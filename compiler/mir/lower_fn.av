@@ -199,10 +199,8 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
     // (the checker boxes their locals there).
     if recv = e.receiver {
       lw.prewalk_expr(recv, encl)
-      if rt = recv.ty {
-        if rt.is_array && e.callee == "parallel" && mir_has_block(e) {
-          lw.prewalk_par(e, encl)
-        }
+      if rt = recv.ty, rt.is_array && e.callee == "parallel" && mir_has_block(e) {
+        lw.prewalk_par(e, encl)
       }
     } else if e.callee == "spawn" && mir_has_block(e) {
       lw.prewalk_spawn(e, encl)
@@ -399,7 +397,7 @@ pub fn (lw: MirLower) bind_name(name: String, t: Ty, ty: Int, v: MOperand, loc: 
   }
   k = lw.var_get(name, ty)
   lw.at(loc)
-  dummy2 = lw.lw_b.assign(lw.lw_b.pl(k), lw.lw_b.rv_use(v))
+  lw.lw_b.assign(lw.lw_b.pl(k), lw.lw_b.rv_use(v))
 }
 
 pub fn mir_without_key(h: Hash(String, Int), key: String): Hash(String, Int) {
@@ -500,15 +498,13 @@ pub fn (lw: MirLower) box_assign(st: Stmt, t: Expr, tt: Ty, ty: Int) {
 // trampoline with a null environment.
 pub fn (lw: MirLower) lower_fn_ref(e: Expr): MOperand {
   b = lw.lw_b
-  if t = e.ty {
-    if sym = lw.lw_fn_syms.get(e.resolved) {
-      l = lw.fn_layout(t, e.loc)
-      if lw.failed {
-        return b.c_i32(0)
-      }
-      lw.at(e.loc)
-      return lw.tmp(b.types.agg(l), b.rv_fnval(l, b.c_null(mt_ref()), b.c_fn("${sym}#fnval")))
+  if t = e.ty, sym = lw.lw_fn_syms.get(e.resolved) {
+    l = lw.fn_layout(t, e.loc)
+    if lw.failed {
+      return b.c_i32(0)
     }
+    lw.at(e.loc)
+    return lw.tmp(b.types.agg(l), b.rv_fnval(l, b.c_null(mt_ref()), b.c_fn("${sym}#fnval")))
   }
   lw.refuse(e.loc, "the function value ${e.ident}")
   b.c_i32(0)
@@ -752,38 +748,36 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
   while i < fns.size && !lw.failed {
     f = fns[i]
     if f.as_value && !f.generic && !fn_is_method(f) {
-      if sym = lw.lw_fn_syms.get(f.emit_name) {
-        if fs = lw.lw_syms.find_fn(f.emit_name) {
-          lw.begin_function(f)
-          ps: Array(Int) = []
-          ps.push(mt_ref())
-          for param in fs.params {
-            ps.push(lw.ty_at(param, f.loc, "a parameter"))
-          }
-          ret = lw.ty_at(fs.ret, f.loc, "a result")
-          if lw.failed {
-            return
-          }
-          b.begin_fn("${sym}#fnval", b.sig(ps, ret, false), lw.mloc(f.loc), f.name)
-          b.name_param(1, "env")
-          lw.at(f.loc)
-          args: Array(MOperand) = []
-          for j in 0..fs.params.size {
-            if j < f.params.size {
-              b.name_param(j + 2, f.params[j].name)
-            }
-            args.push(b.copy_local(j + 2))
-          }
-          if ret == mt_void() {
-            b.call(-1, sym, args)
-          } else {
-            r = b.temp(ret)
-            b.call(r, sym, args)
-            b.assign(b.pl(0), b.rv_use(b.copy_local(r)))
-          }
-          b.ret
-          b.end_fn
+      if sym = lw.lw_fn_syms.get(f.emit_name), fs = lw.lw_syms.find_fn(f.emit_name) {
+        lw.begin_function(f)
+        ps: Array(Int) = []
+        ps.push(mt_ref())
+        for param in fs.params {
+          ps.push(lw.ty_at(param, f.loc, "a parameter"))
         }
+        ret = lw.ty_at(fs.ret, f.loc, "a result")
+        if lw.failed {
+          return
+        }
+        b.begin_fn("${sym}#fnval", b.sig(ps, ret, false), lw.mloc(f.loc), f.name)
+        b.name_param(1, "env")
+        lw.at(f.loc)
+        args: Array(MOperand) = []
+        for j in 0..fs.params.size {
+          if j < f.params.size {
+            b.name_param(j + 2, f.params[j].name)
+          }
+          args.push(b.copy_local(j + 2))
+        }
+        if ret == mt_void() {
+          b.call(-1, sym, args)
+        } else {
+          r = b.temp(ret)
+          b.call(r, sym, args)
+          b.assign(b.pl(0), b.rv_use(b.copy_local(r)))
+        }
+        b.ret
+        b.end_fn
       }
     }
     i += 1

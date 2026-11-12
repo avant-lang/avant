@@ -36,46 +36,32 @@ pub fn (checker_self: Checker) unify_ty(pattern: Ty, actual: Ty, keys: Array(Str
   }
   if pattern.is_array {
     if actual.is_array {
-      if pe = pattern.inner {
-        if ae = actual.inner {
-          return checker_self.unify_ty(pe, ae, keys, vals)
-        }
+      if pe = pattern.inner, ae = actual.inner {
+        return checker_self.unify_ty(pe, ae, keys, vals)
       }
     }
     return false
   }
   if pattern.is_hash {
     if actual.is_hash {
-      if pk = pattern.key {
-        if ak = actual.key {
-          if pv = pattern.val {
-            if av = actual.val {
-              if checker_self.unify_ty(pk, ak, keys, vals) {
-                return checker_self.unify_ty(pv, av, keys, vals)
-              }
-            }
-          }
-        }
+      if pk = pattern.key, ak = actual.key, pv = pattern.val, av = actual.val, checker_self.unify_ty(pk, ak, keys, vals) {
+        return checker_self.unify_ty(pv, av, keys, vals)
       }
     }
     return false
   }
   if pattern.is_ptr {
     if actual.is_ptr {
-      if pe = pattern.inner {
-        if ae = actual.inner {
-          return checker_self.unify_ty(pe, ae, keys, vals)
-        }
+      if pe = pattern.inner, ae = actual.inner {
+        return checker_self.unify_ty(pe, ae, keys, vals)
       }
     }
     return false
   }
   if pattern.is_join {
     if actual.is_join {
-      if pe = pattern.inner {
-        if ae = actual.inner {
-          return checker_self.unify_ty(pe, ae, keys, vals)
-        }
+      if pe = pattern.inner, ae = actual.inner {
+        return checker_self.unify_ty(pe, ae, keys, vals)
       }
     }
     return false
@@ -92,10 +78,8 @@ pub fn (checker_self: Checker) unify_ty(pattern: Ty, actual: Ty, keys: Array(Str
         }
         i += 1
       }
-      if pe = pattern.inner {
-        if ae = actual.inner {
-          return checker_self.unify_ty(pe, ae, keys, vals)
-        }
+      if pe = pattern.inner, ae = actual.inner {
+        return checker_self.unify_ty(pe, ae, keys, vals)
       }
     }
     return false
@@ -129,10 +113,8 @@ pub fn (checker_self: Checker) infer_subst(tparams: Array(String), params: Array
   for name in tparams {
     if got = checker_self.subst_get(keys, vals, name) {
     } else {
-      if e = expected {
-        if !e.is_void && !checker_self.unify_ty(ret, e, keys, vals) {
-          return nil
-        }
+      if e = expected, !e.is_void && !checker_self.unify_ty(ret, e, keys, vals) {
+        return nil
       }
     }
   }
@@ -175,10 +157,8 @@ pub fn (checker_self: Checker) infer_subst_recv(tparams: Array(String), params: 
   for name in tparams {
     if got = checker_self.subst_get(keys, vals, name) {
     } else {
-      if e = expected {
-        if !e.is_void && !checker_self.unify_ty(ret, e, keys, vals) {
-          return nil
-        }
+      if e = expected, !e.is_void && !checker_self.unify_ty(ret, e, keys, vals) {
+        return nil
       }
     }
   }
@@ -196,16 +176,12 @@ pub fn (checker_self: Checker) infer_subst_recv(tparams: Array(String), params: 
 }
 
 pub fn (checker_self: Checker) subst_for_method(sig: FuncSig, call_owner: String, arg_tys: Array(Ty), expected: Ty?): Array(Ty)? {
-  if recv = sig.node.receiver {
-    if sig.owner != call_owner {
-      if act = checker_self.resolver.get_named(call_owner) {
-        checker_self.resolver.set_tparams(sig.node.type_params)
-        pat = checker_self.resolver.resolve(recv.type)
-        checker_self.pull_resolve
-        checker_self.resolver.clear_tparams
-        return checker_self.infer_subst_recv(sig.node.type_params, sig.params, arg_tys, sig.ret, expected, pat, act)
-      }
-    }
+  if recv = sig.node.receiver, sig.owner != call_owner, act = checker_self.resolver.get_named(call_owner) {
+    checker_self.resolver.set_tparams(sig.node.type_params)
+    pat = checker_self.resolver.resolve(recv.type)
+    checker_self.pull_resolve
+    checker_self.resolver.clear_tparams
+    return checker_self.infer_subst_recv(sig.node.type_params, sig.params, arg_tys, sig.ret, expected, pat, act)
   }
   checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected)
 }
@@ -511,31 +487,27 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
     }
     x += 1
   }
-  if act = checker_self.resolver.get_named(owner) {
-    if act.origin.size > 0 {
-      x = 0
-      while x < named.size {
-        sig = checker_self.methods[named[x]]
-        if sig.owner != owner && sig.node.generic && sig.name == name {
-          if recv = sig.node.receiver {
-            if checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
-              is_inst = false
-              for instance in checker_self.instances {
-                if instance.ol_index == sig.node.ol_index {
-                  is_inst = true
-                }
-              }
-              if !is_inst {
-                saw_generic = true
-                if subst = checker_self.subst_for_method(sig, owner, arg_tys, expected) {
-                  cands.push(sig)
-                }
-              }
+  if act = checker_self.resolver.get_named(owner), act.origin.size > 0 {
+    x = 0
+    while x < named.size {
+      sig = checker_self.methods[named[x]]
+      if sig.owner != owner && sig.node.generic && sig.name == name {
+        if recv = sig.node.receiver, checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
+          is_inst = false
+          for instance in checker_self.instances {
+            if instance.ol_index == sig.node.ol_index {
+              is_inst = true
+            }
+          }
+          if !is_inst {
+            saw_generic = true
+            if subst = checker_self.subst_for_method(sig, owner, arg_tys, expected) {
+              cands.push(sig)
             }
           }
         }
-        x += 1
       }
+      x += 1
     }
   }
   if cands.size == 0 && !saw_generic && lits.size > 0 {
@@ -739,12 +711,8 @@ pub fn (checker_self: Checker) method_targets_owner(sig: FuncSig, owner: String)
     return true
   }
   if sig.node.generic {
-    if recv = sig.node.receiver {
-      if act = checker_self.resolver.get_named(owner) {
-        if act.origin.size > 0 {
-          return sig.owner == act.origin
-        }
-      }
+    if recv = sig.node.receiver, act = checker_self.resolver.get_named(owner), act.origin.size > 0 {
+      return sig.owner == act.origin
     }
   }
   false
@@ -788,25 +756,23 @@ pub fn (checker_self: Checker) seed_method_subst(sig: FuncSig, owner: String, ke
   if sig.owner == owner {
     return true
   }
-  if recv = sig.node.receiver {
-    if act = checker_self.resolver.get_named(owner) {
-      checker_self.resolver.set_tparams(sig.node.type_params)
-      pat = checker_self.resolver.resolve(recv.type)
-      checker_self.pull_resolve
-      checker_self.resolver.clear_tparams
-      if checker_self.has_err {
-        return false
-      }
-      if pat.origin == act.origin && pat.ty_args.size == act.ty_args.size {
-        i = 0
-        while i < pat.ty_args.size {
-          if !checker_self.unify_ty(pat.ty_args[i], act.ty_args[i], keys, vals) {
-            return false
-          }
-          i += 1
+  if recv = sig.node.receiver, act = checker_self.resolver.get_named(owner) {
+    checker_self.resolver.set_tparams(sig.node.type_params)
+    pat = checker_self.resolver.resolve(recv.type)
+    checker_self.pull_resolve
+    checker_self.resolver.clear_tparams
+    if checker_self.has_err {
+      return false
+    }
+    if pat.origin == act.origin && pat.ty_args.size == act.ty_args.size {
+      i = 0
+      while i < pat.ty_args.size {
+        if !checker_self.unify_ty(pat.ty_args[i], act.ty_args[i], keys, vals) {
+          return false
         }
-        return true
+        i += 1
       }
+      return true
     }
   }
   false
@@ -911,13 +877,11 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
     return checker_self.t_int()
   }
   if sig.node.generic {
-    if e = expected {
-      if !e.is_void {
-        ret_pat = checker_self.subst_ty(sig.ret, keys, vals)
-        if !checker_self.unify_ty(ret_pat, e, keys, vals) {
-          checker_self.fail(expr.loc, "cannot infer type argument")
-          return checker_self.t_int()
-        }
+    if e = expected, !e.is_void {
+      ret_pat = checker_self.subst_ty(sig.ret, keys, vals)
+      if !checker_self.unify_ty(ret_pat, e, keys, vals) {
+        checker_self.fail(expr.loc, "cannot infer type argument")
+        return checker_self.t_int()
       }
     }
     subst: Array(Ty) = []
@@ -961,10 +925,8 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
   field_owner = object
   if object.is_ptr {
     owner = checker_self.method_owner_name(object)
-    if inner = object.inner {
-      if inner.is_clayout {
-        field_owner = inner
-      }
+    if inner = object.inner, inner.is_clayout {
+      field_owner = inner
     }
   }
   if field_ty = field_owner.field_named(expr.callee) {

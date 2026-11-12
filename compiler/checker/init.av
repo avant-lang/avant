@@ -211,12 +211,8 @@ pub fn (checker_self: Checker) init_stmts(w: InitWalk, stmts: Array(Stmt), start
 // sets, or "".
 fn (w: InitWalk) written(target: Expr): String {
   if target.kind == ex_field() {
-    if obj = target.object {
-      if obj.kind == ex_name() && obj.ident == "self" {
-        if ft = w.ty.field_named(target.ident) {
-          return target.ident
-        }
-      }
+    if obj = target.object, obj.kind == ex_name() && obj.ident == "self", ft = w.ty.field_named(target.ident) {
+      return target.ident
     }
   }
   if target.kind == ex_name() && target.implicit_field {
@@ -333,7 +329,7 @@ pub fn (checker_self: Checker) init_parts(w: InitWalk, st: Stmt, set: Array(Stri
   dummy = checker_self.init_stmts(w, st.pre, set)
   dummy = checker_self.init_stmts(w, st.body, set)
   dummy = checker_self.init_stmts(w, st.then_body, set)
-  dummy = checker_self.init_stmts(w, st.else_body, set)
+  checker_self.init_stmts(w, st.else_body, set)
 }
 
 // A `switch` statement: with `else`, every arm; without, a miss runs

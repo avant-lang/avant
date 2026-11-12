@@ -392,10 +392,8 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       }
       return checker_self.t_void()
     }
-    if e = array.inner {
-      if !checker_self.is_ordered_ty(e) {
-        checker_self.fail(expr.loc, "Array.sort needs an ordered element type or a comparator block")
-      }
+    if e = array.inner, !checker_self.is_ordered_ty(e) {
+      checker_self.fail(expr.loc, "Array.sort needs an ordered element type or a comparator block")
     }
     return checker_self.t_void()
   }
@@ -791,10 +789,8 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       return checker_self.t_int()
     }
     ok = false
-    if v = hash.val {
-      if v.is_int {
-        ok = true
-      }
+    if v = hash.val, v.is_int {
+      ok = true
     }
     if !ok {
       checker_self.fail(expr.loc, "inc is Hash(K, Int) only")
@@ -823,16 +819,14 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
         checker_self.fail(b.loc, "each { |k, v| ... } takes two block parameters")
         return checker_self.t_void()
       }
-      if k = hash.key {
-        if v = hash.val {
-          checker_self.push_scope
-          checker_self.bind(b.params[0], k)
-          checker_self.bind(b.params[1], v)
-          checker_self.loop_depth += 1
-          checker_self.check_body(b.body, checker_self.t_void(), false)
-          checker_self.loop_depth -= 1
-          checker_self.pop_scope
-        }
+      if k = hash.key, v = hash.val {
+        checker_self.push_scope
+        checker_self.bind(b.params[0], k)
+        checker_self.bind(b.params[1], v)
+        checker_self.loop_depth += 1
+        checker_self.check_body(b.body, checker_self.t_void(), false)
+        checker_self.loop_depth -= 1
+        checker_self.pop_scope
       }
       return checker_self.t_void()
     }
@@ -905,12 +899,8 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       return checker_self.t_int()
     }
     ok = false
-    if k = hash.key {
-      if v = hash.val {
-        if k.is_string && v.is_int {
-          ok = true
-        }
-      }
+    if k = hash.key, v = hash.val, k.is_string && v.is_int {
+      ok = true
     }
     if !ok {
       checker_self.fail(expr.loc, "inc_slice is Hash(String, Int) only")
@@ -941,12 +931,8 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       return checker_self.t_int()
     }
     ok = false
-    if k = hash.key {
-      if v = hash.val {
-        if k.is_string && v.is_string {
-          ok = true
-        }
-      }
+    if k = hash.key, v = hash.val, k.is_string && v.is_string {
+      ok = true
     }
     if !ok {
       checker_self.fail(expr.loc, "get_slice is Hash(String, String) only")
@@ -980,12 +966,8 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       return ty_nilable(checker_self.t_int())
     }
     ok = false
-    if k = hash.key {
-      if v = hash.val {
-        if k.is_string && v.is_int {
-          ok = true
-        }
-      }
+    if k = hash.key, v = hash.val, k.is_string && v.is_int {
+      ok = true
     }
     if !ok {
       checker_self.fail(expr.loc, "get_concat is Hash(String, Int) only")
@@ -1296,10 +1278,8 @@ pub fn (checker_self: Checker) check_i32_bytes_to_str(expr: Expr): Ty {
   got = checker_self.check_expr(expr.args[0])
   ok = false
   if got.is_array {
-    if e = got.inner {
-      if e.is_int {
-        ok = true
-      }
+    if e = got.inner, e.is_int {
+      ok = true
     }
   }
   if !ok {

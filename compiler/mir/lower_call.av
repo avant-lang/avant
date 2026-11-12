@@ -118,10 +118,8 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       // A user method on any type (Expr.resolved names a program method;
       // the builtin members have none, W6a.1).
       if !ast_is_ctor_call(e) && e.resolved.size > 0 {
-        if sym0 = lw.lw_fn_syms.get(e.resolved) {
-          if ms0 = lw.lw_syms.find_method_emit(e.resolved) {
-            return lw.lower_method_call(e, recv, rt, sym0, e.args)
-          }
+        if sym0 = lw.lw_fn_syms.get(e.resolved), ms0 = lw.lw_syms.find_method_emit(e.resolved) {
+          return lw.lower_method_call(e, recv, rt, sym0, e.args)
         }
       }
       if (mir_is_str_ty(rt) || rt.is_buf) && e.callee == "get" {
@@ -202,16 +200,14 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   if name.size == 0 {
     name = c
   }
-  if sym = lw.lw_fn_syms.get(name) {
-    if fs = lw.lw_syms.find_fn(name) {
-      ret = lw.ty_at(fs.ret, e.loc, "a call result")
-      args = lw.lower_args_to(e.args, fs.params)
-      if lw.failed {
-        return zero
-      }
-      lw.at(e.loc)
-      return lw.call_to(ret, sym, args)
+  if sym = lw.lw_fn_syms.get(name), fs = lw.lw_syms.find_fn(name) {
+    ret = lw.ty_at(fs.ret, e.loc, "a call result")
+    args = lw.lower_args_to(e.args, fs.params)
+    if lw.failed {
+      return zero
     }
+    lw.at(e.loc)
+    return lw.call_to(ret, sym, args)
   }
   lw.refuse(e.loc, "the call ${c}")
   zero
@@ -271,63 +267,57 @@ pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOpe
 }
 
 pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
-  if obj = e.object {
-    if ot = obj.ty {
-      if e.method_call && e.resolved.size > 0 && !(ot.is_class || ot.is_struct) {
-        if sym1 = lw.lw_fn_syms.get(e.resolved) {
-          none4: Array(Expr) = []
-          return lw.lower_method_call(e, obj, ot, sym1, none4)
+  if obj = e.object, ot = obj.ty {
+    if e.method_call && e.resolved.size > 0 && !(ot.is_class || ot.is_struct) {
+      if sym1 = lw.lw_fn_syms.get(e.resolved) {
+        none4: Array(Expr) = []
+        return lw.lower_method_call(e, obj, ot, sym1, none4)
+      }
+    }
+    if ot.is_integer || ot.is_float {
+      return lw.member(obj, ot, e.ident, e)
+    }
+    if mir_is_str_ty(ot) {
+      none: Array(Expr) = []
+      return lw.str_member(e, obj, ot, e.ident, none)
+    }
+    none3: Array(Expr) = []
+    if ot.is_join && e.ident == "join" {
+      return lw.lower_join(e, obj)
+    }
+    if ot.is_array {
+      return lw.arr_member(e, obj, ot, e.ident, none3)
+    }
+    if ot.is_hash {
+      return lw.hash_member(e, obj, ot, e.ident, none3)
+    }
+    if ot.is_buf {
+      return lw.buf_member(e, obj, e.ident, none3)
+    }
+    if ot.is_class || ot.is_struct {
+      if e.method_call {
+        if sym = lw.lw_fn_syms.get(e.resolved) {
+          none2: Array(Expr) = []
+          return lw.lower_method_call(e, obj, ot, sym, none2)
         }
+        lw.refuse(e.loc, "the method .${e.ident}")
+        return lw.lw_b.c_i32(0)
       }
-      if ot.is_integer || ot.is_float {
-        return lw.member(obj, ot, e.ident, e)
-      }
-      if mir_is_str_ty(ot) {
-        none: Array(Expr) = []
-        return lw.str_member(e, obj, ot, e.ident, none)
-      }
-      none3: Array(Expr) = []
-      if ot.is_join && e.ident == "join" {
-        return lw.lower_join(e, obj)
-      }
-      if ot.is_array {
-        return lw.arr_member(e, obj, ot, e.ident, none3)
-      }
-      if ot.is_hash {
-        return lw.hash_member(e, obj, ot, e.ident, none3)
-      }
-      if ot.is_buf {
-        return lw.buf_member(e, obj, e.ident, none3)
-      }
-      if ot.is_class || ot.is_struct {
-        if e.method_call {
-          if sym = lw.lw_fn_syms.get(e.resolved) {
-            none2: Array(Expr) = []
-            return lw.lower_method_call(e, obj, ot, sym, none2)
-          }
-          lw.refuse(e.loc, "the method .${e.ident}")
-          return lw.lw_b.c_i32(0)
-        }
-        return lw.lower_place_read(e)
-      }
+      return lw.lower_place_read(e)
     }
   }
-  if obj2 = e.object {
-    if ot2 = obj2.ty {
-      if (ot2.is_ptr || ot2.is_clayout) && !e.method_call {
-        ck = lw.c_field_scalar(e)
-        if ck > 0 {
-          p = lw.place_of(e)
-          if lw.failed {
-            return lw.lw_b.c_i32(0)
-          }
-          lw.at(e.loc)
-          raw = lw.tmp(lw.c_scalar_mty(ck), lw.lw_b.rv_use(lw.lw_b.copy(p)))
-          return lw.from_c_scalar(raw, ck)
-        }
-        return lw.lower_place_read(e)
+  if obj2 = e.object, ot2 = obj2.ty, (ot2.is_ptr || ot2.is_clayout) && !e.method_call {
+    ck = lw.c_field_scalar(e)
+    if ck > 0 {
+      p = lw.place_of(e)
+      if lw.failed {
+        return lw.lw_b.c_i32(0)
       }
+      lw.at(e.loc)
+      raw = lw.tmp(lw.c_scalar_mty(ck), lw.lw_b.rv_use(lw.lw_b.copy(p)))
+      return lw.from_c_scalar(raw, ck)
     }
+    return lw.lower_place_read(e)
   }
   lw.refuse(e.loc, "the field .${e.ident} (W6)")
   lw.lw_b.c_i32(0)

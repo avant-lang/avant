@@ -122,23 +122,21 @@ pub fn (lw: MirLower) hash_delete_stmt(e: Expr): Bool {
   if bl = e.block {
     return false
   }
-  if recv = e.receiver {
-    if ht = recv.ty {
-      if !ht.is_hash || e.resolved.size > 0 {
-        return false
-      }
-      f = "avant_hash_del"
-      if mir_hash_key_int(ht) {
-        f = "avant_hash_del_i32k"
-      }
-      ops = lw.args_then_recv(e.args, recv)
-      if lw.failed {
-        return true
-      }
-      lw.at(e.loc)
-      lw.lw_b.call(-1, f, ops)
+  if recv = e.receiver, ht = recv.ty {
+    if !ht.is_hash || e.resolved.size > 0 {
+      return false
+    }
+    f = "avant_hash_del"
+    if mir_hash_key_int(ht) {
+      f = "avant_hash_del_i32k"
+    }
+    ops = lw.args_then_recv(e.args, recv)
+    if lw.failed {
       return true
     }
+    lw.at(e.loc)
+    lw.lw_b.call(-1, f, ops)
+    return true
   }
   false
 }

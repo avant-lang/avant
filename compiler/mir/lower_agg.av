@@ -337,12 +337,8 @@ pub fn (lw: MirLower) field_of(t: Ty, name: String, loc: Location): Int {
 pub fn (lw: MirLower) place_of(e: Expr): MPlace {
   b = lw.lw_b
   if e.kind == ex_index() {
-    if arr = e.left {
-      if at = arr.ty {
-        if at.is_array || at.is_buf {
-          return lw.index_place(e)
-        }
-      }
+    if arr = e.left, at = arr.ty, at.is_array || at.is_buf {
+      return lw.index_place(e)
     }
   }
   if e.kind == ex_name() && !e.fn_ref {
@@ -378,30 +374,28 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
     return b.pl(k)
   }
   if e.kind == ex_field() && !e.method_call {
-    if obj = e.object {
-      if ot = obj.ty {
-        if ot.is_struct || ot.is_clayout {
-          p = lw.place_of(obj)
-          k = lw.field_of(ot, e.ident, e.loc)
-          return b.field(p, k)
+    if obj = e.object, ot = obj.ty {
+      if ot.is_struct || ot.is_clayout {
+        p = lw.place_of(obj)
+        k = lw.field_of(ot, e.ident, e.loc)
+        return b.field(p, k)
+      }
+      if ot.is_ptr {
+        return lw.ptr_field_place(e, obj, ot)
+      }
+      if ot.is_class {
+        o = lw.lower_expr(obj)
+        if lw.failed {
+          return b.pl(0)
         }
-        if ot.is_ptr {
-          return lw.ptr_field_place(e, obj, ot)
+        h = mir_bare_copy(o)
+        if h < 0 {
+          lw.at(e.loc)
+          h = b.temp(lw.ety(obj))
+          b.assign(b.pl(h), b.rv_use(o))
         }
-        if ot.is_class {
-          o = lw.lower_expr(obj)
-          if lw.failed {
-            return b.pl(0)
-          }
-          h = mir_bare_copy(o)
-          if h < 0 {
-            lw.at(e.loc)
-            h = b.temp(lw.ety(obj))
-            b.assign(b.pl(h), b.rv_use(o))
-          }
-          k = lw.field_of(ot, e.ident, e.loc)
-          return b.field(b.deref(b.pl(h)), k)
-        }
+        k = lw.field_of(ot, e.ident, e.loc)
+        return b.field(b.deref(b.pl(h)), k)
       }
     }
   }
@@ -450,7 +444,7 @@ pub fn (lw: MirLower) store_place(p: MPlace, ty: Int, val: MOperand) {
       b.barrier(h)
     }
   }
-  dummy3 = b.assign(p, b.rv_use(val))
+  b.assign(p, b.rv_use(val))
 }
 
 // `x.f = v`, an implicit field `f = v`, and the compound forms: the value
@@ -805,10 +799,8 @@ pub fn (lw: MirLower) zero_strings(p: MPlace, t: Ty, mt: Int) {
 
 // The local of a `copy _k` with no projection, or -1.
 pub fn mir_bare_copy(o: MOperand): Int {
-  if p = o.place {
-    if p.proj.size == 0 {
-      return p.local
-    }
+  if p = o.place, p.proj.size == 0 {
+    return p.local
   }
   -1
 }

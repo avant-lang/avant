@@ -40,57 +40,51 @@ pub fn (checker_self: Checker) annotate_vstep(prev: Stmt, stmt: Stmt) {
   if prev.op != tk_eq() {
     return
   }
-  if t = prev.target {
-    if v = prev.value {
-      if t.kind == ex_name() && v.kind == ex_int() && v.int_bits <= 1000000u64 {
-        ivar = t.ident
-        if c = stmt.cond {
-          cc = c
-          if cc.kind == ex_binary() && cc.op == tk_amp_amp() {
-            if cl0 = cc.left {
-              cc = cl0
-            }
+  if t = prev.target, v = prev.value, t.kind == ex_name() && v.kind == ex_int() && v.int_bits <= 1000000u64 {
+    ivar = t.ident
+    if c = stmt.cond {
+      cc = c
+      if cc.kind == ex_binary() && cc.op == tk_amp_amp() {
+        if cl0 = cc.left {
+          cc = cl0
+        }
+      }
+      if cc.kind == ex_binary() {
+        is_le = false
+        coff = 0
+        matched = false
+        if cc.op == tk_less() || cc.op == tk_less_eq() {
+          if cc.op == tk_less_eq() {
+            is_le = true
           }
-          if cc.kind == ex_binary() {
-            is_le = false
-            coff = 0
-            matched = false
-            if cc.op == tk_less() || cc.op == tk_less_eq() {
-              if cc.op == tk_less_eq() {
-                is_le = true
+          if cl = cc.left {
+            if cl.kind == ex_name() {
+              if cl.ident == ivar {
+                matched = true
               }
-              if cl = cc.left {
-                if cl.kind == ex_name() {
-                  if cl.ident == ivar {
+            } else if cl.kind == ex_binary() {
+              if cl.op == tk_plus() {
+                if cll = cl.left, clr = cl.right {
+                  if cll.kind == ex_name() && cll.ident == ivar && checker_self.lit_small(clr) {
+                    coff = clr.int_bits.to_i
                     matched = true
                   }
-                } else if cl.kind == ex_binary() {
-                  if cl.op == tk_plus() {
-                    if cll = cl.left {
-                      if clr = cl.right {
-                        if cll.kind == ex_name() && cll.ident == ivar && checker_self.lit_small(clr) {
-                          coff = clr.int_bits.to_i
-                          matched = true
-                        }
-                        if clr.kind == ex_name() && clr.ident == ivar && checker_self.lit_small(cll) {
-                          coff = cll.int_bits.to_i
-                          matched = true
-                        }
-                      }
-                    }
+                  if clr.kind == ex_name() && clr.ident == ivar && checker_self.lit_small(cll) {
+                    coff = cll.int_bits.to_i
+                    matched = true
                   }
                 }
               }
             }
-            if matched {
-              step = checker_self.body_vstep(stmt.body, ivar)
-              if step > 0 {
-                stmt.vstep = step
-                stmt.vstart = v.int_bits.to_i
-                stmt.vle = is_le
-                stmt.vcoff = coff
-              }
-            }
+          }
+        }
+        if matched {
+          step = checker_self.body_vstep(stmt.body, ivar)
+          if step > 0 {
+            stmt.vstep = step
+            stmt.vstart = v.int_bits.to_i
+            stmt.vle = is_le
+            stmt.vcoff = coff
           }
         }
       }
@@ -120,35 +114,25 @@ pub fn (checker_self: Checker) body_vstep(body: Array(Stmt), ivar: String): Int 
 
 pub fn (checker_self: Checker) stmt_vstep(s: Stmt, ivar: String): Int {
   if s.kind == st_assign() {
-    if t = s.target {
-      if t.kind == ex_name() && t.ident == ivar {
-        if s.op == tk_plus_eq() {
-          if v = s.value {
-            if v.kind == ex_int() && v.int_bits >= 1u64 && v.int_bits <= 1000000u64 {
-              return v.int_bits.to_i
-            }
-          }
-          return 0 - 2
-        }
-        if s.op == tk_eq() {
-          if v = s.value {
-            if v.kind == ex_binary() && v.op == tk_plus() {
-              if l = v.left {
-                if r = v.right {
-                  if l.kind == ex_name() && l.ident == ivar && r.kind == ex_int() && r.int_bits >= 1u64 && r.int_bits <= 1000000u64 {
-                    return r.int_bits.to_i
-                  }
-                  if r.kind == ex_name() && r.ident == ivar && l.kind == ex_int() && l.int_bits >= 1u64 && l.int_bits <= 1000000u64 {
-                    return l.int_bits.to_i
-                  }
-                }
-              }
-            }
-          }
-          return 0 - 2
+    if t = s.target, t.kind == ex_name() && t.ident == ivar {
+      if s.op == tk_plus_eq() {
+        if v = s.value, v.kind == ex_int() && v.int_bits >= 1u64 && v.int_bits <= 1000000u64 {
+          return v.int_bits.to_i
         }
         return 0 - 2
       }
+      if s.op == tk_eq() {
+        if v = s.value, v.kind == ex_binary() && v.op == tk_plus(), l = v.left, r = v.right {
+          if l.kind == ex_name() && l.ident == ivar && r.kind == ex_int() && r.int_bits >= 1u64 && r.int_bits <= 1000000u64 {
+            return r.int_bits.to_i
+          }
+          if r.kind == ex_name() && r.ident == ivar && l.kind == ex_int() && l.int_bits >= 1u64 && l.int_bits <= 1000000u64 {
+            return l.int_bits.to_i
+          }
+        }
+        return 0 - 2
+      }
+      return 0 - 2
     }
   }
   for st in s.then_body {
@@ -326,13 +310,11 @@ pub fn (checker_self: Checker) cs_delta_of_var(v: String): Int {
 pub fn (checker_self: Checker) bound_cont_of(e: Expr): String {
   if e.kind == ex_field() {
     if e.ident == "size" {
-      if obj = e.object {
-        if obj.kind == ex_name() {
-          if obj.implicit_field {
-            return ""
-          }
-          return obj.ident
+      if obj = e.object, obj.kind == ex_name() {
+        if obj.implicit_field {
+          return ""
         }
+        return obj.ident
       }
     }
     return ""
@@ -376,15 +358,13 @@ pub fn (checker_self: Checker) bound_delta_of(e: Expr): Int {
     return 0
   }
   if e.kind == ex_binary() {
-    if l = e.left {
-      if r = e.right {
-        base = checker_self.bound_delta_of(l)
-        if checker_self.lit_small(r) {
-          if e.op == tk_minus() {
-            return base - r.int_bits.to_i
-          }
-          return base + r.int_bits.to_i
+    if l = e.left, r = e.right {
+      base = checker_self.bound_delta_of(l)
+      if checker_self.lit_small(r) {
+        if e.op == tk_minus() {
+          return base - r.int_bits.to_i
         }
+        return base + r.int_bits.to_i
       }
     }
   }
@@ -412,62 +392,58 @@ pub fn (checker_self: Checker) value_is_nonneg(val: Expr, selfname: String): Boo
   }
   if val.kind == ex_binary() {
     if val.op == tk_star() {
-      if l = val.left {
-        if r = val.right {
-          lok = false
-          if l.kind == ex_int() {
+      if l = val.left, r = val.right {
+        lok = false
+        if l.kind == ex_int() {
+          lok = true
+        } else if l.kind == ex_name() {
+          if checker_self.nn_has(l.ident) {
             lok = true
-          } else if l.kind == ex_name() {
-            if checker_self.nn_has(l.ident) {
-              lok = true
-            }
           }
-          rok = false
-          if r.kind == ex_int() {
-            rok = true
-          } else if r.kind == ex_name() {
-            if checker_self.nn_has(r.ident) {
-              rok = true
-            }
-          }
-          if lok {
-            return rok
-          }
-          return false
         }
+        rok = false
+        if r.kind == ex_int() {
+          rok = true
+        } else if r.kind == ex_name() {
+          if checker_self.nn_has(r.ident) {
+            rok = true
+          }
+        }
+        if lok {
+          return rok
+        }
+        return false
       }
     }
     if val.op == tk_plus() || val.op == tk_minus() {
-      if l = val.left {
-        if r = val.right {
-          lok = false
-          if l.kind == ex_int() {
+      if l = val.left, r = val.right {
+        lok = false
+        if l.kind == ex_int() {
+          lok = true
+        } else if l.kind == ex_name() {
+          if checker_self.nn_has(l.ident) {
             lok = true
-          } else if l.kind == ex_name() {
-            if checker_self.nn_has(l.ident) {
-              lok = true
-            }
-            if l.ident == selfname && checker_self.nn_has(selfname) {
-              lok = true
-            }
           }
-          rok = false
-          if r.kind == ex_int() {
+          if l.ident == selfname && checker_self.nn_has(selfname) {
+            lok = true
+          }
+        }
+        rok = false
+        if r.kind == ex_int() {
+          rok = true
+        } else if r.kind == ex_name() {
+          if checker_self.nn_has(r.ident) {
             rok = true
-          } else if r.kind == ex_name() {
-            if checker_self.nn_has(r.ident) {
-              rok = true
-            }
           }
-          if val.op == tk_minus() {
-            if r.kind == ex_int() {
-              return lok
-            }
-            return false
+        }
+        if val.op == tk_minus() {
+          if r.kind == ex_int() {
+            return lok
           }
-          if lok {
-            return rok
-          }
+          return false
+        }
+        if lok {
+          return rok
         }
       }
     }
@@ -477,64 +453,58 @@ pub fn (checker_self: Checker) value_is_nonneg(val: Expr, selfname: String): Boo
 
 pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
   if stmt.kind == st_assign() {
-    if t = stmt.target {
-      if t.kind == ex_name() {
-        v = t.ident
-        checker_self.kill_facts_for(v)
-        if val = stmt.value {
-          if checker_self.value_is_nonneg(val, v) {
-            checker_self.nn_add(v)
-          } else {
-            checker_self.nn_remove(v)
-          }
-          sv_done = false
-          if val.kind == ex_field() {
-            if val.ident == "size" {
-              if obj = val.object {
-                if obj.kind == ex_name() {
-                  checker_self.sv_put(v, obj.ident)
-                  sv_done = true
-                }
-              }
+    if t = stmt.target, t.kind == ex_name() {
+      v = t.ident
+      checker_self.kill_facts_for(v)
+      if val = stmt.value {
+        if checker_self.value_is_nonneg(val, v) {
+          checker_self.nn_add(v)
+        } else {
+          checker_self.nn_remove(v)
+        }
+        sv_done = false
+        if val.kind == ex_field() {
+          if val.ident == "size" {
+            if obj = val.object, obj.kind == ex_name() {
+              checker_self.sv_put(v, obj.ident)
+              sv_done = true
             }
           }
-          if val.kind == ex_array_new() {
-            if sz = val.size_expr {
-              if sz.kind == ex_name() {
-                checker_self.sv_put(sz.ident, v)
-                checker_self.cs_put(v, sz.ident, 0)
-                sv_done = true
-              } else if sz.kind == ex_binary() {
-                if sz.op == tk_plus() || sz.op == tk_minus() {
-                  if sl2 = sz.left {
-                    if sr2 = sz.right {
-                      if sl2.kind == ex_name() && checker_self.lit_small(sr2) {
-                        d = sr2.int_bits.to_i
-                        if sz.op == tk_minus() {
-                          d = 0 - d
-                        }
-                        checker_self.cs_put(v, sl2.ident, d)
-                      }
-                      if sr2.kind == ex_name() && checker_self.lit_small(sl2) && sz.op == tk_plus() {
-                        checker_self.cs_put(v, sr2.ident, sl2.int_bits.to_i)
-                      }
+        }
+        if val.kind == ex_array_new() {
+          if sz = val.size_expr {
+            if sz.kind == ex_name() {
+              checker_self.sv_put(sz.ident, v)
+              checker_self.cs_put(v, sz.ident, 0)
+              sv_done = true
+            } else if sz.kind == ex_binary() {
+              if sz.op == tk_plus() || sz.op == tk_minus() {
+                if sl2 = sz.left, sr2 = sz.right {
+                  if sl2.kind == ex_name() && checker_self.lit_small(sr2) {
+                    d = sr2.int_bits.to_i
+                    if sz.op == tk_minus() {
+                      d = 0 - d
                     }
+                    checker_self.cs_put(v, sl2.ident, d)
+                  }
+                  if sr2.kind == ex_name() && checker_self.lit_small(sl2) && sz.op == tk_plus() {
+                    checker_self.cs_put(v, sr2.ident, sl2.int_bits.to_i)
                   }
                 }
               }
             }
           }
-          if !sv_done {
-            checker_self.sv_remove_var(v)
-          }
-          bc = checker_self.bound_cont_of(val)
-          if bc.size > 0 {
-            checker_self.bv_put(v, bc, checker_self.bound_delta_of(val))
-          } else {
-            checker_self.bv_remove_var(v)
-          }
-          checker_self.cap_after_assign(v, stmt.op, val)
         }
+        if !sv_done {
+          checker_self.sv_remove_var(v)
+        }
+        bc = checker_self.bound_cont_of(val)
+        if bc.size > 0 {
+          checker_self.bv_put(v, bc, checker_self.bound_delta_of(val))
+        } else {
+          checker_self.bv_remove_var(v)
+        }
+        checker_self.cap_after_assign(v, stmt.op, val)
       }
     }
   }
@@ -548,31 +518,21 @@ pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
 
 pub fn (checker_self: Checker) deep_shrinks_stmt(s: Stmt, cont: String): Bool {
   if s.kind == st_assign() {
-    if t = s.target {
-      if t.kind == ex_name() && t.ident == cont {
-        return true
-      }
-    }
-  }
-  if e = s.expr {
-    if checker_self.deep_shrinks_expr(e, cont) {
+    if t = s.target, t.kind == ex_name() && t.ident == cont {
       return true
     }
   }
-  if c = s.cond {
-    if checker_self.deep_shrinks_expr(c, cont) {
-      return true
-    }
+  if e = s.expr, checker_self.deep_shrinks_expr(e, cont) {
+    return true
   }
-  if t = s.target {
-    if checker_self.deep_shrinks_expr(t, cont) {
-      return true
-    }
+  if c = s.cond, checker_self.deep_shrinks_expr(c, cont) {
+    return true
   }
-  if v = s.value {
-    if checker_self.deep_shrinks_expr(v, cont) {
-      return true
-    }
+  if t = s.target, checker_self.deep_shrinks_expr(t, cont) {
+    return true
+  }
+  if v = s.value, checker_self.deep_shrinks_expr(v, cont) {
+    return true
   }
   for st in s.then_body {
     if checker_self.deep_shrinks_stmt(st, cont) {
@@ -595,37 +555,25 @@ pub fn (checker_self: Checker) deep_shrinks_stmt(s: Stmt, cont: String): Bool {
 pub fn (checker_self: Checker) deep_shrinks_expr(e: Expr, cont: String): Bool {
   if e.kind == ex_call() {
     if e.callee == "pop" || e.callee == "clear" {
-      if recv = e.receiver {
-        if checker_self.expr_root_name(recv) == cont {
-          return true
-        }
+      if recv = e.receiver, checker_self.expr_root_name(recv) == cont {
+        return true
       }
     }
   }
-  if inner = e.inner {
-    if checker_self.deep_shrinks_expr(inner, cont) {
-      return true
-    }
+  if inner = e.inner, checker_self.deep_shrinks_expr(inner, cont) {
+    return true
   }
-  if l = e.left {
-    if checker_self.deep_shrinks_expr(l, cont) {
-      return true
-    }
+  if l = e.left, checker_self.deep_shrinks_expr(l, cont) {
+    return true
   }
-  if r = e.right {
-    if checker_self.deep_shrinks_expr(r, cont) {
-      return true
-    }
+  if r = e.right, checker_self.deep_shrinks_expr(r, cont) {
+    return true
   }
-  if obj = e.object {
-    if checker_self.deep_shrinks_expr(obj, cont) {
-      return true
-    }
+  if obj = e.object, checker_self.deep_shrinks_expr(obj, cont) {
+    return true
   }
-  if recv = e.receiver {
-    if checker_self.deep_shrinks_expr(recv, cont) {
-      return true
-    }
+  if recv = e.receiver, checker_self.deep_shrinks_expr(recv, cont) {
+    return true
   }
   for arg in e.args {
     if checker_self.deep_shrinks_expr(arg, cont) {
@@ -642,15 +590,11 @@ pub fn (checker_self: Checker) deep_shrinks_expr(e: Expr, cont: String): Bool {
       return true
     }
   }
-  if sz = e.size_expr {
-    if checker_self.deep_shrinks_expr(sz, cont) {
-      return true
-    }
+  if sz = e.size_expr, checker_self.deep_shrinks_expr(sz, cont) {
+    return true
   }
-  if c = e.cond {
-    if checker_self.deep_shrinks_expr(c, cont) {
-      return true
-    }
+  if c = e.cond, checker_self.deep_shrinks_expr(c, cont) {
+    return true
   }
   if b = e.block {
     for st in b.body {
@@ -672,10 +616,8 @@ pub fn (checker_self: Checker) deep_shrinks_expr(e: Expr, cont: String): Bool {
     }
   }
   for part in e.parts {
-    if inner = part.expr {
-      if checker_self.deep_shrinks_expr(inner, cont) {
-        return true
-      }
+    if inner = part.expr, checker_self.deep_shrinks_expr(inner, cont) {
+      return true
     }
   }
   false
@@ -693,55 +635,39 @@ pub fn (checker_self: Checker) step_is_nonneg(v: Expr): Bool {
 
 pub fn (checker_self: Checker) deep_ivar_ok_stmt(s: Stmt, ivar: String): Bool {
   if s.kind == st_assign() {
-    if t = s.target {
-      if t.kind == ex_name() && t.ident == ivar {
-        if s.op == tk_plus_eq() {
-          if v = s.value {
-            if checker_self.step_is_nonneg(v) {
-              return checker_self.deep_ivar_ok_rest(s, ivar)
-            }
-          }
-          return false
-        }
-        if s.op == tk_eq() {
-          if v = s.value {
-            if v.kind == ex_binary() && v.op == tk_plus() {
-              if l = v.left {
-                if r = v.right {
-                  if l.kind == ex_name() && l.ident == ivar && checker_self.step_is_nonneg(r) {
-                    return checker_self.deep_ivar_ok_rest(s, ivar)
-                  }
-                  if r.kind == ex_name() && r.ident == ivar && checker_self.step_is_nonneg(l) {
-                    return checker_self.deep_ivar_ok_rest(s, ivar)
-                  }
-                }
-              }
-            }
-          }
-          return false
+    if t = s.target, t.kind == ex_name() && t.ident == ivar {
+      if s.op == tk_plus_eq() {
+        if v = s.value, checker_self.step_is_nonneg(v) {
+          return checker_self.deep_ivar_ok_rest(s, ivar)
         }
         return false
       }
+      if s.op == tk_eq() {
+        if v = s.value, v.kind == ex_binary() && v.op == tk_plus(), l = v.left, r = v.right {
+          if l.kind == ex_name() && l.ident == ivar && checker_self.step_is_nonneg(r) {
+            return checker_self.deep_ivar_ok_rest(s, ivar)
+          }
+          if r.kind == ex_name() && r.ident == ivar && checker_self.step_is_nonneg(l) {
+            return checker_self.deep_ivar_ok_rest(s, ivar)
+          }
+        }
+        return false
+      }
+      return false
     }
   }
   checker_self.deep_ivar_ok_rest(s, ivar)
 }
 
 pub fn (checker_self: Checker) deep_ivar_ok_rest(s: Stmt, ivar: String): Bool {
-  if e = s.expr {
-    if !checker_self.deep_ivar_ok_expr(e, ivar) {
-      return false
-    }
+  if e = s.expr, !checker_self.deep_ivar_ok_expr(e, ivar) {
+    return false
   }
-  if c = s.cond {
-    if !checker_self.deep_ivar_ok_expr(c, ivar) {
-      return false
-    }
+  if c = s.cond, !checker_self.deep_ivar_ok_expr(c, ivar) {
+    return false
   }
-  if v = s.value {
-    if !checker_self.deep_ivar_ok_expr(v, ivar) {
-      return false
-    }
+  if v = s.value, !checker_self.deep_ivar_ok_expr(v, ivar) {
+    return false
   }
   for st in s.then_body {
     if !checker_self.deep_ivar_ok_stmt(st, ivar) {
@@ -762,30 +688,20 @@ pub fn (checker_self: Checker) deep_ivar_ok_rest(s: Stmt, ivar: String): Bool {
 }
 
 pub fn (checker_self: Checker) deep_ivar_ok_expr(e: Expr, ivar: String): Bool {
-  if inner = e.inner {
-    if !checker_self.deep_ivar_ok_expr(inner, ivar) {
-      return false
-    }
+  if inner = e.inner, !checker_self.deep_ivar_ok_expr(inner, ivar) {
+    return false
   }
-  if l = e.left {
-    if !checker_self.deep_ivar_ok_expr(l, ivar) {
-      return false
-    }
+  if l = e.left, !checker_self.deep_ivar_ok_expr(l, ivar) {
+    return false
   }
-  if r = e.right {
-    if !checker_self.deep_ivar_ok_expr(r, ivar) {
-      return false
-    }
+  if r = e.right, !checker_self.deep_ivar_ok_expr(r, ivar) {
+    return false
   }
-  if obj = e.object {
-    if !checker_self.deep_ivar_ok_expr(obj, ivar) {
-      return false
-    }
+  if obj = e.object, !checker_self.deep_ivar_ok_expr(obj, ivar) {
+    return false
   }
-  if recv = e.receiver {
-    if !checker_self.deep_ivar_ok_expr(recv, ivar) {
-      return false
-    }
+  if recv = e.receiver, !checker_self.deep_ivar_ok_expr(recv, ivar) {
+    return false
   }
   for arg in e.args {
     if !checker_self.deep_ivar_ok_expr(arg, ivar) {
@@ -802,15 +718,11 @@ pub fn (checker_self: Checker) deep_ivar_ok_expr(e: Expr, ivar: String): Bool {
       return false
     }
   }
-  if sz = e.size_expr {
-    if !checker_self.deep_ivar_ok_expr(sz, ivar) {
-      return false
-    }
+  if sz = e.size_expr, !checker_self.deep_ivar_ok_expr(sz, ivar) {
+    return false
   }
-  if c = e.cond {
-    if !checker_self.deep_ivar_ok_expr(c, ivar) {
-      return false
-    }
+  if c = e.cond, !checker_self.deep_ivar_ok_expr(c, ivar) {
+    return false
   }
   if b = e.block {
     for st in b.body {
@@ -868,21 +780,13 @@ pub fn (checker_self: Checker) collect_cond_nn(e: Expr, into: Array(String)) {
       return
     }
     if e.op == 47 {
-      if l = e.left {
-        if r = e.right {
-          if l.kind == ex_name() && r.kind == ex_int() && r.int_bits == 0u64 {
-            into.push(l.ident)
-          }
-        }
+      if l = e.left, r = e.right, l.kind == ex_name() && r.kind == ex_int() && r.int_bits == 0u64 {
+        into.push(l.ident)
       }
     }
     if e.op == tk_less_eq() {
-      if l = e.left {
-        if r = e.right {
-          if r.kind == ex_name() && l.kind == ex_int() && l.int_bits == 0u64 {
-            into.push(r.ident)
-          }
-        }
+      if l = e.left, r = e.right, r.kind == ex_name() && l.kind == ex_int() && l.int_bits == 0u64 {
+        into.push(r.ident)
       }
     }
   }
@@ -906,41 +810,33 @@ pub fn (checker_self: Checker) fact_from_cond(e: Expr, body: Array(Stmt), nnl: A
   slack = 0
   is_le = false
   if e.op == tk_less() {
-    if l = e.left {
-      if l.kind == ex_name() {
-        ivar = l.ident
-        if r = e.right {
-          bound = r
-        }
+    if l = e.left, l.kind == ex_name() {
+      ivar = l.ident
+      if r = e.right {
+        bound = r
       }
     }
   } else if e.op == tk_less_eq() {
     is_le = true
-    if l = e.left {
-      if l.kind == ex_name() {
-        ivar = l.ident
-        if r = e.right {
-          bound = r
-        }
+    if l = e.left, l.kind == ex_name() {
+      ivar = l.ident
+      if r = e.right {
+        bound = r
       }
     }
   } else if e.op == 47 {
-    if r = e.right {
-      if r.kind == ex_name() {
-        ivar = r.ident
-        if l = e.left {
-          bound = l
-        }
+    if r = e.right, r.kind == ex_name() {
+      ivar = r.ident
+      if l = e.left {
+        bound = l
       }
     }
   } else if e.op == 48 {
     is_le = true
-    if r = e.right {
-      if r.kind == ex_name() {
-        ivar = r.ident
-        if l = e.left {
-          bound = l
-        }
+    if r = e.right, r.kind == ex_name() {
+      ivar = r.ident
+      if l = e.left {
+        bound = l
       }
     }
   } else {
@@ -1187,39 +1083,23 @@ pub fn (checker_self: Checker) is_sqrt_toi(e: Expr): Bool {
   } else {
     return false
   }
-  if obj = e.object {
-    if obj.kind == ex_field() {
-      if obj.ident == "sqrt" {
-        if o2 = obj.object {
-          if o2.kind == ex_field() {
-            if o2.ident == "to_f" {
-              if src = o2.object {
-                if t = src.ty {
-                  return t.is_int
-                }
-                if src.kind == ex_name() {
-                  return true
-                }
-                if src.kind == ex_int() {
-                  return true
-                }
-              }
-            }
-          }
-        }
-      }
+  if obj = e.object, obj.kind == ex_field(), obj.ident == "sqrt", o2 = obj.object, o2.kind == ex_field(), o2.ident == "to_f", src = o2.object {
+    if t = src.ty {
+      return t.is_int
+    }
+    if src.kind == ex_name() {
+      return true
+    }
+    if src.kind == ex_int() {
+      return true
     }
   }
   false
 }
 
 pub fn (checker_self: Checker) sqrt_src_nonneg(e: Expr): Bool {
-  if obj = e.object {
-    if o2 = obj.object {
-      if src = o2.object {
-        return checker_self.expr_nonneg(src)
-      }
-    }
+  if obj = e.object, o2 = obj.object, src = o2.object {
+    return checker_self.expr_nonneg(src)
   }
   false
 }
@@ -1242,22 +1122,14 @@ pub fn (checker_self: Checker) expr_nonneg(e: Expr): Bool {
   }
   if e.kind == ex_binary() {
     if e.op == tk_star() || e.op == tk_plus() {
-      if l = e.left {
-        if r = e.right {
-          if checker_self.expr_nonneg(l) {
-            return checker_self.expr_nonneg(r)
-          }
-        }
+      if l = e.left, r = e.right, checker_self.expr_nonneg(l) {
+        return checker_self.expr_nonneg(r)
       }
       return false
     }
     if e.op == tk_minus() {
-      if l = e.left {
-        if r = e.right {
-          if r.kind == ex_int() {
-            return checker_self.expr_nonneg(l)
-          }
-        }
+      if l = e.left, r = e.right, r.kind == ex_int() {
+        return checker_self.expr_nonneg(l)
       }
       return false
     }
@@ -1286,41 +1158,39 @@ pub fn (checker_self: Checker) cap_of_expr(e: Expr): Int {
     return 0 - 1
   }
   if e.kind == ex_binary() {
-    if l = e.left {
-      if r = e.right {
-        cl = checker_self.cap_of_expr(l)
-        if cl < 0 {
+    if l = e.left, r = e.right {
+      cl = checker_self.cap_of_expr(l)
+      if cl < 0 {
+        return 0 - 1
+      }
+      if e.op == tk_plus() {
+        cr = checker_self.cap_of_expr(r)
+        if cr < 0 {
           return 0 - 1
         }
-        if e.op == tk_plus() {
-          cr = checker_self.cap_of_expr(r)
-          if cr < 0 {
-            return 0 - 1
-          }
-          if cl > 2305843009213693952 - cr {
-            return 0 - 1
-          }
-          return cl + cr
-        }
-        if e.op == tk_star() {
-          cr = checker_self.cap_of_expr(r)
-          if cr < 0 {
-            return 0 - 1
-          }
-          if cl == 0 || cr == 0 {
-            return 0
-          }
-          if cl > 9223372036854775807 / cr {
-            return 0 - 1
-          }
-          return cl * cr
-        }
-        if e.op == tk_minus() {
-          if checker_self.expr_nonneg(r) {
-            return cl
-          }
+        if cl > 2305843009213693952 - cr {
           return 0 - 1
         }
+        return cl + cr
+      }
+      if e.op == tk_star() {
+        cr = checker_self.cap_of_expr(r)
+        if cr < 0 {
+          return 0 - 1
+        }
+        if cl == 0 || cr == 0 {
+          return 0
+        }
+        if cl > 9223372036854775807 / cr {
+          return 0 - 1
+        }
+        return cl * cr
+      }
+      if e.op == tk_minus() {
+        if checker_self.expr_nonneg(r) {
+          return cl
+        }
+        return 0 - 1
       }
     }
   }
@@ -1360,16 +1230,14 @@ pub fn (checker_self: Checker) push_guard_facts(e: Expr) {
   v = ""
   bound: Expr? = nil
   flipped = false
-  if l = e.left {
-    if r = e.right {
-      if l.kind == ex_name() {
-        v = l.ident
-        bound = r
-      } else if r.kind == ex_name() {
-        v = r.ident
-        bound = l
-        flipped = true
-      }
+  if l = e.left, r = e.right {
+    if l.kind == ex_name() {
+      v = l.ident
+      bound = r
+    } else if r.kind == ex_name() {
+      v = r.ident
+      bound = l
+      flipped = true
     }
   }
   if v.size == 0 {
@@ -1602,10 +1470,8 @@ pub fn (checker_self: Checker) cap_after_assign(v: String, op: Int, val: Expr) {
 
 pub fn (checker_self: Checker) cap_collect_assigned_stmt(s: Stmt, into: Array(String)) {
   if s.kind == st_assign() {
-    if t = s.target {
-      if t.kind == ex_name() && !into.contains(t.ident) {
-        into.push(t.ident)
-      }
+    if t = s.target, t.kind == ex_name() && !into.contains(t.ident) {
+      into.push(t.ident)
     }
   }
   if e = s.expr {

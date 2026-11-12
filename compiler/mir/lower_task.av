@@ -101,11 +101,9 @@ pub fn (lw: MirLower) task_layout(e: Expr, sym: String, par: Bool): Int {
   fields: Array(Int) = []
   names: Array(String) = []
   if par {
-    if recv = e.receiver {
-      if rt = recv.ty {
-        fields.push(lw.field_mty(rt, e.loc))
-        names.push("in")
-      }
+    if recv = e.receiver, rt = recv.ty {
+      fields.push(lw.field_mty(rt, e.loc))
+      names.push("in")
     }
     if t = e.ty {
       fields.push(lw.field_mty(t, e.loc))
@@ -442,19 +440,15 @@ pub fn (lw: MirLower) task_value(bl: Block, want: Ty): MOperand? {
     return nil
   }
   last = bl.body[bl.body.size - 1]
-  if x = last.expr {
-    if last.kind == st_expr() {
-      v = lw.lower_expr(x)
-      if lw.failed {
-        return nil
-      }
-      if xt = x.ty {
-        if !want.is_void {
-          return lw.coerce(v, xt, want, x.loc)
-        }
-      }
-      return v
+  if x = last.expr, last.kind == st_expr() {
+    v = lw.lower_expr(x)
+    if lw.failed {
+      return nil
     }
+    if xt = x.ty, !want.is_void {
+      return lw.coerce(v, xt, want, x.loc)
+    }
+    return v
   }
   lw.lower_stmt(last)
   nil
@@ -478,12 +472,10 @@ pub fn (lw: MirLower) lower_spawn_thunk(t: MirTask) {
     if l >= 0 {
       lw.load_captures(e, c, l, 0)
     }
-    if got = lw.task_value(bl, ty_int()) {
-      if lw.open_now {
-        lw.at(e.loc)
-        b.assign(b.pl(0), b.rv_use(got))
-        b.ret
-      }
+    if got = lw.task_value(bl, ty_int()), lw.open_now {
+      lw.at(e.loc)
+      b.assign(b.pl(0), b.rv_use(got))
+      b.ret
     }
     lw.finish_at(e.loc)
     b.end_fn
@@ -497,61 +489,57 @@ pub fn (lw: MirLower) lower_spawn_thunk(t: MirTask) {
 pub fn (lw: MirLower) lower_par_thunk(t: MirTask) {
   e = t.expr
   b = lw.lw_b
-  if bl = e.block {
-    if recv = e.receiver {
-      l = lw.task_layout(e, t.sym, true)
-      if lw.failed {
-        return
-      }
-      ps: Array(Int) = []
-      ps.push(mt_int())
-      ps.push(mt_ref())
-      c = lw.begin_task(t, ps, mt_void(), 2, l, bl)
-      b.name_param(1, "i")
-      b.name_param(2, "ctx")
-      ts = b.types
-      aty = ts.layouts[l].fields[0]
-      oty = ts.layouts[l].fields[1]
-      a = lw.tmp(aty, b.rv_use(b.copy(b.field(b.deref(b.pl(c)), 0))))
-      ah = mir_bare_copy(a)
-      d = lw.tmp(oty, b.rv_use(b.copy(b.field(b.deref(b.pl(c)), 1))))
-      dh = mir_bare_copy(d)
-      et = lw.elem_of(aty)
-      v = b.c_i32(0)
-      if ts.is_refkind(et) {
-        gl = b.temp(et)
-        b.call(gl, "avant_array_get_ptr", lw.two(b.copy_local(ah), b.copy_local(1)))
-        v = b.copy_local(gl)
-      } else {
-        buf = b.temp(ts.ref_to(lw.elems_of(aty)))
-        b.assign(b.pl(buf), b.rv_use(b.copy(b.field(b.deref(b.pl(ah)), 0))))
-        v = lw.tmp(et, b.rv_use(b.copy(b.index(b.deref(b.pl(buf)), b.copy_local(1)))))
-      }
-      lw.bind_name(bl.params[0], lw.elem_ty_of(recv), et, v, bl.loc, false)
-      lw.load_captures(e, c, l, 2)
-      if lw.failed {
-        return
-      }
-      want = lw.elem_ty_of(e)
-      if got = lw.task_value(bl, want) {
-        if lw.open_now {
-          lw.at(e.loc)
-          ot = lw.elem_of(oty)
-          r = lw.tmp(ot, b.rv_use(got))
-          if ts.is_refkind(ot) {
-            b.call(-1, "avant_array_set_ptr", lw.three(b.copy_local(dh), b.copy_local(1), r))
-          } else {
-            ob = b.temp(ts.ref_to(lw.elems_of(oty)))
-            b.assign(b.pl(ob), b.rv_use(b.copy(b.field(b.deref(b.pl(dh)), 0))))
-            lw.store_place(b.index(b.deref(b.pl(ob)), b.copy_local(1)), ot, r)
-          }
-          b.ret
-        }
-      }
-      lw.finish_at(e.loc)
-      b.end_fn
+  if bl = e.block, recv = e.receiver {
+    l = lw.task_layout(e, t.sym, true)
+    if lw.failed {
       return
     }
+    ps: Array(Int) = []
+    ps.push(mt_int())
+    ps.push(mt_ref())
+    c = lw.begin_task(t, ps, mt_void(), 2, l, bl)
+    b.name_param(1, "i")
+    b.name_param(2, "ctx")
+    ts = b.types
+    aty = ts.layouts[l].fields[0]
+    oty = ts.layouts[l].fields[1]
+    a = lw.tmp(aty, b.rv_use(b.copy(b.field(b.deref(b.pl(c)), 0))))
+    ah = mir_bare_copy(a)
+    d = lw.tmp(oty, b.rv_use(b.copy(b.field(b.deref(b.pl(c)), 1))))
+    dh = mir_bare_copy(d)
+    et = lw.elem_of(aty)
+    v = b.c_i32(0)
+    if ts.is_refkind(et) {
+      gl = b.temp(et)
+      b.call(gl, "avant_array_get_ptr", lw.two(b.copy_local(ah), b.copy_local(1)))
+      v = b.copy_local(gl)
+    } else {
+      buf = b.temp(ts.ref_to(lw.elems_of(aty)))
+      b.assign(b.pl(buf), b.rv_use(b.copy(b.field(b.deref(b.pl(ah)), 0))))
+      v = lw.tmp(et, b.rv_use(b.copy(b.index(b.deref(b.pl(buf)), b.copy_local(1)))))
+    }
+    lw.bind_name(bl.params[0], lw.elem_ty_of(recv), et, v, bl.loc, false)
+    lw.load_captures(e, c, l, 2)
+    if lw.failed {
+      return
+    }
+    want = lw.elem_ty_of(e)
+    if got = lw.task_value(bl, want), lw.open_now {
+      lw.at(e.loc)
+      ot = lw.elem_of(oty)
+      r = lw.tmp(ot, b.rv_use(got))
+      if ts.is_refkind(ot) {
+        b.call(-1, "avant_array_set_ptr", lw.three(b.copy_local(dh), b.copy_local(1), r))
+      } else {
+        ob = b.temp(ts.ref_to(lw.elems_of(oty)))
+        b.assign(b.pl(ob), b.rv_use(b.copy(b.field(b.deref(b.pl(dh)), 0))))
+        lw.store_place(b.index(b.deref(b.pl(ob)), b.copy_local(1)), ot, r)
+      }
+      b.ret
+    }
+    lw.finish_at(e.loc)
+    b.end_fn
+    return
   }
   lw.refuse(e.loc, "a .parallel without a block")
 }
@@ -615,10 +603,8 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   }
   lw.at(e.loc)
   r = zero
-  if v = got {
-    if !vt.is_void {
-      r = lw.tmp(lw.ety(e), b.rv_use(v))
-    }
+  if v = got, !vt.is_void {
+    r = lw.tmp(lw.ety(e), b.rv_use(v))
   }
   g2 = lw.tmp(mt_u64(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), gi))))
   b.call(-1, "avant_gate_unlock", lw.one(g2))

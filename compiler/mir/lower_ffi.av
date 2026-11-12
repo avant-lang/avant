@@ -34,14 +34,12 @@ import re2c_pat
 // are reached through it), else the untyped `ptr` (opaque, Void, and
 // every other pointee: the language reads nothing through them).
 pub fn (lw: MirLower) ptr_ty(t: Ty, loc: Location): Int {
-  if inner = t.inner {
-    if inner.is_clayout {
-      l = lw.clayout_layout(inner, loc)
-      if l < 0 {
-        return -1
-      }
-      return lw.lw_m.types.ptr_to(lw.lw_m.types.agg(l))
+  if inner = t.inner, inner.is_clayout {
+    l = lw.clayout_layout(inner, loc)
+    if l < 0 {
+      return -1
     }
+    return lw.lw_m.types.ptr_to(lw.lw_m.types.agg(l))
   }
   mt_ptr()
 }
@@ -367,18 +365,16 @@ pub fn (lw: MirLower) to_c_scalar(v: MOperand, k: Int, loc: Location): MOperand 
 // through a Ptr), else 0.
 pub fn (lw: MirLower) c_field_scalar(e: Expr): Int {
   if e.kind == ex_field() && !e.method_call {
-    if obj = e.object {
-      if ot = obj.ty {
-        lay = ot
-        if ot.is_ptr {
-          if inner = ot.inner {
-            lay = inner
-          }
+    if obj = e.object, ot = obj.ty {
+      lay = ot
+      if ot.is_ptr {
+        if inner = ot.inner {
+          lay = inner
         }
-        if lay.is_clayout {
-          if ft = lay.field_named(e.ident) {
-            return ft.c_scalar
-          }
+      }
+      if lay.is_clayout {
+        if ft = lay.field_named(e.ident) {
+          return ft.c_scalar
         }
       }
     }
@@ -388,17 +384,15 @@ pub fn (lw: MirLower) c_field_scalar(e: Expr): Int {
 
 pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
   b = lw.lw_b
-  if inner = ot.inner {
-    if inner.is_clayout {
-      o = lw.lower_expr(obj)
-      if lw.failed {
-        return b.pl(0)
-      }
-      lw.at(e.loc)
-      h = lw.hold(o, lw.ety(obj))
-      k = lw.field_of(inner, e.ident, e.loc)
-      return b.field(b.deref(b.pl(h)), k)
+  if inner = ot.inner, inner.is_clayout {
+    o = lw.lower_expr(obj)
+    if lw.failed {
+      return b.pl(0)
     }
+    lw.at(e.loc)
+    h = lw.hold(o, lw.ety(obj))
+    k = lw.field_of(inner, e.ident, e.loc)
+    return b.field(b.deref(b.pl(h)), k)
   }
   lw.refuse(e.loc, "the field .${e.ident} of ${ot.show}")
   b.pl(0)
@@ -421,7 +415,7 @@ pub fn (lw: MirLower) pinned_store(p: MPlace, ty: Int, val: MOperand) {
   args.push(b.copy_local(a))
   args.push(b.copy_local(v))
   b.call(-1, "avant_pin_field", args)
-  dummy3 = b.assign(p, b.rv_use(b.copy_local(v)))
+  b.assign(p, b.rv_use(b.copy_local(v)))
 }
 
 // `release(place)` (Stage 28 W16c, D266): the pins Avant's stores into
@@ -516,7 +510,7 @@ pub fn (lw: MirLower) unpin(h: Int) {
     return
   }
   args.push(lw.lw_b.copy_local(h))
-  dummy = lw.lw_b.call(-1, "avant_unpin", args)
+  lw.lw_b.call(-1, "avant_unpin", args)
 }
 
 // `gc.hold { body }` (std.gc, Stage 29 W1c2, D305): avant_gc_hold_begin,

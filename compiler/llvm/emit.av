@@ -345,13 +345,11 @@ fn ll_stmt(e: LlEmit, st: MStmt) {
   e.site(st.loc)
   k = st.kind
   if k == msk_assign() {
-    if p = st.place {
-      if rv = st.rv {
-        pt = e.place_type(p)
-        val = ll_rvalue(e, rv, pt)
-        ptr = e.place_ptr(p)
-        e.store(pt, val, ptr, e.pa_vol)
-      }
+    if p = st.place, rv = st.rv {
+      pt = e.place_type(p)
+      val = ll_rvalue(e, rv, pt)
+      ptr = e.place_ptr(p)
+      e.store(pt, val, ptr, e.pa_vol)
     }
   } else if k == msk_call() {
     ll_call(e, st)
@@ -659,19 +657,17 @@ fn ll_rvalue(e: LlEmit, r: MRvalue, pt: Int): String {
     return ll_unary(e, r)
   }
   if k == mrk_binary() || k == mrk_checked() || k == mrk_cmp() {
-    if a = r.a {
-      if b = r.b {
-        x = e.value(a)
-        ty = e.ov_ty
-        y = e.value(b)
-        if k == mrk_cmp() {
-          return ll_cmp(e, r.op, ty, x, y)
-        }
-        if k == mrk_checked() {
-          return ll_checked(e, r.op, ty, x, y)
-        }
-        return ll_binary(e, r.op, ty, x, y)
+    if a = r.a, b = r.b {
+      x = e.value(a)
+      ty = e.ov_ty
+      y = e.value(b)
+      if k == mrk_cmp() {
+        return ll_cmp(e, r.op, ty, x, y)
       }
+      if k == mrk_checked() {
+        return ll_checked(e, r.op, ty, x, y)
+      }
+      return ll_binary(e, r.op, ty, x, y)
     }
   }
   if k == mrk_cast() {
@@ -711,13 +707,11 @@ fn ll_rvalue(e: LlEmit, r: MRvalue, pt: Int): String {
     return agg
   }
   if k == mrk_fnval() {
-    if a = r.a {
-      if b = r.b {
-        env = e.value(a)
-        code = e.value(b)
-        agg = ll_insert(e, r.ty, "zeroinitializer", mt_ref(), env, 0)
-        return ll_insert(e, r.ty, agg, mt_ptr(), code, 1)
-      }
+    if a = r.a, b = r.b {
+      env = e.value(a)
+      code = e.value(b)
+      agg = ll_insert(e, r.ty, "zeroinitializer", mt_ref(), env, 0)
+      return ll_insert(e, r.ty, agg, mt_ptr(), code, 1)
     }
   }
   "undef"

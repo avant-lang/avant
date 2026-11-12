@@ -340,10 +340,8 @@ pub fn mir_is_seq_index(e: Expr): Bool {
   if e.kind != ex_index() {
     return false
   }
-  if l = e.left {
-    if t = l.ty {
-      return t.is_array || t.is_buf
-    }
+  if l = e.left, t = l.ty {
+    return t.is_array || t.is_buf
   }
   false
 }
@@ -355,7 +353,7 @@ pub fn (lw: MirLower) seq_bounds(h: Int, i: MOperand, proven: Bool) {
     return
   }
   b = lw.lw_b
-  dummy = b.check_bounds(lw.dup(i), lw.seq_size(h))
+  b.check_bounds(lw.dup(i), lw.seq_size(h))
 }
 
 // The size of the Array or Buf in _h as an Int: the header's i32,
@@ -380,18 +378,16 @@ pub fn (lw: MirLower) seq_place(h: Int, aty: Int, i: MOperand, proven: Bool): MP
 // the index first, then the container.
 pub fn (lw: MirLower) index_place(e: Expr): MPlace {
   b = lw.lw_b
-  if arr = e.left {
-    if ix = e.right {
-      aty = lw.ety(arr)
-      i = lw.snap(lw.lower_expr(ix), arr)
-      a = lw.lower_expr(arr)
-      if lw.failed {
-        return b.pl(0)
-      }
-      lw.at(e.loc)
-      h = lw.hold(a, aty)
-      return lw.seq_place(h, aty, i, e.proven)
+  if arr = e.left, ix = e.right {
+    aty = lw.ety(arr)
+    i = lw.snap(lw.lower_expr(ix), arr)
+    a = lw.lower_expr(arr)
+    if lw.failed {
+      return b.pl(0)
     }
+    lw.at(e.loc)
+    h = lw.hold(a, aty)
+    return lw.seq_place(h, aty, i, e.proven)
   }
   lw.refuse(e.loc, "this index")
   b.pl(0)
@@ -406,13 +402,9 @@ pub fn (lw: MirLower) lower_seq_index(e: Expr): MOperand {
     return b.c_i32(0)
   }
   lw.at(e.loc)
-  if l = e.left {
-    if lt = l.ty {
-      if lt.is_buf {
-        byte = lw.tmp(mt_u8(), b.rv_use(b.copy(p)))
-        return lw.tmp(mt_int(), b.rv_cast(byte, mt_int()))
-      }
-    }
+  if l = e.left, lt = l.ty, lt.is_buf {
+    byte = lw.tmp(mt_u8(), b.rv_use(b.copy(p)))
+    return lw.tmp(mt_int(), b.rv_cast(byte, mt_int()))
   }
   lw.tmp(ty, b.rv_use(b.copy(p)))
 }
@@ -427,88 +419,84 @@ pub fn (lw: MirLower) lower_seq_index(e: Expr): MOperand {
 // old back end evaluates them twice, W6c.2).
 pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
   b = lw.lw_b
-  if arr = t.left {
-    if ix = t.right {
-      if ct = arr.ty {
-        if ct.is_hash {
-          lw.lower_hash_store(st, t, arr, ix, ct)
+  if arr = t.left, ix = t.right, ct = arr.ty {
+    if ct.is_hash {
+      lw.lower_hash_store(st, t, arr, ix, ct)
+      return
+    }
+    if !(ct.is_array || ct.is_buf) {
+      lw.refuse(t.loc, "assignment to this index")
+      return
+    }
+    aty = lw.ety(arr)
+    if lw.failed {
+      return
+    }
+    et = mt_u8()
+    want = ty_int()
+    if ct.is_array {
+      et = lw.elem_of(aty)
+      want = lw.elem_ty_of(arr)
+    }
+    if v = st.value {
+      if st.op == tk_eq() {
+        if ct.is_array && b.types.is_refkind(et) {
+          val = lw.snap(lw.lower_coerced(v, et, want), arr)
+          val = lw.snap(val, ix)
+          a = lw.snap(lw.lower_expr(arr), ix)
+          i = lw.lower_expr(ix)
+          if lw.failed {
+            return
+          }
+          lw.at(st.loc)
+          h = lw.hold(a, aty)
+          lw.seq_bounds(h, i, t.proven)
+          b.call(-1, "avant_array_set_ptr", lw.three(b.copy_local(h), lw.dup(i), val))
           return
         }
-        if !(ct.is_array || ct.is_buf) {
-          lw.refuse(t.loc, "assignment to this index")
-          return
-        }
-        aty = lw.ety(arr)
+        val2 = lw.lower_coerced(v, et, want)
         if lw.failed {
           return
         }
-        et = mt_u8()
-        want = ty_int()
-        if ct.is_array {
-          et = lw.elem_of(aty)
-          want = lw.elem_ty_of(arr)
+        if ct.is_buf {
+          lw.at(st.loc)
+          val2 = lw.byte_of(val2, st.loc)
         }
-        if v = st.value {
-          if st.op == tk_eq() {
-            if ct.is_array && b.types.is_refkind(et) {
-              val = lw.snap(lw.lower_coerced(v, et, want), arr)
-              val = lw.snap(val, ix)
-              a = lw.snap(lw.lower_expr(arr), ix)
-              i = lw.lower_expr(ix)
-              if lw.failed {
-                return
-              }
-              lw.at(st.loc)
-              h = lw.hold(a, aty)
-              lw.seq_bounds(h, i, t.proven)
-              b.call(-1, "avant_array_set_ptr", lw.three(b.copy_local(h), lw.dup(i), val))
-              return
-            }
-            val2 = lw.lower_coerced(v, et, want)
-            if lw.failed {
-              return
-            }
-            if ct.is_buf {
-              lw.at(st.loc)
-              val2 = lw.byte_of(val2, st.loc)
-            }
-            val2 = lw.snap(val2, t)
-            p = lw.index_place(t)
-            if lw.failed {
-              return
-            }
-            lw.at(st.loc)
-            lw.store_place(p, et, val2)
-            return
-          }
-          if !(want.is_integer || want.is_float) {
-            lw.refuse(st.loc, "compound assignment to an element of type ${want.show}")
-            return
-          }
-          p2 = lw.index_place(t)
-          if lw.failed {
-            return
-          }
-          lw.at(st.loc)
-          vty = et
-          cur = lw.tmp(et, b.rv_use(b.copy(lw.clone_place(p2))))
-          if ct.is_buf {
-            vty = mt_int()
-            cur = lw.tmp(mt_int(), b.rv_cast(cur, mt_int()))
-          }
-          rhs = lw.lower_expr(v)
-          if lw.failed {
-            return
-          }
-          r = lw.arith(compound_op_of(st.op), vty, cur, rhs, st.proven, st.loc)
-          lw.at(st.loc)
-          if ct.is_buf {
-            r = lw.byte_of(r, st.loc)
-          }
-          lw.store_place(p2, et, r)
+        val2 = lw.snap(val2, t)
+        p = lw.index_place(t)
+        if lw.failed {
           return
         }
+        lw.at(st.loc)
+        lw.store_place(p, et, val2)
+        return
       }
+      if !(want.is_integer || want.is_float) {
+        lw.refuse(st.loc, "compound assignment to an element of type ${want.show}")
+        return
+      }
+      p2 = lw.index_place(t)
+      if lw.failed {
+        return
+      }
+      lw.at(st.loc)
+      vty = et
+      cur = lw.tmp(et, b.rv_use(b.copy(lw.clone_place(p2))))
+      if ct.is_buf {
+        vty = mt_int()
+        cur = lw.tmp(mt_int(), b.rv_cast(cur, mt_int()))
+      }
+      rhs = lw.lower_expr(v)
+      if lw.failed {
+        return
+      }
+      r = lw.arith(compound_op_of(st.op), vty, cur, rhs, st.proven, st.loc)
+      lw.at(st.loc)
+      if ct.is_buf {
+        r = lw.byte_of(r, st.loc)
+      }
+      lw.store_place(p2, et, r)
+      return
     }
   }
   lw.refuse(t.loc, "assignment to this index")
@@ -731,5 +719,5 @@ pub fn (lw: MirLower) arr_push(h: Int, aty: Int, et: Int, v: MOperand) {
   }
   s = b.temp(b.types.addr_of(et))
   b.call(s, "avant_array_push_slot", lw.three(b.copy_local(h), lw.elem_size(aty), lw.buf_tid(aty)))
-  dummy4 = b.assign(b.deref(b.pl(s)), b.rv_use(v))
+  b.assign(b.deref(b.pl(s)), b.rv_use(v))
 }

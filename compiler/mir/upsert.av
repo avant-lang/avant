@@ -76,10 +76,8 @@ fn up_local(o: MOperand): Int {
   if o.kind != mok_copy() {
     return -1
   }
-  if p = o.place {
-    if p.proj.size == 0 {
-      return p.local
-    }
+  if p = o.place, p.proj.size == 0 {
+    return p.local
   }
   -1
 }
@@ -207,15 +205,11 @@ class UpWalk {
             nh = false
             nk = false
             if p.proj.size == 0 && !self.addr_taken[p.local] {
-              if r = st.rv {
-                if r.kind == mrk_use() {
-                  if a = r.a {
-                    y = up_local(a)
-                    if y >= 0 {
-                      nh = s.h[y]
-                      nk = s.k[y]
-                    }
-                  }
+              if r = st.rv, r.kind == mrk_use(), a = r.a {
+                y = up_local(a)
+                if y >= 0 {
+                  nh = s.h[y]
+                  nk = s.k[y]
                 }
               }
             }
@@ -276,14 +270,8 @@ fn up_addr_taken(f: MFunc): Array(Bool) {
   for blk in f.blocks {
     for st in blk.stmts {
       if st.kind == msk_assign() {
-        if r = st.rv {
-          if r.kind == mrk_addr() || r.kind == mrk_addr_raw() {
-            if p = r.place {
-              if p.local >= 0 && p.local < out.size {
-                out[p.local] = true
-              }
-            }
-          }
+        if r = st.rv, r.kind == mrk_addr() || r.kind == mrk_addr_raw(), p = r.place, p.local >= 0 && p.local < out.size {
+          out[p.local] = true
         }
       }
     }

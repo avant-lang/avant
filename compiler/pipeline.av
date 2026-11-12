@@ -131,12 +131,12 @@ pub fn tmp_keep {
 
 pub fn diag_puts(s: String) {
   line = "${s}\n"
-  dummy = posix.write(2, line, line.size)
+  posix.write(2, line, line.size)
 }
 
 pub fn out_puts(s: String) {
   line = "${s}\n"
-  dummy = posix.write(1, line, line.size)
+  posix.write(1, line, line.size)
 }
 
 pub fn diag_exit(code: Int) {
@@ -418,12 +418,10 @@ pub fn backend_refusal: String? {
 
 // Coverage (D129): AVANT_COVERAGE set to anything but "" or "0".
 pub fn coverage_wanted: Bool {
-  if v = env_get("AVANT_COVERAGE") {
-    if v.size > 0 {
-      if v == "0" {
-      } else {
-        return true
-      }
+  if v = env_get("AVANT_COVERAGE"), v.size > 0 {
+    if v == "0" {
+    } else {
+      return true
     }
   }
   false
@@ -433,10 +431,8 @@ pub fn coverage_wanted: Bool {
 // default the driver chose (beside the output binary, or the scratch
 // directory when the program runs inside this process).
 pub fn coverage_map_path(fallback: String): String {
-  if v = env_get("AVANT_COVERAGE_MAP") {
-    if v.size > 0 {
-      return v
-    }
+  if v = env_get("AVANT_COVERAGE_MAP"), v.size > 0 {
+    return v
   }
   fallback
 }
@@ -568,10 +564,8 @@ pub fn print_ir(ir: String) {
 }
 
 pub fn run_cc(args: Array(String)): Int {
-  if v = env_get("CC") {
-    if file_exists(v) {
-      return tool_run(v, args)
-    }
+  if v = env_get("CC"), file_exists(v) {
+    return tool_run(v, args)
   }
   if file_exists("/usr/bin/cc") {
     return tool_run("/usr/bin/cc", args)
@@ -589,10 +583,8 @@ pub fn run_cc(args: Array(String)): Int {
 // re2c, in the order D150 set: AVANT_RE2C, the re2c beside the
 // compiler's own executable (a release ships one, D151), then the system's.
 pub fn re2c_bin: String {
-  if v = env_get("AVANT_RE2C") {
-    if file_exists(v) {
-      return v
-    }
+  if v = env_get("AVANT_RE2C"), file_exists(v) {
+    return v
   }
   exe = self_exe_path()
   if str_contains(exe, "/") {

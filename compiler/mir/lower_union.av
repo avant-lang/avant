@@ -382,44 +382,40 @@ pub fn (lw: MirLower) branch_failure(src: Int, uty: Ty, fails: Array(Ty), bfail:
 // success part.
 pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
   b = lw.lw_b
-  if inner = e.inner {
-    if uty = inner.ty {
-      if ret = lw.lw_ret_ty {
-        ity = lw.ety(inner)
-        u = lw.lower_expr(inner)
-        if lw.failed {
-          return b.c_i32(0)
-        }
-        lw.at(e.loc)
-        src = lw.hold(u, ity)
-        fails = ty_failures(uty)
-        success = ty_without_nil(uty)
-        if sp = ty_success_part(uty) {
-          success = sp
-        }
-        bf = b.block
-        bok = b.block
-        if fails.size == 1 {
-          c = lw.tag_is(src, uty, uty.tag_of(fails[0]), true)
-          b.branch(c, bf, bok)
-        } else {
-          lw.branch_failure(src, uty, fails, bf, bok)
-        }
-        b.at(bf)
-        if ret.same_as(uty) {
-          b.assign(b.pl(0), b.rv_use(b.copy_local(src)))
-        } else if fails.size == 1 {
-          fv = lw.coerce(lw.unwrap(src, uty, fails[0], e.loc), fails[0], ret, e.loc)
-          b.assign(b.pl(0), b.rv_use(fv))
-        } else {
-          b.assign(b.pl(0), b.rv_use(lw.retag(b.copy_local(src), uty, ret, e.loc)))
-        }
-        lw.unpin_all
-        b.ret
-        b.at(bok)
-        return lw.unwrap(src, uty, success, e.loc)
-      }
+  if inner = e.inner, uty = inner.ty, ret = lw.lw_ret_ty {
+    ity = lw.ety(inner)
+    u = lw.lower_expr(inner)
+    if lw.failed {
+      return b.c_i32(0)
     }
+    lw.at(e.loc)
+    src = lw.hold(u, ity)
+    fails = ty_failures(uty)
+    success = ty_without_nil(uty)
+    if sp = ty_success_part(uty) {
+      success = sp
+    }
+    bf = b.block
+    bok = b.block
+    if fails.size == 1 {
+      c = lw.tag_is(src, uty, uty.tag_of(fails[0]), true)
+      b.branch(c, bf, bok)
+    } else {
+      lw.branch_failure(src, uty, fails, bf, bok)
+    }
+    b.at(bf)
+    if ret.same_as(uty) {
+      b.assign(b.pl(0), b.rv_use(b.copy_local(src)))
+    } else if fails.size == 1 {
+      fv = lw.coerce(lw.unwrap(src, uty, fails[0], e.loc), fails[0], ret, e.loc)
+      b.assign(b.pl(0), b.rv_use(fv))
+    } else {
+      b.assign(b.pl(0), b.rv_use(lw.retag(b.copy_local(src), uty, ret, e.loc)))
+    }
+    lw.unpin_all
+    b.ret
+    b.at(bok)
+    return lw.unwrap(src, uty, success, e.loc)
   }
   lw.refuse(e.loc, "postfix ? here")
   b.c_i32(0)
@@ -431,48 +427,46 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
 // the then-body.
 pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
   b = lw.lw_b
-  if c = st.cond {
-    if uty = c.ty {
-      success = ty_without_nil(uty)
-      if p = ty_success_part(uty) {
-        success = p
-      }
-      fails = ty_failures(uty)
-      cty = lw.ety(c)
-      sty = lw.ty_at(success, st.loc, "a binding")
-      u = lw.lower_expr(c)
-      if lw.failed {
-        return
-      }
-      lw.at(st.loc)
-      src = lw.hold(u, cty)
-      bt = b.block
-      bf = b.block
-      join = bf
-      if st.else_body.size > 0 || lw.lw_cov.on {
-        join = b.block
-      }
-      if fails.size == 1 {
-        ok = lw.tag_is(src, uty, uty.tag_of(fails[0]), false)
-        b.branch(ok, bt, bf)
-      } else {
-        lw.branch_failure(src, uty, fails, bf, bt)
-      }
-      b.at(bt)
-      lw.cov_branch(st.loc)
-      v = lw.unwrap(src, uty, success, st.loc)
-      lw.bind_name(st.bind, success, sty, v, st.loc, false)
-      lw.lower_stmts(st.then_body)
-      lw.goto_if_open(join, st.loc)
-      if st.else_body.size > 0 || lw.lw_cov.on {
-        b.at(bf)
-        lw.cov_branch(st.loc)
-        lw.lower_stmts(st.else_body)
-        lw.goto_if_open(join, st.loc)
-      }
-      b.at(join)
+  if c = st.cond, uty = c.ty {
+    success = ty_without_nil(uty)
+    if p = ty_success_part(uty) {
+      success = p
+    }
+    fails = ty_failures(uty)
+    cty = lw.ety(c)
+    sty = lw.ty_at(success, st.loc, "a binding")
+    u = lw.lower_expr(c)
+    if lw.failed {
       return
     }
+    lw.at(st.loc)
+    src = lw.hold(u, cty)
+    bt = b.block
+    bf = b.block
+    join = bf
+    if st.else_body.size > 0 || lw.lw_cov.on {
+      join = b.block
+    }
+    if fails.size == 1 {
+      ok = lw.tag_is(src, uty, uty.tag_of(fails[0]), false)
+      b.branch(ok, bt, bf)
+    } else {
+      lw.branch_failure(src, uty, fails, bf, bt)
+    }
+    b.at(bt)
+    lw.cov_branch(st.loc)
+    v = lw.unwrap(src, uty, success, st.loc)
+    lw.bind_name(st.bind, success, sty, v, st.loc, false)
+    lw.lower_stmts(st.then_body)
+    lw.goto_if_open(join, st.loc)
+    if st.else_body.size > 0 || lw.lw_cov.on {
+      b.at(bf)
+      lw.cov_branch(st.loc)
+      lw.lower_stmts(st.else_body)
+      lw.goto_if_open(join, st.loc)
+    }
+    b.at(join)
+    return
   }
   lw.refuse(st.loc, "this if binding")
 }
@@ -482,33 +476,31 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
 // the name holds the success part (the builder is left there).
 pub fn (lw: MirLower) lower_cond_bind(el: Stmt, bfail: Int) {
   b = lw.lw_b
-  if c = el.cond {
-    if uty = c.ty {
-      success = ty_without_nil(uty)
-      if p = ty_success_part(uty) {
-        success = p
-      }
-      fails = ty_failures(uty)
-      cty = lw.ety(c)
-      sty = lw.ty_at(success, el.loc, "a binding")
-      u = lw.lower_expr(c)
-      if lw.failed {
-        return
-      }
-      lw.at(el.loc)
-      src = lw.hold(u, cty)
-      bok = b.block
-      if fails.size == 1 {
-        ok = lw.tag_is(src, uty, uty.tag_of(fails[0]), false)
-        b.branch(ok, bok, bfail)
-      } else {
-        lw.branch_failure(src, uty, fails, bfail, bok)
-      }
-      b.at(bok)
-      v = lw.unwrap(src, uty, success, el.loc)
-      lw.bind_name(el.bind, success, sty, v, el.loc, false)
+  if c = el.cond, uty = c.ty {
+    success = ty_without_nil(uty)
+    if p = ty_success_part(uty) {
+      success = p
+    }
+    fails = ty_failures(uty)
+    cty = lw.ety(c)
+    sty = lw.ty_at(success, el.loc, "a binding")
+    u = lw.lower_expr(c)
+    if lw.failed {
       return
     }
+    lw.at(el.loc)
+    src = lw.hold(u, cty)
+    bok = b.block
+    if fails.size == 1 {
+      ok = lw.tag_is(src, uty, uty.tag_of(fails[0]), false)
+      b.branch(ok, bok, bfail)
+    } else {
+      lw.branch_failure(src, uty, fails, bfail, bok)
+    }
+    b.at(bok)
+    v = lw.unwrap(src, uty, success, el.loc)
+    lw.bind_name(el.bind, success, sty, v, el.loc, false)
+    return
   }
   lw.refuse(el.loc, "this if binding")
 }
@@ -601,10 +593,8 @@ pub fn (lw: MirLower) lower_branch(body: Array(Stmt), mode: Int, dest: Int, want
             return
           }
           v2 = lw.lower_expr(e)
-          if t = e.ty {
-            if w = want {
-              v2 = lw.coerce(v2, t, w, e.loc)
-            }
+          if t = e.ty, w = want {
+            v2 = lw.coerce(v2, t, w, e.loc)
           }
           if lw.failed {
             return

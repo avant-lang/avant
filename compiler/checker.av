@@ -299,7 +299,7 @@ pub class Checker {
   }
 
   pub fn pop_scope {
-    dummy = self.scopes.pop
+    self.scopes.pop
   }
 
   pub fn bind(name: String, ty: Ty) {
@@ -695,30 +695,18 @@ pub class Checker {
           pi += 1
         }
         if stmt.for_kind == 1 {
-          if pt = stmt.pre[0].target {
-            if pty = lookup(pt.ident) {
-              if !pty.is_int {
-                fail(stmt.loc, "for range bounds must be Int, got ${pty.show}")
-              }
-            }
+          if pt = stmt.pre[0].target, pty = lookup(pt.ident), !pty.is_int {
+            fail(stmt.loc, "for range bounds must be Int, got ${pty.show}")
           }
           if stmt.pre.size > 1 {
-            if pt2 = stmt.pre[1].target {
-              if pty2 = lookup(pt2.ident) {
-                if !pty2.is_int {
-                  fail(stmt.loc, "for range bounds must be Int, got ${pty2.show}")
-                }
-              }
+            if pt2 = stmt.pre[1].target, pty2 = lookup(pt2.ident), !pty2.is_int {
+              fail(stmt.loc, "for range bounds must be Int, got ${pty2.show}")
             }
           }
         }
         if stmt.for_kind == 2 {
-          if pt = stmt.pre[0].target {
-            if pty = lookup(pt.ident) {
-              if !pty.is_array {
-                fail(stmt.loc, "for needs a range (a..b) or an Array, got ${pty.show}")
-              }
-            }
+          if pt = stmt.pre[0].target, pty = lookup(pt.ident), !pty.is_array {
+            fail(stmt.loc, "for needs a range (a..b) or an Array, got ${pty.show}")
           }
         }
       }
@@ -858,11 +846,9 @@ pub class Checker {
   // receiver (D310's ruling, Stage 29 W4a): nothing wins silently (D308);
   // an error naming both ways out, and true.
   pub fn module_is_method(name: String, loc: Location): Bool {
-    if st = self.bare_receiver {
-      if receiver_method_fits(st, name, 0) {
-        fail(loc, "${name} is both a module and a method of ${st.show}; write self.${name} for the method, or give the method another name to use the module")
-        return true
-      }
+    if st = self.bare_receiver, receiver_method_fits(st, name, 0) {
+      fail(loc, "${name} is both a module and a method of ${st.show}; write self.${name} for the method, or give the method another name to use the module")
+      return true
     }
     false
   }
@@ -971,11 +957,9 @@ pub class Checker {
   }
 
   pub fn check_assign(stmt: Stmt) {
-    if t0 = stmt.target {
-      if t0.kind == ex_name() && t0.ident == "_" {
-        check_discard(stmt)
-        return
-      }
+    if t0 = stmt.target, t0.kind == ex_name() && t0.ident == "_" {
+      check_discard(stmt)
+      return
     }
     if reject_place_assign(stmt) {
       return
@@ -984,115 +968,111 @@ pub class Checker {
       check_compound_assign(stmt)
       return
     }
-    if target = stmt.target {
-      if value = stmt.value {
-        if target.kind == ex_name() {
-          if target.ident == "self" {
-            fail(stmt.loc, "cannot assign to self")
-            return
-          }
-          if declared = stmt.declared {
-            want = resolve_in_module(declared)
-            self.pull_resolve
-            if reject_clayout_value(want, declared.loc) {
-              return
-            }
-            if existing = lookup(target.ident) {
-              fail(stmt.loc, "cannot shadow ${target.ident}")
-              return
-            }
-            if field_ty = implicit_field(target.ident) {
-              fail(stmt.loc, "cannot shadow ${target.ident}")
-              return
-            }
-            early = false
-            if value.kind == ex_lambda() {
-              bind(target.ident, want)
-              target.ty = want
-              early = true
-            }
-            got = check_expr_as(value, want)
-            if !ty_assignable(got, want) && !fn_compatible(got, want) {
-              fail(value.loc, "cannot assign ${got.show} to ${want.show}")
-            }
-            if !early {
-              bind(target.ident, want)
-              target.ty = want
-            }
+    if target = stmt.target, value = stmt.value {
+      if target.kind == ex_name() {
+        if target.ident == "self" {
+          fail(stmt.loc, "cannot assign to self")
+          return
+        }
+        if declared = stmt.declared {
+          want = resolve_in_module(declared)
+          self.pull_resolve
+          if reject_clayout_value(want, declared.loc) {
             return
           }
           if existing = lookup(target.ident) {
-            note_capture(target.ident, existing)
-            got = check_expr_as(value, existing)
-            if !ty_assignable(got, existing) {
-              fail(value.loc, "cannot assign ${got.show} to ${existing.show}")
-            }
-            target.ty = existing
+            fail(stmt.loc, "cannot shadow ${target.ident}")
             return
           }
           if field_ty = implicit_field(target.ident) {
-            // Stage 29 W3b (B6, D292): a field is written self.name = ...
-            refuse_bare_field_write(target, stmt.loc)
+            fail(stmt.loc, "cannot shadow ${target.ident}")
             return
           }
-          got = check_expr(value)
-          if got.is_void {
-            fail(stmt.loc, "cannot bind a Void value")
-            return
+          early = false
+          if value.kind == ex_lambda() {
+            bind(target.ident, want)
+            target.ty = want
+            early = true
           }
-          if reject_clayout_value(got, value.loc) {
-            return
+          got = check_expr_as(value, want)
+          if !ty_assignable(got, want) && !fn_compatible(got, want) {
+            fail(value.loc, "cannot assign ${got.show} to ${want.show}")
           }
-          bind(target.ident, got)
-          target.ty = got
+          if !early {
+            bind(target.ident, want)
+            target.ty = want
+          }
           return
         }
-        if extra = stmt.declared {
-          fail(stmt.loc, "type annotation only belongs on a new name")
-          return
-        }
-        if target.kind == ex_index() {
-          if arr = target.left {
-            if ix = target.right {
-              container = check_expr(arr)
-              if container.is_hash {
-                if k = container.key {
-                  key = check_expr_as(ix, k)
-                  if !ty_assignable(key, k) {
-                    fail(ix.loc, "hash key must be ${k.show}, got ${key.show}")
-                  }
-                }
-                if v = container.val {
-                  got = check_expr_as(value, v)
-                  if !ty_assignable(got, v) {
-                    fail(value.loc, "cannot assign ${got.show} to ${v.show}")
-                  }
-                  target.ty = v
-                  return
-                }
-              }
-            }
+        if existing = lookup(target.ident) {
+          note_capture(target.ident, existing)
+          got = check_expr_as(value, existing)
+          if !ty_assignable(got, existing) {
+            fail(value.loc, "cannot assign ${got.show} to ${existing.show}")
           }
-        }
-        place = check_expr(target)
-        if target.kind == ex_field() && target.method_call {
-          fail(stmt.loc, "cannot assign to a method")
+          target.ty = existing
           return
         }
-        if target.kind == ex_name() && target.implicit_field {
+        if field_ty = implicit_field(target.ident) {
+          // Stage 29 W3b (B6, D292): a field is written self.name = ...
           refuse_bare_field_write(target, stmt.loc)
           return
         }
-        refuse_copy_write(target, stmt.loc)
-        if reject_clayout_value(place, target.loc) {
+        got = check_expr(value)
+        if got.is_void {
+          fail(stmt.loc, "cannot bind a Void value")
           return
         }
-        got = check_expr_as(value, place)
-        if !ty_assignable(got, place) {
-          fail(value.loc, "cannot assign ${got.show} to ${place.show}")
+        if reject_clayout_value(got, value.loc) {
+          return
         }
+        bind(target.ident, got)
+        target.ty = got
         return
       }
+      if extra = stmt.declared {
+        fail(stmt.loc, "type annotation only belongs on a new name")
+        return
+      }
+      if target.kind == ex_index() {
+        if arr = target.left, ix = target.right {
+          container = check_expr(arr)
+          if container.is_hash {
+            if k = container.key {
+              key = check_expr_as(ix, k)
+              if !ty_assignable(key, k) {
+                fail(ix.loc, "hash key must be ${k.show}, got ${key.show}")
+              }
+            }
+            if v = container.val {
+              got = check_expr_as(value, v)
+              if !ty_assignable(got, v) {
+                fail(value.loc, "cannot assign ${got.show} to ${v.show}")
+              }
+              target.ty = v
+              return
+            }
+          }
+        }
+      }
+      place = check_expr(target)
+      if target.kind == ex_field() && target.method_call {
+        fail(stmt.loc, "cannot assign to a method")
+        return
+      }
+      if target.kind == ex_name() && target.implicit_field {
+        refuse_bare_field_write(target, stmt.loc)
+        return
+      }
+      refuse_copy_write(target, stmt.loc)
+      if reject_clayout_value(place, target.loc) {
+        return
+      }
+      got = check_expr_as(value, place)
+      if !ty_assignable(got, place) {
+        fail(value.loc, "cannot assign ${got.show} to ${place.show}")
+      }
+      return
     }
     fail(stmt.loc, "cannot assign to this expression")
   }
@@ -1102,55 +1082,53 @@ pub class Checker {
       fail(stmt.loc, "type annotation only belongs on a new name")
       return
     }
-    if target = stmt.target {
-      if value = stmt.value {
-        if target.kind == ex_name() {
-          if target.ident == "self" {
-            fail(stmt.loc, "cannot assign to self")
-            return
-          }
-        }
-        place = check_expr(target)
-        if target.kind == ex_field() && target.method_call {
-          fail(stmt.loc, "cannot assign to a method")
+    if target = stmt.target, value = stmt.value {
+      if target.kind == ex_name() {
+        if target.ident == "self" {
+          fail(stmt.loc, "cannot assign to self")
           return
         }
-        if target.kind == ex_name() && target.implicit_field {
-          refuse_bare_field_write(target, stmt.loc)
-          return
-        }
-        refuse_copy_write(target, stmt.loc)
-        if reject_clayout_value(place, target.loc) {
-          return
-        }
-        got = check_expr_as(value, place)
-        if !got.same_as(place) {
-          fail(value.loc, "cannot assign ${got.show} to ${place.show}")
-        }
-        if !place.is_numeric {
-          fail(stmt.loc, "compound assignment expects a numeric target, got ${place.show}")
-        }
-        if target.kind == ex_name() {
-          if value.kind == ex_int() {
-            if stmt.op == tk_plus_eq() {
-              s = fact_any_slack(target.ident)
-              if s >= 0 && value.int_bits <= s.to_u64 + 1u64 {
-                stmt.proven = true
-              }
-            }
-            if stmt.op == tk_minus_eq() && (fact_any_slack(target.ident) >= 0 || nn_has(target.ident)) {
+      }
+      place = check_expr(target)
+      if target.kind == ex_field() && target.method_call {
+        fail(stmt.loc, "cannot assign to a method")
+        return
+      }
+      if target.kind == ex_name() && target.implicit_field {
+        refuse_bare_field_write(target, stmt.loc)
+        return
+      }
+      refuse_copy_write(target, stmt.loc)
+      if reject_clayout_value(place, target.loc) {
+        return
+      }
+      got = check_expr_as(value, place)
+      if !got.same_as(place) {
+        fail(value.loc, "cannot assign ${got.show} to ${place.show}")
+      }
+      if !place.is_numeric {
+        fail(stmt.loc, "compound assignment expects a numeric target, got ${place.show}")
+      }
+      if target.kind == ex_name() {
+        if value.kind == ex_int() {
+          if stmt.op == tk_plus_eq() {
+            s = fact_any_slack(target.ident)
+            if s >= 0 && value.int_bits <= s.to_u64 + 1u64 {
               stmt.proven = true
             }
           }
-          if (stmt.op == tk_plus_eq() || stmt.op == tk_minus_eq() || stmt.op == tk_star_eq()) && compound_proven(stmt.op, target.ident, value, place) {
-            stmt.proven = true
-          }
-          if stmt.op == tk_slash_eq() && divisor_proven(value) {
+          if stmt.op == tk_minus_eq() && (fact_any_slack(target.ident) >= 0 || nn_has(target.ident)) {
             stmt.proven = true
           }
         }
-        return
+        if (stmt.op == tk_plus_eq() || stmt.op == tk_minus_eq() || stmt.op == tk_star_eq()) && compound_proven(stmt.op, target.ident, value, place) {
+          stmt.proven = true
+        }
+        if stmt.op == tk_slash_eq() && divisor_proven(value) {
+          stmt.proven = true
+        }
       }
+      return
     }
   }
 
@@ -1577,10 +1555,8 @@ pub class Checker {
         }
         if expr.ident == "sort" {
           expr.method_call = true
-          if e = object.inner {
-            if !is_ordered_ty(e) {
-              fail(expr.loc, "Array.sort needs an ordered element type or a comparator block")
-            }
+          if e = object.inner, !is_ordered_ty(e) {
+            fail(expr.loc, "Array.sort needs an ordered element type or a comparator block")
           }
           return t_void()
         }
@@ -1821,10 +1797,8 @@ pub class Checker {
     in_c = false
     name = ""
     if e.kind == ex_field() && !e.method_call {
-      if obj = e.object {
-        if ot = obj.ty {
-          in_c = ot.is_ptr || ot.is_clayout
-        }
+      if obj = e.object, ot = obj.ty {
+        in_c = ot.is_ptr || ot.is_clayout
       }
       name = e.ident
     }
@@ -1840,23 +1814,19 @@ pub class Checker {
       }
       hint = ""
       if et.is_ptr {
-        if inner = et.inner {
-          if inner.is_clayout && clayout_holds_ref(inner) {
-            hint = " (to release the struct it points to, name the pointer first: p = x.${name}, then release(p))"
-          }
+        if inner = et.inner, inner.is_clayout && clayout_holds_ref(inner) {
+          hint = " (to release the struct it points to, name the pointer first: p = x.${name}, then release(p))"
         }
       }
       fail(e.loc, "nothing to release: ${name} is ${et.show}${hint}")
       return
     }
     if et.is_ptr {
-      if inner = et.inner {
-        if inner.is_clayout {
-          if !clayout_holds_ref(inner) {
-            fail(e.loc, "nothing to release: ${inner.show} has no String field")
-          }
-          return
+      if inner = et.inner, inner.is_clayout {
+        if !clayout_holds_ref(inner) {
+          fail(e.loc, "nothing to release: ${inner.show} has no String field")
         }
+        return
       }
       fail(e.loc, "release needs the fields of a C layout; Avant knows no fields of ${et.show}")
       return
@@ -1913,79 +1883,71 @@ pub class Checker {
   }
 
   pub fn check_index(expr: Expr): Ty {
-    if arr = expr.left {
-      if ix = expr.right {
-        if arr.kind == ex_name() && !arr.implicit_field {
-          cont = arr.ident
-          if ix.kind == ex_name() {
-            if fact_slack_of(ix.ident, cont) >= 0 {
-              expr.proven = true
-            }
-          } else if ix.kind == ex_binary() {
-            if ix.op == tk_plus() {
-              if il = ix.left {
-                if ir = ix.right {
-                  if il.kind == ex_name() && lit_small(ir) {
-                    sl = fact_slack_of(il.ident, cont)
-                    if sl >= 0 && ir.int_bits <= sl.to_u64 {
-                      expr.proven = true
-                      ix.proven = true
-                    }
-                  }
-                  if ir.kind == ex_name() && lit_small(il) {
-                    sl = fact_slack_of(ir.ident, cont)
-                    if sl >= 0 && il.int_bits <= sl.to_u64 {
-                      expr.proven = true
-                      ix.proven = true
-                    }
-                  }
+    if arr = expr.left, ix = expr.right {
+      if arr.kind == ex_name() && !arr.implicit_field {
+        cont = arr.ident
+        if ix.kind == ex_name() {
+          if fact_slack_of(ix.ident, cont) >= 0 {
+            expr.proven = true
+          }
+        } else if ix.kind == ex_binary() {
+          if ix.op == tk_plus() {
+            if il = ix.left, ir = ix.right {
+              if il.kind == ex_name() && lit_small(ir) {
+                sl = fact_slack_of(il.ident, cont)
+                if sl >= 0 && ir.int_bits <= sl.to_u64 {
+                  expr.proven = true
+                  ix.proven = true
+                }
+              }
+              if ir.kind == ex_name() && lit_small(il) {
+                sl = fact_slack_of(ir.ident, cont)
+                if sl >= 0 && il.int_bits <= sl.to_u64 {
+                  expr.proven = true
+                  ix.proven = true
                 }
               }
             }
           }
         }
-        if ix.kind == ex_binary() && (ix.op == tk_plus() || ix.op == tk_minus()) {
-          if il = ix.left {
-            if ir = ix.right {
-              if il.kind == ex_int() || ir.kind == ex_int() {
-                ix.proven = true
-              }
-            }
-          }
+      }
+      if ix.kind == ex_binary() && (ix.op == tk_plus() || ix.op == tk_minus()) {
+        if il = ix.left, ir = ix.right, il.kind == ex_int() || ir.kind == ex_int() {
+          ix.proven = true
         }
-        container = check_expr(arr)
-        if container.is_string || container.is_buf || container.is_bytes {
-          got = check_expr_as(ix, t_int())
-          if !got.is_int {
-            fail(ix.loc, "index must be Int, got ${got.show}")
-          }
-          return t_int()
+      }
+      container = check_expr(arr)
+      if container.is_string || container.is_buf || container.is_bytes {
+        got = check_expr_as(ix, t_int())
+        if !got.is_int {
+          fail(ix.loc, "index must be Int, got ${got.show}")
         }
-        if container.is_hash {
-          if k = container.key {
-            key = check_expr_as(ix, k)
-            if !ty_assignable(key, k) {
-              fail(ix.loc, "hash key must be ${k.show}, got ${key.show}")
-            }
-          }
-          if v = container.val {
-            return ty_nilable(v)
-          }
-          return t_int()
-        }
-        if container.is_array {
-          got = check_expr_as(ix, t_int())
-          if !got.is_int {
-            fail(ix.loc, "array index must be Int, got ${got.show}")
-          }
-          if e = container.inner {
-            return e
-          }
-          return t_int()
-        }
-        fail(expr.loc, "cannot index ${container.show}")
         return t_int()
       }
+      if container.is_hash {
+        if k = container.key {
+          key = check_expr_as(ix, k)
+          if !ty_assignable(key, k) {
+            fail(ix.loc, "hash key must be ${k.show}, got ${key.show}")
+          }
+        }
+        if v = container.val {
+          return ty_nilable(v)
+        }
+        return t_int()
+      }
+      if container.is_array {
+        got = check_expr_as(ix, t_int())
+        if !got.is_int {
+          fail(ix.loc, "array index must be Int, got ${got.show}")
+        }
+        if e = container.inner {
+          return e
+        }
+        return t_int()
+      }
+      fail(expr.loc, "cannot index ${container.show}")
+      return t_int()
     }
     t_int()
   }
@@ -2029,11 +1991,9 @@ pub class Checker {
     elem_ty = t_int()
     forced = false
     if has_want && want.is_array {
-      if e = want.inner {
-        if !type.ty_has_var(e) {
-          elem_ty = e
-          forced = true
-        }
+      if e = want.inner, !type.ty_has_var(e) {
+        elem_ty = e
+        forced = true
       }
     }
     if !forced {
@@ -2325,11 +2285,9 @@ pub class Checker {
 
   pub fn check_name(expr: Expr, has_want: Bool, want: Ty): Ty {
     if expr.ident == "self" {
-      if cf = self.current_fn {
-        if cf.type_method {
-          fail(expr.loc, "self is not available in a type-level function")
-          return t_int()
-        }
+      if cf = self.current_fn, cf.type_method {
+        fail(expr.loc, "self is not available in a type-level function")
+        return t_int()
       }
       if st = self.self_ty {
       } else {
@@ -2374,13 +2332,11 @@ pub class Checker {
       expr.implicit_field = true
       return field_ty
     }
-    if k = self.known_mods.get(expr.ident) {
-      if qualifier_ok(expr.ident, self.current_module) {
-        if module_is_method(expr.ident, expr.loc) {
-          return t_int()
-        }
-        return ty_module(expr.ident)
+    if k = self.known_mods.get(expr.ident), qualifier_ok(expr.ident, self.current_module) {
+      if module_is_method(expr.ident, expr.loc) {
+        return t_int()
       }
+      return ty_module(expr.ident)
     }
     // Stage 29 W3b (B6): a bare method name is a call on the receiver.
     if r = bare_method_call(expr, expr.ident, 0) {
@@ -2400,11 +2356,9 @@ pub class Checker {
       return t_int()
     }
     if self.in_default {
-      if owner = self.default_owner {
-        if ft = owner.field_named(expr.ident) {
-          fail(expr.loc, "a field default cannot read another field (${expr.ident} of ${owner.show}): defaults are evaluated before initialize, in declaration order; compute it in initialize instead")
-          return t_int()
-        }
+      if owner = self.default_owner, ft = owner.field_named(expr.ident) {
+        fail(expr.loc, "a field default cannot read another field (${expr.ident} of ${owner.show}): defaults are evaluated before initialize, in declaration order; compute it in initialize instead")
+        return t_int()
       }
     }
     fail(expr.loc, "unknown name ${expr.ident}")
@@ -2578,11 +2532,9 @@ pub class Checker {
     neg = false
     lit = r
     if r.kind == ex_unary() && r.op == tk_minus() {
-      if inner = r.inner {
-        if inner.kind == ex_int() {
-          neg = true
-          lit = inner
-        }
+      if inner = r.inner, inner.kind == ex_int() {
+        neg = true
+        lit = inner
       }
     }
     if lit.kind != ex_int() {
@@ -2674,98 +2626,96 @@ pub class Checker {
   }
 
   pub fn check_binary(expr: Expr, has_want: Bool, want: Ty): Ty {
-    if l = expr.left {
-      if r = expr.right {
-        op = expr.op
-        if op == tk_question_question() {
-          left = check_expr(l)
-          if can_coalesce(left) {
-            return coalesce_result(left, r, expr.loc, "??")
-          }
-          check_expr(r)
-          if !self.has_err {
-            failure_split(left, expr.loc, "??")
-          }
-          return left
+    if l = expr.left, r = expr.right {
+      op = expr.op
+      if op == tk_question_question() {
+        left = check_expr(l)
+        if can_coalesce(left) {
+          return coalesce_result(left, r, expr.loc, "??")
         }
-        if op == tk_amp_amp() {
-          left = check_expr(l)
-          right = check_expr(r)
-          if left.is_bool && right.is_bool {
-            return t_bool()
-          }
-          fail(expr.loc, "&& expects Bool operands")
-          return t_bool()
+        check_expr(r)
+        if !self.has_err {
+          failure_split(left, expr.loc, "??")
         }
-        if op == tk_pipe_pipe() {
-          left = check_expr(l)
-          right = check_expr(r)
-          if left.is_bool && right.is_bool {
-            return t_bool()
-          }
-          fail(expr.loc, "|| expects Bool operands")
-          return t_bool()
-        }
-        // D315 (Stage 29 W-INT1): an integer literal on the left adopts
-        // the right operand's integer type, as one on the right adopts
-        // the left's (`1 + x` types as `x + 1`).
-        left_lit = is_int_literal(l) && !is_int_literal(r)
-        if left_lit {
-          rfirst = check_expr(r)
-          if rfirst.is_integer || rfirst.is_float {
-            left = check_expr_as(l, rfirst)
-            right = rfirst
-            return binary_typed(expr, l, r, op, left, right)
-          }
-          left = check_expr(l)
-          return binary_typed(expr, l, r, op, left, rfirst)
-        }
-        // Two literals take the integer type the context wants (`x:
-        // Int32 = 46340 * 46340`), as one literal does.
-        left = t_int()
-        if has_want && want.is_integer && is_int_literal(l) && is_int_literal(r) && arith_op(op) {
-          left = check_expr_as(l, want)
-        } else {
-          left = check_expr(l)
-        }
-        opname = binary_op_method_name(op)
-        if opname.size > 0 && left.is_agg {
-          has_op = false
-          for ms in self.methods {
-            if ms.owner == left.name && ms.name == opname {
-              has_op = true
-            }
-          }
-          if has_op {
-            right = check_expr(r)
-            arg_tys: Array(Ty) = []
-            arg_tys.push(right)
-            none: Ty? = nil
-            if sig = match_method(left.name, opname, arg_tys, none, expr.loc, left.name, left.mod_name, no_int_literals()) {
-              expr.resolved = sig.node.emit_name
-              return sig.ret
-            }
-            return t_int()
-          }
-        }
-        right_has = false
-        right_want = t_int()
-        if left.is_integer && !shift_op(op) {
-          right_has = true
-          right_want = left
-        } else if left.is_float {
-          right_has = true
-          right_want = left
-        } else if left.is_string {
-          right_has = true
-          right_want = left
-        } else if left.is_bytes {
-          right_has = true
-          right_want = left
-        }
-        right = check_expr_flag(r, right_has, right_want)
-        return binary_typed(expr, l, r, op, left, right)
+        return left
       }
+      if op == tk_amp_amp() {
+        left = check_expr(l)
+        right = check_expr(r)
+        if left.is_bool && right.is_bool {
+          return t_bool()
+        }
+        fail(expr.loc, "&& expects Bool operands")
+        return t_bool()
+      }
+      if op == tk_pipe_pipe() {
+        left = check_expr(l)
+        right = check_expr(r)
+        if left.is_bool && right.is_bool {
+          return t_bool()
+        }
+        fail(expr.loc, "|| expects Bool operands")
+        return t_bool()
+      }
+      // D315 (Stage 29 W-INT1): an integer literal on the left adopts
+      // the right operand's integer type, as one on the right adopts
+      // the left's (`1 + x` types as `x + 1`).
+      left_lit = is_int_literal(l) && !is_int_literal(r)
+      if left_lit {
+        rfirst = check_expr(r)
+        if rfirst.is_integer || rfirst.is_float {
+          left = check_expr_as(l, rfirst)
+          right = rfirst
+          return binary_typed(expr, l, r, op, left, right)
+        }
+        left = check_expr(l)
+        return binary_typed(expr, l, r, op, left, rfirst)
+      }
+      // Two literals take the integer type the context wants (`x:
+      // Int32 = 46340 * 46340`), as one literal does.
+      left = t_int()
+      if has_want && want.is_integer && is_int_literal(l) && is_int_literal(r) && arith_op(op) {
+        left = check_expr_as(l, want)
+      } else {
+        left = check_expr(l)
+      }
+      opname = binary_op_method_name(op)
+      if opname.size > 0 && left.is_agg {
+        has_op = false
+        for ms in self.methods {
+          if ms.owner == left.name && ms.name == opname {
+            has_op = true
+          }
+        }
+        if has_op {
+          right = check_expr(r)
+          arg_tys: Array(Ty) = []
+          arg_tys.push(right)
+          none: Ty? = nil
+          if sig = match_method(left.name, opname, arg_tys, none, expr.loc, left.name, left.mod_name, no_int_literals()) {
+            expr.resolved = sig.node.emit_name
+            return sig.ret
+          }
+          return t_int()
+        }
+      }
+      right_has = false
+      right_want = t_int()
+      if left.is_integer && !shift_op(op) {
+        right_has = true
+        right_want = left
+      } else if left.is_float {
+        right_has = true
+        right_want = left
+      } else if left.is_string {
+        right_has = true
+        right_want = left
+      } else if left.is_bytes {
+        right_has = true
+        right_want = left
+      }
+      right = check_expr_flag(r, right_has, right_want)
+      return binary_typed(expr, l, r, op, left, right)
     }
     t_int()
   }
@@ -2918,12 +2868,10 @@ pub class Checker {
       fail(expr.loc, "type argument expected")
       return t_int()
     }
-    if existing = lookup(expr.callee) {
-      if existing.is_fn {
-        note_capture(expr.callee, existing)
-        expr.indirect = true
-        return check_indirect_call(expr, existing)
-      }
+    if existing = lookup(expr.callee), existing.is_fn {
+      note_capture(expr.callee, existing)
+      expr.indirect = true
+      return check_indirect_call(expr, existing)
     }
     // Stage 29 W3b (B6): a bare call of a method of the receiver.
     argc = expr.args.size
@@ -3178,12 +3126,8 @@ pub class Checker {
       }
     }
     if recv.kind == ex_field() {
-      if obj = recv.object {
-        if obj.kind == ex_name() {
-          if cdef = find_class_template(recv.ident, obj.ident) {
-            return infer_new(expr, recv, cdef, obj.ident, has_want, want)
-          }
-        }
+      if obj = recv.object, obj.kind == ex_name(), cdef = find_class_template(recv.ident, obj.ident) {
+        return infer_new(expr, recv, cdef, obj.ident, has_want, want)
       }
     }
     if ty = type_from_recv(recv, expr.loc) {
@@ -3448,11 +3392,9 @@ pub class Checker {
       return true
     }
     if expr.kind == ex_field() {
-      if obj = expr.object {
-        if ident_chain(obj, segs) {
-          segs.push(expr.ident)
-          return true
-        }
+      if obj = expr.object, ident_chain(obj, segs) {
+        segs.push(expr.ident)
+        return true
       }
     }
     false
@@ -3566,13 +3508,11 @@ pub class Checker {
             fail(recv.loc, "unknown name ${recv.ident}")
             return t_int()
           }
-          if k = self.known_mods.get(recv.ident) {
-            if qualifier_ok(recv.ident, self.current_module) {
-              if module_is_method(recv.ident, recv.loc) {
-                return t_int()
-              }
-              return dispatch_qualified_call(expr, recv.ident)
+          if k = self.known_mods.get(recv.ident), qualifier_ok(recv.ident, self.current_module) {
+            if module_is_method(recv.ident, recv.loc) {
+              return t_int()
             }
+            return dispatch_qualified_call(expr, recv.ident)
           }
         }
       }
@@ -3843,10 +3783,8 @@ pub class Checker {
         return false
       }
       if target.kind == ex_field() {
-        if obj = target.object {
-          if obj.kind == ex_name() && obj.ident == self.place_name {
-            return false
-          }
+        if obj = target.object, obj.kind == ex_name() && obj.ident == self.place_name {
+          return false
         }
       }
     }

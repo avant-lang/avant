@@ -299,10 +299,8 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
     for m in ty.members {
       tn.args.push(ty_to_type_name(m, loc))
     }
-    if r = ty.inner {
-      if !r.is_void {
-        tn.ret = ty_to_type_name(r, loc)
-      }
+    if r = ty.inner, !r.is_void {
+      tn.ret = ty_to_type_name(r, loc)
     }
     return tn
   }
@@ -366,10 +364,8 @@ pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
         return false
       }
     }
-    if ar = a.inner {
-      if br = b.inner {
-        return ty_eq_sig(ar, br, ap, bp)
-      }
+    if ar = a.inner, br = b.inner {
+      return ty_eq_sig(ar, br, ap, bp)
     }
     return false
   }
@@ -385,40 +381,26 @@ pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
     return true
   }
   if a.is_ptr {
-    if ae = a.inner {
-      if be = b.inner {
-        return ty_eq_sig(ae, be, ap, bp)
-      }
+    if ae = a.inner, be = b.inner {
+      return ty_eq_sig(ae, be, ap, bp)
     }
     return false
   }
   if a.is_array {
-    if ae = a.inner {
-      if be = b.inner {
-        return ty_eq_sig(ae, be, ap, bp)
-      }
+    if ae = a.inner, be = b.inner {
+      return ty_eq_sig(ae, be, ap, bp)
     }
     return false
   }
   if a.is_join {
-    if ae = a.inner {
-      if be = b.inner {
-        return ty_eq_sig(ae, be, ap, bp)
-      }
+    if ae = a.inner, be = b.inner {
+      return ty_eq_sig(ae, be, ap, bp)
     }
     return false
   }
   if a.is_hash {
-    if ak = a.key {
-      if av = a.val {
-        if bk = b.key {
-          if bv = b.val {
-            if ty_eq_sig(ak, bk, ap, bp) {
-              return ty_eq_sig(av, bv, ap, bp)
-            }
-          }
-        }
-      }
+    if ak = a.key, av = a.val, bk = b.key, bv = b.val, ty_eq_sig(ak, bk, ap, bp) {
+      return ty_eq_sig(av, bv, ap, bp)
     }
     return false
   }

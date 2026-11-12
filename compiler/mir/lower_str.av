@@ -101,10 +101,8 @@ pub fn (lw: MirLower) to_str(v: MOperand, t: Ty): MOperand {
 
 pub fn mir_part_has_switch(e: Expr, from: Int): Bool {
   for i in from..e.parts.size {
-    if x = e.parts[i].expr {
-      if mir_has_switch(x) {
-        return true
-      }
+    if x = e.parts[i].expr, mir_has_switch(x) {
+      return true
     }
   }
   false
@@ -117,31 +115,23 @@ pub fn mir_part_has_switch(e: Expr, from: Int): Bool {
 pub fn (lw: MirLower) lower_interp(e: Expr): MOperand {
   b = lw.lw_b
   if e.parts.size == 2 {
-    if text = e.parts[0].text {
-      if inner = e.parts[1].expr {
-        if it = inner.ty {
-          if it.is_int {
-            n = lw.lower_expr(inner)
-            if lw.failed {
-              return b.c_i32(0)
-            }
-            lw.at(e.loc)
-            args: Array(MOperand) = []
-            args.push(b.str_const(text))
-            args.push(n)
-            return lw.str_call("avant_str_cat_i32", args)
-          }
-        }
+    if text = e.parts[0].text, inner = e.parts[1].expr, it = inner.ty, it.is_int {
+      n = lw.lower_expr(inner)
+      if lw.failed {
+        return b.c_i32(0)
       }
+      lw.at(e.loc)
+      args: Array(MOperand) = []
+      args.push(b.str_const(text))
+      args.push(n)
+      return lw.str_call("avant_str_cat_i32", args)
     }
   }
   pieces: Array(MOperand) = []
   for i in 0..e.parts.size {
     part = e.parts[i]
-    if text = part.text {
-      if text.size > 0 {
-        pieces.push(b.str_const(text))
-      }
+    if text = part.text, text.size > 0 {
+      pieces.push(b.str_const(text))
     }
     if inner = part.expr {
       if it = inner.ty {

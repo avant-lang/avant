@@ -380,10 +380,8 @@ pub class Parser {
       return true
     }
     if k == ex_binary() {
-      if l = e.left {
-        if r = e.right {
-          return inert_expr(l) && inert_expr(r)
-        }
+      if l = e.left, r = e.right {
+        return inert_expr(l) && inert_expr(r)
       }
       return false
     }
@@ -414,18 +412,14 @@ pub class Parser {
         if i > 0 {
           p = stmts[i - 1]
           if p.kind == st_expr() {
-            if pe = p.expr {
-              if inert_expr(pe) {
-                fail(s.loc, "this line starts with `${t}`, so it begins a new statement and leaves the line before as a value nobody uses; ${hint}")
-              }
+            if pe = p.expr, inert_expr(pe) {
+              fail(s.loc, "this line starts with `${t}`, so it begins a new statement and leaves the line before as a value nobody uses; ${hint}")
             }
           }
         }
         if i < stmts.size - 1 && s.kind == st_expr() {
-          if se = s.expr {
-            if se.kind == ex_unary() || se.kind == ex_array() {
-              fail(s.loc, "this line starts with `${t}`, so it begins a new statement whose value nobody uses; ${hint}")
-            }
+          if se = s.expr, se.kind == ex_unary() || se.kind == ex_array() {
+            fail(s.loc, "this line starts with `${t}`, so it begins a new statement whose value nobody uses; ${hint}")
           }
         }
       }
@@ -2518,11 +2512,9 @@ pub class Parser {
       return true
     }
     if expr.kind == ex_field() {
-      if obj = expr.object {
-        if collect_idents(obj, segs) {
-          segs.push(expr.ident)
-          return true
-        }
+      if obj = expr.object, collect_idents(obj, segs) {
+        segs.push(expr.ident)
+        return true
       }
     }
     false
