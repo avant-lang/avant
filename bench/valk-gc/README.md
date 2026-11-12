@@ -99,4 +99,4 @@ Toolchains: `valk` 0.8.5 (`vman`), `go`, `ldc2`, `dotnet`, `crystal`, a JDK, `pe
 
 ## Results
 
-The measured tables, the diagnosis of every row where Avant trails Valk, and the record of the session are in the stage record `2026-11-12-s29-wbench-gc` (ledgers: `records/`). They are not repeated here until the README pass prints them.
+This directory holds the programs, the runner and the method. It carries no result tables: run `./run.sh time 7` and `python3 tables.py <output directory>` to produce them on your machine.

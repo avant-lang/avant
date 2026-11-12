@@ -1,6 +1,6 @@
 # Valk's general benchmark suite, tier 1, measured as shipped
 
-The eight single-threaded programs of Valk's `examples/bench` (`binary-tree`, `merkletrees`, `lru`, `json`, `json-serde`, `nsieve`, `spectral-norm`, `fannkuch-redux`), run on this machine in Valk, Go and Rust exactly as Valk ships them, with a written equivalence note per program. This is the baseline that Avant's own ports of the suite and the two-column table (as shipped, levelled) will be measured against (D319, D320; `research/valk/benchmarks.md` L1, L3, L5 in the ledgers). There is no Avant program here yet.
+The eight single-threaded programs of Valk's `examples/bench` (`binary-tree`, `merkletrees`, `lru`, `json`, `json-serde`, `nsieve`, `spectral-norm`, `fannkuch-redux`), run on this machine in Valk, Go and Rust exactly as Valk ships them, with a written equivalence note per program. This is the baseline that Avant's own ports of the suite and the two-column table (as shipped, levelled) will be measured against. There is no Avant program here yet.
 
 Credit: the programs, their inputs and the idea of a one-command, self-checking runner are Valk's (https://github.com/valk-lang/valk, MIT, © 2024 Lorenz Vandevelde). Valk's published numbers come from another machine and never share a table with numbers measured here.
 
@@ -54,7 +54,7 @@ Only the `shipped` set is a headline. The other sets are labelled variants: they
 
 ## What the notes say, in short
 
-Of the eight programs, three are equivalent across the languages that have them (`binary-tree`, `spectral-norm`, and `json-serde` as a library row), `json` is equivalent as a task and is a library row, and four are not comparable as shipped in at least one column (`merkletrees` against Go, `lru` and `nsieve` against both, `fannkuch-redux` against Rust). `equivalence.md` has the lines and the counts. An Avant port follows Valk's program in each case, never something cleverer (D222), and where the shipped programs differ the levelled twin is the comparable row.
+Of the eight programs, three are equivalent across the languages that have them (`binary-tree`, `spectral-norm`, and `json-serde` as a library row), `json` is equivalent as a task and is a library row, and four are not comparable as shipped in at least one column (`merkletrees` against Go, `lru` and `nsieve` against both, `fannkuch-redux` against Rust). `equivalence.md` has the lines and the counts. An Avant port follows Valk's program in each case, never something cleverer, and where the shipped programs differ the levelled twin is the comparable row.
 
 ## Avant's closest LangArena tasks (for orientation only)
 
