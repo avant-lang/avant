@@ -1685,11 +1685,17 @@ pub class Parser {
     e
   }
 
+  // An assignment a `for` loop is made of. It carries for_kind 3 (the
+  // loop's own stores: the counter, its end, the hidden array and index)
+  // or 4 (the element copied into the loop's variable), which is how the
+  // checker tells the loop's stores from the program's: the program may
+  // not assign a for variable (D329, Stage 29 W-FIX1b).
   pub fn for_assign(loc: Location, name: String, value: Expr): Stmt {
     s = Stmt.new(st_assign(), loc)
     s.target = for_name_expr(loc, name)
     s.value = value
     s.op = tk_eq()
+    s.for_kind = 3
     s
   }
 
@@ -1815,7 +1821,9 @@ pub class Parser {
     elem_expr = Expr.new(ex_index(), loc)
     elem_expr.left = for_name_expr(loc, xs_name)
     elem_expr.right = for_name_expr(loc, idx_name)
-    s2.body.push(for_assign(loc, var_tok.value, elem_expr))
+    elem_set = for_assign(loc, var_tok.value, elem_expr)
+    elem_set.for_kind = 4
+    s2.body.push(elem_set)
     adv = for_advance(raw_body2, idx_name, loc)
     bi = 0
     while bi < adv.size {

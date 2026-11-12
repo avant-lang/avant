@@ -567,7 +567,8 @@ fn main {
 ```
 
 - **`..` excludes its end**, unlike Crystal's, Ruby's and Kotlin's. `for i in 1..n` never reaches `n`; write `1..n + 1` until the inclusive `a..=b` is built ([Not built yet](#not-built-yet)).
-- The bounds are evaluated once. The loop variable is a new name that exists only inside the loop. `break`, `continue` and `return` behave as they do in `while`.
+- The bounds are evaluated once. The loop variable is a new name that exists only inside the loop (when a variable of that name already exists outside, the loop uses it, and it keeps its last value afterwards: pick a fresh name). `break`, `continue` and `return` behave as they do in `while`.
+- **The loop variable cannot be assigned.** It is a copy of the range's counter or of the array's element, made again at each step, so `i = 5`, `x += 1` and a field of a struct element (`p.x = 1`) are compile errors: the write would be lost, or would change the iteration. To change the array, store through an index: `xs[i] = v`, or `xs[i].x = v` for one field of a struct element. For a range that skips or repeats steps, use `while` with a counter of your own. A field of a *class* element is assignable: `c.x = 1` changes the object.
 - A range is only a `for` form: it is not a value you can store.
 - Arrays and hashes also have `each` ([Array operations](#array-operations), [Hash operations](#hash-operations)).
 - A struct literal in a `for`'s range or array needs parentheses, brackets or a call around it, as in a [condition](#if): `for p in [Point { x: 1, y: 2 }]`.
@@ -1146,7 +1147,7 @@ When in doubt, start with a struct: it allocates nothing and cannot be changed b
 
 A struct literal names every field, in any order. A copy is independent of the original.
 
-A method may change its struct receiver, and the change is the caller's: no `mutating` mark is needed. A struct passed as an argument is a copy, so a change made through a parameter stays in the callee. The same line runs through arrays: `xs[i].x = v` changes the element in place, while `for p in xs` and `q = xs[i]` give copies, and a change to `p` or `q` does not reach the array.
+A method may change its struct receiver, and the change is the caller's: no `mutating` mark is needed. A struct passed as an argument is a copy, so a change made through a parameter stays in the callee. The same line runs through arrays: `xs[i].x = v` changes the element in place, while `q = xs[i]` gives a copy, and a change to `q` does not reach the array. `for p in xs` gives a copy too, and assigning to `p` or to a field of it is a compile error ([For](#for)).
 
 ```avant
 struct Vec {

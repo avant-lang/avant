@@ -130,6 +130,13 @@ pub class Checker {
   pub try_body: String = "the function"
   pub place_name: String = ""
   pub place_depth: Int = 0
+  // The variables of the `for` loops being checked (D329, Stage 29
+  // W-FIX1b): each one's name, the scope that holds it, and 3 for a
+  // range's counter or 4 for an array's element (the parser's for_kind
+  // of the loop's own store). The program may not assign one.
+  pub for_names: Array(String) = []
+  pub for_scopes: Array(Int) = []
+  pub for_kinds: Array(Int) = []
   pub witness_note: String = ""
   pub impls: Array(ImplFact)
   pub sig_params: Array(Ty)
@@ -420,6 +427,9 @@ pub class Checker {
     }
     self.self_ty = nil
     self.self_name = ""
+    self.for_names = []
+    self.for_scopes = []
+    self.for_kinds = []
     self.push_scope
     if fn_is_method(fnn) && !fnn.type_method {
       got_owner = false
@@ -682,6 +692,7 @@ pub class Checker {
     }
     if k == st_while() {
       has_pre = stmt.pre.size > 0
+      saved_for = self.for_names.size
       if has_pre {
         self.push_scope
         pi = 0
@@ -736,6 +747,11 @@ pub class Checker {
       pop_loop_facts(saved_facts)
       if at_tail && !expected.is_void {
         fail(stmt.loc, "missing return value")
+      }
+      while self.for_names.size > saved_for {
+        self.for_names.pop
+        self.for_scopes.pop
+        self.for_kinds.pop
       }
       if has_pre {
         self.pop_scope
@@ -961,6 +977,22 @@ pub class Checker {
       check_discard(stmt)
       return
     }
+    if stmt.for_kind >= 3 {
+      // A `for` loop's own store: once checked, its target is a for
+      // variable until the loop ends.
+      check_assign_stmt(stmt)
+      if t1 = stmt.target, !self.has_err {
+        note_for_var(t1.ident, stmt.for_kind)
+      }
+      return
+    }
+    if refuse_for_assign(stmt) {
+      return
+    }
+    check_assign_stmt(stmt)
+  }
+
+  pub fn check_assign_stmt(stmt: Stmt) {
     if reject_place_assign(stmt) {
       return
     }
@@ -1065,6 +1097,9 @@ pub class Checker {
         return
       }
       refuse_copy_write(target, stmt.loc)
+      if refuse_for_field_write(target, stmt.loc) {
+        return
+      }
       if reject_clayout_value(place, target.loc) {
         return
       }
@@ -1099,6 +1134,9 @@ pub class Checker {
         return
       }
       refuse_copy_write(target, stmt.loc)
+      if refuse_for_field_write(target, stmt.loc) {
+        return
+      }
       if reject_clayout_value(place, target.loc) {
         return
       }

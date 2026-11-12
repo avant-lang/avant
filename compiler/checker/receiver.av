@@ -167,3 +167,109 @@ pub fn (checker_self: Checker) refuse_copy_write(target: Expr, loc: Location) {
     checker_self.fail(loc, "a lambda holds a copy of the struct receiver, so this write would change only the copy; write the field outside the lambda, or make the type a class")
   }
 }
+
+// A `for` loop's variable (D329, Stage 29 W-FIX1b; O237, O434). The loop
+// is a `while` over a hidden counter: a range's variable is that counter,
+// an array's variable is a copy of the element, stored again at each
+// step. The parser marks the loop's own stores (for_kind 3 and 4);
+// note_for_var records each one's target with the scope that holds it,
+// so a name the body binds anew (an if-assign, a block parameter) is not
+// taken for the loop's.
+pub fn (checker_self: Checker) note_for_var(name: String, kind: Int) {
+  at = checker_self.lookup_index(name)
+  for i in 0..checker_self.for_names.size {
+    if checker_self.for_scopes[i] == at && checker_self.for_names[i] == name {
+      return
+    }
+  }
+  checker_self.for_names.push(name)
+  checker_self.for_scopes.push(at)
+  checker_self.for_kinds.push(kind)
+}
+
+// 3 or 4 when `name` is, here, a for variable; else 0.
+pub fn (checker_self: Checker) for_var_kind(name: String): Int {
+  if checker_self.for_names.size == 0 {
+    return 0
+  }
+  at = checker_self.lookup_index(name)
+  i = checker_self.for_names.size - 1
+  while i >= 0 {
+    if checker_self.for_scopes[i] == at && checker_self.for_names[i] == name {
+      return checker_self.for_kinds[i]
+    }
+    i -= 1
+  }
+  0
+}
+
+// `p.pos.x` for a target made of a name and fields; "" for anything else.
+pub fn (checker_self: Checker) field_path_text(e: Expr): String {
+  if e.kind == ex_name() {
+    return e.ident
+  }
+  if e.kind == ex_field() {
+    if o = e.object {
+      head = checker_self.field_path_text(o)
+      if head.size > 0 {
+        return "${head}.${e.ident}"
+      }
+    }
+  }
+  ""
+}
+
+// The program assigns a for variable (`x = ...`, `x += ...`): the write
+// would change the loop's copy and be lost, or, on a range's counter,
+// change the iteration. Refused, with what works. True when it failed.
+pub fn (checker_self: Checker) refuse_for_assign(stmt: Stmt): Bool {
+  if checker_self.for_names.size == 0 {
+    return false
+  }
+  if target = stmt.target, target.kind == ex_name() {
+    kind = checker_self.for_var_kind(target.ident)
+    if kind == 3 {
+      checker_self.fail(stmt.loc, "cannot assign to ${target.ident}: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own")
+      return true
+    }
+    if kind == 4 {
+      checker_self.fail(stmt.loc, "cannot assign to ${target.ident}: a for variable is a copy of the element, so the array would not change; store through an index (for i in 0..xs.size { xs[i] = ... })")
+      return true
+    }
+  }
+  false
+}
+
+// The program assigns a field of a for variable through struct values
+// only (`p.x = 1`, `p.pos.x += 1`; the target is checked, so every part
+// has its type): the write lands in the loop's copy. Refused, with what
+// works. A field of a class element changes the object and is not
+// refused; neither is a path that passes through a reference (a class,
+// a pointer) or an index. True when it failed.
+pub fn (checker_self: Checker) refuse_for_field_write(target: Expr, loc: Location): Bool {
+  if checker_self.for_names.size == 0 || target.kind != ex_field() {
+    return false
+  }
+  cur = target
+  while cur.kind == ex_field() {
+    if o = cur.object {
+      if ot = o.ty {
+        if !ot.is_struct {
+          return false
+        }
+      } else {
+        return false
+      }
+      cur = o
+    } else {
+      return false
+    }
+  }
+  if cur.kind != ex_name() || checker_self.for_var_kind(cur.ident) != 4 {
+    return false
+  }
+  path = checker_self.field_path_text(target)
+  tail = str_slice(path, cur.ident.size, path.size)
+  checker_self.fail(loc, "cannot assign to ${path}: ${cur.ident} is a for variable, a copy of the element (a struct is a value), so the array would not change; write the stored element through an index (xs[i]${tail} = ...), or change a copy and store it back (xs[i] = ${cur.ident})")
+  true
+}
