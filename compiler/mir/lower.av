@@ -279,12 +279,12 @@ pub class MirLower {
   }
 
   pub fn at(loc: Location) {
-    self.lw_b.file(self.rel_path(loc.path))
+    self.lw_b.file(rel_path(loc.path))
     self.lw_b.at_loc(loc.line, loc.column)
   }
 
   pub fn mloc(loc: Location): MLoc {
-    fid = self.lw_b.file(self.rel_path(loc.path))
+    fid = self.lw_b.file(rel_path(loc.path))
     mir_loc(fid, loc.line, loc.column)
   }
 
@@ -305,19 +305,19 @@ pub class MirLower {
   }
 
   pub fn var_find(name: String, ty: Int): Int {
-    if got = self.lw_vars.get(self.var_key(name, ty)) {
+    if got = self.lw_vars.get(var_key(name, ty)) {
       return got
     }
     -1
   }
 
   pub fn var_get(name: String, ty: Int): Int {
-    k = self.var_find(name, ty)
+    k = var_find(name, ty)
     if k >= 0 {
       return k
     }
     k = self.lw_b.local(ty, name)
-    self.lw_vars[self.var_key(name, ty)] = k
+    self.lw_vars[var_key(name, ty)] = k
     k
   }
 
@@ -339,15 +339,15 @@ pub class MirLower {
     while i < fns.size {
       sym = ""
       if fn_is_method(fns[i]) {
-        sym = self.method_symbol(fns[i])
+        sym = method_symbol(fns[i])
       } else {
-        sym = self.symbol_of(fns[i])
+        sym = symbol_of(fns[i])
       }
       if self.failed {
         return
       }
       if taken.has_key(sym) {
-        self.refuse(fns[i].loc, "a second function with the symbol ${sym} (internal)")
+        refuse(fns[i].loc, "a second function with the symbol ${sym} (internal)")
         return
       }
       taken[sym] = 1
@@ -360,7 +360,7 @@ pub class MirLower {
     // buffer's id.
     i = 0
     while i < fns.size && !self.failed {
-      self.prewalk_function(fns[i])
+      prewalk_function(fns[i])
       i += 1
     }
     if self.failed {
@@ -379,7 +379,7 @@ pub class MirLower {
     i = 0
     while i < fns.size && !self.failed {
       self.lw_cov.rank = i
-      self.lower_function(fns[i])
+      lower_function(fns[i])
       self.lower_pending_lambdas
       i += 1
     }
@@ -389,7 +389,7 @@ pub class MirLower {
     // W8b: the spawn and .parallel thunks after the constructors (the old
     // back end's order), with the lambdas they make.
     self.lower_pending_tasks
-    self.lower_trampolines(fns)
+    lower_trampolines(fns)
     self.lower_cb_thunks
     self.lower_pending_lambdas
     if self.failed {
@@ -397,9 +397,9 @@ pub class MirLower {
     }
     if !has_main {
       if r = run_fn {
-        self.lower_run_wrapper(r)
+        lower_run_wrapper(r)
       } else {
-        self.refuse(p.loc, "a program without fn main or fn run")
+        refuse(p.loc, "a program without fn main or fn run")
         return
       }
     }
@@ -429,35 +429,35 @@ pub class MirLower {
     if m < 0 && t.is_union {
       if r = mir_opt_ref(t) {
         // An optional reference is its reference's pointer (W3b, B13).
-        return self.ty_at(r, loc, what)
+        return ty_at(r, loc, what)
       }
-      l = self.union_layout(t, loc)
+      l = union_layout(t, loc)
       if l < 0 {
         return -1
       }
       m = self.lw_m.types.agg(l)
     }
     if m < 0 && t.is_fn {
-      l2 = self.fn_layout(t, loc)
+      l2 = fn_layout(t, loc)
       if l2 < 0 {
         return -1
       }
       m = self.lw_m.types.agg(l2)
     }
     if m < 0 && (t.is_struct || t.is_class || t.is_array || t.is_hash || t.is_buf || t.is_ptr || t.is_clayout || t.is_join) {
-      m = self.value_agg_ty(t, loc)
+      m = value_agg_ty(t, loc)
       if self.failed {
         return -1
       }
     }
     if m < 0 {
-      self.refuse(loc, "${what} of type ${t.show}")
+      refuse(loc, "${what} of type ${t.show}")
     }
     m
   }
 
   pub fn begin_function(fnn: Function) {
-    self.begin_at(fnn.loc)
+    begin_at(fnn.loc)
   }
 
   pub fn begin_at(loc: Location) {
@@ -494,34 +494,34 @@ pub class MirLower {
   }
 
   pub fn lower_function(fnn: Function) {
-    self.begin_function(fnn)
+    begin_function(fnn)
     sym = ""
     if got = self.lw_fn_syms.get(fnn.emit_name) {
       sym = got
     }
     recv = -1
     if fn_is_method(fnn) && !fnn.type_method {
-      recv = self.method_receiver(fnn)
+      recv = method_receiver(fnn)
       if self.failed {
         return
       }
     }
-    if fs = self.sig_of(fnn) {
+    if fs = sig_of(fnn) {
       self.lw_main = sym == "main"
       params: Array(Int) = []
-      ret = self.ty_at(fs.ret, fnn.loc, "a result")
+      ret = ty_at(fs.ret, fnn.loc, "a result")
       if self.lw_main {
         params.push(mt_i32())
         params.push(mt_ptr())
         if ret != mt_void() && ret != mt_int() {
-          self.refuse(fnn.loc, "main with a result of type ${fs.ret.show}")
+          refuse(fnn.loc, "main with a result of type ${fs.ret.show}")
         }
       } else {
         if recv >= 0 {
           params.push(recv)
         }
         for param in fs.params {
-          params.push(self.ty_at(param, fnn.loc, "a parameter"))
+          params.push(ty_at(param, fnn.loc, "a parameter"))
         }
       }
       if self.failed {
@@ -538,41 +538,41 @@ pub class MirLower {
       if fnn.owner.size > 0 {
         sname = "${fnn.owner}.${fnn.name}"
       }
-      self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), self.mloc(fnn.loc), sname)
-      self.lw_cl.base = self.lam_base(fnn)
+      self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), mloc(fnn.loc), sname)
+      self.lw_cl.base = lam_base(fnn)
       if self.lw_main {
         self.lw_b.set_external
         self.lw_b.name_param(1, "argc")
         self.lw_b.name_param(2, "argv")
-        self.main_prologue(fnn.loc)
+        main_prologue(fnn.loc)
         none: Array(Ty) = []
-        self.begin_boxes(fnn.box_names, mir_no_names(), none, 0)
+        begin_boxes(fnn.box_names, mir_no_names(), none, 0)
       } else {
         base = 0
         if recv >= 0 {
           base = 1
-          self.bind_receiver(fnn, recv)
+          bind_receiver(fnn, recv)
         }
         pn: Array(String) = []
         for i in 0..fnn.params.size {
           self.lw_b.name_param(i + 1 + base, fnn.params[i].name)
-          self.lw_vars[self.var_key(fnn.params[i].name, params[i + base])] = i + 1 + base
+          self.lw_vars[var_key(fnn.params[i].name, params[i + base])] = i + 1 + base
           pn.push(fnn.params[i].name)
         }
-        self.begin_boxes(fnn.box_names, pn, fs.params, base)
+        begin_boxes(fnn.box_names, pn, fs.params, base)
       }
-      self.cov_func(fnn)
-      self.lower_body(fnn.body)
-      self.finish_body(fnn)
+      cov_func(fnn)
+      lower_body(fnn.body)
+      finish_body(fnn)
       self.lw_b.end_fn
       return
     }
-    self.refuse(fnn.loc, "function ${fnn.name} (no checked signature)")
+    refuse(fnn.loc, "function ${fnn.name} (no checked signature)")
   }
 
   // 3.6: the type maps, then argc and argv for the runtime.
   pub fn main_prologue(loc: Location) {
-    self.at(loc)
+    at(loc)
     none: Array(MOperand) = []
     self.lw_b.call(-1, "__avant_type_maps", none)
     args: Array(MOperand) = []
@@ -587,14 +587,14 @@ pub class MirLower {
   // the checker requires a return (E4007) and the tail value was lowered
   // as one.
   pub fn finish_body(fnn: Function) {
-    self.finish_at(fnn.loc)
+    finish_at(fnn.loc)
   }
 
   pub fn finish_at(loc: Location) {
     if self.failed || !self.open_now {
       return
     }
-    self.at(loc)
+    at(loc)
     if self.lw_ret == mt_void() {
       if self.lw_main {
         self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
@@ -608,16 +608,16 @@ pub class MirLower {
   // A program with `fn run` and no `fn main` (3.6): main calls run and
   // returns its Int result, else 0.
   pub fn lower_run_wrapper(r: Function) {
-    self.begin_function(r)
+    begin_function(r)
     self.lw_main = true
     params: Array(Int) = []
     params.push(mt_i32())
     params.push(mt_ptr())
-    self.lw_b.begin_fn("main", self.lw_b.sig(params, mt_i32(), false), self.mloc(r.loc), "main")
+    self.lw_b.begin_fn("main", self.lw_b.sig(params, mt_i32(), false), mloc(r.loc), "main")
     self.lw_b.set_external
     self.lw_b.name_param(1, "argc")
     self.lw_b.name_param(2, "argv")
-    self.main_prologue(r.loc)
+    main_prologue(r.loc)
     sym = ""
     if got = self.lw_fn_syms.get(r.emit_name) {
       sym = got
@@ -646,7 +646,7 @@ pub class MirLower {
       b.call(-1, "avant_trap_exit_status", targs)
       b.unreachable
       b.at(ok)
-      self.at(r.loc)
+      at(r.loc)
       t32 = b.temp(mt_i32())
       b.assign(b.pl(t32), b.rv_cast(b.copy_local(t), mt_i32()))
       b.assign(b.pl(0), b.rv_use(b.copy_local(t32)))

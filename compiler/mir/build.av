@@ -145,7 +145,7 @@ pub class MirBuilder {
       e.alloc = r.alloc
       e.slot_row = r.slot
       e.noreturn = r.noreturn
-      return self.declare(e)
+      return declare(e)
     }
     -1
   }
@@ -154,7 +154,7 @@ pub class MirBuilder {
   // else collects. The first declaration of a C name wins (3.5); a call
   // through another binding carries its own signature (MStmt.sig).
   pub fn extern_c(name: String, sig: Int): Int {
-    self.declare(MExtern.new(name, sig, self.module.rt.class_of(name)))
+    declare(MExtern.new(name, sig, self.module.rt.class_of(name)))
   }
 
   // ---- types
@@ -199,7 +199,7 @@ pub class MirBuilder {
   }
 
   pub fn temp(ty: Int): Int {
-    self.local(ty, "")
+    local(ty, "")
   }
 
   pub fn set_kind(kind: Int) {
@@ -264,13 +264,13 @@ pub class MirBuilder {
     q
   }
 
-  pub fn deref(p: MPlace): MPlace { self.extend(p, MProj.new(mpk_deref(), 0)) }
-  pub fn field(p: MPlace, k: Int): MPlace { self.extend(p, MProj.new(mpk_field(), k)) }
+  pub fn deref(p: MPlace): MPlace { extend(p, MProj.new(mpk_deref(), 0)) }
+  pub fn field(p: MPlace, k: Int): MPlace { extend(p, MProj.new(mpk_field(), k)) }
 
   pub fn index(p: MPlace, o: MOperand): MPlace {
     pr = MProj.new(mpk_index(), 0)
     pr.index = o
-    self.extend(p, pr)
+    extend(p, pr)
   }
 
   pub fn copy(p: MPlace): MOperand {
@@ -279,7 +279,7 @@ pub class MirBuilder {
     o
   }
 
-  pub fn copy_local(local: Int): MOperand { self.copy(self.pl(local)) }
+  pub fn copy_local(local: Int): MOperand { copy(pl(local)) }
 
   pub fn c_int(ty: Int, v: Int): MOperand {
     o = MOperand.new(mok_int(), ty)
@@ -287,10 +287,10 @@ pub class MirBuilder {
     o
   }
 
-  pub fn c_i32(v: Int): MOperand { self.c_int(mt_i32(), v.to_i) }
-  pub fn c_u32(v: Int): MOperand { self.c_int(mt_u32(), v.to_i) }
-  pub fn c_i64(v: Int): MOperand { self.c_int(mt_i64(), v) }
-  pub fn c_u64(v: Int): MOperand { self.c_int(mt_u64(), v) }
+  pub fn c_i32(v: Int): MOperand { c_int(mt_i32(), v.to_i) }
+  pub fn c_u32(v: Int): MOperand { c_int(mt_u32(), v.to_i) }
+  pub fn c_i64(v: Int): MOperand { c_int(mt_i64(), v) }
+  pub fn c_u64(v: Int): MOperand { c_int(mt_u64(), v) }
 
   pub fn c_bool(v: Bool): MOperand {
     o = MOperand.new(mok_bool(), mt_bool())
@@ -343,9 +343,9 @@ pub class MirBuilder {
     r
   }
 
-  pub fn rv_bin(op: Int, a: MOperand, b: MOperand): MRvalue { self.rv2(mrk_binary(), op, a, b) }
-  pub fn rv_chk(op: Int, a: MOperand, b: MOperand): MRvalue { self.rv2(mrk_checked(), op, a, b) }
-  pub fn rv_cmp(op: Int, a: MOperand, b: MOperand): MRvalue { self.rv2(mrk_cmp(), op, a, b) }
+  pub fn rv_bin(op: Int, a: MOperand, b: MOperand): MRvalue { rv2(mrk_binary(), op, a, b) }
+  pub fn rv_chk(op: Int, a: MOperand, b: MOperand): MRvalue { rv2(mrk_checked(), op, a, b) }
+  pub fn rv_cmp(op: Int, a: MOperand, b: MOperand): MRvalue { rv2(mrk_cmp(), op, a, b) }
 
   pub fn rv_cast(a: MOperand, ty: Int): MRvalue {
     r = MRvalue.new(mrk_cast())
@@ -374,7 +374,7 @@ pub class MirBuilder {
   }
 
   pub fn rv_union(layout: Int, tag: Int, o: MOperand): MRvalue {
-    r = self.rv_union_nil(layout, tag)
+    r = rv_union_nil(layout, tag)
     r.a = o
     r
   }
@@ -400,11 +400,11 @@ pub class MirBuilder {
     st = MStmt.new(msk_assign(), self.cur_loc)
     st.place = p
     st.rv = rv
-    self.push(st)
+    push(st)
   }
 
   pub fn assign_fresh(p: MPlace, rv: MRvalue): MStmt {
-    st = self.assign(p, rv)
+    st = assign(p, rv)
     st.fresh = true
     st
   }
@@ -422,7 +422,7 @@ pub class MirBuilder {
     if e = self.module.ext(callee) {
       return mir_class_collects(e.cls)
     }
-    self.extern_rt(callee)
+    extern_rt(callee)
     mir_class_collects(self.module.rt.class_of(callee))
   }
 
@@ -431,8 +431,8 @@ pub class MirBuilder {
     st.dest = dest
     st.callee = callee
     st.args = args
-    st.collects = self.mark(callee)
-    self.push(st)
+    st.collects = mark(callee)
+    push(st)
   }
 
   pub fn call_indirect(dest: Int, fnval: MOperand, args: Array(MOperand)): MStmt {
@@ -441,40 +441,40 @@ pub class MirBuilder {
     st.indirect = fnval
     st.args = args
     st.collects = true
-    self.push(st)
+    push(st)
   }
 
   fn stmt1(kind: Int, o: MOperand): MStmt {
     st = MStmt.new(kind, self.cur_loc)
     st.args.push(o)
-    self.push(st)
+    push(st)
   }
 
-  pub fn barrier(h: Int): MStmt { self.stmt1(msk_barrier(), self.copy_local(h)) }
-  pub fn barrier_at(a: Int): MStmt { self.stmt1(msk_barrier_at(), self.copy_local(a)) }
+  pub fn barrier(h: Int): MStmt { stmt1(msk_barrier(), copy_local(h)) }
+  pub fn barrier_at(a: Int): MStmt { stmt1(msk_barrier_at(), copy_local(a)) }
 
   pub fn check_bounds(i: MOperand, n: MOperand): MStmt {
-    st = self.stmt1(msk_check_bounds(), i)
+    st = stmt1(msk_check_bounds(), i)
     st.args.push(n)
     st
   }
 
   // The frame statements (5.1): the frame pass inserts them; the tests
   // write final-stage MIR by hand.
-  pub fn gc_enter: MStmt { self.push(MStmt.new(msk_gc_enter(), self.cur_loc)) }
-  pub fn gc_leave: MStmt { self.push(MStmt.new(msk_gc_leave(), self.cur_loc)) }
+  pub fn gc_enter: MStmt { push(MStmt.new(msk_gc_enter(), self.cur_loc)) }
+  pub fn gc_leave: MStmt { push(MStmt.new(msk_gc_leave(), self.cur_loc)) }
 
   pub fn gc_roots(locals: Array(Int)): MStmt {
     st = MStmt.new(msk_gc_roots(), self.cur_loc)
     st.locals = locals
-    self.push(st)
+    push(st)
   }
 
   // ---- terminators
   pub fn goto(bb: Int) {
     t = MTerm.new(mtk_goto(), self.cur_loc)
     t.targets.push(bb)
-    self.term(t)
+    term(t)
   }
 
   pub fn branch(c: MOperand, bt: Int, bf: Int) {
@@ -482,7 +482,7 @@ pub class MirBuilder {
     t.cond = c
     t.targets.push(bt)
     t.targets.push(bf)
-    self.term(t)
+    term(t)
   }
 
   // targets[i] is the block for values[i]; other is the else block.
@@ -496,11 +496,11 @@ pub class MirBuilder {
       i += 1
     }
     t.targets.push(other)
-    self.term(t)
+    term(t)
   }
 
-  pub fn ret { self.term(MTerm.new(mtk_return(), self.cur_loc)) }
-  pub fn unreachable { self.term(MTerm.new(mtk_unreachable(), self.cur_loc)) }
+  pub fn ret { term(MTerm.new(mtk_return(), self.cur_loc)) }
+  pub fn unreachable { term(MTerm.new(mtk_unreachable(), self.cur_loc)) }
 }
 
 // Whether a call to an external of class cls is marked collects (4.6).

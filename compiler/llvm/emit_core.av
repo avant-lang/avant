@@ -89,7 +89,7 @@ pub class LlEmit {
     if self.cur_file >= 0 && self.cur_file < self.m.files.size {
       path = self.m.files[self.cur_file]
     }
-    self.text_ref("${path}:${self.cur_line}:${self.cur_col}")
+    text_ref("${path}:${self.cur_line}:${self.cur_col}")
   }
 
   // A trap text's number in the module's table (one per text).
@@ -234,25 +234,25 @@ pub class LlEmit {
 
   pub fn load(ty: Int, ptr: String, volatile: Bool): String {
     t = self.tmp
-    self.line("${t} = load${self.vol(volatile)} ${self.llt(ty)}, ptr ${ptr}, align ${self.align(ty)}")
+    line("${t} = load${vol(volatile)} ${llt(ty)}, ptr ${ptr}, align ${align(ty)}")
     t
   }
 
   pub fn store(ty: Int, val: String, ptr: String, volatile: Bool) {
-    self.line("store${self.vol(volatile)} ${self.llt(ty)} ${val}, ptr ${ptr}, align ${self.align(ty)}")
+    line("store${vol(volatile)} ${llt(ty)} ${val}, ptr ${ptr}, align ${align(ty)}")
   }
 
   // The address of a place (E5), emitting the loads and GEPs it needs.
   // Sets pa_ty (the place's type) and pa_vol (E2: no deref and the local
   // is a slot). An index operand is evaluated where its projection is.
   pub fn place_ptr(p: MPlace): String {
-    ptr = self.local_name(p.local)
+    ptr = local_name(p.local)
     ty = self.f.locals[p.local].ty
-    volatile = self.slot_vol(p.local)
+    volatile = slot_vol(p.local)
     for pr in p.proj {
       mt = self.ts.get(ty)
       if pr.kind == mpk_deref() {
-        ptr = self.load(mt_ptr(), ptr, volatile)
+        ptr = load(mt_ptr(), ptr, volatile)
         volatile = false
         if self.ts.is_refkind(ty) && mt.layout >= 0 {
           ty = self.ts.agg(mt.layout)
@@ -261,7 +261,7 @@ pub class LlEmit {
         }
       } else if pr.kind == mpk_field() {
         t = self.tmp
-        self.line("${t} = getelementptr inbounds ${self.llt(ty)}, ptr ${ptr}, i32 0, i32 ${pr.field}")
+        line("${t} = getelementptr inbounds ${llt(ty)}, ptr ${ptr}, i32 0, i32 ${pr.field}")
         ptr = t
         ty = self.ts.layouts[mt.layout].fields[pr.field]
       } else {
@@ -271,10 +271,10 @@ pub class LlEmit {
         }
         idx = "0"
         if o = pr.index {
-          idx = self.index64(o)
+          idx = index64(o)
         }
         t = self.tmp
-        self.line("${t} = getelementptr inbounds ${self.llt(et)}, ptr ${ptr}, i64 ${idx}")
+        line("${t} = getelementptr inbounds ${llt(et)}, ptr ${ptr}, i64 ${idx}")
         ptr = t
         ty = et
       }
@@ -289,12 +289,12 @@ pub class LlEmit {
     if o.kind == mok_int() {
       return "${o.ival}"
     }
-    x = self.value(o)
+    x = value(o)
     if self.ov_ty == mt_i64() {
       return x
     }
     t = self.tmp
-    self.line("${t} = sext i32 ${x} to i64")
+    line("${t} = sext i32 ${x} to i64")
     t
   }
 
@@ -309,16 +309,16 @@ pub class LlEmit {
   // here (E1); constants are immediate.
   pub fn value(o: MOperand): String {
     if p = o.place {
-      ptr = self.place_ptr(p)
+      ptr = place_ptr(p)
       ty = self.pa_ty
-      x = self.load(ty, ptr, self.pa_vol)
+      x = load(ty, ptr, self.pa_vol)
       self.ov_ty = ty
       return x
     }
     self.ov_ty = self.v.op_ty(o, self.bk, self.si, mir_loc0())
     k = o.kind
     if k == mok_int() || k == mok_bool() {
-      return self.int_text(o.ty, o.ival)
+      return int_text(o.ty, o.ival)
     }
     if k == mok_f64() {
       return llvm_f64_text(o.ival)
@@ -334,8 +334,8 @@ pub class LlEmit {
 
   // `<type> <value>` of an operand, as an argument.
   pub fn typed(o: MOperand): String {
-    x = self.value(o)
-    "${self.llt(self.ov_ty)} ${x}"
+    x = value(o)
+    "${llt(self.ov_ty)} ${x}"
   }
 }
 

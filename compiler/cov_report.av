@@ -66,7 +66,7 @@ pub class CovReport {
           }
           if line >= 0 && kind.size == 1 {
             hit = cov_read_hit(hits, i - 1)
-            self.add_slot(kind, path, line, name, hit, false)
+            add_slot(kind, path, line, name, hit, false)
           }
         }
         i += 1
@@ -75,7 +75,7 @@ pub class CovReport {
   }
 
   pub fn add_tree(dir_abs: String, excludes: Array(String)) {
-    self.walk_tree(dir_abs, excludes)
+    walk_tree(dir_abs, excludes)
   }
 
   pub fn has_rows: Bool {
@@ -84,17 +84,17 @@ pub class CovReport {
 
   pub fn write_lcov(path: String) {
     b = buf_new()
-    paths = self.path_list()
+    paths = path_list()
     for p in paths {
-      bare = self.path_bare(p)
+      bare = path_bare(p)
       b.push_str("TN:\n")
       b.push_str("SF:${p}\n")
       if bare {
-        self.write_lines(b, p)
+        write_lines(b, p)
       } else {
-        self.write_funcs(b, p)
-        self.write_branches(b, p)
-        self.write_lines(b, p)
+        write_funcs(b, p)
+        write_branches(b, p)
+        write_lines(b, p)
       }
       b.push_str("end_of_record\n")
     }
@@ -105,7 +105,7 @@ pub class CovReport {
   }
 
   pub fn print_table {
-    paths = self.path_list()
+    paths = path_list()
     if paths.size == 0 {
       return
     }
@@ -124,14 +124,14 @@ pub class CovReport {
     cov_border(file_w)
     puts(" ${cov_pad("File", file_w)} | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s")
     cov_border(file_w)
-    puts(" ${cov_pad("All files", file_w)} |${self.col_stmt("")}|${self.col_branch("")}|${self.col_func("")}|${self.col_line("")}|")
+    puts(" ${cov_pad("All files", file_w)} |${col_stmt("")}|${col_branch("")}|${col_func("")}|${col_line("")}|")
     for p in paths {
       shown = p
       if shown.size > file_w {
         shown = str_slice(shown, 0, file_w)
       }
-      uncovered = self.uncovered(p)
-      puts(" ${cov_pad(shown, file_w)} |${self.col_stmt(p)}|${self.col_branch(p)}|${self.col_func(p)}|${self.col_line(p)}| ${uncovered}")
+      uncovered = uncovered(p)
+      puts(" ${cov_pad(shown, file_w)} |${col_stmt(p)}|${col_branch(p)}|${col_func(p)}|${col_line(p)}| ${uncovered}")
     }
     cov_border(file_w)
   }
@@ -140,7 +140,7 @@ pub class CovReport {
     if cov_excluded(path, self.excludes) {
       return
     }
-    if self.known(path) && bare {
+    if known(path) && bare {
       return
     }
     for i in 0..self.slots.size {
@@ -183,12 +183,12 @@ pub class CovReport {
         path = "/${name}"
       }
       if file_exists("${path}/.") {
-        self.walk_tree(path, excludes)
+        walk_tree(path, excludes)
       } else {
         if str_ends(name, ".av") {
           rel = cov_rel(self.anchor, path)
-          if !cov_excluded(rel, excludes) && !self.known(rel) {
-            self.add_bare(rel, path)
+          if !cov_excluded(rel, excludes) && !known(rel) {
+            add_bare(rel, path)
           }
         }
       }
@@ -200,11 +200,11 @@ pub class CovReport {
       lines = cov_code_lines(text)
       i = 0
       while i < lines.size {
-        self.add_slot("L", rel, lines[i], "", 0, true)
+        add_slot("L", rel, lines[i], "", 0, true)
         i += 1
       }
       if lines.size == 0 {
-        self.add_slot("L", rel, 0, "", 0, true)
+        add_slot("L", rel, 0, "", 0, true)
       }
     }
   }
@@ -272,35 +272,35 @@ pub class CovReport {
   }
 
   fn col_stmt(path: String): String {
-    self.col(path, "S")
+    col(path, "S")
   }
 
   fn col_branch(path: String): String {
-    self.col(path, "B")
+    col(path, "B")
   }
 
   fn col_func(path: String): String {
-    self.col(path, "F")
+    col(path, "F")
   }
 
   fn col_line(path: String): String {
-    if path.size > 0 && self.path_bare(path) {
-      tot = self.count(path, "L", false)
+    if path.size > 0 && path_bare(path) {
+      tot = count(path, "L", false)
       if tot == 0 {
         return "     0 "
       }
       return "     0 "
     }
     if path.size == 0 {
-      tot = self.count("", "L", false)
-      hit = self.count("", "L", true)
+      tot = count("", "L", false)
+      hit = count("", "L", true)
       if tot == 0 {
         return "     - "
       }
       return cov_pct(hit, tot)
     }
-    tot = self.count(path, "L", false)
-    hit = self.count(path, "L", true)
+    tot = count(path, "L", false)
+    hit = count(path, "L", true)
     if tot == 0 {
       return "     - "
     }
@@ -308,14 +308,14 @@ pub class CovReport {
   }
 
   fn col(path: String, kind: String): String {
-    if path.size > 0 && self.path_bare(path) {
+    if path.size > 0 && path_bare(path) {
       return "     - "
     }
-    tot = self.count(path, kind, false)
+    tot = count(path, kind, false)
     if tot == 0 {
       return "     - "
     }
-    hit = self.count(path, kind, true)
+    hit = count(path, kind, true)
     cov_pct(hit, tot)
   }
 
