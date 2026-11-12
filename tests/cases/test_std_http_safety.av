@@ -4,9 +4,18 @@ import std.http
 // Safety behaviours of std.http's server (Stage 29 W-FIX1a), each a
 // defect that had no test: a client that closes with pipelined answers
 // unread (O240); answers larger than the socket takes at once, and
-// answers piling up for a client that does not read (P191). The
-// byte-level client is tests/fixtures/http/raw_client.py: it prints one
-// line per mode.
+// answers piling up for a client that does not read (P191); a timeout
+// that closed busy connections (P192). The byte-level client is
+// tests/fixtures/http/raw_client.py: it prints one line per mode.
+
+lib c {
+  fun setenv(name: String, value: String, overwrite: Int32): Int32
+}
+
+fn set_env(name: String, value: String) {
+  one: Int32 = 1
+  _ = c.setenv(name, value, one)
+}
 
 class Hits {
   pub n: Int
@@ -72,7 +81,6 @@ fn queue_round(port: Int, out: Channel(String), root: String, stamp: Int): Int {
   out.send(raw_client(port, root, stamp, "close_big", ""))
   out.send(raw_client(port, root, stamp, "half_close", ""))
   out.send(raw_client(port, root, stamp, "flood", ""))
-  stop(port)
   0
 }
 
@@ -127,7 +135,18 @@ fn test_std_http_safety(c: Checks, root: String) {
   // is lost, answers stay in order, Connection: close waits for the
   // queue, and a client that does not read is not served or read
   // further, so the server's memory stays bounded.
-  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+  //
+  // P192: the 30-second timeout was armed once, when the connection was
+  // accepted, so a busy keep-alive connection was closed like an idle
+  // one. It is an idle timeout now: request bytes, and queued answer
+  // bytes the client takes, start it again. The server is created with
+  // the timeout shortened to 8 s by AVANT_HTTP_IDLE_TIMEOUT_S (an
+  // internal variable for this test, read when the server is created);
+  // the idle round takes that long, so it runs beside the queue round.
+  set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "8")
+  listened = Http.listen(0, "127.0.0.1", 1048576, 1)
+  set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "")
+  if opened = listened {
     server = opened
     big = buf_new()
     for i in 0..8388608 {
@@ -163,12 +182,33 @@ fn test_std_http_safety(c: Checks, root: String) {
     }
     port = server.port
     out = Channel(String).new(8)
+    idle_out = Channel(String).new(2)
+    done = Channel(Int).new(2)
     before_kb = peak_rss_kb()
-    handle = spawn {
-      queue_round(port, out, root, stamp)
+    queue_task = spawn {
+      r = queue_round(port, out, root, stamp)
+      done.send(1)
+      r
+    }
+    idle_task = spawn {
+      idle_out.send(raw_client(port, root, stamp, "idle", ""))
+      done.send(1)
+      0
+    }
+    stopper = spawn {
+      got = 0
+      while got < 2 {
+        if d = done.recv {
+          got += d
+        }
+      }
+      stop(port)
+      0
     }
     server.serve
-    c.eq_int(handle.join, 0, "output-queue task")
+    c.eq_int(queue_task.join, 0, "output-queue task")
+    c.eq_int(idle_task.join, 0, "idle-timeout task")
+    c.eq_int(stopper.join, 0, "stopper task")
     want: Array(String) = []
     want.push("slow_big=whole,then pong")
     want.push("pile=65 whole,in order")
@@ -178,8 +218,11 @@ fn test_std_http_safety(c: Checks, root: String) {
     expect_lines(c, out, want, "an answer the socket takes in part is queued, not cut:")
     c.expect(flood_hits.n > 0 && flood_hits.n < 2000, "a client that reads nothing is served a bounded number of requests")
     c.expect(before_kb > 0 && peak_rss_kb() - before_kb < 65536, "a client that reads nothing does not grow the server's memory")
+    idle_want: Array(String) = []
+    idle_want.push("idle=idle closed,busy alive")
+    expect_lines(c, idle_out, idle_want, "idle and stalled connections are closed, a busy one is not:")
   } else {
-    c.expect(false, "listen for the output-queue test")
+    c.expect(false, "listen for the output-queue and idle-timeout test")
   }
 }
 

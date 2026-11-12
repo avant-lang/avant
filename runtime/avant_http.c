@@ -321,6 +321,7 @@ struct AvantHttpServer {
   int port;
   int32_t max_body;
   int32_t max_message;
+  unsigned int idle_timeout;
   AvantWsConn *ws_all;
   AvantWsConn *ws_dead;
 };
@@ -330,6 +331,32 @@ typedef struct ConnNode {
   struct us_socket_t *sock;
   struct ConnNode *next;
 } ConnNode;
+
+/* An HTTP connection is closed when nothing has happened on it for this
+ * long: no request bytes received and no queued answer bytes sent
+ * (Stage 29 W-FIX1a, P192: it was armed once at accept, so a busy
+ * keep-alive connection was closed about 30 s after it was accepted).
+ * uSockets counts timeouts in 4-second ticks, rounding the seconds up
+ * to whole ticks (30 s is 8 ticks): the close comes at the eighth sweep
+ * after the last activity, 28 to 32 s after it. A WebSocket connection
+ * has none (cleared at the upgrade). */
+#define HTTP_IDLE_TIMEOUT_S 30
+
+/* AVANT_HTTP_IDLE_TIMEOUT_S is an internal variable for the suite, not
+ * a user setting: a server created while it holds a number from 8 to 30
+ * uses that many seconds, so tests/cases/test_std_http_safety.av can
+ * watch an idle connection end without waiting 30 s. It can only
+ * shorten the timeout; any other value is ignored. */
+static unsigned int http_idle_timeout(void) {
+  const char *v = getenv("AVANT_HTTP_IDLE_TIMEOUT_S");
+  if (v && v[0] >= '0' && v[0] <= '9') {
+    long n = strtol(v, NULL, 10);
+    if (n >= 8 && n <= HTTP_IDLE_TIMEOUT_S) {
+      return (unsigned int)n;
+    }
+  }
+  return HTTP_IDLE_TIMEOUT_S;
+}
 
 static HttpLoop *loop_of_socket(struct us_socket_t *s) {
   struct us_socket_context_t *ctx = us_socket_context(0, s);
@@ -1666,7 +1693,9 @@ static void conn_flush(Conn *conn, struct us_socket_t *s) {
     int chunk = rem > 1073741824 ? 1073741824 : (int)rem;
     int written = us_socket_write(0, s, conn->out + conn->out_off, chunk, 0);
     if (written > 0) {
+      /* The client took queued bytes: it is not stalled (P192). */
       conn->out_off += (size_t)written;
+      us_socket_timeout(0, s, conn->srv->idle_timeout);
     }
     if (written < chunk) {
       /* us_socket_write polls for readable again; this connection is
@@ -1712,7 +1741,7 @@ static struct us_socket_t *srv_on_open(struct us_socket_t *s, int is_client,
   node->sock = s;
   node->next = hl->conns_head;
   hl->conns_head = node;
-  us_socket_timeout(0, s, 30);
+  us_socket_timeout(0, s, hl->srv->idle_timeout);
   return s;
 }
 
@@ -1722,6 +1751,10 @@ static struct us_socket_t *srv_on_data(struct us_socket_t *s, char *data,
   Conn *conn = &node->conn;
   if (conn->answered) {
     return s;
+  }
+  if (!conn->ws) {
+    /* Request bytes arrived: the idle timeout starts again (P192). */
+    us_socket_timeout(0, s, conn->srv->idle_timeout);
   }
   if (conn->len + (size_t)length > conn->cap) {
     size_t want = conn->cap ? conn->cap : 8192;
@@ -2149,6 +2182,7 @@ void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
   }
   srv->max_body = (int32_t)max_body;
   srv->max_message = max_message > 0 ? (int32_t)max_message : 1048576;
+  srv->idle_timeout = http_idle_timeout();
   srv->loops = (HttpLoop *)calloc((size_t)n, sizeof(HttpLoop));
   if (!srv->loops) {
     free(srv);

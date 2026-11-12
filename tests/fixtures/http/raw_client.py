@@ -184,6 +184,78 @@ def flood():
     return "held back" if sent < limit // 2 else "the server took %d bytes of requests" % sent
 
 
+def wait_closed(s, limit):
+    """True when the server closes the connection (end or reset) within
+    `limit` seconds; what arrives before that is thrown away."""
+    s.settimeout(0.25)
+    end = time.time() + limit
+    while time.time() < end:
+        try:
+            if s.recv(65536) == b"":
+                return True
+        except socket.timeout:
+            continue
+        except OSError:
+            return True
+    return False
+
+
+def idle():
+    # P192: the server's timeout is an idle timeout. The test's server
+    # runs with it shortened to 8 s (two of uSockets' 4-second ticks, so
+    # a connection is closed between 4 and 8 s after its last activity).
+    # Four connections, opened together: `busy` sends a request every
+    # 0.4 s; `quiet` never sends; `once` sends one request and reads its
+    # answer; `stalled` asks for 8 MiB and never reads. The server must
+    # close `quiet`, `once` and `stalled` (idle, idle after activity,
+    # stalled with output queued) while `busy` goes on being answered:
+    # with a timeout armed once at accept all four die in the same sweep.
+    busy = connect()
+    quiet = connect()
+    once = connect()
+    stalled = small_rcvbuf()
+    once.sendall(get("/ping"))
+    if read_answers(once, 1) != [(200, b"pong")]:
+        return "once: no answer"
+    stalled.sendall(get("/big"))
+    quiet.settimeout(0.4)
+    start = time.time()
+    closed = False
+    while time.time() - start < 12:
+        busy.sendall(get("/ping"))
+        if read_answers(busy, 1) != [(200, b"pong")]:
+            return "busy closed after %.0f s" % (time.time() - start)
+        try:
+            if quiet.recv(16) == b"":
+                closed = True
+                break
+        except socket.timeout:
+            pass
+        except OSError:
+            closed = True
+            break
+    if not closed:
+        return "quiet still open after 12 s"
+    waited = time.time() - start
+    # The sweep that closed `quiet` has run: `busy` must have survived it.
+    time.sleep(0.2)
+    try:
+        busy.sendall(get("/ping"))
+        alive = read_answers(busy, 1) == [(200, b"pong")]
+    except OSError:
+        alive = False
+    if not alive:
+        return "busy closed with the idle ones after %.0f s" % waited
+    # `once` and `stalled` were last active just before or after `quiet`
+    # was accepted: the same sweep or the next one (4 s later) closes them.
+    if not wait_closed(once, 6):
+        return "once still open"
+    if not wait_closed(stalled, 6):
+        return "stalled still open"
+    busy.close()
+    return "idle closed,busy alive"
+
+
 try:
     if mode == "close_unread":
         result = close_unread(int(arg))
@@ -197,6 +269,8 @@ try:
         result = half_close()
     elif mode == "flood":
         result = flood()
+    elif mode == "idle":
+        result = idle()
     else:
         result = "unknown mode"
 except Exception as e:  # a failure is a result the test prints
