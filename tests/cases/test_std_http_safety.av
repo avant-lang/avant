@@ -5,7 +5,8 @@ import std.http
 // defect that had no test: a client that closes with pipelined answers
 // unread (O240); answers larger than the socket takes at once, and
 // answers piling up for a client that does not read (P191); a timeout
-// that closed busy connections (P192). The byte-level client is
+// that closed busy connections (P192); Content-Length lines that
+// disagree (P193). The byte-level client is
 // tests/fixtures/http/raw_client.py: it prints one line per mode.
 
 lib c {
@@ -71,6 +72,7 @@ fn close_unread_round(port: Int, out: Channel(String), root: String, stamp: Int)
   out.send(raw_client(port, root, stamp, "close_unread", "2"))
   out.send(raw_client(port, root, stamp, "close_unread", "16"))
   out.send(raw_client(port, root, stamp, "close_unread", "2000"))
+  out.send(raw_client(port, root, stamp, "lengths", ""))
   stop(port)
   0
 }
@@ -110,6 +112,12 @@ fn test_std_http_safety(c: Checks, root: String) {
     server.get("/ping") { |req|
       Response.text("pong")
     }
+    server.post("/echo") { |req|
+      Response.bytes(req.body)
+    }
+    server.get("/hidden") { |req|
+      Response.text("smuggled")
+    }
     server.get("/__stop") { |req|
       server.close
       Response.text("bye")
@@ -126,6 +134,13 @@ fn test_std_http_safety(c: Checks, root: String) {
     want.push("close_unread=alive")
     want.push("close_unread=alive")
     expect_lines(c, out, want, "a close with pipelined answers unread leaves the server alive:")
+    // P193: a second Content-Length with another value was accepted and
+    // the first one won, so the rest of the body ran as a request of its
+    // own (GET /hidden here). Disagreeing lines, and a folded one, are
+    // 400 and close; lines repeating one number stay one value.
+    lwant: Array(String) = []
+    lwant.push("lengths=differ:400,differ-reversed:400,third-differs:400,case:400,folded:400,list:400,same:200")
+    expect_lines(c, out, lwant, "Content-Length lines that disagree are refused:")
   } else {
     c.expect(false, "listen for the close-unread test")
   }

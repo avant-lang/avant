@@ -256,6 +256,59 @@ def idle():
     return "idle closed,busy alive"
 
 
+def exchange(raw):
+    """Sends raw on a new connection; returns (status of the first
+    answer or 0, everything received until the server closes or 1 s
+    passes, whether the server closed)."""
+    s = connect()
+    s.sendall(raw)
+    s.settimeout(1)
+    data = b""
+    closed = False
+    try:
+        while True:
+            chunk = s.recv(65536)
+            if not chunk:
+                closed = True
+                break
+            data += chunk
+    except socket.timeout:
+        pass
+    except OSError:
+        closed = True
+    s.close()
+    status = int(data.split(b" ", 2)[1]) if data.startswith(b"HTTP/1.1 ") else 0
+    return status, data, closed
+
+
+def lengths():
+    # P193: Content-Length lines that disagree are two readings of where
+    # the body ends (request smuggling): 400 and close, the body's tail
+    # never runs as a request. Lines repeating one number are one value.
+    hidden = get("/hidden")
+    post = b"POST /echo HTTP/1.1\r\nHost: x\r\n"
+    out = []
+
+    def case(name, headers, body, want_status, want_closed):
+        status, data, closed = exchange(post + headers + b"\r\n" + body)
+        ok = status == want_status and closed == want_closed and b"smuggled" not in data
+        out.append("%s:%s" % (name, status if ok else "BAD(%d,%s,%r)" % (status, closed, data[-40:])))
+
+    tail = b"abc" + hidden
+    case("differ", b"Content-Length: 3\r\nContent-Length: %d\r\n" % len(tail), tail, 400, True)
+    case("differ-reversed", b"Content-Length: %d\r\nContent-Length: 3\r\n" % len(tail), tail, 400, True)
+    case("third-differs", b"Content-Length: 3\r\nContent-Length: 3\r\nContent-Length: %d\r\n" % len(tail), tail, 400, True)
+    case("case", b"content-length: 3\r\nCONTENT-LENGTH: %d\r\n" % len(tail), tail, 400, True)
+    case("folded", b"Content-Length: 3\r\n 7\r\n", tail, 400, True)
+    case("list", b"Content-Length: 3, 3\r\n", b"abc", 400, True)
+    s = connect()
+    s.sendall(post + b"Content-Length: 3\r\nContent-Length: 3\r\n\r\nabc" + get("/ping"))
+    got = read_answers(s, 2)
+    s.close()
+    out.append("same:%s" % (200 if got == [(200, b"abc"), (200, b"pong")] else "BAD(%r)" % got))
+    return ",".join(out)
+
+
 try:
     if mode == "close_unread":
         result = close_unread(int(arg))
@@ -271,6 +324,8 @@ try:
         result = flood()
     elif mode == "idle":
         result = idle()
+    elif mode == "lengths":
+        result = lengths()
     else:
         result = "unknown mode"
 except Exception as e:  # a failure is a result the test prints

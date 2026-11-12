@@ -1555,13 +1555,32 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
       send_error(conn, s, 411);
       return;
     }
-    if (find_header(headers, num_headers, "Content-Length", &value,
-                    &value_len)) {
-      if (!parse_content_length(value, value_len, &content_length)) {
-        send_error(conn, s, 400);
-        return;
+    /* Every Content-Length line is read, not the first only (Stage 29
+     * W-FIX1a, P193): lines that disagree, or one continued on a folded
+     * line, give two readings of where the body ends, and a proxy in
+     * front may take the other one (request smuggling). RFC 9112 6.3:
+     * 400 and close. Lines repeating the same number are one value, as
+     * that section allows; a list in one line ("5, 5") is not a number
+     * here and is refused like any other non-number, as before. */
+    {
+      size_t hi;
+      for (hi = 0; hi < num_headers; hi++) {
+        long one = 0;
+        if (!headers[hi].name ||
+            !ascii_ieq(headers[hi].name, headers[hi].name_len,
+                       "Content-Length", 14)) {
+          continue;
+        }
+        if ((hi + 1 < num_headers && !headers[hi + 1].name) ||
+            !parse_content_length(headers[hi].value, headers[hi].value_len,
+                                  &one) ||
+            (has_cl && one != content_length)) {
+          send_error(conn, s, 400);
+          return;
+        }
+        content_length = one;
+        has_cl = 1;
       }
-      has_cl = 1;
     }
     if (has_cl && content_length > srv->max_body) {
       send_error(conn, s, 413);

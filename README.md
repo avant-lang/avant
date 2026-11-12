@@ -2971,7 +2971,7 @@ fn main {
 - **Routes** are exact paths: `get`, `post`, `put`, `delete`, `patch`, or `route(method, path)`. There is no pattern router, no middleware and no streaming. Register every route before `serve`.
 - **A handler** gets a `Request` (`method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes`) and returns a `Response`: `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)`, then `.header(name, value)`. `Content-Length` and `Connection` are the server's to set.
 - **Headers** (`req.headers`, `resp.headers`): `get(name)` (`String?`), `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)`.
-- **Bodies** are buffered up to `max_body` (1 MiB by default): a larger one is answered 413, a chunked request body 411, a malformed request 400.
+- **Bodies** are buffered up to `max_body` (1 MiB by default): a larger one is answered 413, a chunked request body 411, a malformed request 400, and so is one whose `Content-Length` lines disagree.
 - **Connections** are kept alive, and pipelined requests are answered in order, each with its own write for now. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on the same port.
 - **Handlers must not block the loop.** Hand slow work to `spawn`.
 - **An idle connection is closed**: an HTTP connection on which nothing has happened for about 30 seconds (no request bytes arrived, no answer bytes left). A WebSocket connection has no such timeout.
