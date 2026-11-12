@@ -17,7 +17,7 @@
 #
 # Environment:
 #   GATE_SEED       seed directory holding avant (default: tools/letters.sh's,
-#                   bin/v0.41.0; `sh tools/letters.sh --print-seed`)
+#                   bin/v0.42.0; `sh tools/letters.sh --print-seed`)
 #   GATE_OUT        output directory (default results/gate-YYYYmmdd-HHMMSS);
 #                   keep it under results/ or outside the repository, since the
 #                   repository snapshot excludes only .git/ and results/

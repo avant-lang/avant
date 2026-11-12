@@ -3710,7 +3710,7 @@ This is the only back end. The earlier one, which emitted [myc](https://github.c
 
 You need a C compiler, the C library's development files and binutils (`ld`, `objcopy`); LLVM 20's static archives (Debian and Ubuntu: `llvm-20-dev`, `libzstd-dev`), which `runtime/build.sh` merges into `runtime/build/avant_llvm.o` (through `tools/build-llvm.sh`) and only the compiler links; `re2c` for regex literals (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`); and, for the `bind` helper, `llvm-config` and libclang 20 (without them the build skips it with a notice).
 
-The compiler is built by a published release, the seed: **v0.41.0 or later**, unpacked at `bin/v0.41.0` (or wherever `LETTERS_SEED` points). An older release cannot build this tree: `Int` became 64-bit in v0.41.0, and the runtime has one ABI.
+The compiler is built by a published release, the seed: **v0.41.0 or later**, unpacked at `bin/v0.42.0` (or wherever `LETTERS_SEED` points). An older release cannot build this tree: `Int` became 64-bit in v0.41.0, and the runtime has one ABI.
 
 ```sh
 sh runtime/build.sh
