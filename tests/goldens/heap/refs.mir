@@ -662,10 +662,10 @@ fn av.refs/recs() -> void frame @refs.av:128:1 {
   let _74: u64
   let _75: u64
   let _76: ref %elems(refs.Rec) slot
-  let _77: %refs.Rec
-  let _78: %refs.Rec
-  let _79: i64
-  let _80: bool
+  let _77: i64
+  let _78: bool
+  let _79 (i): i64
+  let _80: %refs.Rec
   let _81: i32
   let _82: ref %Array(refs.Rec)
   let _83 (big): ref %Array(refs.Rec) slot
@@ -827,21 +827,24 @@ bb6:
   _74 = cast copy _71 to u64   @148:9
   _75 = mul copy _74, const u64 24   @148:9
   _76 = call avant_alloc(copy _75, const u32 3) collects   @148:9
-  _77 = call av.refs/mk(const i64 0) collects   @148:27
-  _78 = copy _77   @148:9
-  _79 = const i64 0   @148:9
+  _77 = const i64 0   @148:9
   goto bb7   @148:9
 
 bb7:
-  _80 = lt copy _79, copy _71   @148:9
-  branch copy _80, bb8, bb9   @148:9
+  _78 = lt copy _77, copy _71   @148:9
+  branch copy _78, bb8, bb10   @148:9
 
 bb8:
-  (*_76)[copy _79] = copy _78 fresh   @148:9
-  _79 = add copy _79, const i64 1   @148:9
-  goto bb7   @148:9
+  _79 = copy _77   @148:27
+  _80 = call av.refs/mk(const i64 0) collects   @148:33
+  (*_76)[copy _77] = copy _80 fresh   @148:33
+  goto bb9   @148:9
 
 bb9:
+  _77 = add copy _77, const i64 1   @148:9
+  goto bb7   @148:9
+
+bb10:
   barrier copy _76   @148:9
   _81 = cast copy _71 to i32   @148:9
   _82 = call avant_alloc(const u64 16, const u32 1022) collects   @148:9

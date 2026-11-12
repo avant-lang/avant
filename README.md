@@ -567,7 +567,8 @@ fn main {
 ```
 
 - **`..` excludes its end**, unlike Crystal's, Ruby's and Kotlin's. `for i in 1..n` never reaches `n`; write `1..n + 1` until the inclusive `a..=b` is built ([Not built yet](#not-built-yet)).
-- The bounds are evaluated once. The loop variable is a new name that exists only inside the loop. `break`, `continue` and `return` behave as they do in `while`.
+- The bounds are evaluated once. The loop variable is a new name that exists only inside the loop (when a variable of that name already exists outside, the loop uses it, and it keeps its last value afterwards: pick a fresh name). `break`, `continue` and `return` behave as they do in `while`.
+- **The loop variable cannot be assigned.** It is a copy of the range's counter or of the array's element, made again at each step, so `i = 5`, `x += 1` and a field of a struct element (`p.x = 1`) are compile errors: the write would be lost, or would change the iteration. To change the array, store through an index: `xs[i] = v`, or `xs[i].x = v` for one field of a struct element. For a range that skips or repeats steps, use `while` with a counter of your own. A field of a *class* element is assignable: `c.x = 1` changes the object.
 - A range is only a `for` form: it is not a value you can store.
 - Arrays and hashes also have `each` ([Array operations](#array-operations), [Hash operations](#hash-operations)).
 - A struct literal in a `for`'s range or array needs parentheses, brackets or a call around it, as in a [condition](#if): `for p in [Point { x: 1, y: 2 }]`.
@@ -599,7 +600,7 @@ fn main {
 
 ## Nil and unions
 
-`T?` is "a `T`, or `nil`". Absence is in the type, so the compiler makes you look before you use the value, and there is no null pointer error to meet at run time.
+`T?` is "a `T`, or `nil`". Absence is in the type, so the compiler makes you look before you use the value, and there is no null pointer error to meet at run time (a C pointer, [`Ptr(T)`](#layouts-and-ptr), is the one exception: it is C's).
 
 ```avant
 fn find(names: Array(String), wanted: String): Int? {
@@ -964,15 +965,19 @@ fn main {
   a = [1, 2, 3]                       // Array(Int), from its elements
   b: Array(String) = []               // an empty literal needs a declared type
   c = Array(Float64).new(4)           // four elements, each 0.0
-  d = Array(Node).new(2, Node.new)    // two references to the same Node
+  d = Array(String).new(2, "none")    // two elements, each "none"
   e: Array(Int32) = [1, 2, 3]         // dense: 4 bytes per element
-  puts(a.size + b.size + c.size + d.size + e.size)   // => 12
+  f = Array(Node).new(2) { |i| Node.new }                  // two elements, each its own Node
+  g = Array(Array(Int)).new(3) { |y| Array(Int).new(4) }   // a grid of 3 rows of 4
+  g[0][0] = 7
+  puts(g[1][0])                       // => 0
+  puts(a.size + b.size + c.size + d.size + e.size + f.size + g.size)   // => 17
 }
 ```
 
 - `Array(T).new(n)` makes `n` elements, each the element type's zero: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a struct of such fields.
-- `Array(T).new(n, value)` makes `n` copies of `value` (for a class, an `Array`, a `Hash` or a `Buf`: `n` references to the same object). It is required when `T` has no zero (a class, an `Array`, a `Hash`): `Array(Node).new(n)` alone is a compile error that names both ways out, this form and `[]` with `push`.
-- For a grid, push a fresh row per iteration (`rows.push(Array(Int).new(width))`): `Array(Array(Int)).new(2, [0, 0])` would hold the same row twice.
+- `Array(T).new(n, value)` makes `n` copies of `value`, for a `T` whose copies are independent: a number, a `Bool`, a `String`, `Bytes`, a struct of those, and `nil` for any `T?`. When `T` is, or holds, a reference to an object that can change (a class, an `Array`, a `Hash`, a `Buf`, a struct or an optional holding one) it is a compile error: every element would be the same object, and a change through one would show in all.
+- `Array(T).new(n) { |i| ... }` builds each element: the block runs once per index, `0` to `n - 1` in order, and its value is that element. It is the form for a `T` with no zero (`Array(Node).new(n)` alone is a compile error that names the ways out) and for a grid, whose rows must each be their own array. `return` inside the block returns from the enclosing function, as in `each`; `break` and `continue` are compile errors, since every index gets a value. To put one shared object in every element on purpose, say so: `Array(Node).new(n) { |i| shared }`.
 - A negative `n` traps (`avant runtime: Array size -5 is negative`).
 
 ### Indexing and bounds
@@ -1146,7 +1151,7 @@ When in doubt, start with a struct: it allocates nothing and cannot be changed b
 
 A struct literal names every field, in any order. A copy is independent of the original.
 
-A method may change its struct receiver, and the change is the caller's: no `mutating` mark is needed. A struct passed as an argument is a copy, so a change made through a parameter stays in the callee. The same line runs through arrays: `xs[i].x = v` changes the element in place, while `for p in xs` and `q = xs[i]` give copies, and a change to `p` or `q` does not reach the array.
+A method may change its struct receiver, and the change is the caller's: no `mutating` mark is needed. A struct passed as an argument is a copy, so a change made through a parameter stays in the callee. The same line runs through arrays: `xs[i].x = v` changes the element in place, while `q = xs[i]` gives a copy, and a change to `q` does not reach the array. `for p in xs` gives a copy too, and assigning to `p` or to a field of it is a compile error ([For](#for)).
 
 ```avant
 struct Vec {
@@ -1305,6 +1310,10 @@ fn main {
   puts(pad("ab", 4, "*"))  // => ab**
 }
 ```
+
+- A default is evaluated at each call that leaves its argument out. It belongs to the function's own module: it may call that module's private functions, and a name in it never means something of the caller's (a function, a method or a local of the same name), however the call is written.
+- A default may name an earlier parameter (`fn span(a: Int, b: Int = a + 1)`). Today the argument's expression is then evaluated a second time for the default, so `span(next())` calls `next` twice: pass a variable when the argument has an effect.
+- A method whose parameters all have defaults may be called without parentheses, like a method without parameters: `conn.recv` is `conn.recv()`.
 
 ### Operator methods
 
@@ -1697,7 +1706,7 @@ fn main {
 
 ### Builtin blocks are loops
 
-The blocks of the builtins (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `spawn`, `Mutex.with`) are not function values: the compiler inlines them. The difference shows in what `return` and `break` mean.
+The blocks of the builtins (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `spawn`, `Mutex.with`, `Array(T).new(n) { ... }`) are not function values: the compiler inlines them. The difference shows in what `return` and `break` mean.
 
 | Inside | `return` | `break` |
 | --- | --- | --- |
@@ -1814,6 +1823,7 @@ fn main {
 - A struct literal infers its arguments the same way: `Pair { first: 1, second: "x" }` is `Pair(Int, String)`.
 - A generic class may name itself (`next: Link(T)?`): a class is a pointer. A struct is copied inline, so a struct that contains itself, generic or not, is an error.
 - `Array`, `Hash`, `Ptr` and `JoinHandle` are built in; they are not generic types you could declare.
+- A generic type or function imported from another module takes the types of the module that uses it, `pub` or private: with `Box` imported, `Box(Point)` and `Box.new(Point { ... })` work for a `Point` declared here. A type argument is a name like any other where it is written: a private type of another module is unknown there, also as an element type (`Array(Hidden)`) or inside a union or a function type.
 
 ## Interfaces
 
@@ -2236,7 +2246,8 @@ fn main {
 ```
 
 - `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` holds the lock for the block; `x` is the guarded value, a place that dies with the block; the block must end with a value, which is the call's. `return`, `break` and `continue` inside `with` are errors. (`with` is a form the compiler provides for a class of this name and shape.)
-- **The lock guards the cell, not what a reference stored in it points to.** With a class in a `Mutex`, do the work inside `with` and return plain values (an `Int`, a `String`): a block that returns the object itself hands out a reference the lock no longer protects, and the compiler does not stop it yet.
+- **The block's value leaves the lock, so it is a plain value:** a number, a `Bool`, a `String`, `Bytes`, a struct or an optional of those, a `Channel` or a `Mutex`. Any other value (a class, an array, a hash, a `Buf`, a struct holding one) is a compile error, even a new object built in the block: it could be the guarded value or a part of it, which the lock no longer protects outside the block. To take a copy out, declare an array before the block and fill it inside (`xs.each { |x| snap.push(x) }`), ending the block with a plain value.
+- **The lock guards the cell, not what a reference stored in it points to.** With a class in a `Mutex`, do the work inside `with`. The compiler checks the block's value; it does not yet stop a block from storing the guarded object itself somewhere else (pushing it into an array declared outside, assigning a part of it to an outer name), which hands out a reference the lock no longer protects.
 
 A channel hands values from one task to another:
 
@@ -2552,6 +2563,8 @@ fn main {
 ```
 
 `Ptr(T)` is for a layout `T`, and `Ptr(Void)` for a pointer you only pass around. A `Ptr` of anything else (`Ptr(Int)`) has no fields to read and cannot be given methods. Memory you got from C is C's: the collector neither moves nor frees it. There is no `sizeof` yet: the size passed to `malloc` is yours to state.
+
+A `Ptr` can be NULL (an unchecked `malloc`), and Avant has no test for that yet. A field read or written through a NULL `Ptr` is a segmentation fault, as in C: the program ends with no Avant message, and what it had printed without flushing is lost. Check in C before handing the pointer over. Do not declare a `fun` result `Ptr(T)?` to get a test: it compiles today and reads the wrong thing. A `String` field that C left NULL (or that `release` made null) reads as `""`.
 
 ### Strings in C memory
 
@@ -3465,7 +3478,7 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 | Reading standard input | planned | `file_read("/dev/stdin")` |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` for structs without writing it; `==` on arrays and hashes | planned | [operator methods](#operator-methods); a loop |
-| `Mutex.with` keeping a reference from leaving the lock | a defect, being fixed | return plain values from the block ([Channel and Mutex](#channel-and-mutex)) |
+| `Mutex.with` keeping a reference from leaving the lock | partly built: the block's value is checked, a store into something outside the block is not | do the work inside the block ([Channel and Mutex](#channel-and-mutex)) |
 | A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
 | `Channel` and `Mutex` in the standard library; a `spawn` result other than `Int` | decided | [copy the two classes](#channel-and-mutex) |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |

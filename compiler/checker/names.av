@@ -304,7 +304,13 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
     }
     return tn
   }
-  TypeName.new(loc, ty.name)
+  // A named type (a struct, a class, an instance of a generic one, a C
+  // layout): pinned to its module, so the name means this type wherever
+  // an instance reads it (O255).
+  named = TypeName.new(loc, ty.name)
+  named.mod_name = ty.mod_name
+  named.pinned = true
+  named
 }
 
 pub class ImplFact {

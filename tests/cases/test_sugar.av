@@ -159,12 +159,16 @@ fn test_sugar(c: Checks) {
     }
   }
   c.expect(eval_once >= 3, "for array live size")
+  // A for variable cannot be assigned (D329, Stage 29 W-FIX1b; the
+  // refusal is tests/cases/test_rules.av's): a loop that skips steps is
+  // a while loop with its own counter.
   mut_i = 0
-  for i in 0..10 {
-    mut_i = i
-    i += 4
+  wi = 0
+  while wi < 10 {
+    mut_i = wi
+    wi += 5
   }
-  c.eq_int(mut_i, 5, "for var assignment affects iteration")
+  c.eq_int(mut_i, 5, "a while loop with its own counter skips steps")
   c.eq_int(sugar_early(xs), 99, "return inside for")
   max_count = 0
   for i in 2147483645..2147483647 {

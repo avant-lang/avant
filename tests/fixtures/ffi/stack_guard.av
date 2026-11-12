@@ -1,0 +1,88 @@
+// O439 (Stage 29 W-FIX1b): every generated function carries a stack
+// probe, so a frame larger than a thread's guard page cannot step over
+// it. `deep` holds a 32 KB struct in its frame and recurses for ever on a
+// pool thread, whose guard is one 4 KB page: the overflow must fault in
+// the guard page, on every run. Without the probe 8 runs of 180 faulted
+// past it (66,408 bytes below the stack's low end: they faulted only
+// because nothing was mapped there). ffi.c's handler says where the
+// fault was and ends the program with status 42.
+
+lib ffi {
+  fun ffi_guard_install
+}
+
+struct K1 {
+  a: Int
+  b: Int
+  c: Int
+  d: Int
+  e: Int
+  f: Int
+  g: Int
+  h: Int
+}
+
+struct K2 {
+  a: K1
+  b: K1
+  c: K1
+  d: K1
+  e: K1
+  f: K1
+  g: K1
+  h: K1
+}
+
+struct K3 {
+  a: K2
+  b: K2
+  c: K2
+  d: K2
+  e: K2
+  f: K2
+  g: K2
+  h: K2
+}
+
+struct K4 {
+  a: K3
+  b: K3
+  c: K3
+  d: K3
+  e: K3
+  f: K3
+  g: K3
+  h: K3
+}
+
+fn k1: K1 {
+  K1 { a: 0, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0 }
+}
+
+fn k2: K2 {
+  K2 { a: k1(), b: k1(), c: k1(), d: k1(), e: k1(), f: k1(), g: k1(), h: k1() }
+}
+
+fn k3: K3 {
+  K3 { a: k2(), b: k2(), c: k2(), d: k2(), e: k2(), f: k2(), g: k2(), h: k2() }
+}
+
+fn k4: K4 {
+  K4 { a: k3(), b: k3(), c: k3(), d: k3(), e: k3(), f: k3(), g: k3(), h: k3() }
+}
+
+// A K4 local is 8^4 Ints = 32,768 bytes. The recursion never ends.
+fn deep(n: Int): Int {
+  big = k4()
+  big.a.a.a.a = n
+  r = deep(n + 1)
+  r + big.a.a.a.a + big.h.h.h.h
+}
+
+fn main {
+  h = spawn {
+    ffi.ffi_guard_install()
+    deep(0)
+  }
+  puts(h.join)
+}

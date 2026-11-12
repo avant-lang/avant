@@ -1,0 +1,178 @@
+import harness
+import backends
+
+// Stage 29 W-FIX1b: the compiler's safety rules of this wave. Each program
+// is compiled in parallel; a refused one must leave no binary, say the
+// expected words and point at the expected line and column; an accepted
+// one (the neighbouring legal forms) must print what it should.
+//   - O231, `Mutex.with`: the block's value leaves the lock, so it cannot
+//     be, or hold, a reference to mutable state (a class handed out this
+//     way was changed by two tasks at once, and updates were lost).
+//   - D329 (O237, O434), a `for` variable is not assignable: `x = ...`
+//     and `x += ...` on a range's counter or an array's element, and a
+//     field of an element through struct values (`p.x = 1`,
+//     `p.pos.x += 1`), which changed the loop's copy and lost the write.
+//     A class element's field, a path through a reference, an index, and
+//     a name the body binds anew stay legal.
+//   - D329 (O246), `Array(T).new(n, value)` is refused when T is, or
+//     holds, a reference to an object that can change (every element
+//     would be that one object), and `Array(T).new(n) { |i| ... }` builds
+//     each element (tests/fixtures/heap/build.av runs it under the
+//     collector's modes).
+//   - O223, O17: a method whose parameters all have defaults, called
+//     without parentheses, is the call with them (the build stopped in
+//     the MIR verifier); a type-level function's defaults are checked and
+//     typed like any argument. Defaults across modules (O343) are
+//     tests/cases/test_modules.av's.
+
+class RCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn mutex_cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(refused("mutex-value-class", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  leaked = m.with { |b| b }\n  puts(leaked.n)\n}\n", "Mutex.with's value cannot be Box: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)", "24:25"))
+  xs.push(refused("mutex-value-part", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  part = m.with { |b|\n    b.n += 1\n    b.inner\n  }\n  puts(part.n)\n}\n", "Mutex.with's value cannot be Inner: ", "26:6"))
+  xs.push(refused("mutex-value-optional", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  nx = m.with { |b| b.next }\n  puts(1)\n}\n", "Mutex.with's value cannot be Box?: ", "24:22"))
+  xs.push(refused("mutex-value-array", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Array(Int)).new([1, 2])\n  xs = m.with { |a| a }\n  puts(xs.size)\n}\n", "Mutex.with's value cannot be Array(Int): ", "24:21"))
+  xs.push(refused("mutex-value-fresh-array", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Int).new(1)\n  xs = m.with { |n| [n, n] }\n  puts(xs.size)\n}\n", "Mutex.with's value cannot be Array(Int): ", "24:21"))
+  xs.push(refused("mutex-value-hash", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Hash(String, Int)).new(Hash(String, Int).new)\n  h = m.with { |t| t }\n  puts(h.size)\n}\n", "Mutex.with's value cannot be Hash(String, Int): ", "24:20"))
+  xs.push(refused("mutex-value-buf", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Buf).new(Buf.new)\n  b = m.with { |t| t }\n  puts(b.size)\n}\n", "Mutex.with's value cannot be Buf: ", "24:20"))
+  xs.push(refused("mutex-value-struct-holding", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nstruct Wrap {\n  b: Box\n}\nfn main {\n  m = Mutex(Box).new(Box.new)\n  w = m.with { |b| Wrap { b: b } }\n  puts(w.b.n)\n}\n", "Mutex.with's value cannot be Wrap: ", "27:20"))
+  xs.push(refused("mutex-value-statement", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  m.with { |b|\n    b\n  }\n  puts(1)\n}\n", "Mutex.with's value cannot be Box: ", "25:5"))
+  xs.push(accepted("mutex-value-plain", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nstruct Pt {\n  x: Int\n  name: String\n}\nstruct Maybe {\n  x: Int?\n}\nfn main {\n  m = Mutex(Box).new(Box.new)\n  a = m.with { |b|\n    b.n += 1\n    b.n\n  }\n  s = m.with { |b| \"n=\${b.n}\" }\n  hm = Mutex(Hash(String, Int)).new(Hash(String, Int).new)\n  o = hm.with { |h|\n    h[\"a\"] = 5\n    h.get(\"a\")\n  }\n  o2 = hm.with { |h| h.get(\"b\") }\n  mm = Mutex(Mutex(Int)).new(Mutex(Int).new(1))\n  inner = mm.with { |x| x }\n  p = m.with { |b| Pt { x: b.n, name: \"p\" } }\n  q = m.with { |b| Maybe { x: nil } }\n  by = m.with { |b| \"ab\".bytes }\n  f = m.with { |b| 1.5 }\n  t = m.with { |b| b.n == 1 }\n  puts(a)\n  puts(s)\n  puts(o ?? 7)\n  puts(o2 ?? -1)\n  puts(inner.with { |x| x })\n  puts(\"\${p.name} \${p.x}\")\n  puts(q.x ?? 9)\n  puts(by.size)\n  puts(f)\n  puts(t)\n}\n", "1\nn=1\n5\n-1\n1\np 1\n9\n2\n1.5\ntrue\n"))
+  xs.push(accepted("mutex-value-copy-out", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Array(Int)).new([1, 2, 3])\n  snap: Array(Int) = []\n  m.with { |xs|\n    xs.each { |x| snap.push(x) }\n    0\n  }\n  puts(snap.size)\n}\n", "3\n"))
+  xs
+}
+
+fn for_cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(refused("for-counter-assign", "fn main {\n  for i in 0..10 {\n    i = 8\n  }\n}\n", "cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own", "3:7"))
+  xs.push(refused("for-counter-compound", "fn main {\n  n = 0\n  for i in 0..10 {\n    i += 4\n    n += 1\n  }\n  puts(n)\n}\n", "cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own", "4:7"))
+  xs.push(refused("for-counter-nested-block", "fn main {\n  for i in 0..10 {\n    if i > 2 {\n      while true {\n        i -= 1\n        break\n      }\n    }\n  }\n}\n", "cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own", "5:11"))
+  xs.push(refused("for-counter-outer-name", "fn main {\n  i = 100\n  for i in 0..3 {\n    i = 7\n  }\n  puts(i)\n}\n", "cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own", "4:7"))
+  xs.push(refused("for-counter-in-lambda", "fn main {\n  total = 0\n  for i in 0..3 {\n    add = { |k: Int|\n      i = k\n      total += k\n    }\n    add(i)\n  }\n  puts(total)\n}\n", "cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own", "5:9"))
+  xs.push(refused("for-element-assign", "fn main {\n  xs = [1, 2, 3]\n  for x in xs {\n    x = 0\n  }\n  puts(xs[0])\n}\n", "cannot assign to x: a for variable is a copy of the element, so the array would not change; store through an index (for i in 0..xs.size { xs[i] = ... })", "4:7"))
+  xs.push(refused("for-element-compound", "fn main {\n  xs = [1, 2, 3]\n  for x in xs {\n    x *= 2\n  }\n  puts(xs[0])\n}\n", "cannot assign to x: a for variable is a copy of the element, so the array would not change; store through an index (for i in 0..xs.size { xs[i] = ... })", "4:7"))
+  xs.push(refused("for-element-class-rebind", "class C {\n  pub n: Int = 0\n}\nfn main {\n  cs = [C.new]\n  for c in cs {\n    c = C.new\n  }\n  puts(cs[0].n)\n}\n", "cannot assign to c: a for variable is a copy of the element, so the array would not change; store through an index (for i in 0..xs.size { xs[i] = ... })", "7:7"))
+  xs.push(refused("for-field-struct", "struct P {\n  x: Int\n  y: Int\n}\nfn main {\n  xs = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]\n  for p in xs {\n    p.x = 7\n  }\n  puts(xs[1].x)\n}\n", "cannot assign to p.x: p is a for variable, a copy of the element (a struct is a value), so the array would not change; write the stored element through an index (xs[i].x = ...), or change a copy and store it back (xs[i] = p)", "8:9"))
+  xs.push(refused("for-field-nested-struct", "struct Pos {\n  x: Int\n  y: Int\n}\nstruct P {\n  id: Int\n  pos: Pos\n}\nfn main {\n  xs = [P { id: 1, pos: Pos { x: 1, y: 1 } }]\n  for p in xs {\n    p.pos.x += 10\n  }\n  puts(xs[0].pos.x)\n}\n", "cannot assign to p.pos.x: p is a for variable, a copy of the element (a struct is a value), so the array would not change; write the stored element through an index (xs[i].pos.x = ...), or change a copy and store it back (xs[i] = p)", "12:13"))
+  xs.push(refused("for-field-struct-in-method", "struct P {\n  x: Int\n}\nclass Bag {\n  ps: Array(P) = []\n  fn bump {\n    for p in ps {\n      p.x += 1\n    }\n  }\n}\nfn main {\n  b = Bag.new\n  b.bump\n}\n", "cannot assign to p.x: p is a for variable", "8:11"))
+  xs.push(accepted("for-legal-neighbours", "struct Pos {\n  x: Int\n  y: Int\n}\nstruct P {\n  x: Int\n  pos: Pos\n}\nclass C {\n  pub x: Int = 0\n  pub pos: Pos = Pos { x: 0, y: 0 }\n}\nstruct Holder {\n  c: C\n  xs: Array(Int)\n}\nfn maybe(n: Int): Int? {\n  if n > 0 {\n    return n\n  }\n  nil\n}\nfn main {\n  // a class element: the object changes, at any depth\n  cs = [C.new, C.new]\n  for c in cs {\n    c.x = 5\n    c.pos.x += 9\n  }\n  puts(\"\${cs[0].x} \${cs[1].x}\")\n  puts(cs[1].pos.x)\n  // a path through a reference inside a struct element, and an index\n  hs = [Holder { c: C.new, xs: [1, 2] }]\n  for h in hs {\n    h.c.x = 42\n    h.xs[0] = 2\n  }\n  puts(\"\${hs[0].c.x} \${hs[0].xs[0]}\")\n  // an element that is itself an array\n  grid = [[1, 2], [3, 4]]\n  for row in grid {\n    row[0] = 7\n  }\n  puts(grid[1][0])\n  // a local copy changed and read\n  ps = [P { x: 1, pos: Pos { x: 1, y: 1 } }, P { x: 3, pos: Pos { x: 3, y: 3 } }]\n  last = 0\n  for p in ps {\n    q = p\n    q.x += 0\n    last = q.x\n  }\n  puts(last)\n  // the stores the hints name\n  for i in 0..ps.size {\n    ps[i].x = 100\n    ps[i].pos.y = 200\n    p = ps[i]\n    p.pos.x = 300\n    ps[i] = p\n  }\n  puts(\"\${ps[0].x} \${ps[1].pos.y} \${ps[1].pos.x}\")\n  // a name the body binds anew is not the loop's\n  total = 0\n  for n in [1, 2, 3] {\n    if n = maybe(n) {\n      n += 0\n      total += n\n    }\n  }\n  puts(total)\n  // other names are assignable in the body; a while loop skips\n  k = 0\n  i = 0\n  while i < 10 {\n    i += 3\n    k += 1\n  }\n  puts(k)\n  // after its loop a name is an ordinary one again\n  for j in 0..3 {\n  }\n  j = 3\n  j += 0\n  puts(j)\n}\n", "5 5\n9\n42 2\n7\n3\n100 200 300\n6\n4\n3\n"))
+  xs
+}
+
+fn array_cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(refused("anew-shared-array", "fn main {\n  g = Array(Array(Int)).new(2, [0, 0])\n  g[0][0] = 7\n  puts(g[1][0])\n}\n", "Array(Array(Int)).new(n, value) would put the same object in every element (Array(Int) is, or holds, a reference: a change through one element would show in all); build one per element: Array(Array(Int)).new(n) { |i| ... }", "2:32"))
+  xs.push(refused("anew-shared-class", "class Node {\n  pub v: Int = 0\n}\nfn main {\n  n = Node.new\n  ns = Array(Node).new(3, n)\n  puts(ns[2].v)\n}\n", "Array(Node).new(n, value) would put the same object in every element (Node is, or holds, a reference", "6:27"))
+  xs.push(refused("anew-shared-hash", "fn main {\n  h = Hash(String, Int).new\n  hs = Array(Hash(String, Int)).new(2, h)\n  puts(hs.size)\n}\n", "Array(Hash(String, Int)).new(n, value) would put the same object in every element", "3:40"))
+  xs.push(refused("anew-shared-buf", "fn main {\n  bs = Array(Buf).new(2, Buf.new)\n  puts(bs.size)\n}\n", "Array(Buf).new(n, value) would put the same object in every element", "2:29"))
+  xs.push(refused("anew-shared-struct-holding", "class Node {\n  pub v: Int = 0\n}\nstruct Rec {\n  n: Int\n  node: Node\n}\nfn main {\n  rs = Array(Rec).new(2, Rec { n: 1, node: Node.new })\n  puts(rs.size)\n}\n", "Array(Rec).new(n, value) would put the same object in every element (Rec is, or holds, a reference", "9:26"))
+  xs.push(refused("anew-shared-optional", "class Node {\n  pub v: Int = 0\n}\nfn main {\n  n = Node.new\n  ns = Array(Node?).new(3, n)\n  puts(ns.size)\n}\n", "Array(Node?).new(n, value) would put the same object in every element", "6:28"))
+  xs.push(refused("anew-shared-generic", "class Node {\n  pub v: Int = 0\n}\nfn fill(n: Int, v: T): Array(T) {\n  Array(T).new(n, v)\n}\nfn main {\n  a = fill(2, 5)\n  b = fill(2, Node.new)\n  puts(a[1] + b.size)\n}\n", "Array(Node).new(n, value) would put the same object in every element", "5:19"))
+  xs.push(refused("build-value-and-block", "fn main {\n  xs = Array(Int).new(3, 0) { |i| i }\n  puts(xs.size)\n}\n", "Array(T).new(n, value) takes no block; the block form builds each element: Array(T).new(n) { |i| ... }", "2:29"))
+  xs.push(refused("build-no-param", "fn main {\n  xs = Array(Int).new(3) { 0 }\n  puts(xs.size)\n}\n", "Array(T).new(n) { |i| ... } takes one block parameter, the index", "2:26"))
+  xs.push(refused("build-two-params", "fn main {\n  xs = Array(Int).new(3) { |i, j| i + j }\n  puts(xs.size)\n}\n", "Array(T).new(n) { |i| ... } takes one block parameter, the index", "2:26"))
+  xs.push(refused("build-value-type", "fn main {\n  xs = Array(Int).new(3) { |i| \"a\" }\n  puts(xs.size)\n}\n", "expected Int, got String", "2:32"))
+  xs.push(refused("build-break", "fn main {\n  xs = Array(Int).new(3) { |i|\n    if i == 1 {\n      break\n    }\n    i\n  }\n  puts(xs.size)\n}\n", "break inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value", "4:7"))
+  xs.push(refused("build-continue", "fn main {\n  for k in 0..2 {\n    xs = Array(Int).new(3) { |i|\n      if i == 1 {\n        continue\n      }\n      i\n    }\n    puts(xs.size)\n  }\n}\n", "continue inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value", "5:9"))
+  xs.push(refused("build-no-value", "fn main {\n  xs = Array(Int).new(3) { |i| }\n  puts(xs.size)\n}\n", "block needs a value", "2:26"))
+  xs.push(refused("build-size-type", "fn main {\n  xs = Array(Int).new(\"3\") { |i| i }\n  puts(xs.size)\n}\n", "expected Int, got String", "2:23"))
+  xs.push(accepted("anew-value-neighbours", "struct P {\n  x: Int\n  name: String\n}\nclass Node {\n  pub v: Int = 0\n}\nfn fill(n: Int, v: T): Array(T) {\n  Array(T).new(n, v)\n}\nfn main {\n  fs = Array(Float64).new(2, 1.5)\n  puts(fs[1])\n  t = Array(String).new(3, \"x\")\n  puts(t[2])\n  is = Array(Int).new(4, -1)\n  puts(is[3])\n  os = Array(Node?).new(2, nil)\n  if o = os[1] {\n    puts(\"some\")\n  } else {\n    puts(\"nil\")\n  }\n  i32 = Array(Int32).new(2, 7)\n  u = Array(UInt64).new(2)\n  puts(\"\${i32[1]} \${u[0]}\")\n  ps = Array(P).new(2, P { x: 2, name: \"p\" })\n  ps[0].x = 9\n  puts(\"\${ps[1].name} \${ps[1].x}\")\n  bs = Array(Bool).new(2, true)\n  puts(bs[1])\n  puts(fill(3, \"s\").size)\n}\n", "1.5\nx\n-1\nnil\n7 0\np 2\ntrue\n3\n"))
+  xs.push(accepted("build-forms", "class Node {\n  pub v: Int = 0\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\nfn squares(n: Int): Array(Int) {\n  Array(Int).new(n) { |i| i * i }\n}\nfn fill(n: Int, v: T): Array(T) {\n  Array(T).new(n) { |i| v }\n}\nfn first(n: Int) {\n  xs = Array(Int).new(n) { |i|\n    if i == 3 {\n      puts(\"\${i - 1} left\")\n      return\n    }\n    i\n  }\n  puts(xs.size)\n}\nfn main {\n  xs = Array(Int).new(4) { |i| i * 2 }\n  puts(\"\${xs.size} \${xs[0]} \${xs[3]}\")\n  grid = Array(Array(Int)).new(3) { |y| Array(Int).new(2) }\n  grid[0][0] = 7\n  puts(\"\${grid[0][0]} \${grid[1][0]} \${grid.size} \${grid[2].size}\")\n  ns = Array(Node).new(3) { |i| Node.new(i + 1) }\n  ns[0].v = 50\n  puts(\"\${ns[0].v} \${ns[1].v} \${ns[2].v}\")\n  ss = Array(String).new(3) { |i| \"s\${i}\" }\n  puts(ss[2])\n  puts(squares(5)[4])\n  puts(\"\${fill(3, \"x\")[2]} \${fill(2, 1.5)[1]}\")\n  e = Array(Int).new(0) { |i| i }\n  puts(e.size)\n  i32s = Array(Int32).new(3) { |i| 7 }\n  puts(i32s[1])\n  es = Array(Array(Int)).new(2) { |i| [] }\n  es[0].push(4)\n  puts(\"\${es[0].size} \${es[1].size}\")\n  fs: Array(fn(Int): Int) = []\n  ys = Array(Int).new(3) { |i|\n    add = { |k: Int| k + i }\n    fs.push(add)\n    add(10)\n  }\n  puts(\"\${ys[2]} \${fs[0](1)} \${fs[2](1)}\")\n  total = 0\n  zs = Array(Int).new(3) { |i|\n    total += i\n    total\n  }\n  puts(\"\${zs[2]} \${total}\")\n  nested = Array(Array(Node)).new(2) { |y| Array(Node).new(2) { |x| Node.new(y * 10 + x) } }\n  puts(nested[1][1].v)\n  shared = Node.new(5)\n  same = Array(Node).new(2) { |i| shared }\n  same[0].v = 6\n  puts(\"\${shared.v - 1} \${same[1].v}\")\n  first(9)\n}\n", "4 0 6\n7 0 3 2\n50 2 3\ns2\n16\nx 1.5\n0\n7\n1 0\n12 1 3\n3 3\n11\n5 6\n2 left\n"))
+  xs.push(refused("anew-no-zero-value-type", "fn main {\n  xs = Array(Int | String).new(2)\n  puts(xs.size)\n}\n", "Array(Int | String).new(n) needs an element value: Int | String has no zero value; write Array(Int | String).new(n, value), or start from [] and push", "2:8"))
+  xs
+}
+
+fn default_cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(accepted("default-no-parens", "class Conn {\n  n: Int = 3\n\n  fn recv(wait: Int = 5): Int {\n    n + wait\n  }\n\n  fn both(a: Int = 1, b: Int = a + 8): Int {\n    n + a + b\n  }\n\n  fn twice: Int {\n    recv + recv\n  }\n}\n\nstruct P {\n  x: Int\n\n  fn far(k: Int = 4): Int {\n    x + k\n  }\n}\n\nfn (p: P) wide(k: Int = 5): Int {\n  p.x + k\n}\n\nfn (s: String) shout(mark: String = \"!\"): String {\n  \"\${s}\${mark}\"\n}\n\nclass Cell(T) {\n  item: T\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  fn pick(other: T, n: Int = 9): Int {\n    n\n  }\n\n  fn count(n: Int = 9): Int {\n    n\n  }\n}\n\nfn main {\n  c = Conn.new\n  puts(c.recv())\n  puts(c.recv)\n  puts(c.twice)\n  puts(c.both)\n  p = P { x: 2 }\n  puts(p.far)\n  puts(p.wide)\n  puts(c.recv + p.far - 2)\n  cell = Cell.new(\"s\")\n  puts(\"\${cell.count} \${cell.pick(\"t\")}\")\n  puts(\"ab\".shout)\n  if c.recv > 7 {\n    puts(c.recv(2))\n  }\n}\n", "8\n8\n16\n13\n6\n7\n12\n9 9\nab!\n5\n"))
+  xs.push(refused("default-no-parens-assign", "class Conn {\n  n: Int = 3\n\n  fn recv(wait: Int = 5): Int {\n    n + wait\n  }\n}\nfn main {\n  c = Conn.new\n  c.recv = 4\n}\n", "cannot assign to a method", "10:10"))
+  xs.push(refused("default-missing-required", "class Conn {\n  n: Int = 3\n\n  fn need(a: Int, b: Int = 1): Int {\n    n + a + b\n  }\n}\nfn main {\n  puts(Conn.new.need)\n}\n", "methods are not values", "9:16"))
+  xs.push(accepted("default-typed-on-type-call", "class K {\n  pub n: Int = 0\n  pub on: Bool = false\n  pub f: Float64 = 0.0\n\n  fn self.make(n: Int = 3, on: Bool = false, f: Float64 = 2.5, tag: String = \"t\", big: UInt64 = 7): K {\n    k = K.new\n    k.n = n + tag.size - 1 + big.to_i - 7\n    k.on = on\n    k.f = f\n    k\n  }\n}\nfn main {\n  a = K.make\n  puts(\"\${a.n} \${a.on}\")\n  b = K.make(5, true)\n  puts(\"\${b.n} \${b.on}\")\n  puts(K.make().f)\n}\n", "3 false\n5 true\n2.5\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/rules-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/rules-${f.tag}.bin", "${dir}/rules-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "rules-${f2.tag}.bin", "rules-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/rules-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/rules-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/rules-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "rules-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_rules.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    all = mutex_cases()
+    for f in for_cases() {
+      all.push(f)
+    }
+    for f2 in array_cases() {
+      all.push(f2)
+    }
+    for f3 in default_cases() {
+      all.push(f3)
+    }
+    run_cases(c, compiler, scratch_dir(), all)
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

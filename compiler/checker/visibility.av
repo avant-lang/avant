@@ -385,7 +385,70 @@ pub fn (checker_self: Checker) lookup_named_type(name: String, loc: Location, qu
   nil
 }
 
+// The parts of a type name (its arguments, a union's members, a function
+// type's result), each seen from the current module like the name's head
+// (O255, Stage 29 W-FIX1b: an instance now carries the types its
+// arguments named, so each must be one this module may name; before, only
+// the head was checked). A name two modules declare is given the module
+// this one sees. True when every part may be named here.
+pub fn (checker_self: Checker) type_parts_seen(tn: TypeName): Bool {
+  for a in tn.args {
+    if !checker_self.type_part_seen(a) {
+      return false
+    }
+  }
+  for m in tn.members {
+    if !checker_self.type_part_seen(m) {
+      return false
+    }
+  }
+  if r = tn.ret {
+    if !checker_self.type_part_seen(r) {
+      return false
+    }
+  }
+  true
+}
+
+pub fn (checker_self: Checker) type_part_seen(tn: TypeName): Bool {
+  if tn.pinned {
+    return true
+  }
+  if !tn.fn_type && tn.members.size == 0 {
+    owners = checker_self.mods_of_type(tn.name)
+    if tn.mod_name.size > 0 {
+      if !checker_self.qualifier_ok(tn.mod_name, checker_self.current_module) {
+        checker_self.fail(tn.loc, "unknown module ${tn.mod_name}")
+        return false
+      }
+      if owners.size > 0 && !checker_self.type_is_visible(tn.name, checker_self.current_module, tn.mod_name) {
+        checker_self.fail(tn.loc, "unknown type ${tn.mod_name}.${tn.name}")
+        return false
+      }
+    } else if owners.size > 0 {
+      if checker_self.clash_unqualified(tn.name, checker_self.current_module) {
+        checker_self.fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
+        return false
+      }
+      if !checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
+        checker_self.fail(tn.loc, "unknown type ${tn.name}")
+        return false
+      }
+      if flag = checker_self.type_multi.get(tn.name) {
+        tn.mod_name = checker_self.visible_type_mod(tn.name, checker_self.current_module, "")
+      }
+    }
+  }
+  checker_self.type_parts_seen(tn)
+}
+
 pub fn (checker_self: Checker) resolve_in_module(tn: TypeName): Ty {
+  if tn.pinned {
+    return checker_self.resolver.resolve(tn)
+  }
+  if !checker_self.type_parts_seen(tn) {
+    return checker_self.t_int()
+  }
   if tn.mod_name.size > 0 {
     if !checker_self.qualifier_ok(tn.mod_name, checker_self.current_module) {
       checker_self.fail(tn.loc, "unknown module ${tn.mod_name}")
@@ -424,25 +487,18 @@ pub fn (checker_self: Checker) resolve_in_module(tn: TypeName): Ty {
   checker_self.resolver.resolve(tn)
 }
 
+// A value's type, seen from the current module: resolve_in_module's
+// rules, then the resolver's for a value. (Until Stage 29 W-FIX1b this
+// looked the name up bare: a parameter of a type whose name two modules
+// declare was `unknown type`, though the same name as a result type
+// resolved; O165's family.)
 pub fn (checker_self: Checker) resolve_value_in_module(tn: TypeName): Ty {
-  if tn.mod_name.size > 0 {
-    if !checker_self.qualifier_ok(tn.mod_name, checker_self.current_module) {
-      checker_self.fail(tn.loc, "unknown module ${tn.mod_name}")
-      return checker_self.t_int()
-    }
-  } else {
-    if named = checker_self.resolver.get_named(tn.name) {
-      if !checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
-        checker_self.fail(tn.loc, "unknown type ${tn.name}")
-        return checker_self.t_int()
-      }
-      if checker_self.clash_unqualified(tn.name, checker_self.current_module) {
-        checker_self.fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
-        return checker_self.t_int()
-      }
-    }
+  mark = checker_self.err_count
+  ty = checker_self.resolve_in_module(tn)
+  if checker_self.new_err_since(mark) {
+    return ty
   }
-  checker_self.resolver.resolve_value(tn)
+  checker_self.resolver.value_only(ty, tn)
 }
 
 pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Function) {
@@ -458,17 +514,28 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
         owner = o
       }
     }
+    // An instance of a generic type is as visible as its template and
+    // its arguments (O255, Stage 29 W-FIX1b: before, an instance of an
+    // imported generic was looked up by its own name, never found, and
+    // `pub fn mk: Box(Int)` was refused as a private type).
+    named = ty.name
+    if ty.origin.size > 0 {
+      named = ty.origin
+      for arg in ty.ty_args {
+        checker_self.ensure_pub_sig_ty(arg, loc, fnn)
+      }
+    }
     if owner != fnn.mod_name {
       vis = 0
-      if flag = checker_self.type_vis.get(type_slot(owner, ty.name)) {
+      if flag = checker_self.type_vis.get(type_slot(owner, named)) {
         vis = flag
       } else {
-        if flag2 = checker_self.type_vis.get(ty.name) {
+        if flag2 = checker_self.type_vis.get(named) {
           vis = flag2
         }
       }
       if vis != 1 {
-        checker_self.fail(loc, "pub signature cannot use private type ${ty.name}")
+        checker_self.fail(loc, "pub signature cannot use private type ${ty.show}")
       }
     }
     return
@@ -598,7 +665,7 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
       if i < arg_tys.size {
         got = arg_tys[i]
       } else {
-        got = checker_self.check_expr_as(expr.args[i], sig.params[i])
+        got = checker_self.check_default_arg(expr, i, sig.params[i], sig.node)
       }
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {

@@ -50,6 +50,13 @@ pub class TypeName {
   pub name: String = ""
   pub args: Array(TypeName) = []
   pub nilable: Bool = false
+  // The name was resolved where it was written and stands for that type
+  // wherever it is read again (O255, Stage 29 W-FIX1b): a generic type's
+  // or function's instance carries its type arguments this way, with the
+  // module of each in mod_name, so a type of the module that uses the
+  // generic is known inside the generic's own module. The checker skips
+  // its visibility rules for a pinned name. It shares `nilable`'s word.
+  pub pinned: Bool = false
   pub members: Array(TypeName) = []
   pub mod_name: String = ""
   pub splice: Expr? = nil
@@ -161,6 +168,16 @@ pub class Expr {
   pub type_call: Bool = false
   pub fn_ref: Bool = false
   vis: Bool = false
+  // A parameter default spliced into a call as an argument
+  // (checker/match.av fill_defaults): a call checked again drops it and
+  // splices anew, so a default is never taken for an argument the caller
+  // wrote. This flag and the next share the four flags' word: the node's
+  // size is unchanged.
+  pub is_default: Bool = false
+  // Inside such a default, a copy of one of the caller's arguments
+  // standing in for the parameter the default names: checked where the
+  // caller wrote it, not where the default was declared.
+  pub caller_copy: Bool = false
   pub mod_name: String = ""
   pub splice: Expr? = nil
 
@@ -494,6 +511,7 @@ pub fn fn_self_name(fnn: Function): String {
 pub fn clone_type_name(tn: TypeName): TypeName {
   out = TypeName.new(tn.loc, tn.name)
   out.nilable = tn.nilable
+  out.pinned = tn.pinned
   out.mod_name = tn.mod_name
   out.fn_type = tn.fn_type
   if sp = tn.splice {
@@ -518,6 +536,28 @@ pub fn clone_type_name(tn: TypeName): TypeName {
     i += 1
   }
   out
+}
+
+// Whether a type name holds a pinned part: it belongs to an instance of
+// a generic, and names a type argument where the generic was used.
+pub fn type_name_has_pinned(tn: TypeName): Bool {
+  if tn.pinned {
+    return true
+  }
+  for a in tn.args {
+    if type_name_has_pinned(a) {
+      return true
+    }
+  }
+  for m in tn.members {
+    if type_name_has_pinned(m) {
+      return true
+    }
+  }
+  if r = tn.ret {
+    return type_name_has_pinned(r)
+  }
+  false
 }
 
 pub fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): TypeName {
@@ -581,6 +621,7 @@ pub fn subst_type_name(tn: TypeName, from: Array(String), to: Array(TypeName)): 
   }
   out = TypeName.new(tn.loc, tn.name)
   out.nilable = tn.nilable
+  out.pinned = tn.pinned
   out.mod_name = tn.mod_name
   i = 0
   while i < tn.args.size {
@@ -742,6 +783,8 @@ pub fn clone_expr(e: Expr): Expr {
   out.indirect = e.indirect
   out.type_call = e.type_call
   out.fn_ref = e.fn_ref
+  out.is_default = e.is_default
+  out.caller_copy = e.caller_copy
   out.resolved = e.resolved
   out.spawn_thunk = e.spawn_thunk
   if sp = e.splice {

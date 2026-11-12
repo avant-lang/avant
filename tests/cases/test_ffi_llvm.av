@@ -276,6 +276,26 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   run_waves(gr)
   c.expect(gr[0].code != 0, "root_guard.av: rg_bad stops the program")
   c.expect(str_has(log_text("${dir}/root_guard.r.err"), "avant_gc_root_begin without avant_gc_enter: the innermost frame is a generated function's frame record"), "root_guard.av: the guard's message (after rg_good, with its own frame, returned 1)")
+  // O439 (Stage 29 W-FIX1b): a stack overflow through 32 KB frames on a
+  // pool thread faults in the thread's guard page on every one of 40
+  // runs (the stack probe every function carries). Without the probe
+  // 8 runs of 180 stepped over the guard.
+  sg: Array(HJob) = []
+  sg.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/stack_guard.av", "${dir}/stack_guard", "${dir}/stack_guard.log", flags_of("tests/fixtures/ffi/stack_guard.av", root)))
+  run_waves(sg)
+  c.eq_int(sg[0].code, 0, "stack_guard.av: compiles")
+  sgr: Array(HJob) = []
+  for si in 0..40 {
+    sgr.push(run_job_env(dir, "stack_guard", "stack_guard.r${si}", ""))
+  }
+  run_waves(sgr)
+  in_guard = 0
+  for si2 in 0..40 {
+    if sgr[si2].code == 42 && log_text("${dir}/stack_guard.r${si2}.err") == "fault in the guard page\n" {
+      in_guard += 1
+    }
+  }
+  c.eq_int(in_guard, 40, "stack_guard.av: 40 of 40 overflows fault in the guard page")
   // O145 (Stage 28 W18C): a C pointer from avant_buf_bytes kept across a
   // growth of its Buf faults under AVANT_GC_VERIFY=1 and is reported, for a
   // small Buf and a large one; plain, the program prints the same and

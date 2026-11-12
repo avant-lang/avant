@@ -1,0 +1,100 @@
+import std.gc
+
+// O360 (Stage 29 W-FIX1b): the test W-INT1's empty-payload fix did not
+// have. An object with no payload (an empty array's buffer, an empty
+// class) had its payload address just past its header; allocated last in
+// a block, that was the next block's first address, and the collector
+// took a reference to it for the object there: after a young copy the
+// holder's field still named the old copy. `avant_alloc` and the
+// emitter's inline path now give such an object one word.
+//
+// Two parts. `round` allocates the three kinds of empty object (an empty
+// array literal's buffer, the buffer of `Array(T).new(0)` with a size
+// known only at run time, an empty class) with a 24-byte pad, so the
+// allocation point moves through every 8-byte position of a block; every
+// holder is kept, a young collection moves them, and each is then used
+// (under AVANT_GC_VERIFY=1 the verifier must stay silent). `extra`
+// allocates EMPTY_PAYLOAD_EXTRA more of each and keeps none:
+// tests/cases/test_gc_checks.av runs the program twice and checks that
+// 100,000 more steps allocate exactly 9,600,000 more bytes (three empty
+// objects of 16 bytes and two array headers of 24), in the inline build
+// and in the call-form build. With the emitter's two guards removed the
+// inline build's difference is 7,200,000: an empty object is its header
+// alone again. (avant_alloc's own line is not reached by generated code,
+// which never passes 0 since the emitter's guard: removing it changes
+// nothing here. The layout that corrupted memory, such an object as the
+// last of a block, was reached by the compiler's own dump only; two
+// attempts at a small program that reaches it failed, so this test pins
+// the property that makes it impossible.)
+
+class Empty {
+}
+
+class Pad {
+  a: Int = 0
+  b: Int = 0
+}
+
+class Holder {
+  pub e: Empty = Empty.new
+  pub xs: Array(Int) = []
+}
+
+fn zero(n: Int): Int {
+  n - n
+}
+
+fn round(steps: Int): Int {
+  lits: Array(Array(Int)) = []
+  news: Array(Array(Int)) = []
+  holders: Array(Holder) = []
+  lits.reserve(steps)
+  news.reserve(steps)
+  holders.reserve(steps)
+  for j in 0..steps {
+    e: Array(Int) = []
+    lits.push(e)
+    news.push(Array(Int).new(zero(j)))
+    holders.push(Holder.new)
+    _ = Pad.new
+  }
+  gc.collect()
+  bad = 0
+  for k in 0..steps {
+    if lits[k].size != 0 || news[k].size != 0 || holders[k].xs.size != 0 {
+      bad += 1
+    }
+    lits[k].push(k)
+    news[k].push(k + 1)
+    holders[k].xs.push(k + 2)
+  }
+  gc.collect()
+  for k in 0..steps {
+    if lits[k][0] != k || news[k][0] != k + 1 || holders[k].xs[0] != k + 2 {
+      bad += 1
+    }
+  }
+  bad
+}
+
+fn extra(steps: Int): Int {
+  n = 0
+  for j in 0..steps {
+    e = Empty.new
+    xs: Array(Int) = []
+    ys = Array(Int).new(zero(j))
+    n += xs.size + ys.size
+  }
+  n
+}
+
+fn main {
+  bad = 0
+  for r in 0..3 {
+    bad += round(6000 + r)
+  }
+  if v = env_get("EMPTY_PAYLOAD_EXTRA") {
+    bad += extra(v.to_i ?? 0)
+  }
+  puts(bad)
+}
