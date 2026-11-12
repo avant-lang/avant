@@ -2996,7 +2996,9 @@ avant_int avant_ws_client_close(void *handle) {
 /* ---- client fetch primitive ---- */
 
 /* request is the whole request (the head and the body), pinned for the
- * loop; sent is how much of it the socket has taken. */
+ * loop; sent is how much of it the socket has taken. sock is the
+ * socket until it is closed (fetch_on_close clears it), which is how
+ * the deadline's timer knows whether there is still something to end. */
 typedef struct FetchState {
   char *buf;
   size_t len;
@@ -3005,6 +3007,7 @@ typedef struct FetchState {
   const char *request;
   size_t request_len;
   size_t sent;
+  struct us_socket_t *sock;
 } FetchState;
 
 static FetchState *fetch_of_socket(struct us_socket_t *s) {
@@ -3060,6 +3063,7 @@ static struct us_socket_t *fetch_on_close(struct us_socket_t *s, int code,
                                           void *reason) {
   (void)code;
   (void)reason;
+  fetch_of_socket(s)->sock = NULL;
   return s;
 }
 
@@ -3068,10 +3072,34 @@ static struct us_socket_t *fetch_on_end(struct us_socket_t *s) {
   return us_socket_close(0, s, 0, NULL);
 }
 
+/* The socket's own timeout is not armed (see fetch_on_deadline); the
+ * handler stays so that one armed by a later change still ends the
+ * exchange as a timeout. */
 static struct us_socket_t *fetch_on_timeout(struct us_socket_t *s) {
   FetchState *st = fetch_of_socket(s);
   st->failed = 2;
   return us_socket_close(0, s, 0, NULL);
+}
+
+/* timeout_ms is a deadline for the whole exchange: the connect, the
+ * request and the complete response (Stage 29 W-FIX1d, O514). It was
+ * armed as the socket's timeout before the connect and uSockets clears
+ * a socket's timeout when the connection is established, so it covered
+ * the connect only: a server that accepted and never answered held the
+ * call until that server closed. It is now a timer of the fetch's own
+ * loop, set once and never re-armed, so data that keeps arriving does
+ * not extend it. When it fires with the socket still open the exchange
+ * failed as a timeout, whatever has arrived: a response that is not
+ * complete is not a response. Its precision is the timer's (timerfd,
+ * milliseconds), not the 4-second sweep uSockets counts socket
+ * timeouts in, which made a 10 s connect timeout 12 s and a 1 s one
+ * 4 s. */
+static void fetch_on_deadline(struct us_timer_t *t) {
+  FetchState *st = *(FetchState **)us_timer_ext(t);
+  if (st->sock) {
+    st->failed = 2;
+    us_socket_close(0, st->sock, 0, NULL);
+  }
 }
 
 static struct us_socket_t *fetch_on_connect_error(struct us_socket_t *s,
@@ -3098,9 +3126,10 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
   struct us_socket_context_t *ctx;
   struct us_socket_context_options_t options;
   struct us_socket_t *sock;
+  struct us_timer_t *deadline;
   FetchState *st;
   char *out;
-  int timeout_s;
+  int deadline_ms;
   set_status(0);
   if (port < 0 || port > 65535) {
     set_status(1);
@@ -3134,8 +3163,20 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
   us_socket_context_on_timeout(0, ctx, fetch_on_timeout);
   us_socket_context_on_end(0, ctx, fetch_on_end);
   us_socket_context_on_connect_error(0, ctx, fetch_on_connect_error);
+  /* The timer does not keep the loop running (fallthrough): the loop
+   * ends when the socket is closed, and the timer is closed after it. */
+  deadline = us_create_timer(loop, 1, (unsigned int)sizeof(FetchState *));
+  if (!deadline) {
+    us_socket_context_free(0, ctx);
+    us_loop_free(loop);
+    free(st);
+    set_status(4);
+    return avant_str_empty();
+  }
+  *(FetchState **)us_timer_ext(deadline) = st;
   sock = us_socket_context_connect(0, ctx, host, (int)port, NULL, 0, 0);
   if (!sock) {
+    us_timer_close(deadline);
     us_socket_context_free(0, ctx);
     us_loop_free(loop);
     free(st->buf);
@@ -3143,8 +3184,9 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
     set_status(1);
     return avant_str_empty();
   }
-  timeout_s = timeout_ms <= 0 ? 10 : (timeout_ms > INT32_MAX ? INT32_MAX / 1000 : (int)((timeout_ms + 999) / 1000));
-  us_socket_timeout(0, sock, (unsigned int)timeout_s);
+  st->sock = sock;
+  deadline_ms = timeout_ms <= 0 ? 10000 : (timeout_ms > INT32_MAX ? INT32_MAX : (int)timeout_ms);
+  us_timer_set(deadline, fetch_on_deadline, deadline_ms, 0);
   st->request = request;
   st->request_len = avant_str_n(request);
   /* The loop runs native (rule 3); its callbacks read the request, which
@@ -3155,6 +3197,7 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
   us_loop_run(loop);
   avant_gc_native_end();
   avant_unpin((void *)request);
+  us_timer_close(deadline);
   us_socket_context_free(0, ctx);
   us_loop_free(loop);
   if (st->failed == 1) {
@@ -3163,7 +3206,7 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
     free(st);
     return avant_str_empty();
   }
-  if (st->failed == 2 && st->len == 0) {
+  if (st->failed == 2) {
     set_status(2);
     free(st->buf);
     free(st);

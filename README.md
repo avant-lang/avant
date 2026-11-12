@@ -3015,6 +3015,8 @@ fn main {
 
 `Http.get(url, follow = true, timeout_ms = 10000)`, `Http.post(url, body, ...)` with a `String` body, and `Http.request(method, url, body, headers, ...)` with `body` as `Bytes` and `headers` as an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`), return `Response | HttpError`. A call blocks its thread until the response is complete, so do not make one from a server handler: `spawn` first.
 
+`timeout_ms` is a deadline for the whole call: the connection, the request, the complete response, and every redirect the call follows. When it passes first, the call returns an `HttpError` (`request to 127.0.0.1:8080 timed out`), whatever part of a response had arrived; a server that keeps sending slowly does not extend it. The deadline is kept within a few milliseconds. Zero or less means the default, 10000.
+
 #### WebSocket server
 
 WebSocket routes share the HTTP server and its port. A handler runs once per complete message.
@@ -3059,7 +3061,7 @@ fn main {
 }
 ```
 
-`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError`. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Never call `recv` from a server handler. A connection that is never closed keeps its thread until the process exits.
+`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError`; its `timeout_ms` is the deadline for the connection and its handshake. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Never call `recv` from a server handler. A connection that is never closed keeps its thread until the process exits.
 
 ### std.zlib
 

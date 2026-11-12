@@ -827,7 +827,9 @@ fn resolve_url(base: String, loc: String): String? {
   nil
 }
 
-fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Header), timeout_ms: Int): Response | HttpError {
+// One exchange, no redirects. `deadline` is a reading of `now_ms()`:
+// the exchange gets what is left until then when it starts.
+fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Header), deadline: Int): Response | HttpError {
   if starts_with(url, "https://") {
     return HttpError.new("https is not supported until the TLS wave")
   }
@@ -856,7 +858,11 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
       text = String.from_utf8(body) ?? ""
       buf.push_str(text)
     }
-    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s, timeout_ms)
+    left = deadline - now_ms()
+    if left <= 0 {
+      return HttpError.new("request to ${p.authority} timed out")
+    }
+    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s, left)
     code = httpc.avant_http_take_status()
     if code == 1 {
       return HttpError.new("could not connect to ${p.authority}")
@@ -926,13 +932,22 @@ pub class Http {
     Http.request("POST", url, body.bytes, hs, follow, timeout_ms)
   }
 
+  // `timeout_ms` is a deadline for the whole call: every redirect it
+  // follows, each one's connect, request and complete response. When
+  // it passes first the call returns an HttpError, whatever has
+  // arrived. Zero or less means the default, 10000.
   pub fn self.request(method: String, url: String, body: Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {
     cur_method = method
     cur_url = url
     cur_body = body
     hops = 0
+    limit = timeout_ms
+    if limit <= 0 {
+      limit = 10000
+    }
+    deadline = now_ms() + limit
     while true {
-      resp = http_fetch_once(cur_method, cur_url, cur_body, headers, timeout_ms)?
+      resp = http_fetch_once(cur_method, cur_url, cur_body, headers, deadline)?
       redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
       if !follow || !redirect {
         return resp

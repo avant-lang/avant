@@ -9,7 +9,8 @@ import std.http
 // disagree (P193). The byte-level client is
 // tests/fixtures/http/raw_client.py: it prints one line per mode.
 // And of its client (Stage 29 W-FIX1d): a request larger than the
-// socket takes at once (O513).
+// socket takes at once (O513); a peer that accepts and never answers,
+// or never reads (O514).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -85,6 +86,61 @@ fn queue_round(port: Int, out: Channel(String), root: String, stamp: Int): Int {
   out.send(raw_client(port, root, stamp, "close_big", ""))
   out.send(raw_client(port, root, stamp, "half_close", ""))
   out.send(raw_client(port, root, stamp, "flood", ""))
+  0
+}
+
+fn http_failure(r: Response | HttpError): HttpError? {
+  _ = r?
+  nil
+}
+
+fn ws_failure(r: WsConnection | HttpError): HttpError? {
+  _ = r?
+  nil
+}
+
+// "timed out in time" when the call failed as a timeout no earlier than
+// its limit and within 1.5 s after it (the slack is for a loaded
+// machine and the collector's check modes; alone it is a few ms).
+fn timed(what: String, started: Int, limit: Int, message: String): String {
+  took = now_ms() - started
+  if str_has(message, "timed out") && took >= limit && took < limit + 1500 {
+    return "${what}=timed out in time"
+  }
+  "${what}=${message} after ${took} ms, limit ${limit}"
+}
+
+// O514: `timeout_ms` covered the connect only, so a peer that accepted
+// and then stayed silent held the call for as long as it liked. It is
+// a deadline for the whole call. The peer here is a listener that is
+// never served: the kernel completes the connection, and nobody reads
+// or answers. A GET, a POST whose 8 MiB the peer stops taking (O513's
+// stalled peer) and a WebSocket handshake each end at their second.
+fn timeout_round(port: Int, out: Channel(String)): Int {
+  url = "http://127.0.0.1:${port}/"
+  t0 = now_ms()
+  if e = http_failure(Http.get(url, true, 1000)) {
+    out.send(timed("get", t0, 1000, e.message))
+  } else {
+    out.send("get=answered")
+  }
+  b = buf_new()
+  for i in 0..8388608 {
+    b.push_byte(97 + i % 26)
+  }
+  big = b.to_s
+  t0 = now_ms()
+  if e = http_failure(Http.post(url, big, true, 1000)) {
+    out.send(timed("post", t0, 1000, e.message))
+  } else {
+    out.send("post=answered")
+  }
+  t0 = now_ms()
+  if e = ws_failure(Ws.connect("ws://127.0.0.1:${port}/", 1000)) {
+    out.send(timed("ws", t0, 1000, e.message))
+  } else {
+    out.send("ws=connected")
+  }
   0
 }
 
@@ -256,6 +312,20 @@ fn test_std_http_safety(c: Checks, root: String) {
     out = Channel(String).new(8)
     idle_out = Channel(String).new(2)
     done = Channel(Int).new(2)
+    // O514: the client's deadline, against a listener that is never
+    // served. Its three seconds run beside the idle round's eight; the
+    // listener is closed after them, which also ends a client that did
+    // not time out (the starting head's), so the check fails instead of
+    // hanging.
+    quiet = Http.listen(0, "127.0.0.1", 1048576, 1)
+    quiet_port = 0
+    if q = quiet {
+      quiet_port = q.port
+    }
+    timeout_out = Channel(String).new(4)
+    timeout_task = spawn {
+      timeout_round(quiet_port, timeout_out)
+    }
     before_kb = peak_rss_kb()
     queue_task = spawn {
       r = queue_round(port, out, root, stamp)
@@ -278,9 +348,18 @@ fn test_std_http_safety(c: Checks, root: String) {
       0
     }
     server.serve
+    if q = quiet {
+      q.close
+    }
     c.eq_int(queue_task.join, 0, "output-queue task")
     c.eq_int(idle_task.join, 0, "idle-timeout task")
     c.eq_int(stopper.join, 0, "stopper task")
+    c.eq_int(timeout_task.join, 0, "client-deadline task")
+    twant: Array(String) = []
+    twant.push("get=timed out in time")
+    twant.push("post=timed out in time")
+    twant.push("ws=timed out in time")
+    expect_lines(c, timeout_out, twant, "the client's timeout_ms is a deadline for the whole call:")
     want: Array(String) = []
     want.push("slow_big=whole,then pong")
     want.push("pile=65 whole,in order")
