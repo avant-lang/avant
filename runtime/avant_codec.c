@@ -200,8 +200,10 @@ int32_t avant_sha256_word0(const char *s) {
       __m128i w = _mm_unpacklo_epi8(b, zero);
       __m128i bl = _mm_unpacklo_epi16(w, zero);
       __m128i bh = _mm_unpackhi_epi16(w, zero);
-      lo = _mm_add_epi32(_mm_add_epi32(_mm_slli_epi32(lo, 5), lo), bl);
-      hi = _mm_add_epi32(_mm_add_epi32(_mm_slli_epi32(hi, 5), hi), bh);
+      /* (h << 5) + (h + b): the same sum modulo 2^32, one add shorter
+       * on the chain (the loop is bound by the chains' latency). */
+      lo = _mm_add_epi32(_mm_slli_epi32(lo, 5), _mm_add_epi32(lo, bl));
+      hi = _mm_add_epi32(_mm_slli_epi32(hi, 5), _mm_add_epi32(hi, bh));
       lo = _mm_xor_si128(_mm_add_epi32(lo, _mm_slli_epi32(lo, 10)), _mm_srli_epi32(lo, 6));
       hi = _mm_xor_si128(_mm_add_epi32(hi, _mm_slli_epi32(hi, 10)), _mm_srli_epi32(hi, 6));
     }
