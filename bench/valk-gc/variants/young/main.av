@@ -1,0 +1,316 @@
+// GC microbenchmarks: the Avant port of Valk's suite, with a YOUNG
+// collection wherever upstream forces a collection.
+//
+// modified from ../../main.av: every call of the runtime's full collection
+// (avant_gc_collect, 8 places) is std.gc's gc.collect(), which collects
+// the young generation only. It is NOT a complete collection (it does not
+// reclaim an old structure: scenario 4 frees nothing here), so this row is
+// not equivalent to the other languages' rows; it is measured to show the
+// cost of Avant's "only what changed" collection beside Valk's local
+// collection (scenario 2). Nothing else differs.
+//
+// Origin as ../../main.av: ported from Valk's examples/bench/gc/main.valk
+// (https://github.com/valk-lang/valk, tag 0.8.5, commit 33224300; MIT,
+// (c) 2024 Lorenz Vandevelde; the license is in ../../upstream/LICENSE).
+
+import std.gc
+
+class Node {
+  next: Node?
+
+  fn len: Int {
+    n: Node? = self
+    c = 0
+    while cur = n {
+      n = cur.next
+      c = c + 1
+    }
+    c
+  }
+}
+
+class Tree {
+  left: Tree?
+  right: Tree?
+
+  fn initialize(left: Tree? = nil, right: Tree? = nil) {
+    self.left = left
+    self.right = right
+  }
+
+  fn check: Int {
+    res = 1
+    if lt = self.left {
+      res = res + lt.check
+    }
+    if rt = self.right {
+      res = res + rt.check
+    }
+    res
+  }
+}
+
+// Valk's globals g_sink and g_keep.
+class Globals {
+  sink: Node?
+  keep: Node?
+}
+
+fn build_tree(depth: Int): Tree {
+  if depth <= 0 {
+    return Tree.new
+  }
+  Tree.new(build_tree(depth - 1), build_tree(depth - 1))
+}
+
+fn chain(n: Int): Node {
+  first = Node.new
+  prev = first
+  i = 1
+  while i < n {
+    node = Node.new
+    prev.next = node
+    prev = node
+    i = i + 1
+  }
+  first
+}
+
+// The length of an optional chain (0 for nil): scenario 4 measures its
+// list without binding it to a second local.
+fn len_of(list: Node?): Int {
+  if l = list {
+    return l.len
+  }
+  0
+}
+
+fn print_time(us: Int) {
+  puts("time_us:  ${us}")
+  puts("time_ms:  ${us / 1000}")
+}
+
+fn mem_kb: Int {
+  0
+}
+
+fn header(name: String) {
+  puts("")
+  puts("=== ${name} ===")
+}
+
+fn ok_fail(ok: Bool): String {
+  if ok {
+    return "OK"
+  }
+  "FAIL"
+}
+
+fn collect_n(n: Int) {
+  i = 0
+  while i < n {
+    gc.collect()
+    i = i + 1
+  }
+}
+
+// 1) Objects that die at once: every allocation is real (stored into the
+//    sink), only the last stays live.
+fn bench_short_lived(g: Globals) {
+  header("short-lived alloc")
+  amount = 10000000
+  root = Node.new
+
+  start = now_us()
+  i = amount
+  while i > 0 {
+    i = i - 1
+    n = Node.new
+    g.sink = n
+    if i == 0 {
+      root.next = n
+    }
+  }
+  us = now_us() - start
+  collect_n(2)
+
+  puts("objects:  ${amount}")
+  print_time(us)
+  puts("rate:     ${amount * 1000 / (us + 1)} allocs/ms")
+  puts("mem_kb:   ${mem_kb()}")
+  puts("verify:   ${root.len}")
+}
+
+// 2) Large stable live set; allocate one trigger object before each
+//    forced collection.
+fn bench_stable_collect(g: Globals) {
+  header("stable-heap forced collects")
+  live = 500000
+  collects = 500
+  list = chain(live)
+
+  gc.collect()
+
+  start = now_us()
+  c = 0
+  while c < collects {
+    g.sink = Node.new
+    gc.collect()
+    c = c + 1
+  }
+  us = now_us() - start
+
+  puts("live:     ${live}")
+  puts("collects: ${collects}")
+  print_time(us)
+  puts("rate:     ${collects * 1000000 / (us + 1)} collects/s")
+  puts("mem_kb:   ${mem_kb()}")
+  puts("verify:   ${ok_fail(list.len == live)}")
+}
+
+// 3) Build a long-lived chain (each link is a store into the node before).
+fn bench_build_chain(g: Globals) {
+  header("build long-lived chain")
+  amount = 5000000
+
+  start = now_us()
+  list = chain(amount)
+  us = now_us() - start
+
+  // Pin so the next scenario can drop it.
+  g.keep = list
+
+  puts("objects:  ${amount}")
+  print_time(us)
+  puts("rate:     ${amount * 1000 / (us + 1)} allocs/ms")
+  puts("mem_kb:   ${mem_kb()}")
+  puts("verify:   ${ok_fail(list.len == amount)}")
+}
+
+// 4) Drop a large graph and reclaim.
+fn bench_free_chain(g: Globals) {
+  header("free long-lived chain")
+  list: Node? = g.keep
+  amount = len_of(list)
+  if amount == 0 {
+    puts("skipped: no chain from build step")
+    return
+  }
+  check = amount
+
+  start = now_us()
+  // Drop every root, this local included, before reclaiming.
+  g.keep = nil
+  list = nil
+  collect_n(4)
+  us = now_us() - start
+
+  puts("objects:  ${amount}")
+  print_time(us)
+  puts("mem_kb:   ${mem_kb()}")
+  puts("verify:   ${check}")
+}
+
+// 5) Rotate a live list: the head goes to the tail, 50 times.
+fn bench_mutate_links(g: Globals) {
+  header("mutate live links")
+  live = 200000
+  rounds = 50
+  list = chain(live)
+  gc.collect()
+
+  start = now_us()
+  r = 0
+  while r < rounds {
+    // Rotate: first -> end, second becomes the new head.
+    head = list
+    second = head.next ?? break
+    head.next = nil
+    tail = second
+    while n = tail.next {
+      tail = n
+    }
+    tail.next = head
+    list = second
+    r = r + 1
+  }
+  us = now_us() - start
+  gc.collect()
+
+  puts("live:     ${live}")
+  puts("rounds:   ${rounds}")
+  print_time(us)
+  puts("mem_kb:   ${mem_kb()}")
+  puts("verify:   ${ok_fail(list.len == live)}")
+}
+
+// 6) Allocate short-lived garbage while a large live set stays rooted.
+fn bench_churn_with_live(g: Globals) {
+  header("short-lived churn with large live set")
+  live = 500000
+  churn = 5000000
+  list = chain(live)
+  gc.collect()
+
+  start = now_us()
+  i = churn
+  while i > 0 {
+    i = i - 1
+    n = Node.new
+    g.sink = n
+  }
+  gc.collect()
+  us = now_us() - start
+
+  puts("live:     ${live}")
+  puts("churn:    ${churn}")
+  print_time(us)
+  puts("rate:     ${churn * 1000 / (us + 1)} allocs/ms")
+  puts("mem_kb:   ${mem_kb()}")
+  puts("verify:   ${ok_fail(list.len == live)}")
+}
+
+// 7) Build and discard trees.
+fn bench_tree_churn {
+  header("tree churn")
+  depth = 14
+  trees = 400
+  // nodes per full binary tree: 2^(depth+1) - 1
+  nodes_per = (1 << (depth + 1)) - 1
+
+  start = now_us()
+  check = 0
+  i = 0
+  while i < trees {
+    check = check + build_tree(depth).check
+    i = i + 1
+  }
+  gc.collect()
+  us = now_us() - start
+
+  puts("depth:    ${depth}")
+  puts("trees:    ${trees}")
+  puts("nodes:    ~${trees * nodes_per}")
+  print_time(us)
+  puts("mem_kb:   ${mem_kb()}")
+  puts("verify:   ${check}")
+}
+
+fn main: Int {
+  puts("Avant GC bench suite (young collections)")
+  puts("mem_kb before: ${mem_kb()}")
+  g = Globals.new
+
+  bench_short_lived(g)
+  bench_stable_collect(g)
+  bench_build_chain(g)
+  bench_free_chain(g)
+  bench_mutate_links(g)
+  bench_churn_with_live(g)
+  bench_tree_churn()
+
+  puts("")
+  puts("=== done ===")
+  puts("mem_kb after: ${mem_kb()}")
+  0
+}

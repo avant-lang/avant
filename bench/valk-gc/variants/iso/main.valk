@@ -1,0 +1,359 @@
+// modified from upstream: main takes scenario numbers and runs those, in the
+// order given (no argument: the seven scenarios in upstream's order,
+// printing what upstream prints; `3 4` isolates scenario 4; `0` runs
+// nothing); scenario 8, "reverse live links", is ADDED BY AVANT and is not
+// part of Valk's suite (scenario 5 with the rotation, 2 stores a round,
+// replaced by an in-place reversal, 200,000 stores a round). Nothing else is
+// changed. The headline rows are measured with the unmodified file, never
+// with this one.
+// Unmodified original: ../../upstream/main.valk, from
+// Valk's examples/bench/gc/main.valk (https://github.com/valk-lang/valk, tag
+// 0.8.5, commit 33224300; MIT, (c) 2024 Lorenz Vandevelde; license in
+// ../../upstream/LICENSE).
+//
+// GC microbenchmarks for comparing Valk's stateful GC against other runtimes.
+// Pair with main.go, main.d, and main.cs. Same scenarios and sizes.
+//
+// Scenarios:
+//   1. short-lived     - allocate objects that never escape (never-owned path)
+//   2. stable-collect  - force collects while a large live graph is untouched
+//   3. build-chain     - build a long-lived singly linked list
+//   4. free-chain      - drop the root and reclaim the list
+//   5. mutate-links    - rewrite pointers in a live list (write-barrier / dirty path)
+//   6. churn+live      - short-lived allocs while holding a large live set
+//   7. tree-churn      - allocate and discard binary trees
+
+use valk.time
+use valk.gc
+
+class Node {
+    next: ?Node
+
+    fn len() uint {
+        let n: ?Node = this
+        let c: uint = 0
+        while isset(n) {
+            n = n.next
+            c++
+        }
+        return c
+    }
+}
+
+class Tree {
+    left: ?Tree
+    right: ?Tree
+
+    static fn build(depth: int) Tree {
+        if depth <= 0 : return Tree {}
+        return Tree {
+            left: Tree.build(depth - 1)
+            right: Tree.build(depth - 1)
+        }
+    }
+
+    fn check() uint {
+        let res: uint = 1
+        let lt = this.left
+        let rt = this.right
+        if isset(lt) : res += lt.check()
+        if isset(rt) : res += rt.check()
+        return res
+    }
+}
+
+fn chain(n: uint) Node {
+    let first = Node {}
+    let prev = first
+    let i: uint = 1
+    while i < n {
+        let node = Node {}
+        prev.next = node
+        prev = node
+        i++
+    }
+    return first
+}
+
+fn print_time(us: uint) {
+    println("time_us:  %us")
+    println("time_ms:  %{ us / 1000 }")
+}
+
+fn mem_kb() uint {
+    return gc.gc.mem_usage_thread / 1024
+}
+
+fn header(name: String) {
+    println("")
+    println("=== " + name + " ===")
+}
+
+fn ok_fail(ok: bool) String {
+    if ok : return "OK"
+    return "FAIL"
+}
+
+// Drain reclaim / pool-reset follow-up passes.
+fn collect_n(n: uint) {
+    let i: uint = 0
+    while i < n {
+        gc.collect()
+        i++
+    }
+}
+
+// Overwrite sink: every alloc is real; only the last stays live.
+global g_sink: ?Node (null)
+
+// 1) Objects that die without ever becoming heap-owned.
+//    Valk: stay `new`, slots reused / pools reset — no per-object free walk.
+fn bench_short_lived() {
+    header("short-lived alloc")
+    let amount: uint = 10_000_000
+    let root = Node {}
+
+    let start = time.mono_us()
+    let i = amount
+    while i-- > 0 {
+        let n = Node {}
+        g_sink = n
+        if i == 0 : root.next = n
+    }
+    let us = time.mono_us() - start
+    collect_n(2)
+
+    println("objects:  %amount")
+    print_time(us)
+    println("rate:     %{ amount * 1000 / (us + 1) } allocs/ms")
+    println("mem_kb:   %{ mem_kb() }")
+    println("verify:   %{ root.len() }")
+}
+
+// 2) Large stable live set; allocate one trigger object before each collection.
+//    Tracers re-walk live data. Valk only re-scans roots / deltas.
+fn bench_stable_collect() {
+    header("stable-heap forced collects")
+    let live: uint = 500_000
+    let collects: uint = 500
+    let list = chain(live)
+
+    // Warm so ownership is established before the timed loop.
+    gc.collect()
+
+    let start = time.mono_us()
+    let c: uint = 0
+    while c < collects {
+        g_sink = Node {}
+        gc.collect()
+        c++
+    }
+    let us = time.mono_us() - start
+
+    println("live:     %live")
+    println("collects: %collects")
+    print_time(us)
+    println("rate:     %{ collects * 1_000_000 / (us + 1) } collects/s")
+    println("mem_kb:   %{ mem_kb() }")
+    println("verify:   %{ ok_fail(list.len() == live) }")
+}
+
+global g_keep: ?Node (null)
+
+// 3) Build a long-lived chain (each link is a heap property write).
+fn bench_build_chain() {
+    header("build long-lived chain")
+    let amount: uint = 5_000_000
+
+    let start = time.mono_us()
+    let list = chain(amount)
+    let us = time.mono_us() - start
+
+    // Pin so the next free bench can drop it.
+    g_keep = list
+
+    println("objects:  %amount")
+    print_time(us)
+    println("rate:     %{ amount * 1000 / (us + 1) } allocs/ms")
+    println("mem_kb:   %{ mem_kb() }")
+    println("verify:   %{ ok_fail(list.len() == amount) }")
+}
+
+// 4) Drop a large owned graph and reclaim.
+fn bench_free_chain() {
+    header("free long-lived chain")
+    let list: ?Node = g_keep
+    if !isset(list) {
+        println("skipped: no chain from build step")
+        return
+    }
+    let amount = list.len()
+    let check = amount
+
+    let start = time.mono_us()
+    // Drop every root — including this local — before reclaiming.
+    g_keep = null
+    list = null
+    // Ownership loss + pool empty-block follow-up resets.
+    collect_n(4)
+    let us = time.mono_us() - start
+
+    println("objects:  %amount")
+    print_time(us)
+    println("mem_kb:   %{ mem_kb() }")
+    println("verify:   %check")
+}
+
+// 5) Mutate every link in a live list repeatedly (write-barrier / update_list path).
+fn bench_mutate_links() {
+    header("mutate live links")
+    let live: uint = 200_000
+    let rounds: uint = 50
+    let list = chain(live)
+    gc.collect()
+
+    let start = time.mono_us()
+    let r: uint = 0
+    while r < rounds {
+        // Rotate: first -> end, second becomes new head.
+        let head = list
+        let second = head.next
+        if !isset(second) : break
+        head.next = null
+        let tail = second
+        while true {
+            let n = tail.next
+            if !isset(n) : break
+            tail = n
+        }
+        tail.next = head
+        list = second
+        r++
+    }
+    let us = time.mono_us() - start
+    gc.collect()
+
+    println("live:     %live")
+    println("rounds:   %rounds")
+    print_time(us)
+    println("mem_kb:   %{ mem_kb() }")
+    println("verify:   %{ ok_fail(list.len() == live) }")
+}
+
+// 6) Allocate short-lived garbage while a large live set remains rooted.
+//    Classic "GC tax under load" microbench.
+fn bench_churn_with_live() {
+    header("short-lived churn with large live set")
+    let live: uint = 500_000
+    let churn: uint = 5_000_000
+    let list = chain(live)
+    gc.collect()
+
+    let start = time.mono_us()
+    let i = churn
+    while i-- > 0 {
+        let n = Node {}
+        g_sink = n
+    }
+    gc.collect()
+    let us = time.mono_us() - start
+
+    println("live:     %live")
+    println("churn:    %churn")
+    print_time(us)
+    println("rate:     %{ churn * 1000 / (us + 1) } allocs/ms")
+    println("mem_kb:   %{ mem_kb() }")
+    println("verify:   %{ ok_fail(list.len() == live) }")
+}
+
+// 7) Build and discard trees (mixed short-lived graphs with internal edges).
+fn bench_tree_churn() {
+    header("tree churn")
+    let depth: int = 14
+    let trees: uint = 400
+    // nodes per full binary tree ≈ 2^(depth+1)-1
+    let nodes_per = (1 << (depth + 1)) - 1
+
+    let start = time.mono_us()
+    let check: uint = 0
+    let i: uint = 0
+    while i < trees {
+        check += Tree.build(depth).check()
+        i++
+    }
+    gc.collect()
+    let us = time.mono_us() - start
+
+    println("depth:    %depth")
+    println("trees:    %trees")
+    println("nodes:    ~%{ trees * nodes_per.to(uint) }")
+    print_time(us)
+    println("mem_kb:   %{ mem_kb() }")
+    println("verify:   %check")
+}
+
+// 8) ADDED BY AVANT, not part of Valk's suite: reverse a live list in place.
+fn bench_reverse_links() {
+    header("reverse live links")
+    let live: uint = 200_000
+    let rounds: uint = 50
+    let list = chain(live)
+    gc.collect()
+
+    let start = time.mono_us()
+    let r: uint = 0
+    while r < rounds {
+        let prev: ?Node = null
+        let cur: ?Node = list
+        while isset(cur) {
+            let next = cur.next
+            cur.next = prev
+            prev = cur
+            cur = next
+        }
+        if isset(prev) : list = prev
+        r++
+    }
+    let us = time.mono_us() - start
+    gc.collect()
+
+    println("live:     %live")
+    println("rounds:   %rounds")
+    println("stores:   %{ live * rounds }")
+    print_time(us)
+    println("mem_kb:   %{ mem_kb() }")
+    println("verify:   %{ ok_fail(list.len() == live) }")
+}
+
+fn run_scenario(which: int) {
+    if which == 1 : bench_short_lived()
+    if which == 2 : bench_stable_collect()
+    if which == 3 : bench_build_chain()
+    if which == 4 : bench_free_chain()
+    if which == 5 : bench_mutate_links()
+    if which == 6 : bench_churn_with_live()
+    if which == 7 : bench_tree_churn()
+    if which == 8 : bench_reverse_links()
+}
+
+fn main(args: Array[String]) {
+    println("Valk GC bench suite")
+    println("mem_kb before: %{ mem_kb() }")
+
+    if args.length < 2 {
+        let which = 1
+        while which <= 7 {
+            run_scenario(which)
+            which++
+        }
+    }
+    each args as arg, index {
+        if index == 0 : continue
+        let which = arg.to_int() ! panic("Invalid scenario: %arg")
+        run_scenario(which)
+    }
+
+    println("")
+    println("=== done ===")
+    println("mem_kb after: %{ mem_kb() }")
+}
