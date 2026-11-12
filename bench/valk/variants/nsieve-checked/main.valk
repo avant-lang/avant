@@ -1,0 +1,47 @@
+// Adapted from examples/bench/nsieve/main.valk of valk-lang/valk (https://github.com/valk-lang/valk),
+// tag 0.8.5, commit 332243001c505373a8203cc60abaafcf188c4701.
+// MIT, © 2024 Lorenz Vandevelde (the licence text is in ../LICENSE-valk).
+//
+// A labelled variant for Avant's bench/valk (levelled twin, D222): what the shipped
+// program costs Valk when it stays in the safe language, as Go's and Rust's versions do.
+//
+// Changed: the flags array only. The shipped file is `@unsafe`: it takes the flags
+// from `mem.alloc`, indexes a raw `*[u8]` (no bounds check) and frees it with
+// `defer mem.free`. Here the flags are `[u8]{ 1 x limit }`: storage owned by the
+// collector, with Valk's checked indexing, as main.go (`make([]bool, n)`) and
+// main.rs (`vec![true; n]`) use checked, runtime-owned arrays. `use valk.mem` goes
+// with it. Everything else is the shipped file, byte for byte.
+
+fn nsieve(limit: uint) {
+    let flags = [u8]{ 1 x limit }
+
+    let count: uint = 0
+    let i: uint = 2
+    while i < limit {
+        if flags[i] != 0 {
+            count++
+            let composite = i << 1
+            while composite < limit {
+                flags[composite] = 0
+                composite += i
+            }
+        }
+        i++
+    }
+
+    let limit_string = limit.to_string().pad_left(' ', 8)
+    let count_string = count.to_string().pad_left(' ', 8)
+    println("Primes up to %limit_string %count_string")
+}
+
+fn main(args: Array[String]) {
+    let n: int = 12
+    args.get(1) -> value : n = value.to_int() ! panic("Invalid number: %value")
+    if n < 2 || n > 20 : panic("Input must be between 2 and 20")
+
+    let i: int = 0
+    while i < 3 {
+        nsieve(10_000 << (n - i).to(uint))
+        i++
+    }
+}
