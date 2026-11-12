@@ -207,7 +207,11 @@ pub class TypeResolver {
   }
 
   pub fn resolve_value(tn: TypeName): Ty {
-    ty = resolve(tn)
+    value_only(resolve(tn), tn)
+  }
+
+  // ty as a value's type: an opaque type, a C layout and Void are not.
+  pub fn value_only(ty: Ty, tn: TypeName): Ty {
     if ty.is_opaque {
       fail(tn.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
       return self.t_int

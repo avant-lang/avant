@@ -440,6 +440,7 @@ fn test_modules(c: Checks) {
     test_field_privacy(c, compiler, dir)
     test_default_modules(c, compiler, dir)
     test_generic_modules(c, compiler, dir)
+    test_same_name_methods(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
@@ -543,6 +544,19 @@ fn test_generic_modules(c: Checks, compiler: String, dir: String) {
   mod_runs(c, compiler, dir, "gown", "6\n", "the root's own type and an imported one of the same name")
   write_av(dir, "gamb", "import gbx\nimport gsame1\nimport gsame2\n\nfn main {\n  a = Box(Item).new(one())\n  puts(a.get.v)\n}\n")
   mod_fails(c, compiler, dir, "gamb", "ambiguous name Item; qualify it", "an argument two imports declare is ambiguous")
+}
+
+// O165's probe (Stage 29 W-FIX1b): two modules declare a class Item and
+// a struct Pt, each with methods, operators, a type-level function, a
+// generic method and an external method of the same names; every call
+// reaches its own module's. What the probe found and this wave fixed: a
+// parameter of such a type (`fn +(o: Item)`) was `unknown type Item`
+// (resolve_value_in_module looked the name up bare).
+fn test_same_name_methods(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "sna", "pub class Item {\n  pub v: Int = 0\n\n  fn initialize(v: Int) {\n    self.v = v\n  }\n\n  pub fn label: String {\n    \"a\${v}\"\n  }\n\n  pub fn bump(n: Int): Int {\n    self.v += n\n    v\n  }\n\n  pub fn +(o: Item): Item {\n    Item.new(v + o.v)\n  }\n\n  pub fn ==(o: Item): Bool {\n    v == o.v\n  }\n\n  pub fn self.zero: Item {\n    Item.new(0)\n  }\n\n  pub fn pick(x: T): T {\n    x\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn far: Int {\n    x + 100\n  }\n\n  pub fn grow(k: Int) {\n    self.x += k\n  }\n}\n\npub fn (i: Item) ext: String {\n  \"ext-a\${i.v}\"\n}\n\npub fn make_a(v: Int): Item {\n  Item.new(v)\n}\n")
+  write_av(dir, "snb", "pub class Item {\n  pub name: String = \"\"\n  pub w: Int = 7\n\n  fn initialize(name: String, w: Int) {\n    self.name = name\n    self.w = w\n  }\n\n  pub fn label: String {\n    \"b-\${name}\"\n  }\n\n  pub fn bump(n: Int): Int {\n    self.w -= n\n    w\n  }\n\n  pub fn +(o: Item): Item {\n    Item.new(\"\${name}\${o.name}\", w * o.w)\n  }\n\n  pub fn ==(o: Item): Bool {\n    name == o.name\n  }\n\n  pub fn self.zero: Item {\n    Item.new(\"zero\", 0)\n  }\n\n  pub fn pick(x: T): T {\n    x\n  }\n}\n\npub struct Pt {\n  pub x: Int\n  pub y: Int\n\n  pub fn far: Int {\n    x * y\n  }\n\n  pub fn grow(k: Int) {\n    self.y += k\n  }\n}\n\npub fn (i: Item) ext: String {\n  \"ext-b\${i.name}\"\n}\n\npub fn make_b(name: String): Item {\n  Item.new(name, 2)\n}\n")
+  write_av(dir, "snmain", "import sna\nimport snb\nfn main {\n  a = sna.Item.new(1)\n  b = snb.Item.new(\"x\", 3)\n  puts(a.label)\n  puts(b.label)\n  puts(a.label())\n  puts(b.label())\n  puts(a.bump(5))\n  puts(b.bump(1))\n  puts(a.ext)\n  puts(b.ext)\n  s = a + sna.Item.new(10)\n  puts(s.v)\n  t = b + snb.Item.new(\"y\", 5)\n  puts(\"\${t.name} \${t.w}\")\n  puts(a == sna.Item.new(6))\n  puts(b == snb.Item.new(\"x\", 0))\n  puts(sna.Item.zero.v)\n  puts(snb.Item.zero.name)\n  puts(a.pick(\"p\"))\n  puts(b.pick(4))\n  c = make_a(9)\n  d = make_b(\"q\")\n  puts(\"\${c.label} \${d.label}\")\n  as = [a, c]\n  bs = [b, d]\n  for i in as {\n    puts(i.label)\n  }\n  bs.each { |i| puts(i.label) }\n  p = sna.Pt { x: 1 }\n  q = snb.Pt { x: 2, y: 3 }\n  puts(\"\${p.far} \${q.far}\")\n  p.grow(1)\n  q.grow(1)\n  puts(\"\${p.x} \${q.y}\")\n  ps = [snb.Pt { x: 5, y: 5 }]\n  ps[0].grow(2)\n  puts(ps[0].far)\n}\n")
+  mod_runs(c, compiler, dir, "snmain", "a1\nb-x\na1\nb-x\n6\n2\next-a6\next-bx\n16\nxy 10\ntrue\ntrue\n0\nzero\np\n4\na9 b-q\na6\na9\nb-x\nb-q\n101 6\n2 4\n35\n", "two modules declare a class and a struct of one name with methods of the same names")
 }
 
 fn main: Int {

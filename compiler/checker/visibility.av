@@ -487,31 +487,18 @@ pub fn (checker_self: Checker) resolve_in_module(tn: TypeName): Ty {
   checker_self.resolver.resolve(tn)
 }
 
+// A value's type, seen from the current module: resolve_in_module's
+// rules, then the resolver's for a value. (Until Stage 29 W-FIX1b this
+// looked the name up bare: a parameter of a type whose name two modules
+// declare was `unknown type`, though the same name as a result type
+// resolved; O165's family.)
 pub fn (checker_self: Checker) resolve_value_in_module(tn: TypeName): Ty {
-  if tn.pinned {
-    return checker_self.resolver.resolve_value(tn)
+  mark = checker_self.err_count
+  ty = checker_self.resolve_in_module(tn)
+  if checker_self.new_err_since(mark) {
+    return ty
   }
-  if !checker_self.type_parts_seen(tn) {
-    return checker_self.t_int()
-  }
-  if tn.mod_name.size > 0 {
-    if !checker_self.qualifier_ok(tn.mod_name, checker_self.current_module) {
-      checker_self.fail(tn.loc, "unknown module ${tn.mod_name}")
-      return checker_self.t_int()
-    }
-  } else {
-    if named = checker_self.resolver.get_named(tn.name) {
-      if !checker_self.type_is_visible(tn.name, checker_self.current_module, "") {
-        checker_self.fail(tn.loc, "unknown type ${tn.name}")
-        return checker_self.t_int()
-      }
-      if checker_self.clash_unqualified(tn.name, checker_self.current_module) {
-        checker_self.fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
-        return checker_self.t_int()
-      }
-    }
-  }
-  checker_self.resolver.resolve_value(tn)
+  checker_self.resolver.value_only(ty, tn)
 }
 
 pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Function) {

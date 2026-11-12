@@ -600,7 +600,7 @@ fn main {
 
 ## Nil and unions
 
-`T?` is "a `T`, or `nil`". Absence is in the type, so the compiler makes you look before you use the value, and there is no null pointer error to meet at run time.
+`T?` is "a `T`, or `nil`". Absence is in the type, so the compiler makes you look before you use the value, and there is no null pointer error to meet at run time (a C pointer, [`Ptr(T)`](#layouts-and-ptr), is the one exception: it is C's).
 
 ```avant
 fn find(names: Array(String), wanted: String): Int? {
@@ -2563,6 +2563,8 @@ fn main {
 ```
 
 `Ptr(T)` is for a layout `T`, and `Ptr(Void)` for a pointer you only pass around. A `Ptr` of anything else (`Ptr(Int)`) has no fields to read and cannot be given methods. Memory you got from C is C's: the collector neither moves nor frees it. There is no `sizeof` yet: the size passed to `malloc` is yours to state.
+
+A `Ptr` can be NULL (an unchecked `malloc`), and Avant has no test for that yet. A field read or written through a NULL `Ptr` is a segmentation fault, as in C: the program ends with no Avant message, and what it had printed without flushing is lost. Check in C before handing the pointer over. Do not declare a `fun` result `Ptr(T)?` to get a test: it compiles today and reads the wrong thing. A `String` field that C left NULL (or that `release` made null) reads as `""`.
 
 ### Strings in C memory
 
