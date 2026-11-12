@@ -1412,7 +1412,7 @@ pub class Checker {
           fa.ident = "__avant_error_text"
           arg_tys: Array(Ty) = []
           none: Ty? = nil
-          if sig = self.match_method(ty.name, fa.ident, arg_tys, none, inner.loc, ty.name, ty.mod_name) {
+          if sig = self.match_method(ty.name, fa.ident, arg_tys, none, inner.loc, ty.name, ty.mod_name, self.no_int_literals()) {
             fa.method_call = true
             fa.resolved = sig.node.emit_name
             fa.ty = sig.ret
@@ -1752,7 +1752,7 @@ pub class Checker {
         if has_zero {
           arg_tys: Array(Ty) = []
           none: Ty? = nil
-          if sig = self.match_method(object.name, expr.ident, arg_tys, none, expr.loc, object.name, object.mod_name) {
+          if sig = self.match_method(object.name, expr.ident, arg_tys, none, expr.loc, object.name, object.mod_name, self.no_int_literals()) {
             expr.method_call = true
             expr.resolved = sig.node.emit_name
             return sig.ret
@@ -1834,7 +1834,7 @@ pub class Checker {
     if has_zero {
       arg_tys: Array(Ty) = []
       none: Ty? = nil
-      if sig = self.match_method(owner, expr.ident, arg_tys, none, expr.loc, object.show, "") {
+      if sig = self.match_method(owner, expr.ident, arg_tys, none, expr.loc, object.show, "", self.no_int_literals()) {
         expr.method_call = true
         expr.resolved = sig.node.emit_name
         return sig.ret
@@ -1922,7 +1922,7 @@ pub class Checker {
     if has_zero {
       arg_tys: Array(Ty) = []
       none: Ty? = nil
-      if sig = self.match_method(owner, expr.ident, arg_tys, none, expr.loc, object.show, object.mod_name) {
+      if sig = self.match_method(owner, expr.ident, arg_tys, none, expr.loc, object.show, object.mod_name, self.no_int_literals()) {
         expr.method_call = true
         expr.resolved = sig.node.emit_name
         return sig.ret
@@ -2773,7 +2773,7 @@ pub class Checker {
             arg_tys: Array(Ty) = []
             arg_tys.push(right)
             none: Ty? = nil
-            if sig = self.match_method(left.name, opname, arg_tys, none, expr.loc, left.name, left.mod_name) {
+            if sig = self.match_method(left.name, opname, arg_tys, none, expr.loc, left.name, left.mod_name, self.no_int_literals()) {
               expr.resolved = sig.node.emit_name
               return sig.ret
             }
@@ -3137,6 +3137,17 @@ pub class Checker {
         return widened
       }
     }
+    // A negated literal adopts the parameter too (D315; Stage 29 W-INT2:
+    // `f(-5)` with an Int32 parameter was refused).
+    if self.is_int_literal(expr) && expr.kind == ex_unary() && want.is_integer {
+      if inner = expr.inner {
+        widened = self.check_negated_literal(expr, inner, true, want)
+        if ty_assignable(widened, want) {
+          expr.ty = widened
+          return widened
+        }
+      }
+    }
     got
   }
 
@@ -3310,7 +3321,7 @@ pub class Checker {
           }
         }
         none: Ty? = nil
-        if sig = self.match_method(ty.name, "initialize", arg_tys, none, expr.loc, shown, ty.mod_name) {
+        if sig = self.match_method(ty.name, "initialize", arg_tys, none, expr.loc, shown, ty.mod_name, self.int_literal_flags(expr.args)) {
           self.fill_defaults(expr, sig.node)
           i = 0
           while i < expr.args.size {
