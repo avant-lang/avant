@@ -141,6 +141,28 @@ fn test_testing_docs(c: Checks) {
       c.expect(false, "README parallel test output")
     }
 
+    // O320 (Stage 29 W-FIX1d): a test file run by `avant run`, or as a
+    // compiled binary, skipped its t.parallel bodies without a word and
+    // exited 0 with the serial checks alone. With no runner listening the
+    // bodies now run in that process: the same checks every way.
+    both_body = "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.check(1 + 1 == 2, \"serial\")\n  t.test(\"adds\") {\n    t.check(1 + 2 == 3, \"in a test body\")\n  }\n  t.parallel(\"first\") {\n    t.check(true, \"first a\")\n    t.check(true, \"first b\")\n  }\n  t.parallel(\"second\") {\n    t.check(2 * 2 == 4, \"second a\")\n  }\n  t.parallel(\"third\") {\n    t.check(true, \"third a\")\n    t.check(true, \"third b\")\n  }\n  t.finish\n}\n"
+    mkdir_p("${dir}/both")
+    _ = file_write("${dir}/both/test_both.av", both_body)
+    both_rc = "${dir}/both.rc"
+    bd = td_quote("${dir}/both")
+    both_sh = "cd ${bd} || exit 1\n${td_quote(compiler)} test test_both.av > t.out 2>&1; t=$?\n${td_quote(compiler)} run test_both.av > r.out 2>&1; r=$?\n${td_quote(compiler)} compile test_both.av both.bin --debug > c.out 2>&1 && ./both.bin > b.out 2>&1; b=$?\nfor f in t r b; do grep -a '^ *PASS ' $f.out | sed 's/^ *//' | sort > $f.pass; done\necho \"$t $r $b\" > status.txt\necho 0 > ${td_quote(both_rc)}\n"
+    c.eq_int(td_sh(both_sh, both_rc), 0, "a test file runs three ways")
+    c.eq_str(file_read("${dir}/both/status.txt") ?? "", "0 0 0\n", "avant test, avant run and the binary all exit 0")
+    want_pass = "PASS first a\nPASS first b\nPASS in a test body\nPASS second a\nPASS serial\nPASS third a\nPASS third b\n"
+    c.eq_str(file_read("${dir}/both/t.pass") ?? "", want_pass, "avant test runs the seven checks")
+    c.eq_str(file_read("${dir}/both/r.pass") ?? "", want_pass, "avant run runs the same seven checks, the parallel bodies' too")
+    c.eq_str(file_read("${dir}/both/b.pass") ?? "", want_pass, "the compiled binary runs the same seven checks")
+    if text = file_read("${dir}/both/r.out") {
+      c.expect(td_at(text, "0 failed, 7 passed") >= 0, "avant run counts every check")
+    } else {
+      c.expect(false, "avant run counts every check")
+    }
+
     _ = file_write("${dir}/want.txt", "Hello Avant\n")
     _ = file_write("${dir}/hello.want", "Hello Avant\n")
     _ = file_write("${dir}/hello.av", "fn main {\n  puts(\"Hello Avant\")\n}\n")

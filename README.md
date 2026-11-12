@@ -3241,7 +3241,7 @@ fn main: Int {
 }
 ```
 
-In each of those processes the file runs again, but serial checks and `t.test` bodies are skipped and only that one parallel body runs; code in `main` outside those bodies runs in every process. `avant run` on the file runs it once, without the parallel bodies: only `avant test` starts them.
+In each of those processes the file runs again, but serial checks and `t.test` bodies are skipped and only that one parallel body runs; code in `main` outside those bodies runs in every process. Only `avant test` starts those processes. `avant run` on the file, or the compiled file run as a program, runs it once with every body in that one process, in source order: the same checks, without the overlap.
 
 ### Test settings
 

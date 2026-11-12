@@ -355,8 +355,22 @@ pub class Test {
       }
       return nil
     }
-    if self.names_path.size > 0 && remember_parallel(name) {
-      write_parallel_names()
+    if self.names_path.size > 0 {
+      if remember_parallel(name) {
+        write_parallel_names()
+      }
+      return nil
+    }
+    // No runner is listening (`avant run`, or the compiled binary run
+    // directly; O320, Stage 29 W-FIX1d): nothing would start this body
+    // in a process of its own, so it runs here, in source order. Before,
+    // it was skipped without a word and `finish` reported the serial
+    // checks alone with status 0. The names are checked as the runner
+    // checks them.
+    if remember_parallel(name) {
+      self.depth += 1
+      body()
+      self.depth -= 1
     }
     nil
   }
