@@ -39,7 +39,7 @@
 # a user program never does.
 #
 # Environment:
-#   LETTERS_SEED      seed directory with avant (default bin/v0.40.0, the
+#   LETTERS_SEED      seed directory with avant (default bin/v0.41.0, the
 #                     release; a seed must emit W15a1's call table, so
 #                     v0.35.0 and v0.36.0 no longer build a correct B since
 #                     the C-stack scans retired); relative to the checkout.
@@ -63,16 +63,16 @@ cd "$root" || exit 2
 COMPILER_LINK="runtime/build/avant_llvm.o"
 
 # The default seed (D178, D189; Stage 28 W12r, W14b2, W16b, then the
-# v0.37.0 to v0.40.0 releases): bin/v0.40.0, the release archive unpacked (CI pins the
+# v0.37.0 to v0.41.0 releases): bin/v0.41.0, the release archive unpacked (CI pins the
 # same asset). The v0.36.0 release predates W15a1's call table: the code it
 # emits holds references in registers across runtime helpers that now
 # collect, which only the conservative C-stack pin scan made safe, and W16b
 # retired the scan, so a B it builds is wrong (the local seed
 # bin/seeds/s28-w16b bridged that gap until v0.37.0). This is the one place
 # the default is computed; tools/gate.sh asks --print-seed (O31).
-default_seed=bin/v0.40.0
+default_seed=bin/v0.41.0
 if [ -z "${LETTERS_SEED:-}" ] && [ ! -x "$default_seed/avant" ]; then
-  echo "letters: the default seed $default_seed is missing: unpack the v0.40.0 release archive there, or set LETTERS_SEED to a seed built after Stage 28 W15a (v0.36.0's B needs the retired C-stack scan)" >&2
+  echo "letters: the default seed $default_seed is missing: unpack the v0.41.0 release archive there, or set LETTERS_SEED to a seed built after Stage 28 W15a (v0.36.0's B needs the retired C-stack scan)" >&2
   exit 2
 fi
 seed=$(realpath -m "${LETTERS_SEED:-$default_seed}")
