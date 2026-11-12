@@ -1,0 +1,104 @@
+module trap_shl_i32
+file 0 "trap_shl_i32.av"
+
+const str.0 = "%d\0A"
+const str.1 = "not reached"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+
+extern __avant_type_maps() -> void never
+extern avant_clock_us() -> i64 never
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_str(ref str) -> void never
+extern avant_trap_shift(i64, i32) -> void never noreturn
+extern printf(ref str, ...) -> i32 never
+
+fn av.trap_shl_i32/opaque(_1: i64) -> i64 leaf @trap_shl_i32.av:5:1 {
+  let _0: i64
+  let _1 (n): i64
+  let _2: i64
+  let _3 (a): i64
+  let _4: i64
+  let _5 (b): i64
+  let _6: i64
+  let _7: bool
+  let _8: i64
+
+bb0:
+  _2 = call avant_clock_us() nocollect   @6:7
+  _3 = copy _2   @6:5
+  _4 = call avant_clock_us() nocollect   @7:7
+  _5 = copy _4   @7:5
+  _6 = sub copy _5, copy _3   @8:8
+  _7 = gt copy _6, const i64 1000000000   @8:13
+  branch copy _7, bb1, bb2   @8:3
+
+bb1:
+  _8 = add copy _1, copy _5   @9:14
+  _0 = copy _8   @9:5
+  return   @9:5
+
+bb2:
+  _0 = copy _1   @11:3
+  return   @11:3
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @trap_shl_i32.av:14:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: i64
+  let _4 (k): i64
+  let _5 (one): i32
+  let _6: i64
+  let _7: u64
+  let _8: bool
+  let _9: i32
+  let _10: i32
+  let _11: i64
+  let _12: u64
+  let _13: bool
+  let _14: i32
+  let _15: i32
+
+bb0:
+  gc.enter   @14:1
+  gc.roots _2   @14:1
+  call __avant_type_maps() nocollect   @14:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @14:1
+  _3 = call av.trap_shl_i32/opaque(const i64 0) nocollect   @15:7
+  _4 = copy _3   @15:5
+  _5 = const i32 1   @16:3
+  _6 = add.chk const i64 31, copy _4   @17:19
+  _7 = cast copy _6 to u64   @17:12
+  _8 = gt copy _7, const u64 31   @17:12
+  branch copy _8, bb1, bb2   @17:12
+
+bb1:
+  call avant_trap_shift(copy _6, const i32 17) nocollect   @17:12
+  unreachable   @17:12
+
+bb2:
+  _9 = cast copy _6 to i32   @17:12
+  _10 = shl copy _5, copy _9   @17:12
+  call printf(const str.0, copy _10) nocollect   @17:3
+  _11 = add.chk const i64 32, copy _4   @18:19
+  _12 = cast copy _11 to u64   @18:12
+  _13 = gt copy _12, const u64 31   @18:12
+  branch copy _13, bb3, bb4   @18:12
+
+bb3:
+  call avant_trap_shift(copy _11, const i32 17) nocollect   @18:12
+  unreachable   @18:12
+
+bb4:
+  _14 = cast copy _11 to i32   @18:12
+  _15 = shl copy _5, copy _14   @18:12
+  call printf(const str.0, copy _15) nocollect   @18:3
+  call avant_puts_str(const str.1) nocollect   @19:3
+  _0 = const i32 0   @14:1
+  gc.leave   @14:1
+  return   @14:1
+}

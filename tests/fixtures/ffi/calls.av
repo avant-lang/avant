@@ -8,20 +8,20 @@
 // `--cc tests/fixtures/ffi/ffi.c`; both back ends print the same.
 
 lib ffi {
-  fun ffi_add_i32(a: Int, b: Int): Int
+  fun ffi_add_i32(a: Int32, b: Int32): Int32
   fun ffi_mul_i64(a: Int64, b: Int64): Int64
-  fun ffi_shl_u64(a: UInt64, n: Int): UInt64
+  fun ffi_shl_u64(a: UInt64, n: Int32): UInt64
   fun ffi_scale(x: Float64, k: Float64): Float64
-  fun ffi_is_pos(x: Int): Bool
-  fun ffi_bool_to_int(b: Bool): Int
+  fun ffi_is_pos(x: Int32): Bool
+  fun ffi_bool_to_int(b: Bool): Int32
   fun ffi_not(b: Bool): Bool
-  fun ffi_mixed(a: Int, b: Float64, c: Bool, d: Int64): Int
-  fun ffi_strlen(s: String): Int
+  fun ffi_mixed(a: Int32, b: Float64, c: Bool, d: Int64): Int32
+  fun ffi_strlen(s: String): Int32
   fun ffi_static_str: String
-  fun ffi_bytes_sum(b: Bytes, n: Int): Int
-  fun ffi_str_at(s: String, i: Int): Int
-  fun ffi_cell_new(v: Int): Ptr(Void)
-  fun ffi_cell_get(p: Ptr(Void)): Int
+  fun ffi_bytes_sum(b: Bytes, n: Int32): Int32
+  fun ffi_str_at(s: String, i: Int32): Int32
+  fun ffi_cell_new(v: Int32): Ptr(Void)
+  fun ffi_cell_get(p: Ptr(Void)): Int32
   fun ffi_cell_free(p: Ptr(Void))
 }
 
@@ -44,7 +44,7 @@ struct Pair {
 
 fn pick(p: Ptr(Void)?): Int {
   if q = p {
-    return ffi.ffi_cell_get(q)
+    return ffi.ffi_cell_get(q).to_i
   }
   -1
 }
@@ -94,7 +94,7 @@ fn main {
   cs = ffi.ffi_static_str()
   puts(cs)
   data = "ABC".bytes
-  puts(ffi.ffi_bytes_sum(data, data.size))
+  puts(ffi.ffi_bytes_sum(data, data.size.to_i32))
   puts(ffi.ffi_str_at(word, 6))
 
   // Heap arguments built right before the call, many times over, while
@@ -102,7 +102,7 @@ fn main {
   sum = 0
   i = 0
   while i < 3000 {
-    sum = sum + ffi.ffi_strlen("n=${i}" + "-tail")
+    sum = sum + ffi.ffi_strlen("n=${i}" + "-tail").to_i
     i = i + 1
   }
   puts(sum)
@@ -126,7 +126,7 @@ fn main {
     k = k + 1
   }
   puts(churn(20000))
-  puts(ffi.ffi_cell_get(holders[49].cell) + holders[49].n)
+  puts(ffi.ffi_cell_get(holders[49].cell).to_i + holders[49].n)
   puts(holders[7].name)
   cells: Array(Ptr(Void)) = []
   cells.push(p)

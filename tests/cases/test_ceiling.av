@@ -1,0 +1,72 @@
+import harness
+
+// The runtime's size ceiling (Stage 29 W-INT1, review 6 section 1.6;
+// runtime/avant_rt.h, AVANT_SIZE_MAX): a Buf, Array, Hash or String whose
+// size would pass its ceiling traps before anything is allocated or
+// written (32-bit arithmetic used to wrap the size negative and write
+// past the capacity), and file_read of a larger file is an IoError
+// (EFBIG). tests/fixtures/ffi/ceiling.c builds each state in C memory
+// with tiny storage, so no run allocates gigabytes.
+
+fn expect_ceiling(c: Checks, bin: String, stamp: Int64, mode: String, needle: String) {
+  log = "${scratch()}/ceiling-${stamp}-${mode}.log"
+  args = [mode]
+  code = process_run_out(bin, args, log) ?? -1
+  c.eq_int(code, 1, "${mode}: exits 1")
+  if out = file_read(log) {
+    c.expect(str_has(out, needle), "${mode}: ${needle}")
+    c.expect(!str_has(out, "no trap"), "${mode}: traps before returning")
+  } else {
+    c.expect(false, "${mode}: read the log")
+  }
+}
+
+fn test_ceiling(c: Checks) {
+  c.suite("tests/cases/test_ceiling.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    root = avant_test_root()
+    stamp = now_ms()
+    src = "${root}/tests/fixtures/ffi/ceiling.av"
+    bin = "${scratch()}/ceiling-${stamp}.bin"
+    clog = "${scratch()}/ceiling-${stamp}.clog"
+    flags: Array(String) = []
+    flags.push("--cc")
+    flags.push("${root}/tests/fixtures/ffi/ceiling.c")
+    c.eq_int(compile_av_flags(compiler, src, bin, clog, flags), 0, "compile the ceiling probes")
+    if file_exists(bin) {
+      chmod_x(bin)
+      expect_ceiling(c, bin, stamp, "1", "avant runtime: Buf would exceed 2147483647 bytes")
+      expect_ceiling(c, bin, stamp, "2", "avant runtime: Buf would exceed 2147483647 bytes")
+      expect_ceiling(c, bin, stamp, "3", "avant runtime: Array would exceed 2147483647 elements")
+      expect_ceiling(c, bin, stamp, "4", "avant runtime: Array would exceed 2147483647 elements")
+      expect_ceiling(c, bin, stamp, "5", "avant runtime: Hash would exceed 1073741824 slots")
+      expect_ceiling(c, bin, stamp, "7", "avant runtime: Buf would exceed 2147483647 bytes")
+      expect_ceiling(c, bin, stamp, "concat", "avant runtime: String would exceed 2147483647 bytes")
+      path = "${scratch()}/ceiling-${stamp}-sparse"
+      rlog = "${scratch()}/ceiling-${stamp}-read.log"
+      rargs = ["read", path]
+      rcode = process_run_out(bin, rargs, rlog) ?? -1
+      c.eq_int(rcode, 0, "read: a file past the ceiling is an error value")
+      if out = file_read(rlog) {
+        c.eq_str(out, "errno 27: cannot read ${path}: File too large\n", "read: EFBIG")
+      } else {
+        c.expect(false, "read: read the log")
+      }
+      rm_f(path)
+    } else {
+      c.expect(false, "the ceiling probes' binary exists")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_ceiling(c)
+  c.finish
+}

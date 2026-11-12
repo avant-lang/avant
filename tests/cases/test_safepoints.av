@@ -9,9 +9,8 @@ fn test_safepoints(c: Checks) {
     clog = "${scratch()}/safepoints-${stamp}-compile.log"
     rlog = "${scratch()}/safepoints-${stamp}-run.log"
     slog = "${scratch()}/safepoints-${stamp}-stats.log"
-    body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  check(n.left, depth - 1) + check(n.right, depth - 1) + n.item\n}\nfn main {\n  i = 0\n  sum = 0\n  while i < 120 {\n    t = make(1, 10)\n    sum = sum + check(t, 10)\n    i = i + 1\n  }\n  puts(sum)\n}\n"
-    w = file_write(src, body)
-    c.eq_int(w, 0, "write nursery churn")
+    body = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  if l = n.left {\n    if r = n.right {\n      return check(l, depth - 1) + check(r, depth - 1) + n.item\n    }\n  }\n  n.item\n}\nfn main {\n  i = 0\n  sum = 0\n  while i < 120 {\n    t = make(1, 10)\n    sum = sum + check(t, 10)\n    i = i + 1\n  }\n  puts(sum)\n}\n"
+    c.wrote(file_write(src, body), "write nursery churn")
     cc = compile_av(compiler, src, bin, clog)
     c.eq_int(cc, 0, "compile nursery churn")
     if clogt = file_read(clog) {
@@ -27,7 +26,7 @@ fn test_safepoints(c: Checks) {
       cap.push("AVANT_NURSERY=1")
       cap.push("AVANT_HEAP_MAX_MB=3")
       cap.push(bin)
-      rcode = process_run_out("/usr/bin/env", cap, rlog)
+      rcode = process_run_out("/usr/bin/env", cap, rlog) ?? -1
       c.eq_int(rcode, 0, "churn under 3MiB heap")
       if out = file_read(rlog) {
         c.eq_str(out, "251535360\n", "churn checksum")
@@ -40,7 +39,7 @@ fn test_safepoints(c: Checks) {
       st.push("AVANT_YOUNG_MB=1")
       st.push("AVANT_GC_STATS=1")
       st.push(bin)
-      scode = process_run_out("/usr/bin/env", st, slog)
+      scode = process_run_out("/usr/bin/env", st, slog) ?? -1
       c.eq_int(scode, 0, "churn with gc stats")
       if stats = file_read(slog) {
         c.expect(str_has(stats, "young="), "gc stats printed")
@@ -57,7 +56,7 @@ fn test_safepoints(c: Checks) {
       disc.push("AVANT_NURSERY=1")
       disc.push("AVANT_HEAP_MAX_MB=3")
       disc.push(bin)
-      dcode = process_run_out("/usr/bin/env", disc, dlog)
+      dcode = process_run_out("/usr/bin/env", disc, dlog) ?? -1
       c.eq_int(dcode, 0, "churn with from-space discarded")
       if dout = file_read(dlog) {
         c.eq_str(dout, "251535360\n", "churn checksum after discard")
@@ -69,9 +68,8 @@ fn test_safepoints(c: Checks) {
       bbin = "${scratch()}/safepoints-${stamp}-barrier"
       blog = "${scratch()}/safepoints-${stamp}-barrier-cc.log"
       brun = "${scratch()}/safepoints-${stamp}-barrier-run.log"
-      bbody = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn main {\n  a = Node.new(1)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  a.left = Node.new(42)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  puts(a.left.item)\n}\n"
-      bw = file_write(bsrc, bbody)
-      c.eq_int(bw, 0, "write old-object store")
+      bbody = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item * 2, depth - 1)\n    n.right = make(item * 2 + 1, depth - 1)\n  }\n  n\n}\nfn main {\n  a = Node.new(1)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  a.left = Node.new(42)\n  i = 0\n  while i < 40 {\n    t = make(1, 10)\n    i = i + 1\n  }\n  if l = a.left {\n    puts(l.item)\n  }\n}\n"
+      c.wrote(file_write(bsrc, bbody), "write old-object store")
       bcc = compile_av(compiler, bsrc, bbin, blog)
       c.eq_int(bcc, 0, "compile old-object store")
       if file_exists(bbin) {
@@ -80,7 +78,7 @@ fn test_safepoints(c: Checks) {
         benv.push("AVANT_NURSERY=1")
         benv.push("AVANT_HEAP_MAX_MB=3")
         benv.push(bbin)
-        bcode = process_run_out("/usr/bin/env", benv, brun)
+        bcode = process_run_out("/usr/bin/env", benv, brun) ?? -1
         c.eq_int(bcode, 0, "old object survives later collections")
         if bout = file_read(brun) {
           c.eq_str(bout, "42\n", "stored field is 42 after collection")
@@ -97,8 +95,7 @@ fn test_safepoints(c: Checks) {
       brun2 = "${scratch()}/safepoints-${stamp}-bump-run.log"
       bdump = "${scratch()}/safepoints-${stamp}-bump.mir"
       bbody2 = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make_tree(item: Int, depth: Int): Node? {\n  n = Node.new(item)\n  if depth > 0 {\n    shift = 1 << (depth - 1)\n    if l = make_tree(item - shift, depth - 1) {\n      if r = make_tree(item + shift, depth - 1) {\n        n.left = l\n        n.right = r\n        return n\n      }\n    }\n    return nil\n  }\n  n\n}\nfn tree_sum(n: Node): Int {\n  total = n.item + 1\n  if l = n.left {\n    total = total + tree_sum(l)\n  }\n  if r = n.right {\n    total = total + tree_sum(r)\n  }\n  total\n}\nfn once: Int {\n  if t = make_tree(0, 6) {\n    return tree_sum(t)\n  }\n  0\n}\nfn main {\n  acc = 0\n  i = 0\n  while i < 20 {\n    acc = acc + once()\n    i = i + 1\n  }\n  puts(acc)\n}\n"
-      bw2 = file_write(bsrc2, bbody2)
-      c.eq_int(bw2, 0, "write bump tree")
+      c.wrote(file_write(bsrc2, bbody2), "write bump tree")
       // The MIR (D171; the old back end's IR until W11).
       dcode2 = dump_av(compiler, bsrc2, bdump)
       c.eq_int(dcode2, 0, "dump bump tree")

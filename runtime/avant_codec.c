@@ -4,12 +4,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct {
-  void *buf;
-  int32_t size;
-  int32_t cap;
-} AvantArray;
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 static uint32_t crc_table[4][256];
 static int crc_ready;
@@ -37,27 +34,28 @@ static void crc_init(void) {
   crc_ready = 1;
 }
 
-int32_t avant_crc32_i32(void *arr) {
+/* crc32_bytes(b: Bytes) (Stage 29 W-INT2: the bytes themselves, as the
+ * references' uint8_t buffers; the Array(Int) form is gone). */
+int32_t avant_crc32_bytes(const char *s) {
   crc_init();
-  AvantArray *a = (AvantArray *)arr;
   uint32_t crc = 0xFFFFFFFFu;
   int32_t i = 0;
   int32_t n = 0;
-  const int32_t *src = NULL;
-  if (a && a->buf && a->size > 0) {
-    n = a->size;
-    src = (const int32_t *)a->buf;
+  const uint8_t *src = (const uint8_t *)"";
+  if (s) {
+    n = (int32_t)avant_str_n(s);
+    src = (const uint8_t *)s;
   }
   /* Slicing by 4: the same CRC recurrence applied to four bytes at
    * once through the derived tables; the result is bit-identical. */
   for (; i + 4 <= n; i += 4) {
-    uint32_t c = crc ^ (uint8_t)(src[i] & 255);
-    crc = crc_table[3][c & 255u] ^ crc_table[2][((c >> 8) ^ (uint8_t)(src[i + 1] & 255)) & 255u] ^
-          crc_table[1][((c >> 16) ^ (uint8_t)(src[i + 2] & 255)) & 255u] ^
-          crc_table[0][((c >> 24) ^ (uint8_t)(src[i + 3] & 255)) & 255u];
+    uint32_t c = crc ^ src[i];
+    crc = crc_table[3][c & 255u] ^ crc_table[2][((c >> 8) ^ src[i + 1]) & 255u] ^
+          crc_table[1][((c >> 16) ^ src[i + 2]) & 255u] ^
+          crc_table[0][((c >> 24) ^ src[i + 3]) & 255u];
   }
   for (; i < n; i++) {
-    crc = crc_table[0][(crc ^ (uint8_t)(src[i] & 255)) & 255u] ^ (crc >> 8);
+    crc = crc_table[0][(crc ^ src[i]) & 255u] ^ (crc >> 8);
   }
   return (int32_t)(crc ^ 0xFFFFFFFFu);
 }
@@ -173,34 +171,60 @@ char *avant_sha256(const char *s) {
   return out;
 }
 
-int32_t avant_sha256_word0(void *arr) {
+/* sha256_word0(b: Bytes) (Stage 29 W-INT2: the bytes themselves). */
+int32_t avant_sha256_word0(const char *s) {
   uint32_t hashes[8] = {
       0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
       0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u,
   };
-  AvantArray *a = (AvantArray *)arr;
   int32_t i;
   int32_t n = 0;
-  const int32_t *src = NULL;
-  if (a && a->buf && a->size > 0) {
-    n = a->size;
-    src = (const int32_t *)a->buf;
+  const uint8_t *src = (const uint8_t *)"";
+  if (s) {
+    n = (int32_t)avant_str_n(s);
+    src = (const uint8_t *)s;
   }
   /* Eight independent chains (index i & 7): eight steps at a time keep
-   * the same per-element arithmetic and the same result. */
-  for (i = 0; i + 8 <= n; i += 8) {
+   * the same per-element arithmetic and the same result. With SSE2 the
+   * eight chains are two 4 x 32-bit vectors and the eight bytes are
+   * widened into them (Stage 29 W-INT2: with byte input GCC no longer
+   * vectorizes the chain loop, 3.7x the time of W-INT1's lanes). */
+  i = 0;
+#if defined(__SSE2__)
+  {
+    __m128i lo = _mm_loadu_si128((const __m128i *)(const void *)&hashes[0]);
+    __m128i hi = _mm_loadu_si128((const __m128i *)(const void *)&hashes[4]);
+    const __m128i zero = _mm_setzero_si128();
+    for (; i + 8 <= n; i += 8) {
+      __m128i b = _mm_loadl_epi64((const __m128i *)(const void *)(src + i));
+      __m128i w = _mm_unpacklo_epi8(b, zero);
+      __m128i bl = _mm_unpacklo_epi16(w, zero);
+      __m128i bh = _mm_unpackhi_epi16(w, zero);
+      /* (h << 5) + (h + b): the same sum modulo 2^32, one add shorter
+       * on the chain (the loop is bound by the chains' latency). */
+      lo = _mm_add_epi32(_mm_slli_epi32(lo, 5), _mm_add_epi32(lo, bl));
+      hi = _mm_add_epi32(_mm_slli_epi32(hi, 5), _mm_add_epi32(hi, bh));
+      lo = _mm_xor_si128(_mm_add_epi32(lo, _mm_slli_epi32(lo, 10)), _mm_srli_epi32(lo, 6));
+      hi = _mm_xor_si128(_mm_add_epi32(hi, _mm_slli_epi32(hi, 10)), _mm_srli_epi32(hi, 6));
+    }
+    _mm_storeu_si128((__m128i *)(void *)&hashes[0], lo);
+    _mm_storeu_si128((__m128i *)(void *)&hashes[4], hi);
+  }
+#else
+  for (; i + 8 <= n; i += 8) {
     int k;
     for (k = 0; k < 8; k++) {
       uint32_t hash = hashes[k];
-      hash = ((hash << 5) + hash) + (uint8_t)(src[i + k] & 255);
+      hash = ((hash << 5) + hash) + src[i + k];
       hash = (hash + (hash << 10)) ^ (hash >> 6);
       hashes[k] = hash;
     }
   }
+#endif
   for (; i < n; i++) {
     uint32_t idx = (uint32_t)i & 7u;
     uint32_t hash = hashes[idx];
-    hash = ((hash << 5) + hash) + (uint8_t)(src[i] & 255);
+    hash = ((hash << 5) + hash) + src[i];
     hash = (hash + (hash << 10)) ^ (hash >> 6);
     hashes[idx] = hash;
   }

@@ -1,7 +1,7 @@
 import harness
 
 fn tree_fixture: String {
-  "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  check(n.left, depth - 1) &+ check(n.right, depth - 1) &+ n.item\n}\n\nfn main: Int {\n  long_lived = make(0, 15)\n  sum = 0\n  i = 0\n  while i < 20 {\n    t = make(i, 15)\n    sum = sum &+ check(t, 15)\n    i = i + 1\n  }\n  puts(sum)\n  puts(check(long_lived, 15))\n  0\n}\n"
+  "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  if l = n.left {\n    if r = n.right {\n      return check(l, depth - 1) &+ check(r, depth - 1) &+ n.item\n    }\n  }\n  n.item\n}\n\nfn main: Int {\n  long_lived = make(0, 15)\n  sum = 0\n  i = 0\n  while i < 20 {\n    t = make(i, 15)\n    sum = sum &+ check(t, 15)\n    i = i + 1\n  }\n  puts(sum)\n  puts(check(long_lived, 15))\n  0\n}\n"
 }
 
 fn churn_fixture: String {
@@ -44,7 +44,7 @@ fn run_with_env(bin: String, name: String, value: String, log: String): Int {
   args: Array(String) = []
   args.push("${name}=${value}")
   args.push(bin)
-  process_run_out("/usr/bin/env", args, log)
+  process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
 fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log: String): Int {
@@ -58,20 +58,22 @@ fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, lo
   args.push("${n1}=${v1}")
   args.push("${n2}=${v2}")
   args.push(bin)
-  process_run_out("/usr/bin/env", args, log)
+  process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
+// The fixtures' checksums wrap with &+ and &*: since Stage 29 W-INT1 they
+// wrap at Int's 64 bits, so each is the exact sum (its low 32 bits are the
+// 32-bit value it was before).
 fn test_gc_behavior(c: Checks) {
   c.suite("tests/cases/test_gc_behavior.av")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
     src = "${scratch()}/gcb-${stamp}.av"
     bin = "${scratch()}/gcb-${stamp}.bin"
-    w = file_write(src, tree_fixture())
-    c.eq_int(w, 0, "write tree fixture")
+    c.wrote(file_write(src, tree_fixture()), "write tree fixture")
     code = compile_av(compiler, src, bin, "${scratch()}/gcb-${stamp}.clog")
     c.eq_int(code, 0, "compile tree fixture")
-    want = "-1432311182\n715795115\n"
+    want = "286330497650\n715795115\n"
     log1 = "${scratch()}/gcb-${stamp}.run1"
     rc1 = run_av_bin(bin, log1)
     c.eq_int(rc1, 0, "trees survive at default young size")
@@ -104,11 +106,10 @@ fn test_gc_behavior(c: Checks) {
 
     src2 = "${scratch()}/gcb-${stamp}-churn.av"
     bin2 = "${scratch()}/gcb-${stamp}-churn.bin"
-    w2 = file_write(src2, churn_fixture())
-    c.eq_int(w2, 0, "write churn fixture")
+    c.wrote(file_write(src2, churn_fixture()), "write churn fixture")
     code2 = compile_av(compiler, src2, bin2, "${scratch()}/gcb-${stamp}-churn.clog")
     c.eq_int(code2, 0, "compile churn fixture")
-    want2 = "12497500\n704982704\n2000\n"
+    want2 = "12497500\n4999950000\n2000\n"
     log4 = "${scratch()}/gcb-${stamp}.run4"
     rc4 = run_av_bin(bin2, log4)
     c.eq_int(rc4, 0, "cycle, array growth, and string churn survive")
@@ -132,11 +133,10 @@ fn test_gc_behavior(c: Checks) {
     // reads from-space addresses and the checksum breaks or segfaults.
     src3 = "${scratch()}/gcb-${stamp}-roots.av"
     bin3 = "${scratch()}/gcb-${stamp}-roots.bin"
-    w3 = file_write(src3, roots_fixture())
-    c.eq_int(w3, 0, "write roots fixture")
+    c.wrote(file_write(src3, roots_fixture()), "write roots fixture")
     code3 = compile_av(compiler, src3, bin3, "${scratch()}/gcb-${stamp}-roots.clog")
     c.eq_int(code3, 0, "compile roots fixture")
-    want3 = "297457169\n"
+    want3 = "4592424465\n"
     log6 = "${scratch()}/gcb-${stamp}.run6"
     rc6 = run_av_bin(bin3, log6)
     c.eq_int(rc6, 0, "rooted locals survive at default young size")
@@ -160,11 +160,10 @@ fn test_gc_behavior(c: Checks) {
     // Wave 0 regression shape, first seen on Graph::BFS).
     src4 = "${scratch()}/gcb-${stamp}-rootsline.av"
     bin4 = "${scratch()}/gcb-${stamp}-rootsline.bin"
-    w4 = file_write(src4, roots_line_fixture())
-    c.eq_int(w4, 0, "write roots-line fixture")
+    c.wrote(file_write(src4, roots_line_fixture()), "write roots-line fixture")
     code4 = compile_av(compiler, src4, bin4, "${scratch()}/gcb-${stamp}-rootsline.clog")
     c.eq_int(code4, 0, "compile roots-line fixture")
-    want4 = "1104943082\n"
+    want4 = "5399910378\n"
     log8 = "${scratch()}/gcb-${stamp}.run8"
     rc8 = run_av_bin(bin4, log8)
     c.eq_int(rc8, 0, "straight-line roots survive at default young size")
@@ -188,8 +187,7 @@ fn test_gc_behavior(c: Checks) {
     // or the start bit breaks the checksum under a small nursery.
     src5 = "${scratch()}/gcb-${stamp}-alloc.av"
     bin5 = "${scratch()}/gcb-${stamp}-alloc.bin"
-    w5 = file_write(src5, alloc_fixture())
-    c.eq_int(w5, 0, "write alloc fixture")
+    c.wrote(file_write(src5, alloc_fixture()), "write alloc fixture")
     code5 = compile_av(compiler, src5, bin5, "${scratch()}/gcb-${stamp}-alloc.clog")
     c.eq_int(code5, 0, "compile alloc fixture")
     want5 = "1679073713\n"
@@ -222,11 +220,10 @@ fn test_gc_behavior(c: Checks) {
     // with the frontier disabled and under every frontier policy.
     src6 = "${scratch()}/gcb-${stamp}-frontier.av"
     bin6 = "${scratch()}/gcb-${stamp}-frontier.bin"
-    w6 = file_write(src6, frontier_fixture())
-    c.eq_int(w6, 0, "write frontier fixture")
+    c.wrote(file_write(src6, frontier_fixture()), "write frontier fixture")
     code6 = compile_av(compiler, src6, bin6, "${scratch()}/gcb-${stamp}-frontier.clog")
     c.eq_int(code6, 0, "compile frontier fixture")
-    want6 = "-1524741201\n"
+    want6 = "2770226095\n"
     log12 = "${scratch()}/gcb-${stamp}.run12"
     rc12 = run_av_bin(bin6, log12)
     c.eq_int(rc12, 0, "frontier graph survives at default young size")
@@ -253,8 +250,7 @@ fn test_gc_behavior(c: Checks) {
     // with defragmentation disabled and at a 1 MB young size.
     src7 = "${scratch()}/gcb-${stamp}-defrag.av"
     bin7 = "${scratch()}/gcb-${stamp}-defrag.bin"
-    w7 = file_write(src7, defrag_fixture())
-    c.eq_int(w7, 0, "write defrag fixture")
+    c.wrote(file_write(src7, defrag_fixture()), "write defrag fixture")
     code7 = compile_av(compiler, src7, bin7, "${scratch()}/gcb-${stamp}-defrag.clog")
     c.eq_int(code7, 0, "compile defrag fixture")
     want7 = "58508488\n"
@@ -289,11 +285,10 @@ fn test_gc_behavior(c: Checks) {
     // loses a survivor breaks the checksum or segfaults.
     src8 = "${scratch()}/gcb-${stamp}-sizing.av"
     bin8 = "${scratch()}/gcb-${stamp}-sizing.bin"
-    w8 = file_write(src8, sizing_fixture())
-    c.eq_int(w8, 0, "write sizing fixture")
+    c.wrote(file_write(src8, sizing_fixture()), "write sizing fixture")
     code8 = compile_av(compiler, src8, bin8, "${scratch()}/gcb-${stamp}-sizing.clog")
     c.eq_int(code8, 0, "compile sizing fixture")
-    want8 = "447162624\n8\n"
+    want8 = "30511933696\n8\n"
     log17 = "${scratch()}/gcb-${stamp}.run17"
     rc17 = run_av_bin(bin8, log17)
     c.eq_int(rc17, 0, "sizing survivors survive at default young size")
@@ -316,8 +311,7 @@ fn test_gc_behavior(c: Checks) {
     // it must stay correct too (they keep their frames).
     src9 = "${scratch()}/gcb-${stamp}-leaf.av"
     bin9 = "${scratch()}/gcb-${stamp}-leaf.bin"
-    w9 = file_write(src9, leaf_method_fixture())
-    c.eq_int(w9, 0, "write leaf method fixture")
+    c.wrote(file_write(src9, leaf_method_fixture()), "write leaf method fixture")
     code9 = compile_av(compiler, src9, bin9, "${scratch()}/gcb-${stamp}-leaf.clog")
     c.eq_int(code9, 0, "compile leaf method fixture")
     want9 = "1440000\nabcd\n"
@@ -346,8 +340,7 @@ fn test_gc_behavior(c: Checks) {
     // every field back after each return.
     src10 = "${scratch()}/gcb-${stamp}-literal.av"
     bin10 = "${scratch()}/gcb-${stamp}-literal.bin"
-    w10 = file_write(src10, literal_fixture())
-    c.eq_int(w10, 0, "write literal fixture")
+    c.wrote(file_write(src10, literal_fixture()), "write literal fixture")
     code10 = compile_av(compiler, src10, bin10, "${scratch()}/gcb-${stamp}-literal.clog")
     c.eq_int(code10, 0, "compile literal fixture")
     want10 = "68100000\n"

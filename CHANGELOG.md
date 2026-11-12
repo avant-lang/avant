@@ -1,5 +1,43 @@
 # Avant Language changelog
 
+## 0.41.0 - 2026-11-12
+
+### Added
+
+* Errors are declared: `class ParseError: Error { message: String ... }`. In a union, `nil` and the `Error` types are the failures, and postfix `?`, if-assign and `??` all follow that rule. `"${e}"` prints an error followed by its `cause`.
+* `x ?? return v`, `?? break` and `?? continue`; `while v = x { }`; binding chains `if a = x, b = y, cond { }`.
+* `if` is an expression (`n = if c { 1 } else { 2 }`), and a final `if`/`else` is a function's value.
+* `Int32` and `UInt32` are everyday types for dense storage: arrays at 4 bytes an element, fields, locals, arithmetic with overflow traps, `to_i32`, `to_u32`, `wrap_i32`, `wrap_u32`.
+* Lambdas inside methods may use `self`, its fields and its methods.
+* `Array(T).new(n, value)` fills an array with a value; `to_i(16)` parses in a base from 2 to 36.
+
+### Changed
+
+* `Int` is a 64-bit signed integer (it was 32-bit). `Int64` remains another name for `Int` in this release only. Integer literals adopt the type of a declared variable, a parameter, a field, a result, or either operand (`1 + x` works as `x + 1`). Shifts take `0..63` for a 64-bit value and `0..31` for a 32-bit one. C's `int` is `Int32` and `unsigned int` is `UInt32` in `fun` declarations, and `avant bind` writes them so.
+* Integer conversions keep the value or trap; `wrap_i`, `wrap_i32`, `wrap_u32` and `wrap_u64` reinterpret bits. `abs` of the minimum value, an overflowing `sum` or `Hash.inc`, a byte outside 0..255 and a slice outside its string trap instead of wrapping or clamping.
+* `String.to_i`, `to_u64` and `to_f` are strict and return `T?` (`"12abc".to_i` is `nil`); `Json.int` is `nil` for reals and out-of-range integers.
+* Floats print their shortest round-trip text everywhere (`2.0`, `0.1`, `1e21`, `nan`, `inf`), and `puts(true)` prints `true`.
+* `Array(T).new(n)` fills with the element type's zero; `now_ms` and `now_us` are 64-bit.
+* An optional reference (`Node?`, `String?`, `Array(T)?`) is one pointer, `nil` the null pointer: optional fields and elements cost nothing over the reference.
+* No field is ever read unset: a field starts at its type's zero, a default may be any expression, and a field with no zero must be set by `initialize` on every path, or the class is refused.
+* Fields are written `self.name = ...`; inside a method, fields are read and methods called bare; a bare call that could mean a method or a function is an error.
+* `file_read`, `file_write`, `dir_list`, `process_run` and `process_run_out` return their result or an `IoError` / `ProcessError` saying what failed; `process_run("ls", ...)` looks the program up on `PATH`; `file_write` returns the bytes written.
+* Dropping an error is a compile error; `_ = expr` discards a value on purpose. A value at the end of a function that returns nothing is accepted.
+* Traps print their site (`at file:line:col`, or `in fn (file:line:col)` for indexing and arithmetic), flush earlier output first and exit 1. `main` returning an `Int` outside 0..255 traps; a C function declared `: String` that returns NULL traps naming the function, and `avant bind` binds `char *` results as `String?`.
+* `Json.parse` and `Regex.compile` errors carry the library's reason and offset; `JsonBuilder` misuse and a closed `Regex` trap. `Hash.delete` returns the removed value; `String.chars` traps on invalid UTF-8.
+* `crc32_bytes` and `sha256_word0` take `Bytes`, and the checksum builtins return `Int32`; `Json.int64` is gone (`Json.int` is 64-bit).
+* Code is placed on 64-byte function and 32-byte loop boundaries, so a program's speed no longer moves when unrelated code grows.
+* Building the compiler from source needs v0.40.0 or newer as the seed.
+* LangArena (same machine, `--release --cpu=v3`): average peak memory 25.7 → 19.9 MB with the tasks storing data at their references' widths; the tasks behind Crystal or Go went from 16 to 11.
+
+### Fixed
+
+* Strings, buffers and arrays have a checked size ceiling (2^31 - 1 bytes or elements; a hash 2^30 slots): growing past it traps instead of writing past the buffer, and reading a larger file is an `IoError` (`EFBIG`).
+* A zero-byte object allocated at the end of a block could be taken by the collector for the next block's first object.
+* `continue` inside an expression in a `for` loop no longer skips the counter; `return` inside a switch arm is checked against the function's result.
+* `get` on an `Array(T?)` and `xs.get(i)` no longer stop the compiler; a C function returning a NULL `String?` no longer crashes.
+* Float `min` and `max` give one answer whatever the NaN's position; `fmt_float`'s precision traps outside 0..64 instead of clamping; `1e400` is a compile error; `puts` prints a NUL byte inside a string.
+
 ## 0.40.0 - 2026-11-11
 
 ### Added

@@ -11,6 +11,7 @@ import loader
 import typed_ir
 import checker.names
 import checker
+import checker.init
 
 pub fn (checker_self: Checker) find_fn(name: String): FuncSig? {
   if id = checker_self.fn_index.get(name) {
@@ -342,6 +343,9 @@ pub fn (checker_self: Checker) check: Program {
   // before they existed), so no back end sees an untyped default.
   checker_self.clear_poison
   checker_self.check_field_defaults
+  // W3b (B5, D292): no field is read unset (checker/init.av).
+  checker_self.clear_poison
+  checker_self.check_inits
   checker_self.program
 }
 
@@ -921,36 +925,14 @@ pub fn (checker_self: Checker) reserve_constructors {
   }
 }
 
-pub fn (checker_self: Checker) trivial_default(expr: Expr): Bool {
-  k = expr.kind
-  if k == ex_int() {
-    return true
-  }
-  if k == ex_float() {
-    return true
-  }
-  if k == ex_string() {
-    return true
-  }
-  if k == ex_bool() {
-    return true
-  }
-  if k == ex_nil() {
-    return true
-  }
-  if k == ex_unary() && expr.op == tk_minus() {
-    if inner = expr.inner {
-      return inner.kind == ex_int()
-    }
-  }
-  false
-}
-
 pub fn (checker_self: Checker) check_field_defaults {
   saved = checker_self.self_ty
   saved_name = checker_self.self_name
+  saved_try = checker_self.try_in
   checker_self.self_ty = nil
   checker_self.self_name = ""
+  checker_self.in_default = true
+  checker_self.try_in = "a field default"
   for defn in checker_self.program.classes {
     if defn.type_params.size > 0 {
       continue
@@ -960,6 +942,7 @@ pub fn (checker_self: Checker) check_field_defaults {
     // the same class name (D76), and the bare name of a shared one finds
     // no type, which left both classes' defaults untyped (L0001).
     if ty = checker_self.resolver.get_named_for(defn.mod_name, defn.name) {
+      checker_self.default_owner = ty
       j = 0
       while j < defn.fields.size {
         field = defn.fields[j]
@@ -969,10 +952,6 @@ pub fn (checker_self: Checker) check_field_defaults {
             // bodies, for the instances of generic classes made there).
             j += 1
             continue
-          }
-          if !checker_self.trivial_default(default) {
-            checker_self.fail(default.loc, "field default must be a literal or nil")
-            return
           }
           if want = ty.field_named(field.name) {
             checker_self.push_scope
@@ -989,6 +968,9 @@ pub fn (checker_self: Checker) check_field_defaults {
   }
   checker_self.self_ty = saved
   checker_self.self_name = saved_name
+  checker_self.in_default = false
+  checker_self.default_owner = nil
+  checker_self.try_in = saved_try
 }
 
 // The name index of the function or method just pushed (Stage 28 W18P):

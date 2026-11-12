@@ -6,16 +6,16 @@ fn test_gc(c: Checks) {
     stamp = now_ms()
     src = "${scratch()}/gc-${stamp}-gc.av"
     dump = "${scratch()}/gc-${stamp}-gc.mir"
-    body = "class Node {\n  item: Int\n  left: Node\n  right: Node\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nclass Box {\n  n: Int\n  child: Box?\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nfn main {\n  a = Node.new(1)\n  a.left = Node.new(42)\n  b = Box.new(1)\n  b.child = Box.new(2)\n  puts(a.left.item)\n}\n"
-    w = file_write(src, body)
-    c.eq_int(w, 0, "write gc fixture")
+    body = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nclass Box {\n  n: Int\n  child: Box?\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nfn main {\n  a = Node.new(1)\n  a.left = Node.new(42)\n  b = Box.new(1)\n  b.child = Box.new(2)\n  if l = a.left {\n    puts(l.item)\n  }\n}\n"
+    c.wrote(file_write(src, body), "write gc fixture")
     code = dump_av(compiler, src, dump)
     c.eq_int(code, 0, "dump gc fixture")
     if ir = file_read(dump) {
       // The MIR (D171; the old back end's IR until W11).
-      // Nil is the first member of every union, tag 0 (Stage 29 W1a, A1).
-      c.expect(str_has(ir, "layout %(Nil|") && str_has(ir, ".Box) = union"), "IR has Box? layout, Nil first")
-      c.expect(str_has(ir, ".Box stride 0 bits [0x4]"), "T? field type map")
+      // An optional reference is one pointer, nil the null pointer: no
+      // union layout, the field one traced word (Stage 29 W3b, B13).
+      c.expect(!str_has(ir, "layout %(Nil|") && str_has(ir, "1 child: ref %") && str_has(ir, ".Box = class { 0 n: i64, 1 child: ref %"), "IR has Box? as one pointer")
+      c.expect(str_has(ir, ".Box stride 0 bits [0x2]"), "T? field type map")
       c.expect(str_has(ir, "extern avant_alloc("), "IR has avant_alloc")
       c.expect(str_has(ir, "= call avant_alloc("), "IR calls avant_alloc")
       c.expect(str_has(ir, "-> i32 frame extern"), "main has a root frame")

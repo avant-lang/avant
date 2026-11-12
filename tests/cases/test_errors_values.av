@@ -1,0 +1,229 @@
+import harness
+import backends
+
+// Stage 29 W4a: errors and values. Each program is compiled in parallel;
+// a refused one must leave no binary and say the expected words, an
+// accepted one must print what it should.
+//   - the Error marker and one failure rule (D292): in a union the
+//     failures are Nil and every member marked Error (`class E: Error`);
+//     the rest is the success value. Postfix `?`, if-assign and `??`
+//     follow it; `?` passes the failure up only where the result can
+//     hold it. An Error makes its message readable (a field or a method
+//     `message`); `"${e}"` prints it.
+
+class FCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String): FCase {
+  f = FCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): FCase {
+  f = FCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn marker_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("err-propagate", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn sum2(a: String, b: String): Int | ParseError {\n  x = parse(a)?\n  y = parse(b)?\n  x + y\n}\nfn main {\n  puts(sum2(\"ab\", \"cde\") ?? -1)\n  puts(sum2(\"ab\", \"\") ?? -1)\n  if v = sum2(\"a\", \"b\") {\n    puts(v)\n  }\n}\n", "5\n-1\n2\n"))
+  xs.push(accepted("err-message", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nclass IoError: Error {\n  code: Int = 0\n  fn initialize(code: Int) {\n    self.code = code\n  }\n  fn message: String {\n    \"io \${code}\"\n  }\n}\nfn main {\n  e = ParseError.new(\"bad\")\n  puts(e.message)\n  puts(\"got: \${e}\")\n  i = IoError.new(5)\n  puts(i.message)\n  puts(\"\${i}!\")\n}\n", "bad\ngot: bad\nio 5\nio 5!\n"))
+  xs.push(accepted("err-two-failures", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nclass IoError: Error {\n  message: String = \"io\"\n}\nfn read(n: Int): String | IoError | Nil {\n  if n == 0 {\n    return nil\n  }\n  if n < 0 {\n    return IoError.new\n  }\n  \"data\${n}\"\n}\nfn twice(n: Int): Int | IoError | ParseError | Nil {\n  s = read(n)?\n  k = parse(s)?\n  k * 2\n}\nfn main {\n  puts(twice(3) ?? -7)\n  puts(twice(0) ?? -8)\n  puts(twice(-1) ?? -9)\n  if s = read(4) {\n    puts(s)\n  }\n  if s2 = read(-4) {\n    puts(s2)\n  } else {\n    puts(\"failed\")\n  }\n}\n", "10\n-8\n-9\ndata4\nfailed\n"))
+  xs.push(accepted("err-success-union", "class Oops: Error {\n  message: String = \"oops\"\n}\nfn pick(n: Int): Int | String | Oops {\n  if n < 0 {\n    return Oops.new\n  }\n  if n == 0 {\n    return \"zero\"\n  }\n  n\n}\nfn show(v: Int | String): String {\n  \"shown\"\n}\nfn lift(n: Int): Int | String | Oops {\n  v = pick(n)?\n  w: Int | String = v\n  w\n}\nfn main {\n  if v = pick(3) {\n    puts(show(v))\n  }\n  w = pick(-1) ?? \"fallback\"\n  puts(show(w))\n  if x = lift(0) {\n    puts(show(x))\n  }\n  if y = lift(-2) {\n    puts(\"no\")\n  } else {\n    puts(\"lifted failure\")\n  }\n}\n", "shown\nshown\nshown\nlifted failure\n"))
+  xs.push(accepted("err-optional", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  opt: ParseError? = nil\n  if o = opt {\n    puts(\"no\")\n  } else {\n    puts(\"none\")\n  }\n  opt = ParseError.new(\"kept\")\n  if o2 = opt {\n    puts(\"has \${o2}\")\n  }\n  d = opt ?? ParseError.new(\"d\")\n  puts(d.message)\n  errs: Array(ParseError) = [ParseError.new(\"p\")]\n  if last = errs.get(0) {\n    puts(last.message)\n  }\n}\n", "none\nhas kept\nkept\np\n"))
+  xs.push(accepted("err-struct", "struct Code: Error {\n  n: Int\n  fn message: String {\n    \"code \${n}\"\n  }\n}\nfn f(n: Int): Int | Code {\n  if n > 9 {\n    return Code { n: n }\n  }\n  n\n}\nfn g(n: Int): String | Code {\n  k = f(n)?\n  \"ok \${k}\"\n}\nfn main {\n  puts(g(3) ?? \"failed\")\n  puts(g(12) ?? \"failed\")\n  c = Code { n: 4 }\n  puts(\"\${c}\")\n}\n", "ok 3\nfailed\ncode 4\n"))
+  xs.push(accepted("err-or", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  puts(parse(\"\").or(4))\n  puts(parse(\"xy\").or(4))\n}\n", "4\n2\n"))
+  xs.push(refused("err-no-failure-if", "class Leaf {\n  v: Int = 1\n}\nfn f(n: Int): Int | Leaf {\n  n\n}\nfn main {\n  if v = f(1) {\n    puts(v)\n  }\n}\n", "if-assign on Int | Leaf: it has no failure member; a failure is Nil or a type marked Error (class E: Error)"))
+  xs.push(refused("err-no-failure-try", "class Leaf {\n  v: Int = 1\n}\nfn f(n: Int): Int | Leaf {\n  n\n}\nfn g: Int | Leaf {\n  x = f(1)?\n  x\n}\nfn main {\n  puts(1)\n}\n", "postfix ? on Int | Leaf: it has no failure member"))
+  xs.push(refused("err-no-failure-qq", "fn f(n: Int): Int | String {\n  n\n}\nfn main {\n  puts(f(1) ?? 0)\n}\n", "?? on Int | String: it has no failure member"))
+  xs.push(refused("err-not-union", "fn main {\n  x = 3\n  if v = x {\n    puts(v)\n  }\n}\n", "if-assign needs a value that can fail (T? or T | E with E marked Error), got Int"))
+  xs.push(refused("err-try-cannot-hold", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn f(s: String): Int {\n  n = parse(s)?\n  n\n}\nfn main {\n  puts(f(\"a\"))\n}\n", "postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError"))
+  xs.push(refused("err-try-missing-one", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nclass IoError: Error {\n  message: String = \"io\"\n}\nfn r(n: Int): Int | IoError | ParseError {\n  n\n}\nfn f(n: Int): Int | ParseError {\n  k = r(n)?\n  k\n}\nfn main {\n  puts(f(1) ?? 0)\n}\n", "would return IoError, but the function returns Int | ParseError"))
+  xs.push(refused("err-try-optional-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn f(o: ParseError?): Int? {\n  e = o?\n  1\n}\nfn main {\n  puts(f(nil) ?? 0)\n}\n", "postfix ? on ParseError?: it has no success value"))
+  xs.push(refused("err-no-success", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nclass IoError: Error {\n  message: String = \"io\"\n}\nfn r(n: Int): IoError | ParseError {\n  IoError.new\n}\nfn main {\n  if e = r(1) {\n    puts(1)\n  }\n}\n", "if-assign on IoError | ParseError: it has no success value, every member is a failure"))
+  xs.push(refused("err-no-message", "class Oops: Error {\n  code: Int = 0\n}\nfn main {\n  puts(Oops.new.code)\n}\n", "Oops is marked Error but has no message; give it a field message: String or a method fn message: String"))
+  xs.push(refused("err-message-type", "class Oops: Error {\n  message: Int = 0\n}\nfn main {\n  puts(Oops.new.message)\n}\n", "its field message must be a String, got Int"))
+  xs.push(refused("err-type-args", "class Oops: Error(Int) {\n  message: String = \"\"\n}\nfn main {\n  puts(Oops.new.message)\n}\n", "Error does not take type arguments"))
+  xs.push(refused("err-reserved", "class Error {\n  message: String = \"\"\n}\nfn main {\n  puts(1)\n}\n", "Error is the built-in error marker (class E: Error); choose another name"))
+  xs.push(refused("err-late-optin", "class Oops {\n  message: String = \"\"\n}\nOops: Error\nfn main {\n  puts(Oops.new.message)\n}\n", "Error is opted into where the type is declared"))
+  xs.push(refused("err-bound", "class Oops: Error {\n  message: String = \"\"\n}\nfn show(e: T: Error): String {\n  \"x\"\n}\nfn main {\n  puts(show(Oops.new))\n}\n", "Error marks a failure type (class E: Error); it is not a bound"))
+  xs
+}
+
+fn cause_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("cause-chain", "class JsonError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nclass ConfigError: Error {\n  message: String\n  cause: JsonError?\n  fn initialize(message: String, cause: JsonError?) {\n    self.message = message\n    self.cause = cause\n  }\n}\nclass LoadError: Error {\n  message: String = \"cannot load\"\n  cause: ConfigError\n  fn initialize(cause: ConfigError) {\n    self.cause = cause\n  }\n}\nfn main {\n  e = ConfigError.new(\"bad config\", JsonError.new(\"unexpected end\"))\n  puts(\"\${e}\")\n  puts(\"\${ConfigError.new(\"no port\", nil)}\")\n  puts(\"\${LoadError.new(e)}\")\n  if c = e.cause {\n    puts(c.message)\n  }\n}\n", "bad config: unexpected end\nno port\ncannot load: bad config: unexpected end\nunexpected end\n"))
+  xs.push(accepted("cause-method-message", "class JsonError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nstruct Wrap: Error {\n  code: Int\n  cause: JsonError?\n  fn message: String {\n    \"code \${code}\"\n  }\n}\nfn main {\n  w = Wrap { code: 3, cause: JsonError.new(\"inner\") }\n  puts(\"\${w}\")\n}\n", "code 3: inner\n"))
+  xs.push(refused("cause-not-error", "class Oops: Error {\n  message: String = \"x\"\n  cause: String?\n}\nfn main {\n  puts(Oops.new.message)\n}\n", "Oops is marked Error, so its field cause must be an Error type or an optional one (cause: E?), got String?"))
+  xs.push(refused("cause-union", "class JsonError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nclass Io: Error {\n  message: String = \"io\"\n}\nclass Oops: Error {\n  message: String = \"x\"\n  cause: JsonError | Io | Nil\n}\nfn main {\n  puts(Oops.new.message)\n}\n", "its field cause must be an Error type or an optional one"))
+  xs
+}
+
+fn flow_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("qq-return", "fn port(h: Hash(String, Int)): Int {\n  p = h.get(\"port\") ?? return 8080\n  p + 1\n}\nfn note(h: Hash(String, Int)) {\n  p = h.get(\"port\") ?? return\n  puts(\"port \${p}\")\n}\nfn main {\n  h = Hash(String, Int).new\n  puts(port(h))\n  note(h)\n  h[\"port\"] = 99\n  puts(port(h))\n  note(h)\n}\n", "8080\n100\nport 99\n"))
+  xs.push(accepted("qq-return-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn sum(xs: Array(String)): Int | ParseError {\n  t = 0\n  for x in xs {\n    n = parse(x) ?? return ParseError.new(\"bad item\")\n    t += n\n  }\n  t\n}\nfn main {\n  puts(sum([\"a\", \"bc\"]) ?? -1)\n  puts(sum([\"a\", \"\"]) ?? -1)\n}\n", "3\n-1\n"))
+  xs.push(accepted("qq-break-continue", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  xs = [\"ab\", \"\", \"cde\", \"f\"]\n  t = 0\n  for x in xs {\n    n = parse(x) ?? continue\n    t += n\n  }\n  puts(t)\n  u = 0\n  for y in xs {\n    m = parse(y) ?? break\n    u += m\n  }\n  puts(u)\n  i = 0\n  w = 0\n  while i < xs.size {\n    s = xs[i]\n    i += 1\n    k = parse(s) ?? continue\n    w += k\n  }\n  puts(w)\n}\n", "6\n2\n6\n"))
+  xs.push(accepted("qq-return-lambda", "fn main {\n  f: fn(Int?): Int = { |o|\n    v = o ?? return -1\n    v * 2\n  }\n  puts(f(4))\n  puts(f(nil))\n}\n", "8\n-1\n"))
+  xs.push(accepted("while-bind", "class Node {\n  v: Int = 0\n  next: Node?\n}\nclass Iter {\n  i: Int = 0\n  fn next: Int? {\n    if i >= 3 {\n      return nil\n    }\n    self.i += 1\n    i * 10\n  }\n}\nfn main {\n  a = Node.new\n  a.v = 1\n  b = Node.new\n  b.v = 2\n  a.next = b\n  cur: Node? = a\n  sum = 0\n  while n = cur {\n    sum += n.v\n    cur = n.next\n  }\n  puts(sum)\n  it = Iter.new\n  while x = it.next {\n    if x == 20 {\n      continue\n    }\n    puts(x)\n  }\n  for k in 0..2 {\n    it2 = Iter.new\n    while y = it2.next {\n      if y > 10 {\n        break\n      }\n      puts(k + y)\n    }\n  }\n}\n", "3\n10\n30\n10\n11\n"))
+  xs.push(accepted("chain-if", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  h = Hash(String, Int).new\n  h[\"a\"] = 5\n  h[\"b\"] = 7\n  if x = h.get(\"a\"), y = h.get(\"b\"), x < y {\n    puts(x + y)\n  } else {\n    puts(\"no\")\n  }\n  if x2 = h.get(\"a\"), x2 > 50 {\n    puts(\"big\")\n  } else {\n    puts(\"else\")\n  }\n  if z = h.get(\"zz\"), w = h.get(\"a\") {\n    puts(\"no\")\n  } else {\n    puts(\"first fails\")\n  }\n  if p = parse(\"abc\"), p == 3, q = parse(\"xy\") {\n    puts(p * q)\n  }\n  if r = parse(\"\") , r > 0 {\n    puts(\"no\")\n  }\n  n = 0\n  if n == 0, m = h.get(\"b\") {\n    puts(m)\n  }\n}\n", "12\nelse\nfirst fails\n6\n7\n"))
+  xs.push(accepted("chain-while", "fn main {\n  xs: Array(Int) = [1, 2, 3, 4]\n  i = 0\n  while v = xs.get(i), v < 3 {\n    puts(v)\n    i += 1\n  }\n  for k in 0..3 {\n    if a = xs.get(k), a % 2 == 0 {\n      continue\n    }\n    puts(k)\n  }\n}\n", "1\n2\n0\n2\n"))
+  xs.push(refused("qq-break-outside", "fn main {\n  h = Hash(String, Int).new\n  v = h.get(\"x\") ?? break\n  puts(v)\n}\n", "break is only valid inside a loop"))
+  xs.push(refused("qq-return-type", "fn f(h: Hash(String, Int)): Int {\n  v = h.get(\"x\") ?? return \"no\"\n  v\n}\nfn main {\n  puts(f(Hash(String, Int).new))\n}\n", "return type is String, expected Int"))
+  xs.push(refused("qq-return-void", "fn f(h: Hash(String, Int)) {\n  v = h.get(\"x\") ?? return 3\n  puts(v)\n}\nfn main {\n  f(Hash(String, Int).new)\n}\n", "return type is Int, expected Void"))
+  xs.push(refused("chain-not-bool", "fn main {\n  h = Hash(String, Int).new\n  if x = h.get(\"a\"), x + 1 {\n    puts(x)\n  }\n}\n", "if condition must be Bool, got Int"))
+  xs.push(refused("chain-bind-plain", "fn main {\n  k = 3\n  if a = k, a > 1 {\n    puts(a)\n  }\n}\n", "if-assign needs a value that can fail (T? or T | E with E marked Error), got Int"))
+  xs.push(refused("chain-else-scope", "fn main {\n  h = Hash(String, Int).new\n  if x = h.get(\"a\"), x > 1 {\n    puts(x)\n  } else {\n    puts(x)\n  }\n}\n", "unknown name x"))
+  xs.push(refused("while-bind-scope", "fn main {\n  xs: Array(Int) = [1]\n  i = 0\n  while v = xs.get(i) {\n    i += 1\n  }\n  puts(v)\n}\n", "unknown name v"))
+  xs.push(refused("init-qq-return", "class C {\n  xs: Array(Int)\n  fn initialize(h: Hash(String, Int)) {\n    n = h.get(\"n\") ?? return\n    self.xs = [n]\n  }\n}\nfn main {\n  puts(C.new(Hash(String, Int).new).xs.size)\n}\n", "initialize returns before field xs of C is set"))
+  xs.push(refused("init-chain-read", "class C {\n  xs: Array(Int)\n  fn initialize(h: Hash(String, Int)) {\n    if n = h.get(\"n\"), xs.size > n {\n      puts(n)\n    }\n    self.xs = []\n  }\n}\nfn main {\n  puts(C.new(Hash(String, Int).new).xs.size)\n}\n", "field xs of C is read in initialize before it is set"))
+  xs.push(accepted("init-qq-after", "class C {\n  xs: Array(Int)\n  fn initialize(h: Hash(String, Int)) {\n    self.xs = []\n    n = h.get(\"n\") ?? return\n    xs.push(n)\n  }\n}\nfn main {\n  h = Hash(String, Int).new\n  puts(C.new(h).xs.size)\n  h[\"n\"] = 4\n  puts(C.new(h).xs.size)\n}\n", "0\n1\n"))
+  xs
+}
+
+fn ifexpr_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("if-expr-uses", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn sign(n: Int): String {\n  if n < 0 { \"-\" } else if n == 0 { \"0\" } else { \"+\" }\n}\nfn width(h: Hash(String, Int)): Int {\n  if v = h.get(\"width\") {\n    v * 2\n  } else {\n    80\n  }\n}\nfn pick(n: Int): Int {\n  if n > 10 {\n    return 100\n  } else {\n    n + 1\n  }\n}\nfn chain(h: Hash(String, Int)): Int {\n  if a = h.get(\"a\"), b = h.get(\"b\") { a + b } else { -1 }\n}\nfn opt(n: Int): Int? {\n  if n > 0 { n } else { nil }\n}\nfn main {\n  puts(sign(-3))\n  puts(sign(0))\n  puts(sign(5))\n  h = Hash(String, Int).new\n  puts(width(h))\n  h[\"width\"] = 3\n  puts(width(h))\n  puts(pick(20))\n  puts(pick(2))\n  label = if h.size > 0 { \"some\" } else { \"none\" }\n  puts(label)\n  w = if v = h.get(\"width\") { v } else { 80 }\n  puts(w)\n  k = (if w > 2 { 10 } else { 20 }) + 1\n  puts(k)\n  h[\"a\"] = 1\n  puts(chain(h))\n  h[\"b\"] = 2\n  puts(chain(h))\n  puts(opt(3) ?? 0)\n  puts(opt(-3) ?? 0)\n  n = if p = parse(\"abc\") { p } else { 0 }\n  puts(n)\n  total = 0\n  for x in [\"a\", \"\", \"bcd\"] {\n    total += if q = parse(x) { q } else { continue }\n  }\n  puts(total)\n  m: Int? = if total > 3 { total } else { nil }\n  puts(m ?? -1)\n}\n", "-\n0\n+\n80\n6\n100\n3\nsome\n3\n11\n-1\n3\n3\n0\n3\n4\n4\n"))
+  xs.push(accepted("if-expr-method-lambda", "class C {\n  k: Int = 2\n  fn half(n: Int): Int {\n    if n % 2 == 0 {\n      n / 2\n    } else {\n      n * k\n    }\n  }\n}\nfn main {\n  c = C.new\n  puts(c.half(8))\n  puts(c.half(3))\n  f: fn(Int): String = { |n|\n    if n > 0 { \"pos\" } else { \"neg\" }\n  }\n  puts(f(1))\n  puts(f(-1))\n  xs = [3, 4]\n  ys: Array(String) = []\n  for x in xs {\n    ys.push(if x > 3 { \"big\" } else { \"small\" })\n  }\n  puts(ys.size)\n  puts(ys[0])\n}\n", "4\n6\npos\nneg\n2\nsmall\n"))
+  xs.push(accepted("switch-arm-return", "fn f(n: Int): Int {\n  x = switch n {\n    case 1 {\n      return 5\n    }\n    else {\n      7\n    }\n  }\n  x + 1\n}\nfn main {\n  puts(f(1))\n  puts(f(2))\n}\n", "5\n8\n"))
+  xs.push(refused("if-expr-no-else", "fn main {\n  x = if true { 1 }\n  puts(x)\n}\n", "an if used as a value needs an else, so every case gives one"))
+  xs.push(refused("if-expr-types", "fn main {\n  n = 3\n  x = if n > 1 { 1 } else { \"a\" }\n  puts(x)\n}\n", "if branches have different types Int and String"))
+  xs.push(refused("if-expr-void-branch", "fn main {\n  n = 3\n  x = if n > 1 { 1 } else { puts(2) }\n  puts(x)\n}\n", "an if used as a value needs a value at the end of each branch"))
+  xs.push(refused("if-expr-want", "fn main {\n  n = 3\n  x: Int = if n > 1 { \"a\" } else { 1 }\n  puts(x)\n}\n", "expected Int, got String"))
+  xs.push(refused("if-expr-leaves", "fn f(n: Int): Int {\n  x = if n > 1 { return 1 } else { return 2 }\n  x\n}\nfn main {\n  puts(f(1))\n}\n", "an if used as a value leaves in every branch, so it has no value"))
+  xs.push(refused("if-tail-void-branch", "fn f(n: Int): Int {\n  if n > 1 {\n    n\n  } else {\n    puts(n)\n  }\n}\nfn main {\n  puts(f(1))\n}\n", "expected Int, got Void"))
+  xs.push(refused("if-tail-type", "fn f(n: Int): Int {\n  if n > 1 {\n    n\n  } else {\n    \"small\"\n  }\n}\nfn main {\n  puts(f(1))\n}\n", "expected Int, got String"))
+  xs.push(refused("if-tail-no-else", "fn f(n: Int): Int {\n  if n > 1 {\n    n\n  }\n}\nfn main {\n  puts(f(1))\n}\n", "missing return value"))
+  xs.push(refused("if-expr-bind-scope", "fn main {\n  h = Hash(String, Int).new\n  x = if v = h.get(\"a\") { v } else { v + 1 }\n  puts(x)\n}\n", "unknown name v"))
+  xs
+}
+
+fn discard_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("discard-ok", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn count(xs: Array(Int)): Int {\n  xs.push(1)\n  xs.size\n}\nfn main {\n  _ = parse(\"\")\n  _ = parse(\"ab\")\n  _ = ParseError.new(\"x\")\n  xs: Array(Int) = []\n  _ = count(xs)\n  count(xs)\n  e: ParseError? = nil\n  _ = e\n  for i in 0..2 {\n    _ = i\n  }\n  puts(xs.size)\n}\n", "2\n"))
+  xs.push(refused("discard-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  parse(\"ab\")\n  puts(1)\n}\n", "this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ..."))
+  xs.push(refused("discard-error-alone", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn main {\n  e = ParseError.new(\"x\")\n  e\n  puts(1)\n}\n", "this statement drops a value that can be an error (ParseError)"))
+  xs.push(refused("discard-optional-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn check(n: Int): ParseError? {\n  nil\n}\nfn main {\n  check(1)\n  puts(1)\n}\n", "this statement drops a value that can be an error (ParseError?)"))
+  xs.push(refused("discard-std-error", "import std.zlib\nfn main {\n  raw = \"hello\".bytes\n  dst = buf_new()\n  raw.compress_into(dst)\n  puts(dst.size)\n}\n", "this statement drops a value that can be an error (ZlibError?)"))
+  xs.push(refused("discard-read", "fn main {\n  _ = 3\n  puts(_)\n}\n", "unknown name _"))
+  xs.push(refused("discard-compound", "fn main {\n  _ += 3\n}\n", "_ discards a value with _ = ...; it holds nothing to read or update"))
+  xs.push(refused("discard-typed", "fn main {\n  _: Int = 3\n}\n", "_ = ... discards a value; it takes no type"))
+  xs.push(refused("discard-void", "fn main {\n  _ = puts(1)\n}\n", "there is no value to discard"))
+  xs
+}
+
+fn voidtail_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(accepted("void-tail", "fn pop_one(xs: Array(Int)) {\n  xs.pop\n}\nfn count(xs: Array(Int)): Int {\n  xs.push(9)\n  xs.size\n}\nfn add(xs: Array(Int)) {\n  count(xs)\n}\nfn go(f: fn()) {\n  f()\n}\nfn stop(h: JoinHandle(Int)) {\n  h.join\n}\nfn main {\n  xs = [1, 2, 3]\n  pop_one(xs)\n  add(xs)\n  puts(xs.size)\n  go() { || xs.push(4) }\n  puts(xs.size)\n  stop(spawn { 7 })\n}\n", "3\n4\n"))
+  xs.push(refused("void-tail-error", "class ParseError: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn parse(s: String): Int | ParseError {\n  if s.size == 0 {\n    return ParseError.new(\"empty\")\n  }\n  s.size\n}\nfn check(s: String) {\n  parse(s)\n}\nfn main {\n  check(\"a\")\n}\n", "this statement drops a value that can be an error (Int | ParseError)"))
+  xs.push(refused("void-tail-minus", "fn main {\n  a = 1\n  t = a\n  - 2\n}\n", "this line starts with `-`, so it begins a new statement whose value nobody uses"))
+  xs
+}
+
+// A case's source may hold more modules: after a line `//== name.av`
+// the lines up to the next such line are the module name.av, written
+// beside the program (its own lines are the ones before the first).
+fn write_sources(dir: String, src: String, text: String) {
+  parts = text.split("//== ")
+  _ = file_write(src, parts[0])
+  for i in 1..parts.size {
+    lines = parts[i].split("\n")
+    body = ""
+    for j in 1..lines.size {
+      body = body + lines[j]
+      if j < lines.size - 1 {
+        body = body + "\n"
+      }
+    }
+    _ = file_write("${dir}/${lines[0]}", body)
+  }
+}
+
+fn ruling_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  xs.push(refused("mod-method-call", "import errvutil\nclass C {\n  fn errvutil: Int {\n    1\n  }\n  fn run: Int {\n    errvutil.twice(3)\n  }\n}\nfn main {\n  puts(C.new.run)\n}\n//== errvutil.av\npub fn twice(n: Int): Int {\n  n * 2\n}\n", "errvutil is both a module and a method of C; write self.errvutil for the method, or give the method another name to use the module"))
+  xs.push(accepted("mod-no-method", "import errvutil2\nclass C {\n  fn other: Int {\n    1\n  }\n  fn run: Int {\n    errvutil2.twice(3) + self.other\n  }\n}\nfn main {\n  puts(C.new.run)\n}\n//== errvutil2.av\npub fn twice(n: Int): Int {\n  n * 2\n}\n", "7\n"))
+  xs.push(refused("mod-method-gc", "import std.gc\nclass C {\n  fn gc: Int {\n    1\n  }\n  fn run {\n    gc.collect()\n  }\n}\nfn main {\n  C.new.run\n}\n", "gc is both a module and a method of C; write self.gc for the method"))
+  xs.push(refused("default-reads-field", "class C {\n  k: Int = 2\n  n: Int = k + 1\n}\nfn main {\n  puts(C.new.n)\n}\n", "a field default cannot read another field (k of C): defaults are evaluated before initialize, in declaration order; compute it in initialize instead"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(FCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/errv-${f.tag}.av"
+    write_sources(dir, src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/errv-${f.tag}.bin", "${dir}/errv-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "errv-${f2.tag}.bin", "errv-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/errv-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/errv-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/errv-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_errors_values.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    all = marker_cases()
+    for f_cause_cases in cause_cases() {
+      all.push(f_cause_cases)
+    }
+    for f_flow_cases in flow_cases() {
+      all.push(f_flow_cases)
+    }
+    for f_ifexpr_cases in ifexpr_cases() {
+      all.push(f_ifexpr_cases)
+    }
+    for f_discard_cases in discard_cases() {
+      all.push(f_discard_cases)
+    }
+    for f_voidtail_cases in voidtail_cases() {
+      all.push(f_voidtail_cases)
+    }
+    for f_ruling_cases in ruling_cases() {
+      all.push(f_ruling_cases)
+    }
+    run_cases(c, compiler, scratch_dir(), all)
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

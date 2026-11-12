@@ -23,6 +23,7 @@ import mir.types
 import mir.ir
 import mir.build
 import mir.lower
+import prelude_src
 
 // The ranks of the thunks (functions take their index, below 1000000;
 // the constructors 1000000 and count nothing).
@@ -48,6 +49,11 @@ pub fn (lw: MirLower) cov_point(kind: Int, path: String, line: Int, name: String
 // emit_cov_hit, cov_touch_line).
 pub fn (lw: MirLower) cov_at(kind: Int, loc: Location, name: String) {
   if !lw.lw_cov.on || lw.failed || !lw.open_now {
+    return
+  }
+  // The prelude module (prelude_src.av) is the language's, not the
+  // program's source: it counts nothing.
+  if loc.path == prelude_path() {
     return
   }
   lw.at(loc)
@@ -151,7 +157,7 @@ pub fn (lw: MirLower) cov_finish {
       }
     }
   }
-  dummy = file_write(c.map_path, buf.to_s)
+  dummy = shim_file_write(c.map_path, buf.to_s)
 }
 
 pub fn mir_cov_line(buf: Buf, kind: Int, path: String, line: Int, name: String) {

@@ -135,10 +135,8 @@ pub fn avant_test_root: String {
 }
 
 pub fn list_only: Bool {
-  if v = env_get("AVANT_TEST_LIST") {
-    if v == "1" {
-      return true
-    }
+  if v = env_get("AVANT_TEST_LIST"), v == "1" {
+    return true
   }
   false
 }
@@ -176,13 +174,11 @@ pub fn gc_env_outer(stated: String): String {
   own = " ${stated} "
   out = ""
   for nm in names {
-    if v = env_get(nm) {
-      if v.size > 0 && !str_has(own, " ${nm} ") {
-        if out.size > 0 {
-          out = "${out} "
-        }
-        out = "${out}${nm}"
+    if v = env_get(nm), v.size > 0 && !str_has(own, " ${nm} ") {
+      if out.size > 0 {
+        out = "${out} "
       }
+      out = "${out}${nm}"
     }
   }
   out
@@ -195,28 +191,20 @@ pub class Checks {
   suites_bad: Int = 0
   suite_name: String = ""
   suite_failed_at: Int = 0
-  pub started: Int = 0
-  case_at: Int = 0
-  lines: Array(String)
-  rec_suite: Array(String)
-  rec_name: Array(String)
-  rec_ok: Array(Int)
-  rec_ms: Array(Int)
-  rec_at: Int = 0
-
-  fn initialize {
-    self.lines = []
-    self.rec_suite = []
-    self.rec_name = []
-    self.rec_ok = []
-    self.rec_ms = []
-  }
+  pub started: Int64 = 0i64
+  case_at: Int64 = 0i64
+  lines: Array(String) = []
+  rec_suite: Array(String) = []
+  rec_name: Array(String) = []
+  rec_ok: Array(Int) = []
+  rec_ms: Array(Int) = []
+  rec_at: Int64 = 0i64
 
   fn record(okv: Bool, msg: String) {
     now = now_ms()
     dur = 0
-    if self.rec_at > 0 {
-      dur = now - self.rec_at
+    if self.rec_at > 0i64 {
+      dur = (now - self.rec_at).to_i
     }
     self.rec_at = now
     self.rec_suite.push(self.suite_name)
@@ -251,7 +239,7 @@ pub class Checks {
   }
 
   pub fn suite(name: String) {
-    self.flush_suite()
+    flush_suite()
     self.suite_name = name
     self.suite_failed_at = self.failed
     self.case_at = now_ms()
@@ -318,9 +306,9 @@ pub class Checks {
         }
         j += 1
       }
-      b.push_str("<testsuite name=\"${self.junit_escape(suite)}\" tests=\"${n}\" failures=\"${badn}\" time=\"${self.junit_secs(total)}\">\n")
+      b.push_str("<testsuite name=\"${junit_escape(suite)}\" tests=\"${n}\" failures=\"${badn}\" time=\"${junit_secs(total)}\">\n")
       for k in i..j {
-        b.push_str("  <testcase name=\"${self.junit_escape(self.rec_name[k])}\" classname=\"${self.junit_escape(suite)}\" time=\"${self.junit_secs(self.rec_ms[k])}\"")
+        b.push_str("  <testcase name=\"${junit_escape(self.rec_name[k])}\" classname=\"${junit_escape(suite)}\" time=\"${junit_secs(self.rec_ms[k])}\"")
         if self.rec_ok[k] == 0 {
           b.push_str(">\n    <failure message=\"check failed\"/>\n  </testcase>\n")
         } else {
@@ -330,11 +318,11 @@ pub class Checks {
       b.push_str("</testsuite>\n")
       i = j
     }
-    dummy = file_write(frag, b.to_s)
+    _ = file_write(frag, b.to_s)
   }
 
   pub fn expect(cond: Bool, msg: String) {
-    self.record(cond, msg)
+    record(cond, msg)
     if cond {
       self.passed += 1
       self.lines.push("    ✓ ${msg}")
@@ -355,8 +343,20 @@ pub class Checks {
     self.lines.push("    ○ ${msg} (skipped: ${why})")
   }
 
+  // A file the test writes (Stage 29 W4b2): passes when file_write
+  // succeeded; a failure shows its IoError.
+  pub fn wrote(r: Int | IoError, msg: String) {
+    if n = r {
+      self.expect(true, msg)
+    } else if e = io_failure(r) {
+      self.expect(false, msg)
+      self.lines.push("    ${e}")
+      self.lines.push("")
+    }
+  }
+
   pub fn eq_int(got: Int, want: Int, msg: String) {
-    self.record(got == want, msg)
+    record(got == want, msg)
     if got == want {
       self.passed += 1
       self.lines.push("    ✓ ${msg}")
@@ -373,7 +373,7 @@ pub class Checks {
   }
 
   pub fn eq_str(got: String, want: String, msg: String) {
-    self.record(got == want, msg)
+    record(got == want, msg)
     if got == want {
       self.passed += 1
       self.lines.push("    ✓ ${msg}")
@@ -390,8 +390,8 @@ pub class Checks {
   }
 
   pub fn finish: Int {
-    self.flush_suite()
-    self.write_junit()
+    flush_suite()
+    write_junit()
     ms = now_ms() - self.started
     puts("")
     puts("Test Suites: ${fmt_counts(self.suites_bad, self.suites_ok)}")
@@ -416,15 +416,15 @@ pub fn empty_strs: Array(String) {
 // chmod +x, rm -f, rm -rf, mkdir -p, and pwd -P without starting a tool
 // (D140); runtime/avant_io.c.
 pub fn chmod_x(path: String) {
-  dummy = harness_rt.avant_fs_chmod_x(path)
+  harness_rt.avant_fs_chmod_x(path)
 }
 
 pub fn rm_f(path: String) {
-  dummy = harness_rt.avant_fs_unlink(path)
+  harness_rt.avant_fs_unlink(path)
 }
 
 pub fn rm_rf(path: String) {
-  dummy = harness_rt.avant_fs_remove_tree(path)
+  harness_rt.avant_fs_remove_tree(path)
 }
 
 pub fn copy_file(src: String, dst: String): Int {
@@ -443,7 +443,7 @@ pub fn compile_av(compiler: String, src: String, bin: String, log: String): Int 
   // Test programs are compiled fast (--debug); a bare compile uses the
   // default mode. test_toolchain.av covers the verb defaults.
   args.push("--debug")
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 pub fn compile_av_flags(compiler: String, src: String, bin: String, log: String, extra: Array(String)): Int {
@@ -469,7 +469,7 @@ pub fn compile_av_flags(compiler: String, src: String, bin: String, log: String,
   if !has_codegen {
     args.push("--debug")
   }
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 // `dump`: the MIR text (D171), which the callers inspect (the old back
@@ -478,7 +478,7 @@ pub fn dump_av(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
   args.push("dump")
   args.push(src)
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 // `__emit-ll SRC OUT` (internal, Stage 28 W9): the pre-optimization .ll
@@ -489,7 +489,7 @@ pub fn emit_ll(compiler: String, src: String, out: String, log: String): Int {
   args.push("__emit-ll")
   args.push(src)
   args.push(out)
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 // A hidden front-end dump (D137): flag is --tokens, --ast, or --check.
@@ -498,7 +498,7 @@ pub fn dump_layer(compiler: String, flag: String, src: String, log: String): Int
   args.push("dump")
   args.push(flag)
   args.push(src)
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 pub fn compiler_abs(tag: String, path: String): String {
@@ -513,14 +513,14 @@ pub fn compiler_abs(tag: String, path: String): String {
 }
 
 pub fn run_av_bin(bin: String, log: String): Int {
-  process_run_out(bin, empty_strs(), log)
+  process_run_out(bin, empty_strs(), log) ?? -1
 }
 
 pub fn run_av_cmd(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
   args.push("run")
   args.push(src)
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 pub fn run_av_cmd_flags(compiler: String, src: String, log: String, extra: Array(String)): Int {
@@ -532,7 +532,7 @@ pub fn run_av_cmd_flags(compiler: String, src: String, log: String, extra: Array
     args.push(extra[i])
     i += 1
   }
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 pub fn compile_av_cov(compiler: String, src: String, bin: String, log: String): Int {
@@ -542,7 +542,7 @@ pub fn compile_av_cov(compiler: String, src: String, bin: String, log: String): 
   args.push("compile")
   args.push(src)
   args.push(bin)
-  process_run_out("/usr/bin/env", args, log)
+  process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
 // The MIR with coverage on (as dump_av).
@@ -552,41 +552,44 @@ pub fn dump_av_cov(compiler: String, src: String, log: String): Int {
   args.push(compiler)
   args.push("dump")
   args.push(src)
-  process_run_out("/usr/bin/env", args, log)
+  process_run_out("/usr/bin/env", args, log) ?? -1
+}
+
+// The IoError of a failed file_write, else nil (until W5's switch reads
+// a failure member in place).
+pub fn io_failure(r: Int | IoError): IoError? {
+  _ = r?
+  nil
 }
 
 pub fn write_tmp(stem: String, stamp: Int, name: String, body: String): String {
   path = "${scratch()}/${stem}-${stamp}-${name}"
-  file_write(path, body)
+  _ = file_write(path, body)
   path
 }
 
 pub fn mkdir_p(path: String) {
-  dummy = harness_rt.avant_fs_mkdir_p(path)
+  harness_rt.avant_fs_mkdir_p(path)
 }
 
 pub fn write_av(dir: String, name: String, body: String) {
-  dummy = file_write("${dir}/${name}.av", body)
+  _ = file_write("${dir}/${name}.av", body)
 }
 
 pub class Channel(T) {
-  slots: Array(T)
+  slots: Array(T?)
   cap: Int
   count: Int
   head: Int
   closed: Int
   has: Int
   gate: UInt64
-  cell: T
+  cell: T?
 
   fn initialize(n: Int = 0) {
     self.cap = n
-    self.count = 0
-    self.head = 0
-    self.closed = 0
-    self.has = 0
     self.gate = avant_gate_new()
-    self.slots = Array(T).new(n)
+    self.slots = Array(T?).new(n)
   }
 
   pub fn send(value: T) {
@@ -639,6 +642,7 @@ pub class Channel(T) {
       }
       if count > 0 {
         got = slots[head]
+        slots[head] = nil
         self.head = (head + 1) % cap
         self.count = count - 1
         avant_gate_broadcast(gate)

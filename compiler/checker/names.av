@@ -47,9 +47,11 @@ pub fn reserved_c_names: Hash(String, Int) {
   "avant_str_eq",
   "avant_str_size",
   "avant_str_byte",
-  "avant_str_to_f",
-  "avant_str_to_f_slice",
-  "avant_str_to_i",
+  "avant_str_parse_i32",
+  "avant_str_parse_i64",
+  "avant_str_parse_u64",
+  "avant_str_parse_f64",
+  "avant_str_parse_f64_slice",
   "avant_checksum_str",
   "avant_checksum_f64",
   "avant_wide_op",
@@ -66,7 +68,7 @@ pub fn reserved_c_names: Hash(String, Int) {
   "avant_buf_clear",
   "avant_buf_starts",
   "avant_buf_ensure",
-  "avant_crc32_i32",
+  "avant_crc32_bytes",
   "avant_sha256_word0",
   "avant_sha256",
   "avant_hash_new",
@@ -79,6 +81,9 @@ pub fn reserved_c_names: Hash(String, Int) {
   "avant_hash_get_i32k_i32",
   "avant_hash_del",
   "avant_hash_del_i32k",
+  "avant_hash_take_i32",
+  "avant_hash_take_str",
+  "avant_hash_take_i32k_i32",
   "avant_hash_inc_slice",
   "avant_hash_last_key",
   "avant_hash_get_str_slice",
@@ -95,12 +100,30 @@ pub fn reserved_c_names: Hash(String, Int) {
   "avant_array_sort_i32",
   "avant_array_fill_i32",
   "avant_array_fill_u8",
+  "avant_trap_empty",
   "avant_trap_bounds",
   "avant_trap_div_zero",
   "avant_trap_overflow",
   "avant_trap_shift",
   "avant_trap_to_i",
   "avant_trap_c_range",
+  "avant_trap_exit_status",
+  "avant_trap_c_null",
+  "avant_trap_overflow_in",
+  "avant_trap_div_zero_in",
+  "avant_trap_empty_at",
+  "avant_trap_bounds_at",
+  "avant_trap_bounds_in",
+  "avant_trap_div_zero_at",
+  "avant_trap_overflow_at",
+  "avant_trap_shift_at",
+  "avant_trap_to_i_at",
+  "avant_trap_c_range_at",
+  "avant_trap_convert_at",
+  "avant_trap_byte_at",
+  "avant_trap_negative_at",
+  "avant_trap_exit_status_at",
+  "avant_trap_c_null_at",
   "avant_checked_add_i64",
   "avant_checked_sub_i64",
   "avant_checked_mul_i64",
@@ -122,15 +145,15 @@ pub fn reserved_c_names: Hash(String, Int) {
   "avant_gate_broadcast",
   "avant_now_ms",
   "avant_now_us",
+  "avant_puts_f64",
+  "avant_puts_bool",
+  "avant_puts_str",
+  "avant_clock_ms",
+  "avant_clock_us",
   "avant_io_init_argv",
   "avant_argv",
-  "avant_file_read",
-  "avant_file_write",
-  "avant_process_run",
-  "avant_process_run_out",
   "avant_env_get",
   "avant_file_exists",
-  "avant_dir_list",
   "avant_cov_init",
   "avant_cov_hit"
   ]
@@ -216,6 +239,12 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
   if k == tyk_uint64() {
     return TypeName.new(loc, "UInt64")
   }
+  if k == tyk_int32() {
+    return TypeName.new(loc, "Int32")
+  }
+  if k == tyk_uint32() {
+    return TypeName.new(loc, "UInt32")
+  }
   if k == tyk_bool() {
     return TypeName.new(loc, "Bool")
   }
@@ -285,10 +314,10 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
 }
 
 pub class ImplFact {
-  type_key: String = ""
-  iface_key: String = ""
-  mod_name: String = ""
-  vis: Bool = false
+  pub type_key: String = ""
+  pub iface_key: String = ""
+  pub mod_name: String = ""
+  pub vis: Bool = false
 
   fn initialize {
   }

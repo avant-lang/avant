@@ -107,9 +107,7 @@ pub fn ll_gc_frame_enter(e: LlEmit) {
   if n > 0 {
     locals = roots[0].locals
     w = 0
-    i = 0
-    while i < locals.size {
-      l = locals[i]
+    for l in locals {
       refs: Array(Int) = []
       words: Array(Int) = []
       e.ts.words(e.f.locals[l].ty, 0, refs, words)
@@ -129,7 +127,6 @@ pub fn ll_gc_frame_enter(e: LlEmit) {
         w += 1
         j += 1
       }
-      i += 1
     }
   }
   e.need("avant_gc_frame_enter")
@@ -300,12 +297,25 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 // hole accounting: the path counts nothing, and must not, since other
 // threads update the counters under the world lock). An unshared module
 // is unchanged.
+// An empty payload is one word (Stage 29 W-INT1, as avant_alloc): a 0-byte
+// object at a block's end would have the next block's first address as
+// its payload.
 pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   size = e.value(args[0])
   ty = e.value(args[1])
   const_size = args[0].kind == mok_int() && args[1].kind == mok_int()
   sz = args[0].ival
   tid = args[1].ival
+  if args[0].kind == mok_int() && sz == 0i64 {
+    sz = 8i64
+    size = "8"
+  } else if args[0].kind != mok_int() {
+    z = e.tmp
+    e.line("${z} = icmp eq i64 ${size}, 0")
+    s8 = e.tmp
+    e.line("${s8} = select i1 ${z}, i64 8, i64 ${size}")
+    size = s8
+  }
   total = "0"
   if const_size {
     tot = (sz + 15i64) & -8i64
@@ -398,7 +408,7 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   // The header: size | type << 32 | (HEAP | YOUNG) << 48.
   if const_size {
     hdr = (32800u64 << 48u64) | (tid.to_u64 << 32u64) | sz.to_u64
-    e.line("store i64 ${hdr.to_i64}, ptr ${bump}, align 8")
+    e.line("store i64 ${bits_u64_to_i64(hdr)}, ptr ${bump}, align 8")
   } else {
     tz = e.tmp
     e.line("${tz} = zext i32 ${ty} to i64")
@@ -407,7 +417,7 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
     h1 = e.tmp
     e.line("${h1} = or i64 ${size}, ${tsh}")
     h2 = e.tmp
-    e.line("${h2} = or i64 ${h1}, ${(32800u64 << 48u64).to_i64}")
+    e.line("${h2} = or i64 ${h1}, ${bits_u64_to_i64(32800u64 << 48u64)}")
     e.line("store i64 ${h2}, ptr ${bump}, align 8")
   }
   obj = e.tmp

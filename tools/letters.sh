@@ -39,7 +39,7 @@
 # a user program never does.
 #
 # Environment:
-#   LETTERS_SEED      seed directory with avant (default bin/v0.39.0, the
+#   LETTERS_SEED      seed directory with avant (default bin/v0.40.0, the
 #                     release; a seed must emit W15a1's call table, so
 #                     v0.35.0 and v0.36.0 no longer build a correct B since
 #                     the C-stack scans retired); relative to the checkout.
@@ -63,16 +63,16 @@ cd "$root" || exit 2
 COMPILER_LINK="runtime/build/avant_llvm.o"
 
 # The default seed (D178, D189; Stage 28 W12r, W14b2, W16b, then the
-# v0.37.0, v0.38.0 and v0.39.0 releases): bin/v0.39.0, the release archive unpacked (CI pins the
+# v0.37.0 to v0.40.0 releases): bin/v0.40.0, the release archive unpacked (CI pins the
 # same asset). The v0.36.0 release predates W15a1's call table: the code it
 # emits holds references in registers across runtime helpers that now
 # collect, which only the conservative C-stack pin scan made safe, and W16b
 # retired the scan, so a B it builds is wrong (the local seed
 # bin/seeds/s28-w16b bridged that gap until v0.37.0). This is the one place
 # the default is computed; tools/gate.sh asks --print-seed (O31).
-default_seed=bin/v0.39.0
+default_seed=bin/v0.40.0
 if [ -z "${LETTERS_SEED:-}" ] && [ ! -x "$default_seed/avant" ]; then
-  echo "letters: the default seed $default_seed is missing: unpack the v0.39.0 release archive there, or set LETTERS_SEED to a seed built after Stage 28 W15a (v0.36.0's B needs the retired C-stack scan)" >&2
+  echo "letters: the default seed $default_seed is missing: unpack the v0.40.0 release archive there, or set LETTERS_SEED to a seed built after Stage 28 W15a (v0.36.0's B needs the retired C-stack scan)" >&2
   exit 2
 fi
 seed=$(realpath -m "${LETTERS_SEED:-$default_seed}")
@@ -110,7 +110,23 @@ build() {
   timer=""
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
   # shellcheck disable=SC2086 # timer and the flag are words or empty
-  env -u AVANT_BACKEND timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null
+  env -u AVANT_BACKEND -u AVANT_ROOT $root_env timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null
+}
+
+# B links the seed's ABI (Stage 29 W-INT1, the bootstrap): the seed's code
+# generator has a 32-bit `Int`, so B, its output, links the copy of the
+# program objects runtime/build.sh builds with a 32-bit avant_int, laid
+# out as an Avant root (runtime/build/seed-abi); every compiler B builds,
+# and every program, links runtime/build (a 64-bit `Int`). The seed's
+# AVANT_ROOT rule (pipeline.av avant_root) picks the objects and the
+# header the seed compiles C against; the compiler imports no std module,
+# so nothing else is read from that root. This goes when a release with
+# the 64-bit `Int` is the seed.
+seed_root="runtime/build/seed-abi"
+need_seed_abi() {
+  [ -f "$seed_root/runtime/build/avant_rt.o" ] && return 0
+  echo "letters: $seed_root is missing: run sh runtime/build.sh (it builds the seed-ABI runtime B links)" >&2
+  exit 1
 }
 
 # B must carry no LLVM stack maps (the runtime walks none since W12r).
@@ -125,10 +141,10 @@ check_no_stackmaps() {
 for s in $steps; do
   case "$s" in
     runtime) timeout -k 10 300 sh runtime/build.sh < /dev/null ;;
-    b) build b "$seed/avant" bin/avant-b --debug && check_no_stackmaps bin/avant-b ;;
-    c-llvm) build c-llvm ./bin/avant-b bin/avant-c-llvm --debug --cpu=baseline ;;
-    d-llvm) build d-llvm ./bin/avant-c-llvm bin/avant-d-llvm --debug --cpu=baseline ;;
-    c-release) build c-release ./bin/avant-b bin/avant-c-release --release --cpu=baseline ;;
+    b) need_seed_abi; root_env="AVANT_ROOT=$root/$seed_root" build b "$seed/avant" bin/avant-b --debug && check_no_stackmaps bin/avant-b ;;
+    c-llvm) root_env= build c-llvm ./bin/avant-b bin/avant-c-llvm --debug --cpu=baseline ;;
+    d-llvm) root_env= build d-llvm ./bin/avant-c-llvm bin/avant-d-llvm --debug --cpu=baseline ;;
+    c-release) root_env= build c-release ./bin/avant-b bin/avant-c-release --release --cpu=baseline ;;
   esac
   rc=$?
   [ $rc -eq 0 ] || exit $rc

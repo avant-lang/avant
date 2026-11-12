@@ -8,8 +8,9 @@
 //     method (the old back end converts only type-level calls' arguments);
 //   - a union into a union of more members (`Int?` into
 //     `Int | Oops | Nil`): the old emit_coerce wraps members only;
-//   - postfix `?` whose success part is itself a union (the old
-//     emit_unwrap reads payload index -1).
+//   - postfix `?` with two failure members (nil and an Error) into a
+//     smaller union (Stage 29 W4a; before: a success part that is itself
+//     a union, which the old emit_unwrap read at payload index -1).
 // It also keeps a `nil` field default in a generic class, which the old
 // back end compiles since W10b (C14: the checker types the instance's
 // default; types/generic_defaults.av proves it on both).
@@ -22,11 +23,11 @@ class Node {
   }
 }
 
-class Oops {
-  m: String
+class Oops: Error {
+  message: String
 
-  fn initialize(m: String) {
-    self.m = m
+  fn initialize(message: String) {
+    self.message = message
   }
 }
 
@@ -42,7 +43,7 @@ class Box(T) {
   }
 
   fn put(v: T) {
-    last = v
+    self.last = v
   }
 }
 
@@ -77,12 +78,22 @@ fn kind(n: Int): Int | Oops | Nil {
   Oops.new("neg")
 }
 
+// Oops is marked Error (D292, Stage 29 W4a): if-assign reads the Int;
+// oops_of passes the two failures up with `?` (a union of several
+// failures into a smaller one) and returns nil after an Int.
 fn desc(u: Int | Oops | Nil): String? {
-  x = u?
-  if i = x {
+  if i = u {
     return "int ${i}"
   }
-  "oops"
+  if o = oops_of(u) {
+    return "oops"
+  }
+  nil
+}
+
+fn oops_of(u: Int | Oops | Nil): Oops? {
+  i = u?
+  nil
 }
 
 fn main {

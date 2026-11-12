@@ -32,6 +32,10 @@ pub fn mt_str: Int { 9 }
 pub fn mt_task: Int { 10 }
 pub fn mt_ptr: Int { 11 }
 pub fn mt_addr: Int { 12 }
+// The MIR type of the language's `Int` (Stage 29 W-INT1, D314: 64-bit).
+// Sizes and capacities in the Array, Buf and Hash headers stay i32 (the
+// runtime's ceiling, AVANT_SIZE_MAX), read with a sign extension.
+pub fn mt_int: Int { 5 }
 
 // Layout kinds (2.4).
 pub fn mlk_struct: Int { 1 }
@@ -66,13 +70,13 @@ pub fn mlk_parse(s: String): Int {
 
 pub class MType {
   id: Int = 0
-  kind: Int = 0
-  bits: Int = 0
+  pub kind: Int = 0
+  pub bits: Int = 0
   signed: Bool = false
-  pointee: Int = -1
-  layout: Int = -1
-  sig: Int = -1
-  text: String = ""
+  pub pointee: Int = -1
+  pub layout: Int = -1
+  pub sig: Int = -1
+  pub text: String = ""
 
   fn initialize(kind: Int, text: String) {
     self.kind = kind
@@ -84,17 +88,17 @@ pub class MType {
 }
 
 pub class MLayout {
-  name: String = ""
-  kind: Int = 0
-  fields: Array(Int)
-  names: Array(String)
-  offsets: Array(Int)
-  size: Int = 0
-  align: Int = 1
-  ref_words: Array(Int)
+  pub name: String = ""
+  pub kind: Int = 0
+  pub fields: Array(Int)
+  pub names: Array(String)
+  pub offsets: Array(Int)
+  pub size: Int = 0
+  pub align: Int = 1
+  pub ref_words: Array(Int)
   root_words: Array(Int)
-  type_id: Int = 0
-  nil_tag: Int = -1
+  pub type_id: Int = 0
+  pub nil_tag: Int = -1
 
   fn initialize(name: String, kind: Int) {
     self.name = name
@@ -108,10 +112,10 @@ pub class MLayout {
 }
 
 pub class MSig {
-  params: Array(Int)
-  ret: Int = 0
-  varargs: Bool = false
-  text: String = ""
+  pub params: Array(Int)
+  pub ret: Int = 0
+  pub varargs: Bool = false
+  pub text: String = ""
 
   fn initialize(params: Array(Int), ret: Int, varargs: Bool, text: String) {
     self.params = params
@@ -131,9 +135,9 @@ pub fn mir_align_up(n: Int, a: Int): Int {
 pub class MTypes {
   all: Array(MType)
   index: Hash(String, Int)
-  layouts: Array(MLayout)
+  pub layouts: Array(MLayout)
   layout_index: Hash(String, Int)
-  sigs: Array(MSig)
+  pub sigs: Array(MSig)
   sig_index: Hash(String, Int)
 
   fn initialize {

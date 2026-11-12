@@ -1,0 +1,253 @@
+// Stage 29 W3b (B13): an optional reference (`T?` where `T` is a class,
+// `String`, `Bytes`, `Array`, `Hash` or `Buf`) is one pointer, `nil` the
+// null pointer: in fields, struct fields, locals, array elements,
+// parameters and results, through `??`, `?`, if-assign, `get`, hash reads,
+// generic instances, and conversions to and from a larger union. Its MIR
+// dump is a golden (the layouts show one `ref` word per optional
+// reference); the suite runs it under the GC environments, and the gate
+// under AVANT_GC_STRESS=1.
+
+class Node {
+  v: Int = 0
+  next: Node?
+  name: String?
+}
+
+struct Slot {
+  n: Node?
+  tag: String?
+  k: Int?
+}
+
+class Holder {
+  a: Node?
+  s: String?
+  xs: Array(Int)?
+  h: Hash(String, Int)?
+  slot: Slot
+}
+
+class Box(T) {
+  item: T?
+}
+
+fn pick(n: Node?, fallback: Node): Node {
+  n ?? fallback
+}
+
+fn first_name(n: Node?): String? {
+  if m = n {
+    return m.name
+  }
+  nil
+}
+
+fn depth(n: Node?): Int {
+  d = 0
+  cur = n
+  while c = cur {
+    d += 1
+    cur = c.next
+  }
+  d
+}
+
+// A number as a failure (D292, Stage 29 W4a), so the three members can be
+// told apart before `switch` (W5): if-assign reads the Node, and num_of
+// passes the two failures up with `?`.
+struct Num: Error {
+  n: Int
+
+  fn message: String {
+    "num"
+  }
+}
+
+fn widen(n: Node?): Node | Num | Nil {
+  n
+}
+
+fn desc(u: Node | Num | Nil): String? {
+  if x = u {
+    return "node"
+  }
+  if k = num_of(u) {
+    return "int ${k.n}"
+  }
+  nil
+}
+
+fn num_of(u: Node | Num | Nil): Num? {
+  x = u?
+  nil
+}
+
+fn try_name(n: Node?): String? {
+  m = n?
+  m.name
+}
+
+fn chain(len: Int): Node? {
+  head: Node? = nil
+  for i in 0..len {
+    nd = Node.new
+    nd.v = i
+    nd.next = head
+    if i % 3 == 0 {
+      nd.name = "n${i}"
+    }
+    head = nd
+  }
+  head
+}
+
+fn sum(n: Node?): Int {
+  s = 0
+  cur = n
+  while c = cur {
+    s += c.v
+    cur = c.next
+  }
+  s
+}
+
+fn main {
+  h = Holder.new
+  puts((h.a ?? Node.new).v)
+  if s = h.s {
+    puts("s ${s}")
+  } else {
+    puts("s nil")
+  }
+  if xs = h.xs {
+    puts(xs.size)
+  } else {
+    puts("xs nil")
+  }
+  h.xs = [1, 2, 3]
+  if xs = h.xs {
+    puts(xs.size)
+  }
+  h.h = Hash(String, Int).new
+  if hh = h.h {
+    hh["a"] = 1
+    puts(hh.size)
+  }
+  if t = h.slot.tag {
+    puts(t)
+  } else {
+    puts("tag nil")
+  }
+
+  a = Node.new
+  a.v = 7
+  a.name = "seven"
+  h.a = a
+  puts(pick(h.a, Node.new).v)
+  puts(pick(nil, a).v)
+  puts(first_name(h.a) ?? "none")
+  puts(first_name(nil) ?? "none")
+  puts(try_name(a) ?? "none")
+  puts(try_name(nil) ?? "none")
+
+  // Array elements: one word each.
+  ns: Array(Node?) = []
+  ns.push(nil)
+  ns.push(a)
+  ns.push(nil)
+  count = 0
+  for e in ns {
+    if x = e {
+      count += x.v
+    } else {
+      count += 100
+    }
+  }
+  puts(count)
+  ns[0] = a
+  if x = ns[0] {
+    puts(x.v)
+  }
+  if y = ns.get(5) {
+    puts("get 5 present")
+  } else {
+    puts("get 5 nil")
+  }
+  ws = [a]
+  if w = ws.get(0) {
+    puts(w.name ?? "none")
+  }
+  if w = ws.get(1) {
+    puts(w.v)
+  } else {
+    puts("get 1 nil")
+  }
+
+  // `get` on an array of optionals of a value type (the base refused it
+  // in the MIR verifier).
+  is: Array(Int?) = [3]
+  is.push(nil)
+  puts(is.get(0) ?? -1)
+  puts(is.get(1) ?? -1)
+  puts(is.get(2) ?? -1)
+
+  // Hash reads give String?.
+  names: Hash(String, String) = Hash(String, String).new
+  names["x"] = "ex"
+  puts(names["x"] ?? "none")
+  puts(names["y"] ?? "none")
+
+  // To and from a larger union.
+  puts(desc(widen(a)) ?? "widened nil")
+  puts(desc(widen(nil)) ?? "widened nil")
+  puts(desc(Num { n: 5 }) ?? "widened nil")
+
+  // Generic instances: T? of a class is one pointer, of an Int a union.
+  bn = Box(Node).new
+  bi = Box(Int).new
+  puts(depth(bn.item))
+  bn.item = a
+  bi.item = 5
+  puts(depth(bn.item))
+  puts(bi.item ?? 0)
+
+  // A long chain through optional fields, under the collector.
+  total = 0
+  for r in 0..20 {
+    c = chain(2000)
+    total += sum(c) + depth(c)
+  }
+  puts(total)
+
+  // Old holders, young referents (the barrier on a one-pointer store).
+  olds: Array(Node) = []
+  for i in 0..500 {
+    olds.push(Node.new)
+  }
+  junk = 0
+  for i in 0..20000 {
+    j = Node.new
+    j.v = i
+    junk += j.v % 7
+  }
+  for i in 0..olds.size {
+    nn = Node.new
+    nn.v = i
+    nn.name = "y${i}"
+    olds[i].next = nn
+  }
+  for i in 0..20000 {
+    j2 = Node.new
+    junk += j2.v
+  }
+  check = 0
+  for o in olds {
+    if nx = o.next {
+      check += nx.v
+      if nm = nx.name {
+        check += nm.size
+      }
+    }
+  }
+  puts(check + junk)
+}

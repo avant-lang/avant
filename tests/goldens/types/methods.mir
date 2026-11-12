@@ -1,28 +1,27 @@
 module methods
 file 0 "methods.av"
 
-layout %methods.Acc = class { 0 n: i32 }  size 4 align 4 id 1
+layout %methods.Acc = class { 0 n: i64 }  size 8 align 8 id 1
 layout %elems(u8) = elems { 0: u8 }  size 1 align 1
 layout %Buf = buf { 0 data: ref %elems(u8), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1021
-layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
-layout %methods.Money = struct { 0 c: i32 }  size 4 align 4
+layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i64 }  size 16 align 8
+layout %methods.Money = struct { 0 c: i64 }  size 8 align 8
 
 const str.0 = "!"
 const str.1 = "int "
-const str.2 = "%s\0A"
-const str.3 = "str "
-const str.4 = "two "
-const str.5 = " "
-const str.6 = "hi"
-const str.7 = "a"
-const str.8 = "-"
-const str.9 = "x"
-const str.10 = "xyz"
-const str.11 = "%d\0A"
-const str.12 = "abc"
-const str.13 = "s"
-const str.14 = "right"
-const str.15 = "left"
+const str.2 = "str "
+const str.3 = "two "
+const str.4 = " "
+const str.5 = "hi"
+const str.6 = "a"
+const str.7 = "-"
+const str.8 = "x"
+const str.9 = "xyz"
+const str.10 = "%lld\0A"
+const str.11 = "abc"
+const str.12 = "s"
+const str.13 = "right"
+const str.14 = "left"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -31,14 +30,16 @@ typemap 1 %methods.Acc stride 0 bits [0x0]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
-extern avant_buf_new(i32) -> ref collects
+extern avant_buf_new(i64) -> ref collects
 extern avant_buf_push_str(ref, ref str) -> void collects
-extern avant_buf_size(ref) -> i32 never
+extern avant_buf_size(ref) -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
-extern avant_str_cat_i32(ref str, i32) -> ref str collects
+extern avant_puts_bool(i32) -> void never
+extern avant_puts_str(ref str) -> void never
+extern avant_str_cat_i32(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
-extern avant_str_from_int(i32) -> ref str collects
-extern avant_str_size(ref str) -> i32 never
+extern avant_str_from_int(i64) -> ref str collects
+extern avant_str_size(ref str) -> i64 never
 extern printf(ref str, ...) -> i32 never
 
 fn av.methods/String.shout(_1: ref str) -> ref str frame @methods.av:9:1 {
@@ -55,13 +56,13 @@ bb0:
   return   @10:5
 }
 
-fn av.methods/String.pad(_1: ref str, _2: i32, _3: ref str) -> ref str frame @methods.av:13:1 {
+fn av.methods/String.pad(_1: ref str, _2: i64, _3: ref str) -> ref str frame @methods.av:13:1 {
   let _0: ref str
   let _1 (s): ref str
-  let _2 (n): i32
+  let _2 (n): i64
   let _3 (c): ref str slot
   let _4 (t): ref str slot
-  let _5: i32
+  let _5: i64
   let _6: bool
   let _7: ref str
 
@@ -88,46 +89,46 @@ bb3:
   return   @18:3
 }
 
-fn av.methods/Bytes.second(_1: ref str) -> i32 leaf @methods.av:21:1 {
-  let _0: i32
+fn av.methods/Bytes.second(_1: ref str) -> i64 leaf @methods.av:21:1 {
+  let _0: i64
   let _1 (b): ref str
-  let _2: i32
+  let _2: i64
   let _3: ptr u8
   let _4: u8
-  let _5: i32
+  let _5: i64
 
 bb0:
   _2 = call avant_str_size(copy _1) nocollect   @22:4
-  check.bounds const i32 1, copy _2   @22:4
+  check.bounds const i64 1, copy _2   @22:4
   _3 = cast copy _1 to ptr u8   @22:4
-  _4 = copy (*_3)[const i32 1]   @22:4
-  _5 = cast copy _4 to i32   @22:4
+  _4 = copy (*_3)[const i64 1]   @22:4
+  _5 = cast copy _4 to i64   @22:4
   _0 = copy _5   @22:4
   return   @22:4
 }
 
-fn av.methods/Buf.twice(_1: ref %Buf) -> i32 leaf @methods.av:25:1 {
-  let _0: i32
+fn av.methods/Buf.twice(_1: ref %Buf) -> i64 leaf @methods.av:25:1 {
+  let _0: i64
   let _1 (b): ref %Buf
-  let _2: i32
-  let _3: i32
+  let _2: i64
+  let _3: i64
 
 bb0:
   _2 = call avant_buf_size(copy _1) nocollect   @26:4
-  _3 = mul.chk copy _2, const i32 2   @26:10
+  _3 = mul copy _2, const i64 2   @26:10
   _0 = copy _3   @26:10
   return   @26:10
 }
 
-fn av.methods/show(Int)(_1: i32) -> void frame @methods.av:121:1 {
-  let _1 (x): i32
+fn av.methods/show(Int)(_1: i64) -> void frame @methods.av:121:1 {
+  let _1 (x): i64
   let _2: ref str
 
 bb0:
   gc.enter   @121:1
   gc.roots   @121:1
   _2 = call avant_str_cat_i32(const str.1, copy _1) collects   @122:8
-  call printf(const str.2, copy _2) nocollect   @122:3
+  call avant_puts_str(copy _2) nocollect   @122:3
   gc.leave   @121:1
   return   @121:1
 }
@@ -139,15 +140,15 @@ fn av.methods/show(String)(_1: ref str) -> void frame @methods.av:125:1 {
 bb0:
   gc.enter   @125:1
   gc.roots _1   @125:1
-  _2 = call avant_str_concat(const str.3, copy _1) collects   @126:8
-  call printf(const str.2, copy _2) nocollect   @126:3
+  _2 = call avant_str_concat(const str.2, copy _1) collects   @126:8
+  call avant_puts_str(copy _2) nocollect   @126:3
   gc.leave   @125:1
   return   @125:1
 }
 
-fn av.methods/show(Int,Int)(_1: i32, _2: i32) -> void frame @methods.av:129:1 {
-  let _1 (x): i32
-  let _2 (y): i32
+fn av.methods/show(Int,Int)(_1: i64, _2: i64) -> void frame @methods.av:129:1 {
+  let _1 (x): i64
+  let _2 (y): i64
   let _3: ref str slot
   let _4: ref str slot
   let _5: ref str slot
@@ -163,34 +164,34 @@ bb0:
   gc.roots _3, _4, _5, _6   @129:1
   _3 = call avant_str_from_int(copy _1) collects   @130:15
   _4 = call avant_str_from_int(copy _2) collects   @130:20
-  _5 = call avant_str_concat(const str.4, copy _3) collects   @130:8
-  _6 = call avant_str_concat(copy _5, const str.5) collects   @130:8
+  _5 = call avant_str_concat(const str.3, copy _3) collects   @130:8
+  _6 = call avant_str_concat(copy _5, const str.4) collects   @130:8
   _7 = call avant_str_concat(copy _6, copy _4) collects   @130:8
-  call printf(const str.2, copy _7) nocollect   @130:3
+  call avant_puts_str(copy _7) nocollect   @130:3
   gc.leave   @129:1
   return   @129:1
 }
 
-fn av.methods/say(_1: ref str, _2: i32) -> i32 leaf @methods.av:133:1 {
-  let _0: i32
+fn av.methods/say(_1: ref str, _2: i64) -> i64 leaf @methods.av:133:1 {
+  let _0: i64
   let _1 (s): ref str
-  let _2 (n): i32
+  let _2 (n): i64
 
 bb0:
-  call printf(const str.2, copy _1) nocollect   @134:3
+  call avant_puts_str(copy _1) nocollect   @134:3
   _0 = copy _2   @135:3
   return   @135:3
 }
 
-fn av.methods/some(_1: i32) -> %(Nil|Int) leaf @methods.av:138:1 {
+fn av.methods/some(_1: i64) -> %(Nil|Int) leaf @methods.av:138:1 {
   let _0: %(Nil|Int)
-  let _1 (n): i32
+  let _1 (n): i64
   let _2: bool
   let _3: %(Nil|Int)
   let _4: %(Nil|Int)
 
 bb0:
-  _2 = gt copy _1, const i32 0   @139:8
+  _2 = gt copy _1, const i64 0   @139:8
   branch copy _2, bb1, bb2   @139:3
 
 bb1:
@@ -211,11 +212,11 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @methods.av:145:1 {
   let _3: ref str
   let _4: ref str
   let _5: ref str
-  let _6: i32
+  let _6: i64
   let _7: ref %Buf
   let _8 (bb): ref %Buf slot
-  let _9: i32
-  let _10: i32
+  let _9: i64
+  let _10: i64
   let _11: %methods.Money
   let _12 (a): %methods.Money
   let _13: %methods.Money
@@ -223,35 +224,35 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @methods.av:145:1 {
   let _15: addr %methods.Money
   let _16: %methods.Money
   let _17: %methods.Money
-  let _18: i32
+  let _18: i64
   let _19: addr %methods.Money
   let _20: %methods.Money
   let _21: %methods.Money
-  let _22: i32
+  let _22: i64
   let _23: addr %methods.Money
   let _24: %methods.Money
   let _25: %methods.Money
-  let _26: i32
+  let _26: i64
   let _27: addr %methods.Money
   let _28: %methods.Money
   let _29: %methods.Money
-  let _30: i32
+  let _30: i64
   let _31: addr %methods.Money
   let _32: %methods.Money
   let _33: %methods.Money
-  let _34: i32
+  let _34: i64
   let _35: addr %methods.Money
   let _36: %methods.Money
   let _37: %methods.Money
-  let _38: i32
+  let _38: i64
   let _39: addr %methods.Money
   let _40: %methods.Money
   let _41: %methods.Money
-  let _42: i32
+  let _42: i64
   let _43: addr %methods.Money
   let _44: %methods.Money
   let _45: %methods.Money
-  let _46: i32
+  let _46: i64
   let _47: addr %methods.Money
   let _48: bool
   let _49: i32
@@ -272,25 +273,25 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @methods.av:145:1 {
   let _64: i32
   let _65: %methods.Money
   let _66 (z): %methods.Money
-  let _67: i32
+  let _67: i64
   let _68: ref %methods.Acc
   let _69 (acc): ref %methods.Acc slot
-  let _70: i32
+  let _70: i64
   let _71: ref %methods.Acc
-  let _72: i32
+  let _72: i64
   let _73: %(Nil|Int)
-  let _74: i32
+  let _74: i64
   let _75: %(Nil|Int)
-  let _76: i32
-  let _77: i32
+  let _76: i64
+  let _77: i64
   let _78: %methods.Money
-  let _79: i32
+  let _79: i64
   let _80: %methods.Money
   let _81: %methods.Money
   let _82: addr %methods.Money
   let _83: %methods.Money
   let _84 (m): %methods.Money
-  let _85: i32
+  let _85: i64
 
 bb0:
   _8 = zero   @145:1
@@ -299,122 +300,122 @@ bb0:
   gc.roots _2, _8, _69   @145:1
   call __avant_type_maps() nocollect   @145:1
   call avant_io_init_argv(copy _1, copy _2) collects   @145:1
-  _3 = call av.methods/String.shout(const str.6) collects   @146:12
-  call printf(const str.2, copy _3) nocollect   @146:3
-  _4 = call av.methods/String.shout(const str.7) collects   @147:11
-  call printf(const str.2, copy _4) nocollect   @147:3
-  _5 = call av.methods/String.pad(const str.9, const i32 4, const str.8) collects   @148:11
-  call printf(const str.2, copy _5) nocollect   @148:3
-  _6 = call av.methods/Bytes.second(const str.10) nocollect   @149:19
-  call printf(const str.11, copy _6) nocollect   @149:3
-  _7 = call avant_buf_new(const i32 0) collects   @150:8
+  _3 = call av.methods/String.shout(const str.5) collects   @146:12
+  call avant_puts_str(copy _3) nocollect   @146:3
+  _4 = call av.methods/String.shout(const str.6) collects   @147:11
+  call avant_puts_str(copy _4) nocollect   @147:3
+  _5 = call av.methods/String.pad(const str.8, const i64 4, const str.7) collects   @148:11
+  call avant_puts_str(copy _5) nocollect   @148:3
+  _6 = call av.methods/Bytes.second(const str.9) nocollect   @149:19
+  call printf(const str.10, copy _6) nocollect   @149:3
+  _7 = call avant_buf_new(const i64 0) collects   @150:8
   _8 = copy _7   @150:6
-  call avant_buf_push_str(copy _8, const str.12) collects   @151:5
+  call avant_buf_push_str(copy _8, const str.11) collects   @151:5
   _9 = call av.methods/Buf.twice(copy _8) nocollect   @152:10
-  call printf(const str.11, copy _9) nocollect   @152:3
+  call printf(const str.10, copy _9) nocollect   @152:3
   _10 = call av.methods/Buf.twice(copy _8) nocollect   @153:10
-  call printf(const str.11, copy _10) nocollect   @153:3
-  _11 = struct %methods.Money (const i32 5)   @154:7
+  call printf(const str.10, copy _10) nocollect   @153:3
+  _11 = struct %methods.Money (const i64 5)   @154:7
   _12 = copy _11   @154:5
-  _13 = struct %methods.Money (const i32 7)   @155:7
+  _13 = struct %methods.Money (const i64 7)   @155:7
   _14 = copy _13   @155:5
   _15 = addr _12   @156:11
   _16 = call av.methods/Money.+(copy _15, copy _14) nocollect   @156:11
   _17 = copy _16   @156:11
   _18 = copy _17.0   @156:15
-  call printf(const str.11, copy _18) nocollect   @156:3
+  call printf(const str.10, copy _18) nocollect   @156:3
   _19 = addr _14   @157:11
   _20 = call av.methods/Money.-(copy _19, copy _12) nocollect   @157:11
   _21 = copy _20   @157:11
   _22 = copy _21.0   @157:15
-  call printf(const str.11, copy _22) nocollect   @157:3
+  call printf(const str.10, copy _22) nocollect   @157:3
   _23 = addr _12   @158:11
-  _24 = call av.methods/Money.*(copy _23, const i32 3) nocollect   @158:11
+  _24 = call av.methods/Money.*(copy _23, const i64 3) nocollect   @158:11
   _25 = copy _24   @158:11
   _26 = copy _25.0   @158:15
-  call printf(const str.11, copy _26) nocollect   @158:3
+  call printf(const str.10, copy _26) nocollect   @158:3
   _27 = addr _14   @159:11
-  _28 = call av.methods/Money./(copy _27, const i32 2) nocollect   @159:11
+  _28 = call av.methods/Money./(copy _27, const i64 2) nocollect   @159:11
   _29 = copy _28   @159:11
   _30 = copy _29.0   @159:15
-  call printf(const str.11, copy _30) nocollect   @159:3
+  call printf(const str.10, copy _30) nocollect   @159:3
   _31 = addr _14   @160:11
-  _32 = call av.methods/Money.%(copy _31, const i32 4) nocollect   @160:11
+  _32 = call av.methods/Money.%(copy _31, const i64 4) nocollect   @160:11
   _33 = copy _32   @160:11
   _34 = copy _33.0   @160:15
-  call printf(const str.11, copy _34) nocollect   @160:3
+  call printf(const str.10, copy _34) nocollect   @160:3
   _35 = addr _12   @161:11
   _36 = call av.methods/Money.&+(copy _35, copy _14) nocollect   @161:11
   _37 = copy _36   @161:11
   _38 = copy _37.0   @161:16
-  call printf(const str.11, copy _38) nocollect   @161:3
+  call printf(const str.10, copy _38) nocollect   @161:3
   _39 = addr _12   @162:11
   _40 = call av.methods/Money.&-(copy _39, copy _14) nocollect   @162:11
   _41 = copy _40   @162:11
   _42 = copy _41.0   @162:16
-  call printf(const str.11, copy _42) nocollect   @162:3
+  call printf(const str.10, copy _42) nocollect   @162:3
   _43 = addr _12   @163:11
   _44 = call av.methods/Money.&*(copy _43, copy _14) nocollect   @163:11
   _45 = copy _44   @163:11
   _46 = copy _45.0   @163:16
-  call printf(const str.11, copy _46) nocollect   @163:3
+  call printf(const str.10, copy _46) nocollect   @163:3
   _47 = addr _12   @164:10
   _48 = call av.methods/Money.==(copy _47, copy _14) nocollect   @164:10
   _49 = cast copy _48 to i32   @164:3
-  call printf(const str.11, copy _49) nocollect   @164:3
+  call avant_puts_bool(copy _49) nocollect   @164:3
   _50 = addr _12   @165:10
   _51 = call av.methods/Money.!=(copy _50, copy _14) nocollect   @165:10
   _52 = cast copy _51 to i32   @165:3
-  call printf(const str.11, copy _52) nocollect   @165:3
+  call avant_puts_bool(copy _52) nocollect   @165:3
   _53 = addr _12   @166:10
   _54 = call av.methods/Money.<(copy _53, copy _14) nocollect   @166:10
   _55 = cast copy _54 to i32   @166:3
-  call printf(const str.11, copy _55) nocollect   @166:3
+  call avant_puts_bool(copy _55) nocollect   @166:3
   _56 = addr _12   @167:10
   _57 = call av.methods/Money.<=(copy _56, copy _14) nocollect   @167:10
   _58 = cast copy _57 to i32   @167:3
-  call printf(const str.11, copy _58) nocollect   @167:3
+  call avant_puts_bool(copy _58) nocollect   @167:3
   _59 = addr _12   @168:10
   _60 = call av.methods/Money.>(copy _59, copy _14) nocollect   @168:10
   _61 = cast copy _60 to i32   @168:3
-  call printf(const str.11, copy _61) nocollect   @168:3
+  call avant_puts_bool(copy _61) nocollect   @168:3
   _62 = addr _12   @169:10
   _63 = call av.methods/Money.>=(copy _62, copy _14) nocollect   @169:10
   _64 = cast copy _63 to i32   @169:3
-  call printf(const str.11, copy _64) nocollect   @169:3
+  call avant_puts_bool(copy _64) nocollect   @169:3
   _65 = call av.methods/Money.zero() nocollect   @170:12
   _66 = copy _65   @170:5
   _67 = copy _66.0   @171:9
-  call printf(const str.11, copy _67) nocollect   @171:3
-  _68 = call av.methods/Acc.new(const i32 1) collects   @172:12
+  call printf(const str.10, copy _67) nocollect   @171:3
+  _68 = call av.methods/Acc.new(const i64 1) collects   @172:12
   _69 = copy _68   @172:7
-  call av.methods/Acc.add(Int)(copy _69, const i32 2) nocollect   @173:6
-  call av.methods/Acc.add(String)(copy _69, const str.10) nocollect   @174:6
-  call av.methods/Acc.add(Int,Int)(copy _69, const i32 2, const i32 5) nocollect   @175:6
+  call av.methods/Acc.add(Int)(copy _69, const i64 2) nocollect   @173:6
+  call av.methods/Acc.add(String)(copy _69, const str.9) nocollect   @174:6
+  call av.methods/Acc.add(Int,Int)(copy _69, const i64 2, const i64 5) nocollect   @175:6
   _70 = copy (*_69).0   @176:11
-  call printf(const str.11, copy _70) nocollect   @176:3
-  _71 = call av.methods/Acc.+(copy _69, const i32 4) collects   @177:13
+  call printf(const str.10, copy _70) nocollect   @176:3
+  _71 = call av.methods/Acc.+(copy _69, const i64 4) collects   @177:13
   _72 = copy (*_71).0   @177:17
-  call printf(const str.11, copy _72) nocollect   @177:3
-  _73 = call av.methods/some(const i32 3) nocollect   @178:17
+  call printf(const str.10, copy _72) nocollect   @177:3
+  _73 = call av.methods/some(const i64 3) nocollect   @178:17
   _74 = call av.methods/Acc.keep(copy _69, copy _73) nocollect   @178:11
-  call printf(const str.11, copy _74) nocollect   @178:3
-  _75 = call av.methods/some(const i32 0) nocollect   @179:17
+  call printf(const str.10, copy _74) nocollect   @178:3
+  _75 = call av.methods/some(const i64 0) nocollect   @179:17
   _76 = call av.methods/Acc.keep(copy _69, copy _75) nocollect   @179:11
-  call printf(const str.11, copy _76) nocollect   @179:3
-  call av.methods/show(Int)(const i32 1) collects   @180:3
-  call av.methods/show(String)(const str.13) collects   @181:3
-  call av.methods/show(Int,Int)(const i32 2, const i32 3) collects   @182:3
-  _77 = call av.methods/say(const str.14, const i32 2) nocollect   @183:48
+  call printf(const str.10, copy _76) nocollect   @179:3
+  call av.methods/show(Int)(const i64 1) collects   @180:3
+  call av.methods/show(String)(const str.12) collects   @181:3
+  call av.methods/show(Int,Int)(const i64 2, const i64 3) collects   @182:3
+  _77 = call av.methods/say(const str.13, const i64 2) nocollect   @183:48
   _78 = struct %methods.Money (copy _77)   @183:37
-  _79 = call av.methods/say(const str.15, const i32 1) nocollect   @183:18
+  _79 = call av.methods/say(const str.14, const i64 1) nocollect   @183:18
   _80 = struct %methods.Money (copy _79)   @183:7
   _81 = copy _80   @183:7
   _82 = addr _81   @183:35
   _83 = call av.methods/Money.+(copy _82, copy _78) nocollect   @183:35
   _84 = copy _83   @183:5
   _85 = copy _84.0   @184:9
-  call printf(const str.11, copy _85) nocollect   @184:3
+  call printf(const str.10, copy _85) nocollect   @184:3
   _0 = const i32 0   @145:1
   gc.leave   @145:1
   return   @145:1
@@ -424,9 +425,9 @@ fn av.methods/Money.+(_1: addr %methods.Money, _2: %methods.Money) -> %methods.M
   let _0: %methods.Money
   let _1 (self): addr %methods.Money
   let _2 (o): %methods.Money
-  let _3: i32
-  let _4: i32
-  let _5: i32
+  let _3: i64
+  let _4: i64
+  let _5: i64
   let _6: %methods.Money
 
 bb0:
@@ -442,9 +443,9 @@ fn av.methods/Money.-(_1: addr %methods.Money, _2: %methods.Money) -> %methods.M
   let _0: %methods.Money
   let _1 (self): addr %methods.Money
   let _2 (o): %methods.Money
-  let _3: i32
-  let _4: i32
-  let _5: i32
+  let _3: i64
+  let _4: i64
+  let _5: i64
   let _6: %methods.Money
 
 bb0:
@@ -456,12 +457,12 @@ bb0:
   return   @37:5
 }
 
-fn av.methods/Money.*(_1: addr %methods.Money, _2: i32) -> %methods.Money leaf @methods.av:40:3 {
+fn av.methods/Money.*(_1: addr %methods.Money, _2: i64) -> %methods.Money leaf @methods.av:40:3 {
   let _0: %methods.Money
   let _1 (self): addr %methods.Money
-  let _2 (k): i32
-  let _3: i32
-  let _4: i32
+  let _2 (k): i64
+  let _3: i64
+  let _4: i64
   let _5: %methods.Money
 
 bb0:
@@ -472,12 +473,12 @@ bb0:
   return   @41:5
 }
 
-fn av.methods/Money./(_1: addr %methods.Money, _2: i32) -> %methods.Money leaf @methods.av:44:3 {
+fn av.methods/Money./(_1: addr %methods.Money, _2: i64) -> %methods.Money leaf @methods.av:44:3 {
   let _0: %methods.Money
   let _1 (self): addr %methods.Money
-  let _2 (k): i32
-  let _3: i32
-  let _4: i32
+  let _2 (k): i64
+  let _3: i64
+  let _4: i64
   let _5: %methods.Money
 
 bb0:
@@ -488,12 +489,12 @@ bb0:
   return   @45:5
 }
 
-fn av.methods/Money.%(_1: addr %methods.Money, _2: i32) -> %methods.Money leaf @methods.av:48:3 {
+fn av.methods/Money.%(_1: addr %methods.Money, _2: i64) -> %methods.Money leaf @methods.av:48:3 {
   let _0: %methods.Money
   let _1 (self): addr %methods.Money
-  let _2 (k): i32
-  let _3: i32
-  let _4: i32
+  let _2 (k): i64
+  let _3: i64
+  let _4: i64
   let _5: %methods.Money
 
 bb0:
@@ -508,9 +509,9 @@ fn av.methods/Money.&+(_1: addr %methods.Money, _2: %methods.Money) -> %methods.
   let _0: %methods.Money
   let _1 (self): addr %methods.Money
   let _2 (o): %methods.Money
-  let _3: i32
-  let _4: i32
-  let _5: i32
+  let _3: i64
+  let _4: i64
+  let _5: i64
   let _6: %methods.Money
 
 bb0:
@@ -526,9 +527,9 @@ fn av.methods/Money.&-(_1: addr %methods.Money, _2: %methods.Money) -> %methods.
   let _0: %methods.Money
   let _1 (self): addr %methods.Money
   let _2 (o): %methods.Money
-  let _3: i32
-  let _4: i32
-  let _5: i32
+  let _3: i64
+  let _4: i64
+  let _5: i64
   let _6: %methods.Money
 
 bb0:
@@ -544,9 +545,9 @@ fn av.methods/Money.&*(_1: addr %methods.Money, _2: %methods.Money) -> %methods.
   let _0: %methods.Money
   let _1 (self): addr %methods.Money
   let _2 (o): %methods.Money
-  let _3: i32
-  let _4: i32
-  let _5: i32
+  let _3: i64
+  let _4: i64
+  let _5: i64
   let _6: %methods.Money
 
 bb0:
@@ -562,8 +563,8 @@ fn av.methods/Money.==(_1: addr %methods.Money, _2: %methods.Money) -> bool leaf
   let _0: bool
   let _1 (self): addr %methods.Money
   let _2 (o): %methods.Money
-  let _3: i32
-  let _4: i32
+  let _3: i64
+  let _4: i64
   let _5: bool
 
 bb0:
@@ -578,8 +579,8 @@ fn av.methods/Money.!=(_1: addr %methods.Money, _2: %methods.Money) -> bool leaf
   let _0: bool
   let _1 (self): addr %methods.Money
   let _2 (o): %methods.Money
-  let _3: i32
-  let _4: i32
+  let _3: i64
+  let _4: i64
   let _5: bool
 
 bb0:
@@ -594,8 +595,8 @@ fn av.methods/Money.<(_1: addr %methods.Money, _2: %methods.Money) -> bool leaf 
   let _0: bool
   let _1 (self): addr %methods.Money
   let _2 (o): %methods.Money
-  let _3: i32
-  let _4: i32
+  let _3: i64
+  let _4: i64
   let _5: bool
 
 bb0:
@@ -610,8 +611,8 @@ fn av.methods/Money.<=(_1: addr %methods.Money, _2: %methods.Money) -> bool leaf
   let _0: bool
   let _1 (self): addr %methods.Money
   let _2 (o): %methods.Money
-  let _3: i32
-  let _4: i32
+  let _3: i64
+  let _4: i64
   let _5: bool
 
 bb0:
@@ -626,8 +627,8 @@ fn av.methods/Money.>(_1: addr %methods.Money, _2: %methods.Money) -> bool leaf 
   let _0: bool
   let _1 (self): addr %methods.Money
   let _2 (o): %methods.Money
-  let _3: i32
-  let _4: i32
+  let _3: i64
+  let _4: i64
   let _5: bool
 
 bb0:
@@ -642,8 +643,8 @@ fn av.methods/Money.>=(_1: addr %methods.Money, _2: %methods.Money) -> bool leaf
   let _0: bool
   let _1 (self): addr %methods.Money
   let _2 (o): %methods.Money
-  let _3: i32
-  let _4: i32
+  let _3: i64
+  let _4: i64
   let _5: bool
 
 bb0:
@@ -659,70 +660,70 @@ fn av.methods/Money.zero() -> %methods.Money leaf @methods.av:88:3 {
   let _1: %methods.Money
 
 bb0:
-  _1 = struct %methods.Money (const i32 0)   @89:5
+  _1 = struct %methods.Money (const i64 0)   @89:5
   _0 = copy _1   @89:5
   return   @89:5
 }
 
-fn av.methods/Acc.initialize(_1: ref %methods.Acc, _2: i32) -> void leaf @methods.av:96:3 {
+fn av.methods/Acc.initialize(_1: ref %methods.Acc, _2: i64) -> void leaf @methods.av:96:3 {
   let _1 (self): ref %methods.Acc
-  let _2 (n): i32
+  let _2 (n): i64
 
 bb0:
   (*_1).0 = copy _2   @97:12
   return   @96:3
 }
 
-fn av.methods/Acc.add(Int)(_1: ref %methods.Acc, _2: i32) -> void leaf @methods.av:100:3 {
+fn av.methods/Acc.add(Int)(_1: ref %methods.Acc, _2: i64) -> void leaf @methods.av:100:3 {
   let _1 (self): ref %methods.Acc
-  let _2 (k): i32
-  let _3: i32
-  let _4: i32
+  let _2 (k): i64
+  let _3: i64
+  let _4: i64
 
 bb0:
-  _3 = copy (*_1).0   @101:9
-  _4 = add.chk copy _3, copy _2   @101:11
-  (*_1).0 = copy _4   @101:7
+  _3 = copy (*_1).0   @101:14
+  _4 = add.chk copy _3, copy _2   @101:16
+  (*_1).0 = copy _4   @101:12
   return   @100:3
 }
 
 fn av.methods/Acc.add(String)(_1: ref %methods.Acc, _2: ref str) -> void leaf @methods.av:104:3 {
   let _1 (self): ref %methods.Acc
   let _2 (s): ref str
-  let _3: i32
-  let _4: i32
-  let _5: i32
+  let _3: i64
+  let _4: i64
+  let _5: i64
 
 bb0:
-  _3 = copy (*_1).0   @105:9
-  _4 = call avant_str_size(copy _2) nocollect   @105:14
-  _5 = add.chk copy _3, copy _4   @105:11
-  (*_1).0 = copy _5   @105:7
+  _3 = copy (*_1).0   @105:14
+  _4 = call avant_str_size(copy _2) nocollect   @105:19
+  _5 = add.chk copy _3, copy _4   @105:16
+  (*_1).0 = copy _5   @105:12
   return   @104:3
 }
 
-fn av.methods/Acc.add(Int,Int)(_1: ref %methods.Acc, _2: i32, _3: i32) -> void leaf @methods.av:108:3 {
+fn av.methods/Acc.add(Int,Int)(_1: ref %methods.Acc, _2: i64, _3: i64) -> void leaf @methods.av:108:3 {
   let _1 (self): ref %methods.Acc
-  let _2 (a): i32
-  let _3 (b): i32
-  let _4: i32
-  let _5: i32
-  let _6: i32
+  let _2 (a): i64
+  let _3 (b): i64
+  let _4: i64
+  let _5: i64
+  let _6: i64
 
 bb0:
-  _4 = copy (*_1).0   @109:9
-  _5 = mul.chk copy _2, copy _3   @109:15
-  _6 = add.chk copy _4, copy _5   @109:11
-  (*_1).0 = copy _6   @109:7
+  _4 = copy (*_1).0   @109:14
+  _5 = mul.chk copy _2, copy _3   @109:20
+  _6 = add.chk copy _4, copy _5   @109:16
+  (*_1).0 = copy _6   @109:12
   return   @108:3
 }
 
-fn av.methods/Acc.+(_1: ref %methods.Acc, _2: i32) -> ref %methods.Acc frame @methods.av:112:3 {
+fn av.methods/Acc.+(_1: ref %methods.Acc, _2: i64) -> ref %methods.Acc frame @methods.av:112:3 {
   let _0: ref %methods.Acc
   let _1 (self): ref %methods.Acc
-  let _2 (k): i32
-  let _3: i32
-  let _4: i32
+  let _2 (k): i64
+  let _3: i64
+  let _4: i64
   let _5: ref %methods.Acc
 
 bb0:
@@ -736,15 +737,15 @@ bb0:
   return   @113:8
 }
 
-fn av.methods/Acc.keep(_1: ref %methods.Acc, _2: %(Nil|Int)) -> i32 leaf @methods.av:116:3 {
-  let _0: i32
+fn av.methods/Acc.keep(_1: ref %methods.Acc, _2: %(Nil|Int)) -> i64 leaf @methods.av:116:3 {
+  let _0: i64
   let _1 (self): ref %methods.Acc
   let _2 (o): %(Nil|Int)
-  let _3: i32
+  let _3: i64
   let _4: i32
   let _5: bool
-  let _6: i32
-  let _7: i32
+  let _6: i64
+  let _7: i64
 
 bb0:
   _4 = copy _2.0   @117:7
@@ -766,15 +767,15 @@ bb3:
   return   @117:7
 }
 
-fn av.methods/Acc.new(_1: i32) -> ref %methods.Acc frame @methods.av:93:1 {
+fn av.methods/Acc.new(_1: i64) -> ref %methods.Acc frame @methods.av:93:1 {
   let _0: ref %methods.Acc
-  let _1 (n): i32
+  let _1 (n): i64
   let _2: ref %methods.Acc
 
 bb0:
   gc.enter   @93:1
   gc.roots   @93:1
-  _2 = call avant_alloc(const u64 4, const u32 1) collects   @93:1
+  _2 = call avant_alloc(const u64 8, const u32 1) collects   @93:1
   call av.methods/Acc.initialize(copy _2, copy _1) nocollect   @93:1
   _0 = copy _2   @93:1
   gc.leave   @93:1

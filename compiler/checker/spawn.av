@@ -36,7 +36,7 @@ pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
 }
 
 pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
-  if ty.is_int {
+  if ty.is_integer {
     return true
   }
   if ty.is_int64 {
@@ -87,6 +87,7 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
     return
   }
   if k == st_if() {
+    checker_self.walk_spawn_stmts(stmt.pre, node, seen)
     if c = stmt.cond {
       checker_self.walk_spawn_expr(c, node, seen)
     }
@@ -213,6 +214,9 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
   if k == ex_array_new() {
     if size = expr.size_expr {
       checker_self.walk_spawn_expr(size, node, seen)
+    }
+    for fv in expr.elems {
+      checker_self.walk_spawn_expr(fv, node, seen)
     }
     return
   }

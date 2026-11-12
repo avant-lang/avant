@@ -1,0 +1,1503 @@
+module opt_ref
+file 0 "opt_ref.av"
+
+layout %opt_ref.Node = class { 0 v: i64, 1 next: ref %opt_ref.Node, 2 name: ref str }  size 24 align 8 id 1
+layout %opt_ref.Holder = class { 0 a: ref %opt_ref.Node, 1 s: ref str, 2 xs: ref %Array(Int), 3 h: ref %Hash, 4 slot: %opt_ref.Slot }  size 64 align 8 id 2
+layout %opt_ref.Box(opt_ref.Node) = class { 0 item: ref %opt_ref.Node }  size 8 align 8 id 3
+layout %opt_ref.Box(Int) = class { 0 item: %(Nil|Int) }  size 16 align 8 id 4
+layout %elems(Int) = elems { 0: i64 }  size 8 align 8
+layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %Hash = hash { 0 keys: ref, 1 vals: ref, 2 state: ref, 3 size: i32, 4 cap: i32, 5 key_kind: i32, 6 val_kind: i32 }  size 40 align 8 id 1023
+layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i64 }  size 16 align 8
+layout %opt_ref.Slot = struct { 0 n: ref %opt_ref.Node, 1 tag: ref str, 2 k: %(Nil|Int) }  size 32 align 8
+layout %opt_ref.Num = struct { 0 n: i64 }  size 8 align 8
+layout %(Nil|opt_ref.Node|opt_ref.Num) = union { 0 tag: i32, 1 m0: ref %opt_ref.Node, 2 m1: %opt_ref.Num }  size 24 align 8
+layout %(Nil|opt_ref.Num) = union { 0 tag: i32, 1 m0: %opt_ref.Num }  size 16 align 8
+layout %elems((Nil|opt_ref.Node)) = elems { 0: ref %opt_ref.Node }  size 8 align 8 id 65535
+layout %Array((Nil|opt_ref.Node)) = array { 0 data: ref %elems((Nil|opt_ref.Node)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %elems(opt_ref.Node) = elems { 0: ref %opt_ref.Node }  size 8 align 8 id 65535
+layout %Array(opt_ref.Node) = array { 0 data: ref %elems(opt_ref.Node), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %elems((Nil|Int)) = elems { 0: %(Nil|Int) }  size 16 align 8
+layout %Array((Nil|Int)) = array { 0 data: ref %elems((Nil|Int)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+
+const str.0 = "node"
+const str.1 = "int "
+const str.2 = "n"
+const str.3 = "%lld\0A"
+const str.4 = "s "
+const str.5 = "s nil"
+const str.6 = "xs nil"
+const str.7 = "a"
+const str.8 = "tag nil"
+const str.9 = "seven"
+const str.10 = "none"
+const str.11 = "get 5 present"
+const str.12 = "get 5 nil"
+const str.13 = "get 1 nil"
+const str.14 = "ex"
+const str.15 = "x"
+const str.16 = "y"
+const str.17 = "widened nil"
+const str.18 = "num"
+
+typemap 1022 %Array(*) stride 0 bits [0x1]
+typemap 1021 %Buf stride 0 bits [0x1]
+typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1 %opt_ref.Node stride 0 bits [0x6]
+typemap 2 %opt_ref.Holder stride 0 bits [0x3f]
+typemap 3 %opt_ref.Box(opt_ref.Node) stride 0 bits [0x1]
+typemap 4 %opt_ref.Box(Int) stride 0 bits [0x0]
+
+extern __avant_type_maps() -> void never
+extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_array_get_ptr(ref, i64) -> ref never
+extern avant_array_push_ptr(ref, ref, u32) -> void collects
+extern avant_array_push_slot(ref, u64, u32) -> addr collects
+extern avant_array_set_ptr(ref, i64, ref) -> void never
+extern avant_hash_get_str(ref, ref str, ptr) -> ref str never
+extern avant_hash_new(i32, i32) -> ref collects
+extern avant_hash_set_i32(ref, ref str, i64) -> void collects
+extern avant_hash_set_str(ref, ref str, ref str) -> void collects
+extern avant_hash_size(ref) -> i64 never
+extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_str(ref str) -> void never
+extern avant_str_cat_i32(ref str, i64) -> ref str collects
+extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_size(ref str) -> i64 never
+extern printf(ref str, ...) -> i32 never
+
+fn av.opt_ref/pick(_1: ref %opt_ref.Node, _2: ref %opt_ref.Node) -> ref %opt_ref.Node leaf @opt_ref.av:34:1 {
+  let _0: ref %opt_ref.Node
+  let _1 (n): ref %opt_ref.Node
+  let _2 (fallback): ref %opt_ref.Node
+  let _3: ref %opt_ref.Node
+  let _4: bool
+
+bb0:
+  _4 = eq copy _1, const ref %opt_ref.Node null   @35:5
+  branch copy _4, bb1, bb2   @35:5
+
+bb1:
+  _3 = copy _2   @35:5
+  goto bb3   @35:5
+
+bb2:
+  _3 = copy _1   @35:5
+  goto bb3   @35:5
+
+bb3:
+  _0 = copy _3   @35:5
+  return   @35:5
+}
+
+fn av.opt_ref/first_name(_1: ref %opt_ref.Node) -> ref str leaf @opt_ref.av:38:1 {
+  let _0: ref str
+  let _1 (n): ref %opt_ref.Node
+  let _2: bool
+  let _3 (m): ref %opt_ref.Node
+  let _4: ref str
+
+bb0:
+  _2 = ne copy _1, const ref %opt_ref.Node null   @39:3
+  branch copy _2, bb1, bb2   @39:3
+
+bb1:
+  _3 = copy _1   @39:3
+  _4 = copy (*_3).2   @40:13
+  _0 = copy _4   @40:5
+  return   @40:5
+
+bb2:
+  _0 = const ref str null   @42:3
+  return   @42:3
+}
+
+fn av.opt_ref/depth(_1: ref %opt_ref.Node) -> i64 leaf @opt_ref.av:45:1 {
+  let _0: i64
+  let _1 (n): ref %opt_ref.Node
+  let _2 (d): i64
+  let _3 (cur): ref %opt_ref.Node
+  let _4: bool
+  let _5 (c): ref %opt_ref.Node
+  let _6: i64
+  let _7: ref %opt_ref.Node
+
+bb0:
+  _2 = const i64 0   @46:5
+  _3 = copy _1   @47:7
+  goto bb1   @48:3
+
+bb1:
+  branch const bool true, bb2, bb3   @48:3
+
+bb2:
+  _4 = ne copy _3, const ref %opt_ref.Node null   @48:3
+  branch copy _4, bb4, bb5   @48:3
+
+bb3:
+  _0 = copy _2   @52:3
+  return   @52:3
+
+bb4:
+  _5 = copy _3   @48:3
+  _6 = add.chk copy _2, const i64 1   @48:3
+  _2 = copy _6   @49:7
+  _7 = copy (*_5).1   @50:12
+  _3 = copy _7   @50:9
+  goto bb6   @48:3
+
+bb5:
+  goto bb3   @48:3
+
+bb6:
+  goto bb1   @48:3
+}
+
+fn av.opt_ref/widen(_1: ref %opt_ref.Node) -> %(Nil|opt_ref.Node|opt_ref.Num) leaf @opt_ref.av:66:1 {
+  let _0: %(Nil|opt_ref.Node|opt_ref.Num)
+  let _1 (n): ref %opt_ref.Node
+  let _2: %(Nil|opt_ref.Node|opt_ref.Num)
+  let _3: bool
+
+bb0:
+  _2 = zero   @67:3
+  _3 = eq copy _1, const ref %opt_ref.Node null   @67:3
+  branch copy _3, bb2, bb3   @67:3
+
+bb1:
+  _0 = copy _2   @67:3
+  return   @67:3
+
+bb2:
+  _2 = union %(Nil|opt_ref.Node|opt_ref.Num) tag 0   @67:3
+  goto bb1   @67:3
+
+bb3:
+  _2 = union %(Nil|opt_ref.Node|opt_ref.Num) tag 1 (copy _1)   @67:3
+  goto bb1   @67:3
+}
+
+fn av.opt_ref/desc(_1: %(Nil|opt_ref.Node|opt_ref.Num)) -> ref str frame @opt_ref.av:70:1 {
+  let _0: ref str
+  let _1 (u): %(Nil|opt_ref.Node|opt_ref.Num)
+  let _2: i32
+  let _3: ref %opt_ref.Node
+  let _4 (x): ref %opt_ref.Node
+  let _5: %(Nil|opt_ref.Num)
+  let _6: i32
+  let _7: bool
+  let _8: %opt_ref.Num
+  let _9 (k): %opt_ref.Num
+  let _10: i64
+  let _11: ref str
+
+bb0:
+  gc.enter   @70:1
+  gc.roots   @70:1
+  _2 = copy _1.0   @71:3
+  switch copy _2 [0: bb2, 2: bb2] else bb1   @71:3
+
+bb1:
+  _3 = copy _1.1   @71:3
+  _4 = copy _3   @71:3
+  _0 = const str.0   @72:5
+  gc.leave   @72:5
+  return   @72:5
+
+bb2:
+  _5 = call av.opt_ref/num_of(copy _1) nocollect   @74:10
+  _6 = copy _5.0   @74:3
+  _7 = ne copy _6, const i32 0   @74:3
+  branch copy _7, bb3, bb4   @74:3
+
+bb3:
+  _8 = copy _5.1   @74:3
+  _9 = copy _8   @74:3
+  _10 = copy _9.0   @75:20
+  _11 = call avant_str_cat_i32(const str.1, copy _10) collects   @75:12
+  _0 = copy _11   @75:5
+  gc.leave   @75:5
+  return   @75:5
+
+bb4:
+  _0 = const ref str null   @77:3
+  gc.leave   @77:3
+  return   @77:3
+}
+
+fn av.opt_ref/num_of(_1: %(Nil|opt_ref.Node|opt_ref.Num)) -> %(Nil|opt_ref.Num) leaf @opt_ref.av:80:1 {
+  let _0: %(Nil|opt_ref.Num)
+  let _1 (u): %(Nil|opt_ref.Node|opt_ref.Num)
+  let _2: i32
+  let _3: %(Nil|opt_ref.Num)
+  let _4: i32
+  let _5: %opt_ref.Num
+  let _6: ref %opt_ref.Node
+  let _7 (x): ref %opt_ref.Node
+  let _8: %(Nil|opt_ref.Num)
+
+bb0:
+  _2 = copy _1.0   @81:8
+  switch copy _2 [0: bb1, 2: bb1] else bb2   @81:8
+
+bb1:
+  _3 = zero   @81:8
+  _4 = copy _1.0   @81:8
+  switch copy _4 [0: bb3, 2: bb4] else bb5   @81:8
+
+bb2:
+  _6 = copy _1.1   @81:8
+  _7 = copy _6   @81:5
+  _8 = union %(Nil|opt_ref.Num) tag 0   @82:3
+  _0 = copy _8   @82:3
+  return   @82:3
+
+bb3:
+  _3 = union %(Nil|opt_ref.Num) tag 0   @81:8
+  goto bb5   @81:8
+
+bb4:
+  _5 = copy _1.2   @81:8
+  _3 = union %(Nil|opt_ref.Num) tag 1 (copy _5)   @81:8
+  goto bb5   @81:8
+
+bb5:
+  _0 = copy _3   @81:8
+  return   @81:8
+}
+
+fn av.opt_ref/try_name(_1: ref %opt_ref.Node) -> ref str leaf @opt_ref.av:85:1 {
+  let _0: ref str
+  let _1 (n): ref %opt_ref.Node
+  let _2: bool
+  let _3 (m): ref %opt_ref.Node
+  let _4: ref str
+
+bb0:
+  _2 = eq copy _1, const ref %opt_ref.Node null   @86:8
+  branch copy _2, bb1, bb2   @86:8
+
+bb1:
+  _0 = const ref str null   @86:8
+  return   @86:8
+
+bb2:
+  _3 = copy _1   @86:5
+  _4 = copy (*_3).2   @87:4
+  _0 = copy _4   @87:4
+  return   @87:4
+}
+
+fn av.opt_ref/chain(_1: i64) -> ref %opt_ref.Node frame @opt_ref.av:90:1 {
+  let _0: ref %opt_ref.Node
+  let _1 (len): i64
+  let _2 (head): ref %opt_ref.Node slot
+  let _3 (i): i64
+  let _4 (__for0_end): i64
+  let _5: bool
+  let _6: ref %opt_ref.Node
+  let _7 (nd): ref %opt_ref.Node slot
+  let _8: i64
+  let _9: bool
+  let _10: ref str
+  let _11: i64
+
+bb0:
+  _2 = zero   @90:1
+  _7 = zero   @90:1
+  gc.enter   @90:1
+  gc.roots _2, _7   @90:1
+  _2 = const ref %opt_ref.Node null   @91:3
+  _3 = const i64 0   @92:3
+  _4 = copy _1   @92:3
+  goto bb1   @92:3
+
+bb1:
+  _5 = lt copy _3, copy _4   @92:3
+  branch copy _5, bb2, bb3   @92:3
+
+bb2:
+  _6 = call av.opt_ref/Node.new() collects   @93:14
+  _7 = copy _6   @93:8
+  (*_7).0 = copy _3   @94:10
+  barrier copy _7   @95:13
+  (*_7).1 = copy _2   @95:13
+  _8 = rem copy _3, const i64 3   @96:10
+  _9 = eq copy _8, const i64 0   @96:14
+  branch copy _9, bb4, bb5   @96:5
+
+bb3:
+  _0 = copy _2   @101:3
+  gc.leave   @101:3
+  return   @101:3
+
+bb4:
+  _10 = call avant_str_cat_i32(const str.2, copy _3) collects   @97:17
+  barrier copy _7   @97:15
+  (*_7).2 = copy _10   @97:15
+  goto bb5   @96:5
+
+bb5:
+  _2 = copy _7   @99:10
+  _11 = add copy _3, const i64 1   @92:3
+  _3 = copy _11   @92:3
+  goto bb1   @92:3
+}
+
+fn av.opt_ref/sum(_1: ref %opt_ref.Node) -> i64 leaf @opt_ref.av:104:1 {
+  let _0: i64
+  let _1 (n): ref %opt_ref.Node
+  let _2 (s): i64
+  let _3 (cur): ref %opt_ref.Node
+  let _4: bool
+  let _5 (c): ref %opt_ref.Node
+  let _6: i64
+  let _7: i64
+  let _8: ref %opt_ref.Node
+
+bb0:
+  _2 = const i64 0   @105:5
+  _3 = copy _1   @106:7
+  goto bb1   @107:3
+
+bb1:
+  branch const bool true, bb2, bb3   @107:3
+
+bb2:
+  _4 = ne copy _3, const ref %opt_ref.Node null   @107:3
+  branch copy _4, bb4, bb5   @107:3
+
+bb3:
+  _0 = copy _2   @111:3
+  return   @111:3
+
+bb4:
+  _5 = copy _3   @107:3
+  _6 = copy (*_5).0   @108:11
+  _7 = add.chk copy _2, copy _6   @108:11
+  _2 = copy _7   @108:7
+  _8 = copy (*_5).1   @109:12
+  _3 = copy _8   @109:9
+  goto bb6   @107:3
+
+bb5:
+  goto bb3   @107:3
+
+bb6:
+  goto bb1   @107:3
+}
+
+fn main(_1: i32, _2: ptr) -> i32 frame extern @opt_ref.av:114:1 {
+  let _0: i32
+  let _1 (argc): i32
+  let _2 (argv): ptr slot
+  let _3: ref %opt_ref.Holder
+  let _4 (h): ref %opt_ref.Holder slot
+  let _5: ref %opt_ref.Node
+  let _6: ref %opt_ref.Node
+  let _7: bool
+  let _8: ref %opt_ref.Node
+  let _9: i64
+  let _10: ref str
+  let _11: bool
+  let _12 (s): ref str slot
+  let _13: ref str
+  let _14: ref %Array(Int)
+  let _15: bool
+  let _16 (xs): ref %Array(Int)
+  let _17: i32
+  let _18: i64
+  let _19: ref %elems(Int) slot
+  let _20: ref %Array(Int)
+  let _21: ref %Array(Int)
+  let _22: bool
+  let _23: i32
+  let _24: i64
+  let _25: ref %Hash
+  let _26: ref %Hash
+  let _27: bool
+  let _28 (hh): ref %Hash slot
+  let _29: i64
+  let _30: ref str
+  let _31: bool
+  let _32 (t): ref str
+  let _33: ref %opt_ref.Node
+  let _34 (a): ref %opt_ref.Node slot
+  let _35: ref %opt_ref.Node slot
+  let _36: ref %opt_ref.Node
+  let _37: ref %opt_ref.Node
+  let _38: i64
+  let _39: ref %opt_ref.Node
+  let _40: i64
+  let _41: ref %opt_ref.Node
+  let _42: ref str
+  let _43: ref str
+  let _44: bool
+  let _45: ref str
+  let _46: ref str
+  let _47: bool
+  let _48: ref str
+  let _49: ref str
+  let _50: bool
+  let _51: ref str
+  let _52: ref str
+  let _53: bool
+  let _54: ref %elems((Nil|opt_ref.Node)) slot
+  let _55: ref %Array((Nil|opt_ref.Node))
+  let _56 (ns): ref %Array((Nil|opt_ref.Node)) slot
+  let _57 (count): i64
+  let _58 (__for1_xs): ref %Array((Nil|opt_ref.Node))
+  let _59 (__for1_i): i64
+  let _60: i32
+  let _61: i64
+  let _62: bool
+  let _63: ref %elems((Nil|opt_ref.Node))
+  let _64: ref %opt_ref.Node
+  let _65 (e): ref %opt_ref.Node
+  let _66: bool
+  let _67 (x): ref %opt_ref.Node
+  let _68: i64
+  let _69: i64
+  let _70: i64
+  let _71: i64
+  let _72: i32
+  let _73: i64
+  let _74: i32
+  let _75: i64
+  let _76: ref %elems((Nil|opt_ref.Node))
+  let _77: ref %opt_ref.Node
+  let _78: bool
+  let _79: i64
+  let _80: i64
+  let _81: i32
+  let _82: i64
+  let _83: ref %opt_ref.Node
+  let _84: bool
+  let _85: bool
+  let _86: bool
+  let _87: ref %opt_ref.Node
+  let _88: bool
+  let _89 (y): ref %opt_ref.Node
+  let _90: ref %elems(opt_ref.Node) slot
+  let _91: ref %Array(opt_ref.Node)
+  let _92 (ws): ref %Array(opt_ref.Node)
+  let _93: i64
+  let _94: i32
+  let _95: i64
+  let _96: ref %opt_ref.Node
+  let _97: bool
+  let _98: bool
+  let _99: bool
+  let _100: ref %opt_ref.Node
+  let _101: bool
+  let _102 (w): ref %opt_ref.Node
+  let _103: ref str
+  let _104: ref str
+  let _105: bool
+  let _106: i64
+  let _107: i32
+  let _108: i64
+  let _109: ref %opt_ref.Node
+  let _110: bool
+  let _111: bool
+  let _112: bool
+  let _113: ref %opt_ref.Node
+  let _114: bool
+  let _115: i64
+  let _116: ref %elems((Nil|Int)) slot
+  let _117: %(Nil|Int)
+  let _118: ref %Array((Nil|Int))
+  let _119 (is): ref %Array((Nil|Int)) slot
+  let _120: %(Nil|Int)
+  let _121: addr %(Nil|Int)
+  let _122: i64
+  let _123: i32
+  let _124: i64
+  let _125: %(Nil|Int)
+  let _126: bool
+  let _127: bool
+  let _128: bool
+  let _129: ref %elems((Nil|Int))
+  let _130: %(Nil|Int)
+  let _131: i64
+  let _132: i32
+  let _133: bool
+  let _134: i64
+  let _135: i64
+  let _136: i32
+  let _137: i64
+  let _138: %(Nil|Int)
+  let _139: bool
+  let _140: bool
+  let _141: bool
+  let _142: ref %elems((Nil|Int))
+  let _143: %(Nil|Int)
+  let _144: i64
+  let _145: i32
+  let _146: bool
+  let _147: i64
+  let _148: i64
+  let _149: i32
+  let _150: i64
+  let _151: %(Nil|Int)
+  let _152: bool
+  let _153: bool
+  let _154: bool
+  let _155: ref %elems((Nil|Int))
+  let _156: %(Nil|Int)
+  let _157: i64
+  let _158: i32
+  let _159: bool
+  let _160: i64
+  let _161: ref %Hash
+  let _162 (names): ref %Hash slot
+  let _163: i32
+  let _164: ptr i32
+  let _165: ref str
+  let _166: bool
+  let _167: ref str
+  let _168: ref str
+  let _169: bool
+  let _170: i32
+  let _171: ptr i32
+  let _172: ref str
+  let _173: bool
+  let _174: ref str
+  let _175: ref str
+  let _176: bool
+  let _177: %(Nil|opt_ref.Node|opt_ref.Num)
+  let _178: ref str
+  let _179: ref str
+  let _180: bool
+  let _181: %(Nil|opt_ref.Node|opt_ref.Num)
+  let _182: ref str
+  let _183: ref str
+  let _184: bool
+  let _185: %opt_ref.Num
+  let _186: %(Nil|opt_ref.Node|opt_ref.Num)
+  let _187: ref str
+  let _188: ref str
+  let _189: bool
+  let _190: ref %opt_ref.Box(opt_ref.Node)
+  let _191 (bn): ref %opt_ref.Box(opt_ref.Node) slot
+  let _192: ref %opt_ref.Box(Int)
+  let _193 (bi): ref %opt_ref.Box(Int)
+  let _194: ref %opt_ref.Node
+  let _195: i64
+  let _196: %(Nil|Int)
+  let _197: ref %opt_ref.Node
+  let _198: i64
+  let _199: %(Nil|Int)
+  let _200: i64
+  let _201: i32
+  let _202: bool
+  let _203: i64
+  let _204 (total): i64
+  let _205 (r): i64
+  let _206 (__for2_end): i64
+  let _207: bool
+  let _208: ref %opt_ref.Node
+  let _209 (c): ref %opt_ref.Node
+  let _210: i64
+  let _211: i64
+  let _212: i64
+  let _213: i64
+  let _214: i64
+  let _215: ref %elems(opt_ref.Node) slot
+  let _216: ref %Array(opt_ref.Node)
+  let _217 (olds): ref %Array(opt_ref.Node) slot
+  let _218 (i): i64
+  let _219 (__for3_end): i64
+  let _220: bool
+  let _221: ref %opt_ref.Node slot
+  let _222: i64
+  let _223 (junk): i64
+  let _224 (__for4_end): i64
+  let _225: bool
+  let _226: ref %opt_ref.Node
+  let _227 (j): ref %opt_ref.Node
+  let _228: i64
+  let _229: i64
+  let _230: i64
+  let _231: i64
+  let _232: i32
+  let _233: i64
+  let _234 (__for5_end): i64
+  let _235: bool
+  let _236: ref %opt_ref.Node
+  let _237 (nn): ref %opt_ref.Node slot
+  let _238: ref str
+  let _239: ref %elems(opt_ref.Node)
+  let _240: ref %opt_ref.Node
+  let _241: i64
+  let _242 (__for6_end): i64
+  let _243: bool
+  let _244: ref %opt_ref.Node
+  let _245 (j2): ref %opt_ref.Node
+  let _246: i64
+  let _247: i64
+  let _248: i64
+  let _249 (check): i64
+  let _250 (__for7_xs): ref %Array(opt_ref.Node)
+  let _251 (__for7_i): i64
+  let _252: i32
+  let _253: i64
+  let _254: bool
+  let _255: ref %elems(opt_ref.Node)
+  let _256: ref %opt_ref.Node
+  let _257 (o): ref %opt_ref.Node
+  let _258: ref %opt_ref.Node
+  let _259: bool
+  let _260 (nx): ref %opt_ref.Node
+  let _261: i64
+  let _262: i64
+  let _263: ref str
+  let _264: bool
+  let _265 (nm): ref str
+  let _266: i64
+  let _267: i64
+  let _268: i64
+  let _269: i64
+
+bb0:
+  _4 = zero   @114:1
+  _12 = zero   @114:1
+  _19 = zero   @114:1
+  _28 = zero   @114:1
+  _34 = zero   @114:1
+  _35 = zero   @114:1
+  _54 = zero   @114:1
+  _56 = zero   @114:1
+  _90 = zero   @114:1
+  _116 = zero   @114:1
+  _119 = zero   @114:1
+  _162 = zero   @114:1
+  _191 = zero   @114:1
+  _215 = zero   @114:1
+  _217 = zero   @114:1
+  _221 = zero   @114:1
+  _237 = zero   @114:1
+  gc.enter   @114:1
+  gc.roots _2, _4, _12, _19, _28, _34, _35, _54, _56, _90, _116, _119, _162, _191, _215, _217, _221, _237   @114:1
+  call __avant_type_maps() nocollect   @114:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @114:1
+  _3 = call av.opt_ref/Holder.new() collects   @115:13
+  _4 = copy _3   @115:5
+  _5 = copy (*_4).0   @116:10
+  _7 = eq copy _5, const ref %opt_ref.Node null   @116:13
+  branch copy _7, bb1, bb2   @116:13
+
+bb1:
+  _8 = call av.opt_ref/Node.new() collects   @116:20
+  _6 = copy _8   @116:13
+  goto bb3   @116:13
+
+bb2:
+  _6 = copy _5   @116:13
+  goto bb3   @116:13
+
+bb3:
+  _9 = copy (*_6).0   @116:25
+  call printf(const str.3, copy _9) nocollect   @116:3
+  _10 = copy (*_4).1   @117:11
+  _11 = ne copy _10, const ref str null   @117:3
+  branch copy _11, bb4, bb5   @117:3
+
+bb4:
+  _12 = copy _10   @117:3
+  _13 = call avant_str_concat(const str.4, copy _12) collects   @118:10
+  call avant_puts_str(copy _13) nocollect   @118:5
+  goto bb6   @117:3
+
+bb5:
+  call avant_puts_str(const str.5) nocollect   @120:5
+  goto bb6   @117:3
+
+bb6:
+  _14 = copy (*_4).2   @122:12
+  _15 = ne copy _14, const ref %Array(Int) null   @122:3
+  branch copy _15, bb7, bb8   @122:3
+
+bb7:
+  _16 = copy _14   @122:3
+  _17 = copy (*_16).1   @123:12
+  _18 = cast copy _17 to i64   @123:12
+  call printf(const str.3, copy _18) nocollect   @123:5
+  goto bb9   @122:3
+
+bb8:
+  call avant_puts_str(const str.6) nocollect   @125:5
+  goto bb9   @122:3
+
+bb9:
+  _19 = call avant_alloc(const u64 24, const u32 0) collects   @127:10
+  (*_19)[const i64 0] = const i64 1   @127:11
+  (*_19)[const i64 1] = const i64 2   @127:14
+  (*_19)[const i64 2] = const i64 3   @127:17
+  _20 = call avant_alloc(const u64 16, const u32 1022) collects   @127:10
+  barrier copy _20   @127:10
+  (*_20).0 = copy _19   @127:10
+  (*_20).1 = const i32 3   @127:10
+  (*_20).2 = const i32 3   @127:10
+  barrier copy _4   @127:8
+  (*_4).2 = copy _20   @127:8
+  _21 = copy (*_4).2   @128:12
+  _22 = ne copy _21, const ref %Array(Int) null   @128:3
+  branch copy _22, bb10, bb11   @128:3
+
+bb10:
+  _16 = copy _21   @128:3
+  _23 = copy (*_16).1   @129:12
+  _24 = cast copy _23 to i64   @129:12
+  call printf(const str.3, copy _24) nocollect   @129:5
+  goto bb11   @128:3
+
+bb11:
+  _25 = call avant_hash_new(const i32 1, const i32 0) collects   @131:9
+  barrier copy _4   @131:7
+  (*_4).3 = copy _25   @131:7
+  _26 = copy (*_4).3   @132:12
+  _27 = ne copy _26, const ref %Hash null   @132:3
+  branch copy _27, bb12, bb13   @132:3
+
+bb12:
+  _28 = copy _26   @132:3
+  call avant_hash_set_i32(copy _28, const str.7, const i64 1) collects   @133:13
+  _29 = call avant_hash_size(copy _28) nocollect   @134:12
+  call printf(const str.3, copy _29) nocollect   @134:5
+  goto bb13   @132:3
+
+bb13:
+  _30 = copy (*_4).4.1   @136:16
+  _31 = ne copy _30, const ref str null   @136:3
+  branch copy _31, bb14, bb15   @136:3
+
+bb14:
+  _32 = copy _30   @136:3
+  call avant_puts_str(copy _32) nocollect   @137:5
+  goto bb16   @136:3
+
+bb15:
+  call avant_puts_str(const str.8) nocollect   @139:5
+  goto bb16   @136:3
+
+bb16:
+  _33 = call av.opt_ref/Node.new() collects   @142:11
+  _34 = copy _33   @142:5
+  (*_34).0 = const i64 7   @143:7
+  barrier copy _34   @144:10
+  (*_34).2 = const str.9   @144:10
+  barrier copy _4   @145:7
+  (*_4).0 = copy _34   @145:7
+  _35 = copy (*_4).0   @146:14
+  _36 = call av.opt_ref/Node.new() collects   @146:22
+  _37 = call av.opt_ref/pick(copy _35, copy _36) nocollect   @146:8
+  _38 = copy (*_37).0   @146:27
+  call printf(const str.3, copy _38) nocollect   @146:3
+  _39 = call av.opt_ref/pick(const ref %opt_ref.Node null, copy _34) nocollect   @147:8
+  _40 = copy (*_39).0   @147:20
+  call printf(const str.3, copy _40) nocollect   @147:3
+  _41 = copy (*_4).0   @148:20
+  _42 = call av.opt_ref/first_name(copy _41) nocollect   @148:8
+  _44 = eq copy _42, const ref str null   @148:24
+  branch copy _44, bb17, bb18   @148:24
+
+bb17:
+  _43 = const str.10   @148:24
+  goto bb19   @148:24
+
+bb18:
+  _43 = copy _42   @148:24
+  goto bb19   @148:24
+
+bb19:
+  call avant_puts_str(copy _43) nocollect   @148:3
+  _45 = call av.opt_ref/first_name(const ref %opt_ref.Node null) nocollect   @149:8
+  _47 = eq copy _45, const ref str null   @149:24
+  branch copy _47, bb20, bb21   @149:24
+
+bb20:
+  _46 = const str.10   @149:24
+  goto bb22   @149:24
+
+bb21:
+  _46 = copy _45   @149:24
+  goto bb22   @149:24
+
+bb22:
+  call avant_puts_str(copy _46) nocollect   @149:3
+  _48 = call av.opt_ref/try_name(copy _34) nocollect   @150:8
+  _50 = eq copy _48, const ref str null   @150:20
+  branch copy _50, bb23, bb24   @150:20
+
+bb23:
+  _49 = const str.10   @150:20
+  goto bb25   @150:20
+
+bb24:
+  _49 = copy _48   @150:20
+  goto bb25   @150:20
+
+bb25:
+  call avant_puts_str(copy _49) nocollect   @150:3
+  _51 = call av.opt_ref/try_name(const ref %opt_ref.Node null) nocollect   @151:8
+  _53 = eq copy _51, const ref str null   @151:22
+  branch copy _53, bb26, bb27   @151:22
+
+bb26:
+  _52 = const str.10   @151:22
+  goto bb28   @151:22
+
+bb27:
+  _52 = copy _51   @151:22
+  goto bb28   @151:22
+
+bb28:
+  call avant_puts_str(copy _52) nocollect   @151:3
+  _54 = call avant_alloc(const u64 0, const u32 65535) collects   @154:22
+  _55 = call avant_alloc(const u64 16, const u32 1022) collects   @154:22
+  barrier copy _55   @154:22
+  (*_55).0 = copy _54   @154:22
+  (*_55).1 = const i32 0   @154:22
+  (*_55).2 = const i32 0   @154:22
+  _56 = copy _55   @154:3
+  call avant_array_push_ptr(copy _56, const ref %opt_ref.Node null, const u32 65535) collects   @155:5
+  call avant_array_push_ptr(copy _56, copy _34, const u32 65535) collects   @156:5
+  call avant_array_push_ptr(copy _56, const ref %opt_ref.Node null, const u32 65535) collects   @157:5
+  _57 = const i64 0   @158:9
+  _58 = copy _56   @159:3
+  _59 = const i64 0   @159:3
+  goto bb29   @159:3
+
+bb29:
+  _60 = copy (*_58).1   @159:3
+  _61 = cast copy _60 to i64   @159:3
+  _62 = lt copy _59, copy _61   @159:3
+  branch copy _62, bb30, bb31   @159:3
+
+bb30:
+  _63 = copy (*_58).0   @159:3
+  _64 = copy (*_63)[copy _59]   @159:3
+  _65 = copy _64   @159:3
+  _66 = ne copy _65, const ref %opt_ref.Node null   @160:5
+  branch copy _66, bb32, bb33   @160:5
+
+bb31:
+  call printf(const str.3, copy _57) nocollect   @166:3
+  _72 = copy (*_56).1   @167:9
+  _73 = cast copy _72 to i64   @167:9
+  check.bounds const i64 0, copy _73   @167:9
+  call avant_array_set_ptr(copy _56, const i64 0, copy _34) nocollect   @167:9
+  _74 = copy (*_56).1   @168:12
+  _75 = cast copy _74 to i64   @168:12
+  check.bounds const i64 0, copy _75   @168:12
+  _76 = copy (*_56).0   @168:12
+  _77 = copy (*_76)[const i64 0]   @168:12
+  _78 = ne copy _77, const ref %opt_ref.Node null   @168:3
+  branch copy _78, bb35, bb36   @168:3
+
+bb32:
+  _67 = copy _65   @160:5
+  _68 = copy (*_67).0   @161:17
+  _69 = add.chk copy _57, copy _68   @161:17
+  _57 = copy _69   @161:13
+  goto bb34   @160:5
+
+bb33:
+  _70 = add.chk copy _57, const i64 100   @160:5
+  _57 = copy _70   @163:13
+  goto bb34   @160:5
+
+bb34:
+  _71 = add copy _59, const i64 1   @159:3
+  _59 = copy _71   @159:3
+  goto bb29   @159:3
+
+bb35:
+  _67 = copy _77   @168:3
+  _79 = copy (*_67).0   @169:11
+  call printf(const str.3, copy _79) nocollect   @169:5
+  goto bb36   @168:3
+
+bb36:
+  _80 = const i64 5   @171:12
+  _81 = copy (*_56).1   @171:12
+  _82 = cast copy _81 to i64   @171:12
+  _83 = const ref %opt_ref.Node null   @171:12
+  _84 = ge copy _80, const i64 0   @171:12
+  _85 = lt copy _80, copy _82   @171:12
+  _86 = and copy _84, copy _85   @171:12
+  branch copy _86, bb37, bb38   @171:12
+
+bb37:
+  _87 = call avant_array_get_ptr(copy _56, copy _80) nocollect   @171:12
+  _83 = copy _87   @171:12
+  goto bb38   @171:12
+
+bb38:
+  _88 = ne copy _83, const ref %opt_ref.Node null   @171:3
+  branch copy _88, bb39, bb40   @171:3
+
+bb39:
+  _89 = copy _83   @171:3
+  call avant_puts_str(const str.11) nocollect   @172:5
+  goto bb41   @171:3
+
+bb40:
+  call avant_puts_str(const str.12) nocollect   @174:5
+  goto bb41   @171:3
+
+bb41:
+  _90 = call avant_alloc(const u64 8, const u32 65535) collects   @176:8
+  (*_90)[const i64 0] = copy _34 fresh   @176:9
+  barrier copy _90   @176:8
+  _91 = call avant_alloc(const u64 16, const u32 1022) collects   @176:8
+  barrier copy _91   @176:8
+  (*_91).0 = copy _90   @176:8
+  (*_91).1 = const i32 1   @176:8
+  (*_91).2 = const i32 1   @176:8
+  _92 = copy _91   @176:6
+  _93 = const i64 0   @177:12
+  _94 = copy (*_92).1   @177:12
+  _95 = cast copy _94 to i64   @177:12
+  _96 = const ref %opt_ref.Node null   @177:12
+  _97 = ge copy _93, const i64 0   @177:12
+  _98 = lt copy _93, copy _95   @177:12
+  _99 = and copy _97, copy _98   @177:12
+  branch copy _99, bb42, bb43   @177:12
+
+bb42:
+  _100 = call avant_array_get_ptr(copy _92, copy _93) nocollect   @177:12
+  _96 = copy _100   @177:12
+  goto bb43   @177:12
+
+bb43:
+  _101 = ne copy _96, const ref %opt_ref.Node null   @177:3
+  branch copy _101, bb44, bb45   @177:3
+
+bb44:
+  _102 = copy _96   @177:3
+  _103 = copy (*_102).2   @178:11
+  _105 = eq copy _103, const ref str null   @178:17
+  branch copy _105, bb46, bb47   @178:17
+
+bb45:
+  _106 = const i64 1   @180:12
+  _107 = copy (*_92).1   @180:12
+  _108 = cast copy _107 to i64   @180:12
+  _109 = const ref %opt_ref.Node null   @180:12
+  _110 = ge copy _106, const i64 0   @180:12
+  _111 = lt copy _106, copy _108   @180:12
+  _112 = and copy _110, copy _111   @180:12
+  branch copy _112, bb49, bb50   @180:12
+
+bb46:
+  _104 = const str.10   @178:17
+  goto bb48   @178:17
+
+bb47:
+  _104 = copy _103   @178:17
+  goto bb48   @178:17
+
+bb48:
+  call avant_puts_str(copy _104) nocollect   @178:5
+  goto bb45   @177:3
+
+bb49:
+  _113 = call avant_array_get_ptr(copy _92, copy _106) nocollect   @180:12
+  _109 = copy _113   @180:12
+  goto bb50   @180:12
+
+bb50:
+  _114 = ne copy _109, const ref %opt_ref.Node null   @180:3
+  branch copy _114, bb51, bb52   @180:3
+
+bb51:
+  _102 = copy _109   @180:3
+  _115 = copy (*_102).0   @181:11
+  call printf(const str.3, copy _115) nocollect   @181:5
+  goto bb53   @180:3
+
+bb52:
+  call avant_puts_str(const str.13) nocollect   @183:5
+  goto bb53   @180:3
+
+bb53:
+  _116 = call avant_alloc(const u64 16, const u32 0) collects   @188:21
+  _117 = union %(Nil|Int) tag 1 (const i64 3)   @188:22
+  (*_116)[const i64 0] = copy _117   @188:22
+  _118 = call avant_alloc(const u64 16, const u32 1022) collects   @188:21
+  barrier copy _118   @188:21
+  (*_118).0 = copy _116   @188:21
+  (*_118).1 = const i32 1   @188:21
+  (*_118).2 = const i32 1   @188:21
+  _119 = copy _118   @188:3
+  _120 = union %(Nil|Int) tag 0   @189:11
+  _121 = call avant_array_push_slot(copy _119, const u64 16, const u32 0) collects   @189:5
+  (*_121) = copy _120   @189:5
+  _122 = const i64 0   @190:10
+  _123 = copy (*_119).1   @190:10
+  _124 = cast copy _123 to i64   @190:10
+  _125 = union %(Nil|Int) tag 0   @190:10
+  _126 = ge copy _122, const i64 0   @190:10
+  _127 = lt copy _122, copy _124   @190:10
+  _128 = and copy _126, copy _127   @190:10
+  branch copy _128, bb54, bb55   @190:10
+
+bb54:
+  _129 = copy (*_119).0   @190:10
+  _130 = copy (*_129)[copy _122]   @190:10
+  _125 = copy _130   @190:10
+  goto bb55   @190:10
+
+bb55:
+  _132 = copy _125.0   @190:18
+  _133 = eq copy _132, const i32 0   @190:18
+  branch copy _133, bb56, bb57   @190:18
+
+bb56:
+  _131 = const i64 -1   @190:18
+  goto bb58   @190:18
+
+bb57:
+  _134 = copy _125.1   @190:18
+  _131 = copy _134   @190:18
+  goto bb58   @190:18
+
+bb58:
+  call printf(const str.3, copy _131) nocollect   @190:3
+  _135 = const i64 1   @191:10
+  _136 = copy (*_119).1   @191:10
+  _137 = cast copy _136 to i64   @191:10
+  _138 = union %(Nil|Int) tag 0   @191:10
+  _139 = ge copy _135, const i64 0   @191:10
+  _140 = lt copy _135, copy _137   @191:10
+  _141 = and copy _139, copy _140   @191:10
+  branch copy _141, bb59, bb60   @191:10
+
+bb59:
+  _142 = copy (*_119).0   @191:10
+  _143 = copy (*_142)[copy _135]   @191:10
+  _138 = copy _143   @191:10
+  goto bb60   @191:10
+
+bb60:
+  _145 = copy _138.0   @191:18
+  _146 = eq copy _145, const i32 0   @191:18
+  branch copy _146, bb61, bb62   @191:18
+
+bb61:
+  _144 = const i64 -1   @191:18
+  goto bb63   @191:18
+
+bb62:
+  _147 = copy _138.1   @191:18
+  _144 = copy _147   @191:18
+  goto bb63   @191:18
+
+bb63:
+  call printf(const str.3, copy _144) nocollect   @191:3
+  _148 = const i64 2   @192:10
+  _149 = copy (*_119).1   @192:10
+  _150 = cast copy _149 to i64   @192:10
+  _151 = union %(Nil|Int) tag 0   @192:10
+  _152 = ge copy _148, const i64 0   @192:10
+  _153 = lt copy _148, copy _150   @192:10
+  _154 = and copy _152, copy _153   @192:10
+  branch copy _154, bb64, bb65   @192:10
+
+bb64:
+  _155 = copy (*_119).0   @192:10
+  _156 = copy (*_155)[copy _148]   @192:10
+  _151 = copy _156   @192:10
+  goto bb65   @192:10
+
+bb65:
+  _158 = copy _151.0   @192:18
+  _159 = eq copy _158, const i32 0   @192:18
+  branch copy _159, bb66, bb67   @192:18
+
+bb66:
+  _157 = const i64 -1   @192:18
+  goto bb68   @192:18
+
+bb67:
+  _160 = copy _151.1   @192:18
+  _157 = copy _160   @192:18
+  goto bb68   @192:18
+
+bb68:
+  call printf(const str.3, copy _157) nocollect   @192:3
+  _161 = call avant_hash_new(const i32 1, const i32 1) collects   @195:33
+  _162 = copy _161   @195:3
+  call avant_hash_set_str(copy _162, const str.15, const str.14) collects   @196:14
+  _163 = const i32 0   @197:13
+  _164 = addr.raw _163   @197:13
+  _165 = call avant_hash_get_str(copy _162, const str.15, copy _164) nocollect   @197:13
+  _166 = eq copy _163, const i32 1   @197:13
+  branch copy _166, bb69, bb70   @197:13
+
+bb69:
+  _167 = copy _165   @197:13
+  goto bb71   @197:13
+
+bb70:
+  _167 = const ref str null   @197:13
+  goto bb71   @197:13
+
+bb71:
+  _169 = eq copy _167, const ref str null   @197:19
+  branch copy _169, bb72, bb73   @197:19
+
+bb72:
+  _168 = const str.10   @197:19
+  goto bb74   @197:19
+
+bb73:
+  _168 = copy _167   @197:19
+  goto bb74   @197:19
+
+bb74:
+  call avant_puts_str(copy _168) nocollect   @197:3
+  _170 = const i32 0   @198:13
+  _171 = addr.raw _170   @198:13
+  _172 = call avant_hash_get_str(copy _162, const str.16, copy _171) nocollect   @198:13
+  _173 = eq copy _170, const i32 1   @198:13
+  branch copy _173, bb75, bb76   @198:13
+
+bb75:
+  _174 = copy _172   @198:13
+  goto bb77   @198:13
+
+bb76:
+  _174 = const ref str null   @198:13
+  goto bb77   @198:13
+
+bb77:
+  _176 = eq copy _174, const ref str null   @198:19
+  branch copy _176, bb78, bb79   @198:19
+
+bb78:
+  _175 = const str.10   @198:19
+  goto bb80   @198:19
+
+bb79:
+  _175 = copy _174   @198:19
+  goto bb80   @198:19
+
+bb80:
+  call avant_puts_str(copy _175) nocollect   @198:3
+  _177 = call av.opt_ref/widen(copy _34) nocollect   @201:13
+  _178 = call av.opt_ref/desc(copy _177) collects   @201:8
+  _180 = eq copy _178, const ref str null   @201:23
+  branch copy _180, bb81, bb82   @201:23
+
+bb81:
+  _179 = const str.17   @201:23
+  goto bb83   @201:23
+
+bb82:
+  _179 = copy _178   @201:23
+  goto bb83   @201:23
+
+bb83:
+  call avant_puts_str(copy _179) nocollect   @201:3
+  _181 = call av.opt_ref/widen(const ref %opt_ref.Node null) nocollect   @202:13
+  _182 = call av.opt_ref/desc(copy _181) collects   @202:8
+  _184 = eq copy _182, const ref str null   @202:25
+  branch copy _184, bb84, bb85   @202:25
+
+bb84:
+  _183 = const str.17   @202:25
+  goto bb86   @202:25
+
+bb85:
+  _183 = copy _182   @202:25
+  goto bb86   @202:25
+
+bb86:
+  call avant_puts_str(copy _183) nocollect   @202:3
+  _185 = struct %opt_ref.Num (const i64 5)   @203:13
+  _186 = union %(Nil|opt_ref.Node|opt_ref.Num) tag 2 (copy _185)   @203:13
+  _187 = call av.opt_ref/desc(copy _186) collects   @203:8
+  _189 = eq copy _187, const ref str null   @203:27
+  branch copy _189, bb87, bb88   @203:27
+
+bb87:
+  _188 = const str.17   @203:27
+  goto bb89   @203:27
+
+bb88:
+  _188 = copy _187   @203:27
+  goto bb89   @203:27
+
+bb89:
+  call avant_puts_str(copy _188) nocollect   @203:3
+  _190 = call av.opt_ref/Box(opt_ref.Node).new() collects   @206:17
+  _191 = copy _190   @206:6
+  _192 = call av.opt_ref/Box(Int).new() collects   @207:16
+  _193 = copy _192   @207:6
+  _194 = copy (*_191).0   @208:16
+  _195 = call av.opt_ref/depth(copy _194) nocollect   @208:8
+  call printf(const str.3, copy _195) nocollect   @208:3
+  barrier copy _191   @209:11
+  (*_191).0 = copy _34   @209:11
+  _196 = union %(Nil|Int) tag 1 (const i64 5)   @210:13
+  (*_193).0 = copy _196   @210:11
+  _197 = copy (*_191).0   @211:16
+  _198 = call av.opt_ref/depth(copy _197) nocollect   @211:8
+  call printf(const str.3, copy _198) nocollect   @211:3
+  _199 = copy (*_193).0   @212:10
+  _201 = copy _199.0   @212:16
+  _202 = eq copy _201, const i32 0   @212:16
+  branch copy _202, bb90, bb91   @212:16
+
+bb90:
+  _200 = const i64 0   @212:16
+  goto bb92   @212:16
+
+bb91:
+  _203 = copy _199.1   @212:16
+  _200 = copy _203   @212:16
+  goto bb92   @212:16
+
+bb92:
+  call printf(const str.3, copy _200) nocollect   @212:3
+  _204 = const i64 0   @215:9
+  _205 = const i64 0   @216:3
+  _206 = const i64 20   @216:3
+  goto bb93   @216:3
+
+bb93:
+  _207 = lt copy _205, copy _206   @216:3
+  branch copy _207, bb94, bb95   @216:3
+
+bb94:
+  _208 = call av.opt_ref/chain(const i64 2000) collects   @217:9
+  _209 = copy _208   @217:7
+  _210 = call av.opt_ref/sum(copy _209) nocollect   @218:14
+  _211 = call av.opt_ref/depth(copy _209) nocollect   @218:23
+  _212 = add.chk copy _210, copy _211   @218:21
+  _213 = add.chk copy _204, copy _212   @218:21
+  _204 = copy _213   @218:11
+  _214 = add copy _205, const i64 1   @216:3
+  _205 = copy _214   @216:3
+  goto bb93   @216:3
+
+bb95:
+  call printf(const str.3, copy _204) nocollect   @220:3
+  _215 = call avant_alloc(const u64 0, const u32 65535) collects   @223:23
+  _216 = call avant_alloc(const u64 16, const u32 1022) collects   @223:23
+  barrier copy _216   @223:23
+  (*_216).0 = copy _215   @223:23
+  (*_216).1 = const i32 0   @223:23
+  (*_216).2 = const i32 0   @223:23
+  _217 = copy _216   @223:3
+  _218 = const i64 0   @224:3
+  _219 = const i64 500   @224:3
+  goto bb96   @224:3
+
+bb96:
+  _220 = lt copy _218, copy _219   @224:3
+  branch copy _220, bb97, bb98   @224:3
+
+bb97:
+  _221 = call av.opt_ref/Node.new() collects   @225:19
+  call avant_array_push_ptr(copy _217, copy _221, const u32 65535) collects   @225:9
+  _222 = add copy _218, const i64 1   @224:3
+  _218 = copy _222   @224:3
+  goto bb96   @224:3
+
+bb98:
+  _223 = const i64 0   @227:8
+  _218 = const i64 0   @228:3
+  _224 = const i64 20000   @228:3
+  goto bb99   @228:3
+
+bb99:
+  _225 = lt copy _218, copy _224   @228:3
+  branch copy _225, bb100, bb101   @228:3
+
+bb100:
+  _226 = call av.opt_ref/Node.new() collects   @229:13
+  _227 = copy _226   @229:7
+  (*_227).0 = copy _218   @230:9
+  _228 = copy (*_227).0   @231:14
+  _229 = rem copy _228, const i64 7   @231:17
+  _230 = add.chk copy _223, copy _229   @231:17
+  _223 = copy _230   @231:10
+  _231 = add copy _218, const i64 1   @228:3
+  _218 = copy _231   @228:3
+  goto bb99   @228:3
+
+bb101:
+  _218 = const i64 0   @233:3
+  _232 = copy (*_217).1   @233:19
+  _233 = cast copy _232 to i64   @233:19
+  _234 = copy _233   @233:3
+  goto bb102   @233:3
+
+bb102:
+  _235 = lt copy _218, copy _234   @233:3
+  branch copy _235, bb103, bb104   @233:3
+
+bb103:
+  _236 = call av.opt_ref/Node.new() collects   @234:14
+  _237 = copy _236   @234:8
+  (*_237).0 = copy _218   @235:10
+  _238 = call avant_str_cat_i32(const str.16, copy _218) collects   @236:15
+  barrier copy _237   @236:13
+  (*_237).2 = copy _238   @236:13
+  _239 = copy (*_217).0   @237:9
+  _240 = copy (*_239)[copy _218]   @237:9
+  barrier copy _240   @237:18
+  (*_240).1 = copy _237   @237:18
+  _241 = add copy _218, const i64 1   @233:3
+  _218 = copy _241   @233:3
+  goto bb102   @233:3
+
+bb104:
+  _218 = const i64 0   @239:3
+  _242 = const i64 20000   @239:3
+  goto bb105   @239:3
+
+bb105:
+  _243 = lt copy _218, copy _242   @239:3
+  branch copy _243, bb106, bb107   @239:3
+
+bb106:
+  _244 = call av.opt_ref/Node.new() collects   @240:14
+  _245 = copy _244   @240:8
+  _246 = copy (*_245).0   @241:15
+  _247 = add.chk copy _223, copy _246   @241:15
+  _223 = copy _247   @241:10
+  _248 = add copy _218, const i64 1   @239:3
+  _218 = copy _248   @239:3
+  goto bb105   @239:3
+
+bb107:
+  _249 = const i64 0   @243:9
+  _250 = copy _217   @244:3
+  _251 = const i64 0   @244:3
+  goto bb108   @244:3
+
+bb108:
+  _252 = copy (*_250).1   @244:3
+  _253 = cast copy _252 to i64   @244:3
+  _254 = lt copy _251, copy _253   @244:3
+  branch copy _254, bb109, bb110   @244:3
+
+bb109:
+  _255 = copy (*_250).0   @244:3
+  _256 = copy (*_255)[copy _251]   @244:3
+  _257 = copy _256   @244:3
+  _258 = copy (*_257).1   @245:14
+  _259 = ne copy _258, const ref %opt_ref.Node null   @245:5
+  branch copy _259, bb111, bb112   @245:5
+
+bb110:
+  _269 = add.chk copy _249, copy _223   @252:14
+  call printf(const str.3, copy _269) nocollect   @252:3
+  _0 = const i32 0   @114:1
+  gc.leave   @114:1
+  return   @114:1
+
+bb111:
+  _260 = copy _258   @245:5
+  _261 = copy (*_260).0   @246:18
+  _262 = add.chk copy _249, copy _261   @246:18
+  _249 = copy _262   @246:13
+  _263 = copy (*_260).2   @247:17
+  _264 = ne copy _263, const ref str null   @247:7
+  branch copy _264, bb113, bb114   @247:7
+
+bb112:
+  _268 = add copy _251, const i64 1   @244:3
+  _251 = copy _268   @244:3
+  goto bb108   @244:3
+
+bb113:
+  _265 = copy _263   @247:7
+  _266 = call avant_str_size(copy _265) nocollect   @248:20
+  _267 = add.chk copy _249, copy _266   @248:20
+  _249 = copy _267   @248:15
+  goto bb114   @247:7
+
+bb114:
+  goto bb112   @245:5
+}
+
+fn av.opt_ref/Num.message(_1: addr %opt_ref.Num) -> ref str leaf @opt_ref.av:61:3 {
+  let _0: ref str
+  let _1 (self): addr %opt_ref.Num
+
+bb0:
+  _0 = const str.18   @62:5
+  return   @62:5
+}
+
+fn av.opt_ref/Num.__avant_error_text(_1: addr %opt_ref.Num) -> ref str leaf @opt_ref.av:58:1 {
+  let _0: ref str
+  let _1 (self): addr %opt_ref.Num
+  let _2: addr %opt_ref.Num
+  let _3: ref str
+
+bb0:
+  _2 = addr (*_1)   @58:1
+  _3 = call av.opt_ref/Num.message(copy _2) nocollect   @58:1
+  _0 = copy _3   @58:1
+  return   @58:1
+}
+
+fn av.opt_ref/Node.new() -> ref %opt_ref.Node frame @opt_ref.av:10:1 {
+  let _0: ref %opt_ref.Node
+  let _1: ref %opt_ref.Node
+
+bb0:
+  gc.enter   @10:1
+  gc.roots   @10:1
+  _1 = call avant_alloc(const u64 24, const u32 1) collects   @10:1
+  (*_1).0 = const i64 0   @11:3
+  _0 = copy _1   @10:1
+  gc.leave   @10:1
+  return   @10:1
+}
+
+fn av.opt_ref/Holder.new() -> ref %opt_ref.Holder frame @opt_ref.av:22:1 {
+  let _0: ref %opt_ref.Holder
+  let _1: ref %opt_ref.Holder
+
+bb0:
+  gc.enter   @22:1
+  gc.roots   @22:1
+  _1 = call avant_alloc(const u64 64, const u32 2) collects   @22:1
+  _0 = copy _1   @22:1
+  gc.leave   @22:1
+  return   @22:1
+}
+
+fn av.opt_ref/Box(opt_ref.Node).new() -> ref %opt_ref.Box(opt_ref.Node) frame @opt_ref.av:30:1 {
+  let _0: ref %opt_ref.Box(opt_ref.Node)
+  let _1: ref %opt_ref.Box(opt_ref.Node)
+
+bb0:
+  gc.enter   @30:1
+  gc.roots   @30:1
+  _1 = call avant_alloc(const u64 8, const u32 3) collects   @30:1
+  _0 = copy _1   @30:1
+  gc.leave   @30:1
+  return   @30:1
+}
+
+fn av.opt_ref/Box(Int).new() -> ref %opt_ref.Box(Int) frame @opt_ref.av:30:1 {
+  let _0: ref %opt_ref.Box(Int)
+  let _1: ref %opt_ref.Box(Int)
+
+bb0:
+  gc.enter   @30:1
+  gc.roots   @30:1
+  _1 = call avant_alloc(const u64 16, const u32 4) collects   @30:1
+  _0 = copy _1   @30:1
+  gc.leave   @30:1
+  return   @30:1
+}

@@ -164,10 +164,25 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
     if cs.ret.c_scalar > 0 {
       return lw.from_c_scalar(b.copy_local(dest), cs.ret.c_scalar)
     }
+    if cs.ret.is_string() {
+      lw.c_string_present(dest, "${e.lib_name}.${e.callee}", e.loc)
+    }
     return b.copy_local(dest)
   }
   lw.refuse(e.loc, "the C function ${e.lib_name}.${e.callee} (no checked signature)")
   zero
+}
+
+// A C function declared `: String` promises a string: a NULL it returns
+// traps, naming the function (Stage 29 W4b2, D295 R15; one compare and a
+// cold block). `String?` reads NULL as nil (W3b).
+pub fn (lw: MirLower) c_string_present(dest: Int, name: String, loc: Location) {
+  b = lw.lw_b
+  isnull = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(dest), b.c_null(b.func.locals[dest].ty)))
+  ok = lw.trap_open(isnull, true)
+  targs: Array(MOperand) = []
+  targs.push(b.str_const(name))
+  lw.trap_close(ok, "avant_trap_c_null", targs, loc)
 }
 
 // The address of the `#cb` thunk for a callback argument (calls.av
@@ -560,7 +575,7 @@ pub fn (lw: MirLower) lower_re2c_compile(e: Expr): MOperand? {
     return nil
   }
   fv = -1
-  if flags.kind == ex_int() {
+  if flags.kind == ex_int() && flags.int_bits <= 2147483647u64 {
     fv = flags.int_bits.to_i
   } else if flags.kind == ex_bool() {
     fv = 0
@@ -589,8 +604,8 @@ pub fn (lw: MirLower) lower_re2c_compile(e: Expr): MOperand? {
   if sym = lw.lw_fn_syms.get("regex_from_re2c") {
     b = lw.lw_b
     args: Array(MOperand) = []
-    args.push(b.c_i32(rid))
-    args.push(b.c_i32(groups))
+    args.push(b.c_i64(rid.to_i64))
+    args.push(b.c_i64(groups.to_i64))
     args.push(lw.lower_expr(pat))
     args.push(lw.lower_expr(flags))
     if lw.failed {

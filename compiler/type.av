@@ -27,13 +27,17 @@ pub fn tyk_clayout: Int { 20 }
 pub fn tyk_fn: Int { 21 }
 pub fn tyk_iface: Int { 22 }
 pub fn tyk_bytes: Int { 23 }
+// Stage 29 W-INT1 (D314): `Int` is 64-bit; Int32 and UInt32 are everyday
+// value types (dense storage, C's int). `Int64` names `Int` (ty_int64).
+pub fn tyk_int32: Int { 24 }
+pub fn tyk_uint32: Int { 25 }
 
 pub class TyField {
-  name: String = ""
-  ty: Ty
+  pub name: String = ""
+  pub ty: Ty
   // false for a field without `pub` (Stage 29 W3a, D299); a C layout's
   // fields are C's and stay visible.
-  vis: Bool = true
+  pub vis: Bool = true
 
   fn initialize(name: String, ty: Ty) {
     self.name = name
@@ -47,25 +51,30 @@ pub class Ty {
   // owns a subset of the payload fields below; the ty_* constructors in
   // this file are the only construction path, and agg shells get their
   // `fields` filled once by resolve before any read.
-  kind: Int = 0
-  name: String = ""
+  pub kind: Int = 0
+  pub name: String = ""
   label: String = ""
-  origin: String = ""
-  template: Bool = false
-  inner: Ty? = nil
-  key: Ty? = nil
-  val: Ty? = nil
-  members: Array(Ty)
-  fields: Array(TyField)
-  ty_args: Array(Ty)
-  mod_name: String = ""
-  emit_base: String = ""
+  pub origin: String = ""
+  pub template: Bool = false
+  pub inner: Ty? = nil
+  pub key: Ty? = nil
+  pub val: Ty? = nil
+  pub members: Array(Ty)
+  pub fields: Array(TyField)
+  pub ty_args: Array(Ty)
+  pub mod_name: String = ""
+  pub emit_base: String = ""
   // A C scalar type (D64 as amended, Stage 29 W1b): cs_* below, 0 for
   // every other type. Such a Ty has its Avant view's kind (Int, Int64 or
   // Float64) and its C name as label; it appears only in a `fun` signature
   // and a C layout's field, where the back end passes and stores the C
   // width and converts at the boundary.
-  c_scalar: Int = 0
+  pub c_scalar: Int = 0
+  // Marked `Error` (D292, Stage 29 W4a): a class or struct declared
+  // `class E: Error`; in a union it is a failure (ty_failures below).
+  // Set on the type's one Ty when the resolver binds its declaration
+  // (resolve.av load_types, instantiate_template), so every check sees it.
+  pub error_mark: Bool = false
 
   fn initialize(kind: Int) {
     self.kind = kind
@@ -82,6 +91,8 @@ pub class Ty {
   pub fn is_int: Bool { self.kind == tyk_int() }
   pub fn is_int64: Bool { self.kind == tyk_int64() }
   pub fn is_uint64: Bool { self.kind == tyk_uint64() }
+  pub fn is_int32: Bool { self.kind == tyk_int32() }
+  pub fn is_uint32: Bool { self.kind == tyk_uint32() }
   pub fn is_integer: Bool {
     if self.is_int {
       return true
@@ -89,7 +100,24 @@ pub class Ty {
     if self.is_int64 {
       return true
     }
+    if self.is_int32 || self.is_uint32 {
+      return true
+    }
     self.is_uint64
+  }
+  // An unsigned integer type (UInt64, UInt32).
+  pub fn is_unsigned: Bool {
+    self.is_uint64 || self.is_uint32
+  }
+  // The width of an integer type in bits (Int is 64), else 0.
+  pub fn int_width: Int {
+    if self.is_int32 || self.is_uint32 {
+      return 32
+    }
+    if self.is_integer {
+      return 64
+    }
+    0
   }
   pub fn is_bool: Bool { self.kind == tyk_bool() }
   pub fn is_float: Bool { self.kind == tyk_float() }
@@ -155,6 +183,9 @@ pub class Ty {
       return true
     }
     if k == tyk_uint64() {
+      return true
+    }
+    if k == tyk_int32() || k == tyk_uint32() {
       return true
     }
     if k == tyk_bool() {
@@ -372,6 +403,12 @@ pub class Ty {
     if k == tyk_uint64() {
       return "UInt64"
     }
+    if k == tyk_int32() {
+      return "Int32"
+    }
+    if k == tyk_uint32() {
+      return "UInt32"
+    }
     if k == tyk_bool() {
       return "Bool"
     }
@@ -497,8 +534,9 @@ pub class Ty {
 
 // The C scalar types (D64 as amended, Stage 29 W1b): the C width and
 // signedness of a `fun` parameter or result or a C layout's field, seen in
-// Avant as their view type: Int8, Int16, UInt8 and UInt16 as Int, UInt32
-// as Int64, Float32 as Float64. From C a value converts exactly; to C an
+// Avant as their view type: Int8, Int16, UInt8 and UInt16 as Int, Float32
+// as Float64. UInt32 (5) and Int32 are everyday types since Stage 29
+// W-INT1 (D314): cs_uint32 stays only as a range kind (avant_trap_c_range). From C a value converts exactly; to C an
 // integer outside the C type's range traps (D215), and a Float64 rounds to
 // the nearest Float32.
 pub fn cs_int8: Int { 1 }
@@ -519,7 +557,7 @@ pub fn c_scalar_name(k: Int): String {
 pub fn c_scalar_of(name: String): Int {
   k = 1
   while k <= 6 {
-    if c_scalar_name(k) == name {
+    if k != cs_uint32() && c_scalar_name(k) == name {
       return k
     }
     k += 1
@@ -528,10 +566,11 @@ pub fn c_scalar_of(name: String): Int {
 }
 
 pub fn ty_c_scalar(k: Int): Ty {
-  kind = tyk_int()
   if k == cs_uint32() {
-    kind = tyk_int64()
-  } else if k == cs_float32() {
+    return Ty.new(tyk_uint32())
+  }
+  kind = tyk_int()
+  if k == cs_float32() {
     kind = tyk_float()
   }
   t = Ty.new(kind)
@@ -549,8 +588,35 @@ pub fn ty_c_view(t: Ty): Ty {
   Ty.new(t.kind)
 }
 
+// The integer conversions (D295, D312; Stage 29 W-INT1, D314): to_i,
+// to_i32, to_u64 and to_u32 keep the value or trap; wrap_i, wrap_i32,
+// wrap_u64 and wrap_u32 take the two's-complement bits at the target's
+// width (truncating, or extending by the source's sign). to_i64 and
+// wrap_i64 name to_i and wrap_i (Int64 is Int), for the compiler's own
+// source until the next release is the seed. The result type, or nil.
+pub fn int_conversion_ty(name: String): Ty? {
+  if name == "to_i" || name == "to_i64" || name == "wrap_i" || name == "wrap_i64" {
+    return Ty.new(tyk_int())
+  }
+  if name == "to_i32" || name == "wrap_i32" {
+    return Ty.new(tyk_int32())
+  }
+  if name == "to_u64" || name == "wrap_u64" {
+    return Ty.new(tyk_uint64())
+  }
+  if name == "to_u32" || name == "wrap_u32" {
+    return Ty.new(tyk_uint32())
+  }
+  nil
+}
+
 pub fn ty_int: Ty { Ty.new(tyk_int()) }
-pub fn ty_int64: Ty { Ty.new(tyk_int64()) }
+// `Int64` is another name of `Int` (Stage 29 W-INT1, D314: one 64-bit
+// integer; the compiler's own source, which the 32-bit seed also builds,
+// still spells it).
+pub fn ty_int64: Ty { Ty.new(tyk_int()) }
+pub fn ty_int32: Ty { Ty.new(tyk_int32()) }
+pub fn ty_uint32: Ty { Ty.new(tyk_uint32()) }
 pub fn ty_uint64: Ty { Ty.new(tyk_uint64()) }
 pub fn ty_bool: Ty { Ty.new(tyk_bool()) }
 pub fn ty_float: Ty { Ty.new(tyk_float()) }
@@ -608,6 +674,12 @@ pub fn mangle_ty(ty: Ty): String {
   }
   if k == tyk_uint64() {
     return "UInt64"
+  }
+  if k == tyk_int32() {
+    return "Int32"
+  }
+  if k == tyk_uint32() {
+    return "UInt32"
   }
   if k == tyk_bool() {
     return "Bool"
@@ -949,42 +1021,69 @@ pub fn ty_without_nil(ty: Ty): Ty {
   ty_union_build(kept)
 }
 
-pub fn if_assign_payload(ty: Ty): Ty? {
-  if ty.is_union {
-    if ty.includes_nil {
-      success = ty_without_nil(ty)
-      if success.is_union {
-        return nil
-      }
-      return success
-    }
-    if ty.members.size == 2 {
-      a = ty.members[0]
-      b = ty.members[1]
-      if a.is_class {
-        if b.is_class {
-          return nil
-        }
-        return b
-      }
-      if b.is_class {
-        return a
-      }
-    }
-  }
-  nil
+// The one failure rule (D292, Stage 29 W4a): in a union the failures are
+// `Nil` and every member marked `Error` (`class E: Error`); the rest is
+// the success value, one type or a smaller union. A union with no
+// success member but `Nil` (an optional error, `E?`, such as a `cause`)
+// has `Nil` as its only failure for if-assign and `??`, so the error is
+// the value read; postfix `?` refuses it (it would pass up the `nil`).
+pub fn ty_is_failure(m: Ty): Bool {
+  m.is_nil || m.error_mark
 }
 
-pub fn if_assign_failure(ty: Ty): Ty {
-  if ty.includes_nil {
-    return ty_nil()
-  }
+pub fn ty_has_success(ty: Ty): Bool {
   for m in ty.members {
-    if m.is_class {
-      return m
+    if !ty_is_failure(m) {
+      return true
     }
   }
-  ty_nil()
+  false
+}
+
+// The failure members of the union ty under the rule above (in member
+// order; empty when ty has none).
+pub fn ty_failures(ty: Ty): Array(Ty) {
+  out: Array(Ty) = []
+  if !ty.is_union {
+    return out
+  }
+  if !ty_has_success(ty) {
+    if ty.includes_nil {
+      out.push(ty_nil())
+    }
+    return out
+  }
+  for m in ty.members {
+    if ty_is_failure(m) {
+      out.push(m)
+    }
+  }
+  out
+}
+
+// The success part of the union ty: its members that are not failures,
+// one type or a union; nil when ty has no failure or no success.
+pub fn ty_success_part(ty: Ty): Ty? {
+  fails = ty_failures(ty)
+  if fails.size == 0 {
+    return nil
+  }
+  kept: Array(Ty) = []
+  for m in ty.members {
+    failed = false
+    for f in fails {
+      if f.same_as(m) {
+        failed = true
+      }
+    }
+    if !failed {
+      kept.push(m)
+    }
+  }
+  if kept.size == 0 {
+    return nil
+  }
+  ty_union_build(kept)
 }
 
 pub fn ty_assignable(got: Ty, want: Ty): Bool {
@@ -1018,6 +1117,9 @@ pub fn type_is_builtin(name: String): Bool {
   if name == "UInt64" {
     return true
   }
+  if name == "Int32" || name == "UInt32" {
+    return true
+  }
   if name == "Bool" {
     return true
   }
@@ -1049,4 +1151,42 @@ pub fn type_is_builtin(name: String): Bool {
     return true
   }
   name == "JoinHandle"
+}
+
+// Whether a value of type t has a natural zero (D292).
+pub fn ty_has_zero(t: Ty): Bool {
+  if t.is_integer || t.is_float || t.is_bool || t.is_string {
+    return true
+  }
+  if t.is_union {
+    return t.includes_nil
+  }
+  if t.is_ptr {
+    return true
+  }
+  if t.is_struct {
+    for f in t.fields {
+      if !ty_has_zero(f.ty) {
+        return false
+      }
+    }
+    return true
+  }
+  false
+}
+
+// Whether the zero of t needs a store (a String, or a struct holding
+// one): the allocation's zero bytes are every other zero.
+pub fn ty_zero_stores(t: Ty): Bool {
+  if t.is_string {
+    return true
+  }
+  if t.is_struct {
+    for f in t.fields {
+      if ty_zero_stores(f.ty) {
+        return true
+      }
+    }
+  }
+  false
 }

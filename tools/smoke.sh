@@ -147,8 +147,8 @@ fi
 src trees.av <<'EOF'
 class Node {
   item: Int
-  left: Node
-  right: Node
+  left: Node?
+  right: Node?
 
   fn initialize(item: Int) {
     self.item = item
@@ -168,7 +168,10 @@ fn check(n: Node, depth: Int): Int {
   if depth == 0 {
     return n.item
   }
-  check(n.left, depth - 1) &+ check(n.right, depth - 1) &+ n.item
+  if l = n.left, r = n.right {
+    return check(l, depth - 1) &+ check(r, depth - 1) &+ n.item
+  }
+  n.item
 }
 
 fn main {
@@ -204,7 +207,7 @@ for mode in debug bare release; do
   for prog in hello trees collect; do
     case $prog in
       hello) want="hello from avant" ;;
-      trees) want="-1431721952" ;;
+      trees) want="2863245344" ;;
       collect) want="6
 3
 10

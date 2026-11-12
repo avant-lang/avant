@@ -34,6 +34,7 @@
 #include <llvm-c/Target.h>
 #include <llvm-c/TargetMachine.h>
 #include <llvm-c/Transforms/PassBuilder.h>
+#include <llvm-c/Support.h>
 
 #include <llvm/Config/llvm-config.h>
 
@@ -93,7 +94,7 @@ static void on_fatal(const char *reason) {
 }
 
 /* Initializes the native (x86-64) target once. 0 or AVANT_LLVM_TARGET. */
-int32_t avant_llvm_init(void) {
+int64_t avant_llvm_init(void) {
   if (!g_initialized) {
     LLVMInstallFatalErrorHandler(on_fatal);
     LLVMInitializeX86TargetInfo();
@@ -101,6 +102,19 @@ int32_t avant_llvm_init(void) {
     LLVMInitializeX86TargetMC();
     LLVMInitializeX86AsmPrinter();
     LLVMInitializeX86AsmParser();
+    /* Code placement (Stage 29 WP, O186): innermost loop headers aligned
+     * to 32 bytes (LLVM's x86 default is 16). With every function aligned
+     * to 64 (place_functions below), a loop's offset within its 64-byte
+     * line no longer depends on the code before it, and a short loop
+     * (up to 32 bytes) never straddles a line: Etc::Sieve's 30-byte inner
+     * loop cost 13% when it did. LLVM 20 offers no per-target-machine
+     * setting for it in the C API (llc's -align-loops lives in its own
+     * flags library), so it is this X86 option, set once per process;
+     * the compiler compiles nothing else with this LLVM. */
+    {
+      static const char *const argv[] = {"avant", "-x86-experimental-pref-innermost-loop-alignment=5"};
+      LLVMParseCommandLineOptions(2, argv, "avant");
+    }
     g_initialized = 1;
   }
   return AVANT_LLVM_OK;
@@ -124,7 +138,7 @@ static LLVMCodeGenOptLevel codegen_level(int32_t level) {
 static int32_t g_cpu = 1;
 
 /* The highest x86-64 level this machine runs (1-4). */
-int32_t avant_llvm_host_level(void) {
+int64_t avant_llvm_host_level(void) {
   __builtin_cpu_init();
   if (__builtin_cpu_supports("x86-64-v4")) {
     return 4;
@@ -139,7 +153,7 @@ int32_t avant_llvm_host_level(void) {
 }
 
 /* The level of the next compiles: 1-5 as above. 0 ok, 1 out of range. */
-int32_t avant_llvm_set_cpu(int32_t level) {
+int64_t avant_llvm_set_cpu(int64_t level) {
   if (level < 1 || level > 5) {
     return 1;
   }
@@ -163,6 +177,29 @@ static void record_level(LLVMModuleRef mod) {
   LLVMSetInitializer(g, LLVMConstInt(LLVMInt32TypeInContext(LLVMGetModuleContext(mod)), (unsigned long long)level, 0));
   LLVMSetGlobalConstant(g, 1);
   LLVMSetLinkage(g, LLVMExternalLinkage);
+}
+
+/* Code placement (Stage 29 WP, O186): every function the module defines,
+ * except the cold ones (they go to .text.unlikely), starts on a 64-byte
+ * boundary. The program's code is linked after the PLT, the runtime's
+ * cold and start-up code and the C start files, and after the standard
+ * library's own functions; any of them growing moved every hot loop by
+ * 16-byte steps and moved tasks' times by up to 14% (the WP probe). A
+ * 64-byte start keeps each function's lines and loop offsets the same
+ * whatever comes before it. The runtime is built the same way
+ * (runtime/build.sh, -falign-functions=64). Cost: about 1% of a
+ * program's own code. */
+static void place_functions(LLVMModuleRef mod) {
+  unsigned cold = LLVMGetEnumAttributeKindForName("cold", 4);
+  for (LLVMValueRef f = LLVMGetFirstFunction(mod); f; f = LLVMGetNextFunction(f)) {
+    if (LLVMIsDeclaration(f) || LLVMGetAlignment(f) >= 64) {
+      continue;
+    }
+    if (cold && LLVMGetEnumAttributeAtIndex(f, LLVMAttributeFunctionIndex, cold)) {
+      continue;
+    }
+    LLVMSetAlignment(f, 64);
+  }
 }
 
 /* Verify, run the pipeline, emit. Consumes nothing; the caller disposes. */
@@ -236,6 +273,7 @@ static int32_t finish_module(LLVMModuleRef mod, const char *passes, int32_t leve
   }
 
   if (status == AVANT_LLVM_OK) {
+    place_functions(mod);
     if (LLVMTargetMachineEmitToFile(tm, mod, (char *)obj_path, LLVMObjectFile, &msg)) {
       set_error("", msg);
       status = AVANT_LLVM_EMIT;
@@ -275,7 +313,7 @@ static int32_t compile_buffer(LLVMMemoryBufferRef buf, const char *passes, int32
 /* Compiles the textual IR file ll_path to the object obj_path: parse,
  * verify, run the new-pass-manager pipeline `passes` (empty: none), emit
  * with codegen level `level` (0 None, 1 Less, 2 Default, 3 Aggressive). */
-int32_t avant_llvm_compile_file(const char *ll_path, const char *passes, int32_t level, const char *obj_path) {
+int64_t avant_llvm_compile_file(const char *ll_path, const char *passes, int64_t level, const char *obj_path) {
   LLVMMemoryBufferRef buf = NULL;
   char *msg = NULL;
   clear_error();
@@ -289,7 +327,7 @@ int32_t avant_llvm_compile_file(const char *ll_path, const char *passes, int32_t
 }
 
 /* The same from IR text in memory; `name` labels it in messages. */
-int32_t avant_llvm_compile_text(const char *text, const char *name, const char *passes, int32_t level, const char *obj_path) {
+int64_t avant_llvm_compile_text(const char *text, const char *name, const char *passes, int64_t level, const char *obj_path) {
   clear_error();
   avant_llvm_init();
   LLVMMemoryBufferRef buf = LLVMCreateMemoryBufferWithMemoryRangeCopy(text, strlen(text), name);
@@ -299,7 +337,7 @@ int32_t avant_llvm_compile_text(const char *text, const char *name, const char *
 /* gc-lint: holds nothing (S is C memory: LLVM's messages, a C buffer). */
 static char *avant_string(const char *s) {
   size_t n = s ? strlen(s) : 0;
-  char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  char *p = avant_str_alloc((uint64_t)n);
   if (n) {
     memcpy(p, s, n);
   }

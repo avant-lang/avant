@@ -2,7 +2,6 @@ module run_status
 file 0 "run_status.av"
 
 const str.0 = "run returns 7"
-const str.1 = "%s\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -10,14 +9,15 @@ typemap 1023 %Hash stride 0 bits [0x7]
 
 extern __avant_type_maps() -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
-extern printf(ref str, ...) -> i32 never
+extern avant_puts_str(ref str) -> void never
+extern avant_trap_exit_status(i64) -> void never noreturn
 
-fn av.run_status/run() -> i32 leaf @run_status.av:4:1 {
-  let _0: i32
+fn av.run_status/run() -> i64 leaf @run_status.av:4:1 {
+  let _0: i64
 
 bb0:
-  call printf(const str.1, const str.0) nocollect   @5:3
-  _0 = const i32 7   @6:3
+  call avant_puts_str(const str.0) nocollect   @5:3
+  _0 = const i64 7   @6:3
   return   @6:3
 }
 
@@ -25,7 +25,10 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @run_status.av:4:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
-  let _3: i32
+  let _3: i64
+  let _4: u64
+  let _5: bool
+  let _6: i32
 
 bb0:
   gc.enter   @4:1
@@ -33,7 +36,17 @@ bb0:
   call __avant_type_maps() nocollect   @4:1
   call avant_io_init_argv(copy _1, copy _2) collects   @4:1
   _3 = call av.run_status/run() nocollect   @4:1
-  _0 = copy _3   @4:1
+  _4 = cast copy _3 to u64   @4:1
+  _5 = le copy _4, const u64 255   @4:1
+  branch copy _5, bb2, bb1   @4:1
+
+bb1:
+  call avant_trap_exit_status(copy _3) nocollect   @4:1
+  unreachable   @4:1
+
+bb2:
+  _6 = cast copy _3 to i32   @4:1
+  _0 = copy _6   @4:1
   gc.leave   @4:1
   return   @4:1
 }

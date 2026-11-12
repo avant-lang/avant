@@ -1,5 +1,5 @@
 lib avant_testing_io {
-  fun write(fd: Int, buf: String, count: Int): Int
+  fun write(fd: Int32, buf: String, count: Int): Int
 }
 
 lib avant_testing_tmp {
@@ -20,7 +20,7 @@ lib avant_testing_fs {
 
 fn testing_write(s: String) {
   line = "${s}\n"
-  dummy = avant_testing_io.write(1, line, line.size)
+  avant_testing_io.write(1, line, line.size)
 }
 
 fn testing_slice(s: String, start: Int, stop: Int): String {
@@ -86,7 +86,7 @@ pub class Test {
   rec_name: Array(String)
   rec_ok: Array(Int)
   rec_ms: Array(Int)
-  rec_at: Int = 0
+  rec_at: Int64 = 0i64
 
   fn initialize {
     self.passed = 0
@@ -101,11 +101,9 @@ pub class Test {
     self.rec_ok = []
     self.rec_ms = []
     self.rec_at = now_ms()
-    if v = env_get("AVANT_TEST_ONLY") {
-      if v.size > 0 {
-        self.mode = 2
-        self.only = v
-      }
+    if v = env_get("AVANT_TEST_ONLY"), v.size > 0 {
+      self.mode = 2
+      self.only = v
     }
     if v = env_get("AVANT_TEST_LIST") {
         if v == "1" {
@@ -113,10 +111,8 @@ pub class Test {
       }
     }
     if self.mode == 0 {
-      if v = env_get("AVANT_TEST_NAMES") {
-        if v.size > 0 {
-          self.names_path = v
-        }
+      if v = env_get("AVANT_TEST_NAMES"), v.size > 0 {
+        self.names_path = v
       }
     }
   }
@@ -134,8 +130,8 @@ pub class Test {
   fn record(okv: Bool, name: String) {
     now = now_ms()
     dur = 0
-    if self.rec_at > 0 {
-      dur = now - self.rec_at
+    if self.rec_at > 0i64 {
+      dur = (now - self.rec_at).to_i
     }
     self.rec_at = now
     self.rec_name.push(name)
@@ -204,9 +200,9 @@ pub class Test {
       }
     }
     b = buf_new()
-    b.push_str("<testsuite name=\"std.testing\" tests=\"${n}\" failures=\"${badn}\" time=\"${self.junit_secs(total)}\">\n")
+    b.push_str("<testsuite name=\"std.testing\" tests=\"${n}\" failures=\"${badn}\" time=\"${junit_secs(total)}\">\n")
     for i in 0..n {
-      b.push_str("  <testcase name=\"${self.junit_escape(self.rec_name[i])}\" classname=\"std.testing\" time=\"${self.junit_secs(self.rec_ms[i])}\"")
+      b.push_str("  <testcase name=\"${junit_escape(self.rec_name[i])}\" classname=\"std.testing\" time=\"${junit_secs(self.rec_ms[i])}\"")
       if self.rec_ok[i] == 0 {
         b.push_str(">\n    <failure message=\"check failed\"/>\n  </testcase>\n")
       } else {
@@ -214,19 +210,19 @@ pub class Test {
       }
     }
     b.push_str("</testsuite>\n")
-    dummy = file_write(frag, b.to_s)
+    _ = file_write(frag, b.to_s)
   }
 
   fn pass_line(name: String) {
     self.passed += 1
-    self.record(true, name)
+    record(true, name)
     testing_write("PASS ${name}")
   }
 
   fn fail_line(name: String) {
     self.failed += 1
     avant_testing_status.avant_test_fail()
-    self.record(false, name)
+    record(false, name)
     testing_write("FAIL ${name}")
   }
 
@@ -254,9 +250,9 @@ pub class Test {
       return nil
     }
     if cond {
-      self.pass_line(name)
+      pass_line(name)
     } else {
-      self.fail_line(name)
+      fail_line(name)
     }
     nil
   }
@@ -266,9 +262,9 @@ pub class Test {
       return nil
     }
     if got == want {
-      self.pass_line(name)
+      pass_line(name)
     } else {
-      self.fail_line(name)
+      fail_line(name)
       testing_write("  got: ${got}")
       testing_write("  want: ${want}")
     }
@@ -280,9 +276,9 @@ pub class Test {
       return nil
     }
     if got == want {
-      self.pass_line(name)
+      pass_line(name)
     } else {
-      self.fail_line(name)
+      fail_line(name)
       testing_write("  got: ${got}")
       testing_write("  want: ${want}")
     }
@@ -294,9 +290,9 @@ pub class Test {
       return nil
     }
     if got == want {
-      self.pass_line(name)
+      pass_line(name)
     } else {
-      self.fail_line(name)
+      fail_line(name)
       testing_write("  got: ${got}")
       testing_write("  want: ${want}")
     }
@@ -322,7 +318,7 @@ pub class Test {
       testing_write("FAIL parallel name must be one line")
       return false
     }
-    if self.note_name(name) {
+    if note_name(name) {
       self.dup = true
       testing_write("FAIL duplicate parallel name ${name}")
       return false
@@ -341,12 +337,12 @@ pub class Test {
       b.push_str("\n")
       i += 1
     }
-    dummy = file_write(self.names_path, b.to_s)
+    _ = file_write(self.names_path, b.to_s)
   }
 
   pub fn parallel(name: String, body: fn(): Nil): Nil {
     if self.mode == 1 {
-      if self.remember_parallel(name) {
+      if remember_parallel(name) {
         testing_write("AVANT_PARALLEL ${name}")
       }
       return nil
@@ -359,8 +355,8 @@ pub class Test {
       }
       return nil
     }
-    if self.names_path.size > 0 && self.remember_parallel(name) {
-      self.write_parallel_names()
+    if self.names_path.size > 0 && remember_parallel(name) {
+      write_parallel_names()
     }
     nil
   }
@@ -372,14 +368,14 @@ pub class Test {
     label = "golden ${path}"
     if text = file_read(path) {
       if text == got {
-        self.pass_line(label)
+        pass_line(label)
       } else {
-        self.fail_line(label)
+        fail_line(label)
         testing_write("  got: ${got}")
         testing_write("  want: ${text}")
       }
     } else {
-      self.fail_line(label)
+      fail_line(label)
       testing_write("  missing ${path}")
     }
     nil
@@ -395,7 +391,7 @@ pub class Test {
       compiler = c
     }
     if compiler.size == 0 {
-      self.fail_line(label)
+      fail_line(label)
       testing_write("  AVANT_COMPILER is not set")
       return nil
     }
@@ -407,9 +403,9 @@ pub class Test {
     args.push(program)
     args.push(out)
     args.push("--debug")
-    code = process_run_out(compiler, args, compile_log)
+    code = process_run_out(compiler, args, compile_log) ?? -1
     if code != 0 {
-      self.fail_line(label)
+      fail_line(label)
       testing_write("  compile failed")
       testing_write(testing_read(compile_log))
       return nil
@@ -422,20 +418,20 @@ pub class Test {
     got = testing_read(stdout_path)
     if want_text = file_read(want) {
       if run_code != 0 {
-        self.fail_line(label)
+        fail_line(label)
         testing_write("  exit ${run_code}")
         testing_write(testing_read(stderr_path))
         return nil
       }
       if got == want_text {
-        self.pass_line(label)
+        pass_line(label)
       } else {
-        self.fail_line(label)
+        fail_line(label)
         testing_write("  got: ${got}")
         testing_write("  want: ${want_text}")
       }
     } else {
-      self.fail_line(label)
+      fail_line(label)
       testing_write("  missing ${want}")
     }
     nil
@@ -451,7 +447,7 @@ pub class Test {
       compiler = c
     }
     if compiler.size == 0 {
-      self.fail_line(label)
+      fail_line(label)
       testing_write("  AVANT_COMPILER is not set")
       return nil
     }
@@ -467,14 +463,14 @@ pub class Test {
     code = testing_run(compiler, args, stdout_path, stderr_path)
     err = testing_read(stderr_path)
     if code == 0 {
-      self.fail_line(label)
+      fail_line(label)
       testing_write("  compiled successfully")
       return nil
     }
     if testing_has(err, substring) {
-      self.pass_line(label)
+      pass_line(label)
     } else {
-      self.fail_line(label)
+      fail_line(label)
       testing_write("  diagnostic did not contain ${substring}")
       testing_write(err)
     }
@@ -482,7 +478,7 @@ pub class Test {
   }
 
   pub fn finish: Int {
-    self.write_junit()
+    write_junit()
     if self.mode == 1 {
       if self.dup {
         return 1

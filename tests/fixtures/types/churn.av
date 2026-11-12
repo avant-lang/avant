@@ -14,13 +14,20 @@
 // every child is checked each round. Under AVANT_GC_VERIFY=1 and
 // AVANT_YOUNG_MB=1 it must print the same.
 
-class Leaf {
+// Leaf is marked Error (D292, Stage 29 W4a) so the two members of the
+// `Int | Leaf` field can be told apart before `switch` (W5): if-assign
+// reads the Int, and `?` passes the Leaf up (leaf_of below).
+class Leaf: Error {
   v: Int
   s: String
 
   fn initialize(v: Int) {
     self.v = v
-    s = "leaf-${v}"
+    self.s = "leaf-${v}"
+  }
+
+  fn message: String {
+    s
   }
 }
 
@@ -40,23 +47,19 @@ class Holder {
 
   fn initialize(id: Int) {
     self.id = id
-    opt = no_leaf()
-    mix = 0
-    slot = Slot { k: 0, leaf: no_leaf() }
-    name = no_name()
+    self.opt = no_leaf()
+    self.mix = 0
+    self.slot = Slot { k: 0, leaf: no_leaf() }
+    self.name = no_name()
     o: Array(Leaf?) = []
-    opts = o
+    self.opts = o
     s: Array(Slot) = []
-    slots = s
+    self.slots = s
   }
 }
 
 class Root {
-  holders: Array(Holder)
-
-  fn initialize {
-    holders = []
-  }
+  holders: Array(Holder) = []
 }
 
 fn no_leaf: Leaf? {
@@ -98,22 +101,31 @@ fn bad_leaf(o: Leaf?, v: Int, on: Bool): Int {
   0
 }
 
-class Oops {
-  m: String
+class Oops: Error {
+  message: String
 
-  fn initialize(m: String) {
-    self.m = m
+  fn initialize(message: String) {
+    self.message = message
   }
 }
 
-// The scalar member of m comes back through postfix `?` (Int is the
-// failure here: the result type holds it); the Leaf is checked.
+// The scalar member of m comes back as the result; the Leaf is checked.
 fn mix_check(m: Int | Leaf, v: Int): Int | Oops {
-  l = m?
-  if l.v != v || !(l.s == "leaf-${v}") {
-    return 1
+  if i = m {
+    return i
   }
-  0
+  if l = leaf_of(m) {
+    if l.v != v || !(l.s == "leaf-${v}") {
+      return 1
+    }
+    return 0
+  }
+  1
+}
+
+fn leaf_of(m: Int | Leaf): Leaf? {
+  i = m?
+  nil
 }
 
 fn bad_mix(m: Int | Leaf, v: Int, on: Bool): Int {

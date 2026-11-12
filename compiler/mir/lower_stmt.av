@@ -25,6 +25,11 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
       return
     }
     st = body[i]
+    if i == body.size - 1 && st.kind == st_if() && st.tail_value && lw.lw_ret != mt_void() {
+      lw.cov_stmt(st)
+      lw.lower_if_general(st, 2, -1, nil)
+      return
+    }
     if i == body.size - 1 && st.kind == st_expr() && lw.lw_ret != mt_void() {
       if e = st.expr {
         lw.cov_stmt(st)
@@ -59,6 +64,9 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
   k = st.kind
   if k == st_expr() {
     if e = st.expr {
+      if lw.hash_delete_stmt(e) {
+        return
+      }
       lw.lower_expr(e)
     }
     return
@@ -109,6 +117,15 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
 }
 
 pub fn (lw: MirLower) lower_assign(st: Stmt) {
+  if t0 = st.target {
+    if t0.kind == ex_name() && t0.ident == "_" {
+      // `_ = expr` (Stage 29 W4a, D295): computed and dropped.
+      if v0 = st.value {
+        lw.lower_expr(v0)
+      }
+      return
+    }
+  }
   if t = st.target {
     if t.kind == ex_field() || (t.kind == ex_name() && (t.implicit_field || lw.mutex_index(t.ident) >= 0)) {
       lw.lower_field_assign(st, t)
@@ -190,10 +207,29 @@ pub fn (lw: MirLower) lower_ret_value(e: Expr): MOperand {
   v = lw.lower_expr(e)
   if rt = lw.lw_ret_ty {
     if t = e.ty {
-      return lw.coerce(v, t, rt, e.loc)
+      v = lw.coerce(v, t, rt, e.loc)
     }
   }
+  if lw.lw_main && lw.lw_ret == mt_int() && !lw.failed {
+    return lw.exit_status(v, e.loc)
+  }
   v
+}
+
+// main's Int result is the process's exit status (Stage 29 W4b2, D295
+// R14): outside 0..255 it traps (avant_trap_exit_status, from a cold
+// block) rather than reach the OS modulo 256, where 256 failures read as
+// success. One unsigned compare per return of main; then C's int.
+pub fn (lw: MirLower) exit_status(v: MOperand, loc: Location): MOperand {
+  b = lw.lw_b
+  lw.at(loc)
+  x = b.temp(mt_int())
+  b.assign(b.pl(x), b.rv_use(v))
+  u = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(x), mt_u64()))
+  inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), u, b.c_u64(255i64)))
+  ok = lw.trap_open(inside, false)
+  lw.trap_close(ok, "avant_trap_exit_status", lw.one(b.copy_local(x)), loc)
+  lw.tmp(mt_i32(), b.rv_cast(b.copy_local(x), mt_i32()))
 }
 
 pub fn (lw: MirLower) lower_return(st: Stmt) {
@@ -221,6 +257,10 @@ pub fn (lw: MirLower) lower_return(st: Stmt) {
 }
 
 pub fn (lw: MirLower) lower_if(st: Stmt) {
+  if st.pre.size > 0 {
+    lw.lower_if_general(st, 0, -1, nil)
+    return
+  }
   if st.bind.size > 0 {
     lw.lower_if_bind(st)
     return
@@ -304,6 +344,13 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
   if lw.failed {
     return lw.lw_b.c_i32(0)
   }
+  if e.op == tk_if() && e.else_body.size == 1 && rty != mt_void() {
+    // An `if` used as a value (Stage 29 W4a): each branch writes the
+    // result temporary.
+    dest = lw.lw_b.temp(rty)
+    lw.lower_if_general(e.else_body[0], 1, dest, e.ty)
+    return lw.lw_b.copy_local(dest)
+  }
   if c = e.cond {
     cv = lw.lower_expr(c)
     if lw.failed {
@@ -320,7 +367,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
       cv = lw.lw_b.copy_local(tb)
       cty = mt_i32()
     }
-    if cty != mt_i32() && cty != mt_i64() && cty != mt_u64() {
+    if cty != mt_i32() && cty != mt_i64() && cty != mt_u64() && cty != mt_u32() {
       lw.refuse(c.loc, "switch on this type")
       return lw.lw_b.c_i32(0)
     }

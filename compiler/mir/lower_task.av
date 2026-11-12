@@ -208,7 +208,7 @@ pub fn (lw: MirLower) lower_join(e: Expr, recv: Expr): MOperand {
     return b.c_i32(0)
   }
   lw.at(e.loc)
-  lw.call_to(mt_i32(), "avant_join", lw.one(h))
+  lw.call_to(mt_int(), "avant_join", lw.one(h))
 }
 
 // ---- .parallel
@@ -263,7 +263,8 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
     return zero
   }
   lw.at(e.loc)
-  b.call(-1, "avant_parallel_for", lw.three(lw.dup(n), b.c_fn(sym), b.copy_local(c)))
+  n64i = lw.tmp(mt_int(), b.rv_cast(lw.dup(n), mt_int()))
+  b.call(-1, "avant_parallel_for", lw.three(n64i, b.c_fn(sym), b.copy_local(c)))
   out
 }
 
@@ -470,9 +471,9 @@ pub fn (lw: MirLower) lower_spawn_thunk(t: MirTask) {
     }
     ps: Array(Int) = []
     ps.push(mt_ref())
-    c = lw.begin_task(t, ps, mt_i32(), 1, l, bl)
+    c = lw.begin_task(t, ps, mt_int(), 1, l, bl)
     b.name_param(1, "cap")
-    lw.lw_ret = mt_i32()
+    lw.lw_ret = mt_int()
     lw.lw_ret_ty = ty_int()
     if l >= 0 {
       lw.load_captures(e, c, l, 0)
@@ -491,7 +492,7 @@ pub fn (lw: MirLower) lower_spawn_thunk(t: MirTask) {
   lw.refuse(e.loc, "a spawn without a block")
 }
 
-// `<enclosing>#parN(_1: i32, _2: ref)` (calls.av emit_parallel_thunk):
+// `<enclosing>#parN(_1: i64, _2: ref)` (calls.av emit_parallel_thunk):
 // element _1 of the input, the block, the result stored at _1.
 pub fn (lw: MirLower) lower_par_thunk(t: MirTask) {
   e = t.expr
@@ -503,7 +504,7 @@ pub fn (lw: MirLower) lower_par_thunk(t: MirTask) {
         return
       }
       ps: Array(Int) = []
-      ps.push(mt_i32())
+      ps.push(mt_int())
       ps.push(mt_ref())
       c = lw.begin_task(t, ps, mt_void(), 2, l, bl)
       b.name_param(1, "i")

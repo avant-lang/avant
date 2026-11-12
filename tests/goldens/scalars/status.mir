@@ -2,41 +2,71 @@ module status
 file 0 "status.av"
 
 const str.0 = "exiting with 3"
-const str.1 = "%s\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
 
 extern __avant_type_maps() -> void never
+extern avant_clock_ms() -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
-extern avant_now_ms() -> i32 never
-extern printf(ref str, ...) -> i32 never
+extern avant_puts_str(ref str) -> void never
+extern avant_trap_exit_status(i64) -> void never noreturn
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @status.av:3:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
-  let _3: i32
+  let _3: i64
   let _4: bool
+  let _5: i64
+  let _6: u64
+  let _7: bool
+  let _8: i32
+  let _9: i64
+  let _10: u64
+  let _11: bool
+  let _12: i32
 
 bb0:
   gc.enter   @3:1
   gc.roots _2   @3:1
   call __avant_type_maps() nocollect   @3:1
   call avant_io_init_argv(copy _1, copy _2) collects   @3:1
-  call printf(const str.1, const str.0) nocollect   @4:3
-  _3 = call avant_now_ms() nocollect   @5:6
-  _4 = lt copy _3, const i32 0   @5:15
+  call avant_puts_str(const str.0) nocollect   @4:3
+  _3 = call avant_clock_ms() nocollect   @5:6
+  _4 = lt copy _3, const i64 0   @5:15
   branch copy _4, bb1, bb2   @5:3
 
 bb1:
-  _0 = const i32 9   @6:5
+  _5 = const i64 9   @6:12
+  _6 = cast copy _5 to u64   @6:12
+  _7 = le copy _6, const u64 255   @6:12
+  branch copy _7, bb4, bb3   @6:12
+
+bb2:
+  _9 = const i64 3   @8:3
+  _10 = cast copy _9 to u64   @8:3
+  _11 = le copy _10, const u64 255   @8:3
+  branch copy _11, bb6, bb5   @8:3
+
+bb3:
+  call avant_trap_exit_status(copy _5) nocollect   @6:12
+  unreachable   @6:12
+
+bb4:
+  _8 = cast copy _5 to i32   @6:12
+  _0 = copy _8   @6:5
   gc.leave   @6:5
   return   @6:5
 
-bb2:
-  _0 = const i32 3   @8:3
+bb5:
+  call avant_trap_exit_status(copy _9) nocollect   @8:3
+  unreachable   @8:3
+
+bb6:
+  _12 = cast copy _9 to i32   @8:3
+  _0 = copy _12   @8:3
   gc.leave   @8:3
   return   @8:3
 }

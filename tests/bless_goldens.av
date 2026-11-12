@@ -21,7 +21,7 @@ fn mkdir_p(path: String) {
   args: Array(String) = []
   args.push("-p")
   args.push(path)
-  dummy = process_run("/bin/mkdir", args)
+  _ = process_run("/bin/mkdir", args)
 }
 
 // The back end's IR, the MIR `avant dump` prints (D171; the goldens
@@ -33,7 +33,7 @@ fn dump_av(compiler: String, src: String, log: String): Int {
   args.push(compiler)
   args.push("dump")
   args.push(src)
-  process_run_out("/usr/bin/env", args, log)
+  process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
 // A hidden front-end dump of the compiler under test (D137): flag is
@@ -43,7 +43,7 @@ fn dump_layer(compiler: String, flag: String, src: String, log: String): Int {
   args.push("dump")
   args.push(flag)
   args.push(src)
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 fn bless_fail(msg: String) {
@@ -93,7 +93,7 @@ fn bless_mir(compiler: String, root: String, src_rel: String, stem: String): Boo
   args.push("dump")
   args.push("${root}/${src_rel}")
   dest = "${root}/tests/goldens/${stem}.mir"
-  code = process_run_out("/usr/bin/env", args, dest)
+  code = process_run_out("/usr/bin/env", args, dest) ?? -1
   if code != 0 {
     bless_fail("dump ${stem}.mir exited ${code}")
     if err = file_read(dest) {
@@ -114,7 +114,7 @@ fn bless_mir(compiler: String, root: String, src_rel: String, stem: String): Boo
 // of the heap subset (tests/cases/test_heap.av, Stage 28 W6c).
 fn bless_mir_all(compiler: String, root: String): Bool {
   mkdir_p("${root}/tests/goldens/scalars")
-  names = ["calls", "control", "conv", "floats", "ints", "loop_sum", "run_status", "shifts", "status", "switches", "trap_add", "trap_div", "trap_neg", "trap_rem", "trap_shl", "trap_shl_i64", "trap_shr_neg", "trap_shr_u64", "trap_to_i_high", "trap_to_i_inf", "trap_to_i_low", "trap_to_i_nan", "trap_to_i_neg_inf", "trap_u64"]
+  names = ["calls", "control", "conv", "floats", "ints", "loop_sum", "run_status", "shifts", "status", "switches", "trap_add", "trap_div", "trap_neg", "trap_rem", "trap_shl", "trap_shl_i32", "trap_shr_neg", "trap_shr_u64", "trap_to_i_high", "trap_to_i_inf", "trap_to_i_low", "trap_to_i_nan", "trap_to_i_neg_inf", "trap_u64"]
   i = 0
   while i < names.size {
     if bless_mir(compiler, root, "tests/fixtures/scalars/${names[i]}.av", "scalars/${names[i]}") {
@@ -154,7 +154,7 @@ fn bless_mir_all(compiler: String, root: String): Bool {
     i += 1
   }
   mkdir_p("${root}/tests/goldens/types")
-  tn = ["churn", "coerce", "generics", "methods", "results", "unions"]
+  tn = ["churn", "coerce", "generics", "generic_targs", "methods", "results", "unions", "opt_ref"]
   i = 0
   while i < tn.size {
     if bless_mir(compiler, root, "tests/fixtures/types/${tn[i]}.av", "types/${tn[i]}") {

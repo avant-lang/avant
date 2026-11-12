@@ -20,21 +20,30 @@ lib jsonc {
   fun avant_json_obj_str(node: Ptr(Void), key: String): String
   fun avant_json_key_at(node: Ptr(Void), index: Int): String
   fun avant_json_text(node: Ptr(Void)): String
+  fun avant_json_error_text: String
+  fun avant_json_error_offset: Int64
+  fun avant_json_misuse(what: String)
 }
 
-pub class JsonError {
+// A document that does not parse: the message says what yyjson found
+// and where ("invalid JSON at byte 7: unexpected character"); offset is
+// that byte offset, -1 when the error has none (Stage 29 W4b2, D295 R11).
+pub class JsonError: Error {
   pub message: String
+  pub offset: Int = -1
 
-  fn initialize(message: String) {
+  fn initialize(message: String, offset: Int = -1) {
     self.message = message
+    self.offset = offset
   }
 }
 
 fn json_error(code: Int): JsonError {
   if code == 1 {
-    return JsonError.new("invalid JSON document")
+    off = jsonc.avant_json_error_offset().to_i
+    return JsonError.new("invalid JSON at byte ${off}: ${jsonc.avant_json_error_text()}", off)
   }
-  JsonError.new("JSON error")
+  JsonError.new("JSON parse ran out of memory")
 }
 
 pub class JsonValue {
@@ -43,15 +52,9 @@ pub class JsonValue {
   pub f64_val: Float64 = 0.0
   pub str_val: String = ""
   pub bool_val: Bool = false
-  pub arr: Array(JsonValue)
-  pub keys: Array(String)
-  pub vals: Array(JsonValue)
-
-  fn initialize {
-    self.arr = []
-    self.keys = []
-    self.vals = []
-  }
+  pub arr: Array(JsonValue) = []
+  pub keys: Array(String) = []
+  pub vals: Array(JsonValue) = []
 
   pub fn get(key: String): JsonValue? {
     i = 0
@@ -243,7 +246,13 @@ pub struct Json {
     v = JsonValue.new
     v.kind = self.kind
     if self.is_int {
-      v.int_val = self.int ?? 0
+      // An integer beyond Int keeps its value as a float (kind 4).
+      if i = self.int {
+        v.int_val = i
+      } else {
+        v.kind = 4
+        v.f64_val = self.f64 ?? 0.0
+      }
     } else if self.is_float {
       v.f64_val = self.f64 ?? 0.0
     } else if self.is_str {
@@ -253,7 +262,7 @@ pub struct Json {
     } else if self.is_arr {
       i = 0
       while i < self.len {
-        if child = self.at(i) {
+        if child = at(i) {
           v.arr.push(child.to_value)
         }
         i += 1
@@ -261,11 +270,9 @@ pub struct Json {
     } else if self.is_obj {
       i = 0
       while i < self.len {
-        if key = self.key_at(i) {
-          if child = self.get(key) {
-            v.keys.push(key)
-            v.vals.push(child.to_value)
-          }
+        if key = key_at(i), child = get(key) {
+          v.keys.push(key)
+          v.vals.push(child.to_value)
         }
         i += 1
       }
@@ -334,17 +341,11 @@ fn builder_escape(buf: Buf, s: String) {
 }
 
 pub class JsonBuilder {
-  buf: Buf
-  stack: Array(Int)
-  counts: Array(Int)
+  buf: Buf = buf_new()
+  stack: Array(Int) = []
+  counts: Array(Int) = []
   pending: Bool = false
   root_done: Bool = false
-
-  fn initialize {
-    self.buf = buf_new()
-    self.stack = []
-    self.counts = []
-  }
 
   pub fn self.into(dst: Buf): JsonBuilder {
     b = JsonBuilder.new
@@ -386,6 +387,7 @@ pub class JsonBuilder {
 
   pub fn end: JsonBuilder {
     if self.stack.size == 0 {
+      jsonc.avant_json_misuse("JsonBuilder.end: nothing open")
       return self
     }
     top = self.stack[self.stack.size - 1]
@@ -400,6 +402,10 @@ pub class JsonBuilder {
   }
 
   pub fn key(name: String): JsonBuilder {
+    if self.stack.size == 0 || self.stack[self.stack.size - 1] != 1 {
+      jsonc.avant_json_misuse("JsonBuilder.key: not inside an object")
+      return self
+    }
     if self.counts[self.counts.size - 1] > 0 {
       self.buf.push_str(",")
     }
@@ -462,65 +468,68 @@ pub class JsonBuilder {
   }
 
   pub fn add(v: Int): JsonBuilder {
-    self.value(v)
+    value(v)
   }
 
   pub fn add(v: Float64): JsonBuilder {
-    self.value(v)
+    value(v)
   }
 
   pub fn add(v: String): JsonBuilder {
-    self.value(v)
+    value(v)
   }
 
   pub fn add(v: Bool): JsonBuilder {
-    self.value(v)
+    value(v)
   }
 
   pub fn add(v: Json): JsonBuilder {
-    self.value(v)
+    value(v)
   }
 
   pub fn add(v: JsonBuilder): JsonBuilder {
-    self.value(v)
+    value(v)
   }
 
   pub fn set(name: String, v: Int): JsonBuilder {
-    self.key(name)
-    self.value(v)
+    key(name)
+    value(v)
   }
 
   pub fn set(name: String, v: Float64): JsonBuilder {
-    self.key(name)
-    self.value(v)
+    key(name)
+    value(v)
   }
 
   pub fn set(name: String, v: String): JsonBuilder {
-    self.key(name)
-    self.value(v)
+    key(name)
+    value(v)
   }
 
   pub fn set(name: String, v: Bool): JsonBuilder {
-    self.key(name)
-    self.value(v)
+    key(name)
+    value(v)
   }
 
   pub fn set(name: String, v: Json): JsonBuilder {
-    self.key(name)
-    self.value(v)
+    key(name)
+    value(v)
   }
 
   pub fn set(name: String, v: JsonBuilder): JsonBuilder {
-    self.key(name)
-    self.value(v)
+    key(name)
+    value(v)
   }
 
   pub fn set_null(name: String): JsonBuilder {
-    self.key(name)
+    key(name)
     self.null
   }
 
   pub fn to_s: String {
+    if self.stack.size > 0 {
+      jsonc.avant_json_misuse("JsonBuilder.to_s: ${self.stack.size} containers still open")
+    }
     self.buf.to_s
   }
 }

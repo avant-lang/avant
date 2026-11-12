@@ -5,7 +5,14 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 cc=${CC:-cc}
 mkdir -p "$root/build"
-cflags="-O2 -std=c11 -pthread -fno-omit-frame-pointer -I$root -I$root/third_party/yyjson -I$root/third_party/base64/include -I$root/third_party/uSockets/src -I$root/third_party/picohttpparser -DLIBUS_NO_SSL"
+# Code placement (Stage 29 WP, O186): every runtime function starts on a
+# 64-byte boundary and loops on 32, as the compiler places a program's own
+# code (runtime/avant_llvm.c, place_functions). gcc's default is 16 for
+# both, so the runtime growing anywhere moved the hot functions linked
+# after it by 16-byte steps, and with them tasks' times (up to 14%, the
+# WP probe; tools/placement-probe.sh reruns it).
+place="-falign-functions=64 -falign-loops=32"
+cflags="-O2 -std=c11 -pthread -fno-omit-frame-pointer $place -I$root -I$root/third_party/yyjson -I$root/third_party/base64/include -I$root/third_party/uSockets/src -I$root/third_party/picohttpparser -DLIBUS_NO_SSL"
 
 compile() {
   "$cc" -c $cflags -o "$2" "$1"
@@ -21,18 +28,74 @@ compile() {
 gc_cflags=
 
 # The core units: the collector and the language traps. They fold into
-# one object, avant_rt.o, below.
+# one object, avant_rt.o, below (build_core).
 core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_sticky avant_gc_mark avant_gc_defrag avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots avant_gc_safepoint"
-for name in $core_units; do
-  "$cc" -c $cflags $gc_cflags -o "$root/build/$name.unit.o" "$root/$name.c"
-done
 
-for name in \
-  avant_str.c avant_buf.c avant_hash.c avant_array.c avant_task.c \
-  avant_json.c avant_http.c avant_wide.c avant_codec.c avant_base64.c avant_io.c avant_cov.c
-do
+# The objects every program links (pipeline.av runtime_object_names), into
+# OUT with EXTRA flags: avant_rt.o from the core units, then the others.
+# The core units fold into avant_rt.o: the seed's link table names
+# avant_rt.o only, so a new core object could not be linked by the old
+# seed. The source split is organizational; the link surface is not:
+# after the merge only the symbols avant_rt.exports lists stay global
+# (Stage 28 W12), so a function or variable the units share with each
+# other never becomes part of the object's surface.
+build_core() {
+  out=$1
+  extra=$2
+  mkdir -p "$out"
+  set --
+  for name in $core_units; do
+    # shellcheck disable=SC2086
+    "$cc" -c $cflags $extra $gc_cflags -o "$out/$name.unit.o" "$root/$name.c"
+    set -- "$@" "$out/$name.unit.o"
+  done
+  ld -r -o "$out/avant_rt_merged.o" "$@"
+  objcopy --keep-global-symbols="$root/avant_rt.exports" "$out/avant_rt_merged.o"
+  # The surface check (Stage 28 W14b2): the object's global symbols are
+  # exactly the exports file's names, the ABI section with default
+  # visibility and the runtime-internal section hidden.
+  want_abi=$(sed -n '/^# runtime-internal$/q; /^[^#]/p' "$root/avant_rt.exports" | LC_ALL=C sort)
+  want_int=$(sed -n '/^# runtime-internal$/,$p' "$root/avant_rt.exports" | sed -n '/^[^#]/p' | LC_ALL=C sort)
+  have=$(nm -g --defined-only "$out/avant_rt_merged.o" | awk '{print $3}' | LC_ALL=C sort)
+  if [ "$have" != "$(printf '%s\n%s\n' "$want_abi" "$want_int" | sed '/^$/d' | LC_ALL=C sort)" ]; then
+    echo "runtime/build.sh: avant_rt.o's global symbols differ from avant_rt.exports" >&2
+    exit 1
+  fi
+  hidden=$(readelf -sW "$out/avant_rt_merged.o" | awk '$5 == "GLOBAL" && $7 != "UND" && $6 == "HIDDEN" {print $8}' | LC_ALL=C sort)
+  if [ "$hidden" != "$want_int" ]; then
+    echo "runtime/build.sh: avant_rt.o's hidden globals differ from avant_rt.exports' runtime-internal section" >&2
+    exit 1
+  fi
+  # The merged parts are removed, as the zlib and PCRE2 parts are:
+  # nothing links them on their own, and tools/package.sh ships every
+  # object left here (W10b: they were 28 KB of dead weight in the
+  # release).
+  rm -f "$@"
+  mv "$out/avant_rt_merged.o" "$out/avant_rt.o"
+  for name in avant_str avant_buf avant_hash avant_array avant_task avant_wide avant_codec avant_io avant_cov; do
+    # shellcheck disable=SC2086
+    "$cc" -c $cflags $extra -o "$out/$name.o" "$root/$name.c"
+  done
+}
+
+build_core "$root/build" ""
+for name in avant_json.c avant_http.c avant_base64.c; do
   compile "$root/$name" "$root/build/${name%.c}.o"
 done
+
+# The seed's ABI (Stage 29 W-INT1, the bootstrap): the v0.40.0 seed's code
+# generator calls the runtime with a 32-bit `Int`, so B, the compiler the
+# seed builds, links a copy of the program objects built with
+# -DAVANT_INT_BITS=32 (avant_rt.h, avant_int), from the same sources.
+# runtime/build/seed-abi is laid out as an Avant root (runtime/build/*.o
+# and runtime/avant_rt.h, a header that selects the 32-bit Int), so
+# tools/letters.sh builds B with AVANT_ROOT pointing at it; everything B
+# builds links runtime/build. The copy goes when a release with the 64-bit
+# Int is the seed.
+seed_abi="$root/build/seed-abi"
+rm -rf "$seed_abi"
+build_core "$seed_abi/runtime/build" "-DAVANT_INT_BITS=32"
+printf '%s\n' '/* The seed ABI (runtime/build.sh): a 32-bit avant_int. */' '#define AVANT_INT_BITS 32' '#include "../../../avant_rt.h"' > "$seed_abi/runtime/avant_rt.h"
 
 # zlib (D146), vendored at the pin in third_party/zlib/PIN: the library
 # files compress and uncompress need, built as zlib's own configure builds
@@ -84,39 +147,6 @@ compile "$root/third_party/picohttpparser/picohttpparser.c" "$root/build/picohtt
 ld -r -o "$root/build/avant_http_merged.o" "$root/build/avant_http.o" "$root/build/picohttpparser.o"
 mv "$root/build/avant_http_merged.o" "$root/build/avant_http.o"
 rm -f "$root/build/picohttpparser.o"
-
-# The core units fold into avant_rt.o: the seed's link table names
-# avant_rt.o only, so a new core object could not be linked by the old
-# seed. The source split is organizational; the link surface is not:
-# after the merge only the symbols avant_rt.exports lists stay global
-# (Stage 28 W12), so a function or variable the units share with each
-# other never becomes part of the object's surface.
-set --
-for name in $core_units; do
-  set -- "$@" "$root/build/$name.unit.o"
-done
-ld -r -o "$root/build/avant_rt_merged.o" "$@"
-objcopy --keep-global-symbols="$root/avant_rt.exports" "$root/build/avant_rt_merged.o"
-# The surface check (Stage 28 W14b2): the object's global symbols are
-# exactly the exports file's names, the ABI section with default
-# visibility and the runtime-internal section hidden.
-want_abi=$(sed -n '/^# runtime-internal$/q; /^[^#]/p' "$root/avant_rt.exports" | LC_ALL=C sort)
-want_int=$(sed -n '/^# runtime-internal$/,$p' "$root/avant_rt.exports" | sed -n '/^[^#]/p' | LC_ALL=C sort)
-have=$(nm -g --defined-only "$root/build/avant_rt_merged.o" | awk '{print $3}' | LC_ALL=C sort)
-if [ "$have" != "$(printf '%s\n%s\n' "$want_abi" "$want_int" | sed '/^$/d' | LC_ALL=C sort)" ]; then
-  echo "runtime/build.sh: avant_rt.o's global symbols differ from avant_rt.exports" >&2
-  exit 1
-fi
-hidden=$(readelf -sW "$root/build/avant_rt_merged.o" | awk '$5 == "GLOBAL" && $7 != "UND" && $6 == "HIDDEN" {print $8}' | LC_ALL=C sort)
-if [ "$hidden" != "$want_int" ]; then
-  echo "runtime/build.sh: avant_rt.o's hidden globals differ from avant_rt.exports' runtime-internal section" >&2
-  exit 1
-fi
-# The merged parts are removed, as the zlib and PCRE2 parts are: nothing
-# links them on their own, and tools/package.sh ships every object left
-# here (W10b: they were 28 KB of dead weight in the release).
-rm -f "$@"
-mv "$root/build/avant_rt_merged.o" "$root/build/avant_rt.o"
 
 # aklomp/base64 e4cc438. LangArena's C port calls this library.
 # x86_64 builds the SIMD codecs; other machines get the plain codec.

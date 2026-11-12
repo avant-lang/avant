@@ -7,6 +7,15 @@ import type
 import ast
 import resolve
 
+// A float literal's value (Stage 29 W4b1): String.to_f is a Float64? since
+// W4b1 and a Float64 in the seed v0.40.0, so the parser reads the lexer's
+// checked literal text with libc's atof, which both build the same
+// (correctly rounded, as the runtime's parser); the next release reads
+// it with `text.to_f ?? 0.0`.
+lib parse_libc {
+  fun atof(s: String): Float64
+}
+
 pub fn hex_digit_val(c: Int): Int {
   if ch_is_digit(c) {
     return c - 48
@@ -68,8 +77,8 @@ pub class Parser {
   index: Int = 0
   allow_struct_lit: Bool = true
   failed: Bool = false
-  err: CompileError? = nil
-  errors: DiagBag
+  pub err: CompileError? = nil
+  pub errors: DiagBag
   int_bits: UInt64 = 0u64
   int_suffix: String = ""
   in_quote: Bool = false
@@ -91,6 +100,18 @@ pub class Parser {
 
   pub fn has_err: Bool {
     self.failed
+  }
+
+  // A float literal's value; one too large for Float64 (it would read as
+  // an infinity) is an error, as an integer literal out of range is
+  // (Stage 29 W4b1, review 4 R7).
+  pub fn float_lit(tok: Token): Float64 {
+    v = parse_libc.atof(tok.value)
+    if v * 0.0 != 0.0 {
+      self.fail(tok.loc, "float literal ${tok.value} is out of range for Float64")
+      return 0.0
+    }
+    v
   }
 
   pub fn fail(loc: Location, message: String) {
@@ -670,7 +691,7 @@ pub class Parser {
     } else if k == tk_float() {
       self.bump
       e = Expr.new(ex_float(), tok.loc)
-      e.float_val = tok.value.to_f
+      e.float_val = self.float_lit(tok)
       e.value_str = tok.value
       left = e
     } else if k == tk_true() {
@@ -753,6 +774,9 @@ pub class Parser {
     defn.comptimes = body.comptimes
     defn.opt_ins = opted
     defn.vis = vis
+    if error_opted(opted) {
+      defn.methods.push(error_text_method(loc, name, defn.fields))
+    }
     defn
   }
 
@@ -770,6 +794,9 @@ pub class Parser {
     defn.comptimes = body.comptimes
     defn.opt_ins = opted
     defn.vis = vis
+    if error_opted(opted) {
+      defn.methods.push(error_text_method(loc, name, defn.fields))
+    }
     defn
   }
 
@@ -1534,20 +1561,50 @@ pub class Parser {
     false
   }
 
-  pub fn parse_if: Stmt {
-    loc = self.expect(tk_if()).loc
-    self.skip_newlines
-    bind = ""
-    cond = self.dummy_expr(loc)
+  // One element of an `if` or `while` condition (Stage 29 W4a, D292):
+  // a binding `name = expr` or a Bool condition, as an st_if without
+  // bodies.
+  pub fn parse_cond_element(loc: Location): Stmt {
+    el = Stmt.new(st_if(), loc)
     if self.if_assign_ahead {
       name = self.bump
       self.skip_newlines
       self.expect(tk_eq())
       self.skip_newlines
-      bind = name.value
-      cond = self.parse_cond_expr
-    } else {
-      cond = self.parse_cond_expr
+      el.bind = name.value
+    }
+    el.cond = self.parse_cond_expr
+    el
+  }
+
+  // The condition of an `if` or a `while`: elements separated by commas
+  // (a binding chain, D292), evaluated left to right; each binding is in
+  // scope for the elements after it and the then-block. The last element
+  // is the statement's own cond and bind; the ones before it are `pre`.
+  pub fn parse_cond_list(loc: Location): Stmt {
+    s = self.parse_cond_element(loc)
+    while self.current.kind == tk_comma() {
+      self.bump
+      self.skip_newlines
+      next = self.parse_cond_element(self.current.loc)
+      first = Stmt.new(st_if(), s.loc)
+      first.bind = s.bind
+      first.cond = s.cond
+      s.pre.push(first)
+      s.bind = next.bind
+      s.cond = next.cond
+    }
+    s
+  }
+
+  pub fn parse_if: Stmt {
+    loc = self.expect(tk_if()).loc
+    self.skip_newlines
+    head = self.parse_cond_list(loc)
+    bind = head.bind
+    cond = self.dummy_expr(loc)
+    if c = head.cond {
+      cond = c
     }
     self.skip_newlines
     then_body = self.parse_block
@@ -1567,6 +1624,7 @@ pub class Parser {
     s.then_body = then_body
     s.else_body = else_body
     s.bind = bind
+    s.pre = head.pre
     s
   }
 
@@ -1601,15 +1659,28 @@ pub class Parser {
     s
   }
 
+  // `while v = x { }` and binding chains (Stage 29 W4a, D292) are
+  // `while true { if <condition> { body } else { break } }`: the
+  // condition is evaluated before each iteration (`continue` too), the
+  // names it binds live in the body only.
   pub fn parse_while: Stmt {
     loc = self.expect(tk_while()).loc
     self.skip_newlines
-    cond = self.parse_cond_expr
+    head = self.parse_cond_list(loc)
     self.skip_newlines
     body = self.parse_block
     s = Stmt.new(st_while(), loc)
-    s.cond = cond
-    s.body = body
+    if head.bind.size == 0 && head.pre.size == 0 {
+      s.cond = head.cond
+      s.body = body
+      return s
+    }
+    t = Expr.new(ex_bool(), loc)
+    t.bool_val = true
+    s.cond = t
+    head.then_body = body
+    head.else_body.push(Stmt.new(st_break(), loc))
+    s.body.push(head)
     s
   }
 
@@ -1651,25 +1722,63 @@ pub class Parser {
       if s.kind == st_continue() {
         out.push(self.for_inc(loc, counter))
         out.push(s)
-      } else if s.kind == st_if() {
-        s.then_body = self.for_advance(s.then_body, counter, loc)
-        s.else_body = self.for_advance(s.else_body, counter, loc)
-        out.push(s)
-      } else if s.kind == st_expr() {
-        if e = s.expr {
-          if e.kind == ex_switch() {
-            for ci in 0..e.cases.size {
-              e.cases[ci].body = self.for_advance(e.cases[ci].body, counter, loc)
-            }
-            e.else_body = self.for_advance(e.else_body, counter, loc)
-          }
-        }
+      } else if s.kind == st_while() {
+        // A nested loop's `continue` is its own.
         out.push(s)
       } else {
+        if s.kind == st_if() {
+          s.then_body = self.for_advance(s.then_body, counter, loc)
+          s.else_body = self.for_advance(s.else_body, counter, loc)
+          for el in s.pre {
+            self.for_advance_opt(el.cond, counter, loc)
+          }
+        }
+        if s.kind == st_pin() || s.kind == st_hold() {
+          s.body = self.for_advance(s.body, counter, loc)
+        }
+        self.for_advance_opt(s.expr, counter, loc)
+        self.for_advance_opt(s.value, counter, loc)
+        self.for_advance_opt(s.target, counter, loc)
+        self.for_advance_opt(s.cond, counter, loc)
         out.push(s)
       }
     }
     out
+  }
+
+  // The statements an expression holds (a switch's arms; `?? continue`
+  // and an `if` used as a value, Stage 29 W4a), outside lambdas.
+  pub fn for_advance_opt(e: Expr?, counter: String, loc: Location) {
+    if x = e {
+      self.for_advance_expr(x, counter, loc)
+    }
+  }
+
+  pub fn for_advance_expr(e: Expr, counter: String, loc: Location) {
+    if e.kind == ex_lambda() {
+      return
+    }
+    if e.kind == ex_switch() {
+      for ci in 0..e.cases.size {
+        e.cases[ci].body = self.for_advance(e.cases[ci].body, counter, loc)
+      }
+      e.else_body = self.for_advance(e.else_body, counter, loc)
+    }
+    self.for_advance_opt(e.left, counter, loc)
+    self.for_advance_opt(e.right, counter, loc)
+    self.for_advance_opt(e.object, counter, loc)
+    self.for_advance_opt(e.cond, counter, loc)
+    self.for_advance_opt(e.receiver, counter, loc)
+    self.for_advance_opt(e.inner, counter, loc)
+    for a in e.args {
+      self.for_advance_expr(a, counter, loc)
+    }
+    for x in e.elems {
+      self.for_advance_expr(x, counter, loc)
+    }
+    for f in e.field_exprs {
+      self.for_advance_expr(f, counter, loc)
+    }
   }
 
   pub fn parse_for: Stmt {
@@ -1908,7 +2017,27 @@ pub class Parser {
       if op.kind == tk_question_question() {
         next_prec = prec
       }
-      right = self.parse_expr_min(next_prec)
+      right = self.dummy_expr(op.loc)
+      k2 = self.current.kind
+      if op.kind == tk_question_question() && (k2 == tk_return() || k2 == tk_break() || k2 == tk_continue()) {
+        // `x ?? return v`, `?? break`, `?? continue` (Stage 29 W4a,
+        // D292): the right side is that statement, held by a switch node
+        // with op tk_return (ast.av), which every walker already visits.
+        st = self.dummy_stmt(op.loc)
+        if k2 == tk_break() {
+          st = self.parse_break
+        } else if k2 == tk_continue() {
+          st = self.parse_continue
+        } else {
+          st = self.parse_return
+        }
+        right = Expr.new(ex_switch(), st.loc)
+        right.op = tk_return()
+        right.has_else = true
+        right.else_body.push(st)
+      } else {
+        right = self.parse_expr_min(next_prec)
+      }
       bin = Expr.new(ex_binary(), op.loc)
       bin.op = op.kind
       bin.left = left
@@ -2027,7 +2156,7 @@ pub class Parser {
     if k == tk_float() {
       self.bump
       e = Expr.new(ex_float(), tok.loc)
-      e.float_val = tok.value.to_f
+      e.float_val = self.float_lit(tok)
       e.value_str = tok.value
       return e
     }
@@ -2058,6 +2187,19 @@ pub class Parser {
     }
     if k == tk_spawn() {
       return self.parse_spawn(tok)
+    }
+    if k == tk_if() {
+      // An `if` used as a value (Stage 29 W4a, D31): held by a switch
+      // node with op tk_if (ast.av); it needs an else.
+      st = self.parse_if
+      if st.else_body.size == 0 {
+        self.fail(st.loc, "an if used as a value needs an else, so every case gives one")
+      }
+      ife = Expr.new(ex_switch(), st.loc)
+      ife.op = tk_if()
+      ife.has_else = true
+      ife.else_body.push(st)
+      return ife
     }
     if k == tk_switch() {
       return self.parse_switch
@@ -2307,10 +2449,15 @@ pub class Parser {
     self.skip_newlines
     size = self.parse_expr
     self.skip_newlines
-    self.expect(tk_r_paren())
     e = Expr.new(ex_array_new(), tok.loc)
     e.elem_type = elem
     e.size_expr = size
+    if self.match_tok(tk_comma()) {
+      self.skip_newlines
+      e.elems.push(self.parse_expr)
+      self.skip_newlines
+    }
+    self.expect(tk_r_paren())
     e
   }
 
@@ -2604,4 +2751,71 @@ pub class Parser {
     self.expect(tk_r_paren())
     args
   }
+}
+
+// What the interpolation of an error prints (`"${e}"`, D292): a method
+// the parser adds to a type marked `Error`, reading its message (a field
+// or a method; the checker requires one, checker/lambda.av mark_error).
+// With a field `cause` (D300), its own text follows after ": " when it is
+// there: `"${message}: ${cause}"`, so a chain prints outermost first
+// (`cannot load config: bad json: unexpected end`).
+pub fn error_text_method(loc: Location, owner: String, fields: Array(Field)): Function {
+  fnn = Function.new(loc, "__avant_error_text")
+  fnn.owner = owner
+  fnn.vis = true
+  fnn.return_type = TypeName.new(loc, "String")
+  cause: Field? = nil
+  for f in fields {
+    if f.name == "cause" {
+      cause = f
+    }
+  }
+  if cf = cause {
+    optional = cf.type.nilable
+    for m in cf.type.members {
+      if m.name == "Nil" {
+        optional = true
+      }
+    }
+    if optional {
+      // if c = self.cause { return "${self.message}: ${c}" }
+      c = Expr.new(ex_name(), loc)
+      c.ident = "__avant_cause"
+      ret = stmt_return(loc, error_chain_text(loc, c))
+      st = Stmt.new(st_if(), loc)
+      st.bind = "__avant_cause"
+      st.cond = error_self_field(loc, "cause")
+      st.then_body.push(ret)
+      fnn.body.push(st)
+    } else {
+      fnn.body.push(stmt_expr(loc, error_chain_text(loc, error_self_field(loc, "cause"))))
+      return fnn
+    }
+  }
+  fnn.body.push(stmt_expr(loc, error_self_field(loc, "message")))
+  fnn
+}
+
+// "${self.message}: ${c}"
+pub fn error_chain_text(loc: Location, c: Expr): Expr {
+  e = Expr.new(ex_interp(), loc)
+  p1 = InterpPart.new
+  p1.expr = error_self_field(loc, "message")
+  p2 = InterpPart.new
+  p2.text = ": "
+  p3 = InterpPart.new
+  p3.expr = c
+  e.parts.push(p1)
+  e.parts.push(p2)
+  e.parts.push(p3)
+  e
+}
+
+pub fn error_self_field(loc: Location, name: String): Expr {
+  me = Expr.new(ex_name(), loc)
+  me.ident = "self"
+  fa = Expr.new(ex_field(), loc)
+  fa.object = me
+  fa.ident = name
+  fa
 }

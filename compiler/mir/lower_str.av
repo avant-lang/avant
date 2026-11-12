@@ -63,6 +63,13 @@ pub fn (lw: MirLower) i32_call1(callee: String, a: MOperand): MOperand {
   lw.call_to(mt_i32(), callee, args)
 }
 
+// A call with one argument that returns an Int (i64).
+pub fn (lw: MirLower) int_call1(callee: String, a: MOperand): MOperand {
+  args: Array(MOperand) = []
+  args.push(a)
+  lw.call_to(mt_int(), callee, args)
+}
+
 // A scalar's text (the old back end): String as is; Int, Int64, UInt64,
 // Float64 (`%g`), and Bool (widened to i32) through avant_str_from_*.
 pub fn (lw: MirLower) to_str(v: MOperand, t: Ty): MOperand {
@@ -72,6 +79,11 @@ pub fn (lw: MirLower) to_str(v: MOperand, t: Ty): MOperand {
   }
   if t.is_int {
     return lw.str_call1("avant_str_from_int", v)
+  }
+  if t.is_int32 || t.is_uint32 {
+    // Its value as an Int (extended by its sign; Stage 29 W-INT1).
+    w32 = lw.tmp(mt_int(), b.rv_cast(v, mt_int()))
+    return lw.str_call1("avant_str_from_int", w32)
   }
   if t.is_int64 {
     return lw.str_call1("avant_str_from_i64", v)
@@ -159,13 +171,11 @@ pub fn (lw: MirLower) lower_interp(e: Expr): MOperand {
   }
   lw.at(e.loc)
   acc = pieces[0]
-  i = 1
-  while i < pieces.size {
+  for i in 1..pieces.size {
     args: Array(MOperand) = []
     args.push(acc)
     args.push(pieces[i])
     acc = lw.str_call("avant_str_concat", args)
-    i += 1
   }
   acc
 }
@@ -212,14 +222,14 @@ pub fn (lw: MirLower) lower_str_index(e: Expr, arr: Expr, ix: Expr): MOperand {
   }
   lw.at(e.loc)
   if !e.proven {
-    n = lw.i32_call1("avant_str_size", lw.dup(s))
+    n = lw.int_call1("avant_str_size", lw.dup(s))
     b.check_bounds(lw.dup(i), n)
   }
   pu8 = b.ptr_to(mt_u8())
   pv = b.temp(pu8)
   b.assign(b.pl(pv), b.rv_cast(s, pu8))
   byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(pv)), i))))
-  lw.tmp(mt_i32(), b.rv_cast(byte, mt_i32()))
+  lw.tmp(mt_int(), b.rv_cast(byte, mt_int()))
 }
 
 // The members of String and Bytes in both forms (`s.size`, `s.to_i`,
@@ -238,8 +248,8 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     }
     lw.at(e.loc)
     if mir_has_switch(recv) {
-      ops[0] = lw.tmp(mt_i32(), b.rv_use(ops[0]))
-      ops[1] = lw.tmp(mt_i32(), b.rv_use(ops[1]))
+      ops[0] = lw.tmp(mt_int(), b.rv_use(ops[0]))
+      ops[1] = lw.tmp(mt_int(), b.rv_use(ops[1]))
     }
     cargs: Array(MOperand) = []
     cargs.push(s)
@@ -247,13 +257,16 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     cargs.push(ops[1])
     return lw.str_call("avant_str_slice", cargs)
   }
+  if rt.is_string && (name == "to_i" || name == "to_i64" || name == "to_u64" || name == "to_f") {
+    return lw.str_parse(e, recv, name, args)
+  }
   if args.size > 0 {
     lw.refuse(e.loc, "the member .${name} of ${rt.show}")
     return b.c_i32(0)
   }
   known = name == "size" || name == "bytes"
   if rt.is_string {
-    known = known || name == "to_i" || name == "to_f" || name == "strip" || name == "strip_left" || name == "strip_right"
+    known = known || name == "strip" || name == "strip_left" || name == "strip_right"
   }
   if !known {
     lw.refuse(e.loc, "the member .${name} of ${rt.show}")
@@ -265,16 +278,10 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   }
   lw.at(e.loc)
   if name == "size" {
-    return lw.i32_call1("avant_str_size", s)
+    return lw.int_call1("avant_str_size", s)
   }
   if name == "bytes" {
     return s
-  }
-  if name == "to_i" {
-    return lw.i32_call1("avant_str_to_i", s)
-  }
-  if name == "to_f" {
-    return lw.call_f64("avant_str_to_f", s)
   }
   mode = 0
   if name == "strip_left" {
@@ -312,5 +319,61 @@ pub fn (lw: MirLower) lower_str_builtin(e: Expr, c: String): MOperand {
   if c == "str_slice" {
     return lw.str_call("avant_str_slice", ops)
   }
-  lw.call_to(mt_f64(), "avant_str_to_f_slice", ops)
+  // str_to_f_slice (Stage 29 W4b1): strict, Float64? like String.to_f.
+  // NaN is "absent" (a parsed float is never NaN).
+  v = lw.hold(lw.call_to(mt_f64(), "avant_str_parse_f64_slice", ops), mt_f64())
+  if t = e.ty {
+    got = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(v), b.copy_local(v)))
+    return lw.opt_of(t, got, b.copy_local(v), ty_float(), e.loc)
+  }
+  lw.refuse(e.loc, "an untyped str_to_f_slice")
+  b.c_i32(0)
+}
+
+// String.to_i, to_i64, to_u64 (an optional base, 10 by default) and to_f
+// (Stage 29 W4b1, D293, D295 R9): strict, through avant_str_parse_* and a
+// found flag, giving T?. The base, then the receiver.
+pub fn (lw: MirLower) str_parse(e: Expr, recv: Expr, name: String, args: Array(Expr)): MOperand {
+  b = lw.lw_b
+  base = b.c_i64(10i64)
+  if args.size == 1 {
+    base = lw.snap(lw.lower_expr(args[0]), recv)
+  }
+  s = lw.lower_expr(recv)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  fl = lw.found_local
+  ops: Array(MOperand) = []
+  ops.push(s)
+  vt = ty_float()
+  mt = mt_f64()
+  f = "avant_str_parse_f64"
+  if name == "to_i" || name == "to_i64" {
+    // Int is 64-bit (Stage 29 W-INT1); to_i64 is to_i's other name.
+    vt = ty_int()
+    mt = mt_int()
+    f = "avant_str_parse_i64"
+  } else if name == "to_u64" {
+    vt = ty_uint64()
+    mt = mt_u64()
+    f = "avant_str_parse_u64"
+  }
+  if name == "to_f" {
+    // NaN is "absent" (a parsed float is never NaN).
+    fv = lw.hold(lw.call_to(mt, f, ops), mt)
+    if t0 = e.ty {
+      got = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(fv), b.copy_local(fv)))
+      return lw.opt_of(t0, got, b.copy_local(fv), vt, e.loc)
+    }
+  }
+  ops.push(base)
+  ops.push(lw.found_ptr(fl))
+  v = lw.call_to(mt, f, ops)
+  if t = e.ty {
+    return lw.opt_of(t, lw.found_is(fl), v, vt, e.loc)
+  }
+  lw.refuse(e.loc, "an untyped ${name}")
+  b.c_i32(0)
 }

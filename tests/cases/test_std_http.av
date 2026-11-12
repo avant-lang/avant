@@ -67,30 +67,28 @@ fn hammer_round(port: Int, out: Channel(String), rounds: Int): Int {
   base = "http://127.0.0.1:${port}"
   ok = 0
   for i in 0..rounds {
-    if resp = Http.get("${base}/ping") {
-      if resp.status == 200 && body_text(resp) == "pong" {
-        ok += 1
-      }
+    if resp = Http.get("${base}/ping"), resp.status == 200 && body_text(resp) == "pong" {
+      ok += 1
     }
   }
   out.send("hammer=${ok}/${rounds}")
   0
 }
 
-fn raw_round(port: Int, script: String, stamp: Int, mode: String): String {
+fn raw_round(port: Int, script: String, stamp: Int64, mode: String): String {
   log = "${scratch()}/http-raw-${stamp}-${mode}.log"
   args: Array(String) = []
   args.push(script)
   args.push("${port}")
   args.push(mode)
-  process_run_out("/usr/bin/python3", args, log)
+  _ = process_run_out("/usr/bin/python3", args, log)
   if text = file_read(log) {
     return nth_line(text, 0)
   }
   ""
 }
 
-fn limit_round(port: Int, out: Channel(String), script: String, stamp: Int): Int {
+fn limit_round(port: Int, out: Channel(String), script: String, stamp: Int64): Int {
   base = "http://127.0.0.1:${port}"
   if resp = Http.post("${base}/echo", "0123456789abcdefghij") {
     out.send("big=${resp.status}")
@@ -127,7 +125,7 @@ fn ws_client_round(port: Int, out: Channel(String)): Int {
   0
 }
 
-fn ws_round(port: Int, out: Channel(String), script: String, stamp: Int): Int {
+fn ws_round(port: Int, out: Channel(String), script: String, stamp: Int64): Int {
   out.send(raw_round(port, script, stamp, "wsecho"))
   out.send(raw_round(port, script, stamp, "wsproto"))
   if resp = Http.get("http://127.0.0.1:${port}/__stop") {
@@ -237,7 +235,7 @@ fn test_std_http(c: Checks) {
   stamp = now_ms()
   script = "${scratch()}/http-raw-${stamp}.py"
   py = "import socket, sys\nport = int(sys.argv[1])\nmode = sys.argv[2]\ns = socket.create_connection((\"127.0.0.1\", port))\nif mode == \"chunked\":\n    s.sendall(b\"POST /echo HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n4\\r\\nWiki\\r\\n0\\r\\n\\r\\n\")\nelif mode == \"keepalive\":\n    s.sendall(b\"GET /ping HTTP/1.1\\r\\nHost: x\\r\\n\\r\\nGET /ping HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n\")\n    s.settimeout(5)\n    data = b\"\"\n    try:\n        while data.count(b\"pong\") < 2:\n            chunk = s.recv(4096)\n            if not chunk:\n                break\n            data += chunk\n    except Exception:\n        pass\n    print(\"keepalive=\" + \",\".join([\"pong\"] * data.count(b\"pong\")))\n    sys.exit(0)\nelse:\n    s.sendall(b\"this is not http\\r\\n\\r\\n\")\ndata = b\"\"\ntry:\n    while True:\n        chunk = s.recv(4096)\n        if not chunk:\n            break\n        data += chunk\nexcept Exception:\n    pass\nprint(data.decode(\"latin1\").split(\"\\r\\n\")[0])\n"
-  file_write(script, py)
+  _ = file_write(script, py)
 
   if opened = Http.listen(0, "127.0.0.1", 8) {
     server = opened
@@ -281,7 +279,7 @@ fn test_std_http(c: Checks) {
   // spoken by a raw-socket Python helper like the cases above.
   wscript = "${scratch()}/ws-raw-${stamp}.py"
   wpy = "import socket,sys,struct\nport=int(sys.argv[1])\nmode=sys.argv[2]\ndef hs(path):\n    s=socket.create_connection((\"127.0.0.1\",port))\n    s.sendall((\"GET %s HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n\" % path).encode())\n    b=b\"\"\n    while b\"\\r\\n\\r\\n\" not in b:\n        b+=s.recv(4096)\n    h,r=b.split(b\"\\r\\n\\r\\n\",1)\n    return s,h.decode(\"latin1\"),r\ndef sf(s,op,payload,fin=True,masked=True):\n    b0=(128 if fin else 0)|op\n    n=len(payload)\n    mb=128 if masked else 0\n    if n<126:\n        head=struct.pack(\"!BB\",b0,mb|n)\n    elif n<=65535:\n        head=struct.pack(\"!BBH\",b0,mb|126,n)\n    else:\n        head=struct.pack(\"!BBQ\",b0,mb|127,n)\n    if masked:\n        m=b\"\\x01\\x02\\x03\\x04\"\n        s.sendall(head+m+bytes(x^m[i&3] for i,x in enumerate(payload)))\n    else:\n        s.sendall(head+payload)\ndef rx(s,buf,n):\n    while len(buf)<n:\n        chunk=s.recv(4096)\n        if not chunk:\n            raise EOFError()\n        buf+=chunk\n    return buf[:n],buf[n:]\ndef rf(s,buf=b\"\"):\n    h,buf=rx(s,buf,2)\n    op=h[0]&15\n    n=h[1]&127\n    if n==126:\n        e,buf=rx(s,buf,2)\n        n=struct.unpack(\"!H\",e)[0]\n    elif n==127:\n        e,buf=rx(s,buf,8)\n        n=struct.unpack(\"!Q\",e)[0]\n    if h[1]&128:\n        m,buf=rx(s,buf,4)\n    else:\n        m=None\n    p,buf=rx(s,buf,n)\n    if m:\n        p=bytes(x^m[i&3] for i,x in enumerate(p))\n    return op,p,buf\nok=True\ntry:\n    if mode==\"wsecho\":\n        s,h,r=hs(\"/echo\")\n        ok=ok and \"101\" in h.split(\"\\r\\n\")[0] and \"s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\" in h\n        sf(s,1,b\"hi avant\")\n        op,p,r=rf(s,r)\n        ok=ok and op==1 and p==b\"hi avant\"\n        sf(s,2,b\"\\x00\\x01\\x02\")\n        op,p,r=rf(s,r)\n        ok=ok and op==2 and p==b\"\\x00\\x01\\x02\"\n        sf(s,9,b\"zz\")\n        op,p,r=rf(s,r)\n        ok=ok and op==10 and p==b\"zz\"\n        sf(s,1,b\"hel\",fin=False)\n        sf(s,0,b\"lo\")\n        op,p,r=rf(s,r)\n        ok=ok and op==1 and p==b\"hello\"\n        sf(s,8,struct.pack(\"!H\",1000)+b\"bye\")\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p[:2]==struct.pack(\"!H\",1000)\n        s.close()\n        s,h,r=hs(\"/shout\")\n        sf(s,1,b\"abc\")\n        op,p,r=rf(s,r)\n        ok=ok and op==1 and p==b\"text:abc\"\n        sf(s,2,b\"\\x01\\x02\")\n        op,p,r=rf(s,r)\n        ok=ok and op==2 and p==b\"\\x01\\x02\"\n        s.close()\n        s,h,r=hs(\"/work\")\n        sf(s,1,b\"go\")\n        op,p,r=rf(s,r)\n        ok=ok and op==1 and p==b\"worked\"\n        s.close()\n        s,h,r=hs(\"/bye\")\n        sf(s,1,b\"x\")\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p==struct.pack(\"!H\",1000)+b\"done\"\n        s.close()\n        print(\"ws-echo=ok\" if ok else \"ws-echo=BAD\")\n    else:\n        s,h,r=hs(\"/echo\")\n        sf(s,1,b\"hi\",masked=False)\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p[:2]==struct.pack(\"!H\",1002)\n        s.close()\n        s,h,r=hs(\"/echo\")\n        sf(s,1,b\"x\"*100)\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p[:2]==struct.pack(\"!H\",1009)\n        s.close()\n        s,h,r=hs(\"/echo\")\n        sf(s,1,b\"\\xff\\xfe\")\n        op,p,r=rf(s,r)\n        ok=ok and op==8 and p[:2]==struct.pack(\"!H\",1007)\n        s.close()\n        s2=socket.create_connection((\"127.0.0.1\",port))\n        s2.sendall(b\"GET /echo HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 12\\r\\n\\r\\n\")\n        ok=ok and b\"400\" in s2.recv(4096).split(b\"\\r\\n\")[0]\n        s2.close()\n        s,h,r=hs(\"/nope\")\n        ok=ok and \"404\" in h.split(\"\\r\\n\")[0]\n        s.close()\n        print(\"ws-proto=ok\" if ok else \"ws-proto=BAD\")\nexcept Exception as e:\n    print((\"ws-echo=BAD:\" if mode==\"wsecho\" else \"ws-proto=BAD:\") + type(e).__name__)\n"
-  file_write(wscript, wpy)
+  _ = file_write(wscript, wpy)
 
   if opened = Http.listen(0, "127.0.0.1", 1048576, 2, 64) {
     server = opened
@@ -393,13 +391,13 @@ fn test_std_http(c: Checks) {
   script2 = "${scratch()}/http-chunked-${stamp}.py"
   portf2 = "${scratch()}/http-chunked-${stamp}.port"
   py2 = "import socket, sys, os\npath = sys.argv[1]\nsrv = socket.socket()\nsrv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nsrv.bind((\"127.0.0.1\", 0))\nsrv.listen(1)\nwith open(path + \".tmp\", \"w\") as f:\n    f.write(str(srv.getsockname()[1]))\nos.rename(path + \".tmp\", path)\nconn, _ = srv.accept()\nconn.recv(4096)\nconn.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nTransfer-Encoding: chunked\\r\\nConnection: close\\r\\n\\r\\n5\\r\\nhello\\r\\n8\\r\\n chunked\\r\\n6\\r\\n world\\r\\n0\\r\\n\\r\\n\")\nconn.close()\nsrv.close()\n"
-  file_write(script2, py2)
+  _ = file_write(script2, py2)
   log2 = "${scratch()}/http-chunked-${stamp}.log"
   handle2 = spawn {
     args2: Array(String) = []
     args2.push(script2)
     args2.push(portf2)
-    process_run_out("/usr/bin/python3", args2, log2)
+    _ = process_run_out("/usr/bin/python3", args2, log2)
     0
   }
   got_body = ""
@@ -408,7 +406,7 @@ fn test_std_http(c: Checks) {
   while got_body.size == 0 && now_ms() < deadline {
     if sport == 0 {
       if pt = file_read(portf2) {
-        sport = pt.strip().to_i
+        sport = pt.strip().to_i ?? 0
       }
     }
     if sport > 0 {

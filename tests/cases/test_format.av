@@ -11,7 +11,7 @@ fn run_format(compiler: String, cmd: String, src: String, log: String, flags: Ar
     args.push(flags[i])
     i += 1
   }
-  process_run_out(compiler, args, log)
+  process_run_out(compiler, args, log) ?? -1
 }
 
 fn read_or_empty(path: String): String {
@@ -95,14 +95,14 @@ fn test_format(c: Checks) {
     // each line, and with it where a statement begins, never changes.
     d280_src = "${scratch()}/format-${stamp}-d280.av"
     d280_log = "${scratch()}/format-${stamp}-d280.log"
-    file_write(d280_src, "fn main {\nt = 1 +\n2\nxs = [\n1,\n-2\n]\n[1, 2].each { |v| puts(v) }\nm = t\n* 2\ny=-t\n-y\n}\n")
+    _ = file_write(d280_src, "fn main {\nt = 1 +\n2\nxs = [\n1,\n-2\n]\n[1, 2].each { |v| puts(v) }\nm = t\n* 2\ny=-t\n-y\n}\n")
     d280_code = run_format(compiler, "format", d280_src, d280_log, empty_flags)
     c.eq_int(d280_code, 0, "format D280 lines exits 0")
     c.eq_str(read_or_empty(d280_log), "fn main {\n  t = 1 +\n  2\n  xs = [\n  1,\n  -2\n  ]\n  [1, 2].each { |v| puts(v) }\n  m = t\n  * 2\n  y = -t\n  -y\n}\n", "format keeps the first token of every line (D280)")
     // Stage 29 W3a (D299): `pub` before a field formats like `pub` before fn.
     pubf_src = "${scratch()}/format-${stamp}-pubf.av"
     pubf_log = "${scratch()}/format-${stamp}-pubf.log"
-    file_write(pubf_src, "pub struct P {\n    pub   x :Int\nkept: Int = 2\n  pub fn get: Int { x }\n}\n")
+    _ = file_write(pubf_src, "pub struct P {\n    pub   x :Int\nkept: Int = 2\n  pub fn get: Int { x }\n}\n")
     pubf_code = run_format(compiler, "format", pubf_src, pubf_log, empty_flags)
     c.eq_int(pubf_code, 0, "format pub fields exits 0")
     c.eq_str(read_or_empty(pubf_log), "pub struct P {\n  pub x: Int\n  kept: Int = 2\n  pub fn get: Int { x }\n}\n", "format pub fields")
@@ -122,8 +122,7 @@ fn test_format(c: Checks) {
 
     copy = "${scratch()}/format-${stamp}-copy.av"
     if body = file_read(want_path) {
-      wcopy = file_write(copy, body)
-      c.eq_int(wcopy, 0, "write copy")
+      c.wrote(file_write(copy, body), "write copy")
       write_flags: Array(String) = []
       write_flags.push("--write")
       write_log = "${scratch()}/format-${stamp}-write.log"
@@ -140,8 +139,7 @@ fn test_format(c: Checks) {
       both.push("--write")
       both_log = "${scratch()}/format-${stamp}-both.log"
       dirty = "${scratch()}/format-${stamp}-dirty.av"
-      wdirty = file_write(dirty, "fn main{\n}\n")
-      c.eq_int(wdirty, 0, "write dirty")
+      c.wrote(file_write(dirty, "fn main{\n}\n"), "write dirty")
       both_code = run_format(compiler, "format", dirty, both_log, both)
       c.eq_int(both_code, 1, "--check with --write is a usage error and exits 1")
       if still = file_read(dirty) {
@@ -155,8 +153,7 @@ fn test_format(c: Checks) {
 
     op_src = "${scratch()}/format-${stamp}-op.av"
     op_body = "fn (v:Vec2) +(other:Vec2):Vec2{\nv\n}\n"
-    wop = file_write(op_src, op_body)
-    c.eq_int(wop, 0, "write operator receiver")
+    c.wrote(file_write(op_src, op_body), "write operator receiver")
     op_log = "${scratch()}/format-${stamp}-op.log"
     op_code = run_format(compiler, "format", op_src, op_log, empty_flags)
     c.eq_int(op_code, 0, "format operator receiver")
@@ -168,8 +165,7 @@ fn test_format(c: Checks) {
 
     tab_src = "${scratch()}/format-${stamp}-tab.av"
     tab_body = "fn main {\n\tx = 1\n}\n"
-    wtab = file_write(tab_src, tab_body)
-    c.eq_int(wtab, 0, "write tab")
+    c.wrote(file_write(tab_src, tab_body), "write tab")
     tab_log = "${scratch()}/format-${stamp}-tab.log"
     tab_code = run_format(compiler, "format", tab_src, tab_log, empty_flags)
     c.eq_int(tab_code, 0, "format tab")
@@ -181,8 +177,7 @@ fn test_format(c: Checks) {
 
     blank_src = "${scratch()}/format-${stamp}-blank.av"
     blank_body = "fn a {\n}\n\n\n\nfn b {\n}\n"
-    wblank = file_write(blank_src, blank_body)
-    c.eq_int(wblank, 0, "write blanks")
+    c.wrote(file_write(blank_src, blank_body), "write blanks")
     blank_log = "${scratch()}/format-${stamp}-blank.log"
     blank_code = run_format(compiler, "format", blank_src, blank_log, empty_flags)
     c.eq_int(blank_code, 0, "format blanks")
@@ -194,8 +189,7 @@ fn test_format(c: Checks) {
 
     tail_src = "${scratch()}/format-${stamp}-tail.av"
     tail_body = "fn main {\n}"
-    wtail = file_write(tail_src, tail_body)
-    c.eq_int(wtail, 0, "write no trailing newline")
+    c.wrote(file_write(tail_src, tail_body), "write no trailing newline")
     tail_flags: Array(String) = []
     tail_flags.push("--write")
     tail_log = "${scratch()}/format-${stamp}-tail.log"
@@ -208,8 +202,7 @@ fn test_format(c: Checks) {
     }
 
     empty_src = "${scratch()}/format-${stamp}-empty.av"
-    wempty = file_write(empty_src, "")
-    c.eq_int(wempty, 0, "write empty")
+    c.wrote(file_write(empty_src, ""), "write empty")
     empty_log = "${scratch()}/format-${stamp}-empty.log"
     empty_code = run_format(compiler, "format", empty_src, empty_log, empty_flags)
     c.eq_int(empty_code, 0, "format empty")
@@ -217,8 +210,7 @@ fn test_format(c: Checks) {
 
     bad_src = "${scratch()}/format-${stamp}-bad.av"
     bad_body = "fn main { @ }\n"
-    wbad = file_write(bad_src, bad_body)
-    c.eq_int(wbad, 0, "write lex error")
+    c.wrote(file_write(bad_src, bad_body), "write lex error")
     bad_log = "${scratch()}/format-${stamp}-bad.log"
     bad_flags: Array(String) = []
     bad_flags.push("--write")
@@ -237,8 +229,7 @@ fn test_format(c: Checks) {
     }
 
     str_src = "${scratch()}/format-${stamp}-str.av"
-    wstr = file_write(str_src, "fn main {\n  s = \"hi\n}\n")
-    c.eq_int(wstr, 0, "write unterminated string")
+    c.wrote(file_write(str_src, "fn main {\n  s = \"hi\n}\n"), "write unterminated string")
     str_log = "${scratch()}/format-${stamp}-str.log"
     str_code = run_format(compiler, "format", str_src, str_log, empty_flags)
     c.eq_int(str_code, 1, "unterminated string exits 1")
@@ -250,8 +241,7 @@ fn test_format(c: Checks) {
 
     nest_src = "${scratch()}/format-${stamp}-nest.av"
     nest_body = "fn main {\n  s = \"\${\"\${x}\"}\"\n}\n"
-    wnest = file_write(nest_src, nest_body)
-    c.eq_int(wnest, 0, "write nested interpolation")
+    c.wrote(file_write(nest_src, nest_body), "write nested interpolation")
     nest_log = "${scratch()}/format-${stamp}-nest.log"
     nest_code = run_format(compiler, "format", nest_src, nest_log, empty_flags)
     c.eq_int(nest_code, 1, "nested interpolation exits 1")
@@ -262,8 +252,7 @@ fn test_format(c: Checks) {
     }
 
     esc_src = "${scratch()}/format-${stamp}-esc.av"
-    wesc = file_write(esc_src, "fn main {\n  s = \"\\q\"\n}\n")
-    c.eq_int(wesc, 0, "write bad escape")
+    c.wrote(file_write(esc_src, "fn main {\n  s = \"\\q\"\n}\n"), "write bad escape")
     esc_log = "${scratch()}/format-${stamp}-esc.log"
     esc_code = run_format(compiler, "format", esc_src, esc_log, empty_flags)
     c.eq_int(esc_code, 1, "bad escape exits 1")
@@ -275,8 +264,7 @@ fn test_format(c: Checks) {
 
     dump_src = "${scratch()}/format-${stamp}-dump.av"
     dump_body = "fn main{\nputs( \"ok\" )\n}\n"
-    wdump = file_write(dump_src, dump_body)
-    c.eq_int(wdump, 0, "write dump fixture")
+    c.wrote(file_write(dump_src, dump_body), "write dump fixture")
     // The emitted .ll (no source locations, unlike the MIR dump; the old
     // back end's IR until Stage 28 W11): formatting changes no code.
     before = "${scratch()}/format-${stamp}-before.ll"
@@ -342,11 +330,11 @@ fn test_format(c: Checks) {
     mkdir_p("${many}/sub")
     mkdir_p("${many}/deps")
     mkdir_p("${many}/.hidden")
-    file_write("${many}/a.av", "fn main {\n}\n")
-    file_write("${many}/sub/b.av", "fn main{\n}\n")
-    file_write("${many}/deps/c.av", "fn main{\n}\n")
-    file_write("${many}/.hidden/d.av", "fn main{\n}\n")
-    file_write("${many}/sub/e.av", "fn main{\n}\n")
+    _ = file_write("${many}/a.av", "fn main {\n}\n")
+    _ = file_write("${many}/sub/b.av", "fn main{\n}\n")
+    _ = file_write("${many}/deps/c.av", "fn main{\n}\n")
+    _ = file_write("${many}/.hidden/d.av", "fn main{\n}\n")
+    _ = file_write("${many}/sub/e.av", "fn main{\n}\n")
     dir_log = "${scratch()}/format-${stamp}-dir.log"
     dir_code = run_format(compiler, "format", many, dir_log, check_flags)
     c.eq_int(dir_code, 1, "a directory with drift: --check exits 1")

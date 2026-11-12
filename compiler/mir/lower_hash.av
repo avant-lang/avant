@@ -112,6 +112,37 @@ pub fn (lw: MirLower) args_then_recv(args: Array(Expr), recv: Expr): Array(MOper
   out
 }
 
+// `h.delete(k)` as a statement, whose value nobody reads (W4b2: delete
+// gives the value it removed): the plain delete, with no found flag and
+// no value; false when e is not such a call.
+pub fn (lw: MirLower) hash_delete_stmt(e: Expr): Bool {
+  if e.callee != "delete" || e.args.size != 1 {
+    return false
+  }
+  if bl = e.block {
+    return false
+  }
+  if recv = e.receiver {
+    if ht = recv.ty {
+      if !ht.is_hash || e.resolved.size > 0 {
+        return false
+      }
+      f = "avant_hash_del"
+      if mir_hash_key_int(ht) {
+        f = "avant_hash_del_i32k"
+      }
+      ops = lw.args_then_recv(e.args, recv)
+      if lw.failed {
+        return true
+      }
+      lw.at(e.loc)
+      lw.lw_b.call(-1, f, ops)
+      return true
+    }
+  }
+  false
+}
+
 // The members of Hash (the old back end).
 pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b
@@ -120,7 +151,7 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
     lw.refuse(e.loc, "Hash.${name} with a block (closures, W7b)")
     return zero
   }
-  if name == "get" || name == "get_slice" || name == "get_concat" {
+  if name == "get" || name == "get_slice" || name == "get_concat" || name == "delete" {
     return lw.lower_hash_read(e, recv, ht, name, args)
   }
   if name == "each" {
@@ -168,12 +199,6 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
       f = "avant_hash_inc_i32k"
     }
     n = -1
-  } else if name == "delete" {
-    f = "avant_hash_del"
-    if ki {
-      f = "avant_hash_del_i32k"
-    }
-    n = 1
   } else if name == "inc_slice" {
     f = "avant_hash_inc_slice"
     n = 3
@@ -188,7 +213,7 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
   }
   lw.at(e.loc)
   if name == "inc" && args.size == 1 {
-    ops.push(b.c_i32(1))
+    ops.push(b.c_i64(1i64))
   }
   if name == "has_key" {
     r = lw.call_to(mt_i32(), f, ops)
@@ -302,7 +327,7 @@ pub fn (lw: MirLower) heap_builtin(e: Expr, c: String): MOperand? {
   }
   lw.at(e.loc)
   if c == "buf_new" && ops.size == 0 {
-    ops.push(b.c_i32(0))
+    ops.push(b.c_i64(0i64))
   }
   lw.call_to(ty, f, ops)
 }

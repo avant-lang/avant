@@ -31,11 +31,11 @@ fn tm_nested_array: String {
 }
 
 fn tm_union_offset: String {
-  tm_common() + "class Holder {\n  u: Int | String\n  n: Int\n  fn initialize(i: Int) {\n    self.u = \"u\${i}\"\n    self.n = i\n  }\n}\n\nfn bad(u: Int | String, want: String): Int? {\n  s = u?\n  if s != want {\n    return 1\n  }\n  0\n}\n\nfn main: Int {\n  hs: Array(Holder) = []\n  i = 0\n  while i < 2000 {\n    hs.push(Holder.new(i))\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < hs.size {\n    if b = bad(hs[i].u, \"u\${i}\") {\n      wrong = wrong + b\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n"
+  tm_common() + "struct Absent: Error {\n  code: Int\n  fn message: String {\n    \"absent\"\n  }\n}\n\nclass Holder {\n  u: String | Absent\n  n: Int\n  fn initialize(i: Int) {\n    self.u = \"u\${i}\"\n    self.n = i\n  }\n}\n\nfn bad(u: String | Absent, want: String): Int? {\n  if s = u {\n    if s != want {\n      return 1\n    }\n    return 0\n  }\n  1\n}\n\nfn main: Int {\n  hs: Array(Holder) = []\n  i = 0\n  while i < 2000 {\n    hs.push(Holder.new(i))\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < hs.size {\n    if b = bad(hs[i].u, \"u\${i}\") {\n      wrong = wrong + b\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n"
 }
 
 fn tm_barriers: String {
-  tm_common() + "struct Rec {\n  n: Int\n  name: String\n}\n\nclass Holder {\n  name: String\n  r: Rec\n  fn initialize {\n    self.name = \"a\"\n    self.r = Rec { n: 0, name: \"a\" }\n  }\n  fn set(i: Int) {\n    name = \"name\${i}\"\n  }\n}\n\nclass Pair {\n  set: fn(Int): Int\n  get: fn(): String\n  fn initialize(set: fn(Int): Int, get: fn(): String) {\n    self.set = set\n    self.get = get\n  }\n}\n\nfn make_pair: Pair {\n  s = \"start\"\n  setter: fn(Int): Int = { |k|\n    s = \"cap\${k}\"\n    0\n  }\n  getter: fn(): String = { || s }\n  Pair.new(setter, getter)\n}\n\nfn main: Int {\n  hs: Array(Holder) = []\n  i = 0\n  while i < 2000 {\n    hs.push(Holder.new)\n    i = i + 1\n  }\n  churn(400000)\n  i = 0\n  while i < 2000 {\n    h = hs[i]\n    h.set(i)\n    h.r.name = \"r\${i}\"\n    i = i + 1\n  }\n  churn(400000)\n  wrong = 0\n  i = 0\n  while i < 2000 {\n    if hs[i].name != \"name\${i}\" {\n      wrong = wrong + 1\n    }\n    if hs[i].r.name != \"r\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  p = make_pair()\n  churn(400000)\n  wrong = 0\n  i = 0\n  while i < 60 {\n    (p.set)(i)\n    churn(60000)\n    if (p.get)() != \"cap\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n"
+  tm_common() + "struct Rec {\n  n: Int\n  name: String\n}\n\nclass Holder {\n  name: String\n  r: Rec\n  fn initialize {\n    self.name = \"a\"\n    self.r = Rec { n: 0, name: \"a\" }\n  }\n  fn set(i: Int) {\n    self.name = \"name\${i}\"\n  }\n}\n\nclass Pair {\n  set: fn(Int): Int\n  get: fn(): String\n  fn initialize(set: fn(Int): Int, get: fn(): String) {\n    self.set = set\n    self.get = get\n  }\n}\n\nfn make_pair: Pair {\n  s = \"start\"\n  setter: fn(Int): Int = { |k|\n    s = \"cap\${k}\"\n    0\n  }\n  getter: fn(): String = { || s }\n  Pair.new(setter, getter)\n}\n\nfn main: Int {\n  hs: Array(Holder) = []\n  i = 0\n  while i < 2000 {\n    hs.push(Holder.new)\n    i = i + 1\n  }\n  churn(400000)\n  i = 0\n  while i < 2000 {\n    h = hs[i]\n    h.set(i)\n    h.r.name = \"r\${i}\"\n    i = i + 1\n  }\n  churn(400000)\n  wrong = 0\n  i = 0\n  while i < 2000 {\n    if hs[i].name != \"name\${i}\" {\n      wrong = wrong + 1\n    }\n    if hs[i].r.name != \"r\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  p = make_pair()\n  churn(400000)\n  wrong = 0\n  i = 0\n  while i < 60 {\n    (p.set)(i)\n    churn(60000)\n    if (p.get)() != \"cap\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n"
 }
 
 fn tm_wide_class: String {
@@ -69,7 +69,7 @@ fn tm_run_env(bin: String, name: String, value: String, log: String): Int {
   args: Array(String) = []
   args.push("${name}=${value}")
   args.push(bin)
-  process_run_out("/usr/bin/env", args, log)
+  process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
 fn tm_run_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log: String): Int {
@@ -83,13 +83,13 @@ fn tm_run_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log:
   args.push("${n1}=${v1}")
   args.push("${n2}=${v2}")
   args.push(bin)
-  process_run_out("/usr/bin/env", args, log)
+  process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
 fn tm_case(c: Checks, compiler: String, stem: String, name: String, src: String, want: String) {
   path = "${stem}-${name}.av"
   bin = "${stem}-${name}.bin"
-  c.eq_int(file_write(path, src), 0, "${name}: write fixture")
+  c.wrote(file_write(path, src), "${name}: write fixture")
   code = compile_av(compiler, path, bin, "${stem}-${name}.clog")
   c.eq_int(code, 0, "${name}: compile")
   if code != 0 {

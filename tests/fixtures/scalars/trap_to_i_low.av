@@ -1,5 +1,7 @@
-// C2 (W11b): Float64.to_i of -2147483649.0 (Int.MIN - 1) traps: `avant
-// runtime: to_i of Float64 -2147483649 out of range for Int`, exit 1.
+// C2 (W11b): Float64.to_i of the double below Int.MIN (-2^63 - 2048; Int
+// is 64-bit since Stage 29 W-INT1) traps: `avant runtime: to_i of Float64
+// -9223372036854777856.0 out of range for Int`, exit 1; Int.MIN itself
+// converts.
 
 // n, unknown to every optimizer: the other branch (two clock reads a
 // thousand seconds apart) never runs.
@@ -7,7 +9,7 @@ fn opaque(n: Int): Int {
   a = now_us()
   b = now_us()
   if b &- a > 1000000000 {
-    return n &+ b
+    return n &+ b.wrap_i
   }
   n
 }
@@ -18,7 +20,7 @@ fn ti(x: Float64): Int {
 
 fn main {
   one = opaque(1).to_f
-  puts(ti(2147483647.9 * one))
-  puts(ti(-2147483649.0 * one))
+  puts(ti(-9223372036854775808.0 * one))
+  puts(ti(-9223372036854777856.0 * one))
   puts("not reached")
 }

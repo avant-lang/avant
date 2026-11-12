@@ -1,0 +1,565 @@
+// Field initialization (Stage 29 W3b, B5, D292): no field is ever read
+// unset. A field whose type has a natural zero (`0`, `0.0`, `false`, `""`,
+// `nil` for any `T?`, a null `Ptr`, a struct of such fields) starts at it;
+// a field with a written default starts at that value (evaluated in
+// declaration order before `initialize`). Every other field (a class,
+// `Array`, `Hash`, `Buf`, `Bytes`, a `fn`, a union without `nil`, a struct
+// holding one) is required: `initialize` sets it on every path before any
+// read of it and before `self` escapes (a method call on `self`, `self` as
+// a value, a lambda that uses the receiver); otherwise the class is
+// refused with an error that names the field and the ways out. Checked
+// after the bodies, on every class and every generic class instance (a
+// field of type `T` is required when `T` has no zero). The same walk finds
+// the fields whose zero needs a store (a String's "") that initialize sets
+// on every path before any read and before self escapes: their zero
+// store is left out (Field.set_by_init), so a class whose initialize sets
+// its strings builds exactly as before.
+
+import location
+import source
+import token
+import type
+import ast
+import resolve
+import checker.names
+import checker
+
+// The walk over one `initialize`: the required fields, the fields whose
+// zero needs a store, the ones read or exposed before they were set
+// (dirty), the meet of the sets at the returns, and the first error (one
+// per class).
+class InitWalk {
+  pub cls: String = ""
+  pub ty: Ty
+  pub required: Array(String)
+  pub stores: Array(String)
+  pub dirty: Array(String)
+  pub exits: Array(String)? = nil
+  pub failed: Bool = false
+
+  fn initialize(cls: String, ty: Ty) {
+    self.cls = cls
+    self.ty = ty
+    self.required = []
+    self.stores = []
+    self.dirty = []
+  }
+}
+
+fn init_has(xs: Array(String), name: String): Bool {
+  for x in xs {
+    if x == name {
+      return true
+    }
+  }
+  false
+}
+
+fn init_copy(xs: Array(String)): Array(String) {
+  out: Array(String) = []
+  for x in xs {
+    out.push(x)
+  }
+  out
+}
+
+fn init_meet(a: Array(String), b: Array(String)): Array(String) {
+  out: Array(String) = []
+  for x in a {
+    if init_has(b, x) {
+      out.push(x)
+    }
+  }
+  out
+}
+
+// The first required field not in set, or "".
+fn (w: InitWalk) missing(set: Array(String)): String {
+  for r in w.required {
+    if !init_has(set, r) {
+      return r
+    }
+  }
+  ""
+}
+
+fn (w: InitWalk) ways(field: String, lead: String): String {
+  "${lead} (self.${field} = ...)${w.or_else(field)}"
+}
+
+// ", give it a default (f: T = ...), or make it optional (f: T?)"; a
+// union becomes optional with `| Nil`; a `fn` type has no optional form
+// to suggest (grouping parentheses in types come later).
+fn (w: InitWalk) or_else(field: String): String {
+  if ft = w.ty.field_named(field) {
+    t = ft.show
+    if ft.is_fn {
+      return " or give it a default (${field}: ${t} = ...)"
+    }
+    opt = "${t}?"
+    if ft.is_union {
+      opt = "${t} | Nil"
+    }
+    return ", give it a default (${field}: ${t} = ...), or make it optional (${field}: ${opt})"
+  }
+  ""
+}
+
+fn (w: InitWalk) ways_new(field: String): String {
+  "set it in an initialize (self.${field} = ...)${w.or_else(field)}"
+}
+
+pub fn (checker_self: Checker) check_inits {
+  for cdef in checker_self.program.classes {
+    if cdef.type_params.size > 0 {
+      continue
+    }
+    if ty = checker_self.resolver.get_named_for(cdef.mod_name, cdef.name) {
+      checker_self.check_class_init(cdef, ty)
+    }
+  }
+}
+
+pub fn (checker_self: Checker) check_class_init(cdef: ClassDef, ty: Ty) {
+  w = InitWalk.new(ty.show, ty)
+  first_loc = cdef.loc
+  for field in cdef.fields {
+    field.set_by_init = false
+    if d = field.default {
+      continue
+    }
+    if ft = ty.field_named(field.name) {
+      if !ty_has_zero(ft) {
+        if w.required.size == 0 {
+          first_loc = field.loc
+        }
+        w.required.push(field.name)
+      } else if ty_zero_stores(ft) {
+        w.stores.push(field.name)
+      }
+    }
+  }
+  if w.required.size == 0 && w.stores.size == 0 {
+    return
+  }
+  init: Function? = nil
+  for m in cdef.methods {
+    if m.name == "initialize" {
+      init = m
+    }
+  }
+  if f = init {
+    set: Array(String) = []
+    out = checker_self.init_stmts(w, f.body, set)
+    if w.failed {
+      return
+    }
+    fin: Array(String)? = w.exits
+    if live = out {
+      if e = fin {
+        fin = init_meet(e, live)
+      } else {
+        fin = live
+      }
+    }
+    if last = fin {
+      miss = w.missing(last)
+      if miss.size > 0 {
+        checker_self.fail(checker_self.init_field_loc(cdef, miss), "field ${miss} of ${w.cls} is not set on every path through initialize; ${w.ways(miss, "set it on every path")}")
+        return
+      }
+      for field2 in cdef.fields {
+        if init_has(w.stores, field2.name) && init_has(last, field2.name) && !init_has(w.dirty, field2.name) {
+          field2.set_by_init = true
+        }
+      }
+    }
+    return
+  }
+  if w.required.size == 0 {
+    return
+  }
+  miss2 = w.required[0]
+  checker_self.fail(first_loc, "field ${miss2} of ${w.cls} has no zero value, no default, and ${w.cls} has no initialize to set it; ${w.ways_new(miss2)}")
+}
+
+pub fn (checker_self: Checker) init_field_loc(cdef: ClassDef, name: String): Location {
+  for f in cdef.fields {
+    if f.name == name {
+      return f.loc
+    }
+  }
+  cdef.loc
+}
+
+// The statements in order from the set of fields already set; the set at
+// their end, or nil when no path falls through (return, break,
+// continue).
+pub fn (checker_self: Checker) init_stmts(w: InitWalk, stmts: Array(Stmt), start: Array(String)): Array(String)? {
+  set = init_copy(start)
+  for st in stmts {
+    if w.failed {
+      return set
+    }
+    if next = checker_self.init_stmt(w, st, set) {
+      set = next
+    } else {
+      return nil
+    }
+  }
+  set
+}
+
+// The field a write `self.f = ...` or a bare `f = ...` (an implicit field)
+// sets, or "".
+fn (w: InitWalk) written(target: Expr): String {
+  if target.kind == ex_field() {
+    if obj = target.object {
+      if obj.kind == ex_name() && obj.ident == "self" {
+        if ft = w.ty.field_named(target.ident) {
+          return target.ident
+        }
+      }
+    }
+  }
+  if target.kind == ex_name() && target.implicit_field {
+    return target.ident
+  }
+  ""
+}
+
+pub fn (checker_self: Checker) init_stmt(w: InitWalk, st: Stmt, set: Array(String)): Array(String)? {
+  k = st.kind
+  if k == st_assign() {
+    if target = st.target {
+      f = w.written(target)
+      if f.size > 0 {
+        if st.op != tk_eq() && st.op != 0 {
+          // A compound write reads the field first.
+          checker_self.init_read(w, f, target.loc, set)
+        }
+        if v = st.value {
+          checker_self.init_expr(w, v, set, false)
+        }
+        out = init_copy(set)
+        if !init_has(out, f) {
+          out.push(f)
+        }
+        return out
+      }
+      checker_self.init_expr(w, target, set, false)
+    }
+    if v2 = st.value {
+      checker_self.init_expr(w, v2, set, false)
+    }
+    return set
+  }
+  if k == st_return() {
+    if e = st.expr {
+      checker_self.init_expr(w, e, set, false)
+    }
+    if v3 = st.value {
+      checker_self.init_expr(w, v3, set, false)
+    }
+    miss = w.missing(set)
+    if miss.size > 0 && !w.failed {
+      w.failed = true
+      checker_self.fail(st.loc, "initialize returns before field ${miss} of ${w.cls} is set; ${w.ways(miss, "set it before the return")}")
+    }
+    if ex = w.exits {
+      w.exits = init_meet(ex, set)
+    } else {
+      w.exits = init_copy(set)
+    }
+    return nil
+  }
+  if k == st_break() || k == st_continue() {
+    return nil
+  }
+  if k == st_if() {
+    for el in st.pre {
+      if c0 = el.cond {
+        checker_self.init_expr(w, c0, set, false)
+      }
+    }
+    if c = st.cond {
+      checker_self.init_expr(w, c, set, false)
+    }
+    a = checker_self.init_stmts(w, st.then_body, set)
+    b = checker_self.init_stmts(w, st.else_body, set)
+    if x = a {
+      if y = b {
+        return init_meet(x, y)
+      }
+      return x
+    }
+    return b
+  }
+  if k == st_pin() || k == st_hold() {
+    // The body runs once, in order.
+    if e2 = st.expr {
+      checker_self.init_expr(w, e2, set, false)
+    }
+    if c2 = st.cond {
+      checker_self.init_expr(w, c2, set, false)
+    }
+    return checker_self.init_stmts(w, st.body, set)
+  }
+  if k == st_expr() {
+    if e3 = st.expr {
+      if e3.kind == ex_switch() {
+        return checker_self.init_switch(w, e3, set)
+      }
+      checker_self.init_expr(w, e3, set, false)
+    }
+    return set
+  }
+  // A loop (while, for) and anything else: what its parts read is
+  // checked; what a body that may not run sets does not count after it.
+  checker_self.init_parts(w, st, set)
+  set
+}
+
+pub fn (checker_self: Checker) init_parts(w: InitWalk, st: Stmt, set: Array(String)) {
+  if e = st.expr {
+    checker_self.init_expr(w, e, set, false)
+  }
+  if v = st.value {
+    checker_self.init_expr(w, v, set, false)
+  }
+  if t = st.target {
+    checker_self.init_expr(w, t, set, false)
+  }
+  if c = st.cond {
+    checker_self.init_expr(w, c, set, false)
+  }
+  dummy = checker_self.init_stmts(w, st.pre, set)
+  dummy = checker_self.init_stmts(w, st.body, set)
+  dummy = checker_self.init_stmts(w, st.then_body, set)
+  dummy = checker_self.init_stmts(w, st.else_body, set)
+}
+
+// A `switch` statement: with `else`, every arm; without, a miss runs
+// nothing, so the set before it is one of the ways out.
+pub fn (checker_self: Checker) init_switch(w: InitWalk, e: Expr, set: Array(String)): Array(String)? {
+  if c = e.cond {
+    checker_self.init_expr(w, c, set, false)
+  }
+  if l = e.left {
+    checker_self.init_expr(w, l, set, false)
+  }
+  out: Array(String)? = nil
+  any = false
+  for cs in e.cases {
+    if r = checker_self.init_stmts(w, cs.body, set) {
+      if o = out {
+        out = init_meet(o, r)
+      } else {
+        out = r
+      }
+      any = true
+    }
+  }
+  if e.has_else {
+    if r2 = checker_self.init_stmts(w, e.else_body, set) {
+      if o2 = out {
+        out = init_meet(o2, r2)
+      } else {
+        out = r2
+      }
+      any = true
+    }
+  } else {
+    if o3 = out {
+      out = init_meet(o3, set)
+    } else {
+      out = init_copy(set)
+    }
+    any = true
+  }
+  if !any {
+    return nil
+  }
+  out
+}
+
+// A read of field f: an error for a required one not yet set; a field
+// whose zero needs a store keeps it.
+pub fn (checker_self: Checker) init_read(w: InitWalk, f: String, loc: Location, set: Array(String)) {
+  if w.failed || init_has(set, f) {
+    return
+  }
+  if init_has(w.stores, f) {
+    if !init_has(w.dirty, f) {
+      w.dirty.push(f)
+    }
+    return
+  }
+  if !init_has(w.required, f) {
+    return
+  }
+  w.failed = true
+  checker_self.fail(loc, "field ${f} of ${w.cls} is read in initialize before it is set; ${w.ways(f, "set it before this read")}")
+}
+
+// self escaping (a method call on it, self as a value, a lambda that
+// uses the receiver) while a required field is unset.
+pub fn (checker_self: Checker) init_escape(w: InitWalk, loc: Location, set: Array(String), what: String) {
+  if w.failed {
+    return
+  }
+  for s in w.stores {
+    if !init_has(set, s) && !init_has(w.dirty, s) {
+      w.dirty.push(s)
+    }
+  }
+  miss = w.missing(set)
+  if miss.size == 0 {
+    return
+  }
+  w.failed = true
+  checker_self.fail(loc, "${what} in initialize before field ${miss} of ${w.cls} is set; ${w.ways(miss, "set it before this")}")
+}
+
+// What e reads; deferred: inside a lambda, where any use of the receiver
+// escapes (the lambda may run later).
+pub fn (checker_self: Checker) init_expr(w: InitWalk, e: Expr, set: Array(String), deferred: Bool) {
+  if w.failed {
+    return
+  }
+  k = e.kind
+  if k == ex_name() {
+    if e.ident == "self" {
+      checker_self.init_escape(w, e.loc, set, "self is used as a value")
+      return
+    }
+    if e.implicit_field {
+      if deferred {
+        checker_self.init_escape(w, e.loc, set, "a lambda uses the receiver")
+      } else {
+        checker_self.init_read(w, e.ident, e.loc, set)
+      }
+      return
+    }
+    return
+  }
+  if k == ex_field() {
+    if obj = e.object {
+      if obj.kind == ex_name() && obj.ident == "self" {
+        if ft = w.ty.field_named(e.ident) {
+          if deferred {
+            checker_self.init_escape(w, e.loc, set, "a lambda uses the receiver")
+          } else {
+            checker_self.init_read(w, e.ident, e.loc, set)
+          }
+        } else {
+          checker_self.init_escape(w, e.loc, set, "a method of self is called")
+        }
+        return
+      }
+      checker_self.init_expr(w, obj, set, deferred)
+    }
+    return
+  }
+  if k == ex_call() {
+    if r = e.receiver {
+      if r.kind == ex_name() && r.ident == "self" {
+        checker_self.init_escape(w, e.loc, set, "a method of self is called")
+      } else {
+        checker_self.init_expr(w, r, set, deferred)
+      }
+    }
+    for a in e.args {
+      checker_self.init_expr(w, a, set, deferred)
+    }
+    if b = e.block {
+      // A trailing block (`each`, `times`, ...) may run any number of
+      // times: what it reads is checked, what it sets does not count.
+      dummy2 = checker_self.init_stmts(w, b.body, set)
+    }
+    return
+  }
+  if k == ex_lambda() {
+    if b2 = e.block {
+      checker_self.init_block(w, b2.body, set, true)
+    }
+    return
+  }
+  if k == ex_switch() {
+    dummy = checker_self.init_switch(w, e, set)
+    return
+  }
+  if l = e.left {
+    checker_self.init_expr(w, l, set, deferred)
+  }
+  if r2 = e.right {
+    checker_self.init_expr(w, r2, set, deferred)
+  }
+  if o = e.object {
+    checker_self.init_expr(w, o, set, deferred)
+  }
+  if c = e.cond {
+    checker_self.init_expr(w, c, set, deferred)
+  }
+  if rc = e.receiver {
+    checker_self.init_expr(w, rc, set, deferred)
+  }
+  if i = e.inner {
+    checker_self.init_expr(w, i, set, deferred)
+  }
+  if s = e.size_expr {
+    checker_self.init_expr(w, s, set, deferred)
+  }
+  for a2 in e.args {
+    checker_self.init_expr(w, a2, set, deferred)
+  }
+  for x in e.elems {
+    checker_self.init_expr(w, x, set, deferred)
+  }
+  for fx in e.field_exprs {
+    checker_self.init_expr(w, fx, set, deferred)
+  }
+  for p in e.parts {
+    if pe = p.expr {
+      checker_self.init_expr(w, pe, set, deferred)
+    }
+  }
+  if b3 = e.block {
+    dummy3 = checker_self.init_stmts(w, b3.body, set)
+  }
+}
+
+// A body that may run later or any number of times: what it reads is
+// checked (every use of the receiver in it escapes); what it sets does
+// not count.
+pub fn (checker_self: Checker) init_block(w: InitWalk, stmts: Array(Stmt), set: Array(String), deferred: Bool) {
+  for st in stmts {
+    if w.failed {
+      return
+    }
+    checker_self.init_deferred_stmt(w, st, set)
+  }
+}
+
+pub fn (checker_self: Checker) init_deferred_stmt(w: InitWalk, st: Stmt, set: Array(String)) {
+  if e = st.expr {
+    checker_self.init_expr(w, e, set, true)
+  }
+  if v = st.value {
+    checker_self.init_expr(w, v, set, true)
+  }
+  if t = st.target {
+    if t.kind == ex_name() && t.implicit_field {
+      checker_self.init_escape(w, t.loc, set, "a lambda uses the receiver")
+    } else {
+      checker_self.init_expr(w, t, set, true)
+    }
+  }
+  if c = st.cond {
+    checker_self.init_expr(w, c, set, true)
+  }
+  checker_self.init_block(w, st.pre, set, true)
+  checker_self.init_block(w, st.body, set, true)
+  checker_self.init_block(w, st.then_body, set, true)
+  checker_self.init_block(w, st.else_body, set, true)
+}

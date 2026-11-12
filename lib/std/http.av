@@ -50,7 +50,7 @@ lib httpc {
   fun avant_http_resp_body(raw: Bytes): Bytes
 }
 
-pub class HttpError {
+pub class HttpError: Error {
   pub message: String
 
   fn initialize(message: String) {
@@ -308,24 +308,15 @@ struct WsCloseRoute {
 // Server value registers routes on, closes, and serves the same
 // server. Not public: programs meet Server, not this.
 class HttpState {
-  routes: Array(Route)
-  ws_routes: Array(WsRoute)
-  ws_open_routes: Array(WsOpenRoute)
-  ws_close_routes: Array(WsCloseRoute)
-  ws_conn_ids: Array(Int)
-  ws_conn_paths: Array(String)
+  routes: Array(Route) = []
+  ws_routes: Array(WsRoute) = []
+  ws_open_routes: Array(WsOpenRoute) = []
+  ws_close_routes: Array(WsCloseRoute) = []
+  ws_conn_ids: Array(Int) = []
+  ws_conn_paths: Array(String) = []
   closed: Bool = false
   serving: Bool = false
   bound_port: Int = 0
-
-  fn initialize {
-    self.routes = []
-    self.ws_routes = []
-    self.ws_open_routes = []
-    self.ws_close_routes = []
-    self.ws_conn_ids = []
-    self.ws_conn_paths = []
-  }
 
   fn add(method: String, path: String, handler: fn(Request): Response) {
     self.routes.push(Route { method: method, path: path, handler: handler })
@@ -631,7 +622,7 @@ pub struct Server {
       return
     }
     self.state.closed = true
-    dummy = httpc.avant_http_close(self.handle)
+    httpc.avant_http_close(self.handle)
   }
 }
 
@@ -941,37 +932,22 @@ pub class Http {
     cur_body = body
     hops = 0
     while true {
-      got = http_fetch_once(cur_method, cur_url, cur_body, headers, timeout_ms)
-      if resp = got {
-        if !follow {
-          return resp
-        }
-        redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
-        if !redirect {
-          return resp
-        }
-        loc = resp.headers.get("Location")
-        if location = loc {
-          hops += 1
-          if hops > 5 {
-            return HttpError.new("too many redirects")
-          }
-          next = resolve_url(cur_url, location)
-          if next_url = next {
-            if resp.status == 303 || ((resp.status == 301 || resp.status == 302) && cur_method == "POST") {
-              cur_method = "GET"
-              cur_body = "".bytes
-            }
-            cur_url = next_url
-          } else {
-            return HttpError.new("invalid redirect location: ${location}")
-          }
-        } else {
-          return resp
-        }
-      } else {
-        return got
+      resp = http_fetch_once(cur_method, cur_url, cur_body, headers, timeout_ms)?
+      redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
+      if !follow || !redirect {
+        return resp
       }
+      location = resp.headers.get("Location") ?? return resp
+      hops += 1
+      if hops > 5 {
+        return HttpError.new("too many redirects")
+      }
+      next_url = resolve_url(cur_url, location) ?? return HttpError.new("invalid redirect location: ${location}")
+      if resp.status == 303 || ((resp.status == 301 || resp.status == 302) && cur_method == "POST") {
+        cur_method = "GET"
+        cur_body = "".bytes
+      }
+      cur_url = next_url
     }
     HttpError.new("too many redirects")
   }
@@ -1013,7 +989,7 @@ pub struct WsConnection {
   // Safe to call more than once: the runtime keeps a registry of
   // live client handles and a second close is a no-op.
   pub fn close {
-    dummy = httpc.avant_ws_client_close(self.handle)
+    httpc.avant_ws_client_close(self.handle)
   }
 }
 

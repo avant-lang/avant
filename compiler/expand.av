@@ -30,8 +30,8 @@ pub class Expander {
   // The module of the type find_all_fields found last.
   fields_mod: String = ""
   failed: Bool = false
-  err: CompileError? = nil
-  errors: DiagBag
+  pub err: CompileError? = nil
+  pub errors: DiagBag
 
   fn initialize(source: Source, program: Program) {
     self.source = source
@@ -290,6 +290,11 @@ pub class Expander {
         out.cond = self.fill_expr(c)
       }
       i = 0
+      while i < s.pre.size {
+        out.pre.push(self.fill_stmt(s.pre[i]))
+        i += 1
+      }
+      i = 0
       while i < s.then_body.size {
         out.then_body.push(self.fill_stmt(s.then_body[i]))
         i += 1
@@ -476,6 +481,9 @@ pub class Expander {
       }
       if sz = e.size_expr {
         out.size_expr = self.fill_expr(sz)
+      }
+      for fv in e.elems {
+        out.elems.push(self.fill_expr(fv))
       }
       return out
     }
@@ -732,7 +740,7 @@ pub class Expander {
       k = s.kind
       if k == st_assign() {
         if t = s.target {
-          if t.kind == ex_name() {
+          if t.kind == ex_name() && t.ident != "_" {
             into.push(t.ident)
           }
         }
@@ -740,6 +748,7 @@ pub class Expander {
           self.collect_introduced_expr(v, into)
         }
       } else if k == st_if() {
+        self.collect_introduced(s.pre, into)
         if s.bind.size > 0 {
           into.push(s.bind)
         }
@@ -850,6 +859,9 @@ pub class Expander {
       if sz = e.size_expr {
         self.collect_introduced_expr(sz, into)
       }
+      for fv in e.elems {
+        self.collect_introduced_expr(fv, into)
+      }
       return
     }
     if k == ex_try() {
@@ -923,6 +935,7 @@ pub class Expander {
       if c = s.cond {
         out.cond = self.rename_expr(c, map)
       }
+      out.pre = self.rename_stmt_list(s.pre, map)
       out.then_body = self.rename_stmt_list(s.then_body, map)
       out.else_body = self.rename_stmt_list(s.else_body, map)
       return out
@@ -1073,6 +1086,9 @@ pub class Expander {
       if sz = e.size_expr {
         out.size_expr = self.rename_expr(sz, map)
       }
+      for i in 0..e.elems.size {
+        out.elems[i] = self.rename_expr(e.elems[i], map)
+      }
       return out
     }
     if k == ex_try() {
@@ -1139,6 +1155,7 @@ pub class Expander {
         n = Stmt.new(st_if(), s.loc)
         n.bind = s.bind
         n.cond = s.cond
+        n.pre = self.expand_stmt_list(s.pre)
         n.then_body = self.expand_stmt_list(s.then_body)
         n.else_body = self.expand_stmt_list(s.else_body)
         out.push(n)

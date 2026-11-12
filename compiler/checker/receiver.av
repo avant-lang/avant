@@ -1,0 +1,169 @@
+// The receiver inside a method (Stage 29 W3b, B6, D292). A field is
+// written `self.name = ...`: a bare `name = ...` where `name` is a field
+// of the receiver (no local of that name) is refused, naming both ways
+// out. A bare name resolves, in order: a local or parameter; a field of
+// the receiver (read); a method of the receiver (call); a function of the
+// module or the prelude. A bare call that fits both a method of the
+// receiver and a function is refused, naming `self.name(...)` and the
+// function's qualified form: nothing wins silently (D308's rule).
+
+import location
+import source
+import token
+import type
+import ast
+import resolve
+import typed_ir
+import checker.names
+import checker
+
+// The prelude's free functions (checker.av check_call and the builtin
+// helpers it calls), which a method of the same name would shadow.
+pub fn prelude_call_name(name: String): Bool {
+  names = ["argv", "buf_new", "bytes_to_str", "checksum_f64", "checksum_str", "chr", "crc32_bytes", "env_get", "exp", "file_exists", "fmt_float", "hash_last_key", "join", "now_ms", "now_us", "puts", "puts_u", "repeat_byte", "sha256", "sha256_word0", "spawn", "sqrt", "str_slice", "str_to_f_slice", "wide_hi", "wide_op"]
+  for n in names {
+    if n == name {
+      return true
+    }
+  }
+  false
+}
+
+// The receiver's type when the body is an inherent method's (self is
+// the receiver and its fields are in scope), else nil.
+pub fn (checker_self: Checker) bare_receiver: Ty? {
+  if checker_self.self_name != "self" {
+    return nil
+  }
+  checker_self.self_ty
+}
+
+// Whether the receiver type st has an instance method name taking argc
+// arguments.
+pub fn (checker_self: Checker) receiver_method_fits(st: Ty, name: String, argc: Int): Bool {
+  owner = st.name
+  named = checker_self.method_indices_named(name)
+  for x in 0..named.size {
+    sig = checker_self.methods[named[x]]
+    if !sig.node.type_method && sig.owner == owner && sig.name == name && arity_ok(sig.node, argc) {
+      if st.mod_name.size == 0 || sig.node.owner_mod.size == 0 || sig.node.owner_mod == st.mod_name {
+        return true
+      }
+    }
+  }
+  false
+}
+
+// Whether a function the current module sees is named name and takes
+// argc arguments (a prelude function counts by name).
+pub fn (checker_self: Checker) free_fn_fits(name: String, argc: Int): Bool {
+  if prelude_call_name(name) {
+    return true
+  }
+  named = checker_self.fn_indices_named(name)
+  for x in 0..named.size {
+    sig = checker_self.functions[named[x]]
+    if sig.name == name && checker_self.fn_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, argc) {
+      return true
+    }
+  }
+  false
+}
+
+// A bare call `name(args)` (or a bare `name` in field form, argc 0) in a
+// method: the receiver's method when one fits, made `self.name(args)`;
+// an error when a function fits too; nil when no method fits (the call
+// is a function's).
+pub fn (checker_self: Checker) bare_method_call(expr: Expr, name: String, argc: Int): Expr? {
+  if st = checker_self.bare_receiver {
+    if !checker_self.receiver_method_fits(st, name, argc) {
+      return nil
+    }
+    if checker_self.free_fn_fits(name, argc) {
+      checker_self.fail(expr.loc, "${name} is both a method of ${st.show} and a function; write self.${name}(...) for the method, or qualify the function (module.${name}(...))")
+      return nil
+    }
+    r = Expr.new(ex_name(), expr.loc)
+    r.ident = "self"
+    return r
+  }
+  nil
+}
+
+// A bare `name = ...` (or `name += ...`) where name is a field of the
+// receiver and no local.
+pub fn (checker_self: Checker) refuse_bare_field_write(target: Expr, loc: Location) {
+  owner = "the receiver"
+  if st = checker_self.self_ty {
+    owner = st.show
+  }
+  checker_self.fail(target.loc, "${target.ident} is a field of ${owner}; write self.${target.ident} = ... to change the field, or choose another name for a local")
+}
+
+// self inside a lambda of an inherent method (Stage 29 W3b, B7, S13):
+// every enclosing lambda captures it, by value, since self is never
+// reassigned (a class receiver's reference, a struct receiver's copy);
+// the receiver's type, or nil after refusing (an external method's
+// receiver may be reassigned, so it is not captured this way).
+pub fn (checker_self: Checker) capture_receiver(loc: Location): Ty? {
+  if checker_self.self_name != "self" {
+    checker_self.fail(loc, "a lambda cannot capture the receiver ${checker_self.self_name} of an external method; copy it into a local first")
+    return nil
+  }
+  st = checker_self.t_int()
+  if got = checker_self.lookup("self") {
+    st = got
+  } else if s2 = checker_self.self_ty {
+    st = s2
+  } else {
+    checker_self.fail(loc, "self is only valid in a method")
+    return nil
+  }
+  for lam in checker_self.lam_exprs {
+    seen = false
+    for n in lam.cap_names {
+      if n == "self" {
+        seen = true
+      }
+    }
+    if !seen {
+      lam.cap_names.push("self")
+      lam.cap_tys.push(st)
+    }
+  }
+  st
+}
+
+// A write through self (self.f = ..., self.s.f += ...) inside a lambda of
+// a struct method: the lambda holds a copy of the receiver, so the write
+// would change only the copy; refused.
+pub fn (checker_self: Checker) refuse_copy_write(target: Expr, loc: Location) {
+  if checker_self.lam_exprs.size == 0 {
+    return
+  }
+  if st = checker_self.self_ty {
+    if !st.is_struct {
+      return
+    }
+  } else {
+    return
+  }
+  cur = target
+  done = false
+  while !done {
+    if cur.kind == ex_field() || cur.kind == ex_index() {
+      if o = cur.object {
+        cur = o
+      } else if l = cur.left {
+        cur = l
+      } else {
+        done = true
+      }
+    } else {
+      done = true
+    }
+  }
+  if cur.kind == ex_name() && cur.ident == "self" {
+    checker_self.fail(loc, "a lambda holds a copy of the struct receiver, so this write would change only the copy; write the field outside the lambda, or make the type a class")
+  }
+}

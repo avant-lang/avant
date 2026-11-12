@@ -1,12 +1,12 @@
 import harness
 import std.regex
 
-fn regex_child(c: Checks, compiler: String, stamp: Int, tag: String, body: String, compile_has: String, compile_lacks: String, out: String) {
+fn regex_child(c: Checks, compiler: String, stamp: Int64, tag: String, body: String, compile_has: String, compile_lacks: String, out: String) {
   src = "${scratch()}/regex-${stamp}-${tag}.av"
   bin = "${scratch()}/regex-${stamp}-${tag}.bin"
   clog = "${scratch()}/regex-${stamp}-${tag}.log"
   rlog = "${scratch()}/regex-${stamp}-${tag}.out"
-  file_write(src, body)
+  _ = file_write(src, body)
   code = compile_av(compiler, src, bin, clog)
   c.eq_int(code, 0, "compile ${tag}")
   c.expect(file_exists(bin), "${tag} bin")
@@ -169,13 +169,8 @@ fn test_std_regex(c: Checks) {
   iter_re = must_compile(c, "a+", false, "iterator")
   total = 0
   iter = iter_re.matches("aa ba aaa")
-  done = false
-  while !done {
-    if m = iter.next {
-      total = total + (m.end - m.start)
-    } else {
-      done = true
-    }
+  while m = iter.next {
+    total = total + (m.end - m.start)
   }
   c.eq_int(total, 6, "iterator total length")
   if extra = iter.next {
@@ -207,12 +202,8 @@ fn test_std_regex(c: Checks) {
   } else {
     c.expect(false, "shared pattern survives sibling close")
   }
-  if gone = shared_a.find("azzz") {
-    c.expect(false, "closed regex finds nothing")
-  } else {
-    c.expect(true, "closed regex finds nothing")
-  }
-  c.eq_int(shared_a.count("zzz"), 0, "closed regex counts zero")
+  // A use after close traps (Stage 29 W4b2, test_system.av lib-regex-*).
+  c.expect(shared_a.is_closed, "closed regex says so")
   shared_b.close
 
   scoped_len = 0

@@ -16,6 +16,10 @@
 
 /* 0 ok, 1 invalid JSON / missing or wrong kind, 2 allocation failure. */
 static __thread int32_t g_json_status;
+/* Why the last parse on this thread failed (Stage 29 W4b2, D295 R11):
+ * yyjson's message (a static string) and the byte offset it names. */
+static __thread const char *g_json_err_msg;
+static __thread int64_t g_json_err_pos;
 static __thread char *g_json_pool;
 static __thread int g_json_pool_rooted;
 
@@ -23,7 +27,7 @@ static void set_status(int32_t code) {
   g_json_status = code;
 }
 
-int32_t avant_json_take_status(void) {
+avant_int avant_json_take_status(void) {
   int32_t code = g_json_status;
   g_json_status = 0;
   return code;
@@ -145,6 +149,8 @@ void *avant_json_parse(const char *s) {
       return doc;
     }
     if (err.code != YYJSON_READ_ERROR_MEMORY_ALLOCATION) {
+      g_json_err_msg = err.msg;
+      g_json_err_pos = (int64_t)err.pos;
       set_status(1);
       return NULL;
     }
@@ -163,7 +169,7 @@ void *avant_json_root(void *docp) {
 
 /* Kinds: 0 no value, 1 null, 2 bool, 3 int, 4 float, 5 string, 6 array,
  * 7 object. */
-int32_t avant_json_kind(void *nodep) {
+avant_int avant_json_kind(void *nodep) {
   yyjson_val *v = (yyjson_val *)nodep;
   if (!v) {
     return 0;
@@ -200,7 +206,7 @@ void *avant_json_get(void *nodep, const char *key) {
   return yyjson_obj_get(v, key);
 }
 
-void *avant_json_at(void *nodep, int32_t i) {
+void *avant_json_at(void *nodep, avant_int i) {
   yyjson_val *v = (yyjson_val *)nodep;
   if (!v || i < 0 || !yyjson_is_arr(v)) {
     return NULL;
@@ -257,6 +263,7 @@ void *avant_json_f64s(void *nodep, const char *key) {
   AVANT_GC_ROOT(1, &key);
   AVANT_GC_ROOT(2, &out);
   out = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
+  avant_size_check((uint64_t)n, AVANT_SIZE_ARRAY);
   if (n > 0) {
     buf = (double *)avant_alloc((uint64_t)n * sizeof(double), AVANT_TYPE_BYTES);
   }
@@ -277,7 +284,7 @@ void *avant_json_f64s(void *nodep, const char *key) {
   return out;
 }
 
-int32_t avant_json_len(void *nodep) {
+avant_int avant_json_len(void *nodep) {
   yyjson_val *v = (yyjson_val *)nodep;
   if (!v) {
     return 0;
@@ -297,7 +304,7 @@ static char *copy_str(const char *p, size_t n) {
   char *out;
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &p);
-  out = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  out = avant_str_alloc((uint64_t)n);
   if (p && n > 0) {
     memcpy(out, p, n);
   }
@@ -306,19 +313,31 @@ static char *copy_str(const char *p, size_t n) {
   return out;
 }
 
-static int32_t node_int(yyjson_val *v) {
-  if (!v || !yyjson_is_num(v)) {
-    set_status(1);
-    return 0;
+/* A JSON integer (no fraction, no exponent: yyjson's int and uint kinds)
+ * within [lo, hi], else status 1 (Stage 29 W4b1, D295 R10: Json.int is
+ * nil for a real, for a non-number and outside the type's range). */
+static int64_t node_int_in(yyjson_val *v, int64_t lo, int64_t hi) {
+  if (v && yyjson_is_uint(v)) {
+    uint64_t u = yyjson_get_uint(v);
+    if (u <= (uint64_t)hi) {
+      set_status(0);
+      return (int64_t)u;
+    }
+  } else if (v && yyjson_is_sint(v)) {
+    int64_t s = yyjson_get_sint(v);
+    if (s >= lo && s <= hi) {
+      set_status(0);
+      return s;
+    }
   }
-  set_status(0);
-  if (yyjson_is_int(v)) {
-    return (int32_t)yyjson_get_sint(v);
-  }
-  if (yyjson_is_uint(v)) {
-    return (int32_t)yyjson_get_uint(v);
-  }
-  return (int32_t)yyjson_get_real(v);
+  set_status(1);
+  return 0;
+}
+
+/* Json.int: an integer within Int (64-bit since Stage 29 W-INT1; Json.int64
+ * went with it, one spelling). */
+static avant_int node_int(yyjson_val *v) {
+  return (avant_int)node_int_in(v, AVANT_INT_MIN, AVANT_INT_MAX);
 }
 
 static double node_f64(yyjson_val *v) {
@@ -348,11 +367,11 @@ static char *node_str(yyjson_val *v) {
   return copy_str(yyjson_get_str(v), yyjson_get_len(v));
 }
 
-int32_t avant_json_as_int(void *nodep) {
+avant_int avant_json_as_int(void *nodep) {
   return node_int((yyjson_val *)nodep);
 }
 
-int32_t avant_json_obj_int(void *nodep, const char *key) {
+avant_int avant_json_obj_int(void *nodep, const char *key) {
   return node_int((yyjson_val *)avant_json_get(nodep, key));
 }
 
@@ -364,11 +383,11 @@ double avant_json_obj_f64(void *nodep, const char *key) {
   return node_f64((yyjson_val *)avant_json_get(nodep, key));
 }
 
-int32_t avant_json_as_bool(void *nodep) {
+avant_int avant_json_as_bool(void *nodep) {
   return node_bool((yyjson_val *)nodep);
 }
 
-int32_t avant_json_obj_bool(void *nodep, const char *key) {
+avant_int avant_json_obj_bool(void *nodep, const char *key) {
   return node_bool((yyjson_val *)avant_json_get(nodep, key));
 }
 
@@ -380,7 +399,7 @@ char *avant_json_obj_str(void *nodep, const char *key) {
   return node_str((yyjson_val *)avant_json_get(nodep, key));
 }
 
-char *avant_json_key_at(void *nodep, int32_t i) {
+char *avant_json_key_at(void *nodep, avant_int i) {
   yyjson_val *v = (yyjson_val *)nodep;
   yyjson_val *key;
   yyjson_obj_iter iter;
@@ -422,4 +441,24 @@ char *avant_json_text(void *nodep) {
     free(raw);
     return out;
   }
+}
+
+/* yyjson's message for the last failed parse ("unexpected character"),
+ * and the byte offset it names. */
+/* gc-lint: holds nothing (C memory only). */
+char *avant_json_error_text(void) {
+  const char *m = g_json_err_msg ? g_json_err_msg : "invalid JSON document";
+  return copy_str(m, strlen(m));
+}
+
+int64_t avant_json_error_offset(void) {
+  return g_json_err_pos;
+}
+
+/* A JsonBuilder used against its contract (Stage 29 W4b2, D295 R11):
+ * what says how. Printed as a trap (stdout first, status 1). */
+void avant_json_misuse(const char *what) {
+  fflush(stdout);
+  fprintf(stderr, "avant runtime: %s\n", what);
+  exit(1);
 }

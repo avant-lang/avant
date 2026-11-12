@@ -100,6 +100,17 @@ pub fn (lw: MirLower) env_layout(e: Expr, sym: String): Int {
   fields: Array(Int) = []
   names: Array(String) = []
   for i in 0..e.cap_names.size {
+    if e.cap_names[i] == "self" {
+      // The receiver, by value (W3b, B7): a class's reference, a
+      // struct's copy.
+      vt = lw.field_mty(e.cap_tys[i], e.loc)
+      if lw.failed {
+        return -1
+      }
+      fields.push(vt)
+      names.push("self")
+      continue
+    }
     bl = lw.box_layout(e.cap_tys[i], e.loc)
     if lw.failed {
       return -1
@@ -138,6 +149,7 @@ pub fn (lw: MirLower) prewalk_stmts(body: Array(Stmt), encl: String) {
     st = body[i]
     k = st.kind
     if k == st_if() {
+      lw.prewalk_stmts(st.pre, encl)
       lw.prewalk_opt(st.cond, encl)
       lw.prewalk_stmts(st.then_body, encl)
       lw.prewalk_stmts(st.else_body, encl)
@@ -212,6 +224,7 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
     lw.prewalk_list(e.elems, encl)
   } else if k == ex_array_new() {
     lw.prewalk_opt(e.size_expr, encl)
+    lw.prewalk_list(e.elems, encl)
   } else if k == ex_interp() {
     for pt in e.parts {
       lw.prewalk_opt(pt.expr, encl)
@@ -253,6 +266,9 @@ pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
   e.resolved = sym
   lw.lw_cov.lam_index[sym] = lw.lw_cov.lam_index.size
   for i in 0..e.cap_names.size {
+    if e.cap_names[i] == "self" {
+      continue
+    }
     key = "${encl}|${e.cap_names[i]}"
     if !lw.lw_cl.cap_at.has_key(key) {
       lw.lw_cl.cap_at[key] = lw.lw_cl.cap_tys.size
@@ -547,6 +563,21 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
   i = 0
   while i < e.cap_names.size && !lw.failed {
     name = e.cap_names[i]
+    if name == "self" {
+      // The receiver's value (W3b, B7): the method's self, or the
+      // enclosing thunk's captured one.
+      se = Expr.new(ex_name(), e.loc)
+      se.ident = "self"
+      se.ty = e.cap_tys[i]
+      sv = lw.lower_expr(se)
+      if lw.failed {
+        return zero
+      }
+      lw.at(e.loc)
+      lw.store_place(b.field(b.deref(b.pl(env)), i), b.types.layouts[el].fields[i], sv)
+      i += 1
+      continue
+    }
     p = lw.capture_box(name, e.cap_tys[i], e.loc)
     lw.at(e.loc)
     b.barrier(env)
@@ -674,8 +705,15 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
       }
     }
     caps: Array(String) = []
+    self_at = -1
     for cap_name in e.cap_names {
-      caps.push(cap_name)
+      if cap_name == "self" {
+        // Not a box: read once into the thunk's own self (W3b, B7).
+        self_at = caps.size
+        caps.push("#self")
+      } else {
+        caps.push(cap_name)
+      }
     }
     lw.lw_cl.caps = caps
     if caps.size > 0 {
@@ -687,6 +725,12 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
       env = b.local(b.types.ref_to(el), "env")
       b.assign(b.pl(env), b.rv_cast(b.copy_local(1), b.types.ref_to(el)))
       lw.lw_cl.env = env
+      if self_at >= 0 {
+        st = b.types.layouts[el].fields[self_at]
+        sl = b.local(st, "self")
+        b.assign(b.pl(sl), b.rv_use(b.copy(b.field(b.deref(b.pl(env)), self_at))))
+        lw.lw_vars[lw.var_key("self", st)] = sl
+      }
     }
     if bl2 = e.block {
       lw.begin_boxes(e.box_names, pnames, t.members, 1)

@@ -8,6 +8,7 @@ import ast
 import resolve
 import parser
 import loader
+import prelude_src
 import expand
 import checker
 import typed_ir
@@ -30,11 +31,11 @@ import mir.lower_task
 import mir.lower_cov
 
 pub class IrBox {
-  ok: Bool = false
-  re2c_obj: String = ""
+  pub ok: Bool = false
+  pub re2c_obj: String = ""
   std_objects: Array(String)
   std_flags: Array(String)
-  mir: MModule? = nil
+  pub mir: MModule? = nil
 
   fn initialize(ok: Bool) {
     self.ok = ok
@@ -158,12 +159,12 @@ pub fn diag_bag(bag: DiagBag) {
 }
 
 pub class LinkJob {
-  objects: Array(String)
-  flags: Array(String)
-  err: String = ""
-  codegen: String = ""
+  pub objects: Array(String)
+  pub flags: Array(String)
+  pub err: String = ""
+  pub codegen: String = ""
   // --cpu=baseline|v2|v3|v4|native (Stage 28 W18S, O140), "" when absent.
-  cpu: String = ""
+  pub cpu: String = ""
 
   fn initialize {
     self.objects = []
@@ -175,8 +176,8 @@ pub class LinkJob {
 }
 
 pub class CliSplit {
-  paths: Array(String)
-  rest: Array(String)
+  pub paths: Array(String)
+  pub rest: Array(String)
 
   fn initialize {
     self.paths = []
@@ -185,11 +186,11 @@ pub class CliSplit {
 }
 
 pub class RunSplit {
-  file: String = ""
-  link: Array(String)
-  program: Array(String)
+  pub file: String = ""
+  pub link: Array(String)
+  pub program: Array(String)
   has_dash: Bool = false
-  err: String = ""
+  pub err: String = ""
 
   fn initialize {
     self.file = ""
@@ -347,6 +348,9 @@ pub fn compile_source(src: Source): IrBox {
   program.root_module = name
   info = ModInfo.new(name, src.path)
   program.mods.push(info)
+  if prelude_wanted(tokens) {
+    add_prelude(program)
+  }
   compile_program(src, program)
 }
 
@@ -364,7 +368,6 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
     return IrBox.new(false)
   }
   checker = Checker.new(src, program)
-  checker.cwd = cwd_physical()
   checker.check
   if e = checker.err {
     diag_bag(checker.errors)
@@ -633,7 +636,7 @@ pub fn compile_re2c(src: String): String {
   re_path = "${base}.re"
   c_path = "${base}.c"
   log_path = "${base}.log"
-  w = file_write(re_path, src)
+  w = shim_file_write(re_path, src)
   if w != 0 {
     diag_puts("re2c: cannot write ${re_path}")
     return ""
@@ -655,6 +658,10 @@ pub fn compile_re2c(src: String): String {
   cc: Array(String) = []
   cc.push("-c")
   cc.push("-O2")
+  // Placed as the runtime is (Stage 29 WP, runtime/build.sh): the
+  // matcher is linked after the runtime, so its growth moved this code.
+  cc.push("-falign-functions=64")
+  cc.push("-falign-loops=32")
   cc.push("-std=c11")
   cc.push("-I")
   cc.push("${avant_root()}/runtime")

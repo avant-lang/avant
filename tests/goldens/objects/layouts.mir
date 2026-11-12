@@ -2,52 +2,51 @@ module layouts
 file 0 "layouts.av"
 
 layout %layouts.Empty = class { }  size 0 align 1 id 1
-layout %layouts.Node = class { 0 v: i32, 1 next: %(Nil|layouts.Node), 2 label: ref str }  size 32 align 8 id 2
-layout %layouts.Mixed = class { 0 flag: bool, 1 u: %(Int|String), 2 n: i32, 3 big: i64, 4 on: bool, 5 f: f64, 6 s: ref str, 7 opt: %(Nil|String) }  size 80 align 8 id 3
+layout %layouts.Node = class { 0 v: i64, 1 next: ref %layouts.Node, 2 label: ref str }  size 24 align 8 id 2
+layout %layouts.Mixed = class { 0 flag: bool, 1 u: %(Int|String), 2 n: i64, 3 big: i64, 4 on: bool, 5 f: f64, 6 s: ref str, 7 opt: ref str }  size 80 align 8 id 3
 layout %layouts.Wide = class { 0 w0: i64, 1 w1: i64, 2 w2: i64, 3 w3: i64, 4 w4: i64, 5 w5: i64, 6 w6: i64, 7 w7: i64, 8 w8: i64, 9 w9: i64, 10 w10: i64, 11 w11: i64, 12 w12: i64, 13 w13: i64, 14 w14: i64, 15 w15: i64, 16 w16: i64, 17 w17: i64, 18 w18: i64, 19 w19: i64, 20 w20: i64, 21 w21: i64, 22 w22: i64, 23 w23: i64, 24 w24: i64, 25 w25: i64, 26 w26: i64, 27 w27: i64, 28 w28: i64, 29 w29: i64, 30 w30: i64, 31 w31: i64, 32 w32: i64, 33 w33: i64, 34 w34: i64, 35 w35: i64, 36 w36: i64, 37 w37: i64, 38 w38: i64, 39 w39: i64, 40 w40: i64, 41 w41: i64, 42 w42: i64, 43 w43: i64, 44 w44: i64, 45 w45: i64, 46 w46: i64, 47 w47: i64, 48 w48: i64, 49 w49: i64, 50 w50: i64, 51 w51: i64, 52 w52: i64, 53 w53: i64, 54 w54: i64, 55 w55: i64, 56 w56: i64, 57 w57: i64, 58 w58: i64, 59 w59: i64, 60 w60: i64, 61 w61: i64, 62 w62: i64, 63 w63: i64, 64 w64: i64, 65 w65: i64, 66 w66: i64, 67 w67: i64, 68 w68: i64, 69 w69: i64, 70 name: ref str }  size 568 align 8 id 4
 layout %layouts.Box = class { 0 first: bool, 1 r: %layouts.Ref, 2 last: ref str }  size 40 align 8 id 5
-layout %(Nil|layouts.Node) = union { 0 tag: i32, 1 m0: ref %layouts.Node }  size 16 align 8
-layout %(Int|String) = union { 0 tag: i32, 1 m0: i32, 2 m1: ref str }  size 16 align 8
-layout %(Nil|String) = union { 0 tag: i32, 1 m0: ref str }  size 16 align 8
-layout %layouts.Ref = struct { 0 tag: i32, 1 node: ref %layouts.Node, 2 text: ref str }  size 24 align 8
+layout %(Int|String) = union { 0 tag: i32, 1 m0: i64, 2 m1: ref str }  size 24 align 8
+layout %layouts.Ref = struct { 0 tag: i64, 1 node: ref %layouts.Node, 2 text: ref str }  size 24 align 8
 
 const str.0 = "j"
 const str.1 = "-"
 const str.2 = "mixed-"
 const str.3 = "wide-"
-const str.4 = "last-"
-const str.5 = "inner-"
-const str.6 = "ref-"
+const str.4 = "inner-"
+const str.5 = "ref-"
+const str.6 = "last-"
 const str.7 = "bad string at "
-const str.8 = "%s\0A"
-const str.9 = "bad box at "
-const str.10 = "bad scalar at "
-const str.11 = "%d\0A"
-const str.12 = "node"
+const str.8 = "bad box at "
+const str.9 = "bad scalar at "
+const str.10 = "%lld\0A"
+const str.11 = "node"
+const str.12 = ""
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
 typemap 1 %layouts.Empty stride 0 bits [0x0]
-typemap 2 %layouts.Node stride 0 bits [0xc]
-typemap 3 %layouts.Mixed stride 0 bits [0x284]
+typemap 2 %layouts.Node stride 0 bits [0x6]
+typemap 3 %layouts.Mixed stride 0 bits [0x308]
 typemap 4 %layouts.Wide stride 0 bits [0x0, 0x40]
 typemap 5 %layouts.Box stride 0 bits [0x1c]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_io_init_argv(i32, ptr) -> void collects
-extern avant_str_cat_i32(ref str, i32) -> ref str collects
+extern avant_puts_str(ref str) -> void never
+extern avant_str_cat_i32(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
-extern avant_str_from_int(i32) -> ref str collects
-extern avant_str_size(ref str) -> i32 never
+extern avant_str_from_int(i64) -> ref str collects
+extern avant_str_size(ref str) -> i64 never
 extern printf(ref str, ...) -> i32 never
 
-fn av.layouts/junk(_1: i32) -> i32 frame @layouts.av:116:1 {
-  let _0: i32
-  let _1 (i): i32
-  let _2 (s): i32
-  let _3 (k): i32
+fn av.layouts/junk(_1: i64) -> i64 frame @layouts.av:120:1 {
+  let _0: i64
+  let _1 (i): i64
+  let _2 (s): i64
+  let _3 (k): i64
   let _4: bool
   let _5: ref %layouts.Empty
   let _6 (e): ref %layouts.Empty
@@ -59,333 +58,337 @@ fn av.layouts/junk(_1: i32) -> i32 frame @layouts.av:116:1 {
   let _12: ref str slot
   let _13: ref str
   let _14: ref str
-  let _15: i32
-  let _16: i32
-  let _17: i32
+  let _15: i64
+  let _16: i64
+  let _17: i64
 
 bb0:
-  _8 = zero   @116:1
-  _9 = zero   @116:1
-  _10 = zero   @116:1
-  _11 = zero   @116:1
-  _12 = zero   @116:1
-  gc.enter   @116:1
-  gc.roots _8, _9, _10, _11, _12   @116:1
-  _2 = const i32 0   @119:5
-  _3 = const i32 0   @120:5
-  goto bb1   @121:3
+  _8 = zero   @120:1
+  _9 = zero   @120:1
+  _10 = zero   @120:1
+  _11 = zero   @120:1
+  _12 = zero   @120:1
+  gc.enter   @120:1
+  gc.roots _8, _9, _10, _11, _12   @120:1
+  _2 = const i64 0   @123:5
+  _3 = const i64 0   @124:5
+  goto bb1   @125:3
 
 bb1:
-  _4 = lt copy _3, const i32 200   @121:11
-  branch copy _4, bb2, bb3   @121:3
+  _4 = lt copy _3, const i64 200   @125:11
+  branch copy _4, bb2, bb3   @125:3
 
 bb2:
-  _5 = call av.layouts/Empty.new() collects   @122:14
-  _6 = copy _5   @122:7
-  _7 = call av.layouts/Node.new() collects   @123:13
-  _8 = copy _7   @123:7
-  (*_8).0 = copy _3   @124:9
-  _9 = call avant_str_from_int(copy _1) collects   @125:19
-  _10 = call avant_str_from_int(copy _3) collects   @125:24
-  _11 = call avant_str_concat(const str.0, copy _9) collects   @125:15
-  _12 = call avant_str_concat(copy _11, const str.1) collects   @125:15
-  _13 = call avant_str_concat(copy _12, copy _10) collects   @125:15
-  barrier copy _8   @125:13
-  (*_8).2 = copy _13   @125:13
-  _14 = copy (*_8).2   @126:15
-  _15 = call avant_str_size(copy _14) nocollect   @126:21
-  _16 = add copy _2, copy _15   @126:11
-  _2 = copy _16   @126:7
-  _17 = add copy _3, const i32 1   @127:11
-  _3 = copy _17   @127:7
-  goto bb1   @121:3
+  _5 = call av.layouts/Empty.new() collects   @126:14
+  _6 = copy _5   @126:7
+  _7 = call av.layouts/Node.new() collects   @127:13
+  _8 = copy _7   @127:7
+  (*_8).0 = copy _3   @128:9
+  _9 = call avant_str_from_int(copy _1) collects   @129:19
+  _10 = call avant_str_from_int(copy _3) collects   @129:24
+  _11 = call avant_str_concat(const str.0, copy _9) collects   @129:15
+  _12 = call avant_str_concat(copy _11, const str.1) collects   @129:15
+  _13 = call avant_str_concat(copy _12, copy _10) collects   @129:15
+  barrier copy _8   @129:13
+  (*_8).2 = copy _13   @129:13
+  _14 = copy (*_8).2   @130:15
+  _15 = call avant_str_size(copy _14) nocollect   @130:21
+  _16 = add copy _2, copy _15   @130:11
+  _2 = copy _16   @130:7
+  _17 = add copy _3, const i64 1   @131:11
+  _3 = copy _17   @131:7
+  goto bb1   @125:3
 
 bb3:
-  _0 = copy _2   @129:3
-  gc.leave   @129:3
-  return   @129:3
+  _0 = copy _2   @133:3
+  gc.leave   @133:3
+  return   @133:3
 }
 
-fn main(_1: i32, _2: ptr) -> i32 frame extern @layouts.av:132:1 {
+fn main(_1: i32, _2: ptr) -> i32 frame extern @layouts.av:136:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
-  let _3 (total): i32
-  let _4 (i): i32
+  let _3 (total): i64
+  let _4 (i): i64
   let _5: bool
   let _6: ref %layouts.Mixed
   let _7 (m): ref %layouts.Mixed slot
-  let _8: i32
+  let _8: i64
   let _9: bool
   let _10: i64
-  let _11: i64
-  let _12: ref str
-  let _13: %(Nil|String)
-  let _14: ref %layouts.Wide
-  let _15 (w): ref %layouts.Wide slot
-  let _16: ref str
-  let _17: ref %layouts.Box
-  let _18 (b): ref %layouts.Box slot
-  let _19: ref str
-  let _20: ref %layouts.Node
-  let _21 (nd): ref %layouts.Node slot
+  let _11: ref str
+  let _12: ref %layouts.Wide
+  let _13 (w): ref %layouts.Wide slot
+  let _14: ref str
+  let _15: ref %layouts.Node
+  let _16 (nd): ref %layouts.Node slot
+  let _17: ref str
+  let _18: ref str
+  let _19: %layouts.Ref
+  let _20: ref %layouts.Box
+  let _21 (b): ref %layouts.Box slot
   let _22: ref str
-  let _23: ref str
-  let _24: %layouts.Ref
-  let _25: i32
-  let _26: i32
+  let _23: i64
+  let _24: i64
+  let _25: ref str
+  let _26: i64
   let _27: ref str
-  let _28: i32
-  let _29: ref str
-  let _30: i32
-  let _31: i32
-  let _32: bool
-  let _33: bool
+  let _28: i64
+  let _29: i64
+  let _30: bool
+  let _31: bool
+  let _32: ref str
+  let _33: i64
   let _34: ref str
-  let _35: i32
-  let _36: ref str
-  let _37: i32
-  let _38: i32
-  let _39: bool
+  let _35: i64
+  let _36: i64
+  let _37: bool
+  let _38: ref str
+  let _39: ref %layouts.Node
   let _40: ref str
-  let _41: ref %layouts.Node
+  let _41: i64
   let _42: ref str
-  let _43: i32
-  let _44: ref str
-  let _45: i32
-  let _46: i32
-  let _47: bool
-  let _48: bool
+  let _43: i64
+  let _44: i64
+  let _45: bool
+  let _46: bool
+  let _47: ref str
+  let _48: i64
   let _49: ref str
-  let _50: i32
-  let _51: ref str
-  let _52: i32
-  let _53: i32
-  let _54: bool
-  let _55: bool
+  let _50: i64
+  let _51: i64
+  let _52: bool
+  let _53: bool
+  let _54: ref str
+  let _55: i64
   let _56: ref str
-  let _57: i32
-  let _58: ref str
-  let _59: i32
-  let _60: i32
-  let _61: bool
-  let _62: ref str
-  let _63: ref %layouts.Node
-  let _64: i32
-  let _65: bool
+  let _57: i64
+  let _58: i64
+  let _59: bool
+  let _60: ref str
+  let _61: ref %layouts.Node
+  let _62: i64
+  let _63: bool
+  let _64: bool
+  let _65: i64
   let _66: bool
-  let _67: i32
-  let _68: bool
+  let _67: bool
+  let _68: i64
   let _69: bool
-  let _70: i32
-  let _71: bool
+  let _70: bool
+  let _71: i64
   let _72: bool
-  let _73: i64
-  let _74: bool
-  let _75: ref str
-  let _76: ref str
-  let _77: i32
-  let _78: i32
-  let _79: ref str
-  let _80: i32
-  let _81: i32
-  let _82: ref %layouts.Node
-  let _83: ref str
-  let _84: i32
-  let _85: i32
-  let _86: i32
+  let _73: ref str
+  let _74: ref str
+  let _75: i64
+  let _76: i64
+  let _77: ref str
+  let _78: i64
+  let _79: i64
+  let _80: ref %layouts.Node
+  let _81: ref str
+  let _82: i64
+  let _83: i64
+  let _84: i64
 
 bb0:
-  _7 = zero   @132:1
-  _15 = zero   @132:1
-  _18 = zero   @132:1
-  _21 = zero   @132:1
-  gc.enter   @132:1
-  gc.roots _2, _7, _15, _18, _21   @132:1
-  call __avant_type_maps() nocollect   @132:1
-  call avant_io_init_argv(copy _1, copy _2) collects   @132:1
-  _3 = const i32 0   @133:9
-  _4 = const i32 0   @134:5
-  goto bb1   @135:3
+  _7 = zero   @136:1
+  _13 = zero   @136:1
+  _16 = zero   @136:1
+  _21 = zero   @136:1
+  gc.enter   @136:1
+  gc.roots _2, _7, _13, _16, _21   @136:1
+  call __avant_type_maps() nocollect   @136:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @136:1
+  _3 = const i64 0   @137:9
+  _4 = const i64 0   @138:5
+  goto bb1   @139:3
 
 bb1:
-  _5 = lt copy _4, const i32 2000   @135:11
-  branch copy _5, bb2, bb3   @135:3
+  _5 = lt copy _4, const i64 2000   @139:11
+  branch copy _5, bb2, bb3   @139:3
 
 bb2:
-  _6 = call av.layouts/Mixed.new() collects   @136:14
-  _7 = copy _6   @136:7
-  _8 = rem copy _4, const i32 2   @137:16
-  _9 = eq copy _8, const i32 0   @137:20
-  (*_7).0 = copy _9   @137:12
-  (*_7).2 = copy _4   @138:9
-  _10 = cast copy _4 to i64   @139:14
-  _11 = mul.chk copy _10, const i64 1000000000   @139:22
-  (*_7).3 = copy _11   @139:11
-  (*_7).4 = const bool true   @140:10
-  (*_7).5 = const f64 0x3FF8000000000000 /* 1.5 */   @141:9
-  _12 = call avant_str_cat_i32(const str.2, copy _4) collects   @142:11
-  barrier copy _7   @142:9
-  (*_7).6 = copy _12   @142:9
-  _13 = union %(Nil|String) tag 0   @143:13
-  barrier copy _7   @143:11
-  (*_7).7 = copy _13   @143:11
-  _14 = call av.layouts/Wide.new() collects   @144:13
-  _15 = copy _14   @144:7
-  (*_15).69 = const i64 7   @145:11
-  _16 = call avant_str_cat_i32(const str.3, copy _4) collects   @146:14
-  barrier copy _15   @146:12
-  (*_15).70 = copy _16   @146:12
-  _17 = call av.layouts/Box.new() collects   @147:12
-  _18 = copy _17   @147:7
-  _19 = call avant_str_cat_i32(const str.4, copy _4) collects   @148:14
-  barrier copy _18   @148:12
-  (*_18).2 = copy _19   @148:12
-  _20 = call av.layouts/Node.new() collects   @149:14
-  _21 = copy _20   @149:8
-  (*_21).0 = copy _4   @150:10
-  _22 = call avant_str_cat_i32(const str.5, copy _4) collects   @151:16
-  barrier copy _21   @151:14
-  (*_21).2 = copy _22   @151:14
-  _23 = call avant_str_cat_i32(const str.6, copy _4) collects   @152:41
-  _24 = struct %layouts.Ref (copy _4, copy _21, copy _23)   @152:11
-  barrier copy _18   @152:9
-  (*_18).1 = copy _24   @152:9
-  _25 = call av.layouts/junk(copy _4) collects   @153:22
-  _26 = add copy _3, copy _25   @153:19
-  _3 = copy _26   @153:11
-  _27 = copy (*_7).6   @154:9
-  _28 = call avant_str_size(copy _27) nocollect   @154:11
-  _29 = call avant_str_from_int(copy _4) collects   @154:27
-  _30 = call avant_str_size(copy _29) nocollect   @154:30
-  _31 = add.chk const i32 6, copy _30   @154:22
-  _32 = ne copy _28, copy _31   @154:17
-  _33 = copy _32   @154:36
-  branch copy _33, bb5, bb4   @154:36
+  _6 = call av.layouts/Mixed.new() collects   @140:14
+  _7 = copy _6   @140:7
+  _8 = rem copy _4, const i64 2   @141:16
+  _9 = eq copy _8, const i64 0   @141:20
+  (*_7).0 = copy _9   @141:12
+  (*_7).2 = copy _4   @142:9
+  _10 = mul.chk copy _4, const i64 1000000000   @143:22
+  (*_7).3 = copy _10   @143:11
+  (*_7).4 = const bool true   @144:10
+  (*_7).5 = const f64 0x3FF8000000000000 /* 1.5 */   @145:9
+  _11 = call avant_str_cat_i32(const str.2, copy _4) collects   @146:11
+  barrier copy _7   @146:9
+  (*_7).6 = copy _11   @146:9
+  barrier copy _7   @147:11
+  (*_7).7 = const ref str null   @147:11
+  _12 = call av.layouts/Wide.new() collects   @148:13
+  _13 = copy _12   @148:7
+  (*_13).69 = const i64 7   @149:11
+  _14 = call avant_str_cat_i32(const str.3, copy _4) collects   @150:14
+  barrier copy _13   @150:12
+  (*_13).70 = copy _14   @150:12
+  _15 = call av.layouts/Node.new() collects   @151:14
+  _16 = copy _15   @151:8
+  (*_16).0 = copy _4   @152:10
+  _17 = call avant_str_cat_i32(const str.4, copy _4) collects   @153:16
+  barrier copy _16   @153:14
+  (*_16).2 = copy _17   @153:14
+  _18 = call avant_str_cat_i32(const str.5, copy _4) collects   @154:47
+  _19 = struct %layouts.Ref (copy _4, copy _16, copy _18)   @154:17
+  _20 = call av.layouts/Box.new(copy _19) collects   @154:12
+  _21 = copy _20   @154:7
+  _22 = call avant_str_cat_i32(const str.6, copy _4) collects   @155:14
+  barrier copy _21   @155:12
+  (*_21).2 = copy _22   @155:12
+  _23 = call av.layouts/junk(copy _4) collects   @156:22
+  _24 = add copy _3, copy _23   @156:19
+  _3 = copy _24   @156:11
+  _25 = copy (*_7).6   @157:9
+  _26 = call avant_str_size(copy _25) nocollect   @157:11
+  _27 = call avant_str_from_int(copy _4) collects   @157:27
+  _28 = call avant_str_size(copy _27) nocollect   @157:30
+  _29 = add const i64 6, copy _28   @157:22
+  _30 = ne copy _26, copy _29   @157:17
+  _31 = copy _30   @157:36
+  branch copy _31, bb5, bb4   @157:36
 
 bb3:
-  call printf(const str.11, copy _3) nocollect   @166:3
-  _0 = const i32 0   @132:1
-  gc.leave   @132:1
-  return   @132:1
+  call printf(const str.10, copy _3) nocollect   @169:3
+  _0 = const i32 0   @136:1
+  gc.leave   @136:1
+  return   @136:1
 
 bb4:
-  _34 = copy (*_15).70   @154:40
-  _35 = call avant_str_size(copy _34) nocollect   @154:45
-  _36 = call avant_str_from_int(copy _4) collects   @154:61
-  _37 = call avant_str_size(copy _36) nocollect   @154:64
-  _38 = add.chk const i32 5, copy _37   @154:56
-  _39 = ne copy _35, copy _38   @154:51
-  _33 = copy _39   @154:36
-  goto bb5   @154:36
+  _32 = copy (*_13).70   @157:40
+  _33 = call avant_str_size(copy _32) nocollect   @157:45
+  _34 = call avant_str_from_int(copy _4) collects   @157:61
+  _35 = call avant_str_size(copy _34) nocollect   @157:64
+  _36 = add const i64 5, copy _35   @157:56
+  _37 = ne copy _33, copy _36   @157:51
+  _31 = copy _37   @157:36
+  goto bb5   @157:36
 
 bb5:
-  branch copy _33, bb6, bb7   @154:5
+  branch copy _31, bb6, bb7   @157:5
 
 bb6:
-  _40 = call avant_str_cat_i32(const str.7, copy _4) collects   @155:12
-  call printf(const str.8, copy _40) nocollect   @155:7
-  goto bb7   @154:5
+  _38 = call avant_str_cat_i32(const str.7, copy _4) collects   @158:12
+  call avant_puts_str(copy _38) nocollect   @158:7
+  goto bb7   @157:5
 
 bb7:
-  _41 = copy (*_18).1.1   @157:11
-  _42 = copy (*_41).2   @157:16
-  _43 = call avant_str_size(copy _42) nocollect   @157:22
-  _44 = call avant_str_from_int(copy _4) collects   @157:38
-  _45 = call avant_str_size(copy _44) nocollect   @157:41
-  _46 = add.chk const i32 6, copy _45   @157:33
-  _47 = ne copy _43, copy _46   @157:28
-  _48 = copy _47   @157:47
-  branch copy _48, bb9, bb8   @157:47
+  _39 = copy (*_21).1.1   @160:11
+  _40 = copy (*_39).2   @160:16
+  _41 = call avant_str_size(copy _40) nocollect   @160:22
+  _42 = call avant_str_from_int(copy _4) collects   @160:38
+  _43 = call avant_str_size(copy _42) nocollect   @160:41
+  _44 = add const i64 6, copy _43   @160:33
+  _45 = ne copy _41, copy _44   @160:28
+  _46 = copy _45   @160:47
+  branch copy _46, bb9, bb8   @160:47
 
 bb8:
-  _49 = copy (*_18).1.2   @157:53
-  _50 = call avant_str_size(copy _49) nocollect   @157:58
-  _51 = call avant_str_from_int(copy _4) collects   @157:74
-  _52 = call avant_str_size(copy _51) nocollect   @157:77
-  _53 = add.chk const i32 4, copy _52   @157:69
-  _54 = ne copy _50, copy _53   @157:64
-  _48 = copy _54   @157:47
-  goto bb9   @157:47
+  _47 = copy (*_21).1.2   @160:53
+  _48 = call avant_str_size(copy _47) nocollect   @160:58
+  _49 = call avant_str_from_int(copy _4) collects   @160:74
+  _50 = call avant_str_size(copy _49) nocollect   @160:77
+  _51 = add const i64 4, copy _50   @160:69
+  _52 = ne copy _48, copy _51   @160:64
+  _46 = copy _52   @160:47
+  goto bb9   @160:47
 
 bb9:
-  _55 = copy _48   @157:83
-  branch copy _55, bb11, bb10   @157:83
+  _53 = copy _46   @160:83
+  branch copy _53, bb11, bb10   @160:83
 
 bb10:
-  _56 = copy (*_18).2   @157:87
-  _57 = call avant_str_size(copy _56) nocollect   @157:92
-  _58 = call avant_str_from_int(copy _4) collects   @157:108
-  _59 = call avant_str_size(copy _58) nocollect   @157:111
-  _60 = add.chk const i32 5, copy _59   @157:103
-  _61 = ne copy _57, copy _60   @157:98
-  _55 = copy _61   @157:83
-  goto bb11   @157:83
+  _54 = copy (*_21).2   @160:87
+  _55 = call avant_str_size(copy _54) nocollect   @160:92
+  _56 = call avant_str_from_int(copy _4) collects   @160:108
+  _57 = call avant_str_size(copy _56) nocollect   @160:111
+  _58 = add const i64 5, copy _57   @160:103
+  _59 = ne copy _55, copy _58   @160:98
+  _53 = copy _59   @160:83
+  goto bb11   @160:83
 
 bb11:
-  branch copy _55, bb12, bb13   @157:5
+  branch copy _53, bb12, bb13   @160:5
 
 bb12:
-  _62 = call avant_str_cat_i32(const str.9, copy _4) collects   @158:12
-  call printf(const str.8, copy _62) nocollect   @158:7
-  goto bb13   @157:5
+  _60 = call avant_str_cat_i32(const str.8, copy _4) collects   @161:12
+  call avant_puts_str(copy _60) nocollect   @161:7
+  goto bb13   @160:5
 
 bb13:
-  _63 = copy (*_18).1.1   @160:11
-  _64 = copy (*_63).0   @160:16
-  _65 = ne copy _64, copy _4   @160:19
-  _66 = copy _65   @160:24
-  branch copy _66, bb15, bb14   @160:24
+  _61 = copy (*_21).1.1   @163:11
+  _62 = copy (*_61).0   @163:16
+  _63 = ne copy _62, copy _4   @163:19
+  _64 = copy _63   @163:24
+  branch copy _64, bb15, bb14   @163:24
 
 bb14:
-  _67 = copy (*_18).1.0   @160:30
-  _68 = ne copy _67, copy _4   @160:35
-  _66 = copy _68   @160:24
-  goto bb15   @160:24
+  _65 = copy (*_21).1.0   @163:30
+  _66 = ne copy _65, copy _4   @163:35
+  _64 = copy _66   @163:24
+  goto bb15   @163:24
 
 bb15:
-  _69 = copy _66   @160:40
-  branch copy _69, bb17, bb16   @160:40
+  _67 = copy _64   @163:40
+  branch copy _67, bb17, bb16   @163:40
 
 bb16:
-  _70 = copy (*_7).2   @160:44
-  _71 = ne copy _70, copy _4   @160:47
-  _69 = copy _71   @160:40
-  goto bb17   @160:40
+  _68 = copy (*_7).2   @163:44
+  _69 = ne copy _68, copy _4   @163:47
+  _67 = copy _69   @163:40
+  goto bb17   @163:40
 
 bb17:
-  _72 = copy _69   @160:52
-  branch copy _72, bb19, bb18   @160:52
+  _70 = copy _67   @163:52
+  branch copy _70, bb19, bb18   @163:52
 
 bb18:
-  _73 = copy (*_15).69   @160:56
-  _74 = ne copy _73, const i64 7   @160:61
-  _72 = copy _74   @160:52
-  goto bb19   @160:52
+  _71 = copy (*_13).69   @163:56
+  _72 = ne copy _71, const i64 7   @163:61
+  _70 = copy _72   @163:52
+  goto bb19   @163:52
 
 bb19:
-  branch copy _72, bb20, bb21   @160:5
+  branch copy _70, bb20, bb21   @163:5
 
 bb20:
-  _75 = call avant_str_cat_i32(const str.10, copy _4) collects   @161:12
-  call printf(const str.8, copy _75) nocollect   @161:7
-  goto bb21   @160:5
+  _73 = call avant_str_cat_i32(const str.9, copy _4) collects   @164:12
+  call avant_puts_str(copy _73) nocollect   @164:7
+  goto bb21   @163:5
 
 bb21:
-  _76 = copy (*_7).6   @163:23
-  _77 = call avant_str_size(copy _76) nocollect   @163:25
-  _78 = add copy _3, copy _77   @163:19
-  _79 = copy (*_15).70   @163:35
-  _80 = call avant_str_size(copy _79) nocollect   @163:40
-  _81 = add copy _78, copy _80   @163:31
-  _82 = copy (*_18).1.1   @163:52
-  _83 = copy (*_82).2   @163:57
-  _84 = call avant_str_size(copy _83) nocollect   @163:63
-  _85 = add copy _81, copy _84   @163:46
-  _3 = copy _85   @163:11
-  _86 = add copy _4, const i32 1   @164:11
-  _4 = copy _86   @164:7
-  goto bb1   @135:3
+  _74 = copy (*_7).6   @166:23
+  _75 = call avant_str_size(copy _74) nocollect   @166:25
+  _76 = add copy _3, copy _75   @166:19
+  _77 = copy (*_13).70   @166:35
+  _78 = call avant_str_size(copy _77) nocollect   @166:40
+  _79 = add copy _76, copy _78   @166:31
+  _80 = copy (*_21).1.1   @166:52
+  _81 = copy (*_80).2   @166:57
+  _82 = call avant_str_size(copy _81) nocollect   @166:63
+  _83 = add copy _79, copy _82   @166:46
+  _3 = copy _83   @166:11
+  _84 = add copy _4, const i64 1   @167:11
+  _4 = copy _84   @167:7
+  goto bb1   @139:3
+}
+
+fn av.layouts/Box.initialize(_1: ref %layouts.Box, _2: %layouts.Ref) -> void leaf @layouts.av:115:3 {
+  let _1 (self): ref %layouts.Box
+  let _2 (r): %layouts.Ref
+
+bb0:
+  barrier copy _1   @116:12
+  (*_1).1 = copy _2   @116:12
+  return   @115:3
 }
 
 fn av.layouts/Empty.new() -> ref %layouts.Empty frame @layouts.av:10:1 {
@@ -404,17 +407,15 @@ bb0:
 fn av.layouts/Node.new() -> ref %layouts.Node frame @layouts.av:13:1 {
   let _0: ref %layouts.Node
   let _1: ref %layouts.Node
-  let _2: %(Nil|layouts.Node)
 
 bb0:
   gc.enter   @13:1
   gc.roots   @13:1
-  _1 = call avant_alloc(const u64 32, const u32 2) collects   @13:1
-  _2 = union %(Nil|layouts.Node) tag 0   @15:17
+  _1 = call avant_alloc(const u64 24, const u32 2) collects   @13:1
   barrier copy _1   @15:3
-  (*_1).1 = copy _2   @15:3
+  (*_1).1 = const ref %layouts.Node null   @15:3
   barrier copy _1   @16:3
-  (*_1).2 = const str.12   @16:3
+  (*_1).2 = const str.11   @16:3
   _0 = copy _1   @13:1
   gc.leave   @13:1
   return   @13:1
@@ -423,15 +424,19 @@ bb0:
 fn av.layouts/Mixed.new() -> ref %layouts.Mixed frame @layouts.av:19:1 {
   let _0: ref %layouts.Mixed
   let _1: ref %layouts.Mixed
-  let _2: %(Nil|String)
+  let _2: %(Int|String)
 
 bb0:
   gc.enter   @19:1
   gc.roots   @19:1
   _1 = call avant_alloc(const u64 80, const u32 3) collects   @19:1
-  _2 = union %(Nil|String) tag 0   @27:18
+  _2 = union %(Int|String) tag 0 (const i64 0)   @21:21
+  barrier copy _1   @21:3
+  (*_1).1 = copy _2   @21:3
+  barrier copy _1   @26:3
+  (*_1).6 = const str.12   @26:3
   barrier copy _1   @27:3
-  (*_1).7 = copy _2   @27:3
+  (*_1).7 = const ref str null   @27:3
   _0 = copy _1   @19:1
   gc.leave   @19:1
   return   @19:1
@@ -445,20 +450,28 @@ bb0:
   gc.enter   @30:1
   gc.roots   @30:1
   _1 = call avant_alloc(const u64 568, const u32 4) collects   @30:1
+  barrier copy _1   @101:3
+  (*_1).70 = const str.12   @101:3
   _0 = copy _1   @30:1
   gc.leave   @30:1
   return   @30:1
 }
 
-fn av.layouts/Box.new() -> ref %layouts.Box frame @layouts.av:110:1 {
+fn av.layouts/Box.new(_1: %layouts.Ref) -> ref %layouts.Box frame @layouts.av:110:1 {
   let _0: ref %layouts.Box
-  let _1: ref %layouts.Box
+  let _1 (r): %layouts.Ref slot
+  let _2: ref %layouts.Box
 
 bb0:
   gc.enter   @110:1
-  gc.roots   @110:1
-  _1 = call avant_alloc(const u64 40, const u32 5) collects   @110:1
-  _0 = copy _1   @110:1
+  gc.roots _1   @110:1
+  _2 = call avant_alloc(const u64 40, const u32 5) collects   @110:1
+  barrier copy _2   @112:3
+  (*_2).1.2 = const str.12   @112:3
+  barrier copy _2   @113:3
+  (*_2).2 = const str.12   @113:3
+  call av.layouts/Box.initialize(copy _2, copy _1) nocollect   @110:1
+  _0 = copy _2   @110:1
   gc.leave   @110:1
   return   @110:1
 }

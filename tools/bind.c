@@ -127,10 +127,12 @@ static const char *scalar_name(CXType t) {
     return is_unsigned ? "UInt8" : "Int8";
   case 2:
     return is_unsigned ? "UInt16" : "Int16";
+  /* C's int is Int32 and a 64-bit integer is Int (Stage 29 W-INT1, D314:
+   * Int is 64-bit). */
   case 4:
-    return is_unsigned ? "UInt32" : "Int";
+    return is_unsigned ? "UInt32" : "Int32";
   case 8:
-    return is_unsigned ? "UInt64" : "Int64";
+    return is_unsigned ? "UInt64" : "Int";
   default:
     return NULL;
   }
@@ -285,6 +287,12 @@ static void emit_fun(Emit *e, CXCursor cursor) {
   if (uret.kind != CXType_Void) {
     fputs(": ", e->out);
     emit_type(e, ret);
+    /* A char * result may be NULL ("absent", "failed"): String? reads it
+     * as nil, where a String result traps on NULL (Stage 29 W4b2, D295
+     * R15). Parameters stay String. */
+    if (uret.kind == CXType_Pointer && is_char_type(unwrap(clang_getPointeeType(uret)))) {
+      fputs("?", e->out);
+    }
   }
   fputc('\n', e->out);
 }

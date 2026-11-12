@@ -96,15 +96,15 @@ pub fn mst_final: Int { 2 }
 
 // A source location (9): file indexes the module's file table.
 pub struct MLoc {
-  file: Int
-  line: Int
-  col: Int
+  pub file: Int
+  pub line: Int
+  pub col: Int
 }
 
 pub class MProj {
-  kind: Int = 0
-  field: Int = 0
-  index: MOperand? = nil
+  pub kind: Int = 0
+  pub field: Int = 0
+  pub index: MOperand? = nil
 
   fn initialize(kind: Int, field: Int) {
     self.kind = kind
@@ -113,8 +113,8 @@ pub class MProj {
 }
 
 pub class MPlace {
-  local: Int = 0
-  proj: Array(MProj)
+  pub local: Int = 0
+  pub proj: Array(MProj)
 
   fn initialize(local: Int) {
     self.local = local
@@ -143,12 +143,12 @@ pub class MPlace {
 // bit cast, so the lowering supplies both); ok_fn keeps the symbol in text;
 // ok_str the constant's number in sid.
 pub class MOperand {
-  kind: Int = 0
-  ty: Int = 0
-  place: MPlace? = nil
-  ival: Int64 = 0i64
-  text: String = ""
-  sid: Int = 0
+  pub kind: Int = 0
+  pub ty: Int = 0
+  pub place: MPlace? = nil
+  pub ival: Int64 = 0i64
+  pub text: String = ""
+  pub sid: Int = 0
 
   fn initialize(kind: Int, ty: Int) {
     self.kind = kind
@@ -158,13 +158,13 @@ pub class MOperand {
 }
 
 pub class MRvalue {
-  kind: Int = 0
-  op: Int = 0
-  ty: Int = 0
-  a: MOperand? = nil
-  b: MOperand? = nil
-  place: MPlace? = nil
-  ops: Array(MOperand)
+  pub kind: Int = 0
+  pub op: Int = 0
+  pub ty: Int = 0
+  pub a: MOperand? = nil
+  pub b: MOperand? = nil
+  pub place: MPlace? = nil
+  pub ops: Array(MOperand)
 
   fn initialize(kind: Int) {
     self.kind = kind
@@ -173,18 +173,18 @@ pub class MRvalue {
 }
 
 pub class MStmt {
-  kind: Int = 0
-  loc: MLoc
-  place: MPlace? = nil
-  rv: MRvalue? = nil
-  fresh: Bool = false
-  dest: Int = -1
-  callee: String = ""
-  indirect: MOperand? = nil
-  args: Array(MOperand)
-  collects: Bool = true
-  sig: Int = -1
-  locals: Array(Int)
+  pub kind: Int = 0
+  pub loc: MLoc
+  pub place: MPlace? = nil
+  pub rv: MRvalue? = nil
+  pub fresh: Bool = false
+  pub dest: Int = -1
+  pub callee: String = ""
+  pub indirect: MOperand? = nil
+  pub args: Array(MOperand)
+  pub collects: Bool = true
+  pub sig: Int = -1
+  pub locals: Array(Int)
 
   fn initialize(kind: Int, loc: MLoc) {
     self.kind = kind
@@ -196,16 +196,16 @@ pub class MStmt {
 }
 
 pub class MTerm {
-  kind: Int = 0
-  loc: MLoc
-  cond: MOperand? = nil
-  targets: Array(Int)
-  values: Array(Int64)
+  pub kind: Int = 0
+  pub loc: MLoc
+  pub cond: MOperand? = nil
+  pub targets: Array(Int)
+  pub values: Array(Int64)
   // W9b: the back edge of a loop that loop versioning left as the checked
   // copy (the cold path): 1 + the loop header's block number, else 0. The
   // emitter tells LLVM not to unroll or peel that loop (one loop
   // metadata node per header).
-  cold: Int = 0
+  pub cold: Int = 0
 
   fn initialize(kind: Int, loc: MLoc) {
     self.kind = kind
@@ -216,9 +216,9 @@ pub class MTerm {
 }
 
 pub class MBlock {
-  id: Int = 0
-  stmts: Array(MStmt)
-  term: MTerm? = nil
+  pub id: Int = 0
+  pub stmts: Array(MStmt)
+  pub term: MTerm? = nil
 
   fn initialize(id: Int) {
     self.id = id
@@ -245,14 +245,14 @@ pub fn mir_zero_words(k: Int): Array(UInt64) {
 // V12, which use it only while the function's blocks still have those
 // transfers and those edges.
 pub class MLive {
-  n: Int = 0
-  nw: Int = 0
-  nb: Int = 0
-  gen: Array(UInt64)
-  kill: Array(UInt64)
-  outs: Array(UInt64)
-  succ: Array(Int)
-  succ_at: Array(Int)
+  pub n: Int = 0
+  pub nw: Int = 0
+  pub nb: Int = 0
+  pub gen: Array(UInt64)
+  pub kill: Array(UInt64)
+  pub outs: Array(UInt64)
+  pub succ: Array(Int)
+  pub succ_at: Array(Int)
 
   fn initialize(n: Int, nb: Int) {
     self.n = n
@@ -267,9 +267,9 @@ pub class MLive {
 }
 
 pub class MLocal {
-  ty: Int = 0
-  name: String = ""
-  slot: Bool = false
+  pub ty: Int = 0
+  pub name: String = ""
+  pub slot: Bool = false
 
   fn initialize(ty: Int, name: String) {
     self.ty = ty
@@ -278,17 +278,17 @@ pub class MLocal {
 }
 
 pub class MFunc {
-  symbol: String = ""
-  external: Bool = false
-  sig: Int = 0
-  kind: Int = 0
-  nparams: Int = 0
-  locals: Array(MLocal)
-  blocks: Array(MBlock)
-  loc: MLoc
-  source_name: String = ""
+  pub symbol: String = ""
+  pub external: Bool = false
+  pub sig: Int = 0
+  pub kind: Int = 0
+  pub nparams: Int = 0
+  pub locals: Array(MLocal)
+  pub blocks: Array(MBlock)
+  pub loc: MLoc
+  pub source_name: String = ""
   // The frame pass's liveness (MLive above), or nil.
-  live: MLive? = nil
+  pub live: MLive? = nil
 
   fn initialize(symbol: String, sig: Int, loc: MLoc) {
     self.symbol = symbol
@@ -322,12 +322,12 @@ pub class MFunc {
 
 // A declared external (3.5); cls is the call-table class (runtime.av).
 pub class MExtern {
-  name: String = ""
-  sig: Int = 0
-  cls: Int = 0
-  slot_row: Bool = false
-  alloc: Bool = false
-  noreturn: Bool = false
+  pub name: String = ""
+  pub sig: Int = 0
+  pub cls: Int = 0
+  pub slot_row: Bool = false
+  pub alloc: Bool = false
+  pub noreturn: Bool = false
 
   fn initialize(name: String, sig: Int, cls: Int) {
     self.name = name
@@ -339,10 +339,10 @@ pub class MExtern {
 // A type-map registration (3.3). layout -1 is a fixed map (1022, 1021,
 // 1023): its name and its one chunk of bits are given.
 pub class MTypeMap {
-  id: Int = 0
-  layout: Int = -1
-  name: String = ""
-  fixed_bits: UInt64 = 0u64
+  pub id: Int = 0
+  pub layout: Int = -1
+  pub name: String = ""
+  pub fixed_bits: UInt64 = 0u64
 
   fn initialize(id: Int, layout: Int) {
     self.id = id
@@ -352,20 +352,20 @@ pub class MTypeMap {
 }
 
 pub class MModule {
-  name: String = ""
-  shared: Bool = false
-  files: Array(String)
-  types: MTypes
-  strs: Array(String)
-  str_index: Hash(String, Int)
-  maps: Array(MTypeMap)
-  next_dyn: Int = 0
-  externs: Array(MExtern)
-  extern_index: Hash(String, Int)
-  funcs: Array(MFunc)
-  func_index: Hash(String, Int)
-  error: String = ""
-  rt: MRtTable
+  pub name: String = ""
+  pub shared: Bool = false
+  pub files: Array(String)
+  pub types: MTypes
+  pub strs: Array(String)
+  pub str_index: Hash(String, Int)
+  pub maps: Array(MTypeMap)
+  pub next_dyn: Int = 0
+  pub externs: Array(MExtern)
+  pub extern_index: Hash(String, Int)
+  pub funcs: Array(MFunc)
+  pub func_index: Hash(String, Int)
+  pub error: String = ""
+  pub rt: MRtTable
 
   fn initialize(name: String) {
     self.name = name

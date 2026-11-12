@@ -173,8 +173,9 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
   zero
 }
 
-// A literal, negated when neg (`-` on a literal folds: the literal is
-// never MIN, so neg.chk could not trap).
+// A literal, negated when neg (`-` on a literal folds; the checker keeps a
+// negated literal within its type, the minimum included, Stage 29 W-INT1).
+// The value is computed in 64 bits, wrapping, so the minimum folds too.
 pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
   b = lw.lw_b
   ty = lw.ety(e)
@@ -202,22 +203,15 @@ pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
     }
     return b.c_f64(mir_f64_bits(v), text)
   }
-  if ty == mt_i64() {
-    v64 = e.int_bits.to_i64
+  if ty == mt_i64() || ty == mt_i32() || ty == mt_u32() {
+    v64 = bits_u64_to_i64(e.int_bits)
     if neg {
-      v64 = 0i64 - v64
+      v64 = 0i64 &- v64
     }
-    return b.c_i64(v64)
+    return b.c_int(ty, v64)
   }
   if ty == mt_u64() {
-    return b.c_u64(e.int_bits.to_i64)
-  }
-  if ty == mt_i32() {
-    v32 = e.int_bits.to_i
-    if neg {
-      v32 = 0 - v32
-    }
-    return b.c_i32(v32)
+    return b.c_u64(bits_u64_to_i64(e.int_bits))
   }
   lw.refuse(e.loc, "this literal")
   b.c_i32(0)
@@ -441,7 +435,10 @@ pub fn (lw: MirLower) int_const(ty: Int, v: Int64): MOperand {
   if ty == mt_u64() {
     return lw.lw_b.c_u64(v)
   }
-  lw.lw_b.c_i32(v.to_i)
+  if ty == mt_u32() {
+    return lw.lw_b.c_int(mt_u32(), v)
+  }
+  lw.lw_b.c_int(mt_i32(), v)
 }
 
 // + - * / % &+ &- &* & | ^ on one type (W5.3): checked unless Float64 or
@@ -498,21 +495,24 @@ pub fn (lw: MirLower) arith(op: Int, ty: Int, a: MOperand, c: MOperand, proven: 
 }
 
 // << >> (C1, W11b): an amount outside 0..width - 1, negative included,
-// traps with avant_trap_shift(amount, kind) (kind: 0 Int, 1 Int64,
-// 2 UInt64, + 8 when the amount is a UInt64); the test is one unsigned
+// traps with avant_trap_shift(amount, kind) (kind: 16 + 0 Int, 1 Int32,
+// 2 UInt64, 3 UInt32, + 8 when the amount is unsigned; Stage 29 W-INT1;
+// below 16 the seed's codes); the test is one unsigned
 // compare in the amount's own type (a signed amount viewed as the unsigned
 // type of its width, which costs nothing), skipped for a constant amount
 // in range. Then the amount in the left type, and shl or shr by signedness.
 pub fn (lw: MirLower) shift(op: Int, ty: Int, at: Int, a: MOperand, c: MOperand, loc: Location): MOperand {
   b = lw.lw_b
-  width = 32i64
-  kind = 0
-  if ty == mt_i64() {
-    width = 64i64
-    kind = 1
+  width = 64i64
+  kind = 16
+  if ty == mt_i32() {
+    width = 32i64
+    kind = 17
   } else if ty == mt_u64() {
-    width = 64i64
-    kind = 2
+    kind = 18
+  } else if ty == mt_u32() {
+    width = 32i64
+    kind = 19
   }
   if c.kind != mok_int() || c.ival < 0i64 || c.ival >= width {
     ut = at
@@ -534,7 +534,7 @@ pub fn (lw: MirLower) shift(op: Int, ty: Int, at: Int, a: MOperand, c: MOperand,
     if at != mt_i64() {
       amt64 = lw.tmp(mt_i64(), b.rv_cast(amt64, mt_i64()))
     }
-    if at == mt_u64() {
+    if at == mt_u64() || at == mt_u32() {
       kind += 8
     }
     lw.trap_close(ok, "avant_trap_shift", lw.two(amt64, b.c_i32(kind)), loc)

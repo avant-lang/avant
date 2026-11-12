@@ -26,7 +26,7 @@ declare void @avant_barrier(ptr)
 declare void @avant_gc_frame_enter(ptr)
 declare void @avant_gc_frame_leave(ptr)
 declare void @avant_io_init_argv(i32, ptr)
-declare ptr @avant_str_from_int(i32)
+declare ptr @avant_str_from_int(i64)
 declare void @avant_type_map(i32, i64)
 declare i32 @printf(ptr, ...)
 declare i1 @llvm.expect.i1(i1, i1)
@@ -158,15 +158,15 @@ bb0.s3.cont:
   ret ptr %t49
 }
 
-define internal ptr @"av.main/tag"(i32 %a1) #0 {
+define internal ptr @"av.main/tag"(i64 %a1) #0 {
 alloca:
   %_0 = alloca ptr, align 8
-  %_1.n = alloca i32, align 4
+  %_1.n = alloca i64, align 8
   %_2.b = alloca ptr, align 8
   %_3 = alloca i1, align 1
   %_4 = alloca ptr, align 8
   %gcf = alloca { ptr, ptr, i32, i32, i32, [3 x ptr] }, align 8
-  store i32 %a1, ptr %_1.n, align 4
+  store i64 %a1, ptr %_1.n, align 8
   br label %bb0
 
 bb0:
@@ -190,15 +190,15 @@ bb0:
   call void @__avant_frame_push(ptr %gcf)
   %t7 = call ptr @"av.main/Box.new"(ptr @str.0)
   store ptr %t7, ptr %_2.b, align 8
-  %t8 = load i32, ptr %_1.n, align 4
-  %t9 = icmp sgt i32 %t8, 9
+  %t8 = load i64, ptr %_1.n, align 8
+  %t9 = icmp sgt i64 %t8, 9
   store i1 %t9, ptr %_3, align 1
   %t10 = load i1, ptr %_3, align 1
   br i1 %t10, label %bb1, label %bb2
 
 bb1:
-  %t11 = load i32, ptr %_1.n, align 4
-  %t12 = call ptr @avant_str_from_int(i32 %t11)
+  %t11 = load i64, ptr %_1.n, align 8
+  %t12 = call ptr @avant_str_from_int(i64 %t11)
   store ptr %t12, ptr %_4, align 8
   %t13 = load ptr, ptr %_2.b, align 8
   %t14 = icmp eq ptr %t13, null
@@ -241,7 +241,7 @@ alloca:
   %_1.argc = alloca i32, align 4
   %_2.argv = alloca ptr, align 8
   %_3.last = alloca ptr, align 8
-  %_4.i = alloca i32, align 4
+  %_4.i = alloca i64, align 8
   %_5 = alloca i1, align 1
   %_6 = alloca ptr, align 8
   %gcf = alloca { ptr, ptr, i32, i32, i32, [3 x ptr] }, align 8
@@ -271,31 +271,31 @@ bb0:
   %t7 = load i32, ptr %_1.argc, align 4
   %t8 = load ptr, ptr %_2.argv, align 8
   call void @avant_io_init_argv(i32 %t7, ptr %t8)
-  %t9 = call ptr @"av.main/tag"(i32 0)
+  %t9 = call ptr @"av.main/tag"(i64 0)
   store ptr %t9, ptr %_3.last, align 8
-  store i32 0, ptr %_4.i, align 4
+  store i64 0, ptr %_4.i, align 8
   br label %bb1
 
 bb1:
-  %t10 = load i32, ptr %_4.i, align 4
-  %t11 = icmp slt i32 %t10, 200000
+  %t10 = load i64, ptr %_4.i, align 8
+  %t11 = icmp slt i64 %t10, 200000
   store i1 %t11, ptr %_5, align 1
   %t12 = load i1, ptr %_5, align 1
   br i1 %t12, label %bb2, label %bb3
 
 bb2:
-  %t13 = load i32, ptr %_4.i, align 4
-  %t14 = call ptr @"av.main/tag"(i32 %t13)
+  %t13 = load i64, ptr %_4.i, align 8
+  %t14 = call ptr @"av.main/tag"(i64 %t13)
   store ptr %t14, ptr %_3.last, align 8
-  %t15 = load i32, ptr %_4.i, align 4
-  %t16 = add i32 %t15, 1
-  store i32 %t16, ptr %_4.i, align 4
+  %t15 = load i64, ptr %_4.i, align 8
+  %t16 = add i64 %t15, 1
+  store i64 %t16, ptr %_4.i, align 8
   br label %bb1
 
 bb3:
   %t17 = load ptr, ptr %_3.last, align 8
   %t18 = call i32 (ptr, ...) @printf(ptr @str.1, ptr %t17)
-  %t19 = call ptr @"av.main/tag"(i32 3)
+  %t19 = call ptr @"av.main/tag"(i64 3)
   store ptr %t19, ptr %_6, align 8
   %t20 = load ptr, ptr %_6, align 8
   %t21 = call i32 (ptr, ...) @printf(ptr @str.1, ptr %t20)

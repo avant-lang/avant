@@ -35,8 +35,8 @@ import mir.take
 import mir.upsert
 
 pub class MirLowered {
-  module: MModule
-  err: String = ""
+  pub module: MModule
+  pub err: String = ""
 
   fn initialize(m: MModule, err: String) {
     self.module = m
@@ -46,8 +46,8 @@ pub class MirLowered {
 
 // A lambda waiting for its thunk (W7b): the lambda and its symbol.
 pub class MirLam {
-  expr: Expr
-  sym: String = ""
+  pub expr: Expr
+  pub sym: String = ""
 
   fn initialize(expr: Expr, sym: String) {
     self.expr = expr
@@ -64,16 +64,16 @@ pub class MirLam {
 // the lambdas waiting for their thunks; the lambda counter per enclosing
 // symbol (8.2: `#lamN` in source order).
 pub class MirClosures {
-  caps: Array(String)
-  base: String = ""
-  env: Int = -1
-  boxed: Array(String)
-  box_local: Hash(String, Int)
-  box_ready: Hash(String, Int)
-  cap_at: Hash(String, Int)
-  cap_tys: Array(Ty)
-  pending: Array(MirLam)
-  lam_n: Hash(String, Int)
+  pub caps: Array(String)
+  pub base: String = ""
+  pub env: Int = -1
+  pub boxed: Array(String)
+  pub box_local: Hash(String, Int)
+  pub box_ready: Hash(String, Int)
+  pub cap_at: Hash(String, Int)
+  pub cap_tys: Array(Ty)
+  pub pending: Array(MirLam)
+  pub lam_n: Hash(String, Int)
 
   fn initialize {
     self.caps = []
@@ -91,11 +91,11 @@ pub class MirClosures {
 // function or lambda thunk it calls, the `fn` type, whether the target is
 // a lambda thunk (whose first parameter is the environment), and where.
 pub class MirCb {
-  sym: String = ""
-  target: String = ""
-  fty: Ty
-  lambda: Bool = false
-  loc: Location
+  pub sym: String = ""
+  pub target: String = ""
+  pub fty: Ty
+  pub lambda: Bool = false
+  pub loc: Location
 
   fn initialize(sym: String, target: String, fty: Ty, lambda: Bool, loc: Location) {
     self.sym = sym
@@ -110,10 +110,10 @@ pub class MirCb {
 // open pins of the function being lowered (the pinned local, and the
 // loop depth, lw_heads.size, where each was opened).
 pub class MirFfi {
-  cbs: Array(MirCb)
-  cb_seen: Hash(String, Int)
-  pins: Array(Int)
-  pin_depth: Array(Int)
+  pub cbs: Array(MirCb)
+  pub cb_seen: Hash(String, Int)
+  pub pins: Array(Int)
+  pub pin_depth: Array(Int)
 
   fn initialize {
     self.cbs = []
@@ -132,10 +132,10 @@ pub class MirFfi {
 // the call, its symbol (`<enclosing>#spawnN`, `#parN`, 8.2), and its
 // place in the pre-walk (the old back end's pending order).
 pub class MirTask {
-  expr: Expr
-  sym: String = ""
-  par: Bool = false
-  index: Int = 0
+  pub expr: Expr
+  pub sym: String = ""
+  pub par: Bool = false
+  pub index: Int = 0
 
   fn initialize(expr: Expr, sym: String, par: Bool, index: Int) {
     self.expr = expr
@@ -150,14 +150,14 @@ pub class MirTask {
 // `Mutex.with` places (the block parameter's name, the local holding the
 // mutex, the cell's field index), innermost last.
 pub class MirTasks {
-  pending: Array(MirTask)
-  done: Int = 0
-  count: Int = 0
-  n: Hash(String, Int)
-  index: Hash(String, Int)
-  pnames: Array(String)
-  pholders: Array(Int)
-  pfields: Array(Int)
+  pub pending: Array(MirTask)
+  pub done: Int = 0
+  pub count: Int = 0
+  pub n: Hash(String, Int)
+  pub index: Hash(String, Int)
+  pub pnames: Array(String)
+  pub pholders: Array(Int)
+  pub pfields: Array(Int)
 
   fn initialize {
     self.pending = []
@@ -175,15 +175,15 @@ pub class MirTasks {
 // name, and the rank of the function it is in, which orders the slots as
 // the old back end numbers them).
 pub class MirCov {
-  on: Bool = false
-  map_path: String = ""
-  rank: Int = 0
-  kinds: Array(Int)
-  paths: Array(String)
-  lines: Array(Int)
-  names: Array(String)
-  ranks: Array(Int)
-  lam_index: Hash(String, Int)
+  pub on: Bool = false
+  pub map_path: String = ""
+  pub rank: Int = 0
+  pub kinds: Array(Int)
+  pub paths: Array(String)
+  pub lines: Array(Int)
+  pub names: Array(String)
+  pub ranks: Array(Int)
+  pub lam_index: Hash(String, Int)
 
   fn initialize {
     self.kinds = []
@@ -196,33 +196,33 @@ pub class MirCov {
 }
 
 pub class MirLower {
-  lw_m: MModule
-  lw_b: MirBuilder
-  lw_prog: Program
-  lw_syms: SymbolTable
+  pub lw_m: MModule
+  pub lw_b: MirBuilder
+  pub lw_prog: Program
+  pub lw_syms: SymbolTable
   lw_root_dir: String = ""
   lw_avant_root: String = ""
   lw_err: String = ""
-  lw_fn_syms: Hash(String, String)
-  lw_vars: Hash(String, Int)
-  lw_heads: Array(Int)
-  lw_exits: Array(Int)
-  lw_ret: Int = 0
-  lw_main: Bool = false
-  lw_fn_loc: Location
-  lw_self: Int = 0
-  lw_self_struct: Bool = false
-  lw_self_name: String = ""
-  lw_self_ty: Ty? = nil
-  lw_busy: Hash(String, Int)
-  lw_pend_struct: Array(String)
-  lw_pend_elems: Array(Int)
-  lw_ret_ty: Ty? = nil
-  lw_all: Array(Function)
-  lw_cl: MirClosures
-  lw_ffi: MirFfi
-  lw_task: MirTasks
-  lw_cov: MirCov
+  pub lw_fn_syms: Hash(String, String)
+  pub lw_vars: Hash(String, Int)
+  pub lw_heads: Array(Int)
+  pub lw_exits: Array(Int)
+  pub lw_ret: Int = 0
+  pub lw_main: Bool = false
+  pub lw_fn_loc: Location
+  pub lw_self: Int = 0
+  pub lw_self_struct: Bool = false
+  pub lw_self_name: String = ""
+  pub lw_self_ty: Ty? = nil
+  pub lw_busy: Hash(String, Int)
+  pub lw_pend_struct: Array(String)
+  pub lw_pend_elems: Array(Int)
+  pub lw_ret_ty: Ty? = nil
+  pub lw_all: Array(Function)
+  pub lw_cl: MirClosures
+  pub lw_ffi: MirFfi
+  pub lw_task: MirTasks
+  pub lw_cov: MirCov
 
   fn initialize(program: Program, symbols: SymbolTable, root_dir: String, avant_root: String) {
     self.lw_m = mir_module(mir_module_part(program.root_module))
@@ -427,6 +427,10 @@ pub class MirLower {
       m = mt_i32()
     }
     if m < 0 && t.is_union {
+      if r = mir_opt_ref(t) {
+        // An optional reference is its reference's pointer (W3b, B13).
+        return self.ty_at(r, loc, what)
+      }
       l = self.union_layout(t, loc)
       if l < 0 {
         return -1
@@ -509,7 +513,7 @@ pub class MirLower {
       if self.lw_main {
         params.push(mt_i32())
         params.push(mt_ptr())
-        if ret != mt_void() && ret != mt_i32() {
+        if ret != mt_void() && ret != mt_int() {
           self.refuse(fnn.loc, "main with a result of type ${fs.ret.show}")
         }
       } else {
@@ -529,7 +533,12 @@ pub class MirLower {
       if self.lw_main {
         sret = mt_i32()
       }
-      self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), self.mloc(fnn.loc), fnn.name)
+      // The source name a trap prints (W4b2): Owner.name for a method.
+      sname = fnn.name
+      if fnn.owner.size > 0 {
+        sname = "${fnn.owner}.${fnn.name}"
+      }
+      self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), self.mloc(fnn.loc), sname)
       self.lw_cl.base = self.lam_base(fnn)
       if self.lw_main {
         self.lw_b.set_external
@@ -618,10 +627,29 @@ pub class MirLower {
       rty = mir_scalar_ty(fs.ret)
     }
     none: Array(MOperand) = []
-    if rty == mt_i32() {
-      t = self.lw_b.temp(mt_i32())
+    if rty == mt_int() {
+      t = self.lw_b.temp(mt_int())
       self.lw_b.call(t, sym, none)
-      self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.copy_local(t)))
+      // run's Int is the exit status: outside 0..255 it traps (W4b2,
+      // D295 R14; lower_stmt.av exit_status).
+      b = self.lw_b
+      u = b.temp(mt_u64())
+      b.assign(b.pl(u), b.rv_cast(b.copy_local(t), mt_u64()))
+      inside = b.temp(mt_bool())
+      b.assign(b.pl(inside), b.rv_cmp(mop_le(), b.copy_local(u), b.c_u64(255i64)))
+      bad = b.block
+      ok = b.block
+      b.branch(b.copy_local(inside), ok, bad)
+      b.at(bad)
+      targs: Array(MOperand) = []
+      targs.push(b.copy_local(t))
+      b.call(-1, "avant_trap_exit_status", targs)
+      b.unreachable
+      b.at(ok)
+      self.at(r.loc)
+      t32 = b.temp(mt_i32())
+      b.assign(b.pl(t32), b.rv_cast(b.copy_local(t), mt_i32()))
+      b.assign(b.pl(0), b.rv_use(b.copy_local(t32)))
     } else {
       dest = -1
       if rty != mt_void() && rty >= 0 {

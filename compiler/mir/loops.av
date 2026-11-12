@@ -14,6 +14,11 @@
 // is copied unchanged, so the GC contract is not touched: the pass runs
 // before the leaf and root-slot passes, which see the copy like any code.
 //
+// The variable, the bound and the invariant locals are i32 or i64 (an Int
+// is i64 since Stage 29 W-INT1); an i64 one is tested to lie within the
+// i32 range in the guard before any arithmetic, so the guard's sums
+// cannot overflow, and the header's size of an Array or Buf is its i32
+// field read and sign-extended (seen through the cast).
 // An index is known in range when, at the check, it is (all in i64):
 // - the induction variable plus a constant c, the variable unchanged
 //   since the header test passed: from entry_i + c >= 0 (the variable
@@ -144,7 +149,7 @@ fn lv_stmt_copy(st: MStmt): MStmt {
 // existing Array or Buf: they read, allocate new objects, or write
 // elements. Every name not matched here is assumed to resize.
 pub fn mir_lv_keeps_sizes(name: String): Bool {
-  pre = ["avant_str_", "avant_checksum_", "avant_trap_", "avant_gc_", "avant_barrier", "avant_type_map", "avant_cov_", "avant_checked_", "avant_wide_", "avant_now_", "avant_is_", "avant_hash_", "avant_bytes_", "avant_array_contains_", "avant_array_sum_", "avant_array_index_", "avant_array_min_", "avant_array_max_", "avant_array_sort_", "avant_array_fill_"]
+  pre = ["avant_str_", "avant_checksum_", "avant_trap_", "avant_gc_", "avant_barrier", "avant_type_map", "avant_cov_", "avant_checked_", "avant_wide_", "avant_now_", "avant_clock_", "avant_puts_", "avant_is_", "avant_hash_", "avant_bytes_", "avant_array_contains_", "avant_array_sum_", "avant_array_index_", "avant_array_min_", "avant_array_max_", "avant_array_sort_", "avant_array_fill_"]
   for st in pre {
     if str_starts(name, st) {
       return true
@@ -631,6 +636,13 @@ fn lv_size_at(lp: LvLoop, ts: MTypes, blk: MBlock, j: Int, o: MOperand, out: LvS
   k = j - 1
   while k >= 0 {
     if mir_stmt_def(blk.stmts[k]) == v {
+      // The i64 size of an Array or Buf: the sign extension of its i32
+      // field read (lower_arr.av seq_size); the read is the size
+      // statement.
+      if w = lv_widened(lp.f, blk.stmts[k]) {
+        lv_size_at(lp, ts, blk, k, w, out)
+        return
+      }
       lv_size_stmt(lp, ts, blk.stmts[k], out)
       if out.h >= 0 {
         out.dpos = k
@@ -685,6 +697,10 @@ fn lv_val_def(lp: LvLoop, ts: MTypes, b: Int, k: Int, depth: Int, out: LvVal) {
   if st.kind != msk_assign() {
     return
   }
+  if w = lv_widened(lp.f, st) {
+    lv_val_at(lp, ts, b, k, w, depth + 1, out)
+    return
+  }
   if r = st.rv {
     c: Array(Int) = [0]
     if r.kind == mrk_use() {
@@ -734,7 +750,7 @@ fn lv_val_def(lp: LvLoop, ts: MTypes, b: Int, k: Int, depth: Int, out: LvVal) {
       }
       return
     }
-    if r.kind == mrk_cast() && r.ty == mt_i32() {
+    if r.kind == mrk_cast() && (r.ty == mt_i32() || r.ty == mt_i64()) {
       y = lv_opt_local(r.a)
       if y >= 0 {
         yt = lp.f.locals[y].ty
@@ -861,7 +877,7 @@ fn lv_header(m: MModule, lp: LvLoop, lps: LvLoops): Bool {
     return false
   }
   i = lv_opt_local(r.a)
-  if i < 0 || f.locals[i].ty != mt_i32() || lp.addr_taken[i] {
+  if i < 0 || !lv_int_local(f, i) || lp.addr_taken[i] {
     return false
   }
   lp.ind = i
@@ -921,7 +937,7 @@ fn lv_bound(lp: LvLoop, ts: MTypes, hb: MBlock, pos: Int, o: MOperand, depth: In
     return false
   }
   n = lv_local(o)
-  if n < 0 || n == lp.ind || f.locals[n].ty != mt_i32() || depth > 6 {
+  if n < 0 || n == lp.ind || !lv_int_local(f, n) || depth > 6 {
     return false
   }
   if lp.invariant(n) {
@@ -943,6 +959,9 @@ fn lv_bound(lp: LvLoop, ts: MTypes, hb: MBlock, pos: Int, o: MOperand, depth: In
       }
       if st.kind != msk_assign() {
         return false
+      }
+      if w = lv_widened(f, st) {
+        return lv_bound(lp, ts, hb, k, w, depth + 1)
       }
       if rv = st.rv {
         if rv.kind == mrk_use() {
@@ -1011,8 +1030,7 @@ fn lv_freshness(lp: LvLoop) {
       }
     }
   }
-  b = 0
-  while b < n {
+  for b in 0..n {
     row: Array(Bool) = []
     if lp.body[b] {
       cur = ins[b] && b != lp.header
@@ -1028,7 +1046,6 @@ fn lv_freshness(lp: LvLoop) {
       row.push(cur)
     }
     lp.fresh.push(row)
-    b += 1
   }
 }
 
@@ -1068,13 +1085,9 @@ fn lv_loop_keeps(m: MModule, lp: LvLoop, keep: Array(Bool)): Bool {
 // theirs crosses a block boundary or feeds anything but a check.
 fn lv_check_only(f: MFunc): Array(Bool) {
   ok = mir_bools(f.locals.size, true)
-  b = 0
-  while b < f.blocks.size {
-    blk = f.blocks[b]
+  for blk in f.blocks {
     defs: Array(Int) = []
-    j = 0
-    while j < blk.stmts.size {
-      st = blk.stmts[j]
+    for st in blk.stmts {
       reads: Array(Int) = []
       if st.kind == msk_check_bounds() && st.args.size == 2 {
         mir_operand_reads(st.args[0], reads)
@@ -1096,7 +1109,6 @@ fn lv_check_only(f: MFunc): Array(Bool) {
       if d >= 0 {
         defs.push(d)
       }
-      j += 1
     }
     if t = blk.term {
       reads: Array(Int) = []
@@ -1105,7 +1117,6 @@ fn lv_check_only(f: MFunc): Array(Bool) {
         ok[read] = false
       }
     }
-    b += 1
   }
   ok
 }
@@ -1244,8 +1255,8 @@ fn lv_holder_size(f: MFunc, loc: MLoc, blk0: MBlock, h: Int, hk: Int, fail: Int,
   g = lv_new_local(f, mt_bool())
   blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_ne(), lv_copy_local(h), MOperand.new(mok_null(), f.locals[h].ty))))
   blk = lv_test(f, loc, blk, g, fail)
-  s32 = lv_new_local(f, mt_i32())
   if hk == 1 {
+    s32 = lv_new_local(f, mt_i32())
     p = MPlace.new(h)
     p.proj.push(MProj.new(mpk_deref(), 0))
     p.proj.push(MProj.new(mpk_field(), 1))
@@ -1254,17 +1265,19 @@ fn lv_holder_size(f: MFunc, loc: MLoc, blk0: MBlock, h: Int, hk: Int, fail: Int,
     r = MRvalue.new(mrk_use())
     r.a = o
     blk.stmts.push(lv_assign(loc, s32, r))
-  } else {
-    call = MStmt.new(msk_call(), loc)
-    call.dest = s32
-    call.callee = "avant_str_size"
-    call.args.push(lv_copy_local(h))
-    call.collects = false
-    blk.stmts.push(call)
+    s64 = lv_new_local(f, mt_i64())
+    blk.stmts.push(lv_assign(loc, s64, lv_cast(lv_copy_local(s32), mt_i64())))
+    out[0] = s64
+    return blk
   }
-  s64 = lv_new_local(f, mt_i64())
-  blk.stmts.push(lv_assign(loc, s64, lv_cast(lv_copy_local(s32), mt_i64())))
-  out[0] = s64
+  sz = lv_new_local(f, mt_i64())
+  call = MStmt.new(msk_call(), loc)
+  call.dest = sz
+  call.callee = "avant_str_size"
+  call.args.push(lv_copy_local(h))
+  call.collects = false
+  blk.stmts.push(call)
+  out[0] = sz
   blk
 }
 
@@ -1272,6 +1285,51 @@ fn lv_widen(f: MFunc, loc: MLoc, blk: MBlock, v: Int): Int {
   w = lv_new_local(f, mt_i64())
   blk.stmts.push(lv_assign(loc, w, lv_cast(lv_copy_local(v), mt_i64())))
   w
+}
+
+// v as i64 (lv_widen), and when v is itself i64 (an Int), tests that it
+// lies within the i32 range, failing to `fail` (the original loop): every
+// guard term is then a sum of such values and constants within a million,
+// which cannot overflow (Stage 29 W-INT1). Returns the block to continue
+// in; out[0] receives the local.
+fn lv_widen_in(f: MFunc, loc: MLoc, blk0: MBlock, v: Int, fail: Int, out: Array(Int)): MBlock {
+  blk = blk0
+  w = lv_widen(f, loc, blk, v)
+  out[0] = w
+  if f.locals[v].ty != mt_i64() {
+    return blk
+  }
+  g1 = lv_new_local(f, mt_bool())
+  blk.stmts.push(lv_assign(loc, g1, lv_rv2(mrk_cmp(), mop_ge(), lv_copy_local(w), lv_c_i64(0 - 2147483647 - 1))))
+  blk = lv_test(f, loc, blk, g1, fail)
+  g2 = lv_new_local(f, mt_bool())
+  blk.stmts.push(lv_assign(loc, g2, lv_rv2(mrk_cmp(), mop_le(), lv_copy_local(w), lv_c_i64(2147483647))))
+  lv_test(f, loc, blk, g2, fail)
+}
+
+// A local of an integer type the pass reasons about (i32, or i64: Int).
+fn lv_int_local(f: MFunc, v: Int): Bool {
+  t = f.locals[v].ty
+  t == mt_i32() || t == mt_i64()
+}
+
+// The operand a statement widens without changing its value (`_d = cast
+// copy _y` from i32, u8 or bool to i64), or nil.
+fn lv_widened(f: MFunc, st: MStmt): MOperand? {
+  if st.kind != msk_assign() {
+    return nil
+  }
+  if r = st.rv {
+    if r.kind == mrk_cast() && r.ty == mt_i64() {
+      if a = r.a {
+        y = lv_local(a)
+        if y >= 0 && f.locals[y].ty == mt_i32() {
+          return a
+        }
+      }
+    }
+  }
+  nil
 }
 
 // Builds the guard and the check-free copy, and sends the loop's entry
@@ -1303,7 +1361,9 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
       ru.a = lv_c_i64(lp.bval)
       blk.stmts.push(lv_assign(loc, x64, ru))
     } else if lp.bkind == 2 {
-      x64 = lv_widen(f, loc, blk, lp.bval)
+      wo: Array(Int) = [0]
+      blk = lv_widen_in(f, loc, blk, lp.bval, hdr, wo)
+      x64 = wo[0]
     } else {
       out: Array(Int) = [0]
       blk = lv_holder_size(f, loc, blk, lp.bholder, lp.bhk, hdr, out)
@@ -1323,7 +1383,9 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
       // The largest value the variable reaches below the bound:
       // entry + ((X' - entry) / s) * s (when X' < entry the body does not
       // run, and the guard's answer does not matter).
-      e64 = lv_widen(f, loc, blk, lp.ind)
+      eo: Array(Int) = [0]
+      blk = lv_widen_in(f, loc, blk, lp.ind, hdr, eo)
+      e64 = eo[0]
       d = lv_new_local(f, mt_i64())
       blk.stmts.push(lv_assign(loc, d, lv_rv2(mrk_binary(), mop_sub(), lv_copy_local(xp), lv_copy_local(e64))))
       q = lv_new_local(f, mt_i64())
@@ -1336,12 +1398,13 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
     }
   }
   for i in 0..terms.lo_bk.size {
-    base = -1
+    bo: Array(Int) = [0]
     if terms.lo_bk[i] == 1 {
-      base = lv_widen(f, loc, blk, lp.ind)
+      blk = lv_widen_in(f, loc, blk, lp.ind, hdr, bo)
     } else {
-      base = lv_widen(f, loc, blk, terms.lo_bv[i])
+      blk = lv_widen_in(f, loc, blk, terms.lo_bv[i], hdr, bo)
     }
+    base = bo[0]
     s = lv_new_local(f, mt_i64())
     blk.stmts.push(lv_assign(loc, s, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(base), lv_c_i64(terms.lo_off[i]))))
     g = lv_new_local(f, mt_bool())
@@ -1353,7 +1416,9 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
     if terms.up_bk[i] != 3 {
       base = xp
       if terms.up_bk[i] == 2 {
-        base = lv_widen(f, loc, blk, terms.up_bv[i])
+        uo: Array(Int) = [0]
+        blk = lv_widen_in(f, loc, blk, terms.up_bv[i], hdr, uo)
+        base = uo[0]
       }
       s = lv_new_local(f, mt_i64())
       blk.stmts.push(lv_assign(loc, s, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(base), lv_c_i64(terms.up_off[i]))))
@@ -1575,7 +1640,7 @@ fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int): Bool {
             }
             if k == strs.size {
               strs.push(v)
-              h = lv_new_local(f, mt_i32())
+              h = lv_new_local(f, mt_i64())
               held.push(h)
               call = MStmt.new(msk_call(), loc)
               call.dest = h

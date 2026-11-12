@@ -2,7 +2,7 @@ module loops
 file 0 "loops.av"
 
 layout %loops.Box = class { 0 xs: ref %Array(Int) }  size 8 align 8 id 1
-layout %elems(Int) = elems { 0: i32 }  size 4 align 4
+layout %elems(Int) = elems { 0: i64 }  size 8 align 8
 layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %elems(u8) = elems { 0: u8 }  size 1 align 1
 layout %Buf = buf { 0 data: ref %elems(u8), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1021
@@ -12,7 +12,7 @@ layout %Array(Array(Int)) = array { 0 data: ref %elems(Array(Int)), 1 size: i32,
 const str.0 = "start"
 const str.1 = "v"
 const str.2 = ":"
-const str.3 = "%d\0A"
+const str.3 = "%lld\0A"
 const str.4 = "the quick brown fox"
 const str.5 = "jumps over the lazy dog"
 
@@ -24,482 +24,587 @@ typemap 1 %loops.Box stride 0 bits [0x1]
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_array_pop_slot(ref, u64) -> addr collects
-extern avant_array_push_i32(ref, i32) -> void collects
+extern avant_array_push_i64(ref, i64) -> void collects
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
-extern avant_buf_new(i32) -> ref collects
-extern avant_buf_push_byte(ref, i32) -> void collects
-extern avant_buf_size(ref) -> i32 never
+extern avant_buf_new(i64) -> ref collects
+extern avant_buf_push_byte(ref, i64) -> void collects
+extern avant_buf_size(ref) -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
-extern avant_str_from_int(i32) -> ref str collects
-extern avant_str_repeat_byte(i32, i32) -> ref str collects
-extern avant_str_size(ref str) -> i32 never
+extern avant_str_from_int(i64) -> ref str collects
+extern avant_str_repeat_byte(i64, i64) -> ref str collects
+extern avant_str_size(ref str) -> i64 never
+extern avant_trap_empty(i32) -> void never noreturn
+extern avant_trap_negative(i64, i32) -> void never noreturn
+extern avant_trap_size(i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
-fn av.loops/fill(_1: i32, _2: i32) -> ref %Array(Int) frame @loops.av:17:1 {
+fn av.loops/fill(_1: i64, _2: i64) -> ref %Array(Int) frame @loops.av:17:1 {
   let _0: ref %Array(Int)
-  let _1 (n): i32
-  let _2 (seed): i32
-  let _3: i32
-  let _4: u64
-  let _5: u64
-  let _6: ref %elems(Int) slot
-  let _7: ref %Array(Int)
-  let _8 (xs): ref %Array(Int)
-  let _9 (i): i32
-  let _10: bool
-  let _11: i32
-  let _12: i32
-  let _13: i32
-  let _14: ref %elems(Int)
-  let _15: i32
+  let _1 (n): i64
+  let _2 (seed): i64
+  let _3: i64
+  let _4: bool
+  let _5: bool
+  let _6: u64
+  let _7: u64
+  let _8: ref %elems(Int) slot
+  let _9: i32
+  let _10: ref %Array(Int)
+  let _11 (xs): ref %Array(Int)
+  let _12 (i): i64
+  let _13: bool
+  let _14: i64
+  let _15: i64
+  let _16: i64
+  let _17: ref %elems(Int)
+  let _18: i64
 
 bb0:
-  _6 = zero   @17:1
+  _8 = zero   @17:1
   gc.enter   @17:1
-  gc.roots _6   @17:1
+  gc.roots _8   @17:1
   _3 = copy _1   @18:8
-  _4 = cast copy _3 to u64   @18:8
-  _5 = mul copy _4, const u64 4   @18:8
-  _6 = call avant_alloc(copy _5, const u32 0) collects   @18:8
-  _7 = call avant_alloc(const u64 16, const u32 1022) collects   @18:8
-  barrier copy _7   @18:8
-  (*_7).0 = copy _6   @18:8
-  (*_7).1 = copy _3   @18:8
-  (*_7).2 = copy _3   @18:8
-  _8 = copy _7   @18:6
-  _9 = const i32 0   @19:5
-  goto bb1   @20:3
+  _4 = lt copy _3, const i64 0   @18:8
+  branch copy _4, bb1, bb2   @18:8
 
 bb1:
-  _10 = lt copy _9, copy _1   @20:11
-  branch copy _10, bb2, bb3   @20:3
+  call avant_trap_negative(copy _3, const i32 0) nocollect   @18:8
+  unreachable   @18:8
 
 bb2:
-  _11 = mul.chk copy _9, const i32 7   @21:16
-  _12 = add.chk copy _11, copy _2   @21:20
-  _13 = rem copy _12, const i32 31   @21:28
-  _14 = copy (*_8).0   @21:7
-  (*_14)[copy _9] = copy _13   @21:11
-  _15 = add copy _9, const i32 1   @22:11
-  _9 = copy _15   @22:7
-  goto bb1   @20:3
+  _5 = gt copy _3, const i64 2147483647   @18:8
+  branch copy _5, bb3, bb4   @18:8
 
 bb3:
-  _0 = copy _8   @24:3
+  call avant_trap_size(const i32 2) nocollect   @18:8
+  unreachable   @18:8
+
+bb4:
+  _6 = cast copy _3 to u64   @18:8
+  _7 = mul copy _6, const u64 8   @18:8
+  _8 = call avant_alloc(copy _7, const u32 0) collects   @18:8
+  _9 = cast copy _3 to i32   @18:8
+  _10 = call avant_alloc(const u64 16, const u32 1022) collects   @18:8
+  barrier copy _10   @18:8
+  (*_10).0 = copy _8   @18:8
+  (*_10).1 = copy _9   @18:8
+  (*_10).2 = copy _9   @18:8
+  _11 = copy _10   @18:6
+  _12 = const i64 0   @19:5
+  goto bb5   @20:3
+
+bb5:
+  _13 = lt copy _12, copy _1   @20:11
+  branch copy _13, bb6, bb7   @20:3
+
+bb6:
+  _14 = mul.chk copy _12, const i64 7   @21:16
+  _15 = add.chk copy _14, copy _2   @21:20
+  _16 = rem copy _15, const i64 31   @21:28
+  _17 = copy (*_11).0   @21:7
+  (*_17)[copy _12] = copy _16   @21:11
+  _18 = add copy _12, const i64 1   @22:11
+  _12 = copy _18   @22:7
+  goto bb5   @20:3
+
+bb7:
+  _0 = copy _11   @24:3
   gc.leave   @24:3
   return   @24:3
 }
 
-fn av.loops/sums(_1: ref %Array(Int)) -> i32 leaf @loops.av:28:1 {
-  let _0: i32
+fn av.loops/sums(_1: ref %Array(Int)) -> i64 leaf @loops.av:28:1 {
+  let _0: i64
   let _1 (xs): ref %Array(Int)
   let _2: i32
-  let _3 (n): i32
-  let _4 (s): i32
-  let _5 (i): i32
-  let _6: bool
-  let _7: ref %elems(Int)
-  let _8: i32
-  let _9: i32
-  let _10: i32
-  let _11: i32
-  let _12: bool
-  let _13: i32
-  let _14: i32
-  let _15: ref %elems(Int)
+  let _3: i64
+  let _4 (n): i64
+  let _5 (s): i64
+  let _6 (i): i64
+  let _7: bool
+  let _8: ref %elems(Int)
+  let _9: i64
+  let _10: i64
+  let _11: i64
+  let _12: i64
+  let _13: bool
+  let _14: i64
+  let _15: i32
+  let _16: i64
+  let _17: ref %elems(Int)
+  let _18: i64
+  let _19: i64
+  let _20: i64
+  let _21: i64
+  let _22: ref %elems(Int)
+  let _23: i64
+  let _24: i64
+  let _25: ref %elems(Int)
+  let _26: i64
+  let _27: i64
+  let _28: i64
+  let _29: i64
+  let _30: bool
+  let _31: i64
+  let _32: ref %elems(Int)
+  let _33: i64
+  let _34: i64
+  let _35: i64
+  let _36: bool
+  let _37: i32
+  let _38: i64
+  let _39: i64
+  let _40: bool
+  let _41: bool
+  let _42: i64
+  let _43: i64
+  let _44: i64
+  let _45: bool
+  let _46: bool
+  let _47: i64
+  let _48: bool
+  let _49: i64
+  let _50: bool
+
+bb0:
+  _2 = copy (*_1).1   @29:9
+  _3 = cast copy _2 to i64   @29:9
+  _4 = copy _3   @29:5
+  _5 = const i64 0   @30:5
+  _6 = const i64 0   @31:5
+  goto bb1   @32:3
+
+bb1:
+  _7 = lt copy _6, copy _4   @32:11
+  branch copy _7, bb2, bb3   @32:3
+
+bb2:
+  _8 = copy (*_1).0   @33:15
+  _9 = copy (*_8)[copy _6]   @33:15
+  _10 = add.chk copy _5, copy _9   @33:11
+  _5 = copy _10   @33:7
+  _11 = add copy _6, const i64 1   @34:11
+  _6 = copy _11   @34:7
+  goto bb1   @32:3
+
+bb3:
+  _6 = const i64 1   @36:5
+  goto bb10   @37:3
+
+bb4:
+  _12 = sub copy _4, const i64 1   @37:15
+  _13 = lt copy _6, copy _12   @37:11
+  branch copy _13, bb5, bb6   @37:3
+
+bb5:
+  _14 = sub copy _6, const i64 1   @38:18
+  _15 = copy (*_1).1   @38:15
+  _16 = cast copy _15 to i64   @38:15
+  check.bounds copy _14, copy _16   @38:15
+  _17 = copy (*_1).0   @38:15
+  _18 = copy (*_17)[copy _14]   @38:15
+  _19 = mul.chk copy _18, const i64 3   @38:23
+  _20 = add.chk copy _5, copy _19   @38:11
+  _21 = add copy _6, const i64 1   @38:34
+  _22 = copy (*_1).0   @38:31
+  _23 = copy (*_22)[copy _21]   @38:31
+  _24 = add.chk copy _20, copy _23   @38:27
+  _25 = copy (*_1).0   @38:43
+  _26 = copy (*_25)[copy _6]   @38:43
+  _27 = sub.chk copy _24, copy _26   @38:39
+  _5 = copy _27   @38:7
+  _28 = add copy _6, const i64 1   @39:11
+  _6 = copy _28   @39:7
+  goto bb4 cold   @37:3
+
+bb6:
+  _6 = const i64 0   @41:5
+  goto bb7   @42:3
+
+bb7:
+  _29 = sub copy _4, const i64 2   @42:16
+  _30 = le copy _6, copy _29   @42:11
+  branch copy _30, bb8, bb9   @42:3
+
+bb8:
+  _31 = add copy _6, const i64 1   @43:18
+  _32 = copy (*_1).0   @43:15
+  _33 = copy (*_32)[copy _31]   @43:15
+  _34 = add.chk copy _5, copy _33   @43:11
+  _5 = copy _34   @43:7
+  _35 = add copy _6, const i64 1   @44:11
+  _6 = copy _35   @44:7
+  goto bb7   @42:3
+
+bb9:
+  _0 = copy _5   @46:3
+  return   @46:3
+
+bb10:
+  _36 = ne copy _1, const ref %Array(Int) null   @37:11
+  branch copy _36, bb11, bb4   @37:11
+
+bb11:
+  _37 = copy (*_1).1   @37:11
+  _38 = cast copy _37 to i64   @37:11
+  _39 = cast copy _4 to i64   @37:11
+  _40 = ge copy _39, const i64 -2147483648   @37:11
+  branch copy _40, bb12, bb4   @37:11
+
+bb12:
+  _41 = le copy _39, const i64 2147483647   @37:11
+  branch copy _41, bb13, bb4   @37:11
+
+bb13:
+  _42 = add copy _39, const i64 -1   @37:11
+  _43 = sub copy _42, const i64 1   @37:11
+  _44 = cast copy _6 to i64   @37:11
+  _45 = ge copy _44, const i64 -2147483648   @37:11
+  branch copy _45, bb14, bb4   @37:11
+
+bb14:
+  _46 = le copy _44, const i64 2147483647   @37:11
+  branch copy _46, bb15, bb4   @37:11
+
+bb15:
+  _47 = add copy _44, const i64 -1   @37:11
+  _48 = ge copy _47, const i64 0   @37:11
+  branch copy _48, bb16, bb4   @37:11
+
+bb16:
+  _49 = add copy _43, const i64 -1   @37:11
+  _50 = lt copy _49, copy _38   @37:11
+  branch copy _50, bb17, bb4   @37:11
+
+bb17:
+  goto bb18   @37:11
+
+bb18:
+  _12 = sub copy _4, const i64 1   @37:15
+  _13 = lt copy _6, copy _12   @37:11
+  branch copy _13, bb19, bb6   @37:3
+
+bb19:
+  _14 = sub copy _6, const i64 1   @38:18
+  _15 = copy (*_1).1   @38:15
+  _16 = cast copy _15 to i64   @38:15
+  _17 = copy (*_1).0   @38:15
+  _18 = copy (*_17)[copy _14]   @38:15
+  _19 = mul.chk copy _18, const i64 3   @38:23
+  _20 = add.chk copy _5, copy _19   @38:11
+  _21 = add copy _6, const i64 1   @38:34
+  _22 = copy (*_1).0   @38:31
+  _23 = copy (*_22)[copy _21]   @38:31
+  _24 = add.chk copy _20, copy _23   @38:27
+  _25 = copy (*_1).0   @38:43
+  _26 = copy (*_25)[copy _6]   @38:43
+  _27 = sub.chk copy _24, copy _26   @38:39
+  _5 = copy _27   @38:7
+  _28 = add copy _6, const i64 1   @39:11
+  _6 = copy _28   @39:7
+  goto bb18   @37:3
+}
+
+fn av.loops/steps(_1: ref %Array(Int)) -> i64 leaf @loops.av:50:1 {
+  let _0: i64
+  let _1 (xs): ref %Array(Int)
+  let _2: i32
+  let _3: i64
+  let _4 (n): i64
+  let _5: i64
+  let _6: i64
+  let _7 (n4): i64
+  let _8 (a): i64
+  let _9 (b): i64
+  let _10 (k): i64
+  let _11: bool
+  let _12: ref %elems(Int)
+  let _13: i64
+  let _14: i64
+  let _15: i64
   let _16: i32
-  let _17: i32
-  let _18: i32
-  let _19: i32
-  let _20: ref %elems(Int)
-  let _21: i32
+  let _17: i64
+  let _18: ref %elems(Int)
+  let _19: i64
+  let _20: i64
+  let _21: i64
   let _22: i32
-  let _23: ref %elems(Int)
-  let _24: i32
-  let _25: i32
-  let _26: i32
+  let _23: i64
+  let _24: ref %elems(Int)
+  let _25: i64
+  let _26: i64
   let _27: i32
-  let _28: bool
-  let _29: i32
-  let _30: ref %elems(Int)
-  let _31: i32
-  let _32: i32
-  let _33: i32
+  let _28: i64
+  let _29: ref %elems(Int)
+  let _30: i64
+  let _31: i64
+  let _32: i64
+  let _33: i64
   let _34: bool
-  let _35: i32
+  let _35: ref %elems(Int)
   let _36: i64
   let _37: i64
   let _38: i64
   let _39: i64
   let _40: i64
-  let _41: i64
-  let _42: bool
-  let _43: i64
-  let _44: bool
-
-bb0:
-  _2 = copy (*_1).1   @29:9
-  _3 = copy _2   @29:5
-  _4 = const i32 0   @30:5
-  _5 = const i32 0   @31:5
-  goto bb1   @32:3
-
-bb1:
-  _6 = lt copy _5, copy _3   @32:11
-  branch copy _6, bb2, bb3   @32:3
-
-bb2:
-  _7 = copy (*_1).0   @33:15
-  _8 = copy (*_7)[copy _5]   @33:15
-  _9 = add.chk copy _4, copy _8   @33:11
-  _4 = copy _9   @33:7
-  _10 = add copy _5, const i32 1   @34:11
-  _5 = copy _10   @34:7
-  goto bb1   @32:3
-
-bb3:
-  _5 = const i32 1   @36:5
-  goto bb10   @37:3
-
-bb4:
-  _11 = sub copy _3, const i32 1   @37:15
-  _12 = lt copy _5, copy _11   @37:11
-  branch copy _12, bb5, bb6   @37:3
-
-bb5:
-  _13 = sub copy _5, const i32 1   @38:18
-  _14 = copy (*_1).1   @38:15
-  check.bounds copy _13, copy _14   @38:15
-  _15 = copy (*_1).0   @38:15
-  _16 = copy (*_15)[copy _13]   @38:15
-  _17 = mul.chk copy _16, const i32 3   @38:23
-  _18 = add.chk copy _4, copy _17   @38:11
-  _19 = add copy _5, const i32 1   @38:34
-  _20 = copy (*_1).0   @38:31
-  _21 = copy (*_20)[copy _19]   @38:31
-  _22 = add.chk copy _18, copy _21   @38:27
-  _23 = copy (*_1).0   @38:43
-  _24 = copy (*_23)[copy _5]   @38:43
-  _25 = sub.chk copy _22, copy _24   @38:39
-  _4 = copy _25   @38:7
-  _26 = add copy _5, const i32 1   @39:11
-  _5 = copy _26   @39:7
-  goto bb4 cold   @37:3
-
-bb6:
-  _5 = const i32 0   @41:5
-  goto bb7   @42:3
-
-bb7:
-  _27 = sub copy _3, const i32 2   @42:16
-  _28 = le copy _5, copy _27   @42:11
-  branch copy _28, bb8, bb9   @42:3
-
-bb8:
-  _29 = add copy _5, const i32 1   @43:18
-  _30 = copy (*_1).0   @43:15
-  _31 = copy (*_30)[copy _29]   @43:15
-  _32 = add.chk copy _4, copy _31   @43:11
-  _4 = copy _32   @43:7
-  _33 = add copy _5, const i32 1   @44:11
-  _5 = copy _33   @44:7
-  goto bb7   @42:3
-
-bb9:
-  _0 = copy _4   @46:3
-  return   @46:3
-
-bb10:
-  _34 = ne copy _1, const ref %Array(Int) null   @37:11
-  branch copy _34, bb11, bb4   @37:11
-
-bb11:
-  _35 = copy (*_1).1   @37:11
-  _36 = cast copy _35 to i64   @37:11
-  _37 = cast copy _3 to i64   @37:11
-  _38 = add copy _37, const i64 -1   @37:11
-  _39 = sub copy _38, const i64 1   @37:11
-  _40 = cast copy _5 to i64   @37:11
-  _41 = add copy _40, const i64 -1   @37:11
-  _42 = ge copy _41, const i64 0   @37:11
-  branch copy _42, bb12, bb4   @37:11
-
-bb12:
-  _43 = add copy _39, const i64 -1   @37:11
-  _44 = lt copy _43, copy _36   @37:11
-  branch copy _44, bb13, bb4   @37:11
-
-bb13:
-  goto bb14   @37:11
-
-bb14:
-  _11 = sub copy _3, const i32 1   @37:15
-  _12 = lt copy _5, copy _11   @37:11
-  branch copy _12, bb15, bb6   @37:3
-
-bb15:
-  _13 = sub copy _5, const i32 1   @38:18
-  _15 = copy (*_1).0   @38:15
-  _16 = copy (*_15)[copy _13]   @38:15
-  _17 = mul.chk copy _16, const i32 3   @38:23
-  _18 = add.chk copy _4, copy _17   @38:11
-  _19 = add copy _5, const i32 1   @38:34
-  _20 = copy (*_1).0   @38:31
-  _21 = copy (*_20)[copy _19]   @38:31
-  _22 = add.chk copy _18, copy _21   @38:27
-  _23 = copy (*_1).0   @38:43
-  _24 = copy (*_23)[copy _5]   @38:43
-  _25 = sub.chk copy _22, copy _24   @38:39
-  _4 = copy _25   @38:7
-  _26 = add copy _5, const i32 1   @39:11
-  _5 = copy _26   @39:7
-  goto bb14   @37:3
-}
-
-fn av.loops/steps(_1: ref %Array(Int)) -> i32 leaf @loops.av:50:1 {
-  let _0: i32
-  let _1 (xs): ref %Array(Int)
-  let _2: i32
-  let _3 (n): i32
-  let _4: i32
-  let _5: i32
-  let _6 (n4): i32
-  let _7 (a): i32
-  let _8 (b): i32
-  let _9 (k): i32
-  let _10: bool
-  let _11: ref %elems(Int)
-  let _12: i32
-  let _13: i32
-  let _14: i32
-  let _15: i32
-  let _16: ref %elems(Int)
-  let _17: i32
-  let _18: i32
-  let _19: i32
-  let _20: i32
-  let _21: ref %elems(Int)
-  let _22: i32
-  let _23: i32
-  let _24: i32
-  let _25: ref %elems(Int)
-  let _26: i32
-  let _27: i32
-  let _28: i32
-  let _29: i32
-  let _30: bool
-  let _31: ref %elems(Int)
-  let _32: i32
-  let _33: i32
-  let _34: i32
-  let _35: i32
-  let _36: i32
-  let _37: bool
-  let _38: i32
-  let _39: i64
-  let _40: i64
-  let _41: i64
-  let _42: i64
+  let _41: bool
+  let _42: i32
   let _43: i64
   let _44: i64
-  let _45: i64
-  let _46: i64
+  let _45: bool
+  let _46: bool
   let _47: i64
   let _48: i64
   let _49: bool
-  let _50: i64
-  let _51: bool
+  let _50: bool
+  let _51: i64
+  let _52: i64
+  let _53: i64
+  let _54: i64
+  let _55: i64
+  let _56: bool
+  let _57: bool
+  let _58: i64
+  let _59: bool
+  let _60: i64
+  let _61: bool
 
 bb0:
   _2 = copy (*_1).1   @51:9
-  _3 = copy _2   @51:5
-  _4 = rem copy _3, const i32 4   @52:14
-  _5 = sub.chk copy _3, copy _4   @52:10
-  _6 = copy _5   @52:6
-  _7 = const i32 0   @53:5
-  _8 = const i32 0   @54:5
-  _9 = const i32 0   @55:5
+  _3 = cast copy _2 to i64   @51:9
+  _4 = copy _3   @51:5
+  _5 = rem copy _4, const i64 4   @52:14
+  _6 = sub.chk copy _4, copy _5   @52:10
+  _7 = copy _6   @52:6
+  _8 = const i64 0   @53:5
+  _9 = const i64 0   @54:5
+  _10 = const i64 0   @55:5
   goto bb7   @56:3
 
 bb1:
-  _10 = lt copy _9, copy _6   @56:11
-  branch copy _10, bb2, bb3   @56:3
+  _11 = lt copy _10, copy _7   @56:11
+  branch copy _11, bb2, bb3   @56:3
 
 bb2:
-  _11 = copy (*_1).0   @57:15
-  _12 = copy (*_11)[copy _9]   @57:15
-  _13 = add.chk copy _7, copy _12   @57:11
-  _14 = add copy _9, const i32 1   @57:26
-  _15 = copy (*_1).1   @57:23
-  check.bounds copy _14, copy _15   @57:23
-  _16 = copy (*_1).0   @57:23
-  _17 = copy (*_16)[copy _14]   @57:23
-  _18 = add.chk copy _13, copy _17   @57:19
-  _7 = copy _18   @57:7
-  _19 = add copy _9, const i32 2   @58:18
-  _20 = copy (*_1).1   @58:15
-  check.bounds copy _19, copy _20   @58:15
-  _21 = copy (*_1).0   @58:15
-  _22 = copy (*_21)[copy _19]   @58:15
-  _23 = add copy _9, const i32 3   @58:30
-  _24 = copy (*_1).1   @58:27
-  check.bounds copy _23, copy _24   @58:27
-  _25 = copy (*_1).0   @58:27
-  _26 = copy (*_25)[copy _23]   @58:27
-  _27 = mul.chk copy _22, copy _26   @58:23
-  _28 = add.chk copy _8, copy _27   @58:11
-  _8 = copy _28   @58:7
-  _29 = add.chk copy _9, const i32 4   @59:11
-  _9 = copy _29   @59:7
+  _12 = copy (*_1).0   @57:15
+  _13 = copy (*_12)[copy _10]   @57:15
+  _14 = add.chk copy _8, copy _13   @57:11
+  _15 = add copy _10, const i64 1   @57:26
+  _16 = copy (*_1).1   @57:23
+  _17 = cast copy _16 to i64   @57:23
+  check.bounds copy _15, copy _17   @57:23
+  _18 = copy (*_1).0   @57:23
+  _19 = copy (*_18)[copy _15]   @57:23
+  _20 = add.chk copy _14, copy _19   @57:19
+  _8 = copy _20   @57:7
+  _21 = add copy _10, const i64 2   @58:18
+  _22 = copy (*_1).1   @58:15
+  _23 = cast copy _22 to i64   @58:15
+  check.bounds copy _21, copy _23   @58:15
+  _24 = copy (*_1).0   @58:15
+  _25 = copy (*_24)[copy _21]   @58:15
+  _26 = add copy _10, const i64 3   @58:30
+  _27 = copy (*_1).1   @58:27
+  _28 = cast copy _27 to i64   @58:27
+  check.bounds copy _26, copy _28   @58:27
+  _29 = copy (*_1).0   @58:27
+  _30 = copy (*_29)[copy _26]   @58:27
+  _31 = mul.chk copy _25, copy _30   @58:23
+  _32 = add.chk copy _9, copy _31   @58:11
+  _9 = copy _32   @58:7
+  _33 = add.chk copy _10, const i64 4   @59:11
+  _10 = copy _33   @59:7
   goto bb1 cold   @56:3
 
 bb3:
   goto bb4   @61:3
 
 bb4:
-  _30 = lt copy _9, copy _3   @61:11
-  branch copy _30, bb5, bb6   @61:3
+  _34 = lt copy _10, copy _4   @61:11
+  branch copy _34, bb5, bb6   @61:3
 
 bb5:
-  _31 = copy (*_1).0   @62:15
-  _32 = copy (*_31)[copy _9]   @62:15
-  _33 = add.chk copy _7, copy _32   @62:11
-  _7 = copy _33   @62:7
-  _34 = add copy _9, const i32 1   @63:11
-  _9 = copy _34   @63:7
+  _35 = copy (*_1).0   @62:15
+  _36 = copy (*_35)[copy _10]   @62:15
+  _37 = add.chk copy _8, copy _36   @62:11
+  _8 = copy _37   @62:7
+  _38 = add copy _10, const i64 1   @63:11
+  _10 = copy _38   @63:7
   goto bb4   @61:3
 
 bb6:
-  _35 = mul.chk copy _7, const i32 1000   @65:5
-  _36 = add.chk copy _35, copy _8   @65:12
-  _0 = copy _36   @65:12
+  _39 = mul.chk copy _8, const i64 1000   @65:5
+  _40 = add.chk copy _39, copy _9   @65:12
+  _0 = copy _40   @65:12
   return   @65:12
 
 bb7:
-  _37 = ne copy _1, const ref %Array(Int) null   @56:11
-  branch copy _37, bb8, bb1   @56:11
+  _41 = ne copy _1, const ref %Array(Int) null   @56:11
+  branch copy _41, bb8, bb1   @56:11
 
 bb8:
-  _38 = copy (*_1).1   @56:11
-  _39 = cast copy _38 to i64   @56:11
-  _40 = cast copy _6 to i64   @56:11
-  _41 = sub copy _40, const i64 1   @56:11
-  _42 = cast copy _9 to i64   @56:11
-  _43 = sub copy _41, copy _42   @56:11
-  _44 = div copy _43, const i64 4   @56:11
-  _45 = mul copy _44, const i64 4   @56:11
-  _46 = add copy _42, copy _45   @56:11
-  _47 = cast copy _9 to i64   @56:11
-  _48 = add copy _47, const i64 1   @56:11
-  _49 = ge copy _48, const i64 0   @56:11
-  branch copy _49, bb9, bb1   @56:11
+  _42 = copy (*_1).1   @56:11
+  _43 = cast copy _42 to i64   @56:11
+  _44 = cast copy _7 to i64   @56:11
+  _45 = ge copy _44, const i64 -2147483648   @56:11
+  branch copy _45, bb9, bb1   @56:11
 
 bb9:
-  _50 = add copy _46, const i64 3   @56:11
-  _51 = lt copy _50, copy _39   @56:11
-  branch copy _51, bb10, bb1   @56:11
+  _46 = le copy _44, const i64 2147483647   @56:11
+  branch copy _46, bb10, bb1   @56:11
 
 bb10:
-  goto bb11   @56:11
+  _47 = sub copy _44, const i64 1   @56:11
+  _48 = cast copy _10 to i64   @56:11
+  _49 = ge copy _48, const i64 -2147483648   @56:11
+  branch copy _49, bb11, bb1   @56:11
 
 bb11:
-  _10 = lt copy _9, copy _6   @56:11
-  branch copy _10, bb12, bb3   @56:3
+  _50 = le copy _48, const i64 2147483647   @56:11
+  branch copy _50, bb12, bb1   @56:11
 
 bb12:
-  _11 = copy (*_1).0   @57:15
-  _12 = copy (*_11)[copy _9]   @57:15
-  _13 = add.chk copy _7, copy _12   @57:11
-  _14 = add copy _9, const i32 1   @57:26
-  _16 = copy (*_1).0   @57:23
-  _17 = copy (*_16)[copy _14]   @57:23
-  _18 = add.chk copy _13, copy _17   @57:19
-  _7 = copy _18   @57:7
-  _19 = add copy _9, const i32 2   @58:18
-  _21 = copy (*_1).0   @58:15
-  _22 = copy (*_21)[copy _19]   @58:15
-  _23 = add copy _9, const i32 3   @58:30
-  _25 = copy (*_1).0   @58:27
-  _26 = copy (*_25)[copy _23]   @58:27
-  _27 = mul.chk copy _22, copy _26   @58:23
-  _28 = add.chk copy _8, copy _27   @58:11
-  _8 = copy _28   @58:7
-  _29 = add.chk copy _9, const i32 4   @59:11
-  _9 = copy _29   @59:7
-  goto bb11   @56:3
+  _51 = sub copy _47, copy _48   @56:11
+  _52 = div copy _51, const i64 4   @56:11
+  _53 = mul copy _52, const i64 4   @56:11
+  _54 = add copy _48, copy _53   @56:11
+  _55 = cast copy _10 to i64   @56:11
+  _56 = ge copy _55, const i64 -2147483648   @56:11
+  branch copy _56, bb13, bb1   @56:11
+
+bb13:
+  _57 = le copy _55, const i64 2147483647   @56:11
+  branch copy _57, bb14, bb1   @56:11
+
+bb14:
+  _58 = add copy _55, const i64 1   @56:11
+  _59 = ge copy _58, const i64 0   @56:11
+  branch copy _59, bb15, bb1   @56:11
+
+bb15:
+  _60 = add copy _54, const i64 3   @56:11
+  _61 = lt copy _60, copy _43   @56:11
+  branch copy _61, bb16, bb1   @56:11
+
+bb16:
+  goto bb17   @56:11
+
+bb17:
+  _11 = lt copy _10, copy _7   @56:11
+  branch copy _11, bb18, bb3   @56:3
+
+bb18:
+  _12 = copy (*_1).0   @57:15
+  _13 = copy (*_12)[copy _10]   @57:15
+  _14 = add.chk copy _8, copy _13   @57:11
+  _15 = add copy _10, const i64 1   @57:26
+  _16 = copy (*_1).1   @57:23
+  _17 = cast copy _16 to i64   @57:23
+  _18 = copy (*_1).0   @57:23
+  _19 = copy (*_18)[copy _15]   @57:23
+  _20 = add.chk copy _14, copy _19   @57:19
+  _8 = copy _20   @57:7
+  _21 = add copy _10, const i64 2   @58:18
+  _22 = copy (*_1).1   @58:15
+  _23 = cast copy _22 to i64   @58:15
+  _24 = copy (*_1).0   @58:15
+  _25 = copy (*_24)[copy _21]   @58:15
+  _26 = add copy _10, const i64 3   @58:30
+  _27 = copy (*_1).1   @58:27
+  _28 = cast copy _27 to i64   @58:27
+  _29 = copy (*_1).0   @58:27
+  _30 = copy (*_29)[copy _26]   @58:27
+  _31 = mul.chk copy _25, copy _30   @58:23
+  _32 = add.chk copy _9, copy _31   @58:11
+  _9 = copy _32   @58:7
+  _33 = add.chk copy _10, const i64 4   @59:11
+  _10 = copy _33   @59:7
+  goto bb17   @56:3
 }
 
-fn av.loops/invariant(_1: ref %Array(Int), _2: ref %Array(Int), _3: i32) -> i32 leaf @loops.av:69:1 {
-  let _0: i32
+fn av.loops/invariant(_1: ref %Array(Int), _2: ref %Array(Int), _3: i64) -> i64 leaf @loops.av:69:1 {
+  let _0: i64
   let _1 (xs): ref %Array(Int)
   let _2 (ys): ref %Array(Int)
-  let _3 (m): i32
-  let _4 (s): i32
-  let _5 (i): i32
+  let _3 (m): i64
+  let _4 (s): i64
+  let _5 (i): i64
   let _6: i32
-  let _7: bool
-  let _8: ref %elems(Int)
-  let _9: i32
-  let _10: i32
-  let _11: ref %elems(Int)
-  let _12: i32
-  let _13: i32
-  let _14: i32
-  let _15: i32
-  let _16: i32
-  let _17: ref %elems(Int)
+  let _7: i64
+  let _8: bool
+  let _9: ref %elems(Int)
+  let _10: i64
+  let _11: i32
+  let _12: i64
+  let _13: ref %elems(Int)
+  let _14: i64
+  let _15: i64
+  let _16: i64
+  let _17: i64
   let _18: i32
-  let _19: i32
-  let _20: i32
-  let _21: ref %elems(Int)
-  let _22: i32
+  let _19: i64
+  let _20: ref %elems(Int)
+  let _21: i64
+  let _22: i64
   let _23: i32
-  let _24: i32
-  let _25: bool
-  let _26: i32
+  let _24: i64
+  let _25: ref %elems(Int)
+  let _26: i64
   let _27: i64
   let _28: i64
-  let _29: i64
-  let _30: bool
+  let _29: bool
+  let _30: i32
   let _31: i64
   let _32: i64
   let _33: bool
   let _34: bool
+  let _35: i64
+  let _36: bool
+  let _37: i64
+  let _38: bool
+  let _39: bool
+  let _40: i64
+  let _41: bool
+  let _42: bool
 
 bb0:
-  _4 = const i32 0   @70:5
-  _5 = const i32 0   @71:5
+  _4 = const i64 0   @70:5
+  _5 = const i64 0   @71:5
   goto bb4   @72:3
 
 bb1:
   _6 = copy (*_2).1   @72:15
-  _7 = lt copy _5, copy _6   @72:11
-  branch copy _7, bb2, bb3   @72:3
+  _7 = cast copy _6 to i64   @72:15
+  _8 = lt copy _5, copy _7   @72:11
+  branch copy _8, bb2, bb3   @72:3
 
 bb2:
-  _8 = copy (*_2).0   @73:15
-  _9 = copy (*_8)[copy _5]   @73:15
-  _10 = copy (*_1).1   @73:23
-  check.bounds copy _3, copy _10   @73:23
-  _11 = copy (*_1).0   @73:23
-  _12 = copy (*_11)[copy _3]   @73:23
-  _13 = mul.chk copy _9, copy _12   @73:19
-  _14 = add.chk copy _4, copy _13   @73:11
-  _15 = add copy _3, const i32 1   @73:34
-  _16 = copy (*_1).1   @73:31
-  check.bounds copy _15, copy _16   @73:31
-  _17 = copy (*_1).0   @73:31
-  _18 = copy (*_17)[copy _15]   @73:31
-  _19 = add.chk copy _14, copy _18   @73:27
-  _20 = copy (*_1).1   @73:43
-  check.bounds const i32 2, copy _20   @73:43
-  _21 = copy (*_1).0   @73:43
-  _22 = copy (*_21)[const i32 2]   @73:43
-  _23 = add.chk copy _19, copy _22   @73:39
-  _4 = copy _23   @73:7
-  _24 = add copy _5, const i32 1   @74:11
-  _5 = copy _24   @74:7
+  _9 = copy (*_2).0   @73:15
+  _10 = copy (*_9)[copy _5]   @73:15
+  _11 = copy (*_1).1   @73:23
+  _12 = cast copy _11 to i64   @73:23
+  check.bounds copy _3, copy _12   @73:23
+  _13 = copy (*_1).0   @73:23
+  _14 = copy (*_13)[copy _3]   @73:23
+  _15 = mul.chk copy _10, copy _14   @73:19
+  _16 = add.chk copy _4, copy _15   @73:11
+  _17 = add copy _3, const i64 1   @73:34
+  _18 = copy (*_1).1   @73:31
+  _19 = cast copy _18 to i64   @73:31
+  check.bounds copy _17, copy _19   @73:31
+  _20 = copy (*_1).0   @73:31
+  _21 = copy (*_20)[copy _17]   @73:31
+  _22 = add.chk copy _16, copy _21   @73:27
+  _23 = copy (*_1).1   @73:43
+  _24 = cast copy _23 to i64   @73:43
+  check.bounds const i64 2, copy _24   @73:43
+  _25 = copy (*_1).0   @73:43
+  _26 = copy (*_25)[const i64 2]   @73:43
+  _27 = add.chk copy _22, copy _26   @73:39
+  _4 = copy _27   @73:7
+  _28 = add copy _5, const i64 1   @74:11
+  _5 = copy _28   @74:7
   goto bb1 cold   @72:3
 
 bb3:
@@ -507,114 +612,144 @@ bb3:
   return   @76:3
 
 bb4:
-  _25 = ne copy _1, const ref %Array(Int) null   @72:11
-  branch copy _25, bb5, bb1   @72:11
+  _29 = ne copy _1, const ref %Array(Int) null   @72:11
+  branch copy _29, bb5, bb1   @72:11
 
 bb5:
-  _26 = copy (*_1).1   @72:11
-  _27 = cast copy _26 to i64   @72:11
-  _28 = cast copy _3 to i64   @72:11
-  _29 = add copy _28, const i64 0   @72:11
-  _30 = ge copy _29, const i64 0   @72:11
-  branch copy _30, bb6, bb1   @72:11
+  _30 = copy (*_1).1   @72:11
+  _31 = cast copy _30 to i64   @72:11
+  _32 = cast copy _3 to i64   @72:11
+  _33 = ge copy _32, const i64 -2147483648   @72:11
+  branch copy _33, bb6, bb1   @72:11
 
 bb6:
-  _31 = cast copy _3 to i64   @72:11
-  _32 = add copy _31, const i64 1   @72:11
-  _33 = lt copy _32, copy _27   @72:11
-  branch copy _33, bb7, bb1   @72:11
+  _34 = le copy _32, const i64 2147483647   @72:11
+  branch copy _34, bb7, bb1   @72:11
 
 bb7:
-  _34 = lt const i64 2, copy _27   @72:11
-  branch copy _34, bb8, bb1   @72:11
+  _35 = add copy _32, const i64 0   @72:11
+  _36 = ge copy _35, const i64 0   @72:11
+  branch copy _36, bb8, bb1   @72:11
 
 bb8:
-  goto bb9   @72:11
+  _37 = cast copy _3 to i64   @72:11
+  _38 = ge copy _37, const i64 -2147483648   @72:11
+  branch copy _38, bb9, bb1   @72:11
 
 bb9:
-  _6 = copy (*_2).1   @72:15
-  _7 = lt copy _5, copy _6   @72:11
-  branch copy _7, bb10, bb3   @72:3
+  _39 = le copy _37, const i64 2147483647   @72:11
+  branch copy _39, bb10, bb1   @72:11
 
 bb10:
-  _8 = copy (*_2).0   @73:15
-  _9 = copy (*_8)[copy _5]   @73:15
-  _11 = copy (*_1).0   @73:23
-  _12 = copy (*_11)[copy _3]   @73:23
-  _13 = mul.chk copy _9, copy _12   @73:19
-  _14 = add.chk copy _4, copy _13   @73:11
-  _15 = add copy _3, const i32 1   @73:34
-  _17 = copy (*_1).0   @73:31
-  _18 = copy (*_17)[copy _15]   @73:31
-  _19 = add.chk copy _14, copy _18   @73:27
-  _21 = copy (*_1).0   @73:43
-  _22 = copy (*_21)[const i32 2]   @73:43
-  _23 = add.chk copy _19, copy _22   @73:39
-  _4 = copy _23   @73:7
-  _24 = add copy _5, const i32 1   @74:11
-  _5 = copy _24   @74:7
-  goto bb9   @72:3
+  _40 = add copy _37, const i64 1   @72:11
+  _41 = lt copy _40, copy _31   @72:11
+  branch copy _41, bb11, bb1   @72:11
+
+bb11:
+  _42 = lt const i64 2, copy _31   @72:11
+  branch copy _42, bb12, bb1   @72:11
+
+bb12:
+  goto bb13   @72:11
+
+bb13:
+  _6 = copy (*_2).1   @72:15
+  _7 = cast copy _6 to i64   @72:15
+  _8 = lt copy _5, copy _7   @72:11
+  branch copy _8, bb14, bb3   @72:3
+
+bb14:
+  _9 = copy (*_2).0   @73:15
+  _10 = copy (*_9)[copy _5]   @73:15
+  _11 = copy (*_1).1   @73:23
+  _12 = cast copy _11 to i64   @73:23
+  _13 = copy (*_1).0   @73:23
+  _14 = copy (*_13)[copy _3]   @73:23
+  _15 = mul.chk copy _10, copy _14   @73:19
+  _16 = add.chk copy _4, copy _15   @73:11
+  _17 = add copy _3, const i64 1   @73:34
+  _18 = copy (*_1).1   @73:31
+  _19 = cast copy _18 to i64   @73:31
+  _20 = copy (*_1).0   @73:31
+  _21 = copy (*_20)[copy _17]   @73:31
+  _22 = add.chk copy _16, copy _21   @73:27
+  _23 = copy (*_1).1   @73:43
+  _24 = cast copy _23 to i64   @73:43
+  _25 = copy (*_1).0   @73:43
+  _26 = copy (*_25)[const i64 2]   @73:43
+  _27 = add.chk copy _22, copy _26   @73:39
+  _4 = copy _27   @73:7
+  _28 = add copy _5, const i64 1   @74:11
+  _5 = copy _28   @74:7
+  goto bb13   @72:3
 }
 
-fn av.loops/bytes(_1: ref %Buf, _2: ref %Array(Int)) -> i32 leaf @loops.av:80:1 {
-  let _0: i32
+fn av.loops/bytes(_1: ref %Buf, _2: ref %Array(Int)) -> i64 leaf @loops.av:80:1 {
+  let _0: i64
   let _1 (b): ref %Buf
   let _2 (tab): ref %Array(Int)
-  let _3: i32
-  let _4 (n): i32
-  let _5 (i): i32
+  let _3: i64
+  let _4 (n): i64
+  let _5 (i): i64
   let _6: bool
   let _7: ref %elems(u8)
   let _8: u8
-  let _9: i32
+  let _9: i64
   let _10: i32
-  let _11: ref %elems(Int)
-  let _12: i32
-  let _13: i32
-  let _14: ref %elems(u8)
-  let _15: u8
-  let _16: i32
-  let _17: i32
-  let _18: ref %elems(Int)
-  let _19: i32
-  let _20: i32
-  let _21: i32
-  let _22: ref %elems(Int)
+  let _11: i64
+  let _12: ref %elems(Int)
+  let _13: i64
+  let _14: i64
+  let _15: ref %elems(u8)
+  let _16: u8
+  let _17: i64
+  let _18: i32
+  let _19: i64
+  let _20: ref %elems(Int)
+  let _21: i64
+  let _22: i64
   let _23: i32
-  let _24: i32
-  let _25: i32
-  let _26: i32
-  let _27: i32
-  let _28: ref %elems(Int)
-  let _29: i32
-  let _30 (s): i32
-  let _31: bool
-  let _32: i32
-  let _33: ref %elems(Int)
-  let _34: i32
-  let _35: i32
+  let _24: i64
+  let _25: ref %elems(Int)
+  let _26: i64
+  let _27: i64
+  let _28: i64
+  let _29: i64
+  let _30: i32
+  let _31: i64
+  let _32: ref %elems(Int)
+  let _33: i64
+  let _34 (s): i64
+  let _35: bool
   let _36: i32
-  let _37: i32
-  let _38: i32
-  let _39: bool
-  let _40: i32
+  let _37: i64
+  let _38: ref %elems(Int)
+  let _39: i64
+  let _40: i64
   let _41: i64
-  let _42: bool
-  let _43: bool
-  let _44: i32
-  let _45: i64
+  let _42: i64
+  let _43: i64
+  let _44: bool
+  let _45: i32
   let _46: i64
-  let _47: i64
-  let _48: i64
-  let _49: i64
-  let _50: bool
+  let _47: bool
+  let _48: bool
+  let _49: i32
+  let _50: i64
   let _51: i64
-  let _52: bool
+  let _52: i64
+  let _53: i64
+  let _54: bool
+  let _55: bool
+  let _56: i64
+  let _57: bool
+  let _58: i64
+  let _59: bool
 
 bb0:
   _3 = call avant_buf_size(copy _1) nocollect   @81:8
   _4 = copy _3   @81:5
-  _5 = const i32 0   @82:5
+  _5 = const i64 0   @82:5
   goto bb7   @83:3
 
 bb1:
@@ -624,71 +759,76 @@ bb1:
 bb2:
   _7 = copy (*_1).0   @84:22
   _8 = copy (*_7)[copy _5]   @84:22
-  _9 = cast copy _8 to i32   @84:22
+  _9 = cast copy _8 to i64   @84:22
   _10 = copy (*_2).1   @84:20
-  check.bounds copy _9, copy _10   @84:20
-  _11 = copy (*_2).0   @84:20
-  _12 = copy (*_11)[copy _9]   @84:20
-  _13 = add.chk copy _12, const i32 1   @84:27
-  _14 = copy (*_1).0   @84:10
-  _15 = copy (*_14)[copy _5]   @84:10
-  _16 = cast copy _15 to i32   @84:10
-  _17 = copy (*_2).1   @84:8
-  check.bounds copy _16, copy _17   @84:8
-  _18 = copy (*_2).0   @84:8
-  (*_18)[copy _16] = copy _13   @84:15
-  _19 = mul.chk copy _5, const i32 13   @85:34
-  _20 = and copy _19, const i32 255   @85:40
-  _21 = copy (*_2).1   @85:30
-  check.bounds copy _20, copy _21   @85:30
-  _22 = copy (*_2).0   @85:30
-  _23 = copy (*_22)[copy _20]   @85:30
-  _24 = add.chk copy _23, const i32 2   @85:47
-  _25 = mul.chk copy _5, const i32 13   @85:12
-  _26 = and copy _25, const i32 255   @85:18
-  _27 = copy (*_2).1   @85:8
-  check.bounds copy _26, copy _27   @85:8
-  _28 = copy (*_2).0   @85:8
-  (*_28)[copy _26] = copy _24   @85:25
-  _29 = add copy _5, const i32 1   @86:11
-  _5 = copy _29   @86:7
+  _11 = cast copy _10 to i64   @84:20
+  check.bounds copy _9, copy _11   @84:20
+  _12 = copy (*_2).0   @84:20
+  _13 = copy (*_12)[copy _9]   @84:20
+  _14 = add.chk copy _13, const i64 1   @84:27
+  _15 = copy (*_1).0   @84:10
+  _16 = copy (*_15)[copy _5]   @84:10
+  _17 = cast copy _16 to i64   @84:10
+  _18 = copy (*_2).1   @84:8
+  _19 = cast copy _18 to i64   @84:8
+  check.bounds copy _17, copy _19   @84:8
+  _20 = copy (*_2).0   @84:8
+  (*_20)[copy _17] = copy _14   @84:15
+  _21 = mul.chk copy _5, const i64 13   @85:34
+  _22 = and copy _21, const i64 255   @85:40
+  _23 = copy (*_2).1   @85:30
+  _24 = cast copy _23 to i64   @85:30
+  check.bounds copy _22, copy _24   @85:30
+  _25 = copy (*_2).0   @85:30
+  _26 = copy (*_25)[copy _22]   @85:30
+  _27 = add.chk copy _26, const i64 2   @85:47
+  _28 = mul.chk copy _5, const i64 13   @85:12
+  _29 = and copy _28, const i64 255   @85:18
+  _30 = copy (*_2).1   @85:8
+  _31 = cast copy _30 to i64   @85:8
+  check.bounds copy _29, copy _31   @85:8
+  _32 = copy (*_2).0   @85:8
+  (*_32)[copy _29] = copy _27   @85:25
+  _33 = add copy _5, const i64 1   @86:11
+  _5 = copy _33   @86:7
   goto bb1 cold   @83:3
 
 bb3:
-  _30 = const i32 0   @88:5
-  _5 = const i32 0   @89:5
+  _34 = const i64 0   @88:5
+  _5 = const i64 0   @89:5
   goto bb12   @90:3
 
 bb4:
-  _31 = lt copy _5, const i32 256   @90:11
-  branch copy _31, bb5, bb6   @90:3
+  _35 = lt copy _5, const i64 256   @90:11
+  branch copy _35, bb5, bb6   @90:3
 
 bb5:
-  _32 = copy (*_2).1   @91:16
-  check.bounds copy _5, copy _32   @91:16
-  _33 = copy (*_2).0   @91:16
-  _34 = copy (*_33)[copy _5]   @91:16
-  _35 = add copy _5, const i32 1   @91:25
-  _36 = mul.chk copy _34, copy _35   @91:20
-  _37 = add.chk copy _30, copy _36   @91:11
-  _30 = copy _37   @91:7
-  _38 = add copy _5, const i32 1   @92:11
-  _5 = copy _38   @92:7
+  _36 = copy (*_2).1   @91:16
+  _37 = cast copy _36 to i64   @91:16
+  check.bounds copy _5, copy _37   @91:16
+  _38 = copy (*_2).0   @91:16
+  _39 = copy (*_38)[copy _5]   @91:16
+  _40 = add copy _5, const i64 1   @91:25
+  _41 = mul.chk copy _39, copy _40   @91:20
+  _42 = add.chk copy _34, copy _41   @91:11
+  _34 = copy _42   @91:7
+  _43 = add copy _5, const i64 1   @92:11
+  _5 = copy _43   @92:7
   goto bb4 cold   @90:3
 
 bb6:
-  _0 = copy _30   @94:3
+  _0 = copy _34   @94:3
   return   @94:3
 
 bb7:
-  _39 = ne copy _2, const ref %Array(Int) null   @83:11
-  branch copy _39, bb8, bb1   @83:11
+  _44 = ne copy _2, const ref %Array(Int) null   @83:11
+  branch copy _44, bb8, bb1   @83:11
 
 bb8:
-  _40 = copy (*_2).1   @83:11
-  _41 = cast copy _40 to i64   @83:11
-  _42 = lt const i64 255, copy _41   @83:11
-  branch copy _42, bb9, bb1   @83:11
+  _45 = copy (*_2).1   @83:11
+  _46 = cast copy _45 to i64   @83:11
+  _47 = lt const i64 255, copy _46   @83:11
+  branch copy _47, bb9, bb1   @83:11
 
 bb9:
   goto bb10   @83:11
@@ -700,116 +840,134 @@ bb10:
 bb11:
   _7 = copy (*_1).0   @84:22
   _8 = copy (*_7)[copy _5]   @84:22
-  _9 = cast copy _8 to i32   @84:22
-  _11 = copy (*_2).0   @84:20
-  _12 = copy (*_11)[copy _9]   @84:20
-  _13 = add.chk copy _12, const i32 1   @84:27
-  _14 = copy (*_1).0   @84:10
-  _15 = copy (*_14)[copy _5]   @84:10
-  _16 = cast copy _15 to i32   @84:10
-  _18 = copy (*_2).0   @84:8
-  (*_18)[copy _16] = copy _13   @84:15
-  _19 = mul.chk copy _5, const i32 13   @85:34
-  _20 = and copy _19, const i32 255   @85:40
-  _22 = copy (*_2).0   @85:30
-  _23 = copy (*_22)[copy _20]   @85:30
-  _24 = add.chk copy _23, const i32 2   @85:47
-  _25 = mul.chk copy _5, const i32 13   @85:12
-  _26 = and copy _25, const i32 255   @85:18
-  _28 = copy (*_2).0   @85:8
-  (*_28)[copy _26] = copy _24   @85:25
-  _29 = add copy _5, const i32 1   @86:11
-  _5 = copy _29   @86:7
+  _9 = cast copy _8 to i64   @84:22
+  _10 = copy (*_2).1   @84:20
+  _11 = cast copy _10 to i64   @84:20
+  _12 = copy (*_2).0   @84:20
+  _13 = copy (*_12)[copy _9]   @84:20
+  _14 = add.chk copy _13, const i64 1   @84:27
+  _15 = copy (*_1).0   @84:10
+  _16 = copy (*_15)[copy _5]   @84:10
+  _17 = cast copy _16 to i64   @84:10
+  _18 = copy (*_2).1   @84:8
+  _19 = cast copy _18 to i64   @84:8
+  _20 = copy (*_2).0   @84:8
+  (*_20)[copy _17] = copy _14   @84:15
+  _21 = mul.chk copy _5, const i64 13   @85:34
+  _22 = and copy _21, const i64 255   @85:40
+  _23 = copy (*_2).1   @85:30
+  _24 = cast copy _23 to i64   @85:30
+  _25 = copy (*_2).0   @85:30
+  _26 = copy (*_25)[copy _22]   @85:30
+  _27 = add.chk copy _26, const i64 2   @85:47
+  _28 = mul.chk copy _5, const i64 13   @85:12
+  _29 = and copy _28, const i64 255   @85:18
+  _30 = copy (*_2).1   @85:8
+  _31 = cast copy _30 to i64   @85:8
+  _32 = copy (*_2).0   @85:8
+  (*_32)[copy _29] = copy _27   @85:25
+  _33 = add copy _5, const i64 1   @86:11
+  _5 = copy _33   @86:7
   goto bb10   @83:3
 
 bb12:
-  _43 = ne copy _2, const ref %Array(Int) null   @90:11
-  branch copy _43, bb13, bb4   @90:11
+  _48 = ne copy _2, const ref %Array(Int) null   @90:11
+  branch copy _48, bb13, bb4   @90:11
 
 bb13:
-  _44 = copy (*_2).1   @90:11
-  _45 = cast copy _44 to i64   @90:11
-  _46 = const i64 256   @90:11
-  _47 = sub copy _46, const i64 1   @90:11
-  _48 = cast copy _5 to i64   @90:11
-  _49 = add copy _48, const i64 0   @90:11
-  _50 = ge copy _49, const i64 0   @90:11
-  branch copy _50, bb14, bb4   @90:11
+  _49 = copy (*_2).1   @90:11
+  _50 = cast copy _49 to i64   @90:11
+  _51 = const i64 256   @90:11
+  _52 = sub copy _51, const i64 1   @90:11
+  _53 = cast copy _5 to i64   @90:11
+  _54 = ge copy _53, const i64 -2147483648   @90:11
+  branch copy _54, bb14, bb4   @90:11
 
 bb14:
-  _51 = add copy _47, const i64 0   @90:11
-  _52 = lt copy _51, copy _45   @90:11
-  branch copy _52, bb15, bb4   @90:11
+  _55 = le copy _53, const i64 2147483647   @90:11
+  branch copy _55, bb15, bb4   @90:11
 
 bb15:
-  goto bb16   @90:11
+  _56 = add copy _53, const i64 0   @90:11
+  _57 = ge copy _56, const i64 0   @90:11
+  branch copy _57, bb16, bb4   @90:11
 
 bb16:
-  _31 = lt copy _5, const i32 256   @90:11
-  branch copy _31, bb17, bb6   @90:3
+  _58 = add copy _52, const i64 0   @90:11
+  _59 = lt copy _58, copy _50   @90:11
+  branch copy _59, bb17, bb4   @90:11
 
 bb17:
-  _33 = copy (*_2).0   @91:16
-  _34 = copy (*_33)[copy _5]   @91:16
-  _35 = add copy _5, const i32 1   @91:25
-  _36 = mul.chk copy _34, copy _35   @91:20
-  _37 = add.chk copy _30, copy _36   @91:11
-  _30 = copy _37   @91:7
-  _38 = add copy _5, const i32 1   @92:11
-  _5 = copy _38   @92:7
-  goto bb16   @90:3
+  goto bb18   @90:11
+
+bb18:
+  _35 = lt copy _5, const i64 256   @90:11
+  branch copy _35, bb19, bb6   @90:3
+
+bb19:
+  _36 = copy (*_2).1   @91:16
+  _37 = cast copy _36 to i64   @91:16
+  _38 = copy (*_2).0   @91:16
+  _39 = copy (*_38)[copy _5]   @91:16
+  _40 = add copy _5, const i64 1   @91:25
+  _41 = mul.chk copy _39, copy _40   @91:20
+  _42 = add.chk copy _34, copy _41   @91:11
+  _34 = copy _42   @91:7
+  _43 = add copy _5, const i64 1   @92:11
+  _5 = copy _43   @92:7
+  goto bb18   @90:3
 }
 
-fn av.loops/strings(_1: ref str, _2: ref str) -> i32 leaf @loops.av:98:1 {
-  let _0: i32
+fn av.loops/strings(_1: ref str, _2: ref str) -> i64 leaf @loops.av:98:1 {
+  let _0: i64
   let _1 (s): ref str
   let _2 (t): ref str
-  let _3: i32
-  let _4 (n): i32
-  let _5: i32
-  let _6 (m): i32
-  let _7 (c): i32
-  let _8 (i): i32
-  let _9: i32
+  let _3: i64
+  let _4 (n): i64
+  let _5: i64
+  let _6 (m): i64
+  let _7 (c): i64
+  let _8 (i): i64
+  let _9: i64
   let _10: bool
-  let _11 (j): i32
+  let _11 (j): i64
   let _12: bool
   let _13: ptr u8
   let _14: u8
-  let _15: i32
+  let _15: i64
   let _16: ptr u8
   let _17: u8
-  let _18: i32
+  let _18: i64
   let _19: bool
   let _20: bool
-  let _21: i32
+  let _21: i64
   let _22: ptr u8
   let _23: u8
-  let _24: i32
+  let _24: i64
   let _25: ptr u8
   let _26: u8
-  let _27: i32
+  let _27: i64
   let _28: bool
-  let _29: i32
-  let _30: i32
-  let _31: i32
+  let _29: i64
+  let _30: i64
+  let _31: i64
 
 bb0:
   _3 = call avant_str_size(copy _1) nocollect   @99:8
   _4 = copy _3   @99:5
   _5 = call avant_str_size(copy _2) nocollect   @100:8
   _6 = copy _5   @100:5
-  _7 = const i32 0   @101:5
-  _8 = const i32 0   @102:5
+  _7 = const i64 0   @101:5
+  _8 = const i64 0   @102:5
   goto bb1   @103:3
 
 bb1:
-  _9 = sub copy _4, const i32 1   @103:15
+  _9 = sub copy _4, const i64 1   @103:15
   _10 = lt copy _8, copy _9   @103:11
   branch copy _10, bb2, bb3   @103:3
 
 bb2:
-  _11 = const i32 0   @104:7
+  _11 = const i64 0   @104:7
   goto bb4   @105:5
 
 bb3:
@@ -823,27 +981,27 @@ bb4:
 bb5:
   _13 = cast copy _1 to ptr u8   @106:11
   _14 = copy (*_13)[copy _8]   @106:11
-  _15 = cast copy _14 to i32   @106:11
+  _15 = cast copy _14 to i64   @106:11
   _16 = cast copy _2 to ptr u8   @106:19
   _17 = copy (*_16)[copy _11]   @106:19
-  _18 = cast copy _17 to i32   @106:19
+  _18 = cast copy _17 to i64   @106:19
   _19 = eq copy _15, copy _18   @106:15
   _20 = copy _19   @106:23
   branch copy _20, bb8, bb7   @106:23
 
 bb6:
-  _31 = add copy _8, const i32 1   @111:11
+  _31 = add copy _8, const i64 1   @111:11
   _8 = copy _31   @111:7
   goto bb1   @103:3
 
 bb7:
-  _21 = add copy _8, const i32 1   @106:30
+  _21 = add copy _8, const i64 1   @106:30
   _22 = cast copy _1 to ptr u8   @106:27
   _23 = copy (*_22)[copy _21]   @106:27
-  _24 = cast copy _23 to i32   @106:27
+  _24 = cast copy _23 to i64   @106:27
   _25 = cast copy _2 to ptr u8   @106:39
   _26 = copy (*_25)[copy _11]   @106:39
-  _27 = cast copy _26 to i32   @106:39
+  _27 = cast copy _26 to i64   @106:39
   _28 = eq copy _24, copy _27   @106:35
   _20 = copy _28   @106:23
   goto bb8   @106:23
@@ -857,83 +1015,99 @@ bb9:
   goto bb10   @106:7
 
 bb10:
-  _30 = add copy _11, const i32 1   @109:13
+  _30 = add copy _11, const i64 1   @109:13
   _11 = copy _30   @109:9
   goto bb4   @105:5
 }
 
-fn av.loops/grid(_1: ref %Array(Array(Int)), _2: i32) -> i32 leaf @loops.av:117:1 {
-  let _0: i32
+fn av.loops/grid(_1: ref %Array(Array(Int)), _2: i64) -> i64 leaf @loops.av:117:1 {
+  let _0: i64
   let _1 (rows): ref %Array(Array(Int))
-  let _2 (n): i32
-  let _3 (s): i32
-  let _4 (i): i32
+  let _2 (n): i64
+  let _3 (s): i64
+  let _4 (i): i64
   let _5: bool
   let _6: i32
-  let _7: ref %elems(Array(Int))
-  let _8: ref %Array(Int)
-  let _9 (r): ref %Array(Int)
-  let _10 (j): i32
-  let _11: bool
-  let _12: i32
-  let _13: ref %elems(Int)
-  let _14: i32
-  let _15: i32
-  let _16: i32
-  let _17: i32
-  let _18: i32
-  let _19: ref %elems(Array(Int))
-  let _20: ref %Array(Int)
-  let _21: i32
-  let _22: ref %elems(Int)
-  let _23: i32
+  let _7: i64
+  let _8: ref %elems(Array(Int))
+  let _9: ref %Array(Int)
+  let _10 (r): ref %Array(Int)
+  let _11 (j): i64
+  let _12: bool
+  let _13: i32
+  let _14: i64
+  let _15: ref %elems(Int)
+  let _16: i64
+  let _17: i64
+  let _18: i64
+  let _19: i64
+  let _20: i32
+  let _21: i64
+  let _22: ref %elems(Array(Int))
+  let _23: ref %Array(Int)
   let _24: i32
-  let _25: i32
-  let _26: i32
-  let _27: bool
-  let _28: i32
+  let _25: i64
+  let _26: ref %elems(Int)
+  let _27: i64
+  let _28: i64
   let _29: i64
   let _30: i64
-  let _31: i64
-  let _32: i64
+  let _31: bool
+  let _32: i32
   let _33: i64
-  let _34: bool
-  let _35: i64
+  let _34: i64
+  let _35: bool
   let _36: bool
-  let _37: bool
-  let _38: i32
-  let _39: i64
+  let _37: i64
+  let _38: i64
+  let _39: bool
   let _40: bool
-  let _41: i32
-  let _42: i64
+  let _41: i64
+  let _42: bool
   let _43: i64
-  let _44: i64
-  let _45: i64
-  let _46: i64
-  let _47: bool
-  let _48: i64
-  let _49: bool
+  let _44: bool
+  let _45: bool
+  let _46: i32
+  let _47: i64
+  let _48: bool
+  let _49: i32
   let _50: i64
-  let _51: bool
+  let _51: i64
   let _52: bool
-  let _53: i32
+  let _53: bool
   let _54: i64
-  let _55: bool
-  let _56: i32
-  let _57: i64
+  let _55: i64
+  let _56: bool
+  let _57: bool
   let _58: i64
-  let _59: i64
+  let _59: bool
   let _60: i64
-  let _61: i64
-  let _62: bool
-  let _63: i64
+  let _61: bool
+  let _62: i64
+  let _63: bool
   let _64: bool
-  let _65: i64
-  let _66: bool
+  let _65: i32
+  let _66: i64
+  let _67: bool
+  let _68: i32
+  let _69: i64
+  let _70: i64
+  let _71: bool
+  let _72: bool
+  let _73: i64
+  let _74: i64
+  let _75: bool
+  let _76: bool
+  let _77: i64
+  let _78: bool
+  let _79: i64
+  let _80: bool
+  let _81: i64
+  let _82: bool
 
 bb0:
-  _3 = const i32 0   @118:5
-  _4 = const i32 0   @119:5
+  _3 = const i64 0   @118:5
+  _4 = const i64 0   @119:5
   goto bb7   @120:3
 
 bb1:
@@ -942,504 +1116,608 @@ bb1:
 
 bb2:
   _6 = copy (*_1).1   @121:13
-  check.bounds copy _4, copy _6   @121:13
-  _7 = copy (*_1).0   @121:13
-  _8 = copy (*_7)[copy _4]   @121:13
-  _9 = copy _8   @121:7
-  _10 = const i32 0   @122:7
-  goto bb16   @123:5
+  _7 = cast copy _6 to i64   @121:13
+  check.bounds copy _4, copy _7   @121:13
+  _8 = copy (*_1).0   @121:13
+  _9 = copy (*_8)[copy _4]   @121:13
+  _10 = copy _9   @121:7
+  _11 = const i64 0   @122:7
+  goto bb20   @123:5
 
 bb3:
   _0 = copy _3   @129:3
   return   @129:3
 
 bb4:
-  _11 = lt copy _10, copy _2   @123:13
-  branch copy _11, bb5, bb6   @123:5
+  _12 = lt copy _11, copy _2   @123:13
+  branch copy _12, bb5, bb6   @123:5
 
 bb5:
-  _12 = copy (*_9).1   @124:16
-  check.bounds copy _10, copy _12   @124:16
-  _13 = copy (*_9).0   @124:16
-  _14 = copy (*_13)[copy _10]   @124:16
-  _15 = add copy _4, const i32 1   @124:25
-  _16 = mul.chk copy _14, copy _15   @124:20
-  _17 = add.chk copy _3, copy _16   @124:13
-  _18 = copy (*_1).1   @124:36
-  check.bounds copy _10, copy _18   @124:36
-  _19 = copy (*_1).0   @124:36
-  _20 = copy (*_19)[copy _10]   @124:36
-  _21 = copy (*_20).1   @124:39
-  check.bounds copy _4, copy _21   @124:39
-  _22 = copy (*_20).0   @124:39
-  _23 = copy (*_22)[copy _4]   @124:39
-  _24 = add.chk copy _17, copy _23   @124:30
-  _3 = copy _24   @124:9
-  _25 = add copy _10, const i32 1   @125:13
-  _10 = copy _25   @125:9
+  _13 = copy (*_10).1   @124:16
+  _14 = cast copy _13 to i64   @124:16
+  check.bounds copy _11, copy _14   @124:16
+  _15 = copy (*_10).0   @124:16
+  _16 = copy (*_15)[copy _11]   @124:16
+  _17 = add copy _4, const i64 1   @124:25
+  _18 = mul.chk copy _16, copy _17   @124:20
+  _19 = add.chk copy _3, copy _18   @124:13
+  _20 = copy (*_1).1   @124:36
+  _21 = cast copy _20 to i64   @124:36
+  check.bounds copy _11, copy _21   @124:36
+  _22 = copy (*_1).0   @124:36
+  _23 = copy (*_22)[copy _11]   @124:36
+  _24 = copy (*_23).1   @124:39
+  _25 = cast copy _24 to i64   @124:39
+  check.bounds copy _4, copy _25   @124:39
+  _26 = copy (*_23).0   @124:39
+  _27 = copy (*_26)[copy _4]   @124:39
+  _28 = add.chk copy _19, copy _27   @124:30
+  _3 = copy _28   @124:9
+  _29 = add copy _11, const i64 1   @125:13
+  _11 = copy _29   @125:9
   goto bb4 cold   @123:5
 
 bb6:
-  _26 = add copy _4, const i32 1   @127:11
-  _4 = copy _26   @127:7
+  _30 = add copy _4, const i64 1   @127:11
+  _4 = copy _30   @127:7
   goto bb1 cold   @120:3
 
 bb7:
-  _27 = ne copy _1, const ref %Array(Array(Int)) null   @120:11
-  branch copy _27, bb8, bb1   @120:11
+  _31 = ne copy _1, const ref %Array(Array(Int)) null   @120:11
+  branch copy _31, bb8, bb1   @120:11
 
 bb8:
-  _28 = copy (*_1).1   @120:11
-  _29 = cast copy _28 to i64   @120:11
-  _30 = cast copy _2 to i64   @120:11
-  _31 = sub copy _30, const i64 1   @120:11
-  _32 = cast copy _4 to i64   @120:11
-  _33 = add copy _32, const i64 0   @120:11
-  _34 = ge copy _33, const i64 0   @120:11
-  branch copy _34, bb9, bb1   @120:11
+  _32 = copy (*_1).1   @120:11
+  _33 = cast copy _32 to i64   @120:11
+  _34 = cast copy _2 to i64   @120:11
+  _35 = ge copy _34, const i64 -2147483648   @120:11
+  branch copy _35, bb9, bb1   @120:11
 
 bb9:
-  _35 = add copy _31, const i64 0   @120:11
-  _36 = lt copy _35, copy _29   @120:11
+  _36 = le copy _34, const i64 2147483647   @120:11
   branch copy _36, bb10, bb1   @120:11
 
 bb10:
-  goto bb11   @120:11
+  _37 = sub copy _34, const i64 1   @120:11
+  _38 = cast copy _4 to i64   @120:11
+  _39 = ge copy _38, const i64 -2147483648   @120:11
+  branch copy _39, bb11, bb1   @120:11
 
 bb11:
-  _5 = lt copy _4, copy _2   @120:11
-  branch copy _5, bb12, bb3   @120:3
+  _40 = le copy _38, const i64 2147483647   @120:11
+  branch copy _40, bb12, bb1   @120:11
 
 bb12:
-  _7 = copy (*_1).0   @121:13
-  _8 = copy (*_7)[copy _4]   @121:13
-  _9 = copy _8   @121:7
-  _10 = const i32 0   @122:7
-  goto bb24   @123:5
+  _41 = add copy _38, const i64 0   @120:11
+  _42 = ge copy _41, const i64 0   @120:11
+  branch copy _42, bb13, bb1   @120:11
 
 bb13:
-  _11 = lt copy _10, copy _2   @123:13
-  branch copy _11, bb14, bb15   @123:5
+  _43 = add copy _37, const i64 0   @120:11
+  _44 = lt copy _43, copy _33   @120:11
+  branch copy _44, bb14, bb1   @120:11
 
 bb14:
-  _12 = copy (*_9).1   @124:16
-  check.bounds copy _10, copy _12   @124:16
-  _13 = copy (*_9).0   @124:16
-  _14 = copy (*_13)[copy _10]   @124:16
-  _15 = add copy _4, const i32 1   @124:25
-  _16 = mul.chk copy _14, copy _15   @124:20
-  _17 = add.chk copy _3, copy _16   @124:13
-  _18 = copy (*_1).1   @124:36
-  check.bounds copy _10, copy _18   @124:36
-  _19 = copy (*_1).0   @124:36
-  _20 = copy (*_19)[copy _10]   @124:36
-  _21 = copy (*_20).1   @124:39
-  check.bounds copy _4, copy _21   @124:39
-  _22 = copy (*_20).0   @124:39
-  _23 = copy (*_22)[copy _4]   @124:39
-  _24 = add.chk copy _17, copy _23   @124:30
-  _3 = copy _24   @124:9
-  _25 = add copy _10, const i32 1   @125:13
-  _10 = copy _25   @125:9
-  goto bb13 cold   @123:5
+  goto bb15   @120:11
 
 bb15:
-  _26 = add copy _4, const i32 1   @127:11
-  _4 = copy _26   @127:7
-  goto bb11   @120:3
+  _5 = lt copy _4, copy _2   @120:11
+  branch copy _5, bb16, bb3   @120:3
 
 bb16:
-  _37 = ne copy _9, const ref %Array(Int) null   @123:13
-  branch copy _37, bb17, bb4   @123:13
+  _6 = copy (*_1).1   @121:13
+  _7 = cast copy _6 to i64   @121:13
+  _8 = copy (*_1).0   @121:13
+  _9 = copy (*_8)[copy _4]   @121:13
+  _10 = copy _9   @121:7
+  _11 = const i64 0   @122:7
+  goto bb32   @123:5
 
 bb17:
-  _38 = copy (*_9).1   @123:13
-  _39 = cast copy _38 to i64   @123:13
-  _40 = ne copy _1, const ref %Array(Array(Int)) null   @123:13
-  branch copy _40, bb18, bb4   @123:13
+  _12 = lt copy _11, copy _2   @123:13
+  branch copy _12, bb18, bb19   @123:5
 
 bb18:
-  _41 = copy (*_1).1   @123:13
-  _42 = cast copy _41 to i64   @123:13
-  _43 = cast copy _2 to i64   @123:13
-  _44 = sub copy _43, const i64 1   @123:13
-  _45 = cast copy _10 to i64   @123:13
-  _46 = add copy _45, const i64 0   @123:13
-  _47 = ge copy _46, const i64 0   @123:13
-  branch copy _47, bb19, bb4   @123:13
+  _13 = copy (*_10).1   @124:16
+  _14 = cast copy _13 to i64   @124:16
+  check.bounds copy _11, copy _14   @124:16
+  _15 = copy (*_10).0   @124:16
+  _16 = copy (*_15)[copy _11]   @124:16
+  _17 = add copy _4, const i64 1   @124:25
+  _18 = mul.chk copy _16, copy _17   @124:20
+  _19 = add.chk copy _3, copy _18   @124:13
+  _20 = copy (*_1).1   @124:36
+  _21 = cast copy _20 to i64   @124:36
+  check.bounds copy _11, copy _21   @124:36
+  _22 = copy (*_1).0   @124:36
+  _23 = copy (*_22)[copy _11]   @124:36
+  _24 = copy (*_23).1   @124:39
+  _25 = cast copy _24 to i64   @124:39
+  check.bounds copy _4, copy _25   @124:39
+  _26 = copy (*_23).0   @124:39
+  _27 = copy (*_26)[copy _4]   @124:39
+  _28 = add.chk copy _19, copy _27   @124:30
+  _3 = copy _28   @124:9
+  _29 = add copy _11, const i64 1   @125:13
+  _11 = copy _29   @125:9
+  goto bb17 cold   @123:5
 
 bb19:
-  _48 = add copy _44, const i64 0   @123:13
-  _49 = lt copy _48, copy _39   @123:13
-  branch copy _49, bb20, bb4   @123:13
+  _30 = add copy _4, const i64 1   @127:11
+  _4 = copy _30   @127:7
+  goto bb15   @120:3
 
 bb20:
-  _50 = add copy _44, const i64 0   @123:13
-  _51 = lt copy _50, copy _42   @123:13
-  branch copy _51, bb21, bb4   @123:13
+  _45 = ne copy _10, const ref %Array(Int) null   @123:13
+  branch copy _45, bb21, bb4   @123:13
 
 bb21:
-  goto bb22   @123:13
+  _46 = copy (*_10).1   @123:13
+  _47 = cast copy _46 to i64   @123:13
+  _48 = ne copy _1, const ref %Array(Array(Int)) null   @123:13
+  branch copy _48, bb22, bb4   @123:13
 
 bb22:
-  _11 = lt copy _10, copy _2   @123:13
-  branch copy _11, bb23, bb6   @123:5
+  _49 = copy (*_1).1   @123:13
+  _50 = cast copy _49 to i64   @123:13
+  _51 = cast copy _2 to i64   @123:13
+  _52 = ge copy _51, const i64 -2147483648   @123:13
+  branch copy _52, bb23, bb4   @123:13
 
 bb23:
-  _13 = copy (*_9).0   @124:16
-  _14 = copy (*_13)[copy _10]   @124:16
-  _15 = add copy _4, const i32 1   @124:25
-  _16 = mul.chk copy _14, copy _15   @124:20
-  _17 = add.chk copy _3, copy _16   @124:13
-  _19 = copy (*_1).0   @124:36
-  _20 = copy (*_19)[copy _10]   @124:36
-  _21 = copy (*_20).1   @124:39
-  check.bounds copy _4, copy _21   @124:39
-  _22 = copy (*_20).0   @124:39
-  _23 = copy (*_22)[copy _4]   @124:39
-  _24 = add.chk copy _17, copy _23   @124:30
-  _3 = copy _24   @124:9
-  _25 = add copy _10, const i32 1   @125:13
-  _10 = copy _25   @125:9
-  goto bb22   @123:5
+  _53 = le copy _51, const i64 2147483647   @123:13
+  branch copy _53, bb24, bb4   @123:13
 
 bb24:
-  _52 = ne copy _9, const ref %Array(Int) null   @123:13
-  branch copy _52, bb25, bb13   @123:13
+  _54 = sub copy _51, const i64 1   @123:13
+  _55 = cast copy _11 to i64   @123:13
+  _56 = ge copy _55, const i64 -2147483648   @123:13
+  branch copy _56, bb25, bb4   @123:13
 
 bb25:
-  _53 = copy (*_9).1   @123:13
-  _54 = cast copy _53 to i64   @123:13
-  _55 = ne copy _1, const ref %Array(Array(Int)) null   @123:13
-  branch copy _55, bb26, bb13   @123:13
+  _57 = le copy _55, const i64 2147483647   @123:13
+  branch copy _57, bb26, bb4   @123:13
 
 bb26:
-  _56 = copy (*_1).1   @123:13
-  _57 = cast copy _56 to i64   @123:13
-  _58 = cast copy _2 to i64   @123:13
-  _59 = sub copy _58, const i64 1   @123:13
-  _60 = cast copy _10 to i64   @123:13
-  _61 = add copy _60, const i64 0   @123:13
-  _62 = ge copy _61, const i64 0   @123:13
-  branch copy _62, bb27, bb13   @123:13
+  _58 = add copy _55, const i64 0   @123:13
+  _59 = ge copy _58, const i64 0   @123:13
+  branch copy _59, bb27, bb4   @123:13
 
 bb27:
-  _63 = add copy _59, const i64 0   @123:13
-  _64 = lt copy _63, copy _54   @123:13
-  branch copy _64, bb28, bb13   @123:13
+  _60 = add copy _54, const i64 0   @123:13
+  _61 = lt copy _60, copy _47   @123:13
+  branch copy _61, bb28, bb4   @123:13
 
 bb28:
-  _65 = add copy _59, const i64 0   @123:13
-  _66 = lt copy _65, copy _57   @123:13
-  branch copy _66, bb29, bb13   @123:13
+  _62 = add copy _54, const i64 0   @123:13
+  _63 = lt copy _62, copy _50   @123:13
+  branch copy _63, bb29, bb4   @123:13
 
 bb29:
   goto bb30   @123:13
 
 bb30:
-  _11 = lt copy _10, copy _2   @123:13
-  branch copy _11, bb31, bb15   @123:5
+  _12 = lt copy _11, copy _2   @123:13
+  branch copy _12, bb31, bb6   @123:5
 
 bb31:
-  _13 = copy (*_9).0   @124:16
-  _14 = copy (*_13)[copy _10]   @124:16
-  _15 = add copy _4, const i32 1   @124:25
-  _16 = mul.chk copy _14, copy _15   @124:20
-  _17 = add.chk copy _3, copy _16   @124:13
-  _19 = copy (*_1).0   @124:36
-  _20 = copy (*_19)[copy _10]   @124:36
-  _21 = copy (*_20).1   @124:39
-  check.bounds copy _4, copy _21   @124:39
-  _22 = copy (*_20).0   @124:39
-  _23 = copy (*_22)[copy _4]   @124:39
-  _24 = add.chk copy _17, copy _23   @124:30
-  _3 = copy _24   @124:9
-  _25 = add copy _10, const i32 1   @125:13
-  _10 = copy _25   @125:9
+  _13 = copy (*_10).1   @124:16
+  _14 = cast copy _13 to i64   @124:16
+  _15 = copy (*_10).0   @124:16
+  _16 = copy (*_15)[copy _11]   @124:16
+  _17 = add copy _4, const i64 1   @124:25
+  _18 = mul.chk copy _16, copy _17   @124:20
+  _19 = add.chk copy _3, copy _18   @124:13
+  _20 = copy (*_1).1   @124:36
+  _21 = cast copy _20 to i64   @124:36
+  _22 = copy (*_1).0   @124:36
+  _23 = copy (*_22)[copy _11]   @124:36
+  _24 = copy (*_23).1   @124:39
+  _25 = cast copy _24 to i64   @124:39
+  check.bounds copy _4, copy _25   @124:39
+  _26 = copy (*_23).0   @124:39
+  _27 = copy (*_26)[copy _4]   @124:39
+  _28 = add.chk copy _19, copy _27   @124:30
+  _3 = copy _28   @124:9
+  _29 = add copy _11, const i64 1   @125:13
+  _11 = copy _29   @125:9
   goto bb30   @123:5
+
+bb32:
+  _64 = ne copy _10, const ref %Array(Int) null   @123:13
+  branch copy _64, bb33, bb17   @123:13
+
+bb33:
+  _65 = copy (*_10).1   @123:13
+  _66 = cast copy _65 to i64   @123:13
+  _67 = ne copy _1, const ref %Array(Array(Int)) null   @123:13
+  branch copy _67, bb34, bb17   @123:13
+
+bb34:
+  _68 = copy (*_1).1   @123:13
+  _69 = cast copy _68 to i64   @123:13
+  _70 = cast copy _2 to i64   @123:13
+  _71 = ge copy _70, const i64 -2147483648   @123:13
+  branch copy _71, bb35, bb17   @123:13
+
+bb35:
+  _72 = le copy _70, const i64 2147483647   @123:13
+  branch copy _72, bb36, bb17   @123:13
+
+bb36:
+  _73 = sub copy _70, const i64 1   @123:13
+  _74 = cast copy _11 to i64   @123:13
+  _75 = ge copy _74, const i64 -2147483648   @123:13
+  branch copy _75, bb37, bb17   @123:13
+
+bb37:
+  _76 = le copy _74, const i64 2147483647   @123:13
+  branch copy _76, bb38, bb17   @123:13
+
+bb38:
+  _77 = add copy _74, const i64 0   @123:13
+  _78 = ge copy _77, const i64 0   @123:13
+  branch copy _78, bb39, bb17   @123:13
+
+bb39:
+  _79 = add copy _73, const i64 0   @123:13
+  _80 = lt copy _79, copy _66   @123:13
+  branch copy _80, bb40, bb17   @123:13
+
+bb40:
+  _81 = add copy _73, const i64 0   @123:13
+  _82 = lt copy _81, copy _69   @123:13
+  branch copy _82, bb41, bb17   @123:13
+
+bb41:
+  goto bb42   @123:13
+
+bb42:
+  _12 = lt copy _11, copy _2   @123:13
+  branch copy _12, bb43, bb19   @123:5
+
+bb43:
+  _13 = copy (*_10).1   @124:16
+  _14 = cast copy _13 to i64   @124:16
+  _15 = copy (*_10).0   @124:16
+  _16 = copy (*_15)[copy _11]   @124:16
+  _17 = add copy _4, const i64 1   @124:25
+  _18 = mul.chk copy _16, copy _17   @124:20
+  _19 = add.chk copy _3, copy _18   @124:13
+  _20 = copy (*_1).1   @124:36
+  _21 = cast copy _20 to i64   @124:36
+  _22 = copy (*_1).0   @124:36
+  _23 = copy (*_22)[copy _11]   @124:36
+  _24 = copy (*_23).1   @124:39
+  _25 = cast copy _24 to i64   @124:39
+  check.bounds copy _4, copy _25   @124:39
+  _26 = copy (*_23).0   @124:39
+  _27 = copy (*_26)[copy _4]   @124:39
+  _28 = add.chk copy _19, copy _27   @124:30
+  _3 = copy _28   @124:9
+  _29 = add copy _11, const i64 1   @125:13
+  _11 = copy _29   @125:9
+  goto bb42   @123:5
 }
 
-fn av.loops/churn(_1: ref %Array(Int), _2: ref %Array(Int), _3: i32) -> i32 frame @loops.av:137:1 {
-  let _0: i32
+fn av.loops/churn(_1: ref %Array(Int), _2: ref %Array(Int), _3: i64) -> i64 frame @loops.av:137:1 {
+  let _0: i64
   let _1 (xs): ref %Array(Int)
   let _2 (ys): ref %Array(Int) slot
-  let _3 (rounds): i32
+  let _3 (rounds): i64
   let _4: i32
-  let _5 (n): i32
-  let _6 (acc): i32
-  let _7 (keep): ref str slot
-  let _8 (r): i32
-  let _9: bool
-  let _10 (i): i32
-  let _11: bool
-  let _12: i32
-  let _13: ref %elems(Int)
-  let _14: i32
-  let _15: ref str slot
-  let _16: ref str slot
+  let _5: i64
+  let _6 (n): i64
+  let _7 (acc): i64
+  let _8 (keep): ref str slot
+  let _9 (r): i64
+  let _10: bool
+  let _11 (i): i64
+  let _12: bool
+  let _13: i32
+  let _14: i64
+  let _15: ref %elems(Int)
+  let _16: i64
   let _17: ref str slot
   let _18: ref str slot
-  let _19: ref str
-  let _20 (t): ref str slot
-  let _21: i32
-  let _22: ref %Array(Int)
-  let _23 (tmp): ref %Array(Int) slot
-  let _24: i32
-  let _25: i32
-  let _26: ref str
-  let _27 (pad): ref str
-  let _28: i32
-  let _29: i32
-  let _30: i32
-  let _31: ref %elems(Int)
+  let _19: ref str slot
+  let _20: ref str slot
+  let _21: ref str
+  let _22 (t): ref str slot
+  let _23: i64
+  let _24: ref %Array(Int)
+  let _25 (tmp): ref %Array(Int) slot
+  let _26: i64
+  let _27: i64
+  let _28: ref str
+  let _29 (pad): ref str
+  let _30: i64
+  let _31: i64
   let _32: i32
-  let _33: i32
-  let _34: i32
-  let _35: ref %elems(Int)
-  let _36: i32
+  let _33: i64
+  let _34: ref %elems(Int)
+  let _35: i64
+  let _36: i64
   let _37: i32
-  let _38: i32
-  let _39: i32
-  let _40: ptr u8
-  let _41: u8
-  let _42: i32
-  let _43: i32
-  let _44: i32
-  let _45: bool
-  let _46: i32
-  let _47: i32
-  let _48: i32
-  let _49: i32
-  let _50: bool
-  let _51: i32
+  let _38: i64
+  let _39: ref %elems(Int)
+  let _40: i64
+  let _41: i64
+  let _42: i64
+  let _43: i64
+  let _44: ptr u8
+  let _45: u8
+  let _46: i64
+  let _47: i64
+  let _48: i64
+  let _49: bool
+  let _50: i64
+  let _51: i64
   let _52: i64
   let _53: i64
-  let _54: i64
-  let _55: i64
+  let _54: bool
+  let _55: i32
   let _56: i64
-  let _57: bool
-  let _58: i64
+  let _57: i64
+  let _58: bool
   let _59: bool
+  let _60: i64
+  let _61: i64
+  let _62: bool
+  let _63: bool
+  let _64: i64
+  let _65: bool
+  let _66: i64
+  let _67: bool
 
 bb0:
-  _7 = zero   @137:1
-  _15 = zero   @137:1
-  _16 = zero   @137:1
+  _8 = zero   @137:1
   _17 = zero   @137:1
   _18 = zero   @137:1
+  _19 = zero   @137:1
   _20 = zero   @137:1
-  _23 = zero   @137:1
+  _22 = zero   @137:1
+  _25 = zero   @137:1
   gc.enter   @137:1
-  gc.roots _2, _7, _15, _16, _17, _18, _20, _23   @137:1
+  gc.roots _2, _8, _17, _18, _19, _20, _22, _25   @137:1
   _4 = copy (*_1).1   @138:9
-  _5 = copy _4   @138:5
-  _6 = const i32 0   @139:7
-  _7 = const str.0   @140:8
-  _8 = const i32 0   @141:5
+  _5 = cast copy _4 to i64   @138:9
+  _6 = copy _5   @138:5
+  _7 = const i64 0   @139:7
+  _8 = const str.0   @140:8
+  _9 = const i64 0   @141:5
   goto bb1   @142:3
 
 bb1:
-  _9 = lt copy _8, copy _3   @142:11
-  branch copy _9, bb2, bb3   @142:3
+  _10 = lt copy _9, copy _3   @142:11
+  branch copy _10, bb2, bb3   @142:3
 
 bb2:
-  _10 = const i32 0   @143:7
+  _11 = const i64 0   @143:7
   goto bb9   @144:5
 
 bb3:
-  _48 = call avant_str_size(copy _7) nocollect   @156:13
-  _49 = add.chk copy _6, copy _48   @156:7
-  _0 = copy _49   @156:7
+  _52 = call avant_str_size(copy _8) nocollect   @156:13
+  _53 = add.chk copy _7, copy _52   @156:7
+  _0 = copy _53   @156:7
   gc.leave   @156:7
   return   @156:7
 
 bb4:
-  _11 = lt copy _10, copy _5   @144:13
-  branch copy _11, bb5, bb6   @144:5
+  _12 = lt copy _11, copy _6   @144:13
+  branch copy _12, bb5, bb6   @144:5
 
 bb5:
-  _12 = copy (*_2).1   @145:17
-  check.bounds copy _10, copy _12   @145:17
-  _13 = copy (*_2).0   @145:17
-  _14 = copy (*_13)[copy _10]   @145:17
-  _15 = call avant_str_from_int(copy _14) collects   @145:17
-  _16 = call avant_str_from_int(copy _10) collects   @145:24
-  _17 = call avant_str_concat(const str.1, copy _15) collects   @145:11
-  _18 = call avant_str_concat(copy _17, const str.2) collects   @145:11
-  _19 = call avant_str_concat(copy _18, copy _16) collects   @145:11
-  _20 = copy _19   @145:9
-  _21 = add.chk copy _10, copy _8   @146:24
-  _22 = call av.loops/fill(const i32 24, copy _21) collects   @146:13
-  _23 = copy _22   @146:11
-  _24 = rem copy _10, const i32 3   @147:32
-  _25 = add.chk const i32 65, copy _24   @147:28
-  _26 = call avant_str_repeat_byte(copy _25, const i32 40) collects   @147:13
-  _27 = copy _26   @147:11
-  _28 = call avant_str_size(copy _20) nocollect   @148:20
-  _29 = add.chk copy _6, copy _28   @148:17
-  _30 = copy (*_2).1   @148:30
-  check.bounds copy _10, copy _30   @148:30
-  _31 = copy (*_2).0   @148:30
-  _32 = copy (*_31)[copy _10]   @148:30
-  _33 = add.chk copy _29, copy _32   @148:26
-  _34 = copy (*_23).1   @148:39
-  check.bounds const i32 23, copy _34   @148:39
-  _35 = copy (*_23).0   @148:39
-  _36 = copy (*_35)[const i32 23]   @148:39
-  _37 = add.chk copy _33, copy _36   @148:34
-  _38 = rem copy _10, const i32 40   @148:52
-  _39 = call avant_str_size(copy _27) nocollect   @148:49
-  check.bounds copy _38, copy _39   @148:49
-  _40 = cast copy _27 to ptr u8   @148:49
-  _41 = copy (*_40)[copy _38]   @148:49
-  _42 = cast copy _41 to i32   @148:49
-  _43 = add.chk copy _37, copy _42   @148:44
-  _6 = copy _43   @148:11
-  _44 = rem copy _10, const i32 10   @149:12
-  _45 = eq copy _44, const i32 0   @149:17
-  branch copy _45, bb7, bb8   @149:7
+  _13 = copy (*_2).1   @145:17
+  _14 = cast copy _13 to i64   @145:17
+  check.bounds copy _11, copy _14   @145:17
+  _15 = copy (*_2).0   @145:17
+  _16 = copy (*_15)[copy _11]   @145:17
+  _17 = call avant_str_from_int(copy _16) collects   @145:17
+  _18 = call avant_str_from_int(copy _11) collects   @145:24
+  _19 = call avant_str_concat(const str.1, copy _17) collects   @145:11
+  _20 = call avant_str_concat(copy _19, const str.2) collects   @145:11
+  _21 = call avant_str_concat(copy _20, copy _18) collects   @145:11
+  _22 = copy _21   @145:9
+  _23 = add.chk copy _11, copy _9   @146:24
+  _24 = call av.loops/fill(const i64 24, copy _23) collects   @146:13
+  _25 = copy _24   @146:11
+  _26 = rem copy _11, const i64 3   @147:32
+  _27 = add.chk const i64 65, copy _26   @147:28
+  _28 = call avant_str_repeat_byte(copy _27, const i64 40) collects   @147:13
+  _29 = copy _28   @147:11
+  _30 = call avant_str_size(copy _22) nocollect   @148:20
+  _31 = add.chk copy _7, copy _30   @148:17
+  _32 = copy (*_2).1   @148:30
+  _33 = cast copy _32 to i64   @148:30
+  check.bounds copy _11, copy _33   @148:30
+  _34 = copy (*_2).0   @148:30
+  _35 = copy (*_34)[copy _11]   @148:30
+  _36 = add.chk copy _31, copy _35   @148:26
+  _37 = copy (*_25).1   @148:39
+  _38 = cast copy _37 to i64   @148:39
+  check.bounds const i64 23, copy _38   @148:39
+  _39 = copy (*_25).0   @148:39
+  _40 = copy (*_39)[const i64 23]   @148:39
+  _41 = add.chk copy _36, copy _40   @148:34
+  _42 = rem copy _11, const i64 40   @148:52
+  _43 = call avant_str_size(copy _29) nocollect   @148:49
+  check.bounds copy _42, copy _43   @148:49
+  _44 = cast copy _29 to ptr u8   @148:49
+  _45 = copy (*_44)[copy _42]   @148:49
+  _46 = cast copy _45 to i64   @148:49
+  _47 = add.chk copy _41, copy _46   @148:44
+  _7 = copy _47   @148:11
+  _48 = rem copy _11, const i64 10   @149:12
+  _49 = eq copy _48, const i64 0   @149:17
+  branch copy _49, bb7, bb8   @149:7
 
 bb6:
-  _47 = add copy _8, const i32 1   @154:11
-  _8 = copy _47   @154:7
+  _51 = add copy _9, const i64 1   @154:11
+  _9 = copy _51   @154:7
   goto bb1   @142:3
 
 bb7:
-  _7 = copy _20   @150:14
+  _8 = copy _22   @150:14
   goto bb8   @149:7
 
 bb8:
-  _46 = add copy _10, const i32 1   @152:13
-  _10 = copy _46   @152:9
+  _50 = add copy _11, const i64 1   @152:13
+  _11 = copy _50   @152:9
   goto bb4 cold   @144:5
 
 bb9:
-  _50 = ne copy _2, const ref %Array(Int) null   @144:13
-  branch copy _50, bb10, bb4   @144:13
+  _54 = ne copy _2, const ref %Array(Int) null   @144:13
+  branch copy _54, bb10, bb4   @144:13
 
 bb10:
-  _51 = copy (*_2).1   @144:13
-  _52 = cast copy _51 to i64   @144:13
-  _53 = cast copy _5 to i64   @144:13
-  _54 = sub copy _53, const i64 1   @144:13
-  _55 = cast copy _10 to i64   @144:13
-  _56 = add copy _55, const i64 0   @144:13
-  _57 = ge copy _56, const i64 0   @144:13
-  branch copy _57, bb11, bb4   @144:13
+  _55 = copy (*_2).1   @144:13
+  _56 = cast copy _55 to i64   @144:13
+  _57 = cast copy _6 to i64   @144:13
+  _58 = ge copy _57, const i64 -2147483648   @144:13
+  branch copy _58, bb11, bb4   @144:13
 
 bb11:
-  _58 = add copy _54, const i64 0   @144:13
-  _59 = lt copy _58, copy _52   @144:13
+  _59 = le copy _57, const i64 2147483647   @144:13
   branch copy _59, bb12, bb4   @144:13
 
 bb12:
-  goto bb13   @144:13
+  _60 = sub copy _57, const i64 1   @144:13
+  _61 = cast copy _11 to i64   @144:13
+  _62 = ge copy _61, const i64 -2147483648   @144:13
+  branch copy _62, bb13, bb4   @144:13
 
 bb13:
-  _11 = lt copy _10, copy _5   @144:13
-  branch copy _11, bb14, bb6   @144:5
+  _63 = le copy _61, const i64 2147483647   @144:13
+  branch copy _63, bb14, bb4   @144:13
 
 bb14:
-  _13 = copy (*_2).0   @145:17
-  _14 = copy (*_13)[copy _10]   @145:17
-  _15 = call avant_str_from_int(copy _14) collects   @145:17
-  _16 = call avant_str_from_int(copy _10) collects   @145:24
-  _17 = call avant_str_concat(const str.1, copy _15) collects   @145:11
-  _18 = call avant_str_concat(copy _17, const str.2) collects   @145:11
-  _19 = call avant_str_concat(copy _18, copy _16) collects   @145:11
-  _20 = copy _19   @145:9
-  _21 = add.chk copy _10, copy _8   @146:24
-  _22 = call av.loops/fill(const i32 24, copy _21) collects   @146:13
-  _23 = copy _22   @146:11
-  _24 = rem copy _10, const i32 3   @147:32
-  _25 = add.chk const i32 65, copy _24   @147:28
-  _26 = call avant_str_repeat_byte(copy _25, const i32 40) collects   @147:13
-  _27 = copy _26   @147:11
-  _28 = call avant_str_size(copy _20) nocollect   @148:20
-  _29 = add.chk copy _6, copy _28   @148:17
-  _31 = copy (*_2).0   @148:30
-  _32 = copy (*_31)[copy _10]   @148:30
-  _33 = add.chk copy _29, copy _32   @148:26
-  _34 = copy (*_23).1   @148:39
-  check.bounds const i32 23, copy _34   @148:39
-  _35 = copy (*_23).0   @148:39
-  _36 = copy (*_35)[const i32 23]   @148:39
-  _37 = add.chk copy _33, copy _36   @148:34
-  _38 = rem copy _10, const i32 40   @148:52
-  _39 = call avant_str_size(copy _27) nocollect   @148:49
-  check.bounds copy _38, copy _39   @148:49
-  _40 = cast copy _27 to ptr u8   @148:49
-  _41 = copy (*_40)[copy _38]   @148:49
-  _42 = cast copy _41 to i32   @148:49
-  _43 = add.chk copy _37, copy _42   @148:44
-  _6 = copy _43   @148:11
-  _44 = rem copy _10, const i32 10   @149:12
-  _45 = eq copy _44, const i32 0   @149:17
-  branch copy _45, bb15, bb16   @149:7
+  _64 = add copy _61, const i64 0   @144:13
+  _65 = ge copy _64, const i64 0   @144:13
+  branch copy _65, bb15, bb4   @144:13
 
 bb15:
-  _7 = copy _20   @150:14
-  goto bb16   @149:7
+  _66 = add copy _60, const i64 0   @144:13
+  _67 = lt copy _66, copy _56   @144:13
+  branch copy _67, bb16, bb4   @144:13
 
 bb16:
-  _46 = add copy _10, const i32 1   @152:13
-  _10 = copy _46   @152:9
-  goto bb13   @144:5
+  goto bb17   @144:13
+
+bb17:
+  _12 = lt copy _11, copy _6   @144:13
+  branch copy _12, bb18, bb6   @144:5
+
+bb18:
+  _13 = copy (*_2).1   @145:17
+  _14 = cast copy _13 to i64   @145:17
+  _15 = copy (*_2).0   @145:17
+  _16 = copy (*_15)[copy _11]   @145:17
+  _17 = call avant_str_from_int(copy _16) collects   @145:17
+  _18 = call avant_str_from_int(copy _11) collects   @145:24
+  _19 = call avant_str_concat(const str.1, copy _17) collects   @145:11
+  _20 = call avant_str_concat(copy _19, const str.2) collects   @145:11
+  _21 = call avant_str_concat(copy _20, copy _18) collects   @145:11
+  _22 = copy _21   @145:9
+  _23 = add.chk copy _11, copy _9   @146:24
+  _24 = call av.loops/fill(const i64 24, copy _23) collects   @146:13
+  _25 = copy _24   @146:11
+  _26 = rem copy _11, const i64 3   @147:32
+  _27 = add.chk const i64 65, copy _26   @147:28
+  _28 = call avant_str_repeat_byte(copy _27, const i64 40) collects   @147:13
+  _29 = copy _28   @147:11
+  _30 = call avant_str_size(copy _22) nocollect   @148:20
+  _31 = add.chk copy _7, copy _30   @148:17
+  _32 = copy (*_2).1   @148:30
+  _33 = cast copy _32 to i64   @148:30
+  _34 = copy (*_2).0   @148:30
+  _35 = copy (*_34)[copy _11]   @148:30
+  _36 = add.chk copy _31, copy _35   @148:26
+  _37 = copy (*_25).1   @148:39
+  _38 = cast copy _37 to i64   @148:39
+  check.bounds const i64 23, copy _38   @148:39
+  _39 = copy (*_25).0   @148:39
+  _40 = copy (*_39)[const i64 23]   @148:39
+  _41 = add.chk copy _36, copy _40   @148:34
+  _42 = rem copy _11, const i64 40   @148:52
+  _43 = call avant_str_size(copy _29) nocollect   @148:49
+  check.bounds copy _42, copy _43   @148:49
+  _44 = cast copy _29 to ptr u8   @148:49
+  _45 = copy (*_44)[copy _42]   @148:49
+  _46 = cast copy _45 to i64   @148:49
+  _47 = add.chk copy _41, copy _46   @148:44
+  _7 = copy _47   @148:11
+  _48 = rem copy _11, const i64 10   @149:12
+  _49 = eq copy _48, const i64 0   @149:17
+  branch copy _49, bb19, bb20   @149:7
+
+bb19:
+  _8 = copy _22   @150:14
+  goto bb20   @149:7
+
+bb20:
+  _50 = add copy _11, const i64 1   @152:13
+  _11 = copy _50   @152:9
+  goto bb17   @144:5
 }
 
-fn av.loops/grows(_1: ref %Array(Int)) -> i32 frame @loops.av:160:1 {
-  let _0: i32
+fn av.loops/grows(_1: ref %Array(Int)) -> i64 frame @loops.av:160:1 {
+  let _0: i64
   let _1 (xs): ref %Array(Int) slot
   let _2: i32
-  let _3 (n): i32
-  let _4 (i): i32
-  let _5 (s): i32
-  let _6: bool
-  let _7: ref %elems(Int)
-  let _8: i32
-  let _9: i32
-  let _10: i32
-  let _11: bool
-  let _12: i32
-  let _13: i32
+  let _3: i64
+  let _4 (n): i64
+  let _5 (i): i64
+  let _6 (s): i64
+  let _7: bool
+  let _8: ref %elems(Int)
+  let _9: i64
+  let _10: i64
+  let _11: i64
+  let _12: bool
+  let _13: i64
   let _14: i32
+  let _15: i64
+  let _16: i64
 
 bb0:
   gc.enter   @160:1
   gc.roots _1   @160:1
   _2 = copy (*_1).1   @161:9
-  _3 = copy _2   @161:5
-  _4 = const i32 0   @162:5
-  _5 = const i32 0   @163:5
+  _3 = cast copy _2 to i64   @161:9
+  _4 = copy _3   @161:5
+  _5 = const i64 0   @162:5
+  _6 = const i64 0   @163:5
   goto bb1   @164:3
 
 bb1:
-  _6 = lt copy _4, copy _3   @164:11
-  branch copy _6, bb2, bb3   @164:3
+  _7 = lt copy _5, copy _4   @164:11
+  branch copy _7, bb2, bb3   @164:3
 
 bb2:
-  _7 = copy (*_1).0   @165:15
-  _8 = copy (*_7)[copy _4]   @165:15
-  _9 = add.chk copy _5, copy _8   @165:11
-  _5 = copy _9   @165:7
-  _10 = rem copy _4, const i32 3   @166:10
-  _11 = eq copy _10, const i32 0   @166:14
-  branch copy _11, bb4, bb5   @166:5
+  _8 = copy (*_1).0   @165:15
+  _9 = copy (*_8)[copy _5]   @165:15
+  _10 = add.chk copy _6, copy _9   @165:11
+  _6 = copy _10   @165:7
+  _11 = rem copy _5, const i64 3   @166:10
+  _12 = eq copy _11, const i64 0   @166:14
+  branch copy _12, bb4, bb5   @166:5
 
 bb3:
-  _13 = copy (*_1).1   @171:9
-  _14 = add.chk copy _5, copy _13   @171:5
-  _0 = copy _14   @171:5
+  _14 = copy (*_1).1   @171:9
+  _15 = cast copy _14 to i64   @171:9
+  _16 = add.chk copy _6, copy _15   @171:5
+  _0 = copy _16   @171:5
   gc.leave   @171:5
   return   @171:5
 
 bb4:
-  call avant_array_push_i32(copy _1, copy _4) collects   @167:9
+  call avant_array_push_i64(copy _1, copy _5) collects   @167:9
   goto bb5   @166:5
 
 bb5:
-  _12 = add copy _4, const i32 1   @169:11
-  _4 = copy _12   @169:7
+  _13 = add copy _5, const i64 1   @169:11
+  _5 = copy _13   @169:7
   goto bb1   @164:3
 }
 
@@ -1447,57 +1725,67 @@ fn av.loops/drop_last(_1: ref %loops.Box) -> void frame @loops.av:176:1 {
   let _1 (b): ref %loops.Box
   let _2: ref %Array(Int)
   let _3: i32
-  let _4: bool
-  let _5: ref %Array(Int) slot
-  let _6: i32
+  let _4: i64
+  let _5: bool
+  let _6: ref %Array(Int) slot
   let _7: i32
-  let _8: addr i32
-  let _9: i32
-  let _10 (v): i32
+  let _8: bool
+  let _9: addr i64
+  let _10: i64
+  let _11 (v): i64
 
 bb0:
-  _5 = zero   @176:1
+  _6 = zero   @176:1
   gc.enter   @176:1
-  gc.roots _5   @176:1
+  gc.roots _6   @176:1
   _2 = copy (*_1).0   @177:7
   _3 = copy (*_2).1   @177:10
-  _4 = gt copy _3, const i32 0   @177:16
-  branch copy _4, bb1, bb2   @177:3
+  _4 = cast copy _3 to i64   @177:10
+  _5 = gt copy _4, const i64 0   @177:16
+  branch copy _5, bb1, bb2   @177:3
 
 bb1:
-  _5 = copy (*_1).0   @178:10
-  _6 = copy (*_5).1   @178:13
-  _7 = sub copy _6, const i32 1   @178:13
-  check.bounds copy _7, copy _6   @178:13
-  _8 = call avant_array_pop_slot(copy _5, const u64 4) collects   @178:13
-  _9 = copy (*_8)   @178:13
-  _10 = copy _9   @178:7
-  goto bb2   @177:3
+  _6 = copy (*_1).0   @178:10
+  _7 = copy (*_6).1   @178:13
+  _8 = eq copy _7, const i32 0   @178:13
+  branch copy _8, bb3, bb4   @178:13
 
 bb2:
   gc.leave   @176:1
   return   @176:1
+
+bb3:
+  call avant_trap_empty(const i32 0) nocollect   @178:13
+  unreachable   @178:13
+
+bb4:
+  _9 = call avant_array_pop_slot(copy _6, const u64 8) collects   @178:13
+  _10 = copy (*_9)   @178:13
+  _11 = copy _10   @178:7
+  goto bb2   @177:3
 }
 
-fn av.loops/aliased(_1: ref %loops.Box, _2: i32) -> i32 frame @loops.av:182:1 {
-  let _0: i32
+fn av.loops/aliased(_1: ref %loops.Box, _2: i64) -> i64 frame @loops.av:182:1 {
+  let _0: i64
   let _1 (b): ref %loops.Box slot
-  let _2 (n): i32
+  let _2 (n): i64
   let _3: ref %Array(Int)
   let _4 (xs): ref %Array(Int) slot
-  let _5 (s): i32
-  let _6 (i): i32
+  let _5 (s): i64
+  let _6 (i): i64
   let _7: bool
   let _8: bool
   let _9: i32
-  let _10: bool
-  let _11: ref %elems(Int)
-  let _12: i32
-  let _13: i32
-  let _14: i32
-  let _15: i32
-  let _16: i32
+  let _10: i64
+  let _11: bool
+  let _12: ref %elems(Int)
+  let _13: i64
+  let _14: i64
+  let _15: i64
+  let _16: i64
   let _17: i32
+  let _18: i64
+  let _19: i64
 
 bb0:
   _4 = zero   @182:1
@@ -1505,8 +1793,8 @@ bb0:
   gc.roots _1, _4   @182:1
   _3 = copy (*_1).0   @183:9
   _4 = copy _3   @183:6
-  _5 = const i32 0   @184:5
-  _6 = const i32 0   @185:5
+  _5 = const i64 0   @184:5
+  _6 = const i64 0   @185:5
   goto bb1   @186:3
 
 bb1:
@@ -1515,205 +1803,229 @@ bb1:
   branch copy _8, bb4, bb5   @186:15
 
 bb2:
-  _11 = copy (*_4).0   @187:15
-  _12 = copy (*_11)[copy _6]   @187:15
-  _13 = add.chk copy _5, copy _12   @187:11
-  _5 = copy _13   @187:7
+  _12 = copy (*_4).0   @187:15
+  _13 = copy (*_12)[copy _6]   @187:15
+  _14 = add.chk copy _5, copy _13   @187:11
+  _5 = copy _14   @187:7
   call av.loops/drop_last(copy _1) collects   @188:5
-  _14 = add copy _6, const i32 1   @189:11
-  _6 = copy _14   @189:7
+  _15 = add copy _6, const i64 1   @189:11
+  _6 = copy _15   @189:7
   goto bb1   @186:3
 
 bb3:
-  _15 = mul.chk copy _5, const i32 100   @191:5
-  _16 = copy (*_4).1   @191:15
-  _17 = add.chk copy _15, copy _16   @191:11
-  _0 = copy _17   @191:11
+  _16 = mul.chk copy _5, const i64 100   @191:5
+  _17 = copy (*_4).1   @191:15
+  _18 = cast copy _17 to i64   @191:15
+  _19 = add.chk copy _16, copy _18   @191:11
+  _0 = copy _19   @191:11
   gc.leave   @191:11
   return   @191:11
 
 bb4:
   _9 = copy (*_4).1   @186:24
-  _10 = lt copy _6, copy _9   @186:20
-  _8 = copy _10   @186:15
+  _10 = cast copy _9 to i64   @186:24
+  _11 = lt copy _6, copy _10   @186:20
+  _8 = copy _11   @186:15
   goto bb5   @186:15
 
 bb5:
   branch copy _8, bb2, bb3   @186:3
 }
 
-fn av.loops/early(_1: ref %Array(Int)) -> i32 leaf @loops.av:196:1 {
-  let _0: i32
+fn av.loops/early(_1: ref %Array(Int)) -> i64 leaf @loops.av:196:1 {
+  let _0: i64
   let _1 (xs): ref %Array(Int)
-  let _2 (i): i32
-  let _3 (s): i32
+  let _2 (i): i64
+  let _3 (s): i64
   let _4: bool
   let _5: i32
-  let _6: ref %elems(Int)
-  let _7: i32
-  let _8: bool
-  let _9: i32
-  let _10: ref %elems(Int)
-  let _11: i32
-  let _12: i32
-  let _13: i32
-  let _14: i32
-  let _15: i32
-  let _16: bool
-  let _17: i32
-  let _18: i64
-  let _19: i64
+  let _6: i64
+  let _7: ref %elems(Int)
+  let _8: i64
+  let _9: bool
+  let _10: i32
+  let _11: i64
+  let _12: ref %elems(Int)
+  let _13: i64
+  let _14: i64
+  let _15: i64
+  let _16: i64
+  let _17: i64
+  let _18: bool
+  let _19: i32
   let _20: i64
   let _21: i64
   let _22: i64
-  let _23: bool
-  let _24: i64
+  let _23: i64
+  let _24: bool
   let _25: bool
+  let _26: i64
+  let _27: bool
+  let _28: i64
+  let _29: bool
 
 bb0:
-  _2 = const i32 0   @197:5
-  _3 = const i32 0   @198:5
+  _2 = const i64 0   @197:5
+  _3 = const i64 0   @198:5
   goto bb6   @199:3
 
 bb1:
-  _4 = lt copy _2, const i32 1000   @199:11
+  _4 = lt copy _2, const i64 1000   @199:11
   branch copy _4, bb2, bb3   @199:3
 
 bb2:
   _5 = copy (*_1).1   @200:10
-  check.bounds copy _2, copy _5   @200:10
-  _6 = copy (*_1).0   @200:10
-  _7 = copy (*_6)[copy _2]   @200:10
-  _8 = eq copy _7, const i32 30   @200:14
-  branch copy _8, bb4, bb5   @200:5
+  _6 = cast copy _5 to i64   @200:10
+  check.bounds copy _2, copy _6   @200:10
+  _7 = copy (*_1).0   @200:10
+  _8 = copy (*_7)[copy _2]   @200:10
+  _9 = eq copy _8, const i64 30   @200:14
+  branch copy _9, bb4, bb5   @200:5
 
 bb3:
-  _14 = mul.chk copy _3, const i32 1000   @206:5
-  _15 = add.chk copy _14, copy _2   @206:12
-  _0 = copy _15   @206:12
+  _16 = mul.chk copy _3, const i64 1000   @206:5
+  _17 = add.chk copy _16, copy _2   @206:12
+  _0 = copy _17   @206:12
   return   @206:12
 
 bb4:
   goto bb3   @201:7
 
 bb5:
-  _9 = copy (*_1).1   @203:15
-  check.bounds copy _2, copy _9   @203:15
-  _10 = copy (*_1).0   @203:15
-  _11 = copy (*_10)[copy _2]   @203:15
-  _12 = add.chk copy _3, copy _11   @203:11
-  _3 = copy _12   @203:7
-  _13 = add copy _2, const i32 1   @204:11
-  _2 = copy _13   @204:7
+  _10 = copy (*_1).1   @203:15
+  _11 = cast copy _10 to i64   @203:15
+  check.bounds copy _2, copy _11   @203:15
+  _12 = copy (*_1).0   @203:15
+  _13 = copy (*_12)[copy _2]   @203:15
+  _14 = add.chk copy _3, copy _13   @203:11
+  _3 = copy _14   @203:7
+  _15 = add copy _2, const i64 1   @204:11
+  _2 = copy _15   @204:7
   goto bb1 cold   @199:3
 
 bb6:
-  _16 = ne copy _1, const ref %Array(Int) null   @199:11
-  branch copy _16, bb7, bb1   @199:11
+  _18 = ne copy _1, const ref %Array(Int) null   @199:11
+  branch copy _18, bb7, bb1   @199:11
 
 bb7:
-  _17 = copy (*_1).1   @199:11
-  _18 = cast copy _17 to i64   @199:11
-  _19 = const i64 1000   @199:11
-  _20 = sub copy _19, const i64 1   @199:11
-  _21 = cast copy _2 to i64   @199:11
-  _22 = add copy _21, const i64 0   @199:11
-  _23 = ge copy _22, const i64 0   @199:11
-  branch copy _23, bb8, bb1   @199:11
+  _19 = copy (*_1).1   @199:11
+  _20 = cast copy _19 to i64   @199:11
+  _21 = const i64 1000   @199:11
+  _22 = sub copy _21, const i64 1   @199:11
+  _23 = cast copy _2 to i64   @199:11
+  _24 = ge copy _23, const i64 -2147483648   @199:11
+  branch copy _24, bb8, bb1   @199:11
 
 bb8:
-  _24 = add copy _20, const i64 0   @199:11
-  _25 = lt copy _24, copy _18   @199:11
+  _25 = le copy _23, const i64 2147483647   @199:11
   branch copy _25, bb9, bb1   @199:11
 
 bb9:
-  goto bb10   @199:11
+  _26 = add copy _23, const i64 0   @199:11
+  _27 = ge copy _26, const i64 0   @199:11
+  branch copy _27, bb10, bb1   @199:11
 
 bb10:
-  _4 = lt copy _2, const i32 1000   @199:11
-  branch copy _4, bb11, bb3   @199:3
+  _28 = add copy _22, const i64 0   @199:11
+  _29 = lt copy _28, copy _20   @199:11
+  branch copy _29, bb11, bb1   @199:11
 
 bb11:
-  _6 = copy (*_1).0   @200:10
-  _7 = copy (*_6)[copy _2]   @200:10
-  _8 = eq copy _7, const i32 30   @200:14
-  branch copy _8, bb4, bb12   @200:5
+  goto bb12   @199:11
 
 bb12:
-  _10 = copy (*_1).0   @203:15
-  _11 = copy (*_10)[copy _2]   @203:15
-  _12 = add.chk copy _3, copy _11   @203:11
-  _3 = copy _12   @203:7
-  _13 = add copy _2, const i32 1   @204:11
-  _2 = copy _13   @204:7
-  goto bb10   @199:3
+  _4 = lt copy _2, const i64 1000   @199:11
+  branch copy _4, bb13, bb3   @199:3
+
+bb13:
+  _5 = copy (*_1).1   @200:10
+  _6 = cast copy _5 to i64   @200:10
+  _7 = copy (*_1).0   @200:10
+  _8 = copy (*_7)[copy _2]   @200:10
+  _9 = eq copy _8, const i64 30   @200:14
+  branch copy _9, bb4, bb14   @200:5
+
+bb14:
+  _10 = copy (*_1).1   @203:15
+  _11 = cast copy _10 to i64   @203:15
+  _12 = copy (*_1).0   @203:15
+  _13 = copy (*_12)[copy _2]   @203:15
+  _14 = add.chk copy _3, copy _13   @203:11
+  _3 = copy _14   @203:7
+  _15 = add copy _2, const i64 1   @204:11
+  _2 = copy _15   @204:7
+  goto bb12   @199:3
 }
 
-fn av.loops/wobble(_1: ref %Array(Int)) -> i32 leaf @loops.av:210:1 {
-  let _0: i32
+fn av.loops/wobble(_1: ref %Array(Int)) -> i64 leaf @loops.av:210:1 {
+  let _0: i64
   let _1 (xs): ref %Array(Int)
-  let _2 (i): i32
-  let _3 (s): i32
+  let _2 (i): i64
+  let _3 (s): i64
   let _4: i32
-  let _5 (n): i32
-  let _6: bool
-  let _7: i32
-  let _8: ref %elems(Int)
-  let _9: i32
-  let _10: i32
-  let _11: i32
-  let _12: bool
-  let _13: bool
+  let _5: i64
+  let _6 (n): i64
+  let _7: bool
+  let _8: i32
+  let _9: i64
+  let _10: ref %elems(Int)
+  let _11: i64
+  let _12: i64
+  let _13: i64
   let _14: bool
-  let _15: i32
-  let _16: i32
-  let _17: i32
+  let _15: bool
+  let _16: bool
+  let _17: i64
+  let _18: i64
+  let _19: i64
 
 bb0:
-  _2 = const i32 0   @211:5
-  _3 = const i32 0   @212:5
+  _2 = const i64 0   @211:5
+  _3 = const i64 0   @212:5
   _4 = copy (*_1).1   @213:9
-  _5 = copy _4   @213:5
+  _5 = cast copy _4 to i64   @213:9
+  _6 = copy _5   @213:5
   goto bb1   @214:3
 
 bb1:
-  _6 = lt copy _2, copy _5   @214:11
-  branch copy _6, bb2, bb3   @214:3
+  _7 = lt copy _2, copy _6   @214:11
+  branch copy _7, bb2, bb3   @214:3
 
 bb2:
-  _7 = copy (*_1).1   @215:15
-  check.bounds copy _2, copy _7   @215:15
-  _8 = copy (*_1).0   @215:15
-  _9 = copy (*_8)[copy _2]   @215:15
-  _10 = add.chk copy _3, copy _9   @215:11
-  _3 = copy _10   @215:7
-  _11 = rem copy _3, const i32 5   @216:10
-  _12 = eq copy _11, const i32 0   @216:14
-  _13 = copy _12   @216:19
-  branch copy _13, bb4, bb5   @216:19
+  _8 = copy (*_1).1   @215:15
+  _9 = cast copy _8 to i64   @215:15
+  check.bounds copy _2, copy _9   @215:15
+  _10 = copy (*_1).0   @215:15
+  _11 = copy (*_10)[copy _2]   @215:15
+  _12 = add.chk copy _3, copy _11   @215:11
+  _3 = copy _12   @215:7
+  _13 = rem copy _3, const i64 5   @216:10
+  _14 = eq copy _13, const i64 0   @216:14
+  _15 = copy _14   @216:19
+  branch copy _15, bb4, bb5   @216:19
 
 bb3:
   _0 = copy _3   @222:3
   return   @222:3
 
 bb4:
-  _14 = gt copy _2, const i32 2   @216:24
-  _13 = copy _14   @216:19
+  _16 = gt copy _2, const i64 2   @216:24
+  _15 = copy _16   @216:19
   goto bb5   @216:19
 
 bb5:
-  branch copy _13, bb6, bb7   @216:5
+  branch copy _15, bb6, bb7   @216:5
 
 bb6:
-  _15 = sub copy _2, const i32 2   @217:13
-  _2 = copy _15   @217:9
-  _16 = add.chk copy _3, const i32 1   @218:13
-  _3 = copy _16   @218:9
+  _17 = sub copy _2, const i64 2   @217:13
+  _2 = copy _17   @217:9
+  _18 = add.chk copy _3, const i64 1   @218:13
+  _3 = copy _18   @218:9
   goto bb7   @216:5
 
 bb7:
-  _17 = add.chk copy _2, const i32 1   @220:11
-  _2 = copy _17   @220:7
+  _19 = add.chk copy _2, const i64 1   @220:11
+  _2 = copy _19   @220:7
   goto bb1   @214:3
 }
 
@@ -1723,197 +2035,237 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @loops.av:225:1 {
   let _2 (argv): ptr slot
   let _3: ref %Array(Int)
   let _4 (xs): ref %Array(Int) slot
-  let _5: i32
-  let _6: i32
+  let _5: i64
+  let _6: i64
   let _7: ref %Array(Int)
-  let _8: i32
+  let _8: i64
   let _9: ref %Array(Int)
-  let _10: i32
+  let _10: i64
   let _11: ref %Buf
   let _12 (b): ref %Buf slot
-  let _13 (i): i32
+  let _13 (i): i64
   let _14: bool
-  let _15: i32
-  let _16: i32
-  let _17: i32
-  let _18: i32
-  let _19: u64
-  let _20: u64
-  let _21: ref %elems(Int) slot
-  let _22: ref %Array(Int)
-  let _23: i32
+  let _15: i64
+  let _16: i64
+  let _17: i64
+  let _18: i64
+  let _19: bool
+  let _20: bool
+  let _21: u64
+  let _22: u64
+  let _23: ref %elems(Int) slot
   let _24: i32
-  let _25: ref %elems(Array(Int)) slot
-  let _26: ref %Array(Array(Int))
-  let _27 (rows): ref %Array(Array(Int)) slot
-  let _28: bool
-  let _29: ref %Array(Int) slot
-  let _30: i32
-  let _31: i32
-  let _32: ref %Array(Int)
-  let _33: i32
-  let _34: ref %Array(Int)
-  let _35: i32
-  let _36: ref %loops.Box
-  let _37 (bx): ref %loops.Box slot
-  let _38: bool
-  let _39: i32
-  let _40: ref %Array(Int) slot
-  let _41: i32
-  let _42: i32
-  let _43: ref %Array(Int)
-  let _44: i32
-  let _45: ref %Array(Int)
-  let _46: i32
+  let _25: ref %Array(Int)
+  let _26: i64
+  let _27: i64
+  let _28: ref %elems(Array(Int)) slot
+  let _29: ref %Array(Array(Int))
+  let _30 (rows): ref %Array(Array(Int)) slot
+  let _31: bool
+  let _32: ref %Array(Int) slot
+  let _33: i64
+  let _34: i64
+  let _35: ref %Array(Int)
+  let _36: i64
+  let _37: ref %Array(Int)
+  let _38: i64
+  let _39: ref %loops.Box
+  let _40 (bx): ref %loops.Box slot
+  let _41: bool
+  let _42: i64
+  let _43: ref %Array(Int) slot
+  let _44: i64
+  let _45: i64
+  let _46: ref %Array(Int)
+  let _47: i64
+  let _48: ref %Array(Int)
+  let _49: i64
 
 bb0:
   _4 = zero   @225:1
   _12 = zero   @225:1
-  _21 = zero   @225:1
-  _25 = zero   @225:1
-  _27 = zero   @225:1
-  _29 = zero   @225:1
-  _37 = zero   @225:1
+  _23 = zero   @225:1
+  _28 = zero   @225:1
+  _30 = zero   @225:1
+  _32 = zero   @225:1
   _40 = zero   @225:1
+  _43 = zero   @225:1
   gc.enter   @225:1
-  gc.roots _2, _4, _12, _21, _25, _27, _29, _37, _40   @225:1
+  gc.roots _2, _4, _12, _23, _28, _30, _32, _40, _43   @225:1
   call __avant_type_maps() nocollect   @225:1
   call avant_io_init_argv(copy _1, copy _2) collects   @225:1
-  _3 = call av.loops/fill(const i32 103, const i32 5) collects   @226:8
+  _3 = call av.loops/fill(const i64 103, const i64 5) collects   @226:8
   _4 = copy _3   @226:6
   _5 = call av.loops/sums(copy _4) nocollect   @227:8
   call printf(const str.3, copy _5) nocollect   @227:3
   _6 = call av.loops/steps(copy _4) nocollect   @228:8
   call printf(const str.3, copy _6) nocollect   @228:3
-  _7 = call av.loops/fill(const i32 8, const i32 1) collects   @229:14
+  _7 = call av.loops/fill(const i64 8, const i64 1) collects   @229:14
   _8 = call av.loops/steps(copy _7) nocollect   @229:8
   call printf(const str.3, copy _8) nocollect   @229:3
-  _9 = call av.loops/fill(const i32 20, const i32 2) collects   @230:22
-  _10 = call av.loops/invariant(copy _4, copy _9, const i32 4) nocollect   @230:8
+  _9 = call av.loops/fill(const i64 20, const i64 2) collects   @230:22
+  _10 = call av.loops/invariant(copy _4, copy _9, const i64 4) nocollect   @230:8
   call printf(const str.3, copy _10) nocollect   @230:3
-  _11 = call avant_buf_new(const i32 0) collects   @231:7
+  _11 = call avant_buf_new(const i64 0) collects   @231:7
   _12 = copy _11   @231:5
-  _13 = const i32 0   @232:5
+  _13 = const i64 0   @232:5
   goto bb1   @233:3
 
 bb1:
-  _14 = lt copy _13, const i32 500   @233:11
+  _14 = lt copy _13, const i64 500   @233:11
   branch copy _14, bb2, bb3   @233:3
 
 bb2:
-  _15 = mul copy _13, const i32 37   @234:20
-  _16 = rem copy _15, const i32 256   @234:26
+  _15 = mul copy _13, const i64 37   @234:20
+  _16 = rem copy _15, const i64 256   @234:26
   call avant_buf_push_byte(copy _12, copy _16) collects   @234:6
-  _17 = add copy _13, const i32 1   @235:11
+  _17 = add copy _13, const i64 1   @235:11
   _13 = copy _17   @235:7
   goto bb1   @233:3
 
 bb3:
-  _18 = const i32 256   @237:17
-  _19 = cast copy _18 to u64   @237:17
-  _20 = mul copy _19, const u64 4   @237:17
-  _21 = call avant_alloc(copy _20, const u32 0) collects   @237:17
-  _22 = call avant_alloc(const u64 16, const u32 1022) collects   @237:17
-  barrier copy _22   @237:17
-  (*_22).0 = copy _21   @237:17
-  (*_22).1 = copy _18   @237:17
-  (*_22).2 = copy _18   @237:17
-  _23 = call av.loops/bytes(copy _12, copy _22) nocollect   @237:8
-  call printf(const str.3, copy _23) nocollect   @237:3
-  _24 = call av.loops/strings(const str.4, const str.5) nocollect   @238:8
-  call printf(const str.3, copy _24) nocollect   @238:3
-  _25 = call avant_alloc(const u64 0, const u32 65535) collects   @239:29
-  _26 = call avant_alloc(const u64 16, const u32 1022) collects   @239:29
-  barrier copy _26   @239:29
-  (*_26).0 = copy _25   @239:29
-  (*_26).1 = const i32 0   @239:29
-  (*_26).2 = const i32 0   @239:29
-  _27 = copy _26   @239:3
-  _13 = const i32 0   @240:5
-  goto bb4   @241:3
+  _18 = const i64 256   @237:17
+  _19 = lt copy _18, const i64 0   @237:17
+  branch copy _19, bb4, bb5   @237:17
 
 bb4:
-  _28 = lt copy _13, const i32 12   @241:11
-  branch copy _28, bb5, bb6   @241:3
+  call avant_trap_negative(copy _18, const i32 0) nocollect   @237:17
+  unreachable   @237:17
 
 bb5:
-  _29 = call av.loops/fill(const i32 12, copy _13) collects   @242:15
-  call avant_array_push_ptr(copy _27, copy _29, const u32 65535) collects   @242:9
-  _30 = add copy _13, const i32 1   @243:11
-  _13 = copy _30   @243:7
-  goto bb4   @241:3
+  _20 = gt copy _18, const i64 2147483647   @237:17
+  branch copy _20, bb6, bb7   @237:17
 
 bb6:
-  _31 = call av.loops/grid(copy _27, const i32 12) nocollect   @245:8
-  call printf(const str.3, copy _31) nocollect   @245:3
-  _32 = call av.loops/fill(const i32 103, const i32 9) collects   @246:18
-  _33 = call av.loops/churn(copy _4, copy _32, const i32 1500) collects   @246:8
-  call printf(const str.3, copy _33) nocollect   @246:3
-  _34 = call av.loops/fill(const i32 10, const i32 3) collects   @247:14
-  _35 = call av.loops/grows(copy _34) collects   @247:8
-  call printf(const str.3, copy _35) nocollect   @247:3
-  _36 = call av.loops/Box.new(const i32 0) collects   @248:11
-  _37 = copy _36   @248:6
-  _13 = const i32 0   @249:5
-  goto bb7   @250:3
+  call avant_trap_size(const i32 2) nocollect   @237:17
+  unreachable   @237:17
 
 bb7:
-  _38 = lt copy _13, const i32 10   @250:11
-  branch copy _38, bb8, bb9   @250:3
+  _21 = cast copy _18 to u64   @237:17
+  _22 = mul copy _21, const u64 8   @237:17
+  _23 = call avant_alloc(copy _22, const u32 0) collects   @237:17
+  _24 = cast copy _18 to i32   @237:17
+  _25 = call avant_alloc(const u64 16, const u32 1022) collects   @237:17
+  barrier copy _25   @237:17
+  (*_25).0 = copy _23   @237:17
+  (*_25).1 = copy _24   @237:17
+  (*_25).2 = copy _24   @237:17
+  _26 = call av.loops/bytes(copy _12, copy _25) nocollect   @237:8
+  call printf(const str.3, copy _26) nocollect   @237:3
+  _27 = call av.loops/strings(const str.4, const str.5) nocollect   @238:8
+  call printf(const str.3, copy _27) nocollect   @238:3
+  _28 = call avant_alloc(const u64 0, const u32 65535) collects   @239:29
+  _29 = call avant_alloc(const u64 16, const u32 1022) collects   @239:29
+  barrier copy _29   @239:29
+  (*_29).0 = copy _28   @239:29
+  (*_29).1 = const i32 0   @239:29
+  (*_29).2 = const i32 0   @239:29
+  _30 = copy _29   @239:3
+  _13 = const i64 0   @240:5
+  goto bb8   @241:3
 
 bb8:
-  _39 = mul copy _13, const i32 2   @251:18
-  _40 = copy (*_37).0   @251:7
-  call avant_array_push_i32(copy _40, copy _39) collects   @251:10
-  _41 = add copy _13, const i32 1   @252:11
-  _13 = copy _41   @252:7
-  goto bb7   @250:3
+  _31 = lt copy _13, const i64 12   @241:11
+  branch copy _31, bb9, bb10   @241:3
 
 bb9:
-  _42 = call av.loops/aliased(copy _37, const i32 10) collects   @254:8
-  call printf(const str.3, copy _42) nocollect   @254:3
-  _43 = call av.loops/fill(const i32 40, const i32 0) collects   @255:14
-  _44 = call av.loops/early(copy _43) nocollect   @255:8
-  call printf(const str.3, copy _44) nocollect   @255:3
-  _45 = call av.loops/fill(const i32 30, const i32 4) collects   @256:15
-  _46 = call av.loops/wobble(copy _45) nocollect   @256:8
-  call printf(const str.3, copy _46) nocollect   @256:3
+  _32 = call av.loops/fill(const i64 12, copy _13) collects   @242:15
+  call avant_array_push_ptr(copy _30, copy _32, const u32 65535) collects   @242:9
+  _33 = add copy _13, const i64 1   @243:11
+  _13 = copy _33   @243:7
+  goto bb8   @241:3
+
+bb10:
+  _34 = call av.loops/grid(copy _30, const i64 12) nocollect   @245:8
+  call printf(const str.3, copy _34) nocollect   @245:3
+  _35 = call av.loops/fill(const i64 103, const i64 9) collects   @246:18
+  _36 = call av.loops/churn(copy _4, copy _35, const i64 1500) collects   @246:8
+  call printf(const str.3, copy _36) nocollect   @246:3
+  _37 = call av.loops/fill(const i64 10, const i64 3) collects   @247:14
+  _38 = call av.loops/grows(copy _37) collects   @247:8
+  call printf(const str.3, copy _38) nocollect   @247:3
+  _39 = call av.loops/Box.new(const i64 0) collects   @248:11
+  _40 = copy _39   @248:6
+  _13 = const i64 0   @249:5
+  goto bb11   @250:3
+
+bb11:
+  _41 = lt copy _13, const i64 10   @250:11
+  branch copy _41, bb12, bb13   @250:3
+
+bb12:
+  _42 = mul copy _13, const i64 2   @251:18
+  _43 = copy (*_40).0   @251:7
+  call avant_array_push_i64(copy _43, copy _42) collects   @251:10
+  _44 = add copy _13, const i64 1   @252:11
+  _13 = copy _44   @252:7
+  goto bb11   @250:3
+
+bb13:
+  _45 = call av.loops/aliased(copy _40, const i64 10) collects   @254:8
+  call printf(const str.3, copy _45) nocollect   @254:3
+  _46 = call av.loops/fill(const i64 40, const i64 0) collects   @255:14
+  _47 = call av.loops/early(copy _46) nocollect   @255:8
+  call printf(const str.3, copy _47) nocollect   @255:3
+  _48 = call av.loops/fill(const i64 30, const i64 4) collects   @256:15
+  _49 = call av.loops/wobble(copy _48) nocollect   @256:8
+  call printf(const str.3, copy _49) nocollect   @256:3
   _0 = const i32 0   @225:1
   gc.leave   @225:1
   return   @225:1
 }
 
-fn av.loops/Box.initialize(_1: ref %loops.Box, _2: i32) -> void frame @loops.av:12:3 {
+fn av.loops/Box.initialize(_1: ref %loops.Box, _2: i64) -> void frame @loops.av:12:3 {
   let _1 (self): ref %loops.Box slot
-  let _2 (n): i32
-  let _3: i32
-  let _4: u64
-  let _5: u64
-  let _6: ref %elems(Int) slot
-  let _7: ref %Array(Int)
+  let _2 (n): i64
+  let _3: i64
+  let _4: bool
+  let _5: bool
+  let _6: u64
+  let _7: u64
+  let _8: ref %elems(Int) slot
+  let _9: i32
+  let _10: ref %Array(Int)
 
 bb0:
-  _6 = zero   @12:3
+  _8 = zero   @12:3
   gc.enter   @12:3
-  gc.roots _1, _6   @12:3
+  gc.roots _1, _8   @12:3
   _3 = copy _2   @13:15
-  _4 = cast copy _3 to u64   @13:15
-  _5 = mul copy _4, const u64 4   @13:15
-  _6 = call avant_alloc(copy _5, const u32 0) collects   @13:15
-  _7 = call avant_alloc(const u64 16, const u32 1022) collects   @13:15
-  barrier copy _7   @13:15
-  (*_7).0 = copy _6   @13:15
-  (*_7).1 = copy _3   @13:15
-  (*_7).2 = copy _3   @13:15
+  _4 = lt copy _3, const i64 0   @13:15
+  branch copy _4, bb1, bb2   @13:15
+
+bb1:
+  call avant_trap_negative(copy _3, const i32 0) nocollect   @13:15
+  unreachable   @13:15
+
+bb2:
+  _5 = gt copy _3, const i64 2147483647   @13:15
+  branch copy _5, bb3, bb4   @13:15
+
+bb3:
+  call avant_trap_size(const i32 2) nocollect   @13:15
+  unreachable   @13:15
+
+bb4:
+  _6 = cast copy _3 to u64   @13:15
+  _7 = mul copy _6, const u64 8   @13:15
+  _8 = call avant_alloc(copy _7, const u32 0) collects   @13:15
+  _9 = cast copy _3 to i32   @13:15
+  _10 = call avant_alloc(const u64 16, const u32 1022) collects   @13:15
+  barrier copy _10   @13:15
+  (*_10).0 = copy _8   @13:15
+  (*_10).1 = copy _9   @13:15
+  (*_10).2 = copy _9   @13:15
   barrier copy _1   @13:13
-  (*_1).0 = copy _7   @13:13
+  (*_1).0 = copy _10   @13:13
   gc.leave   @12:3
   return   @12:3
 }
 
-fn av.loops/Box.new(_1: i32) -> ref %loops.Box frame @loops.av:9:1 {
+fn av.loops/Box.new(_1: i64) -> ref %loops.Box frame @loops.av:9:1 {
   let _0: ref %loops.Box
-  let _1 (n): i32
+  let _1 (n): i64
   let _2: ref %loops.Box slot
 
 bb0:

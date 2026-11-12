@@ -2,6 +2,7 @@
 #include "avant_rt.h"
 
 #include <pcre2.h>
+#include <stdio.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +20,7 @@
 /* 0 ok, 1 invalid pattern, 2 allocation failure. */
 static __thread int32_t g_re_status;
 
-int32_t avant_regex_take_status(void) {
+avant_int avant_regex_take_status(void) {
   int32_t code = g_re_status;
   g_re_status = 0;
   return code;
@@ -57,7 +58,7 @@ __attribute__((weak)) int32_t avant_re2c_owns(void *re) {
   return 0;
 }
 
-__attribute__((weak)) void *avant_re2c_handle(int32_t id) {
+__attribute__((weak)) void *avant_re2c_handle(avant_int id) {
   (void)id;
   return NULL;
 }
@@ -102,6 +103,11 @@ static int32_t g_cache_n;
 static uint64_t g_cache_tick;
 static pthread_mutex_t g_cache_mu = PTHREAD_MUTEX_INITIALIZER;
 
+/* Why the last compile on this thread failed (Stage 29 W4b2, D295 R11):
+ * PCRE2's error code and the pattern offset it names. */
+static __thread int g_re_err;
+static __thread int32_t g_re_off;
+
 static pcre2_code *compile_pat(const char *pat, int32_t flags, int32_t *ngroups) {
   int err = 0;
   PCRE2_SIZE erroff = 0;
@@ -112,6 +118,10 @@ static pcre2_code *compile_pat(const char *pat, int32_t flags, int32_t *ngroups)
   }
   code = pcre2_compile((PCRE2_SPTR)pat, PCRE2_ZERO_TERMINATED, opts, &err,
                        &erroff, NULL);
+  if (!code) {
+    g_re_err = err;
+    g_re_off = (int32_t)erroff;
+  }
   if (code) {
     uint32_t caps = 0;
     (void)pcre2_jit_compile(code, PCRE2_JIT_COMPLETE);
@@ -162,7 +172,7 @@ static int32_t cache_evict_idle(void) {
   return 1;
 }
 
-void *avant_regex_compile(const char *pat, int32_t flags) {
+void *avant_regex_compile(const char *pat, avant_int flags) {
   ReEntry *e;
   pcre2_code *code;
   int32_t ngroups = 0;
@@ -171,10 +181,10 @@ void *avant_regex_compile(const char *pat, int32_t flags) {
   if (!pat) {
     pat = "";
   }
-  flags = flags ? 1 : 0;
+  int32_t fl = flags ? 1 : 0;
   g_re_status = 0;
   pthread_mutex_lock(&g_cache_mu);
-  e = cache_find(pat, flags);
+  e = cache_find(pat, fl);
   if (e) {
     e->refs += 1;
     g_cache_tick += 1;
@@ -184,7 +194,7 @@ void *avant_regex_compile(const char *pat, int32_t flags) {
   }
   pthread_mutex_unlock(&g_cache_mu);
 
-  code = compile_pat(pat, flags, &ngroups);
+  code = compile_pat(pat, fl, &ngroups);
   if (!code) {
     g_re_status = 1;
     return NULL;
@@ -201,7 +211,7 @@ void *avant_regex_compile(const char *pat, int32_t flags) {
   }
   memcpy(copy, pat, n + 1);
   e->pat = copy;
-  e->flags = flags;
+  e->flags = fl;
   e->code = code;
   e->ngroups = ngroups;
   e->refs = 1;
@@ -210,7 +220,7 @@ void *avant_regex_compile(const char *pat, int32_t flags) {
 
   pthread_mutex_lock(&g_cache_mu);
   {
-    ReEntry *again = cache_find(pat, flags);
+    ReEntry *again = cache_find(pat, fl);
     if (again) {
       entry_free(e);
       again->refs += 1;
@@ -247,7 +257,7 @@ void avant_regex_release(void *handle) {
   pthread_mutex_unlock(&g_cache_mu);
 }
 
-int32_t avant_regex_groups(void *handle) {
+avant_int avant_regex_groups(void *handle) {
   ReEntry *e;
   if (!handle) {
     return 0;
@@ -259,7 +269,7 @@ int32_t avant_regex_groups(void *handle) {
   return e->ngroups;
 }
 
-int32_t avant_regex_group_index(void *handle, const char *name) {
+avant_int avant_regex_group_index(void *handle, const char *name) {
   ReEntry *e;
   int rc;
   if (!handle || !name || avant_re2c_owns(handle)) {
@@ -273,7 +283,7 @@ int32_t avant_regex_group_index(void *handle, const char *name) {
   return rc;
 }
 
-int64_t avant_regex_find(void *handle, const char *s, int32_t from);
+int64_t avant_regex_find(void *handle, const char *s, avant_int from);
 
 /* Span pairs of this thread's most recent avant_regex_find, copied
  * out of the PCRE2 ovector before any later match can overwrite it.
@@ -284,7 +294,7 @@ static __thread int32_t g_last_pairs;
 
 /* Packed (lo, hi) of pair i of the last match, or -1 when the pair
  * did not participate or does not exist. */
-int64_t avant_regex_span_pair(int32_t i) {
+int64_t avant_regex_span_pair(avant_int i) {
   int32_t lo;
   int32_t hi;
   if (i < 0 || i >= g_last_pairs) {
@@ -298,8 +308,8 @@ int64_t avant_regex_span_pair(int32_t i) {
 /* Packed (lo, hi) of pair i of the match at or after `from`,
  * recomputed without allocating. This is the path for groups beyond
  * the ones a Match value carries inline. */
-int64_t avant_regex_span_at(void *handle, const char *s, int32_t from,
-                            int32_t i) {
+int64_t avant_regex_span_at(void *handle, const char *s, avant_int from,
+                            avant_int i) {
   if (avant_regex_find(handle, s, from) < 0) {
     return -1;
   }
@@ -309,7 +319,7 @@ int64_t avant_regex_span_at(void *handle, const char *s, int32_t from,
 /* Finds the first match at or after `from` and keeps its span pairs
  * in thread-local scratch for avant_regex_span_pair. Returns the
  * packed whole-match pair, or -1 on no match. */
-int64_t avant_regex_find(void *handle, const char *s, int32_t from) {
+int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
   ReEntry *e;
   pcre2_match_data *md;
   size_t n;
@@ -328,7 +338,11 @@ int64_t avant_regex_find(void *handle, const char *s, int32_t from) {
     int32_t local[4];
     int32_t groups = avant_re2c_groups((int32_t)(uintptr_t)handle);
     local[0] = local[1] = local[2] = local[3] = -1;
-    if (!avant_re2c_find_into(handle, s, from, local, 2)) {
+    /* A start past the text finds nothing; within it, it is a position. */
+    if (from > (avant_int)avant_str_n(s)) {
+      return -1;
+    }
+    if (!avant_re2c_find_into(handle, s, from < 0 ? 0 : (int32_t)from, local, 2)) {
       return -1;
     }
     pairs = groups + 1;
@@ -380,7 +394,7 @@ int64_t avant_regex_find(void *handle, const char *s, int32_t from) {
   return avant_regex_span_pair(0);
 }
 
-int32_t avant_regex_count(void *handle, const char *s) {
+avant_int avant_regex_count(void *handle, const char *s) {
   ReEntry *e;
   pcre2_match_data *md;
   size_t slen;
@@ -430,4 +444,33 @@ int32_t avant_regex_count(void *handle, const char *s) {
     start = next;
   }
   return n;
+}
+
+/* PCRE2's text for the last failed compile ("missing closing
+ * parenthesis"), and the offset in the pattern it points at. */
+/* gc-lint: holds nothing (C memory only). */
+char *avant_regex_error_text(void) {
+  PCRE2_UCHAR buf[256];
+  int n = pcre2_get_error_message(g_re_err, buf, sizeof buf);
+  char *out;
+  if (n < 0) {
+    n = 0;
+  }
+  out = avant_str_alloc((uint64_t)n);
+  memcpy(out, buf, (size_t)n);
+  out[n] = 0;
+  avant_str_tag(out);
+  return out;
+}
+
+avant_int avant_regex_error_offset(void) {
+  return g_re_off;
+}
+
+/* A Regex used after close (Stage 29 W4b2, D295 R11): a program error,
+ * not an honest "no match". Printed as a trap (stdout first, status 1). */
+void avant_regex_closed(void) {
+  fflush(stdout);
+  fputs("avant runtime: Regex used after close\n", stderr);
+  exit(1);
 }
