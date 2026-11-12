@@ -2236,7 +2236,8 @@ fn main {
 ```
 
 - `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` holds the lock for the block; `x` is the guarded value, a place that dies with the block; the block must end with a value, which is the call's. `return`, `break` and `continue` inside `with` are errors. (`with` is a form the compiler provides for a class of this name and shape.)
-- **The lock guards the cell, not what a reference stored in it points to.** With a class in a `Mutex`, do the work inside `with` and return plain values (an `Int`, a `String`): a block that returns the object itself hands out a reference the lock no longer protects, and the compiler does not stop it yet.
+- **The block's value leaves the lock, so it is a plain value:** a number, a `Bool`, a `String`, `Bytes`, a struct or an optional of those, a `Channel` or a `Mutex`. Any other value (a class, an array, a hash, a `Buf`, a struct holding one) is a compile error, even a new object built in the block: it could be the guarded value or a part of it, which the lock no longer protects outside the block. To take a copy out, declare an array before the block and fill it inside (`xs.each { |x| snap.push(x) }`), ending the block with a plain value.
+- **The lock guards the cell, not what a reference stored in it points to.** With a class in a `Mutex`, do the work inside `with`. The compiler checks the block's value; it does not yet stop a block from storing the guarded object itself somewhere else (pushing it into an array declared outside, assigning a part of it to an outer name), which hands out a reference the lock no longer protects.
 
 A channel hands values from one task to another:
 
@@ -3465,7 +3466,7 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 | Reading standard input | planned | `file_read("/dev/stdin")` |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` for structs without writing it; `==` on arrays and hashes | planned | [operator methods](#operator-methods); a loop |
-| `Mutex.with` keeping a reference from leaving the lock | a defect, being fixed | return plain values from the block ([Channel and Mutex](#channel-and-mutex)) |
+| `Mutex.with` keeping a reference from leaving the lock | partly built: the block's value is checked, a store into something outside the block is not | do the work inside the block ([Channel and Mutex](#channel-and-mutex)) |
 | A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
 | `Channel` and `Mutex` in the standard library; a `spawn` result other than `Int` | decided | [copy the two classes](#channel-and-mutex) |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |

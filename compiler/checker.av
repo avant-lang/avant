@@ -3847,6 +3847,12 @@ pub class Checker {
       self.place_name = saved_name
       self.place_depth = saved_depth
       self.pop_scope
+      // The block's value leaves the lock (O231): it may not be, or hold,
+      // a reference to mutable state (two tasks raced on a class handed
+      // out this way and lost updates).
+      if !self.has_err && !leaves_mutex_with(result) {
+        fail(b.body[b.body.size - 1].loc, "Mutex.with's value cannot be ${result.show}: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)")
+      }
       return result
     }
     fail(expr.loc, "Mutex.with needs a block")

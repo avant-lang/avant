@@ -62,6 +62,40 @@ pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
   false
 }
 
+// What may leave a `Mutex.with` block as its value (O231, Stage 29
+// W-FIX1b): spawn's rule for what crosses a task (a share type, or bits
+// that hold no reference to mutable state), without the frozen array
+// (that rule freezes a named array while a task is pending; a value has
+// no name to freeze) and with what holds no mutable state either:
+// `Bytes`, `nil`, and a union or a struct of such members. A class, an
+// array, a hash, a `Buf`, a `fn` or a pointer may be the guarded object
+// or a part of it: outside the block the lock no longer protects it.
+pub fn (checker_self: Checker) leaves_mutex_with(ty: Ty): Bool {
+  if checker_self.is_share_ty(ty) {
+    return true
+  }
+  if ty.is_nil || ty.is_bytes {
+    return true
+  }
+  if ty.is_union {
+    for m in ty.members {
+      if !checker_self.leaves_mutex_with(m) {
+        return false
+      }
+    }
+    return true
+  }
+  if ty.is_struct {
+    for field in ty.fields {
+      if !checker_self.leaves_mutex_with(field.ty) {
+        return false
+      }
+    }
+    return true
+  }
+  checker_self.copyable_bits(ty)
+}
+
 pub fn (checker_self: Checker) collect_spawn_captures(expr: Expr, body: Array(Stmt)) {
   seen = Hash(String, Int).new
   checker_self.walk_spawn_stmts(body, expr, seen)

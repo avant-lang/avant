@@ -1,0 +1,104 @@
+import harness
+import backends
+
+// Stage 29 W-FIX1b: the compiler's safety rules of this wave. Each program
+// is compiled in parallel; a refused one must leave no binary, say the
+// expected words and point at the expected line and column; an accepted
+// one (the neighbouring legal forms) must print what it should.
+//   - O231, `Mutex.with`: the block's value leaves the lock, so it cannot
+//     be, or hold, a reference to mutable state (a class handed out this
+//     way was changed by two tasks at once, and updates were lost).
+
+class RCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn mutex_cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(refused("mutex-value-class", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  leaked = m.with { |b| b }\n  puts(leaked.n)\n}\n", "Mutex.with's value cannot be Box: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)", "24:25"))
+  xs.push(refused("mutex-value-part", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  part = m.with { |b|\n    b.n += 1\n    b.inner\n  }\n  puts(part.n)\n}\n", "Mutex.with's value cannot be Inner: ", "26:6"))
+  xs.push(refused("mutex-value-optional", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  nx = m.with { |b| b.next }\n  puts(1)\n}\n", "Mutex.with's value cannot be Box?: ", "24:22"))
+  xs.push(refused("mutex-value-array", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Array(Int)).new([1, 2])\n  xs = m.with { |a| a }\n  puts(xs.size)\n}\n", "Mutex.with's value cannot be Array(Int): ", "24:21"))
+  xs.push(refused("mutex-value-fresh-array", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Int).new(1)\n  xs = m.with { |n| [n, n] }\n  puts(xs.size)\n}\n", "Mutex.with's value cannot be Array(Int): ", "24:21"))
+  xs.push(refused("mutex-value-hash", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Hash(String, Int)).new(Hash(String, Int).new)\n  h = m.with { |t| t }\n  puts(h.size)\n}\n", "Mutex.with's value cannot be Hash(String, Int): ", "24:20"))
+  xs.push(refused("mutex-value-buf", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Buf).new(Buf.new)\n  b = m.with { |t| t }\n  puts(b.size)\n}\n", "Mutex.with's value cannot be Buf: ", "24:20"))
+  xs.push(refused("mutex-value-struct-holding", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nstruct Wrap {\n  b: Box\n}\nfn main {\n  m = Mutex(Box).new(Box.new)\n  w = m.with { |b| Wrap { b: b } }\n  puts(w.b.n)\n}\n", "Mutex.with's value cannot be Wrap: ", "27:20"))
+  xs.push(refused("mutex-value-statement", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  m.with { |b|\n    b\n  }\n  puts(1)\n}\n", "Mutex.with's value cannot be Box: ", "25:5"))
+  xs.push(accepted("mutex-value-plain", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nstruct Pt {\n  x: Int\n  name: String\n}\nstruct Maybe {\n  x: Int?\n}\nfn main {\n  m = Mutex(Box).new(Box.new)\n  a = m.with { |b|\n    b.n += 1\n    b.n\n  }\n  s = m.with { |b| \"n=\${b.n}\" }\n  hm = Mutex(Hash(String, Int)).new(Hash(String, Int).new)\n  o = hm.with { |h|\n    h[\"a\"] = 5\n    h.get(\"a\")\n  }\n  o2 = hm.with { |h| h.get(\"b\") }\n  mm = Mutex(Mutex(Int)).new(Mutex(Int).new(1))\n  inner = mm.with { |x| x }\n  p = m.with { |b| Pt { x: b.n, name: \"p\" } }\n  q = m.with { |b| Maybe { x: nil } }\n  by = m.with { |b| \"ab\".bytes }\n  f = m.with { |b| 1.5 }\n  t = m.with { |b| b.n == 1 }\n  puts(a)\n  puts(s)\n  puts(o ?? 7)\n  puts(o2 ?? -1)\n  puts(inner.with { |x| x })\n  puts(\"\${p.name} \${p.x}\")\n  puts(q.x ?? 9)\n  puts(by.size)\n  puts(f)\n  puts(t)\n}\n", "1\nn=1\n5\n-1\n1\np 1\n9\n2\n1.5\ntrue\n"))
+  xs.push(accepted("mutex-value-copy-out", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = avant_gate_new()\n  }\n}\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub xs: Array(Int) = []\n}\n\nfn main {\n  m = Mutex(Array(Int)).new([1, 2, 3])\n  snap: Array(Int) = []\n  m.with { |xs|\n    xs.each { |x| snap.push(x) }\n    0\n  }\n  puts(snap.size)\n}\n", "3\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/rules-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/rules-${f.tag}.bin", "${dir}/rules-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "rules-${f2.tag}.bin", "rules-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/rules-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/rules-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/rules-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "rules-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_rules.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    all = mutex_cases()
+    run_cases(c, compiler, scratch_dir(), all)
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}
