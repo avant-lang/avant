@@ -1531,7 +1531,7 @@ pub class Parser {
     if self.tokens[i].kind != tk_l_brace() {
       return expr
     }
-    if expr.kind != ex_call() && expr.kind != ex_field() {
+    if expr.kind != ex_call() && expr.kind != ex_field() && expr.kind != ex_array_new() {
       return expr
     }
     self.skip_newlines
@@ -2716,6 +2716,25 @@ pub class Parser {
     if left.kind == ex_name() {
       call = Expr.new(ex_call(), block.loc)
       call.callee = left.ident
+      call.block = block
+      return call
+    }
+    if left.kind == ex_array_new() {
+      // `Array(T).new(n) { |i| ... }` (D329, Stage 29 W-FIX1b): the block
+      // builds each element. A call named "Array.new" (no program can
+      // write that name) with the size as its argument, T as its
+      // elem_type and the block, so every walk that knows a call with a
+      // block knows this form.
+      if left.elems.size > 0 {
+        fail(block.loc, "Array(T).new(n, value) takes no block; the block form builds each element: Array(T).new(n) { |i| ... }")
+        return left
+      }
+      call = Expr.new(ex_call(), left.loc)
+      call.callee = "Array.new"
+      call.elem_type = left.elem_type
+      if sz = left.size_expr {
+        call.args.push(sz)
+      }
       call.block = block
       return call
     }

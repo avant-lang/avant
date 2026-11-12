@@ -1147,6 +1147,33 @@ pub fn ty_has_zero(t: Ty): Bool {
   false
 }
 
+// Whether a value of type t is, or holds, a reference to an object that
+// can change (D329, Stage 29 W-FIX1b): a class, an array, a hash, a Buf,
+// or a struct or union holding one. Copies of such a value share the
+// object. A String and Bytes cannot change; a number, a Bool, a function
+// value, a pointer and a JoinHandle are not counted.
+pub fn ty_holds_mutable_ref(t: Ty): Bool {
+  if t.is_class || t.is_array || t.is_hash || t.is_buf {
+    return true
+  }
+  if t.is_union {
+    for m in t.members {
+      if ty_holds_mutable_ref(m) {
+        return true
+      }
+    }
+    return false
+  }
+  if t.is_struct {
+    for f in t.fields {
+      if ty_holds_mutable_ref(f.ty) {
+        return true
+      }
+    }
+  }
+  false
+}
+
 // Whether the zero of t needs a store (a String, or a struct holding
 // one): the allocation's zero bytes are every other zero.
 pub fn ty_zero_stores(t: Ty): Bool {

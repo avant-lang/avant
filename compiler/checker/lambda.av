@@ -678,6 +678,8 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     // not one its `break` or `continue` can leave.
     saved_loops = checker_self.loop_depth
     checker_self.loop_depth = 0
+    saved_build = checker_self.in_build
+    checker_self.in_build = 0
     i = 0
     while i < b.params.size {
       pty = want.members[i]
@@ -729,6 +731,7 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     checker_self.try_in = saved_try
     checker_self.try_body = saved_body
     checker_self.loop_depth = saved_loops
+    checker_self.in_build = saved_build
     checker_self.pop_lambda
     if !result_ret.is_void && result_ret.is_var {
       checker_self.fail(expr.loc, "cannot infer type argument")

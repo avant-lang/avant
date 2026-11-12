@@ -965,15 +965,19 @@ fn main {
   a = [1, 2, 3]                       // Array(Int), from its elements
   b: Array(String) = []               // an empty literal needs a declared type
   c = Array(Float64).new(4)           // four elements, each 0.0
-  d = Array(Node).new(2, Node.new)    // two references to the same Node
+  d = Array(String).new(2, "none")    // two elements, each "none"
   e: Array(Int32) = [1, 2, 3]         // dense: 4 bytes per element
-  puts(a.size + b.size + c.size + d.size + e.size)   // => 12
+  f = Array(Node).new(2) { |i| Node.new }                  // two elements, each its own Node
+  g = Array(Array(Int)).new(3) { |y| Array(Int).new(4) }   // a grid of 3 rows of 4
+  g[0][0] = 7
+  puts(g[1][0])                       // => 0
+  puts(a.size + b.size + c.size + d.size + e.size + f.size + g.size)   // => 17
 }
 ```
 
 - `Array(T).new(n)` makes `n` elements, each the element type's zero: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a struct of such fields.
-- `Array(T).new(n, value)` makes `n` copies of `value` (for a class, an `Array`, a `Hash` or a `Buf`: `n` references to the same object). It is required when `T` has no zero (a class, an `Array`, a `Hash`): `Array(Node).new(n)` alone is a compile error that names both ways out, this form and `[]` with `push`.
-- For a grid, push a fresh row per iteration (`rows.push(Array(Int).new(width))`): `Array(Array(Int)).new(2, [0, 0])` would hold the same row twice.
+- `Array(T).new(n, value)` makes `n` copies of `value`, for a `T` whose copies are independent: a number, a `Bool`, a `String`, `Bytes`, a struct of those, and `nil` for any `T?`. When `T` is, or holds, a reference to an object that can change (a class, an `Array`, a `Hash`, a `Buf`, a struct or an optional holding one) it is a compile error: every element would be the same object, and a change through one would show in all.
+- `Array(T).new(n) { |i| ... }` builds each element: the block runs once per index, `0` to `n - 1` in order, and its value is that element. It is the form for a `T` with no zero (`Array(Node).new(n)` alone is a compile error that names the ways out) and for a grid, whose rows must each be their own array. `return` inside the block returns from the enclosing function, as in `each`; `break` and `continue` are compile errors, since every index gets a value. To put one shared object in every element on purpose, say so: `Array(Node).new(n) { |i| shared }`.
 - A negative `n` traps (`avant runtime: Array size -5 is negative`).
 
 ### Indexing and bounds
@@ -1698,7 +1702,7 @@ fn main {
 
 ### Builtin blocks are loops
 
-The blocks of the builtins (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `spawn`, `Mutex.with`) are not function values: the compiler inlines them. The difference shows in what `return` and `break` mean.
+The blocks of the builtins (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `spawn`, `Mutex.with`, `Array(T).new(n) { ... }`) are not function values: the compiler inlines them. The difference shows in what `return` and `break` mean.
 
 | Inside | `return` | `break` |
 | --- | --- | --- |

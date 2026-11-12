@@ -14,6 +14,11 @@ import backends
 //     `p.pos.x += 1`), which changed the loop's copy and lost the write.
 //     A class element's field, a path through a reference, an index, and
 //     a name the body binds anew stay legal.
+//   - D329 (O246), `Array(T).new(n, value)` is refused when T is, or
+//     holds, a reference to an object that can change (every element
+//     would be that one object), and `Array(T).new(n) { |i| ... }` builds
+//     each element (tests/fixtures/heap/build.av runs it under the
+//     collector's modes).
 
 class RCase {
   pub tag: String = ""
@@ -74,6 +79,29 @@ fn for_cases: Array(RCase) {
   xs
 }
 
+fn array_cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(refused("anew-shared-array", "fn main {\n  g = Array(Array(Int)).new(2, [0, 0])\n  g[0][0] = 7\n  puts(g[1][0])\n}\n", "Array(Array(Int)).new(n, value) would put the same object in every element (Array(Int) is, or holds, a reference: a change through one element would show in all); build one per element: Array(Array(Int)).new(n) { |i| ... }", "2:32"))
+  xs.push(refused("anew-shared-class", "class Node {\n  pub v: Int = 0\n}\nfn main {\n  n = Node.new\n  ns = Array(Node).new(3, n)\n  puts(ns[2].v)\n}\n", "Array(Node).new(n, value) would put the same object in every element (Node is, or holds, a reference", "6:27"))
+  xs.push(refused("anew-shared-hash", "fn main {\n  h = Hash(String, Int).new\n  hs = Array(Hash(String, Int)).new(2, h)\n  puts(hs.size)\n}\n", "Array(Hash(String, Int)).new(n, value) would put the same object in every element", "3:40"))
+  xs.push(refused("anew-shared-buf", "fn main {\n  bs = Array(Buf).new(2, Buf.new)\n  puts(bs.size)\n}\n", "Array(Buf).new(n, value) would put the same object in every element", "2:29"))
+  xs.push(refused("anew-shared-struct-holding", "class Node {\n  pub v: Int = 0\n}\nstruct Rec {\n  n: Int\n  node: Node\n}\nfn main {\n  rs = Array(Rec).new(2, Rec { n: 1, node: Node.new })\n  puts(rs.size)\n}\n", "Array(Rec).new(n, value) would put the same object in every element (Rec is, or holds, a reference", "9:26"))
+  xs.push(refused("anew-shared-optional", "class Node {\n  pub v: Int = 0\n}\nfn main {\n  n = Node.new\n  ns = Array(Node?).new(3, n)\n  puts(ns.size)\n}\n", "Array(Node?).new(n, value) would put the same object in every element", "6:28"))
+  xs.push(refused("anew-shared-generic", "class Node {\n  pub v: Int = 0\n}\nfn fill(n: Int, v: T): Array(T) {\n  Array(T).new(n, v)\n}\nfn main {\n  a = fill(2, 5)\n  b = fill(2, Node.new)\n  puts(a[1] + b.size)\n}\n", "Array(Node).new(n, value) would put the same object in every element", "5:19"))
+  xs.push(refused("build-value-and-block", "fn main {\n  xs = Array(Int).new(3, 0) { |i| i }\n  puts(xs.size)\n}\n", "Array(T).new(n, value) takes no block; the block form builds each element: Array(T).new(n) { |i| ... }", "2:29"))
+  xs.push(refused("build-no-param", "fn main {\n  xs = Array(Int).new(3) { 0 }\n  puts(xs.size)\n}\n", "Array(T).new(n) { |i| ... } takes one block parameter, the index", "2:26"))
+  xs.push(refused("build-two-params", "fn main {\n  xs = Array(Int).new(3) { |i, j| i + j }\n  puts(xs.size)\n}\n", "Array(T).new(n) { |i| ... } takes one block parameter, the index", "2:26"))
+  xs.push(refused("build-value-type", "fn main {\n  xs = Array(Int).new(3) { |i| \"a\" }\n  puts(xs.size)\n}\n", "expected Int, got String", "2:32"))
+  xs.push(refused("build-break", "fn main {\n  xs = Array(Int).new(3) { |i|\n    if i == 1 {\n      break\n    }\n    i\n  }\n  puts(xs.size)\n}\n", "break inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value", "4:7"))
+  xs.push(refused("build-continue", "fn main {\n  for k in 0..2 {\n    xs = Array(Int).new(3) { |i|\n      if i == 1 {\n        continue\n      }\n      i\n    }\n    puts(xs.size)\n  }\n}\n", "continue inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value", "5:9"))
+  xs.push(refused("build-no-value", "fn main {\n  xs = Array(Int).new(3) { |i| }\n  puts(xs.size)\n}\n", "block needs a value", "2:26"))
+  xs.push(refused("build-size-type", "fn main {\n  xs = Array(Int).new(\"3\") { |i| i }\n  puts(xs.size)\n}\n", "expected Int, got String", "2:23"))
+  xs.push(accepted("anew-value-neighbours", "struct P {\n  x: Int\n  name: String\n}\nclass Node {\n  pub v: Int = 0\n}\nfn fill(n: Int, v: T): Array(T) {\n  Array(T).new(n, v)\n}\nfn main {\n  fs = Array(Float64).new(2, 1.5)\n  puts(fs[1])\n  t = Array(String).new(3, \"x\")\n  puts(t[2])\n  is = Array(Int).new(4, -1)\n  puts(is[3])\n  os = Array(Node?).new(2, nil)\n  if o = os[1] {\n    puts(\"some\")\n  } else {\n    puts(\"nil\")\n  }\n  i32 = Array(Int32).new(2, 7)\n  u = Array(UInt64).new(2)\n  puts(\"\${i32[1]} \${u[0]}\")\n  ps = Array(P).new(2, P { x: 2, name: \"p\" })\n  ps[0].x = 9\n  puts(\"\${ps[1].name} \${ps[1].x}\")\n  bs = Array(Bool).new(2, true)\n  puts(bs[1])\n  puts(fill(3, \"s\").size)\n}\n", "1.5\nx\n-1\nnil\n7 0\np 2\ntrue\n3\n"))
+  xs.push(accepted("build-forms", "class Node {\n  pub v: Int = 0\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\nfn squares(n: Int): Array(Int) {\n  Array(Int).new(n) { |i| i * i }\n}\nfn fill(n: Int, v: T): Array(T) {\n  Array(T).new(n) { |i| v }\n}\nfn first(n: Int) {\n  xs = Array(Int).new(n) { |i|\n    if i == 3 {\n      puts(\"\${i - 1} left\")\n      return\n    }\n    i\n  }\n  puts(xs.size)\n}\nfn main {\n  xs = Array(Int).new(4) { |i| i * 2 }\n  puts(\"\${xs.size} \${xs[0]} \${xs[3]}\")\n  grid = Array(Array(Int)).new(3) { |y| Array(Int).new(2) }\n  grid[0][0] = 7\n  puts(\"\${grid[0][0]} \${grid[1][0]} \${grid.size} \${grid[2].size}\")\n  ns = Array(Node).new(3) { |i| Node.new(i + 1) }\n  ns[0].v = 50\n  puts(\"\${ns[0].v} \${ns[1].v} \${ns[2].v}\")\n  ss = Array(String).new(3) { |i| \"s\${i}\" }\n  puts(ss[2])\n  puts(squares(5)[4])\n  puts(\"\${fill(3, \"x\")[2]} \${fill(2, 1.5)[1]}\")\n  e = Array(Int).new(0) { |i| i }\n  puts(e.size)\n  i32s = Array(Int32).new(3) { |i| 7 }\n  puts(i32s[1])\n  es = Array(Array(Int)).new(2) { |i| [] }\n  es[0].push(4)\n  puts(\"\${es[0].size} \${es[1].size}\")\n  fs: Array(fn(Int): Int) = []\n  ys = Array(Int).new(3) { |i|\n    add = { |k: Int| k + i }\n    fs.push(add)\n    add(10)\n  }\n  puts(\"\${ys[2]} \${fs[0](1)} \${fs[2](1)}\")\n  total = 0\n  zs = Array(Int).new(3) { |i|\n    total += i\n    total\n  }\n  puts(\"\${zs[2]} \${total}\")\n  nested = Array(Array(Node)).new(2) { |y| Array(Node).new(2) { |x| Node.new(y * 10 + x) } }\n  puts(nested[1][1].v)\n  shared = Node.new(5)\n  same = Array(Node).new(2) { |i| shared }\n  same[0].v = 6\n  puts(\"\${shared.v - 1} \${same[1].v}\")\n  first(9)\n}\n", "4 0 6\n7 0 3 2\n50 2 3\ns2\n16\nx 1.5\n0\n7\n1 0\n12 1 3\n3 3\n11\n5 6\n2 left\n"))
+  xs.push(refused("anew-no-zero-value-type", "fn main {\n  xs = Array(Int | String).new(2)\n  puts(xs.size)\n}\n", "Array(Int | String).new(n) needs an element value: Int | String has no zero value; write Array(Int | String).new(n, value), or start from [] and push", "2:8"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -112,6 +140,9 @@ fn test_main(c: Checks) {
     all = mutex_cases()
     for f in for_cases() {
       all.push(f)
+    }
+    for f2 in array_cases() {
+      all.push(f2)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {
