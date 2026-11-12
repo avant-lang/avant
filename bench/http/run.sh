@@ -47,10 +47,10 @@
 #    (a thread per connection) and is bounded by the pinning alone.
 #    Three labelled variants run only when named, never under `all`:
 #    avant-nosigpipe (the same Avant binary started by
-#    `env --ignore-signal=PIPE`: the server as shipped is killed by
-#    SIGPIPE when a client closes with pipelined answers unread, which
-#    is what wrk does at the end of a B or C load; this row is how its
-#    throughput is measured until that is fixed), and hyper-nodate and
+#    `env --ignore-signal=PIPE`: up to v0.41.0 the server was killed by
+#    SIGPIPE when a client closed with pipelined answers unread, which
+#    is what wrk does at the end of a B or C load; the row stays for
+#    measuring a binary built before that was fixed), and hyper-nodate and
 #    fasthttp-nodate (those servers with their `Date` header, and
 #    fasthttp's `Server` header, switched off: an 84-byte answer like
 #    the servers that send neither).

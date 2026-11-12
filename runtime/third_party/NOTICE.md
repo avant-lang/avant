@@ -5,7 +5,7 @@ Avant wraps these; it does not reimplement JSON or HTTP.
 | Tree | Role | License | Pin |
 | --- | --- | --- | --- |
 | `yyjson/` | JSON (D8) | MIT, copyright YaoYuan | v0.10.0 (`yyjson.h` / `yyjson.c`) |
-| `uSockets/` | HTTP evented sockets (D8, D37: C only) | Apache-2.0 | `7a7c820` (`src/` only) |
+| `uSockets/` | HTTP evented sockets (D8, D37: C only) | Apache-2.0 | `7a7c820` (`src/` only), with the local patches listed under "uSockets: local patches" |
 | `base64/` | Base64 codec (aklomp/base64) | BSD-style, copyright Nick Galbreath, Wojciech Muła, Matthieu Darbois, and Alfred Klomp (see `base64/LICENSE`) | `e4cc438b7a8f2780b15f88aed24a89927f6bd6c6` (`base64/PIN`) |
 | `pcre2/` | Regular expressions for `std.regex` computed patterns (D116, D146); literal patterns take re2c | BSD-3-Clause with the PCRE2 exception, copyright University of Cambridge and the PCRE2 authors (see `pcre2/LICENCE.md`, `pcre2/AUTHORS.md`); the bundled sljit JIT compiler is BSD-2-Clause, copyright Zoltan Herczeg (`pcre2/deps/sljit/LICENSE`) | 10.49 (`pcre2/PIN`: tarball sha256 and the release signature checked) |
 | `zlib/` | Deflate for `std.zlib` (D99, D146) | zlib license, copyright Jean-loup Gailly and Mark Adler (see `zlib/LICENSE`) | 1.3.2 (`zlib/PIN`: tarball sha256 and the release signature checked) |
@@ -18,6 +18,12 @@ Do not tidy these trees except to update the pin.
 ## CVE and update policy
 
 Each vendored tree has exactly one pin of record: the table above for `yyjson/` and `uSockets/`, `base64/PIN` for `base64/`, `pcre2/PIN` for `pcre2/`, and `zlib/PIN` for `zlib/`. A security fix or a needed upstream fix updates the work the same way every time: replace the tree with the fixed upstream revision, update the pin in this file (and the tree's `PIN` file where it has one) in the same change, and record the reason in the commit message. There is no floating "latest" anywhere: a build always names the revision it vendored. If upstream has no fixed revision yet, the pin stays and the exposure is recorded here rather than patched silently in-tree, so the vendored tree never diverges from its named pin without this file saying so.
+
+## uSockets: local patches
+
+The tree is upstream `7a7c820` plus the changes below, each marked "Avant patch" in the source. An update of the pin re-applies each one or drops it with the upstream change that makes it unnecessary, and says which in the commit message.
+
+- `uSockets/src/bsd.c`, `bsd_write2` (Stage 29 W-FIX1a): `sendmsg` with `MSG_NOSIGNAL` in place of `writev`. `writev` cannot carry the flag, so a write to a connection the peer had reset raised SIGPIPE and ended the process (a client that closed with two pipelined answers unread did it); the call now fails with `EPIPE`, as `bsd_send` in the same file already does. Every socket write of the runtime goes through `bsd_send` or `bsd_write2`.
 
 ## PCRE2
 

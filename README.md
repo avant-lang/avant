@@ -2975,7 +2975,6 @@ fn main {
 - **Connections** are kept alive, and pipelined requests are answered in order, each with its own write for now. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on the same port.
 - **Handlers must not block the loop.** Hand slow work to `spawn`.
 - **A trap in a handler ends the server**, like any [trap](#traps). Run it under a supervisor, and read request data with the non-trapping forms.
-- **One known defect, being fixed:** a client that disconnects while pipelined answers are still unread ends the server process. The supervisor covers it meanwhile.
 - `close` stops the server and lets `serve` return. A server that is never closed keeps its socket until the process exits; there is no finalizer.
 
 #### HTTP client
