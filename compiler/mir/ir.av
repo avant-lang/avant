@@ -95,10 +95,20 @@ pub fn mst_lowered: Int { 1 }
 pub fn mst_final: Int { 2 }
 
 // A source location (9): file indexes the module's file table.
+// Stored in 32 bits (Stage 29 W-ADOPT: every statement and terminator
+// holds one inline) and read as Int.
 pub struct MLoc {
-  pub file: Int
-  pub line: Int
-  pub col: Int
+  file32: Int32
+  line32: Int32
+  col32: Int32
+
+  pub fn file: Int { self.file32.to_i }
+  pub fn line: Int { self.line32.to_i }
+  pub fn col: Int { self.col32.to_i }
+}
+
+pub fn mir_loc(file: Int, line: Int, col: Int): MLoc {
+  MLoc { file32: file.to_i32, line32: line.to_i32, col32: col.to_i32 }
 }
 
 pub class MProj {
