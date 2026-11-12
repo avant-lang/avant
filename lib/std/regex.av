@@ -47,9 +47,20 @@ pub struct Span {
   pub hi: Int
 }
 
+// Whether one compiled Regex is still open, in one shared place (Stage 29
+// W-FIX1a): a Regex is a struct, so each copy of it would carry a flag of
+// its own, and a copy of a closed Regex went on to read the handle that
+// close had released. Every copy of the value, and every Match it
+// produced, points at this one object, the way a Server's copies share
+// their HttpState.
+class RegexState {
+  closed: Bool = false
+}
+
 pub struct Match {
   text: String
   code: Ptr(Void)
+  state: RegexState
   ngroups: Int
   at: Int
   pub start: Int
@@ -95,6 +106,12 @@ pub struct Match {
       }
       return Span { lo: lo, hi: group_hi(i) }
     }
+    // Groups past the third are read from the pattern again: not after
+    // its Regex was closed.
+    if self.state.closed {
+      regex_closed()
+      return nil
+    }
     v = rec.avant_regex_span_at(self.code, self.text, self.at, i)
     lo = pair_lo(v)
     if lo < 0 {
@@ -111,6 +128,11 @@ pub struct Match {
   }
 
   pub fn group(name: String): String? {
+    // The name is looked up in the pattern: not after its Regex was closed.
+    if self.state.closed {
+      regex_closed()
+      return nil
+    }
     idx = rec.avant_regex_group_index(self.code, name)
     if idx < 0 {
       return nil
@@ -196,13 +218,14 @@ fn is_digits(s: String): Bool {
 // A Regex is a value holding one hold on a compiled pattern, in the
 // shape of Json: the struct form is what lets Regex | RegexError open
 // with if-assign, since the error must be the union's one class.
-// Copies of a Regex value are the same handle; close it once, through
-// one of them.
+// Copies of a Regex value are the same handle and share its open or
+// closed state (RegexState): close it once, through any of them, and
+// every copy is closed.
 pub struct Regex {
   code: Ptr(Void)
   scan: Ptr(Void)
   ngroups: Int
-  closed: Bool
+  state: RegexState
 
   // Compiles `pattern` on PCRE2 with JIT. A pattern written as a string
   // literal may instead be compiled by re2c into a scanner; that path
@@ -220,23 +243,25 @@ pub struct Regex {
     if status != 0 {
       return regex_error(status)
     }
-    Regex { code: code, scan: code, ngroups: rec.avant_regex_groups(code), closed: false }
+    Regex { code: code, scan: code, ngroups: rec.avant_regex_groups(code), state: RegexState.new() }
   }
 
   // Releases this handle's hold on the compiled pattern. The C side may
   // keep the pattern in its bounded cache for the next compile; other
-  // handles on the same pattern are unaffected. Closing twice is a
-  // no-op, and every operation on a closed Regex traps.
+  // handles on the same pattern (other compiles of it) are unaffected.
+  // Closing twice, through this value or a copy of it, is a no-op, and
+  // every operation on a closed Regex, through any copy, traps; so do a
+  // Match's named groups and its groups past the third.
   pub fn close {
-    if self.closed {
+    if self.state.closed {
       return
     }
-    self.closed = true
+    self.state.closed = true
     rec.avant_regex_release(self.code)
   }
 
   pub fn is_closed: Bool {
-    self.closed
+    self.state.closed
   }
 
   // Runs the block with this Regex and closes it on exit.
@@ -246,7 +271,7 @@ pub struct Regex {
   }
 
   pub fn find(text: String, from: Int = 0): Match? {
-    if self.closed {
+    if self.state.closed {
       regex_closed()
       return nil
     }
@@ -269,6 +294,7 @@ pub struct Regex {
     Match {
       text: text,
       code: self.code,
+      state: self.state,
       ngroups: self.ngroups,
       at: from,
       start: pair_lo(p0),
@@ -283,7 +309,7 @@ pub struct Regex {
   }
 
   pub fn count(text: String): Int {
-    if self.closed {
+    if self.state.closed {
       regex_closed()
       return 0
     }
@@ -304,7 +330,7 @@ pub struct Regex {
   }
 
   pub fn replace_into(dst: Buf, text: String, repl: String) {
-    if self.closed {
+    if self.state.closed {
       regex_closed()
       return
     }
@@ -338,7 +364,7 @@ pub struct Regex {
   // points; their bytes stay in the surrounding piece.
   pub fn split(text: String): Array(String) {
     parts: Array(String) = []
-    if self.closed {
+    if self.state.closed {
       regex_closed()
       return parts
     }
@@ -403,5 +429,5 @@ fn regex_from_re2c(id: Int, groups: Int, pattern: String, caseless: Bool): Regex
   if status != 0 {
     return regex_error(status)
   }
-  Regex { code: code, scan: rec.avant_re2c_handle(id), ngroups: groups, closed: false }
+  Regex { code: code, scan: rec.avant_re2c_handle(id), ngroups: groups, state: RegexState.new() }
 }

@@ -32,6 +32,25 @@ fn regex_child(c: Checks, compiler: String, stamp: Int, tag: String, body: Strin
   }
 }
 
+// One run of a compiled child that must trap: exit status 1, `out` on
+// stdout before the trap, `needle` on stderr (the log holds both).
+fn regex_trap_run(c: Checks, bin: String, stamp: Int, tag: String, args: Array(String), out: String, needle: String) {
+  rlog = "${scratch()}/regex-${stamp}-${tag}.out"
+  code = process_run_out(bin, args, rlog) ?? -1
+  c.eq_int(code, 1, "${tag}: exits 1")
+  if got = file_read(rlog) {
+    c.eq_str(got, "${out}${needle}\n", "${tag}: output, then the trap")
+  } else {
+    c.expect(false, "${tag}: output missing")
+  }
+}
+
+fn one_arg(a: String): Array(String) {
+  xs: Array(String) = []
+  xs.push(a)
+  xs
+}
+
 fn must_compile(c: Checks, pat: String, caseless: Bool, label: String): Regex {
   if re = Regex.compile(pat, caseless) {
     return re
@@ -206,6 +225,26 @@ fn test_std_regex(c: Checks) {
   c.expect(shared_a.is_closed, "closed regex says so")
   shared_b.close
 
+  // The open or closed state is one shared place (Stage 29 W-FIX1a,
+  // P150): a copy of a Regex is the same handle, so closing through any
+  // copy closes them all, once. Each copy used to carry its own flag,
+  // and a copy of a closed Regex read the released handle.
+  twin_a = must_compile(c, "yy+", false, "twin a")
+  twin_b = must_compile(c, "yy+", false, "twin b")
+  twin_copy = twin_a
+  c.expect(!twin_copy.is_closed, "a copy of an open regex is open")
+  twin_a.close
+  c.expect(twin_copy.is_closed, "closing a regex closes its copies")
+  twin_copy.close
+  twin_a.close
+  c.expect(!twin_b.is_closed, "another compile of the same pattern stays open")
+  if m = twin_b.find("ayyy") {
+    c.eq_int(m.end, 4, "another compile of the same pattern still matches")
+  } else {
+    c.expect(false, "another compile of the same pattern still matches")
+  }
+  twin_b.close
+
   scoped_len = 0
   if re = Regex.compile("q+") {
     re.scoped { |r|
@@ -224,6 +263,30 @@ fn test_std_regex(c: Checks) {
     regex_child(c, compiler, stamp, "regex-computed", computed, "", "stays on PCRE2", "2\n4\n")
     unsupported = "import std.regex\nfn main {\n  if re = Regex.compile(\"(a)\\\\1\") {\n    if m = re.find(\"baa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    re.close\n  }\n}\n"
     regex_child(c, compiler, stamp, "regex-backref", unsupported, "stays on PCRE2", "", "1\n3\n")
+
+    // P150: every use through a copy of a closed Regex traps, whichever
+    // copy was closed and wherever the copy lives (a parameter, an array,
+    // a MatchIter, a Match's named groups and its groups past the third).
+    // "uncached" fills the 128-entry cache with patterns in use first,
+    // so the pattern is freed by close itself: that run used to end in a
+    // segmentation fault.
+    copies = "import std.regex\n\nfn shut(r: Regex) {\n  r.close\n}\n\nfn main {\n  args = argv()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  held: Array(Regex) = []\n  if mode == \"uncached\" {\n    for i in 0..128 {\n      if r = Regex.compile(\"h\${i}x+\") {\n        held.push(r)\n      }\n    }\n  }\n  p = \"(?<w>a+)(b)(c)(d)\"\n  if mode != \"names\" {\n    p = \"q\" + \"+z\"\n  }\n  if re = Regex.compile(p) {\n    copy = re\n    if mode == \"copy-find\" || mode == \"uncached\" {\n      re.close\n      puts(\"closed \${copy.is_closed}\")\n      if m = copy.find(\"aqqz\") {\n        puts(m.start)\n      }\n    }\n    if mode == \"copy-close\" {\n      copy.close\n      puts(\"closed \${re.is_closed}\")\n      puts(re.count(\"qz qqz\"))\n    }\n    if mode == \"param\" {\n      shut(re)\n      puts(\"closed \${re.is_closed}\")\n      puts(re.replace(\"qz\", \"x\"))\n    }\n    if mode == \"array\" {\n      xs: Array(Regex) = []\n      xs.push(re)\n      re.close\n      puts(\"closed \${xs[0].is_closed}\")\n      puts(xs[0].split(\"aqzb\").size)\n    }\n    if mode == \"iter\" {\n      it = re.matches(\"qz qqz\")\n      if m = it.next {\n        puts(m.end)\n      }\n      copy.close\n      if m = it.next {\n        puts(m.end)\n      }\n    }\n    if mode == \"names\" {\n      if m = re.find(\"xaabcd\") {\n        re.close\n        puts(m.group(1) ?? \"?\")\n        puts(m.group(3) ?? \"?\")\n        if args.size > 2 {\n          puts(m.group(4) ?? \"?\")\n        } else {\n          puts(m.group(\"w\") ?? \"?\")\n        }\n      }\n    }\n  }\n  puts(held.size)\n}\n"
+    csrc = "${scratch()}/regex-${stamp}-copies.av"
+    cbin = "${scratch()}/regex-${stamp}-copies.bin"
+    _ = file_write(csrc, copies)
+    c.eq_int(compile_av(compiler, csrc, cbin, "${scratch()}/regex-${stamp}-copies.log"), 0, "compile closed-copies")
+    chmod_x(cbin)
+    trap = "avant runtime: Regex used after close"
+    regex_trap_run(c, cbin, stamp, "copy-find", one_arg("copy-find"), "closed true\n", trap)
+    regex_trap_run(c, cbin, stamp, "uncached", one_arg("uncached"), "closed true\n", trap)
+    regex_trap_run(c, cbin, stamp, "copy-close", one_arg("copy-close"), "closed true\n", trap)
+    regex_trap_run(c, cbin, stamp, "param", one_arg("param"), "closed true\n", trap)
+    regex_trap_run(c, cbin, stamp, "array", one_arg("array"), "closed true\n", trap)
+    regex_trap_run(c, cbin, stamp, "iter", one_arg("iter"), "2\n", trap)
+    regex_trap_run(c, cbin, stamp, "names", one_arg("names"), "aa\nc\n", trap)
+    fourth = one_arg("names")
+    fourth.push("4")
+    regex_trap_run(c, cbin, stamp, "names-4", fourth, "aa\nc\n", trap)
   }
 }
 
