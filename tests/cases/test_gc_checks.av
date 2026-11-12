@@ -180,10 +180,65 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   }
 }
 
+// The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
+fn stat_value(text: String, key: String): Int {
+  parts = text.split(" ")
+  for p in parts {
+    if p.size > key.size + 1 && str_slice(p, 0, key.size + 1) == "${key}=" {
+      return str_slice(p, key.size + 1, p.size).strip.to_i ?? -1
+    }
+  }
+  -1
+}
+
+// O360 (Stage 29 W-FIX1b): an object with no payload takes one word
+// (W-INT1's fix, which had no test). heap/empty_payload.av allocates
+// EMPTY_PAYLOAD_EXTRA steps of three empty objects (an empty array
+// literal's buffer, `Array(T).new(0)`'s with a run-time size, an empty
+// class) and two array headers: 100,000 more steps are exactly 9,600,000
+// more allocated bytes, in the inline build and in the call-form build,
+// under every collector mode. With the emitter's two guards removed the
+// inline build's four runs give 7,200,000 (the stress run allocates
+// through the runtime). The program also keeps, moves and uses empty
+// objects at every position of a block and prints 0.
+fn test_empty_payload(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/empty_payload.av", "${dir}/empty_payload", "${dir}/empty_payload.log"))
+  jobs.push(compile_job("AVANT_LLVM_CALL_FORMS=1", compiler, "${root}/tests/fixtures/heap/empty_payload.av", "${dir}/empty_payload_calls", "${dir}/empty_payload_calls.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "empty_payload.av: compiles")
+  c.eq_int(jobs[1].code, 0, "empty_payload.av: compiles with the call forms")
+  bins = ["empty_payload", "empty_payload_calls"]
+  envs = ["-u AVANT_GC_STRESS", "-u AVANT_GC_STRESS AVANT_GC_VERIFY=1", "-u AVANT_GC_STRESS AVANT_YOUNG_MB=1", "-u AVANT_GC_STRESS AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for b in 0..bins.size {
+    for e in 0..envs.size {
+      runs.push(run_job_env(dir, bins[b], "${bins[b]}.a${e}", "${envs[e]} AVANT_GC_STATS=1 EMPTY_PAYLOAD_EXTRA=1000"))
+      runs.push(run_job_env(dir, bins[b], "${bins[b]}.b${e}", "${envs[e]} AVANT_GC_STATS=1 EMPTY_PAYLOAD_EXTRA=101000"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for b in 0..bins.size {
+    for e in 0..envs.size {
+      what = "${bins[b]} under '${envs[e]}'"
+      c.eq_int(runs[k].code, 0, "${what}: exit 0")
+      c.eq_int(runs[k + 1].code, 0, "${what}, 100,000 more steps: exit 0")
+      c.eq_str(log_text("${dir}/${bins[b]}.b${e}.out"), "0\n", "${what}: every empty object survives its moves")
+      small = stat_value(log_text("${dir}/${bins[b]}.a${e}.err"), "alloc")
+      large = stat_value(log_text("${dir}/${bins[b]}.b${e}.err"), "alloc")
+      c.expect(small > 0, "${what}: the statistics line has alloc=")
+      c.eq_int(large - small, 9600000, "${what}: 100,000 steps of three empty objects allocate 9,600,000 bytes")
+      k += 2
+    }
+  }
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
   if compiler = env_get("AVANT_COMPILER") {
     test_gc_checks(c, compiler, avant_test_root(), scratch_dir())
+    test_empty_payload(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
