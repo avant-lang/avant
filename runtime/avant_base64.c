@@ -16,7 +16,7 @@ static void set_status(int32_t code) {
   g_base64_status = code;
 }
 
-int32_t avant_base64_take_status(void) {
+avant_int avant_base64_take_status(void) {
   int32_t code = g_base64_status;
   g_base64_status = 0;
   return code;
@@ -69,7 +69,7 @@ char *avant_base64_encode(const char *s) {
    * allocation. */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &s);
-  out = (char *)avant_alloc((uint64_t)out_n + 1, AVANT_TYPE_BYTES);
+  out = avant_str_alloc((uint64_t)out_n);
   p = (const unsigned char *)(s ? s : "");
   base64_encode((const char *)p, n, out, &wrote, 0);
   out[out_n] = 0;
@@ -87,7 +87,7 @@ char *avant_base64_decode(const char *s) {
   /* RC1/RC2, as in avant_base64_encode. */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &s);
-  out = (char *)avant_alloc((uint64_t)out_n + 1, AVANT_TYPE_BYTES);
+  out = avant_str_alloc((uint64_t)out_n);
   p = (const unsigned char *)(s ? s : "");
   if (!decode_write(out, out_n, p, n, &wrote)) {
     set_status(1);
@@ -98,7 +98,7 @@ char *avant_base64_decode(const char *s) {
   return out;
 }
 
-int32_t avant_base64_encode_into(const char *s, void *buf) {
+avant_int avant_base64_encode_into(const char *s, void *buf) {
   size_t n = avant_str_n(s);
   size_t out_n = encoded_len(n);
   const unsigned char *p = (const unsigned char *)(s ? s : "");
@@ -111,7 +111,7 @@ int32_t avant_base64_encode_into(const char *s, void *buf) {
     set_status(2);
     return 2;
   }
-  at = avant_buf_size(buf);
+  at = (int32_t)avant_buf_size(buf);
   if (out_n > (size_t)INT32_MAX - (size_t)at) {
     set_status(2);
     return 2;
@@ -139,7 +139,7 @@ int32_t avant_base64_encode_into(const char *s, void *buf) {
   return 0;
 }
 
-int32_t avant_base64_decode_into(const char *s, void *buf) {
+avant_int avant_base64_decode_into(const char *s, void *buf) {
   size_t n = avant_str_n(s);
   const unsigned char *p = (const unsigned char *)(s ? s : "");
   size_t out_n = decoded_len(p, n);
@@ -152,7 +152,7 @@ int32_t avant_base64_decode_into(const char *s, void *buf) {
     set_status(1);
     return 1;
   }
-  at = avant_buf_size(buf);
+  at = (int32_t)avant_buf_size(buf);
   if (out_n > (size_t)INT32_MAX - (size_t)at) {
     set_status(2);
     return 2;

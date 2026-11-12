@@ -432,7 +432,7 @@ void avant_pin(void *payload) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
-int avant_pin_count(void) {
+avant_int avant_pin_count(void) {
   int n = 0;
   pthread_mutex_lock(&gc_heap.world);
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {

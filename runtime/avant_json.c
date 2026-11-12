@@ -27,7 +27,7 @@ static void set_status(int32_t code) {
   g_json_status = code;
 }
 
-int32_t avant_json_take_status(void) {
+avant_int avant_json_take_status(void) {
   int32_t code = g_json_status;
   g_json_status = 0;
   return code;
@@ -169,7 +169,7 @@ void *avant_json_root(void *docp) {
 
 /* Kinds: 0 no value, 1 null, 2 bool, 3 int, 4 float, 5 string, 6 array,
  * 7 object. */
-int32_t avant_json_kind(void *nodep) {
+avant_int avant_json_kind(void *nodep) {
   yyjson_val *v = (yyjson_val *)nodep;
   if (!v) {
     return 0;
@@ -206,7 +206,7 @@ void *avant_json_get(void *nodep, const char *key) {
   return yyjson_obj_get(v, key);
 }
 
-void *avant_json_at(void *nodep, int32_t i) {
+void *avant_json_at(void *nodep, avant_int i) {
   yyjson_val *v = (yyjson_val *)nodep;
   if (!v || i < 0 || !yyjson_is_arr(v)) {
     return NULL;
@@ -263,6 +263,7 @@ void *avant_json_f64s(void *nodep, const char *key) {
   AVANT_GC_ROOT(1, &key);
   AVANT_GC_ROOT(2, &out);
   out = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
+  avant_size_check((uint64_t)n, AVANT_SIZE_ARRAY);
   if (n > 0) {
     buf = (double *)avant_alloc((uint64_t)n * sizeof(double), AVANT_TYPE_BYTES);
   }
@@ -283,7 +284,7 @@ void *avant_json_f64s(void *nodep, const char *key) {
   return out;
 }
 
-int32_t avant_json_len(void *nodep) {
+avant_int avant_json_len(void *nodep) {
   yyjson_val *v = (yyjson_val *)nodep;
   if (!v) {
     return 0;
@@ -303,7 +304,7 @@ static char *copy_str(const char *p, size_t n) {
   char *out;
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &p);
-  out = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  out = avant_str_alloc((uint64_t)n);
   if (p && n > 0) {
     memcpy(out, p, n);
   }
@@ -333,8 +334,10 @@ static int64_t node_int_in(yyjson_val *v, int64_t lo, int64_t hi) {
   return 0;
 }
 
-static int32_t node_int(yyjson_val *v) {
-  return (int32_t)node_int_in(v, INT32_MIN, INT32_MAX);
+/* Json.int: an integer within Int (64-bit since Stage 29 W-INT1; Json.int64
+ * went with it, one spelling). */
+static avant_int node_int(yyjson_val *v) {
+  return (avant_int)node_int_in(v, AVANT_INT_MIN, AVANT_INT_MAX);
 }
 
 static double node_f64(yyjson_val *v) {
@@ -364,20 +367,12 @@ static char *node_str(yyjson_val *v) {
   return copy_str(yyjson_get_str(v), yyjson_get_len(v));
 }
 
-int32_t avant_json_as_int(void *nodep) {
+avant_int avant_json_as_int(void *nodep) {
   return node_int((yyjson_val *)nodep);
 }
 
-int32_t avant_json_obj_int(void *nodep, const char *key) {
+avant_int avant_json_obj_int(void *nodep, const char *key) {
   return node_int((yyjson_val *)avant_json_get(nodep, key));
-}
-
-int64_t avant_json_as_int64(void *nodep) {
-  return node_int_in((yyjson_val *)nodep, INT64_MIN, INT64_MAX);
-}
-
-int64_t avant_json_obj_int64(void *nodep, const char *key) {
-  return node_int_in((yyjson_val *)avant_json_get(nodep, key), INT64_MIN, INT64_MAX);
 }
 
 double avant_json_as_f64(void *nodep) {
@@ -388,11 +383,11 @@ double avant_json_obj_f64(void *nodep, const char *key) {
   return node_f64((yyjson_val *)avant_json_get(nodep, key));
 }
 
-int32_t avant_json_as_bool(void *nodep) {
+avant_int avant_json_as_bool(void *nodep) {
   return node_bool((yyjson_val *)nodep);
 }
 
-int32_t avant_json_obj_bool(void *nodep, const char *key) {
+avant_int avant_json_obj_bool(void *nodep, const char *key) {
   return node_bool((yyjson_val *)avant_json_get(nodep, key));
 }
 
@@ -404,7 +399,7 @@ char *avant_json_obj_str(void *nodep, const char *key) {
   return node_str((yyjson_val *)avant_json_get(nodep, key));
 }
 
-char *avant_json_key_at(void *nodep, int32_t i) {
+char *avant_json_key_at(void *nodep, avant_int i) {
   yyjson_val *v = (yyjson_val *)nodep;
   yyjson_val *key;
   yyjson_obj_iter iter;

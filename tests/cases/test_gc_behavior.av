@@ -61,6 +61,9 @@ fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, lo
   process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
+// The fixtures' checksums wrap with &+ and &*: since Stage 29 W-INT1 they
+// wrap at Int's 64 bits, so each is the exact sum (its low 32 bits are the
+// 32-bit value it was before).
 fn test_gc_behavior(c: Checks) {
   c.suite("tests/cases/test_gc_behavior.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -70,7 +73,7 @@ fn test_gc_behavior(c: Checks) {
     c.wrote(file_write(src, tree_fixture()), "write tree fixture")
     code = compile_av(compiler, src, bin, "${scratch()}/gcb-${stamp}.clog")
     c.eq_int(code, 0, "compile tree fixture")
-    want = "-1432311182\n715795115\n"
+    want = "286330497650\n715795115\n"
     log1 = "${scratch()}/gcb-${stamp}.run1"
     rc1 = run_av_bin(bin, log1)
     c.eq_int(rc1, 0, "trees survive at default young size")
@@ -106,7 +109,7 @@ fn test_gc_behavior(c: Checks) {
     c.wrote(file_write(src2, churn_fixture()), "write churn fixture")
     code2 = compile_av(compiler, src2, bin2, "${scratch()}/gcb-${stamp}-churn.clog")
     c.eq_int(code2, 0, "compile churn fixture")
-    want2 = "12497500\n704982704\n2000\n"
+    want2 = "12497500\n4999950000\n2000\n"
     log4 = "${scratch()}/gcb-${stamp}.run4"
     rc4 = run_av_bin(bin2, log4)
     c.eq_int(rc4, 0, "cycle, array growth, and string churn survive")
@@ -133,7 +136,7 @@ fn test_gc_behavior(c: Checks) {
     c.wrote(file_write(src3, roots_fixture()), "write roots fixture")
     code3 = compile_av(compiler, src3, bin3, "${scratch()}/gcb-${stamp}-roots.clog")
     c.eq_int(code3, 0, "compile roots fixture")
-    want3 = "297457169\n"
+    want3 = "4592424465\n"
     log6 = "${scratch()}/gcb-${stamp}.run6"
     rc6 = run_av_bin(bin3, log6)
     c.eq_int(rc6, 0, "rooted locals survive at default young size")
@@ -160,7 +163,7 @@ fn test_gc_behavior(c: Checks) {
     c.wrote(file_write(src4, roots_line_fixture()), "write roots-line fixture")
     code4 = compile_av(compiler, src4, bin4, "${scratch()}/gcb-${stamp}-rootsline.clog")
     c.eq_int(code4, 0, "compile roots-line fixture")
-    want4 = "1104943082\n"
+    want4 = "5399910378\n"
     log8 = "${scratch()}/gcb-${stamp}.run8"
     rc8 = run_av_bin(bin4, log8)
     c.eq_int(rc8, 0, "straight-line roots survive at default young size")
@@ -220,7 +223,7 @@ fn test_gc_behavior(c: Checks) {
     c.wrote(file_write(src6, frontier_fixture()), "write frontier fixture")
     code6 = compile_av(compiler, src6, bin6, "${scratch()}/gcb-${stamp}-frontier.clog")
     c.eq_int(code6, 0, "compile frontier fixture")
-    want6 = "-1524741201\n"
+    want6 = "2770226095\n"
     log12 = "${scratch()}/gcb-${stamp}.run12"
     rc12 = run_av_bin(bin6, log12)
     c.eq_int(rc12, 0, "frontier graph survives at default young size")
@@ -285,7 +288,7 @@ fn test_gc_behavior(c: Checks) {
     c.wrote(file_write(src8, sizing_fixture()), "write sizing fixture")
     code8 = compile_av(compiler, src8, bin8, "${scratch()}/gcb-${stamp}-sizing.clog")
     c.eq_int(code8, 0, "compile sizing fixture")
-    want8 = "447162624\n8\n"
+    want8 = "30511933696\n8\n"
     log17 = "${scratch()}/gcb-${stamp}.run17"
     rc17 = run_av_bin(bin8, log17)
     c.eq_int(rc17, 0, "sizing survivors survive at default young size")

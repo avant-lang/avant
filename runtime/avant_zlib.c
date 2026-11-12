@@ -13,7 +13,7 @@ static void set_status(int32_t code) {
   g_zlib_status = code;
 }
 
-int32_t avant_zlib_take_status(void) {
+avant_int avant_zlib_take_status(void) {
   int32_t code = g_zlib_status;
   g_zlib_status = 0;
   return code;
@@ -49,6 +49,7 @@ char *avant_zlib_compress(const char *s) {
   /* RC1: the text is a handle across the allocation. */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &s);
+  avant_size_check((uint64_t)bound + 4, AVANT_SIZE_STRING);
   out = (char *)avant_alloc((uint64_t)bound + 5, AVANT_TYPE_BYTES);
   write_len((uint8_t *)out, n);
   if (compress((Bytef *)(out + 4), &dest_len, (const Bytef *)(s ? s : ""), (uLong)n) != Z_OK) {
@@ -72,11 +73,17 @@ char *avant_zlib_uncompress(const char *s) {
   }
   orig = read_len(p);
   dest_len = orig;
+  /* A length past the String ceiling is data this runtime cannot
+   * return: an error, not a trap (Stage 29 W-INT1). */
+  if (orig > (uint32_t)AVANT_SIZE_MAX) {
+    set_status(1);
+    return avant_str_empty();
+  }
   /* RC1/RC2: the text is a handle; its bytes are formed after the
    * allocation. */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &s);
-  out = (char *)avant_alloc((uint64_t)orig + 1, AVANT_TYPE_BYTES);
+  out = avant_str_alloc((uint64_t)orig);
   p = (const uint8_t *)s;
   if (orig == 0) {
     out[0] = 0;
@@ -92,7 +99,7 @@ char *avant_zlib_uncompress(const char *s) {
   return out;
 }
 
-int32_t avant_zlib_compress_into(const char *s, void *buf) {
+avant_int avant_zlib_compress_into(const char *s, void *buf) {
   size_t n = avant_str_n(s);
   uLong bound = compressBound((uLong)n);
   uLong dest_len = bound;
@@ -104,12 +111,14 @@ int32_t avant_zlib_compress_into(const char *s, void *buf) {
     set_status(2);
     return 2;
   }
-  at = avant_buf_size(buf);
-  need = at + 4 + (int32_t)bound;
-  if (need < at) {
+  at = (int32_t)avant_buf_size(buf);
+  /* In 64 bits, against the Buf ceiling (Stage 29 W-INT1): the 32-bit
+   * sum overflowed before its check. */
+  if ((int64_t)at + 4 + (int64_t)bound > (int64_t)AVANT_SIZE_MAX) {
     set_status(2);
     return 2;
   }
+  need = at + 4 + (int32_t)bound;
   /* RC1/RC2: the growth may collect; the text and the Buf are handles,
    * and the text's bytes are formed again after it. */
   AVANT_GC_SCOPE(2);
@@ -130,7 +139,7 @@ int32_t avant_zlib_compress_into(const char *s, void *buf) {
   return 0;
 }
 
-int32_t avant_zlib_uncompress_into(const char *s, void *buf) {
+avant_int avant_zlib_uncompress_into(const char *s, void *buf) {
   size_t n = avant_str_n(s);
   const uint8_t *p = (const uint8_t *)(s ? s : "");
   uint32_t orig;
@@ -145,12 +154,12 @@ int32_t avant_zlib_uncompress_into(const char *s, void *buf) {
   }
   orig = read_len(p);
   dest_len = orig;
-  at = avant_buf_size(buf);
-  need = at + (int32_t)orig;
-  if (need < at) {
+  at = (int32_t)avant_buf_size(buf);
+  if ((int64_t)at + (int64_t)orig > (int64_t)AVANT_SIZE_MAX) {
     set_status(2);
     return 2;
   }
+  need = at + (int32_t)orig;
   if (orig == 0) {
     return 0;
   }

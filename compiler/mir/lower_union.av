@@ -694,7 +694,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     }
     lw.at(e.loc)
     h = lw.hold(r, aty)
-    iv = b.c_i32(0)
+    iv = b.c_i64(0i64)
     if args.size > 0 {
       iv = lw.lower_expr(args[0])
     }
@@ -702,12 +702,12 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    ix = lw.hold(iv, mt_i32())
-    n = b.c_i32(0)
+    ix = lw.hold(iv, mt_int())
+    n = b.c_i64(0i64)
     if rt.is_array || rt.is_buf {
-      n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 1))))
+      n = lw.seq_size(h)
     } else {
-      n = lw.call_to(mt_i32(), "avant_str_size", lw.one(b.copy_local(h)))
+      n = lw.call_to(mt_int(), "avant_str_size", lw.one(b.copy_local(h)))
     }
     oref = mir_is_opt_ref(t)
     l = -1
@@ -720,7 +720,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     } else {
       b.assign(b.pl(d), b.rv_union_nil(l, t.tag_of(ty_nil())))
     }
-    c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(ix), b.c_i32(0)))
+    c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(ix), b.c_i64(0i64)))
     c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ix), n))
     c = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
     bt = b.block
@@ -745,13 +745,13 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
       dd2 = b.temp(b.types.ref_to(lw.elems_of(aty)))
       b.assign(b.pl(dd2), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
       byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(dd2)), b.copy_local(ix)))))
-      v = lw.tmp(mt_i32(), b.rv_cast(byte, mt_i32()))
+      v = lw.tmp(mt_int(), b.rv_cast(byte, mt_int()))
     } else {
       pu8 = b.ptr_to(mt_u8())
       pv = lw.tmp(pu8, b.rv_cast(b.copy_local(h), pu8))
       pk = mir_bare_copy(pv)
       byte2 = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(pk)), b.copy_local(ix)))))
-      v = lw.tmp(mt_i32(), b.rv_cast(byte2, mt_i32()))
+      v = lw.tmp(mt_int(), b.rv_cast(byte2, mt_int()))
     }
     if oref || t.same_as(elt) {
       // An optional reference, or an element that is already the result
@@ -783,7 +783,12 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
     et = lw.elem_of(aty)
     want = lw.elem_ty_of(recv)
     if name == "index_of" && args.size == 1 {
-      f = lw.kind_fn("avant_array_index", et, true)
+      // An Array(UInt32) is searched by its bits, as Int32's.
+      cet = et
+      if et == mt_u32() {
+        cet = mt_i32()
+      }
+      f = lw.kind_fn("avant_array_index", cet, true)
       if f.size == 0 {
         lw.refuse(e.loc, "Array.index_of on ${want.show}")
         return b.c_i32(0)
@@ -794,12 +799,12 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
         return b.c_i32(0)
       }
       lw.at(e.loc)
-      if et == mt_bool() {
+      if et == mt_bool() || et == mt_u32() {
         v = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
       }
-      ix = lw.call_to(mt_i32(), f, lw.two(a, v))
-      k = lw.hold(ix, mt_i32())
-      c = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(k), b.c_i32(0)))
+      ix = lw.call_to(mt_int(), f, lw.two(a, v))
+      k = lw.hold(ix, mt_int())
+      c = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(k), b.c_i64(0i64)))
       return lw.opt_of(t, c, b.copy_local(k), ty_int(), e.loc)
     }
     mf = lw.kind_fn("avant_array_${name}", et, false)
@@ -904,7 +909,7 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    return lw.call_to(mt_i32(), "avant_wide_op", wops)
+    return lw.call_to(mt_int(), "avant_wide_op", wops)
   }
   f = ""
   if c == "wide_hi" && e.args.size == 0 {

@@ -96,7 +96,7 @@ fn st_maker(b: MirBuilder, name: String) {
   b.assign(b.pl(0), b.rv_zero)
   b.gc_enter
   b.gc_roots(st_ints(0, -1))
-  b.call(0, "avant_str_from_int", st_one(b.c_i32(1)))
+  b.call(0, "avant_str_from_int", st_one(b.c_i64(1i64)))
   b.gc_leave
   b.ret
 }
@@ -368,7 +368,7 @@ fn st_rejecting(out: Buf) {
   b = st_base(false)
   st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset())
   l1 = b.local(mt_str(), "")
-  st = b.call(l1, "avant_str_from_int", st_one(b.c_i32(1)))
+  st = b.call(l1, "avant_str_from_int", st_one(b.c_i64(1i64)))
   st.collects = false
   b.ret
   st_case(out, "v18_collects_marked_nocollect", lo, b.module)
@@ -589,10 +589,10 @@ fn st_passes(out: Buf) {
   for sh in 0..2 {
     b = st_base(sh == 1)
     first = b.module.funcs.size
-    st_fn(b, "a", st_tys(mt_str(), -1), mt_i32(), un)
+    st_fn(b, "a", st_tys(mt_str(), -1), mt_i64(), un)
     b.call(0, "avant_str_size", st_one(b.copy_local(1)))
     b.ret
-    st_fn(b, "c", st_tys(-1, -1), mt_i32(), un)
+    st_fn(b, "c", st_tys(-1, -1), mt_i64(), un)
     b.call(0, "av.t/a", st_one(b.str_const("q")))
     b.ret
     st_fn(b, "d", st_tys(-1, -1), vd, un)

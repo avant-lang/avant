@@ -15,11 +15,11 @@
 lib rel {
   struct Pos {
     tag: String
-    n: Int
+    n: Int32
   }
   struct Holder {
     name: String
-    id: Int
+    id: Int32
     link: Ptr(Void)
     at: Pos
     note: String
@@ -27,18 +27,18 @@ lib rel {
   fun rel_new: Ptr(Holder)
   fun rel_free(h: Ptr(Holder))
   fun rel_keep(h: Ptr(Holder))
-  fun rel_kept_is(want: String): Int
+  fun rel_kept_is(want: String): Int32
   fun rel_forget
   fun rel_copy(dst: Ptr(Holder), src: Ptr(Holder))
   fun rel_clear(h: Ptr(Holder))
-  fun rel_name_is(h: Ptr(Holder), want: String): Int
-  fun rel_note_is(h: Ptr(Holder), want: String): Int
-  fun rel_name_null(h: Ptr(Holder)): Int
-  fun rel_note_null(h: Ptr(Holder)): Int
-  fun rel_tag_null(h: Ptr(Holder)): Int
+  fun rel_name_is(h: Ptr(Holder), want: String): Int32
+  fun rel_note_is(h: Ptr(Holder), want: String): Int32
+  fun rel_name_null(h: Ptr(Holder)): Int32
+  fun rel_note_null(h: Ptr(Holder)): Int32
+  fun rel_tag_null(h: Ptr(Holder)): Int32
   fun rel_set_c_name(h: Ptr(Holder))
-  fun rel_name_is_c(h: Ptr(Holder)): Int
-  fun rel_name_len(h: Ptr(Holder)): Int
+  fun rel_name_is_c(h: Ptr(Holder)): Int32
+  fun rel_name_len(h: Ptr(Holder)): Int32
   fun avant_pin_count: Int
   fun avant_gc_collect
 }
@@ -120,7 +120,7 @@ fn struct_release(base: Int) {
   k = 5
   e.name = "name-${k}"
   e.at.tag = "tag-${k}"
-  e.at.n = k
+  e.at.n = k.to_i32
   e.note = "note-${k}"
   e.id = 9
   puts("struct pins: ${rel.avant_pin_count() - base}")
@@ -161,7 +161,7 @@ fn bounded(base: Int) {
     s = "${i}:" + big
     h.name = s
     rel.rel_keep(h)
-    if rel.rel_name_len(h) == s.size {
+    if rel.rel_name_len(h).to_i == s.size {
       ok = ok + 1
     }
     rel.rel_forget()

@@ -1,7 +1,7 @@
 module trap_shr_neg
 file 0 "trap_shr_neg.av"
 
-const str.0 = "%d\0A"
+const str.0 = "%lld\0A"
 const str.1 = "not reached"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
@@ -15,17 +15,16 @@ extern avant_puts_str(ref str) -> void never
 extern avant_trap_shift(i64, i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
-fn av.trap_shr_neg/opaque(_1: i32) -> i32 leaf @trap_shr_neg.av:5:1 {
-  let _0: i32
-  let _1 (n): i32
+fn av.trap_shr_neg/opaque(_1: i64) -> i64 leaf @trap_shr_neg.av:5:1 {
+  let _0: i64
+  let _1 (n): i64
   let _2: i64
   let _3 (a): i64
   let _4: i64
   let _5 (b): i64
   let _6: i64
   let _7: bool
-  let _8: i32
-  let _9: i32
+  let _8: i64
 
 bb0:
   _2 = call avant_clock_us() nocollect   @6:7
@@ -37,9 +36,8 @@ bb0:
   branch copy _7, bb1, bb2   @8:3
 
 bb1:
-  _8 = cast copy _5 to i32   @9:18
-  _9 = add copy _1, copy _8   @9:14
-  _0 = copy _9   @9:5
+  _8 = add copy _1, copy _5   @9:14
+  _0 = copy _8   @9:5
   return   @9:5
 
 bb2:
@@ -51,52 +49,48 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @trap_shr_neg.av:14:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
-  let _3: i32
-  let _4 (k): i32
-  let _5: i32
-  let _6: u32
+  let _3: i64
+  let _4 (k): i64
+  let _5: i64
+  let _6: u64
   let _7: bool
   let _8: i64
-  let _9: i32
-  let _10: i32
-  let _11: u32
-  let _12: bool
-  let _13: i64
-  let _14: i32
+  let _9: i64
+  let _10: u64
+  let _11: bool
+  let _12: i64
 
 bb0:
   gc.enter   @14:1
   gc.roots _2   @14:1
   call __avant_type_maps() nocollect   @14:1
   call avant_io_init_argv(copy _1, copy _2) collects   @14:1
-  _3 = call av.trap_shr_neg/opaque(const i32 0) nocollect   @15:7
+  _3 = call av.trap_shr_neg/opaque(const i64 0) nocollect   @15:7
   _4 = copy _3   @15:5
-  _5 = add.chk const i32 1, copy _4   @16:17
-  _6 = cast copy _5 to u32   @16:11
-  _7 = gt copy _6, const u32 31   @16:11
+  _5 = add.chk const i64 1, copy _4   @16:17
+  _6 = cast copy _5 to u64   @16:11
+  _7 = gt copy _6, const u64 63   @16:11
   branch copy _7, bb1, bb2   @16:11
 
 bb1:
-  _8 = cast copy _5 to i64   @16:11
-  call avant_trap_shift(copy _8, const i32 0) nocollect   @16:11
+  call avant_trap_shift(copy _5, const i32 16) nocollect   @16:11
   unreachable   @16:11
 
 bb2:
-  _9 = shr const i32 -8, copy _5   @16:11
-  call printf(const str.0, copy _9) nocollect   @16:3
-  _10 = sub.chk copy _4, const i32 1   @17:17
-  _11 = cast copy _10 to u32   @17:11
-  _12 = gt copy _11, const u32 31   @17:11
-  branch copy _12, bb3, bb4   @17:11
+  _8 = shr const i64 -8, copy _5   @16:11
+  call printf(const str.0, copy _8) nocollect   @16:3
+  _9 = sub.chk copy _4, const i64 1   @17:17
+  _10 = cast copy _9 to u64   @17:11
+  _11 = gt copy _10, const u64 63   @17:11
+  branch copy _11, bb3, bb4   @17:11
 
 bb3:
-  _13 = cast copy _10 to i64   @17:11
-  call avant_trap_shift(copy _13, const i32 0) nocollect   @17:11
+  call avant_trap_shift(copy _9, const i32 16) nocollect   @17:11
   unreachable   @17:11
 
 bb4:
-  _14 = shr const i32 -8, copy _10   @17:11
-  call printf(const str.0, copy _14) nocollect   @17:3
+  _12 = shr const i64 -8, copy _9   @17:11
+  call printf(const str.0, copy _12) nocollect   @17:3
   call avant_puts_str(const str.1) nocollect   @18:3
   _0 = const i32 0   @14:1
   gc.leave   @14:1

@@ -297,12 +297,25 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 // hole accounting: the path counts nothing, and must not, since other
 // threads update the counters under the world lock). An unshared module
 // is unchanged.
+// An empty payload is one word (Stage 29 W-INT1, as avant_alloc): a 0-byte
+// object at a block's end would have the next block's first address as
+// its payload.
 pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   size = e.value(args[0])
   ty = e.value(args[1])
   const_size = args[0].kind == mok_int() && args[1].kind == mok_int()
   sz = args[0].ival
   tid = args[1].ival
+  if args[0].kind == mok_int() && sz == 0i64 {
+    sz = 8i64
+    size = "8"
+  } else if args[0].kind != mok_int() {
+    z = e.tmp
+    e.line("${z} = icmp eq i64 ${size}, 0")
+    s8 = e.tmp
+    e.line("${s8} = select i1 ${z}, i64 8, i64 ${size}")
+    size = s8
+  }
   total = "0"
   if const_size {
     tot = (sz + 15i64) & -8i64

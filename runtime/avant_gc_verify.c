@@ -234,6 +234,12 @@ static uint64_t verify_mark_reachable(int stale) {
         void *st = verify_trace_r(*slot);
         if (st) {
           bad += verify_stale_found(st, p);
+          if (st && (avant_header(st)->flags & AVANT_FLAG_FORWARDED)) {
+            /* The holder's kind and the slot (Stage 29 W-INT1). */
+            fprintf(stderr, "avant gc verify:   holder type %u size %u flags %#x, slot at +%ld\n",
+                    (unsigned)avant_header(p)->type_id, (unsigned)avant_header(p)->size,
+                    (unsigned)avant_header(p)->flags, (long)((char *)(void *)slot - (char *)p));
+          }
         }
       });
       continue;

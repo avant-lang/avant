@@ -513,7 +513,7 @@ pub class MirLower {
       if self.lw_main {
         params.push(mt_i32())
         params.push(mt_ptr())
-        if ret != mt_void() && ret != mt_i32() {
+        if ret != mt_void() && ret != mt_int() {
           self.refuse(fnn.loc, "main with a result of type ${fs.ret.show}")
         }
       } else {
@@ -627,16 +627,16 @@ pub class MirLower {
       rty = mir_scalar_ty(fs.ret)
     }
     none: Array(MOperand) = []
-    if rty == mt_i32() {
-      t = self.lw_b.temp(mt_i32())
+    if rty == mt_int() {
+      t = self.lw_b.temp(mt_int())
       self.lw_b.call(t, sym, none)
       // run's Int is the exit status: outside 0..255 it traps (W4b2,
       // D295 R14; lower_stmt.av exit_status).
       b = self.lw_b
-      u = b.temp(mt_u32())
-      b.assign(b.pl(u), b.rv_cast(b.copy_local(t), mt_u32()))
+      u = b.temp(mt_u64())
+      b.assign(b.pl(u), b.rv_cast(b.copy_local(t), mt_u64()))
       inside = b.temp(mt_bool())
-      b.assign(b.pl(inside), b.rv_cmp(mop_le(), b.copy_local(u), b.c_u32(255)))
+      b.assign(b.pl(inside), b.rv_cmp(mop_le(), b.copy_local(u), b.c_u64(255i64)))
       bad = b.block
       ok = b.block
       b.branch(b.copy_local(inside), ok, bad)
@@ -647,7 +647,9 @@ pub class MirLower {
       b.unreachable
       b.at(ok)
       self.at(r.loc)
-      b.assign(b.pl(0), b.rv_use(b.copy_local(t)))
+      t32 = b.temp(mt_i32())
+      b.assign(b.pl(t32), b.rv_cast(b.copy_local(t), mt_i32()))
+      b.assign(b.pl(0), b.rv_use(b.copy_local(t32)))
     } else {
       dest = -1
       if rty != mt_void() && rty >= 0 {

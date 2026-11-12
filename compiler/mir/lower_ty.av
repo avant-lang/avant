@@ -8,15 +8,22 @@ import source
 import type
 import mir.types
 
-// The MIR type of t in the supported subset (2.9), or -1: Int i32, Int64
-// i64, UInt64 u64, Bool bool, Float64 f64, Void void, String and Bytes
-// `ref str` (a literal's constant or a heap string, W6a).
+// The MIR type of t in the supported subset (2.9), or -1: Int i64 (Stage
+// 29 W-INT1, D314; Int64 is Int), Int32 i32, UInt32 u32, UInt64 u64, Bool
+// bool, Float64 f64, Void void, String and Bytes `ref str` (a literal's
+// constant or a heap string, W6a).
 pub fn mir_scalar_ty(t: Ty): Int {
   if t.is_int {
-    return mt_i32()
+    return mt_i64()
   }
   if t.is_int64 {
     return mt_i64()
+  }
+  if t.is_int32 {
+    return mt_i32()
+  }
+  if t.is_uint32 {
+    return mt_u32()
   }
   if t.is_uint64 {
     return mt_u64()
@@ -188,6 +195,12 @@ pub fn mir_mty(t: Ty): String {
   if t.is_uint64 {
     return "UInt64"
   }
+  if t.is_int32 {
+    return "Int32"
+  }
+  if t.is_uint32 {
+    return "UInt32"
+  }
   if t.is_bool {
     return "Bool"
   }
@@ -286,14 +299,14 @@ pub fn mir_f64_bits(v: Float64): Int64 {
   top | (biased.to_i64 << 52i64) | (hi.to_i.to_i64 << 26i64) | lo.to_i.to_i64
 }
 
-// The type of a C scalar's Avant view: Int64 for UInt32, Float64 for
-// Float32, Int for the others.
+// The type of a C scalar's Avant view: Float64 for Float32, Int (i64)
+// for the others (UInt32 is an everyday type since Stage 29 W-INT1).
 pub fn mir_c_view_mty(k: Int): Int {
   if k == cs_uint32() {
-    return mt_i64()
+    return mt_u32()
   }
   if k == cs_float32() {
     return mt_f64()
   }
-  mt_i32()
+  mt_i64()
 }

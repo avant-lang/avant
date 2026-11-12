@@ -30,7 +30,7 @@ static void *g_argv_arr;
 /* gc-lint: holds nothing (every caller passes C memory: argv, file and
  * environment text, directory names, paths). */
 static char *dup_bytes(const char *s, size_t n) {
-  char *p = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  char *p = avant_str_alloc((uint64_t)n);
   if (n) {
     memcpy(p, s, n);
   }
@@ -184,6 +184,13 @@ static char *read_all(FILE *f, size_t *np) {
   size_t cap = 4096;
   if (fseek(f, 0, SEEK_END) == 0) {
     long sz = ftell(f);
+    /* A file past the String ceiling is an IoError (EFBIG) before
+     * anything is read (Stage 29 W-INT1). */
+    if (sz > (long)AVANT_SIZE_MAX) {
+      fclose(f);
+      errno = EFBIG;
+      return NULL;
+    }
     if (sz > 0) {
       cap = (size_t)sz + 1;
     }
@@ -200,6 +207,14 @@ static char *read_all(FILE *f, size_t *np) {
   size_t n = 0;
   for (;;) {
     if (n == cap) {
+      /* A file whose size was not known (a pipe, /proc) stops at the
+       * ceiling the same way. */
+      if (cap > (size_t)AVANT_SIZE_MAX) {
+        free(raw);
+        fclose(f);
+        errno = EFBIG;
+        return NULL;
+      }
       size_t ncap = cap * 2;
       char *grown = (char *)realloc(raw, ncap + 1);
       if (!grown) {
@@ -223,6 +238,12 @@ static char *read_all(FILE *f, size_t *np) {
       }
       break;
     }
+  }
+  if (n > (size_t)AVANT_SIZE_MAX) {
+    free(raw);
+    fclose(f);
+    errno = EFBIG;
+    return NULL;
   }
   raw[n] = 0;
   fclose(f);
@@ -287,13 +308,19 @@ char *avant_sys_read(const char *path) {
 
 /* The prelude's file_write: the bytes written, or -1 with
  * avant_sys_errno() telling why (opening, writing or closing). */
-int32_t avant_sys_write(const char *path, const char *body) {
+avant_int avant_sys_write(const char *path, const char *body) {
   FILE *f;
   size_t n;
   if (!body) {
     body = "";
   }
   n = avant_str_n(body);
+  /* The count is an Avant Int: a body past the ceiling (a C string) is
+   * EFBIG, never a wrapped count (Stage 29 W-INT1). */
+  if (n > (size_t)AVANT_SIZE_MAX) {
+    g_sys_errno = EFBIG;
+    return -1;
+  }
   f = fopen(path ? path : "", "wb");
   if (!f) {
     g_sys_errno = errno;
@@ -312,30 +339,30 @@ int32_t avant_sys_write(const char *path, const char *body) {
   return (int32_t)n;
 }
 
-int32_t avant_sys_errno(void) {
+avant_int avant_sys_errno(void) {
   return g_sys_errno;
 }
 
-int32_t avant_sys_stage(void) {
+avant_int avant_sys_stage(void) {
   return g_sys_stage;
 }
 
-int32_t avant_sys_signal(void) {
+avant_int avant_sys_signal(void) {
   return g_sys_signal;
 }
 
 /* The text of an errno value ("No such file or directory"). */
 /* gc-lint: holds nothing (C memory only). */
-char *avant_sys_strerror(int32_t code) {
+char *avant_sys_strerror(avant_int code) {
   char buf[256];
-  const char *t = strerror_r(code, buf, sizeof buf);
+  const char *t = strerror_r(avant_c_int(code), buf, sizeof buf);
   return dup_bytes(t, strlen(t));
 }
 
 /* The name of a signal ("Killed"). */
 /* gc-lint: holds nothing (C memory only). */
-char *avant_sys_strsignal(int32_t sig) {
-  const char *t = strsignal(sig);
+char *avant_sys_strsignal(avant_int sig) {
+  const char *t = strsignal(avant_c_int(sig));
   if (!t) {
     t = "unknown signal";
   }
@@ -523,7 +550,7 @@ static int32_t run_child(const char *path, void *args, const char *out_path, con
  * why); -2 when a signal killed it (avant_sys_signal()). The child
  * reports a failed start on a close-on-exec pipe, so "could not start"
  * is never confused with a program that exits 127. */
-int32_t avant_sys_run(const char *path, void *args, const char *out_path) {
+avant_int avant_sys_run(const char *path, void *args, const char *out_path) {
   char **argv;
   pid_t pid;
   int st = 0;
@@ -599,20 +626,20 @@ int32_t avant_sys_run(const char *path, void *args, const char *out_path) {
 /* The compiler's own run until the next release (W4b2): the old
  * process_run's answer (the exit status, 128 + n for signal n, 127 when
  * it could not start), the same under the seed and the new prelude. */
-int32_t avant_fs_run(const char *path, void *args) {
+avant_int avant_fs_run(const char *path, void *args) {
   return run_child(path, args, NULL, NULL, 0);
 }
 
 /* The compiler's own file_write until the next release (W4b2): 0 when
  * the whole body was written, else 1. */
-int32_t avant_fs_write(const char *path, const char *body) {
+avant_int avant_fs_write(const char *path, const char *body) {
   return avant_sys_write(path, body) < 0 ? 1 : 0;
 }
 
 /* Starts a job without waiting: path with args, stdout and stderr to
  * out_path, stdin /dev/null, its own process group. Returns its pid, or
  * -1 when it cannot start. Internal to the test runner (D131). */
-int32_t avant_job_start(const char *path, void *args, const char *out_path) {
+avant_int avant_job_start(const char *path, void *args, const char *out_path) {
   char **argv;
   pid_t pid;
   if (!path || g_njobs >= JOB_MAX) {
@@ -642,7 +669,7 @@ int32_t avant_job_start(const char *path, void *args, const char *out_path) {
 /* Waits for any started job to finish. Returns its pid, or -1 when no job
  * is running; avant_job_status then gives its exit code (128+n for a
  * signal). */
-int32_t avant_job_wait(void) {
+avant_int avant_job_wait(void) {
   for (;;) {
     int st = 0;
     int32_t i;
@@ -671,7 +698,7 @@ int32_t avant_job_wait(void) {
   }
 }
 
-int32_t avant_job_status(void) {
+avant_int avant_job_status(void) {
   return g_job_status;
 }
 
@@ -679,14 +706,14 @@ int32_t avant_job_status(void) {
  * bind helper, git): like process_run, with stdout (and stderr, unless
  * err_path names its own file) to out_path when given, and stdin from
  * /dev/null. Internal (no prelude name, D132). */
-int32_t avant_tool_run(const char *path, void *args, const char *out_path, const char *err_path) {
+avant_int avant_tool_run(const char *path, void *args, const char *out_path, const char *err_path) {
   return run_child(path, args, out_path, err_path, 1);
 }
 
 /* A blocking run with stdout and stderr in separate files (D140): what
  * std.testing's run_golden and rejects and bind's output split asked of
  * sh. Like process_run, it forwards a signal to its child. Internal. */
-int32_t avant_process_run_split(const char *path, void *args, const char *out_path, const char *err_path) {
+avant_int avant_process_run_split(const char *path, void *args, const char *out_path, const char *err_path) {
   return run_child(path, args, out_path, err_path, 0);
 }
 
@@ -696,7 +723,7 @@ int32_t avant_process_run_split(const char *path, void *args, const char *out_pa
  * on success, 1 otherwise. */
 
 /* rm -f: 0 when the path is gone, including when it never existed. */
-int32_t avant_fs_unlink(const char *path) {
+avant_int avant_fs_unlink(const char *path) {
   if (!path || !path[0]) {
     return 0;
   }
@@ -708,7 +735,7 @@ int32_t avant_fs_unlink(const char *path) {
 
 /* chmod +x for the usual case: execute wherever read is granted, so the
  * umask that shaped the read bits shapes the execute bits too. */
-int32_t avant_fs_chmod_x(const char *path) {
+avant_int avant_fs_chmod_x(const char *path) {
   struct stat st;
   mode_t add = 0;
   if (!path || stat(path, &st) != 0) {
@@ -727,7 +754,7 @@ int32_t avant_fs_chmod_x(const char *path) {
 }
 
 /* mkdir -p, mode 0777 under the umask. */
-int32_t avant_fs_mkdir_p(const char *path) {
+avant_int avant_fs_mkdir_p(const char *path) {
   char buf[4096];
   size_t n;
   size_t i;
@@ -759,7 +786,7 @@ int32_t avant_fs_mkdir_p(const char *path) {
  * stdio, not read()/write(): an Avant program's own fn read or fn write is
  * a global symbol of the same name and would replace libc's for every
  * caller in the process. */
-int32_t avant_fs_copy(const char *src, const char *dst) {
+avant_int avant_fs_copy(const char *src, const char *dst) {
   char tmp[4096];
   char buf[65536];
   struct stat st;
@@ -906,6 +933,11 @@ static int list_names(const char *path, char ***out, int32_t *np) {
       continue;
     }
     if (n >= cap) {
+      /* An Array of names stays within the ceiling (Stage 29 W-INT1). */
+      if (cap > AVANT_SIZE_MAX / 2) {
+        err = EOVERFLOW;
+        break;
+      }
       int32_t next = cap == 0 ? 16 : cap * 2;
       char **grown = (char **)realloc(names, (size_t)next * sizeof(char *));
       if (!grown) {
@@ -1079,7 +1111,7 @@ static void tmp_empty_dir(int fd, int depth) {
 /* rm -rf (D140): a file or a symbolic link is unlinked; a directory is
  * emptied depth-first without following links, then removed. 0 when the
  * path is gone. */
-int32_t avant_fs_remove_tree(const char *path) {
+avant_int avant_fs_remove_tree(const char *path) {
   int fd;
   if (!path || !path[0]) {
     return 0;

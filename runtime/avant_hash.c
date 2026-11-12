@@ -16,6 +16,11 @@ typedef struct {
   int32_t val_kind;
 } AvantHash;
 
+/* An Int key or value is stored as the language's Int (avant_int: 64-bit;
+ * 32-bit in the seed-ABI copy, runtime/build.sh), so the generated code's
+ * pointer into a value slot (the upsert rows) has the Int's width. */
+typedef avant_int hint;
+
 static __thread const char *g_last_key;
 static __thread int g_last_key_rooted;
 
@@ -67,6 +72,16 @@ static uint32_t hash_i32(int32_t k) {
   return x;
 }
 
+/* An Int key (Stage 29 W-INT1): a key within 32 bits hashes as before
+ * (its high word is the sign extension, so hi is 0), so a hash of such
+ * keys keeps its slots and its walk order; the high word of a wider key
+ * is folded into the low one first. */
+static uint32_t hash_int(int64_t k) {
+  int32_t lo = (int32_t)k;
+  uint32_t hi = (uint32_t)(int32_t)(k >> 32) - (uint32_t)(lo >> 31);
+  return hash_i32((int32_t)((uint32_t)lo ^ (hi * 0x9e3779b1u)));
+}
+
 static int bytes_eq(const char *a, size_t na, const char *b, size_t nb) {
   if (!a) {
     a = "";
@@ -83,7 +98,7 @@ static uint32_t hash_key(const AvantHash *h, int64_t key_bits) {
   if (h->key_kind == AVANT_HASH_KEY_STR) {
     return hash_str((const char *)(uintptr_t)key_bits);
   }
-  return hash_i32((int32_t)key_bits);
+  return hash_int(key_bits);
 }
 
 static int key_eq(const AvantHash *h, int64_t slot_bits, int64_t key_bits) {
@@ -92,14 +107,14 @@ static int key_eq(const AvantHash *h, int64_t slot_bits, int64_t key_bits) {
     const char *b = (const char *)(uintptr_t)key_bits;
     return bytes_eq(a, avant_str_n(a), b, avant_str_n(b));
   }
-  return (int32_t)slot_bits == (int32_t)key_bits;
+  return slot_bits == key_bits;
 }
 
 static int64_t load_key(const AvantHash *h, int32_t i) {
   if (h->key_kind == AVANT_HASH_KEY_STR) {
     return (int64_t)(uintptr_t)((void **)h->keys)[i];
   }
-  return (int64_t)((int32_t *)h->keys)[i];
+  return (int64_t)((hint *)h->keys)[i];
 }
 
 /* Occupied slots are state 1. Bit 0x80 means the key is a heap string
@@ -136,12 +151,12 @@ static void store_key(AvantHash *h, int32_t i, int64_t key_bits) {
   if (h->key_kind == AVANT_HASH_KEY_STR) {
     ((void **)h->keys)[i] = (void *)(uintptr_t)key_bits;
   } else {
-    ((int32_t *)h->keys)[i] = (int32_t)key_bits;
+    ((hint *)h->keys)[i] = (hint)key_bits;
   }
 }
 
-static void store_val_i32(AvantHash *h, int32_t i, int32_t val) {
-  ((int32_t *)h->vals)[i] = val;
+static void store_val_i32(AvantHash *h, int32_t i, hint val) {
+  ((hint *)h->vals)[i] = val;
 }
 
 static void store_val_str(AvantHash *h, int32_t i, const char *val) {
@@ -212,7 +227,7 @@ static int lookup_str(AvantHash *h, const char *key, int32_t *out) {
   return lookup_bytes(h, key, n, hash_bytes(key, n), out);
 }
 
-static void insert_raw(AvantHash *dst, int64_t key_bits, int32_t val_i32, const char *val_str) {
+static void insert_raw(AvantHash *dst, int64_t key_bits, hint val_i32, const char *val_str) {
   int32_t i = 0;
   const char *skey = NULL;
   size_t sn = 0;
@@ -265,12 +280,12 @@ static uint32_t val_type_id(const AvantHash *h) {
 }
 
 static uint64_t key_bytes(const AvantHash *h, int32_t cap) {
-  size_t elem = h->key_kind == AVANT_HASH_KEY_STR ? sizeof(void *) : sizeof(int32_t);
+  size_t elem = h->key_kind == AVANT_HASH_KEY_STR ? sizeof(void *) : sizeof(hint);
   return (uint64_t)cap * (uint64_t)elem;
 }
 
 static uint64_t val_bytes(const AvantHash *h, int32_t cap) {
-  size_t elem = h->val_kind == AVANT_HASH_VAL_STR ? sizeof(void *) : sizeof(int32_t);
+  size_t elem = h->val_kind == AVANT_HASH_VAL_STR ? sizeof(void *) : sizeof(hint);
   return (uint64_t)cap * (uint64_t)elem;
 }
 
@@ -278,6 +293,11 @@ static uint64_t val_bytes(const AvantHash *h, int32_t cap) {
  * buffers not yet published are handles, and the old buffers are read
  * from the hash after the last allocation (RC2). */
 static void grow(AvantHash *h) {
+  /* The slot ceiling, before anything is allocated (Stage 29 W-INT1):
+   * cap is a power of two, so the next one would not fit. */
+  if (h->cap >= AVANT_HASH_SLOTS_MAX) {
+    avant_trap_size(AVANT_SIZE_HASH);
+  }
   int32_t ncap = h->cap ? h->cap * 2 : 8;
   void *nkeys = NULL;
   uint8_t *nstate = NULL;
@@ -308,11 +328,11 @@ static void grow(AvantHash *h) {
     }
     int64_t kb = h->key_kind == AVANT_HASH_KEY_STR
                      ? (int64_t)(uintptr_t)((void **)okeys)[i]
-                     : (int64_t)((int32_t *)okeys)[i];
+                     : (int64_t)((hint *)okeys)[i];
     if (h->val_kind == AVANT_HASH_VAL_STR) {
       insert_raw(&dst, kb, 0, ((const char **)ovals)[i]);
     } else {
-      insert_raw(&dst, kb, ((int32_t *)ovals)[i], NULL);
+      insert_raw(&dst, kb, ((hint *)ovals)[i], NULL);
     }
   }
 
@@ -338,16 +358,16 @@ static void grow(AvantHash *h) {
 
 /* gc-lint: holds nothing (grow is its last statement and roots the hash itself). */
 static void ensure_cap(AvantHash *h) {
-  if (h->size * 4 >= h->cap * 3) {
+  if ((int64_t)h->size * 4 >= (int64_t)h->cap * 3) {
     grow(h);
   }
 }
 
 /* A key slice traps like avant_str_slice (Stage 29 W4b1, D295 R4). */
-static void check_slice(const char *s, int32_t start, int32_t stop, const char **out, size_t *n) {
+static void check_slice(const char *s, avant_int start, avant_int stop, const char **out, size_t *n) {
   size_t len = avant_str_n(s);
   if (start < 0 || stop < start || (size_t)stop > len) {
-    avant_trap_slice(start, stop, (int32_t)len);
+    avant_trap_slice(start, stop, (avant_int)len);
   }
   *out = (s ? s : "") + start;
   *n = (size_t)(stop - start);
@@ -375,7 +395,7 @@ void *avant_hash_new(int32_t key_kind, int32_t val_kind) {
   return h;
 }
 
-int32_t avant_hash_size(void *hp) {
+avant_int avant_hash_size(void *hp) {
   AvantHash *h = (AvantHash *)hp;
   return h ? h->size : 0;
 }
@@ -405,7 +425,7 @@ void avant_hash_clear(void *hp) {
 /* The setters (RC1, avant_gc.h; Stage 28 W16a: they were W15a1's named
  * safepoints): grow may collect, so the hash and the key and value
  * arguments are handles across it. */
-void avant_hash_set_i32(void *hp, const char *key, int32_t val) {
+void avant_hash_set_i32(void *hp, const char *key, avant_int val) {
   AvantHash *h = (AvantHash *)hp;
   AVANT_GC_SCOPE(2);
   AVANT_GC_ROOT(0, &h);
@@ -428,7 +448,7 @@ void avant_hash_set_str(void *hp, const char *key, const char *val) {
   }
 }
 
-void avant_hash_set_i32k_i32(void *hp, int32_t key, int32_t val) {
+void avant_hash_set_i32k_i32(void *hp, avant_int key, avant_int val) {
   AvantHash *h = (AvantHash *)hp;
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &h);
@@ -438,7 +458,7 @@ void avant_hash_set_i32k_i32(void *hp, int32_t key, int32_t val) {
   }
 }
 
-int32_t avant_hash_get_i32(void *hp, const char *key, int32_t *found) {
+avant_int avant_hash_get_i32(void *hp, const char *key, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
   if (!h || !lookup_str(h, key, &i)) {
@@ -450,7 +470,7 @@ int32_t avant_hash_get_i32(void *hp, const char *key, int32_t *found) {
   if (found) {
     *found = 1;
   }
-  return ((int32_t *)h->vals)[i];
+  return ((hint *)h->vals)[i];
 }
 
 const char *avant_hash_get_str(void *hp, const char *key, int32_t *found) {
@@ -468,10 +488,10 @@ const char *avant_hash_get_str(void *hp, const char *key, int32_t *found) {
   return ((const char **)h->vals)[i];
 }
 
-int32_t avant_hash_get_i32k_i32(void *hp, int32_t key, int32_t *found) {
+avant_int avant_hash_get_i32k_i32(void *hp, avant_int key, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
-  if (!h || !lookup(h, (int64_t)key, hash_i32(key), &i)) {
+  if (!h || !lookup(h, (int64_t)key, hash_int(key), &i)) {
     if (found) {
       *found = 0;
     }
@@ -480,7 +500,7 @@ int32_t avant_hash_get_i32k_i32(void *hp, int32_t key, int32_t *found) {
   if (found) {
     *found = 1;
   }
-  return ((int32_t *)h->vals)[i];
+  return ((hint *)h->vals)[i];
 }
 
 /* Linear-probing deletion slides later cluster entries back into the hole
@@ -506,7 +526,7 @@ static void erase_at(AvantHash *h, int32_t i) {
       if (h->key_kind == AVANT_HASH_KEY_STR) {
         hv = hs[k];
       } else {
-        hv = hash_i32(((int32_t *)h->keys)[k]);
+        hv = hash_int(((hint *)h->keys)[k]);
       }
       home = (int32_t)(hv & (uint32_t)mask);
       move = (i <= k) ? (home <= i || home > k) : (home <= i && home > k);
@@ -516,12 +536,12 @@ static void erase_at(AvantHash *h, int32_t i) {
         if (h->key_kind == AVANT_HASH_KEY_STR) {
           ((void **)h->keys)[i] = ((void **)h->keys)[k];
         } else {
-          ((int32_t *)h->keys)[i] = ((int32_t *)h->keys)[k];
+          ((hint *)h->keys)[i] = ((hint *)h->keys)[k];
         }
         if (h->val_kind == AVANT_HASH_VAL_STR) {
           ((const char **)h->vals)[i] = ((const char **)h->vals)[k];
         } else {
-          ((int32_t *)h->vals)[i] = ((int32_t *)h->vals)[k];
+          ((hint *)h->vals)[i] = ((hint *)h->vals)[k];
         }
         i = k;
         break;
@@ -534,15 +554,15 @@ static void erase_at(AvantHash *h, int32_t i) {
 /* Hash.delete (Stage 29 W4b2): removes the key and gives the value it
  * held, *found 1; or *found 0 when the key was absent. erase_at does not
  * allocate, so a String value stays valid. */
-int32_t avant_hash_take_i32(void *hp, const char *key, int32_t *found) {
+avant_int avant_hash_take_i32(void *hp, const char *key, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
-  int32_t v;
+  hint v;
   *found = 0;
   if (!h || !h->cap || !lookup_str(h, key, &i)) {
     return 0;
   }
-  v = ((int32_t *)h->vals)[i];
+  v = ((hint *)h->vals)[i];
   erase_at(h, i);
   *found = 1;
   return v;
@@ -562,15 +582,15 @@ char *avant_hash_take_str(void *hp, const char *key, int32_t *found) {
   return v;
 }
 
-int32_t avant_hash_take_i32k_i32(void *hp, int32_t key, int32_t *found) {
+avant_int avant_hash_take_i32k_i32(void *hp, avant_int key, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
-  int32_t v;
+  hint v;
   *found = 0;
-  if (!h || !h->cap || !lookup(h, (int64_t)key, hash_i32(key), &i)) {
+  if (!h || !h->cap || !lookup(h, (int64_t)key, hash_int(key), &i)) {
     return 0;
   }
-  v = ((int32_t *)h->vals)[i];
+  v = ((hint *)h->vals)[i];
   erase_at(h, i);
   *found = 1;
   return v;
@@ -587,10 +607,10 @@ void avant_hash_del(void *hp, const char *key) {
   erase_at(h, i);
 }
 
-void avant_hash_del_i32k(void *hp, int32_t key) {
+void avant_hash_del_i32k(void *hp, avant_int key) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
-  if (!h || !h->cap || !lookup(h, (int64_t)key, hash_i32(key), &i)) {
+  if (!h || !h->cap || !lookup(h, (int64_t)key, hash_int(key), &i)) {
     return;
   }
   erase_at(h, i);
@@ -600,7 +620,7 @@ void avant_hash_del_i32k(void *hp, int32_t key) {
  * and the key's allocation may collect, so the hash and the text are
  * handles and the slice's pointer is formed again from the text after
  * each (its offset is an integer). */
-int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t stop) {
+avant_int avant_hash_inc_slice(void *hp, const char *s, avant_int start, avant_int stop) {
   AvantHash *h = (AvantHash *)hp;
   AVANT_GC_SCOPE(2);
   AVANT_GC_ROOT(0, &h);
@@ -619,18 +639,18 @@ int32_t avant_hash_inc_slice(void *hp, const char *s, int32_t start, int32_t sto
   uint32_t hv = hash_bytes(p, n);
   int32_t i = 0;
   if (lookup_bytes(h, p, n, hv, &i)) {
-    int32_t c;
-    if (__builtin_add_overflow(((int32_t *)h->vals)[i], 1, &c)) {
+    hint c;
+    if (__builtin_add_overflow(((hint *)h->vals)[i], 1, &c)) {
       avant_trap_overflow();
     }
-    ((int32_t *)h->vals)[i] = c;
+    ((hint *)h->vals)[i] = c;
     g_last_key = (const char *)(uintptr_t)load_key(h, i);
     return c;
   }
   ensure_cap(h);
   p = s + off;
   lookup_bytes(h, p, n, hv, &i);
-  char *key = (char *)avant_alloc((uint64_t)n + 1, AVANT_TYPE_BYTES);
+  char *key = avant_str_alloc((uint64_t)n);
   p = s + off;
   if (n) {
     memcpy(key, p, n);
@@ -654,7 +674,7 @@ const char *avant_hash_last_key(void) {
   return g_last_key ? g_last_key : "";
 }
 
-const char *avant_hash_get_str_slice(void *hp, const char *s, int32_t start, int32_t stop, int32_t *found) {
+const char *avant_hash_get_str_slice(void *hp, const char *s, avant_int start, avant_int stop, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   if (found) {
     *found = 0;
@@ -741,7 +761,7 @@ static void *hash_collect(AvantHash *h, int keys, int str) {
   AVANT_GC_ROOT(1, &a);
   a = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
   if (n > 0) {
-    void *buf = avant_alloc((uint64_t)n * (str ? sizeof(char *) : sizeof(int32_t)),
+    void *buf = avant_alloc((uint64_t)n * (str ? sizeof(char *) : sizeof(hint)),
                             str ? AVANT_TYPE_PTRS : AVANT_TYPE_BYTES);
     int32_t i;
     int32_t k = 0;
@@ -752,7 +772,7 @@ static void *hash_collect(AvantHash *h, int keys, int str) {
       if (str) {
         ((char **)buf)[k++] = keys ? (char *)(uintptr_t)load_key(h, i) : ((char **)h->vals)[i];
       } else {
-        ((int32_t *)buf)[k++] = keys ? (int32_t)load_key(h, i) : ((int32_t *)h->vals)[i];
+        ((hint *)buf)[k++] = keys ? (hint)load_key(h, i) : ((hint *)h->vals)[i];
       }
     }
     if (str) {
@@ -775,16 +795,16 @@ int32_t avant_hash_has_str(void *hp, const char *key) {
   return lookup_str(h, key, &i) ? 1 : 0;
 }
 
-int32_t avant_hash_has_i32k(void *hp, int32_t key) {
+int32_t avant_hash_has_i32k(void *hp, avant_int key) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
   if (!h) {
     return 0;
   }
-  return lookup(h, (int64_t)key, hash_i32(key), &i) ? 1 : 0;
+  return lookup(h, (int64_t)key, hash_int(key), &i) ? 1 : 0;
 }
 
-int32_t avant_hash_inc_str(void *hp, const char *key, int32_t by) {
+avant_int avant_hash_inc_str(void *hp, const char *key, avant_int by) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
   if (!h) {
@@ -795,11 +815,11 @@ int32_t avant_hash_inc_str(void *hp, const char *key, int32_t by) {
   AVANT_GC_ROOT(0, &h);
   AVANT_GC_ROOT(1, &key);
   if (lookup_str(h, key, &i)) {
-    int32_t c;
-    if (__builtin_add_overflow(((int32_t *)h->vals)[i], by, &c)) {
+    hint c;
+    if (__builtin_add_overflow(((hint *)h->vals)[i], by, &c)) {
       avant_trap_overflow();
     }
-    ((int32_t *)h->vals)[i] = c;
+    ((hint *)h->vals)[i] = c;
     return c;
   }
   ensure_cap(h);
@@ -819,7 +839,7 @@ int32_t avant_hash_inc_str(void *hp, const char *key, int32_t by) {
   return by;
 }
 
-int32_t avant_hash_inc_i32k(void *hp, int32_t key, int32_t by) {
+avant_int avant_hash_inc_i32k(void *hp, avant_int key, avant_int by) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
   if (!h) {
@@ -828,16 +848,16 @@ int32_t avant_hash_inc_i32k(void *hp, int32_t key, int32_t by) {
   /* RC1: grow may collect; the hash is a handle. */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &h);
-  if (lookup(h, (int64_t)key, hash_i32(key), &i)) {
-    int32_t c;
-    if (__builtin_add_overflow(((int32_t *)h->vals)[i], by, &c)) {
+  if (lookup(h, (int64_t)key, hash_int(key), &i)) {
+    hint c;
+    if (__builtin_add_overflow(((hint *)h->vals)[i], by, &c)) {
       avant_trap_overflow();
     }
-    ((int32_t *)h->vals)[i] = c;
+    ((hint *)h->vals)[i] = c;
     return c;
   }
   ensure_cap(h);
-  lookup(h, (int64_t)key, hash_i32(key), &i);
+  lookup(h, (int64_t)key, hash_int(key), &i);
   store_key(h, i, (int64_t)key);
   store_val_i32(h, i, by);
   if (!slot_full(h->state[i])) {
@@ -857,9 +877,9 @@ int32_t avant_hash_inc_i32k(void *hp, int32_t key, int32_t by) {
  * before its last use. Int values only, so the stores need no barrier.
  * A nil hash gives a per-thread scratch slot (a get then reads 0 and a
  * set stores nothing, as before). */
-static __thread int32_t g_upsert_scratch;
+static __thread hint g_upsert_scratch;
 
-int32_t *avant_hash_upsert_i32k(void *hp, int32_t key, int32_t init, int32_t *found) {
+avant_int *avant_hash_upsert_i32k(void *hp, avant_int key, avant_int init, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
   if (!h) {
@@ -872,27 +892,27 @@ int32_t *avant_hash_upsert_i32k(void *hp, int32_t key, int32_t init, int32_t *fo
   /* RC1: grow may collect; the hash is a handle. */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &h);
-  if (lookup(h, (int64_t)key, hash_i32(key), &i)) {
+  if (lookup(h, (int64_t)key, hash_int(key), &i)) {
     if (found) {
       *found = 1;
     }
-    return &((int32_t *)h->vals)[i];
+    return &((hint *)h->vals)[i];
   }
   if (found) {
     *found = 0;
   }
   ensure_cap(h);
-  lookup(h, (int64_t)key, hash_i32(key), &i);
+  lookup(h, (int64_t)key, hash_int(key), &i);
   store_key(h, i, (int64_t)key);
   store_val_i32(h, i, init);
   if (!slot_full(h->state[i])) {
     h->state[i] = 1;
     h->size += 1;
   }
-  return &((int32_t *)h->vals)[i];
+  return &((hint *)h->vals)[i];
 }
 
-int32_t *avant_hash_upsert_i32(void *hp, const char *key, int32_t init, int32_t *found) {
+avant_int *avant_hash_upsert_i32(void *hp, const char *key, avant_int init, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t i = 0;
   if (!h) {
@@ -910,7 +930,7 @@ int32_t *avant_hash_upsert_i32(void *hp, const char *key, int32_t init, int32_t 
     if (found) {
       *found = 1;
     }
-    return &((int32_t *)h->vals)[i];
+    return &((hint *)h->vals)[i];
   }
   if (found) {
     *found = 0;
@@ -929,12 +949,12 @@ int32_t *avant_hash_upsert_i32(void *hp, const char *key, int32_t init, int32_t 
     h->state[i] = occ_mark(key, avant_str_n(key));
     h->size += 1;
   }
-  return &((int32_t *)h->vals)[i];
+  return &((hint *)h->vals)[i];
 }
 
-int32_t avant_hash_get_or_i32(void *hp, const char *key, int32_t fallback) {
+avant_int avant_hash_get_or_i32(void *hp, const char *key, avant_int fallback) {
   int32_t found = 0;
-  int32_t v = avant_hash_get_i32(hp, key, &found);
+  hint v = avant_hash_get_i32(hp, key, &found);
   return found ? v : fallback;
 }
 
@@ -944,9 +964,9 @@ const char *avant_hash_get_or_str(void *hp, const char *key, const char *fallbac
   return found ? v : (fallback ? fallback : "");
 }
 
-int32_t avant_hash_get_or_i32k_i32(void *hp, int32_t key, int32_t fallback) {
+avant_int avant_hash_get_or_i32k_i32(void *hp, avant_int key, avant_int fallback) {
   int32_t found = 0;
-  int32_t v = avant_hash_get_i32k_i32(hp, key, &found);
+  hint v = avant_hash_get_i32k_i32(hp, key, &found);
   return found ? v : fallback;
 }
 
@@ -966,7 +986,7 @@ void *avant_hash_vals_i32(void *hp) {
   return hash_collect((AvantHash *)hp, 0, 0);
 }
 
-int32_t avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t *found) {
+avant_int avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   size_t na = avant_str_n(a);
   size_t nb = avant_str_n(b);
@@ -995,7 +1015,7 @@ int32_t avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t *f
           *found = 1;
         }
         g_last_key = slot;
-        return ((int32_t *)h->vals)[i];
+        return ((hint *)h->vals)[i];
       }
     }
     i = (i + 1) & mask;

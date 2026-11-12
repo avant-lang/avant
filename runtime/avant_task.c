@@ -17,13 +17,15 @@
  * pool thread, so a full pool deadlocks; those calls die.
  */
 
-typedef int32_t (*avant_task_fn)(void *);
-typedef void (*avant_par_fn)(int32_t, void *);
+/* A spawned block returns an Avant Int (Stage 29 W-INT1: avant_int). */
+typedef avant_int (*avant_task_fn)(void *);
+/* A .parallel thunk takes the element index as an Avant Int. */
+typedef void (*avant_par_fn)(avant_int, void *);
 
 typedef struct {
   avant_task_fn fn;
   void *arg;
-  int32_t result;
+  avant_int result;
   int done;
   pthread_cond_t done_cv;
   /* R1: roots arg (avant_gc_task_root_add) until fn has returned. */
@@ -90,7 +92,7 @@ void avant_set_flag_threads(long n) {
   g_flag_threads = n;
 }
 
-int32_t avant_chosen_threads(void) {
+avant_int avant_chosen_threads(void) {
   if (g_flag_threads > 0) {
     return (int32_t)g_flag_threads;
   }
@@ -216,8 +218,7 @@ static void *worker_main(void *p) {
  * join read freed memory and freed it again. */
 typedef struct {
   AvantTask *task;
-  int32_t result;
-  int32_t pad;
+  avant_int result;
 } AvantJoinHandle;
 
 void *avant_spawn(void *fn, void *arg) {
@@ -263,10 +264,10 @@ void *avant_spawn(void *fn, void *arg) {
   return hd;
 }
 
-int32_t avant_join(void *handle) {
+avant_int avant_join(void *handle) {
   AvantJoinHandle *hd = (AvantJoinHandle *)handle;
   AvantTask *t;
-  int32_t result;
+  avant_int result;
   if (!hd) {
     return 0;
   }
@@ -302,7 +303,7 @@ int32_t avant_join(void *handle) {
   return result;
 }
 
-void avant_parallel_for(int32_t n, void *fn, void *ctx) {
+void avant_parallel_for(avant_int n, void *fn, void *ctx) {
   ParDone done;
   int32_t i;
   if (n <= 0) {
@@ -318,7 +319,8 @@ void avant_parallel_for(int32_t n, void *fn, void *ctx) {
   if (pthread_cond_init(&done.cv, NULL) != 0) {
     die_task("parallel cond");
   }
-  done.remaining = n;
+  /* n is an Array's size, within the ceiling. */
+  done.remaining = (int32_t)n;
   ensure_pool();
   avant_gc_lock(&pool_mu);
   for (i = 0; i < n; i++) {

@@ -1,7 +1,7 @@
 module trap_to_i_low
 file 0 "trap_to_i_low.av"
 
-const str.0 = "%d\0A"
+const str.0 = "%lld\0A"
 const str.1 = "not reached"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
@@ -15,92 +15,90 @@ extern avant_puts_str(ref str) -> void never
 extern avant_trap_to_i(f64) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
-fn av.trap_to_i_low/opaque(_1: i32) -> i32 leaf @trap_to_i_low.av:6:1 {
-  let _0: i32
-  let _1 (n): i32
+fn av.trap_to_i_low/opaque(_1: i64) -> i64 leaf @trap_to_i_low.av:8:1 {
+  let _0: i64
+  let _1 (n): i64
   let _2: i64
   let _3 (a): i64
   let _4: i64
   let _5 (b): i64
   let _6: i64
   let _7: bool
-  let _8: i32
-  let _9: i32
+  let _8: i64
 
 bb0:
-  _2 = call avant_clock_us() nocollect   @7:7
-  _3 = copy _2   @7:5
-  _4 = call avant_clock_us() nocollect   @8:7
-  _5 = copy _4   @8:5
-  _6 = sub copy _5, copy _3   @9:8
-  _7 = gt copy _6, const i64 1000000000   @9:13
-  branch copy _7, bb1, bb2   @9:3
+  _2 = call avant_clock_us() nocollect   @9:7
+  _3 = copy _2   @9:5
+  _4 = call avant_clock_us() nocollect   @10:7
+  _5 = copy _4   @10:5
+  _6 = sub copy _5, copy _3   @11:8
+  _7 = gt copy _6, const i64 1000000000   @11:13
+  branch copy _7, bb1, bb2   @11:3
 
 bb1:
-  _8 = cast copy _5 to i32   @10:18
-  _9 = add copy _1, copy _8   @10:14
-  _0 = copy _9   @10:5
-  return   @10:5
+  _8 = add copy _1, copy _5   @12:14
+  _0 = copy _8   @12:5
+  return   @12:5
 
 bb2:
-  _0 = copy _1   @12:3
-  return   @12:3
+  _0 = copy _1   @14:3
+  return   @14:3
 }
 
-fn av.trap_to_i_low/ti(_1: f64) -> i32 leaf @trap_to_i_low.av:15:1 {
-  let _0: i32
+fn av.trap_to_i_low/ti(_1: f64) -> i64 leaf @trap_to_i_low.av:17:1 {
+  let _0: i64
   let _1 (x): f64
   let _2: f64
   let _3: bool
   let _4: bool
   let _5: bool
-  let _6: i32
+  let _6: i64
 
 bb0:
-  _2 = copy _1   @16:4
-  _3 = gt copy _2, const f64 0xC1E0000000200000 /* -2147483649.0 */   @16:4
-  _4 = lt copy _2, const f64 0x41E0000000000000 /* 2147483648.0 */   @16:4
-  _5 = and copy _3, copy _4   @16:4
-  branch copy _5, bb2, bb1   @16:4
+  _2 = copy _1   @18:4
+  _3 = ge copy _2, const f64 0xC3E0000000000000 /* -9223372036854775808.0 */   @18:4
+  _4 = lt copy _2, const f64 0x43E0000000000000 /* 9223372036854775808.0 */   @18:4
+  _5 = and copy _3, copy _4   @18:4
+  branch copy _5, bb2, bb1   @18:4
 
 bb1:
-  call avant_trap_to_i(copy _2) nocollect   @16:4
-  unreachable   @16:4
+  call avant_trap_to_i(copy _2) nocollect   @18:4
+  unreachable   @18:4
 
 bb2:
-  _6 = cast copy _2 to i32   @16:4
-  _0 = copy _6   @16:4
-  return   @16:4
+  _6 = cast copy _2 to i64   @18:4
+  _0 = copy _6   @18:4
+  return   @18:4
 }
 
-fn main(_1: i32, _2: ptr) -> i32 frame extern @trap_to_i_low.av:19:1 {
+fn main(_1: i32, _2: ptr) -> i32 frame extern @trap_to_i_low.av:21:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
-  let _3: i32
+  let _3: i64
   let _4: f64
   let _5 (one): f64
   let _6: f64
-  let _7: i32
+  let _7: i64
   let _8: f64
-  let _9: i32
+  let _9: i64
 
 bb0:
-  gc.enter   @19:1
-  gc.roots _2   @19:1
-  call __avant_type_maps() nocollect   @19:1
-  call avant_io_init_argv(copy _1, copy _2) collects   @19:1
-  _3 = call av.trap_to_i_low/opaque(const i32 1) nocollect   @20:9
-  _4 = cast copy _3 to f64   @20:18
-  _5 = copy _4   @20:7
-  _6 = mul const f64 0x41DFFFFFFFF9999A /* 2147483647.9 */, copy _5   @21:24
-  _7 = call av.trap_to_i_low/ti(copy _6) nocollect   @21:8
-  call printf(const str.0, copy _7) nocollect   @21:3
-  _8 = mul const f64 0xC1E0000000200000 /* -2147483649.0 */, copy _5   @22:25
-  _9 = call av.trap_to_i_low/ti(copy _8) nocollect   @22:8
-  call printf(const str.0, copy _9) nocollect   @22:3
-  call avant_puts_str(const str.1) nocollect   @23:3
-  _0 = const i32 0   @19:1
-  gc.leave   @19:1
-  return   @19:1
+  gc.enter   @21:1
+  gc.roots _2   @21:1
+  call __avant_type_maps() nocollect   @21:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @21:1
+  _3 = call av.trap_to_i_low/opaque(const i64 1) nocollect   @22:9
+  _4 = cast copy _3 to f64   @22:18
+  _5 = copy _4   @22:7
+  _6 = mul const f64 0xC3E0000000000000 /* -9223372036854775808.0 */, copy _5   @23:34
+  _7 = call av.trap_to_i_low/ti(copy _6) nocollect   @23:8
+  call printf(const str.0, copy _7) nocollect   @23:3
+  _8 = mul const f64 0xC3E0000000000001 /* -9223372036854777856.0 */, copy _5   @24:34
+  _9 = call av.trap_to_i_low/ti(copy _8) nocollect   @24:8
+  call printf(const str.0, copy _9) nocollect   @24:3
+  call avant_puts_str(const str.1) nocollect   @25:3
+  _0 = const i32 0   @21:1
+  gc.leave   @21:1
+  return   @21:1
 }

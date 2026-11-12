@@ -369,11 +369,15 @@ fn ll_stmt(e: LlEmit, st: MStmt) {
 }
 
 // check.bounds i, n: unsigned i >= n traps with avant_trap_bounds(i, n).
+// The operands are two i64 (an Int index against a size the header keeps
+// in 32 bits, sign-extended; Stage 29 W-INT1), or two i32 (MIR's own
+// tests), widened for the trap.
 fn ll_bounds(e: LlEmit, st: MStmt) {
   i = e.value(st.args[0])
+  ity = e.ov_ty
   n = e.value(st.args[1])
   c = e.tmp
-  e.line("${c} = icmp uge i32 ${i}, ${n}")
+  e.line("${c} = icmp uge ${e.llt(ity)} ${i}, ${n}")
   oob = e.part("oob")
   ok = e.part("ok")
   e.line("br i1 ${c}, label %${oob}, label %${ok}")
@@ -384,7 +388,15 @@ fn ll_bounds(e: LlEmit, st: MStmt) {
   // (W4b2, D295 R16; a site argument per check flipped an inlining on
   // Maze::AStar, +5.8% instructions).
   e.trap_bounds = true
-  e.line("call void ${ll_stub(e, "#tb")}(i32 ${i}, i32 ${n})")
+  if ity != mt_i64() {
+    wi = e.tmp
+    e.line("${wi} = sext i32 ${i} to i64")
+    wn = e.tmp
+    e.line("${wn} = sext i32 ${n} to i64")
+    i = wi
+    n = wn
+  }
+  e.line("call void ${ll_stub(e, "#tb")}(i64 ${i}, i64 ${n})")
   e.line("unreachable")
   e.block(ok)
 }
@@ -878,8 +890,8 @@ fn ll_trap_stubs(e: LlEmit) {
   o = e.out
   if e.trap_bounds {
     e.need("avant_trap_bounds_in")
-    o.push_str("define internal void ${ll_stub(e, "#tb")}(i32 %i, i32 %n) #1 {\n")
-    o.push_str("  call void @avant_trap_bounds_in(i32 %i, i32 %n, i32 ${fsite})\n  unreachable\n}\n\n")
+    o.push_str("define internal void ${ll_stub(e, "#tb")}(i64 %i, i64 %n) #1 {\n")
+    o.push_str("  call void @avant_trap_bounds_in(i64 %i, i64 %n, i32 ${fsite})\n  unreachable\n}\n\n")
   }
   if e.trap_ovf {
     e.need("avant_trap_overflow_in")

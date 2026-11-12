@@ -2,23 +2,23 @@ module generics
 file 0 "generics.av"
 
 layout %generics.Name = class { 0 s: ref str }  size 8 align 8 id 1
-layout %generics.Stack(Int) = class { 0 items: ref %Array(Int), 1 last: %(Nil|Int), 2 label: ref str, 3 depth: i32 }  size 32 align 8 id 2
-layout %generics.Stack(String) = class { 0 items: ref %Array(String), 1 last: ref str, 2 label: ref str, 3 depth: i32 }  size 32 align 8 id 3
-layout %generics.Stack(generics.Pair(Int,String)) = class { 0 items: ref %Array(generics.Pair(Int,String)), 1 last: %(Nil|generics.Pair(Int,String)), 2 label: ref str, 3 depth: i32 }  size 48 align 8 id 4
-layout %elems(Int) = elems { 0: i32 }  size 4 align 4
+layout %generics.Stack(Int) = class { 0 items: ref %Array(Int), 1 last: %(Nil|Int), 2 label: ref str, 3 depth: i64 }  size 40 align 8 id 2
+layout %generics.Stack(String) = class { 0 items: ref %Array(String), 1 last: ref str, 2 label: ref str, 3 depth: i64 }  size 32 align 8 id 3
+layout %generics.Stack(generics.Pair(Int,String)) = class { 0 items: ref %Array(generics.Pair(Int,String)), 1 last: %(Nil|generics.Pair(Int,String)), 2 label: ref str, 3 depth: i64 }  size 48 align 8 id 4
+layout %elems(Int) = elems { 0: i64 }  size 8 align 8
 layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
-layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
+layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i64 }  size 16 align 8
 layout %elems(String) = elems { 0: ref str }  size 8 align 8 id 65535
 layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
-layout %generics.Pair(Int,String) = struct { 0 a: i32, 1 b: ref str }  size 16 align 8
+layout %generics.Pair(Int,String) = struct { 0 a: i64, 1 b: ref str }  size 16 align 8
 layout %elems(generics.Pair(Int,String)) = elems { 0: %generics.Pair(Int,String) }  size 16 align 8 id 5
 layout %Array(generics.Pair(Int,String)) = array { 0 data: ref %elems(generics.Pair(Int,String)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %(Nil|generics.Pair(Int,String)) = union { 0 tag: i32, 1 m0: %generics.Pair(Int,String) }  size 24 align 8
-layout %generics.Pair(String,Int) = struct { 0 a: ref str, 1 b: i32 }  size 16 align 8
-layout %generics.Box = struct { 0 n: i32 }  size 4 align 4
-layout %generics.Pt = struct { 0 x: i32, 1 y: i32 }  size 8 align 4
+layout %generics.Pair(String,Int) = struct { 0 a: ref str, 1 b: i64 }  size 16 align 8
+layout %generics.Box = struct { 0 n: i64 }  size 8 align 8
+layout %generics.Pt = struct { 0 x: i64, 1 y: i64 }  size 16 align 8
 
-const str.0 = "%d\0A"
+const str.0 = "%lld\0A"
 const str.1 = "s"
 const str.2 = "one"
 const str.3 = "k"
@@ -40,29 +40,29 @@ typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
 typemap 1 %generics.Name stride 0 bits [0x1]
-typemap 2 %generics.Stack(Int) stride 0 bits [0x5]
+typemap 2 %generics.Stack(Int) stride 0 bits [0x9]
 typemap 3 %generics.Stack(String) stride 0 bits [0x7]
 typemap 4 %generics.Stack(generics.Pair(Int,String)) stride 0 bits [0x19]
 typemap 5 %elems(generics.Pair(Int,String)) stride 2 bits [0x2]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
-extern avant_array_get_ptr(ref, i32) -> ref never
-extern avant_array_push_i32(ref, i32) -> void collects
+extern avant_array_get_ptr(ref, i64) -> ref never
+extern avant_array_push_i64(ref, i64) -> void collects
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_array_push_slot(ref, u64, u32) -> addr collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_f64(f64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_str_concat(ref str, ref str) -> ref str collects
-extern avant_str_from_int(i32) -> ref str collects
+extern avant_str_from_int(i64) -> ref str collects
 extern printf(ref str, ...) -> i32 never
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @generics.av:117:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
-  let _3: i32
+  let _3: i64
   let _4: ref str
   let _5: f64
   let _6: %generics.Pair(Int,String)
@@ -71,26 +71,26 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @generics.av:117:1 {
   let _9: %generics.Pair(String,Int)
   let _10 (q): %generics.Pair(String,Int)
   let _11: ref str
-  let _12: i32
+  let _12: i64
   let _13: %generics.Pair(String,Int)
   let _14 (r): %generics.Pair(String,Int)
   let _15: ref str
-  let _16: i32
+  let _16: i64
   let _17: ref %generics.Stack(Int)
   let _18 (s): ref %generics.Stack(Int) slot
   let _19: %(Nil|Int)
   let _20: i32
   let _21: bool
-  let _22: i32
-  let _23 (t): i32
+  let _22: i64
+  let _23 (t): i64
   let _24: %(Nil|Int)
-  let _25: i32
+  let _25: i64
   let _26: i32
   let _27: bool
-  let _28: i32
-  let _29: i32
+  let _28: i64
+  let _29: i64
   let _30: ref str slot
-  let _31: i32
+  let _31: i64
   let _32: ref str slot
   let _33: ref str slot
   let _34: ref str
@@ -110,11 +110,11 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @generics.av:117:1 {
   let _48: %generics.Pair(Int,String)
   let _49 (tp): %generics.Pair(Int,String)
   let _50: ref str
-  let _51: i32
+  let _51: i64
   let _52: %generics.Box
   let _53 (b): %generics.Box
   let _54: addr %generics.Box
-  let _55: i32
+  let _55: i64
   let _56: addr %generics.Box
   let _57: ref str
   let _58: %generics.Pt
@@ -127,10 +127,10 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @generics.av:117:1 {
   let _65: ref %Array(Int)
   let _66 (ys): ref %Array(Int)
   let _67: %(Nil|Int)
-  let _68: i32
+  let _68: i64
   let _69: i32
   let _70: bool
-  let _71: i32
+  let _71: i64
   let _72: ref %elems(String) slot
   let _73: ref %Array(String)
   let _74 (zs): ref %Array(String)
@@ -152,13 +152,13 @@ bb0:
   gc.roots _2, _7, _18, _30, _32, _33, _36, _44, _64, _72   @117:1
   call __avant_type_maps() nocollect   @117:1
   call avant_io_init_argv(copy _1, copy _2) collects   @117:1
-  _3 = call av.generics/id[Int](const i32 3) nocollect   @118:8
+  _3 = call av.generics/id[Int](const i64 3) nocollect   @118:8
   call printf(const str.0, copy _3) nocollect   @118:3
   _4 = call av.generics/id[String](const str.1) nocollect   @119:8
   call avant_puts_str(copy _4) nocollect   @119:3
   _5 = call av.generics/id[Float64](const f64 0x4004000000000000 /* 2.5 */) nocollect   @120:8
   call avant_puts_f64(copy _5) nocollect   @120:3
-  _6 = struct %generics.Pair(Int,String) (const i32 1, const str.2)   @121:7
+  _6 = struct %generics.Pair(Int,String) (const i64 1, const str.2)   @121:7
   _7 = copy _6   @121:5
   _8 = addr _7   @122:8
   _9 = call av.generics/Pair(Int,String).swap(copy _8) nocollect   @122:8
@@ -167,7 +167,7 @@ bb0:
   call avant_puts_str(copy _11) nocollect   @123:3
   _12 = copy _10.1   @124:9
   call printf(const str.0, copy _12) nocollect   @124:3
-  _13 = call av.generics/pair_of[String,Int](const str.3, const i32 9) nocollect   @125:7
+  _13 = call av.generics/pair_of[String,Int](const str.3, const i64 9) nocollect   @125:7
   _14 = copy _13   @125:5
   _15 = copy _14.0   @126:9
   call avant_puts_str(copy _15) nocollect   @126:3
@@ -175,8 +175,8 @@ bb0:
   call printf(const str.0, copy _16) nocollect   @127:3
   _17 = call av.generics/Stack(Int).new() collects   @128:17
   _18 = copy _17   @128:5
-  call av.generics/Stack(Int).push(copy _18, const i32 4) collects   @129:4
-  call av.generics/Stack(Int).push(copy _18, const i32 5) collects   @130:4
+  call av.generics/Stack(Int).push(copy _18, const i64 4) collects   @129:4
+  call av.generics/Stack(Int).push(copy _18, const i64 5) collects   @130:4
   _19 = call av.generics/Stack(Int).top(copy _18) nocollect   @131:11
   _20 = copy _19.0   @131:3
   _21 = ne copy _20, const i32 0   @131:3
@@ -195,7 +195,7 @@ bb2:
   branch copy _27, bb3, bb4   @134:15
 
 bb3:
-  _25 = const i32 -1   @134:15
+  _25 = const i64 -1   @134:15
   goto bb5   @134:15
 
 bb4:
@@ -262,26 +262,26 @@ bb12:
 bb13:
   _51 = call av.generics/count[generics.Pair(Int,String)](copy _44) nocollect   @150:8
   call printf(const str.0, copy _51) nocollect   @150:3
-  _52 = struct %generics.Box (const i32 0)   @151:7
+  _52 = struct %generics.Box (const i64 0)   @151:7
   _53 = copy _52   @151:5
   _54 = addr _53   @152:9
-  _55 = call av.generics/Box.wrap[Int](copy _54, const i32 11) nocollect   @152:9
+  _55 = call av.generics/Box.wrap[Int](copy _54, const i64 11) nocollect   @152:9
   call printf(const str.0, copy _55) nocollect   @152:3
   _56 = addr _53   @153:9
   _57 = call av.generics/Box.wrap[String](copy _56, const str.8) nocollect   @153:9
   call avant_puts_str(copy _57) nocollect   @153:3
-  _58 = struct %generics.Pt (const i32 1, const i32 2)   @154:14
+  _58 = struct %generics.Pt (const i64 1, const i64 2)   @154:14
   _59 = call av.generics/twice[generics.Pt](copy _58) collects   @154:8
   call avant_puts_str(copy _59) nocollect   @154:3
   _60 = call av.generics/Name.new(const str.9) collects   @155:18
   _61 = call av.generics/twice[generics.Name](copy _60) collects   @155:8
   call avant_puts_str(copy _61) nocollect   @155:3
-  _62 = struct %generics.Pt (const i32 3, const i32 4)   @156:13
+  _62 = struct %generics.Pt (const i64 3, const i64 4)   @156:13
   _63 = call av.generics/both[generics.Pt](copy _62) collects   @156:8
   call avant_puts_str(copy _63) nocollect   @156:3
-  _64 = call avant_alloc(const u64 8, const u32 0) collects   @157:20
-  (*_64)[const i32 0] = const i32 7   @157:21
-  (*_64)[const i32 1] = const i32 8   @157:24
+  _64 = call avant_alloc(const u64 16, const u32 0) collects   @157:20
+  (*_64)[const i64 0] = const i64 7   @157:21
+  (*_64)[const i64 1] = const i64 8   @157:24
   _65 = call avant_alloc(const u64 16, const u32 1022) collects   @157:20
   barrier copy _65   @157:20
   (*_65).0 = copy _64   @157:20
@@ -294,7 +294,7 @@ bb13:
   branch copy _70, bb14, bb15   @158:18
 
 bb14:
-  _68 = const i32 -1   @158:18
+  _68 = const i64 -1   @158:18
   goto bb16   @158:18
 
 bb15:
@@ -330,9 +330,9 @@ bb19:
   return   @117:1
 }
 
-fn av.generics/id[Int](_1: i32) -> i32 leaf @generics.av:90:1 {
-  let _0: i32
-  let _1 (x): i32
+fn av.generics/id[Int](_1: i64) -> i64 leaf @generics.av:90:1 {
+  let _0: i64
+  let _1 (x): i64
 
 bb0:
   _0 = copy _1   @91:3
@@ -357,10 +357,10 @@ bb0:
   return   @91:3
 }
 
-fn av.generics/pair_of[String,Int](_1: ref str, _2: i32) -> %generics.Pair(String,Int) leaf @generics.av:109:1 {
+fn av.generics/pair_of[String,Int](_1: ref str, _2: i64) -> %generics.Pair(String,Int) leaf @generics.av:109:1 {
   let _0: %generics.Pair(String,Int)
   let _1 (a): ref str
-  let _2 (b): i32
+  let _2 (b): i64
   let _3: %generics.Pair(String,Int)
 
 bb0:
@@ -369,10 +369,10 @@ bb0:
   return   @110:3
 }
 
-fn av.generics/count[Int](_1: ref %generics.Stack(Int)) -> i32 leaf @generics.av:113:1 {
-  let _0: i32
+fn av.generics/count[Int](_1: ref %generics.Stack(Int)) -> i64 leaf @generics.av:113:1 {
+  let _0: i64
   let _1 (s): ref %generics.Stack(Int)
-  let _2: i32
+  let _2: i64
 
 bb0:
   _2 = call av.generics/Stack(Int).size(copy _1) nocollect   @114:4
@@ -380,10 +380,10 @@ bb0:
   return   @114:4
 }
 
-fn av.generics/count[generics.Pair(Int,String)](_1: ref %generics.Stack(generics.Pair(Int,String))) -> i32 leaf @generics.av:113:1 {
-  let _0: i32
+fn av.generics/count[generics.Pair(Int,String)](_1: ref %generics.Stack(generics.Pair(Int,String))) -> i64 leaf @generics.av:113:1 {
+  let _0: i64
   let _1 (s): ref %generics.Stack(generics.Pair(Int,String))
-  let _2: i32
+  let _2: i64
 
 bb0:
   _2 = call av.generics/Stack(generics.Pair(Int,String)).size(copy _1) nocollect   @114:4
@@ -447,7 +447,7 @@ fn av.generics/both[generics.Pt](_1: %generics.Pt) -> ref str frame @generics.av
   let _2: addr %generics.Pt
   let _3: ref str slot
   let _4: addr %generics.Pt
-  let _5: i32
+  let _5: i64
   let _6: ref str slot
   let _7: ref str slot
   let _8: ref str
@@ -474,30 +474,34 @@ fn av.generics/first[Int](_1: ref %Array(Int)) -> %(Nil|Int) leaf @generics.av:1
   let _0: %(Nil|Int)
   let _1 (xs): ref %Array(Int)
   let _2: i32
-  let _3: bool
-  let _4: %(Nil|Int)
-  let _5: i32
-  let _6: ref %elems(Int)
-  let _7: i32
-  let _8: %(Nil|Int)
+  let _3: i64
+  let _4: bool
+  let _5: %(Nil|Int)
+  let _6: i32
+  let _7: i64
+  let _8: ref %elems(Int)
+  let _9: i64
+  let _10: %(Nil|Int)
 
 bb0:
   _2 = copy (*_1).1   @103:8
-  _3 = eq copy _2, const i32 0   @103:14
-  branch copy _3, bb1, bb2   @103:3
+  _3 = cast copy _2 to i64   @103:8
+  _4 = eq copy _3, const i64 0   @103:14
+  branch copy _4, bb1, bb2   @103:3
 
 bb1:
-  _4 = union %(Nil|Int) tag 0   @104:12
-  _0 = copy _4   @104:5
+  _5 = union %(Nil|Int) tag 0   @104:12
+  _0 = copy _5   @104:5
   return   @104:5
 
 bb2:
-  _5 = copy (*_1).1   @106:5
-  check.bounds const i32 0, copy _5   @106:5
-  _6 = copy (*_1).0   @106:5
-  _7 = copy (*_6)[const i32 0]   @106:5
-  _8 = union %(Nil|Int) tag 1 (copy _7)   @106:5
-  _0 = copy _8   @106:5
+  _6 = copy (*_1).1   @106:5
+  _7 = cast copy _6 to i64   @106:5
+  check.bounds const i64 0, copy _7   @106:5
+  _8 = copy (*_1).0   @106:5
+  _9 = copy (*_8)[const i64 0]   @106:5
+  _10 = union %(Nil|Int) tag 1 (copy _9)   @106:5
+  _0 = copy _10   @106:5
   return   @106:5
 }
 
@@ -505,33 +509,37 @@ fn av.generics/first[String](_1: ref %Array(String)) -> ref str leaf @generics.a
   let _0: ref str
   let _1 (xs): ref %Array(String)
   let _2: i32
-  let _3: bool
-  let _4: i32
-  let _5: ref %elems(String)
-  let _6: ref str
+  let _3: i64
+  let _4: bool
+  let _5: i32
+  let _6: i64
+  let _7: ref %elems(String)
+  let _8: ref str
 
 bb0:
   _2 = copy (*_1).1   @103:8
-  _3 = eq copy _2, const i32 0   @103:14
-  branch copy _3, bb1, bb2   @103:3
+  _3 = cast copy _2 to i64   @103:8
+  _4 = eq copy _3, const i64 0   @103:14
+  branch copy _4, bb1, bb2   @103:3
 
 bb1:
   _0 = const ref str null   @104:5
   return   @104:5
 
 bb2:
-  _4 = copy (*_1).1   @106:5
-  check.bounds const i32 0, copy _4   @106:5
-  _5 = copy (*_1).0   @106:5
-  _6 = copy (*_5)[const i32 0]   @106:5
-  _0 = copy _6   @106:5
+  _5 = copy (*_1).1   @106:5
+  _6 = cast copy _5 to i64   @106:5
+  check.bounds const i64 0, copy _6   @106:5
+  _7 = copy (*_1).0   @106:5
+  _8 = copy (*_7)[const i64 0]   @106:5
+  _0 = copy _8   @106:5
   return   @106:5
 }
 
-fn av.generics/Box.wrap[Int](_1: addr %generics.Box, _2: i32) -> i32 leaf @generics.av:60:3 {
-  let _0: i32
+fn av.generics/Box.wrap[Int](_1: addr %generics.Box, _2: i64) -> i64 leaf @generics.av:60:3 {
+  let _0: i64
   let _1 (self): addr %generics.Box
-  let _2 (v): i32
+  let _2 (v): i64
 
 bb0:
   _0 = copy _2   @61:5
@@ -551,9 +559,9 @@ bb0:
 fn av.generics/Pt.show(_1: addr %generics.Pt) -> ref str frame @generics.av:69:3 {
   let _0: ref str
   let _1 (self): addr %generics.Pt slot
-  let _2: i32
+  let _2: i64
   let _3: ref str slot
-  let _4: i32
+  let _4: i64
   let _5: ref str slot
   let _6: ref str slot
   let _7: ref str slot
@@ -581,12 +589,12 @@ bb0:
   return   @70:5
 }
 
-fn av.generics/Pt.size(_1: addr %generics.Pt) -> i32 leaf @generics.av:73:3 {
-  let _0: i32
+fn av.generics/Pt.size(_1: addr %generics.Pt) -> i64 leaf @generics.av:73:3 {
+  let _0: i64
   let _1 (self): addr %generics.Pt
 
 bb0:
-  _0 = const i32 2   @74:5
+  _0 = const i64 2   @74:5
   return   @74:5
 }
 
@@ -594,7 +602,7 @@ fn av.generics/Pair(Int,String).swap(_1: addr %generics.Pair(Int,String)) -> %ge
   let _0: %generics.Pair(String,Int)
   let _1 (self): addr %generics.Pair(Int,String)
   let _2: ref str
-  let _3: i32
+  let _3: i64
   let _4: %generics.Pair(String,Int)
 
 bb0:
@@ -608,7 +616,7 @@ bb0:
 fn av.generics/Pair(String,Int).swap(_1: addr %generics.Pair(String,Int)) -> %generics.Pair(Int,String) leaf @generics.av:22:3 {
   let _0: %generics.Pair(Int,String)
   let _1 (self): addr %generics.Pair(String,Int)
-  let _2: i32
+  let _2: i64
   let _3: ref str
   let _4: %generics.Pair(Int,String)
 
@@ -652,14 +660,15 @@ fn av.generics/Stack(Int).initialize(_1: ref %generics.Stack(Int)) -> void frame
   let _2: ref %elems(Int) slot
   let _3: ref %Array(Int)
   let _4 (xs): ref %Array(Int)
-  let _5: i32
+  let _5: i64
   let _6: i32
-  let _7: %(Nil|Int)
-  let _8: bool
+  let _7: i64
+  let _8: %(Nil|Int)
   let _9: bool
   let _10: bool
-  let _11: ref %elems(Int)
-  let _12: i32
+  let _11: bool
+  let _12: ref %elems(Int)
+  let _13: i64
 
 bb0:
   _2 = zero   @33:3
@@ -674,44 +683,45 @@ bb0:
   _4 = copy _3   @34:5
   barrier copy _1   @35:16
   (*_1).0 = copy _4   @35:16
-  _5 = const i32 0   @36:19
+  _5 = const i64 0   @36:19
   _6 = copy (*_4).1   @36:19
-  _7 = union %(Nil|Int) tag 0   @36:19
-  _8 = ge copy _5, const i32 0   @36:19
-  _9 = lt copy _5, copy _6   @36:19
-  _10 = and copy _8, copy _9   @36:19
-  branch copy _10, bb1, bb2   @36:19
+  _7 = cast copy _6 to i64   @36:19
+  _8 = union %(Nil|Int) tag 0   @36:19
+  _9 = ge copy _5, const i64 0   @36:19
+  _10 = lt copy _5, copy _7   @36:19
+  _11 = and copy _9, copy _10   @36:19
+  branch copy _11, bb1, bb2   @36:19
 
 bb1:
-  _11 = copy (*_4).0   @36:19
-  _12 = copy (*_11)[copy _5]   @36:19
-  _7 = union %(Nil|Int) tag 1 (copy _12)   @36:19
+  _12 = copy (*_4).0   @36:19
+  _13 = copy (*_12)[copy _5]   @36:19
+  _8 = union %(Nil|Int) tag 1 (copy _13)   @36:19
   goto bb2   @36:19
 
 bb2:
-  (*_1).1 = copy _7   @36:15
+  (*_1).1 = copy _8   @36:15
   gc.leave   @33:3
   return   @33:3
 }
 
-fn av.generics/Stack(Int).push(_1: ref %generics.Stack(Int), _2: i32) -> void frame @generics.av:39:3 {
+fn av.generics/Stack(Int).push(_1: ref %generics.Stack(Int), _2: i64) -> void frame @generics.av:39:3 {
   let _1 (self): ref %generics.Stack(Int) slot
-  let _2 (v): i32
+  let _2 (v): i64
   let _3: ref %Array(Int) slot
   let _4: %(Nil|Int)
-  let _5: i32
-  let _6: i32
+  let _5: i64
+  let _6: i64
 
 bb0:
   _3 = zero   @39:3
   gc.enter   @39:3
   gc.roots _1, _3   @39:3
   _3 = copy (*_1).0   @40:5
-  call avant_array_push_i32(copy _3, copy _2) collects   @40:10
+  call avant_array_push_i64(copy _3, copy _2) collects   @40:10
   _4 = union %(Nil|Int) tag 1 (copy _2)   @41:17
   (*_1).1 = copy _4   @41:15
   _5 = copy (*_1).3   @42:16
-  _6 = add.chk copy _5, const i32 1   @42:16
+  _6 = add.chk copy _5, const i64 1   @42:16
   (*_1).3 = copy _6   @42:16
   gc.leave   @39:3
   return   @39:3
@@ -722,52 +732,60 @@ fn av.generics/Stack(Int).top(_1: ref %generics.Stack(Int)) -> %(Nil|Int) leaf @
   let _1 (self): ref %generics.Stack(Int)
   let _2: ref %Array(Int)
   let _3: i32
-  let _4: bool
-  let _5: %(Nil|Int)
-  let _6: ref %Array(Int)
-  let _7: i32
+  let _4: i64
+  let _5: bool
+  let _6: %(Nil|Int)
+  let _7: ref %Array(Int)
   let _8: i32
-  let _9: ref %Array(Int)
-  let _10: i32
-  let _11: ref %elems(Int)
+  let _9: i64
+  let _10: i64
+  let _11: ref %Array(Int)
   let _12: i32
-  let _13: %(Nil|Int)
+  let _13: i64
+  let _14: ref %elems(Int)
+  let _15: i64
+  let _16: %(Nil|Int)
 
 bb0:
   _2 = copy (*_1).0   @46:8
   _3 = copy (*_2).1   @46:13
-  _4 = eq copy _3, const i32 0   @46:19
-  branch copy _4, bb1, bb2   @46:5
+  _4 = cast copy _3 to i64   @46:13
+  _5 = eq copy _4, const i64 0   @46:19
+  branch copy _5, bb1, bb2   @46:5
 
 bb1:
-  _5 = union %(Nil|Int) tag 0   @47:14
-  _0 = copy _5   @47:7
+  _6 = union %(Nil|Int) tag 0   @47:14
+  _0 = copy _6   @47:7
   return   @47:7
 
 bb2:
-  _6 = copy (*_1).0   @49:11
-  _7 = copy (*_6).1   @49:16
-  _8 = sub copy _7, const i32 1   @49:22
-  _9 = copy (*_1).0   @49:5
-  _10 = copy (*_9).1   @49:10
-  check.bounds copy _8, copy _10   @49:10
-  _11 = copy (*_9).0   @49:10
-  _12 = copy (*_11)[copy _8]   @49:10
-  _13 = union %(Nil|Int) tag 1 (copy _12)   @49:10
-  _0 = copy _13   @49:10
+  _7 = copy (*_1).0   @49:11
+  _8 = copy (*_7).1   @49:16
+  _9 = cast copy _8 to i64   @49:16
+  _10 = sub copy _9, const i64 1   @49:22
+  _11 = copy (*_1).0   @49:5
+  _12 = copy (*_11).1   @49:10
+  _13 = cast copy _12 to i64   @49:10
+  check.bounds copy _10, copy _13   @49:10
+  _14 = copy (*_11).0   @49:10
+  _15 = copy (*_14)[copy _10]   @49:10
+  _16 = union %(Nil|Int) tag 1 (copy _15)   @49:10
+  _0 = copy _16   @49:10
   return   @49:10
 }
 
-fn av.generics/Stack(Int).size(_1: ref %generics.Stack(Int)) -> i32 leaf @generics.av:52:3 {
-  let _0: i32
+fn av.generics/Stack(Int).size(_1: ref %generics.Stack(Int)) -> i64 leaf @generics.av:52:3 {
+  let _0: i64
   let _1 (self): ref %generics.Stack(Int)
   let _2: ref %Array(Int)
   let _3: i32
+  let _4: i64
 
 bb0:
   _2 = copy (*_1).0   @53:5
   _3 = copy (*_2).1   @53:10
-  _0 = copy _3   @53:10
+  _4 = cast copy _3 to i64   @53:10
+  _0 = copy _4   @53:10
   return   @53:10
 }
 
@@ -776,13 +794,14 @@ fn av.generics/Stack(String).initialize(_1: ref %generics.Stack(String)) -> void
   let _2: ref %elems(String) slot
   let _3: ref %Array(String)
   let _4 (xs): ref %Array(String)
-  let _5: i32
+  let _5: i64
   let _6: i32
-  let _7: ref str
-  let _8: bool
+  let _7: i64
+  let _8: ref str
   let _9: bool
   let _10: bool
-  let _11: ref str
+  let _11: bool
+  let _12: ref str
 
 bb0:
   _2 = zero   @33:3
@@ -797,22 +816,23 @@ bb0:
   _4 = copy _3   @34:5
   barrier copy _1   @35:16
   (*_1).0 = copy _4   @35:16
-  _5 = const i32 0   @36:19
+  _5 = const i64 0   @36:19
   _6 = copy (*_4).1   @36:19
-  _7 = const ref str null   @36:19
-  _8 = ge copy _5, const i32 0   @36:19
-  _9 = lt copy _5, copy _6   @36:19
-  _10 = and copy _8, copy _9   @36:19
-  branch copy _10, bb1, bb2   @36:19
+  _7 = cast copy _6 to i64   @36:19
+  _8 = const ref str null   @36:19
+  _9 = ge copy _5, const i64 0   @36:19
+  _10 = lt copy _5, copy _7   @36:19
+  _11 = and copy _9, copy _10   @36:19
+  branch copy _11, bb1, bb2   @36:19
 
 bb1:
-  _11 = call avant_array_get_ptr(copy _4, copy _5) nocollect   @36:19
-  _7 = copy _11   @36:19
+  _12 = call avant_array_get_ptr(copy _4, copy _5) nocollect   @36:19
+  _8 = copy _12   @36:19
   goto bb2   @36:19
 
 bb2:
   barrier copy _1   @36:15
-  (*_1).1 = copy _7   @36:15
+  (*_1).1 = copy _8   @36:15
   gc.leave   @33:3
   return   @33:3
 }
@@ -821,8 +841,8 @@ fn av.generics/Stack(String).push(_1: ref %generics.Stack(String), _2: ref str) 
   let _1 (self): ref %generics.Stack(String) slot
   let _2 (v): ref str slot
   let _3: ref %Array(String) slot
-  let _4: i32
-  let _5: i32
+  let _4: i64
+  let _5: i64
 
 bb0:
   _3 = zero   @39:3
@@ -833,7 +853,7 @@ bb0:
   barrier copy _1   @41:15
   (*_1).1 = copy _2   @41:15
   _4 = copy (*_1).3   @42:16
-  _5 = add.chk copy _4, const i32 1   @42:16
+  _5 = add.chk copy _4, const i64 1   @42:16
   (*_1).3 = copy _5   @42:16
   gc.leave   @39:3
   return   @39:3
@@ -844,48 +864,56 @@ fn av.generics/Stack(String).top(_1: ref %generics.Stack(String)) -> ref str lea
   let _1 (self): ref %generics.Stack(String)
   let _2: ref %Array(String)
   let _3: i32
-  let _4: bool
-  let _5: ref %Array(String)
-  let _6: i32
+  let _4: i64
+  let _5: bool
+  let _6: ref %Array(String)
   let _7: i32
-  let _8: ref %Array(String)
-  let _9: i32
-  let _10: ref %elems(String)
-  let _11: ref str
+  let _8: i64
+  let _9: i64
+  let _10: ref %Array(String)
+  let _11: i32
+  let _12: i64
+  let _13: ref %elems(String)
+  let _14: ref str
 
 bb0:
   _2 = copy (*_1).0   @46:8
   _3 = copy (*_2).1   @46:13
-  _4 = eq copy _3, const i32 0   @46:19
-  branch copy _4, bb1, bb2   @46:5
+  _4 = cast copy _3 to i64   @46:13
+  _5 = eq copy _4, const i64 0   @46:19
+  branch copy _5, bb1, bb2   @46:5
 
 bb1:
   _0 = const ref str null   @47:7
   return   @47:7
 
 bb2:
-  _5 = copy (*_1).0   @49:11
-  _6 = copy (*_5).1   @49:16
-  _7 = sub copy _6, const i32 1   @49:22
-  _8 = copy (*_1).0   @49:5
-  _9 = copy (*_8).1   @49:10
-  check.bounds copy _7, copy _9   @49:10
-  _10 = copy (*_8).0   @49:10
-  _11 = copy (*_10)[copy _7]   @49:10
-  _0 = copy _11   @49:10
+  _6 = copy (*_1).0   @49:11
+  _7 = copy (*_6).1   @49:16
+  _8 = cast copy _7 to i64   @49:16
+  _9 = sub copy _8, const i64 1   @49:22
+  _10 = copy (*_1).0   @49:5
+  _11 = copy (*_10).1   @49:10
+  _12 = cast copy _11 to i64   @49:10
+  check.bounds copy _9, copy _12   @49:10
+  _13 = copy (*_10).0   @49:10
+  _14 = copy (*_13)[copy _9]   @49:10
+  _0 = copy _14   @49:10
   return   @49:10
 }
 
-fn av.generics/Stack(String).size(_1: ref %generics.Stack(String)) -> i32 leaf @generics.av:52:3 {
-  let _0: i32
+fn av.generics/Stack(String).size(_1: ref %generics.Stack(String)) -> i64 leaf @generics.av:52:3 {
+  let _0: i64
   let _1 (self): ref %generics.Stack(String)
   let _2: ref %Array(String)
   let _3: i32
+  let _4: i64
 
 bb0:
   _2 = copy (*_1).0   @53:5
   _3 = copy (*_2).1   @53:10
-  _0 = copy _3   @53:10
+  _4 = cast copy _3 to i64   @53:10
+  _0 = copy _4   @53:10
   return   @53:10
 }
 
@@ -894,14 +922,15 @@ fn av.generics/Stack(generics.Pair(Int,String)).initialize(_1: ref %generics.Sta
   let _2: ref %elems(generics.Pair(Int,String)) slot
   let _3: ref %Array(generics.Pair(Int,String))
   let _4 (xs): ref %Array(generics.Pair(Int,String))
-  let _5: i32
+  let _5: i64
   let _6: i32
-  let _7: %(Nil|generics.Pair(Int,String))
-  let _8: bool
+  let _7: i64
+  let _8: %(Nil|generics.Pair(Int,String))
   let _9: bool
   let _10: bool
-  let _11: ref %elems(generics.Pair(Int,String))
-  let _12: %generics.Pair(Int,String)
+  let _11: bool
+  let _12: ref %elems(generics.Pair(Int,String))
+  let _13: %generics.Pair(Int,String)
 
 bb0:
   _2 = zero   @33:3
@@ -916,23 +945,24 @@ bb0:
   _4 = copy _3   @34:5
   barrier copy _1   @35:16
   (*_1).0 = copy _4   @35:16
-  _5 = const i32 0   @36:19
+  _5 = const i64 0   @36:19
   _6 = copy (*_4).1   @36:19
-  _7 = union %(Nil|generics.Pair(Int,String)) tag 0   @36:19
-  _8 = ge copy _5, const i32 0   @36:19
-  _9 = lt copy _5, copy _6   @36:19
-  _10 = and copy _8, copy _9   @36:19
-  branch copy _10, bb1, bb2   @36:19
+  _7 = cast copy _6 to i64   @36:19
+  _8 = union %(Nil|generics.Pair(Int,String)) tag 0   @36:19
+  _9 = ge copy _5, const i64 0   @36:19
+  _10 = lt copy _5, copy _7   @36:19
+  _11 = and copy _9, copy _10   @36:19
+  branch copy _11, bb1, bb2   @36:19
 
 bb1:
-  _11 = copy (*_4).0   @36:19
-  _12 = copy (*_11)[copy _5]   @36:19
-  _7 = union %(Nil|generics.Pair(Int,String)) tag 1 (copy _12)   @36:19
+  _12 = copy (*_4).0   @36:19
+  _13 = copy (*_12)[copy _5]   @36:19
+  _8 = union %(Nil|generics.Pair(Int,String)) tag 1 (copy _13)   @36:19
   goto bb2   @36:19
 
 bb2:
   barrier copy _1   @36:15
-  (*_1).1 = copy _7   @36:15
+  (*_1).1 = copy _8   @36:15
   gc.leave   @33:3
   return   @33:3
 }
@@ -943,8 +973,8 @@ fn av.generics/Stack(generics.Pair(Int,String)).push(_1: ref %generics.Stack(gen
   let _3: ref %Array(generics.Pair(Int,String)) slot
   let _4: addr %generics.Pair(Int,String)
   let _5: %(Nil|generics.Pair(Int,String))
-  let _6: i32
-  let _7: i32
+  let _6: i64
+  let _7: i64
 
 bb0:
   _3 = zero   @39:3
@@ -957,7 +987,7 @@ bb0:
   barrier copy _1   @41:15
   (*_1).1 = copy _5   @41:15
   _6 = copy (*_1).3   @42:16
-  _7 = add.chk copy _6, const i32 1   @42:16
+  _7 = add.chk copy _6, const i64 1   @42:16
   (*_1).3 = copy _7   @42:16
   gc.leave   @39:3
   return   @39:3
@@ -968,52 +998,60 @@ fn av.generics/Stack(generics.Pair(Int,String)).top(_1: ref %generics.Stack(gene
   let _1 (self): ref %generics.Stack(generics.Pair(Int,String))
   let _2: ref %Array(generics.Pair(Int,String))
   let _3: i32
-  let _4: bool
-  let _5: %(Nil|generics.Pair(Int,String))
-  let _6: ref %Array(generics.Pair(Int,String))
-  let _7: i32
+  let _4: i64
+  let _5: bool
+  let _6: %(Nil|generics.Pair(Int,String))
+  let _7: ref %Array(generics.Pair(Int,String))
   let _8: i32
-  let _9: ref %Array(generics.Pair(Int,String))
-  let _10: i32
-  let _11: ref %elems(generics.Pair(Int,String))
-  let _12: %generics.Pair(Int,String)
-  let _13: %(Nil|generics.Pair(Int,String))
+  let _9: i64
+  let _10: i64
+  let _11: ref %Array(generics.Pair(Int,String))
+  let _12: i32
+  let _13: i64
+  let _14: ref %elems(generics.Pair(Int,String))
+  let _15: %generics.Pair(Int,String)
+  let _16: %(Nil|generics.Pair(Int,String))
 
 bb0:
   _2 = copy (*_1).0   @46:8
   _3 = copy (*_2).1   @46:13
-  _4 = eq copy _3, const i32 0   @46:19
-  branch copy _4, bb1, bb2   @46:5
+  _4 = cast copy _3 to i64   @46:13
+  _5 = eq copy _4, const i64 0   @46:19
+  branch copy _5, bb1, bb2   @46:5
 
 bb1:
-  _5 = union %(Nil|generics.Pair(Int,String)) tag 0   @47:14
-  _0 = copy _5   @47:7
+  _6 = union %(Nil|generics.Pair(Int,String)) tag 0   @47:14
+  _0 = copy _6   @47:7
   return   @47:7
 
 bb2:
-  _6 = copy (*_1).0   @49:11
-  _7 = copy (*_6).1   @49:16
-  _8 = sub copy _7, const i32 1   @49:22
-  _9 = copy (*_1).0   @49:5
-  _10 = copy (*_9).1   @49:10
-  check.bounds copy _8, copy _10   @49:10
-  _11 = copy (*_9).0   @49:10
-  _12 = copy (*_11)[copy _8]   @49:10
-  _13 = union %(Nil|generics.Pair(Int,String)) tag 1 (copy _12)   @49:10
-  _0 = copy _13   @49:10
+  _7 = copy (*_1).0   @49:11
+  _8 = copy (*_7).1   @49:16
+  _9 = cast copy _8 to i64   @49:16
+  _10 = sub copy _9, const i64 1   @49:22
+  _11 = copy (*_1).0   @49:5
+  _12 = copy (*_11).1   @49:10
+  _13 = cast copy _12 to i64   @49:10
+  check.bounds copy _10, copy _13   @49:10
+  _14 = copy (*_11).0   @49:10
+  _15 = copy (*_14)[copy _10]   @49:10
+  _16 = union %(Nil|generics.Pair(Int,String)) tag 1 (copy _15)   @49:10
+  _0 = copy _16   @49:10
   return   @49:10
 }
 
-fn av.generics/Stack(generics.Pair(Int,String)).size(_1: ref %generics.Stack(generics.Pair(Int,String))) -> i32 leaf @generics.av:52:3 {
-  let _0: i32
+fn av.generics/Stack(generics.Pair(Int,String)).size(_1: ref %generics.Stack(generics.Pair(Int,String))) -> i64 leaf @generics.av:52:3 {
+  let _0: i64
   let _1 (self): ref %generics.Stack(generics.Pair(Int,String))
   let _2: ref %Array(generics.Pair(Int,String))
   let _3: i32
+  let _4: i64
 
 bb0:
   _2 = copy (*_1).0   @53:5
   _3 = copy (*_2).1   @53:10
-  _0 = copy _3   @53:10
+  _4 = cast copy _3 to i64   @53:10
+  _0 = copy _4   @53:10
   return   @53:10
 }
 
@@ -1040,10 +1078,10 @@ bb0:
   _1 = zero   @27:1
   gc.enter   @27:1
   gc.roots _1   @27:1
-  _1 = call avant_alloc(const u64 32, const u32 2) collects   @27:1
+  _1 = call avant_alloc(const u64 40, const u32 2) collects   @27:1
   barrier copy _1   @30:3
   (*_1).2 = const str.16   @30:3
-  (*_1).3 = const i32 0   @31:3
+  (*_1).3 = const i64 0   @31:3
   call av.generics/Stack(Int).initialize(copy _1) collects   @27:1
   _0 = copy _1   @27:1
   gc.leave   @27:1
@@ -1061,7 +1099,7 @@ bb0:
   _1 = call avant_alloc(const u64 32, const u32 3) collects   @27:1
   barrier copy _1   @30:3
   (*_1).2 = const str.16   @30:3
-  (*_1).3 = const i32 0   @31:3
+  (*_1).3 = const i64 0   @31:3
   call av.generics/Stack(String).initialize(copy _1) collects   @27:1
   _0 = copy _1   @27:1
   gc.leave   @27:1
@@ -1079,7 +1117,7 @@ bb0:
   _1 = call avant_alloc(const u64 48, const u32 4) collects   @27:1
   barrier copy _1   @30:3
   (*_1).2 = const str.16   @30:3
-  (*_1).3 = const i32 0   @31:3
+  (*_1).3 = const i64 0   @31:3
   call av.generics/Stack(generics.Pair(Int,String)).initialize(copy _1) collects   @27:1
   _0 = copy _1   @27:1
   gc.leave   @27:1

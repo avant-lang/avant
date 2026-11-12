@@ -110,7 +110,23 @@ build() {
   timer=""
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
   # shellcheck disable=SC2086 # timer and the flag are words or empty
-  env -u AVANT_BACKEND timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null
+  env -u AVANT_BACKEND -u AVANT_ROOT $root_env timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null
+}
+
+# B links the seed's ABI (Stage 29 W-INT1, the bootstrap): the seed's code
+# generator has a 32-bit `Int`, so B, its output, links the copy of the
+# program objects runtime/build.sh builds with a 32-bit avant_int, laid
+# out as an Avant root (runtime/build/seed-abi); every compiler B builds,
+# and every program, links runtime/build (a 64-bit `Int`). The seed's
+# AVANT_ROOT rule (pipeline.av avant_root) picks the objects and the
+# header the seed compiles C against; the compiler imports no std module,
+# so nothing else is read from that root. This goes when a release with
+# the 64-bit `Int` is the seed.
+seed_root="runtime/build/seed-abi"
+need_seed_abi() {
+  [ -f "$seed_root/runtime/build/avant_rt.o" ] && return 0
+  echo "letters: $seed_root is missing: run sh runtime/build.sh (it builds the seed-ABI runtime B links)" >&2
+  exit 1
 }
 
 # B must carry no LLVM stack maps (the runtime walks none since W12r).
@@ -125,10 +141,10 @@ check_no_stackmaps() {
 for s in $steps; do
   case "$s" in
     runtime) timeout -k 10 300 sh runtime/build.sh < /dev/null ;;
-    b) build b "$seed/avant" bin/avant-b --debug && check_no_stackmaps bin/avant-b ;;
-    c-llvm) build c-llvm ./bin/avant-b bin/avant-c-llvm --debug --cpu=baseline ;;
-    d-llvm) build d-llvm ./bin/avant-c-llvm bin/avant-d-llvm --debug --cpu=baseline ;;
-    c-release) build c-release ./bin/avant-b bin/avant-c-release --release --cpu=baseline ;;
+    b) need_seed_abi; root_env="AVANT_ROOT=$root/$seed_root" build b "$seed/avant" bin/avant-b --debug && check_no_stackmaps bin/avant-b ;;
+    c-llvm) root_env= build c-llvm ./bin/avant-b bin/avant-c-llvm --debug --cpu=baseline ;;
+    d-llvm) root_env= build d-llvm ./bin/avant-c-llvm bin/avant-d-llvm --debug --cpu=baseline ;;
+    c-release) root_env= build c-release ./bin/avant-b bin/avant-c-release --release --cpu=baseline ;;
   esac
   rc=$?
   [ $rc -eq 0 ] || exit $rc

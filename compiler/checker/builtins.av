@@ -53,28 +53,13 @@ pub fn (checker_self: Checker) check_int_method(expr: Expr, object: Ty): Ty {
     return checker_self.expect_no_args(expr, checker_self.t_float(), "${object.show}.to_f takes no arguments")
   }
   if expr.callee == "abs" {
-    if object.is_uint64 {
-      checker_self.fail(expr.loc, "abs of a UInt64 is the value itself")
+    if object.is_unsigned {
+      checker_self.fail(expr.loc, "abs of a ${object.show} is the value itself")
     }
     return checker_self.expect_no_args(expr, object, "${object.show}.abs takes no arguments")
   }
-  if expr.callee == "to_i" {
-    return checker_self.expect_no_args(expr, checker_self.t_int(), "${object.show}.to_i takes no arguments")
-  }
-  if expr.callee == "to_i64" {
-    return checker_self.expect_no_args(expr, checker_self.t_int64(), "${object.show}.to_i64 takes no arguments")
-  }
-  if expr.callee == "to_u64" {
-    return checker_self.expect_no_args(expr, checker_self.t_uint64(), "${object.show}.to_u64 takes no arguments")
-  }
-  if expr.callee == "wrap_i" {
-    return checker_self.expect_no_args(expr, checker_self.t_int(), "${object.show}.wrap_i takes no arguments")
-  }
-  if expr.callee == "wrap_i64" {
-    return checker_self.expect_no_args(expr, checker_self.t_int64(), "${object.show}.wrap_i64 takes no arguments")
-  }
-  if expr.callee == "wrap_u64" {
-    return checker_self.expect_no_args(expr, checker_self.t_uint64(), "${object.show}.wrap_u64 takes no arguments")
+  if rt = int_conversion_ty(expr.callee) {
+    return checker_self.expect_no_args(expr, rt, "${object.show}.${expr.callee} takes no arguments")
   }
   checker_self.fail(expr.loc, "no method ${expr.callee} on ${object.show}")
   object
@@ -602,10 +587,12 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       return checker_self.t_void()
     }
     if e = array.inner {
-      if e.is_int {
-        got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
-        if !got.is_int {
-          checker_self.fail(expr.args[0].loc, "fill expects Int")
+      if e.is_integer {
+        // Any integer element (Stage 29 W-INT1: Int, Int32, UInt32,
+        // UInt64).
+        got = checker_self.check_expr_as(expr.args[0], e)
+        if !got.same_as(e) {
+          checker_self.fail(expr.args[0].loc, "fill expects ${e.show}")
         }
       } else if e.is_bool {
         got = checker_self.check_expr_as(expr.args[0], checker_self.t_bool())
@@ -613,7 +600,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
           checker_self.fail(expr.args[0].loc, "fill expects Bool")
         }
       } else {
-        checker_self.fail(expr.loc, "Array.fill is Int or Bool")
+        checker_self.fail(expr.loc, "Array.fill takes an integer or Bool element")
       }
     } else {
       checker_self.check_expr_as(expr.args[0], checker_self.t_int())
@@ -1065,11 +1052,11 @@ pub fn (checker_self: Checker) check_i32_bytes(expr: Expr): Ty {
   if expr.args.size == 1 {
     if b = expr.block {
       checker_self.fail(expr.loc, "${expr.callee} takes Array(Int)")
-      return checker_self.t_int()
+      return ty_int32()
     }
   } else {
     checker_self.fail(expr.loc, "${expr.callee} takes Array(Int)")
-    return checker_self.t_int()
+    return ty_int32()
   }
   got = checker_self.check_expr(expr.args[0])
   ok = false
@@ -1083,7 +1070,7 @@ pub fn (checker_self: Checker) check_i32_bytes(expr: Expr): Ty {
   if !ok {
     checker_self.fail(expr.args[0].loc, "${expr.callee} expects Array(Int)")
   }
-  checker_self.t_int()
+  ty_int32()
 }
 
 pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
@@ -1249,15 +1236,17 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     checker_self.fail(expr.loc, "wide_hi takes no arguments")
     return checker_self.t_int()
   }
+  // The 32-bit checksums (checksum_f64, checksum_str, crc32_bytes,
+  // sha256_word0) are Int32 (Stage 29 W-INT1): the bits they always had.
   if expr.callee == "checksum_f64" {
     if expr.args.size == 1 {
       if b = expr.block {
         checker_self.fail(expr.loc, "checksum_f64 takes one Float64")
-        return checker_self.t_int()
+        return ty_int32()
       }
     } else {
       checker_self.fail(expr.loc, "checksum_f64 takes one Float64")
-      return checker_self.t_int()
+      return ty_int32()
     }
     got = checker_self.check_expr(expr.args[0])
     if !got.is_numeric {
@@ -1266,24 +1255,26 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     if !got.is_float {
       expr.args[0].ty = checker_self.t_float()
     }
-    return checker_self.t_int()
+    return ty_int32()
   }
   if expr.callee == "checksum_str" {
-    return checker_self.check_one_string(expr, checker_self.t_int())
+    return checker_self.check_one_string(expr, ty_int32())
   }
   if expr.callee == "puts_u" {
     if expr.args.size == 1 {
       if b = expr.block {
-        checker_self.fail(expr.loc, "puts_u takes one Int")
+        checker_self.fail(expr.loc, "puts_u takes one integer")
         return checker_self.t_void()
       }
     } else {
-      checker_self.fail(expr.loc, "puts_u takes one Int")
+      checker_self.fail(expr.loc, "puts_u takes one integer")
       return checker_self.t_void()
     }
-    got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
-    if !got.is_int {
-      checker_self.fail(expr.args[0].loc, "puts_u expects Int")
+    // An integer, printed as the unsigned number of its bits at its own
+    // width (Stage 29 W-INT1: an Int as UInt64, an Int32 as UInt32).
+    got = checker_self.check_expr(expr.args[0])
+    if !got.is_integer {
+      checker_self.fail(expr.args[0].loc, "puts_u expects an integer")
     }
     return checker_self.t_void()
   }

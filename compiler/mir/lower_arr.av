@@ -163,7 +163,8 @@ pub fn (lw: MirLower) three(o: MOperand, p: MOperand, q: MOperand): Array(MOpera
 // The header of a new array whose buffer is _d (the old back end,
 // emit_array_header_at): allocated after the buffer, its data word
 // stored behind the header's barrier (the old back end barriers the
-// header after its three stores), size and cap set.
+// header after its three stores), size and cap set; n is the i32 the
+// header keeps (within the ceiling).
 pub fn (lw: MirLower) array_header(aty: Int, d: Int, n: MOperand): MOperand {
   b = lw.lw_b
   l = b.types.layout_of(aty)
@@ -203,7 +204,7 @@ pub fn (lw: MirLower) lower_array_lit(e: Expr): MOperand {
       return b.c_i32(0)
     }
     lw.at(e.elems[i].loc)
-    p = b.index(b.deref(b.pl(d)), b.c_i32(i))
+    p = b.index(b.deref(b.pl(d)), b.c_i64(i.to_i64))
     if rc {
       b.assign_fresh(p, b.rv_use(v))
     } else {
@@ -249,11 +250,15 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
     return b.c_i32(0)
   }
   lw.at(e.loc)
-  k = b.temp(mt_i32())
+  k = b.temp(mt_int())
   b.assign(b.pl(k), b.rv_use(nv))
-  neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(k), b.c_i32(0)))
+  neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(k), b.c_i64(0i64)))
   ok = lw.trap_open(neg, true)
   lw.trap_close(ok, "avant_trap_negative", lw.two(b.copy_local(k), b.c_i32(0)), e.loc)
+  // The ceiling (Stage 29 W-INT1): the header keeps a 32-bit size.
+  big = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(k), b.c_i64(2147483647i64)))
+  ok2 = lw.trap_open(big, true)
+  lw.trap_close(ok2, "avant_trap_size", lw.one(b.c_i32(2)), e.loc)
   n64 = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(k), mt_u64()))
   bytes = lw.tmp(mt_u64(), b.rv_bin(mop_mul(), n64, lw.elem_size(aty)))
   d = b.temp(b.types.ref_to(lw.elems_of(aty)))
@@ -277,15 +282,15 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
   if rc {
     b.barrier(d)
   }
-  lw.array_header(aty, d, b.copy_local(k))
+  lw.array_header(aty, d, lw.tmp(mt_i32(), b.rv_cast(b.copy_local(k), mt_i32())))
 }
 
 // for i in 0..n: the buffer's element i (_d's) = _v, or the zero's
 // strings when v is -1.
 pub fn (lw: MirLower) fill_loop(d: Int, n: Int, et: Int, want: Ty, v: Int) {
   b = lw.lw_b
-  i = b.temp(mt_i32())
-  b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  i = b.temp(mt_int())
+  b.assign(b.pl(i), b.rv_use(b.c_i64(0i64)))
   head = b.block
   body = b.block
   done = b.block
@@ -304,7 +309,7 @@ pub fn (lw: MirLower) fill_loop(d: Int, n: Int, et: Int, want: Ty, v: Int) {
   } else {
     lw.fresh_zero_strings(p, want, et)
   }
-  b.assign(b.pl(i), b.rv_bin(mop_add(), b.copy_local(i), b.c_i32(1)))
+  b.assign(b.pl(i), b.rv_bin(mop_add(), b.copy_local(i), b.c_i64(1i64)))
   b.goto(head)
   b.at(done)
 }
@@ -350,8 +355,15 @@ pub fn (lw: MirLower) seq_bounds(h: Int, i: MOperand, proven: Bool) {
     return
   }
   b = lw.lw_b
+  dummy = b.check_bounds(lw.dup(i), lw.seq_size(h))
+}
+
+// The size of the Array or Buf in _h as an Int: the header's i32,
+// sign-extended (Stage 29 W-INT1).
+pub fn (lw: MirLower) seq_size(h: Int): MOperand {
+  b = lw.lw_b
   n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 1))))
-  dummy = b.check_bounds(lw.dup(i), n)
+  lw.tmp(mt_int(), b.rv_cast(n, mt_int()))
 }
 
 // The element place of an Array or Buf held in _h at index i: the bounds
@@ -398,7 +410,7 @@ pub fn (lw: MirLower) lower_seq_index(e: Expr): MOperand {
     if lt = l.ty {
       if lt.is_buf {
         byte = lw.tmp(mt_u8(), b.rv_use(b.copy(p)))
-        return lw.tmp(mt_i32(), b.rv_cast(byte, mt_i32()))
+        return lw.tmp(mt_int(), b.rv_cast(byte, mt_int()))
       }
     }
   }
@@ -481,8 +493,8 @@ pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
           vty = et
           cur = lw.tmp(et, b.rv_use(b.copy(lw.clone_place(p2))))
           if ct.is_buf {
-            vty = mt_i32()
-            cur = lw.tmp(mt_i32(), b.rv_cast(cur, mt_i32()))
+            vty = mt_int()
+            cur = lw.tmp(mt_int(), b.rv_cast(cur, mt_int()))
           }
           rhs = lw.lower_expr(v)
           if lw.failed {
@@ -507,10 +519,10 @@ pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
 // unsigned compare; LLVM drops it where v is known to be a byte).
 pub fn (lw: MirLower) byte_of(v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
-  x = b.temp(mt_i32())
+  x = b.temp(mt_int())
   b.assign(b.pl(x), b.rv_use(v))
-  u = lw.tmp(mt_u32(), b.rv_cast(b.copy_local(x), mt_u32()))
-  inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), u, b.c_u32(255)))
+  u = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(x), mt_u64()))
+  inside = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), u, b.c_u64(255i64)))
   ok = lw.trap_open(inside, false)
   lw.trap_close(ok, "avant_trap_byte", lw.one(b.copy_local(x)), loc)
   lw.tmp(mt_u8(), b.rv_cast(b.copy_local(x), mt_u8()))
@@ -531,6 +543,9 @@ pub fn (lw: MirLower) kind_fn(base: String, et: Int, has_ptr: Bool): String {
   }
   if et == mt_u64() {
     return "${base}_u64"
+  }
+  if et == mt_u32() {
+    return "${base}_u32"
   }
   if et == mt_f64() {
     return "${base}_f64"
@@ -590,18 +605,28 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
       lw.arr_push(h, aty, et, v)
       return zero
     }
-    if et == mt_bool() {
+    if et == mt_bool() || et == mt_u32() {
       v = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
     }
     if name == "fill" {
       f = "avant_array_fill_i32"
       if et == mt_bool() {
         f = "avant_array_fill_u8"
+      } else if et == mt_i64() || et == mt_u64() {
+        f = "avant_array_fill_i64"
+        if et == mt_u64() {
+          v = lw.tmp(mt_i64(), b.rv_cast(v, mt_i64()))
+        }
       }
       b.call(-1, f, lw.two(b.copy_local(h), v))
       return zero
     }
-    cf = lw.kind_fn("avant_array_contains", et, true)
+    // An Array(UInt32) is searched by its bits, as Int32's.
+    cet = et
+    if et == mt_u32() {
+      cet = mt_i32()
+    }
+    cf = lw.kind_fn("avant_array_contains", cet, true)
     if cf.size == 0 {
       lw.refuse(e.loc, "Array.contains on ${want.show}")
       return zero
@@ -620,7 +645,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   lw.at(e.loc)
   h2 = lw.hold(a2, aty)
   if name == "size" {
-    return lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h2)), 1))))
+    return lw.seq_size(h2)
   }
   if name == "reserve" && args.size == 1 {
     // The receiver, then the count (builtins.av:1309-1330).
@@ -694,6 +719,10 @@ pub fn (lw: MirLower) arr_push(h: Int, aty: Int, et: Int, v: MOperand) {
   b = lw.lw_b
   if et == mt_i32() {
     b.call(-1, "avant_array_push_i32", lw.two(b.copy_local(h), v))
+    return
+  }
+  if et == mt_i64() {
+    b.call(-1, "avant_array_push_i64", lw.two(b.copy_local(h), v))
     return
   }
   if b.types.is_refkind(et) {

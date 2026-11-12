@@ -1,19 +1,19 @@
 module coerce
 file 0 "coerce.av"
 
-layout %coerce.Node = class { 0 v: i32 }  size 4 align 4 id 1
+layout %coerce.Node = class { 0 v: i64 }  size 8 align 8 id 1
 layout %coerce.Oops = class { 0 message: ref str }  size 8 align 8 id 2
 layout %coerce.Taker = class { }  size 0 align 1 id 3
-layout %coerce.Box(Int) = class { 0 last: %(Nil|Int) }  size 8 align 4 id 4
-layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i32 }  size 8 align 4
-layout %(Nil|Int|coerce.Oops) = union { 0 tag: i32, 1 m0: i32, 2 m1: ref %coerce.Oops }  size 16 align 8
-layout %coerce.Slot = struct { 0 k: i32, 1 node: ref %coerce.Node }  size 16 align 8
+layout %coerce.Box(Int) = class { 0 last: %(Nil|Int) }  size 16 align 8 id 4
+layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i64 }  size 16 align 8
+layout %(Nil|Int|coerce.Oops) = union { 0 tag: i32, 1 m0: i64, 2 m1: ref %coerce.Oops }  size 24 align 8
+layout %coerce.Slot = struct { 0 k: i64, 1 node: ref %coerce.Node }  size 16 align 8
 
 const str.0 = "none"
 const str.1 = "neg"
 const str.2 = "int "
 const str.3 = "oops"
-const str.4 = "%d\0A"
+const str.4 = "%lld\0A"
 const str.5 = "nil node"
 const str.6 = "s"
 const str.7 = "nil"
@@ -30,16 +30,16 @@ extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_str(ref str) -> void never
-extern avant_str_cat_i32(ref str, i32) -> ref str collects
+extern avant_str_cat_i32(ref str, i64) -> ref str collects
 extern printf(ref str, ...) -> i32 never
 
-fn av.coerce/opt(_1: %(Nil|Int)) -> i32 leaf @coerce.av:59:1 {
-  let _0: i32
+fn av.coerce/opt(_1: %(Nil|Int)) -> i64 leaf @coerce.av:59:1 {
+  let _0: i64
   let _1 (o): %(Nil|Int)
-  let _2: i32
+  let _2: i64
   let _3: i32
   let _4: bool
-  let _5: i32
+  let _5: i64
 
 bb0:
   _3 = copy _1.0   @60:5
@@ -47,7 +47,7 @@ bb0:
   branch copy _4, bb1, bb2   @60:5
 
 bb1:
-  _2 = const i32 -1   @60:5
+  _2 = const i64 -1   @60:5
   goto bb3   @60:5
 
 bb2:
@@ -88,7 +88,7 @@ fn av.coerce/widen(_1: %(Nil|Int)) -> %(Nil|Int|coerce.Oops) leaf @coerce.av:67:
   let _1 (o): %(Nil|Int)
   let _2: %(Nil|Int|coerce.Oops)
   let _3: i32
-  let _4: i32
+  let _4: i64
 
 bb0:
   _2 = zero   @68:3
@@ -109,9 +109,9 @@ bb3:
   return   @68:3
 }
 
-fn av.coerce/kind(_1: i32) -> %(Nil|Int|coerce.Oops) frame @coerce.av:71:1 {
+fn av.coerce/kind(_1: i64) -> %(Nil|Int|coerce.Oops) frame @coerce.av:71:1 {
   let _0: %(Nil|Int|coerce.Oops)
-  let _1 (n): i32
+  let _1 (n): i64
   let _2: bool
   let _3: %(Nil|Int|coerce.Oops)
   let _4: bool
@@ -122,7 +122,7 @@ fn av.coerce/kind(_1: i32) -> %(Nil|Int|coerce.Oops) frame @coerce.av:71:1 {
 bb0:
   gc.enter   @71:1
   gc.roots   @71:1
-  _2 = eq copy _1, const i32 0   @72:8
+  _2 = eq copy _1, const i64 0   @72:8
   branch copy _2, bb1, bb2   @72:3
 
 bb1:
@@ -132,7 +132,7 @@ bb1:
   return   @73:5
 
 bb2:
-  _4 = gt copy _1, const i32 0   @75:8
+  _4 = gt copy _1, const i64 0   @75:8
   branch copy _4, bb3, bb4   @75:3
 
 bb3:
@@ -153,8 +153,8 @@ fn av.coerce/desc(_1: %(Nil|Int|coerce.Oops)) -> ref str frame @coerce.av:84:1 {
   let _0: ref str
   let _1 (u): %(Nil|Int|coerce.Oops)
   let _2: i32
-  let _3: i32
-  let _4 (i): i32
+  let _3: i64
+  let _4 (i): i64
   let _5: ref str
   let _6: ref %coerce.Oops
   let _7: bool
@@ -198,8 +198,8 @@ fn av.coerce/oops_of(_1: %(Nil|Int|coerce.Oops)) -> ref %coerce.Oops leaf @coerc
   let _3: ref %coerce.Oops
   let _4: i32
   let _5: ref %coerce.Oops
-  let _6: i32
-  let _7 (i): i32
+  let _6: i64
+  let _7 (i): i64
 
 bb0:
   _2 = copy _1.0   @95:8
@@ -236,25 +236,25 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @coerce.av:99:1 {
   let _6: ref %coerce.Node
   let _7: bool
   let _8 (n): ref %coerce.Node
-  let _9: i32
+  let _9: i64
   let _10: %coerce.Slot
   let _11 (t): %coerce.Slot
   let _12: ref %coerce.Node
   let _13: bool
   let _14 (n2): ref %coerce.Node
-  let _15: i32
+  let _15: i64
   let _16: %(Nil|Int)
-  let _17: i32
+  let _17: i64
   let _18: %(Nil|Int)
-  let _19: i32
+  let _19: i64
   let _20: ref str
   let _21: ref str
   let _22: ref %coerce.Taker
   let _23 (tk): ref %coerce.Taker
   let _24: %(Nil|Int)
-  let _25: i32
+  let _25: i64
   let _26: %(Nil|Int)
-  let _27: i32
+  let _27: i64
   let _28: %(Nil|Int)
   let _29: %(Nil|Int|coerce.Oops)
   let _30: ref str
@@ -280,23 +280,23 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @coerce.av:99:1 {
   let _50: ref %coerce.Box(Int)
   let _51 (b): ref %coerce.Box(Int)
   let _52: %(Nil|Int)
-  let _53: i32
+  let _53: i64
   let _54: i32
   let _55: bool
-  let _56: i32
+  let _56: i64
   let _57: %(Nil|Int)
-  let _58: i32
+  let _58: i64
   let _59: i32
   let _60: bool
-  let _61: i32
+  let _61: i64
 
 bb0:
   gc.enter   @99:1
   gc.roots _2   @99:1
   call __avant_type_maps() nocollect   @99:1
   call avant_io_init_argv(copy _1, copy _2) collects   @99:1
-  _3 = call av.coerce/Node.new(const i32 2) collects   @100:30
-  _4 = struct %coerce.Slot (const i32 1, copy _3)   @100:7
+  _3 = call av.coerce/Node.new(const i64 2) collects   @100:30
+  _4 = struct %coerce.Slot (const i64 1, copy _3)   @100:7
   _5 = copy _4   @100:5
   _6 = copy _5.1   @101:11
   _7 = ne copy _6, const ref %coerce.Node null   @101:3
@@ -309,7 +309,7 @@ bb1:
   goto bb2   @101:3
 
 bb2:
-  _10 = struct %coerce.Slot (const i32 2, const ref %coerce.Node null)   @104:7
+  _10 = struct %coerce.Slot (const i64 2, const ref %coerce.Node null)   @104:7
   _11 = copy _10   @104:5
   _12 = copy _11.1   @105:12
   _13 = ne copy _12, const ref %coerce.Node null   @105:3
@@ -326,7 +326,7 @@ bb4:
   goto bb5   @105:3
 
 bb5:
-  _16 = union %(Nil|Int) tag 1 (const i32 5)   @110:12
+  _16 = union %(Nil|Int) tag 1 (const i64 5)   @110:12
   _17 = call av.coerce/opt(copy _16) nocollect   @110:8
   call printf(const str.4, copy _17) nocollect   @110:3
   _18 = union %(Nil|Int) tag 0   @111:12
@@ -338,13 +338,13 @@ bb5:
   call avant_puts_str(copy _21) nocollect   @113:3
   _22 = call av.coerce/Taker.new() collects   @114:13
   _23 = copy _22   @114:6
-  _24 = union %(Nil|Int) tag 1 (const i32 7)   @115:16
+  _24 = union %(Nil|Int) tag 1 (const i64 7)   @115:16
   _25 = call av.coerce/Taker.take(copy _23, copy _24) nocollect   @115:10
   call printf(const str.4, copy _25) nocollect   @115:3
   _26 = union %(Nil|Int) tag 0   @116:16
   _27 = call av.coerce/Taker.take(copy _23, copy _26) nocollect   @116:10
   call printf(const str.4, copy _27) nocollect   @116:3
-  _28 = union %(Nil|Int) tag 1 (const i32 4)   @117:19
+  _28 = union %(Nil|Int) tag 1 (const i64 4)   @117:19
   _29 = call av.coerce/widen(copy _28) nocollect   @117:13
   _30 = call av.coerce/desc(copy _29) collects   @117:8
   _32 = eq copy _30, const ref str null   @117:23
@@ -376,7 +376,7 @@ bb10:
 
 bb11:
   call avant_puts_str(copy _36) nocollect   @118:3
-  _38 = call av.coerce/kind(const i32 3) collects   @119:13
+  _38 = call av.coerce/kind(const i64 3) collects   @119:13
   _39 = call av.coerce/desc(copy _38) collects   @119:8
   _41 = eq copy _39, const ref str null   @119:22
   branch copy _41, bb12, bb13   @119:22
@@ -391,7 +391,7 @@ bb13:
 
 bb14:
   call avant_puts_str(copy _40) nocollect   @119:3
-  _42 = call av.coerce/kind(const i32 0) collects   @120:13
+  _42 = call av.coerce/kind(const i64 0) collects   @120:13
   _43 = call av.coerce/desc(copy _42) collects   @120:8
   _45 = eq copy _43, const ref str null   @120:22
   branch copy _45, bb15, bb16   @120:22
@@ -406,7 +406,7 @@ bb16:
 
 bb17:
   call avant_puts_str(copy _44) nocollect   @120:3
-  _46 = call av.coerce/kind(const i32 -1) collects   @121:13
+  _46 = call av.coerce/kind(const i64 -1) collects   @121:13
   _47 = call av.coerce/desc(copy _46) collects   @121:8
   _49 = eq copy _47, const ref str null   @121:23
   branch copy _49, bb18, bb19   @121:23
@@ -429,7 +429,7 @@ bb20:
   branch copy _55, bb21, bb22   @123:15
 
 bb21:
-  _53 = const i32 0   @123:15
+  _53 = const i64 0   @123:15
   goto bb23   @123:15
 
 bb22:
@@ -439,14 +439,14 @@ bb22:
 
 bb23:
   call printf(const str.4, copy _53) nocollect   @123:3
-  call av.coerce/Box(Int).put(copy _51, const i32 9) nocollect   @124:4
+  call av.coerce/Box(Int).put(copy _51, const i64 9) nocollect   @124:4
   _57 = copy (*_51).0   @125:9
   _59 = copy _57.0   @125:15
   _60 = eq copy _59, const i32 0   @125:15
   branch copy _60, bb24, bb25   @125:15
 
 bb24:
-  _58 = const i32 0   @125:15
+  _58 = const i64 0   @125:15
   goto bb26   @125:15
 
 bb25:
@@ -461,9 +461,9 @@ bb26:
   return   @99:1
 }
 
-fn av.coerce/Node.initialize(_1: ref %coerce.Node, _2: i32) -> void leaf @coerce.av:21:3 {
+fn av.coerce/Node.initialize(_1: ref %coerce.Node, _2: i64) -> void leaf @coerce.av:21:3 {
   let _1 (self): ref %coerce.Node
-  let _2 (v): i32
+  let _2 (v): i64
 
 bb0:
   (*_1).0 = copy _2   @22:12
@@ -498,14 +498,14 @@ bb0:
   return   @51:3
 }
 
-fn av.coerce/Taker.take(_1: ref %coerce.Taker, _2: %(Nil|Int)) -> i32 leaf @coerce.av:54:3 {
-  let _0: i32
+fn av.coerce/Taker.take(_1: ref %coerce.Taker, _2: %(Nil|Int)) -> i64 leaf @coerce.av:54:3 {
+  let _0: i64
   let _1 (self): ref %coerce.Taker
   let _2 (o): %(Nil|Int)
-  let _3: i32
+  let _3: i64
   let _4: i32
   let _5: bool
-  let _6: i32
+  let _6: i64
 
 bb0:
   _4 = copy _2.0   @55:7
@@ -513,7 +513,7 @@ bb0:
   branch copy _5, bb1, bb2   @55:7
 
 bb1:
-  _3 = const i32 -1   @55:7
+  _3 = const i64 -1   @55:7
   goto bb3   @55:7
 
 bb2:
@@ -533,9 +533,9 @@ bb0:
   return   @42:3
 }
 
-fn av.coerce/Box(Int).put(_1: ref %coerce.Box(Int), _2: i32) -> void leaf @coerce.av:45:3 {
+fn av.coerce/Box(Int).put(_1: ref %coerce.Box(Int), _2: i64) -> void leaf @coerce.av:45:3 {
   let _1 (self): ref %coerce.Box(Int)
-  let _2 (v): i32
+  let _2 (v): i64
   let _3: %(Nil|Int)
 
 bb0:
@@ -544,15 +544,15 @@ bb0:
   return   @45:3
 }
 
-fn av.coerce/Node.new(_1: i32) -> ref %coerce.Node frame @coerce.av:18:1 {
+fn av.coerce/Node.new(_1: i64) -> ref %coerce.Node frame @coerce.av:18:1 {
   let _0: ref %coerce.Node
-  let _1 (v): i32
+  let _1 (v): i64
   let _2: ref %coerce.Node
 
 bb0:
   gc.enter   @18:1
   gc.roots   @18:1
-  _2 = call avant_alloc(const u64 4, const u32 1) collects   @18:1
+  _2 = call avant_alloc(const u64 8, const u32 1) collects   @18:1
   call av.coerce/Node.initialize(copy _2, copy _1) nocollect   @18:1
   _0 = copy _2   @18:1
   gc.leave   @18:1
@@ -596,7 +596,7 @@ fn av.coerce/Box(Int).new() -> ref %coerce.Box(Int) frame @coerce.av:39:1 {
 bb0:
   gc.enter   @39:1
   gc.roots   @39:1
-  _1 = call avant_alloc(const u64 8, const u32 4) collects   @39:1
+  _1 = call avant_alloc(const u64 16, const u32 4) collects   @39:1
   _2 = union %(Nil|Int) tag 0   @40:14
   (*_1).0 = copy _2   @40:3
   call av.coerce/Box(Int).initialize(copy _1) nocollect   @39:1

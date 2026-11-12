@@ -43,12 +43,12 @@ int32_t avant_crc32_i32(void *arr) {
   uint32_t crc = 0xFFFFFFFFu;
   int32_t i = 0;
   int32_t n = 0;
-  const int32_t *src = NULL;
+  const avant_int *src = NULL;
   if (a && a->buf && a->size > 0) {
     n = a->size;
-    src = (const int32_t *)a->buf;
+    src = (const avant_int *)a->buf;
   }
-  /* Slicing by 4: the same CRC recurrence applied to four bytes at
+  /* The bytes are an Array(Int)'s elements (avant_int). Slicing by 4: the same CRC recurrence applied to four bytes at
    * once through the derived tables; the result is bit-identical. */
   for (; i + 4 <= n; i += 4) {
     uint32_t c = crc ^ (uint8_t)(src[i] & 255);
@@ -181,18 +181,25 @@ int32_t avant_sha256_word0(void *arr) {
   AvantArray *a = (AvantArray *)arr;
   int32_t i;
   int32_t n = 0;
-  const int32_t *src = NULL;
+  const avant_int *src = NULL;
   if (a && a->buf && a->size > 0) {
     n = a->size;
-    src = (const int32_t *)a->buf;
+    src = (const avant_int *)a->buf;
   }
   /* Eight independent chains (index i & 7): eight steps at a time keep
    * the same per-element arithmetic and the same result. */
   for (i = 0; i + 8 <= n; i += 8) {
     int k;
+    /* The 64-bit elements' low bytes first, as 32-bit lanes, so the chains
+     * vectorize as they did over 32-bit elements (Stage 29 W-INT1: 3.6x
+     * the instructions on Hash::SHA256 without it). */
+    uint32_t lane[8];
+    for (k = 0; k < 8; k++) {
+      lane[k] = (uint32_t)src[i + k] & 255u;
+    }
     for (k = 0; k < 8; k++) {
       uint32_t hash = hashes[k];
-      hash = ((hash << 5) + hash) + (uint8_t)(src[i + k] & 255);
+      hash = ((hash << 5) + hash) + lane[k];
       hash = (hash + (hash << 10)) ^ (hash >> 6);
       hashes[k] = hash;
     }

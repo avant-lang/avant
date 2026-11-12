@@ -1,6 +1,7 @@
 // The C scalar types (Stage 29 W1b, D64 as amended): Int8, Int16, UInt8,
-// UInt16, UInt32 and Float32 in `fun` signatures and C layout fields,
-// seen in Avant as Int, Int64 (UInt32) and Float64 (Float32). Values from
+// UInt16 and Float32 in `fun` signatures and C layout fields, seen in
+// Avant as Int and Float64 (Float32); UInt32 is an everyday type since
+// Stage 29 W-INT1, passed as itself. Values from
 // C convert exactly (the extremes of each type included); values to C
 // keep their value (an integer out of the C type's range traps, see
 // tests/cases/test_ffi_llvm.av); a C layout with narrow fields has C's
@@ -27,9 +28,9 @@ lib cs {
   fun cs_min_i8: Int8
   fun cs_sum(a: Int8, b: UInt8, c: Int16, d: UInt16, e: UInt32, f: Float32): Float64
   fun cs_pix_new: Ptr(CsPix)
-  fun cs_pix_size: Int
-  fun cs_pix_off_id: Int
-  fun cs_pix_off_gain: Int
+  fun cs_pix_size: Int32
+  fun cs_pix_off_id: Int32
+  fun cs_pix_off_gain: Int32
   fun cs_pix_fill(p: Ptr(CsPix))
   fun cs_pix_total(p: Ptr(CsPix)): Float64
 }
@@ -41,14 +42,14 @@ fn main {
   puts(cs.cs_inc_u8(255))
   puts(cs.cs_neg_i16(-32767))
   puts(cs.cs_dbl_u16(30000))
-  puts(cs.cs_inc_u32(4294967294i64))
+  puts(cs.cs_inc_u32(4294967294))
   m = cs.cs_max_u32()
   puts(m)
-  puts(m + 1i64)
+  puts(m.to_i + 1)
   puts(cs.cs_min_i8())
   puts(cs.cs_half_f32(3.0))
   puts((cs.cs_widen_f32(0.1) * 1000000000.0).to_i)
-  puts(cs.cs_sum(-1, 2, -3, 4, 5i64, 0.5))
+  puts(cs.cs_sum(-1, 2, -3, 4, 5, 0.5))
   puts(cs.cs_pix_size())
   puts(cs.cs_pix_off_id())
   puts(cs.cs_pix_off_gain())
@@ -60,7 +61,7 @@ fn main {
   p.w = 65534
   p.h = -32768
   p.tag = 127
-  p.id = 4294967295i64
+  p.id = 4294967295
   p.gain = 1.5
   puts("${p.r} ${p.g} ${p.w} ${p.h} ${p.tag} ${p.id} ${p.gain}")
   puts(cs.cs_pix_total(p) - 4294967295.0)
