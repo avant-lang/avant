@@ -47,6 +47,12 @@ fn testing_has(hay: String, needle: String): Bool {
   false
 }
 
+// A write's failure, or nil.
+fn testing_write_failure(r: Int | IoError): IoError? {
+  _ = r?
+  nil
+}
+
 fn testing_read(path: String): String {
   if text = file_read(path) {
     return text
@@ -80,6 +86,7 @@ pub class Test {
   depth: Int = 0
   mode: Int = 0
   dup: Bool = false
+  lost: Bool = false
   only: String = ""
   names_path: String = ""
   names: Array(String)
@@ -94,6 +101,7 @@ pub class Test {
     self.depth = 0
     self.mode = 0
     self.dup = false
+    self.lost = false
     self.only = ""
     self.names_path = ""
     self.names = []
@@ -210,7 +218,24 @@ pub class Test {
       }
     }
     b.push_str("</testsuite>\n")
-    _ = file_write(frag, b.to_s)
+    // The runner builds its report from these fragments: one that is
+    // not written is a report without this process's checks, so the
+    // run fails and says why (O416, Stage 29 W-FIX1d; the failure was
+    // dropped).
+    if e = testing_write_failure(file_write(frag, b.to_s)) {
+      report_lost("the JUnit fragment was not written: ${e.message}")
+    }
+  }
+
+  // A write the runner depends on failed: the line, once per message
+  // kind, and a failed run (`finish` returns 1, and the process cannot
+  // exit 0).
+  fn report_lost(what: String) {
+    if !self.lost {
+      testing_write("FAIL ${what}")
+    }
+    self.lost = true
+    avant_testing_status.avant_test_fail()
   }
 
   fn pass_line(name: String) {
@@ -337,7 +362,12 @@ pub class Test {
       b.push_str("\n")
       i += 1
     }
-    _ = file_write(self.names_path, b.to_s)
+    // The runner starts the parallel bodies from this file: if it is
+    // not written they never run, so the run fails and says why (O416;
+    // the failure was dropped).
+    if e = testing_write_failure(file_write(self.names_path, b.to_s)) {
+      report_lost("the parallel names were not written, so the parallel tests cannot run: ${e.message}")
+    }
   }
 
   pub fn parallel(name: String, body: fn(): Nil): Nil {
@@ -355,8 +385,22 @@ pub class Test {
       }
       return nil
     }
-    if self.names_path.size > 0 && remember_parallel(name) {
-      write_parallel_names()
+    if self.names_path.size > 0 {
+      if remember_parallel(name) {
+        write_parallel_names()
+      }
+      return nil
+    }
+    // No runner is listening (`avant run`, or the compiled binary run
+    // directly; O320, Stage 29 W-FIX1d): nothing would start this body
+    // in a process of its own, so it runs here, in source order. Before,
+    // it was skipped without a word and `finish` reported the serial
+    // checks alone with status 0. The names are checked as the runner
+    // checks them.
+    if remember_parallel(name) {
+      self.depth += 1
+      body()
+      self.depth -= 1
     }
     nil
   }
@@ -486,7 +530,7 @@ pub class Test {
       return 0
     }
     testing_write("${self.failed} failed, ${self.passed} passed")
-    if self.failed > 0 || self.dup {
+    if self.failed > 0 || self.dup || self.lost {
       return 1
     }
     0

@@ -574,6 +574,14 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
       i += 1
       continue
     }
+    if ao = lw.arg_frame_op(name) {
+      // A lambda in a default captures an earlier parameter (O546): the
+      // argument's operand goes into a box of its own first.
+      lw.bind_name(name, e.cap_tys[i], lw.ty_at(e.cap_tys[i], e.loc, "a capture"), lw.dup(ao), e.loc, true)
+      if lw.failed {
+        return zero
+      }
+    }
     p = lw.capture_box(name, e.cap_tys[i], e.loc)
     lw.at(e.loc)
     b.barrier(env)
@@ -628,7 +636,7 @@ pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
   lw.at(e.loc)
   h = b.temp(fty)
   b.assign(b.pl(h), b.rv_use(f))
-  args = lw.lower_args_to(e.args, e.cap_tys)
+  args = lw.lower_args_to(e.args, e.cap_tys, 0u64)
   if lw.failed {
     return zero
   }

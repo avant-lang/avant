@@ -289,7 +289,9 @@ static void emit_fun(Emit *e, CXCursor cursor) {
     emit_type(e, ret);
     /* A char * result may be NULL ("absent", "failed"): String? reads it
      * as nil, where a String result traps on NULL (Stage 29 W4b2, D295
-     * R15). Parameters stay String. */
+     * R15). Parameters stay String. This is the only union a binding
+     * gets: the test is emit_type's own for String, and a `fun`
+     * signature refuses every union but an optional reference (O549). */
     if (uret.kind == CXType_Pointer && is_char_type(unwrap(clang_getPointeeType(uret)))) {
       fputs("?", e->out);
     }

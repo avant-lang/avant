@@ -169,6 +169,11 @@ pub class MirLower {
   lw_err: String = ""
   pub lw_fn_syms: Hash(String, String)
   pub lw_vars: Hash(String, Int)
+  // The arguments of the calls being lowered whose defaults may name an
+  // earlier parameter (O546): each hidden name (ast arg_frame_name) with
+  // the operand lowered for that argument, innermost call last.
+  pub lw_arg_names: Array(String)
+  pub lw_arg_ops: Array(MOperand)
   pub lw_heads: Array(Int)
   pub lw_exits: Array(Int)
   pub lw_ret: Int = 0
@@ -198,6 +203,8 @@ pub class MirLower {
     self.lw_err = ""
     self.lw_fn_syms = Hash(String, String).new
     self.lw_vars = Hash(String, Int).new
+    self.lw_arg_names = []
+    self.lw_arg_ops = []
     self.lw_heads = []
     self.lw_exits = []
     self.lw_fn_loc = program.loc
@@ -224,6 +231,16 @@ pub class MirLower {
       r = str_slice(r, 0, r.size - 1)
     }
     self.lw_err = r
+  }
+
+  // A failure that is not a refusal of a construct (a file the build
+  // needs could not be written): the message as given. The first failure
+  // wins, as with refuse.
+  pub fn fail_build(message: String) {
+    if self.lw_err.size > 0 {
+      return
+    }
+    self.lw_err = message
   }
 
   pub fn failed: Bool {
@@ -426,6 +443,8 @@ pub class MirLower {
 
   pub fn begin_at(loc: Location) {
     self.lw_vars = Hash(String, Int).new
+    self.lw_arg_names = []
+    self.lw_arg_ops = []
     self.lw_heads = []
     self.lw_exits = []
     self.lw_fn_loc = loc

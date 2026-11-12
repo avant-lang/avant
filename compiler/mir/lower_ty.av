@@ -40,23 +40,11 @@ pub fn mir_scalar_ty(t: Ty): Int {
   -1
 }
 
-// An optional reference (Stage 29 W3b, B13): a union of exactly `Nil`
-// and one reference type (a class, `String`, `Bytes`, `Array`, `Hash`,
-// `Buf`, a `JoinHandle`) is that reference's one pointer, `nil` the null
-// pointer; its reference member, or nil for any other type. Every other
-// union keeps the tag-and-payloads layout (2.4).
+// An optional reference is its reference's one pointer, `nil` the null
+// pointer (type.av ty_opt_ref); every other union keeps the
+// tag-and-payloads layout (2.4).
 pub fn mir_opt_ref(t: Ty): Ty? {
-  if !t.is_union || t.members.size != 2 {
-    return nil
-  }
-  for m in t.members {
-    if !m.is_nil && (m.is_class || m.is_string || m.is_bytes || m.is_array || m.is_hash || m.is_buf || m.is_join) {
-      if t.includes_nil {
-        return m
-      }
-    }
-  }
-  nil
+  ty_opt_ref(t)
 }
 
 pub fn mir_is_opt_ref(t: Ty): Bool {

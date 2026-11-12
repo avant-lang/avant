@@ -1312,7 +1312,7 @@ fn main {
 ```
 
 - A default is evaluated at each call that leaves its argument out. It belongs to the function's own module: it may call that module's private functions, and a name in it never means something of the caller's (a function, a method or a local of the same name), however the call is written.
-- A default may name an earlier parameter (`fn span(a: Int, b: Int = a + 1)`). Today the argument's expression is then evaluated a second time for the default, so `span(next())` calls `next` twice: pass a variable when the argument has an effect.
+- A default may name an earlier parameter (`fn span(a: Int, b: Int = a + 1)`). It reads that parameter's value, with its declared type: the argument is evaluated once, so `span(next())` calls `next` once.
 - A method whose parameters all have defaults may be called without parentheses, like a method without parameters: `conn.recv` is `conn.recv()`.
 
 ### Operator methods
@@ -2395,6 +2395,8 @@ A mutable object reaches another task only inside a `Mutex`, or as the results o
 
 The pool has one thread per online processor, counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number; the runtime removes the flag before `argv()` sees it. Tasks beyond the pool's size wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
 
+A task that waits (in a channel's `recv` or `send`, or for a `Mutex`) keeps its pool thread while it waits. If every pool thread is held by a task waiting for something that only a task still in the queue would do, nothing can run and the program hangs without a message: with `--threads 2`, two consumers waiting in `recv` keep a producer spawned after them from ever starting. Spawn the tasks that send before the ones that wait for them, or keep fewer waiting tasks than the pool has threads.
+
 ## Memory
 
 Memory is managed for you: allocate with `Type.new`, literals and `push`, and nothing is freed by hand. No program needs a setting from this section. What is worth knowing is where the collector costs time today.
@@ -2506,6 +2508,7 @@ A `lib NAME { ... }` block holds `fun` declarations: `fun` for a C function, `fn
 
 - A `String` argument is passed as a `char *`.
 - A result declared `String?` is a `char *` that may be NULL: NULL reads as `nil`, and passing `nil` passes NULL. A result declared `String` is a promise that the string is there: a NULL traps, naming the function (`avant runtime: C function c.getenv returned NULL for String (declare String?)`).
+- The only unions a `fun` signature may use are the optional references, each one pointer with `nil` as NULL: `String?`, `Bytes?`, and an array, a hash, a `Buf` or a class with `?`. Any other union (`Int?`, `Int | String`, `Ptr(T)?`) is a compile error there: C has one word in that place, and such a union is a tag and a payload.
 - C++ is reached only through `extern "C"` functions.
 
 ### C types
@@ -2564,7 +2567,7 @@ fn main {
 
 `Ptr(T)` is for a layout `T`, and `Ptr(Void)` for a pointer you only pass around. A `Ptr` of anything else (`Ptr(Int)`) has no fields to read and cannot be given methods. Memory you got from C is C's: the collector neither moves nor frees it. There is no `sizeof` yet: the size passed to `malloc` is yours to state.
 
-A `Ptr` can be NULL (an unchecked `malloc`), and Avant has no test for that yet. A field read or written through a NULL `Ptr` is a segmentation fault, as in C: the program ends with no Avant message, and what it had printed without flushing is lost. Check in C before handing the pointer over. Do not declare a `fun` result `Ptr(T)?` to get a test: it compiles today and reads the wrong thing. A `String` field that C left NULL (or that `release` made null) reads as `""`.
+A `Ptr` can be NULL (an unchecked `malloc`), and Avant has no test for that yet. A field read or written through a NULL `Ptr` is a segmentation fault, as in C: the program ends with no Avant message, and what it had printed without flushing is lost. Check in C before handing the pointer over. A `fun` signature cannot say `Ptr(T)?` to get a test: it is refused, because `Ptr(T)?` is not a nullable pointer today (it would be read as a tag and a pointer). A `String` field that C left NULL (or that `release` made null) reads as `""`.
 
 ### Strings in C memory
 
@@ -3015,6 +3018,8 @@ fn main {
 
 `Http.get(url, follow = true, timeout_ms = 10000)`, `Http.post(url, body, ...)` with a `String` body, and `Http.request(method, url, body, headers, ...)` with `body` as `Bytes` and `headers` as an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`), return `Response | HttpError`. A call blocks its thread until the response is complete, so do not make one from a server handler: `spawn` first.
 
+`timeout_ms` is a deadline for the whole call: the connection, the request, the complete response, and every redirect the call follows. When it passes first, the call returns an `HttpError` (`request to 127.0.0.1:8080 timed out`), whatever part of a response had arrived; a server that keeps sending slowly does not extend it. The deadline is kept within a few milliseconds. Zero or less means the default, 10000.
+
 #### WebSocket server
 
 WebSocket routes share the HTTP server and its port. A handler runs once per complete message.
@@ -3037,7 +3042,7 @@ fn main {
 ```
 
 - A message is text (`msg.text` is its `String`, `msg.is_text`) or binary (`msg.body`, `msg.is_binary`). `msg.body` is always the payload.
-- On a connection: `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")`; each returns `Bool`.
+- On a connection: `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")`; each returns `Bool`: `false` when the connection is closed or its send queue is full. A `WsConn` kept after its connection closed, or after `serve` returned, answers `false` to all four.
 - `websocket_open(path) { |conn| ... }` and `websocket_close(path) { |conn, code, reason| ... }` run once per connection (code 1006 when it dropped without a close frame).
 - Ping, the close handshake and fragmentation are handled for you. A message over `max_message` (1 MiB by default) closes the connection with code 1009 and never reaches the handler. `server.close` sends code 1001 to open connections.
 - A connection stays on its loop thread. To answer from a `spawn` block, capture `conn.sender` and send through that.
@@ -3059,7 +3064,9 @@ fn main {
 }
 ```
 
-`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError`. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Never call `recv` from a server handler. A connection that is never closed keeps its thread until the process exits.
+`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError`; its `timeout_ms` is the deadline for the connection and its handshake. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Never call `recv` from a server handler. A connection that is never closed keeps its thread until the process exits.
+
+After `close`, every copy of the connection answers as closed, whatever connections are opened later: `send_text` and `send_bytes` return `false`, `recv` returns `nil`, `close_code` is 1006, and another `close` does nothing. A `WsConnection` may be captured by a `spawn` block, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return `nil`.
 
 ### std.zlib
 
@@ -3236,7 +3243,7 @@ fn main: Int {
 }
 ```
 
-In each of those processes the file runs again, but serial checks and `t.test` bodies are skipped and only that one parallel body runs; code in `main` outside those bodies runs in every process. `avant run` on the file runs it once, without the parallel bodies: only `avant test` starts them.
+In each of those processes the file runs again, but serial checks and `t.test` bodies are skipped and only that one parallel body runs; code in `main` outside those bodies runs in every process. Only `avant test` starts those processes. `avant run` on the file, or the compiled file run as a program, runs it once with every body in that one process, in source order: the same checks, without the overlap.
 
 ### Test settings
 
