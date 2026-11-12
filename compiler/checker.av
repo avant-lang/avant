@@ -133,14 +133,9 @@ pub class Checker {
   // Inside the block of `Array(T).new(n) { |i| ... }` (how deep): a
   // `break` or `continue` there gets its own message.
   pub in_build: Int = 0
-  // While a spliced default is checked (check_default_arg; how deep):
-  // the caller's context, for the copies of its arguments inside the
-  // default.
-  pub arg_default: Int = 0
-  pub def_mod: String = ""
-  pub def_scopes: Array(Scope) = []
-  pub def_self: Ty? = nil
-  pub def_self_name: String = ""
+  // The calls whose defaults name an earlier parameter, counted
+  // (fill_defaults): each gets the next number as its argument frame.
+  pub arg_frames: Int = 0
   // The variables of the `for` loops being checked (D329, Stage 29
   // W-FIX1b): each one's name, the scope that holds it, and 3 for a
   // range's counter or 4 for an array's element (the parser's for_kind
@@ -1196,12 +1191,6 @@ pub class Checker {
   pub fn check_expr_flag(expr: Expr, has_want: Bool, want: Ty): Ty {
     if self.has_err {
       return t_int()
-    }
-    // Inside a spliced default (check_default_arg): a copy of an earlier
-    // argument of the call, standing in for its parameter, is the
-    // caller's expression and is checked in the caller's context.
-    if expr.caller_copy && self.arg_default > 0 {
-      return check_caller_copy(expr, has_want, want)
     }
     mark = self.err_count
     kind = check_expr_core(expr, has_want, want)
@@ -3387,13 +3376,13 @@ pub class Checker {
               if i < pre.size {
                 got = pre[i]
               } else {
-                got = check_default_arg(expr, i, sig.params[i], sig.node)
+                got = check_default_arg(expr, i, sig.params, sig.node)
               }
             } else {
               if i < arg_tys.size {
                 got = arg_tys[i]
               } else {
-                got = check_default_arg(expr, i, sig.params[i], sig.node)
+                got = check_default_arg(expr, i, sig.params, sig.node)
               }
             }
             if i < sig.params.size {

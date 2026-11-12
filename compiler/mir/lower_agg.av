@@ -598,7 +598,7 @@ pub fn (lw: MirLower) lower_struct_lit(e: Expr): MOperand {
 pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String, args: Array(Expr)): MOperand {
   b = lw.lw_b
   ret = lw.ety(e)
-  ops = lw.lower_args_to(args, lw.callee_params(e.resolved, e))
+  ops = lw.lower_args_to(args, lw.callee_params(e.resolved, e), e.int_bits)
   if lw.failed {
     return b.c_i32(0)
   }
@@ -634,7 +634,7 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
 pub fn (lw: MirLower) lower_named_call(e: Expr): MOperand? {
   if sym = lw.lw_fn_syms.get(e.resolved) {
     ret = lw.ety(e)
-    args = lw.lower_args_to(e.args, lw.callee_params(e.resolved, e))
+    args = lw.lower_args_to(e.args, lw.callee_params(e.resolved, e), e.int_bits)
     if lw.failed {
       return lw.lw_b.c_i32(0)
     }

@@ -174,10 +174,6 @@ pub class Expr {
   // wrote. This flag and the next share the four flags' word: the node's
   // size is unchanged.
   pub is_default: Bool = false
-  // Inside such a default, a copy of one of the caller's arguments
-  // standing in for the parameter the default names: checked where the
-  // caller wrote it, not where the default was declared.
-  pub caller_copy: Bool = false
   pub mod_name: String = ""
   pub splice: Expr? = nil
 
@@ -784,7 +780,6 @@ pub fn clone_expr(e: Expr): Expr {
   out.type_call = e.type_call
   out.fn_ref = e.fn_ref
   out.is_default = e.is_default
-  out.caller_copy = e.caller_copy
   out.resolved = e.resolved
   out.spawn_thunk = e.spawn_thunk
   if sp = e.splice {
@@ -1104,12 +1099,28 @@ pub fn subst_function_types(fnn: Function, from: Array(String), to: Array(TypeNa
   subst_type_in_stmts(fnn.body, from, to)
 }
 
+// The hidden name of argument j of the call whose argument frame is
+// frame (checker/match.av fill_defaults): no name a program can write.
+pub fn arg_frame_name(frame: UInt64, j: Int): String {
+  "$${frame}.${j}"
+}
+
+// Each name of from in e becomes a copy of the node of to at the same
+// index. A node of to without an ident is a hidden argument name that
+// has not been needed yet (its frame in int_bits, its index in op): it is
+// named at its first use, so the caller can tell which were used.
 pub fn rewrite_expr_names(e: Expr, from: Array(String), to: Array(Expr)): Expr {
   if e.kind == ex_name() {
     i = 0
     while i < from.size {
       if e.ident == from[i] {
-        return clone_expr(to[i])
+        t = to[i]
+        if t.ident.size == 0 {
+          t.ident = arg_frame_name(t.int_bits, t.op)
+        }
+        c = Expr.new(ex_name(), t.loc)
+        c.ident = t.ident
+        return c
       }
       i += 1
     }
@@ -1134,7 +1145,34 @@ pub fn rewrite_expr_names(e: Expr, from: Array(String), to: Array(Expr)): Expr {
     e.inner = rewrite_expr_names(x, from, to)
   }
   if b = e.block {
-    rewrite_stmt_names_body(b.body, from, to)
+    // A block's own parameter hides an outer name of the same spelling.
+    hidden = false
+    for bp in b.params {
+      for fname in from {
+        if bp == fname {
+          hidden = true
+        }
+      }
+    }
+    if hidden {
+      from2: Array(String) = []
+      to2: Array(Expr) = []
+      for k in 0..from.size {
+        keep = true
+        for bp in b.params {
+          if bp == from[k] {
+            keep = false
+          }
+        }
+        if keep {
+          from2.push(from[k])
+          to2.push(to[k])
+        }
+      }
+      rewrite_stmt_names_body(b.body, from2, to2)
+    } else {
+      rewrite_stmt_names_body(b.body, from, to)
+    }
   }
   if x = e.size_expr {
     e.size_expr = rewrite_expr_names(x, from, to)

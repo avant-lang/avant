@@ -439,6 +439,7 @@ fn test_modules(c: Checks) {
     test_fn_scopes(c, compiler, dir)
     test_field_privacy(c, compiler, dir)
     test_default_modules(c, compiler, dir)
+    test_default_once(c, compiler, dir)
     test_generic_modules(c, compiler, dir)
     test_same_name_methods(c, compiler, dir)
   } else {
@@ -504,13 +505,32 @@ fn test_field_privacy(c: Checks, compiler: String, dir: String) {
 // without parentheses, a type-level function. Before, only the qualified
 // call did; the others reported `unknown function secret`, or called the
 // calling module's function of that name. An earlier parameter named by a
-// default is the caller's argument, checked as the caller wrote it.
+// default is that parameter's value (test_default_once).
 fn test_default_modules(c: Checks, compiler: String, dir: String) {
   write_av(dir, "dlib", "fn secret: Int {\n  7\n}\n\npub fn pick(n: Int = secret()): Int {\n  n\n}\n\npub fn span(a: Int, b: Int = a + secret()): Int {\n  a * 100 + b\n}\n\npub fn same(a: String, b: String = a): String {\n  \"\${a}\${b}\"\n}\n\npub class Box {\n  pub v: Int = 0\n\n  fn initialize(v: Int = secret()) {\n    self.v = v\n  }\n\n  pub fn plus(k: Int = secret()): Int {\n    v + k\n  }\n\n  pub fn self.make(k: Int = secret()): Int {\n    k\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn far(k: Int = secret()): Int {\n    x + k\n  }\n}\n\npub fn (s: String) pad(k: Int = secret()): Int {\n  s.size + k\n}\n")
   write_av(dir, "dplain", "import dlib\n\nfn main {\n  puts(dlib.pick())\n  puts(pick())\n  b = Box.new\n  puts(b.v)\n  puts(b.plus())\n  puts(b.plus)\n  puts(Box.make())\n  puts(Box.make)\n  p = Pt { x: 1 }\n  puts(p.far)\n  puts(\"ab\".pad)\n}\n")
   mod_runs(c, compiler, dir, "dplain", "7\n7\n7\n14\n14\n7\n7\n8\n9\n", "a default names a function private to its module: every call form")
   write_av(dir, "dsame", "import dlib\n\nfn secret: Int {\n  1000\n}\n\nfn mine: Int {\n  3\n}\n\nclass User {\n  n: Int = 0\n\n  fn secret: Int {\n    5000\n  }\n\n  fn go: Int {\n    pick() + Box.new.plus\n  }\n}\n\nfn wrap(x: T): Int {\n  pick() + Box.new.v\n}\n\nfn main {\n  puts(dlib.pick())\n  puts(pick())\n  b = Box.new\n  puts(b.v)\n  puts(b.plus())\n  puts(b.plus)\n  puts(Box.make())\n  puts(Box.make)\n  puts(User.new.go)\n  puts(wrap(1) + wrap(\"s\"))\n  secret = { |k: Int| k + 90000 }\n  puts(pick() + secret(1))\n  x = 4\n  puts(span(x + mine()))\n  puts(span(1, 2))\n  puts(same(\"ab\"))\n  puts(dsame.secret())\n}\n")
   mod_runs(c, compiler, dir, "dsame", "7\n7\n7\n14\n14\n7\n7\n21\n28\n90008\n714\n102\nabab\n1000\n", "the calling module's function, method and local of the same name do not capture a default")
+}
+
+// A default that names an earlier parameter reads that parameter's value
+// (O546, Stage 29 W-FIX1d): the argument as the call passes it, evaluated
+// once, with the parameter's declared type. Before, a copy of the
+// argument's expression stood in for the name: the argument ran once for
+// its parameter and once more for each mention (`pair(tick(t))` left two
+// ticks and returned 1102), and again each time a lambda in the default
+// ran; a default that used an optional parameter as declared, or called a
+// function with such a default of its own, did not compile. Every call
+// path counts its ticks: functions unqualified, imported and qualified,
+// two defaults in a row, a constructor, a method of a class and of a
+// struct, a type-level function, a generic function's instance.
+fn test_default_once(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "olib", "pub class Tally {\n  pub n: Int = 0\n}\n\npub fn tick(t: Tally): Int {\n  t.n += 1\n  t.n\n}\n\npub fn pair(a: Int, b: Int = a + 100): Int {\n  a * 1000 + b\n}\n\npub fn triple(a: Int, b: Int = a + 1, c: Int = a + b): Int {\n  a * 10000 + b * 100 + c\n}\n\npub fn outer(a: Int, b: Int = pair(a)): Int {\n  a * 100000 + b\n}\n\npub class Box {\n  pub v: Int\n  pub w: Int\n\n  pub fn initialize(v: Int, w: Int = v * 2) {\n    self.v = v\n    self.w = w\n  }\n\n  pub fn add(a: Int, b: Int = a + 100): Int {\n    self.v + a * 1000 + b\n  }\n\n  pub fn self.make(a: Int, b: Int = a + 100): Int {\n    a * 1000 + b\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn shift(a: Int, b: Int = a + 100): Int {\n    self.x + a * 1000 + b\n  }\n}\n\npub fn same(a: T, b: T = a): T {\n  b\n}\n")
+  write_av(dir, "oeval", "import olib\n\nfn pair2(a: Int, b: Int = a + 100): Int {\n  a * 1000 + b\n}\n\nfn opt(a: Int?, b: Int = a ?? 7): Int {\n  b\n}\n\nfn text(a: String, b: Int = a.size): Int {\n  b\n}\n\nfn apply(a: Int, f: fn(Int): Int = { |x| x + a }): Int {\n  f(1) + f(2)\n}\n\nfn shadow(a: Int, f: fn(Int): Int = { |a| a * 2 }): Int {\n  f(a + 1)\n}\n\nfn twice(a: Int, b: Int = apply(a)): Int {\n  a + b\n}\n\nfn main {\n  t = Tally.new\n  puts(\"unqualified \${pair2(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"imported \${pair(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"qualified \${olib.pair(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"two defaults \${triple(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  b = Box.new(tick(t))\n  puts(\"constructor \${b.v} \${b.w} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"method \${b.add(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"type-level \${Box.make(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  p = Pt { x: 5 }\n  puts(\"struct method \${p.shift(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"generic \${same(tick(t))} ticks \${t.n}\")\n  puts(\"literal \${pair2(7)} string \${text(\"abc\")}\")\n  t = Tally.new\n  puts(\"both written \${pair2(tick(t), tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"lambda \${apply(tick(t) * 10)} ticks \${t.n}\")\n}\n")
+  mod_runs(c, compiler, dir, "oeval", "unqualified 1101 ticks 1\nimported 1101 ticks 1\nqualified 1101 ticks 1\ntwo defaults 10203 ticks 1\nconstructor 1 2 ticks 1\nmethod 1102 ticks 1\ntype-level 1101 ticks 1\nstruct method 1106 ticks 1\ngeneric 1 ticks 1\nliteral 7107 string 3\nboth written 1002 ticks 2\nlambda 23 ticks 1\n", "an argument a default names is evaluated once on every call path")
+  write_av(dir, "odecl", "import olib\n\nfn pair2(a: Int, b: Int = a + 100): Int {\n  a * 1000 + b\n}\n\nfn opt(a: Int?, b: Int = a ?? 7): Int {\n  b\n}\n\nfn text(a: String, b: Int = a.size): Int {\n  b\n}\n\nfn apply(a: Int, f: fn(Int): Int = { |x| x + a }): Int {\n  f(1) + f(2)\n}\n\nfn shadow(a: Int, f: fn(Int): Int = { |a| a * 2 }): Int {\n  f(a + 1)\n}\n\nfn twice(a: Int, b: Int = apply(a)): Int {\n  a + b\n}\n\nfn main {\n  t = Tally.new\n  puts(\"nested \${outer(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"optional \${opt(tick(t))} \${opt(nil)} ticks \${t.n}\")\n  t = Tally.new\n  run: fn(Int): Int = { |k|\n    apply(tick(t) * 10) + k\n  }\n  puts(\"inside a lambda \${run(1000)} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"lambda through a default \${twice(tick(t) * 10)} ticks \${t.n}\")\n  a = 99\n  puts(\"a block's own parameter \${shadow(5)}; the caller's a \${apply(3)} \${a}\")\n}\n")
+  mod_runs(c, compiler, dir, "odecl", "nested 101101 ticks 1\noptional 1 7 ticks 1\ninside a lambda 1023 ticks 1\nlambda through a default 33 ticks 1\na block's own parameter 12; the caller's a 9 99\n", "a default reads its earlier parameter as declared: optional, through another default, in a lambda")
 }
 
 // An imported generic takes types of the module that uses it (O255,

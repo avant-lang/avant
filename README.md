@@ -1312,7 +1312,7 @@ fn main {
 ```
 
 - A default is evaluated at each call that leaves its argument out. It belongs to the function's own module: it may call that module's private functions, and a name in it never means something of the caller's (a function, a method or a local of the same name), however the call is written.
-- A default may name an earlier parameter (`fn span(a: Int, b: Int = a + 1)`). Today the argument's expression is then evaluated a second time for the default, so `span(next())` calls `next` twice: pass a variable when the argument has an effect.
+- A default may name an earlier parameter (`fn span(a: Int, b: Int = a + 1)`). It reads that parameter's value, with its declared type: the argument is evaluated once, so `span(next())` calls `next` once.
 - A method whose parameters all have defaults may be called without parentheses, like a method without parameters: `conn.recv` is `conn.recv()`.
 
 ### Operator methods

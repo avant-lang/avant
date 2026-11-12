@@ -203,6 +203,11 @@ pub fn (lw: MirLower) lower_name(e: Expr): MOperand {
   if e.fn_ref {
     return lw.lower_fn_ref(e)
   }
+  if lw.lw_arg_names.size > 0 {
+    if o = lw.arg_frame_op(e.ident) {
+      return lw.dup(o)
+    }
+  }
   if e.implicit_field || lw.is_struct_self(e) || lw.mutex_index(e.ident) >= 0 {
     return lw.lower_place_read(e)
   }
