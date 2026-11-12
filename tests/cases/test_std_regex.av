@@ -1,6 +1,24 @@
 import harness
 import std.regex
 
+lib c {
+  fun setenv(name: String, value: String, overwrite: Int32): Int32
+}
+
+fn set_env(name: String, value: String) {
+  one: Int32 = 1
+  _ = c.setenv(name, value, one)
+}
+
+fn repeated(piece: String, n: Int, tail: String): String {
+  b = buf_new()
+  for i in 0..n {
+    b.push_str(piece)
+  }
+  b.push_str(tail)
+  b.to_s
+}
+
 fn regex_child(c: Checks, compiler: String, stamp: Int, tag: String, body: String, compile_has: String, compile_lacks: String, out: String) {
   src = "${scratch()}/regex-${stamp}-${tag}.av"
   bin = "${scratch()}/regex-${stamp}-${tag}.bin"
@@ -245,6 +263,49 @@ fn test_std_regex(c: Checks) {
   }
   twin_b.close
 
+  // PCRE2's failures are not "no match" (Stage 29 W-FIX1a, P40). A
+  // match that nests deeper than the JIT's 32 KiB stack is answered: by
+  // the JIT on a larger stack, and past that by the interpreter (reached
+  // here by shrinking that stack with the suite's internal variable
+  // AVANT_RE_JIT_STACK_KB). It used to be nil, and count 0.
+  deep_pat = "((a)|(b))*"
+  deep_pat = deep_pat + "c"
+  deep = must_compile(c, deep_pat, false, "deep")
+  deep_text = repeated("ab", 20000, "c")
+  if m = deep.find(deep_text) {
+    c.eq_int(m.end - m.start, 40001, "a match deeper than the JIT's own stack is found")
+  } else {
+    c.expect(false, "a match deeper than the JIT's own stack is found")
+  }
+  c.eq_int(deep.count(deep_text), 1, "and counted")
+  set_env("AVANT_RE_JIT_STACK_KB", "64")
+  if m = deep.find(deep_text) {
+    c.eq_int(m.end - m.start, 40001, "past the JIT's larger stack the interpreter finds it")
+  } else {
+    c.expect(false, "past the JIT's larger stack the interpreter finds it")
+  }
+  c.eq_int(deep.count(deep_text), 1, "and counts it")
+  set_env("AVANT_RE_JIT_STACK_KB", "")
+  deep.close
+
+  // Groups past the 63rd are read: the span pairs were capped at 64, so
+  // they read as "did not take part".
+  many = must_compile(c, repeated("(x)", 70, ""), false, "seventy groups")
+  if m = many.find(repeated("x", 70, "")) {
+    c.eq_int(m.group_count, 70, "seventy groups counted")
+    c.eq_str(m.group(63) ?? "nil", "x", "group 63")
+    c.eq_str(m.group(64) ?? "nil", "x", "group 64 took part")
+    c.eq_str(m.group(70) ?? "nil", "x", "group 70 took part")
+    if sp = m.span(70) {
+      c.eq_int(sp.lo, 69, "group 70 span")
+    } else {
+      c.expect(false, "group 70 span")
+    }
+  } else {
+    c.expect(false, "seventy groups match")
+  }
+  many.close
+
   scoped_len = 0
   if re = Regex.compile("q+") {
     re.scoped { |r|
@@ -287,6 +348,24 @@ fn test_std_regex(c: Checks) {
     fourth = one_arg("names")
     fourth.push("4")
     regex_trap_run(c, cbin, stamp, "names-4", fourth, "aa\nc\n", trap)
+
+    // P40: a match that reaches PCRE2's match limit traps, naming the
+    // operation: (a+)+$ on forty a's, a b and "aaa" has a match (the last
+    // three a's), but the attempt at the first a backtracks past the
+    // limit. It used to read as "no match": find nil, count 0, replace
+    // and split the text unchanged, the iterator done.
+    limits = "import std.regex\n\nfn main {\n  args = argv()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  p = \"(a+)+\"\n  p = p + \"\$\"\n  b = buf_new()\n  for i in 0..40 {\n    b.push_str(\"a\")\n  }\n  b.push_str(\"b aaa\")\n  text = b.to_s\n  if re = Regex.compile(p) {\n    puts(\"start\")\n    if mode == \"find\" {\n      if m = re.find(text) {\n        puts(m.start)\n      } else {\n        puts(\"nil\")\n      }\n    }\n    if mode == \"count\" {\n      puts(re.count(text))\n    }\n    if mode == \"replace\" {\n      puts(re.replace(text, \"X\"))\n    }\n    if mode == \"split\" {\n      puts(re.split(text).size)\n    }\n    if mode == \"matches\" {\n      it = re.matches(text)\n      if m = it.next {\n        puts(m.start)\n      } else {\n        puts(\"nil\")\n      }\n    }\n  }\n}\n"
+    lsrc = "${scratch()}/regex-${stamp}-limits.av"
+    lbin = "${scratch()}/regex-${stamp}-limits.bin"
+    _ = file_write(lsrc, limits)
+    c.eq_int(compile_av(compiler, lsrc, lbin, "${scratch()}/regex-${stamp}-limits.log"), 0, "compile limits")
+    chmod_x(lbin)
+    said = "match limit exceeded (PCRE2 error -47)"
+    regex_trap_run(c, lbin, stamp, "limit-find", one_arg("find"), "start\n", "avant runtime: Regex.find: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-count", one_arg("count"), "start\n", "avant runtime: Regex.count: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-replace", one_arg("replace"), "start\n", "avant runtime: Regex.replace: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-split", one_arg("split"), "start\n", "avant runtime: Regex.split: ${said}")
+    regex_trap_run(c, lbin, stamp, "limit-matches", one_arg("matches"), "start\n", "avant runtime: Regex.matches: ${said}")
   }
 }
 
