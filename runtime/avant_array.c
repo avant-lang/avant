@@ -1098,10 +1098,13 @@ static int order_by_rank(avant_int *sa, const int32_t *rank, avant_int *tmp, int
     count[i] = sum;
     sum += c;
   }
+  /* The counts are below n: read as unsigned, the slot is a plain 32-bit
+   * load (a sign-extending load of a just-stored count forwards slowly:
+   * Compress::BWTEncode 437 -> 320 ms, the same instructions). */
   if (add <= 0) {
     for (i = 0; i < n; i++) {
       int32_t idx = (int32_t)sa[i];
-      tmp[count[rank[idx]]++] = idx;
+      tmp[(uint32_t)count[rank[idx]]++] = idx;
     }
   } else {
     for (i = 0; i < n; i++) {
@@ -1110,7 +1113,7 @@ static int order_by_rank(avant_int *sa, const int32_t *rank, avant_int *tmp, int
       if (j >= n) {
         j -= n;
       }
-      tmp[count[rank[j]]++] = idx;
+      tmp[(uint32_t)count[rank[j]]++] = idx;
     }
   }
   memcpy(sa, tmp, (size_t)n * sizeof(avant_int));
