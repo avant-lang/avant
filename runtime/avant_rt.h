@@ -533,6 +533,7 @@ void avant_tmp_keep(void);
 avant_int avant_job_start(const char *path, void *args, const char *out_path);
 avant_int avant_job_wait(void);
 avant_int avant_job_status(void);
+avant_int avant_job_signal(void);
 
 void avant_cov_init(const char *map_path);
 void avant_cov_hit(int32_t slot);

@@ -3153,7 +3153,7 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 
 `--jobs=N`, `--shard=I/N` and `--junit=PATH` are the same flags. An unknown flag is an error. `avant test` does not pass arguments to the test programs, and a `--` on the command is an error.
 
-For each file the runner prints its output, in source order, then `ok tests/test_greet.av` or `FAIL tests/test_greet.av`, and a total at the end (`0 failed, 1 passed`). Its own status is 1 when any file failed, when nothing was selected, or when the command was refused. Ctrl-C or `SIGTERM` stops every test process it started and removes its temporary files.
+For each file the runner prints its output, in source order, then `ok tests/test_greet.av`, or `FAIL tests/test_greet.av:` and how its process ended (`the test process exited with status 1`, `the test process killed by signal 13 (Broken pipe)`, `the compile exited with status 1`, `the parallel test "other" killed by signal 11 (Segmentation fault)`), and a total at the end (`0 failed, 1 passed`). Its own status is 1 when any file failed, when nothing was selected, or when the command was refused. Ctrl-C or `SIGTERM` stops every test process it started and removes its temporary files.
 
 ### Checks
 
@@ -3271,7 +3271,7 @@ first = ["tests/test_slow.av"]
 
 ### Reports
 
-**JUnit** (`--junit PATH`) is for test analytics. A test file that uses `std.testing` contributes one `<testcase>` per check, named by the check; any other test file contributes one case, named by its path. It is off unless you ask; a project does not gain a `junit.xml` by surprise.
+**JUnit** (`--junit PATH`) is for test analytics. A test file that uses `std.testing` contributes one `<testcase>` per check, named by the check; any other test file contributes one case, named by its path. A file that failed without a failed case (its process killed by a signal, or exiting with a status and no failed check) adds one case named by its path, whose failure message says how the process ended. It is off unless you ask; a project does not gain a `junit.xml` by surprise.
 
 **Coverage** (`--coverage`) compiles each selected file with counters, runs them, prints one table after the summary and writes `coverage/lcov.info` in the current directory (one file, overwritten by each run). Without the flag nothing is instrumented and nothing is written.
 

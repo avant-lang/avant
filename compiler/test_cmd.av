@@ -19,6 +19,7 @@ pub class FileRun {
   map: String = ""
   frags: Array(String)
   pending: Int = 0
+  why: String = ""
 
   fn initialize(abs: String, rel: String, bin: String) {
     self.abs = abs
@@ -38,6 +39,7 @@ lib job_rt {
   fun avant_job_start(path: String, args: Array(String), out: String): Int
   fun avant_job_wait: Int
   fun avant_job_status: Int
+  fun avant_job_signal: Int
 }
 
 // One test job (D131): /usr/bin/env with its variables and command as
@@ -54,6 +56,9 @@ pub class JobCmd {
   kind: Int = 0
   file: Int = 0
   names: String = ""
+  signal: Int = 0
+  unstarted: Bool = false
+  what: String = ""
 
   fn initialize(args: Array(String), log: String, kind: Int, file: Int) {
     self.args = args
@@ -127,6 +132,7 @@ pub class JobSched {
       pid = job_rt.avant_job_start("/usr/bin/env", cmd.args, cmd.log)
       if pid < 0 {
         cmd.code = 127
+        cmd.unstarted = true
         cmd.finished = true
         return k
       }
@@ -146,6 +152,7 @@ pub class JobSched {
       cmd = self.jobs[i]
       if cmd.started && cmd.pid == got && !cmd.finished {
         cmd.code = job_rt.avant_job_status()
+        cmd.signal = job_rt.avant_job_signal()
         cmd.finished = true
         return i
       }
@@ -432,9 +439,30 @@ fn emit_file(host: TestHost, f: FileRun) {
   if f.ok {
     out_puts("ok ${f.rel}")
     host.good += 1
+  } else if f.why.size > 0 {
+    out_puts("FAIL ${f.rel}: ${f.why}")
+    host.bad += 1
   } else {
     out_puts("FAIL ${f.rel}")
     host.bad += 1
+  }
+}
+
+// How the first failed job of a file ended, for its FAIL line and its
+// JUnit failure (O520): a test process that a signal killed was only
+// `FAIL file` before. The signal is named because an exit status of
+// 128+n cannot tell `exit 141` from SIGPIPE.
+fn job_failed(f: FileRun, cmd: JobCmd) {
+  if f.why.size > 0 {
+    return
+  }
+  if cmd.unstarted {
+    f.why = "${cmd.what} could not start"
+  } else if cmd.signal > 0 {
+    // process_run's wording: "WHAT killed by signal N (NAME)".
+    f.why = ProcessError.new(cmd.what, 0, cmd.signal, "").message
+  } else {
+    f.why = "${cmd.what} exited with status ${cmd.code}"
   }
 }
 
@@ -450,6 +478,7 @@ fn queue_run(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
   args.push(f.bin)
   run = JobCmd.new(args, "${base}.log", 1, at)
   run.names = names
+  run.what = "the test process"
   sched.add(run)
 }
 
@@ -463,6 +492,7 @@ fn queue_parallels(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
     args = env_run(host.compiler, "", name, host.coverage, frag)
     args.push(f.bin)
     cmd = JobCmd.new(args, "${host.fresh()}.log", 2, at)
+    cmd.what = "the parallel test \"${name}\""
     sched.add(cmd)
     f.par_logs.push(cmd.log)
     f.pending += 1
@@ -534,7 +564,9 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     args.push("--debug")
     // The tests are local runs: the machine's highest level (O140).
     args.push("--cpu=${llvm_cpu_name(llvm_host_level())}")
-    sched.add(JobCmd.new(args, "${host.fresh()}.log", 0, i))
+    cjob = JobCmd.new(args, "${host.fresh()}.log", 0, i)
+    cjob.what = "the compile"
+    sched.add(cjob)
     i += 1
   }
   while true {
@@ -547,6 +579,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     if cmd.kind == 0 {
       if cmd.code != 0 {
         f.ok = false
+        job_failed(f, cmd)
         f.compiled = false
         f.output = read_text(cmd.log)
         emit_file(host, f)
@@ -560,6 +593,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
       f.output = append_text(f.output, read_text(cmd.log))
       if cmd.code != 0 {
         f.ok = false
+        job_failed(f, cmd)
       }
       rm_file(cmd.log)
       found = name_lines(read_text(cmd.names))
@@ -582,6 +616,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     } else {
       if cmd.code != 0 {
         f.ok = false
+        job_failed(f, cmd)
       }
       f.pending -= 1
       if f.pending == 0 {
@@ -734,15 +769,22 @@ fn write_junit(path: String, files: Array(FileRun)) {
       fragtext = append_text(fragtext, read_text(frag))
       rm_file(frag)
     }
+    frag_bad = 0
     if fragtext.size > 0 {
       body.push_str(fragtext)
       if fragtext[fragtext.size - 1] != 10 {
         body.push_str("\n")
       }
       tests = tests + attr_sum(fragtext, "tests=\"")
-      bad = bad + attr_sum(fragtext, "failures=\"")
+      frag_bad = attr_sum(fragtext, "failures=\"")
+      bad = bad + frag_bad
       total_ms += suite_time_ms(fragtext)
-    } else {
+    }
+    // A file without fragments is one case. A failed file whose
+    // fragments count no failure (a process killed after it wrote its
+    // fragment, a parallel test killed before it wrote one) gets one
+    // too, so the report never shows a failed file as passing (O520).
+    if fragtext.size == 0 || (!f.ok && frag_bad == 0) {
       fb_tests += 1
       tests += 1
       fb.push_str("    <testcase name=\"")
@@ -755,7 +797,13 @@ fn write_junit(path: String, files: Array(FileRun)) {
       } else {
         fb_bad += 1
         bad += 1
-        fb.push_str(">\n      <failure message=\"failed\"><![CDATA[")
+        why = "failed"
+        if f.why.size > 0 {
+          why = f.why
+        }
+        fb.push_str(">\n      <failure message=\"")
+        fb.push_str(xml_escape(why))
+        fb.push_str("\"><![CDATA[")
         fb.push_str(f.output)
         fb.push_str("]]></failure>\n    </testcase>\n")
       }

@@ -472,6 +472,7 @@ static volatile pid_t g_wait_child;
 static volatile pid_t g_jobs[JOB_MAX];
 static volatile int32_t g_njobs;
 static int32_t g_job_status;
+static int32_t g_job_signal;
 
 static int32_t run_child(const char *path, void *args, const char *out_path, const char *err_path, int no_stdin) {
   char **argv;
@@ -630,7 +631,8 @@ avant_int avant_job_start(const char *path, void *args, const char *out_path) {
 
 /* Waits for any started job to finish. Returns its pid, or -1 when no job
  * is running; avant_job_status then gives its exit code (128+n for a
- * signal). */
+ * signal) and avant_job_signal the signal that ended it (0 when it
+ * exited), so the runner can tell `exit 141` from SIGPIPE (O520). */
 avant_int avant_job_wait(void) {
   for (;;) {
     int st = 0;
@@ -654,6 +656,7 @@ avant_int avant_job_wait(void) {
         g_jobs[i] = g_jobs[g_njobs - 1];
         g_njobs = g_njobs - 1;
         g_job_status = exit_code_of(st);
+        g_job_signal = WIFSIGNALED(st) ? WTERMSIG(st) : 0;
         return (int32_t)pid;
       }
     }
@@ -662,6 +665,10 @@ avant_int avant_job_wait(void) {
 
 avant_int avant_job_status(void) {
   return g_job_status;
+}
+
+avant_int avant_job_signal(void) {
+  return g_job_signal;
 }
 
 /* A blocking run of a tool the compiler starts (myc-llvm, cc, re2c, the
