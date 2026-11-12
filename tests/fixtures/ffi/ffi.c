@@ -560,3 +560,18 @@ void ffi_guard_install(void) {
   sigaction(SIGSEGV, &sa, 0);
   sigaction(SIGBUS, &sa, 0);
 }
+
+/* opt_refs.av (Stage 29 W-FIX1d, O549): an optional reference is one
+ * pointer at the C boundary, nil as NULL. One trio per kind, because a C
+ * name is bound with one signature. */
+#define FFI_OPT_TRIO(k) \
+  void *ffi_opt_null_##k(void) { return NULL; } \
+  void *ffi_opt_same_##k(void *p) { return p; } \
+  long ffi_opt_is_null_##k(void *p) { return p == NULL; }
+FFI_OPT_TRIO(s)
+FFI_OPT_TRIO(b)
+FFI_OPT_TRIO(a)
+FFI_OPT_TRIO(h)
+FFI_OPT_TRIO(u)
+FFI_OPT_TRIO(k)
+FFI_OPT_TRIO(j)

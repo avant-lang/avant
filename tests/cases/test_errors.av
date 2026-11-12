@@ -175,6 +175,14 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "fn-block", "fn main {\n  f: fn(Int): Int = { |n| n }\n  f(1) { |x| x }\n  puts(1)\n}\n", "function value does not take a block")
     expect_err(c, compiler, stamp, "fn-call-int", "fn main {\n  n = 1\n  puts((n)(2))\n}\n", "cannot call Int")
     expect_err(c, compiler, stamp, "fn-cret", "lib math {\n  fun make: fn(Int): Int\n}\nfn main {\n  puts(1)\n}\n", "C function pointers are not supported")
+    // A union in a `fun` signature that is not one pointer (O549, Stage 29
+    // W-FIX1d): it compiled, and C read a tag or a payload as the value.
+    // The optional references stay (tests/fixtures/ffi/opt_refs.av).
+    expect_err(c, compiler, stamp, "fun-optptr-ret", "lib c {\n  struct Pair {\n    a: Int32\n    b: Int32\n  }\n  fun malloc(size: Int): Ptr(Pair)?\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Ptr(Pair)?: C has one pointer there, and Ptr(T)? is a tag and a pointer in Avant, not a nullable pointer (that is not decided yet); declare Ptr(Pair)")
+    expect_err(c, compiler, stamp, "fun-optptr-param", "lib c {\n  fun free(p: Ptr(Void)?)\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Ptr(Void)?: C has one pointer there")
+    expect_err(c, compiler, stamp, "fun-optint", "lib c {\n  fun labs(n: Int?): Int\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int?: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL")
+    expect_err(c, compiler, stamp, "fun-union-ret", "lib c {\n  fun labs(n: Int): Int | String\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int | String: C has one word there")
+    expect_err(c, compiler, stamp, "fun-optfloat", "lib c {\n  fun fabs(x: Float64): Float64?\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Float64?: C has one word there")
     expect_err(c, compiler, stamp, "fn-ne", "fn main {\n  f: fn(): Int = { || 1 }\n  g: fn(): Int = { || 2 }\n  if f != g {\n    puts(1)\n  }\n}\n", "cannot compare fn values")
     expect_err(c, compiler, stamp, "fn-ret", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Int): Bool = f\n  puts(1)\n}\n", "expected fn(Int): Bool, got fn(Int): Int")
     expect_err(c, compiler, stamp, "fn-param", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Bool): Int = f\n  puts(1)\n}\n", "expected fn(Bool): Int, got fn(Int): Int")

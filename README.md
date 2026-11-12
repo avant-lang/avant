@@ -2506,6 +2506,7 @@ A `lib NAME { ... }` block holds `fun` declarations: `fun` for a C function, `fn
 
 - A `String` argument is passed as a `char *`.
 - A result declared `String?` is a `char *` that may be NULL: NULL reads as `nil`, and passing `nil` passes NULL. A result declared `String` is a promise that the string is there: a NULL traps, naming the function (`avant runtime: C function c.getenv returned NULL for String (declare String?)`).
+- The only unions a `fun` signature may use are the optional references, each one pointer with `nil` as NULL: `String?`, `Bytes?`, and an array, a hash, a `Buf` or a class with `?`. Any other union (`Int?`, `Int | String`, `Ptr(T)?`) is a compile error there: C has one word in that place, and such a union is a tag and a payload.
 - C++ is reached only through `extern "C"` functions.
 
 ### C types
@@ -2564,7 +2565,7 @@ fn main {
 
 `Ptr(T)` is for a layout `T`, and `Ptr(Void)` for a pointer you only pass around. A `Ptr` of anything else (`Ptr(Int)`) has no fields to read and cannot be given methods. Memory you got from C is C's: the collector neither moves nor frees it. There is no `sizeof` yet: the size passed to `malloc` is yours to state.
 
-A `Ptr` can be NULL (an unchecked `malloc`), and Avant has no test for that yet. A field read or written through a NULL `Ptr` is a segmentation fault, as in C: the program ends with no Avant message, and what it had printed without flushing is lost. Check in C before handing the pointer over. Do not declare a `fun` result `Ptr(T)?` to get a test: it compiles today and reads the wrong thing. A `String` field that C left NULL (or that `release` made null) reads as `""`.
+A `Ptr` can be NULL (an unchecked `malloc`), and Avant has no test for that yet. A field read or written through a NULL `Ptr` is a segmentation fault, as in C: the program ends with no Avant message, and what it had printed without flushing is lost. Check in C before handing the pointer over. A `fun` signature cannot say `Ptr(T)?` to get a test: it is refused, because `Ptr(T)?` is not a nullable pointer today (it would be read as a tag and a pointer). A `String` field that C left NULL (or that `release` made null) reads as `""`.
 
 ### Strings in C memory
 

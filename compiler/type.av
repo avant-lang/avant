@@ -981,6 +981,27 @@ pub fn ty_nilable(inner: Ty): Ty {
   ty_union_build(parts)
 }
 
+// An optional reference (Stage 29 W3b, B13): a union of exactly `Nil`
+// and one reference type (a class, `String`, `Bytes`, `Array`, `Hash`,
+// `Buf`, a `JoinHandle`) is that reference's one pointer, `nil` the null
+// pointer; its reference member, or nil for any other type. Every other
+// union keeps the tag-and-payloads layout. The back end's layouts
+// (mir_opt_ref) and the rule for a `fun` signature (checker/register.av,
+// O549) read this one definition.
+pub fn ty_opt_ref(t: Ty): Ty? {
+  if !t.is_union || t.members.size != 2 {
+    return nil
+  }
+  for m in t.members {
+    if !m.is_nil && (m.is_class || m.is_string || m.is_bytes || m.is_array || m.is_hash || m.is_buf || m.is_join) {
+      if t.includes_nil {
+        return m
+      }
+    }
+  }
+  nil
+}
+
 pub fn ty_without_nil(ty: Ty): Ty {
   kept: Array(Ty) = []
   for m in ty.members {
