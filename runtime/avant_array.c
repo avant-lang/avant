@@ -1021,22 +1021,46 @@ void avant_array_fill_i32(void *arr, int32_t v) {
 #endif
 }
 
-/* The BWT entries' arrays are Array(Int): their elements are the
- * language's Int (bwt_el, 64-bit since Stage 29 W-INT1); every value is
- * an index or a byte below the array's size, so the arithmetic stays in
+/* The BWT entries take the references' widths (Stage 29 W-INT2;
+ * LangArena compress.c and compress.rs): the input, the transform and
+ * the inverse's result are bytes (Buf: uint8_t, :7, :22, :256); the
+ * suffix array, its scratch copy and the inverse's next links are
+ * Array(Int) (size_t, :38, :44, :245; usize in Rust); the ranks and the
+ * counting sort's counts are Array(Int32) (int, :66, :93). Every value
+ * is an index or a rank below the size, so the arithmetic stays in
  * int32_t. */
-typedef avant_int bwt_el;
+typedef struct {
+  uint8_t *data;
+  int32_t size;
+  int32_t cap;
+} BwtBuf;
 
-static bwt_el *i32_buf(void *arr, int32_t need) {
+static avant_int *bwt_ix(void *arr, int32_t need) {
   AvantArray *a = (AvantArray *)arr;
   if (!a || !a->buf || a->size < need || need < 0) {
     return NULL;
   }
-  return (bwt_el *)a->buf;
+  return (avant_int *)a->buf;
+}
+
+static int32_t *bwt_i32(void *arr, int32_t need) {
+  AvantArray *a = (AvantArray *)arr;
+  if (!a || !a->buf || a->size < need || need < 0) {
+    return NULL;
+  }
+  return (int32_t *)a->buf;
+}
+
+static uint8_t *bwt_bytes(void *buf, int32_t need) {
+  BwtBuf *b = (BwtBuf *)buf;
+  if (!b || !b->data || b->size < need || need < 0) {
+    return NULL;
+  }
+  return b->data;
 }
 
 /* Stable counting sort of sa by rank[(sa[i] + add) % n]. */
-static int order_by_rank(bwt_el *sa, const bwt_el *rank, bwt_el *tmp, bwt_el *count,
+static int order_by_rank(avant_int *sa, const int32_t *rank, avant_int *tmp, int32_t *count,
                          int32_t n, int32_t csz, int32_t add) {
   int32_t i;
   int32_t sum;
@@ -1046,10 +1070,10 @@ static int order_by_rank(bwt_el *sa, const bwt_el *rank, bwt_el *tmp, bwt_el *co
   if (csz <= 0) {
     return 0;
   }
-  memset(count, 0, (size_t)csz * sizeof(bwt_el));
+  memset(count, 0, (size_t)csz * sizeof(int32_t));
   if (add <= 0) {
     for (i = 0; i < n; i++) {
-      int32_t key = (int32_t)rank[sa[i]];
+      int32_t key = rank[sa[i]];
       if ((uint32_t)key >= (uint32_t)csz) {
         return 0;
       }
@@ -1061,7 +1085,7 @@ static int order_by_rank(bwt_el *sa, const bwt_el *rank, bwt_el *tmp, bwt_el *co
       if (idx >= n) {
         idx -= n;
       }
-      int32_t key = (int32_t)rank[idx];
+      int32_t key = rank[idx];
       if ((uint32_t)key >= (uint32_t)csz) {
         return 0;
       }
@@ -1074,10 +1098,13 @@ static int order_by_rank(bwt_el *sa, const bwt_el *rank, bwt_el *tmp, bwt_el *co
     count[i] = sum;
     sum += c;
   }
+  /* The counts are below n: read as unsigned, the slot is a plain 32-bit
+   * load (a sign-extending load of a just-stored count forwards slowly:
+   * Compress::BWTEncode 437 -> 320 ms, the same instructions). */
   if (add <= 0) {
     for (i = 0; i < n; i++) {
       int32_t idx = (int32_t)sa[i];
-      tmp[count[rank[idx]]++] = idx;
+      tmp[(uint32_t)count[rank[idx]]++] = idx;
     }
   } else {
     for (i = 0; i < n; i++) {
@@ -1086,15 +1113,15 @@ static int order_by_rank(bwt_el *sa, const bwt_el *rank, bwt_el *tmp, bwt_el *co
       if (j >= n) {
         j -= n;
       }
-      tmp[count[rank[j]]++] = idx;
+      tmp[(uint32_t)count[rank[j]]++] = idx;
     }
   }
-  memcpy(sa, tmp, (size_t)n * sizeof(bwt_el));
+  memcpy(sa, tmp, (size_t)n * sizeof(avant_int));
   return 1;
 }
 
 /* 1 when the last ordered suffix got rank n - 1. */
-static int rerank(bwt_el *sa, bwt_el *rank, bwt_el *neu, int32_t n, int32_t add) {
+static int rerank(avant_int *sa, int32_t *rank, int32_t *neu, int32_t n, int32_t add) {
   int32_t prev;
   int32_t i;
   if (n <= 0) {
@@ -1106,7 +1133,7 @@ static int rerank(bwt_el *sa, bwt_el *rank, bwt_el *neu, int32_t n, int32_t add)
     int32_t curr = (int32_t)sa[i];
     int32_t pk = prev + add;
     int32_t ck = curr + add;
-    bwt_el r;
+    int32_t r;
     if (pk >= n) {
       pk -= n;
     }
@@ -1120,20 +1147,20 @@ static int rerank(bwt_el *sa, bwt_el *rank, bwt_el *neu, int32_t n, int32_t add)
     neu[curr] = r;
     prev = curr;
   }
-  memcpy(rank, neu, (size_t)n * sizeof(bwt_el));
+  memcpy(rank, neu, (size_t)n * sizeof(int32_t));
   return neu[sa[n - 1]] == n - 1;
 }
 
 avant_int avant_bwt_transform(void *input_arr, void *sa_arr, void *rank_arr, void *tmp_arr,
                             void *count_arr, void *out_arr) {
-  AvantArray *in_a = (AvantArray *)input_arr;
+  BwtBuf *in_b = (BwtBuf *)input_arr;
   int32_t n;
-  bwt_el *input;
-  bwt_el *sa;
-  bwt_el *rank;
-  bwt_el *tmp;
-  bwt_el *count;
-  bwt_el *out;
+  uint8_t *input;
+  avant_int *sa;
+  int32_t *rank;
+  avant_int *tmp;
+  int32_t *count;
+  uint8_t *out;
   int32_t csz;
   int32_t counts[256];
   int32_t positions[256];
@@ -1141,20 +1168,20 @@ avant_int avant_bwt_transform(void *input_arr, void *sa_arr, void *rank_arr, voi
   int32_t i;
   int32_t total;
   int32_t original;
-  if (!in_a || !in_a->buf) {
+  if (!in_b || !in_b->data) {
     return 0;
   }
-  n = in_a->size;
+  n = in_b->size;
   csz = 0;
   if (count_arr) {
     csz = ((AvantArray *)count_arr)->size;
   }
-  input = i32_buf(input_arr, n);
-  sa = i32_buf(sa_arr, n);
-  rank = i32_buf(rank_arr, n);
-  tmp = i32_buf(tmp_arr, n);
-  count = i32_buf(count_arr, csz > 0 ? csz : 1);
-  out = i32_buf(out_arr, n);
+  input = bwt_bytes(input_arr, n);
+  sa = bwt_ix(sa_arr, n);
+  rank = bwt_i32(rank_arr, n);
+  tmp = bwt_ix(tmp_arr, n);
+  count = bwt_i32(count_arr, csz > 0 ? csz : 1);
+  out = bwt_bytes(out_arr, n);
   if (!input || !sa || !rank || !tmp || !count || !out || n <= 0) {
     return 0;
   }
@@ -1195,7 +1222,9 @@ avant_int avant_bwt_transform(void *input_arr, void *sa_arr, void *rank_arr, voi
       if (!order_by_rank(sa, rank, tmp, count, n, csz, 0)) {
         break;
       }
-      if (rerank(sa, rank, tmp, n, k)) {
+      /* The new ranks go into count (n + 1 Int32 slots, free between
+       * the sorts), as the reference's int new_rank (compress.c:125). */
+      if (csz < n || rerank(sa, rank, count, n, k)) {
         break;
       }
       if (k > n / 2) {
@@ -1218,24 +1247,24 @@ avant_int avant_bwt_transform(void *input_arr, void *sa_arr, void *rank_arr, voi
 }
 
 void avant_bwt_inverse(void *bwt_arr, void *next_arr, void *out_arr, avant_int start) {
-  AvantArray *bwt_a = (AvantArray *)bwt_arr;
+  BwtBuf *bwt_b = (BwtBuf *)bwt_arr;
   int32_t n;
-  bwt_el *bwt;
-  bwt_el *next;
-  bwt_el *out;
+  uint8_t *bwt;
+  avant_int *next;
+  uint8_t *out;
   int32_t counts[256];
   int32_t positions[256];
   int32_t temp_counts[256];
   int32_t i;
   int32_t total;
   int32_t idx;
-  if (!bwt_a || !bwt_a->buf) {
+  if (!bwt_b || !bwt_b->data) {
     return;
   }
-  n = bwt_a->size;
-  bwt = i32_buf(bwt_arr, n);
-  next = i32_buf(next_arr, n);
-  out = i32_buf(out_arr, n);
+  n = bwt_b->size;
+  bwt = bwt_bytes(bwt_arr, n);
+  next = bwt_ix(next_arr, n);
+  out = bwt_bytes(out_arr, n);
   /* start names an element (Stage 29 W-INT1: out of range it read past
    * next). */
   if (!bwt || !next || !out || n <= 0 || start < 0 || start >= n) {
