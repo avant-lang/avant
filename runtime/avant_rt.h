@@ -23,29 +23,13 @@
 
 /* An Avant `Int` at the runtime's C boundary (Stage 29 W-INT1, D314):
  * every parameter, result or stored value the generated code or a `fun`
- * declaration treats as an Avant `Int` is declared avant_int, so the
- * width is said in one place. AVANT_INT_BITS is 64, the language's `Int`;
- * runtime/build.sh also builds one copy with -DAVANT_INT_BITS=32
- * (runtime/build/seed-abi/), the ABI of the v0.40.0 seed, which only B
- * links: B's code comes from the seed's 32-bit code generator (the
- * bootstrap, tools/letters.sh). That copy goes when a release with the
- * 64-bit `Int` is the seed. Values that are C's own (flags, kinds, site
- * numbers, element widths named in an entry, `found` out-parameters)
+ * declaration treats as an Avant `Int` (64-bit) is declared avant_int, so
+ * the width is said in one place. Values that are C's own (flags, kinds,
+ * site numbers, element widths named in an entry, `found` out-parameters)
  * keep their exact C types. */
-#ifndef AVANT_INT_BITS
-#define AVANT_INT_BITS 64
-#endif
-#if AVANT_INT_BITS == 32
-typedef int32_t avant_int;
-#define AVANT_INT_MAX INT32_MAX
-#define AVANT_INT_MIN INT32_MIN
-#elif AVANT_INT_BITS == 64
 typedef int64_t avant_int;
 #define AVANT_INT_MAX INT64_MAX
 #define AVANT_INT_MIN INT64_MIN
-#else
-#error "AVANT_INT_BITS is 32 or 64"
-#endif
 
 #define AVANT_TYPE_BYTES 0
 #define AVANT_TYPE_PTRS 65535u
@@ -452,13 +436,8 @@ __attribute__((noreturn, cold)) void avant_trap_c_range_at(int64_t value, int32_
 __attribute__((noreturn, cold)) void avant_trap_convert_at(int64_t value, int32_t kind, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_byte_at(avant_int value, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_negative_at(avant_int n, int32_t what, int32_t site);
-__attribute__((noreturn, cold)) void avant_trap_bounds(avant_int index, avant_int size);
-__attribute__((noreturn, cold)) void avant_trap_div_zero(void);
 __attribute__((noreturn, cold)) void avant_trap_overflow(void);
-__attribute__((noreturn, cold)) void avant_trap_shift(int64_t amount, int32_t kind);
-__attribute__((noreturn, cold)) void avant_trap_to_i(double x);
 __attribute__((noreturn, cold)) void avant_trap_c_range(int64_t value, int32_t kind);
-__attribute__((noreturn, cold)) void avant_trap_convert(int64_t value, int32_t kind);
 __attribute__((noreturn, cold)) void avant_trap_byte(avant_int value);
 __attribute__((noreturn, cold)) void avant_trap_precision(avant_int prec);
 __attribute__((noreturn, cold)) void avant_trap_slice(avant_int start, avant_int stop, avant_int size);
@@ -486,7 +465,7 @@ __attribute__((noreturn, cold)) void avant_trap_size(int32_t kind);
 __attribute__((noreturn, cold)) void avant_trap_size_at(int32_t kind, int32_t site);
 /* An Avant Int the runtime passes on to a C int (an HTTP status, an errno,
  * a signal number): the value, or a trap naming the C type (Stage 29
- * W-INT1; D215, the correct value or a trap). Free in the seed-ABI copy. */
+ * W-INT1; D215, the correct value or a trap). */
 static inline int32_t avant_c_int(avant_int v) {
   if (__builtin_expect(v < INT32_MIN || v > INT32_MAX, 0)) {
     avant_trap_c_range((int64_t)v, 6);
@@ -520,14 +499,11 @@ void avant_gate_unlock(uint64_t gate);
 void avant_gate_wait(uint64_t gate);
 void avant_gate_signal(uint64_t gate);
 void avant_gate_broadcast(uint64_t gate);
-int32_t avant_now_ms(void);
 int64_t avant_clock_ms(void);
 int64_t avant_clock_us(void);
-int32_t avant_now_us(void);
 
 void avant_io_init_argv(int32_t argc, void *argv);
 void *avant_argv(void);
-char *avant_file_read(const char *path, int32_t *ok);
 char *avant_sys_read(const char *path);
 avant_int avant_sys_write(const char *path, const char *body);
 void *avant_sys_list(const char *path);

@@ -80,13 +80,13 @@ void avant_trap_empty_at(int32_t what, int32_t site) {
   trap_tail();
 }
 
-void avant_trap_bounds(avant_int index, avant_int size) {
+static __attribute__((noreturn, cold)) void avant_trap_bounds(avant_int index, avant_int size) {
   trap_head();
   fprintf(stderr, "index %lld out of bounds (size %lld)", (long long)index, (long long)size);
   trap_tail();
 }
 
-void avant_trap_div_zero(void) {
+static __attribute__((noreturn, cold)) void avant_trap_div_zero(void) {
   trap_head();
   fprintf(stderr, "division by zero");
   trap_tail();
@@ -98,18 +98,14 @@ void avant_trap_overflow(void) {
   trap_tail();
 }
 
-/* A shift amount outside 0..width - 1 (Stage 28 W11b, C1). kind: 0 Int,
- * 1 Int64, 2 UInt64, + 8 when the amount is a UInt64 (printed unsigned). */
-/* kind: 16 + 0 Int, 1 Int32, 2 UInt64, 3 UInt32 (+ 8 for an unsigned
- * amount; Stage 29 W-INT1); below 16 the seed's 0 Int (32-bit), 1 Int64,
- * 2 UInt64. */
-void avant_trap_shift(int64_t amount, int32_t kind) {
-  static const char *seed_names[] = {"Int", "Int64", "UInt64", "?"};
-  static const char *int_names[] = {"Int", "Int32", "UInt64", "UInt32"};
-  const char **names = kind >= 16 ? int_names : seed_names;
+/* A shift amount outside 0..width - 1 (Stage 28 W11b, C1). kind: 16 +
+ * 0 Int, 1 Int32, 2 UInt64, 3 UInt32, + 8 for an unsigned amount (Stage 29
+ * W-INT1; the 16 kept the seed's old kinds apart until W-ADOPT). */
+static __attribute__((noreturn, cold)) void avant_trap_shift(int64_t amount, int32_t kind) {
+  static const char *names[] = {"Int", "Int32", "UInt64", "UInt32"};
   int t = kind & 3;
   trap_head();
-  int top = kind >= 16 ? ((t == 1 || t == 3) ? 31 : 63) : (t == 0 ? 31 : 63);
+  int top = (t == 1 || t == 3) ? 31 : 63;
   if (kind & 8) {
     fprintf(stderr, "shift amount %llu out of range for %s (0..%d)", (unsigned long long)amount, names[t], top);
   } else {
@@ -121,7 +117,7 @@ void avant_trap_shift(int64_t amount, int32_t kind) {
 /* Float64.to_i of NaN, an infinity, or a value outside the Int range
  * (Stage 28 W11b, C2). NaN prints as nan whatever its sign bit (the
  * float text prints it so). */
-void avant_trap_to_i(double x) {
+static __attribute__((noreturn, cold)) void avant_trap_to_i(double x) {
   char text[64];
   /* The value as Avant prints it (W4b1's shortest round-trip text). */
   avant_fmt_float_text(text, x);
@@ -133,19 +129,14 @@ void avant_trap_to_i(double x) {
 /* A conversion between integer types whose value the target cannot hold
  * (Stage 29 W4b1, D295 R1: the correct value or a trap). kind is
  * 16 + from * 4 + to, each 0 Int, 1 Int32, 2 UInt64, 3 UInt32 (Stage 29
- * W-INT1); below 16 it is the seed's from * 4 + to, each 0 Int, 1 Int64,
- * 2 UInt64 (B's own code, until a release with the 64-bit Int is the
- * seed). An unsigned value arrives as its bits and prints unsigned. */
-void avant_trap_convert(int64_t value, int32_t kind) {
-  static const char *seed_names[] = {"Int", "Int64", "UInt64", "?"};
-  static const char *seed_methods[] = {"to_i", "to_i64", "to_u64", "?"};
-  static const char *int_names[] = {"Int", "Int32", "UInt64", "UInt32"};
-  static const char *int_methods[] = {"to_i", "to_i32", "to_u64", "to_u32"};
-  const char **names = kind >= 16 ? int_names : seed_names;
-  const char **methods = kind >= 16 ? int_methods : seed_methods;
+ * W-INT1; the 16 kept the seed's old kinds apart until W-ADOPT). An
+ * unsigned value arrives as its bits and prints unsigned. */
+static __attribute__((noreturn, cold)) void avant_trap_convert(int64_t value, int32_t kind) {
+  static const char *names[] = {"Int", "Int32", "UInt64", "UInt32"};
+  static const char *methods[] = {"to_i", "to_i32", "to_u64", "to_u32"};
   int from = (kind >> 2) & 3;
   int to = kind & 3;
-  int unsigned_from = kind >= 16 ? (from == 2 || from == 3) : from == 2;
+  int unsigned_from = from == 2 || from == 3;
   trap_head();
   if (unsigned_from) {
     fprintf(stderr, "%s of %s %llu out of range for %s", methods[to], names[from], (unsigned long long)value, names[to]);

@@ -251,38 +251,6 @@ static char *read_all(FILE *f, size_t *np) {
   return raw;
 }
 
-/* The seed's file_read (its compiler lowers the builtin to this entry);
- * removed once the seed has the prelude's file_read (W4b2). */
-/* gc-lint: holds nothing (the text read is C memory; the path is not read after dup_bytes). */
-char *avant_file_read(const char *path, int32_t *ok) {
-  size_t n = 0;
-  char *raw;
-  if (ok) {
-    *ok = 0;
-  }
-  if (!path) {
-    return NULL;
-  }
-  FILE *f = open_read(path);
-  if (!f) {
-    return NULL;
-  }
-  /* Native while the file is read into C memory (Stage 28 W17a, rule 2):
-   * path is not read again. */
-  avant_gc_native_begin();
-  raw = read_all(f, &n);
-  avant_gc_native_end();
-  if (!raw) {
-    return NULL;
-  }
-  char *heap = dup_bytes(raw, n);
-  free(raw);
-  if (ok) {
-    *ok = 1;
-  }
-  return heap;
-}
-
 /* The prelude's file_read (Stage 29 W4b2, D295 R12): the text, or NULL
  * with avant_sys_errno() telling why. */
 /* gc-lint: holds nothing (the text read is C memory; the path is not read after dup_bytes). */
