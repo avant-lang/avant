@@ -10,10 +10,17 @@ import std.http
 // tests/fixtures/http/raw_client.py: it prints one line per mode.
 // And of its client (Stage 29 W-FIX1d): a request larger than the
 // socket takes at once (O513); a peer that accepts and never answers,
-// or never reads (O514).
+// or never reads (O514). And of WebSocket values whose connection is
+// gone: a WsConn kept after its server (O515), a copy of a closed
+// WsConnection (O516).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
+  fun usleep(micros: UInt32): Int32
+}
+
+fn sleep_ms(ms: Int) {
+  _ = c.usleep((ms * 1000).to_u32)
 }
 
 fn set_env(name: String, value: String) {
@@ -196,6 +203,210 @@ fn client_cases(c: Checks) {
     expect_lines(c, out, want, "a request the socket takes in part reaches the server whole and in order:")
   } else {
     c.expect(false, "listen for the client's large request")
+  }
+}
+
+class Kept {
+  pub conns: Array(WsConn)
+
+  pub fn initialize {
+    self.conns = []
+  }
+}
+
+// Every operation through each kept WsConn: how many answered anything
+// but "closed".
+fn stale_answers(kept: Kept): Int {
+  bad = 0
+  i = 0
+  while i < kept.conns.size {
+    conn = kept.conns[i]
+    if conn.send_text("ghost") {
+      bad += 1
+    }
+    if conn.send_bytes("ghost".bytes) {
+      bad += 1
+    }
+    if conn.sender.send_text("ghost") {
+      bad += 1
+    }
+    if conn.close(1000, "ghost") {
+      bad += 1
+    }
+    i += 1
+  }
+  bad
+}
+
+// Against the first server: n connections that each echo one message
+// and close (the server keeps their WsConn values), then O516.
+fn ws_keep_round(port: Int, n: Int, out: Channel(String)): Int {
+  url = "ws://127.0.0.1:${port}/keep"
+  echoed = 0
+  for i in 0..n {
+    if conn = Ws.connect(url) {
+      if conn.send_text("hi ${i}") {
+        if msg = conn.recv(2000) {
+          if (msg.text ?? "") == "hi ${i}" {
+            echoed += 1
+          }
+        }
+      }
+      conn.close
+    }
+  }
+  out.send("echoed ${echoed} of ${n}")
+  // O516: the registry of open client connections held addresses, and
+  // the next connection was given the address the closed one had: a
+  // copy of the closed value sent on the new connection and closed it.
+  if first = Ws.connect(url) {
+    stale = first
+    first.close
+    if later = Ws.connect(url) {
+      sent = stale.send_text("from a closed copy")
+      stale.close
+      code = stale.close_code
+      got = "nothing"
+      if m = stale.recv(50) {
+        got = "a message"
+      }
+      alive = "closed"
+      if later.send_text("still here") {
+        if msg = later.recv(2000) {
+          alive = msg.text ?? "?"
+        }
+      }
+      out.send("closed copy: send=${sent} recv=${got} close_code=${code}; the later connection: ${alive}")
+      later.close
+    } else {
+      out.send("second connect failed")
+    }
+  } else {
+    out.send("first connect failed")
+  }
+  // spawn-crossing: begin (a WsConnection is an id since W-FIX1d, so it
+  // may cross a spawn; before, it held a pointer and could not)
+  if conn = Ws.connect(url) {
+    woke = Channel(Int).new(1)
+    waiter = spawn {
+      r = 0
+      if m = conn.recv() {
+        r = 1
+      }
+      woke.send(r)
+      r
+    }
+    sleep_ms(100)
+    conn.close
+    got = woke.recv ?? -1
+    out.send("a recv waiting in another task when close is called returns nil: ${got == 0}")
+  } else {
+    out.send("third connect failed")
+  }
+  // spawn-crossing: end
+  stop(port)
+  0
+}
+
+// Against the second server: n connections held open, then "probe" on
+// the first; its answer, and whatever else arrives on any of them.
+fn ws_probe_round(port: Int, n: Int, out: Channel(String)): Int {
+  url = "ws://127.0.0.1:${port}/probe"
+  conns: Array(WsConnection) = []
+  for i in 0..n {
+    if conn = Ws.connect(url) {
+      conns.push(conn)
+    }
+  }
+  if conns.size == n {
+    _ = conns[0].send_text("probe")
+    if msg = conns[0].recv(2000) {
+      out.send(msg.text ?? "?")
+    } else {
+      out.send("no answer to the probe")
+    }
+    stray = 0
+    i = 0
+    while i < conns.size {
+      if msg = conns[i].recv(50) {
+        stray += 1
+      }
+      i += 1
+    }
+    out.send("stray messages: ${stray}")
+  } else {
+    out.send("connected ${conns.size} of ${n}")
+    out.send("")
+  }
+  i = 0
+  while i < conns.size {
+    conns[i].close
+    i += 1
+  }
+  stop(port)
+  0
+}
+
+// O515: a WsConn held the address of its connection's record, and the
+// records were freed when `serve` returned: a WsConn kept past that
+// read freed memory, and once a later server's connection was given
+// the same memory, the kept value sent on that connection. The value
+// now carries the connection's id beside the address of a record that
+// is never freed, and every operation checks the id first.
+fn ws_cases(c: Checks) {
+  kept = Kept.new()
+  n = 6
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened
+    server.websocket("/keep") { |conn, msg|
+      kept.conns.push(conn)
+      _ = conn.send_message(msg)
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    out = Channel(String).new(4)
+    task = spawn {
+      ws_keep_round(port, n, out)
+    }
+    server.serve
+    c.eq_int(task.join, 0, "ws keep task")
+    want: Array(String) = []
+    want.push("echoed ${n} of ${n}")
+    want.push("closed copy: send=false recv=nothing close_code=1006; the later connection: still here")
+    // spawn-crossing: begin
+    want.push("a recv waiting in another task when close is called returns nil: true")
+    // spawn-crossing: end
+    expect_lines(c, out, want, "a copy of a closed WsConnection addresses no later connection:")
+    c.expect(kept.conns.size >= n, "the server kept its WsConn values")
+    c.eq_int(stale_answers(kept), 0, "operations through a WsConn after serve returned that did not answer closed")
+  } else {
+    c.expect(false, "listen for the kept WsConn test")
+  }
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened
+    server.websocket("/probe") { |conn, msg|
+      _ = conn.send_text("operations through the first server's WsConn values that did not answer closed: ${stale_answers(kept)}")
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    out = Channel(String).new(4)
+    task = spawn {
+      ws_probe_round(port, n, out)
+    }
+    server.serve
+    c.eq_int(task.join, 0, "ws probe task")
+    want: Array(String) = []
+    want.push("operations through the first server's WsConn values that did not answer closed: 0")
+    want.push("stray messages: 0")
+    expect_lines(c, out, want, "a WsConn of a closed server addresses no connection of a later one:")
+  } else {
+    c.expect(false, "listen for the later server")
   }
 }
 
@@ -385,5 +596,6 @@ fn main: Int {
   c.started = now_ms()
   test_std_http_safety(c, avant_test_root())
   client_cases(c)
+  ws_cases(c)
   c.finish
 }

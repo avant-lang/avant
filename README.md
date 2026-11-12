@@ -3039,7 +3039,7 @@ fn main {
 ```
 
 - A message is text (`msg.text` is its `String`, `msg.is_text`) or binary (`msg.body`, `msg.is_binary`). `msg.body` is always the payload.
-- On a connection: `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")`; each returns `Bool`.
+- On a connection: `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")`; each returns `Bool`: `false` when the connection is closed or its send queue is full. A `WsConn` kept after its connection closed, or after `serve` returned, answers `false` to all four.
 - `websocket_open(path) { |conn| ... }` and `websocket_close(path) { |conn, code, reason| ... }` run once per connection (code 1006 when it dropped without a close frame).
 - Ping, the close handshake and fragmentation are handled for you. A message over `max_message` (1 MiB by default) closes the connection with code 1009 and never reaches the handler. `server.close` sends code 1001 to open connections.
 - A connection stays on its loop thread. To answer from a `spawn` block, capture `conn.sender` and send through that.
@@ -3062,6 +3062,8 @@ fn main {
 ```
 
 `Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError`; its `timeout_ms` is the deadline for the connection and its handshake. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Never call `recv` from a server handler. A connection that is never closed keeps its thread until the process exits.
+
+After `close`, every copy of the connection answers as closed, whatever connections are opened later: `send_text` and `send_bytes` return `false`, `recv` returns `nil`, `close_code` is 1006, and another `close` does nothing. A `WsConnection` may be captured by a `spawn` block, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return `nil`.
 
 ### std.zlib
 
