@@ -124,11 +124,10 @@ pub class MProj {
 
 pub class MPlace {
   pub local: Int = 0
-  pub proj: Array(MProj)
+  pub proj: Array(MProj) = []
 
   fn initialize(local: Int) {
     self.local = local
-    self.proj = []
   }
 
   // The index of the last deref projection, or -1 (frame-local, 4.1).
@@ -163,7 +162,6 @@ pub class MOperand {
   fn initialize(kind: Int, ty: Int) {
     self.kind = kind
     self.ty = ty
-    self.text = ""
   }
 }
 
@@ -174,11 +172,10 @@ pub class MRvalue {
   pub a: MOperand? = nil
   pub b: MOperand? = nil
   pub place: MPlace? = nil
-  pub ops: Array(MOperand)
+  pub ops: Array(MOperand) = []
 
   fn initialize(kind: Int) {
     self.kind = kind
-    self.ops = []
   }
 }
 
@@ -191,17 +188,14 @@ pub class MStmt {
   pub dest: Int = -1
   pub callee: String = ""
   pub indirect: MOperand? = nil
-  pub args: Array(MOperand)
+  pub args: Array(MOperand) = []
   pub collects: Bool = true
   pub sig: Int = -1
-  pub locals: Array(Int)
+  pub locals: Array(Int) = []
 
   fn initialize(kind: Int, loc: MLoc) {
     self.kind = kind
     self.loc = loc
-    self.callee = ""
-    self.args = []
-    self.locals = []
   }
 }
 
@@ -209,8 +203,8 @@ pub class MTerm {
   pub kind: Int = 0
   pub loc: MLoc
   pub cond: MOperand? = nil
-  pub targets: Array(Int)
-  pub values: Array(Int)
+  pub targets: Array(Int) = []
+  pub values: Array(Int) = []
   // W9b: the back edge of a loop that loop versioning left as the checked
   // copy (the cold path): 1 + the loop header's block number, else 0. The
   // emitter tells LLVM not to unroll or peel that loop (one loop
@@ -220,19 +214,16 @@ pub class MTerm {
   fn initialize(kind: Int, loc: MLoc) {
     self.kind = kind
     self.loc = loc
-    self.targets = []
-    self.values = []
   }
 }
 
 pub class MBlock {
   pub id: Int = 0
-  pub stmts: Array(MStmt)
+  pub stmts: Array(MStmt) = []
   pub term: MTerm? = nil
 
   fn initialize(id: Int) {
     self.id = id
-    self.stmts = []
   }
 }
 
@@ -293,8 +284,8 @@ pub class MFunc {
   pub sig: Int = 0
   pub kind: Int = 0
   pub nparams: Int = 0
-  pub locals: Array(MLocal)
-  pub blocks: Array(MBlock)
+  pub locals: Array(MLocal) = []
+  pub blocks: Array(MBlock) = []
   pub loc: MLoc
   pub source_name: String = ""
   // The frame pass's liveness (MLive above), or nil.
@@ -304,9 +295,6 @@ pub class MFunc {
     self.symbol = symbol
     self.sig = sig
     self.loc = loc
-    self.source_name = ""
-    self.locals = []
-    self.blocks = []
   }
 
   pub fn has_ret: Bool {
@@ -357,14 +345,13 @@ pub class MTypeMap {
   fn initialize(id: Int, layout: Int) {
     self.id = id
     self.layout = layout
-    self.name = ""
   }
 }
 
 pub class MModule {
   pub name: String = ""
   pub shared: Bool = false
-  pub files: Array(String)
+  pub files: Array(String) = []
   pub types: MTypes
   pub strs: Array(String)
   pub str_index: Hash(String, Int)
@@ -379,7 +366,6 @@ pub class MModule {
 
   fn initialize(name: String) {
     self.name = name
-    self.files = []
     self.types = MTypes.new()
     self.strs = []
     self.str_index = Hash(String, Int).new
