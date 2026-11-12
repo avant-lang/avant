@@ -15,7 +15,7 @@
 #    the phase (idle RSS before it). Avant also reports allocation
 #    bytes per request from AVANT_GC_STATS.
 #
-# 2. With METHOD=A|A8|B|C|Q9 (Stage 29 W-BENCH-HTTP):
+# 2. With METHOD=A|A8|B|C|Q9:
 #      METHOD=B run.sh [row ...|all]      (all: every row that built)
 #    HTTP only, HTTP_BENCH_RUNS (3) rounds; in each round every row
 #    gets a fresh server process, one unmeasured warm-up load
@@ -27,15 +27,16 @@
 #      A8  wrk -t8 -c256 -d10s --latency URL
 #          as A with a stronger load generator (is wrk the limit in A?)
 #      B   wrk --latency -d 5 -c 900 -t 8 --timeout 8 URL -s pipe.lua -- 16
-#          Valk's README method: 900 keep-alive connections, 16
-#          pipelined requests per write, servers at their default
-#          thread counts, nothing pinned
+#          900 keep-alive connections, 16 pipelined requests per
+#          write, 8 load threads; servers at their default thread
+#          counts, nothing pinned
 #      C   the same wrk line under `taskset -c 4-7,12-15`; the server
-#          limited to 4 threads and under `taskset -c 0-3` (Valk's
-#          chart method: four physical cores for the server, the other
-#          four with both siblings for wrk, the server cores' siblings
-#          8-11 idle; the CPU lists are for a machine whose siblings
-#          are k and k+8: HTTP_BENCH_SERVER_CPUS, HTTP_BENCH_WRK_CPUS)
+#          limited to 4 threads and under `taskset -c 0-3` (B with
+#          the server on 4 pinned threads: four physical cores for the
+#          server, the other four with both siblings for wrk, the
+#          server cores' siblings 8-11 idle; the CPU lists are for a
+#          machine whose siblings are k and k+8:
+#          HTTP_BENCH_SERVER_CPUS, HTTP_BENCH_WRK_CPUS)
 #      Q9  wrk --latency -d 5 -c 900 -t 8 --timeout 8 URL
 #          B without pipelining (depth 1 at 900 connections)
 #    HTTP_BENCH_DURATION overrides the seconds of the measured load;
@@ -52,7 +53,7 @@
 #    throughput is measured until that is fixed), and hyper-nodate and
 #    fasthttp-nodate (those servers with their `Date` header, and
 #    fasthttp's `Server` header, switched off: an 84-byte answer like
-#    Avant's and Valk's).
+#    the servers that send neither).
 #    Before each load one request is checked (status 200, body
 #    `hello`). Kept per run under HTTP_BENCH_OUT/<METHOD>/ (default
 #    $BUILD/out): r<round>.<row>.wrk (wrk's output, measured),
@@ -85,9 +86,10 @@
 # batch (receive, send) are what this shows; the share of the waiting
 # calls (epoll_wait, io_uring_enter, futex) is a lower bound.
 #
-# pipe.lua, the method B and C loads and the hyper, fasthttp and Valk
-# programs are adapted from valk-lang/valk examples/bench/http (MIT,
-# (c) 2024 Lorenz Vandevelde); each file states what it changed.
+# Credit: pipe.lua and the hyper, fasthttp and valk programs are
+# adapted from valk-lang/valk examples/bench/http (MIT, (c) 2024
+# Lorenz Vandevelde), each file stating what it changed; the pipelined
+# methods (B and C) follow that project's published benchmark.
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 AVANT_ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
@@ -172,8 +174,7 @@ build_all() {
   if ! fresh "$BUILD/go_fasthttp" "$HERE/go_fasthttp/main.go" || ! fresh "$BUILD/go_fasthttp" "$HERE/go_fasthttp/go.sum"; then
     (cd "$HERE/go_fasthttp" && go build -o "$BUILD/go_fasthttp" .)
   fi
-  # Valk's own server, when a Valk toolchain is installed; without one
-  # the row is left out.
+  # The valk row needs the Valk toolchain; without one it is left out.
   if command -v valk >/dev/null 2>&1; then
     fresh "$BUILD/valk_server" "$HERE/valk_server.valk" || valk build "$HERE/valk_server.valk" --release -o "$BUILD/valk_server" >/dev/null
   else

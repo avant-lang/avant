@@ -38,11 +38,11 @@ ROW_NAME = {
 }
 METHOD_ORDER = ["A", "A8", "B", "C", "Q9"]
 METHOD_TITLE = {
-    "A": "Method A: 64 connections, no pipelining, 4 wrk threads, nothing pinned",
-    "A8": "Method A8: 256 connections, no pipelining, 8 wrk threads, nothing pinned",
-    "B": "Method B: 900 connections, 16 pipelined requests per write, 8 wrk threads, nothing pinned",
-    "C": "Method C: as B, the server on 4 threads pinned to 4 cores, wrk pinned to the other 4 cores",
-    "Q9": "Method Q9: 900 connections, no pipelining, 8 wrk threads, nothing pinned",
+    "A": "Method A: 64 connections, no pipelining, 4 load threads",
+    "A8": "Method A8: 256 connections, no pipelining, 8 load threads",
+    "B": "Method B: 900 connections, 16 pipelined requests, 8 load threads",
+    "C": "Method C: B with the server limited to 4 pinned threads",
+    "Q9": "Method Q9: 900 connections, no pipelining, 8 load threads",
 }
 UNIT_US = {"us": 1.0, "ms": 1e3, "s": 1e6, "m": 6e7, "h": 3.6e9}
 
@@ -189,7 +189,7 @@ def method_table(out_dir, method, checks, label):
         any_meta.get("warmup_s", "?"), session.get("date", "?"), session.get("kernel", "?"), session.get("cpu", "?"),
         session.get("governor", "?"), session.get("wrk", "?"), session.get("runs", "?"), session.get("loadavg", "?")))
     print()
-    print("| Server | Requests/s, median (min–max) | p50 | p99 | Peak RSS | Server CPU, cores (system share) | `wrk` CPU, cores | OS threads | Answer bytes | `Date` | Valid runs |")
+    print("| Server | Requests/s, median (min–max) | p50 | p99 | Peak RSS | Server CPU, cores (system share) | `wrk` CPU, cores | OS threads after the load | Answer bytes | `Date` | Valid runs |")
     print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |")
     notes = []
     best = 0.0
