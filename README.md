@@ -111,44 +111,163 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
 
 **The language**
 
-- [Basics](#basics): [entry point](#entry-point) · [names and scope](#names-and-scope) · [functions](#functions) · [built-in types](#built-in-types) · [operators](#operators) · [line breaks](#line-breaks) · [comments](#comments)
-- [Control flow](#control-flow): [if](#if) · [conditions that bind](#conditions-that-bind) · [while](#while) · [for](#for) · [switch](#switch)
-- [Nil and unions](#nil-and-unions): [opening an optional](#opening-an-optional) · [unions](#unions) · [what an optional costs](#what-an-optional-costs)
-- [Numbers](#numbers): [integer types](#integer-types) · [literals](#literals) · [conversions](#conversions) · [arithmetic and overflow](#arithmetic-and-overflow) · [floats](#floats)
-- [Strings](#strings): [string literals](#string-literals) · [bytes, not characters](#bytes-not-characters) · [string operations](#string-operations) · [parsing numbers](#parsing-numbers) · [Bytes and Buf](#bytes-and-buf)
-- [Arrays](#arrays): [creating arrays](#creating-arrays) · [indexing and bounds](#indexing-and-bounds) · [array operations](#array-operations) · [size limits](#size-limits)
-- [Hashes](#hashes): [hash operations](#hash-operations) · [key and value types](#key-and-value-types)
-- [Structs and classes](#structs-and-classes): [struct or class](#struct-or-class) · [structs](#structs) · [classes](#classes) · [field initialization](#field-initialization) · [methods and self](#methods-and-self) · [external methods](#external-methods) · [type-level functions](#type-level-functions) · [overloads and defaults](#overloads-and-defaults) · [operator methods](#operator-methods) · [no inheritance](#no-inheritance)
-- [Errors](#errors): [propagate, replace, branch](#propagate-replace-branch) · [declaring an error](#declaring-an-error) · [causes](#causes) · [errors cannot be dropped](#errors-cannot-be-dropped) · [reading the error itself](#reading-the-error-itself) · [traps](#traps) · [nil, error or trap](#nil-error-or-trap)
-- [Function values](#function-values): [lambdas](#lambdas) · [trailing blocks](#trailing-blocks) · [capture](#capture) · [builtin blocks are loops](#builtin-blocks-are-loops)
-- [Generics](#generics): [generic functions](#generic-functions) · [generic types](#generic-types)
-- [Interfaces](#interfaces): [opting in](#opting-in) · [bounds](#bounds)
-- [Modules](#modules): [import paths](#import-paths) · [visibility](#visibility) · [name clashes](#name-clashes)
-- [Packages](#packages): [the manifest](#the-manifest) · [fetch and lock](#fetch-and-lock) · [importing a dependency](#importing-a-dependency) · [updating and removing](#updating-and-removing) · [publishing a package](#publishing-a-package) · [package conflicts](#package-conflicts) · [package limits](#package-limits)
-- [Concurrency](#concurrency): [spawn](#spawn) · [parallel](#parallel) · [Channel and Mutex](#channel-and-mutex) · [choosing a tool](#choosing-a-tool) · [what may cross a task](#what-may-cross-a-task) · [the thread pool](#the-thread-pool)
-- [Memory](#memory): [the collector](#the-collector) · [what allocation costs today](#what-allocation-costs-today) · [collection hints](#collection-hints) · [collector settings](#collector-settings)
-- [C interop](#c-interop): [declaring C functions](#declaring-c-functions) · [C types](#c-types) · [layouts and Ptr](#layouts-and-ptr) · [strings in C memory](#strings-in-c-memory) · [callbacks](#callbacks) · [linking C code](#linking-c-code) · [avant bind](#avant-bind)
-- [Macros](#macros): [quote and splice](#quote-and-splice) · [the field walk](#the-field-walk)
+- [Basics](#basics):
+  - [entry point](#entry-point)
+  - [names and scope](#names-and-scope)
+  - [functions](#functions)
+  - [built-in types](#built-in-types)
+  - [operators](#operators)
+  - [line breaks](#line-breaks)
+  - [comments](#comments)
+- [Control flow](#control-flow):
+  - [if](#if)
+  - [conditions that bind](#conditions-that-bind)
+  - [while](#while)
+  - [for](#for)
+  - [switch](#switch)
+- [Nil and unions](#nil-and-unions):
+  - [opening an optional](#opening-an-optional)
+  - [unions](#unions)
+  - [what an optional costs](#what-an-optional-costs)
+- [Numbers](#numbers):
+  - [integer types](#integer-types)
+  - [literals](#literals)
+  - [conversions](#conversions)
+  - [arithmetic and overflow](#arithmetic-and-overflow)
+  - [floats](#floats)
+- [Strings](#strings):
+  - [string literals](#string-literals)
+  - [bytes, not characters](#bytes-not-characters)
+  - [string operations](#string-operations)
+  - [parsing numbers](#parsing-numbers)
+  - [Bytes and Buf](#bytes-and-buf)
+- [Arrays](#arrays):
+  - [creating arrays](#creating-arrays)
+  - [indexing and bounds](#indexing-and-bounds)
+  - [array operations](#array-operations)
+  - [size limits](#size-limits)
+- [Hashes](#hashes):
+  - [hash operations](#hash-operations)
+  - [key and value types](#key-and-value-types)
+- [Structs and classes](#structs-and-classes):
+  - [struct or class](#struct-or-class)
+  - [structs](#structs)
+  - [classes](#classes)
+  - [field initialization](#field-initialization)
+  - [methods and self](#methods-and-self)
+  - [external methods](#external-methods)
+  - [type-level functions](#type-level-functions)
+  - [overloads and defaults](#overloads-and-defaults)
+  - [operator methods](#operator-methods)
+  - [no inheritance](#no-inheritance)
+- [Errors](#errors):
+  - [propagate, replace, branch](#propagate-replace-branch)
+  - [declaring an error](#declaring-an-error)
+  - [causes](#causes)
+  - [errors cannot be dropped](#errors-cannot-be-dropped)
+  - [reading the error itself](#reading-the-error-itself)
+  - [traps](#traps)
+  - [nil, error or trap](#nil-error-or-trap)
+- [Function values](#function-values):
+  - [lambdas](#lambdas)
+  - [trailing blocks](#trailing-blocks)
+  - [capture](#capture)
+  - [builtin blocks are loops](#builtin-blocks-are-loops)
+- [Generics](#generics):
+  - [generic functions](#generic-functions)
+  - [generic types](#generic-types)
+- [Interfaces](#interfaces):
+  - [opting in](#opting-in)
+  - [bounds](#bounds)
+- [Modules](#modules):
+  - [import paths](#import-paths)
+  - [visibility](#visibility)
+  - [name clashes](#name-clashes)
+- [Packages](#packages):
+  - [the manifest](#the-manifest)
+  - [fetch and lock](#fetch-and-lock)
+  - [importing a dependency](#importing-a-dependency)
+  - [updating and removing](#updating-and-removing)
+  - [publishing a package](#publishing-a-package)
+  - [package conflicts](#package-conflicts)
+  - [package limits](#package-limits)
+- [Concurrency](#concurrency):
+  - [spawn](#spawn)
+  - [parallel](#parallel)
+  - [Channel and Mutex](#channel-and-mutex)
+  - [choosing a tool](#choosing-a-tool)
+  - [what may cross a task](#what-may-cross-a-task)
+  - [the thread pool](#the-thread-pool)
+- [Memory](#memory):
+  - [the collector](#the-collector)
+  - [what allocation costs today](#what-allocation-costs-today)
+  - [collection hints](#collection-hints)
+  - [collector settings](#collector-settings)
+- [C interop](#c-interop):
+  - [declaring C functions](#declaring-c-functions)
+  - [C types](#c-types)
+  - [layouts and Ptr](#layouts-and-ptr)
+  - [strings in C memory](#strings-in-c-memory)
+  - [callbacks](#callbacks)
+  - [linking C code](#linking-c-code)
+  - [avant bind](#avant-bind)
+- [Macros](#macros):
+  - [quote and splice](#quote-and-splice)
+  - [the field walk](#the-field-walk)
 
 **Library and tools**
 
-- [Builtins](#builtins): [output](#output) · [files and directories](#files-and-directories) · [processes and environment](#processes-and-environment) · [time, hashing and math](#time-hashing-and-math)
-- [Standard library](#standard-library): [std.json](#stdjson) · [std.regex](#stdregex) · [std.http](#stdhttp) · [std.zlib](#stdzlib) · [std.base64](#stdbase64)
-- [Testing](#testing): [running tests](#running-tests) · [checks](#checks) · [golden files](#golden-files) · [serial and parallel tests](#serial-and-parallel-tests) · [test settings](#test-settings) · [reports](#reports)
+- [Builtins](#builtins):
+  - [output](#output)
+  - [files and directories](#files-and-directories)
+  - [processes and environment](#processes-and-environment)
+  - [time, hashing and math](#time-hashing-and-math)
+- [Standard library](#standard-library):
+  - [std.json](#stdjson)
+  - [std.regex](#stdregex)
+  - [std.http](#stdhttp)
+  - [std.zlib](#stdzlib)
+  - [std.base64](#stdbase64)
+- [Testing](#testing):
+  - [running tests](#running-tests)
+  - [checks](#checks)
+  - [golden files](#golden-files)
+  - [serial and parallel tests](#serial-and-parallel-tests)
+  - [test settings](#test-settings)
+  - [reports](#reports)
 - [Formatter](#formatter)
-- [Command line](#command-line): [commands](#commands) · [build modes](#build-modes) · [program arguments](#program-arguments) · [compile errors](#compile-errors) · [temporary files](#temporary-files) · [environment variables](#environment-variables)
+- [Command line](#command-line):
+  - [commands](#commands)
+  - [build modes](#build-modes)
+  - [program arguments](#program-arguments)
+  - [compile errors](#compile-errors)
+  - [temporary files](#temporary-files)
+  - [environment variables](#environment-variables)
 
 **Perspective**
 
-- [Coming from another language](#coming-from-another-language): [the deliberate differences](#the-deliberate-differences) · [by language](#by-language)
+- [Coming from another language](#coming-from-another-language):
+  - [the deliberate differences](#the-deliberate-differences)
+  - [by language](#by-language)
 - [Not built yet](#not-built-yet)
-- [Benchmarks](#benchmarks): [LangArena](#langarena) · [where Avant loses](#where-avant-loses) · [HTTP and WebSocket servers](#http-and-websocket-servers) · [reading these numbers](#reading-these-numbers)
+- [Benchmarks](#benchmarks):
+  - [LangArena](#langarena)
+  - [where Avant loses](#where-avant-loses)
+  - [HTTP and WebSocket servers](#http-and-websocket-servers)
+  - [reading these numbers](#reading-these-numbers)
 - [Goals](#goals)
 
 **Going deeper**
 
-- [Installation in depth](#installation-in-depth): [installer options](#installer-options) · [manual install](#manual-install) · [requirements](#requirements)
-- [Contributing](#contributing): [how the compiler works](#how-the-compiler-works) · [building the compiler](#building-the-compiler) · [the gate and the suite](#the-gate-and-the-suite) · [checking this README](#checking-this-readme)
+- [Installation in depth](#installation-in-depth):
+  - [installer options](#installer-options)
+  - [manual install](#manual-install)
+  - [requirements](#requirements)
+- [Contributing](#contributing):
+  - [how the compiler works](#how-the-compiler-works)
+  - [building the compiler](#building-the-compiler)
+  - [the gate and the suite](#the-gate-and-the-suite)
+  - [checking this README](#checking-this-readme)
 - [License](#license)
 
 ## Basics
