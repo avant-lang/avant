@@ -989,8 +989,8 @@ void *avant_sys_list(const char *path) {
  * marker in each directory tells a child that it is nested.
  *
  * Removal runs at exit (atexit covers normal and error exits, traps
- * included) and on SIGINT, SIGTERM, and SIGHUP, after which the signal is
- * re-raised so the status stays 128+n. Only the creating process removes:
+ * included) and on SIGINT, SIGTERM, SIGHUP and SIGPIPE, after which the
+ * signal is re-raised so the status stays 128+n. Only the creating process removes:
  * a forked child that never execs must not delete its parent's tree. A
  * crash or kill -9 leaves one directory. AVANT_KEEP_TMP=1 (set by the
  * compiler's --keep-tmp) keeps it; the top-level process prints the path.
@@ -1256,6 +1256,12 @@ static void tmp_create(void) {
   tmp_catch(SIGINT);
   tmp_catch(SIGTERM);
   tmp_catch(SIGHUP);
+  /* A closed pipe on standard output (`prog | head`) is an ordinary way
+   * for a command-line program to end (O521, Stage 29 W-FIX1e): the
+   * directory goes and the program still dies by SIGPIPE, status 141
+   * (D330 keeps SIGPIPE's default action). std.http's sockets never
+   * raise it (MSG_NOSIGNAL). */
+  tmp_catch(SIGPIPE);
   /* A crash removes the directory too (O35, Stage 29 W1b): the handler
    * cleans up and re-raises the signal with its default action, so the
    * process still dies by it (a core dump included). A crash with no
