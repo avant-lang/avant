@@ -2,11 +2,16 @@
  * tests/cases/test_ffi_llvm.av): every scalar conversion, strings and
  * bytes, opaque pointers, C layouts, callbacks, and structs by value
  * (byval.av, the SysV C ABI). Compiled with `--cc`. */
+#define _GNU_SOURCE
+#include <pthread.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* ---- scalars */
 int ffi_add_i32(int a, int b) { return a + b; }
@@ -511,4 +516,47 @@ int32_t ox_run(foreign_cb_t f, int32_t n) {
     avant_gc_native_end();
   }
   return (int32_t)(ox_rss_kb() - before);
+}
+
+/* ---- stack_guard.av (Stage 29 W-FIX1b, O439): a SIGSEGV handler on an
+ * alternate stack that says where the fault was against the faulting
+ * thread's stack: in its guard page (the overflow was caught there), or
+ * past it (a frame larger than the guard stepped over it). It ends the
+ * program with status 42. ffi_guard_install() is called on the thread
+ * that will overflow. */
+static void ffi_guard_on_segv(int sig, siginfo_t *si, void *ctx) {
+  (void)sig;
+  (void)ctx;
+  pthread_attr_t a;
+  void *lo = 0;
+  size_t size = 0, guard = 0;
+  if (pthread_getattr_np(pthread_self(), &a) == 0) {
+    pthread_attr_getstack(&a, &lo, &size);
+    pthread_attr_getguardsize(&a, &guard);
+  }
+  uintptr_t f = (uintptr_t)si->si_addr, l = (uintptr_t)lo;
+  const char *msg = "fault inside the stack or above it\n";
+  if (f >= l - guard && f < l) {
+    msg = "fault in the guard page\n";
+  } else if (f < l - guard) {
+    msg = "fault PAST the guard page: the guard was skipped\n";
+  }
+  ssize_t w = write(2, msg, strlen(msg));
+  (void)w;
+  _exit(42);
+}
+
+void ffi_guard_install(void) {
+  stack_t ss;
+  ss.ss_sp = malloc(1 << 16);
+  ss.ss_size = 1 << 16;
+  ss.ss_flags = 0;
+  sigaltstack(&ss, 0);
+  struct sigaction sa;
+  memset(&sa, 0, sizeof sa);
+  sa.sa_sigaction = ffi_guard_on_segv;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+  sigaction(SIGSEGV, &sa, 0);
+  sigaction(SIGBUS, &sa, 0);
 }

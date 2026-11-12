@@ -350,4 +350,4 @@ leave:
   ret void
 }
 
-attributes #0 = { nounwind "frame-pointer"="all" }
+attributes #0 = { nounwind "frame-pointer"="all" "probe-stack"="inline-asm" }
