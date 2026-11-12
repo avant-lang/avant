@@ -1,6 +1,6 @@
 # Avant
 
-Avant is a compiled, garbage-collected programming language with the density of Crystal, the braces of C, and speed in the neighbourhood of C and Rust. You write short, type-inferred code; `avant` compiles it ahead of time, through LLVM, to a native binary; a generational Immix collector manages memory. No borrow checker, no manual `free`, no interpreter, no exceptions.
+Avant is a compiled, garbage-collected programming language that aims for the density of Crystal, with the braces of C and speed in the neighbourhood of C and Rust. You write short, type-inferred code; `avant` compiles it ahead of time, through LLVM, to a native binary; a generational Immix collector manages memory. No borrow checker, no manual `free`, no interpreter, no exceptions.
 
 For a long time a programmer picked one pair: simplicity and productivity, or performance and efficiency. Avant's bet is that you no longer have to choose, and its rule is to show the evidence, the losses included: [Benchmarks](#benchmarks) prints the rows where Avant is behind beside the rows where it leads.
 
@@ -57,8 +57,8 @@ skipped cake,one,300
 What you just read:
 
 - **No ceremony.** No semicolons, no parentheses around conditions, no `let`. Types appear where they name a fact (a field, a parameter, a result) and are inferred everywhere else.
-- **Errors are values.** `parse` returns `Item | BadLine`. `??` supplies a fallback or leaves the function; `if item = parse(line)` opens the success. Nothing unwinds, and an error cannot be dropped by accident.
-- **Values and objects.** A `struct` is a value with methods; a `class` is a reference. You choose per type.
+- **Errors are values.** `parse` returns `Item | BadLine`. `??` supplies a fallback or leaves the function; `if item = parse(line)` opens the success. Nothing unwinds, and an error cannot be dropped by accident. (Printing the error's own message takes one more line today: [Reading the error itself](#reading-the-error-itself).)
+- **Values and objects.** A `struct` is a value with methods. A `class` (not shown here) is a reference. You choose per type.
 - **Concurrency is built in.** `.parallel` runs the block on a pool of OS threads and returns the results in input order.
 
 And because backend work is home ground, a web server is seven lines:
@@ -75,7 +75,7 @@ fn main {
 }
 ```
 
-It is a real one: keep-alive connections, one event loop per core, WebSockets on the same port. It is [measured here](#http-and-websocket-servers), with its method.
+It is a real one: keep-alive connections, one event loop per processor, WebSockets on the same port. It is [measured here](#http-and-websocket-servers), with its method.
 
 ## Install
 
@@ -101,7 +101,7 @@ avant compile hello.av             # build ./hello
 avant compile hello.av --release   # the optimized build: use it whenever you measure
 ```
 
-That is everything you need to write Avant. The three build modes are compared in [Build modes](#build-modes).
+The three build modes are compared in [Build modes](#build-modes).
 
 Avant is pre-1.0 and young: the language still changes between releases ([CHANGELOG](CHANGELOG.md)), and what is decided but not built is listed in [Not built yet](#not-built-yet) and said again beside each feature it limits.
 
@@ -126,7 +126,7 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
 - [Modules](#modules): [import paths](#import-paths) · [visibility](#visibility) · [name clashes](#name-clashes)
 - [Packages](#packages): [the manifest](#the-manifest) · [fetch and lock](#fetch-and-lock) · [importing a dependency](#importing-a-dependency) · [updating and removing](#updating-and-removing) · [publishing a package](#publishing-a-package) · [package conflicts](#package-conflicts) · [package limits](#package-limits)
 - [Concurrency](#concurrency): [spawn](#spawn) · [parallel](#parallel) · [Channel and Mutex](#channel-and-mutex) · [choosing a tool](#choosing-a-tool) · [what may cross a task](#what-may-cross-a-task) · [the thread pool](#the-thread-pool)
-- [Memory](#memory): [the collector](#the-collector) · [collection hints](#collection-hints) · [collector settings](#collector-settings)
+- [Memory](#memory): [the collector](#the-collector) · [what allocation costs today](#what-allocation-costs-today) · [collection hints](#collection-hints) · [collector settings](#collector-settings)
 - [C interop](#c-interop): [declaring C functions](#declaring-c-functions) · [C types](#c-types) · [layouts and Ptr](#layouts-and-ptr) · [strings in C memory](#strings-in-c-memory) · [callbacks](#callbacks) · [linking C code](#linking-c-code) · [avant bind](#avant-bind)
 - [Macros](#macros): [quote and splice](#quote-and-splice) · [the field walk](#the-field-walk)
 
@@ -142,7 +142,7 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
 
 - [Coming from another language](#coming-from-another-language): [the deliberate differences](#the-deliberate-differences) · [by language](#by-language)
 - [Not built yet](#not-built-yet)
-- [Benchmarks](#benchmarks): [LangArena](#langarena) · [where Avant loses](#where-avant-loses) · [garbage collector](#garbage-collector) · [Valk's general suite](#valks-general-suite) · [HTTP and WebSocket servers](#http-and-websocket-servers) · [reading these numbers](#reading-these-numbers)
+- [Benchmarks](#benchmarks): [LangArena](#langarena) · [where Avant loses](#where-avant-loses) · [HTTP and WebSocket servers](#http-and-websocket-servers) · [reading these numbers](#reading-these-numbers)
 - [Goals](#goals)
 
 **Going deeper**
@@ -174,7 +174,7 @@ The last expression of a function is its value. `1..6` stops before 6. `${...}` 
 
 ### Entry point
 
-The entry point is `fn main` (or `fn run`); it needs no `pub`. Returning nothing exits with status 0. Declared `fn main: Int`, its result is the process's exit status, which must be in `0..255`: any other value traps (`avant runtime: exit status 256 out of range (0..255)`, status 1) instead of reaching the OS cut to its low byte, where 256 failures would read as success.
+The entry point is `fn main` (or `fn run`); it needs no `pub`. Returning nothing exits with status 0. Declared `fn main: Int`, its result is the process's exit status, which must be in `0..255`.
 
 <!-- check: run status=3 -->
 ```avant
@@ -183,6 +183,8 @@ fn main: Int {
   3
 }
 ```
+
+A status outside `0..255` traps (`avant runtime: exit status 256 out of range (0..255)`, status 1) instead of reaching the OS cut to its low byte, where 256 failures would read as success.
 
 Command-line arguments come from `argv()` ([Program arguments](#program-arguments)). An entry point cannot return an error yet ([Not built yet](#not-built-yet)).
 
@@ -209,7 +211,7 @@ fn main {
 
 ### Functions
 
-`fn name(params): Result { body }`. An omitted result type means the function returns nothing (`Void`); result types are never inferred. A function without parameters drops the parentheses in its declaration.
+`fn name(params): Result { body }`. An omitted result type means the function returns nothing (`Void`); result types are never inferred. A function without parameters may drop the parentheses in its declaration. It is still called with them (`answer()`): a bare `answer` is the function as a value. A *method* without arguments may be called with or without them (`q.sum`, `q.sum()`), the builtin ones included (`s.strip`, `xs.pop`).
 
 ```avant
 fn area(w: Int, h: Int): Int {
@@ -286,6 +288,8 @@ From loosest to tightest binding; operators on one row associate left to right.
 
 As in C, `&`, `^` and `|` bind looser than comparisons: write `(x & 1) == 0`, since `x & 1 == 0` means `x & (1 == 0)` and does not compile. Assignment is a statement: `=`, `+=`, `-=`, `*=`, `/=`. There is no `++`, no ternary (`if` is an expression) and no `**`.
 
+`==` and `!=` compare numbers, `Bool`s, `String`s and `Bytes`. A struct or a class gets them from an [operator method](#operator-methods); arrays and hashes have none (compare in a loop); and an optional is never compared with `nil`: open it ([Opening an optional](#opening-an-optional)).
+
 ### Line breaks
 
 A line break ends a statement. To continue an expression on the next line, end the line with an operator or an open bracket, or start the next line with `.`, `?` or an infix operator other than `+` and `-`.
@@ -310,7 +314,7 @@ A line whose first token is `[`, `-` or `+` always begins a new statement: it ne
 
 `//` runs to the end of the line. There is no `/* */`.
 
-One comment form is reserved: `// file: path` is a marker the compiler's own test tooling uses when it joins sources. It resets the path and line that diagnostics report; it is not an import. Do not start a comment that way.
+One comment form is reserved: a comment that starts `// file: ` changes the path and line that diagnostics report. It is not an import. Do not start a comment that way.
 
 ## Control flow
 
@@ -359,7 +363,7 @@ fn main {
 }
 ```
 
-A final `if`/`else` in a function with a result is that function's value, as in `classify` above. An `if` without `else` is a statement. Conditions are `Bool`: there is no truthiness, so `if n` on an `Int` is a compile error.
+A final `if`/`else` in a function with a result is that function's value, as in `classify` above. An `if` without `else` is a statement. Conditions are `Bool`: there is no truthiness, so `if n` on an `Int` is a compile error. A struct literal directly in a condition needs parentheses around it (`if p == (Point { x: 1, y: 2 }) { ... }`), so the `{` that opens the block is never taken for a literal's.
 
 ### Conditions that bind
 
@@ -383,6 +387,7 @@ fn main {
 ```
 
 - The bound name exists only in the then-block: not in the `else`, not after the `if`.
+- An `if` that binds is an expression like any other: `width = if v = cfg.get("width") { v } else { 80 }`.
 - A condition may be a comma list of bindings and `Bool` tests, evaluated left to right and stopping at the first that fails. Each bound name is in scope for the conditions after it. The `else` runs when any of them fails, and sees none of the names.
 - `while` takes the same conditions ([While](#while)).
 
@@ -444,12 +449,12 @@ fn main {
 - **`..` excludes its end**, unlike Crystal's, Ruby's and Kotlin's. `for i in 1..n` never reaches `n`; write `1..n + 1` until the inclusive `a..=b` is built ([Not built yet](#not-built-yet)).
 - The bounds are evaluated once. The loop variable is a new name that exists only inside the loop. `break`, `continue` and `return` behave as they do in `while`.
 - A range is only a `for` form: it is not a value you can store.
-- The range's ends and the array are read like a condition: a struct literal there needs parentheses, brackets or a call around it (`for p in [Point { x: 1, y: 2 }]`), so a body that starts with a typed declaration is never taken for a literal.
 - Arrays and hashes also have `each` ([Array operations](#array-operations), [Hash operations](#hash-operations)).
+- A struct literal in a `for`'s range or array needs parentheses, brackets or a call around it, as in a [condition](#if): `for p in [Point { x: 1, y: 2 }]`.
 
 ### Switch
 
-`switch` picks an arm by an integer or a `Bool`. There is no fall-through; an arm may list several values.
+`switch` picks an arm by an integer. There is no fall-through; an arm may list several values.
 
 ```avant
 fn name_of(kind: Int): String {
@@ -467,7 +472,7 @@ fn main {
 }
 ```
 
-- The value is an `Int`, `Int32`, `UInt32`, `UInt64` or `Bool`; the labels are integer literals.
+- The value is an `Int`, `Int32`, `UInt32` or `UInt64`; the labels are integer literals. A `Bool` is accepted too, with the labels `1` and `0` (`case true` is not a form yet): an `if` reads better.
 - A switch used as a value needs `else`, so every input produces a result. Used as a statement, a value no arm names does nothing.
 - An arm may leave instead of giving a value (`return`, `break`, `continue`).
 - There is no `switch` on strings or on a union's member yet ([Not built yet](#not-built-yet)).
@@ -495,14 +500,14 @@ fn main {
 
 ### Opening an optional
 
-Four forms take the value out of a `T?`. The first three also work on a result that can fail ([Errors](#errors)).
+These forms take the value out of a `T?`. All of them work the same way on a result that can fail ([Errors](#errors)).
 
 | Form | Gives | Use it when |
 | --- | --- | --- |
-| `if v = x { ... } else { ... }` | `v` inside the block | absence needs its own code path |
+| `x?` | the value, or returns `nil` from the current function | the caller should deal with it |
 | `x ?? fallback` | the value, or `fallback` (evaluated only when needed) | there is a sensible default |
 | `x ?? return`, `?? return v`, `?? break`, `?? continue` | the value, or leaves | absence ends this function or iteration, and the rest should not nest |
-| `x?` | the value, or returns `nil` from the current function | the caller should deal with it |
+| `if v = x { ... } else { ... }` | `v` inside the block | absence needs its own code path |
 | `x.or(fallback)` | the same as `x ?? fallback` | you prefer a method chain |
 
 ```avant
@@ -524,7 +529,7 @@ fn main {
 }
 ```
 
-`x?` compiles only in a function whose result can carry the `nil` (here `Int?`); otherwise the compiler says what would be returned and where it cannot go. There is no `?.` chaining and no `!` to force a value out: open it.
+`x?` compiles only in a function whose result can carry the `nil` (here `Int?`); otherwise the compiler says what would be returned and where it cannot go. There is no `?.` chaining, no `!` to force a value out and no `x == nil`: open it. To test for absence without using the value, write `if _ = x { ... } else { ... }`.
 
 ### Unions
 
@@ -533,9 +538,6 @@ Any other union is written with `|`: `Int | String`, `Item | BadLine`. `T?` is s
 ```avant
 class Config {
   port: Int | String = 8080
-
-  fn initialize {
-  }
 }
 
 fn main {
@@ -633,7 +635,7 @@ fn main {
 }
 ```
 
-`Float64.to_i` truncates toward zero, and traps on NaN, an infinity, or a value outside `Int` (`avant runtime: to_i of Float64 30000000000000000000.0 out of range for Int`). From text, `"42".to_i` returns an optional ([Parsing numbers](#parsing-numbers)).
+`Float64.to_i` truncates toward zero, and traps on NaN, an infinity, or a value outside `Int` (`avant runtime: to_i of Float64 30000000000000000000.0 out of range for Int`). From text, `"42".to_i` returns an optional ([Parsing numbers](#parsing-numbers)). To text, interpolate (`"${n}"`), or use `fmt_float(x, digits)` for a fixed number of decimals: numbers have no `to_s`.
 
 ### Arithmetic and overflow
 
@@ -650,6 +652,20 @@ A check costs a compare and a never-taken branch, and the compiler drops the one
 ### Floats
 
 `Float64` has `abs`, `floor`, `sqrt`, `exp` and `to_i`, and the prelude has `sqrt(x)` and `exp(x)`. Float arithmetic follows IEEE 754 and never traps: `1.0 / 0.0` is `inf`.
+
+The rest of C's math library is one `lib` block away and needs no flag ([C interop](#c-interop)):
+
+```avant
+lib m {
+  fun pow(x: Float64, y: Float64): Float64
+  fun log(x: Float64): Float64
+}
+
+fn main {
+  puts(m.pow(2.0, 10.0))   // => 1024.0
+  puts(m.log(1.0))         // => 0.0
+}
+```
 
 `puts` and interpolation print a float as the shortest text that reads back as the same number, with `.0` on a whole value: `0.30000000000000004`, `2.0`, `1e21`, `1.5e-7`, `-0.0`, `nan`, `inf`, `-inf`. JSON output uses the same text (with `null` for NaN and the infinities). For a fixed number of decimals, `fmt_float(x, digits)` returns a `String` and `buf.push_fmt_f(x, digits)` appends to a buffer; `digits` is 0 to 64, and anything else traps.
 
@@ -687,7 +703,7 @@ fn main {
 
 ### Bytes, not characters
 
-`size` is the byte length, and `s[i]` is the byte at `i` as an `Int`. Nothing checks that a string is UTF-8 until you ask for characters: `s.chars` returns one `String` per Unicode code point and traps on bytes that are not valid UTF-8 (`avant runtime: String.chars needs valid UTF-8`), and `String.from_utf8(bytes)` returns `nil` for them. This is Go's model: cheap, predictable indexing, and text handled deliberately.
+`size` is the byte length (at most 2,147,483,647: [Size limits](#size-limits)), and `s[i]` is the byte at `i` as an `Int`. Nothing checks that a string is UTF-8 until you ask for characters: `s.chars` returns one `String` per Unicode code point and traps on bytes that are not valid UTF-8 (`avant runtime: String.chars needs valid UTF-8`), and `String.from_utf8(bytes)` returns `nil` for them. This is Go's model: cheap, predictable indexing, and text handled deliberately.
 
 ```avant
 fn main {
@@ -719,8 +735,6 @@ fn main {
 | `repeat_byte(b, n)` | `n` copies of the byte `b` |
 | `bytes_to_str(xs)` | a string from an `Array(Int)` of bytes |
 | `String.from_utf8(bytes)` | `String?`: `nil` when the bytes are not valid UTF-8 |
-
-A method without arguments may be called with or without parentheses: `s.strip` and `s.strip()` are the same call, for every builtin and for your own methods.
 
 `String` has no `contains`, `starts_with`, `index_of`, `replace`, `join` or case conversion yet ([Not built yet](#not-built-yet)); [`std.regex`](#stdregex) finds, replaces and splits. Substrings are a free function (`str_slice`) rather than a method for now.
 
@@ -774,7 +788,7 @@ fn main {
 | `Buf` | yes, grows | any bytes | building text or binary output piece by piece |
 | `Array(Int)` | yes, grows | 8 bytes per element | numbers. Not byte data: a byte table in an array costs eight times a `Buf` |
 
-| `Bytes` | |
+| `Bytes` operation | Result |
 | --- | --- |
 | `b.size`, `b[i]`, `b.get(i)` | as for `String` |
 | `b.slice(start, stop)` | a new `Bytes`; traps unless `0 <= start <= stop <= size` |
@@ -782,7 +796,7 @@ fn main {
 | `b.chars` | as `String.chars` |
 | `b.to_buf` | a `Buf` holding a copy |
 
-| `Buf` | |
+| `Buf` operation | Result |
 | --- | --- |
 | `Buf.new`, `Buf.new(capacity)`, `buf_new()` | an empty buffer |
 | `push_str(s)`, `push_bytes(b)`, `push_byte(n)` | append a string, `Bytes`, or one byte (`0..255`, else a trap) |
@@ -837,7 +851,8 @@ fn main {
 ```
 
 - `Array(T).new(n)` makes `n` elements, each the element type's zero: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a struct of such fields.
-- `Array(T).new(n, value)` makes `n` copies of `value` (the same object, for a class). It is required when `T` has no zero (a class, an `Array`, a `Hash`): `Array(Node).new(n)` alone is a compile error that names both ways out, this form and `[]` with `push`.
+- `Array(T).new(n, value)` makes `n` copies of `value` (for a class, an `Array`, a `Hash` or a `Buf`: `n` references to the same object). It is required when `T` has no zero (a class, an `Array`, a `Hash`): `Array(Node).new(n)` alone is a compile error that names both ways out, this form and `[]` with `push`.
+- For a grid, push a fresh row per iteration (`rows.push(Array(Int).new(width))`): `Array(Array(Int)).new(2, [0, 0])` would hold the same row twice.
 - A negative `n` traps (`avant runtime: Array size -5 is negative`).
 
 ### Indexing and bounds
@@ -895,11 +910,11 @@ fn main {
 
 ### Size limits
 
-A `String`, `Bytes` or `Buf` holds at most 2,147,483,647 bytes and an `Array` at most 2,147,483,647 elements (the runtime keeps 32-bit sizes). Growing past the limit traps before anything is written (`avant runtime: Buf would exceed 2147483647 bytes`), and `file_read` of a larger file is an `IoError` (`File too large`).
+A `String`, `Bytes` or `Buf` holds at most 2,147,483,647 bytes and an `Array` at most 2,147,483,647 elements (the runtime keeps 32-bit sizes); a `Hash` holds at most 1,073,741,824 slots. Growing past a limit traps before anything is written (`avant runtime: Buf would exceed 2147483647 bytes`, `Hash would exceed 1073741824 slots`), and `file_read` of a larger file is an `IoError` (`File too large`).
 
 ## Hashes
 
-`Hash(K, V)` maps keys to values. A lookup returns `V?`: a missing key is `nil`, never a default value and never a crash.
+`Hash(K, V)` maps keys to values. A lookup returns `V?`: a missing key is `nil`, never a default value and never a crash. Today the key and value types are limited to three combinations ([Key and value types](#key-and-value-types)).
 
 ```avant
 fn main {
@@ -1011,7 +1026,7 @@ When in doubt, start with a struct: it allocates nothing and cannot be changed b
 
 A struct literal names every field, in any order. A copy is independent of the original.
 
-A method may change its struct receiver, and the change is the caller's: no `mutating` mark is needed. A struct passed as an argument is a copy, so a change made through a parameter stays in the callee.
+A method may change its struct receiver, and the change is the caller's: no `mutating` mark is needed. A struct passed as an argument is a copy, so a change made through a parameter stays in the callee. The same line runs through arrays: `xs[i].x = v` changes the element in place, while `for p in xs` and `q = xs[i]` give copies, and a change to `p` or `q` does not reach the array.
 
 ```avant
 struct Vec {
@@ -1070,7 +1085,7 @@ fn main {
 
 ### Field initialization
 
-No field is ever read unset. For each field, in order:
+This section is about classes: a struct has no `initialize` and no field defaults (`struct fields have no defaults; use a literal`), because its literal names every field. No class field is ever read unset. For each field, in order:
 
 1. **A default**, if the field has one: any expression that does not use `self` (`xs: Array(Int) = []`, `seen: Hash(String, Int) = Hash(String, Int).new`, `at: Span = Span.new(0, 0)`). Defaults are evaluated at each construction, in declaration order, before `initialize`. A default cannot read another field; compute such a value in `initialize`.
 2. **The type's zero**, if it has one and there is no default: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a null `Ptr`, a struct of such fields.
@@ -1084,7 +1099,9 @@ A method is a `fn` inside the type's body. Inside it, `self` is the receiver.
 
 - A field is **read** bare (`x`) or as `self.x`, and **written** only as `self.x = ...`. A bare `x = ...` where `x` is a field is a compile error that names both ways out (write `self.x =`, or give the local another name), so a write to the receiver is always visible on its line.
 - A method of the same type is called bare (`sum`, `sum()`) or as `self.sum`.
-- A bare name means, in order: a local or parameter, a field of the receiver, a method of the receiver, then a function. A bare call that fits both a method and a function is an error that asks for `self.name(...)` or the function's qualified name, and a module name used as a qualifier (`util.twice(3)`) that is also a method of the receiver is an error that asks for `self.util` or another name for the method. Nothing is chosen silently.
+- A bare name means, in order: a local or parameter, a field of the receiver, a method of the receiver, then a function. Nothing is chosen silently when two of those fit:
+  - a bare call that fits both a method and a function is an error that asks for `self.name(...)` or the function's qualified name;
+  - a module name used as a qualifier (`util.twice(3)`) that is also a method of the receiver is an error that asks for `self.util` or another name for the method.
 - A method without arguments is called with or without parentheses: `q.sum` and `q.sum()` are the same call.
 - Methods, like fields, are private to their module unless marked `pub` ([Visibility](#visibility)).
 - Methods are not values: `box.f()` is always a method call. To call a field that holds a function, parenthesize it: `(box.f)()`.
@@ -1243,6 +1260,8 @@ fn main {
 ```
 
 One rule says what fails: **in any union, the failures are `Nil` and every member marked `Error`; the rest is the success value**. Everything below follows from it.
+
+The `else` above cannot see the error yet; [Reading the error itself](#reading-the-error-itself) shows how to get at it.
 
 ### Propagate, replace, branch
 
@@ -1409,10 +1428,15 @@ fn main {
 avant runtime: index 5 out of bounds (size 3) in main (main.av:1:1)
 ```
 
-- The line is `avant runtime: WHAT` and where. Whatever the program printed before comes first: a trap flushes stdout before it writes to stderr, so a log with both streams reads in order.
-- A trap placed at one operation names that operation's position: `pop` on an empty array, the number conversions, shifts, a byte stored with `buf[i] = n`, `Array(T).new` with a negative size, `main`'s exit status and a C string result that is NULL (`avant runtime: pop on an empty Array at main.av:7:10`).
-- Indexing out of bounds, integer overflow and division by zero name the function and where it starts (`avant runtime: integer overflow in twice (main.av:9:1)`). Every such check of a function shares one cold exit, which lets the optimizer fold a statement's checks into one branch; a position per check would cost time in hot loops.
-- A trap raised inside a runtime function (a slice's bounds, `push_byte`, `chr`, `repeat_byte`, `sum`, a `Hash` counter, `fmt_float`'s precision, a parse base, `split` with an empty separator, `chars` on invalid UTF-8) names the operation and its values, and no position yet.
+The line is `avant runtime: WHAT` and where. Whatever the program printed before comes first: a trap flushes stdout before it writes to stderr, so a log with both streams reads in order. How precisely the line says where depends on the trap:
+
+| Where the trap is | The line names | Example |
+| --- | --- | --- |
+| at one operation: `pop` on an empty array, the number conversions, shifts, `buf[i] = n`, `Array(T).new` with a negative size, `main`'s exit status, a C string result that is NULL | that operation's position | `avant runtime: pop on an empty Array at main.av:7:10` |
+| an index out of bounds, an integer overflow, a division by zero | the function, and where it starts | `avant runtime: integer overflow in twice (main.av:9:1)` |
+| inside a runtime function: a slice's bounds, `push_byte`, `chr`, `repeat_byte`, `sum`, a `Hash` counter, `fmt_float`'s precision, a parse base, `split` with an empty separator, `chars` on invalid UTF-8 | the operation and its values; no position yet | `avant runtime: slice 4..2 out of range (size 5)` |
+
+The second row is deliberate: a position for each check would cost time in hot loops.
 
 | What traps | The form that does not |
 | --- | --- |
@@ -1475,7 +1499,7 @@ fn main {
 
 `{ |x| x + 1 }` is a lambda; its last expression is its result. A parameter's type may be written inside the pipes (`{ |a: Int, b: Int| a * 10 + b }`) and is optional when the expected `fn` type already gives it; a lambda whose parameter type is still unknown is an error.
 
-A lambda with no parameters is `{ || 1 }`. `||` is one token, so `{ | | 1 }` with a space is not that form.
+A lambda with no parameters is `{ || 1 }`.
 
 ```avant
 fn main {
@@ -1841,7 +1865,13 @@ fn main {
 }
 ```
 
-A bare `value()` there is refused, naming both: `ambiguous call to value: alpha.value and beta.value both match; write alpha.value() or beta.value()`. A name that is a function in one module and a type in another is refused the same way (`ambiguous name value; qualify it`), and so is a type two modules both publish: write `beta.Token`. (For that last case the message is still the unhelpful `unknown type Token`.) Nothing wins silently, not even the module's own name over an imported one.
+A bare use that could mean either is refused, and nothing wins silently, not even the module's own name over an imported one:
+
+- **The same function in two modules.** A bare `value()` reports `ambiguous call to value: alpha.value and beta.value both match; write alpha.value() or beta.value()`.
+- **A function in one module, a type of the same name in another.** `ambiguous name value; qualify it`.
+- **The same type in two modules.** Write `beta.Token`. The message for the bare `Token` is still the unhelpful `unknown type Token`.
+
+Three more rules:
 
 - Functions with different parameter types still meet as one overload set across modules: `show(7)` and `show("ab")` pick `show_int.show` and `show_str.show` by their arguments.
 - A qualified call reaches only that module's `pub` functions. A module may qualify its own names (`main.helper()`).
@@ -1991,7 +2021,7 @@ No registry, no version ranges or solving, no per-package build step, one versio
 
 ## Concurrency
 
-Avant runs tasks on a pool of OS threads. `spawn` starts one task; `.parallel` maps a block over an array; channels and mutexes carry what tasks share. The compiler checks what crosses a task boundary, so a data race on an ordinary value is a compile error.
+Avant runs tasks on a pool of OS threads. `spawn` starts one task; `.parallel` maps a block over an array; channels and mutexes carry what tasks share. The compiler checks what a task captures, so sharing a mutable value between tasks by accident is a compile error.
 
 ```avant
 fn fib(n: Int): Int {
@@ -2032,7 +2062,7 @@ fn main {
 
 - A value the block captures is copied when the task is sent ([What may cross a task](#what-may-cross-a-task)); the block cannot assign a captured variable.
 - A captured `Array` is shared for reading: the block may not change it, and the sender may not change it until the handle is joined. Both are compile errors.
-- Calling `.join` or `.parallel` from inside a pool worker is an error; a nested `spawn` from a worker is allowed.
+- Calling `.join` or `.parallel` from inside a pool worker is refused: at compile time when it is written in the block, at run time (the program stops) when it is reached through a call. A nested `spawn` from a worker is allowed.
 
 ### Parallel
 
@@ -2051,10 +2081,19 @@ The block takes one parameter. The statement form `parallel { }`, without a rece
 
 ### Channel and Mutex
 
-`Channel(T)` passes values between tasks; `Mutex(T)` guards one shared value. Both are ordinary generic classes written in Avant, and **they are not in the standard library yet**: copy `class Channel(T)` from [tests/fixtures/threads/channels.av](tests/fixtures/threads/channels.av) and `class Mutex(T)` from [tests/fixtures/threads/mutex.av](tests/fixtures/threads/mutex.av) into your project. Making them importable is decided and not built.
+`Channel(T)` passes values between tasks; `Mutex(T)` guards one shared value. Both are ordinary generic classes written in Avant, and **they are not in the standard library yet**: until they are, the two classes are yours to paste. Both are printed here in full.
 
-<!-- check: run pre=mutex_class -->
 ```avant
+class Mutex(T) {                 // until Mutex is in the standard library, this class is yours to paste
+  cell: T
+  gate: UInt64
+
+  fn initialize(value: T) {
+    self.cell = value
+    self.gate = avant_gate_new()
+  }
+}
+
 fn main {
   hits = Mutex(Int).new(0)
   handles: Array(JoinHandle(Int)) = []
@@ -2066,7 +2105,7 @@ fn main {
           n
         }
       }
-      0
+      0                          // a spawn block ends with an Int, for now
     })
   }
   for h in handles {
@@ -2076,21 +2115,125 @@ fn main {
 }
 ```
 
-<!-- check: hidden id=mutex_class
-class Mutex(T) {
-  cell: T
-  gate: UInt64
+- `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` holds the lock for the block; `x` is the guarded value, a place that dies with the block; the block must end with a value, which is the call's. `return`, `break` and `continue` inside `with` are errors. (`with` is a form the compiler provides for a class of this name and shape.)
+- **The lock guards the cell, not what a reference stored in it points to.** With a class in a `Mutex`, do the work inside `with` and return plain values (an `Int`, a `String`): a block that returns the object itself hands out a reference the lock no longer protects, and the compiler does not stop it yet.
 
-  fn initialize(value: T) {
-    self.cell = value
+A channel hands values from one task to another:
+
+<!-- check: run pre=channel_class -->
+```avant
+fn main {
+  jobs = Channel(Int).new(4)          // buffered: four values may wait
+  producer = spawn {
+    for i in 1..6 {
+      jobs.send(i * i)
+    }
+    jobs.close
+    0
+  }
+  total = 0
+  while v = jobs.recv {               // nil once the channel is closed and empty
+    total += v
+  }
+  _ = producer.join
+  puts(total)    // => 55
+}
+```
+
+- `Channel(T).new` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` sends, `recv` returns `T?` (`nil` once the channel is closed and empty, so `while v = ch.recv { ... }` drains it), `close` closes.
+- The class as it stands works for element types that have a zero value (integers, `String`, structs of such fields), not for a class.
+- Waiting and waking go through the runtime's `avant_gate_*` functions, which is all the two classes are built on.
+
+<details>
+<summary>The <code>Channel(T)</code> class, to paste</summary>
+
+<!-- check: compile decls id=channel_class -->
+```avant
+class Channel(T) {
+  slots: Array(T)
+  cap: Int
+  count: Int
+  head: Int
+  closed: Int
+  has: Int
+  gate: UInt64
+  cell: T
+
+  fn initialize(n: Int = 0) {
+    self.cap = n
     self.gate = avant_gate_new()
+    self.slots = Array(T).new(n)
+  }
+
+  fn send(value: T) {
+    avant_gate_lock(gate)
+    if cap == 0 {
+      while has == 1 {
+        avant_gate_wait(gate)
+      }
+      self.cell = value
+      self.has = 1
+      avant_gate_broadcast(gate)
+      while has == 1 {
+        if closed == 1 {
+          break
+        }
+        avant_gate_wait(gate)
+      }
+    } else {
+      while count == cap {
+        avant_gate_wait(gate)
+      }
+      slots[(head + count) % cap] = value
+      self.count = count + 1
+      avant_gate_broadcast(gate)
+    }
+    avant_gate_unlock(gate)
+  }
+
+  fn recv: T? {
+    avant_gate_lock(gate)
+    got: T? = nil
+    if cap == 0 {
+      while has == 0 {
+        if closed == 1 {
+          break
+        }
+        avant_gate_wait(gate)
+      }
+      if has == 1 {
+        got = cell
+        self.has = 0
+        avant_gate_broadcast(gate)
+      }
+    } else {
+      while count == 0 {
+        if closed == 1 {
+          break
+        }
+        avant_gate_wait(gate)
+      }
+      if count > 0 {
+        got = slots[head]
+        self.head = (head + 1) % cap
+        self.count = count - 1
+        avant_gate_broadcast(gate)
+      }
+    }
+    avant_gate_unlock(gate)
+    got
+  }
+
+  fn close {
+    avant_gate_lock(gate)
+    self.closed = 1
+    avant_gate_broadcast(gate)
+    avant_gate_unlock(gate)
   }
 }
--->
+```
 
-- `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` holds the lock for the block; `x` is the guarded value, a place that dies with the block; the block must end with a value, which is the call's. `return`, `break` and `continue` inside `with` are errors.
-- `Channel(T).new` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` sends, `recv` returns `T?` (`nil` once the channel is closed and empty, so `while v = ch.recv { ... }` drains it), `close` closes.
-- Waiting and waking go through the runtime's `avant_gate_*` functions, which is all the two classes are built on.
+</details>
 
 ### Choosing a tool
 
@@ -2099,8 +2242,8 @@ class Mutex(T) {
 | an array, and the same independent work for each element | `.parallel` | one line; results come back in order; nothing to join |
 | a few different jobs to run beside the main one | `spawn` and `.join` | each task has its own code and its own result |
 | a stream of values from producers to consumers | `Channel(T)` | hand-off without shared state; `recv` ends the loop when the channel closes |
-| one value several tasks update (a counter, a table) | `Mutex(T)` | the value is only reachable under its lock |
-| independent work that needs no sharing at all | nothing: a plain loop is often fast enough | a task costs a thread hop; measure first |
+| one value several tasks update (a counter, a table) | `Mutex(T)` | the value is read and changed under its lock |
+| work too small to be worth a thread (a few microseconds per item) | nothing: a plain loop | a task costs a thread hop; measure first |
 
 ### What may cross a task
 
@@ -2115,7 +2258,7 @@ What a `spawn` or `.parallel` block captures is checked at compile time:
 | a `Channel` or a `Mutex` | shared: that is their purpose |
 | a class instance, a `Hash`, a `fn` value, a `JoinHandle`, or a struct holding one | **refused**: it is not copied, and sharing it would be a race |
 
-A mutable object reaches another task only inside a `Mutex`, through a `Channel`, or as the results of `.parallel`.
+A mutable object reaches another task only inside a `Mutex`, or as the results of `.parallel`.
 
 ### The thread pool
 
@@ -2123,7 +2266,7 @@ The pool has one thread per online processor, counted once when the pool starts.
 
 ## Memory
 
-Memory is managed for you: allocate with `Type.new`, literals and `push`, and forget about it. Most programs never need anything from this section.
+Memory is managed for you: allocate with `Type.new`, literals and `push`, and nothing is freed by hand. No program needs a setting from this section. What is worth knowing is where the collector costs time today.
 
 ### The collector
 
@@ -2131,9 +2274,26 @@ The collector is a precise, generational Immix: new objects are allocated in a y
 
 Structs live inline in their holder and optional references are plain pointers ([What an optional costs](#what-an-optional-costs)), so idiomatic code allocates less than its class-only equivalent would.
 
+### What allocation costs today
+
+Allocation-heavy code is where Avant is weakest today, and it is being worked on.
+
+- **Many small objects in a tight loop.** Creating a class instance costs more instructions than it should (a function call, where it should be a few inlined instructions), so a loop that does little besides `T.new` runs slower than it will.
+- **A large structure that all stays alive** (a big tree, a long list, a graph built once). While it grows, the collector copies its objects out of the young generation and traces them again: the build pays for the same objects more than once. [Collection hints](#collection-hints) exist for this shape.
+- **A large live heap.** A full collection traces everything that is alive, so its cost grows with the live data, not with the garbage.
+
+LangArena shows it: `Binarytrees::Arena` is at 1.42× the best time and 1.92× the best memory, and `Binarytrees::Obj` and `Calculator::Ast` post good times only because their source carries hints ([Reading these numbers](#reading-these-numbers)).
+
+Until this improves:
+
+- keep small values in structs: a struct allocates nothing;
+- reuse a `Buf` or an array, with `clear`, instead of making one per iteration;
+- use the `_into(buf)` calls of the standard library;
+- hint where a structure is built and dropped whole.
+
 ### Collection hints
 
-`std.gc` holds two hints for the rare program that knows something the collector cannot: it builds a large structure that stays alive while it is built, then drops it whole.
+`std.gc` holds two hints for a program that knows something the collector cannot: it builds a large structure that stays alive while it is built, then drops it whole. That is the shape the collector handles worst today, so the hints are worth their two lines there.
 
 ```avant
 import std.gc
@@ -2271,7 +2431,7 @@ fn main {
 }
 ```
 
-`Ptr` of a layout and `Ptr(Void)` are the pointer types; `Ptr(Int)` is rejected. Memory you got from C is C's: the collector neither moves nor frees it.
+`Ptr(T)` is for a layout `T`, and `Ptr(Void)` for a pointer you only pass around. A `Ptr` of anything else (`Ptr(Int)`) has no fields to read and cannot be given methods. Memory you got from C is C's: the collector neither moves nor frees it. There is no `sizeof` yet: the size passed to `malloc` is yours to state.
 
 ### Strings in C memory
 
@@ -2351,11 +2511,29 @@ avant compile app.av --cc helper.c      # compile and link a C file (or link a .
 avant run app.av --lib z
 ```
 
-The C library and the math library need no flag. The C libraries the standard library stands on (yyjson, PCRE2, zlib, a Base64 codec, uSockets, picohttpparser) are vendored under `runtime/third_party/` and compiled into the runtime: a program that uses them needs nothing installed.
+The C library and the math library need no flag. The C libraries the standard library stands on (yyjson, PCRE2, zlib, a Base64 codec, uSockets, picohttpparser) are compiled into the runtime that ships with `avant`: a program that uses them needs nothing installed.
 
 ### avant bind
 
-`avant bind HEADER.h` reads a C header with libclang and prints a `lib` block for you to keep and edit. It builds nothing and writes nothing into your project.
+`avant bind HEADER.h` reads a C header with libclang and prints a `lib` block for you to keep and edit. It builds nothing and writes nothing into your project. Given this header,
+
+```c
+int avant_add(int a, int b);
+void *avant_sentinel(void);
+int avant_is_null(void *p);
+```
+
+`avant bind add.h` prints:
+
+<!-- check: compile decls -->
+```avant
+// generated by avant bind from add.h
+lib add {
+  fun avant_add(a: Int32, b: Int32): Int32
+  fun avant_sentinel: Ptr(Void)
+  fun avant_is_null(p: Ptr(Void)): Int32
+}
+```
 
 - Each C scalar type maps to its exact name (`unsigned char` and `uint8_t` to `UInt8`, `short` to `Int16`, `int` to `Int32`, `unsigned int` to `UInt32`, `float` to `Float32`). A type with no Avant name (`long double`) fails the bind with a message.
 - A `char *` result is bound as `String?`, since C returns NULL for "absent" or "failed"; a `char *` parameter is `String`.
@@ -2426,13 +2604,13 @@ The prelude is the set of names every program can use without an import. The typ
 | Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
 | Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `bytes_to_str`, `buf_new` ([String operations](#string-operations)) |
 
-Runnable programs that use them live in [examples/](examples).
+Runnable programs that use them live in [examples/](examples), in the repository.
 
 ### Output
 
 `puts(x)` writes one value and a newline to stdout. `x` is an integer, a float, a `Bool` or a `String` (every byte of it, a NUL included); anything else goes through interpolation first (`puts("${e}")`). `puts_u(n)` prints an integer as the unsigned number its bits spell.
 
-There is no `print` without a newline, no writer for stderr and no `exit(status)` yet ([Not built yet](#not-built-yet)); the exit status comes from `main`'s result.
+`puts` takes exactly one argument: a blank line is `puts("")`. There is no `print` without a newline, no writer for stderr, no `exit(status)` and no reader for standard input yet ([Not built yet](#not-built-yet)); the exit status comes from `main`'s result, and `file_read("/dev/stdin")` reads the whole of standard input.
 
 ### Files and directories
 
@@ -2461,7 +2639,9 @@ fn main {
 }
 ```
 
-An `IoError` has `op` (`"read"`, `"write"` or `"list"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. Dropping one is a compile error, like any [error](#errors-cannot-be-dropped). `IoError` and `ProcessError` exist in a program that calls one of these functions; a program that calls none may declare types of those names.
+- `file_read` returns the whole file; split it into lines with `text.split("\n")` (a final newline gives a last, empty piece). There is no streaming reader yet.
+- An `IoError` has `op` (`"read"`, `"write"` or `"list"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. Dropping one is a compile error, like any [error](#errors-cannot-be-dropped).
+- The names `IoError` and `ProcessError` are taken only in a program that calls these functions.
 
 ### Processes and environment
 
@@ -2497,10 +2677,10 @@ fn main {
 }
 ```
 
-- `now_ms()` and `now_us()` read a monotonic clock as `Int` milliseconds and microseconds. They measure intervals; they are not the time of day.
+- `now_ms()` and `now_us()` read a monotonic clock as `Int` milliseconds and microseconds; they do not wrap. They measure intervals; they are not the time of day. The prelude has no time-of-day call and no `sleep` yet; C's `usleep` is one `lib` block away (`lib c { fun usleep(us: UInt32): Int32 }`).
 - `sha256(s)` is the SHA-256 of a string, as 64 hexadecimal characters.
 - `sqrt(x)`, `exp(x)` and `fmt_float(x, digits)` are in [Floats](#floats).
-- A few more names are reserved for the benchmark programs and print their checksums: `checksum_str`, `checksum_f64`, `crc32_bytes`, `sha256_word0` (each an `Int32`), `wide_op`, `wide_hi` and `hash_last_key`.
+- These names are also taken (they serve the benchmark programs): `checksum_str`, `checksum_f64`, `crc32_bytes`, `sha256_word0` (each an `Int32`), `wide_op`, `wide_hi` and `hash_last_key`.
 
 ## Standard library
 
@@ -2516,7 +2696,7 @@ The standard library is imported module by module, and importing is what links t
 | `std.gc` | `gc.hold { }`, `gc.collect()` | the collector ([Collection hints](#collection-hints)) |
 | `std.testing` | `Test`, the checks of a test file | — ([Testing](#testing)) |
 
-Wrapping a mature C library is a strategy here, not an embarrassment: the speed of these modules is their libraries' merit, reached through Avant's bindings, and the benchmark notes say so ([Reading these numbers](#reading-these-numbers)). The libraries are compiled into the runtime, so nothing needs installing. A module's file is its import name: `std.regex` is `lib/std/regex.av`.
+These modules are fast because of the C libraries under them: that speed is the libraries' merit, reached through Avant's bindings, and the benchmark notes say so ([Reading these numbers](#reading-these-numbers)). The libraries are compiled into the runtime, so nothing needs installing. A module's file is its import name: `std.regex` is `lib/std/regex.av`.
 
 Two conventions run through the library: a failure is an error value (`Json.parse` returns `Json | JsonError`), and a call that allocates its result usually has an `_into(buf)` twin that writes into a `Buf` you own.
 
@@ -2594,6 +2774,8 @@ fn main {
 }
 ```
 
+Compiling this program prints one note, `re2c: pattern stays on PCRE2 (...)`: see "Two engines" below.
+
 | Call | Gives |
 | --- | --- |
 | `Regex.compile(pattern, caseless = false)` | `Regex \| RegexError` |
@@ -2633,7 +2815,7 @@ fn main {
         puts(resp.status)                               // => 200
         puts(String.from_utf8(resp.body) ?? "")         // => hello ada
       }
-      0
+      0                                        // a spawn block ends with an Int, for now
     }
     server.serve
     _ = client.join
@@ -2695,7 +2877,7 @@ fn main {
 }
 ```
 
-`Http.get(url, follow = true, timeout_ms = 10000)`, `Http.post(url, body, ...)` and `Http.request(method, url, body, headers, ...)`, with `body` as `Bytes` and `headers` as an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`), return `Response | HttpError`. A call blocks its thread until the response is complete, so do not make one from a server handler: `spawn` first.
+`Http.get(url, follow = true, timeout_ms = 10000)`, `Http.post(url, body, ...)` with a `String` body, and `Http.request(method, url, body, headers, ...)` with `body` as `Bytes` and `headers` as an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`), return `Response | HttpError`. A call blocks its thread until the response is complete, so do not make one from a server handler: `spawn` first.
 
 #### WebSocket server
 
@@ -2708,7 +2890,7 @@ import std.http
 fn main {
   if server = Http.listen(8080) {
     server.websocket("/echo") { |conn, msg|
-      sent = conn.send_message(msg)            // echo, text or binary
+      conn.send_message(msg)                   // echo, text or binary
     }
     server.websocket_close("/echo") { |conn, code, reason|
       puts("closed with ${code}")
@@ -2732,7 +2914,7 @@ import std.http
 
 fn main {
   if conn = Ws.connect("ws://127.0.0.1:8080/echo") {
-    sent = conn.send_text("hi")
+    conn.send_text("hi")
     if msg = conn.recv() {
       puts(msg.text ?? "")
     }
@@ -2820,11 +3002,11 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 | Flag | Meaning |
 | --- | --- |
 | `--jobs N` | how many test processes run at once (default: the online processors; `--jobs 1` runs one file at a time; `--jobs 0` is an error) |
-| `--shard I/N` | run slice `I` of `N`, counted from 1; it does not launch the other slices |
-| `--junit PATH` | write a JUnit report, one case per file |
+| `--shard I/N` | run slice `I` of `N`, counted from 1; it does not launch the other slices. May be combined with `--jobs` |
+| `--junit PATH` | write a JUnit report: one case per check for files that use `std.testing`, one case per file otherwise |
 | `--coverage` | instrument the tests, print a coverage table after the summary, write `coverage/lcov.info` |
 | `--skip-exclusive` | leave out the files listed in `[test] exclusive` (required when `--shard` would include one) |
-| `-h`, `--help` | print the flags |
+| `-h`, `--help` | print the flags and exit 0 |
 
 `--jobs=N`, `--shard=I/N` and `--junit=PATH` are the same flags. An unknown flag is an error. `avant test` does not pass arguments to the test programs, and a `--` on the command is an error.
 
@@ -2859,10 +3041,8 @@ fn main: Int {
   t = Test.new
   names = ["Ada", "Bo", "Cy"]
   wants = ["Hello, Ada", "Hello, Bo", "Hello, Cy"]
-  i = 0
-  while i < names.size {
+  for i in 0..names.size {
     t.check(greet(names[i]) == wants[i], "greet ${names[i]}")
-    i = i + 1
   }
   t.finish
 }
@@ -2937,17 +3117,18 @@ first = ["tests/test_slow.av"]
 | --- | --- |
 | `dir` | one directory, replacing the default `tests/` walk |
 | `entry` | one file, replacing the walk (`dir` and `entry` together are an error) |
-| `exclusive` | files that run only while no other test file is compiling or running: a benchmark that needs a quiet machine. A string or a list |
-| `first` | files that start before the others, in the listed order: list the slowest, so a long file does not start last (a file runs as soon as it has compiled). A string or a list |
+| `exclusive` | files that run alone, while no other test file is compiling or running. A string or a list |
+| `first` | files that start before the others, in the listed order. A string or a list |
 
 - A path on the command overrides `dir` and `entry`. There is no `jobs` key and no command string.
+- `exclusive` is for a benchmark that needs a quiet machine. `first` is for the slowest files, so a long file does not start last (a file runs as soon as it has compiled).
 - The lists do not discover files: on a command with no path, every listed file must be one of the discovered tests.
 - `--shard` is an error when the selection contains an exclusive file, unless `--skip-exclusive` is passed; it picks its slice before `first` is applied, so `first` never moves a file between shards.
 - With `--jobs 1` every file is already alone, and `exclusive` changes nothing.
 
 ### Reports
 
-**JUnit** (`--junit PATH`) is for test analytics: one `<testcase>` per test file, named by its path. It is off unless you ask; a project does not gain a `junit.xml` by surprise.
+**JUnit** (`--junit PATH`) is for test analytics. A test file that uses `std.testing` contributes one `<testcase>` per check, named by the check; any other test file contributes one case, named by its path. It is off unless you ask; a project does not gain a `junit.xml` by surprise.
 
 **Coverage** (`--coverage`) compiles each selected file with counters, runs them, prints one table after the summary and writes `coverage/lcov.info` in the current directory (one file, overwritten by each run). Without the flag nothing is instrumented and nothing is written.
 
@@ -2966,9 +3147,9 @@ The runner sets what the instrumented programs need. These variables exist for a
 | Variable | Read by | Effect |
 | --- | --- | --- |
 | `AVANT_COVERAGE=1` | the compiler | emit hit counters for this compilation (`0` turns it off). The test runner sets it; a person rarely does |
-| `AVANT_COVERAGE_MAP` | the compiler | the path of the slot map baked into the binary. Unset, `compile` writes it beside the binary as `OUT.covmap` (the program adds `OUT.covmap.hits` when it runs); `run` and `dump` keep it in their temporary directory |
+| `AVANT_COVERAGE_MAP` | the compiler | the path of the coverage map baked into the binary. Unset, `compile` writes it beside the binary as `OUT.covmap` (the program adds `OUT.covmap.hits` when it runs); `run` and `dump` keep it in their temporary directory |
 | `AVANT_COVERAGE_LCOV` | the program | where it writes the LCOV report; `0` writes none. Unset: `coverage/lcov.info` |
-| `AVANT_COVERAGE_REPORT` | the program | `0` hides the text table, `1` prints it |
+| `AVANT_COVERAGE_REPORT` | the program | `0` hides the text table, `1` prints it. Unset, a program prints the table and the compiler's command line does not |
 | `AVANT_COVERAGE_COLOR` | the table | `0` or `1` forces color; unset, it follows the terminal |
 
 Several processes of one instrumented binary add into one shared map, and `avant test --coverage` merges every test into one report. `compile`, `run` and `dump` take no `--coverage` flag.
@@ -3007,7 +3188,7 @@ avant format . --check
 | `avant compile FILE.av [OUT]` | `avant c` | builds a binary: `OUT`, or the file's name without `.av`. Prints `compiled to OUT` |
 | `avant test [PATH...]` | `avant t` | runs test files ([Testing](#testing)) |
 | `avant format PATH...` | `avant f` | prints or rewrites files in the canonical style ([Formatter](#formatter)) |
-| `avant fetch [DIR]` | | downloads a project's dependencies ([Packages](#packages)) |
+| `avant fetch [DIR] [--update]` | | downloads a project's dependencies ([Packages](#packages)) |
 | `avant bind HEADER.h` | `avant b` | prints a `lib` block for a C header ([avant bind](#avant-bind)) |
 | `avant dump FILE.av` | `avant d` | prints the program's mid-level IR without linking |
 | `avant help` | `-h`, `--help` | the usage text |
@@ -3079,7 +3260,7 @@ error[E4001]: unknown name cuont
   |        ^
 ```
 
-- The compiler recovers and keeps going, per statement: one run reports every independent mistake it can find, in every function and imported file, up to 20 errors (with a count of any beyond that), then `error: aborting due to N previous errors`.
+- The compiler recovers and keeps going, per statement: one run reports every independent mistake it can find, in every function and imported file, up to 20 errors. With several, the run ends with `error: aborting due to N previous errors`, and past the cap with `error: and M more errors (limit 20)`.
 - A syntax error names what the parser expected and what it found, in source terms: ``error[E2004]: expected `{`, found a string``.
 - The code's first digit names the phase: `E1xxx` lexer, `E2xxx` parser, `E3xxx` type resolution, `E4xxx` checker, `E5xxx` module loader, `E6xxx` macro expansion.
 
@@ -3087,7 +3268,7 @@ Run-time failures are [traps](#traps).
 
 ### Temporary files
 
-`compile`, `run`, `test`, `fetch` and `bind` keep every intermediate file (IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp`). It is removed when the command exits, on an error, Ctrl-C, `SIGTERM` or a crash included; only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it.
+`compile`, `run`, `test`, `fetch` and `bind` keep every intermediate file (IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp`). It is removed when the command exits, on an error, Ctrl-C, `SIGTERM` or a crash included (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`: the process still dies by the signal); only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it.
 
 `--keep-tmp` keeps the directory for debugging and prints its path. A program run on its own keeps its directory with `AVANT_KEEP_TMP=1`.
 
@@ -3117,7 +3298,7 @@ Avant will look familiar from almost anywhere, and it differs on purpose in a ha
 | `null` in any reference | absence only in `T?`, which must be opened ([Nil and unions](#nil-and-unions)) | no null error at run time |
 | a 32-bit `int` that wraps | `Int` is 64-bit and overflow traps; `&+` wraps on request; `Int32` is for dense storage ([Numbers](#numbers)) | a wrong number never passes silently |
 | numbers that convert themselves | no implicit conversion, between widths or to floats ([Conversions](#conversions)) | no silent truncation or precision loss |
-| `/` that floors (Python, Ruby) | `/` truncates toward zero and `%` follows the dividend, as in C, Go and Rust | |
+| integer division that floors (Python's `//`, Ruby's `/`) | `/` truncates toward zero and `%` follows the dividend, as in C, Go and Rust | |
 | `1..10` including 10 (Crystal, Ruby, Kotlin) | `..` excludes its end ([For](#for)) | ranges match zero-based indexes |
 | truthiness: `if n`, `if list` | conditions are `Bool`; `if v = x` opens an optional ([Conditions that bind](#conditions-that-bind)) | |
 | inheritance, virtual methods, interface values | none: composition, interfaces as compile-time bounds, unions ([No inheritance](#no-inheritance)) | every call is direct, every layout known |
@@ -3131,7 +3312,7 @@ Avant will look familiar from almost anywhere, and it differs on purpose in a ha
 | `return` inside a block returning from the block | in a builtin's block (`each`), `return` leaves the function; in a lambda, the lambda ([Builtin blocks are loops](#builtin-blocks-are-loops)) | |
 | a panic caught per request by the server | a trap ends the process: run servers under a supervisor ([Traps](#traps)) | no unwinding machinery; Erlang's "let it crash", at the one granularity Avant has today, the process |
 | one optimized build (Go) | three modes: time programs only with `--release` ([Build modes](#build-modes)) | a fast edit-and-run loop |
-| a power operator `**` | none; multiply, or use `exp` | |
+| a power operator `**` | none; multiply, or declare C's `pow` in a `lib` block ([Floats](#floats)) | |
 | `async`/`await` | OS threads and blocking calls: `spawn`, `.parallel`, channels ([Concurrency](#concurrency)) | no function coloring |
 
 ### By language
@@ -3145,7 +3326,7 @@ Avant will look familiar from almost anywhere, and it differs on purpose in a ha
 
 ## Not built yet
 
-What is decided, or simply missing, said in one place. Each item is repeated beside the feature it limits.
+What is missing, said in one place, and repeated beside each feature it limits. **Decided**: the design is settled and it will be built. **Planned**: wanted; the design is open. **Not started**: no work yet.
 
 | Missing | Status | Today |
 | --- | --- | --- |
@@ -3158,10 +3339,14 @@ What is decided, or simply missing, said in one place. Each item is repeated bes
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#trailing-blocks) |
 | `fn main` returning an error | decided | handle it in `main` |
 | `print` (no newline), writing to stderr, `exit(status)` | decided | `puts`; `main`'s result |
+| Reading standard input | not started | `file_read("/dev/stdin")` |
+| The time of day; `sleep` | not started | intervals with `now_ms`; C's `usleep` through a `lib` block |
+| `==` for structs without writing it; `==` on arrays and hashes | planned | [operator methods](#operator-methods); a loop |
+| `Mutex.with` keeping a reference from leaving the lock | not started | return plain values from the block ([Channel and Mutex](#channel-and-mutex)) |
 | A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
 | `Channel` and `Mutex` in the standard library; a `spawn` result other than `Int` | decided | [copy the two classes](#channel-and-mutex) |
-| `parallel { }` as a statement, with no receiver | decided, not shipping | `.parallel` on an array |
-| TLS for `std.http` (`https`, `wss`) | decided, not shipping | a TLS-terminating proxy in front |
+| `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |
+| TLS for `std.http` (`https`, `wss`) | decided | a TLS-terminating proxy in front |
 | A trap that ends only its task; a pre-forked server mode | decided | a supervisor that restarts the process |
 | Positions in traps raised inside runtime functions | planned | the message names the operation and its values |
 | Platforms other than Linux x86-64 with glibc (musl, ARM, macOS, Windows) | not started | |
@@ -3173,7 +3358,7 @@ Every number here was measured on one machine (an AMD Ryzen 7 5700G), each langu
 
 ### LangArena
 
-[LangArena](https://github.com/kostya/LangArena) runs the same tasks in many languages. Seconds, lower is better; **bold** is the best of the five. One process per task, timed by its wall clock, with peak memory from `/usr/bin/time`: the same wrapper for every language. Avant measured on 2026-11-12 (commit `a6246d8`, `--release --cpu=v3`, one run, the machine otherwise idle, governor `performance`, all 50 task checksums correct); the other languages on 2026-11-07.
+[LangArena](https://github.com/kostya/LangArena) runs the same tasks in many languages. Seconds, lower is better; **bold** is the best of the five. One process per task, timed by its wall clock, with peak memory from `/usr/bin/time`: the same wrapper for every language. Avant measured on 2026-11-12 (the development tree after release 0.41.0, `--release --cpu=v3`, one run, the machine otherwise idle, governor `performance`, all 50 task checksums correct); the other languages on 2026-11-07.
 
 | Language | 49 tasks (s) | Average peak memory |
 | --- | ---: | ---: |
@@ -3183,7 +3368,7 @@ Every number here was measured on one machine (an AMD Ryzen 7 5700G), each langu
 | Crystal | 85.670 | 67.1 MB |
 | Go | 117.876 | 64.3 MB |
 
-**The total flatters Avant.** Much of that gap is not the language: the four `Matmul` rows and `Hash::CRC32` are not comparable programs, and several rows measure C libraries ([Reading these numbers](#reading-these-numbers)). The honest reading is task by task.
+**The total flatters Avant.** Much of that gap is not the language: the four `Matmul` rows and `Hash::CRC32` are not comparable programs, two rows carry collection hints, and several rows measure C libraries ([Reading these numbers](#reading-these-numbers)). The honest reading is task by task.
 
 | Task | Avant | C | Rust | Crystal | Go |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -3262,7 +3447,7 @@ Memory, the same way: at or below the best on 31 tasks, the median task at 0.90�
 | `Etc::GameOfLife` | 53.7 | 30.4 (Go) | 1.77× |
 | `Sort::Self` | 11.3 | 7.1 (C, Clang) | 1.59× |
 
-Crystal and Go are compiled and garbage-collected, as Avant is, so Avant should never be behind either of them on any task, in time or in memory. It is behind on twelve, and each is an open defect:
+Crystal and Go are compiled and garbage-collected, as Avant is, so Avant should never be behind either of them on any task, in time or in memory. It is behind on twelve, and each is treated as a defect until it is fixed:
 
 | Task | Behind |
 | --- | --- |
@@ -3281,57 +3466,13 @@ Crystal and Go are compiled and garbage-collected, as Avant is, so Avant should 
 
 These come from one run; ratios within a few percent may be that run's noise.
 
-### Garbage collector
-
-Scenarios, and the Valk, Go, D and C# programs, from [Valk](https://github.com/valk-lang/valk) (`examples/bench/gc`, MIT, © 2024 Lorenz Vandevelde); the Avant, Crystal and Java programs are ports. The suite is in `bench/valk-gc/`. It isolates what a collector costs: seven scenarios in one process, each timed by the program itself.
-
-Milliseconds, median of seven runs, lower is better; **bold** is the best of the row. AMD Ryzen 7 5700G, Linux 7.2.8, governor `performance`, one warm-up and seven rotating rounds of fresh processes, every run's result verified, 2026-11-12. Avant `--release` (commit `a6246d8`), Valk 0.8.5 `--release`, Go 1.26.0, D (LDC 1.41.0), C# (.NET 10.0.15, tiered JIT), Crystal 1.21.1, Java 25 (G1).
-
-| Scenario | Avant | Valk | Go | D | C# | Crystal | Java |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 short-lived allocation | 49.2 | **11.5** | 155 | 164 | 105 | 100 | 55.3 |
-| 2 forced collections of a stable heap | 5830 | **0.317** | 5394 | 1793 | 3603 | 1621 | 5647 |
-| 3 build a long-lived chain | 332 | **62.4** | 115 | 176 | 243 | 140 | 129 |
-| 4 free a long-lived chain | 6.58 | 32.2 | 54.4 | 13.9 | 19.7 | **3.34** | 7.19 |
-| 5 mutate live links | 9.58 | 11.2 | **8.92** | 11.6 | 14.9 | 11.8 | 12.7 |
-| 6 churn beside a large live set | 48.8 | **5.44** | 127 | 117 | 52.1 | 45.6 | 26.8 |
-| 7 tree churn | 150 | **44.5** | 270 | 307 | 179 | 136 | 99.3 |
-
-**Avant leads Valk on 2 of the 7 scenarios and trails on 5.** No scenario's ranges overlap.
-
-| Scenario | Avant (ms) | Valk (ms) | Avant ÷ Valk | |
-| --- | ---: | ---: | ---: | --- |
-| 1 short-lived allocation | 49.2 | 11.5 | 4.29 | trails |
-| 2 forced collections of a stable heap | 5830 | 0.317 | 18,392 | trails |
-| 3 build a long-lived chain | 332 | 62.4 | 5.32 | trails |
-| 4 free a long-lived chain | 6.58 | 32.2 | 0.20 | **leads** |
-| 5 mutate live links | 9.58 | 11.2 | 0.86 | **leads** |
-| 6 churn beside a large live set | 48.8 | 5.44 | 8.97 | trails |
-| 7 tree churn | 150 | 44.5 | 3.38 | trails |
-| 8 reverse live links in place (*added by Avant; not part of Valk's suite; separate builds*) | 10.7 | 139 | 0.077 | leads |
-
-The whole seven-scenario process takes Avant 6.51 s and 100.1 MB of peak memory, and Valk 0.206 s and 81.0 MB. Among all seven languages, Avant is the slowest on scenarios 2 (where its range overlaps Java's) and 3, second on 1, 4 and 5, and fourth on 6 and 7.
-
-Why Avant trails, each cause resting on a count or a profile:
-
-- **Allocation is too expensive** (scenario 1, and most of 6 and 7). One iteration of scenario 1 runs 95 instructions in Avant and 17 in Valk: `T.new` is an out-of-line call of 81 instructions. The collector itself is under 3% of that scenario.
-- **A build where everything survives is processed several times** (scenario 3): the objects are copied out of the young generation, traced again, then marked by full collections. 89% of the scenario is collector pauses, and Avant is the slowest of the seven.
-- **A full collection pays for the whole live heap** (scenario 2, and part of 6). Scenario 2 forces 500 full collections of an unchanged heap: Valk's collector processes only what changed, and a tracing collector re-marks the live heap each time. Stated literally, that is 5,830 ms against 0.317 ms, and it is a defect. Two findings sit inside it: the defragmenter moves the same sparse block again at every full collection of an unchanged heap (41% of the cost), and one internal check is 39% of the instructions. The equivalent operation, a collection when nothing has changed, costs 0.90 µs in Avant (a young collection) and 0.63 µs in Valk (a local collection); it is printed here for the comparison and is not the bar.
-- **Valk does not give scenario 7's trees to its collector at all**: its compiler proves they can live in a region. With `--no-regions` Valk takes 54.3 ms, still 2.8× faster than Avant.
-
-Where Avant leads: freeing (scenario 4), because a tracing collector never visits the dead; plain pointer reads (scenario 5), which Avant does not mask; and writes into old objects (scenario 8).
-
-Two labelled variants, neither a headline row. With [collection hints](#collection-hints), Avant takes 192 ms on scenario 3, 41.1 ms on 6 and 117 ms on 7. The programs as Valk ships them carry a few asymmetries that were measured and left in the table: Go's sink is atomic (scenario 1: 155 ms, 149 ms with a plain one); Go and D return memory to the system inside scenario 4's timer (54.4 ms and 13.9 ms; 43.3 ms and 2.13 ms with it outside); and C#'s JIT warms up inside the timers (scenario 1: 105 ms, 76.3 ms without tiering).
-
-### Valk's general suite
-
-Valk also ships a general benchmark suite (eight single-threaded programs in Valk, Go and Rust). It was measured on this machine as shipped, to have the baseline. **Avant's ports are not written yet, so Avant has no row there and no table is printed here**: a comparison without Avant in it says nothing about Avant. The baseline, with a note per program on whether the three versions are equivalent programs (four of the eight are not, as shipped), is in `bench/valk/`. When Avant's ports exist, the table comes here, with Valk's tag and those notes beside the numbers.
+One weakness these tables understate is allocation-heavy code. `Binarytrees::Arena`, which allocates most, is behind in both time and memory; the two rows that would be worse still are fast only because they are hinted; and [What allocation costs today](#what-allocation-costs-today) says what to expect and what to do meanwhile.
 
 ### HTTP and WebSocket servers
 
 The most basic server in each language: `GET /` answered with `hello`, and a WebSocket echo. Every server is an optimized build; the sources and the script are in [bench/http](bench/http). Avant's row is the median of three runs (2026-11-10, `--release`).
 
-<!-- TODO(orchestrator): replace this table and the caveat below with the re-measurement by three stated methods (today's; Valk's README method; Valk's pinned chart method), with Rust hyper and Go fasthttp added. -->
+<!-- TODO(benchmarks): replace this table and the caveat below when the comparison has been repeated by more than one stated method (more connections, pipelining, the load generator on its own cores) and with more servers in it. -->
 
 | Language | HTTP (req/s) | HTTP peak RSS | WebSocket (msg/s) | WebSocket peak RSS |
 | --- | ---: | ---: | ---: | ---: |
@@ -3352,6 +3493,7 @@ These notes are about [LangArena](#langarena).
 - **Compiled-in task sizes.** Avant's task configuration is compiled into the program as constants, while the other languages read `run.js` at run time, so LLVM can specialize Avant's loops on the sizes.
 - **Rows that are not comparable programs.** The four `Matmul` tasks: Avant's port sums with eight independent accumulators, which vectorizes, and the references use one. `Hash::CRC32`: Avant calls a runtime builtin written in C with slice-by-4 tables, and every reference is the bitwise loop. `Compress::LZWEncode` and `LZWDecode`: Avant keys the dictionary by integer, C by string. Together these seven rows are 7.6 of the 20.4 seconds between Avant's total and C's.
 - **Rows that measure C, not Avant.** `Hash::SHA256` and `Hash::CRC32` call runtime builtins that do the whole task in C, where the references implement it in the language; the Burrows-Wheeler transform inside `Compress::BWTEncode` and `BWTDecode` is runtime C too.
+- **Rows that carry collection hints.** `Binarytrees::Obj` and `Calculator::Ast` call `gc.hold` and `gc.collect()` ([Collection hints](#collection-hints)) in their Avant source: the same algorithm as the references, with the programmer telling the collector when not to run and when everything is dead. No reference program has an equivalent. Read these two rows as what a hinted program does, not as the collector's ordinary behaviour: without the hints, `Binarytrees::Obj` is several times slower than every language in the table.
 - **Library-leaning rows.** `Json::ParseDom` and `Json::ParseMapping` (yyjson in Avant and C; simdjson in C++; serde in Rust), `Base64::Encode` and `Decode` (the aklomp codec in Avant and C), `Template::Regex` and `Etc::LogParser` (PCRE2 in Avant and C, RE2 in C++, the `regex` crate in Rust): the speed is those libraries', reached through Avant's bindings. `Sort::Self` is each language's own library sort, by the task's definition. In `CSV::Parse`, Rust and C++ use CSV libraries; in `Json::Generate`, C and C++ use JSON libraries and Avant writes into its own buffer.
 - **Scope.** 49 of LangArena's 50 tasks: `Etc::TextRaytracer` is left out because it is invalid for Avant (`--release` hoists its pure render out of the timed loop).
 - **Equivalent programs is the rule**: Avant's tasks are meant to follow the algorithms and the data widths of the C and Rust references, and a row that does not is named above until it is rewritten.
@@ -3364,15 +3506,14 @@ The bars are measurable, and [LangArena](#langarena) is the public scoreboard:
 
 | Goal | Bar |
 | --- | --- |
-| Expressiveness | Crystal-class: as little syntax as Crystal to say the same thing |
+| Expressiveness | Crystal's density: as little syntax as Crystal to say the same thing |
 | Run time and memory | **C and Rust, one to one**: against the best language on each task, a median of 1.0× or better and no task above 1.5× |
 | The floor | never behind Crystal or Go, the other compiled, garbage-collected languages, on any task, in time or in memory |
-| The collector | at least as fast as [Valk](https://github.com/valk-lang/valk), the language whose approach is closest to Avant's, on every scenario of its garbage-collector benchmark |
 | HTTP | at least as fast as the fastest server measured on the same machine |
 | Interop | C libraries usable with little ceremony |
 | Concurrency | built in, and obvious |
 
-Where Avant stands today (2026-11-12): on LangArena, the median task is at 1.02× the best language's time and 0.90× its memory, with three tasks beyond the 1.5× bar in time and five in memory, and twelve tasks behind Crystal or Go ([Where Avant loses](#where-avant-loses)). On the collector, Avant leads Valk on two of seven scenarios and trails on five ([Garbage collector](#garbage-collector)). Every one of those rows is a defect on the list until it is fixed. The gaps are named, published and worked on, never hidden and never rounded away.
+Where Avant stands today (2026-11-12): on LangArena, the median task is at 1.02× the best language's time and 0.90× its memory, with three tasks beyond the 1.5× bar in time and five in memory, and twelve tasks behind Crystal or Go ([Where Avant loses](#where-avant-loses)). Allocation-heavy code is the weakest area ([What allocation costs today](#what-allocation-costs-today)). On expressiveness, Avant's LangArena sources are 5,482 lines against Crystal's 4,220 (30% more, and 18% more once compressed): not Crystal's density yet, and the forms that will close the gap are listed in [Not built yet](#not-built-yet). Each of these is treated as a defect until it is fixed, and the numbers on this page are printed as measured, the bad rows beside the good ones.
 
 Avant is not a better TypeScript, not a borrow-checker language, not a dynamic language with types bolted on, and not a research language. It does not try to please everyone.
 
@@ -3396,7 +3537,7 @@ The script downloads the release archive, checks its SHA-256, installs it into `
 | `--no-modify-path` | leave shell configuration alone and print the `PATH` line to add |
 | `AVANT_INSTALL` | install into another directory than `~/.avant` |
 
-Running it again updates the install in place. It refuses, with a message, on anything but Linux x86-64 with glibc (musl systems included), and it needs `curl` and `tar`.
+Running it again updates the install in place. It refuses, with a message, on anything but Linux x86-64 with glibc (musl systems included), and it needs `curl`, `tar`, and `sha256sum` or `shasum`.
 
 ### Manual install
 

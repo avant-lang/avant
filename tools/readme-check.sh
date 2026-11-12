@@ -42,7 +42,8 @@
 #   decls      the text is declarations: an empty `fn main { }` is added
 # KEY=VALUE
 #   id=NAME          keep this block's text under NAME
-#   pre=A,B          put the texts A and B (ids, hidden or shown) before it
+#   pre=A,B          put the texts A and B (ids, hidden or shown, before or
+#                    after this block in the file) before it
 #   post=A,B         put them after it
 #   project=P        the block belongs to project P (a directory kept for
 #                    the whole document); file=PATH is its file there
@@ -276,6 +277,14 @@ add_ids() {
 }
 
 tab=$(printf '\t')
+# Every id= first, so a block may take a text that is shown after it.
+while IFS=$tab read -r n line lang mark; do
+  for w in $mark; do
+    case $w in
+      id=*) cp "$work/b/$n" "$work/ids/${w#id=}" ;;
+    esac
+  done
+done < "$work/blocks.tsv"
 while IFS=$tab read -r n line lang mark; do
   src=$work/b/$n
   mode=""
@@ -318,7 +327,6 @@ while IFS=$tab read -r n line lang mark; do
       esac
     done
   fi
-  [ -n "$id" ] && cp "$src" "$work/ids/$id"
 
   case $mode in
     output|stderr)
