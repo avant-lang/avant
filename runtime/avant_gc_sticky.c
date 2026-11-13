@@ -1223,15 +1223,86 @@ static void splus_finish(void) {
 #endif
 
 /* Block.kept in a young collection: the young sweep
- * left the block empty, and it leaves mature space (keep_unless_empty);
+ * left the block empty, and it leaves mature space (mature_drop_empty);
  * under S+ also SPLUS_KEPT and SPLUS_EVAC during a young collection. */
 #define YOUNG_EMPTY 4
-static int keep_unless_empty(Block *b) {
-  if (b->kept == YOUNG_EMPTY) {
-    b->kept = 0;
-    return 0;
+
+/* The EMPTY young blocks the sweep left without a live line (kept ==
+ * YOUNG_EMPTY) leave the mature space, and its order is reversed: what
+ * gc_filter_blocks(keep_unless_empty) did until the Valk stage's VALK-T
+ * by walking every block of the heap (O577: 4,242 of a "nothing changed"
+ * young collection's 13,576 instructions at 250 blocks, growing with the
+ * heap). Without the walk: the space's blocks are two stacks (GcSpace's
+ * comment) and a block the young sweep can empty held no mature line when
+ * the collection began, so it was taken since the last young collection
+ * began (a fresh block young allocation took, a survivor block of that
+ * collection), and such blocks are at the tops of the two stacks. Both
+ * are searched from the top, a block of each in turn, until the EMPTY
+ * blocks are found: the search ends after about as many blocks as were
+ * taken since that collection began, whatever the heap's size. The
+ * blocks are then freed in the order the walk freed them (the space's
+ * order: a freed block's place in the cache and in its chunk's free list
+ * decides which block the next allocation takes), and the order is
+ * reversed by flipping the direction, as the walk left the list
+ * reversed. */
+static void mature_drop_empty(uint32_t empty) {
+  GcSpace *sp = &gc_heap.space[SPACE_MATURE];
+  Block **pl = &sp->list;
+  Block **pb = &sp->back;
+  Block **dl;
+  Block **db;
+  uint32_t nl = 0;
+  uint32_t nb = 0;
+  uint32_t left = empty;
+  uint32_t i;
+  if (empty > gc_heap.dropped_cap) {
+    gc_heap.dropped_cap = empty * 2;
+    gc_heap.dropped = gc_xrealloc(gc_heap.dropped, (size_t)gc_heap.dropped_cap * 2 * sizeof(Block *));
   }
-  return 1;
+  dl = gc_heap.dropped;
+  db = gc_heap.dropped + gc_heap.dropped_cap;
+  while (left && (*pl || *pb)) {
+    Block *b = *pl;
+    if (b) {
+      if (b->kept == YOUNG_EMPTY) {
+        *pl = b->next;
+        dl[nl++] = b;
+        left--;
+      } else {
+        pl = &b->next;
+      }
+    }
+    b = *pb;
+    if (left && b) {
+      if (b->kept == YOUNG_EMPTY) {
+        *pb = b->next;
+        db[nb++] = b;
+        left--;
+      } else {
+        pb = &b->next;
+      }
+    }
+  }
+  if (left) {
+    gc_die("a young block the sweep emptied is not in the mature space's lists");
+  }
+  /* In the space's order: the head stack's from its top down, then the
+   * other's from its bottom up. */
+  {
+    Block **dh = sp->rev ? db : dl;
+    Block **dt = sp->rev ? dl : db;
+    uint32_t nh = sp->rev ? nb : nl;
+    uint32_t nt = sp->rev ? nl : nb;
+    for (i = 0; i < nh; i++) {
+      dh[i]->kept = 0;
+      gc_cache_or_free_block(dh[i]);
+    }
+    for (i = nt; i-- > 0;) {
+      dt[i]->kept = 0;
+      gc_cache_or_free_block(dt[i]);
+    }
+  }
+  sp->rev ^= 1;
 }
 
 void gc_sticky_collect(int tenure) {
@@ -1373,9 +1444,10 @@ void gc_sticky_collect(int tenure) {
    * collection began, gc_alloc_stop_all.) */
   /* The empty young blocks go back to their chunks' free lists (O89):
    * before, they stayed in mature space until a full collection, so a
-   * program that never runs one never returned them. The mature list is
-   * filtered only when this sweep left a block empty; the return then
-   * runs on the hysteresis clock (gc_heap.return_clock), keeping
+   * program that never runs one never returned them. They are unlinked
+   * from the mature space's lists (mature_drop_empty: no walk of the
+   * heap's blocks) only when this sweep left a block empty; the return
+   * then runs on the hysteresis clock (gc_heap.return_clock), keeping
    * max(4 MiB, a quarter of the heap in use) of free memory resident. */
   if (empty) {
     /* The clock ticks first: the blocks freed now carry the new stamp, so
@@ -1385,7 +1457,7 @@ void gc_sticky_collect(int tenure) {
     if (!ticked) {
       gc_heap.return_clock++;
     }
-    gc_filter_blocks(&gc_heap.space[SPACE_MATURE].list, keep_unless_empty);
+    mature_drop_empty(empty);
     gc_heap.ctr.sticky.returned += empty;
     gc_heap_return(gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes);
   }

@@ -290,7 +290,11 @@ _Static_assert(sizeof(Block) == 64, "a block record is 64 bytes");
  * dirty (FREE): the data was used and may hold non-zero bytes.
  * decommitted (FREE): the data is PROT_NONE (gc_heap_return).
  * free, nfree (SMALL): the chunk's free blocks (O53), so a chunk whose
- * blocks are all free can be decommitted.
+ * blocks are all free can be decommitted. nres (SMALL): how many of them
+ * are resident (not madvised: Block.clean 0), kept where
+ * gc_heap.free_resident is, so gc_heap_return reads a chunk's resident
+ * free bytes without walking its free list (the Valk stage, VALK-T,
+ * O577).
  * idle: the full-collection count when the chunk last became free or
  * empty, or (LARGE) last freed a page; gc_heap_return returns only
  * memory idle since before the collection running it (Q12). */
@@ -307,7 +311,7 @@ typedef struct GcChunk {
   struct Block *free;
   uint16_t nfree;
   uint8_t decommitted;
-  uint8_t pad_;
+  uint8_t nres;
   uint32_t idle;
   uint64_t alloc[PAGE_WORDS];
   uint64_t dirty_pages[PAGE_WORDS];
@@ -315,7 +319,24 @@ typedef struct GcChunk {
 
 /* One space's state (gc-design.md §1.1, Stage 28 W15a1, O69), indexed
  * by SPACE_* in gc_heap.space (SPACE_COUNT of them):
- *   list   the space's blocks (avant_gc_heap.c owns the lists)
+ *   list   the space's blocks (avant_gc_heap.c owns the lists). The
+ *          mature space's are two stacks and a direction (the Valk
+ *          stage, VALK-T, O577): list and back, linked by Block.next,
+ *          and rev. The space's blocks in order are list from its top
+ *          down and then back from its bottom up; with rev set, back
+ *          from its top down and then list from its bottom up (the same
+ *          sequence read backwards). A new block goes to the head of the
+ *          order (gc_new_block: the top of list, or of back with rev
+ *          set), so the blocks taken since a collection began are at the
+ *          tops of the two stacks, and reversing the order is flipping
+ *          rev. A young collection unlinks the young blocks its sweep
+ *          emptied from those tops and reverses the order
+ *          (mature_drop_empty, avant_gc_sticky.c): what gc_filter_blocks
+ *          did by walking, and reversing, every block of the heap.
+ *          gc_mature_normalize puts the whole order into list (back
+ *          empty, rev clear) for the code that walks it in order: a full
+ *          collection, and mature allocation looking for a hole.
+ *          EACH_MATURE_BLOCK visits every block in no stated order.
  *   cur    the space's bump cursor (avant_gc_alloc.c). A full block used
  *          to send the next allocation back through every older block
  *          (take_from_list + find_hole); workers allocate in mature
@@ -330,8 +351,23 @@ typedef struct GcSpace {
   struct Block *list;
   struct Block *cur;
   uint8_t fresh;
+  uint8_t rev;
   uint64_t bytes;
+  struct Block *back;
 } GcSpace;
+
+/* Every block of the mature space as `Block *B`, in no stated order (the
+ * two stacks, GcSpace's comment). BODY must not unlink a block. */
+#define EACH_MATURE_BLOCK(B, BODY)                                                  \
+  do {                                                                              \
+    int emb_k_;                                                                     \
+    for (emb_k_ = 0; emb_k_ < 2; emb_k_++) {                                        \
+      Block *B;                                                                     \
+      for (B = emb_k_ ? gc_heap.space[SPACE_MATURE].back : gc_heap.space[SPACE_MATURE].list; B; B = B->next) { \
+        BODY                                                                        \
+      }                                                                             \
+    }                                                                               \
+  } while (0)
 
 /* A walk over every large object (gc_large_next, avant_gc_los.c), in
  * address order. The walk may free the object it just returned. */
@@ -992,6 +1028,10 @@ typedef struct GcHeap {
   Block **part_blocks;
   uint32_t part_blocks_n;
   uint32_t part_blocks_cap;
+  /* mature_drop_empty's scratch (avant_gc_sticky.c): the emptied young
+   * blocks it unlinked from each of the mature space's two stacks. */
+  Block **dropped;
+  uint32_t dropped_cap;
   /* AVANT_GC_VERIFY (Stage 28 W16b): the blocks the last young sweep
    * left with free lines, held back from part_blocks until the next
    * collection begins (the lost-reference check, avant_gc_verify.c). */
@@ -1333,6 +1373,7 @@ uint64_t gc_chunk_take(uint64_t n);
 void gc_chunk_give(uint64_t c);
 void gc_return_pages(void *p, size_t len);
 void gc_heap_return(uint64_t live);
+void gc_mature_normalize(void);
 int gc_type_word_is_ref(const AvantHeader *h, size_t w);
 void gc_type_refs_update(uint32_t id);
 __attribute__((noreturn)) void gc_die(const char *msg);

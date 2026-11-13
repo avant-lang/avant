@@ -154,8 +154,15 @@ Block *gc_new_block(uint8_t space) {
   b->bump = b->base;
   b->limit = b->base + BLOCK_SIZE;
   b->in_use = 1;
-  b->next = gc_heap.space[space].list;
-  gc_heap.space[space].list = b;
+  /* At the head of the space's order (GcSpace's comment: the top of the
+   * back stack while the order is reversed). */
+  if (gc_heap.space[space].rev) {
+    b->next = gc_heap.space[space].back;
+    gc_heap.space[space].back = b;
+  } else {
+    b->next = gc_heap.space[space].list;
+    gc_heap.space[space].list = b;
+  }
   return b;
 }
 
@@ -584,7 +591,10 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
    * walks every full block. Recycle only after a collection cleared
    * the fresh bit, and then only forward from the cursor. */
   if (bspace == space && !gc_heap.space[space].fresh) {
-    Block *b = cur ? cur->next : gc_heap.space[space].list;
+    Block *b;
+    /* The walk follows the space's order through Block.next. */
+    gc_mature_normalize();
+    b = cur ? cur->next : gc_heap.space[space].list;
     for (; b; b = b->next) {
       if (b->young_hi) {
         continue;

@@ -345,6 +345,7 @@ static uint64_t make_small_chunk(void) {
   ch->used = 0;
   ch->free = NULL;
   ch->nfree = BLOCKS_PER_CHUNK;
+  ch->nres = dirty ? (uint8_t)BLOCKS_PER_CHUNK : 0;
   for (i = (int)BLOCKS_PER_CHUNK - 1; i >= 0; i--) {
     Block *b = &gc_heap.blocks[b0 + (uint64_t)i];
     b->in_use = 0;
@@ -392,6 +393,7 @@ Block *gc_block_take(void) {
   b->next = NULL;
   if (!b->clean) {
     gc_heap.free_resident -= BLOCK_SIZE;
+    ch->nres--;
   }
   b->clean = 0;
   memset(b->line_mark, 0, LINES_PER_BLOCK);
@@ -414,6 +416,7 @@ void gc_block_give(Block *b) {
   b->next = ch->free;
   ch->free = b;
   ch->nfree++;
+  ch->nres++;
   gc_heap.free_resident += BLOCK_SIZE;
   if (c < gc_heap.small_hint) {
     gc_heap.small_hint = c;
@@ -443,17 +446,28 @@ static void decommit_chunk(uint64_t c) {
   gc_heap.chunks[c].decommitted = 1;
 }
 
-/* The resident free bytes of chunk C: free blocks not madvised, the
+/* The resident free bytes of chunk C: free blocks not madvised (counted
+ * in GcChunk.nres as blocks join and leave the free list and are
+ * madvised; until the Valk stage's VALK-T a walk of the free list at
+ * every call, which a young collection that emptied a block makes: O577;
+ * AVANT_GC_VERIFY still walks it and stops on a count that differs), the
  * dirty free pages of a large-object chunk, or a free chunk's whole data
  * while it is dirty. */
 static uint64_t chunk_resident_free(uint64_t c) {
   GcChunk *ch = &gc_heap.chunks[c];
   uint64_t n = 0;
   if (ch->kind == CHUNK_SMALL) {
-    Block *b;
-    for (b = ch->free; b; b = b->next) {
-      if (!b->clean) {
-        n += BLOCK_SIZE;
+    n = (uint64_t)ch->nres * BLOCK_SIZE;
+    if (gc_heap.set.verify) {
+      uint64_t w = 0;
+      Block *b;
+      for (b = ch->free; b; b = b->next) {
+        if (!b->clean) {
+          w += BLOCK_SIZE;
+        }
+      }
+      if (w != n) {
+        gc_die("avant gc verify: a chunk's count of resident free blocks differs from its free list");
       }
     }
   } else if (ch->kind == CHUNK_LARGE) {
@@ -517,6 +531,7 @@ void gc_heap_return(uint64_t live) {
         if (!b->clean && b->idle < now) {
           gc_return_pages(b->base, BLOCK_SIZE);
           b->clean = 1;
+          ch->nres--;
           gc_heap.free_resident -= BLOCK_SIZE;
           total -= BLOCK_SIZE;
         }
@@ -541,6 +556,43 @@ void gc_heap_return(uint64_t live) {
       }
     }
   }
+}
+
+/* The mature space's blocks in order in its list alone (GcSpace's
+ * comment; the Valk stage, VALK-T, O577): back is emptied into list and
+ * rev cleared, the order unchanged. For the code that walks the blocks in
+ * order through Block.next: a full collection (its sweep, its
+ * defragmentation, the young allocator's list rebuilt after it) and
+ * mature allocation looking for a hole (place). O(the space's blocks)
+ * when there is something to do, nothing otherwise. */
+void gc_mature_normalize(void) {
+  GcSpace *sp = &gc_heap.space[SPACE_MATURE];
+  Block *head = sp->rev ? sp->back : sp->list;
+  Block *tail = sp->rev ? sp->list : sp->back;
+  Block *r = NULL;
+  if (!sp->rev && !sp->back) {
+    return;
+  }
+  /* The order is HEAD from its top down, then TAIL from its bottom up:
+   * TAIL reversed, appended to HEAD. */
+  while (tail) {
+    Block *n = tail->next;
+    tail->next = r;
+    r = tail;
+    tail = n;
+  }
+  if (!head) {
+    head = r;
+  } else {
+    Block *t = head;
+    while (t->next) {
+      t = t->next;
+    }
+    t->next = r;
+  }
+  sp->list = head;
+  sp->back = NULL;
+  sp->rev = 0;
 }
 
 /* The live lines of B, eight line marks at a time against the epoch

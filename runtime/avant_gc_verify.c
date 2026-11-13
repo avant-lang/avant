@@ -665,12 +665,9 @@ static void verify_no_stale_one(AvantHeader *h, Block *b) {
 }
 
 void gc_verify_no_stale_marks(void) {
-  Block *b;
   LargeIter it;
   AvantHeader *lh;
-  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
-    gc_foreach_block_object(b, verify_no_stale_one);
-  }
+  EACH_MATURE_BLOCK(mb, { gc_foreach_block_object(mb, verify_no_stale_one); });
   gc_large_iter_init(&it);
   while ((lh = gc_large_next(&it))) {
     verify_no_stale_one(lh, NULL);
@@ -837,7 +834,6 @@ static void sd_walk_page(Block *b, int page) {
 static int verify_no_stale_marks_incr(void) {
   size_t pages = gc_heap.committed / PAGE_SIZE;
   size_t blocks = gc_heap.committed >> BLOCK_SHIFT;
-  Block *b;
   LargeIter it;
   AvantHeader *lh;
   if (pages > sd_map_cap) {
@@ -854,24 +850,24 @@ static int verify_no_stale_marks_incr(void) {
       sd_dirty += (size_t)((sd_map[i] >> 55) & 1ULL);
     }
   }
-  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
+  EACH_MATURE_BLOCK(b, {
     size_t bi = (size_t)(b->base - gc_heap.base) >> BLOCK_SHIFT;
     size_t p0 = (size_t)(b->base - gc_heap.base) / PAGE_SIZE;
     int p;
     if (bi >= blocks || bi / 64 >= sd_seen_words || !((sd_seen[bi / 64] >> (bi % 64)) & 1)) {
       gc_foreach_block_object(b, verify_no_stale_one);
       gc_heap.v_pages_checked += BLOCK_SIZE / PAGE_SIZE;
-      continue;
-    }
-    for (p = 0; p < (int)(BLOCK_SIZE / PAGE_SIZE); p++) {
-      if (sd_map[p0 + (size_t)p] & SD_BIT) {
-        sd_walk_page(b, p);
-        gc_heap.v_pages_checked++;
-      } else {
-        gc_heap.v_pages_skipped++;
+    } else {
+      for (p = 0; p < (int)(BLOCK_SIZE / PAGE_SIZE); p++) {
+        if (sd_map[p0 + (size_t)p] & SD_BIT) {
+          sd_walk_page(b, p);
+          gc_heap.v_pages_checked++;
+        } else {
+          gc_heap.v_pages_skipped++;
+        }
       }
     }
-  }
+  });
   gc_large_iter_init(&it);
   while ((lh = gc_large_next(&it))) {
     verify_no_stale_one(lh, NULL);
@@ -883,16 +879,15 @@ static int verify_no_stale_marks_incr(void) {
 static void sd_stamp(void) {
   size_t blocks = gc_heap.committed >> BLOCK_SHIFT;
   size_t words = (blocks + 63) / 64;
-  Block *b;
   if (words > sd_seen_words) {
     sd_seen = gc_xrealloc(sd_seen, words * sizeof(uint64_t));
     sd_seen_words = words;
   }
   memset(sd_seen, 0, sd_seen_words * sizeof(uint64_t));
-  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
+  EACH_MATURE_BLOCK(b, {
     size_t bi = (size_t)(b->base - gc_heap.base) >> BLOCK_SHIFT;
     sd_seen[bi / 64] |= 1ULL << (bi % 64);
-  }
+  });
 }
 
 /* The choice between the two forms (Stage 28 W18S, O150; W18M item 7
