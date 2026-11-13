@@ -339,6 +339,7 @@ struct AvantHttpServer {
   int32_t max_body;
   int32_t max_message;
   unsigned int idle_timeout;
+  size_t ws_write_chunk; /* the most a WebSocket write hands the socket */
   AvantWsConn *ws_all;
 };
 
@@ -372,6 +373,25 @@ static unsigned int http_idle_timeout(void) {
     }
   }
   return HTTP_IDLE_TIMEOUT_S;
+}
+
+/* A WebSocket write hands the socket at most 1 GiB at a time (Stage 29
+ * W-FIX1g, O519): uSockets takes an int length. AVANT_HTTP_WS_WRITE_CHUNK
+ * is an internal variable for the suite, not a user setting: a server
+ * created while it holds a number of bytes from 4096 to 1073741824 hands
+ * the socket at most that much, so tests/cases/test_std_http_safety.av
+ * runs the path a message of 1 GiB or more takes with one of 1 MiB. It
+ * can only shrink the piece; any other value is ignored. */
+#define WS_WRITE_CHUNK 1073741824
+static size_t http_ws_write_chunk(void) {
+  const char *v = getenv("AVANT_HTTP_WS_WRITE_CHUNK");
+  if (v && v[0] >= '0' && v[0] <= '9') {
+    long n = strtol(v, NULL, 10);
+    if (n >= 4096 && n <= WS_WRITE_CHUNK) {
+      return (size_t)n;
+    }
+  }
+  return WS_WRITE_CHUNK;
 }
 
 static HttpLoop *loop_of_socket(struct us_socket_t *s) {
@@ -997,18 +1017,29 @@ static size_t ws_frame_header(char *dst, int opcode, size_t len) {
   return n;
 }
 
-/* Loop thread only. Writes as much of the queue as the kernel takes. */
+/* Loop thread only. Writes as much of the queue as the kernel takes,
+ * each piece at most the server's ws_write_chunk (a frame's rest may be
+ * larger than an int since W-FIX1g). */
 static void ws_flush(AvantWsConn *ws) {
+  size_t chunk = ws->srv->ws_write_chunk;
   pthread_mutex_lock(&ws->qmu);
   while (ws->out_head) {
     WsOut *node = ws->out_head;
-    size_t remaining = node->len - node->off;
-    int written = us_socket_write(0, ws->sock, node->data + node->off,
-                                  (int)remaining, 0);
-    if (written < 0) { written = 0; }
-    node->off += (size_t)written;
-    ws->out_bytes -= (size_t)written;
-    if (node->off < node->len) {
+    int full = 0;
+    while (node->off < node->len) {
+      size_t remaining = node->len - node->off;
+      int piece = remaining > chunk ? (int)chunk : (int)remaining;
+      int written = us_socket_write(0, ws->sock, node->data + node->off,
+                                    piece, 0);
+      if (written < 0) { written = 0; }
+      node->off += (size_t)written;
+      ws->out_bytes -= (size_t)written;
+      if (written < piece) {
+        full = 1;
+        break;
+      }
+    }
+    if (full) {
       break;
     }
     ws->out_head = node->next;
@@ -1072,13 +1103,21 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
     queued = ws->out_head != NULL;
     pthread_mutex_unlock(&ws->qmu);
     if (!queued) {
-      int total = (int)(header_len + len);
+      /* Lengths stay size_t (Stage 29 W-FIX1g, O519): the total was an
+       * int, so a payload within 10 bytes of 2^31 made it negative, any
+       * count the socket took passed for the whole frame, and send
+       * returned true with only that part on the wire. The socket is
+       * handed at most ws_write_chunk of the payload; the rest is queued
+       * like any rest. */
+      size_t total = header_len + len;
+      size_t chunk = ws->srv->ws_write_chunk;
+      size_t first = len > chunk ? chunk : len;
       int written = us_socket_write2(0, ws->sock, header, (int)header_len,
-                                     payload, (int)len);
-      if (written >= total) {
+                                     payload, (int)first);
+      if (written < 0) { written = 0; }
+      if ((size_t)written >= total) {
         return 1;
       }
-      if (written < 0) { written = 0; }
       if ((size_t)written < header_len) {
         size_t rem_h = header_len - (size_t)written;
         size_t framed_len = rem_h + len;
@@ -1094,7 +1133,17 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
         char *framed = (char *)malloc(rem ? rem : 1);
         if (!framed) { return 0; }
         if (rem > 0) { memcpy(framed, src, rem); }
-        return ws_enqueue(ws, framed, rem, 1);
+        if (!ws_enqueue(ws, framed, rem, 1)) {
+          return 0;
+        }
+        if ((size_t)written == header_len + first) {
+          /* The socket took the whole piece: it has not asked for the
+           * writable event, so the rest is written now, a piece at a
+           * time, until the socket is full (ws_flush asks for the event
+           * then). */
+          ws_flush(ws);
+        }
+        return 1;
       }
     }
   }
@@ -2314,6 +2363,7 @@ void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
   srv->max_body = (int32_t)max_body;
   srv->max_message = max_message > 0 ? (int32_t)max_message : 1048576;
   srv->idle_timeout = http_idle_timeout();
+  srv->ws_write_chunk = http_ws_write_chunk();
   srv->loops = (HttpLoop *)calloc((size_t)n, sizeof(HttpLoop));
   if (!srv->loops) {
     free(srv);

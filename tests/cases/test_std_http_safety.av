@@ -711,9 +711,21 @@ class BigSent {
 // by the send queue's 1 MiB bound and dropped, and `send_text` returned
 // false with half a frame on the wire. The rest of a frame begun is
 // queued whatever the bound now: the message arrives whole and the
-// connection carries the next one.
-fn ws_big_cases(c: Checks, root: String) {
-  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+// connection carries the next one. With `chunk` (O519) the server is
+// created with AVANT_HTTP_WS_WRITE_CHUNK, an internal variable that
+// shrinks the most one write hands the socket from 1 GiB: a message
+// larger than it takes the path one of 1 GiB or more takes (its first
+// write cut to the piece, the rest written a piece at a time), which
+// the suite cannot afford at full size. Its defect, a 32-bit total that
+// let a payload within 10 bytes of 2^31 pass a part for the whole
+// frame, is shown at full size in the wave's record only.
+fn ws_big_round(c: Checks, root: String, chunk: String, size: Int) {
+  if chunk.size > 0 {
+    set_env("AVANT_HTTP_WS_WRITE_CHUNK", chunk)
+  }
+  listened = Http.listen(0, "127.0.0.1", 1048576, 1)
+  set_env("AVANT_HTTP_WS_WRITE_CHUNK", "")
+  if opened = listened {
     server = opened
     big = BigSent.new()
     server.websocket("/ws-big") { |conn, msg|
@@ -737,18 +749,27 @@ fn ws_big_cases(c: Checks, root: String) {
     stamp = now_ms()
     out = Channel(String).new(2)
     task = spawn {
-      out.send(raw_client(port, root, stamp, "ws_big", "8388608"))
+      out.send(raw_client(port, root, stamp, "ws_big", "${size}"))
       stop(port)
       0
     }
     server.serve
-    c.eq_int(task.join, 0, "ws big-message task")
+    c.eq_int(task.join, 0, "ws big-message task (${size} bytes)")
     want: Array(String) = []
     want.push("ws_big=whole,then the big send returned true")
-    expect_lines(c, out, want, "a WebSocket message the socket takes in part arrives whole:")
+    piece = "1 GiB"
+    if chunk.size > 0 {
+      piece = "${chunk} bytes"
+    }
+    expect_lines(c, out, want, "a WebSocket message of ${size} bytes the socket takes in part arrives whole (write piece ${piece}):")
   } else {
     c.expect(false, "listen for the large WebSocket message test")
   }
+}
+
+fn ws_big_cases(c: Checks, root: String) {
+  ws_big_round(c, root, "", 8388608)
+  ws_big_round(c, root, "65536", 1048581)
 }
 
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
