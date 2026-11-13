@@ -672,6 +672,33 @@ fn xml_escape(s: String): String {
   b.to_s
 }
 
+// The text of a CDATA section (Stage 29 W-FIX1f, O596): a section ends
+// at its first "]]>", so each one in the text is split across two
+// sections, "]]" ending the first and ">" opening the next, and a parser
+// reads the text back byte for byte. (Escaping the output as text
+// instead would turn every < and & a diagnostic quotes into an entity
+// in the report file.)
+fn cdata_text(s: String): String {
+  b = buf_new()
+  from = 0
+  i = 0
+  while i + 2 < s.size {
+    if s[i] == 93 && s[i + 1] == 93 && s[i + 2] == 62 {
+      b.push_str(str_slice(s, from, i + 2))
+      b.push_str("]]><![CDATA[")
+      from = i + 2
+      i += 2
+    } else {
+      i += 1
+    }
+  }
+  if from == 0 {
+    return s
+  }
+  b.push_str(str_slice(s, from, s.size))
+  b.to_s
+}
+
 fn find_from(text: String, needle: String, from: Int): Int {
   if needle.size == 0 {
     return -1
@@ -804,7 +831,7 @@ fn write_junit(path: String, files: Array(FileRun)) {
         fb.push_str(">\n      <failure message=\"")
         fb.push_str(xml_escape(why))
         fb.push_str("\"><![CDATA[")
-        fb.push_str(f.output)
+        fb.push_str(cdata_text(f.output))
         fb.push_str("]]></failure>\n    </testcase>\n")
       }
     }
@@ -914,7 +941,7 @@ pub fn driver_test(args: Array(String)) {
       diag_puts("--jobs N   test processes at once (default: online processors)")
       diag_puts("--jobs 1   one file at a time")
       diag_puts("--shard I/N   slice I of N, 1-based, round-robin")
-      diag_puts("--junit PATH   one case per file")
+      diag_puts("--junit PATH   write a JUnit report: one case per check std.testing records, one per file that records none, and one for a failed file whose checks all passed")
       diag_puts("--skip-exclusive   omit [test] exclusive files")
       diag_puts("--coverage   instrument tests and print one coverage table")
       diag_exit(0)
