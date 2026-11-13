@@ -855,7 +855,7 @@ typedef struct GcSizeCounters {
  * young sweeps found without a survivor, overflow the medium objects
  * placed in the overflow block because the current hole could not hold
  * them, returned the empty young blocks the young sweeps gave back to
- * their chunks (Stage 28 W15c); under S+ (GC_STICKY_COPY) evac_blocks the
+ * their chunks (Stage 28 W15c); S+'s: evac_blocks the
  * young blocks evacuated, kept_blocks the young blocks kept in place
  * because a young object in them was named imprecisely, copy_blocks the
  * fresh blocks the copies went to (the bytes copied are prom.copied and
@@ -1134,7 +1134,7 @@ typedef struct GcHeap {
   Block **verify_holes;
   uint32_t verify_holes_n;
   uint32_t verify_holes_cap;
-  /* S+ (GC_STICKY_COPY): whether the running young collection may copy;
+  /* S+: whether the running young collection may copy (always, today);
    * the block copies go to; copied_bytes when it began. splus_age: the
    * collection copies first survivors into survivor blocks (YOUNG_AGE 2,
    * not a fixed AVANT_YOUNG_MB); splus_sdst the survivor block they go
@@ -1525,15 +1525,20 @@ void gc_rem_thread_leave(void);
 void gc_hdr_or(AvantHeader *h, uint16_t bits);
 void gc_hdr_and(AvantHeader *h, uint16_t bits);
 
-/* GC_STICKY_COPY (Stage 28 W15c, gc-design.md §3.1, §3.3): 1 builds
- * S+, the young generation (D233): candidate S with the opportunistic
- * young copy (avant_gc_sticky.c: survivors of young blocks are copied out
- * when every reference to them is precise); 0 builds plain S, candidate
- * S alone (the in-place young collection), kept as an internal constant
- * because it costs one compile-time condition per S+ site (Stage 28
- * W15d: E, the other candidate, and runtime/build.sh's
- * AVANT_GC_CANDIDATE knob are deleted, D232). A build-time constant, not
- * ABI. SPLUS_SPARSE_LINES: a young block that held no
+/* The young generation is S+ (Stage 28 W15c, gc-design.md §3.1, §3.3;
+ * D233): candidate S, the in-place young collection, with the
+ * opportunistic young copy (avant_gc_sticky.c: survivors of young blocks
+ * are copied out when every reference to them is precise). Until the
+ * Valk stage's VALK-T2 (O632) a build-time constant, GC_STICKY_COPY 0,
+ * built S alone, with the copy compiled out: no build, test or gate
+ * selected it, and every change to the young collection had to keep a
+ * second arm compiling that nothing ran. It is deleted as a build; S's
+ * mechanism is not (D232): in-place promotion is what S+ does with every
+ * survivor it does not copy (a kept block's, a block with mature lines,
+ * a dense survivor block's, the candidates past the copy's budget).
+ * gc_heap.splus_on, set at every young collection, is where a collection
+ * that copies nothing would be chosen again.
+ * SPLUS_SPARSE_LINES: a young block that held no
  * mature line is evacuated when its survivors' bytes fill at most this
  * many of its 128 lines. Measured at 32, 64, 96, 112 and 128 (Stage 28
  * W15c record, thr-v1 to thr-v3): 128, every such block, is the one
@@ -1544,9 +1549,6 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
  * cost is a copy of a dense live set that a later collection would not
  * have moved (Calculator::Interpreter 27 -> 44 MB, as under E). A block
  * that holds mature lines is never evacuated: it cannot be freed. */
-#ifndef GC_STICKY_COPY
-#define GC_STICKY_COPY 1
-#endif
 #ifndef SPLUS_SPARSE_LINES
 #define SPLUS_SPARSE_LINES 128
 #endif
@@ -1592,9 +1594,8 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
 #define SPLUS_AGED_SPARSE_LINES 64
 #endif
 
-/* avant_gc_sticky.c: the young generation (S+; candidate S with
- * GC_STICKY_COPY 0) and the noted list, and the young allocator's block
- * lists in avant_gc_alloc.c. */
+/* avant_gc_sticky.c: the young generation (S+) and the noted list, and
+ * the young allocator's block lists in avant_gc_alloc.c. */
 void gc_clear_noted(void);
 /* The noted list's tag bits (avant_gc_sticky.c says what each means): a
  * payload is 8-aligned, so its three low bits are free. */

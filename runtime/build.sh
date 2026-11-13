@@ -21,10 +21,10 @@ compile() {
 # The young generation is S+ (Stage 28 W15c, D233; avant_gc_sticky.c).
 # Candidate E, the evacuating nursery, and the AVANT_GC_CANDIDATE knob
 # that chose between the candidates were deleted in Stage 28 W15d (D232):
-# E's mechanisms that S+ uses stay in S+. Candidate S (S+ with its copy
-# off) is the internal constant GC_STICKY_COPY 0 (avant_gc_internal.h),
-# built only for a measurement (a copy of runtime/ with the constant
-# changed).
+# E's mechanisms that S+ uses stay in S+. Candidate S alone (S+ with its
+# copy compiled out, the internal constant GC_STICKY_COPY 0) was deleted
+# as a build in the Valk stage's VALK-T2 (O632): nothing built or tested
+# it; its in-place promotion is part of S+.
 gc_cflags=
 
 # The core units: the collector and the language traps. They fold into

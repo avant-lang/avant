@@ -211,9 +211,7 @@ static void verify_each_root(void (*fn)(void **), int rem) {
  * silent about dead mature objects, whose fields legitimately name
  * copied objects. The visited bit is VSEEN (the verifier's own);
  * verify_clear_traced resets it before gc_verify_young_copy returns. */
-#if GC_STICKY_COPY
 static uint64_t verify_stale_found(void *start, void *holder);
-#endif
 
 /* STALE (S+): count the fields of the reached objects that name a moved
  * object's old copy, as the trace reads them (verify_stale_found). */
@@ -223,7 +221,6 @@ static uint64_t verify_mark_reachable(int stale) {
   verify_each_root(verify_tls_slot, 1);
   while (gc_heap.work_n) {
     void *p = verify_pop();
-#if GC_STICKY_COPY
     if (stale) {
       EACH_REF_SLOT_WALK(p, slot, {
         void *st = verify_trace_r(*slot);
@@ -239,7 +236,6 @@ static uint64_t verify_mark_reachable(int stale) {
       });
       continue;
     }
-#endif
     EACH_REF_SLOT_WALK(p, slot, { verify_trace(*slot); });
   }
   return bad;
@@ -255,7 +251,6 @@ static uint64_t verify_mark_reachable(int stale) {
  * object must be marked (gc_reclaim_young_large then promotes it, else it
  * is freed). Each report names the object; the count is
  * gc_heap.verify_untraced. */
-#if GC_STICKY_COPY
 /* S+: a reference the collection did not rewrite names a moved object's
  * old copy (its header holds the forward). */
 static uint64_t verify_stale_start(void *start, const char *where, void *holder) {
@@ -279,7 +274,6 @@ static uint64_t verify_stale_found(void *start, void *holder) {
 static void verify_stale_tls(void **slot) {
   gc_heap.verify_untraced += verify_stale(*slot, "runtime root", (void *)slot);
 }
-#endif
 
 /* T's checks of one reached object V: NULL, or what is wrong. */
 static const char *sticky_why(void *v) {
@@ -314,14 +308,9 @@ static void verify_sticky_whole(void) {
   size_t i;
   uint64_t bad = 0;
   vb_ensure();
-#if GC_STICKY_COPY
   /* The fields of every reached object are checked for stale
    * references as the trace reads them (verify_mark_reachable). */
   bad += verify_mark_reachable(1);
-#else
-  (void)verify_mark_reachable(0);
-#endif
-#if GC_STICKY_COPY
   /* After S+'s copy and fix-up (before the old copies lose their start
    * bits): no root slot, runtime-held slot or field of a reachable object
    * may still name a moved object; verify_mark_reachable followed the
@@ -339,7 +328,6 @@ static void verify_sticky_whole(void) {
     }
     gc_each_runtime_root(verify_stale_tls);
   }
-#endif
   for (i = 0; i < gc_heap.vnoted_n; i++) {
     void *v = gc_heap.vnoted[i];
     AvantHeader *h = avant_header(v);
@@ -1477,11 +1465,9 @@ static int vi_remembered(void) {
 /* T's examination of one slot, and of one object. */
 static inline void vi_t_slot(void **slot) {
   void *st = vi_trace(*slot);
-#if GC_STICKY_COPY
   if (st && (avant_header(st)->flags & AVANT_FLAG_FORWARDED)) {
     vi_cand++;
   }
-#endif
   vi_note(slot, st);
 }
 
@@ -1493,7 +1479,6 @@ static void vi_t_root(void **slot) {
   (void)vi_trace(*slot);
 }
 
-#if GC_STICKY_COPY
 static inline int vi_stale(void *p) {
   void *st = gc_object_payload(p, NULL, NULL);
   return st && (avant_header(st)->flags & AVANT_FLAG_FORWARDED);
@@ -1502,7 +1487,6 @@ static inline int vi_stale(void *p) {
 static void vi_stale_root(void **slot) {
   vi_cand += (uint64_t)vi_stale(*slot);
 }
-#endif
 
 
 /* The young blocks' objects that are not young (promoted in place, or
@@ -1551,7 +1535,6 @@ static int vi_sticky(void) {
     vi_t_object(verify_pop());
   }
   vi_sources(pages, vi_t_object);
-#if GC_STICKY_COPY
   for (t = gc_heap.threads; t; t = t->next) {
     EACH_FRAME_SLOT(gc_thread_frames(t), slot, {
       vi_cand += (uint64_t)vi_stale(*slot);
@@ -1559,7 +1542,6 @@ static int vi_sticky(void) {
     });
   }
   gc_each_runtime_root(vi_stale_root);
-#endif
   for (i = 0; i < gc_heap.vnoted_n; i++) {
     vi_cand += sticky_why(gc_heap.vnoted[i]) != NULL;
   }

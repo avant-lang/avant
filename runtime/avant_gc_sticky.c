@@ -17,9 +17,10 @@
  * from avant_gc_young.c, which held E's young copy).
  *
  * Candidate S, the in-place young generation (Stage 28 W15b,
- * gc-design.md §3.1, StickyImmix), is this file with GC_STICKY_COPY 0
- * (an internal constant, avant_gc_internal.h). A young collection under
- * S moves nothing. It traces from the roots
+ * gc-design.md §3.1, StickyImmix), is what this file does with every
+ * survivor it does not copy (until the Valk stage's VALK-T2, O632, it
+ * could also be built alone, with GC_STICKY_COPY 0: avant_gc_internal.h).
+ * A young collection under S moves nothing. It traces from the roots
  * (frame slots, pins, runtime-held slots) and the remembered set, and
  * promotes each young object it reaches where it lies: YOUNG cleared,
  * its lines marked live at the current line epoch. A young object it
@@ -253,12 +254,7 @@ static inline __attribute__((always_inline)) void promote_young(YCtx *c, void *s
   if (__builtin_expect(l != e, 0)) {
     y_lines_rest(c->lines, l, e);
   }
-#if GC_STICKY_COPY
   c->blocks[off >> BLOCK_SHIFT].idle += total;
-#else
-  gc_heap.ctr.sticky.inplace += total;
-  gc_heap.live += total;
-#endif
   if (__builtin_expect(c->noted_n == c->noted_cap, 0)) {
     y_noted_grow();
     c->noted = gc_heap.noted;
@@ -276,7 +272,6 @@ static inline __attribute__((always_inline)) void promote_young(YCtx *c, void *s
   }
 }
 
-#if GC_STICKY_COPY
 /* Variant S+ (Stage 28 W15c, gc-design.md §3.1, §3.3): the opportunistic
  * young copy. A young collection traces and promotes in place as S does,
  * and sums each young block's survivor bytes. After the trace a young
@@ -301,7 +296,6 @@ static inline __attribute__((always_inline)) void promote_young(YCtx *c, void *s
  * unshared one since Stage 28 W17a (the handshake stops the other
  * threads; before, nothing moved there, D191). Copying is optional: a block refused at the
  * heap limit leaves the remaining survivors in place. */
-#endif
 
 /* One reference to the object at START (in block B, or the large object
  * OL), named by SLOT's word (NULL: named by a pin, a task root or a slot's
@@ -320,16 +314,12 @@ static int trace_object(void **slot, void *start, Block *b, AvantHeader *ol, int
   uint16_t fl = h->flags;
   uint32_t idx;
   int r;
-#if GC_STICKY_COPY
   /* S+: a young block object named other than by a slot (a pin, a
    * registered slot location inside it), or pinned, keeps its block in
    * place: splus_fix rewrites slots only. */
   if (gc_heap.splus_on && !ol && (fl & AVANT_FLAG_YOUNG) && (!slot || (fl & AVANT_FLAG_PINNED))) {
     b->kept = SPLUS_KEPT;
   }
-#else
-  (void)slot;
-#endif
   if (fl & AVANT_FLAG_MARKED) {
     /* A carded object scanned so far only by its marked cards, now named
      * by a root or a young object's field (R1'(a), (b)): scanned whole,
@@ -443,11 +433,9 @@ static inline __attribute__((always_inline)) int trace_field(YCtx *c, void **slo
   h = (AvantHeader *)((uint8_t *)p - sizeof(AvantHeader));
   fl = h->flags;
   if (__builtin_expect((fl & (AVANT_FLAG_LARGE | AVANT_FLAG_MARKED | AVANT_FLAG_YOUNG)) == AVANT_FLAG_YOUNG, 1)) {
-#if GC_STICKY_COPY
     if (__builtin_expect((fl & AVANT_FLAG_PINNED) != 0, 0) && gc_heap.splus_on) {
       c->blocks[off >> BLOCK_SHIFT].kept = SPLUS_KEPT;
     }
-#endif
     promote_young(c, p, h, fl, off);
     return TR_MOVABLE;
   }
@@ -598,7 +586,6 @@ static void trace_all(void) {
       if (ls && (avant_header(ls)->flags & AVANT_FLAG_YOUNG)) {
         trace_ref(NULL, ls, 0);
       }
-#if GC_STICKY_COPY
       /* A slot location inside an object an earlier slot already
        * reached (promoted, so no longer YOUNG): its block must stay in
        * place all the same, since splus_fix rewrites what a slot holds,
@@ -609,7 +596,6 @@ static void trace_all(void) {
       else if (ls && gc_heap.splus_on && lb && !ll && lb->young_hi && lb->kept != SPLUS_KEPT) {
         lb->kept = SPLUS_KEPT;
       }
-#endif
       trace_ref(slot, *slot, 0);
     });
   }
@@ -736,7 +722,6 @@ void gc_evac_map_ensure(void) {
 /* A young collection under S (gc_young_collect's S arm): the trace, the
  * young large objects, the remembered set emptied, then the sweep of the
  * young blocks. */
-#if GC_STICKY_COPY
 /* The new address of P when it lies in an object S+ moved (its exact
  * start or an interior address, resolved through the old copy's start
  * bit and forward), else P. Only addresses in an evacuated block (P's
@@ -1335,7 +1320,6 @@ static void splus_finish(void) {
   }
   gc_heap.splus_dst = NULL;
 }
-#endif
 
 /* Block.kept in a young collection: the young sweep
  * left the block empty, and it leaves mature space (mature_drop_empty);
@@ -1463,7 +1447,6 @@ static __attribute__((noinline)) int young_sweep_checked(Block *b, uint32_t i, i
       }
     }
   }
-#if GC_STICKY_COPY
   /* The block known to have no live line (gc_sticky_collect's comment):
    * its count alone. */
   if ((b->kept == SPLUS_EVAC && !(stress && gc_heap.stress_mixed[i])) || (b->kept == SPLUS_PURE && b->idle == 0)) {
@@ -1476,7 +1459,6 @@ static __attribute__((noinline)) int young_sweep_checked(Block *b, uint32_t i, i
     }
     gc_heap.ctr.sticky.blocks++;
   } else
-#endif
   {
     live = sweep_lines(b, lo, fr);
     gc_heap.ctr.sticky.freed_lines += (uint64_t)(hi - fr);
@@ -1500,7 +1482,6 @@ void gc_sticky_collect(int tenure) {
   gc_heap.keep_n = 0;
   gc_heap.work_n = 0;
   gc_heap.noted_hi = UINT32_MAX;
-#if GC_STICKY_COPY
   /* In shared programs too since Stage 28 W17a: every other thread is
    * stopped at a safepoint (its references in root slots) or native (it
    * touches no unpinned heap object), so the copy may move what any
@@ -1540,21 +1521,16 @@ void gc_sticky_collect(int tenure) {
       yb->idle = 0;
     }
   }
-#endif
   trace_all();
-#if GC_STICKY_COPY
   if (gc_heap.splus_on) {
     splus_evacuate();
   }
-#endif
   if (gc_heap.set.verify) {
     gc_verify_sticky();
   }
-#if GC_STICKY_COPY
   if (gc_heap.splus_on) {
     splus_finish();
   }
-#endif
   /* The young large objects: an unreached one is freed; a reached one is
    * stays young at its first survival (SURVIVED, S_LARGE_AGE 2, the
    * default by measurement since Stage 28 W15d) and is promoted at its
@@ -1595,7 +1571,6 @@ void gc_sticky_collect(int tenure) {
          * of its whole range leaves it, and the count is the same. */
         live = young_sweep_checked(b, i, stress, verify);
       } else
-#if GC_STICKY_COPY
       /* A block evacuated whole (its line marks were cleared) and a block
        * that held no live line and had no survivor have no live line: the
        * sweep of such a block is its count alone (the Valk stage, VALK-T,
@@ -1611,7 +1586,6 @@ void gc_sticky_collect(int tenure) {
         }
         gc_heap.ctr.sticky.blocks++;
       } else
-#endif
       {
         live = sweep_lines(b, b->young_lo, b->young_hi);
       }
@@ -1637,7 +1611,6 @@ void gc_sticky_collect(int tenure) {
     }
     gc_heap.young_blocks_n = 0;
   }
-#if GC_STICKY_COPY
   /* The survivor blocks (YOUNG_AGE 2) are young blocks until the next
    * collection: their used lines are its young range, and neither young
    * nor mature allocation takes a block with one (young_hi set). */
@@ -1657,7 +1630,6 @@ void gc_sticky_collect(int tenure) {
     gc_heap.surv_blocks_n = 0;
     gc_heap.splus_sdst = NULL;
   }
-#endif
   /* (Every thread's young cursor and overflow block were dropped when the
    * collection began, gc_alloc_stop_all.) */
   /* The empty young blocks go back to their chunks' free lists (O89):
@@ -1700,14 +1672,12 @@ void gc_sticky_collect(int tenure) {
  * the young budget is empty. */
 void gc_sticky_full_begin(void) {
   uint32_t i;
-#if GC_STICKY_COPY
   /* A copy block the stress mode kept (splus_finish) becomes an ordinary
    * mature block: its free rest is free lines for the full sweep. */
   if (gc_heap.splus_dst) {
     gc_reset_block_bump(gc_heap.splus_dst);
     gc_heap.splus_dst = NULL;
   }
-#endif
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     gc_heap.young_blocks[i]->young_lo = 0;
     gc_heap.young_blocks[i]->young_hi = 0;

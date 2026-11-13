@@ -977,17 +977,13 @@ int avant_is_heap(void *payload) {
 /* The contract (ABI name kept, gc-design.md §3.1): 1 when a young
  * collection can move this object, 0 when no collection before the next
  * full one moves it; .parallel keeps a raw address only on 0. Under S+
- * (GC_STICKY_COPY, Stage 28 W15c) a young block object may be copied, so
- * it is 1 for one that is not pinned; mature and large objects stay put,
- * so a parallel numeric loop can keep their address. Under candidate S
- * (GC_STICKY_COPY 0) no young collection moves anything, so it is 0 for
- * every object (Stage 28 W15b). (Under E, deleted in W15d, it was 1 for
- * every young block object.) */
+ * (Stage 28 W15c) a young block object may be copied, so it is 1 for one
+ * that is not pinned; mature and large objects stay put, so a parallel
+ * numeric loop can keep their address. (Under candidate S alone, a
+ * build deleted in the Valk stage's VALK-T2, no young collection moved
+ * anything and it was 0 for every object; under E, deleted in W15d, it
+ * was 1 for every young block object.) */
 int32_t avant_is_young(void *payload) {
-#if !GC_STICKY_COPY
-  (void)payload;
-  return 0;
-#else
   AvantHeader *h;
   if (!payload || ((uintptr_t)payload & (ALIGN - 1)) != 0) {
     return 0;
@@ -1002,7 +998,6 @@ int32_t avant_is_young(void *payload) {
     return 1;
   }
   return 0;
-#endif
 }
 
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *)) {
