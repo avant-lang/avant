@@ -2382,6 +2382,18 @@ avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
   return 0;
 }
 
+/* A route method of std.http called while its server serves (Stage 29
+ * W-FIX1f, O594): the loop threads read the route tables with no lock,
+ * so the route is refused. The trap's form is the runtime's (trap_head
+ * and trap_tail in avant_rt_traps.c, as avant_regex_closed has it): the
+ * program's stdout flushed, one line on stderr, status 1. what names
+ * the route ("route GET /x", "websocket route /x"). */
+__attribute__((noreturn, cold)) void avant_http_route_while_serving(const char *what) {
+  fflush(stdout);
+  fprintf(stderr, "avant runtime: %s registered while the server is serving: register every route before serve\n", what);
+  exit(1);
+}
+
 avant_int avant_http_close(void *srvp) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
   int i;

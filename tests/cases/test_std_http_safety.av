@@ -14,7 +14,8 @@ import std.http
 // gone: a WsConn kept after its server (O515), a copy of a closed
 // WsConnection (O516). And WebSocket connections opening and closing
 // together on a server with more than one loop (Stage 29 W-FIX1e,
-// O564).
+// O564). And a route registered while the server serves (Stage 29
+// W-FIX1f, O594).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -532,6 +533,34 @@ fn ws_route_cases(c: Checks) {
   }
 }
 
+// A route registered while the server serves (Stage 29 W-FIX1f, O594):
+// the route tables are read by the loop threads with no lock, so every
+// route method traps once `serve` runs. The fixture registers the route
+// from a handler, on a loop thread, with each method in turn; each run
+// must end with status 1 and the trap's line, its request unanswered.
+fn route_serving_cases(c: Checks, root: String) {
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    bin = "${scratch()}/http-route-serving-${stamp}.bin"
+    clog = "${scratch()}/http-route-serving-${stamp}.clog"
+    code = compile_av(compiler, "${root}/tests/fixtures/http/route_while_serving.av", bin, clog)
+    c.eq_int(code, 0, "the route-while-serving fixture compiles")
+    kinds = ["get", "post", "put", "delete", "patch", "route", "websocket", "websocket_open", "websocket_close"]
+    whats = ["route GET /x", "route POST /x", "route PUT /x", "route DELETE /x", "route PATCH /x", "route OPTIONS /x", "websocket route /w", "websocket_open route /w", "websocket_close route /w"]
+    for i in 0..kinds.size {
+      log = "${scratch()}/http-route-serving-${stamp}-${kinds[i]}.log"
+      args: Array(String) = []
+      args.push(kinds[i])
+      status = process_run_out(bin, args, log) ?? -1
+      text = file_read(log) ?? ""
+      c.eq_int(status, 1, "Server.${kinds[i]} while serving: status 1")
+      c.eq_str(text, "avant runtime: ${whats[i]} registered while the server is serving: register every route before serve\n", "Server.${kinds[i]} while serving: the trap's line, the request unanswered")
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER is set for the route-while-serving test")
+  }
+}
+
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
   i = 0
   while i < want.size {
@@ -720,5 +749,6 @@ fn main: Int {
   client_cases(c)
   ws_cases(c)
   ws_route_cases(c)
+  route_serving_cases(c, avant_test_root())
   c.finish
 }

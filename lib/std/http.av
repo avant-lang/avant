@@ -14,6 +14,7 @@ lib httpc {
   fun avant_http_port(srv: Ptr(Void)): Int
   fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void))): Int
   fun avant_http_close(srv: Ptr(Void)): Int
+  fun avant_http_route_while_serving(what: String)
   fun avant_http_req_is_ws(req: Ptr(Void)): Int
   fun avant_http_req_ws_upgrade(req: Ptr(Void), route: Int): Int
   fun avant_http_req_ws_id(req: Ptr(Void)): Int
@@ -320,11 +321,24 @@ class HttpState {
   serving: Bool = false
   bound_port: Int = 0
 
+  // The route tables are read by every loop thread while `serve` runs,
+  // with no lock, so a route added then is pushed onto an array the
+  // loops are reading (Stage 29 W-FIX1f, O594: routes answered by
+  // another route's handler, and crashes). Every route method checks
+  // here, on the registering thread, and traps while serving: the
+  // README's rule, register every route before `serve`. Nothing is
+  // added to the request or message path.
   fn add(method: String, path: String, handler: fn(Request): Response) {
+    if self.serving {
+      httpc.avant_http_route_while_serving("route ${method} ${path}")
+    }
     self.routes.push(Route { method: method, path: path, handler: handler })
   }
 
   fn add_ws(path: String, handler: fn(WsConn, WsMessage)) {
+    if self.serving {
+      httpc.avant_http_route_while_serving("websocket route ${path}")
+    }
     k = self.ws_routes.size
     i = self.first_ws_route(path)
     if i >= 0 {
@@ -349,10 +363,16 @@ class HttpState {
   }
 
   fn add_ws_open(path: String, handler: fn(WsConn)) {
+    if self.serving {
+      httpc.avant_http_route_while_serving("websocket_open route ${path}")
+    }
     self.ws_open_routes.push(WsOpenRoute { path: path, handler: handler })
   }
 
   fn add_ws_close(path: String, handler: fn(WsConn, Int, String)) {
+    if self.serving {
+      httpc.avant_http_route_while_serving("websocket_close route ${path}")
+    }
     self.ws_close_routes.push(WsCloseRoute { path: path, handler: handler })
   }
 
@@ -575,8 +595,9 @@ pub struct Server {
   }
 
   // Runs the event loop until `close` is called from another task.
-  // Register every route before serving: the route table is read on
-  // the loop thread while `serve` blocks. Returns when the loop has
+  // Register every route before serving: the route tables are read by
+  // the loop threads while `serve` blocks, and a route method called
+  // while serving (from a handler) traps. Returns when the loop has
   // drained, after which the listen port is released.
   pub fn serve {
     if self.state.closed {
