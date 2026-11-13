@@ -280,6 +280,16 @@ fn test_user_test(c: Checks) {
     c.eq_int(ut_sh(o596_psh, o596_prc), 0, "O596: an XML parser reads the JUnit report of an output holding ]]>")
     c.expect(ut_has(file_read("${root}/o596-parse.out") ?? "", "${o596_line}\n"), "O596: the failure's text is the file's output, ]]> included")
 
+    // O235 (Stage 29 W-FIX1f): `avant test --help` said `--junit PATH
+    // one case per file`; the report has one case per check std.testing
+    // records (write_junit takes its processes' fragments), one per file
+    // that records none, and one for a failed file whose checks all
+    // passed (O520).
+    help_rc = "${root}/test-help.rc"
+    help_sh = "#!/bin/sh\n${ut_quote(compiler)} test --help > ${ut_quote(root)}/test-help.log 2>&1; echo $? > ${ut_quote(help_rc)}\n"
+    c.eq_int(ut_sh(help_sh, help_rc), 0, "O235: avant test --help exits 0")
+    c.expect(ut_has(file_read("${root}/test-help.log") ?? "", "\n--junit PATH   write a JUnit report: one case per check std.testing records, one per file that records none, and one for a failed file whose checks all passed\n"), "O235: avant test --help says what --junit's cases are")
+
     // O569 (Stage 29 W-FIX1e): seven writes of the compiler printed
     // `cannot write PATH` and dropped the reason; each now prints it
     // (`cannot write PATH: REASON`), and a lost lcov report fails
