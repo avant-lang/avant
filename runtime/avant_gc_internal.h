@@ -1130,7 +1130,10 @@ typedef struct GcHeap {
    * SPLUS_PART): the copy's test of every survivor and the fix-up's test
    * of every field it rereads, instead of block records (Stage 28 W15d,
    * O93; the Valk stage, VALK-T, O579). Set when the blocks are chosen,
-   * cleared by splus_finish. */
+   * cleared by splus_finish. A defragmenting full collection uses it the
+   * same way for the mature blocks it evacuates, between its copy and the
+   * end of its fix-up (avant_gc_defrag.c; the Valk stage, VALK-T2,
+   * O603). */
   uint8_t *evac_map;
   uint64_t evac_map_n;
   /* An entry of the map is set (splus_finish clears them). */
@@ -1581,6 +1584,7 @@ void gc_sticky_collect(int tenure);
 void gc_sticky_full_begin(void);
 void gc_sticky_full_end(void);
 void gc_sticky_push(Block ***v, uint32_t *n, uint32_t *cap, Block *b);
+void gc_evac_map_ensure(void);
 
 /* avant_gc_mark.c */
 void gc_mark_roots(void);

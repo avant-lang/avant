@@ -718,6 +718,21 @@ static int sweep_lines(Block *b, int lo, int hi) {
   return live;
 }
 
+/* The block map (gc_heap.evac_map) grown to the committed heap, its new
+ * entries clear. The young copy's map (S+), and the defragmenter's for
+ * the blocks a full collection evacuates (avant_gc_defrag.c; the Valk
+ * stage, VALK-T2, O603): each sets its blocks' entries when it has chosen
+ * them and clears them before it ends, so the map is clear between
+ * collections. */
+void gc_evac_map_ensure(void) {
+  uint64_t need = gc_heap.committed >> BLOCK_SHIFT;
+  if (need > gc_heap.evac_map_n) {
+    gc_heap.evac_map = gc_xrealloc(gc_heap.evac_map, (size_t)need);
+    memset(gc_heap.evac_map + gc_heap.evac_map_n, 0, (size_t)(need - gc_heap.evac_map_n));
+    gc_heap.evac_map_n = need;
+  }
+}
+
 /* A young collection under S (gc_young_collect's S arm): the trace, the
  * young large objects, the remembered set emptied, then the sweep of the
  * young blocks. */
@@ -736,15 +751,6 @@ static int sweep_lines(Block *b, int lo, int hi) {
 #define EVAC_MAP_PART 2
 static inline int evac_at(uint64_t bi) {
   return bi < gc_heap.evac_map_n && gc_heap.evac_map[bi];
-}
-
-static void evac_map_ensure(void) {
-  uint64_t need = gc_heap.committed >> BLOCK_SHIFT;
-  if (need > gc_heap.evac_map_n) {
-    gc_heap.evac_map = gc_xrealloc(gc_heap.evac_map, (size_t)need);
-    memset(gc_heap.evac_map + gc_heap.evac_map_n, 0, (size_t)(need - gc_heap.evac_map_n));
-    gc_heap.evac_map_n = need;
-  }
 }
 
 static inline void evac_map_set(const Block *b, uint8_t v) {
@@ -1130,7 +1136,11 @@ static void splus_evacuate(void) {
    * (the Valk stage, VALK-T, O579); an evacuated block's are taken back
    * below. */
   uint64_t surv = 0;
-  evac_map_ensure();
+  /* The map covers the committed heap (the test in line: the call is
+   * for a heap that grew). */
+  if ((gc_heap.committed >> BLOCK_SHIFT) > gc_heap.evac_map_n) {
+    gc_evac_map_ensure();
+  }
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     Block *b = gc_heap.young_blocks[i];
     surv += b->idle;
