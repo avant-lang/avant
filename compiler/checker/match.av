@@ -552,32 +552,32 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
         mod_ok = false
       }
       if mod_ok {
-      if sig.name == name {
-        is_inst = false
-        for j in 0..checker_self.instances.size {
-          if checker_self.instances[j].ol_index == sig.node.ol_index {
-            is_inst = true
-          }
-        }
-        if !is_inst && checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
-          if sig.node.generic {
-            saw_generic = true
-            if subst = checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected) {
-              cands.push(sig)
+        if sig.name == name {
+          is_inst = false
+          for j in 0..checker_self.instances.size {
+            if checker_self.instances[j].ol_index == sig.node.ol_index {
+              is_inst = true
             }
-          } else {
-            ok = true
-            for k in 0..arg_tys.size {
-              if !ty_assignable(arg_tys[k], sig.params[k]) {
-                ok = false
+          }
+          if !is_inst && checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
+            if sig.node.generic {
+              saw_generic = true
+              if subst = checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected) {
+                cands.push(sig)
+              }
+            } else {
+              ok = true
+              for k in 0..arg_tys.size {
+                if !ty_assignable(arg_tys[k], sig.params[k]) {
+                  ok = false
+                }
+              }
+              if ok {
+                cands.push(sig)
               }
             }
-            if ok {
-              cands.push(sig)
-            }
           }
         }
-      }
       }
     }
     x += 1

@@ -280,6 +280,36 @@ fn test_user_test(c: Checks) {
     c.eq_int(ut_sh(o596_psh, o596_prc), 0, "O596: an XML parser reads the JUnit report of an output holding ]]>")
     c.expect(ut_has(file_read("${root}/o596-parse.out") ?? "", "${o596_line}\n"), "O596: the failure's text is the file's output, ]]> included")
 
+    // O620 (Stage 29 W-FIX1f2): XML 1.0 refuses a control character, a
+    // byte that is not UTF-8, U+FFFE and U+FFFF, in CDATA as in an
+    // attribute, so a failed file that printed a terminal colour made
+    // the fallback's report unreadable, and so did a check named with
+    // one in std.testing's fragment. Each such byte is now \xNN; tab and
+    // UTF-8 (é) stay as they are. Python's XML parser must read the
+    // report, with the escapes visible.
+    mkdir_p("${root}/o620/tests")
+    _ = file_write("${root}/o620/avant.toml", "[package]\nname = \"o620\"\nversion = \"0.1.0\"\n")
+    o620_ctl = "fn main: Int {\n  b = buf_new()\n  b.push_str(\"before \")\n  b.push_byte(27)\n  b.push_str(\"[31mred\")\n  b.push_byte(27)\n  b.push_str(\"[0m bell\")\n  b.push_byte(7)\n  b.push_str(\" ff\")\n  b.push_byte(255)\n  b.push_str(\" fffe\")\n  b.push_byte(239)\n  b.push_byte(191)\n  b.push_byte(190)\n  b.push_str(\" tab\\tcaf\")\n  b.push_byte(195)\n  b.push_byte(169)\n  b.push_str(\" after\")\n  puts(b.to_s)\n  1\n}\n"
+    _ = file_write("${root}/o620/tests/test_ctl.av", o620_ctl)
+    o620_name = "import std.testing\n\nfn main: Int {\n  t = Test.new\n  b = buf_new()\n  b.push_str(\"named \")\n  b.push_byte(27)\n  b.push_str(\"[1m bold\")\n  t.check(false, b.to_s)\n  t.finish\n}\n"
+    _ = file_write("${root}/o620/tests/test_name.av", o620_name)
+    o620_rc = "${root}/o620.rc"
+    o620_sh = "#!/bin/sh\ncd ${ut_quote(root)}/o620 && ${ut_quote(compiler)} test --junit ${ut_quote(root)}/o620.xml > ${ut_quote(root)}/o620.log 2>&1; echo $? > ${ut_quote(o620_rc)}\n"
+    c.eq_int(ut_sh(o620_sh, o620_rc), 1, "O620: the two failing files fail the run")
+    o620_py = "import sys, xml.etree.ElementTree as E\nout = []\nfor tc in E.parse(sys.argv[1]).iter('testcase'):\n    out.append('case ' + tc.get('name'))\n    f = tc.find('failure')\n    if f is not None and f.text:\n        out.append('text ' + f.text)\nsys.stdout.buffer.write(('\\n'.join(out) + '\\n').encode('utf-8'))\n"
+    _ = file_write("${root}/o620.py", o620_py)
+    o620_prc = "${root}/o620-parse.rc"
+    o620_psh = "#!/bin/sh\n/usr/bin/python3 -I ${ut_quote(root)}/o620.py ${ut_quote(root)}/o620.xml > ${ut_quote(root)}/o620-parse.out 2>&1; echo $? > ${ut_quote(o620_prc)}\n"
+    c.eq_int(ut_sh(o620_psh, o620_prc), 0, "O620: an XML parser reads the JUnit report of an output and a name holding control characters")
+    o620_got = file_read("${root}/o620-parse.out") ?? ""
+    o620_text = buf_new()
+    o620_text.push_str("text before \\x1b[31mred\\x1b[0m bell\\x07 ff\\xff fffe\\xef\\xbf\\xbe tab\tcaf")
+    o620_text.push_byte(195)
+    o620_text.push_byte(169)
+    o620_text.push_str(" after\n")
+    c.expect(ut_has(o620_got, o620_text.to_s), "O620: the failure's text is the file's output, each byte XML cannot carry as \\xNN")
+    c.expect(ut_has(o620_got, "case named \\x1b[1m bold\n"), "O620: a check's name with a control character is written with \\xNN")
+
     // O235 (Stage 29 W-FIX1f): `avant test --help` said `--junit PATH
     // one case per file`; the report has one case per check std.testing
     // records (write_junit takes its processes' fragments), one per file

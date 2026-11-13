@@ -2393,7 +2393,7 @@ A mutable object reaches another task only inside a `Mutex`, or as the results o
 
 ### The thread pool
 
-The pool has one thread per online processor, counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number; the runtime removes the flag before `argv()` sees it. Tasks beyond the pool's size wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
+The pool has one thread per online processor, counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number; the runtime removes the flag before `argv()` sees it (it is to become `--avant-threads=N`, leaving `--threads` to programs: [Not built yet](#not-built-yet)). Tasks beyond the pool's size wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
 
 A task that waits (in a channel's `recv` or `send`, or for a `Mutex`) keeps its pool thread while it waits. If every pool thread is held by a task waiting for something that only a task still in the queue would do, nothing can run and the program hangs without a message: with `--threads 2`, two consumers waiting in `recv` keep a producer spawned after them from ever starting. Spawn the tasks that send before the ones that wait for them, or keep fewer waiting tasks than the pool has threads.
 
@@ -2910,7 +2910,7 @@ fn main {
 }
 ```
 
-Compiling this program prints one note, `re2c: pattern stays on PCRE2 (...)`: see "Two engines" below.
+Compiling this program prints one note on stderr, `re2c: pattern stays on PCRE2 (...)`: see "Two engines" below.
 
 | Call | Gives |
 | --- | --- |
@@ -2932,7 +2932,7 @@ Compiling this program prints one note, `re2c: pattern stays on PCRE2 (...)`: se
 - **At PCRE2's limits a match traps; it is never read as "no match".** A search that backtracks past PCRE2's match limit (ten million steps), or runs into its depth or memory limits, ends the program with the operation and PCRE2's reason: `avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`. There is no way yet to set a limit or to get the failure as a value, so a pattern or a text that comes from outside is yours to bound (its length, its shape) before matching.
 - A match that only nests deeply (a group repeated many thousands of times) is not a failure: it is answered, on a larger stack and then by PCRE2's interpreter, at a cost in memory that grows with the text. A pattern may have any number of groups PCRE2 accepts.
 
-**Two engines.** A string-literal pattern that needs at most one capture group and no named groups is compiled to a native scanner at compile time, by re2c. Any other pattern runs on PCRE2 with its JIT, and the compiler says so when it compiles your program. Both are inside the release: a program needs neither library on the machine. (Without any `re2c` binary, literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary.) PCRE2 backtracks, and backtracking can be catastrophic on adversarial patterns and texts.
+**Two engines.** A string-literal pattern that needs at most one capture group and no named groups is compiled to a native scanner at compile time, by re2c. Any other pattern runs on PCRE2 with its JIT; when the pattern (and its `caseless` argument, if given) is a literal, the compiler says so on stderr as it compiles your program, so `avant run` prints only the program's own output on stdout. Both are inside the release: a program needs neither library on the machine. (Without any `re2c` binary, literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary.) PCRE2 backtracks, and backtracking can be catastrophic on adversarial patterns and texts.
 
 ### std.http
 
@@ -3146,7 +3146,7 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 | --- | --- |
 | `--jobs N` | how many test processes run at once (default: the online processors; `--jobs 1` runs one file at a time; `--jobs 0` is an error) |
 | `--shard I/N` | run slice `I` of `N`, counted from 1; it does not launch the other slices. May be combined with `--jobs` |
-| `--junit PATH` | write a JUnit report: one case per check for files that use `std.testing`, one case per file otherwise |
+| `--junit PATH` | write a JUnit report: one case per check `std.testing` records, one per file that records none, and one for a failed file whose checks all passed |
 | `--coverage` | instrument the tests, print a coverage table after the summary, write `coverage/lcov.info` |
 | `--skip-exclusive` | leave out the files listed in `[test] exclusive` (required when `--shard` would include one) |
 | `-h`, `--help` | print the flags and exit 0 |
@@ -3271,7 +3271,7 @@ first = ["tests/test_slow.av"]
 
 ### Reports
 
-**JUnit** (`--junit PATH`) is for test analytics. A test file that uses `std.testing` contributes one `<testcase>` per check, named by the check; any other test file contributes one case, named by its path. A file that failed without a failed case (its process killed by a signal, or exiting with a status and no failed check) adds one case named by its path, whose failure message says how the process ended. It is off unless you ask; a project does not gain a `junit.xml` by surprise.
+**JUnit** (`--junit PATH`) is for test analytics. A test file that uses `std.testing` contributes one `<testcase>` per check, named by the check; any other test file contributes one case, named by its path. A file that failed without a failed case (its process killed by a signal, or exiting with a status and no failed check) adds one case named by its path, whose failure message says how the process ended; a failed case named by its path carries the file's output. A byte XML cannot hold, in that output or in a check's name (a control character such as a terminal colour's escape, or a byte that is not UTF-8), is written as `\xNN` (`\x1b`), so the report always parses. It is off unless you ask; a project does not gain a `junit.xml` by surprise.
 
 **Coverage** (`--coverage`) compiles each selected file with counters, runs them, prints one table after the summary and writes `coverage/lcov.info` in the current directory (one file, overwritten by each run). Without the flag nothing is instrumented and nothing is written.
 
@@ -3490,6 +3490,7 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 | A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
 | `Channel` and `Mutex` in the standard library; a `spawn` result other than `Int` | decided | [copy the two classes](#channel-and-mutex) |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |
+| The pool's size from `--avant-threads=N` only (a bad value an error) and a call in `std` to set it, every other argument the program's | decided | `--threads N`, which the runtime takes out of `argv()` |
 | TLS for `std.http` (`https`, `wss`) | decided | a TLS-terminating proxy in front |
 | A trap that ends only its task; a pre-forked server mode | decided | a supervisor that restarts the process |
 | Positions in traps raised inside runtime functions | planned | the message names the operation and its values |
@@ -3504,13 +3505,13 @@ Every number here was measured on one machine (an AMD Ryzen 7 5700G), each langu
 
 [LangArena](https://github.com/kostya/LangArena) runs the same tasks in many languages. Seconds, lower is better; **bold** is the best of the five. One process per task, timed by its wall clock, with peak memory from `/usr/bin/time`: the same wrapper for every language. Avant measured on 2026-11-12 (the development tree after release 0.41.0, `--release --cpu=v3`, one run, the machine otherwise idle, governor `performance`, all 50 task checksums correct); the other languages on 2026-11-07.
 
-| Language | 49 tasks (s) | Average peak memory |
+| Language | 50 tasks (s) | Average peak memory |
 | --- | ---: | ---: |
-| Avant | **38.201** | **20.3 MB** |
-| C | 58.583 | 23.4 MB |
-| Rust | 58.926 | 29.8 MB |
-| Crystal | 85.670 | 67.1 MB |
-| Go | 117.876 | 64.3 MB |
+| Avant | **39.200** | **19.9 MB** |
+| C | 59.890 | 22.9 MB |
+| Rust | 59.945 | 29.3 MB |
+| Crystal | 87.011 | 65.9 MB |
+| Go | 119.708 | 63.0 MB |
 
 **The total flatters Avant.** Much of that gap is not the language: the four `Matmul` rows and `Hash::CRC32` are not comparable programs, two rows carry collection hints, and several rows measure C libraries ([Reading these numbers](#reading-these-numbers)). The honest reading is task by task.
 
@@ -3531,6 +3532,7 @@ Every number here was measured on one machine (an AMD Ryzen 7 5700G), each langu
 | `Json::ParseMapping` | 0.234 | **0.229** | 0.425 | 1.546 | 2.871 |
 | `CSV::Parse` | **0.759** | 2.247 | 0.881 | 3.418 | 3.000 |
 | `Etc::Sieve` | 1.450 | **0.920** | 0.979 | 2.360 | 1.896 |
+| `Etc::TextRaytracer` | **0.999** | 1.307 | 1.019 | 1.341 | 1.831 |
 | `Etc::NeuralNet` | 1.305 | **1.073** | 1.165 | 1.260 | 2.219 |
 | `Etc::CacheSimulation` | **0.492** | 0.762 | 0.863 | 1.298 | 1.638 |
 | `Etc::GameOfLife` | 1.433 | 1.487 | 1.503 | 2.816 | **0.980** |
@@ -3568,7 +3570,7 @@ Every number here was measured on one machine (an AMD Ryzen 7 5700G), each langu
 
 ### Where Avant loses
 
-Among these five, Avant is the fastest on 26 of the 49 tasks. Against the best of *every* language measured on this machine (C and C++ under both GCC and Clang included, so a wider field than the table above), its time is at or ahead of the best on 24 tasks, the median task is 1.02× the best, and three tasks are more than 1.5× behind. The worst rows by time:
+Among these five, Avant is the fastest on 27 of the 50 tasks. Against the best of *every* language measured on this machine (C and C++ under both GCC and Clang included, so a wider field than the table above), its time is at or ahead of the best on 25 tasks, the median task is 1.01× the best, and three tasks are more than 1.5× behind. The worst rows by time:
 
 | Task | Avant (s) | Best (s) | Behind by |
 | --- | ---: | ---: | ---: |
@@ -3581,7 +3583,7 @@ Among these five, Avant is the fastest on 26 of the 49 tasks. Against the best o
 | `Etc::NeuralNet` | 1.305 | 0.948 (C++, Clang) | 1.38× |
 | `Etc::LogParser` | 0.467 | 0.348 (Rust) | 1.34× |
 
-Memory, the same way: at or below the best on 31 tasks, the median task at 0.90× the best, five tasks more than 1.5× above it. The worst rows by peak memory:
+Memory, the same way: at or below the best on 32 tasks, the median task at 0.90× the best, five tasks more than 1.5× above it. The worst rows by peak memory:
 
 | Task | Avant (MB) | Best (MB) | Above by |
 | --- | ---: | ---: | ---: |
@@ -3650,11 +3652,11 @@ These notes are about [LangArena](#langarena).
 - **Build flags.** Avant: `--release --cpu=v3` (x86-64-v3). C and C++: LangArena's `-O3 -march=native -mtune=native` (Zen 3 here, a superset of v3); the C column is Clang, the faster of the two C compilers measured (GCC: 59.499 s, 23.4 MB). Rust (`cargo build --release`), Go and Crystal (`--release`): their defaults.
 - **The whole process is timed**: start-up, data preparation, warm-up and the timed iterations. LangArena's published numbers count only the timed iterations.
 - **Compiled-in task sizes.** Avant's task configuration is compiled into the program as constants, while the other languages read `run.js` at run time, so LLVM can specialize Avant's loops on the sizes.
-- **Rows that are not comparable programs.** The four `Matmul` tasks: Avant's port sums with eight independent accumulators, which vectorizes, and the references use one. `Hash::CRC32`: Avant calls a runtime builtin written in C with slice-by-4 tables, and every reference is the bitwise loop. `Compress::LZWEncode` and `LZWDecode`: Avant keys the dictionary by integer, C by string. Together these seven rows are 7.6 of the 20.4 seconds between Avant's total and C's.
+- **Rows that are not comparable programs.** The four `Matmul` tasks: Avant's port sums with eight independent accumulators, which vectorizes, and the references use one. `Hash::CRC32`: Avant calls a runtime builtin written in C with slice-by-4 tables, and every reference is the bitwise loop. `Compress::LZWEncode` and `LZWDecode`: Avant keys the dictionary by integer, C by string. Together these seven rows are 7.6 of the 20.7 seconds between Avant's total and C's.
 - **Rows that measure C, not Avant.** `Hash::SHA256` and `Hash::CRC32` call runtime builtins that do the whole task in C, where the references implement it in the language; the Burrows-Wheeler transform inside `Compress::BWTEncode` and `BWTDecode` is runtime C too.
 - **Rows that carry collection hints.** `Binarytrees::Obj` and `Calculator::Ast` call `gc.hold` and `gc.collect()` ([Collection hints](#collection-hints)) in their Avant source: the same algorithm as the references, with the programmer telling the collector when not to run and when everything is dead. No reference program has an equivalent. Read these two rows as what a hinted program does, not as the collector's ordinary behaviour: without the hints, `Binarytrees::Obj` is several times slower than every language in the table.
 - **Library-leaning rows.** `Json::ParseDom` and `Json::ParseMapping` (yyjson in Avant and C; simdjson in C++; serde in Rust), `Base64::Encode` and `Decode` (the aklomp codec in Avant and C), `Template::Regex` and `Etc::LogParser` (PCRE2 in Avant and C, RE2 in C++, the `regex` crate in Rust): the speed is those libraries', reached through Avant's bindings. `Sort::Self` is each language's own library sort, by the task's definition. In `CSV::Parse`, Rust and C++ use CSV libraries; in `Json::Generate`, C and C++ use JSON libraries and Avant writes into its own buffer.
-- **Scope.** 49 of LangArena's 50 tasks: `Etc::TextRaytracer` is left out because it is invalid for Avant (`--release` hoists its pure render out of the timed loop).
+- **Scope.** All 50 of LangArena's tasks. `Etc::TextRaytracer` runs its whole render (0.999 s, level with Rust's 1.019 s); it was left out while an earlier build hoisted that render out of the timed loop.
 - **Equivalent programs is the rule**: Avant's tasks are meant to follow the algorithms and the data widths of the C and Rust references, and a row that does not is named above until it is rewritten.
 
 ## Goals
@@ -3672,7 +3674,7 @@ The bars are measurable, and [LangArena](#langarena) is the public scoreboard:
 | Interop | C libraries usable with little ceremony |
 | Concurrency | built in, and obvious |
 
-Where Avant stands today (2026-11-12): on LangArena, the median task is at 1.02× the best language's time and 0.90× its memory, with three tasks beyond the 1.5× bar in time and five in memory, and twelve tasks behind Crystal or Go ([Where Avant loses](#where-avant-loses)). Allocation-heavy code is the weakest area ([What allocation costs today](#what-allocation-costs-today)). On HTTP, Avant's server is level with the fastest servers at 64 connections without pipelining, and slower than the servers that batch their writes when requests are pipelined ([HTTP and WebSocket servers](#http-and-websocket-servers)). On expressiveness, Avant's LangArena sources are 5,482 lines against Crystal's 4,220 (30% more, and 18% more once compressed): not Crystal's density yet, and the forms that will close the gap are listed in [Not built yet](#not-built-yet). Each of these is treated as a defect until it is fixed, and the numbers on this page are printed as measured, the bad rows beside the good ones.
+Where Avant stands today (2026-11-12): on LangArena, the median task is at 1.01× the best language's time and 0.90× its memory, with three tasks beyond the 1.5× bar in time and five in memory, and twelve tasks behind Crystal or Go ([Where Avant loses](#where-avant-loses)). Allocation-heavy code is the weakest area ([What allocation costs today](#what-allocation-costs-today)). On HTTP, Avant's server is level with the fastest servers at 64 connections without pipelining, and slower than the servers that batch their writes when requests are pipelined ([HTTP and WebSocket servers](#http-and-websocket-servers)). On expressiveness, Avant's LangArena sources are 5,482 lines against Crystal's 4,220 (30% more, and 18% more once compressed): not Crystal's density yet, and the forms that will close the gap are listed in [Not built yet](#not-built-yet). Each of these is treated as a defect until it is fixed, and the numbers on this page are printed as measured, the bad rows beside the good ones.
 
 Avant is not a better TypeScript, not a borrow-checker language, not a dynamic language with types bolted on, and not a research language. It does not try to please everyone.
 

@@ -651,7 +651,94 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
   }
 }
 
-fn xml_escape(s: String): String {
+// The length of the character XML 1.0 can carry that starts at byte i
+// of s, or 0 (Stage 29 W-FIX1f2, O620). The report is UTF-8, and XML 1.0
+// allows tab, line feed, carriage return and the characters from U+0020
+// on, except the surrogates, U+FFFE and U+FFFF, in CDATA as in text and
+// attributes: a control character (a terminal colour's escape), a byte
+// that is not UTF-8, and those three are not allowed.
+fn xml_char_len(s: String, i: Int): Int {
+  c = s[i]
+  if c < 128 {
+    if c >= 32 || c == 9 || c == 10 || c == 13 {
+      return 1
+    }
+    return 0
+  }
+  n = 0
+  lo = 128
+  hi = 191
+  if c >= 194 && c <= 223 {
+    n = 2
+  } else if c >= 224 && c <= 239 {
+    n = 3
+    if c == 224 {
+      lo = 160
+    } else if c == 237 {
+      hi = 159
+    }
+  } else if c >= 240 && c <= 244 {
+    n = 4
+    if c == 240 {
+      lo = 144
+    } else if c == 244 {
+      hi = 143
+    }
+  }
+  if n == 0 || i + n > s.size {
+    return 0
+  }
+  if s[i + 1] < lo || s[i + 1] > hi {
+    return 0
+  }
+  for k in 2..n {
+    if s[i + k] < 128 || s[i + k] > 191 {
+      return 0
+    }
+  }
+  if c == 239 && s[i + 1] == 191 && (s[i + 2] == 190 || s[i + 2] == 191) {
+    return 0
+  }
+  n
+}
+
+// s with each byte XML 1.0 cannot carry written as a visible escape,
+// \xNN (two lowercase hex digits; O620), so the report stays XML and
+// shows where the byte was. A text without such a byte is returned as
+// it is. A backslash is not escaped: the report is read by people, and
+// \x1b in it means the byte.
+fn xml_chars(s: String): String {
+  i = 0
+  while i < s.size {
+    n = xml_char_len(s, i)
+    if n == 0 {
+      break
+    }
+    i += n
+  }
+  if i >= s.size {
+    return s
+  }
+  hex = "0123456789abcdef"
+  b = buf_new()
+  b.push_str(str_slice(s, 0, i))
+  while i < s.size {
+    n = xml_char_len(s, i)
+    if n == 0 {
+      b.push_str("\\x")
+      b.push_byte(hex[s[i] / 16])
+      b.push_byte(hex[s[i] % 16])
+      i += 1
+    } else {
+      b.push_str(str_slice(s, i, i + n))
+      i += n
+    }
+  }
+  b.to_s
+}
+
+fn xml_escape(text: String): String {
+  s = xml_chars(text)
   b = buf_new()
   i = 0
   while i < s.size {
@@ -677,8 +764,10 @@ fn xml_escape(s: String): String {
 // sections, "]]" ending the first and ">" opening the next, and a parser
 // reads the text back byte for byte. (Escaping the output as text
 // instead would turn every < and & a diagnostic quotes into an entity
-// in the report file.)
-fn cdata_text(s: String): String {
+// in the report file.) A byte XML cannot carry is written as \xNN
+// first (xml_chars, O620).
+fn cdata_text(text: String): String {
+  s = xml_chars(text)
   b = buf_new()
   from = 0
   i = 0

@@ -86,19 +86,14 @@ fn test_testing_docs(c: Checks) {
     dir = "${scratch()}/testing_docs-docs-${stamp}"
     mkdir_p(dir)
 
-    greet_body = "import std.testing\n\nfn greet(name: String): String {\n  \"Hello, \${name}\"\n}\n\nfn main: Int {\n  t = Test.new\n  t.check(greet(\"Ada\") == \"Hello, Ada\", \"greet uses the name\")\n  t.check_eq(greet(\"\"), \"Hello, \", \"greet handles empty\")\n  t.finish\n}\n"
-    _ = file_write("${dir}/test_greet.av", greet_body)
-    greet_log = "${dir}/greet.log"
-    greet_rc = "${dir}/greet.rc"
-    greet_sh = "#!/bin/sh\ncd ${td_quote(dir)} && ${td_quote(compiler)} run test_greet.av -- > ${td_quote(greet_log)} 2>${td_quote(dir)}/greet.err; echo $? > ${td_quote(greet_rc)}\n"
-    greet_code = td_sh(greet_sh, greet_rc)
-    c.eq_int(greet_code, 0, "README greet test runs")
-    if text = file_read(greet_log) {
-      c.eq_str(text, "PASS greet uses the name\nPASS greet handles empty\n0 failed, 2 passed\n", "README greet test output")
-    } else {
-      c.expect(false, "README greet test output")
-    }
-
+    // The README's first test (test_greet.av) and its output are no
+    // longer written here: tools/readme-check.sh compiles and runs the
+    // README's block and compares its stdout with the README's output
+    // block, and the gate runs it (Stage 29 W-FIX1f2, O218). What stays
+    // is what the checker does not do: the outputs the README does not
+    // print (the table, temp_dir), `avant test` running a file's parallel
+    // bodies after its serial work, the golden checks beside their files
+    // (the README's block is marked skip), and `avant run FILE -- ARGS`.
     table_body = "import std.testing\n\nfn greet(name: String): String {\n  \"Hello, \${name}\"\n}\n\nfn main: Int {\n  t = Test.new\n  names = [\"Ada\", \"Bo\", \"Cy\"]\n  wants = [\"Hello, Ada\", \"Hello, Bo\", \"Hello, Cy\"]\n  for i in 0..names.size {\n    t.check(greet(names[i]) == wants[i], \"greet \${names[i]}\")\n  }\n  t.finish\n}\n"
     _ = file_write("${dir}/test_table.av", table_body)
     table_log = "${dir}/table.log"
