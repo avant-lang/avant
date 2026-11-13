@@ -3618,6 +3618,13 @@ char *avant_http_resp_body(const char *raw) {
     set_status(3);
     return make_bytes("", 0);
   }
+  /* A 204 or a 304 has no body whatever its head says (RFC 9112 6.3):
+   * a 304's Content-Length is the length the full answer would have, so
+   * reading it as this body's length made the response invalid (Stage 29
+   * W-FIX1g). A HEAD's answer is the caller's to know (http_fetch_once). */
+  if (status == 204 || status == 304) {
+    return make_bytes("", 0);
+  }
   body = raw + pret;
   body_len = n - (size_t)pret;
   if (find_header(headers, num_headers, "Transfer-Encoding", &value,

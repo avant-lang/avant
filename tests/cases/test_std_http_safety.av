@@ -653,6 +653,9 @@ fn wait_port(path: String): Int {
 // stops at the end the framing gives: Content-Length, the last chunk
 // and its trailers (also with a Content-Length beside it), a 204, a
 // redirect's empty body; a body with neither still ends at the close.
+// A 304's and a HEAD answer's Content-Length is not their body's (they
+// have none): it made them invalid responses even from a server that
+// closed (Stage 29 W-FIX1g).
 // The fixture sends some answers in pieces 0.1 s apart (half a head,
 // half a chunk size), so a client that stops too early is caught too.
 fn client_framing_cases(c: Checks, root: String) {
@@ -668,11 +671,16 @@ fn client_framing_cases(c: Checks, root: String) {
   }
   port = wait_port(port_file)
   c.expect(port > 0, "the keep-open server is listening")
-  paths = ["/cl", "/cl-late", "/chunked", "/chunked-late", "/both", "/204", "/redirect", "/close"]
-  wants = ["200 hello", "200 hello", "200 hello", "200 hello", "200 hello", "204 ", "200 hello", "200 until close"]
+  paths = ["/cl", "/cl-late", "/chunked", "/chunked-late", "/both", "/204", "/304", "/head", "/redirect", "/close"]
+  wants = ["200 hello", "200 hello", "200 hello", "200 hello", "200 hello", "204 ", "304 ", "200 ", "200 hello", "200 until close"]
+  hs: Array(Header) = []
   for i in 0..paths.size {
+    method = "GET"
+    if paths[i] == "/head" {
+      method = "HEAD"
+    }
     t0 = now_ms()
-    r = Http.get("http://127.0.0.1:${port}${paths[i]}", true, 4000)
+    r = Http.request(method, "http://127.0.0.1:${port}${paths[i]}", "".bytes, hs, true, 4000)
     took = now_ms() - t0
     got = ""
     if e = http_failure(r) {
@@ -680,8 +688,8 @@ fn client_framing_cases(c: Checks, root: String) {
     } else if resp = r {
       got = "${resp.status} ${String.from_utf8(resp.body) ?? "?"}"
     }
-    c.eq_str(got, wants[i], "GET ${paths[i]} from a server that keeps the connection open")
-    c.expect(took < 2000, "GET ${paths[i]} returns when the response is complete, not at the deadline (${took} ms)")
+    c.eq_str(got, wants[i], "${method} ${paths[i]} from a server that keeps the connection open")
+    c.expect(took < 2000, "${method} ${paths[i]} returns when the response is complete, not at the deadline (${took} ms)")
   }
   if resp = Http.get("http://127.0.0.1:${port}/__stop", true, 4000) {
   }

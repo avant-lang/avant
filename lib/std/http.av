@@ -881,9 +881,15 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     if httpc.avant_http_take_status() != 0 {
       return HttpError.new("invalid HTTP response from ${p.authority}")
     }
-    resp_body = httpc.avant_http_resp_body(raw)
-    if httpc.avant_http_take_status() != 0 {
-      return HttpError.new("invalid HTTP response body from ${p.authority}")
+    // The answer to HEAD has no body: its Content-Length is the length
+    // a GET's would have (RFC 9112 6.3), and reading it as this body's
+    // made every such answer invalid (Stage 29 W-FIX1g).
+    resp_body = "".bytes
+    if method != "HEAD" {
+      resp_body = httpc.avant_http_resp_body(raw)
+      if httpc.avant_http_take_status() != 0 {
+        return HttpError.new("invalid HTTP response body from ${p.authority}")
+      }
     }
     resp_headers = httpc.avant_http_resp_headers(raw)
     return Response {

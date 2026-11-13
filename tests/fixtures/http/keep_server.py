@@ -23,6 +23,8 @@ ANSWERS = {
     "/chunked-late": [b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nhe", b"l\r\n2\r\nlo\r\n0", b"\r\n\r\n"],
     "/both": [b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 100\r\n\r\n5\r\nhello\r\n0\r\n\r\n"],
     "/204": [b"HTTP/1.1 204 No Content\r\n\r\n"],
+    "/304": [b"HTTP/1.1 304 Not Modified\r\nContent-Length: 5\r\n\r\n"],
+    "/head": [b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n"],
     "/redirect": [b"HTTP/1.1 302 Found\r\nLocation: /cl\r\nContent-Length: 0\r\n\r\n"],
     "/close": [b"HTTP/1.1 200 OK\r\n\r\nuntil close"],
     "/__stop": [b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nbye"],
