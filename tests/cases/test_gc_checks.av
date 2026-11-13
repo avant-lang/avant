@@ -234,11 +234,54 @@ fn test_empty_payload(c: Checks, compiler: String, root: String, dir: String) {
   }
 }
 
+// O207 (Stage 29 W-FIX1c): AVANT_GC_STRESS=1 reaches generated code's
+// allocations. heap/stress_inline.av makes 40,000 allocations, all
+// generated code's and nothing else (1,440,000 bytes exactly). With
+// every collector variable unset it runs no collection, and the inline
+// build takes its allocations on the inline path (at least 39,000 of
+// the 40,000); under AVANT_GC_STRESS=1 every allocation is a stress
+// point: at least 40,000 collections, none of the allocations inline, in
+// the inline build and in the call-form build, and the same output.
+// Before W-FIX1c the stress runs made 0 collections, as the default ones.
+fn test_stress_inline(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/stress_inline.av", "${dir}/stress_inline", "${dir}/stress_inline.log"))
+  jobs.push(compile_job("AVANT_LLVM_CALL_FORMS=1", compiler, "${root}/tests/fixtures/heap/stress_inline.av", "${dir}/stress_inline_calls", "${dir}/stress_inline_calls.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "stress_inline.av: compiles")
+  c.eq_int(jobs[1].code, 0, "stress_inline.av: compiles with the call forms")
+  clean = "-u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_HEAP_RESERVE_GB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS AVANT_GC_STATS=1"
+  bins = ["stress_inline", "stress_inline_calls"]
+  runs: Array(HJob) = []
+  for b in 0..bins.size {
+    runs.push(run_job_env(dir, bins[b], "${bins[b]}.plain", clean))
+    runs.push(run_job_env(dir, bins[b], "${bins[b]}.stress", "${clean} AVANT_GC_STRESS=1"))
+  }
+  run_waves(runs)
+  for b in 0..bins.size {
+    what = bins[b]
+    plain = log_text("${dir}/${what}.plain.err")
+    stress = log_text("${dir}/${what}.stress.err")
+    c.eq_int(runs[b * 2].code, 0, "${what}: exit 0")
+    c.eq_int(runs[b * 2 + 1].code, 0, "${what} under AVANT_GC_STRESS=1: exit 0")
+    c.eq_str(log_text("${dir}/${what}.plain.out"), "stress_inline: 0 bad\n", "${what}: the known stdout")
+    c.eq_str(log_text("${dir}/${what}.stress.out"), "stress_inline: 0 bad\n", "${what} under AVANT_GC_STRESS=1: the known stdout")
+    c.eq_int(stat_value(plain, "alloc"), 1440000, "${what}: 40,000 allocations of generated code and no other (1,440,000 bytes)")
+    c.eq_int(stat_value(stress, "alloc"), 1440000, "${what} under AVANT_GC_STRESS=1: the same allocations")
+    c.eq_int(stat_value(plain, "collections"), 0, "${what}: no collection in the default environment")
+    c.expect(stat_value(stress, "collections") >= 40000, "${what} under AVANT_GC_STRESS=1: a collection at every allocation (at least 40,000)")
+    c.eq_int(stat_value(stress, "inline_allocs"), 0, "${what} under AVANT_GC_STRESS=1: no allocation takes the inline path")
+  }
+  c.expect(stat_value(log_text("${dir}/stress_inline.plain.err"), "inline_allocs") >= 39000, "stress_inline: its allocations take the inline path in the default environment")
+  c.eq_int(stat_value(log_text("${dir}/stress_inline_calls.plain.err"), "inline_allocs"), 0, "stress_inline_calls: the call-form build has no inline allocation")
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
   if compiler = env_get("AVANT_COMPILER") {
     test_gc_checks(c, compiler, avant_test_root(), scratch_dir())
     test_empty_payload(c, compiler, avant_test_root(), scratch_dir())
+    test_stress_inline(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

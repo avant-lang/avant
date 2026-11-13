@@ -3,11 +3,8 @@
 
 #include "avant_rt.h"
 /* The collector implements what avant_gc.h declares for the rest of the
- * runtime (the frame type of RC1's scopes, the no-GC regions); its own
- * avant_alloc is the allocation itself, not avant_gc.h's mapping of the
- * name to avant_alloc_c. */
+ * runtime (the frame type of RC1's scopes, the no-GC regions). */
 #include "avant_gc.h"
-#undef avant_alloc
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -704,8 +701,9 @@ typedef struct GcSettings {
   int stats;
   /* AVANT_GC_STRESS (Stage 28 W14b1, gc-design.md §4.2 item 1, the
    * minimal step): a young collection at every outermost
-   * avant_gc_defer_enter and at every avant_alloc called from runtime C
-   * (avant_alloc_c), in unshared programs with the nursery on. A young
+   * avant_gc_defer_enter and at every avant_alloc (runtime C's, and
+   * since Stage 29 W-FIX1c generated code's: the inline allocation path
+   * is never published under it), with the nursery on. A young
    * collection frees every unreached young object and S+ moves the
    * survivors of the blocks it evacuates, so a helper that holds a young
    * reference the collector does not know across one of these points
