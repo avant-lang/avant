@@ -1,0 +1,35 @@
+// .join and .parallel reached through a call from a pool worker (Stage
+// 29 W-FIX1f, O234). The checker refuses them written in a spawn block
+// or a .parallel body; reached through a call, they stop the program
+// with a trap: one line on stderr, status 1 (they aborted, status 134).
+// The argument says which: join or parallel. "before" comes first: a
+// trap flushes stdout before it writes its line. Run by
+// tests/cases/test_safety.av.
+
+fn doubled(xs: Array(Int)): Int {
+  ys = xs.parallel { |x| x * 2 }
+  ys[0]
+}
+
+fn joined: Int {
+  h = spawn { 1 }
+  h.join
+}
+
+fn main: Int {
+  a = argv()
+  kind = a[a.size - 1]
+  puts("before")
+  xs = [1, 2, 3]
+  t = spawn {
+    n = 0
+    if kind == "join" {
+      n = joined()
+    } else {
+      n = doubled(xs)
+    }
+    n
+  }
+  puts(t.join)
+  0
+}

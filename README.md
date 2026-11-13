@@ -2192,7 +2192,7 @@ fn main {
 
 - A value the block captures is copied when the task is sent ([What may cross a task](#what-may-cross-a-task)); the block cannot assign a captured variable.
 - A captured `Array` is shared for reading: the block may not change it, and the sender may not change it until the handle is joined. Both are compile errors.
-- Calling `.join` or `.parallel` from inside a pool worker is refused: at compile time when it is written in the block, at run time (the program stops) when it is reached through a call. A nested `spawn` from a worker is allowed.
+- Calling `.join` or `.parallel` from inside a pool worker is refused: at compile time when it is written in the block, at run time when it is reached through a call, with a trap (`avant runtime: .parallel called from a pool worker: …`, status 1). A nested `spawn` from a worker is allowed.
 
 ### Parallel
 
