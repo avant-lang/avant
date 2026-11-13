@@ -119,8 +119,7 @@ static uint64_t hs_stall_reports;
 static void hs_report_stalled(uint64_t waited_ns) {
   ThreadReg *t;
   for (t = gc_heap.threads; t; t = t->next) {
-    Frame *f;
-    Frame *gen = NULL;
+    const Frame *gen = NULL;
     uint32_t above_c = 0;
     uint32_t above_scope = 0;
     uint32_t depth = 0;
@@ -140,23 +139,28 @@ static void hs_report_stalled(uint64_t waited_ns) {
       }
       fclose(fp);
     }
-    for (f = t->head ? *t->head : NULL; f && depth < 100000; f = f->prev, depth++) {
-      if (f->scope & AVANT_GC_SCOPE_OPEN) {
-        above_scope++;
-      } else if (f->scope & AVANT_GC_FRAME_C) {
-        above_c++;
-      } else {
+    EACH_FRAME(gc_thread_frames(t), f, {
+      if (depth++ >= 100000) {
+        break;
+      }
+      if (gc_frame_generated(f)) {
         gen = f;
         break;
       }
-    }
+      if (f->scope & AVANT_GC_SCOPE_OPEN) {
+        above_scope++;
+      } else {
+        above_c++;
+      }
+    });
     if (gen) {
       fprintf(stderr,
               "avant gc verify: a collection has waited %.1f s for thread %d (%s) to reach a safepoint; it is running, "
               "and its innermost Avant frame is a generated function's frame record at %p (%u root slots; %u C frame(s) "
               "and %u runtime scope(s) above it, stack %p-%p): C called from there blocks or loops without "
               "avant_gc_native_begin/end around it (the collection keeps waiting)\n",
-              (double)waited_ns / 1e9, t->tid, name, (void *)gen, gen->n, above_c, above_scope, t->stack_lo,
+              (double)waited_ns / 1e9, t->tid, name, (const void *)gen, gc_frame_slot_count(gen), above_c, above_scope,
+              t->stack_lo,
               t->stack_hi);
     } else {
       fprintf(stderr,

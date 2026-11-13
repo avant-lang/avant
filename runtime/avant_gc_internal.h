@@ -381,6 +381,67 @@ typedef struct LargeIter {
  * alike; the type is avant_gc.h's AvantGcFrame. */
 typedef AvantGcFrame Frame;
 
+/* The one frame-slot iterator (the Valk stage, VALK-T, M9's iterator;
+ * prepares M15, VALK-F). Every root walker reads frame records through
+ * the three macros below and nothing else, so the record's layout is
+ * known in one place: how a record names the one before it (prev), how
+ * many root slots it has (n) and where the i-th is (slots[i], the
+ * address of the slot: a local of generated code, a C local a scope or a
+ * user frame registered). VALK-F's record with its root words in place
+ * changes EACH_SLOT_OF (and the scope bits a walker may ask through
+ * gc_frame_generated), and no walker.
+ *
+ *   EACH_FRAME(HEAD, F, BODY)        the records of a chain from its
+ *                                    innermost one HEAD, innermost first,
+ *                                    as `Frame *F`; BODY may `break` out
+ *                                    of the walk
+ *   EACH_SLOT_OF(F, SLOT, BODY)      the root slots of record F as
+ *                                    `void **SLOT`: SLOT is the slot's
+ *                                    address, *SLOT the reference it holds
+ *   EACH_FRAME_SLOT(HEAD, SLOT, BODY) every slot of every record of the
+ *                                    chain; BODY must not use break or
+ *                                    continue
+ *
+ * gc_thread_frames(T) is a registered thread's chain head; the collecting
+ * thread's own is avant_gc_top. The walkers: the young trace and its
+ * fix-up (avant_gc_sticky.c), the full mark (avant_gc_mark.c), the
+ * defragmenter's fix-up (avant_gc_defrag.c), the verifier's root walks
+ * (avant_gc_verify.c: verify_each_root, the stale-root checks of the
+ * whole and the incremental sticky check, the defragmentation check),
+ * the stalled-handshake report (avant_gc_safepoint.c, records only) and
+ * the "is it rooted" test of a growth's freed buffer (avant_gc_los.c).
+ * avant_gc_root and avant_gc_root_begin (avant_gc_roots.c) fill a user
+ * frame's slot array; they register slots, they do not walk roots. */
+#define EACH_FRAME(HEAD, F, BODY)                                                   \
+  do {                                                                              \
+    Frame *F;                                                                       \
+    for (F = (HEAD); F; F = F->prev) {                                              \
+      BODY                                                                          \
+    }                                                                               \
+  } while (0)
+
+#define EACH_SLOT_OF(F, SLOT, BODY)                                                 \
+  do {                                                                              \
+    const Frame *eso_f_ = (F);                                                      \
+    uint32_t eso_i_;                                                                \
+    for (eso_i_ = 0; eso_i_ < eso_f_->n; eso_i_++) {                                \
+      void **SLOT = eso_f_->slots[eso_i_];                                          \
+      BODY                                                                          \
+    }                                                                               \
+  } while (0)
+
+#define EACH_FRAME_SLOT(HEAD, SLOT, BODY) EACH_FRAME(HEAD, efs_f_, { EACH_SLOT_OF(efs_f_, SLOT, BODY); })
+
+/* A record generated code linked (not a runtime scope, not a user C
+ * frame), and its slot count. */
+static inline int gc_frame_generated(const Frame *f) {
+  return (f->scope & (AVANT_GC_SCOPE_OPEN | AVANT_GC_FRAME_C)) == 0;
+}
+
+static inline uint32_t gc_frame_slot_count(const Frame *f) {
+  return f->n;
+}
+
 /* A registered thread's collector state as other threads see it (Stage
  * 28 W17a, gc-design.md section 4.4). state is GC_RUNNING, GC_NATIVE or
  * GC_SAFEPOINT (avant_gc_safepoint.c); owner is the thread's GcThread,
@@ -398,6 +459,11 @@ typedef struct ThreadReg {
    * (Stage 28 W18C, O125). */
   int tid;
 } ThreadReg;
+
+/* A registered thread's frame chain, from its innermost record. */
+static inline Frame *gc_thread_frames(const ThreadReg *t) {
+  return t->head ? *t->head : NULL;
+}
 
 typedef struct PinEnt {
   struct PinEnt *next;

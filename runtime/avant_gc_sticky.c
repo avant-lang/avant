@@ -179,21 +179,21 @@ static inline __attribute__((always_inline)) void y_close(YCtx *c) {
   gc_heap.work_n = c->work_n;
 }
 
-/* Line L (of the heap's line table) is made live by a promotion: the
+/* LINE (an entry of the heap's line table) is made live by a promotion: the
  * mature growth for the full-collection trigger is the line, whole
  * (promote_young's comment). Out of the trace's loop: most promoted
  * objects lie in a line an earlier one made live. */
-static __attribute__((noinline)) void y_line_live(uint8_t *lines, size_t l, uint8_t epoch) {
-  lines[l] = epoch;
+static __attribute__((noinline)) void y_line_live(uint8_t *line) {
+  *line = gc_heap.line_epoch;
   gc_heap.promoted_since_full += LINE_SIZE;
   gc_heap.mature_since_full += LINE_SIZE;
 }
 
 /* The lines after an object's first, L + 1 to E. */
-static __attribute__((noinline)) void y_lines_rest(uint8_t *lines, size_t l, size_t e, uint8_t epoch) {
+static __attribute__((noinline)) void y_lines_rest(uint8_t *lines, size_t l, size_t e) {
   while (l++ < e) {
-    if (lines[l] != epoch) {
-      y_line_live(lines, l, epoch);
+    if (lines[l] != gc_heap.line_epoch) {
+      y_line_live(lines + l);
     }
   }
 }
@@ -234,10 +234,10 @@ static inline __attribute__((always_inline)) void promote_young(YCtx *c, void *s
   uint32_t idx;
   h->flags = (uint16_t)((fl & ~AVANT_FLAG_YOUNG) | AVANT_FLAG_MARKED | AVANT_FLAG_PROMOTED_NOW);
   if (__builtin_expect(c->lines[l] != c->epoch, 0)) {
-    y_line_live(c->lines, l, c->epoch);
+    y_line_live(c->lines + l);
   }
   if (__builtin_expect(l != e, 0)) {
-    y_lines_rest(c->lines, l, e, c->epoch);
+    y_lines_rest(c->lines, l, e);
   }
 #if GC_STICKY_COPY
   c->blocks[off >> BLOCK_SHIFT].idle += total;
@@ -556,31 +556,28 @@ static void trace_all(void) {
   uint32_t i;
   pthread_mutex_lock(&gc_heap.threads_mu);
   for (t = gc_heap.threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      for (i = 0; i < f->n; i++) {
-        void *loc = (void *)f->slots[i];
-        Block *lb = NULL;
-        AvantHeader *ll = NULL;
-        void *ls = gc_object_payload(loc, &lb, &ll);
-        if (ls && (avant_header(ls)->flags & AVANT_FLAG_YOUNG)) {
-          trace_ref(NULL, ls, 0);
-        }
-#if GC_STICKY_COPY
-        /* A slot location inside an object an earlier slot already
-         * reached (promoted, so no longer YOUNG): its block must stay in
-         * place all the same, since splus_fix rewrites what a slot holds,
-         * never where the frame keeps it (Stage 28 W15d: before, such an
-         * object moved and the frame's location named its old copy). A
-         * candidate block holds only objects young when the collection
-         * began. */
-        else if (ls && gc_heap.splus_on && lb && !ll && lb->young_hi && lb->kept != SPLUS_KEPT) {
-          lb->kept = SPLUS_KEPT;
-        }
-#endif
-        trace_ref(f->slots[i], *f->slots[i], 0);
+    EACH_FRAME_SLOT(gc_thread_frames(t), slot, {
+      void *loc = (void *)slot;
+      Block *lb = NULL;
+      AvantHeader *ll = NULL;
+      void *ls = gc_object_payload(loc, &lb, &ll);
+      if (ls && (avant_header(ls)->flags & AVANT_FLAG_YOUNG)) {
+        trace_ref(NULL, ls, 0);
       }
-    }
+#if GC_STICKY_COPY
+      /* A slot location inside an object an earlier slot already
+       * reached (promoted, so no longer YOUNG): its block must stay in
+       * place all the same, since splus_fix rewrites what a slot holds,
+       * never where the frame keeps it (Stage 28 W15d: before, such an
+       * object moved and the frame's location named its old copy). A
+       * candidate block holds only objects young when the collection
+       * began. */
+      else if (ls && gc_heap.splus_on && lb && !ll && lb->young_hi && lb->kept != SPLUS_KEPT) {
+        lb->kept = SPLUS_KEPT;
+      }
+#endif
+      trace_ref(slot, *slot, 0);
+    });
   }
   pthread_mutex_unlock(&gc_heap.threads_mu);
   {
@@ -933,12 +930,7 @@ static void splus_fix(void) {
   ThreadReg *t;
   uint32_t i;
   for (t = gc_heap.threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      for (i = 0; i < f->n; i++) {
-        splus_fix_slot(f->slots[i]);
-      }
-    }
+    EACH_FRAME_SLOT(gc_thread_frames(t), slot, { splus_fix_slot(slot); });
   }
   gc_each_runtime_root(splus_fix_slot);
   /* Task roots move with their records since Stage 28 W17a. */

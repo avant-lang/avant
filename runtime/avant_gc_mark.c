@@ -254,15 +254,9 @@ static void mark_tls_slot(void **slot) {
 
 void gc_mark_roots(void) {
   ThreadReg *t;
-  uint32_t i;
   pthread_mutex_lock(&gc_heap.threads_mu);
   for (t = gc_heap.threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      for (i = 0; i < f->n; i++) {
-        mark(*f->slots[i]);
-      }
-    }
+    EACH_FRAME_SLOT(gc_thread_frames(t), slot, { mark(*slot); });
   }
   pthread_mutex_unlock(&gc_heap.threads_mu);
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {

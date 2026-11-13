@@ -606,16 +606,13 @@ __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uin
  * slot of its frame chain (generated code's frames, user C's, runtime C's
  * handle scopes) or a runtime root. */
 static int thread_roots_name(const uint8_t *lo, const uint8_t *hi) {
-  Frame *f;
   uint32_t i;
-  for (f = avant_gc_top; f; f = f->prev) {
-    for (i = 0; i < f->n; i++) {
-      const uint8_t *v = f->slots[i] ? (const uint8_t *)*f->slots[i] : NULL;
-      if (v >= lo && v < hi) {
-        return 1;
-      }
+  EACH_FRAME_SLOT(avant_gc_top, slot, {
+    const uint8_t *v = slot ? (const uint8_t *)*slot : NULL;
+    if (v >= lo && v < hi) {
+      return 1;
     }
-  }
+  });
   for (i = 0; i < gc_thread.nroots; i++) {
     const uint8_t *v = (const uint8_t *)*gc_thread.roots[i];
     if (v >= lo && v < hi) {

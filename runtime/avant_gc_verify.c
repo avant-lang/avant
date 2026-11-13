@@ -191,13 +191,7 @@ static void verify_tls_slot(void **slot) {
 static void verify_each_root(void (*fn)(void **), int rem) {
   ThreadReg *t;
   for (t = gc_heap.threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      uint32_t k;
-      for (k = 0; k < f->n; k++) {
-        fn(f->slots[k]);
-      }
-    }
+    EACH_FRAME_SLOT(gc_thread_frames(t), slot, { fn(slot); });
   }
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     fn(&p->payload);
@@ -334,15 +328,13 @@ static void verify_sticky_whole(void) {
   {
     ThreadReg *t;
     for (t = gc_heap.threads; t; t = t->next) {
-      Frame *f;
-      for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-        uint32_t k;
-        for (k = 0; k < f->n; k++) {
-          bad += verify_stale(*f->slots[k], "root", (void *)f->slots[k]);
+      EACH_FRAME(gc_thread_frames(t), f, {
+        EACH_SLOT_OF(f, slot, {
+          bad += verify_stale(*slot, "root", (void *)slot);
           /* A slot location inside a moved object (Stage 28 W15d). */
-          bad += verify_stale((void *)f->slots[k], "root location", (void *)f);
-        }
-      }
+          bad += verify_stale((void *)slot, "root location", (void *)f);
+        });
+      });
     }
     gc_each_runtime_root(verify_stale_tls);
   }
@@ -1507,14 +1499,10 @@ static int vi_sticky(void) {
   vi_sources(pages, vi_t_object);
 #if GC_STICKY_COPY
   for (t = gc_heap.threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      uint32_t k;
-      for (k = 0; k < f->n; k++) {
-        vi_cand += (uint64_t)vi_stale(*f->slots[k]);
-        vi_cand += (uint64_t)vi_stale((void *)f->slots[k]);
-      }
-    }
+    EACH_FRAME_SLOT(gc_thread_frames(t), slot, {
+      vi_cand += (uint64_t)vi_stale(*slot);
+      vi_cand += (uint64_t)vi_stale((void *)slot);
+    });
   }
   gc_each_runtime_root(vi_stale_root);
 #endif
@@ -1650,12 +1638,7 @@ void gc_verify_defrag(void) {
   uint32_t i;
   pthread_mutex_lock(&gc_heap.threads_mu);
   for (t = gc_heap.threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      for (i = 0; i < f->n; i++) {
-        verify_defrag_word(*f->slots[i], "root slot", (void *)f->slots[i]);
-      }
-    }
+    EACH_FRAME_SLOT(gc_thread_frames(t), slot, { verify_defrag_word(*slot, "root slot", (void *)slot); });
   }
   pthread_mutex_unlock(&gc_heap.threads_mu);
   for (PinEnt *pe = gc_heap.pins; pe; pe = pe->next) {
