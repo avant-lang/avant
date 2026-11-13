@@ -1420,6 +1420,78 @@ static void mature_drop_empty(uint32_t empty) {
   sp->rev ^= 1;
 }
 
+/* The young sweep of block B (entry I of the young blocks) under the
+ * stress mode and under the verifier (the Valk stage, VALK-T2, O628): up
+ * to B's allocation frontier. B's young range [young_lo, young_hi) is the
+ * hull of the holes young allocation took in it since the last collection
+ * (young_note_hole), and the frontier is the line after the last byte
+ * allocated in the last of them: Block.bump, which every allocation path
+ * keeps (bump_take, tl_bump, young_overflow, the inline sequence's store).
+ * The cursor takes a block's holes in rising order, so every young object
+ * of this cycle lies below the frontier, and the lines from it to young_hi
+ * are the rest of the last hole: free when it was handed out (their start
+ * bits clear, as every hole's are) and never allocated since. So only the
+ * lines below the frontier are swept and, under the stress mode, poisoned
+ * (until VALK-T2 a stress collection poisoned the 128 lines of a block of
+ * which one had been allocated since the last collection: 4,400 of its
+ * 12,233 instructions and 32 KB written); the lines past it are counted
+ * free, as the sweep of the whole range counted them. Every line a young
+ * object of this cycle lay in is poisoned as before; a line past the
+ * frontier held none. A survivor block's range ends at its frontier
+ * already (its bump is the block's end). Under AVANT_GC_VERIFY the lines
+ * past the frontier are read, and a start bit or a live line there stops
+ * the program; the verifier's sweep stops at the frontier too, so the
+ * gate's verify pass checks the frontier on every program it runs.
+ * Returns the block's live lines, as the sweep does. */
+static __attribute__((noinline)) int young_sweep_checked(Block *b, uint32_t i, int stress, int verify) {
+  int lo = b->young_lo;
+  int hi = b->young_hi > LINES_PER_BLOCK ? LINES_PER_BLOCK : b->young_hi;
+  int fr = (int)(((size_t)(b->bump - b->base) + LINE_SIZE - 1) >> LINE_SHIFT);
+  int live;
+  int l;
+  if (fr > hi) {
+    fr = hi;
+  }
+  if (fr < lo) {
+    fr = lo;
+  }
+  if (verify) {
+    for (l = fr; l < hi; l++) {
+      /* A line's start bits are half a start word (32 granules). */
+      if (line_live(b, l) || ((b->start[l >> 1] >> (32 * (l & 1))) & 0xffffffffULL)) {
+        gc_die("avant gc verify: a young block has a start bit or a live line past its allocation frontier");
+      }
+    }
+  }
+#if GC_STICKY_COPY
+  /* The block known to have no live line (gc_sticky_collect's comment):
+   * its count alone. */
+  if ((b->kept == SPLUS_EVAC && !(stress && gc_heap.stress_mixed[i])) || (b->kept == SPLUS_PURE && b->idle == 0)) {
+    if (verify && gc_block_any_live(b)) {
+      gc_die("avant gc verify: a young block taken for empty has a live line");
+    }
+    live = 0;
+    if (hi > lo) {
+      gc_heap.ctr.sticky.freed_lines += (uint64_t)(hi - lo);
+    }
+    gc_heap.ctr.sticky.blocks++;
+  } else
+#endif
+  {
+    live = sweep_lines(b, lo, fr);
+    gc_heap.ctr.sticky.freed_lines += (uint64_t)(hi - fr);
+  }
+  if (stress) {
+    /* Freed young lines are poisoned (Stage 28 W16a). */
+    for (l = lo; l < fr; l++) {
+      if (!line_live(b, l)) {
+        gc_poison(b->base + (size_t)l * LINE_SIZE, LINE_SIZE);
+      }
+    }
+  }
+  return live;
+}
+
 void gc_sticky_collect(int tenure) {
   Block *b;
   uint32_t empty = 0;
@@ -1509,22 +1581,30 @@ void gc_sticky_collect(int tenure) {
    * to part_blocks, the young allocator's next holes. */
   {
     uint32_t i;
+    /* The two check modes, read once (the loop makes calls). */
+    const int stress = gc_heap.set.stress;
+    const int verify = gc_heap.set.verify;
     for (i = 0; i < gc_heap.young_blocks_n; i++) {
       int live;
       b = gc_heap.young_blocks[i];
+      if (__builtin_expect(stress | verify, 0)) {
+        /* Under the stress mode and the verifier: up to the block's
+         * allocation frontier (young_sweep_checked). The lines between
+         * the frontier and the end of the young range are free and their
+         * start bits clear either way, so the block is left as the sweep
+         * of its whole range leaves it, and the count is the same. */
+        live = young_sweep_checked(b, i, stress, verify);
+      } else
 #if GC_STICKY_COPY
       /* A block evacuated whole (its line marks were cleared) and a block
        * that held no live line and had no survivor have no live line: the
        * sweep of such a block is its count alone (the Valk stage, VALK-T,
        * O600: until then its marks were read to find that out, and its
        * start bits cleared, which a block taken again has cleared anyway).
-       * AVANT_GC_VERIFY reads the marks and stops on a live one. */
-      if ((b->kept == SPLUS_EVAC && !(gc_heap.set.stress && gc_heap.stress_mixed[i])) ||
-          (b->kept == SPLUS_PURE && b->idle == 0)) {
+       * AVANT_GC_VERIFY reads the marks and stops on a live one
+       * (young_sweep_checked). */
+      if (b->kept == SPLUS_EVAC || (b->kept == SPLUS_PURE && b->idle == 0)) {
         int hi = b->young_hi > LINES_PER_BLOCK ? LINES_PER_BLOCK : b->young_hi;
-        if (gc_heap.set.verify && gc_block_any_live(b)) {
-          gc_die("avant gc verify: a young block taken for empty has a live line");
-        }
         live = 0;
         if (hi > b->young_lo) {
           gc_heap.ctr.sticky.freed_lines += (uint64_t)(hi - b->young_lo);
@@ -1534,15 +1614,6 @@ void gc_sticky_collect(int tenure) {
 #endif
       {
         live = sweep_lines(b, b->young_lo, b->young_hi);
-      }
-      if (gc_heap.set.stress) {
-        /* Freed young lines are poisoned (Stage 28 W16a). */
-        int l;
-        for (l = b->young_lo; l < b->young_hi && l < LINES_PER_BLOCK; l++) {
-          if (!line_live(b, l)) {
-            gc_poison(b->base + (size_t)l * LINE_SIZE, LINE_SIZE);
-          }
-        }
       }
       b->young_lo = 0;
       b->young_hi = 0;
@@ -1557,7 +1628,7 @@ void gc_sticky_collect(int tenure) {
          * (gc_quarantine_release), so a reference to an object that died
          * here still names freed memory there, where the lost-reference
          * check (avant_gc_verify.c) sees it. */
-        if (gc_heap.set.verify) {
+        if (verify) {
           gc_sticky_push(&gc_heap.verify_holes, &gc_heap.verify_holes_n, &gc_heap.verify_holes_cap, b);
         } else {
           gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
