@@ -23,6 +23,17 @@
 #       PUBLISHED.js (optional) is a LangArena results file; it adds an
 #       "estimated best" column for prod runs of languages not measured here,
 #       scaled per task by C/Clang's local (c_clang.tsv) / published ratio. Estimates never enter the measured best.
+#   lr-table.sh rounds N RUN_JS OUT_DIR [OPTION...] [TASK...]
+#       Median-of-N with rotation (tools/rounds.py langarena; its --help has
+#       the method): one warm-up, then N rounds of every task's binary,
+#       started directly (no wrapper: the RSS is the task's own), the order
+#       rotated by round, every output checked against RUN_JS, one raw file
+#       per run, the median with its minimum and maximum, the versions and
+#       the governor written by the script. OPTIONs: --side NAME=BIN_DIR
+#       (repeatable; default the checkout's langarena/tmp), --pin CPU,
+#       --short SECONDS, --timeout SECONDS, --allow-governor. For milestones
+#       and publication, never per gate. OUT_DIR/SIDE.lr-avant.tsv is a
+#       `table` input of the medians.
 #
 # After a wave (from avant/, results kept, references not re-run):
 #   AVANT_COMPILER=./bin/avant-c-llvm AVANT_CODEGEN=release \
@@ -217,5 +228,10 @@ table)
   function val(t, key) { return key == "both" ? worst[t] : (key == "time" ? (tm[t] == "" ? -1 : tm[t]) : (mm[t] == "" ? -1 : mm[t])) }
   ' "$av" "$refdir"/*.tsv "$pubtsv" "${runsfile:-/dev/null}" "$notes"
   ;;
-*) sed -n '2,31p' "$0"; exit 2 ;;
+rounds)
+  [ $# -ge 3 ] || die "rounds needs N RUN_JS OUT_DIR [OPTION...] [TASK...]"
+  n=$1 runjs=$2 out=$3; shift 3
+  need_runjs "$runjs"
+  exec python3 -I "$(dirname "$0")/rounds.py" langarena --rounds "$n" --run-js "$runjs" --out "$out" "$@" ;;
+*) sed -n '2,/^set -u/p' "$0" | sed '$d'; exit 2 ;;
 esac
