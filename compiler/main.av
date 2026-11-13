@@ -59,6 +59,7 @@ pub fn show_usage {
   puts("  avant format PATH... [--check|--write]")
   puts("  avant bind [--lib NAME] HEADER.h")
   puts("  avant fetch [DIR] [--update]")
+  puts("  avant version")
   puts("")
   puts("FILE.av is the program root. import name loads name.av beside it.")
   puts("Programs are compiled by the LLVM built into avant (no backend process) and linked with cc.")
@@ -663,6 +664,64 @@ fn driver_mir_build(args: Array(String)) {
 // The self-hosting fixed point compares it between two compilers (D171).
 //   avant __emit-ll SRC.av OUT.ll
 // Exit 0, or 1 with the message on stderr.
+// `avant version` and `avant --version` (O534, Stage 29 W-FIX1e): the
+// version and the commit this binary was built from. The compiler does
+// not carry them (an identical compiler stays byte-identical across
+// commits); they come from the build's record beside the executable:
+// EXE.versions.txt, which tools/letters.sh writes beside each compiler
+// it builds, else versions.txt in the same directory (a release
+// archive, D148, and tools/package.sh). `version:` is avant.toml's
+// version (a release's `tag: vX` is read when there is none), `avant:`
+// the commit, and `dirty: yes` says that compiler/, lib/ or runtime/
+// had changes the commit does not hold.
+fn driver_version(args: Array(String)) {
+  if args.size > 0 {
+    diag_puts("avant version takes no arguments")
+    diag_exit(1)
+  }
+  exe = self_exe_path()
+  text = ""
+  if t = file_read("${exe}.versions.txt") {
+    text = t
+  } else if t = file_read("${path_dirname(exe)}/versions.txt") {
+    text = t
+  }
+  if text.size == 0 {
+    puts("avant (version unknown: no versions.txt beside ${exe})")
+    return
+  }
+  version = ""
+  tag = ""
+  commit = ""
+  dirty = false
+  for line in text.split("\n") {
+    if str_starts(line, "version: ") {
+      version = str_slice(line, 9, line.size)
+    } else if str_starts(line, "tag: v") {
+      tag = str_slice(line, 6, line.size)
+    } else if str_starts(line, "avant: ") {
+      commit = str_slice(line, 7, line.size)
+    } else if line == "dirty: yes" {
+      dirty = true
+    }
+  }
+  if version.size == 0 {
+    version = tag
+  }
+  head = "avant (version unknown)"
+  if version.size > 0 {
+    head = "avant ${version}"
+  }
+  built = "commit unknown"
+  if commit.size > 0 && commit != "unknown" {
+    built = "commit ${commit}"
+  }
+  if dirty {
+    built = "${built}, with uncommitted changes"
+  }
+  puts("${head} (${built})")
+}
+
 fn driver_emit_ll(args: Array(String)) {
   if args.size != 2 || !str_ends(args[0], ".av") {
     diag_puts("usage: avant __emit-ll SRC.av OUT.ll")
@@ -704,6 +763,14 @@ fn main {
   }
   if command == "help" {
     show_usage()
+    return
+  }
+  if command == "version" {
+    driver_version(argv_drop_first(args))
+    return
+  }
+  if command == "--version" {
+    driver_version(argv_drop_first(args))
     return
   }
   if command == "dump" {

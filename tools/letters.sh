@@ -25,6 +25,9 @@
 #            (built once per release; the letters and the gate stay
 #            --debug)
 #
+# Each compiler step also writes OUT.versions.txt beside the compiler it
+# built (record below): what `avant version` prints for it.
+#
 # The names keep the letter and the back end that built it (c-llvm,
 # d-llvm; the old back end's C, letter c, retired with it at W11). C' is
 # built by B and D' by C'; C' is judged only by D' and the suite (C' = D'
@@ -113,8 +116,29 @@ build() {
   [ -x "$2" ] || { echo "letters: no compiler at $2" >&2; exit 1; }
   timer=""
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
+  rm -f "$3.versions.txt"
   # shellcheck disable=SC2086 # timer and the flag are words or empty
-  env -u AVANT_BACKEND -u AVANT_ROOT timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null
+  env -u AVANT_BACKEND -u AVANT_ROOT timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+  record "$3" "$1"
+}
+
+# record OUT STEP: writes OUT.versions.txt, the build's record that
+# `avant version` prints (O534, Stage 29 W-FIX1e): avant.toml's version,
+# the commit (unknown outside git), `dirty: yes` when compiler/, lib/ or
+# runtime/ differ from that commit (untracked files there included), and
+# the step. The compiler carries none of it, so a compiler stays
+# byte-identical across commits that do not change it.
+record() {
+  v=$(sed -n 's/^version = "\(.*\)"$/\1/p' avant.toml | head -n 1)
+  c=$(git rev-parse HEAD 2>/dev/null) || c=unknown
+  {
+    [ -z "$v" ] || echo "version: $v"
+    echo "avant: $c"
+    if [ "$c" != unknown ] && [ -n "$(git status --porcelain -- compiler lib runtime 2>/dev/null)" ]; then
+      echo "dirty: yes"
+    fi
+    echo "built: tools/letters.sh $2"
+  } > "$1.versions.txt"
 }
 
 # B must carry no LLVM stack maps (the runtime walks none since W12r).

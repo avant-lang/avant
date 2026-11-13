@@ -66,11 +66,26 @@ for f in "$root"/runtime/build/*.o; do
 done
 install -m 644 "$root/runtime/avant_rt.h" "$dir/runtime/avant_rt.h"
 
+# versions.txt is also what `avant version` reads (O534). Without
+# VERSIONS_FILE: the compiler's own build record (COMPILER.versions.txt,
+# written by tools/letters.sh) when it has one, else avant.toml's version
+# and this checkout's commit; `dirty: yes` when compiler/, lib/ or
+# runtime/ differ from that commit.
 if [ -n "$versions" ]; then
   install -m 644 "$versions" "$dir/versions.txt"
 else
   {
-    echo "avant: $(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)"
+    if [ -f "$compiler.versions.txt" ]; then
+      grep -E '^(version|avant|dirty): ' "$compiler.versions.txt" || true
+    else
+      v=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/avant.toml" | head -n 1)
+      c=$(git -C "$root" rev-parse HEAD 2>/dev/null) || c=unknown
+      [ -z "$v" ] || echo "version: $v"
+      echo "avant: $c"
+      if [ "$c" != unknown ] && [ -n "$(git -C "$root" status --porcelain -- compiler lib runtime 2>/dev/null)" ]; then
+        echo "dirty: yes"
+      fi
+    fi
     echo "built: local (tools/package.sh)"
   } > "$dir/versions.txt"
 fi

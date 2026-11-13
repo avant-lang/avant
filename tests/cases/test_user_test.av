@@ -32,6 +32,10 @@ fn ut_has(hay: String, needle: String): Bool {
   false
 }
 
+fn ut_starts(s: String, prefix: String): Bool {
+  s.size >= prefix.size && str_slice(s, 0, prefix.size) == prefix
+}
+
 fn ut_sh(body: String, rc_path: String): Int {
   script = "${rc_path}.sh"
   _ = file_write(script, body) ?? return 1
@@ -300,6 +304,43 @@ fn test_user_test(c: Checks) {
       i += 1
     }
     c.expect(ut_has(file_read("${w5}/w-2.log") ?? "", "re2c: cannot write "), "O569: re2c's failed input names re2c")
+
+    // O534 (Stage 29 W-FIX1e): `avant version` (and `--version`) prints
+    // the version and the commit from the build's record beside the
+    // executable: EXE.versions.txt (tools/letters.sh writes it), else
+    // versions.txt (a release archive, tools/package.sh). A copy of the
+    // compiler in a directory of its own shows each case.
+    vdir = "${root}/o534"
+    mkdir_p(vdir)
+    vexe = "${vdir}/avant"
+    c.eq_int(copy_file(compiler, vexe), 0, "O534: the compiler copied")
+    chmod_x(vexe)
+    v_args = ["version"]
+    c.eq_int(process_run_out(vexe, v_args, "${vdir}/none.log") ?? -1, 0, "O534: avant version without a record exits 0")
+    v_none = file_read("${vdir}/none.log") ?? ""
+    c.expect(ut_starts(v_none, "avant (version unknown: no versions.txt beside ") && ut_has(v_none, "/o534/avant)\n"), "O534: without a record avant version says the version is unknown and where it looked")
+    _ = file_write("${vdir}/versions.txt", "tag: v9.8.7\navant: 0123456789abcdef0123456789abcdef01234567\nllvm: 20.1.2\nglibc-floor: 2.38\n")
+    _ = process_run_out(vexe, v_args, "${vdir}/archive.log")
+    c.eq_str(file_read("${vdir}/archive.log") ?? "", "avant 9.8.7 (commit 0123456789abcdef0123456789abcdef01234567)\n", "O534: a release archive's versions.txt gives the tag and the commit")
+    _ = file_write("${vexe}.versions.txt", "version: 9.8.8\navant: fedcba9876543210fedcba9876543210fedcba98\ndirty: yes\nbuilt: tools/letters.sh c-llvm\n")
+    _ = process_run_out(vexe, v_args, "${vdir}/record.log")
+    c.eq_str(file_read("${vdir}/record.log") ?? "", "avant 9.8.8 (commit fedcba9876543210fedcba9876543210fedcba98, with uncommitted changes)\n", "O534: the compiler's own record comes first and says when the tree was dirty")
+    _ = process_run_out(vexe, ["--version"], "${vdir}/dash.log")
+    c.eq_str(file_read("${vdir}/dash.log") ?? "", file_read("${vdir}/record.log") ?? "?", "O534: avant --version prints what avant version prints")
+    c.eq_int(process_run_out(vexe, ["version", "extra"], "${vdir}/extra.log") ?? -1, 1, "O534: avant version takes no arguments")
+    rm_f(vexe)
+    // The compiler under test, when tools/letters.sh built it, prints
+    // avant.toml's version.
+    if file_exists("${compiler}.versions.txt") {
+      toml_version = ""
+      for line in (file_read("${avant_test_root()}/avant.toml") ?? "").split("\n") {
+        if toml_version.size == 0 && ut_starts(line, "version = \"") && line.size > 12 {
+          toml_version = str_slice(line, 11, line.size - 1)
+        }
+      }
+      _ = process_run_out(compiler, v_args, "${vdir}/self.log")
+      c.expect(toml_version.size > 0 && ut_starts(file_read("${vdir}/self.log") ?? "", "avant ${toml_version} (commit "), "O534: the compiler under test prints avant.toml's version (${toml_version})")
+    }
 
     fetch_body = "[package]\nname = \"fetch\"\nversion = \"0.1.0\"\n\n[test]\ndir = \"tests\"\nexclusive = [\"tests/test_bench.av\"]\n"
     _ = file_write("${root}/fetch/avant.toml", fetch_body)
