@@ -69,9 +69,8 @@ bb0:
   gc.roots _3, _5, _8, _10, _14   @28:1
   _2 = const i64 0   @29:5
   _3 = call avant_alloc(const u64 0, const u32 65535) collects   @30:25
-  _4 = call avant_alloc(const u64 16, const u32 1022) collects   @30:25
-  barrier copy _4   @30:25
-  (*_4).0 = copy _3   @30:25
+  _4 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @30:25
+  (*_4).0 = copy _3 fresh   @30:25
   (*_4).1 = const i32 0   @30:25
   (*_4).2 = const i32 0   @30:25
   _5 = copy _4   @30:3
@@ -102,9 +101,8 @@ bb3:
 
 bb4:
   _14 = call avant_alloc(const u64 0, const u32 65535) collects   @36:14
-  _15 = call avant_alloc(const u64 16, const u32 1022) collects   @36:14
-  barrier copy _15   @36:14
-  (*_15).0 = copy _14   @36:14
+  _15 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @36:14
+  (*_15).0 = copy _14 fresh   @36:14
   (*_15).1 = const i32 0   @36:14
   (*_15).2 = const i32 0   @36:14
   _5 = copy _15   @36:12
@@ -177,7 +175,7 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @pins.av:54:1 {
   let _18: i64
   let _19: i64
   let _20: i64
-  let _21: ref str
+  let _21: ref str slot
   let _22: ref %pins.Box
   let _23 (b): ref %pins.Box slot
   let _24 (total): i64
@@ -224,11 +222,12 @@ bb0:
   _6 = zero   @54:1
   _7 = zero   @54:1
   _10 = zero   @54:1
+  _21 = zero   @54:1
   _23 = zero   @54:1
   _27 = zero   @54:1
   _41 = zero   @54:1
   gc.enter   @54:1
-  gc.roots _2, _6, _7, _10, _23, _27, _41   @54:1
+  gc.roots _2, _6, _7, _10, _21, _23, _27, _41   @54:1
   call __avant_type_maps() nocollect   @54:1
   call avant_io_init_argv(copy _1, copy _2) collects   @54:1
   _3 = call avant_pin_count() collects   @55:12
@@ -262,7 +261,8 @@ bb0:
   _20 = sub.chk copy _19, copy _4   @68:29
   call printf(const str.5, copy _20) nocollect   @68:3
   _21 = call avant_str_concat(const str.7, const str.8) collects   @70:23
-  _22 = call av.pins/Box.new(copy _21, const i64 3) collects   @70:10
+  _22 = call avant_alloc(const u64 16, const u32 1) collects fresh   @70:10
+  call av.pins/Box.initialize(copy _22, copy _21, const i64 3) nocollect   @70:10
   _23 = copy _22   @70:5
   _24 = const i64 0   @71:9
   _25 = const i64 0   @72:5
@@ -388,8 +388,7 @@ fn av.pins/Box.initialize(_1: ref %pins.Box, _2: ref str, _3: i64) -> void leaf 
   let _3 (n): i64
 
 bb0:
-  barrier copy _1   @20:16
-  (*_1).0 = copy _2   @20:16
+  (*_1).0 = copy _2 fresh   @20:16
   (*_1).1 = copy _3   @21:12
   return   @19:3
 }
@@ -403,7 +402,7 @@ fn av.pins/Box.new(_1: ref str, _2: i64) -> ref %pins.Box frame @pins.av:15:1 {
 bb0:
   gc.enter   @15:1
   gc.roots _1   @15:1
-  _3 = call avant_alloc(const u64 16, const u32 1) collects   @15:1
+  _3 = call avant_alloc(const u64 16, const u32 1) collects fresh   @15:1
   call av.pins/Box.initialize(copy _3, copy _1, copy _2) nocollect   @15:1
   _0 = copy _3   @15:1
   gc.leave   @15:1

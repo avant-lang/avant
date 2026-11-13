@@ -72,6 +72,7 @@ import mir.types
 import mir.ir
 import mir.runtime
 import mir.flow
+import mir.fresh
 
 fn mir_in_set(cand: Hash(String, Int), name: String): Bool {
   if v = cand.get(name) {
@@ -408,5 +409,8 @@ pub fn mir_frame_pass(m: MModule) {
 // Both passes, in the order of 5.9.
 pub fn mir_gc_passes(m: MModule) {
   mir_leaf_pass(m)
+  // VALK-A1 (M5): barriers on open holders go before the slot set is
+  // computed (fresh.av).
+  mir_fresh_pass(m)
   mir_frame_pass(m)
 }

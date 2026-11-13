@@ -1,4 +1,5 @@
 import harness
+import backends
 
 // Per-function shape assertions on the allocation sequence (Stage 29
 // VALK-A1; research/valk/compiler.md L8, learned from Valk's
@@ -19,13 +20,16 @@ import harness
 // here; `main` keeps its record, and so does the thunk C calls in
 // tests/fixtures/ffi/first_frame.av (`check#cb`, the first-frame rule)
 // while the functions it calls (`check`, `fill`) have none.
-
-fn log_text(path: String): String {
-  if t = file_read(path) {
-    return t
-  }
-  "(no log)"
-}
+//
+// M5 (O204, O337): a constructor with an `initialize` and no field code
+// is lowered at its call site (`pair` allocates inline and calls
+// Tree.initialize, never Tree.new), and the stores of an initialize into
+// its new object have no barrier test while no collecting call lies
+// between the allocation and them (Tree.initialize: none; Named.initialize:
+// one, the store after the string interpolation); the allocation's slow
+// path barriers its result once (avant_barrier, the birth barrier).
+// tests/fixtures/llvm/fresh_init.av runs both shapes under the
+// collector's environments.
 
 // The text of the definition of SYM in the .ll text LL (from its `define`
 // line to its closing brace), or "" when it is not defined.
@@ -64,7 +68,7 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   text = log_text(ll)
   c.eq_int(compile_av(compiler, src, "${dir}/alloc_shape", "${dir}/alloc_shape.log"), 0, "alloc_shape.av: compiles")
   c.eq_int(run_av_bin("${dir}/alloc_shape", "${dir}/alloc_shape.out"), 0, "alloc_shape.av: exit 0")
-  c.eq_str(log_text("${dir}/alloc_shape.out"), "3\n6\n", "alloc_shape.av: output")
+  c.eq_str(log_text("${dir}/alloc_shape.out"), "3\n6\npair\nn2 n1\n", "alloc_shape.av: output")
 
   // M3: local-exec thread-locals.
   for g in ["avant_gc_fast_ok", "avant_gc_bump", "avant_gc_limit", "avant_gc_block", "avant_gc_base", "avant_gc_starts", "avant_gc_top"] {
@@ -91,6 +95,35 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   for f in ["check", "fill"] {
     body = ll_fn(ftext, "av.first_frame/${f}")
     c.expect(body.size > 0 && !str_has(body, "%gcf"), "M4: first_frame.av's ${f} (no root slot) links no frame record")
+  }
+
+  // M5: the constructor at its call site, no barrier on the fresh object.
+  tinit = ll_fn(text, "av.alloc_shape/Tree.initialize")
+  c.expect(tinit.size > 0, "M5: Tree.initialize is defined")
+  c.eq_int(count_of(tinit, "@avant_barrier"), 0, "M5: Tree.initialize stores into its new object with no barrier test")
+  ninit = ll_fn(text, "av.alloc_shape/Named.initialize")
+  c.eq_int(count_of(ninit, "call void @avant_barrier(ptr"), 1, "M5: Named.initialize keeps one barrier test, the store after its collecting call")
+  pbody = ll_fn(text, "av.alloc_shape/pair")
+  c.expect(str_has(pbody, "load ptr, ptr @avant_gc_bump") && str_has(pbody, "call void @\"av.alloc_shape/Tree.initialize\"(") && !str_has(pbody, "@\"av.alloc_shape/Tree.new\""), "M5: pair allocates inline and calls Tree.initialize, not Tree.new")
+  c.eq_int(count_of(pbody, "call void @avant_barrier(ptr"), 1, "M5: pair barriers the allocation's slow-path result once (the birth barrier)")
+
+  // M5 at run time, plainly and under the collector's environments.
+  fsrc = "${root}/tests/fixtures/llvm/fresh_init.av"
+  c.eq_int(compile_av(compiler, fsrc, "${dir}/fresh_init", "${dir}/fresh_init.log"), 0, "fresh_init.av: compiles")
+  fenvs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for i in 0..fenvs.size {
+    runs.push(run_job_env(dir, "fresh_init", "fresh_init.e${i}", fenvs[i]))
+  }
+  run_waves(runs)
+  for i in 0..fenvs.size {
+    what = "plain"
+    if fenvs[i].size > 0 {
+      what = "under ${fenvs[i]}"
+    }
+    c.eq_int(runs[i].code, 0, "fresh_init.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/fresh_init.e${i}.out"), "chains 100 1800378890\ntrees 81880\n", "fresh_init.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/fresh_init.e${i}.err"), "", "fresh_init.av ${what}: no stderr (no verifier report)")
   }
 }
 

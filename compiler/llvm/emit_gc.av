@@ -296,7 +296,13 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 // An empty payload is one word (Stage 29 W-INT1, as avant_alloc): a 0-byte
 // object at a block's end would have the next block's first address as
 // its payload.
-pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
+// birth (the allocation is marked `fresh`, mir/fresh.av, Stage 29
+// VALK-A1): stores into the object follow with no barrier of their own,
+// so the slow path's result, which may be mature (born in mature space by
+// avant_alloc_in_mature or on an unregistered thread), is barriered once:
+// avant_barrier returns at once for a young object. The inline path's
+// result is always young: it bumps in the thread's young hole.
+pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): String {
   size = e.value(args[0])
   ty = e.value(args[1])
   const_size = args[0].kind == mok_int() && args[1].kind == mok_int()
@@ -316,11 +322,11 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   if const_size {
     tot = (sz + 15) & -8
     if !e.inline_fast || tot > 8192 || (tid == 0 && sz >= 6144) {
-      return ll_alloc_call(e, callee, size, ty)
+      return ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
     }
     total = "${tot}"
   } else if !e.inline_fast {
-    return ll_alloc_call(e, callee, size, ty)
+    return ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
   }
   e.used_alloc_globals = true
   e.need(callee)
@@ -470,12 +476,22 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   e.line("br label %${cont}")
 
   e.block(slow)
-  s = ll_alloc_call(e, callee, size, ty)
+  s = ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
   e.line("br label %${cont}")
 
   e.block(cont)
   r = e.tmp
   e.line("${r} = phi ptr [ ${obj}, %${from} ], [ ${s}, %${slow} ]")
+  r
+}
+
+// The birth barrier of an allocation's call result R (ll_alloc), when
+// birth; returns R.
+fn ll_alloc_birth(e: LlEmit, r: String, birth: Bool): String {
+  if birth {
+    e.need("avant_barrier")
+    e.line("call void @avant_barrier(ptr ${r})")
+  }
   r
 }
 

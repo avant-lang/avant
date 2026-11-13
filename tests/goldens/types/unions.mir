@@ -120,7 +120,8 @@ bb0:
   branch copy _3, bb1, bb2   @65:3
 
 bb1:
-  _4 = call av.unions/Oops.new(const str.1) collects   @66:16
+  _4 = call avant_alloc(const u64 8, const u32 2) collects fresh   @66:16
+  call av.unions/Oops.initialize(copy _4, const str.1) nocollect   @66:16
   _5 = union %(Int|unions.Oops) tag 1 (copy _4)   @66:16
   _0 = copy _5   @66:5
   return   @66:5
@@ -453,11 +454,9 @@ bb4:
 
 bb5:
   _15 = union %(Int|String) tag 1 (const str.5)   @111:9
-  barrier copy _4   @111:7
-  (*_4).1 = copy _15   @111:7
+  (*_4).1 = copy _15 fresh   @111:7
   _16 = union %(Int|String) tag 0 (const i64 9)   @112:9
-  barrier copy _4   @112:7
-  (*_4).1 = copy _16   @112:7
+  (*_4).1 = copy _16 fresh   @112:7
   _17 = union %(Nil|Bool) tag 1 (const bool true)   @113:9
   (*_4).2 = copy _17   @113:7
   _18 = copy (*_4).2   @114:11
@@ -682,9 +681,8 @@ bb42:
   _99 = call av.unions/Leaf.new(const i64 3) collects   @146:45
   (*_97)[const i64 2] = copy _99 fresh   @146:45
   barrier copy _97   @146:22
-  _100 = call avant_alloc(const u64 16, const u32 1022) collects   @146:22
-  barrier copy _100   @146:22
-  (*_100).0 = copy _97   @146:22
+  _100 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @146:22
+  (*_100).0 = copy _97 fresh   @146:22
   (*_100).1 = const i32 3   @146:22
   (*_100).2 = const i32 3   @146:22
   _101 = copy _100   @146:3
@@ -718,9 +716,8 @@ bb44:
   (*_114)[const i64 0] = copy _115   @154:20
   _116 = call av.unions/pick(const i64 0) nocollect   @154:29
   (*_114)[const i64 1] = copy _116   @154:29
-  _117 = call avant_alloc(const u64 16, const u32 1022) collects   @154:19
-  barrier copy _117   @154:19
-  (*_117).0 = copy _114   @154:19
+  _117 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @154:19
+  (*_117).0 = copy _114 fresh   @154:19
   (*_117).1 = const i32 2   @154:19
   (*_117).2 = const i32 2   @154:19
   _118 = copy _117   @154:3
@@ -772,8 +769,7 @@ fn av.unions/Oops.initialize(_1: ref %unions.Oops, _2: ref str) -> void leaf @un
   let _2 (message): ref str
 
 bb0:
-  barrier copy _1   @21:18
-  (*_1).0 = copy _2   @21:18
+  (*_1).0 = copy _2 fresh   @21:18
   return   @20:3
 }
 
@@ -820,7 +816,7 @@ fn av.unions/Oops.new(_1: ref str) -> ref %unions.Oops frame @unions.av:17:1 {
 bb0:
   gc.enter   @17:1
   gc.roots _1   @17:1
-  _2 = call avant_alloc(const u64 8, const u32 2) collects   @17:1
+  _2 = call avant_alloc(const u64 8, const u32 2) collects fresh   @17:1
   call av.unions/Oops.initialize(copy _2, copy _1) nocollect   @17:1
   _0 = copy _2   @17:1
   gc.leave   @17:1
@@ -834,12 +830,10 @@ fn av.unions/Holder.new() -> ref %unions.Holder frame @unions.av:35:1 {
   let _3: %(Nil|Bool)
 
 bb0:
-  _1 = call avant_alloc(const u64 72, const u32 3) collects   @35:1
-  barrier copy _1   @36:3
-  (*_1).0 = const ref %unions.Leaf null   @36:3
+  _1 = call avant_alloc(const u64 72, const u32 3) collects fresh   @35:1
+  (*_1).0 = const ref %unions.Leaf null fresh   @36:3
   _2 = union %(Int|String) tag 0 (const i64 0)   @37:21
-  barrier copy _1   @37:3
-  (*_1).1 = copy _2   @37:3
+  (*_1).1 = copy _2 fresh   @37:3
   _3 = union %(Nil|Bool) tag 0   @38:14
   (*_1).2 = copy _3   @38:3
   call av.unions/Holder.initialize(copy _1) nocollect   @35:1

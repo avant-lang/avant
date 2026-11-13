@@ -1,0 +1,340 @@
+// The fresh pass (Stage 29 VALK-A1, M5, O204, O337): barriers on an object
+// that is still young or already remembered are removed, and so are the
+// store barriers of a constructor's `initialize` on its new object. It runs
+// between the leaf pass and the frame pass (gc.av), when every call's
+// `collects` is final and before the slot set is computed (a removed
+// barrier is a read the liveness no longer sees).
+//
+// The rule. A holder _h is *open* at a point when, on every path to it,
+// since the last collecting call and the last redefinition of _h, one of
+// these happened: (1) `_h = call avant_alloc(...)` (an allocation's result
+// is young, or, from the slow path, barriered at birth: the emitter calls
+// avant_barrier on the slow path's result of an allocation marked
+// `fresh`, which a mature-born object needs: AVANT_NURSERY=0's is never
+// remembered and needs nothing, avant_alloc_in_mature's and an
+// unregistered thread's do); (2) `barrier copy _h` that is not the slot
+// form (a barrier followed by an element store of _h's buffer is emitted
+// as avant_barrier_slot, which marks one card of a large pointer buffer,
+// so it opens nothing); (3) the entry of an `initialize` (MFunc.fresh_self)
+// for its receiver _1: every call of one passes an open first argument
+// (the lowering puts a barrier before each, removed here when it is open).
+// An object stays young, or remembered with its cards counted as marked,
+// until the next collection, and a thread is collected only at a
+// collecting call of its own (a safepoint: an allocation, a poll, a native
+// transition, any call that collects, an indirect call). In a shared
+// module the frame pass then adds a poll at loop heads, so here every
+// block a back edge enters closes every holder. A barrier on an open
+// holder is removed, and the store it preceded (if it is one through _h)
+// is marked `fresh`; every allocation whose result is the holder of a
+// removed barrier that served a store (or an initialize's receiver) is
+// marked `fresh` (barriered at birth). An initialize whose receiver's
+// openness serves no store asks nothing of its callers (mir_fresh_pass). V14 (verify_gc.av)
+// checks the result independently: a fresh store's holder is open by the
+// same rule, counting only allocations marked `fresh`, or the store is
+// justified by the older form (a closing barrier, a slot).
+//
+// So `T.new(a, b)` with `initialize` setting two reference fields stores
+// both with no barrier test (scenario 7's Tree.new), while a store after a
+// collecting call keeps its barrier.
+
+import mir.types
+import mir.ir
+import mir.runtime
+import mir.flow
+
+// Whether st collects (an allocation, a collecting call, an indirect call).
+fn mir_fresh_collects(st: MStmt): Bool {
+  if st.kind != msk_call() {
+    return false
+  }
+  if ind = st.indirect {
+    return true
+  }
+  st.collects
+}
+
+// Whether st is a call of an allocation external.
+fn mir_fresh_is_alloc(m: MModule, st: MStmt): Bool {
+  if st.kind == msk_call() && st.dest >= 0 {
+    if fo = st.indirect {
+      return false
+    }
+    if x = m.ext(st.callee) {
+      return x.alloc
+    }
+  }
+  false
+}
+
+// The holder of `barrier copy _h`, or -1.
+fn mir_fresh_holder(st: MStmt): Int {
+  if st.kind == msk_barrier() && st.args.size == 1 {
+    if p = st.args[0].place, p.proj.size == 0 {
+      return p.local
+    }
+  }
+  -1
+}
+
+// Whether the statement after a barrier on h (stmts[j + 1]) is an element
+// store of h's buffer: the emitter's slot form (ll_barrier_store).
+pub fn mir_fresh_slot_form(stmts: Array(MStmt), j: Int, h: Int): Bool {
+  k = j + 1
+  if k >= stmts.size || stmts[k].kind != msk_assign() {
+    return false
+  }
+  if p = stmts[k].place {
+    return p.local == h && p.proj.size >= 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_index()
+  }
+  false
+}
+
+// The open set through block b (in place), from its entry state. With
+// edit, removes the barriers on open holders and marks the stores they
+// preceded; returns the holders of the barriers it removed (`removed`).
+fn mir_fresh_block(m: MModule, f: MFunc, b: Int, open: Array(UInt64), edit: Bool, removed: Array(UInt64)) {
+  blk = f.blocks[b]
+  n = f.locals.size
+  out: Array(MStmt) = []
+  drop_next_mark = -1
+  j = 0
+  while j < blk.stmts.size {
+    st = blk.stmts[j]
+    h = mir_fresh_holder(st)
+    keep = true
+    if h >= 0 && h < n {
+      if mir_bit(open, 0, h) {
+        // What the barrier served: the store after it, or the receiver of
+        // an initialize that relies on it; a barrier that served neither
+        // (one before an initialize that stores no reference) goes without
+        // asking anything of the allocation.
+        served = false
+        if j + 1 < blk.stmts.size {
+          nx = blk.stmts[j + 1]
+          if p = nx.place, nx.kind == msk_assign() && p.local == h && !p.frame_local {
+            served = true
+            if edit {
+              nx.fresh = true
+            }
+          }
+          if mir_fresh_init_call(m, nx) && nx.args.size > 0 {
+            if q = nx.args[0].place, q.proj.size == 0 && q.local == h {
+              served = true
+            }
+          }
+        }
+        if served {
+          mir_bit_on(removed, 0, h)
+        }
+        if edit {
+          keep = false
+        }
+      } else if !mir_fresh_slot_form(blk.stmts, j, h) {
+        mir_bit_on(open, 0, h)
+      }
+    } else {
+      // A fill's store already marked fresh (an array literal's element,
+      // W1b) through an open holder relies on the openness from here on:
+      // its closing barrier goes, so the allocation is barriered at birth.
+      if st.fresh && st.kind == msk_assign() {
+        if p = st.place, p.local >= 0 && p.local < n && mir_bit(open, 0, p.local) {
+          mir_bit_on(removed, 0, p.local)
+        }
+      }
+      if mir_fresh_collects(st) {
+        for w in 0..open.size {
+          open[w] = 0u64
+        }
+      }
+      d = mir_stmt_def(st)
+      if d >= 0 && d < n {
+        mir_bit_off(open, 0, d)
+        if mir_fresh_is_alloc(m, st) {
+          mir_bit_on(open, 0, d)
+        }
+      }
+    }
+    if keep {
+      out.push(st)
+    }
+    j += 1
+  }
+  if edit {
+    blk.stmts = out
+  }
+}
+
+// Whether st calls an `initialize` (MFunc.fresh_self) of this module.
+fn mir_fresh_init_call(m: MModule, st: MStmt): Bool {
+  if st.kind != msk_call() {
+    return false
+  }
+  if fo = st.indirect {
+    return false
+  }
+  if g = m.func(st.callee) {
+    return g.fresh_self
+  }
+  false
+}
+
+// Every call of an `initialize` gets `barrier copy _h` on its receiver
+// right before it, unless one is there (the constructors' lowering puts
+// one before theirs; a method may also call initialize on any object, as
+// `obj.initialize(...)` or `initialize(...)`): the receiver its entry
+// assumes open is then open at every call, and the dataflow below removes
+// the barrier where the receiver was open already. A receiver that is not
+// a bare local is left as it is; V14 at stage final would refuse it.
+fn mir_fresh_init_barriers(m: MModule, f: MFunc) {
+  for blk in f.blocks {
+    out: Array(MStmt) = []
+    changed = false
+    for st in blk.stmts {
+      if mir_fresh_init_call(m, st) && st.args.size > 0 {
+        if p = st.args[0].place, p.proj.size == 0 {
+          have = false
+          if out.size > 0 && mir_fresh_holder(out[out.size - 1]) == p.local {
+            have = true
+          }
+          if !have {
+            bst = MStmt.new(msk_barrier(), st.loc)
+            o = MOperand.new(mok_copy(), -1)
+            o.place = MPlace.new(p.local)
+            bst.args.push(o)
+            out.push(bst)
+            changed = true
+          }
+        }
+      }
+      out.push(st)
+    }
+    if changed {
+      blk.stmts = out
+    }
+  }
+}
+
+// The open sets of f to a fixpoint and its final walk (with edit, the
+// removals); returns the holders whose removed barrier served a store or
+// an initialize's receiver.
+fn mir_fresh_func(m: MModule, f: MFunc, edit: Bool): Array(UInt64) {
+  n0 = mir_nwords(f.locals.size)
+  none = mir_zero_words(n0)
+  any = false
+  for blk in f.blocks {
+    for st in blk.stmts {
+      if st.kind == msk_barrier() {
+        any = true
+      }
+    }
+  }
+  if !any || f.blocks.size == 0 {
+    return none
+  }
+  n = f.locals.size
+  nb = f.blocks.size
+  nw = mir_nwords(n)
+  preds = mir_preds(f)
+  // Loop heads close every holder in a shared module (their poll).
+  head = mir_bools(nb, false)
+  if m.shared {
+    for b in 0..nb {
+      succ = mir_succ(f.blocks[b])
+      for s in succ {
+        if s >= 0 && s <= b && s < nb {
+          head[s] = true
+        }
+      }
+    }
+  }
+  entry = mir_zero_words(nw)
+  if f.fresh_self && n > 1 {
+    mir_bit_on(entry, 0, 1)
+  }
+  // Every block's exit, top (all open) until computed: a must-analysis.
+  outs = mir_zero_words(nb * nw)
+  for i in 0..outs.size {
+    outs[i] = ~0u64
+  }
+  cur = mir_zero_words(nw)
+  scratch = mir_zero_words(nw)
+  changed = true
+  while changed {
+    changed = false
+    for b in 0..nb {
+      mir_fresh_in(b, preds, outs, entry, head, nw, cur)
+      mir_fresh_block(m, f, b, cur, false, scratch)
+      for w in 0..nw {
+        if cur[w] != outs[b * nw + w] {
+          outs[b * nw + w] = cur[w]
+          changed = true
+        }
+      }
+    }
+  }
+  removed = mir_zero_words(nw)
+  for b in 0..nb {
+    mir_fresh_in(b, preds, outs, entry, head, nw, cur)
+    mir_fresh_block(m, f, b, cur, edit, removed)
+  }
+  if edit {
+    // An allocation whose result held a removed barrier that served a
+    // store is barriered at birth (its slow path's result, which may be
+    // mature).
+    for blk in f.blocks {
+      for st in blk.stmts {
+        if mir_fresh_is_alloc(m, st) && mir_bit(removed, 0, st.dest) {
+          st.fresh = true
+        }
+      }
+    }
+  }
+  removed
+}
+
+// The entry state of block b: bb0's from the function's entry, any other
+// the intersection of its predecessors' exits (none: nothing is open), and
+// nothing at a loop head of a shared module.
+fn mir_fresh_in(b: Int, preds: Array(Array(Int)), outs: Array(UInt64), entry: Array(UInt64), head: Array(Bool), nw: Int, cur: Array(UInt64)) {
+  if b == 0 {
+    for w in 0..nw {
+      cur[w] = entry[w]
+    }
+    return
+  }
+  if head[b] || preds[b].size == 0 {
+    for w in 0..nw {
+      cur[w] = 0u64
+    }
+    return
+  }
+  for w in 0..nw {
+    cur[w] = ~0u64
+  }
+  for p in preds[b] {
+    for w in 0..nw {
+      cur[w] = cur[w] & outs[p * nw + w]
+    }
+  }
+}
+
+// The pass over every function of the module. First each `initialize`
+// is asked whether its receiver's openness serves anything (a barrier on
+// _1 it would remove before a store); one that stores no reference into
+// its object, or none before collecting, asks nothing of its callers
+// (MFunc.fresh_self cleared), so their allocation needs no birth barrier
+// for it. Then the receivers' barriers, then the removals.
+pub fn mir_fresh_pass(m: MModule) {
+  for f in m.funcs {
+    if f.fresh_self {
+      r = mir_fresh_func(m, f, false)
+      if f.locals.size < 2 || !mir_bit(r, 0, 1) {
+        f.fresh_self = false
+      }
+    }
+  }
+  for f in m.funcs {
+    mir_fresh_init_barriers(m, f)
+    dummy = mir_fresh_func(m, f, true)
+  }
+}

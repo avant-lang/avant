@@ -96,7 +96,7 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @byval.av:84:1 {
   let _46: %byval.Q2
   let _47: i64
   let _48: %byval.Big
-  let _49: %byval.Named
+  let _49: %byval.Named slot
   let _50: ref %byval.Keep
   let _51 (k): ref %byval.Keep slot
   let _52: %byval.Big
@@ -123,12 +123,13 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @byval.av:84:1 {
 
 bb0:
   _40 = zero   @84:1
+  _49 = zero   @84:1
   _51 = zero   @84:1
   _54 = zero   @84:1
   _66 = zero   @84:1
   _68 = zero   @84:1
   gc.enter   @84:1
-  gc.roots _2, _40, _51, _54, _66, _68   @84:1
+  gc.roots _2, _40, _49, _51, _54, _66, _68   @84:1
   call __avant_type_maps() nocollect   @84:1
   call avant_io_init_argv(copy _1, copy _2) collects   @84:1
   _3 = struct %byval.P2 (const i32 4, const i32 2)   @85:22
@@ -197,7 +198,8 @@ bb0:
   call printf(const str.1, copy _47) nocollect   @108:3
   _48 = call ffi_big_make(const i64 2) collects   @109:18
   _49 = struct %byval.Named (const i32 1, const str.4)   @109:36
-  _50 = call av.byval/Keep.new(copy _48, copy _49) collects   @109:11
+  _50 = call avant_alloc(const u64 40, const u32 1) collects fresh   @109:11
+  call av.byval/Keep.initialize(copy _50, copy _48, copy _49) nocollect   @109:11
   _51 = copy _50   @109:5
   _52 = copy (*_51).0   @110:24
   _53 = call ffi_big_sum(copy _52) collects   @110:10
@@ -253,8 +255,7 @@ fn av.byval/Keep.initialize(_1: ref %byval.Keep, _2: %byval.Big, _3: %byval.Name
 
 bb0:
   (*_1).0 = copy _2   @79:14
-  barrier copy _1   @80:15
-  (*_1).1 = copy _3   @80:15
+  (*_1).1 = copy _3 fresh   @80:15
   return   @78:3
 }
 
@@ -267,7 +268,7 @@ fn av.byval/Keep.new(_1: %byval.Big, _2: %byval.Named) -> ref %byval.Keep frame 
 bb0:
   gc.enter   @74:1
   gc.roots _2   @74:1
-  _3 = call avant_alloc(const u64 40, const u32 1) collects   @74:1
+  _3 = call avant_alloc(const u64 40, const u32 1) collects fresh   @74:1
   call av.byval/Keep.initialize(copy _3, copy _1, copy _2) nocollect   @74:1
   _0 = copy _3   @74:1
   gc.leave   @74:1

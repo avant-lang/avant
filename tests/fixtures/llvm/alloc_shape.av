@@ -29,8 +29,47 @@ fn sum_nodes(k: Int): Int {
   t
 }
 
+// M5 (O204, O337): Tree.new(a, b) is lowered where it is called: `pair`
+// allocates inline (its slow path barriers the result once, at birth) and
+// calls Tree.initialize, whose two stores into the new object have no
+// barrier test: no collecting call lies between the allocation and them.
+class Tree {
+  left: Tree?
+  right: Tree?
+
+  fn initialize(left: Tree?, right: Tree?) {
+    self.left = left
+    self.right = right
+  }
+}
+
+fn pair(a: Tree?, b: Tree?): Tree {
+  Tree.new(a, b)
+}
+
+// M5's other side: in Named.initialize the string interpolation (a
+// collecting call) lies between the allocation and `self.label = ...`,
+// which keeps its barrier test; `self.next = next` before it has none.
+class Named {
+  next: Named?
+  label: String
+
+  fn initialize(next: Named?, k: Int) {
+    self.next = next
+    self.label = "n${k}"
+  }
+}
+
 fn main {
   n = fresh_node(3)
   puts(n.v)
   puts(sum_nodes(4))
+  t = pair(pair(nil, nil), nil)
+  if l = t.left {
+    puts("pair")
+  }
+  m = Named.new(Named.new(nil, 1), 2)
+  if x = m.next {
+    puts("${m.label} ${x.label}")
+  }
 }
