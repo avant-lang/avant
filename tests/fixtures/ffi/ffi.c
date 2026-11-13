@@ -575,3 +575,148 @@ FFI_OPT_TRIO(h)
 FFI_OPT_TRIO(u)
 FFI_OPT_TRIO(k)
 FFI_OPT_TRIO(j)
+
+/* empty_end.av (Stage 29 W-FIX1c, O551): an object with no payload at
+ * the last word of the heap's highest block. With avant_alloc's guard
+ * (a 0-byte request takes one word) removed, the object's payload
+ * address there is the first address past the committed heap; a young
+ * collection copies the object and, when its copy finds a free block
+ * without committing a new chunk, the fix-up leaves every reference to
+ * it naming the old copy (splus_new_addr returns an address at or past
+ * the committed range unchanged). The steps:
+ *   1. objects allocated in mature space, kept on a chain, until the
+ *      mature cursor has left four blocks free in its 4 MiB chunk (a
+ *      fresh chunk's blocks are taken lowest first, so they are its last
+ *      four);
+ *   2. young 16-byte objects, dropped, until the young cursor is in the
+ *      chunk's last block; a young collection, which frees the four
+ *      blocks; then the same objects again until the young cursor is in
+ *      the last block with exactly one word left (a 24-byte one shifts
+ *      the parity once): freed blocks are taken last freed first, so
+ *      other blocks of the four are still free then;
+ *   3. avant_alloc(0, bytes): without the guard it takes that word; with
+ *      it the object takes two words elsewhere. It is stored in a rooted
+ *      holder and a young collection runs.
+ * Returned, packed: bit 0..15 how many times step 3's position was
+ * reached, 16..31 empty objects whose payload was not one word, 32..47
+ * ones whose payload address was a block's first address, 48..62 ones the
+ * holder no longer named as an object after the collection. */
+typedef struct FfiHeader {
+  uint32_t size;
+  uint16_t type_id;
+  uint16_t flags;
+} FfiHeader;
+void *avant_alloc(uint64_t nbytes, uint32_t type_id);
+void avant_alloc_in_mature(int32_t on);
+void avant_gc_add_root(void **slot);
+void avant_gc_collect_young(void);
+void avant_barrier(void *obj);
+int avant_is_heap(void *payload);
+#define FFI_TYPE_PTRS 65535u
+#define FFI_BLOCK ((uintptr_t)32768)
+#define FFI_CHUNK ((uintptr_t)4 << 20)
+#define FFI_FLAG_FORWARDED 4u
+static __thread void *ffi_ee_keep;
+static __thread void *ffi_ee_chain;
+static __thread int ffi_ee_rooted;
+
+static uintptr_t ffi_ee_block(void *payload) {
+  return (((uintptr_t)payload - 8) % FFI_CHUNK) / FFI_BLOCK;
+}
+
+static uintptr_t ffi_ee_rest(void *payload, uintptr_t total) {
+  return FFI_BLOCK - (((uintptr_t)payload - 8) % FFI_BLOCK) - total;
+}
+
+/* Young 16-byte objects, dropped, until one lies in block LAST of its
+ * chunk (WORD 0), or until the cursor there has one word left (WORD 1). */
+static int ffi_ee_young_to(uintptr_t last, int word) {
+  int i;
+  for (i = 0; i < 6 * 2048; i++) {
+    void *p = avant_alloc(8, 0);
+    uintptr_t rest;
+    if (ffi_ee_block(p) != last) {
+      continue;
+    }
+    if (!word) {
+      return 1;
+    }
+    rest = ffi_ee_rest(p, 16);
+    if (rest % 16 == 0 && rest >= 32) {
+      p = avant_alloc(16, 0);
+      if (ffi_ee_block(p) != last) {
+        continue;
+      }
+      rest = ffi_ee_rest(p, 24);
+    }
+    if (rest == 8) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+int64_t ffi_empty_end(int64_t rounds) {
+  int64_t reached = 0, nonword = 0, atblock = 0, stale = 0;
+  int64_t r;
+  uintptr_t last = FFI_CHUNK / FFI_BLOCK - 1;
+  if (!ffi_ee_rooted) {
+    avant_gc_add_root(&ffi_ee_keep);
+    avant_gc_add_root(&ffi_ee_chain);
+    ffi_ee_rooted = 1;
+  }
+  ffi_ee_keep = avant_alloc(64 * sizeof(void *), FFI_TYPE_PTRS);
+  /* The guard itself, wherever the cursor is. */
+  {
+    void *e = avant_alloc(0, 0);
+    if (((FfiHeader *)e - 1)->size != 8) {
+      nonword++;
+    }
+  }
+  for (r = 0; r < rounds && r < 60; r++) {
+    int i;
+    int at = 0;
+    /* Step 1: 2,048-byte objects (16 to a block), each naming the one
+     * before, until one ends the fifth block from the chunk's end. */
+    avant_alloc_in_mature(1);
+    for (i = 0; i < 16 * 300 && !at; i++) {
+      void **f = (void **)avant_alloc(2040, FFI_TYPE_PTRS);
+      f[0] = ffi_ee_chain;
+      ffi_ee_chain = f;
+      at = ffi_ee_block(f) == last - 4 && ffi_ee_rest(f, 2048) == 0;
+    }
+    avant_alloc_in_mature(0);
+    /* Step 2. */
+    if (!at || !ffi_ee_young_to(last, 0)) {
+      continue;
+    }
+    avant_gc_collect_young();
+    if (!ffi_ee_young_to(last, 1)) {
+      continue;
+    }
+    reached++;
+    /* Step 3. */
+    {
+      void **keep;
+      void *e = avant_alloc(0, 0);
+      void *e2;
+      if (((FfiHeader *)e - 1)->size != 8) {
+        nonword++;
+      }
+      if ((uintptr_t)e % FFI_BLOCK == 0) {
+        atblock++;
+      }
+      keep = (void **)ffi_ee_keep;
+      keep[r] = e;
+      avant_barrier(keep);
+      avant_gc_collect_young();
+      keep = (void **)ffi_ee_keep;
+      e2 = keep[r];
+      if (!avant_is_heap(e2) || (((FfiHeader *)e2 - 1)->flags & FFI_FLAG_FORWARDED)) {
+        stale++;
+      }
+    }
+  }
+  ffi_ee_chain = NULL;
+  return reached | (nonword << 16) | (atblock << 32) | (stale << 48);
+}

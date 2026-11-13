@@ -276,12 +276,55 @@ fn test_stress_inline(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(stat_value(log_text("${dir}/stress_inline_calls.plain.err"), "inline_allocs"), 0, "stress_inline_calls: the call-form build has no inline allocation")
 }
 
+// O551 (Stage 29 W-FIX1c): avant_alloc's own guard (a 0-byte request
+// takes one word), which generated code never reaches, and the layout it
+// makes impossible, reached on purpose. ffi/empty_end.av (its C half in
+// ffi/ffi.c) asks avant_alloc for 0 bytes from C: once anywhere, and
+// with exactly one word left in the last block of the heap's highest
+// chunk, then keeps the object in a rooted holder across a young
+// collection. Every environment prints `empty_end: 0 bad`. With every
+// collector variable unset the position must be reached (at least once;
+// twice today), so a change of the allocator's order that loses the
+// layout fails here instead of passing with nothing checked. With
+// avant_alloc's line removed the default run prints `6 bad`: 3 objects
+// not one word, 2 with a block's first address as their payload
+// address, 1 the holder still names by its old copy after the
+// collection (splus_new_addr leaves an address at the end of the
+// committed heap unchanged).
+fn test_empty_end(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/empty_end.av", "${dir}/empty_end", "${dir}/empty_end.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "empty_end.av: compiles")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "empty_end", "empty_end.g${e}", envs[e]))
+  }
+  runs.push(run_job_env(dir, "empty_end", "empty_end.clean", "-u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_HEAP_RESERVE_GB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS -u AVANT_GC_STATS EMPTY_END_REPORT=1"))
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "empty_end.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/empty_end.g${e}.out"), "empty_end: 0 bad\n", "empty_end.av ${what}: an empty object takes one word and survives its move")
+    c.eq_str(log_text("${dir}/empty_end.g${e}.err"), "", "empty_end.av ${what}: no stderr (no verifier report)")
+  }
+  clean = log_text("${dir}/empty_end.clean.out")
+  c.eq_int(runs[envs.size].code, 0, "empty_end.av, every collector variable unset: exit 0")
+  c.expect(str_has(clean, "empty_end: 0 bad\n"), "empty_end.av, every collector variable unset: 0 bad")
+  c.expect(str_has(clean, "\nreached ") && !str_has(clean, "\nreached 0,"), "empty_end.av, every collector variable unset: the position is reached (one word left in the last block of the highest chunk)")
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
   if compiler = env_get("AVANT_COMPILER") {
     test_gc_checks(c, compiler, avant_test_root(), scratch_dir())
     test_empty_payload(c, compiler, avant_test_root(), scratch_dir())
     test_stress_inline(c, compiler, avant_test_root(), scratch_dir())
+    test_empty_end(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
