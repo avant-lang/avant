@@ -14,7 +14,8 @@
 # runtime/build.sh` first), except avant_llvm.o, which only the
 # compiler's own link uses (D190); runtime/avant_rt.h ships too, for the
 # scanners re2c generates. The compiler finds this runtime beside its
-# executable (D149). VERSIONS_FILE, when given, becomes versions.txt;
+# executable (D149). examples/, LICENSE and third_party/ (the notices)
+# ship too (O294). VERSIONS_FILE, when given, becomes versions.txt;
 # otherwise a short local one is written.
 #
 # Writes OUT_DIR/avant-linux-x86_64/, OUT_DIR/avant-linux-x86_64.tar.gz,
@@ -65,6 +66,32 @@ for f in "$root"/runtime/build/*.o; do
   install -m 644 "$f" "$dir/runtime/build/"
 done
 install -m 644 "$root/runtime/avant_rt.h" "$dir/runtime/avant_rt.h"
+
+# What the README points to that a user of the archive needs (O294,
+# Stage 29 W-FIX1e): examples/ ("Runnable programs ... live in
+# examples/"), with the C sources its interop examples link; Avant's
+# LICENSE; and the third-party notices D148 lists, which the vendored
+# libraries' terms require beside a binary that carries them (the
+# runtime objects carry all six): runtime/third_party/NOTICE.md and each
+# tree's license, the two that keep theirs in a source header (yyjson,
+# picohttpparser) as that header's license comment.
+(cd "$root" && find examples -type f | LC_ALL=C sort) | while IFS= read -r f; do
+  install -D -m 644 "$root/$f" "$dir/$f"
+done
+install -m 644 "$root/LICENSE" "$dir/LICENSE"
+tp="$root/runtime/third_party"
+install -D -m 644 "$tp/NOTICE.md" "$dir/third_party/NOTICE.md"
+for f in base64/LICENSE pcre2/LICENCE.md pcre2/AUTHORS.md pcre2/deps/sljit/LICENSE uSockets/LICENSE zlib/LICENSE; do
+  [ -f "$tp/$f" ] || fail "third-party license is missing: runtime/third_party/$f"
+  install -D -m 644 "$tp/$f" "$dir/third_party/$f"
+done
+for h in yyjson/yyjson.h picohttpparser/picohttpparser.h; do
+  lic="$dir/third_party/$(dirname "$h")/LICENSE"
+  mkdir -p "$(dirname "$lic")"
+  sed -n '1,/\*\//p' "$tp/$h" > "$lic"
+  grep -q 'Permission is hereby granted' "$lic" || fail "no license comment at the top of runtime/third_party/$h"
+  chmod 644 "$lic"
+done
 
 # versions.txt is also what `avant version` reads (O534). Without
 # VERSIONS_FILE: the compiler's own build record (COMPILER.versions.txt,
