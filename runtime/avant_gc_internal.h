@@ -87,8 +87,9 @@
  * gc_heap.committed, which null and every static address fail) and the
  * header's LARGE flag, with no start-bit lookup, no chunk kind and no
  * block-in-use test: the full mark (mark_field, avant_gc_mark.c), the
- * young trace (trace_field, avant_gc_sticky.c), the remembered set's
- * "names a young object" (slot_names_young, avant_gc_remset.c). The
+ * young trace and its fix-up (trace_field, fix_field,
+ * avant_gc_sticky.c), the remembered set's "names a young object"
+ * (slot_names_young, avant_gc_remset.c). The
  * allocation path's late start bits (VALK-A2, M7) rely on it too: a
  * trace that never asks a field's start bit lets a young object's bit be
  * set when its hole is retired.
@@ -512,7 +513,7 @@ typedef struct BlockSet {
 #define AVANT_FLAG_VSEEN 256u
 
 /* A young collection's "promoted by this collection" bit (Stage 28 W15d,
- * S+): set by promote_in_place, cleared with MARKED by gc_clear_noted,
+ * S+): set by promote_young, cleared with MARKED by gc_clear_noted,
  * internal to the runtime like REM (128 was LOS_KEEP's, retired in
  * W15a1). S+'s holder aging reads it (splus_age_holders). */
 #define AVANT_FLAG_PROMOTED_NOW 128u
@@ -948,10 +949,23 @@ typedef struct GcHeap {
    * set it and no later young collection reads a stale one as "already
    * scanned". Full collections mark in the side bitmap and never touch
    * MARKED. Before W14a2 the marks were cleared by a walk of every object
-   * of every space (clear_mark_flags). */
+   * of every space (clear_mark_flags). An entry is the payload address
+   * with tag bits in its three low bits (NOTED_*, below; the Valk stage,
+   * VALK-T, O579); gc_noted_object gives the address. */
   void **noted;
   uint32_t noted_n;
   uint32_t noted_cap;
+  /* Holders the fix-up walks besides the list's NOTED_FIX entries
+   * (avant_gc_sticky.c, fix_extra_add). */
+  void **fix_extra;
+  uint32_t fix_extra_n;
+  uint32_t fix_extra_cap;
+  /* The large pointer buffers the running young collection marked, in
+   * the order it marked them (avant_gc_sticky.c, note_carded):
+   * gc_cards_settle's objects. */
+  void **carded;
+  uint32_t carded_n;
+  uint32_t carded_cap;
   /* A young collection tenures every reached young large object (a fixed
    * AVANT_YOUNG_MB, or S_LARGE_AGE 1; gc_reclaim_young_large). */
   int force_tenure;
@@ -999,13 +1013,16 @@ typedef struct GcHeap {
   uint32_t surv_blocks_n;
   uint32_t surv_blocks_cap;
   uint64_t aged_now;
-  /* One byte per block of the committed heap, 1 for a block the running
-   * young collection moved objects out of (SPLUS_EVAC, SPLUS_PART):
-   * splus_fix's test of every field it rereads, instead of two block
-   * records (Stage 28 W15d, O93). Set before the fix-up, cleared by
-   * splus_finish. */
+  /* One byte per block of the committed heap, nonzero for a block the
+   * running young collection moves objects out of (1 SPLUS_EVAC, 2
+   * SPLUS_PART): the copy's test of every survivor and the fix-up's test
+   * of every field it rereads, instead of block records (Stage 28 W15d,
+   * O93; the Valk stage, VALK-T, O579). Set when the blocks are chosen,
+   * cleared by splus_finish. */
   uint8_t *evac_map;
   uint64_t evac_map_n;
+  /* An entry of the map is set (splus_finish clears them). */
+  int evac_any;
 
   /* avant_gc_defrag.c: the evacuated blocks a defragmenting full
    * collection frees once every reference is rewritten. */
@@ -1428,8 +1445,16 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
 /* avant_gc_sticky.c: the young generation (S+; candidate S with
  * GC_STICKY_COPY 0) and the noted list, and the young allocator's block
  * lists in avant_gc_alloc.c. */
-void gc_note_marked(void *payload);
 void gc_clear_noted(void);
+/* The noted list's tag bits (avant_gc_sticky.c says what each means): a
+ * payload is 8-aligned, so its three low bits are free. */
+#define NOTED_SURV ((uintptr_t)1)
+#define NOTED_FIX ((uintptr_t)2)
+#define NOTED_MOVED ((uintptr_t)4)
+#define NOTED_TAGS ((uintptr_t)7)
+static inline void *gc_noted_object(uint32_t i) {
+  return (void *)((uintptr_t)gc_heap.noted[i] & ~NOTED_TAGS);
+}
 void gc_sticky_collect(int tenure);
 void gc_sticky_full_begin(void);
 void gc_sticky_full_end(void);

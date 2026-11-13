@@ -1549,7 +1549,7 @@ static int vi_sticky(void) {
      * passes over less). */
     vr_record(0);
     for (i = 0; vr_valid && i < gc_heap.noted_n; i++) {
-      void *n = gc_heap.noted[i];
+      void *n = gc_noted_object((uint32_t)i);
       if (avant_header(n)->flags & AVANT_FLAG_FORWARDED) {
         n = gc_forward_of(avant_header(n));
       }
