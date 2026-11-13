@@ -1,0 +1,342 @@
+// The metamorphic probe matrix (Valk stage VALK-TM, L4; learned from
+// Valk's tests/probe/gen.py). Each static rule of the checker comes as a
+// pair: an unsafe program (the compiler must refuse it, with the rule's
+// words) and its safe twin (the compiler must accept it). The marked
+// statement or expression of both is rewritten under every syntactic
+// wrapper below, each program is checked by `avant dump` (the whole front
+// end, the lowering and the MIR verifier; no link), and each verdict is
+// one row of a table:
+//
+//   AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm run tests/probe_matrix.av
+//
+// writes tests/probe/matrix.txt (bless it only after reading its diff);
+// with an argument (`... run tests/probe_matrix.av -- OUT`) it writes OUT,
+// which tests/cases/test_probe_matrix.av compares with the checked-in
+// table row by row. A row's class is `ok` (the verdict the pair asks
+// for), `hole` (an unsafe program accepted), `refused` (a safe program
+// rejected) or `other` (an unsafe program rejected for another reason
+// than the rule's). A row that is not `ok` is a finding of the record
+// that blessed it.
+//
+// A new rule joins by adding one `rule(...)` below: its name, its kind
+// (`stmt`: the marked text is a statement; `expr`: an expression of the
+// type it names), the site (a program with `@` where the wrapped text
+// goes), the unsafe and the safe text, the words of the rule's error, and
+// the site of the safe twin when the twin differs by its site rather
+// than by its text.
+
+lib probe_rt {
+  fun avant_tmp_dir: String
+}
+
+class PRule {
+  pub name: String = ""
+  pub kind: String = ""
+  pub ty: String = ""
+  pub site: String = ""
+  pub safe_site: String = ""
+  pub unsafe_text: String = ""
+  pub safe_text: String = ""
+  pub needle: String = ""
+}
+
+fn rule(name: String, kind: String, ty: String, site: String, safe_site: String, unsafe_text: String, safe_text: String, needle: String): PRule {
+  r = PRule.new
+  r.name = name
+  r.kind = kind
+  r.ty = ty
+  r.site = site
+  r.safe_site = safe_site
+  if safe_site.size == 0 {
+    r.safe_site = site
+  }
+  r.unsafe_text = unsafe_text
+  r.safe_text = safe_text
+  r.needle = needle
+  r
+}
+
+// The declarations every program shares: an error type and a function
+// that can fail (the README's parse_age), and opaque values for the
+// wrappers' conditions.
+fn prelude_decls: String {
+  "class ParseError: Error {\n  message: String\n\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\n\nfn parse_age(s: String): Int | ParseError {\n  n = s.to_i ?? return ParseError.new(\"not a number: \${s}\")\n  n\n}\n\nfn probe_cond: Bool {\n  argv().size > 0\n}\n\nfn probe_k: Int {\n  argv().size\n}\n\nfn probe_maybe: Int? {\n  if argv().size > 0 {\n    return 1\n  }\n  nil\n}\n"
+}
+
+// The rules the README states that one program pair can show. Left out
+// for now: `Mutex.with`'s plain value and the captures of `spawn` and
+// `.parallel` (their programs need a task runtime and say more than one
+// thing at once; tests/cases/test_rules.av and test_threads_llvm.av hold
+// their cases), `if` on a non-Bool, the dangling-line rule (it is the
+// parser's, before any wrapper exists), and the never-read locals and
+// the walk's mutation rules (W6, W8: not built yet).
+//
+// Wrappers: a statement under `if`, `else`, a `switch` arm, `while`,
+// `for`, a lambda's body, a builtin's block (`each`) and a binding chain
+// (`if v = ..., cond`); an expression as the value of an `if` expression,
+// a `switch` expression, a lambda, inside a binding chain's body, a
+// method call's argument, an interpolation, a `for` body, a builtin's
+// block and the fallback of `??`. Left out: `?? return` (it ends the
+// function and wraps no expression of its own; the fallback row covers
+// the operand of `??`), a bare block (the language has none), and
+// `switch` on a union's member (not built).
+fn rules: Array(PRule) {
+  xs: Array(PRule) = []
+  main_site = "fn main {\n@\n}\n"
+  // README "Errors cannot be dropped".
+  xs.push(rule("discard-error", "stmt", "", main_site, "", "parse_age(\"1\")", "_ = parse_age(\"1\")", "drops a value that can be an error"))
+  // README "x? compiles only where the failure can be returned".
+  xs.push(rule("question-unreturnable", "expr", "Int", "fn site: Int {\n@\n  0\n}\n\nfn main {\n  puts(site())\n}\n", "fn site: Int | ParseError {\n@\n  0\n}\n\nfn main {\n  _ = site()\n}\n", "parse_age(\"1\")?", "parse_age(\"1\")?", "postfix ? on Int | ParseError would return ParseError"))
+  // README "Field initialization", rule 3: a field without a default or a
+  // zero is set on every path before it is read.
+  xs.push(rule("field-read-before-set", "expr", "Int", "class Probe {\n  xs: Array(Int)\n\n  fn initialize {\n@\n    self.xs = []\n  }\n}\n\nfn main {\n  p = Probe.new\n}\n", "class Probe {\n  xs: Array(Int)\n\n  fn initialize {\n    self.xs = []\n@\n  }\n}\n\nfn main {\n  p = Probe.new\n}\n", "self.xs.size", "self.xs.size", "xs of Probe"))
+  // README "Methods and self": a field is written only as self.x = ...
+  xs.push(rule("bare-field-write", "stmt", "", "class Probe {\n  x: Int = 0\n\n  fn bump {\n@\n  }\n}\n\nfn main {\n  p = Probe.new\n  p.bump\n  puts(p.x)\n}\n", "", "x = 1", "self.x = 1", "x is a field of Probe"))
+  // README "for": the loop variable cannot be assigned.
+  xs.push(rule("for-variable-assign", "stmt", "", "fn main {\n  for i in 0..3 {\n@\n  }\n}\n", "", "i = 5", "puts(i)", "cannot assign to i"))
+  // README "Visibility": a field without pub is private to its module.
+  xs.push(rule("private-field", "expr", "Int", "import probe_mod\n\nfn main {\n  pb = PBox.new\n@\n}\n", "", "pb.secret", "pb.open", "is private to module probe_mod"))
+  // README "Numbers": values of different number types do not mix.
+  xs.push(rule("number-mix", "expr", "Int", "fn main {\n  pa: Int32 = 1\n  pn = 2\n@\n}\n", "", "pa + pn", "pn + pn", "binary operator expects matching types"))
+  xs
+}
+
+// The module private-field imports.
+fn probe_mod_src: String {
+  "pub class PBox {\n  secret: Int = 1\n  pub open: Int = 2\n}\n"
+}
+
+fn stmt_wrappers: Array(String) {
+  ["plain", "if", "else", "switch-arm", "while", "for", "lambda", "builtin-block", "binding-chain"]
+}
+
+fn expr_wrappers: Array(String) {
+  ["plain", "if-expr", "switch-expr", "lambda", "binding-chain", "call-arg", "interpolation", "for", "builtin-block", "qq-fallback"]
+}
+
+fn ind(s: String, pad: String): String {
+  out = ""
+  lines = s.split("\n")
+  for i in 0..lines.size {
+    if i > 0 {
+      out = "${out}\n"
+    }
+    out = "${out}${pad}${lines[i]}"
+  }
+  out
+}
+
+// A statement under a wrapper, at two spaces.
+fn wrap_stmt(w: String, s: String): String {
+  if w == "plain" {
+    return ind(s, "  ")
+  }
+  if w == "if" {
+    return "  if probe_cond() {\n${ind(s, "    ")}\n  }"
+  }
+  if w == "else" {
+    return "  if probe_cond() {\n    puts(0)\n  } else {\n${ind(s, "    ")}\n  }"
+  }
+  if w == "switch-arm" {
+    return "  switch probe_k() {\n    case 1 {\n${ind(s, "      ")}\n    }\n    else {\n      puts(0)\n    }\n  }"
+  }
+  if w == "while" {
+    return "  while probe_cond() {\n${ind(s, "    ")}\n    break\n  }"
+  }
+  if w == "for" {
+    return "  for q in 0..2 {\n${ind(s, "    ")}\n  }"
+  }
+  if w == "lambda" {
+    return "  pf = { ||\n${ind(s, "    ")}\n    0\n  }\n  puts(pf())"
+  }
+  if w == "builtin-block" {
+    return "  [1, 2].each { |q|\n${ind(s, "    ")}\n  }"
+  }
+  if w == "binding-chain" {
+    return "  if pv = probe_maybe(), pv > 0 {\n${ind(s, "    ")}\n  }"
+  }
+  "  (unknown wrapper ${w})"
+}
+
+// An expression of type ty under a wrapper, used, at two spaces.
+fn wrap_expr(w: String, e: String): String {
+  use = "  puts(\"\${px}\")"
+  if w == "plain" {
+    return "  px = ${e}\n${use}"
+  }
+  if w == "if-expr" {
+    return "  px = if probe_cond() {\n    ${e}\n  } else {\n    ${e}\n  }\n${use}"
+  }
+  if w == "switch-expr" {
+    return "  px = switch probe_k() {\n    case 1 {\n      ${e}\n    }\n    else {\n      ${e}\n    }\n  }\n${use}"
+  }
+  if w == "lambda" {
+    return "  pf = { || ${e} }\n  px = pf()\n${use}"
+  }
+  if w == "binding-chain" {
+    return "  if pv = probe_maybe(), pv > 0 {\n    px = ${e}\n    puts(\"\${px}\")\n  }"
+  }
+  if w == "call-arg" {
+    return "  px = ProbeCall.new.pass(${e})\n${use}"
+  }
+  if w == "interpolation" {
+    return "  px = \"<\${${e}}>\"\n${use}"
+  }
+  if w == "for" {
+    return "  for q in 0..2 {\n    puts(\"\${${e}}\")\n  }"
+  }
+  if w == "builtin-block" {
+    return "  [1, 2].each { |q| puts(\"\${${e}}\") }"
+  }
+  if w == "qq-fallback" {
+    return "  px = probe_opt() ?? ${e}\n${use}"
+  }
+  "  (unknown wrapper ${w})"
+}
+
+// The helpers an expression wrapper of type ty needs.
+fn expr_decls(ty: String): String {
+  "class ProbeCall {\n  pub fn pass(v: ${ty}): ${ty} {\n    v\n  }\n}\n\nfn probe_opt: ${ty}? {\n  nil\n}\n"
+}
+
+fn fill(site: String, body: String): String {
+  out = ""
+  lines = site.split("\n")
+  for i in 0..lines.size {
+    if i > 0 {
+      out = "${out}\n"
+    }
+    if lines[i] == "@" {
+      out = "${out}${body}"
+    } else {
+      out = "${out}${lines[i]}"
+    }
+  }
+  out
+}
+
+fn program(r: PRule, w: String, safe: Bool): String {
+  text = r.unsafe_text
+  site = r.site
+  if safe {
+    text = r.safe_text
+    site = r.safe_site
+  }
+  body = ""
+  decls = prelude_decls()
+  if r.kind == "stmt" {
+    body = wrap_stmt(w, text)
+  } else {
+    body = wrap_expr(w, text)
+    decls = "${decls}\n${expr_decls(r.ty)}"
+  }
+  filled = fill(site, body)
+  // An import stays the program's first line.
+  if filled.size > 7 && str_slice(filled, 0, 7) == "import " {
+    nl = 0
+    while filled[nl] != 10 {
+      nl += 1
+    }
+    return "${str_slice(filled, 0, nl + 1)}\n${decls}\n${str_slice(filled, nl + 1, filled.size)}"
+  }
+  "${decls}\n${filled}"
+}
+
+// The index of needle in hay at or after from, or -1; no allocation per
+// position (the stress pass collects at every allocation).
+fn find_at(hay: String, needle: String, from: Int): Int {
+  if needle.size == 0 {
+    return from
+  }
+  i = from
+  while i + needle.size <= hay.size {
+    k = 0
+    while k < needle.size && hay[i + k] == needle[k] {
+      k += 1
+    }
+    if k == needle.size {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+// The first error line of a log ("" when none).
+fn first_error(log: String): String {
+  at = find_at(log, "error[", 0)
+  if at < 0 {
+    return ""
+  }
+  e = at
+  while e < log.size && log[e] != 10 {
+    e += 1
+  }
+  str_slice(log, at, e)
+}
+
+fn main: Int {
+  compiler = env_get("AVANT_COMPILER") ?? ""
+  if compiler.size == 0 {
+    puts("tests/probe_matrix.av: AVANT_COMPILER is not set")
+    return 1
+  }
+  root = env_get("AVANT_ROOT") ?? "."
+  out_path = "${root}/tests/probe/matrix.txt"
+  av = argv()
+  if av.size > 1 {
+    out_path = av[1]
+  }
+  dir = probe_rt.avant_tmp_dir()
+  _ = file_write("${dir}/probe_mod.av", probe_mod_src())
+  table = buf_new()
+  table.push_str("# The probe matrix (tests/probe_matrix.av writes it; tests/cases/test_probe_matrix.av compares it).\n")
+  table.push_str("# rule wrapper variant verdict class | first error line\n")
+  n = 0
+  for r in rules() {
+    ws = stmt_wrappers()
+    if r.kind == "expr" {
+      ws = expr_wrappers()
+    }
+    for w in ws {
+      for v in 0..2 {
+        safe = v == 1
+        variant = "unsafe"
+        if safe {
+          variant = "safe"
+        }
+        n += 1
+        src = "${dir}/p${n}.av"
+        log = "${dir}/p${n}.log"
+        _ = file_write(src, program(r, w, safe))
+        code = process_run_out(compiler, ["dump", src], log) ?? -1
+        text = file_read(log) ?? ""
+        err = first_error(text)
+        verdict = "accepted"
+        if code != 0 {
+          verdict = "refused"
+        }
+        cls = "ok"
+        if safe && code != 0 {
+          cls = "refused"
+        } else if !safe && code == 0 {
+          cls = "hole"
+        } else if !safe && find_at(text, r.needle, 0) < 0 {
+          cls = "other"
+        }
+        if code != 0 && code != 1 {
+          verdict = "status-${code}"
+        }
+        table.push_str("${r.name} ${w} ${variant} ${verdict} ${cls} | ${err}\n")
+        if code == 0 {
+          _ = file_write(log, "")
+        }
+      }
+    }
+  }
+  if r = file_write(out_path, table.to_s) {
+    return 0
+  }
+  puts("tests/probe_matrix.av: cannot write ${out_path}")
+  1
+}
