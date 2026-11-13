@@ -3383,9 +3383,10 @@ static int parse_response_head(const char *raw, size_t n, int *status,
  * (avant_http_resp_body): a server that keeps the connection open after
  * a complete answer (it ignores Connection: close, or a proxy keeps the
  * connection) held the call until its deadline, which then failed it
- * as a timeout. RFC 9112 6.3, in its order: a response to HEAD, a 1xx,
- * 204 or 304 ends with its head (a 1xx is interim: the response that
- * follows it is read until the close, as before); a chunked body ends
+ * as a timeout. RFC 9112 6.3, in its order: a response to HEAD, a 204
+ * or a 304 ends with its head; after a 1xx (an interim answer, which
+ * the client does not read past) the exchange ends at the close, as
+ * before; a chunked body ends
  * after its last chunk and the trailer section; a Content-Length body
  * after that many bytes; a body with neither (or another
  * Transfer-Encoding, or a length that is not a number) when the server
