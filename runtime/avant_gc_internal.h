@@ -963,6 +963,14 @@ typedef struct GcHeap {
   uint64_t small_hint;
   /* Bytes of free blocks that are resident (not madvised). */
   uint64_t free_resident;
+  /* The resident free bytes that are not free blocks (the dirty free
+   * pages of large-object chunks, the free chunks that are dirty and
+   * committed), and the chunks that are empty, not decommitted and hold
+   * no resident free byte: with free_resident, what gc_heap_return starts
+   * from instead of reading the chunk map (gc_chunk_account,
+   * avant_gc_heap.c; the Valk stage, VALK-T2, O630). */
+  uint64_t free_resident_other;
+  uint32_t clean_empty_chunks;
   /* The clock of gc_heap_return's hysteresis (Q12): a free block or
    * chunk is stamped with it when freed (idle) and returned only by a
    * later tick. It ticks at every full collection, and under candidate
@@ -1446,6 +1454,7 @@ Block *gc_block_take(void);
 void gc_block_give(Block *b);
 uint64_t gc_chunk_take(uint64_t n);
 void gc_chunk_give(uint64_t c);
+void gc_chunk_account(uint64_t c, int sign);
 void gc_return_pages(void *p, size_t len);
 void gc_heap_return(uint64_t live);
 void gc_mature_normalize(void);
