@@ -70,11 +70,13 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   keys: Array(String) = []
   envs: Array(String) = []
   wants: Array(String) = []
-  // The heap-limit runs leave out an outer AVANT_GC_STRESS (400,000
-  // pushes into a remembered array, one young collection each), and the
-  // stress runs an outer AVANT_GC_VERIFY (a whole-heap check at each of
-  // millions of collections).
-  lenvs = ["-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=24", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=24 AVANT_GC_VERIFY=1", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=24 AVANT_NURSERY=0", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=32 AVANT_NURSERY=0"]
+  // The heap-limit runs keep an outer AVANT_GC_STRESS (VALK-TM, O602:
+  // 0.6 to 6.9 s each with it), except the one under AVANT_GC_VERIFY=1:
+  // with the stress mode it did not end in 600 s (a whole-heap check at
+  // each of 400,000 pushes' collections). The stress runs leave out an
+  // outer AVANT_GC_VERIFY (a whole-heap check at each of millions of
+  // collections).
+  lenvs = ["AVANT_HEAP_MAX_MB=24", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=24 AVANT_GC_VERIFY=1", "AVANT_HEAP_MAX_MB=24 AVANT_NURSERY=0", "AVANT_HEAP_MAX_MB=32 AVANT_NURSERY=0"]
   e = 0
   while e < lenvs.size {
     progs.push("limit_defer")
@@ -91,7 +93,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   keys.push("task_pins.g0")
   envs.push("")
   wants.push("sum: 1490\npins left: 0\n")
-  renvs = ["-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=32", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=32 AVANT_GC_VERIFY=1"]
+  renvs = ["AVANT_HEAP_MAX_MB=32", "AVANT_HEAP_MAX_MB=32 AVANT_GC_VERIFY=1"]
   e = 0
   while e < renvs.size {
     progs.push("task_records")
@@ -133,9 +135,9 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   }
   // heap/limit_region.av (gc-design.md §5.4, Stage 28 W15a1): a split
   // that alone allocates more than the limit dies naming the region.
-  runs.push(run_job_env(dir, "limit_region", "limit_region.l", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=4"))
+  runs.push(run_job_env(dir, "limit_region", "limit_region.l", "AVANT_HEAP_MAX_MB=4"))
   // C39: near-limit thrash ends in "heap limit".
-  tenvs = ["-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=8", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=8 AVANT_YOUNG_MB=1"]
+  tenvs = ["AVANT_HEAP_MAX_MB=8", "AVANT_HEAP_MAX_MB=8 AVANT_YOUNG_MB=1"]
   e = 0
   while e < tenvs.size {
     runs.push(run_job_env(dir, "limit_defer", "limit_defer.t${e}", tenvs[e]))

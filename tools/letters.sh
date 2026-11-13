@@ -126,7 +126,10 @@ build() {
 # `avant version` prints (O534, Stage 29 W-FIX1e): avant.toml's version,
 # the commit (unknown outside git), `dirty: yes` when compiler/, lib/ or
 # runtime/ differ from that commit (untracked files there included), and
-# the step. The compiler carries none of it, so a compiler stays
+# the step, and `lib:` the checkout's lib/ (physical path) that the
+# compiler reads its standard library from when AVANT_ROOT is not set
+# (O617, VALK-TM: a kept or copied compiler keeps its own library, or
+# says it is gone). The compiler carries none of it, so a compiler stays
 # byte-identical across commits that do not change it.
 record() {
   v=$(sed -n 's/^version = "\(.*\)"$/\1/p' avant.toml | head -n 1)
@@ -138,6 +141,7 @@ record() {
       echo "dirty: yes"
     fi
     echo "built: tools/letters.sh $2"
+    echo "lib: $(pwd -P)/lib"
   } > "$1.versions.txt"
 }
 
