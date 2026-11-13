@@ -290,6 +290,11 @@ pub class MFunc {
   pub source_name: String = ""
   // The frame pass's liveness (MLive above), or nil.
   pub live: MLive? = nil
+  // Called from C or by the runtime, so a thread's first Avant frame may
+  // be this function's (a C callback's thunk, a task's thunk; `main` is
+  // one by its symbol): it keeps its frame record even with no root slot
+  // (gc.av, VALK-A1).
+  pub entry: Bool = false
 
   fn initialize(symbol: String, sig: Int, loc: MLoc) {
     self.symbol = symbol
@@ -315,6 +320,12 @@ pub class MFunc {
 
   pub fn is_param(i: Int): Bool {
     i >= 1 && i <= self.nparams
+  }
+
+  // Whether a thread's first Avant frame can be this function's: `main`,
+  // or a function C or the runtime calls (entry).
+  pub fn first_frame: Bool {
+    self.entry || self.symbol == "main"
   }
 }
 

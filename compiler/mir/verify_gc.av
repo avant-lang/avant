@@ -67,6 +67,16 @@ fn mir_v15(v: MVerifier) {
   }
 }
 
+// V16 as restated by Stage 29 VALK-A1 (M4, gc.av rule 2): a frame
+// function links a record (bb0 begins with the zeroed non-parameter
+// slots, gc.enter and gc.roots of every slot in local order, and no other
+// gc.enter or gc.roots follows) or links none (no frame statement at all).
+// It must link one when it has a slot, or when a thread's first Avant
+// frame can be its own (MFunc.first_frame: main, a C callback's thunk, a
+// task's thunk; the record registers the thread). The frame pass links
+// none exactly when neither holds; a record with no slot elsewhere is
+// correct and accepted (the builder's modules have them). V17 checks the
+// returns of a function that links one.
 fn mir_v16(v: MVerifier) {
   f = v.func
   if f.kind == mfk_unset() {
@@ -86,6 +96,14 @@ fn mir_v16(v: MVerifier) {
       }
     }
     k += 1
+  }
+  if !mir_has_gc_stmt(f) {
+    if slots.size > 0 {
+      v.ferr(16, "a frame function with slots links no frame record")
+    } else if f.first_frame {
+      v.ferr(16, "a thread's first Avant frame can be this function's (main, a C callback's or a task's thunk) and it links no frame record")
+    }
+    return
   }
   bb0 = f.blocks[0]
   idx = 0
@@ -119,6 +137,19 @@ fn mir_v16(v: MVerifier) {
   }
 }
 
+// Whether f has a frame statement (gc.enter, gc.roots or gc.leave)
+// anywhere: a frame function without one links no record (V16).
+fn mir_has_gc_stmt(f: MFunc): Bool {
+  for blk in f.blocks {
+    for st in blk.stmts {
+      if mir_is_gc_stmt(st) {
+        return true
+      }
+    }
+  }
+  false
+}
+
 fn mir_is_zero_of(st: MStmt, l: Int): Bool {
   if st.kind != msk_assign() {
     return false
@@ -141,9 +172,16 @@ fn mir_same_ints(a: Array(Int), b: Array(Int)): Bool {
   true
 }
 
+// V17: every return of a frame function that links a record has
+// gc.leave immediately before it, and gc.leave is nowhere else. A frame
+// function with no frame statement links none (V16 says when that is
+// allowed) and has nothing to unlink.
 fn mir_v17(v: MVerifier) {
   f = v.func
   if f.kind != mfk_frame() {
+    return
+  }
+  if !mir_has_gc_stmt(f) {
     return
   }
   b = 0

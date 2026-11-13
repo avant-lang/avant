@@ -13,6 +13,12 @@ import harness
 // (avant_gc_fast_ok, avant_gc_bump, avant_gc_limit, avant_gc_block,
 // avant_gc_base, avant_gc_starts) are declared local-exec, as
 // avant_gc_top is, and no thread-local is declared without a model.
+//
+// M4 (O176): a frame function with no root slot links no frame record
+// (no %gcf, no frame-helper call): fresh_node, sum_nodes and Node.new
+// here; `main` keeps its record, and so does the thunk C calls in
+// tests/fixtures/ffi/first_frame.av (`check#cb`, the first-frame rule)
+// while the functions it calls (`check`, `fill`) have none.
 
 fn log_text(path: String): String {
   if t = file_read(path) {
@@ -25,6 +31,9 @@ fn log_text(path: String): String {
 // line to its closing brace), or "" when it is not defined.
 fn ll_fn(ll: String, sym: String): String {
   key = "@\"${sym}\"("
+  if sym == "main" {
+    key = "@main("
+  }
   lines = ll.split("\n")
   out = buf_new()
   inside = false
@@ -55,7 +64,7 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   text = log_text(ll)
   c.eq_int(compile_av(compiler, src, "${dir}/alloc_shape", "${dir}/alloc_shape.log"), 0, "alloc_shape.av: compiles")
   c.eq_int(run_av_bin("${dir}/alloc_shape", "${dir}/alloc_shape.out"), 0, "alloc_shape.av: exit 0")
-  c.eq_str(log_text("${dir}/alloc_shape.out"), "3\n", "alloc_shape.av: output")
+  c.eq_str(log_text("${dir}/alloc_shape.out"), "3\n6\n", "alloc_shape.av: output")
 
   // M3: local-exec thread-locals.
   for g in ["avant_gc_fast_ok", "avant_gc_bump", "avant_gc_limit", "avant_gc_block", "avant_gc_base", "avant_gc_starts", "avant_gc_top"] {
@@ -64,6 +73,25 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(count_of(text, " thread_local global "), 0, "M3: no thread-local is declared without a model")
   fnode = ll_fn(text, "av.alloc_shape/Node.new")
   c.expect(str_has(fnode, "load ptr, ptr @avant_gc_bump") && str_has(fnode, "load ptr, ptr @avant_gc_limit"), "M3: Node.new allocates inline (it reads the bump cursor and the limit)")
+
+  // M4: no frame record without a slot, but in a thread's first frame.
+  for f in ["fresh_node", "sum_nodes", "Node.new"] {
+    body = ll_fn(text, "av.alloc_shape/${f}")
+    c.expect(body.size > 0, "M4: ${f} is defined")
+    c.expect(!str_has(body, "%gcf") && !str_has(body, "@__avant_frame_push") && !str_has(body, "@avant_gc_frame_enter"), "M4: ${f} (no root slot) links no frame record")
+  }
+  mbody = ll_fn(text, "main")
+  c.expect(str_has(mbody, "%gcf = alloca") && str_has(mbody, "call void @__avant_frame_push(ptr %gcf)"), "M4: main keeps its frame record (a thread's first Avant frame)")
+  ff = "${root}/tests/fixtures/ffi/first_frame.av"
+  fll = "${dir}/first_frame.ll"
+  c.eq_int(emit_ll(compiler, ff, fll, "${dir}/first_frame.ll.log"), 0, "first_frame.av: __emit-ll")
+  ftext = log_text(fll)
+  thunk = ll_fn(ftext, "av.first_frame/check#cb")
+  c.expect(str_has(thunk, "%gcf = alloca { ptr, ptr, i32, i32, i32 }") && str_has(thunk, "call void @__avant_frame_push(ptr %gcf)"), "M4: the C callback's thunk check#cb keeps a record with no slot (the first-frame rule)")
+  for f in ["check", "fill"] {
+    body = ll_fn(ftext, "av.first_frame/${f}")
+    c.expect(body.size > 0 && !str_has(body, "%gcf"), "M4: first_frame.av's ${f} (no root slot) links no frame record")
+  }
 }
 
 fn test_main(c: Checks) {

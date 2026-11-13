@@ -376,7 +376,10 @@ pub fn (lw: MirLower) begin_task(t: MirTask, ps: Array(Int), ret: Int, rec: Int,
   b = lw.lw_b
   e = t.expr
   lw.begin_at(e.loc)
-  b.begin_fn(t.sym, b.sig(ps, ret, false), lw.mloc(e.loc), "task")
+  tf = b.begin_fn(t.sym, b.sig(ps, ret, false), lw.mloc(e.loc), "task")
+  // The runtime calls it as a worker's or a spawned thread's first Avant
+  // function (gc.av's first-frame rule).
+  tf.entry = true
   lw.lw_cl.base = t.sym
   lw.lw_main = false
   lw.lw_ret = mt_void()

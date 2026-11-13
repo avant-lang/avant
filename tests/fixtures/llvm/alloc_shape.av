@@ -17,7 +17,20 @@ fn fresh_node(v: Int): Node {
   n
 }
 
+// M4 (O176): a frame function with no root slot links no frame record.
+// fresh_node calls Node.new (a collecting call) and keeps no reference
+// across it, so neither it nor Node.new (no reference argument) has a
+// %gcf record; `main` keeps its record (a thread's first Avant frame).
+fn sum_nodes(k: Int): Int {
+  t = 0
+  for i in 0..k {
+    t += fresh_node(i).v
+  }
+  t
+}
+
 fn main {
   n = fresh_node(3)
   puts(n.v)
+  puts(sum_nodes(4))
 }
