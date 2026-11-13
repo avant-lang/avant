@@ -1,0 +1,80 @@
+import std.http
+
+// Response.header with a name that is not a token or a value holding a
+// control character (Stage 29 W-FIX1g, O518). Appended as it came, a
+// value with CR LF added header lines to the answer or began a second
+// answer (response splitting); now `header` traps: one line on stderr,
+// status 1, and nothing of the answer is written. The handler of GET /h
+// sets the header the first argument names; with a second argument
+// (a path) the program writes its port there and waits for a raw client
+// (tests/fixtures/http/raw_client.py, mode header_split, run by
+// tests/cases/test_std_http_safety.av, which reads the wire); without
+// one it asks itself with Http.get. Without arguments (the run goldens)
+// the kind is crlf.
+fn bad_header(kind: String): Response {
+  r = Response.text("x")
+  if kind == "crlf" {
+    return r.header("X-A", "1\r\nSet-Cookie: evil=1")
+  } else if kind == "lf" {
+    return r.header("X-A", "1\nSet-Cookie: evil=1")
+  } else if kind == "cr" {
+    return r.header("X-A", "1\rSet-Cookie: evil=1")
+  } else if kind == "answer" {
+    return r.header("X-A", "1\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nforged")
+  } else if kind == "nul" {
+    return r.header("X-A", "1${chr(0)}2")
+  } else if kind == "del" {
+    return r.header("X-A", "1${chr(127)}2")
+  } else if kind == "name-crlf" {
+    return r.header("X-A: 1\r\nSet-Cookie", "evil=1")
+  } else if kind == "name-space" {
+    return r.header("X A", "1")
+  } else if kind == "name-colon" {
+    return r.header("X-A:", "1")
+  } else if kind == "name-empty" {
+    return r.header("", "1")
+  }
+  // "ok": a tab, a quote and bytes over 127 are a valid value; the
+  // token's punctuation is a valid name.
+  r.header("X-Ok!#$%&'*+-.^_`|~", "a\tb \"c\" ${chr(195)}${chr(169)}")
+}
+
+fn main: Int {
+  a = argv()
+  kind = "crlf"
+  if a.size > 1 {
+    kind = a[1]
+  }
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened
+    server.get("/h") { |req|
+      bad_header(kind)
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    if a.size > 2 {
+      if wrote = file_write(a[2], "${port}\n") {
+      }
+      server.serve
+      return 0
+    }
+    client = spawn {
+      if resp = Http.get("http://127.0.0.1:${port}/h", true, 5000) {
+        puts("answered ${resp.status}")
+      } else {
+        puts("no answer")
+      }
+      if resp = Http.get("http://127.0.0.1:${port}/__stop", true, 5000) {
+      }
+      0
+    }
+    server.serve
+    _ = client.join
+    return 0
+  }
+  puts("listen failed")
+  1
+}

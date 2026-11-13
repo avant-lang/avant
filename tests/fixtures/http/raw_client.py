@@ -343,6 +343,52 @@ def hosts():
     return ",".join(out)
 
 
+def header_split(port_file):
+    # O518: tests/fixtures/http/header_split.av writes its port to
+    # port_file and answers GET /h with a header its handler sets. What
+    # reaches the wire: "nothing" when the server sent no byte (it
+    # trapped), else the answers' count and their header lines.
+    global port
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        try:
+            text = open(port_file).read()
+            if text.endswith("\n"):
+                port = int(text)
+                break
+        except OSError:
+            pass
+        time.sleep(0.02)
+    else:
+        return "no port"
+    s = connect()
+    s.sendall(b"GET /h HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+    s.settimeout(5)
+    data = b""
+    try:
+        while True:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            data += chunk
+    except OSError:
+        pass
+    s.close()
+    if not data:
+        return "nothing"
+    answers = data.count(b"HTTP/1.1 ")
+    head = data.split(b"\r\n\r\n", 1)[0].split(b"\r\n")[1:]
+    try:
+        s = connect()
+        s.sendall(get("/__stop"))
+        read_answers(s, 1)
+        s.close()
+    except OSError:
+        pass
+    # Each header line with a byte that is not printable ASCII escaped.
+    return "%d answer(s) %s" % (answers, "|".join(h.decode("latin1").encode("unicode_escape").decode("ascii") for h in head))
+
+
 try:
     if mode == "close_unread":
         result = close_unread(int(arg))
@@ -362,6 +408,8 @@ try:
         result = lengths()
     elif mode == "hosts":
         result = hosts()
+    elif mode == "header_split":
+        result = header_split(arg)
     else:
         result = "unknown mode"
 except Exception as e:  # a failure is a result the test prints

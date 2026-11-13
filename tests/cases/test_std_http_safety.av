@@ -16,7 +16,8 @@ import std.http
 // WsConnection (O516). And WebSocket connections opening and closing
 // together on a server with more than one loop (Stage 29 W-FIX1e,
 // O564). And a route registered while the server serves (Stage 29
-// W-FIX1f, O594).
+// W-FIX1f, O594). And a header that would split the answer (Stage 29
+// W-FIX1g, O518).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -563,6 +564,71 @@ fn route_serving_cases(c: Checks, root: String) {
   }
 }
 
+// Response.header with CR or LF in a value or a name that is not a token
+// (Stage 29 W-FIX1g, O518): appended as it came, it added header lines
+// or a second answer (response splitting). `header` traps now. The
+// fixture's handler sets the header its argument names, and a raw
+// client reads what reaches the wire: nothing, since the process stops
+// at the trap before the answer is written. The valid case (a tab, a
+// quote and bytes over 127 in the value, the token's punctuation in the
+// name) is answered with the header as given.
+fn header_split_cases(c: Checks, root: String) {
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    bin = "${scratch()}/http-header-split-${stamp}.bin"
+    clog = "${scratch()}/http-header-split-${stamp}.clog"
+    code = compile_av(compiler, "${root}/tests/fixtures/http/header_split.av", bin, clog)
+    c.eq_int(code, 0, "the header-split fixture compiles")
+    value_rule = "a header value holds no CR, LF or other control character but tab (RFC 9110)"
+    name_rule = "is not a token: a header name is letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)"
+    kinds = ["crlf", "lf", "cr", "answer", "nul", "del", "name-crlf", "name-space", "name-colon", "name-empty", "ok"]
+    lines = [
+      "avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
+      "avant runtime: Response.header value of X-A holds a control character (byte 10 at 1): ${value_rule}\n",
+      "avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
+      "avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
+      "avant runtime: Response.header value of X-A holds a control character (byte 0 at 1): ${value_rule}\n",
+      "avant runtime: Response.header value of X-A holds a control character (byte 127 at 1): ${value_rule}\n",
+      "avant runtime: Response.header name \"X-A: 1\\r\\nSet-Cookie\" ${name_rule}\n",
+      "avant runtime: Response.header name \"X A\" ${name_rule}\n",
+      "avant runtime: Response.header name \"X-A:\" ${name_rule}\n",
+      "avant runtime: Response.header name \"\" ${name_rule}\n",
+      ""
+    ]
+    for i in 0..kinds.size {
+      kind = kinds[i]
+      log = "${scratch()}/http-header-split-${stamp}-${kind}.log"
+      port_file = "${scratch()}/http-header-split-${stamp}-${kind}.port"
+      server = spawn {
+        args: Array(String) = []
+        args.push(kind)
+        args.push(port_file)
+        process_run_out(bin, args, log) ?? -1
+      }
+      wlog = "${scratch()}/http-header-split-${stamp}-${kind}.wire"
+      pargs: Array(String) = []
+      pargs.push("${root}/tests/fixtures/http/raw_client.py")
+      pargs.push("0")
+      pargs.push("header_split")
+      pargs.push(port_file)
+      _ = process_run_out("/usr/bin/python3", pargs, wlog)
+      wire = nth_line(file_read(wlog) ?? "", 0)
+      status = server.join
+      text = file_read(log) ?? ""
+      if kind == "ok" {
+        c.eq_int(status, 0, "Response.header ${kind}: answered, status 0")
+        c.eq_str(wire, "header_split=1 answer(s) Content-Type: text/plain; charset=utf-8|X-Ok!#$%&'*+-.^_`|~: a\\tb \"c\" \\xc3\\xa9|Content-Length: 1|Connection: close", "Response.header ${kind}: the header on the wire as given")
+      } else {
+        c.eq_int(status, 1, "Response.header ${kind}: status 1")
+        c.eq_str(text, lines[i], "Response.header ${kind}: the trap's line")
+        c.eq_str(wire, "header_split=nothing", "Response.header ${kind}: nothing on the wire")
+      }
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER is set for the header-split test")
+  }
+}
+
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
   i = 0
   while i < want.size {
@@ -760,5 +826,6 @@ fn main: Int {
   ws_cases(c)
   ws_route_cases(c)
   route_serving_cases(c, avant_test_root())
+  header_split_cases(c, avant_test_root())
   c.finish
 }

@@ -2416,6 +2416,72 @@ __attribute__((noreturn, cold)) void avant_http_route_while_serving(const char *
   exit(1);
 }
 
+/* Writes at most 64 bytes of p to stderr, a byte that is not printable
+ * ASCII (or is a quote or a backslash) as \r, \n, \t or \xNN. */
+static void put_escaped(const char *p, size_t n) {
+  size_t i;
+  for (i = 0; i < n && i < 64; i++) {
+    unsigned char ch = (unsigned char)p[i];
+    if (ch == '\r') {
+      fputs("\\r", stderr);
+    } else if (ch == '\n') {
+      fputs("\\n", stderr);
+    } else if (ch == '\t') {
+      fputs("\\t", stderr);
+    } else if (ch < 0x20 || ch >= 0x7f || ch == '"' || ch == '\\') {
+      fprintf(stderr, "\\x%02x", ch);
+    } else {
+      fputc(ch, stderr);
+    }
+  }
+  if (n > 64) {
+    fputs("...", stderr);
+  }
+}
+
+/* RFC 9110 5.6.2: tchar, the bytes of a token (a field name). */
+static int http_tchar(unsigned char ch) {
+  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+         (ch >= '0' && ch <= '9') || (ch != 0 && strchr("!#$%&'*+-.^_`|~", ch));
+}
+
+/* Response.header's check (Stage 29 W-FIX1g, O518). The name and the
+ * value were appended to the answer's head as they came, so a value
+ * holding CR LF (a redirect target or a cookie built from request data)
+ * added header lines or began the body, and a second answer could
+ * follow: response splitting. A name must be a token (RFC 9110 5.1) and
+ * a value may hold no control character but tab (5.5: CR, LF and NUL
+ * are refused, and the other controls with them); anything else is the
+ * program's error, and it traps in the runtime's form (the program's
+ * stdout flushed, one line on stderr, status 1), naming the rule. */
+void avant_http_header_check(const char *name, const char *value) {
+  size_t nn = avant_str_n(name);
+  size_t vn = avant_str_n(value);
+  size_t i;
+  for (i = 0; i < nn; i++) {
+    if (!http_tchar((unsigned char)name[i])) {
+      break;
+    }
+  }
+  if (nn == 0 || i < nn) {
+    fflush(stdout);
+    fputs("avant runtime: Response.header name \"", stderr);
+    put_escaped(name, nn);
+    fputs("\" is not a token: a header name is letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)\n", stderr);
+    exit(1);
+  }
+  for (i = 0; i < vn; i++) {
+    unsigned char ch = (unsigned char)value[i];
+    if ((ch < 0x20 && ch != '\t') || ch == 0x7f) {
+      fflush(stdout);
+      fputs("avant runtime: Response.header value of ", stderr);
+      put_escaped(name, nn);
+      fprintf(stderr, " holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)\n", (unsigned)ch, i);
+      exit(1);
+    }
+  }
+}
+
 avant_int avant_http_close(void *srvp) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
   int i;
