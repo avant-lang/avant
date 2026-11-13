@@ -763,3 +763,21 @@ int64_t ffi_field_rule(int64_t brk) {
   h = (void **)ffi_fr_holder;
   return h[0] != NULL && avant_is_heap(h[0]);
 }
+
+/* rem_invariant.av (the Valk stage, VALK-T2, O610): a store of V into the
+ * first reference word of HOLDER (a class instance whose first field is a
+ * reference), behind avant_barrier when BARRIER is set and with no barrier
+ * otherwise, which only C can do. A holder that is mature and not
+ * remembered then names a young object: the state AVANT_GC_VERIFY=1's
+ * check of the generational invariant reports at the next young
+ * collection, even while a root names the holder (and the collection's
+ * trace therefore repairs it). Returns 1. */
+void avant_barrier(void *obj);
+
+int64_t ffi_rem_store(void *holder, void *v, int64_t barrier) {
+  if (barrier) {
+    avant_barrier(holder);
+  }
+  *(void **)holder = v;
+  return 1;
+}
