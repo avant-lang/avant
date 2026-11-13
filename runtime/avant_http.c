@@ -1027,11 +1027,17 @@ static void ws_flush(AvantWsConn *ws) {
 }
 
 /* Enqueue one already-framed buffer (takes ownership). Caller holds no
- * locks; returns 0 when the byte bound would be exceeded. */
-static int ws_enqueue(AvantWsConn *ws, char *framed, size_t framed_len) {
+ * locks; returns 0 when the byte bound would be exceeded. begun says
+ * that the frame's first bytes are already on the wire and this is its
+ * rest: it is queued whatever the bound (Stage 29 W-FIX1g). Refusing it
+ * left half a frame on the wire, whose stated length then swallowed the
+ * next frames as payload; the bound only decides whether a new frame
+ * starts, so the queue holds at most one frame's rest past it. */
+static int ws_enqueue(AvantWsConn *ws, char *framed, size_t framed_len,
+                      int begun) {
   WsOut *node;
   pthread_mutex_lock(&ws->qmu);
-  if (ws->out_bytes + framed_len > WS_QUEUE_MAX_BYTES) {
+  if (!begun && ws->out_bytes + framed_len > WS_QUEUE_MAX_BYTES) {
     pthread_mutex_unlock(&ws->qmu);
     free(framed);
     return 0;
@@ -1080,7 +1086,7 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
         if (!framed) { return 0; }
         memcpy(framed, header + written, rem_h);
         if (len > 0) { memcpy(framed + rem_h, payload, len); }
-        return ws_enqueue(ws, framed, framed_len);
+        return ws_enqueue(ws, framed, framed_len, written > 0);
       }
       {
         size_t rem = len - ((size_t)written - header_len);
@@ -1088,7 +1094,7 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
         char *framed = (char *)malloc(rem ? rem : 1);
         if (!framed) { return 0; }
         if (rem > 0) { memcpy(framed, src, rem); }
-        return ws_enqueue(ws, framed, rem);
+        return ws_enqueue(ws, framed, rem, 1);
       }
     }
   }
@@ -1099,13 +1105,13 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
     memcpy(framed, header, header_len);
     if (len > 0) { memcpy(framed + header_len, payload, len); }
     if (!pthread_equal(pthread_self(), ws->owner_tid)) {
-      int ok = ws_enqueue(ws, framed, framed_len);
+      int ok = ws_enqueue(ws, framed, framed_len, 0);
       if (ok && ws->loop && ws->loop->loop) {
         us_wakeup_loop(ws->loop->loop);
       }
       return ok;
     }
-    return ws_enqueue(ws, framed, framed_len);
+    return ws_enqueue(ws, framed, framed_len, 0);
   }
 }
 

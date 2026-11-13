@@ -389,6 +389,80 @@ def header_split(port_file):
     return "%d answer(s) %s" % (answers, "|".join(h.decode("latin1").encode("unicode_escape").decode("ascii") for h in head))
 
 
+def ws_frame(s, op, payload):
+    # One masked client frame.
+    import struct
+    m = b"\x01\x02\x03\x04"
+    n = len(payload)
+    if n < 126:
+        head = struct.pack("!BB", 0x80 | op, 0x80 | n)
+    elif n <= 65535:
+        head = struct.pack("!BBH", 0x80 | op, 0x80 | 126, n)
+    else:
+        head = struct.pack("!BBQ", 0x80 | op, 0x80 | 127, n)
+    s.sendall(head + m + bytes(x ^ m[i & 3] for i, x in enumerate(payload)))
+
+
+def ws_read_frame(s, buf):
+    # One server frame: (opcode, payload, the bytes after it).
+    import struct
+
+    def need(n):
+        nonlocal buf
+        while len(buf) < n:
+            chunk = s.recv(1 << 20)
+            if not chunk:
+                raise EOFError("closed after %d of %d bytes" % (len(buf), n))
+            buf += chunk
+
+    need(2)
+    op, n, off = buf[0] & 15, buf[1] & 127, 2
+    if n == 126:
+        need(4)
+        n, off = struct.unpack("!H", buf[2:4])[0], 4
+    elif n == 127:
+        need(10)
+        n, off = struct.unpack("!Q", buf[2:10])[0], 10
+    need(off + n)
+    return op, buf[off:off + n], buf[off + n:]
+
+
+def ws_big(size):
+    # A WebSocket message larger than the socket takes at once, sent
+    # from the handler to a client that reads late: the frame must
+    # arrive whole (the rest of a frame already begun was refused by the
+    # send queue's 1 MiB bound, leaving half a frame on the wire, whose
+    # length then swallowed the next frames), and the connection must
+    # still carry the next message.
+    s = small_rcvbuf()
+    s.sendall(b"GET /ws-big HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            return "no handshake"
+        buf += chunk
+    head, buf = buf.split(b"\r\n\r\n", 1)
+    if b" 101 " not in head.split(b"\r\n")[0]:
+        return "handshake %r" % head.split(b"\r\n")[0]
+    ws_frame(s, 1, b"big %d" % size)
+    time.sleep(0.3)
+    try:
+        op, payload, buf = ws_read_frame(s, buf)
+    except (EOFError, OSError) as e:
+        return "cut:%s" % e
+    want = bytes(range(97, 123)) * (size // 26 + 1)
+    if op != 1 or payload != want[:size]:
+        return "wrong:op %d, %d bytes" % (op, len(payload))
+    ws_frame(s, 1, b"next")
+    try:
+        op, payload, buf = ws_read_frame(s, buf)
+    except (EOFError, OSError) as e:
+        return "whole,then %s" % e
+    s.close()
+    return "whole,then %s" % payload.decode("latin1")
+
+
 try:
     if mode == "close_unread":
         result = close_unread(int(arg))
@@ -410,6 +484,8 @@ try:
         result = hosts()
     elif mode == "header_split":
         result = header_split(arg)
+    elif mode == "ws_big":
+        result = ws_big(int(arg))
     else:
         result = "unknown mode"
 except Exception as e:  # a failure is a result the test prints

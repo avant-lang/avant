@@ -18,7 +18,8 @@ import std.http
 // O564). And a route registered while the server serves (Stage 29
 // W-FIX1f, O594). And a header that would split the answer (Stage 29
 // W-FIX1g, O518). And a client that waited for the server to close
-// after a complete response (Stage 29 W-FIX1g, O566).
+// after a complete response (Stage 29 W-FIX1g, O566). And a WebSocket
+// message the socket took in part (Stage 29 W-FIX1g).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -696,6 +697,60 @@ fn client_framing_cases(c: Checks, root: String) {
   c.eq_int(server.join, 0, "the keep-open server ends")
 }
 
+class BigSent {
+  pub sent: String
+
+  pub fn initialize {
+    self.sent = "nothing"
+  }
+}
+
+// A WebSocket message larger than the socket takes at once, sent from
+// the handler (the owner thread's direct write) to a client that reads
+// late (Stage 29 W-FIX1g): the socket took a part, the rest was refused
+// by the send queue's 1 MiB bound and dropped, and `send_text` returned
+// false with half a frame on the wire. The rest of a frame begun is
+// queued whatever the bound now: the message arrives whole and the
+// connection carries the next one.
+fn ws_big_cases(c: Checks, root: String) {
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened
+    big = BigSent.new()
+    server.websocket("/ws-big") { |conn, msg|
+      text = msg.text ?? ""
+      if text.size > 4 && str_slice(text, 0, 4) == "big " {
+        n = str_slice(text, 4, text.size).to_i ?? 0
+        b = buf_new()
+        for i in 0..n {
+          b.push_byte(97 + i % 26)
+        }
+        big.sent = "${conn.send_text(b.to_s)}"
+      } else {
+        _ = conn.send_text("the big send returned ${big.sent}")
+      }
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    stamp = now_ms()
+    out = Channel(String).new(2)
+    task = spawn {
+      out.send(raw_client(port, root, stamp, "ws_big", "8388608"))
+      stop(port)
+      0
+    }
+    server.serve
+    c.eq_int(task.join, 0, "ws big-message task")
+    want: Array(String) = []
+    want.push("ws_big=whole,then the big send returned true")
+    expect_lines(c, out, want, "a WebSocket message the socket takes in part arrives whole:")
+  } else {
+    c.expect(false, "listen for the large WebSocket message test")
+  }
+}
+
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
   i = 0
   while i < want.size {
@@ -895,5 +950,6 @@ fn main: Int {
   route_serving_cases(c, avant_test_root())
   header_split_cases(c, avant_test_root())
   client_framing_cases(c, avant_test_root())
+  ws_big_cases(c, avant_test_root())
   c.finish
 }
