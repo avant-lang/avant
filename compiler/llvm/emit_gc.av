@@ -188,7 +188,12 @@ pub fn ll_gc_frame_helpers(e: LlEmit) {
 }
 
 // barrier copy _h (5.6): the holder is read once (E1); null, or a heap
-// object already young or remembered, skips the call. The call form when
+// object already young or remembered, skips the call. The header's flags
+// (runtime/avant_rt.h: HEAP 0x8000, YOUNG 0x20; REM 0x10) are tested with
+// one masked compare (Stage 29 VALK-A1, M8): flags & 0x8030 is above
+// 0x8000 exactly when HEAP is set and YOUNG or REM is (without HEAP it is
+// at most 0x30), the same condition as the two tests and their `and`
+// before, in four instructions where LLVM made seven. The call form when
 // inline fast paths are off. When the store the barrier precedes (V13) is
 // an element of the holder's buffer (`(*_h)[i]`, `(*_h)[i].j`), the call
 // passes the slot (avant_barrier_slot, Stage 28 W16t: a large pointer
@@ -217,16 +222,11 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   e.line("${fp} = getelementptr inbounds i8, ptr ${h}, i64 -2")
   fl = e.tmp
   e.line("${fl} = load i16, ptr ${fp}, align 2")
-  a = e.tmp
-  e.line("${a} = and i16 ${fl}, -32768")
-  ha = e.tmp
-  e.line("${ha} = icmp ne i16 ${a}, 0")
-  b = e.tmp
-  e.line("${b} = and i16 ${fl}, 48")
-  hb = e.tmp
-  e.line("${hb} = icmp ne i16 ${b}, 0")
+  // 0x8030 and 0x8000 as i16.
+  mk = e.tmp
+  e.line("${mk} = and i16 ${fl}, -32720")
   skip = e.tmp
-  e.line("${skip} = and i1 ${ha}, ${hb}")
+  e.line("${skip} = icmp ugt i16 ${mk}, -32768")
   e.line("br i1 ${skip}, label %${cont}, label %${call}")
   e.block(call)
   ll_barrier_call(e, h, k)

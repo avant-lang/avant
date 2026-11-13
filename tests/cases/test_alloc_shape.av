@@ -30,6 +30,10 @@ import backends
 // path barriers its result once (avant_barrier, the birth barrier).
 // tests/fixtures/llvm/fresh_init.av runs both shapes under the
 // collector's environments.
+//
+// M8: the barrier's inline test of the holder's header flags is one
+// masked compare (`and i16 flags, 0x8030`, then `icmp ugt` against 0x8000),
+// not two tests and an `and` (link here).
 
 // The text of the definition of SYM in the .ll text LL (from its `define`
 // line to its closing brace), or "" when it is not defined.
@@ -106,6 +110,12 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   pbody = ll_fn(text, "av.alloc_shape/pair")
   c.expect(str_has(pbody, "load ptr, ptr @avant_gc_bump") && str_has(pbody, "call void @\"av.alloc_shape/Tree.initialize\"(") && !str_has(pbody, "@\"av.alloc_shape/Tree.new\""), "M5: pair allocates inline and calls Tree.initialize, not Tree.new")
   c.eq_int(count_of(pbody, "call void @avant_barrier(ptr"), 1, "M5: pair barriers the allocation's slow-path result once (the birth barrier)")
+
+  // M8: one masked compare.
+  lbody = ll_fn(text, "av.alloc_shape/link")
+  c.expect(str_has(lbody, " = and i16 ") && str_has(lbody, ", -32720") && str_has(lbody, " = icmp ugt i16 ") && str_has(lbody, ", -32768"), "M8: link's barrier test is flags & 0x8030 compared above 0x8000")
+  c.eq_int(count_of(lbody, " = and i16 "), 1, "M8: link's barrier test has one mask, not two")
+  c.eq_int(count_of(lbody, " = and i1 "), 0, "M8: link's barrier test joins no two conditions")
 
   // M5 at run time, plainly and under the collector's environments.
   fsrc = "${root}/tests/fixtures/llvm/fresh_init.av"
