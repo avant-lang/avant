@@ -31,6 +31,10 @@
 #      this checkout's copy as avant/ and LangArena/ side by side, the layout
 #      W12r used) and WAVE_LR_REFERENCE (the reference results directory of
 #      records/2026-11-07-s28-lr)
+#      and the floor (tools/floor.py, D296): floor.md beside SUMMARY.txt,
+#      with the base's floor beside it when WAVE_FLOOR_BASE names a base
+#      la/table.md, else the la/table.md beside BASE_STATS when there is one
+#      (its column headed by WAVE_FLOOR_BASE_LABEL, else by its path)
 #   7. tmp-after.txt, and SUMMARY.txt: one line per step
 #
 # Timed steps (the gate's suites, LangArena) assume nothing else runs and the
@@ -143,6 +147,20 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
       && sh tools/lr-table.sh table "$ref" "$la" "$side/LangArena/results/2026-10-21-kostya-ms7c37.js" < /dev/null > "$la/table.md" 2> "$la/table.log" )
     lrc=$?
     if [ $rc -eq 0 ] && [ $lrc -eq 0 ]; then step "langarena: prod rc=0 wall=$(wall "$t0" "$t1") s; LR table la/table.md"; else step "langarena: red (prod rc=$rc, LR table rc=$lrc)"; fi
+    # The floor (D296, O353): tools/floor.py on la/table.md, beside the base's.
+    fbase=${WAVE_FLOOR_BASE:-}
+    [ -z "$fbase" ] && [ -n "$base" ] && [ -f "$(dirname "$base")/la/table.md" ] && fbase=$(dirname "$base")/la/table.md
+    if [ $lrc -eq 0 ]; then
+      {
+        echo "# The floor: tasks where Avant is behind Crystal or Go, in time or memory"
+        echo
+        echo "Re-derived by \`tools/floor.py\` from \`la/table.md\` (the combined table's \"vs Crystal\" and \"vs Go\" columns, a ratio above 1.00)${fbase:+, beside the base's \`$fbase\`}; the totals from \`la/runtime.tsv\`."
+        echo
+        python3 -I tools/floor.py "$la/table.md" --runtime "$la/runtime.tsv" ${fbase:+--base "$fbase"} ${WAVE_FLOOR_BASE_LABEL:+--base-label "$WAVE_FLOOR_BASE_LABEL"} 2> "$out/floor.err"
+      } > "$out/floor.md"
+      frc=$?
+      if [ $frc -eq 0 ]; then step "floor: $(grep -E '^[0-9]+ tasks' "$out/floor.md" | head -1) (floor.md)"; else step "floor: red (tools/floor.py rc=$frc; floor.err)"; fi
+    else step "floor: red (no LR table)"; fi
   fi
 else step "langarena: skipped (WAVE_LA unset)"; fi
 
