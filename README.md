@@ -3742,13 +3742,13 @@ sh runtime/build.sh
 ./bin/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o   # rebuild with itself
 ```
 
-`AVANT_ROOT` overrides where a compiler looks for `runtime/build` and `lib/std`. `avant dump FILE.av` prints a program's MIR. `tools/bind.c` is the `avant bind` translator, built by `runtime/build.sh` into `runtime/build/avant-bind`; in a checkout the compiler runs that one, elsewhere the `avant-bind` beside itself.
+`AVANT_ROOT` overrides where a compiler looks for `runtime/build` and `lib/std`; without it, a compiler built by `tools/letters.sh` reads the `lib/` its `OUT.versions.txt` names, and any other (a release, a bare copy) the nearest `lib/` in its own directory or one above it. `avant dump FILE.av` prints a program's MIR. `tools/bind.c` is the `avant bind` translator, built by `runtime/build.sh` into `runtime/build/avant-bind`; in a checkout the compiler runs that one, elsewhere the `avant-bind` beside itself.
 
 ### The gate and the suite
 
 | Command | What it proves |
 | --- | --- |
-| `sh tools/letters.sh` | builds the runtime, B (`bin/avant-b`, built by the seed) and C′ (`bin/avant-c-llvm`, built by B). `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′) or `c-release` (the `--release` compiler a release ships) builds one. Beside each compiler it writes `OUT.versions.txt`, the build's record that `avant version` prints (the compiler itself carries no version, so it stays byte-identical across commits that do not change it) |
+| `sh tools/letters.sh` | builds the runtime, B (`bin/avant-b`, built by the seed) and C′ (`bin/avant-c-llvm`, built by B). `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′) or `c-release` (the `--release` compiler a release ships) builds one. Beside each compiler it writes `OUT.versions.txt`, the build's record that `avant version` prints (the compiler itself carries no version, so it stays byte-identical across commits that do not change it); its `lib:` line names the checkout's `lib/`, which that compiler reads its standard library from when `AVANT_ROOT` is not set, wherever the compiler is copied, and a compiler whose recorded library is gone says so instead of reading another |
 | `sh tools/gate.sh` | the full gate: B, C′, the suite on both, D′, and the fixed point (C′ and D′ emit the same LLVM IR for the compiler and are byte-identical) |
 | `sh tools/run-goldens.sh` | compiles and runs every example, runnable fixture and LangArena task and compares stdout, stderr and exit status with its golden (`GOLDEN_MODE=--release`, or empty, for the other modes) |
 
@@ -3758,6 +3758,8 @@ The suite is the native test runner on the compiler's own tests:
 AVANT_COMPILER=./bin/avant-b ./bin/avant-b test
 AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm test
 ```
+
+`tests/cases/test_probe_matrix.av` checks seven of the checker's rules, each shown by a pair of programs (an unsafe one the compiler must refuse, a safe twin it must accept) under every statement and expression wrapper of the language, against the table `tests/probe/matrix.txt`; `AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm run tests/probe_matrix.av` writes the table again, to be committed only after its diff is read.
 
 - Each `tests/cases/test_*.av` is one program; helpers shared by several live in `tests/cases/harness.av`. Run one file with `avant test tests/cases/test_ffi.av`, or one slice with `--shard 2/4`.
 - The files listed in `[test] exclusive` (they probe the collector, rewrite `PATH`, use git, or write a coverage report of their own) run alone, in a command without `--shard`; a shard that would include one needs `--skip-exclusive`. `test_fixed_point.av`, which compiles the compiler, is listed in `[test] first` so it starts before the rest.
