@@ -74,6 +74,9 @@ void gc_cache_or_free_block(Block *b) {
   if (gc_heap.space[SPACE_MATURE].cur == b) {
     gc_clear_alloc_cur(SPACE_MATURE);
   }
+  if (gc_heap.def_last == b) {
+    gc_heap.def_last = NULL;
+  }
   /* Out of use: no lookup finds it, as when it left the block hash. A
    * cached block stays charged to gc_heap.heap_bytes; a released one goes back
    * to its chunk's free list (resident until a full collection's
@@ -233,11 +236,14 @@ void gc_fast_clear(void) {
  * Anything else clears it, so
  * generated code only ever checks fast_ok, the shared flag, and the
  * cursor against the limit. Called at slow allocation entries; state
- * transitions clear eagerly below. */
+ * transitions clear eagerly below. Never under AVANT_GC_STRESS=1 (here
+ * and in tl_grant): the path is then never published, so every
+ * allocation of generated code reaches avant_alloc and its stress point
+ * (Stage 29 W-FIX1c, O207). */
 static void gc_fast_refresh(void) {
   Block *cur = gc_thread.ycur;
   int cur_ok = S_INLINE_HOLES || gc_thread.cur_whole;
-  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 && !gc_heap.set.stress &&
       !gc_thread.nogc && !gc_thread.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
       !gc_heap.limit_pending && !gc_heap.explicit_pending && gc_heap.mature_since_full < gc_heap.full_trigger && cur && gc_thread.cur == cur &&
       cur_ok && avant_gc_bump) {
@@ -280,7 +286,7 @@ void gc_tl_settle(GcThread *t) {
  * previous charge was settled at the slow path's start. */
 static void tl_grant(void) {
   Block *y = gc_thread.ycur;
-  if (!gc_thread.reg.head || gc_thread.nogc || gc_thread.collecting || gc_heap.set.nursery_off ||
+  if (gc_heap.set.stress || !gc_thread.reg.head || gc_thread.nogc || gc_thread.collecting || gc_heap.set.nursery_off ||
       gc_thread.alloc_mature || gc_heap.limit_pending || gc_heap.explicit_pending ||
       gc_heap.mature_since_full >= gc_heap.full_trigger || avant_nursery_held >= avant_young_bytes ||
       !y || gc_thread.cur != y || !(S_INLINE_HOLES || gc_thread.cur_whole) || !avant_gc_bump ||
@@ -706,6 +712,23 @@ static int alloc_is_large(uint32_t type_id, size_t payload, size_t total) {
 void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   int shared;
   gc_init();
+  /* AVANT_GC_STRESS=1: every allocation is a stress point, a young
+   * collection before it (gc_stress_point: not inside a no-GC region or a
+   * collection, and only with a young generation). Generated code's
+   * allocations all come here under it, since the inline path is never
+   * published (gc_fast_refresh, tl_grant; Stage 29 W-FIX1c, O207), as do
+   * runtime C's and user C's: a caller that holds a reference outside a
+   * root slot across any allocation reads a moved or poisoned object at
+   * once. (Before, only runtime C's allocations were stress points,
+   * through a wrapper of their own, avant_alloc_c, Stage 28 W14b1; a
+   * program whose allocations were all generated code's ran under the
+   * stress mode as it ran without it.) */
+  if (gc_heap.set.stress) {
+    gc_safepoint();
+    gc_lock(&gc_heap.world);
+    gc_stress_point();
+    pthread_mutex_unlock(&gc_heap.world);
+  }
   shared = atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;
   if (!shared) {
     gc_fast_refresh();
@@ -858,24 +881,5 @@ __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes)
     gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);
   }
   pthread_mutex_unlock(&gc_heap.world);
-}
-
-/* avant_alloc as runtime C calls it (avant_gc.h maps avant_alloc to this
- * name in every runtime unit outside the collector; Stage 28 W14b1). The
- * same allocation, plus AVANT_GC_STRESS's stress point first, so a
- * stress run collects at every runtime C allocation and not at the
- * generated code's, which roots everything across avant_alloc by
- * construction (D165). */
-__attribute__((visibility("hidden"))) void *avant_alloc_c(uint64_t nbytes, uint32_t type_id) {
-  void *p;
-  gc_init();
-  if (gc_heap.set.stress) {
-    gc_safepoint();
-    gc_lock(&gc_heap.world);
-    gc_stress_point();
-    pthread_mutex_unlock(&gc_heap.world);
-  }
-  p = avant_alloc(nbytes, type_id);
-  return p;
 }
 

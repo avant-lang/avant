@@ -54,11 +54,12 @@ sh runtime/build.sh && sh tools/letters.sh b c-llvm      # the Avant compiler, b
 bench/valk-gc/run.sh build                               # every program, into $VALK_GC_BUILD (default /tmp/valk-gc-build)
 bench/valk-gc/run.sh check                               # every row once, untimed: verification only
 bench/valk-gc/run.sh counts                              # no clock: AVANT_GC_STATS, instruction counts, the other runtimes' collection counts
+bench/valk-gc/run.sh cg 2 3 6                            # no clock: exact instructions per function of the Avant program, here for scenarios 2, 3 and 6
 bench/valk-gc/run.sh time 7                              # one warm-up round, then seven measured rounds (alone on the machine, governor performance)
 python3 bench/valk-gc/tables.py /tmp/valk-gc-build/out   # every table, regenerated from the raw per-run files
 ```
 
-Toolchains: `valk` 0.8.5 (`vman`), `go`, `ldc2`, `dotnet`, `crystal`, a JDK, `perf`, GNU `time`, `python3`. The build commands of the upstream programs are upstream's (`run-gc.sh`): `valk build --release`, `go build`, `ldc2 -O3 -release -boundscheck=off`, `dotnet publish --configuration Release`. The ports: `avant compile --release` (and `--release --cpu=v3`), `crystal build --release`, `javac`.
+Toolchains: `valk` 0.8.5 (`vman`), `go`, `ldc2`, `dotnet`, `crystal`, a JDK, `perf`, GNU `time`, `python3`; `valgrind` for `run.sh cg` only. The build commands of the upstream programs are upstream's (`run-gc.sh`): `valk build --release`, `go build`, `ldc2 -O3 -release -boundscheck=off`, `dotnet publish --configuration Release`. The ports: `avant compile --release` (and `--release --cpu=v3`), `crystal build --release`, `javac`.
 
 ## The method
 
@@ -67,6 +68,7 @@ Toolchains: `valk` 0.8.5 (`vman`), `go`, `ldc2`, `dotnet`, `crystal`, a JDK, `pe
 - **What is read.** `time_us` of each scenario from the program's own output (never the truncated `time_ms`); the whole process's wall time (the shell's microsecond clock around the launch, about a millisecond of launcher inside it) and GNU `time`'s elapsed and peak RSS. Tables give the median, the minimum and the maximum, never a best-of.
 - **Checks.** Every run: exit status 0, every expected scenario present once, every verification value right, `=== done ===` present; otherwise the session stops and the run is not a result.
 - **Counts, with no clock** (`run.sh counts`): for each scenario in its own process, Avant's `AVANT_GC_STATS=1` line and user-mode instructions (`perf stat -e instructions:u`) for the three Avant rows; instructions for the other ahead-of-time programs; and the collection counts Go (`GODEBUG=gctrace=1`), D (`--DRT-gcopt=profile:1`), Crystal (`GC_PRINT_STATS=1`) and Java (`-Xlog:gc`) print themselves.
+- **Instructions per function, with no clock** (`run.sh cg [N...]`): each scenario asked for (every one by default) runs once, in its own process, as the scenario-isolated Avant program under `valgrind --tool=callgrind`. Callgrind counts every instruction the process executes and attributes each to its function, so the listings are exact and repeat from run to run; a sampled profile (`perf record`) attributes a sample to the instruction that is waiting and so over-counts the functions that take cache misses. For each scenario, under `cg/` of the output directory: `sN.excl.txt` (each function's own instructions, largest first), `sN.incl.txt` (with its callees'), `sN.total` (the whole process; it agrees with `perf stat -e instructions:u` to about 0.1%) and `sN.out` (the program's output, verified like any run); `session.txt` records the toolchains and the binary's hash. Scenario 4's process also runs scenario 3. A process runs about fifty times slower under callgrind, so the limit is an hour per scenario (`VALK_GC_CG_TIMEOUT`); `VALK_GC_CG_ROWS` sets how many functions a listing keeps (70). The runtime's reserved address range is set to 2 GiB for these runs (`AVANT_HEAP_RESERVE_GB=2`), which valgrind needs and which changes no count.
 - **Raw files.** `raw/<set>/<row>/r<N>.out` (the program's output), `.time` (GNU time), `.wall_us`, `.rc`, `.err`, `.verify`; `tables.py` reads nothing else.
 
 ## The labelled variants

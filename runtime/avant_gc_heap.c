@@ -840,15 +840,6 @@ void gc_clear_side_marks(void) {
   }
 }
 
-void gc_mark_object_lines(void *p) {
-  Block *b = NULL;
-  if (!gc_is_heap_payload(p, &b, NULL) || !b) {
-    return;
-  }
-  AvantHeader *h = avant_header(p);
-  mark_lines(b, (size_t)((uint8_t *)h - b->base), gc_obj_total(h));
-}
-
 void avant_type_map(uint32_t type_id, uint64_t word_bits) {
   gc_init();
   if (type_id == AVANT_TYPE_PTRS) {

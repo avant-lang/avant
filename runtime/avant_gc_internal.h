@@ -3,11 +3,8 @@
 
 #include "avant_rt.h"
 /* The collector implements what avant_gc.h declares for the rest of the
- * runtime (the frame type of RC1's scopes, the no-GC regions); its own
- * avant_alloc is the allocation itself, not avant_gc.h's mapping of the
- * name to avant_alloc_c. */
+ * runtime (the frame type of RC1's scopes, the no-GC regions). */
 #include "avant_gc.h"
-#undef avant_alloc
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -164,6 +161,13 @@
 #define HEAP_FACTOR 2
 #define MAX_TYPES 65535
 #define CACHE_BLOCKS 2
+/* The defragmenter's least gain (Stage 29 W-FIX1c, O202;
+ * avant_gc_defrag.c): an evacuation must free, net, at least one block
+ * for every DEFRAG_GAIN_DIV blocks' worth of live mature lines (and at
+ * least one), because its fix-up walks every live object. */
+#ifndef DEFRAG_GAIN_DIV
+#define DEFRAG_GAIN_DIV 128
+#endif
 #define GC_THREAD_ROOTS 8
 
 /* SCALAR_LOS_MIN: numeric (type-0) buffers at or above this size are
@@ -704,8 +708,9 @@ typedef struct GcSettings {
   int stats;
   /* AVANT_GC_STRESS (Stage 28 W14b1, gc-design.md §4.2 item 1, the
    * minimal step): a young collection at every outermost
-   * avant_gc_defer_enter and at every avant_alloc called from runtime C
-   * (avant_alloc_c), in unshared programs with the nursery on. A young
+   * avant_gc_defer_enter and at every avant_alloc (runtime C's, and
+   * since Stage 29 W-FIX1c generated code's: the inline allocation path
+   * is never published under it), with the nursery on. A young
    * collection frees every unreached young object and S+ moves the
    * survivors of the blocks it evacuates, so a helper that holds a young
    * reference the collector does not know across one of these points
@@ -907,6 +912,10 @@ typedef struct GcHeap {
   /* avant_gc_defrag.c: the evacuated blocks a defragmenting full
    * collection frees once every reference is rewritten. */
   BlockSet def_release;
+  /* The destination block the last evacuation filled last, or NULL
+   * (Stage 29 W-FIX1c, O202): not a candidate of the next evacuation.
+   * Cleared when the block is freed (gc_cache_or_free_block). */
+  Block *def_last;
 
 
   /* avant_gc_verify.c. vnoted: the objects verify_trace flagged VSEEN
@@ -1221,7 +1230,6 @@ void *gc_object_payload(void *p, Block **ob, AvantHeader **ol);
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
 void gc_zero_line_marks(Block *list);
 void gc_clear_side_marks(void);
-void gc_mark_object_lines(void *p);
 void gc_line_epoch_advance(void);
 
 /* avant_gc_alloc.c */
@@ -1581,6 +1589,40 @@ static inline uint64_t granule_of(const void *p) {
 static inline int start_bit_at(const void *p) {
   uint64_t g = granule_of(p);
   return (int)((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL);
+}
+
+/* gc_object_payload with its common case in line (Stage 29 W-FIX1c,
+ * O203): P is the exact start of an object in a small-object block in
+ * use, as nearly every traced field and root is. The tests are
+ * gc_is_heap_payload's own, in its order (8-aligned, the header inside
+ * the committed range, its start bit, the chunk's kind, the block in
+ * use), so the answer is the same; any other address (inside an object,
+ * a large object's, a static object's, outside the heap) takes the
+ * function. Before, every traced reference paid two calls for this
+ * (gc_object_payload, then gc_is_heap_payload inside it). */
+static inline void *gc_object_payload_fast(void *p, Block **ob, AvantHeader **ol) {
+  uintptr_t off = (uintptr_t)p - (uintptr_t)gc_heap.base - sizeof(AvantHeader);
+  if (!p) {
+    return NULL;
+  }
+  if (!((uintptr_t)p & (ALIGN - 1)) && off < gc_heap.committed) {
+    uint64_t g = off >> 3;
+    if ((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL) {
+      if (gc_heap.chunks[off >> CHUNK_SHIFT].kind == CHUNK_SMALL) {
+        Block *b = &gc_heap.blocks[off >> BLOCK_SHIFT];
+        if (b->in_use) {
+          if (ob) {
+            *ob = b;
+          }
+          if (ol) {
+            *ol = NULL;
+          }
+          return p;
+        }
+      }
+    }
+  }
+  return gc_object_payload(p, ob, ol);
 }
 
 static inline void start_bit_set(const void *p, int on) {

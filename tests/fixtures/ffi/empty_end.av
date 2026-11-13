@@ -1,0 +1,37 @@
+// O551 (Stage 29 W-FIX1c): the layout W-INT1's empty-payload fix makes
+// impossible, reached on purpose, and avant_alloc's own guard tested.
+// Generated code never asks avant_alloc for 0 bytes (the emitter's guard
+// comes first; heap/empty_payload.av pins that), so the runtime's line
+// was reached by C callers only and had no test. ffi_empty_end
+// (tests/fixtures/ffi/ffi.c, built with `--cc`) fills the heap's highest
+// chunk until one word is left in its last block, asks avant_alloc for 0
+// bytes there, keeps the object in a rooted holder and runs a young
+// collection; its comment has the steps and the faulty path.
+//
+// Every environment prints `empty_end: 0 bad`: each empty object took one
+// word, none had a block's first address as its payload address, and
+// the holder still named each as an object after the collection. With
+// EMPTY_END_REPORT=1 the second line says how many times the position
+// (one word left in the last block) was reached: twice in the default
+// environment (tests/cases/test_gc_checks.av asks for at least once);
+// under AVANT_GC_STRESS=1 never, since every allocation collects and
+// the young cursor starts over, nor under AVANT_GC_VERIFY=1, which
+// holds freed blocks back. With avant_alloc's line removed the default
+// environment prints `6 bad`: 3 not one word, 2 at a block's first
+// address, 1 stale.
+
+lib ee {
+  fun ffi_empty_end(rounds: Int): Int
+}
+
+fn main {
+  r = ee.ffi_empty_end(2)
+  reached = r & 65535
+  nonword = (r >> 16) & 65535
+  atblock = (r >> 32) & 65535
+  stale = (r >> 48) & 32767
+  puts("empty_end: ${nonword + atblock + stale} bad")
+  if v = env_get("EMPTY_END_REPORT"), v == "1" {
+    puts("reached ${reached}, not one word ${nonword}, at a block's first address ${atblock}, stale ${stale}")
+  }
+}

@@ -17,25 +17,87 @@
 
 static void scan_payload(void *p);
 
+/* The object at START (header H, in block B, or a large object when B is
+ * NULL), whose side mark the caller has just set: its lines through the
+ * block the lookup already gave (until Stage 29 W-FIX1c a second lookup
+ * found it again, O203), its bytes, and the work list. A full collection
+ * promotes every object it reaches (Stage 28 W15b), so no object is young
+ * after it (its remembered set and young budget are empty,
+ * gc_sticky_full_end); the flags are written only when one is set, so a
+ * collection of a heap that is already mature dirties no header. */
+static inline void mark_object(void *start, AvantHeader *h, Block *b) {
+  size_t total = align_up(sizeof(AvantHeader) + (size_t)h->size);
+  if (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
+    h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
+  }
+  if (b) {
+    mark_lines(b, (size_t)((uint8_t *)h - b->base), total);
+  }
+  gc_heap.live += total;
+  if (gc_heap.work_n == gc_heap.work_cap) {
+    gc_work_push(start);
+  } else {
+    gc_heap.work[gc_heap.work_n++] = start;
+  }
+}
+
+/* Any reference (a root's, which may name the inside of an object; a
+ * large object's; a static object's): one lookup, then the mark. */
 static void mark(void *p) {
   Block *b = NULL;
   AvantHeader *ol = NULL;
   void *start = gc_object_payload(p, &b, &ol);
+  AvantHeader *h;
   if (!start) {
     return;
   }
-  AvantHeader *h = avant_header(start);
+  h = avant_header(start);
   if (full_marked(h)) {
     return;
   }
   full_set_mark(h);
-  /* A full collection promotes every object it reaches (Stage 28 W15b),
-   * so no object is young after it (its remembered set and young budget
-   * are empty, gc_sticky_full_end). */
-  h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
-  gc_mark_object_lines(start);
-  gc_heap.live += gc_obj_total(h);
-  gc_work_push(start);
+  mark_object(start, h, b);
+}
+
+/* A traced object's field, with the common case in one function (Stage
+ * 29 W-FIX1c, O203): the exact start of an object in a small-object block
+ * in use is looked up here, by gc_is_heap_payload's own tests in its
+ * order (as gc_object_payload_fast), and marked with no further call and
+ * the side mark set through the granule already in hand. Anything else
+ * takes mark(). Before, a field cost eight calls (mark, gc_object_payload
+ * with gc_is_heap_payload inside it, gc_mark_object_lines with
+ * gc_is_heap_payload and gc_obj_total inside it, gc_obj_total,
+ * gc_work_push; 276 instructions per object of a full collection, 149
+ * now). It is kept
+ * out of line on purpose: inlined into scan_payload's loop, the loop's
+ * registers were spilled around it and the same collection cost 167. */
+static __attribute__((noinline)) void mark_field(void *p) {
+  uintptr_t off;
+  uint64_t g;
+  Block *b;
+  if (!p) {
+    return;
+  }
+  off = (uintptr_t)p - (uintptr_t)gc_heap.base - sizeof(AvantHeader);
+  if (((uintptr_t)p & (ALIGN - 1)) || off >= gc_heap.committed) {
+    mark(p);
+    return;
+  }
+  g = off >> 3;
+  if (!((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL) || gc_heap.chunks[off >> CHUNK_SHIFT].kind != CHUNK_SMALL) {
+    mark(p);
+    return;
+  }
+  b = &gc_heap.blocks[off >> BLOCK_SHIFT];
+  if (!b->in_use) {
+    mark(p);
+    return;
+  }
+  if ((gc_heap.marks[g >> 6] >> (g & 63)) & 1ULL) {
+    return;
+  }
+  gc_heap.marks[g >> 6] |= 1ULL << (g & 63);
+  mark_object(p, avant_header(p), b);
 }
 
 static void drain(void) {
@@ -52,7 +114,7 @@ static void mark_tls_slot(void **slot) {
 }
 
 static void scan_payload(void *p) {
-  EACH_REF_SLOT(p, slot, { mark(*slot); });
+  EACH_REF_SLOT(p, slot, { mark_field(*slot); });
 }
 
 void gc_mark_roots(void) {

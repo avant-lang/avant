@@ -2482,7 +2482,7 @@ No setting is needed. Every one is an environment variable read once when the pr
 | `AVANT_HEAP_RESERVE_GB` | `64` | the address space reserved for the heap, in GiB (halved automatically if the OS refuses) |
 | `AVANT_GC_STATS` | `0` | `1` prints one line of collector statistics on stderr at exit |
 | `AVANT_GC_VERIFY` | `0` | `1` runs the collector's self-checks (slow; for debugging the runtime) |
-| `AVANT_GC_STRESS` | `0` | `1` collects before every runtime allocation (very slow; for testing) |
+| `AVANT_GC_STRESS` | `0` | `1` collects before every allocation (very slow; for testing) |
 
 The two a user is likely to meet are `AVANT_HEAP_MAX_MB`, to cap a service, and `AVANT_GC_STATS`, to see what the collector did.
 
