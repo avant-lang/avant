@@ -257,6 +257,50 @@ fn test_user_test(c: Checks) {
       i += 1
     }
 
+    // O569 (Stage 29 W-FIX1e): seven writes of the compiler printed
+    // `cannot write PATH` and dropped the reason; each now prints it
+    // (`cannot write PATH: REASON`), and a lost lcov report fails
+    // `avant test --coverage`. A directory where a file is written, a
+    // missing directory, or `ulimit -f 0` (SIGXFSZ ignored: every write
+    // to a file fails with "File too large", for root too) makes each
+    // fail. Output goes through a pipe: under the limit the compiler
+    // could not write its stderr to a file either.
+    w5 = "${root}/o569"
+    mkdir_p("${w5}/p/tests")
+    mkdir_p("${w5}/isdir")
+    mkdir_p("${w5}/f/avant.lock")
+    _ = file_write("${w5}/p/avant.toml", "[package]\nname = \"p\"\nversion = \"0.1.0\"\n")
+    _ = file_write("${w5}/f/avant.toml", "[package]\nname = \"f\"\nversion = \"0.1.0\"\n")
+    _ = file_write("${w5}/p/tests/test_ok.av", "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.check(true, \"holds\")\n  t.finish\n}\n")
+    _ = file_write("${w5}/re.av", "import std.regex\n\nfn main {\n  if re = Regex.compile(\"a+\") {\n    puts(re.count(\"aa\"))\n  }\n}\n")
+    _ = file_write("${w5}/ok.av", "fn main {\n  puts(1)\n}\n")
+    _ = file_write("${w5}/fmt.av", "fn main {\n    puts(1)\n}\n")
+    mkdir_p("${w5}/p/coverage/lcov.info")
+    qc = ut_quote(compiler)
+    qw = ut_quote(w5)
+    limit = "trap '' XFSZ; ulimit -f 0; "
+    w5_cmds = ["${qc} test tests/test_ok.av --junit ${qw}/isdir", "${qc} test --coverage tests/test_ok.av", "${limit}${qc} compile ${qw}/re.av ${qw}/re-bin", "${qc} __mir-build example ${qw}/mb --emit-ll ${qw}/nodir/k.ll", "${qc} __emit-ll ${qw}/ok.av ${qw}/nodir/e.ll", "${limit}${qc} format --write ${qw}/fmt.av", "${qc} fetch ${qw}/f"]
+    w5_want = ["cannot write ${w5}/isdir: Is a directory\n", "cannot write coverage/lcov.info: Is a directory\n", "/re2c.re: File too large\n", "cannot write ${w5}/nodir/k.ll: No such file or directory\n", "cannot write ${w5}/nodir/e.ll: No such file or directory\n", "cannot write ${w5}/fmt.av: File too large\n", "avant fetch: cannot write ${w5}/f/avant.lock: Is a directory\n"]
+    w5_what = ["the JUnit report", "the lcov report", "re2c's input", "the kept .ll", "__emit-ll's .ll", "format --write", "fetch's avant.lock"]
+    i = 0
+    while i < w5_cmds.size {
+      w_rc = "${w5}/w-${i}.rc"
+      w_log = "${w5}/w-${i}.log"
+      w_sh = "#!/bin/sh\ncd ${qw}/p && { (${w5_cmds[i]}) < /dev/null 2>&1; echo $? > ${ut_quote(w_rc)}; } | cat > ${ut_quote(w_log)}\n"
+      w_code = ut_sh(w_sh, w_rc)
+      if i == 2 {
+        // re2c's input is not fatal (the pattern stays on PCRE2); the
+        // compile fails later, when LLVM cannot write the object.
+        c.expect(w_code != 0, "O569: the compile under ulimit -f 0 fails")
+      } else {
+        c.eq_int(w_code, 1, "O569: a failed write of ${w5_what[i]} fails the command")
+      }
+      w_text = file_read(w_log) ?? ""
+      c.expect(ut_has(w_text, w5_want[i]), "O569: a failed write of ${w5_what[i]} names its reason: ${w5_want[i].strip()}")
+      i += 1
+    }
+    c.expect(ut_has(file_read("${w5}/w-2.log") ?? "", "re2c: cannot write "), "O569: re2c's failed input names re2c")
+
     fetch_body = "[package]\nname = \"fetch\"\nversion = \"0.1.0\"\n\n[test]\ndir = \"tests\"\nexclusive = [\"tests/test_bench.av\"]\n"
     _ = file_write("${root}/fetch/avant.toml", fetch_body)
     fetch_rc = "${root}/fetch.rc"

@@ -222,9 +222,11 @@ pub fn driver_format(args: Array(String)) {
           changed += 1
         }
       } else if write {
-        if !same && (file_write(path, got.text) ?? -1) < 0 {
-          diag_puts("cannot write ${path}")
-          failed = true
+        if !same {
+          if e = write_failure(file_write(path, got.text)) {
+            diag_puts(e.message)
+            failed = true
+          }
         }
       } else {
         print_format(got.text)

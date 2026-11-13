@@ -819,9 +819,8 @@ fn write_junit(path: String, files: Array(FileRun)) {
     b.push_str("  </testsuite>\n")
   }
   b.push_str("</testsuites>\n")
-  w = file_write(path, b.to_s) ?? -1
-  if w < 0 {
-    diag_puts("cannot write ${path}")
+  if e = write_failure(file_write(path, b.to_s)) {
+    diag_puts(e.message)
     diag_exit(1)
   }
 }
@@ -1154,17 +1153,18 @@ pub fn driver_test(args: Array(String)) {
   bad = host.bad
   good = host.good
   puts("${bad} failed, ${good} passed")
+  lost = false
   if coverage {
     for k in 0..cov_include.size {
       host.cov.add_tree(abs_join(anchor, cov_include[k]), cov_exclude)
     }
     if host.cov.has_rows {
       fs_mkdir_p("coverage")
-      host.cov.write_lcov("coverage/lcov.info")
+      lost = !host.cov.write_lcov("coverage/lcov.info")
       host.cov.print_table
     }
   }
-  if bad > 0 {
+  if bad > 0 || lost {
     diag_exit(1)
   }
   diag_exit(0)
