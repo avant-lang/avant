@@ -96,7 +96,6 @@ fn mir_fresh_block(m: MModule, f: MFunc, b: Int, open: Array(UInt64), edit: Bool
   blk = f.blocks[b]
   n = f.locals.size
   out: Array(MStmt) = []
-  drop_next_mark = -1
   j = 0
   while j < blk.stmts.size {
     st = blk.stmts[j]
@@ -154,12 +153,12 @@ fn mir_fresh_block(m: MModule, f: MFunc, b: Int, open: Array(UInt64), edit: Bool
         }
       }
     }
-    if keep {
+    if keep && edit {
       out.push(st)
     }
     j += 1
   }
-  if edit {
+  if edit && out.size != blk.stmts.size {
     blk.stmts = out
   }
 }
