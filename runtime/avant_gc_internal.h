@@ -376,7 +376,9 @@ typedef struct PinEnt {
  * buffer of repeated elements of stride words each (an Array element
  * buffer of a by-value struct or union): the bitmap is one element's
  * and applies to every whole element in the payload. Every walker goes
- * through EACH_REF_SLOT, so they all read the same description. */
+ * through EACH_REF_SLOT or EACH_REF_SLOT_WALK, so they all read the same
+ * description (EACH_REF_SLOT through the list made from it for a small
+ * record, gc_heap.refs). */
 typedef struct TypeMap {
   uint64_t *words;
   uint64_t first;
@@ -394,9 +396,13 @@ typedef struct BlockSet {
   size_t cap;
 } BlockSet;
 
-/* Visit every reference slot of payload P as `void **SLOT`. BODY must
- * not use break or continue. */
-#define EACH_REF_SLOT(P, SLOT, BODY)                                                \
+/* Visit every reference slot of payload P as `void **SLOT`, by the
+ * type's bitmap (a pointer buffer: every word). BODY must not use break
+ * or continue. The description itself: EACH_REF_SLOT below reads the
+ * list made from it for small records and comes here for every other
+ * object; AVANT_GC_VERIFY's checks (avant_gc_verify.c) always walk the
+ * bitmap, so the verifier does not depend on the list. */
+#define EACH_REF_SLOT_WALK(P, SLOT, BODY)                                           \
   do {                                                                              \
     void **ers_p_ = (void **)(P);                                                   \
     const AvantHeader *ers_h_ = avant_header(ers_p_);                               \
@@ -429,6 +435,52 @@ typedef struct BlockSet {
           }                                                                         \
         }                                                                           \
       }                                                                             \
+    }                                                                               \
+  } while (0)
+
+/* A small record's reference words as a list (the Valk stage, VALK-T,
+ * O578, M9): gc_heap.refs[type id], one 64-bit word per type id. Its low
+ * byte is the count of reference words, 0 to TYPE_REFS_MAX, and the bytes
+ * after it are their payload word indexes in ascending order; or the low
+ * byte is TYPE_REFS_WALK and the type is walked by its bitmap. A type is
+ * "small" when it is one record (stride 0) with at most seven reference
+ * words, all among its first 256 payload words: what one word holds, so
+ * the walk of such an object is one load and a short loop instead of the
+ * type id's two special cases, the type table, the stride test with its
+ * division and the loop over bitmap chunks and bits (78 instructions for
+ * a one-field object, VALK-PLAN F4). A type with no map and
+ * AVANT_TYPE_BYTES have count 0 (the table is zero until a map is
+ * registered, and EACH_REF_SLOT_WALK visits nothing of them either);
+ * AVANT_TYPE_PTRS, element buffers (stride > 0) and larger records are
+ * TYPE_REFS_WALK. gc_type_refs_update (avant_gc_heap.c) makes an entry
+ * whenever its type's map changes; gc_init_slow makes AVANT_TYPE_PTRS's.
+ * The layout stays in the type, read through the id the header carries
+ * (Valk keeps it in the block: one size and one layout per block; Avant
+ * keeps headers, D232). */
+#define TYPE_REFS_MAX 7u
+#define TYPE_REFS_WALK 0xffu
+
+/* Visit every reference slot of payload P as `void **SLOT`: a small
+ * record's by its list, a word past the payload's size skipped as the
+ * bitmap walk skips it; any other object's by EACH_REF_SLOT_WALK. BODY
+ * must not use break or continue. */
+#define EACH_REF_SLOT(P, SLOT, BODY)                                                \
+  do {                                                                              \
+    void **erl_p_ = (void **)(P);                                                   \
+    const AvantHeader *erl_h_ = avant_header(erl_p_);                               \
+    uint64_t erl_d_ = gc_heap.refs[erl_h_->type_id];                                \
+    unsigned erl_n_ = (unsigned)(erl_d_ & 0xffu);                                   \
+    if (erl_n_ <= TYPE_REFS_MAX) {                                                  \
+      size_t erl_nw_ = (size_t)erl_h_->size / sizeof(void *);                       \
+      for (; erl_n_; erl_n_--) {                                                    \
+        erl_d_ >>= 8;                                                               \
+        if ((size_t)(erl_d_ & 0xffu) < erl_nw_) {                                   \
+          void **SLOT = erl_p_ + (size_t)(erl_d_ & 0xffu);                          \
+          BODY                                                                      \
+        }                                                                           \
+      }                                                                             \
+    } else {                                                                        \
+      EACH_REF_SLOT_WALK(erl_p_, SLOT, BODY);                                       \
     }                                                                               \
   } while (0)
 
@@ -823,6 +875,10 @@ typedef struct GcHeap {
   /* The type maps (avant_type_map), by type id. */
   TypeMap types[MAX_TYPES];
   uint8_t type_set[MAX_TYPES];
+  /* Each type's reference words as a list, or TYPE_REFS_WALK
+   * (EACH_REF_SLOT; the Valk stage, VALK-T, O578): indexed by any 16-bit
+   * type id, AVANT_TYPE_PTRS included. */
+  uint64_t refs[65536];
 
   /* avant_gc_alloc.c. Freed blocks kept for reuse (at most
    * CACHE_BLOCKS), still charged to heap_bytes. */
@@ -1261,6 +1317,7 @@ void gc_chunk_give(uint64_t c);
 void gc_return_pages(void *p, size_t len);
 void gc_heap_return(uint64_t live);
 int gc_type_word_is_ref(const AvantHeader *h, size_t w);
+void gc_type_refs_update(uint32_t id);
 __attribute__((noreturn)) void gc_die(const char *msg);
 void *gc_xrealloc(void *p, size_t n);
 void gc_work_push(void *p);

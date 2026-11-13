@@ -230,7 +230,7 @@ static uint64_t verify_mark_reachable(int stale) {
     void *p = verify_pop();
 #if GC_STICKY_COPY
     if (stale) {
-      EACH_REF_SLOT(p, slot, {
+      EACH_REF_SLOT_WALK(p, slot, {
         void *st = verify_trace_r(*slot);
         if (st) {
           bad += verify_stale_found(st, p);
@@ -245,7 +245,7 @@ static uint64_t verify_mark_reachable(int stale) {
       continue;
     }
 #endif
-    EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
+    EACH_REF_SLOT_WALK(p, slot, { verify_trace(*slot); });
   }
   return bad;
 }
@@ -468,7 +468,7 @@ void gc_verify_lost(void) {
   verify_each_root(lost_root_slot, 0);
   while (gc_heap.work_n) {
     void *p = verify_pop();
-    EACH_REF_SLOT(p, slot, {
+    EACH_REF_SLOT_WALK(p, slot, {
       void *st = verify_trace_r(*slot);
       verify_lost_found(*slot, st, "field of", p);
       verify_field_rule(*slot, st, slot, p);
@@ -564,7 +564,7 @@ static uint64_t yholders_check(int print) {
     if (by_cards && !rem_by_cards(h)) {
       continue;
     }
-    EACH_REF_SLOT(v, slot, {
+    EACH_REF_SLOT_WALK(v, slot, {
       void *y;
       if ((!by_cards || !gc_heap.cards[gc_card_index(slot)]) && verify_names_young(*slot, &y)) {
         found++;
@@ -597,7 +597,7 @@ static void verify_remembered_whole(void) {
     void *p = verify_pop();
     int py = (avant_header(p)->flags & AVANT_FLAG_YOUNG) != 0;
     int ny = 0;
-    EACH_REF_SLOT(p, slot, {
+    EACH_REF_SLOT_WALK(p, slot, {
       void *st = verify_trace_r(*slot);
       verify_lost_found(*slot, st, "field of", p);
       verify_field_rule(*slot, st, slot, p);
@@ -625,7 +625,7 @@ static void verify_remembered_whole(void) {
         if (rem_by_cards(avant_header(obj))) {
           EACH_CARD_SLOT(obj, slot, { rem_named_field(obj, slot); });
         } else {
-          EACH_REF_SLOT(obj, slot, { rem_named_field(obj, slot); });
+          EACH_REF_SLOT_WALK(obj, slot, { rem_named_field(obj, slot); });
         }
       }
     }
@@ -1230,7 +1230,7 @@ static inline int vi_lost(void *p, void *found) {
         vis_s_ = vis_n_;                                                                \
       }                                                                                 \
     } else {                                                                            \
-      EACH_REF_SLOT(vis_p_, SLOT, {                                                     \
+      EACH_REF_SLOT_WALK(vis_p_, SLOT, {                                                     \
         if ((ALL) || vi_hot(SLOT)) {                                                    \
           CALL;                                                                         \
         }                                                                               \
@@ -1640,7 +1640,7 @@ static void verify_defrag_fields(AvantHeader *h, Block *b) {
     return;
   }
   p = payload_of(h);
-  EACH_REF_SLOT(p, slot, { verify_defrag_word(*slot, "field", (void *)slot); });
+  EACH_REF_SLOT_WALK(p, slot, { verify_defrag_word(*slot, "field", (void *)slot); });
 }
 
 static void verify_defrag_tls(void **slot) {

@@ -53,6 +53,47 @@ int gc_type_word_is_ref(const AvantHeader *h, size_t w) {
   return (m->words[w / 64] >> (w % 64)) & 1u;
 }
 
+/* gc_heap.refs[ID] from the type's map (EACH_REF_SLOT, the Valk stage,
+ * VALK-T, O578): the list of a small record's reference words, or
+ * TYPE_REFS_WALK. Called whenever the map of ID changes, and once for
+ * AVANT_TYPE_PTRS (gc_init_slow). */
+void gc_type_refs_update(uint32_t id) {
+  uint64_t d = 0;
+  unsigned n = 0;
+  uint32_t c;
+  const TypeMap *m;
+  if (id > 65535u) {
+    return;
+  }
+  if (id == AVANT_TYPE_PTRS) {
+    gc_heap.refs[id] = TYPE_REFS_WALK;
+    return;
+  }
+  if (id == AVANT_TYPE_BYTES || id >= MAX_TYPES || !gc_heap.type_set[id]) {
+    gc_heap.refs[id] = 0;
+    return;
+  }
+  m = &gc_heap.types[id];
+  if (m->stride) {
+    gc_heap.refs[id] = TYPE_REFS_WALK;
+    return;
+  }
+  for (c = 0; c < m->nchunks; c++) {
+    uint64_t w = m->words[c];
+    while (w) {
+      uint64_t i = (uint64_t)c * 64 + (uint64_t)__builtin_ctzll(w);
+      w &= w - 1;
+      if (n == TYPE_REFS_MAX || i > 255) {
+        gc_heap.refs[id] = TYPE_REFS_WALK;
+        return;
+      }
+      n++;
+      d |= i << (8 * n);
+    }
+  }
+  gc_heap.refs[id] = d | n;
+}
+
 void gc_die(const char *msg) {
   fprintf(stderr, "avant runtime: %s\n", msg);
   abort();
@@ -858,6 +899,7 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
   m->stride = 0;
   m->nrefs = (uint32_t)__builtin_popcountll(word_bits);
   gc_heap.type_set[type_id] = 1;
+  gc_type_refs_update(type_id);
 }
 
 /* Stage 28 W1b. Registers bits for payload words word_base ..
@@ -912,4 +954,5 @@ void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_ba
   m->nrefs -= (uint32_t)__builtin_popcountll(m->words[chunk]);
   m->words[chunk] = bits;
   m->nrefs += (uint32_t)__builtin_popcountll(bits);
+  gc_type_refs_update(type_id);
 }
