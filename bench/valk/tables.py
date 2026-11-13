@@ -24,6 +24,14 @@ SET_TITLES = {
 }
 
 
+INSTR_NOTE = ("Instructions are `perf stat -e instructions:u` of separate runs, every thread of the process: the median of "
+              "`VALK_BENCH_COUNT_RUNS` runs, with its range when the runs differ by more than 1% (a program whose work varies by run). "
+              "\"threaded\" marks a row whose main thread (`perf stat --no-inherit`, its task-clock) took under 95% of the process's CPU time in "
+              "one more run: its collector or worker threads did the rest, often beside it, so its count is not its wall time, and a ratio "
+              "marked † involves such a row. "
+              "Counts from before W9Fb1 are one run, every thread, unmarked.")
+
+
 def base_of(row):
     """The shipped row a variant is compared with."""
     if row.endswith("-v3"):
@@ -107,10 +115,17 @@ def main():
         add("")
 
     # ---- instruction counts --------------------------------------------------
-    instr = {}
+    instr, irange, ithreads = {}, {}, {}
     ipath = os.path.join(out, "counts", "instructions.tsv")
     if os.path.exists(ipath):
-        instr = {r[0]: int(r[1]) for r in read_tsv(ipath, 1)}
+        for r in read_tsv(ipath, 1):
+            instr[r[0]] = int(r[1])
+            if len(r) >= 8:  # since W9Fb1: min, max, runs, main thread, its CPU share, threaded
+                lo, hi = int(r[2]), int(r[3])
+                if hi > lo * 1.01:
+                    irange[r[0]] = (lo, hi)
+                if r[7] == "threaded":
+                    ithreads[r[0]] = float(r[6])
 
     # ---- timed session -------------------------------------------------------
     session = sys.argv[2] if len(sys.argv) > 2 else None
@@ -134,7 +149,7 @@ def main():
         if not rs:
             return None
         walls = sorted(int(r["wall_ns"]) / 1e9 for r in rs)
-        rss = statistics.median(int(r["rss_kb"]) for r in rs) / 1024
+        rss = statistics.median(int(r["rss_kb"]) for r in rs) / 1024  # GNU time's %M before W9Fb1, wait4's rusage since
         return {"n": len(rs), "med": statistics.median(walls), "min": walls[0], "max": walls[-1], "rss": rss}
 
     def time_cells(rid, base_id):
@@ -150,7 +165,14 @@ def main():
         if rid not in instr:
             return ["—", "—"]
         ratio = "%.3f" % (instr[rid] / instr[base_id]) if base_id in instr and base_id != rid else ("1" if base_id in instr else "—")
-        return [fmt_int(instr[rid]), ratio]
+        cell = fmt_int(instr[rid])
+        if rid in irange:
+            cell += " (%s–%s)" % (fmt_int(irange[rid][0]), fmt_int(irange[rid][1]))
+        if rid in ithreads:
+            cell += " threaded (main thread %.0f%% of the CPU time)" % (ithreads[rid] * 100)
+        if base_id in ithreads or rid in ithreads:
+            ratio += " †"
+        return [cell, ratio]
 
     mark = " — **DISTURBED, NOT EVIDENCE** (a dry run beside other work; the numbers prove the runner, nothing else)" if disturbed else ""
     add("## Table 2. The shipped programs by this workbench's method%s" % mark)
@@ -162,9 +184,9 @@ def main():
         md.extend(stext.rstrip("\n").split("\n"))
         add("```")
         add("")
-        add("Seconds are wall time by a nanosecond clock around the process; median, minimum and maximum of the measured rounds (never a best-of); spread is (max − min) / median. Peak RSS is the median of GNU time's `%M`. `× Valk` divides by the Valk row of the same program. Instructions are `perf stat -e instructions:u` of one separate run, all threads of the process (Go's collector runs on other threads, so its count is not its wall time).")
+        add("Seconds are wall time by a nanosecond clock around the process (since W9Fb1 the spawner's own clock around vfork and wait4, no wrapper's start-up inside; before, GNU time's start-up was inside); median, minimum and maximum of the measured rounds (never a best-of); spread is (max − min) / median. Peak RSS is the median of the program's own peak (wait4's rusage since W9Fb1, GNU time's `%M` before). `× Valk` divides by the Valk row of the same program. " + INSTR_NOTE)
     else:
-        add("No timed session yet: the time columns are empty. Instructions are `perf stat -e instructions:u` of one run, all threads of the process (Go's collector runs on other threads, so its count is not its wall time).")
+        add("No timed session yet: the time columns are empty. " + INSTR_NOTE)
     add("")
     head = "| Program | Row | Median s | Min s | Max s | Spread % | Peak RSS MB | × Valk time | Instructions:u | × Valk instr. |"
     sep = "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
