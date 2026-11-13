@@ -334,7 +334,7 @@ fn main {
       0
     }
     server.serve
-    dummy = handle.join
+    _ = handle.join
   }
 }
 EOF
