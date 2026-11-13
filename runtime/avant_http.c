@@ -1686,27 +1686,49 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
      * W-FIX1a, P193): lines that disagree, or one continued on a folded
      * line, give two readings of where the body ends, and a proxy in
      * front may take the other one (request smuggling). RFC 9112 6.3:
-     * 400 and close. Lines repeating the same number are one value, as
-     * that section allows; a list in one line ("5, 5") is not a number
-     * here and is refused like any other non-number, as before. */
+     * 400 and close. Every repeat is refused too, identical or not
+     * (Stage 29 W-FIX1g, O522, the owner's choice; nginx does the same):
+     * two lines "5" and one line "5, 5" are the same list (RFC 9110 5.3),
+     * and a list in one line is not a number here, so both spellings
+     * are 400, where two identical lines used to be one value.
+     * The same pass counts the Host lines (Stage 29 W-FIX1g, O472, H3):
+     * RFC 9112 3.2 has a server answer 400 to an HTTP/1.1 request
+     * without one and to any request with two (identical or not), and a
+     * Host continued on a folded line is an invalid value; a request
+     * that names two hosts is read one way here and maybe the other way
+     * by a proxy or a virtual-host router in front. */
     {
       size_t hi;
+      int hosts = 0;
       for (hi = 0; hi < num_headers; hi++) {
         long one = 0;
-        if (!headers[hi].name ||
-            !ascii_ieq(headers[hi].name, headers[hi].name_len,
+        if (!headers[hi].name) {
+          continue;
+        }
+        if (ascii_ieq(headers[hi].name, headers[hi].name_len, "Host", 4)) {
+          if (++hosts > 1 || (hi + 1 < num_headers && !headers[hi + 1].name)) {
+            send_error(conn, s, 400);
+            return;
+          }
+          continue;
+        }
+        if (!ascii_ieq(headers[hi].name, headers[hi].name_len,
                        "Content-Length", 14)) {
           continue;
         }
         if ((hi + 1 < num_headers && !headers[hi + 1].name) ||
             !parse_content_length(headers[hi].value, headers[hi].value_len,
                                   &one) ||
-            (has_cl && one != content_length)) {
+            has_cl) {
           send_error(conn, s, 400);
           return;
         }
         content_length = one;
         has_cl = 1;
+      }
+      if (hosts == 0 && minor_version >= 1) {
+        send_error(conn, s, 400);
+        return;
       }
     }
     if (has_cl && content_length > srv->max_body) {

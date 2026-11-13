@@ -6,7 +6,8 @@ import std.http
 // unread (O240); answers larger than the socket takes at once, and
 // answers piling up for a client that does not read (P191); a timeout
 // that closed busy connections (P192); Content-Length lines that
-// disagree (P193). The byte-level client is
+// disagree (P193); a request without Host or with two (Stage 29
+// W-FIX1g, O472). The byte-level client is
 // tests/fixtures/http/raw_client.py: it prints one line per mode.
 // And of its client (Stage 29 W-FIX1d): a request larger than the
 // socket takes at once (O513); a peer that accepts and never answers,
@@ -86,6 +87,7 @@ fn close_unread_round(port: Int, out: Channel(String), root: String, stamp: Int)
   out.send(raw_client(port, root, stamp, "close_unread", "16"))
   out.send(raw_client(port, root, stamp, "close_unread", "2000"))
   out.send(raw_client(port, root, stamp, "lengths", ""))
+  out.send(raw_client(port, root, stamp, "hosts", ""))
   stop(port)
   0
 }
@@ -612,10 +614,18 @@ fn test_std_http_safety(c: Checks, root: String) {
     // P193: a second Content-Length with another value was accepted and
     // the first one won, so the rest of the body ran as a request of its
     // own (GET /hidden here). Disagreeing lines, and a folded one, are
-    // 400 and close; lines repeating one number stay one value.
+    // 400 and close; so is every repeat, identical or not, as two lines
+    // or as a list in one (Stage 29 W-FIX1g, O522); one line is a value.
     lwant: Array(String) = []
-    lwant.push("lengths=differ:400,differ-reversed:400,third-differs:400,case:400,folded:400,list:400,same:200")
+    lwant.push("lengths=differ:400,differ-reversed:400,third-differs:400,case:400,folded:400,list:400,same:400,same-list:400,one:200")
     expect_lines(c, out, lwant, "Content-Length lines that disagree are refused:")
+    // O472 (H3): a request without Host, or with two, was answered (and
+    // a request behind it too). RFC 9112 3.2: 400 for an HTTP/1.1
+    // request without Host and for any request with more than one; the
+    // connection is closed.
+    hwant: Array(String) = []
+    hwant.push("hosts=none:400,two:400,same:400,case:400,folded:400,ws-none:400,1.0-two:400,1.0-none:200,empty:200,one:200")
+    expect_lines(c, out, hwant, "a request without Host, or with two, is refused:")
   } else {
     c.expect(false, "listen for the close-unread test")
   }

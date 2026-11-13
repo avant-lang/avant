@@ -284,7 +284,8 @@ def exchange(raw):
 def lengths():
     # P193: Content-Length lines that disagree are two readings of where
     # the body ends (request smuggling): 400 and close, the body's tail
-    # never runs as a request. Lines repeating one number are one value.
+    # never runs as a request. Repeats are refused too, identical or not,
+    # in both spellings of the list (O522, the owner's choice).
     hidden = get("/hidden")
     post = b"POST /echo HTTP/1.1\r\nHost: x\r\n"
     out = []
@@ -301,11 +302,44 @@ def lengths():
     case("case", b"content-length: 3\r\nCONTENT-LENGTH: %d\r\n" % len(tail), tail, 400, True)
     case("folded", b"Content-Length: 3\r\n 7\r\n", tail, 400, True)
     case("list", b"Content-Length: 3, 3\r\n", b"abc", 400, True)
+    case("same", b"Content-Length: 3\r\nContent-Length: 3\r\n", tail, 400, True)
+    case("same-list", b"Content-Length: %d, %d\r\n" % (len(tail), len(tail)), tail, 400, True)
     s = connect()
-    s.sendall(post + b"Content-Length: 3\r\nContent-Length: 3\r\n\r\nabc" + get("/ping"))
+    s.sendall(post + b"Content-Length: 3\r\n\r\nabc" + get("/ping"))
     got = read_answers(s, 2)
     s.close()
-    out.append("same:%s" % (200 if got == [(200, b"abc"), (200, b"pong")] else "BAD(%r)" % got))
+    out.append("one:%s" % (200 if got == [(200, b"abc"), (200, b"pong")] else "BAD(%r)" % got))
+    return ",".join(out)
+
+
+def hosts():
+    # O472 (H3): RFC 9112 3.2: an HTTP/1.1 request without Host, and a
+    # request of any version with two Host lines (identical or not, in
+    # any case) or a folded one, are answered 400 and the connection is
+    # closed: a request behind it is never answered. HTTP/1.0 may omit
+    # Host; an empty Host is valid.
+    hidden = get("/hidden")
+    out = []
+
+    def case(name, raw, want_status, want_closed):
+        status, data, closed = exchange(raw)
+        ok = status == want_status and closed == want_closed and b"smuggled" not in data
+        out.append("%s:%s" % (name, status if ok else "BAD(%d,%s,%r)" % (status, closed, data[-40:])))
+
+    case("none", b"GET /ping HTTP/1.1\r\n\r\n" + hidden, 400, True)
+    case("two", b"GET /ping HTTP/1.1\r\nHost: a\r\nHost: b\r\n\r\n" + hidden, 400, True)
+    case("same", b"GET /ping HTTP/1.1\r\nHost: x\r\nHost: x\r\n\r\n" + hidden, 400, True)
+    case("case", b"GET /ping HTTP/1.1\r\nhost: x\r\nHOST: y\r\n\r\n" + hidden, 400, True)
+    case("folded", b"GET /ping HTTP/1.1\r\nHost: x\r\n y\r\n\r\n" + hidden, 400, True)
+    case("ws-none", b"GET /ping HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n", 400, True)
+    case("1.0-two", b"GET /ping HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n", 400, True)
+    case("1.0-none", b"GET /ping HTTP/1.0\r\n\r\n", 200, True)
+    case("empty", b"GET /ping HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n", 200, True)
+    s = connect()
+    s.sendall(get("/ping") + get("/ping"))
+    got = read_answers(s, 2)
+    s.close()
+    out.append("one:%s" % (200 if got == [(200, b"pong"), (200, b"pong")] else "BAD(%r)" % got))
     return ",".join(out)
 
 
@@ -326,6 +360,8 @@ try:
         result = idle()
     elif mode == "lengths":
         result = lengths()
+    elif mode == "hosts":
+        result = hosts()
     else:
         result = "unknown mode"
 except Exception as e:  # a failure is a result the test prints
