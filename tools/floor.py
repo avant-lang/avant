@@ -28,7 +28,9 @@ judged; it is listed after the table as "Not judged". Exit 0, or 1 when an
 input has no combined table, 2 on a usage error.
 
 Replaces the `floor.py` that each record copied from the one before (O353):
-the copies of W-INT1 to W-FIX1f2 print the same rows.
+it reproduces VALK-T's `floor-final.txt` and `floor-base.txt` and W-FIX1f2's
+`floor-table.txt` byte for byte, and the table of W-FIX1f's `floor.md` (with
+--base-label W-FIX1c).
 """
 import csv
 import os
