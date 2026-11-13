@@ -286,6 +286,8 @@ pub class Loader {
   mod_paths: Hash(String, String)
   std_names: Hash(String, String)
   wants_prelude: Bool = false
+  lib_read: Bool = false
+  lib_rec: String = ""
 
   fn initialize {
     h = Hash(String, Int).new
@@ -387,6 +389,26 @@ pub class Loader {
     self_exe_path()
   }
 
+  // The `lib: PATH` line of EXE.versions.txt, read once; nil without a
+  // record or without the line (a release archive's versions.txt, a seed,
+  // a bare copy: the climb below).
+  pub fn record_lib(exe: String): String? {
+    if !self.lib_read {
+      self.lib_read = true
+      if text = file_read("${exe}.versions.txt") {
+        for line in text.split("\n") {
+          if line.size > 5 && str_slice(line, 0, 5) == "lib: " {
+            self.lib_rec = str_slice(line, 5, line.size)
+          }
+        }
+      }
+    }
+    if self.lib_rec.size > 0 {
+      return self.lib_rec
+    }
+    nil
+  }
+
   pub fn resolve_std(name: String, loc: Location): String {
     if name == "std" {
       fail(loc, "import std needs a module")
@@ -403,7 +425,25 @@ pub class Loader {
       fail(loc, "cannot find ${name} in the standard library")
       return ""
     }
-    dir = path_dirname(exe_path())
+    exe = exe_path()
+    // The build's record beside the compiler (EXE.versions.txt,
+    // tools/letters.sh) names the library it was built from (O617,
+    // VALK-TM): a kept or copied compiler reads that one, never the
+    // nearest lib/ its path climbs to, and says why when it is gone.
+    if libdir = record_lib(exe) {
+      if !file_exists(libdir) {
+        fail(loc, "cannot find ${name}: ${exe}.versions.txt names the library ${libdir}, which does not exist; set AVANT_ROOT to the checkout whose lib/ this compiler should read")
+        return ""
+      }
+      path = "${libdir}/${rel}"
+      if file_exists(path) {
+        self.std_names[path] = name
+        return path
+      }
+      fail(loc, "cannot find ${name} in the standard library ${libdir} (named by ${exe}.versions.txt)")
+      return ""
+    }
+    dir = path_dirname(exe)
     for guard in 0..64 {
       cand = join_dir(dir, suffix)
       if file_exists(cand) {

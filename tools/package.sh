@@ -97,7 +97,9 @@ done
 # VERSIONS_FILE: the compiler's own build record (COMPILER.versions.txt,
 # written by tools/letters.sh) when it has one, else avant.toml's version
 # and this checkout's commit; `dirty: yes` when compiler/, lib/ or
-# runtime/ differ from that commit.
+# runtime/ differ from that commit. The record's `lib:` line (the
+# checkout's library, O617) is left out: an installed compiler reads the
+# lib/ beside it, and the archive's versions.txt is not EXE.versions.txt.
 if [ -n "$versions" ]; then
   install -m 644 "$versions" "$dir/versions.txt"
 else

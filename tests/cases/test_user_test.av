@@ -401,6 +401,27 @@ fn test_user_test(c: Checks) {
       c.expect(toml_version.size > 0 && ut_starts(file_read("${vdir}/self.log") ?? "", "avant ${toml_version} (commit "), "O534: the compiler under test prints avant.toml's version (${toml_version})")
     }
 
+    // O617 (VALK-TM): a compiler copied outside a checkout reads the
+    // library its build record names (`lib:` in EXE.versions.txt), with
+    // AVANT_ROOT unset; when that library is gone it says so and stops,
+    // instead of reading whatever lib/ its path climbs to.
+    ldir = "${scratch()}/o617"
+    mkdir_p(ldir)
+    lexe = "${ldir}/avant"
+    c.eq_int(copy_file(compiler, lexe), 0, "O617: the compiler copied")
+    chmod_x(lexe)
+    lroot = avant_test_root()
+    if lroot == "." {
+      lroot = cwd_here()
+    }
+    _ = file_write("${ldir}/b64.av", "import std.base64\n\nfn main {\n  puts(\"hi\".bytes.to_base64)\n}\n")
+    _ = file_write("${lexe}.versions.txt", "version: 0.0.0\navant: unknown\nbuilt: tools/letters.sh c-llvm\nlib: ${lroot}/lib\n")
+    c.eq_int(process_run_out("/usr/bin/env", ["-u", "AVANT_ROOT", lexe, "dump", "${ldir}/b64.av"], "${ldir}/own.log") ?? -1, 0, "O617: a copy whose record names the checkout's lib/ reads std.base64 from it")
+    _ = file_write("${lexe}.versions.txt", "version: 0.0.0\navant: unknown\nbuilt: tools/letters.sh c-llvm\nlib: ${ldir}/gone/lib\n")
+    c.eq_int(process_run_out("/usr/bin/env", ["-u", "AVANT_ROOT", lexe, "dump", "${ldir}/b64.av"], "${ldir}/gone.log") ?? -1, 1, "O617: a copy whose recorded library is gone fails")
+    c.expect(ut_has(file_read("${ldir}/gone.log") ?? "", "cannot find std.base64: ${lexe}.versions.txt names the library ${ldir}/gone/lib, which does not exist; set AVANT_ROOT to the checkout whose lib/ this compiler should read"), "O617: and says which record named which library")
+    rm_f(lexe)
+
     fetch_body = "[package]\nname = \"fetch\"\nversion = \"0.1.0\"\n\n[test]\ndir = \"tests\"\nexclusive = [\"tests/test_bench.av\"]\n"
     _ = file_write("${root}/fetch/avant.toml", fetch_body)
     fetch_rc = "${root}/fetch.rc"
