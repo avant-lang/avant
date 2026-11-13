@@ -261,6 +261,25 @@ fn test_user_test(c: Checks) {
       i += 1
     }
 
+    // O596 (Stage 29 W-FIX1f): the JUnit report's fallback case put a
+    // failed file's output in CDATA as it was, so an output holding
+    // `]]>` ended the section early and the report did not parse. A
+    // file without std.testing prints it and fails; Python's XML parser
+    // must read the report and give the output back whole.
+    mkdir_p("${root}/o596/tests")
+    _ = file_write("${root}/o596/avant.toml", "[package]\nname = \"o596\"\nversion = \"0.1.0\"\n")
+    o596_line = "before ]]> middle <tag/> & ]]]> ]]>]]> after"
+    _ = file_write("${root}/o596/tests/test_cdata.av", "fn main: Int {\n  puts(\"${o596_line}\")\n  1\n}\n")
+    o596_rc = "${root}/o596.rc"
+    o596_sh = "#!/bin/sh\ncd ${ut_quote(root)}/o596 && ${ut_quote(compiler)} test tests/test_cdata.av --junit ${ut_quote(root)}/o596.xml > ${ut_quote(root)}/o596.log 2>&1; echo $? > ${ut_quote(o596_rc)}\n"
+    c.eq_int(ut_sh(o596_sh, o596_rc), 1, "O596: a file whose output holds ]]> fails the run")
+    o596_py = "import sys, xml.etree.ElementTree as E\nf = E.parse(sys.argv[1]).find('.//failure')\nsys.stdout.write(f.text if f is not None else '(no failure element)')\n"
+    _ = file_write("${root}/o596.py", o596_py)
+    o596_prc = "${root}/o596-parse.rc"
+    o596_psh = "#!/bin/sh\n/usr/bin/python3 -I ${ut_quote(root)}/o596.py ${ut_quote(root)}/o596.xml > ${ut_quote(root)}/o596-parse.out 2>&1; echo $? > ${ut_quote(o596_prc)}\n"
+    c.eq_int(ut_sh(o596_psh, o596_prc), 0, "O596: an XML parser reads the JUnit report of an output holding ]]>")
+    c.expect(ut_has(file_read("${root}/o596-parse.out") ?? "", "${o596_line}\n"), "O596: the failure's text is the file's output, ]]> included")
+
     // O569 (Stage 29 W-FIX1e): seven writes of the compiler printed
     // `cannot write PATH` and dropped the reason; each now prints it
     // (`cannot write PATH: REASON`), and a lost lcov report fails
