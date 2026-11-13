@@ -203,7 +203,7 @@ table)
       if (ast[t] != "ok") miss[t] = miss[t] " Avant: " ast[t] ";"
       if (t in note) miss[t] = miss[t] " " note[t]
     }
-    printf "Avant source: %s. Multiplier = Avant / best measured here; best excludes failed runs. Crystal and Go columns are Avant/Crystal and Avant/Go as time / memory.\n\n", (avsrc == "lr" ? "lr-avant.tsv (one wrapper for all)" : "harness runtime.tsv (ps sampling; not the same method as the references)")
+    printf "Avant source: %s. Multiplier = Avant / best measured here; best excludes failed runs. Crystal and Go columns are Avant/Crystal and Avant/Go as time / memory.\n\n", (avsrc == "lr" ? "lr-avant.tsv (one wrapper for all)" : "harness runtime.tsv (its own wrapper; peak RSS by ps sampling before W9Fb1, GNU time since; not the same method as the references)")
     sec("Combined (worse of the two multipliers)", "both")
     sec("By time multiplier", "time")
     sec("By memory multiplier", "mem")
