@@ -207,9 +207,25 @@
 /* The defragmenter's least gain (Stage 29 W-FIX1c, O202;
  * avant_gc_defrag.c): an evacuation must free, net, at least one block
  * for every DEFRAG_GAIN_DIV blocks' worth of live mature lines (and at
- * least one), because its fix-up walks every live object. */
+ * least one), because its fix-up walks every live object. 64 by
+ * measurement (the Valk stage, VALK-T2, O604; 128 until then), on the
+ * fix-up of O603: 4, 8, 16, 32, 64, 128, 256, 512 and the one-block rule
+ * alone, on the collector benchmark's scenarios, bench/mature_defrag.av,
+ * the suite's two fixtures that evacuate (with the nursery on and off),
+ * the statistics set and LangArena's 50 tasks. 16, 32 and 64 gave the
+ * same counts everywhere. Against them 128 ran one more evacuation in
+ * heap/full_default.av (five against four, 4,272 more bytes moved for
+ * the same 49 blocks freed: 0.03% more instructions, a peak_heap 20 KiB
+ * higher) and was equal on everything else; 256, 512 and the one-block rule added an
+ * evacuation to scenario 6 (5,424 bytes moved for one block beside an
+ * 8 MiB live list: 3.6% more instructions, the same peak_heap); 8 began
+ * to leave fragmentation (heap/full_default.av's peak_heap +0.8%) and 4
+ * left most of it (its peak_heap with the nursery off 21.1 MB against
+ * 14.2 MB). 64 is the largest of the three equal values: the farthest
+ * from where memory is lost. LangArena's counts and peak_heap did not
+ * move with any value. */
 #ifndef DEFRAG_GAIN_DIV
-#define DEFRAG_GAIN_DIV 128
+#define DEFRAG_GAIN_DIV 64
 #endif
 #define GC_THREAD_ROOTS 8
 

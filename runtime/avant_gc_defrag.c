@@ -29,9 +29,10 @@
  * blocks their live objects fill (def_dest_blocks): at least one, and at
  * least one for every DEFRAG_GAIN_DIV blocks' worth of live lines the
  * mark found, since the pass costs in proportion to them (a heap of up to
- * 128 live blocks, 4 MiB, moves for one block; one of 8 MiB needs two).
+ * 64 live blocks, 2 MiB, moves for one block; one of 4 MiB needs two; the
+ * divisor's measurement is at its definition, avant_gc_internal.h).
  * What is given up is bounded: sparse blocks that would have freed less
- * than 1/128 of the live heap stay, and their free lines stay
+ * than 1/64 of the live heap stay, and their free lines stay
  * allocatable. And the block the last evacuation filled last
  * (gc_heap.def_last), sparse by construction, is not a candidate:
  * evacuated with the next sparse block it would be copied again at every
