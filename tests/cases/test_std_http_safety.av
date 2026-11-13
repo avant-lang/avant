@@ -805,12 +805,33 @@ fn ws_target_round(root: String, n: Int, out: Channel(String)) {
 // The WebSocket client's handshake (Stage 29 W-FIX1g): it was formatted
 // into 2048 bytes and copied by the length it would have had, so a
 // target of a few thousand bytes overran the buffers and glibc stopped
-// the program (SIGABRT). It is built to its length now.
+// the program (SIGABRT). It is built to its length now. And it was
+// written with one call whose count was ignored (O571): a handshake the
+// socket took in part was cut, and the call timed out. A 4 MiB target
+// to a server that reads late is more than the socket takes at once;
+// the rest is sent as the socket becomes writable.
 fn ws_handshake_cases(c: Checks, root: String) {
   out = Channel(String).new(4)
   ws_target_round(root, 4000, out)
+  ws_target_round(root, 4194304, out)
   want: Array(String) = []
   want.push("target 4000: target of 4001 bytes, message hi")
+  want.push("target 4194304: target of 4194305 bytes, message hi")
+  // A handshake the peer never takes (a listener that is never served)
+  // is written as the socket allows, within the call's deadline.
+  if quiet = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    long_url = "ws://127.0.0.1:${quiet.port}/${repeat_byte(97, 4194304)}"
+    t0 = now_ms()
+    if e = ws_failure(Ws.connect(long_url, 1000)) {
+      out.send(timed("ws-long", t0, 1000, e.message))
+    } else {
+      out.send("ws-long=connected")
+    }
+    quiet.close
+  } else {
+    out.send("no listener")
+  }
+  want.push("ws-long=timed out in time")
   expect_lines(c, out, want, "a WebSocket handshake longer than 2048 bytes:")
 }
 

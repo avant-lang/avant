@@ -2594,6 +2594,7 @@ typedef struct WsClient {
   int close_code;
   char *request; /* the handshake, malloc'd to its length */
   size_t request_len;
+  size_t request_sent; /* how much of it the socket has taken */
   int want_close;
   WsClientMsg *in_head;
   WsClientMsg *in_tail;
@@ -2832,10 +2833,12 @@ static struct us_socket_t *ws_client_on_open(struct us_socket_t *s,
   c->sock = s;
   /* The handshake goes out only now: writing on a still-connecting
    * socket corrupts the semi-socket state machine (the fetch rule). */
-  if (c->request_len > 0) {
-    us_socket_write(0, s, c->request, (int)c->request_len, 0);
-    c->request_len = 0;
-  }
+  /* All of it, under the call's deadline (Stage 29 W-FIX1g, O571): one
+   * us_socket_write ignored its count, so a handshake the socket took in
+   * part was cut and the server waited for the rest; the rest is now
+   * sent each time the socket is writable (ws_client_on_writable), by
+   * the loop the server's queue and the HTTP client use. */
+  (void)sock_write_rest(s, c->request, c->request_len, &c->request_sent);
   return s;
 }
 
@@ -2877,7 +2880,12 @@ static struct us_socket_t *ws_client_on_timeout(struct us_socket_t *s) {
 }
 
 static struct us_socket_t *ws_client_on_writable(struct us_socket_t *s) {
-  ws_client_flush(ws_client_of_socket(s));
+  WsClient *c = ws_client_of_socket(s);
+  if (c->request_sent < c->request_len) {
+    (void)sock_write_rest(s, c->request, c->request_len, &c->request_sent);
+    return s;
+  }
+  ws_client_flush(c);
   return s;
 }
 
