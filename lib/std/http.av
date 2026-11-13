@@ -858,10 +858,11 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
       i += 1
     }
     buf.push_str("Content-Length: ${body.size}\r\nConnection: close\r\n\r\n")
-    if body.size > 0 {
-      text = String.from_utf8(body) ?? ""
-      buf.push_str(text)
-    }
+    // The body's bytes as they are (Stage 29 W-FIX1g): it went through
+    // String.from_utf8, so a body that is not valid UTF-8 was sent as
+    // nothing after a Content-Length of its size, and the server waited
+    // for it until the call's deadline.
+    buf.push_bytes(body)
     left = deadline - now_ms()
     if left <= 0 {
       return HttpError.new("request to ${p.authority} timed out")

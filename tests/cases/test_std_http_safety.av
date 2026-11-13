@@ -172,6 +172,19 @@ fn post_big_round(port: Int, out: Channel(String), n: Int): Int {
   } else {
     out.send("HttpError")
   }
+  // A body that is not valid UTF-8 (Stage 29 W-FIX1g): it was sent as
+  // nothing after a Content-Length of its size.
+  raw = buf_new()
+  raw.push_byte(255)
+  raw.push_byte(0)
+  raw.push_byte(65)
+  raw.push_byte(254)
+  hs: Array(Header) = []
+  if resp = Http.request("POST", "http://127.0.0.1:${port}/raw", raw.to_s.bytes, hs, true, 4000) {
+    out.send("status ${resp.status}: ${String.from_utf8(resp.body) ?? "?"}")
+  } else {
+    out.send("HttpError")
+  }
   stop(port)
   0
 }
@@ -188,6 +201,13 @@ fn client_cases(c: Checks) {
   set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "")
   if opened = listened {
     server = opened
+    server.post("/raw") { |req|
+      sum = 0
+      for i in 0..req.body.size {
+        sum = sum * 7 + req.body[i]
+      }
+      Response.text("${req.body.size} bytes, sum ${sum}")
+    }
     server.post("/len") { |req|
       body = req.body
       bad = 0
@@ -211,7 +231,8 @@ fn client_cases(c: Checks) {
     c.eq_int(task.join, 0, "client post task")
     want: Array(String) = []
     want.push("status 200: 8388608 bytes, 0 out of place")
-    expect_lines(c, out, want, "a request the socket takes in part reaches the server whole and in order:")
+    want.push("status 200: 4 bytes, sum 88174")
+    expect_lines(c, out, want, "the client's request body reaches the server whole and in order (8 MiB; 4 bytes not UTF-8):")
   } else {
     c.expect(false, "listen for the client's large request")
   }
