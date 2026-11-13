@@ -17,7 +17,7 @@ One hello-world server per row, with identical behavior: HTTP answers `GET /` wi
 
 ## One run per server (no `METHOD`)
 
-`sh bench/http/run.sh [avant|h2o|rust|go|crystal|all]`. HTTP is measured with `wrk -t4 -c64 -d10s --latency`, one run; WebSocket is measured with [ws_load.go](avant/bench/http/ws_load.go) using 8 connections for 10 seconds. Each phase also reports the server's peak RSS, and the Avant HTTP phase reports allocated bytes per request. `hyper`, `fasthttp` and `valk` can be named too (HTTP only).
+`sh bench/http/run.sh [avant|h2o|rust|go|crystal|all]`. Only the row named is built (its servers, and the WebSocket load generator), so `sh bench/http/run.sh avant` needs only the compiler, Go (for the load generator), `wrk`, `curl` and `python3`; `all` builds every row. HTTP is measured with `wrk -t4 -c64 -d10s --latency`, one run; WebSocket is measured with [ws_load.go](avant/bench/http/ws_load.go) using 8 connections for 10 seconds. Each phase also reports the server's peak RSS, and the Avant HTTP phase reports allocated bytes per request. `hyper`, `fasthttp` and `valk` can be named too (HTTP only).
 
 ## The methods (`METHOD`)
 
@@ -58,7 +58,7 @@ For every run the harness keeps, under `HTTP_BENCH_OUT/<METHOD>/` (default `$HTT
 
 ## Prerequisites
 
-Binaries are built into `/tmp/http-ws-bench-build` (override with `HTTP_BENCH_BUILD`); `sh bench/http/run.sh build` only builds. Avant is compiled with `bin/avant-b` in `--release`, like the other languages' optimized builds (override with `AVANT_BENCH_COMPILER`). The h2o servers need a clone of `h2o-project/h2o` at the workbench's `refs/h2o` (override with `H2O_SRC`; the library is built into `H2O_BUILD`, default `/tmp/h2o-build`) and the wslay library, either from the system or extracted from the distribution's packages under `/tmp/wslay` (`WSLAY_ROOT` for the extraction's `usr`, `WSLAY_PC` for the directory holding a `libwslay.pc` that points at it). The `hyper` row needs `cargo`, the `fasthttp` row Go modules, the `valk` row a `valk` on `PATH`; `wrk`, `curl`, `python3`, `taskset` and, for `syscalls`, `strace` are used by the harness itself.
+Binaries are built into `$TMPDIR/http-ws-bench-build` (`/tmp` when `TMPDIR` is not set; override with `HTTP_BENCH_BUILD`); every command builds only the rows it names (`all`: every row), and `sh bench/http/run.sh build` only builds, every row. Avant is compiled with `bin/avant-b` in `--release`, like the other languages' optimized builds (override with `AVANT_BENCH_COMPILER`). The h2o servers need a clone of `h2o-project/h2o` at the workbench's `refs/h2o`: the workbench is `AVANT_WORKBENCH` when it is set, else the directory that holds the main checkout, which `git` names from a worktree too (a wave's worktree elsewhere finds the same `refs/`), else the checkout's parent (override the clone with `H2O_SRC`; the library is built into `H2O_BUILD`, default `$TMPDIR/h2o-build`). They also need the wslay library: the system's (`libwslay-dev`, found with `pkg-config`) comes first, else an extraction of the distribution's packages (`WSLAY_ROOT` for the extraction's `usr`, default `/tmp/wslay/root/usr`, and `WSLAY_PC` for the directory holding a `libwslay.pc` that points at it); without either, the h2o row stops and says so. The `hyper` row needs `cargo`, the `fasthttp` row Go modules, the `valk` row a `valk` on `PATH`; `wrk`, `curl`, `python3`, `taskset` and, for `syscalls`, `strace` are used by the harness itself.
 
 ## Credits
 
