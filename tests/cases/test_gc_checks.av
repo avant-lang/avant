@@ -361,6 +361,37 @@ fn test_field_rule(c: Checks, compiler: String, root: String, dir: String) {
   }
 }
 
+// A chain of remembered old objects (the Valk stage, VALK-T):
+// heap/rem_chain.av makes a list of 200,000 nodes old, writes a young
+// object into every node (each node is remembered and names a young
+// object) and runs a young collection with the list's head in a root.
+// Every environment prints `200000 200000` with no stderr. Before the
+// fix the young trace called itself once per node of such a chain and
+// the program ended with exit 139 (a stack overflow) plainly, at 1 MB
+// and under the verifier.
+fn test_rem_chain(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  no_flags: Array(String) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/heap/rem_chain.av", "${dir}/rem_chain", "${dir}/rem_chain.log", no_flags))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "rem_chain.av: compiles")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "rem_chain", "rem_chain.g${e}", envs[e]))
+  }
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "rem_chain.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/rem_chain.g${e}.out"), "200000 200000\n", "rem_chain.av ${what}: every node of the remembered chain keeps its young object")
+    c.eq_str(log_text("${dir}/rem_chain.g${e}.err"), "", "rem_chain.av ${what}: no stderr (no verifier report)")
+  }
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -369,6 +400,7 @@ fn test_main(c: Checks) {
     test_stress_inline(c, compiler, avant_test_root(), scratch_dir())
     test_empty_end(c, compiler, avant_test_root(), scratch_dir())
     test_field_rule(c, compiler, avant_test_root(), scratch_dir())
+    test_rem_chain(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

@@ -1,0 +1,65 @@
+// A chain of remembered old objects (found in the Valk stage's VALK-T):
+// a list of 200,000 nodes is made old by a full collection, every node
+// is written (so every node is remembered), and a young collection runs
+// with the list's head in a root. The young trace followed a remembered
+// object named by a mature object's field at once, one call inside the
+// other per node, and the program ended with a stack overflow (exit 139)
+// from about 100,000 nodes. Prints the count of nodes whose field reads
+// back and the count reached by the walk: `200000 200000`.
+
+import std.gc
+
+lib gcrt {
+  fun avant_gc_collect()
+}
+
+class Node {
+  next: Node?
+  mark: Node?
+  v: Int
+}
+
+fn chain(n: Int): Node {
+  first = Node.new
+  prev = first
+  i = 1
+  while i < n {
+    node = Node.new
+    node.v = i
+    prev.next = node
+    prev = node
+    i = i + 1
+  }
+  first
+}
+
+fn touch(list: Node, fresh: Node): Int {
+  n = 0
+  cur: Node? = list
+  while node = cur {
+    node.mark = fresh
+    cur = node.next
+    n = n + 1
+  }
+  n
+}
+
+fn main: Int {
+  n = 200000
+  list = chain(n)
+  gcrt.avant_gc_collect()
+  fresh = Node.new
+  fresh.v = 7
+  touched = touch(list, fresh)
+  gc.collect()
+  good = 0
+  cur: Node? = list
+  while node = cur {
+    if m = node.mark, m.v == 7 {
+      good = good + 1
+    }
+    cur = node.next
+  }
+  puts("${good} ${touched}")
+  0
+}

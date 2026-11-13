@@ -143,6 +143,12 @@ static int scan_fields(void *p, int from_mature);
 static uint64_t scan_cards(void *p, int from_mature, int *r);
 static int trace_object(void **slot, void *start, Block *b, AvantHeader *ol, int from_mature);
 
+/* How many remembered objects trace_object is following inside one
+ * another (only the collecting thread traces), and the most it follows
+ * that way (its comment). */
+#define TRACE_REM_DEPTH 64
+static uint32_t trace_rem_depth;
+
 /* The trace's state in locals (the Valk stage, VALK-T, O579), as the full
  * mark's MarkCtx: what a field's trace reads of gc_heap, loaded once by
  * the loop that scans (y_open), so the loop keeps it in registers. The
@@ -361,11 +367,28 @@ static int trace_object(void **slot, void *start, Block *b, AvantHeader *ol, int
   if (from_mature && (fl & (AVANT_FLAG_REM | AVANT_FLAG_REMC)) == 0) {
     return 0;
   }
+  /* A remembered object a mature object's field names is followed here,
+   * and its fields name the next remembered object: on a chain of them
+   * (a list of old nodes, each written since the last collection) this
+   * function called itself once per node, and a chain of 100,000 ended
+   * the program with a stack overflow (found in the Valk stage's VALK-T;
+   * tests/fixtures/heap/rem_chain.av). Past TRACE_REM_DEPTH nested
+   * objects the object is left to the remembered set's own scan
+   * (trace_all, R1'(c)), which reaches every remembered object not yet
+   * traced: such an object is met here only before or during that scan,
+   * never after it. Below the depth the order of the trace is the one it
+   * always had. */
+  if (from_mature && trace_rem_depth >= TRACE_REM_DEPTH) {
+    return 0;
+  }
   h->flags = (uint16_t)(fl | AVANT_FLAG_MARKED);
   idx = note_marked(start, 0);
   if (ol) {
     note_carded(start, h);
     gc_heap.young_large_live += gc_large_bytes(ol);
+  }
+  if (from_mature) {
+    trace_rem_depth++;
   }
   /* Followed only because it is remembered: a carded object's marked
    * cards are what the barrier recorded (Stage 28 W16t). */
@@ -375,6 +398,9 @@ static int trace_object(void **slot, void *start, Block *b, AvantHeader *ol, int
     (void)scan_cards(start, 1, &r);
   } else {
     r = scan_fields(start, 1);
+  }
+  if (from_mature) {
+    trace_rem_depth--;
   }
   if (r & TR_MOVABLE) {
     noted_tag(idx, NOTED_FIX);
