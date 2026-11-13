@@ -2592,8 +2592,8 @@ typedef struct WsClient {
   int closed;
   int close_sent;
   int close_code;
-  char request[2048];
-  int request_len;
+  char *request; /* the handshake, malloc'd to its length */
+  size_t request_len;
   int want_close;
   WsClientMsg *in_head;
   WsClientMsg *in_tail;
@@ -2833,7 +2833,7 @@ static struct us_socket_t *ws_client_on_open(struct us_socket_t *s,
   /* The handshake goes out only now: writing on a still-connecting
    * socket corrupts the semi-socket state machine (the fetch rule). */
   if (c->request_len > 0) {
-    us_socket_write(0, s, c->request, c->request_len, 0);
+    us_socket_write(0, s, c->request, (int)c->request_len, 0);
     c->request_len = 0;
   }
   return s;
@@ -2932,6 +2932,7 @@ static void ws_client_free(WsClient *c) {
   if (c->loop) { us_loop_free(c->loop); }
   free(c->buf);
   free(c->frag);
+  free(c->request);
   pthread_mutex_destroy(&c->mu);
   pthread_cond_destroy(&c->cond);
   free(c);
@@ -2948,7 +2949,6 @@ avant_int avant_ws_client_connect(const char *host, avant_int port,
   WsClient *c;
   avant_int id;
   struct us_socket_context_options_t options;
-  char request[2048];
   int request_len;
   struct timespec deadline;
   set_status(0);
@@ -2978,14 +2978,23 @@ avant_int avant_ws_client_connect(const char *host, avant_int port,
   us_socket_context_on_timeout(0, c->ctx, ws_client_on_timeout);
   us_socket_context_on_end(0, c->ctx, ws_client_on_end);
   us_socket_context_on_connect_error(0, c->ctx, ws_client_on_connect_error);
-  request_len = snprintf(request, sizeof(request),
-                         "GET %s HTTP/1.1\r\nHost: %s:%d\r\n"
-                         "Upgrade: websocket\r\nConnection: Upgrade\r\n"
-                         "Sec-WebSocket-Key: %s\r\n"
-                         "Sec-WebSocket-Version: 13\r\n\r\n",
-                         target, host, (int)port, key_b64);
-  memcpy(c->request, request, (size_t)request_len);
-  c->request_len = request_len;
+  /* The handshake is built to its own length (Stage 29 W-FIX1g): it was
+   * formatted into 2048 bytes on the stack and then copied by the length
+   * snprintf would have written, so a target or a host longer than about
+   * 1,900 bytes overran both buffers (glibc's fortified memcpy stopped
+   * the program: "buffer overflow detected", SIGABRT). */
+#define WS_CLIENT_HANDSHAKE "GET %s HTTP/1.1\r\nHost: %s:%d\r\n" \
+                            "Upgrade: websocket\r\nConnection: Upgrade\r\n" \
+                            "Sec-WebSocket-Key: %s\r\n" \
+                            "Sec-WebSocket-Version: 13\r\n\r\n"
+  request_len = snprintf(NULL, 0, WS_CLIENT_HANDSHAKE, target, host,
+                         (int)port, key_b64);
+  c->request = request_len > 0 ? (char *)malloc((size_t)request_len + 1) : NULL;
+  if (!c->request) { ws_client_free(c); set_status(4); return 0; }
+  snprintf(c->request, (size_t)request_len + 1, WS_CLIENT_HANDSHAKE, target,
+           host, (int)port, key_b64);
+#undef WS_CLIENT_HANDSHAKE
+  c->request_len = (size_t)request_len;
   {
     struct us_socket_t *sock = us_socket_context_connect(
         0, c->ctx, host, (int)port, NULL, 0, 0);

@@ -19,7 +19,8 @@ import std.http
 // W-FIX1f, O594). And a header that would split the answer (Stage 29
 // W-FIX1g, O518). And a client that waited for the server to close
 // after a complete response (Stage 29 W-FIX1g, O566). And a WebSocket
-// message the socket took in part (Stage 29 W-FIX1g).
+// message the socket took in part (Stage 29 W-FIX1g). And the WebSocket
+// client's handshake: one longer than 2048 bytes (Stage 29 W-FIX1g).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -772,6 +773,47 @@ fn ws_big_cases(c: Checks, root: String) {
   ws_big_round(c, root, "65536", 1048581)
 }
 
+// Ws.connect with a target of `n` bytes against
+// tests/fixtures/http/ws_target_server.py, which reads the handshake
+// late with a small receive buffer: what the connection gave.
+fn ws_target_round(root: String, n: Int, out: Channel(String)) {
+  stamp = now_ms()
+  port_file = "${scratch()}/ws-target-${stamp}-${n}.port"
+  log = "${scratch()}/ws-target-${stamp}-${n}.log"
+  server = spawn {
+    args: Array(String) = []
+    args.push("${root}/tests/fixtures/http/ws_target_server.py")
+    args.push(port_file)
+    process_run_out("/usr/bin/python3", args, log) ?? -1
+  }
+  port = wait_port(port_file)
+  r = Ws.connect("ws://127.0.0.1:${port}/${repeat_byte(97, n)}", 5000)
+  if e = ws_failure(r) {
+    out.send("target ${n}: ${e.message}")
+  } else if conn = r {
+    _ = conn.send_text("hi")
+    if msg = conn.recv(5000) {
+      out.send("target ${n}: ${msg.text ?? "?"}")
+    } else {
+      out.send("target ${n}: connected, no answer")
+    }
+    conn.close
+  }
+  _ = server.join
+}
+
+// The WebSocket client's handshake (Stage 29 W-FIX1g): it was formatted
+// into 2048 bytes and copied by the length it would have had, so a
+// target of a few thousand bytes overran the buffers and glibc stopped
+// the program (SIGABRT). It is built to its length now.
+fn ws_handshake_cases(c: Checks, root: String) {
+  out = Channel(String).new(4)
+  ws_target_round(root, 4000, out)
+  want: Array(String) = []
+  want.push("target 4000: target of 4001 bytes, message hi")
+  expect_lines(c, out, want, "a WebSocket handshake longer than 2048 bytes:")
+}
+
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
   i = 0
   while i < want.size {
@@ -972,5 +1014,6 @@ fn main: Int {
   header_split_cases(c, avant_test_root())
   client_framing_cases(c, avant_test_root())
   ws_big_cases(c, avant_test_root())
+  ws_handshake_cases(c, avant_test_root())
   c.finish
 }
