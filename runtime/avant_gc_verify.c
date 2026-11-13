@@ -426,6 +426,36 @@ static uint64_t verify_lost_found(void *p, void *found, const char *where, void 
   return 1;
 }
 
+/* The field rule's check (the Valk stage, VALK-T, O585; D342 Q6; the
+ * rule is stated at the top of avant_gc_internal.h): FOUND is
+ * gc_object_payload(P) for the word P of HOLDER's field SLOT. A field
+ * that names the inside of an object breaks what the traces rely on (they
+ * classify a field by the range test alone and read the header right
+ * before the address), so it is not counted like the other reports: the
+ * program stops here, before the collection that would misread it. A
+ * field naming heap memory where no object lives is verify_lost_found's
+ * report. Asked of every field the verifier reads before a collection:
+ * every field of every object the roots reach and of every remembered
+ * object (the whole checks; an incremental check counts a broken field as
+ * a candidate, which runs the whole check). */
+static inline int field_rule_broken(void *p, void *found) {
+  return found && found != p;
+}
+
+static void verify_field_rule(void *p, void *found, void **slot, void *holder) {
+  if (!field_rule_broken(p, found)) {
+    return;
+  }
+  fprintf(stderr,
+          "avant gc verify: field rule: holder %p (type %u size %u flags 0x%x) field %ld holds %p, an address "
+          "inside object %p (type %u size %u) before coll=%llu\n",
+          holder, (unsigned)avant_header(holder)->type_id, (unsigned)avant_header(holder)->size,
+          (unsigned)avant_header(holder)->flags, (long)((uint8_t *)slot - (uint8_t *)holder), p, found,
+          (unsigned)avant_header(found)->type_id, (unsigned)avant_header(found)->size,
+          (unsigned long long)avant_g_stats.collections);
+  gc_die("avant gc verify: a reference-typed field holds an address inside an object (the field rule)");
+}
+
 static void lost_root_slot(void **slot) {
   void *st = verify_trace_r(*slot);
   verify_lost_found(*slot, st, "root", (void *)slot);
@@ -441,6 +471,7 @@ void gc_verify_lost(void) {
     EACH_REF_SLOT(p, slot, {
       void *st = verify_trace_r(*slot);
       verify_lost_found(*slot, st, "field of", p);
+      verify_field_rule(*slot, st, slot, p);
     });
   }
   verify_clear_traced();
@@ -473,8 +504,15 @@ static void rem_named_found(void *start) {
   gc_heap.rnamed[gc_heap.rnamed_n++] = start;
 }
 
-static void rem_named(void *p) {
-  rem_named_found(gc_object_payload(p, NULL, NULL));
+/* A remembered object's field (R1'(c)), in the whole check: the young
+ * collection traces it whether or not the roots reach its holder, so the
+ * field rule and the lost-reference check are asked of it here too (the
+ * Valk stage, VALK-T, O585). */
+static void rem_named_field(void *holder, void **slot) {
+  void *st = gc_object_payload(*slot, NULL, NULL);
+  verify_lost_found(*slot, st, "field of remembered", holder);
+  verify_field_rule(*slot, st, slot, holder);
+  rem_named_found(st);
 }
 
 /* The reached holders that are not young and name a young object in a
@@ -562,6 +600,7 @@ static void verify_remembered_whole(void) {
     EACH_REF_SLOT(p, slot, {
       void *st = verify_trace_r(*slot);
       verify_lost_found(*slot, st, "field of", p);
+      verify_field_rule(*slot, st, slot, p);
       if (st) {
         if (py) {
           rem_named_found(st);
@@ -584,9 +623,9 @@ static void verify_remembered_whole(void) {
       void *obj = gc_heap.remset[ri];
       if (gc_is_heap_payload(obj, NULL, NULL)) {
         if (rem_by_cards(avant_header(obj))) {
-          EACH_CARD_SLOT(obj, slot, { rem_named(*slot); });
+          EACH_CARD_SLOT(obj, slot, { rem_named_field(obj, slot); });
         } else {
-          EACH_REF_SLOT(obj, slot, { rem_named(*slot); });
+          EACH_REF_SLOT(obj, slot, { rem_named_field(obj, slot); });
         }
       }
     }
@@ -1293,6 +1332,8 @@ static void vi_sources(size_t pages, void (*examine)(void *)) {
 static inline void vi_m_slot(void **slot, int py, int *ny) {
   void *st = vi_trace(*slot);
   vi_cand += (uint64_t)vi_lost(*slot, st);
+  /* The field rule (verify_field_rule: the whole check reports it). */
+  vi_cand += (uint64_t)field_rule_broken(*slot, st);
   /* An object the last whole T proved unreached is named again. */
   vi_cand += (uint64_t)(st && vr_unreached(st));
   vi_note(slot, st);
@@ -1305,6 +1346,15 @@ static inline void vi_m_slot(void **slot, int py, int *ny) {
       *ny = 1;
     }
   }
+}
+
+/* rem_named_field in an incremental check: a broken or lost field is a
+ * candidate. */
+static void vi_rem_named_field(void **slot) {
+  void *st = gc_object_payload(*slot, NULL, NULL);
+  vi_cand += (uint64_t)vi_lost(*slot, st);
+  vi_cand += (uint64_t)field_rule_broken(*slot, st);
+  rem_named_found(st);
 }
 
 static void vi_m_object(void *p) {
@@ -1359,11 +1409,11 @@ static int vi_remembered(void) {
         if (rem_by_cards(avant_header(obj))) {
           EACH_CARD_SLOT(obj, slot, {
             if (vi_hot(slot)) {
-              rem_named(*slot);
+              vi_rem_named_field(slot);
             }
           });
         } else {
-          VI_EACH_SLOT(obj, vi_all(obj), slot, rem_named(*slot));
+          VI_EACH_SLOT(obj, vi_all(obj), slot, vi_rem_named_field(slot));
         }
       }
     }

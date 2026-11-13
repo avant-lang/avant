@@ -1,0 +1,28 @@
+// O585 (the Valk stage, VALK-T; D342 Q6): the field rule's check. A
+// reference-typed field holds null, an exact object start or a static
+// object, never an address inside an object; root slots may. Generated
+// code cannot break the rule, so the C half (ffi_field_rule in
+// tests/fixtures/ffi/ffi.c, built with `--cc`) stores the addresses: a
+// rooted pointer buffer names a second buffer by its start, and a young
+// collection runs. Every environment prints `field_rule: 1` (the holder
+// still names an object).
+//
+// With FIELD_RULE_BREAK=1 the holder's next slot is given an address two
+// words inside the second buffer first. tests/cases/test_gc_checks.av
+// runs that form under AVANT_GC_VERIFY=1 only: the verifier reads every
+// field before a collection traces it and stops the program with
+// "avant gc verify: field rule: holder ..." before the collection reads
+// the field. Without the verifier the breaking form must not be run: the
+// traces trust the rule.
+
+lib fr {
+  fun ffi_field_rule(brk: Int): Int
+}
+
+fn main {
+  brk = 0
+  if v = env_get("FIELD_RULE_BREAK"), v == "1" {
+    brk = 1
+  }
+  puts("field_rule: ${fr.ffi_field_rule(brk)}")
+}

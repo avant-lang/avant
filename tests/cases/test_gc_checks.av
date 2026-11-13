@@ -318,6 +318,49 @@ fn test_empty_end(c: Checks, compiler: String, root: String, dir: String) {
   c.expect(str_has(clean, "\nreached ") && !str_has(clean, "\nreached 0,"), "empty_end.av, every collector variable unset: the position is reached (one word left in the last block of the highest chunk)")
 }
 
+// O585 (the Valk stage, VALK-T; D342 Q6): the field rule and its check.
+// ffi/field_rule.av (its C half in ffi/ffi.c) keeps a pointer buffer that
+// names another by its start across a young collection: `field_rule: 1`
+// and no stderr in every environment. With FIELD_RULE_BREAK=1 a slot is
+// given an address inside the other buffer, which the rule forbids in a
+// field: under AVANT_GC_VERIFY=1 (alone, with a small young budget, with
+// the nursery off, under the stress mode) the program must stop before
+// the collection traces the field, naming the rule and the holder. The
+// breaking form is never run without the verifier (the traces trust the
+// rule). With the check removed from the verifier the breaking runs exit
+// 0 with no report.
+fn test_field_rule(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/field_rule.av", "${dir}/field_rule", "${dir}/field_rule.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "field_rule.av: compiles")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  brks = ["AVANT_GC_VERIFY=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_NURSERY=0", "AVANT_GC_VERIFY=1 AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "field_rule", "field_rule.g${e}", envs[e]))
+  }
+  for e in 0..brks.size {
+    runs.push(run_job_env(dir, "field_rule", "field_rule.b${e}", "FIELD_RULE_BREAK=1 ${brks[e]}"))
+  }
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "field_rule.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/field_rule.g${e}.out"), "field_rule: 1\n", "field_rule.av ${what}: a field naming an object's start survives the collection")
+    c.eq_str(log_text("${dir}/field_rule.g${e}.err"), "", "field_rule.av ${what}: no stderr (no verifier report)")
+  }
+  for e in 0..brks.size {
+    err = log_text("${dir}/field_rule.b${e}.err")
+    c.expect(runs[envs.size + e].code != 0, "field_rule.av, a field holding an address inside an object, under ${brks[e]}: the program stops")
+    c.expect(str_has(err, "avant gc verify: field rule: holder ") && str_has(err, "an address inside object "), "field_rule.av, a field holding an address inside an object, under ${brks[e]}: the verifier names the rule and the holder")
+    c.eq_str(log_text("${dir}/field_rule.b${e}.out"), "", "field_rule.av, a field holding an address inside an object, under ${brks[e]}: stopped before the collection ended")
+  }
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -325,6 +368,7 @@ fn test_main(c: Checks) {
     test_empty_payload(c, compiler, avant_test_root(), scratch_dir())
     test_stress_inline(c, compiler, avant_test_root(), scratch_dir())
     test_empty_end(c, compiler, avant_test_root(), scratch_dir())
+    test_field_rule(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

@@ -64,6 +64,48 @@
  * Stage 6 spawn uses 1:1 OS threads (D35). Frames are thread-local;
  * collection and the slow path of allocation take a world lock; each
  * thread bumps in its own young hole without it (Stage 28 W17b).
+ *
+ * The field rule: what a reference may hold (D342 Q6; the Valk stage,
+ * VALK-T, O585).
+ *
+ * A reference-typed field holds null, the exact start of a heap object
+ * (its payload address, the header right before it) or the address of a
+ * static object (one outside the committed heap: a literal in the
+ * program's image); never an address inside an object. "Field" is every
+ * word a type map names (EACH_REF_SLOT: a record's reference words, the
+ * elements of a pointer buffer, AVANT_TYPE_PTRS, and of a by-value
+ * element buffer) and so every slot of a carded buffer (EACH_CARD_SLOT).
+ *
+ * Root slots keep interior addresses: a frame slot, a runtime-held slot,
+ * a task root, a pin, a frame slot's own location and the keep list may
+ * name the inside of an object (generated code roots a field's or an
+ * element's address; runtime C roots what it holds), and are resolved by
+ * the start bits (gc_object_payload).
+ *
+ * What relies on it. The traces classify a field's word by one compare
+ * (gc_field_object below: the header's offset from gc_heap.base against
+ * gc_heap.committed, which null and every static address fail) and the
+ * header's LARGE flag, with no start-bit lookup, no chunk kind and no
+ * block-in-use test: the full mark (mark_field, avant_gc_mark.c), the
+ * young trace (trace_field, avant_gc_sticky.c), the remembered set's
+ * "names a young object" (slot_names_young, avant_gc_remset.c). The
+ * allocation path's late start bits (VALK-A2, M7) rely on it too: a
+ * trace that never asks a field's start bit lets a young object's bit be
+ * set when its hole is retired.
+ *
+ * What must keep it. Generated code and runtime C store only null, exact
+ * starts and static addresses into reference-typed words. A view of
+ * part of an object (a substring, a slice: W7, O442) is a base reference,
+ * an offset and a length, never an address inside its parent's bytes
+ * stored in a reference-typed word. A type map marks a word as a
+ * reference only when the word obeys this.
+ *
+ * The check. Under AVANT_GC_VERIFY=1 every field the verifier reads
+ * before a collection (every field of every object the roots reach, and
+ * of every remembered object) is tested: a field naming the inside of an
+ * object stops the program with "field rule" and the holder
+ * (avant_gc_verify.c, verify_field_rule); a field naming heap memory
+ * where no object lives is the lost-reference check's, as before.
  */
 
 #define ALIGN 8
@@ -1623,6 +1665,37 @@ static inline void *gc_object_payload_fast(void *p, Block **ob, AvantHeader **ol
     }
   }
   return gc_object_payload(p, ob, ol);
+}
+
+/* The object a reference-typed field's word P names, by the field rule
+ * (the top of this file; D342 Q6, O585): NULL when P is null or outside
+ * the committed heap (a static object), else P, the exact start of a live
+ * object, with *OB its block (a small object) or *OL its header (a large
+ * one, which the header's LARGE flag tells: gc_los_alloc sets it on every
+ * large object and nothing else does). One compare serves null, static
+ * and foreign addresses: the header's offset from gc_heap.base wraps to a
+ * value above any committed size for all three. No start bit, chunk kind
+ * or block-in-use test is made: a field of an object a trace reads names
+ * a live object's start (an object in a block out of use or in freed
+ * lines is named by no field a trace reads; AVANT_GC_VERIFY's
+ * lost-reference check says so before every collection). Root slots, pins
+ * and the keep list never come here (gc_object_payload: they may name the
+ * inside of an object). */
+static inline void *gc_field_object(void *p, Block **ob, AvantHeader **ol) {
+  uintptr_t off = (uintptr_t)p - (uintptr_t)gc_heap.base - sizeof(AvantHeader);
+  AvantHeader *h;
+  if (off >= gc_heap.committed) {
+    return NULL;
+  }
+  h = (AvantHeader *)((uint8_t *)p - sizeof(AvantHeader));
+  if (h->flags & AVANT_FLAG_LARGE) {
+    *ob = NULL;
+    *ol = h;
+  } else {
+    *ob = &gc_heap.blocks[off >> BLOCK_SHIFT];
+    *ol = NULL;
+  }
+  return p;
 }
 
 static inline void start_bit_set(const void *p, int on) {

@@ -123,25 +123,19 @@ static uint64_t scan_cards(void *p, int from_mature);
  * heap limit leaves the remaining survivors in place. */
 #endif
 
-/* One reference P (an object's start or an interior address).
- * FROM_MATURE: P is a field of a mature object that is not remembered
+/* One reference to the object at START (in block B, or the large object
+ * OL), named by SLOT's word (NULL: named by a pin, a task root or a slot's
+ * own location). FROM_MATURE: the reference is a field of a mature object that is not remembered
  * (R1': not followed unless remembered). Every object the collection
  * reaches is flagged MARKED ("traced this cycle") and noted, so the flag
  * ends with the collection (gc_clear_noted). A young object is promoted
  * at once and its fields are traced from the work list; a young large
  * object is marked and decided after the trace (gc_reclaim_young_large:
- * at its first survival it stays young, Stage 28 W15c). Returns 1 when P
- * names a young large object, whose holder may then have to stay
+ * at its first survival it stays young, Stage 28 W15c). Returns 1 when
+ * it is a young large object, whose holder may then have to stay
  * remembered (scan_fields). */
-static int trace_ref(void **slot, void *p, int from_mature) {
-  Block *b = NULL;
-  AvantHeader *ol = NULL;
-  void *start = gc_object_payload_fast(p, &b, &ol);
-  AvantHeader *h;
-  if (!start) {
-    return 0;
-  }
-  h = avant_header(start);
+static int trace_object(void **slot, void *start, Block *b, AvantHeader *ol, int from_mature) {
+  AvantHeader *h = avant_header(start);
 #if GC_STICKY_COPY
   /* S+: a young block object named other than by a slot (a pin, a
    * registered slot location inside it), or pinned, keeps its block in
@@ -199,6 +193,28 @@ static int trace_ref(void **slot, void *p, int from_mature) {
   return 0;
 }
 
+/* A root's reference P (a frame slot's, a pin's, a task root's, a
+ * runtime-held slot's, a frame slot's own location): it may name the
+ * inside of an object, so the start bits resolve it. */
+static int trace_ref(void **slot, void *p, int from_mature) {
+  Block *b = NULL;
+  AvantHeader *ol = NULL;
+  void *start = gc_object_payload_fast(p, &b, &ol);
+  return start ? trace_object(slot, start, b, ol, from_mature) : 0;
+}
+
+/* A field's reference (SLOT is a word a type map names, or a carded
+ * buffer's slot): null, an exact start or a static address by the field
+ * rule (avant_gc_internal.h), so the range test alone classifies it (the
+ * Valk stage, VALK-T, O585; until then the start-bit lookup of
+ * gc_object_payload_fast). */
+static inline int trace_field(void **slot, int from_mature) {
+  Block *b;
+  AvantHeader *ol;
+  void *start = gc_field_object(*slot, &b, &ol);
+  return start ? trace_object(slot, start, b, ol, from_mature) : 0;
+}
+
 /* The slots of carded P's marked cards (Stage 28 W16t), traced as
  * scan_fields traces fields; returns their count (rem_fields counts the
  * remembered set's scans, as field_count does for whole objects). A
@@ -207,7 +223,7 @@ static int trace_ref(void **slot, void *p, int from_mature) {
 static uint64_t scan_cards(void *p, int from_mature) {
   uint64_t n = 0;
   EACH_CARD_SLOT(p, slot, {
-    (void)trace_ref(slot, *slot, from_mature);
+    (void)trace_field(slot, from_mature);
     n++;
   });
   return n;
@@ -225,7 +241,7 @@ static void scan_fields(void *p, int from_mature) {
   if (ph->type_id == AVANT_TYPE_BYTES) {
     return;
   }
-  EACH_REF_SLOT(p, slot, { names_young_large |= trace_ref(slot, *slot, from_mature); });
+  EACH_REF_SLOT(p, slot, { names_young_large |= trace_field(slot, from_mature); });
   if (names_young_large &&
       (ph->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE)) != (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE)) {
     gc_keep_add(p);

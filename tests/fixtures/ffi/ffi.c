@@ -610,6 +610,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id);
 void avant_alloc_in_mature(int32_t on);
 void avant_gc_add_root(void **slot);
 void avant_gc_collect_young(void);
+void avant_gc_collect(void);
 void avant_barrier(void *obj);
 int avant_is_heap(void *payload);
 #define FFI_TYPE_PTRS 65535u
@@ -719,4 +720,46 @@ int64_t ffi_empty_end(int64_t rounds) {
   }
   ffi_ee_chain = NULL;
   return reached | (nonword << 16) | (atblock << 32) | (stale << 48);
+}
+
+/* field_rule.av (the Valk stage, VALK-T, O585; D342 Q6): the field rule's
+ * check. A reference-typed field holds null, an exact start or a static
+ * address, never an address inside an object (runtime/avant_gc_internal.h
+ * states the rule and what relies on it). A rooted pointer buffer names a
+ * second one by its start, which is allowed; with BRK set its next slot
+ * is given an address two words into that object, which only C can
+ * store, and a young collection is asked for (then, in the breaking
+ * form, a full one: with the nursery off no young one runs). Under
+ * AVANT_GC_VERIFY=1 the
+ * verifier reads the field before the collection traces it and stops the
+ * program with "field rule" and the holder; without the verifier the
+ * breaking form is never run (a trace that reads a header right before
+ * that address reads the object's own words). Returns 1 when the holder's
+ * first slot still names a heap object after the collection. */
+static __thread void *ffi_fr_holder;
+static __thread int ffi_fr_rooted;
+
+int64_t ffi_field_rule(int64_t brk) {
+  void **h;
+  void **t;
+  if (!ffi_fr_rooted) {
+    avant_gc_add_root(&ffi_fr_holder);
+    ffi_fr_rooted = 1;
+  }
+  ffi_fr_holder = avant_alloc(4 * sizeof(void *), FFI_TYPE_PTRS);
+  t = (void **)avant_alloc(4 * sizeof(void *), FFI_TYPE_PTRS);
+  h = (void **)ffi_fr_holder;
+  h[0] = t;
+  if (brk) {
+    h[1] = (void *)(t + 2);
+  }
+  avant_barrier(h);
+  avant_gc_collect_young();
+  if (brk) {
+    /* With the nursery off no young collection runs: the full one's
+     * verification reads the field. */
+    avant_gc_collect();
+  }
+  h = (void **)ffi_fr_holder;
+  return h[0] != NULL && avant_is_heap(h[0]);
 }

@@ -59,45 +59,35 @@ static void mark(void *p) {
   mark_object(start, h, b);
 }
 
-/* A traced object's field, with the common case in one function (Stage
- * 29 W-FIX1c, O203): the exact start of an object in a small-object block
- * in use is looked up here, by gc_is_heap_payload's own tests in its
- * order (as gc_object_payload_fast), and marked with no further call and
- * the side mark set through the granule already in hand. Anything else
- * takes mark(). Before, a field cost eight calls (mark, gc_object_payload
- * with gc_is_heap_payload inside it, gc_mark_object_lines with
- * gc_is_heap_payload and gc_obj_total inside it, gc_obj_total,
- * gc_work_push; 276 instructions per object of a full collection, 149
- * now). It is kept
+/* A traced object's field (Stage 29 W-FIX1c, O203; the Valk stage,
+ * VALK-T, O585). By the field rule (avant_gc_internal.h: a field holds
+ * null, an exact start or a static address) its word is classified by one
+ * compare, the header's offset against the committed size, which null and
+ * every static address fail; what passes is the start of a live object,
+ * marked through the granule already in hand, with no start-bit lookup,
+ * no chunk kind and no block-in-use test (until VALK-T those three were
+ * asked of every field, gc_is_heap_payload's tests in line, and an
+ * address that failed one took mark(); before W-FIX1c a field cost eight
+ * calls). A large object takes the same path with no block (the header's
+ * LARGE flag): it has no line marks. Roots, pins and runtime-held slots
+ * take mark(), which resolves an address inside an object. It is kept
  * out of line on purpose: inlined into scan_payload's loop, the loop's
- * registers were spilled around it and the same collection cost 167. */
+ * registers were spilled around it (W-FIX1c: 167 instructions per object
+ * of a full collection against 149). */
 static __attribute__((noinline)) void mark_field(void *p) {
-  uintptr_t off;
+  uintptr_t off = (uintptr_t)p - (uintptr_t)gc_heap.base - sizeof(AvantHeader);
   uint64_t g;
-  Block *b;
-  if (!p) {
-    return;
-  }
-  off = (uintptr_t)p - (uintptr_t)gc_heap.base - sizeof(AvantHeader);
-  if (((uintptr_t)p & (ALIGN - 1)) || off >= gc_heap.committed) {
-    mark(p);
+  AvantHeader *h;
+  if (off >= gc_heap.committed) {
     return;
   }
   g = off >> 3;
-  if (!((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL) || gc_heap.chunks[off >> CHUNK_SHIFT].kind != CHUNK_SMALL) {
-    mark(p);
-    return;
-  }
-  b = &gc_heap.blocks[off >> BLOCK_SHIFT];
-  if (!b->in_use) {
-    mark(p);
-    return;
-  }
   if ((gc_heap.marks[g >> 6] >> (g & 63)) & 1ULL) {
     return;
   }
   gc_heap.marks[g >> 6] |= 1ULL << (g & 63);
-  mark_object(p, avant_header(p), b);
+  h = (AvantHeader *)((uint8_t *)p - sizeof(AvantHeader));
+  mark_object(p, h, (h->flags & AVANT_FLAG_LARGE) ? NULL : &gc_heap.blocks[off >> BLOCK_SHIFT]);
 }
 
 static void drain(void) {

@@ -121,12 +121,14 @@ void gc_keep_add(void *obj) {
   gc_heap.keep[gc_heap.keep_n++] = obj;
 }
 
-/* Does a field of OBJ name a young object (gc_young_at: one with
- * YOUNG)? */
-static int slot_names_young(void *p) {
-  Block *b = NULL;
-  AvantHeader *ol = NULL;
-  void *start = gc_object_payload(p, &b, &ol);
+/* Does a field's word P name a young object (one with YOUNG)? By the
+ * field rule (avant_gc_internal.h; the Valk stage, VALK-T, O585) the range
+ * test alone says whether P names a heap object, and then P is its
+ * start (until VALK-T: gc_object_payload's lookup of every field). */
+static inline int slot_names_young(void *p) {
+  Block *b;
+  AvantHeader *ol;
+  void *start = gc_field_object(p, &b, &ol);
   return start && gc_young_at(start, b, ol);
 }
 
@@ -137,12 +139,7 @@ static int rem_names_young(void *obj) {
   }
   EACH_REF_SLOT(obj, slot, {
     if (!found) {
-      Block *b = NULL;
-      AvantHeader *ol = NULL;
-      void *start = gc_object_payload(*slot, &b, &ol);
-      if (start) {
-        found = gc_young_at(start, b, ol);
-      }
+      found = slot_names_young(*slot);
     }
   });
   return found;
