@@ -15,7 +15,7 @@ lib httpc {
   fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void))): Int
   fun avant_http_close(srv: Ptr(Void)): Int
   fun avant_http_req_is_ws(req: Ptr(Void)): Int
-  fun avant_http_req_ws_upgrade(req: Ptr(Void)): Int
+  fun avant_http_req_ws_upgrade(req: Ptr(Void), route: Int): Int
   fun avant_http_req_ws_id(req: Ptr(Void)): Int
   fun avant_http_req_ws_conn(req: Ptr(Void)): Ptr(Void)
   fun avant_ws_event_conn(ev: Ptr(Void)): Ptr(Void)
@@ -25,6 +25,7 @@ lib httpc {
   fun avant_ws_close_direct(handle: Ptr(Void), id: Int, code: Int, reason: String): Int
   fun avant_ws_event_kind(ev: Ptr(Void)): Int
   fun avant_ws_event_conn_id(ev: Ptr(Void)): Int
+  fun avant_ws_event_route(ev: Ptr(Void)): Int
   fun avant_ws_event_path(ev: Ptr(Void)): String
   fun avant_ws_event_is_text(ev: Ptr(Void)): Int
   fun avant_ws_event_data(ev: Ptr(Void)): Bytes
@@ -288,9 +289,13 @@ struct Route {
   handler: fn(Request): Response
 }
 
+// next is the index of the next route on the same path, -1 after the
+// last: a message runs every route of its path, in the order they were
+// registered, without comparing a path.
 struct WsRoute {
   path: String
   handler: fn(WsConn, WsMessage)
+  next: Int
 }
 
 struct WsOpenRoute {
@@ -311,8 +316,6 @@ class HttpState {
   ws_routes: Array(WsRoute) = []
   ws_open_routes: Array(WsOpenRoute) = []
   ws_close_routes: Array(WsCloseRoute) = []
-  ws_conn_ids: Array(Int) = []
-  ws_conn_paths: Array(String) = []
   closed: Bool = false
   serving: Bool = false
   bound_port: Int = 0
@@ -322,7 +325,27 @@ class HttpState {
   }
 
   fn add_ws(path: String, handler: fn(WsConn, WsMessage)) {
-    self.ws_routes.push(WsRoute { path: path, handler: handler })
+    k = self.ws_routes.size
+    i = self.first_ws_route(path)
+    if i >= 0 {
+      while self.ws_routes[i].next >= 0 {
+        i = self.ws_routes[i].next
+      }
+      self.ws_routes[i].next = k
+    }
+    self.ws_routes.push(WsRoute { path: path, handler: handler, next: -1 })
+  }
+
+  // The index of the first message route on path, -1 when it has none.
+  fn first_ws_route(path: String): Int {
+    i = 0
+    while i < self.ws_routes.size {
+      if self.ws_routes[i].path == path {
+        return i
+      }
+      i += 1
+    }
+    -1
   }
 
   fn add_ws_open(path: String, handler: fn(WsConn)) {
@@ -356,27 +379,6 @@ class HttpState {
       i += 1
     }
     false
-  }
-
-  fn register_ws_conn(id: Int, path: String) {
-    self.ws_conn_ids.push(id)
-    self.ws_conn_paths.push(path)
-  }
-
-
-  fn unregister_ws_conn(id: Int) {
-    i = 0
-    while i < self.ws_conn_ids.size {
-      if self.ws_conn_ids[i] == id {
-        last = self.ws_conn_ids.size - 1
-        self.ws_conn_ids[i] = self.ws_conn_ids[last]
-        self.ws_conn_paths[i] = self.ws_conn_paths[last]
-        self.ws_conn_ids.pop
-        self.ws_conn_paths.pop
-        return
-      }
-      i += 1
-    }
   }
 
   fn ws_open_dispatch(path: String, conn: WsConn) {
@@ -424,13 +426,14 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
   }
   // A well-formed WebSocket handshake (validated in C) upgrades here
   // when a websocket route owns the path; without one it falls through
-  // to ordinary routing and its 404.
+  // to ordinary routing and its 404. The connection's C record keeps
+  // its path's first message route (O564: the loop threads share no
+  // table of connections; the route tables are only read while serving).
   if httpc.avant_http_req_is_ws(raw) != 0 && state.has_ws_route(path) {
-    if httpc.avant_http_req_ws_upgrade(raw) != 0 {
+    if httpc.avant_http_req_ws_upgrade(raw, state.first_ws_route(path)) != 0 {
       wid = httpc.avant_http_req_ws_id(raw)
       whandle = httpc.avant_http_req_ws_conn(raw)
       conn = WsConn { id: wid, handle: whandle }
-      state.register_ws_conn(wid, path)
       state.ws_open_dispatch(path, conn)
     }
     return
@@ -465,46 +468,26 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
   whandle = httpc.avant_ws_event_conn(raw)
   conn = WsConn { id: wid, handle: whandle }
   if kind == 1 {
-    // Route and connection-path lookup are inlined here rather than
-    // called as HttpState methods: each Avant call is a collector
-    // frame entry, and this path runs once per message.
-    path = ""
-    i = 0
-    while i < state.ws_conn_ids.size {
-      if state.ws_conn_ids[i] == wid {
-        path = state.ws_conn_paths[i]
-        i = state.ws_conn_ids.size
-      } else {
-        i += 1
-      }
-    }
-    if path.size == 0 {
-      path = httpc.avant_ws_event_path(raw)
-    }
-    is_text = httpc.avant_ws_event_is_text(raw) != 0
-    data = httpc.avant_ws_event_data(raw)
-    msg = WsMessage { is_text: is_text, body: data }
-    for r in state.ws_routes {
-      if r.path == path {
+    // The route walk is inlined here rather than called as an
+    // HttpState method: each Avant call is a collector frame entry, and
+    // this path runs once per message. The first route comes from the
+    // connection's own C record (set at the upgrade, O564), the rest by
+    // each route's next: no path is compared.
+    i = httpc.avant_ws_event_route(raw)
+    if i >= 0 {
+      is_text = httpc.avant_ws_event_is_text(raw) != 0
+      data = httpc.avant_ws_event_data(raw)
+      msg = WsMessage { is_text: is_text, body: data }
+      while i >= 0 {
+        r = state.ws_routes[i]
         (r.handler)(conn, msg)
+        i = r.next
       }
     }
     return
   }
   if kind == 2 {
-    path = ""
-    i = 0
-    while i < state.ws_conn_ids.size {
-      if state.ws_conn_ids[i] == wid {
-        path = state.ws_conn_paths[i]
-        i = state.ws_conn_ids.size
-      } else {
-        i += 1
-      }
-    }
-    if path.size == 0 {
-      path = httpc.avant_ws_event_path(raw)
-    }
+    path = httpc.avant_ws_event_path(raw)
     code = httpc.avant_ws_event_code(raw)
     reason = httpc.avant_ws_event_reason(raw)
     for rc in state.ws_close_routes {
@@ -512,7 +495,6 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
         (rc.handler)(conn, code, reason)
       }
     }
-    state.unregister_ws_conn(wid)
   }
 }
 

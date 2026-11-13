@@ -2740,7 +2740,7 @@ The prelude is the set of names every program can use without an import. The typ
 | Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
 | Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `bytes_to_str`, `buf_new` ([String operations](#string-operations)) |
 
-Runnable programs that use them live in [examples/](examples), in the repository.
+Runnable programs that use them live in [examples/](examples): in the repository, and in the release archive beside `avant`.
 
 ### Output
 
@@ -3153,7 +3153,7 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 
 `--jobs=N`, `--shard=I/N` and `--junit=PATH` are the same flags. An unknown flag is an error. `avant test` does not pass arguments to the test programs, and a `--` on the command is an error.
 
-For each file the runner prints its output, in source order, then `ok tests/test_greet.av` or `FAIL tests/test_greet.av`, and a total at the end (`0 failed, 1 passed`). Its own status is 1 when any file failed, when nothing was selected, or when the command was refused. Ctrl-C or `SIGTERM` stops every test process it started and removes its temporary files.
+For each file the runner prints its output, in source order, then `ok tests/test_greet.av`, or `FAIL tests/test_greet.av:` and how its process ended (`the test process exited with status 1`, `the test process killed by signal 13 (Broken pipe)`, `the compile exited with status 1`, `the parallel test "other" killed by signal 11 (Segmentation fault)`), and a total at the end (`0 failed, 1 passed`). Its own status is 1 when any file failed, when nothing was selected, or when the command was refused. Ctrl-C or `SIGTERM` stops every test process it started and removes its temporary files.
 
 ### Checks
 
@@ -3271,7 +3271,7 @@ first = ["tests/test_slow.av"]
 
 ### Reports
 
-**JUnit** (`--junit PATH`) is for test analytics. A test file that uses `std.testing` contributes one `<testcase>` per check, named by the check; any other test file contributes one case, named by its path. It is off unless you ask; a project does not gain a `junit.xml` by surprise.
+**JUnit** (`--junit PATH`) is for test analytics. A test file that uses `std.testing` contributes one `<testcase>` per check, named by the check; any other test file contributes one case, named by its path. A file that failed without a failed case (its process killed by a signal, or exiting with a status and no failed check) adds one case named by its path, whose failure message says how the process ended. It is off unless you ask; a project does not gain a `junit.xml` by surprise.
 
 **Coverage** (`--coverage`) compiles each selected file with counters, runs them, prints one table after the summary and writes `coverage/lcov.info` in the current directory (one file, overwritten by each run). Without the flag nothing is instrumented and nothing is written.
 
@@ -3335,6 +3335,7 @@ avant format . --check
 | `avant bind HEADER.h` | `avant b` | prints a `lib` block for a C header ([avant bind](#avant-bind)) |
 | `avant dump FILE.av` | `avant d` | prints the program's mid-level IR without linking |
 | `avant help` | `-h`, `--help` | the usage text |
+| `avant version` | `--version` | the version and the commit the binary was built from, as `avant 0.42.0 (commit e030096…)`; `, with uncommitted changes` when its `compiler/`, `lib/` or `runtime/` differed from that commit |
 
 `FILE.av` is always one root file; the compiler follows its imports. Flags for `run` and `compile`:
 
@@ -3411,7 +3412,7 @@ Run-time failures are [traps](#traps).
 
 ### Temporary files
 
-`compile`, `run`, `test`, `fetch` and `bind` keep every intermediate file (IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp`). It is removed when the command exits, on an error, Ctrl-C, `SIGTERM` or a crash included (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`: the process still dies by the signal); only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it.
+`compile`, `run`, `test`, `fetch` and `bind` keep every intermediate file (IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp`). It is removed when the command exits, on an error, Ctrl-C, `SIGTERM`, `SIGHUP`, a closed pipe (`SIGPIPE`, as in `avant test | head`) or a crash included (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`): the process still dies by the signal. Only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it.
 
 `--keep-tmp` keeps the directory for debugging and prints its path. A program run on its own keeps its directory with `AVANT_KEEP_TMP=1`.
 
@@ -3699,7 +3700,7 @@ Running it again updates the install in place. It refuses, with a message, on an
 
 ### Manual install
 
-Download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases), extract it anywhere, and put the extracted `avant-linux-x86_64` directory on your `PATH`. Keep its files together: the compiler finds `re2c`, the standard library and the runtime beside itself.
+Download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases), extract it anywhere, and put the extracted `avant-linux-x86_64` directory on your `PATH`. Keep its files together: the compiler finds `re2c`, the standard library and the runtime beside itself. `avant version` prints the release and the commit it was built from, read from the archive's `versions.txt`.
 
 ### Requirements
 
@@ -3710,7 +3711,7 @@ Download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-la
 | `git` | `avant fetch` only | |
 | libclang 20 | `avant bind` only | `sudo apt install libclang1-20` |
 
-Nothing else. The archive carries `avant` with LLVM 20 linked in (there is no separate backend program), `re2c`, `avant-bind`, the standard library, and the runtime with PCRE2, zlib and the other C libraries inside. No environment variable needs to be set: the compiler turns a program into machine code with the LLVM it carries, and links it with `cc`.
+Nothing else. The archive carries `avant` with LLVM 20 linked in (there is no separate backend program), `re2c`, `avant-bind`, the standard library, and the runtime with PCRE2, zlib and the other C libraries inside; beside them, `examples/` (the runnable programs this page points to), `versions.txt` (the release and its commit, which `avant version` prints), Avant's `LICENSE`, and `third_party/` with the notices and licenses of those C libraries. No environment variable needs to be set: the compiler turns a program into machine code with the LLVM it carries, and links it with `cc`.
 
 ## Contributing
 
@@ -3745,7 +3746,7 @@ sh runtime/build.sh
 
 | Command | What it proves |
 | --- | --- |
-| `sh tools/letters.sh` | builds the runtime, B (`bin/avant-b`, built by the seed) and C′ (`bin/avant-c-llvm`, built by B). `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′) or `c-release` (the `--release` compiler a release ships) builds one |
+| `sh tools/letters.sh` | builds the runtime, B (`bin/avant-b`, built by the seed) and C′ (`bin/avant-c-llvm`, built by B). `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′) or `c-release` (the `--release` compiler a release ships) builds one. Beside each compiler it writes `OUT.versions.txt`, the build's record that `avant version` prints (the compiler itself carries no version, so it stays byte-identical across commits that do not change it) |
 | `sh tools/gate.sh` | the full gate: B, C′, the suite on both, D′, and the fixed point (C′ and D′ emit the same LLVM IR for the compiler and are byte-identical) |
 | `sh tools/run-goldens.sh` | compiles and runs every example, runnable fixture and LangArena task and compares stdout, stderr and exit status with its golden (`GOLDEN_MODE=--release`, or empty, for the other modes) |
 

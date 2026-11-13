@@ -255,7 +255,7 @@ fn test_scratch(c: Checks) {
     // private directory (a compiler crash is the same runtime path) dies
     // by the signal and leaves nothing in TMPDIR.
     crash_src = "${work}/crash.av"
-    _ = file_write(crash_src, "lib crash_c {\n  fun avant_tmp_dir: String\n  fun raise(sig: Int32): Int32\n  fun abort\n}\nfn main {\n  puts(crash_c.avant_tmp_dir())\n  if v = env_get(\"CRASH_SIG\") {\n    if v == \"abort\" {\n      crash_c.abort()\n    }\n    puts(crash_c.raise((v.to_i ?? 0).to_i32))\n  }\n}\n")
+    _ = file_write(crash_src, "lib crash_c {\n  fun avant_tmp_dir: String\n  fun raise(sig: Int32): Int32\n  fun abort\n}\nfn main {\n  puts(crash_c.avant_tmp_dir())\n  if v = env_get(\"CRASH_SIG\") {\n    if v == \"abort\" {\n      crash_c.abort()\n    }\n    if v == \"pipe\" {\n      while true {\n        puts(\"more\")\n      }\n    }\n    puts(crash_c.raise((v.to_i ?? 0).to_i32))\n  }\n}\n")
     crash_bin = "${work}/crash.bin"
     c.eq_int(compile_av(compiler, crash_src, crash_bin, "${work}/crash.clog"), 0, "crash program compiles")
     crashes = ["11", "7", "8", "abort"]
@@ -276,6 +276,37 @@ fn test_scratch(c: Checks) {
       c.eq_int(cleft.size, 0, "${crash_names[q]} leaves nothing in TMPDIR")
       q += 1
     }
+
+    // O521 (Stage 29 W-FIX1e): a program whose standard output is a pipe
+    // its reader closed (`prog | head`) dies by SIGPIPE, and SIGPIPE was
+    // not among the signals that remove the directory. The program, then
+    // `avant test` itself, each cut by `head -c 1`.
+    pbase = "${work}/pipe-base"
+    mkdir_p(pbase)
+    prc = "${work}/pipe.rc"
+    psh = "${work}/pipe.sh"
+    _ = file_write(psh, "#!/bin/sh\n(AVANT_KEEP_TMP= TMPDIR='${pbase}' CRASH_SIG=pipe '${crash_bin}' 2> '${work}/pipe.log'; echo $? > '${prc}') | head -c 1 > /dev/null\n")
+    p_args: Array(String) = []
+    p_args.push(psh)
+    _ = process_run("/bin/sh", p_args)
+    c.eq_int(nth_line(read_all(prc), 0).to_i ?? -1, 141, "a program cut by a closed pipe still dies by SIGPIPE")
+    pleft = dir_list(pbase) ?? empty_strs()
+    c.eq_int(pleft.size, 0, "SIGPIPE leaves nothing in TMPDIR")
+    loud = scratch_dir()
+    mkdir_p("${loud}/tests")
+    _ = file_write("${loud}/avant.toml", "[package]\nname = \"loud\"\nversion = \"0.1.0\"\n")
+    _ = file_write("${loud}/tests/test_loud.av", "import std.testing\n\nfn main: Int {\n  t = Test.new\n  for i in 0..5000 {\n    t.check(true, \"one of 5000 checks whose output fills the pipe\")\n  }\n  t.finish\n}\n")
+    rbase = "${work}/pipe-runner-base"
+    mkdir_p(rbase)
+    rrc = "${work}/pipe-runner.rc"
+    rsh = "${work}/pipe-runner.sh"
+    _ = file_write(rsh, "#!/bin/sh\ncd '${loud}' || exit 9\n(AVANT_KEEP_TMP= TMPDIR='${rbase}' '${abs_c}' test 2> '${work}/pipe-runner.log'; echo $? > '${rrc}') | head -c 1 > /dev/null\n")
+    r_args: Array(String) = []
+    r_args.push(rsh)
+    _ = process_run("/bin/sh", r_args)
+    c.eq_int(nth_line(read_all(rrc), 0).to_i ?? -1, 141, "avant test cut by a closed pipe dies by SIGPIPE")
+    rleft = dir_list(rbase) ?? empty_strs()
+    c.eq_int(rleft.size, 0, "avant test cut by a closed pipe leaves nothing in TMPDIR")
     c.expect(str_has(unset_dir, "/tmp/avant-"), "no TMPDIR falls back to /tmp")
     c.expect(!file_exists(unset_dir), "fallback directory removed")
   }

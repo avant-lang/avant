@@ -472,6 +472,7 @@ static volatile pid_t g_wait_child;
 static volatile pid_t g_jobs[JOB_MAX];
 static volatile int32_t g_njobs;
 static int32_t g_job_status;
+static int32_t g_job_signal;
 
 static int32_t run_child(const char *path, void *args, const char *out_path, const char *err_path, int no_stdin) {
   char **argv;
@@ -630,7 +631,8 @@ avant_int avant_job_start(const char *path, void *args, const char *out_path) {
 
 /* Waits for any started job to finish. Returns its pid, or -1 when no job
  * is running; avant_job_status then gives its exit code (128+n for a
- * signal). */
+ * signal) and avant_job_signal the signal that ended it (0 when it
+ * exited), so the runner can tell `exit 141` from SIGPIPE (O520). */
 avant_int avant_job_wait(void) {
   for (;;) {
     int st = 0;
@@ -654,6 +656,7 @@ avant_int avant_job_wait(void) {
         g_jobs[i] = g_jobs[g_njobs - 1];
         g_njobs = g_njobs - 1;
         g_job_status = exit_code_of(st);
+        g_job_signal = WIFSIGNALED(st) ? WTERMSIG(st) : 0;
         return (int32_t)pid;
       }
     }
@@ -662,6 +665,10 @@ avant_int avant_job_wait(void) {
 
 avant_int avant_job_status(void) {
   return g_job_status;
+}
+
+avant_int avant_job_signal(void) {
+  return g_job_signal;
 }
 
 /* A blocking run of a tool the compiler starts (myc-llvm, cc, re2c, the
@@ -982,8 +989,8 @@ void *avant_sys_list(const char *path) {
  * marker in each directory tells a child that it is nested.
  *
  * Removal runs at exit (atexit covers normal and error exits, traps
- * included) and on SIGINT, SIGTERM, and SIGHUP, after which the signal is
- * re-raised so the status stays 128+n. Only the creating process removes:
+ * included) and on SIGINT, SIGTERM, SIGHUP and SIGPIPE, after which the
+ * signal is re-raised so the status stays 128+n. Only the creating process removes:
  * a forked child that never execs must not delete its parent's tree. A
  * crash or kill -9 leaves one directory. AVANT_KEEP_TMP=1 (set by the
  * compiler's --keep-tmp) keeps it; the top-level process prints the path.
@@ -1249,6 +1256,12 @@ static void tmp_create(void) {
   tmp_catch(SIGINT);
   tmp_catch(SIGTERM);
   tmp_catch(SIGHUP);
+  /* A closed pipe on standard output (`prog | head`) is an ordinary way
+   * for a command-line program to end (O521, Stage 29 W-FIX1e): the
+   * directory goes and the program still dies by SIGPIPE, status 141
+   * (D330 keeps SIGPIPE's default action). std.http's sockets never
+   * raise it (MSG_NOSIGNAL). */
+  tmp_catch(SIGPIPE);
   /* A crash removes the directory too (O35, Stage 29 W1b): the handler
    * cleans up and re-raises the signal with its default action, so the
    * process still dies by it (a core dump included). A crash with no

@@ -80,7 +80,9 @@ pub class CovReport {
     self.slots.size > 0
   }
 
-  pub fn write_lcov(path: String) {
+  // False when the report could not be written; the message names the
+  // path and the reason (O569), and `avant test --coverage` fails.
+  pub fn write_lcov(path: String): Bool {
     b = buf_new()
     paths = path_list()
     for p in paths {
@@ -96,10 +98,11 @@ pub class CovReport {
       }
       b.push_str("end_of_record\n")
     }
-    w = file_write(path, b.to_s) ?? -1
-    if w < 0 {
-      diag_puts("cannot write ${path}")
+    if e = write_failure(file_write(path, b.to_s)) {
+      diag_puts(e.message)
+      return false
     }
+    true
   }
 
   pub fn print_table {

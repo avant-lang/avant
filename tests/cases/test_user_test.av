@@ -32,6 +32,10 @@ fn ut_has(hay: String, needle: String): Bool {
   false
 }
 
+fn ut_starts(s: String, prefix: String): Bool {
+  s.size >= prefix.size && str_slice(s, 0, prefix.size) == prefix
+}
+
 fn ut_sh(body: String, rc_path: String): Int {
   script = "${rc_path}.sh"
   _ = file_write(script, body) ?? return 1
@@ -227,6 +231,116 @@ fn test_user_test(c: Checks) {
     dp_rc = "${root}/d84-pass.rc"
     dp_sh = "#!/bin/sh\ncd ${ut_quote(root)}/d84 && ${ut_quote(compiler)} test tests/test_pass.av > ${ut_quote(root)}/d84-pass.log 2>&1; echo $? > ${ut_quote(dp_rc)}\n"
     c.eq_int(ut_sh(dp_sh, dp_rc), 0, "D84: a void main whose checks pass still passes")
+
+    // O520 (Stage 29 W-FIX1e): a test process that a signal killed, or
+    // that exited with a status and no failed check, was reported as
+    // `FAIL file` and nothing else. The FAIL line and the JUnit failure
+    // say how it ended; a file whose parallel test was killed after the
+    // serial part wrote a passing fragment is a failure in the report.
+    mkdir_p("${root}/o520/tests")
+    _ = file_write("${root}/o520/avant.toml", "[package]\nname = \"o520\"\nversion = \"0.1.0\"\n")
+    sig_lib = "lib c {\n  fun raise(sig: Int32): Int32\n}\n\n"
+    _ = file_write("${root}/o520/tests/test_sig.av", "import std.testing\n\n${sig_lib}fn main: Int {\n  t = Test.new\n  t.check(true, \"before the signal\")\n  sig: Int32 = 13\n  _ = c.raise(sig)\n  t.finish\n}\n")
+    _ = file_write("${root}/o520/tests/test_exit.av", "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.check(true, \"holds\")\n  7\n}\n")
+    _ = file_write("${root}/o520/tests/test_par.av", "import std.testing\n\n${sig_lib}fn main: Int {\n  t = Test.new\n  t.check(true, \"serial holds\")\n  t.parallel(\"dies\") {\n    sig: Int32 = 9\n    _ = c.raise(sig)\n    t.check(false, \"not reached\")\n  }\n  t.finish\n}\n")
+    o520_names = ["sig", "exit", "par"]
+    o520_why = ["the test process killed by signal 13 (Broken pipe)", "the test process exited with status 7", "the parallel test \"dies\" killed by signal 9 (Killed)"]
+    o520_xml = [o520_why[0], o520_why[1], "the parallel test &quot;dies&quot; killed by signal 9 (Killed)"]
+    i = 0
+    while i < o520_names.size {
+      nm = o520_names[i]
+      o_rc = "${root}/o520-${nm}.rc"
+      o_log = "${root}/o520-${nm}.log"
+      o_sh = "#!/bin/sh\ncd ${ut_quote(root)}/o520 && ${ut_quote(compiler)} test tests/test_${nm}.av --junit ${ut_quote(root)}/o520-${nm}.xml > ${ut_quote(o_log)} 2>&1; echo $? > ${ut_quote(o_rc)}\n"
+      c.eq_int(ut_sh(o_sh, o_rc), 1, "O520: tests/test_${nm}.av fails the run")
+      o_text = file_read(o_log) ?? ""
+      c.expect(ut_has(o_text, "FAIL tests/test_${nm}.av: ${o520_why[i]}\n"), "O520: the FAIL line of tests/test_${nm}.av says how it ended (${o520_why[i]})")
+      o_xml = file_read("${root}/o520-${nm}.xml") ?? ""
+      c.expect(ut_has(nth_line(o_xml, 1), "<testsuites tests=") && ut_has(nth_line(o_xml, 1), "failures=\"1\""), "O520: the JUnit report counts tests/test_${nm}.av as a failure")
+      c.expect(ut_has(o_xml, "<failure message=\"${o520_xml[i]}\">"), "O520: the JUnit failure of tests/test_${nm}.av says how it ended")
+      i += 1
+    }
+
+    // O569 (Stage 29 W-FIX1e): seven writes of the compiler printed
+    // `cannot write PATH` and dropped the reason; each now prints it
+    // (`cannot write PATH: REASON`), and a lost lcov report fails
+    // `avant test --coverage`. A directory where a file is written, a
+    // missing directory, or `ulimit -f 0` (SIGXFSZ ignored: every write
+    // to a file fails with "File too large", for root too) makes each
+    // fail. Output goes through a pipe: under the limit the compiler
+    // could not write its stderr to a file either.
+    w5 = "${root}/o569"
+    mkdir_p("${w5}/p/tests")
+    mkdir_p("${w5}/isdir")
+    mkdir_p("${w5}/f/avant.lock")
+    _ = file_write("${w5}/p/avant.toml", "[package]\nname = \"p\"\nversion = \"0.1.0\"\n")
+    _ = file_write("${w5}/f/avant.toml", "[package]\nname = \"f\"\nversion = \"0.1.0\"\n")
+    _ = file_write("${w5}/p/tests/test_ok.av", "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.check(true, \"holds\")\n  t.finish\n}\n")
+    _ = file_write("${w5}/re.av", "import std.regex\n\nfn main {\n  if re = Regex.compile(\"a+\") {\n    puts(re.count(\"aa\"))\n  }\n}\n")
+    _ = file_write("${w5}/ok.av", "fn main {\n  puts(1)\n}\n")
+    _ = file_write("${w5}/fmt.av", "fn main {\n    puts(1)\n}\n")
+    mkdir_p("${w5}/p/coverage/lcov.info")
+    qc = ut_quote(compiler)
+    qw = ut_quote(w5)
+    limit = "trap '' XFSZ; ulimit -f 0; "
+    w5_cmds = ["${qc} test tests/test_ok.av --junit ${qw}/isdir", "${qc} test --coverage tests/test_ok.av", "${limit}${qc} compile ${qw}/re.av ${qw}/re-bin", "${qc} __mir-build example ${qw}/mb --emit-ll ${qw}/nodir/k.ll", "${qc} __emit-ll ${qw}/ok.av ${qw}/nodir/e.ll", "${limit}${qc} format --write ${qw}/fmt.av", "${qc} fetch ${qw}/f"]
+    w5_want = ["cannot write ${w5}/isdir: Is a directory\n", "cannot write coverage/lcov.info: Is a directory\n", "/re2c.re: File too large\n", "cannot write ${w5}/nodir/k.ll: No such file or directory\n", "cannot write ${w5}/nodir/e.ll: No such file or directory\n", "cannot write ${w5}/fmt.av: File too large\n", "avant fetch: cannot write ${w5}/f/avant.lock: Is a directory\n"]
+    w5_what = ["the JUnit report", "the lcov report", "re2c's input", "the kept .ll", "__emit-ll's .ll", "format --write", "fetch's avant.lock"]
+    i = 0
+    while i < w5_cmds.size {
+      w_rc = "${w5}/w-${i}.rc"
+      w_log = "${w5}/w-${i}.log"
+      w_sh = "#!/bin/sh\ncd ${qw}/p && { (${w5_cmds[i]}) < /dev/null 2>&1; echo $? > ${ut_quote(w_rc)}; } | cat > ${ut_quote(w_log)}\n"
+      w_code = ut_sh(w_sh, w_rc)
+      if i == 2 {
+        // re2c's input is not fatal (the pattern stays on PCRE2); the
+        // compile fails later, when LLVM cannot write the object.
+        c.expect(w_code != 0, "O569: the compile under ulimit -f 0 fails")
+      } else {
+        c.eq_int(w_code, 1, "O569: a failed write of ${w5_what[i]} fails the command")
+      }
+      w_text = file_read(w_log) ?? ""
+      c.expect(ut_has(w_text, w5_want[i]), "O569: a failed write of ${w5_what[i]} names its reason: ${w5_want[i].strip()}")
+      i += 1
+    }
+    c.expect(ut_has(file_read("${w5}/w-2.log") ?? "", "re2c: cannot write "), "O569: re2c's failed input names re2c")
+
+    // O534 (Stage 29 W-FIX1e): `avant version` (and `--version`) prints
+    // the version and the commit from the build's record beside the
+    // executable: EXE.versions.txt (tools/letters.sh writes it), else
+    // versions.txt (a release archive, tools/package.sh). A copy of the
+    // compiler in a directory of its own shows each case.
+    vdir = "${root}/o534"
+    mkdir_p(vdir)
+    vexe = "${vdir}/avant"
+    c.eq_int(copy_file(compiler, vexe), 0, "O534: the compiler copied")
+    chmod_x(vexe)
+    v_args = ["version"]
+    c.eq_int(process_run_out(vexe, v_args, "${vdir}/none.log") ?? -1, 0, "O534: avant version without a record exits 0")
+    v_none = file_read("${vdir}/none.log") ?? ""
+    c.expect(ut_starts(v_none, "avant (version unknown: no versions.txt beside ") && ut_has(v_none, "/o534/avant)\n"), "O534: without a record avant version says the version is unknown and where it looked")
+    _ = file_write("${vdir}/versions.txt", "tag: v9.8.7\navant: 0123456789abcdef0123456789abcdef01234567\nllvm: 20.1.2\nglibc-floor: 2.38\n")
+    _ = process_run_out(vexe, v_args, "${vdir}/archive.log")
+    c.eq_str(file_read("${vdir}/archive.log") ?? "", "avant 9.8.7 (commit 0123456789abcdef0123456789abcdef01234567)\n", "O534: a release archive's versions.txt gives the tag and the commit")
+    _ = file_write("${vexe}.versions.txt", "version: 9.8.8\navant: fedcba9876543210fedcba9876543210fedcba98\ndirty: yes\nbuilt: tools/letters.sh c-llvm\n")
+    _ = process_run_out(vexe, v_args, "${vdir}/record.log")
+    c.eq_str(file_read("${vdir}/record.log") ?? "", "avant 9.8.8 (commit fedcba9876543210fedcba9876543210fedcba98, with uncommitted changes)\n", "O534: the compiler's own record comes first and says when the tree was dirty")
+    _ = process_run_out(vexe, ["--version"], "${vdir}/dash.log")
+    c.eq_str(file_read("${vdir}/dash.log") ?? "", file_read("${vdir}/record.log") ?? "?", "O534: avant --version prints what avant version prints")
+    c.eq_int(process_run_out(vexe, ["version", "extra"], "${vdir}/extra.log") ?? -1, 1, "O534: avant version takes no arguments")
+    rm_f(vexe)
+    // The compiler under test, when tools/letters.sh built it, prints
+    // avant.toml's version.
+    if file_exists("${compiler}.versions.txt") {
+      toml_version = ""
+      for line in (file_read("${avant_test_root()}/avant.toml") ?? "").split("\n") {
+        if toml_version.size == 0 && ut_starts(line, "version = \"") && line.size > 12 {
+          toml_version = str_slice(line, 11, line.size - 1)
+        }
+      }
+      _ = process_run_out(compiler, v_args, "${vdir}/self.log")
+      c.expect(toml_version.size > 0 && ut_starts(file_read("${vdir}/self.log") ?? "", "avant ${toml_version} (commit "), "O534: the compiler under test prints avant.toml's version (${toml_version})")
+    }
 
     fetch_body = "[package]\nname = \"fetch\"\nversion = \"0.1.0\"\n\n[test]\ndir = \"tests\"\nexclusive = [\"tests/test_bench.av\"]\n"
     _ = file_write("${root}/fetch/avant.toml", fetch_body)
