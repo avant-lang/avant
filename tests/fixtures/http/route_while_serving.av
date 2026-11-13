@@ -8,10 +8,14 @@ import std.http
 // stderr, status 1, and the request is never answered. Without the trap
 // the route is added, the request answered, and the program prints
 // "answered 200" and ends with status 0. Run by
-// tests/cases/test_std_http_safety.av once per method.
+// tests/cases/test_std_http_safety.av once per method; without an
+// argument (the run goldens) the method is get.
 fn main: Int {
   a = argv()
-  kind = a[a.size - 1]
+  kind = "get"
+  if a.size > 1 {
+    kind = a[a.size - 1]
+  }
   if opened = Http.listen(0, "127.0.0.1", 1048576, 2) {
     server = opened
     server.get("/add") { |req|

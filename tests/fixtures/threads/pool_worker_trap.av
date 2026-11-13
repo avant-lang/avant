@@ -4,7 +4,8 @@
 // with a trap: one line on stderr, status 1 (they aborted, status 134).
 // The argument says which: join or parallel. "before" comes first: a
 // trap flushes stdout before it writes its line. Run by
-// tests/cases/test_safety.av.
+// tests/cases/test_safety.av; without an argument (the run goldens) it
+// is parallel.
 
 fn doubled(xs: Array(Int)): Int {
   ys = xs.parallel { |x| x * 2 }
@@ -18,7 +19,10 @@ fn joined: Int {
 
 fn main: Int {
   a = argv()
-  kind = a[a.size - 1]
+  kind = "parallel"
+  if a.size > 1 {
+    kind = a[a.size - 1]
+  }
   puts("before")
   xs = [1, 2, 3]
   t = spawn {
