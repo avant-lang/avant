@@ -257,7 +257,9 @@ typedef struct Block {
   uint8_t *line_mark;  /* 16: LINES_PER_BLOCK bytes in gc_heap.lines */
   uint8_t space;       /* 24 */
   uint8_t in_use;      /* 25 */
-  uint16_t search;     /* 26: the hole search cursor, in lines */
+  uint16_t search;     /* 26: the hole search cursor, in lines; of a
+                        * young block during a young collection: the
+                        * lines that collection made live in it */
   uint8_t clean;       /* 28: free and madvised: zero, not resident */
   uint8_t kept;        /* 29: a young block's state in a young
                         * collection (SPLUS_*, YOUNG_EMPTY) */
@@ -1057,6 +1059,10 @@ typedef struct GcHeap {
   void **noted;
   uint32_t noted_n;
   uint32_t noted_cap;
+  /* One past the last entry the running collection's copy did not move
+   * (UINT32_MAX when no copy ran): gc_clear_noted reads no entry from
+   * there on (the Valk stage, VALK-T, O600). */
+  uint32_t noted_hi;
   /* Holders the fix-up walks besides the list's NOTED_FIX entries
    * (avant_gc_sticky.c, fix_extra_add). */
   void **fix_extra;
@@ -1446,6 +1452,7 @@ __attribute__((noreturn)) void gc_die(const char *msg);
 void *gc_xrealloc(void *p, size_t n);
 void gc_work_push(void *p);
 int gc_block_live_lines(Block *b);
+int gc_block_any_live(const Block *b);
 int gc_sweep_block_lines(Block *b, int lo, int hi, uint64_t *freed);
 size_t gc_obj_total(const AvantHeader *h);
 int gc_is_heap_payload(void *p, Block **ob, AvantHeader **ol);
@@ -1545,6 +1552,14 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
  * lines when the collection began; its young survivors are evacuated all
  * the same and its line marks restored from gc_heap.stress_lines. */
 #define SPLUS_MIXED 9
+/* Between collections (the Valk stage, VALK-T, O600): a block young
+ * allocation took whole from the chunks since the last collection
+ * (place, place_bump, young_overflow). Like a survivor block
+ * (SPLUS_WAS_SURV) it has
+ * no live line when the next young collection begins (a block entering
+ * use has its marks zeroed, and only a collection marks lines), so that
+ * collection does not read its line marks to learn it. */
+#define SPLUS_FRESH 10
 #ifndef SPLUS_AGED_SPARSE_LINES
 #define SPLUS_AGED_SPARSE_LINES 64
 #endif
@@ -1745,8 +1760,11 @@ static inline int line_live(const Block *b, int i) {
 /* Line marks read a word (eight lines) at a time (Stage 28 W15c, O87;
  * shared since W15d, O94): the epoch replicated into every byte, the high
  * bit of every byte of MARKS equal to it (exact: no borrow crosses a
- * byte), and the count of those bits (no popcount instruction is assumed:
- * without -mpopcnt __builtin_popcountll is a library call). */
+ * byte). A block's live lines are those bits counted: each word's as 0
+ * or 1 per byte, added byte-wise over the block's sixteen words and the
+ * bytes summed by one multiply (gc_block_live_lines, gc_sweep_block_lines;
+ * no popcount instruction is assumed: without -mpopcnt
+ * __builtin_popcountll is a library call). */
 #define LINE_WORDS (LINES_PER_BLOCK / 8)
 static inline uint64_t line_epoch8(void) {
   return 0x0101010101010101ULL * (uint64_t)gc_heap.line_epoch;
@@ -1756,10 +1774,6 @@ static inline uint64_t live_bytes_mask(uint64_t marks, uint64_t epoch8) {
   uint64_t x = marks ^ epoch8;
   uint64_t t = (x & 0x7f7f7f7f7f7f7f7fULL) + 0x7f7f7f7f7f7f7f7fULL;
   return ~(t | x | 0x7f7f7f7f7f7f7f7fULL);
-}
-
-static inline int live_byte_count(uint64_t mask) {
-  return (int)(((mask >> 7) * 0x0101010101010101ULL) >> 56);
 }
 
 static inline void mark_lines(Block *b, size_t off, size_t total) {

@@ -600,14 +600,32 @@ void gc_mature_normalize(void) {
  * before, a byte loop over the 128 marks). */
 int gc_block_live_lines(Block *b) {
   uint64_t epoch8 = line_epoch8();
-  int n = 0;
+  uint64_t sum = 0;
+  int k;
+  /* Each word's live bytes as 0 or 1 per byte, added byte-wise (sixteen
+   * words: no byte passes 16), and the bytes summed once at the end (the
+   * Valk stage, VALK-T, O600: one multiply a block, not one a word). */
+  for (k = 0; k < LINE_WORDS; k++) {
+    uint64_t m;
+    memcpy(&m, b->line_mark + 8 * k, sizeof m);
+    sum += live_bytes_mask(m, epoch8) >> 7;
+  }
+  return (int)((sum * 0x0101010101010101ULL) >> 56);
+}
+
+/* Whether B has a live line (the young collection's first question of
+ * every young block; the Valk stage, VALK-T, O600: it counted them). */
+int gc_block_any_live(const Block *b) {
+  uint64_t epoch8 = line_epoch8();
   int k;
   for (k = 0; k < LINE_WORDS; k++) {
     uint64_t m;
     memcpy(&m, b->line_mark + 8 * k, sizeof m);
-    n += live_byte_count(live_bytes_mask(m, epoch8));
+    if (live_bytes_mask(m, epoch8)) {
+      return 1;
+    }
   }
-  return n;
+  return 0;
 }
 
 /* The line sweep of block B over the lines LO..HI (Stage 28 W15c, O87;
@@ -622,13 +640,20 @@ int gc_block_live_lines(Block *b) {
  * gc_reset_block_bump's find_hole did in three passes. Returns the live
  * line count and leaves the block's bump and limit on its first hole (as
  * gc_reset_block_bump does: search 0; a full block's cursor at its end).
- * *FREED counts the freed lines of the range. */
+ * *FREED counts the freed lines of the range. A block with no live line
+ * is left as it is (the Valk stage, VALK-T, O600): its whole range is
+ * counted freed and 0 returned; the caller frees such a block (the young
+ * sweep; the full sweep does not come here with one), and a block taken
+ * again has its start bits, line marks and cursor set anew
+ * (gc_block_take, gc_new_block), so clearing them here was work nothing
+ * read. */
 int gc_sweep_block_lines(Block *b, int lo, int hi, uint64_t *freed) {
   uint64_t epoch8 = line_epoch8();
   uint64_t live_bits[LINE_WORDS];
   uint64_t range_lo = (uint64_t)lo;
   uint64_t range_hi = (uint64_t)hi;
-  int live = 0;
+  uint64_t sum = 0;
+  int live;
   int k;
   int first_free = -1;
   int hole_end = LINES_PER_BLOCK;
@@ -636,7 +661,16 @@ int gc_sweep_block_lines(Block *b, int lo, int hi, uint64_t *freed) {
     uint64_t m;
     memcpy(&m, b->line_mark + 8 * k, sizeof m);
     live_bits[k] = live_bytes_mask(m, epoch8);
-    live += live_byte_count(live_bits[k]);
+    sum += live_bits[k] >> 7;
+  }
+  live = (int)((sum * 0x0101010101010101ULL) >> 56);
+  if (live == 0) {
+    int a = lo < 0 ? 0 : lo;
+    int z = hi > LINES_PER_BLOCK ? LINES_PER_BLOCK : hi;
+    if (z > a) {
+      *freed += (uint64_t)(z - a);
+    }
+    return 0;
   }
   for (k = 0; k < LINE_WORDS; k++) {
     uint64_t freeb = ~live_bits[k] & 0x8080808080808080ULL;
