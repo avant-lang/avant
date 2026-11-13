@@ -10,6 +10,11 @@
 #   run.sh counts           no clock: AVANT_GC_STATS and instruction counts
 #                           per scenario (scenario-isolated builds), and the
 #                           collection counts the other runtimes print
+#   run.sh cg [N...]        no clock: exact instructions per function of the
+#                           Avant scenario-isolated build under callgrind,
+#                           exclusive and inclusive, one process per
+#                           scenario (default every scenario; `4` runs 3
+#                           then 4)
 #   run.sh versions         the toolchains, the machine, the governor
 #
 # Tables: python3 tables.py $OUT (regenerates every table from raw files).
@@ -23,6 +28,8 @@
 #   VALK_GC_ROWS    restrict to these row ids  (default: all)
 #   VALK_GC_ALLOW_GOVERNOR=1  let `time` run without the performance
 #                   governor (a dry run; the session file says so)
+#   VALK_GC_CG_TIMEOUT  seconds one `cg` process may take (default 3600)
+#   VALK_GC_CG_ROWS   how many functions each `cg` listing keeps (default 70)
 #
 # Every run: stdin from /dev/null, a timeout, the output capped, and the
 # verification values of each scenario checked (a wrong value, a missing
@@ -414,11 +421,53 @@ do_counts() {
   say "counts in $dir; tables: python3 $HERE/tables.py $OUT"
 }
 
+# cg: nothing here reads a clock either. Each scenario asked for (default
+# all eight; 4 runs 3 then 4) runs once, in its own process, under
+# `valgrind --tool=callgrind`, which counts every instruction the process
+# executes (event Ir) and attributes it to its function exactly: a sampled
+# profile attributes a sample to the instruction that waits, so it
+# over-counts the functions that take cache misses. Written per scenario
+# under $OUT/cg: sN.excl.txt (each function's own instructions), sN.incl.txt
+# (with its callees'), sN.total (the process), sN.out (the program's
+# output, verified). The raw callgrind file is removed after the two
+# listings are made. AVANT_HEAP_RESERVE_GB=2 keeps the address range the
+# runtime reserves small enough for valgrind; it changes no count.
+do_cg() {
+  command -v valgrind >/dev/null && command -v callgrind_annotate >/dev/null || die "cg needs valgrind and callgrind_annotate"
+  [ -x "$BUILD/gc-avant-iso" ] || die "no $BUILD/gc-avant-iso (run.sh build)"
+  local dir=$OUT/cg limit=${VALK_GC_CG_TIMEOUT:-3600} rows=${VALK_GC_CG_ROWS:-70}
+  mkdir -p "$dir"
+  local wanted=("$@") n nums tag
+  [ ${#wanted[@]} -gt 0 ] || wanted=(1 2 3 4 5 6 7 8)
+  for n in "${wanted[@]}"; do
+    case "$n" in
+      [1235678]) nums=$n ;;
+      4) nums="3 4" ;;
+      *) die "cg: unknown scenario $n (1 to 8)" ;;
+    esac
+    tag=s$n
+    rm -f "$dir/$tag".*
+    # shellcheck disable=SC2086
+    AVANT_HEAP_RESERVE_GB=2 timeout -k 10 "$limit" valgrind --tool=callgrind --callgrind-out-file="$dir/$tag.callgrind" "$BUILD/gc-avant-iso" $nums </dev/null 2>"$dir/$tag.err" | head -c 50000000 >"$dir/$tag.out"
+    [ "${PIPESTATUS[0]}" = 0 ] || die "cg: scenario $n failed or timed out (see $dir/$tag.err)"
+    # shellcheck disable=SC2086
+    verify_output "$dir/$tag.out" $nums || die "cg: scenario $n: verification"
+    callgrind_annotate --threshold=99.9 "$dir/$tag.callgrind" 2>/dev/null | sed -n '/PROGRAM TOTALS/,$p' | sed 's# \[/[^]]*\]##; s#???:##' | head -n "$rows" >"$dir/$tag.excl.txt"
+    callgrind_annotate --threshold=99.9 --inclusive=yes "$dir/$tag.callgrind" 2>/dev/null | sed -n '/PROGRAM TOTALS/,$p' | sed 's# \[/[^]]*\]##; s#???:##' | head -n "$rows" >"$dir/$tag.incl.txt"
+    awk '/PROGRAM TOTALS/ {gsub(",", "", $1); print $1}' "$dir/$tag.excl.txt" >"$dir/$tag.total"
+    [ -s "$dir/$tag.total" ] || die "cg: scenario $n: no total (see $dir/$tag.err)"
+    rm -f "$dir/$tag.callgrind"
+    say "cg: scenario $n: $(cat "$dir/$tag.total") instructions ($dir/$tag.excl.txt, $tag.incl.txt)"
+  done
+  { do_versions; say "valgrind: $(valgrind --version)"; say "binary: $(sha256sum "$BUILD/gc-avant-iso")"; } >"$dir/session.txt"
+}
+
 case "${1:-}" in
   build) do_build ;;
   check) do_check ;;
   time) do_time "${2:-7}" ;;
   counts) do_counts ;;
+  cg) shift; do_cg "$@" ;;
   versions) do_versions ;;
-  *) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
