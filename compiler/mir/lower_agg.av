@@ -274,13 +274,17 @@ pub fn (lw: MirLower) owner_text(ot: Ty, mod_name: String): String {
 // named by the checker's resolved name (`ty_owned_symbol(ty, "new")`).
 pub fn (lw: MirLower) note_ctor_symbols {
   p = lw.lw_prog
-  for cls in p.classes {
+  i = 0
+  while i < p.classes.size {
+    cls = p.classes[i]
     if cls.type_params.size == 0 {
       if t = lw.class_ty(cls) {
         owner = lw.owner_text(t, t.mod_name)
         lw.lw_fn_syms[ty_owned_symbol(t, "new")] = "av.${mir_module_part(t.mod_name)}/${owner}.new"
+        lw.lw_ctor_cls[ty_owned_symbol(t, "new")] = i
       }
     }
+    i += 1
   }
 }
 
@@ -632,6 +636,11 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
 // A call of a program function by its resolved name (a constructor
 // `C.new`, a type-level function `C.f`), or nil when it is not one.
 pub fn (lw: MirLower) lower_named_call(e: Expr): MOperand? {
+  if ci = lw.lw_ctor_cls.get(e.resolved) {
+    if got = lw.lower_ctor_inline(e, ci) {
+      return got
+    }
+  }
   if sym = lw.lw_fn_syms.get(e.resolved) {
     ret = lw.ety(e)
     args = lw.lower_args_to(e.args, lw.callee_params(e.resolved, e), e.int_bits)
@@ -734,6 +743,104 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   b.end_fn
 }
 
+// `C.new(args)` at its call site (Stage 29 VALK-A1, M5, O204), for a class
+// with an `initialize` that takes a reference and no field code before it
+// (no default, no String's ""; ctor_field_code): the arguments, then the
+// allocation, the barrier on it (removed by the fresh pass: the
+// allocation is open, so initialize's own stores need none),
+// `C.initialize(_o, args)`, and the object; exactly what the out-of-line
+// `C.new` does, in the same order,
+// with the caller's frame rooting the arguments across the allocation
+// (scenario 7's Tree.new linked a record of two slots for them on every
+// call). nil when the class does not qualify (`C.new` is called).
+pub fn (lw: MirLower) lower_ctor_inline(e: Expr, ci: Int): MOperand? {
+  b = lw.lw_b
+  cdef = lw.lw_prog.classes[ci]
+  init_sym = ""
+  refs = false
+  if f = lw.initialize_of(cdef) {
+    if got = lw.lw_fn_syms.get(f.emit_name) {
+      init_sym = got
+    }
+    // Only a constructor with a reference argument: its `new` holds the
+    // argument across the allocation, so it links a record of slots on
+    // every call; without one `new` has no slot, links nothing since M4,
+    // and LLVM inlines it where that pays.
+    if sig = lw.lw_syms.find_method_emit(f.emit_name) {
+      for param in sig.params {
+        pt = lw.ty_at(param, f.loc, "a parameter")
+        if pt >= 0 && b.types.traced(pt) {
+          refs = true
+        }
+      }
+    }
+  }
+  if init_sym.size == 0 || !refs || lw.failed {
+    return nil
+  }
+  if t = lw.class_ty(cdef) {
+    if lw.ctor_field_code(cdef, t) {
+      return nil
+    }
+    cty = lw.value_agg_ty(t, cdef.loc)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    layout = b.types.layout_of(cty)
+    args = lw.lower_args_to(e.args, lw.callee_params(e.resolved, e), e.int_bits)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    o = b.temp(cty)
+    aargs: Array(MOperand) = []
+    aargs.push(b.c_u64(b.types.layouts[layout].size.to_i))
+    aargs.push(b.c_u32(b.types.layouts[layout].type_id))
+    b.call(o, "avant_alloc", aargs)
+    b.barrier(o)
+    iargs: Array(MOperand) = []
+    iargs.push(b.copy_local(o))
+    for a in args {
+      iargs.push(a)
+    }
+    dummy = b.call(-1, init_sym, iargs)
+    return b.copy_local(o)
+  }
+  nil
+}
+
+// Whether ctor_fill emits anything before the initialize call for cdef:
+// a field default, or the "" of a String field initialize does not set.
+pub fn (lw: MirLower) ctor_field_code(cdef: ClassDef, t: Ty): Bool {
+  for fd in cdef.fields {
+    if dv = fd.default {
+      return true
+    }
+    if !fd.set_by_init {
+      k = t.field_index(fd.name)
+      if lw.has_strings(t.fields[k].ty) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+// Whether zero_strings stores anything into a place of type t.
+pub fn (lw: MirLower) has_strings(t: Ty): Bool {
+  if t.is_string {
+    return true
+  }
+  if t.is_struct {
+    for fl in t.fields {
+      if (fl.ty.is_string || fl.ty.is_struct) && lw.has_strings(fl.ty) {
+        return true
+      }
+    }
+  }
+  false
+}
+
 // The body of a constructor after its allocation into _o: each field
 // default in declaration order (a reference-carrying one behind
 // `barrier`, the old back end's emit_field_defaults), then `C.initialize(_o,
@@ -769,6 +876,10 @@ pub fn (lw: MirLower) ctor_fill(cdef: ClassDef, t: Ty, o: Int, layout: Int, init
   lw.lw_vars = params
   lw.at(cdef.loc)
   if init_sym.size > 0 {
+    // initialize's receiver must be open (MFunc.fresh_self): a field
+    // default that collects closes it; the fresh pass removes this
+    // barrier when none did (VALK-A1).
+    b.barrier(o)
     args: Array(MOperand) = []
     args.push(b.copy_local(o))
     for i in 0..nparams {

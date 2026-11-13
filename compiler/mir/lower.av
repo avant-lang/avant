@@ -168,6 +168,9 @@ pub class MirLower {
   lw_avant_root: String = ""
   lw_err: String = ""
   pub lw_fn_syms: Hash(String, String)
+  // A constructor's resolved name (`ty_owned_symbol(t, "new")`) to its
+  // class's index in lw_prog.classes (VALK-A1: inline constructors).
+  pub lw_ctor_cls: Hash(String, Int)
   pub lw_vars: Hash(String, Int)
   // The arguments of the calls being lowered whose defaults may name an
   // earlier parameter (O546): each hidden name (ast arg_frame_name) with
@@ -202,6 +205,7 @@ pub class MirLower {
     self.lw_avant_root = avant_root
     self.lw_err = ""
     self.lw_fn_syms = Hash(String, String).new
+    self.lw_ctor_cls = Hash(String, Int).new
     self.lw_vars = Hash(String, Int).new
     self.lw_arg_names = []
     self.lw_arg_ops = []
@@ -521,7 +525,12 @@ pub class MirLower {
       if fnn.owner.size > 0 {
         sname = "${fnn.owner}.${fnn.name}"
       }
-      self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), mloc(fnn.loc), sname)
+      mf = self.lw_b.begin_fn(sym, self.lw_b.sig(params, sret, false), mloc(fnn.loc), sname)
+      // A class's initialize: its receiver is the object its constructor
+      // just allocated (MFunc.fresh_self, fresh.av).
+      if fnn.name == "initialize" && !fnn.type_method && recv >= 0 && !self.lw_m.types.is_addr(recv) {
+        mf.fresh_self = true
+      }
       self.lw_cl.base = lam_base(fnn)
       if self.lw_main {
         self.lw_b.set_external

@@ -188,7 +188,12 @@ pub fn ll_gc_frame_helpers(e: LlEmit) {
 }
 
 // barrier copy _h (5.6): the holder is read once (E1); null, or a heap
-// object already young or remembered, skips the call. The call form when
+// object already young or remembered, skips the call. The header's flags
+// (runtime/avant_rt.h: HEAP 0x8000, YOUNG 0x20; REM 0x10) are tested with
+// one masked compare (Stage 29 VALK-A1, M8): flags & 0x8030 is above
+// 0x8000 exactly when HEAP is set and YOUNG or REM is (without HEAP it is
+// at most 0x30), the same condition as the two tests and their `and`
+// before, in four instructions where LLVM made seven. The call form when
 // inline fast paths are off. When the store the barrier precedes (V13) is
 // an element of the holder's buffer (`(*_h)[i]`, `(*_h)[i].j`), the call
 // passes the slot (avant_barrier_slot, Stage 28 W16t: a large pointer
@@ -217,16 +222,11 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   e.line("${fp} = getelementptr inbounds i8, ptr ${h}, i64 -2")
   fl = e.tmp
   e.line("${fl} = load i16, ptr ${fp}, align 2")
-  a = e.tmp
-  e.line("${a} = and i16 ${fl}, -32768")
-  ha = e.tmp
-  e.line("${ha} = icmp ne i16 ${a}, 0")
-  b = e.tmp
-  e.line("${b} = and i16 ${fl}, 48")
-  hb = e.tmp
-  e.line("${hb} = icmp ne i16 ${b}, 0")
+  // 0x8030 and 0x8000 as i16.
+  mk = e.tmp
+  e.line("${mk} = and i16 ${fl}, -32720")
   skip = e.tmp
-  e.line("${skip} = and i1 ${ha}, ${hb}")
+  e.line("${skip} = icmp ugt i16 ${mk}, -32768")
   e.line("br i1 ${skip}, label %${cont}, label %${call}")
   e.block(call)
   ll_barrier_call(e, h, k)
@@ -296,7 +296,13 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 // An empty payload is one word (Stage 29 W-INT1, as avant_alloc): a 0-byte
 // object at a block's end would have the next block's first address as
 // its payload.
-pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
+// birth (the allocation is marked `fresh`, mir/fresh.av, Stage 29
+// VALK-A1): stores into the object follow with no barrier of their own,
+// so the slow path's result, which may be mature (born in mature space by
+// avant_alloc_in_mature or on an unregistered thread), is barriered once:
+// avant_barrier returns at once for a young object. The inline path's
+// result is always young: it bumps in the thread's young hole.
+pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): String {
   size = e.value(args[0])
   ty = e.value(args[1])
   const_size = args[0].kind == mok_int() && args[1].kind == mok_int()
@@ -316,11 +322,11 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   if const_size {
     tot = (sz + 15) & -8
     if !e.inline_fast || tot > 8192 || (tid == 0 && sz >= 6144) {
-      return ll_alloc_call(e, callee, size, ty)
+      return ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
     }
     total = "${tot}"
   } else if !e.inline_fast {
-    return ll_alloc_call(e, callee, size, ty)
+    return ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
   }
   e.used_alloc_globals = true
   e.need(callee)
@@ -470,12 +476,22 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand)): String {
   e.line("br label %${cont}")
 
   e.block(slow)
-  s = ll_alloc_call(e, callee, size, ty)
+  s = ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
   e.line("br label %${cont}")
 
   e.block(cont)
   r = e.tmp
   e.line("${r} = phi ptr [ ${obj}, %${from} ], [ ${s}, %${slow} ]")
+  r
+}
+
+// The birth barrier of an allocation's call result R (ll_alloc), when
+// birth; returns R.
+fn ll_alloc_birth(e: LlEmit, r: String, birth: Bool): String {
+  if birth {
+    e.need("avant_barrier")
+    e.line("call void @avant_barrier(ptr ${r})")
+  }
   r
 }
 
@@ -512,16 +528,26 @@ pub fn ll_gc_poll(e: LlEmit) {
 }
 
 // The runtime globals the allocation fast path reads (5.5), in the
-// order of 10.3.
+// order of 10.3. The six thread-local ones are local-exec (VALK-A1, O137),
+// as avant_gc_top is (D268): every program the compiler builds is an
+// executable that links the runtime statically, so each access is one
+// %fs-relative load or store; without a model (general-dynamic, which the
+// linker relaxes) each address was formed apart (`mov %fs:0`, `lea`,
+// often a copy: two or three instructions more per access, O137). A
+// shared-object output (none is built today; `--lib` links a C library)
+// could not use local-exec for a variable another module defines: it needs
+// initial-exec here and for avant_gc_top (general-dynamic in a library
+// that is dlopen'ed), chosen by the driver, which knows the output kind,
+// and passed to the emitter.
 pub fn ll_alloc_globals: String {
   buf = buf_new()
   buf.push_str("@g_avant_shared = external global i32\n")
-  buf.push_str("@avant_gc_fast_ok = external thread_local global i32\n")
-  buf.push_str("@avant_gc_bump = external thread_local global ptr\n")
-  buf.push_str("@avant_gc_limit = external thread_local global ptr\n")
-  buf.push_str("@avant_gc_block = external thread_local global ptr\n")
-  buf.push_str("@avant_gc_base = external thread_local global ptr\n")
-  buf.push_str("@avant_gc_starts = external thread_local global ptr\n")
+  buf.push_str("@avant_gc_fast_ok = external thread_local(localexec) global i32\n")
+  buf.push_str("@avant_gc_bump = external thread_local(localexec) global ptr\n")
+  buf.push_str("@avant_gc_limit = external thread_local(localexec) global ptr\n")
+  buf.push_str("@avant_gc_block = external thread_local(localexec) global ptr\n")
+  buf.push_str("@avant_gc_base = external thread_local(localexec) global ptr\n")
+  buf.push_str("@avant_gc_starts = external thread_local(localexec) global ptr\n")
   buf.push_str("@avant_g_stats = external global i64\n")
   buf.push_str("@avant_since_gc = external global i64\n")
   buf.push_str("@avant_nursery_held = external global i64\n")

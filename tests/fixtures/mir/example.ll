@@ -8,12 +8,12 @@ target triple = "x86_64-pc-linux-gnu"
 @str.1 = private constant [4 x i8] c"%s\0A\00", align 1
 
 @g_avant_shared = external global i32
-@avant_gc_fast_ok = external thread_local global i32
-@avant_gc_bump = external thread_local global ptr
-@avant_gc_limit = external thread_local global ptr
-@avant_gc_block = external thread_local global ptr
-@avant_gc_base = external thread_local global ptr
-@avant_gc_starts = external thread_local global ptr
+@avant_gc_fast_ok = external thread_local(localexec) global i32
+@avant_gc_bump = external thread_local(localexec) global ptr
+@avant_gc_limit = external thread_local(localexec) global ptr
+@avant_gc_block = external thread_local(localexec) global ptr
+@avant_gc_base = external thread_local(localexec) global ptr
+@avant_gc_starts = external thread_local(localexec) global ptr
 @avant_g_stats = external global i64
 @avant_since_gc = external global i64
 @avant_nursery_held = external global i64
@@ -48,22 +48,19 @@ bb0:
 bb0.s0.test:
   %t2 = getelementptr inbounds i8, ptr %t0, i64 -2
   %t3 = load i16, ptr %t2, align 2
-  %t4 = and i16 %t3, -32768
-  %t5 = icmp ne i16 %t4, 0
-  %t6 = and i16 %t3, 48
-  %t7 = icmp ne i16 %t6, 0
-  %t8 = and i1 %t5, %t7
-  br i1 %t8, label %bb0.s0.cont, label %bb0.s0.call
+  %t4 = and i16 %t3, -32720
+  %t5 = icmp ugt i16 %t4, -32768
+  br i1 %t5, label %bb0.s0.cont, label %bb0.s0.call
 
 bb0.s0.call:
   call void @avant_barrier(ptr %t0)
   br label %bb0.s0.cont
 
 bb0.s0.cont:
-  %t9 = load ptr, ptr %_2.name, align 8
-  %t10 = load ptr, ptr %_1.self, align 8
-  %t11 = getelementptr inbounds %"main.Box", ptr %t10, i32 0, i32 0
-  store ptr %t9, ptr %t11, align 8
+  %t6 = load ptr, ptr %_2.name, align 8
+  %t7 = load ptr, ptr %_1.self, align 8
+  %t8 = getelementptr inbounds %"main.Box", ptr %t7, i32 0, i32 0
+  store ptr %t6, ptr %t8, align 8
   ret void
 }
 
@@ -207,32 +204,29 @@ bb1:
 bb1.s1.test:
   %t15 = getelementptr inbounds i8, ptr %t13, i64 -2
   %t16 = load i16, ptr %t15, align 2
-  %t17 = and i16 %t16, -32768
-  %t18 = icmp ne i16 %t17, 0
-  %t19 = and i16 %t16, 48
-  %t20 = icmp ne i16 %t19, 0
-  %t21 = and i1 %t18, %t20
-  br i1 %t21, label %bb1.s1.cont, label %bb1.s1.call
+  %t17 = and i16 %t16, -32720
+  %t18 = icmp ugt i16 %t17, -32768
+  br i1 %t18, label %bb1.s1.cont, label %bb1.s1.call
 
 bb1.s1.call:
   call void @avant_barrier(ptr %t13)
   br label %bb1.s1.cont
 
 bb1.s1.cont:
-  %t22 = load ptr, ptr %_4, align 8
-  %t23 = load ptr, ptr %_2.b, align 8
-  %t24 = getelementptr inbounds %"main.Box", ptr %t23, i32 0, i32 0
-  store ptr %t22, ptr %t24, align 8
+  %t19 = load ptr, ptr %_4, align 8
+  %t20 = load ptr, ptr %_2.b, align 8
+  %t21 = getelementptr inbounds %"main.Box", ptr %t20, i32 0, i32 0
+  store ptr %t19, ptr %t21, align 8
   br label %bb2
 
 bb2:
-  %t25 = load ptr, ptr %_2.b, align 8
-  %t26 = getelementptr inbounds %"main.Box", ptr %t25, i32 0, i32 0
-  %t27 = load ptr, ptr %t26, align 8
-  store ptr %t27, ptr %_0, align 8
+  %t22 = load ptr, ptr %_2.b, align 8
+  %t23 = getelementptr inbounds %"main.Box", ptr %t22, i32 0, i32 0
+  %t24 = load ptr, ptr %t23, align 8
+  store ptr %t24, ptr %_0, align 8
   call void @__avant_frame_pop(ptr %gcf)
-  %t28 = load ptr, ptr %_0, align 8
-  ret ptr %t28
+  %t25 = load ptr, ptr %_0, align 8
+  ret ptr %t25
 }
 
 define i32 @main(i32 %a1, ptr %a2) #0 {

@@ -365,6 +365,28 @@ fn st_rejecting(out: Buf) {
   b.ret
   st_case(out, "v17_no_leave", fi, b.module)
 
+  // V16 as restated by VALK-A1 (M4): a frame function with a slot links a
+  // record, and so does one a thread's first Avant frame can be (main, a
+  // C callback's thunk), slot or none.
+  b = st_base(false)
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
+  l1 = b.local(mt_str(), "")
+  b.set_slot(l1)
+  b.assign(b.pl(l1), b.rv_zero)
+  b.call(l1, "av.t/mk", st_none())
+  b.call(-1, "av.t/churn", st_none())
+  b.call(-1, "av.t/use", st_one(b.copy_local(l1)))
+  b.ret
+  st_case(out, "v16_slot_no_record", fi, b.module)
+
+  b = st_base(false)
+  cbf = b.begin_fn("av.t/f#cb", b.sig(st_tys(-1, -1), vd, false), b.here(2, 1), "callback")
+  b.set_kind(mfk_frame())
+  cbf.entry = true
+  b.call(-1, "av.t/churn", st_none())
+  b.ret
+  st_case(out, "v16_first_frame_no_record", fi, b.module)
+
   b = st_base(false)
   st_fn(b, "f", st_tys(-1, -1), vd, mfk_unset())
   l1 = b.local(mt_str(), "")
@@ -483,6 +505,17 @@ fn st_accepting(out: Buf) {
   st_both(out, "ok_ref_across_nocollect", st_ok_module("ok_ref_across_nocollect"))
   st_both(out, "ok_fresh_fill_closed", st_ok_module("ok_fresh_fill_closed"))
   st_both(out, "ok_addr_in_slot", st_ok_module("ok_addr_in_slot"))
+
+  // A frame function with no slot and no frame statement (VALK-A1, M4):
+  // it collects, holds no reference across it, links no record.
+  b = st_base(false)
+  st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
+  l1 = b.local(mt_str(), "")
+  b.call(-1, "av.t/churn", st_none())
+  b.call(l1, "av.t/mk", st_none())
+  b.call(-1, "avant_str_size", st_one(b.copy_local(l1)))
+  b.ret
+  st_case(out, "ok_frameless", fi, b.module)
 
   // V13 forms 2, 3, 4: barrier_at on an addr holder, a pin before a store
   // into C memory (avant_pin, or avant_pin_field with the field's address,
