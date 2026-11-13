@@ -905,6 +905,10 @@ typedef struct GcHeap {
   /* avant_gc_defrag.c: the evacuated blocks a defragmenting full
    * collection frees once every reference is rewritten. */
   BlockSet def_release;
+  /* The destination block the last evacuation filled last, or NULL
+   * (Stage 29 W-FIX1c, O202): not a candidate of the next evacuation.
+   * Cleared when the block is freed (gc_cache_or_free_block). */
+  Block *def_last;
 
 
   /* avant_gc_verify.c. vnoted: the objects verify_trace flagged VSEEN

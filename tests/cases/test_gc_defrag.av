@@ -54,10 +54,64 @@ fn test_gc_defrag(c: Checks, compiler: String, root: String, dir: String) {
   }
 }
 
+// The number after `key=` in an AVANT_GC_STATS=1 line, or -1.
+fn stat_int(text: String, key: String): Int {
+  parts = text.split(" ")
+  for p in parts {
+    if p.size > key.size + 1 && str_slice(p, 0, key.size + 1) == "${key}=" {
+      return str_slice(p, key.size + 1, p.size).strip.to_i ?? -1
+    }
+  }
+  -1
+}
+
+// O202 (Stage 29 W-FIX1c): no evacuation without a gain.
+// heap/defrag_gain.av (its comment has the two cases) prints the known
+// stdout plainly and under each environment above. Then each case alone,
+// with AVANT_GC_STATS=1 and every collector variable unset: 50 forced
+// full collections of a heap that does not change evacuate fewer than 5
+// blocks in all (0 today; 50 before W-FIX1c, one per collection), and a
+// fragmented heap is still evacuated (at least 60 blocks; 98 today, 100
+// before).
+fn test_defrag_gain(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/defrag_gain.av", "${dir}/defrag_gain", "${dir}/defrag_gain.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "defrag_gain.av: compiles")
+  envs = gc_envs()
+  clean = "-u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_HEAP_RESERVE_GB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS AVANT_GC_STATS=1"
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "defrag_gain", "defrag_gain.g${e}", envs[e]))
+  }
+  runs.push(run_job_env(dir, "defrag_gain", "defrag_gain.steady", "${clean} DEFRAG_GAIN_CASE=steady"))
+  runs.push(run_job_env(dir, "defrag_gain", "defrag_gain.fragmented", "${clean} DEFRAG_GAIN_CASE=fragmented"))
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "defrag_gain.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/defrag_gain.g${e}.out"), "steady 20992\nfragmented 33544192\n", "defrag_gain.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/defrag_gain.g${e}.err"), "", "defrag_gain.av ${what}: no stderr (no verifier report)")
+  }
+  steady = log_text("${dir}/defrag_gain.steady.err")
+  frag = log_text("${dir}/defrag_gain.fragmented.err")
+  c.eq_int(runs[envs.size].code, 0, "defrag_gain.av steady: exit 0")
+  c.eq_int(runs[envs.size + 1].code, 0, "defrag_gain.av fragmented: exit 0")
+  c.eq_int(stat_int(steady, "full"), 50, "defrag_gain.av steady: 50 full collections")
+  ev = stat_int(steady, "def_evac_blocks")
+  c.expect(ev >= 0 && ev < 5, "defrag_gain.av steady: a heap that does not change is not evacuated again at every full collection (fewer than 5 blocks in 50 collections)")
+  c.expect(stat_int(frag, "def_evac_blocks") >= 60, "defrag_gain.av fragmented: a fragmented heap is still evacuated (at least 60 blocks)")
+  c.eq_int(stat_int(frag, "def_evac_blocks"), stat_int(frag, "def_freed_blocks"), "defrag_gain.av fragmented: every evacuated block is freed")
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_defrag.av")
   if compiler = env_get("AVANT_COMPILER") {
     test_gc_defrag(c, compiler, avant_test_root(), scratch_dir())
+    test_defrag_gain(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

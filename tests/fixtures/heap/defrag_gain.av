@@ -1,0 +1,145 @@
+// O202 (Stage 29 W-FIX1c): no evacuation without a gain. The mature
+// defragmenter moves blocks only when that frees at least one block net,
+// and never the block its last evacuation filled last; moving anything
+// costs a pass over every live object to rewrite references.
+//
+// DEFRAG_GAIN_CASE picks what runs (both by default, one after the
+// other); tests/cases/test_gc_defrag.av reads the counters of each case
+// alone from AVANT_GC_STATS=1 with every collector variable unset:
+//
+//   steady      a list of 20,992 nodes (ten blocks and a quarter of one), then 50 forced full collections
+//               of a heap that does not change. Before W-FIX1c each of
+//               them evacuated the heap's one sparse block into a fresh
+//               block (def_evac_blocks grew by one per collection, the
+//               same few hundred bytes moved each time, no block
+//               gained: def_evac_blocks=50); now none does
+//               (def_evac_blocks=0 today; the test asks for under 5).
+//               Under AVANT_GC_STRESS=1 the rule is off and the block
+//               moves every time, as before.
+//   fragmented  16,384 one-line objects tenured, then every eighth kept:
+//               the survivors lie one to eight lines across 128 blocks.
+//               The full collections still evacuate them (98 blocks
+//               today, 100 before the rule; the test asks for at least
+//               60: sparse blocks pack several to a block, so the move
+//               frees blocks), and the survivors read back right.
+
+lib gcrt {
+  fun avant_gc_collect()
+}
+
+class Node {
+  next: Node?
+}
+
+class Line {
+  v: Int
+  f1: Int
+  f2: Int
+  f3: Int
+  f4: Int
+  f5: Int
+  f6: Int
+  f7: Int
+  f8: Int
+  f9: Int
+  f10: Int
+  f11: Int
+  f12: Int
+  f13: Int
+  f14: Int
+  f15: Int
+  f16: Int
+  f17: Int
+  f18: Int
+  f19: Int
+  f20: Int
+  f21: Int
+  f22: Int
+  f23: Int
+  f24: Int
+  f25: Int
+  f26: Int
+  f27: Int
+  f28: Int
+  f29: Int
+  f30: Int
+
+  fn initialize(v: Int) {
+    self.v = v
+    self.f30 = v
+  }
+}
+
+fn chain(n: Int): Node {
+  first = Node.new
+  prev = first
+  i = 1
+  while i < n {
+    node = Node.new
+    prev.next = node
+    prev = node
+    i = i + 1
+  }
+  first
+}
+
+fn steady: Int {
+  list = chain(20992)
+  c = 0
+  while c < 50 {
+    gcrt.avant_gc_collect()
+    c = c + 1
+  }
+  n = 0
+  cur: Node? = list
+  while node = cur {
+    cur = node.next
+    n = n + 1
+  }
+  n
+}
+
+// The pruning runs in its own frame, gone before the full collections
+// below, so no stale root slot keeps the dropped array alive.
+fn build_pruned: Array(Line) {
+  flat: Array(Line) = []
+  i = 0
+  while i < 16384 {
+    flat.push(Line.new(i + 1))
+    i = i + 1
+  }
+  gcrt.avant_gc_collect()
+  keep: Array(Line) = []
+  j = 0
+  while j < flat.size {
+    if j % 8 == 0 {
+      keep.push(flat[j])
+    }
+    j = j + 1
+  }
+  keep
+}
+
+fn fragmented: Int {
+  keep = build_pruned()
+  gcrt.avant_gc_collect()
+  gcrt.avant_gc_collect()
+  gcrt.avant_gc_collect()
+  total = keep.size
+  k = 0
+  while k < keep.size {
+    total = total + keep[k].v + keep[k].f30
+    k = k + 1
+  }
+  total
+}
+
+fn main {
+  which = env_get("DEFRAG_GAIN_CASE") ?? "all"
+  if which == "all" || which == "steady" {
+    puts("steady ${steady()}")
+  }
+  if which == "all" || which == "fragmented" {
+    puts("fragmented ${fragmented()}")
+  }
+}

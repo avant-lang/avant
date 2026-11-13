@@ -20,7 +20,22 @@
  * none a word of the collecting thread's stack named, C31's exclusion,
  * D213: runtime C roots what it holds since W16a, RC1);
  * per full collection the live lines evacuated stay at or below 25% of
- * that mark's mature live lines, worst first. */
+ * that mark's mature live lines, worst first.
+ *
+ * No evacuation without a gain (Stage 29 W-FIX1c, O202). Moving anything
+ * at all costs a pass over every live object to rewrite references
+ * (gc_defrag_evacuate's fix-up), so the chosen blocks are evacuated only
+ * when that frees at least one block net: the blocks freed less the
+ * destination blocks their live objects fill (def_dest_blocks). And the
+ * block the last evacuation filled last (gc_heap.def_last), sparse by
+ * construction, is not a candidate: evacuated with the next sparse block
+ * it would be copied again at every full collection for one block's gain.
+ * Before, a heap that did not change had its one sparse block (the last
+ * destination) evacuated into a fresh block at every full collection:
+ * the same few hundred bytes moved, no block gained, and 41% of the
+ * collection spent in the fix-up (500,000 objects, W-BENCH-GC F4).
+ * Under AVANT_GC_STRESS=1 neither rule applies: the stress mode moves
+ * what can move, as before. */
 
 /* Whether block B holds a pinned object: a candidate holding one is not
  * evacuated (D34). Moved here with E's deletion (Stage 28 W15d) from
@@ -101,6 +116,36 @@ static int def_cand_cmp(const void *a, const void *b) {
   return (x->b > y->b) - (x->b < y->b);
 }
 
+/* The destination blocks the marked objects of CAND[0..N) fill when they
+ * are copied in order, as gc_defrag_evacuate's copy packs them (an object
+ * that does not fit the rest of a block starts the next one). */
+static size_t def_dest_blocks(const DefCand *cand, size_t n) {
+  size_t blocks = 0;
+  size_t used = BLOCK_SIZE;
+  size_t i;
+  for (i = 0; i < n; i++) {
+    const Block *b = cand[i].b;
+    int w;
+    for (w = 0; w < START_WORDS; w++) {
+      uint64_t bits = b->start[w];
+      while (bits) {
+        int bit = __builtin_ctzll(bits);
+        const AvantHeader *h = (const AvantHeader *)(b->base + ((size_t)w * 64 + (size_t)bit) * 8);
+        bits &= bits - 1;
+        if (full_marked(h)) {
+          size_t total = gc_obj_total(h);
+          if (used + total > BLOCK_SIZE) {
+            blocks++;
+            used = 0;
+          }
+          used += total;
+        }
+      }
+    }
+  }
+  return blocks;
+}
+
 static void defrag_rewrite_slot(void **slot) {
   void *w = *slot;
   Block *b = NULL;
@@ -178,6 +223,10 @@ void gc_defrag_evacuate(uint64_t live_lines_this) {
     if (live <= 0 || live > 64 || block_has_pinned(b)) {
       continue;
     }
+    /* The last evacuation's last destination (see the top of the file). */
+    if (b == gc_heap.def_last && !gc_heap.set.stress) {
+      continue;
+    }
     if (ncand == ccap) {
       ccap = ccap ? ccap * 2 : 32;
       cand = (DefCand *)gc_xrealloc(cand, ccap * sizeof(DefCand));
@@ -216,6 +265,11 @@ void gc_defrag_evacuate(uint64_t live_lines_this) {
   }
   ncand = i;
   if (ncand == 0) {
+    free(cand);
+    return;
+  }
+  /* No evacuation without a gain: at least one block freed net. */
+  if (!gc_heap.set.stress && ncand < def_dest_blocks(cand, ncand) + 1) {
     free(cand);
     return;
   }
@@ -301,6 +355,8 @@ void gc_defrag_evacuate(uint64_t live_lines_this) {
     if (stopped) {
       gc_heap.ctr.def.skipped++;
     }
+    /* The block filled last: not a candidate of the next evacuation. */
+    gc_heap.def_last = db;
   }
   {
     ThreadReg *t;

@@ -74,6 +74,9 @@ void gc_cache_or_free_block(Block *b) {
   if (gc_heap.space[SPACE_MATURE].cur == b) {
     gc_clear_alloc_cur(SPACE_MATURE);
   }
+  if (gc_heap.def_last == b) {
+    gc_heap.def_last = NULL;
+  }
   /* Out of use: no lookup finds it, as when it left the block hash. A
    * cached block stays charged to gc_heap.heap_bytes; a released one goes back
    * to its chunk's free list (resident until a full collection's
