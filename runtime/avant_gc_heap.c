@@ -53,6 +53,47 @@ int gc_type_word_is_ref(const AvantHeader *h, size_t w) {
   return (m->words[w / 64] >> (w % 64)) & 1u;
 }
 
+/* gc_heap.refs[ID] from the type's map (EACH_REF_SLOT, the Valk stage,
+ * VALK-T, O578): the list of a small record's reference words, or
+ * TYPE_REFS_WALK. Called whenever the map of ID changes, and once for
+ * AVANT_TYPE_PTRS (gc_init_slow). */
+void gc_type_refs_update(uint32_t id) {
+  uint64_t d = 0;
+  unsigned n = 0;
+  uint32_t c;
+  const TypeMap *m;
+  if (id > 65535u) {
+    return;
+  }
+  if (id == AVANT_TYPE_PTRS) {
+    gc_heap.refs[id] = TYPE_REFS_WALK;
+    return;
+  }
+  if (id == AVANT_TYPE_BYTES || id >= MAX_TYPES || !gc_heap.type_set[id]) {
+    gc_heap.refs[id] = 0;
+    return;
+  }
+  m = &gc_heap.types[id];
+  if (m->stride) {
+    gc_heap.refs[id] = TYPE_REFS_WALK;
+    return;
+  }
+  for (c = 0; c < m->nchunks; c++) {
+    uint64_t w = m->words[c];
+    while (w) {
+      uint64_t i = (uint64_t)c * 64 + (uint64_t)__builtin_ctzll(w);
+      w &= w - 1;
+      if (n == TYPE_REFS_MAX || i > 255) {
+        gc_heap.refs[id] = TYPE_REFS_WALK;
+        return;
+      }
+      n++;
+      d |= i << (8 * n);
+    }
+  }
+  gc_heap.refs[id] = d | n;
+}
+
 void gc_die(const char *msg) {
   fprintf(stderr, "avant runtime: %s\n", msg);
   abort();
@@ -304,6 +345,7 @@ static uint64_t make_small_chunk(void) {
   ch->used = 0;
   ch->free = NULL;
   ch->nfree = BLOCKS_PER_CHUNK;
+  ch->nres = dirty ? (uint8_t)BLOCKS_PER_CHUNK : 0;
   for (i = (int)BLOCKS_PER_CHUNK - 1; i >= 0; i--) {
     Block *b = &gc_heap.blocks[b0 + (uint64_t)i];
     b->in_use = 0;
@@ -351,6 +393,7 @@ Block *gc_block_take(void) {
   b->next = NULL;
   if (!b->clean) {
     gc_heap.free_resident -= BLOCK_SIZE;
+    ch->nres--;
   }
   b->clean = 0;
   memset(b->line_mark, 0, LINES_PER_BLOCK);
@@ -373,6 +416,7 @@ void gc_block_give(Block *b) {
   b->next = ch->free;
   ch->free = b;
   ch->nfree++;
+  ch->nres++;
   gc_heap.free_resident += BLOCK_SIZE;
   if (c < gc_heap.small_hint) {
     gc_heap.small_hint = c;
@@ -402,17 +446,28 @@ static void decommit_chunk(uint64_t c) {
   gc_heap.chunks[c].decommitted = 1;
 }
 
-/* The resident free bytes of chunk C: free blocks not madvised, the
+/* The resident free bytes of chunk C: free blocks not madvised (counted
+ * in GcChunk.nres as blocks join and leave the free list and are
+ * madvised; until the Valk stage's VALK-T a walk of the free list at
+ * every call, which a young collection that emptied a block makes: O577;
+ * AVANT_GC_VERIFY still walks it and stops on a count that differs), the
  * dirty free pages of a large-object chunk, or a free chunk's whole data
  * while it is dirty. */
 static uint64_t chunk_resident_free(uint64_t c) {
   GcChunk *ch = &gc_heap.chunks[c];
   uint64_t n = 0;
   if (ch->kind == CHUNK_SMALL) {
-    Block *b;
-    for (b = ch->free; b; b = b->next) {
-      if (!b->clean) {
-        n += BLOCK_SIZE;
+    n = (uint64_t)ch->nres * BLOCK_SIZE;
+    if (gc_heap.set.verify) {
+      uint64_t w = 0;
+      Block *b;
+      for (b = ch->free; b; b = b->next) {
+        if (!b->clean) {
+          w += BLOCK_SIZE;
+        }
+      }
+      if (w != n) {
+        gc_die("avant gc verify: a chunk's count of resident free blocks differs from its free list");
       }
     }
   } else if (ch->kind == CHUNK_LARGE) {
@@ -476,6 +531,7 @@ void gc_heap_return(uint64_t live) {
         if (!b->clean && b->idle < now) {
           gc_return_pages(b->base, BLOCK_SIZE);
           b->clean = 1;
+          ch->nres--;
           gc_heap.free_resident -= BLOCK_SIZE;
           total -= BLOCK_SIZE;
         }
@@ -502,19 +558,74 @@ void gc_heap_return(uint64_t live) {
   }
 }
 
+/* The mature space's blocks in order in its list alone (GcSpace's
+ * comment; the Valk stage, VALK-T, O577): back is emptied into list and
+ * rev cleared, the order unchanged. For the code that walks the blocks in
+ * order through Block.next: a full collection (its sweep, its
+ * defragmentation, the young allocator's list rebuilt after it) and
+ * mature allocation looking for a hole (place). O(the space's blocks)
+ * when there is something to do, nothing otherwise. */
+void gc_mature_normalize(void) {
+  GcSpace *sp = &gc_heap.space[SPACE_MATURE];
+  Block *head = sp->rev ? sp->back : sp->list;
+  Block *tail = sp->rev ? sp->list : sp->back;
+  Block *r = NULL;
+  if (!sp->rev && !sp->back) {
+    return;
+  }
+  /* The order is HEAD from its top down, then TAIL from its bottom up:
+   * TAIL reversed, appended to HEAD. */
+  while (tail) {
+    Block *n = tail->next;
+    tail->next = r;
+    r = tail;
+    tail = n;
+  }
+  if (!head) {
+    head = r;
+  } else {
+    Block *t = head;
+    while (t->next) {
+      t = t->next;
+    }
+    t->next = r;
+  }
+  sp->list = head;
+  sp->back = NULL;
+  sp->rev = 0;
+}
+
 /* The live lines of B, eight line marks at a time against the epoch
  * (Stage 28 W15d, O94: the young sweep's word-wise reading, W15c's O87;
  * before, a byte loop over the 128 marks). */
 int gc_block_live_lines(Block *b) {
   uint64_t epoch8 = line_epoch8();
-  int n = 0;
+  uint64_t sum = 0;
+  int k;
+  /* Each word's live bytes as 0 or 1 per byte, added byte-wise (sixteen
+   * words: no byte passes 16), and the bytes summed once at the end (the
+   * Valk stage, VALK-T, O600: one multiply a block, not one a word). */
+  for (k = 0; k < LINE_WORDS; k++) {
+    uint64_t m;
+    memcpy(&m, b->line_mark + 8 * k, sizeof m);
+    sum += live_bytes_mask(m, epoch8) >> 7;
+  }
+  return (int)((sum * 0x0101010101010101ULL) >> 56);
+}
+
+/* Whether B has a live line (the young collection's first question of
+ * every young block; the Valk stage, VALK-T, O600: it counted them). */
+int gc_block_any_live(const Block *b) {
+  uint64_t epoch8 = line_epoch8();
   int k;
   for (k = 0; k < LINE_WORDS; k++) {
     uint64_t m;
     memcpy(&m, b->line_mark + 8 * k, sizeof m);
-    n += live_byte_count(live_bytes_mask(m, epoch8));
+    if (live_bytes_mask(m, epoch8)) {
+      return 1;
+    }
   }
-  return n;
+  return 0;
 }
 
 /* The line sweep of block B over the lines LO..HI (Stage 28 W15c, O87;
@@ -529,13 +640,20 @@ int gc_block_live_lines(Block *b) {
  * gc_reset_block_bump's find_hole did in three passes. Returns the live
  * line count and leaves the block's bump and limit on its first hole (as
  * gc_reset_block_bump does: search 0; a full block's cursor at its end).
- * *FREED counts the freed lines of the range. */
+ * *FREED counts the freed lines of the range. A block with no live line
+ * is left as it is (the Valk stage, VALK-T, O600): its whole range is
+ * counted freed and 0 returned; the caller frees such a block (the young
+ * sweep; the full sweep does not come here with one), and a block taken
+ * again has its start bits, line marks and cursor set anew
+ * (gc_block_take, gc_new_block), so clearing them here was work nothing
+ * read. */
 int gc_sweep_block_lines(Block *b, int lo, int hi, uint64_t *freed) {
   uint64_t epoch8 = line_epoch8();
   uint64_t live_bits[LINE_WORDS];
   uint64_t range_lo = (uint64_t)lo;
   uint64_t range_hi = (uint64_t)hi;
-  int live = 0;
+  uint64_t sum = 0;
+  int live;
   int k;
   int first_free = -1;
   int hole_end = LINES_PER_BLOCK;
@@ -543,7 +661,16 @@ int gc_sweep_block_lines(Block *b, int lo, int hi, uint64_t *freed) {
     uint64_t m;
     memcpy(&m, b->line_mark + 8 * k, sizeof m);
     live_bits[k] = live_bytes_mask(m, epoch8);
-    live += live_byte_count(live_bits[k]);
+    sum += live_bits[k] >> 7;
+  }
+  live = (int)((sum * 0x0101010101010101ULL) >> 56);
+  if (live == 0) {
+    int a = lo < 0 ? 0 : lo;
+    int z = hi > LINES_PER_BLOCK ? LINES_PER_BLOCK : hi;
+    if (z > a) {
+      *freed += (uint64_t)(z - a);
+    }
+    return 0;
   }
   for (k = 0; k < LINE_WORDS; k++) {
     uint64_t freeb = ~live_bits[k] & 0x8080808080808080ULL;
@@ -858,6 +985,7 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
   m->stride = 0;
   m->nrefs = (uint32_t)__builtin_popcountll(word_bits);
   gc_heap.type_set[type_id] = 1;
+  gc_type_refs_update(type_id);
 }
 
 /* Stage 28 W1b. Registers bits for payload words word_base ..
@@ -912,4 +1040,5 @@ void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_ba
   m->nrefs -= (uint32_t)__builtin_popcountll(m->words[chunk]);
   m->words[chunk] = bits;
   m->nrefs += (uint32_t)__builtin_popcountll(bits);
+  gc_type_refs_update(type_id);
 }

@@ -371,15 +371,9 @@ void gc_defrag_evacuate(uint64_t live_lines_this) {
   }
   {
     ThreadReg *t;
-    uint32_t fi;
     pthread_mutex_lock(&gc_heap.threads_mu);
     for (t = gc_heap.threads; t; t = t->next) {
-      Frame *f;
-      for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-        for (fi = 0; fi < f->n; fi++) {
-          defrag_rewrite_slot(f->slots[fi]);
-        }
-      }
+      EACH_FRAME_SLOT(gc_thread_frames(t), slot, { defrag_rewrite_slot(slot); });
     }
     pthread_mutex_unlock(&gc_heap.threads_mu);
   }

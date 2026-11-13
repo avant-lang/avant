@@ -15,8 +15,6 @@
  * defragmentation a full collection may run between the two is
  * avant_gc_defrag.c's. */
 
-static void scan_payload(void *p);
-
 /* The object at START (header H, in block B, or a large object when B is
  * NULL), whose side mark the caller has just set: its lines through the
  * block the lookup already gave (until Stage 29 W-FIX1c a second lookup
@@ -59,52 +57,193 @@ static void mark(void *p) {
   mark_object(start, h, b);
 }
 
-/* A traced object's field, with the common case in one function (Stage
- * 29 W-FIX1c, O203): the exact start of an object in a small-object block
- * in use is looked up here, by gc_is_heap_payload's own tests in its
- * order (as gc_object_payload_fast), and marked with no further call and
- * the side mark set through the granule already in hand. Anything else
- * takes mark(). Before, a field cost eight calls (mark, gc_object_payload
- * with gc_is_heap_payload inside it, gc_mark_object_lines with
- * gc_is_heap_payload and gc_obj_total inside it, gc_obj_total,
- * gc_work_push; 276 instructions per object of a full collection, 149
- * now). It is kept
- * out of line on purpose: inlined into scan_payload's loop, the loop's
- * registers were spilled around it and the same collection cost 167. */
-static __attribute__((noinline)) void mark_field(void *p) {
-  uintptr_t off;
-  uint64_t g;
-  Block *b;
-  if (!p) {
-    return;
-  }
-  off = (uintptr_t)p - (uintptr_t)gc_heap.base - sizeof(AvantHeader);
-  if (((uintptr_t)p & (ALIGN - 1)) || off >= gc_heap.committed) {
-    mark(p);
-    return;
-  }
-  g = off >> 3;
-  if (!((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL) || gc_heap.chunks[off >> CHUNK_SHIFT].kind != CHUNK_SMALL) {
-    mark(p);
-    return;
-  }
-  b = &gc_heap.blocks[off >> BLOCK_SHIFT];
-  if (!b->in_use) {
-    mark(p);
-    return;
-  }
-  if ((gc_heap.marks[g >> 6] >> (g & 63)) & 1ULL) {
-    return;
-  }
-  gc_heap.marks[g >> 6] |= 1ULL << (g & 63);
-  mark_object(p, avant_header(p), b);
+/* The mark loop's state in locals (the Valk stage, VALK-T, O578 and O585):
+ * what a field's mark reads of gc_heap, loaded once, so the loop below
+ * keeps it in registers; nothing in a full mark changes the committed
+ * size, the side tables or the epoch. base8 is gc_heap.base plus a
+ * header's size: a payload address less it is its header's offset. live
+ * and the work list's count are written back when the loop leaves
+ * (mark_close). */
+typedef struct MarkCtx {
+  uintptr_t base8;
+  uint64_t committed;
+  uint64_t *marks;
+  uint8_t *lines;
+  uint8_t epoch;
+  uint64_t live;
+  void **work;
+  uint32_t n;
+  uint32_t cap;
+} MarkCtx;
+
+static inline __attribute__((always_inline)) void mark_open(MarkCtx *c) {
+  c->base8 = (uintptr_t)gc_heap.base + sizeof(AvantHeader);
+  c->committed = gc_heap.committed;
+  c->marks = gc_heap.marks;
+  c->lines = gc_heap.lines;
+  c->epoch = gc_heap.line_epoch;
+  c->live = 0;
+  c->work = gc_heap.work;
+  c->n = gc_heap.work_n;
+  c->cap = gc_heap.work_cap;
 }
 
-static void drain(void) {
-  while (gc_heap.work_n) {
-    void *p = gc_heap.work[--gc_heap.work_n];
-    scan_payload(p);
+static inline __attribute__((always_inline)) void mark_close(MarkCtx *c) {
+  gc_heap.live += c->live;
+  gc_heap.work_n = c->n;
+}
+
+/* The lines after the first two of an object that covers more than two
+ * (over 256 bytes: the uncommon case, kept out of the loop so the loop
+ * makes no call). */
+static __attribute__((noinline)) void mark_lines_rest(uint8_t *lines, size_t l, size_t e, uint8_t epoch) {
+  memset(lines + l, epoch, e - l);
+}
+
+/* A traced object's field (Stage 29 W-FIX1c, O203; the Valk stage,
+ * VALK-T, O585 and O578): 1 when its word V names an object this call
+ * marked that has references of its own to scan (the caller pushes it,
+ * or scans it next), else 0. By the field rule (avant_gc_internal.h: a
+ * field holds null, an exact start or a static address) V is classified
+ * by one compare, the header's offset against the committed size, which
+ * null and every static address fail; what passes is the start of a live
+ * object, marked through the granule in hand, with no start-bit lookup,
+ * no chunk kind and no block-in-use test (until VALK-T those were asked
+ * of every field, and an address that failed one took mark(); before
+ * W-FIX1c a field cost eight calls). Then what mark_object does: the
+ * flags written only when one is set, the lines (through the heap's line
+ * table at the header's offset: an object lies in one block; a large
+ * object, which the LARGE flag tells, has no line marks) and the bytes.
+ * An object without references (AVANT_TYPE_BYTES: a string, a numeric
+ * buffer) is not scanned: its scan would visit nothing. Roots, pins and
+ * runtime-held slots take mark(), which resolves an address inside an
+ * object.
+ *
+ * In line in the two loops below, over MarkCtx's locals. W-FIX1c kept it
+ * out of line because, inlined into EACH_REF_SLOT's one loop nest, the
+ * nest's registers were spilled around it (167 instructions per object of
+ * a full collection against 149); the small record's loop is now its own
+ * (drain) and the bitmap walk is a function of its own (scan_walk). */
+static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v) {
+  uintptr_t off = (uintptr_t)v - c->base8;
+  uint64_t g;
+  uint64_t w;
+  AvantHeader *h;
+  uint16_t fl;
+  size_t total;
+  size_t l;
+  size_t e;
+  if (off >= c->committed) {
+    return 0;
   }
+  g = off >> 3;
+  w = c->marks[g >> 6];
+  if ((w >> (g & 63)) & 1ULL) {
+    return 0;
+  }
+  c->marks[g >> 6] = w | (1ULL << (g & 63));
+  h = (AvantHeader *)((uint8_t *)v - sizeof(AvantHeader));
+  fl = h->flags;
+  total = align_up(sizeof(AvantHeader) + (size_t)h->size);
+  c->live += total;
+  if (__builtin_expect((fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED | AVANT_FLAG_LARGE)) != 0, 0)) {
+    if (fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
+      h->flags = (uint16_t)(fl & ~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED));
+    }
+    if (fl & AVANT_FLAG_LARGE) {
+      return h->type_id != AVANT_TYPE_BYTES;
+    }
+  }
+  l = off >> LINE_SHIFT;
+  e = (off + total - 1) >> LINE_SHIFT;
+  c->lines[l] = c->epoch;
+  if (__builtin_expect(l != e, 0)) {
+    c->lines[e] = c->epoch;
+    if (e - l > 1) {
+      mark_lines_rest(c->lines, l + 1, e, c->epoch);
+    }
+  }
+  return h->type_id != AVANT_TYPE_BYTES;
+}
+
+static inline __attribute__((always_inline)) void mark_push(MarkCtx *c, void *v) {
+  if (__builtin_expect(c->n == c->cap, 0)) {
+    gc_heap.work_n = c->n;
+    gc_work_push(v);
+    c->work = gc_heap.work;
+    c->cap = gc_heap.work_cap;
+    c->n = gc_heap.work_n;
+  } else {
+    c->work[c->n++] = v;
+  }
+}
+
+/* The fields of an object that is not a small record (a pointer buffer,
+ * an element buffer, a record with more than seven reference words), by
+ * its bitmap. A function of its own, with its own copy of the loop's
+ * state, so that drain's loop keeps its registers. */
+static __attribute__((noinline)) void scan_walk(void *p) {
+  MarkCtx c;
+  mark_open(&c);
+  EACH_REF_SLOT_WALK(p, slot, {
+    void *v = *slot;
+    if (mark_field(&c, v)) {
+      mark_push(&c, v);
+    }
+  });
+  mark_close(&c);
+}
+
+/* The mark loop: each object of the work list, its reference words read
+ * from its type's list (gc_heap.refs, EACH_REF_SLOT's small record) and
+ * marked in line; any other object through scan_walk. The object a
+ * record's last reference word names is scanned next without passing
+ * through the work list (a list's nodes, a tree's last child: no push and
+ * no pop); the others are pushed. The order of a full mark changes
+ * nothing it leaves: marks, line marks and the live bytes are sets and a
+ * sum. */
+static void drain(void) {
+  MarkCtx c;
+  mark_open(&c);
+  while (c.n) {
+    void **p = (void **)c.work[--c.n];
+    for (;;) {
+      const AvantHeader *ph = avant_header(p);
+      uint64_t d = gc_heap.refs[ph->type_id];
+      unsigned k = (unsigned)(d & 0xffu);
+      void *next = NULL;
+      if (__builtin_expect(k > TYPE_REFS_MAX, 0)) {
+        mark_close(&c);
+        scan_walk(p);
+        mark_open(&c);
+        break;
+      }
+      if (k) {
+        size_t nw = (size_t)ph->size / sizeof(void *);
+        for (; k > 1; k--) {
+          d >>= 8;
+          if ((size_t)(d & 0xffu) < nw) {
+            void *v = p[d & 0xffu];
+            if (mark_field(&c, v)) {
+              mark_push(&c, v);
+            }
+          }
+        }
+        d >>= 8;
+        if ((size_t)(d & 0xffu) < nw) {
+          void *v = p[d & 0xffu];
+          if (mark_field(&c, v)) {
+            next = v;
+          }
+        }
+      }
+      if (!next) {
+        break;
+      }
+      p = (void **)next;
+    }
+  }
+  mark_close(&c);
 }
 
 static void mark_tls_slot(void **slot) {
@@ -113,21 +252,11 @@ static void mark_tls_slot(void **slot) {
   }
 }
 
-static void scan_payload(void *p) {
-  EACH_REF_SLOT(p, slot, { mark_field(*slot); });
-}
-
 void gc_mark_roots(void) {
   ThreadReg *t;
-  uint32_t i;
   pthread_mutex_lock(&gc_heap.threads_mu);
   for (t = gc_heap.threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      for (i = 0; i < f->n; i++) {
-        mark(*f->slots[i]);
-      }
-    }
+    EACH_FRAME_SLOT(gc_thread_frames(t), slot, { mark(*slot); });
   }
   pthread_mutex_unlock(&gc_heap.threads_mu);
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
