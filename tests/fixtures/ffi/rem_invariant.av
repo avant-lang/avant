@@ -1,0 +1,54 @@
+// O610 (the Valk stage, VALK-T2): the verifier's check of the generational
+// invariant itself. A record that names a young object is remembered,
+// whatever names the record: generated code stores a reference behind a
+// barrier or into a holder that is still open (D347), so the invariant
+// holds without the help of the collector's three-way rule (a young
+// collection also scans a mature object that a root, a young object or a
+// remembered object names, which repairs a missed barrier while something
+// names the holder). Generated code cannot break it, so the C half
+// (ffi_rem_store in tests/fixtures/ffi/ffi.c, built with `--cc`) makes
+// the store: a Cell two young collections promoted is given a young
+// string, behind avant_barrier. Every environment prints
+// `rem_invariant: young-2 24` with no stderr.
+//
+// With REM_INVARIANT_BREAK=1 the store is made with no barrier. The Cell
+// is in a slot of main at every collection, so the trace scans it and the
+// program prints the same; under AVANT_GC_VERIFY=1 the verifier reports
+// "avant gc verify: missing barrier: holder ... not remembered ..." at
+// the first young collection after the store
+// (tests/cases/test_gc_checks.av). Until VALK-T2 nothing was reported:
+// VALK-A1's planted defect (a compiler whose fresh pass ignores collecting
+// calls) ran silent under the verifier for the same reason.
+import std.gc
+
+class Cell {
+  v: String
+
+  fn initialize(v: String) {
+    self.v = v
+  }
+}
+
+lib ri {
+  fun ffi_rem_store(holder: Cell, v: String, barrier: Int): Int
+}
+
+fn main {
+  barrier = 1
+  if v = env_get("REM_INVARIANT_BREAK"), v == "1" {
+    barrier = 0
+  }
+  c = Cell.new("old")
+  // Two young collections: the Cell survives the first and is promoted at
+  // the second (at once under a fixed young budget).
+  gc.collect()
+  gc.collect()
+  n = 0
+  for i in 0..3 {
+    s = "young-${i}"
+    n = n + ri.ffi_rem_store(c, s, barrier)
+    gc.collect()
+    n = n + c.v.size
+  }
+  puts("rem_invariant: ${c.v} ${n}")
+}

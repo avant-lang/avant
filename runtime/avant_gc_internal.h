@@ -207,9 +207,25 @@
 /* The defragmenter's least gain (Stage 29 W-FIX1c, O202;
  * avant_gc_defrag.c): an evacuation must free, net, at least one block
  * for every DEFRAG_GAIN_DIV blocks' worth of live mature lines (and at
- * least one), because its fix-up walks every live object. */
+ * least one), because its fix-up walks every live object. 64 by
+ * measurement (the Valk stage, VALK-T2, O604; 128 until then), on the
+ * fix-up of O603: 4, 8, 16, 32, 64, 128, 256, 512 and the one-block rule
+ * alone, on the collector benchmark's scenarios, bench/mature_defrag.av,
+ * the suite's two fixtures that evacuate (with the nursery on and off),
+ * the statistics set and LangArena's 50 tasks. 16, 32 and 64 gave the
+ * same counts everywhere. Against them 128 ran one more evacuation in
+ * heap/full_default.av (five against four, 4,272 more bytes moved for
+ * the same 49 blocks freed: 0.03% more instructions, a peak_heap 20 KiB
+ * higher) and was equal on everything else; 256, 512 and the one-block rule added an
+ * evacuation to scenario 6 (5,424 bytes moved for one block beside an
+ * 8 MiB live list: 3.6% more instructions, the same peak_heap); 8 began
+ * to leave fragmentation (heap/full_default.av's peak_heap +0.8%) and 4
+ * left most of it (its peak_heap with the nursery off 21.1 MB against
+ * 14.2 MB). 64 is the largest of the three equal values: the farthest
+ * from where memory is lost. LangArena's counts and peak_heap did not
+ * move with any value. */
 #ifndef DEFRAG_GAIN_DIV
-#define DEFRAG_GAIN_DIV 128
+#define DEFRAG_GAIN_DIV 64
 #endif
 #define GC_THREAD_ROOTS 8
 
@@ -839,7 +855,7 @@ typedef struct GcSizeCounters {
  * young sweeps found without a survivor, overflow the medium objects
  * placed in the overflow block because the current hole could not hold
  * them, returned the empty young blocks the young sweeps gave back to
- * their chunks (Stage 28 W15c); under S+ (GC_STICKY_COPY) evac_blocks the
+ * their chunks (Stage 28 W15c); S+'s: evac_blocks the
  * young blocks evacuated, kept_blocks the young blocks kept in place
  * because a young object in them was named imprecisely, copy_blocks the
  * fresh blocks the copies went to (the bytes copied are prom.copied and
@@ -963,6 +979,14 @@ typedef struct GcHeap {
   uint64_t small_hint;
   /* Bytes of free blocks that are resident (not madvised). */
   uint64_t free_resident;
+  /* The resident free bytes that are not free blocks (the dirty free
+   * pages of large-object chunks, the free chunks that are dirty and
+   * committed), and the chunks that are empty, not decommitted and hold
+   * no resident free byte: with free_resident, what gc_heap_return starts
+   * from instead of reading the chunk map (gc_chunk_account,
+   * avant_gc_heap.c; the Valk stage, VALK-T2, O630). */
+  uint64_t free_resident_other;
+  uint32_t clean_empty_chunks;
   /* The clock of gc_heap_return's hysteresis (Q12): a free block or
    * chunk is stamped with it when freed (idle) and returned only by a
    * later tick. It ticks at every full collection, and under candidate
@@ -1110,7 +1134,7 @@ typedef struct GcHeap {
   Block **verify_holes;
   uint32_t verify_holes_n;
   uint32_t verify_holes_cap;
-  /* S+ (GC_STICKY_COPY): whether the running young collection may copy;
+  /* S+: whether the running young collection may copy (always, today);
    * the block copies go to; copied_bytes when it began. splus_age: the
    * collection copies first survivors into survivor blocks (YOUNG_AGE 2,
    * not a fixed AVANT_YOUNG_MB); splus_sdst the survivor block they go
@@ -1130,7 +1154,10 @@ typedef struct GcHeap {
    * SPLUS_PART): the copy's test of every survivor and the fix-up's test
    * of every field it rereads, instead of block records (Stage 28 W15d,
    * O93; the Valk stage, VALK-T, O579). Set when the blocks are chosen,
-   * cleared by splus_finish. */
+   * cleared by splus_finish. A defragmenting full collection uses it the
+   * same way for the mature blocks it evacuates, between its copy and the
+   * end of its fix-up (avant_gc_defrag.c; the Valk stage, VALK-T2,
+   * O603). */
   uint8_t *evac_map;
   uint64_t evac_map_n;
   /* An entry of the map is set (splus_finish clears them). */
@@ -1443,6 +1470,7 @@ Block *gc_block_take(void);
 void gc_block_give(Block *b);
 uint64_t gc_chunk_take(uint64_t n);
 void gc_chunk_give(uint64_t c);
+void gc_chunk_account(uint64_t c, int sign);
 void gc_return_pages(void *p, size_t len);
 void gc_heap_return(uint64_t live);
 void gc_mature_normalize(void);
@@ -1497,15 +1525,20 @@ void gc_rem_thread_leave(void);
 void gc_hdr_or(AvantHeader *h, uint16_t bits);
 void gc_hdr_and(AvantHeader *h, uint16_t bits);
 
-/* GC_STICKY_COPY (Stage 28 W15c, gc-design.md §3.1, §3.3): 1 builds
- * S+, the young generation (D233): candidate S with the opportunistic
- * young copy (avant_gc_sticky.c: survivors of young blocks are copied out
- * when every reference to them is precise); 0 builds plain S, candidate
- * S alone (the in-place young collection), kept as an internal constant
- * because it costs one compile-time condition per S+ site (Stage 28
- * W15d: E, the other candidate, and runtime/build.sh's
- * AVANT_GC_CANDIDATE knob are deleted, D232). A build-time constant, not
- * ABI. SPLUS_SPARSE_LINES: a young block that held no
+/* The young generation is S+ (Stage 28 W15c, gc-design.md §3.1, §3.3;
+ * D233): candidate S, the in-place young collection, with the
+ * opportunistic young copy (avant_gc_sticky.c: survivors of young blocks
+ * are copied out when every reference to them is precise). Until the
+ * Valk stage's VALK-T2 (O632) a build-time constant, GC_STICKY_COPY 0,
+ * built S alone, with the copy compiled out: no build, test or gate
+ * selected it, and every change to the young collection had to keep a
+ * second arm compiling that nothing ran. It is deleted as a build; S's
+ * mechanism is not (D232): in-place promotion is what S+ does with every
+ * survivor it does not copy (a kept block's, a block with mature lines,
+ * a dense survivor block's, the candidates past the copy's budget).
+ * gc_heap.splus_on, set at every young collection, is where a collection
+ * that copies nothing would be chosen again.
+ * SPLUS_SPARSE_LINES: a young block that held no
  * mature line is evacuated when its survivors' bytes fill at most this
  * many of its 128 lines. Measured at 32, 64, 96, 112 and 128 (Stage 28
  * W15c record, thr-v1 to thr-v3): 128, every such block, is the one
@@ -1516,9 +1549,6 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
  * cost is a copy of a dense live set that a later collection would not
  * have moved (Calculator::Interpreter 27 -> 44 MB, as under E). A block
  * that holds mature lines is never evacuated: it cannot be freed. */
-#ifndef GC_STICKY_COPY
-#define GC_STICKY_COPY 1
-#endif
 #ifndef SPLUS_SPARSE_LINES
 #define SPLUS_SPARSE_LINES 128
 #endif
@@ -1564,9 +1594,8 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
 #define SPLUS_AGED_SPARSE_LINES 64
 #endif
 
-/* avant_gc_sticky.c: the young generation (S+; candidate S with
- * GC_STICKY_COPY 0) and the noted list, and the young allocator's block
- * lists in avant_gc_alloc.c. */
+/* avant_gc_sticky.c: the young generation (S+) and the noted list, and
+ * the young allocator's block lists in avant_gc_alloc.c. */
 void gc_clear_noted(void);
 /* The noted list's tag bits (avant_gc_sticky.c says what each means): a
  * payload is 8-aligned, so its three low bits are free. */
@@ -1581,6 +1610,7 @@ void gc_sticky_collect(int tenure);
 void gc_sticky_full_begin(void);
 void gc_sticky_full_end(void);
 void gc_sticky_push(Block ***v, uint32_t *n, uint32_t *cap, Block *b);
+void gc_evac_map_ensure(void);
 
 /* avant_gc_mark.c */
 void gc_mark_roots(void);

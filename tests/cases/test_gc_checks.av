@@ -394,6 +394,51 @@ fn test_rem_chain(c: Checks, compiler: String, root: String, dir: String) {
   }
 }
 
+// O610 (the Valk stage, VALK-T2): the verifier's check of the
+// generational invariant itself. ffi/rem_invariant.av (its C half in
+// ffi/ffi.c) stores a young string into a Cell two young collections
+// promoted, behind avant_barrier: `rem_invariant: young-2 24` and no
+// stderr in every environment. With REM_INVARIANT_BREAK=1 the store has no
+// barrier: the Cell is in a slot of main, so the collection's trace scans
+// it and the output is the same, and under AVANT_GC_VERIFY=1 (alone, with
+// a small young budget, under the stress mode) the verifier must report
+// the holder as not remembered. With the nursery off nothing is young and
+// nothing is reported. Before VALK-T2 the breaking runs printed no report.
+fn test_rem_invariant(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/rem_invariant.av", "${dir}/rem_invariant", "${dir}/rem_invariant.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "rem_invariant.av: compiles")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  brks = ["AVANT_GC_VERIFY=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "rem_invariant", "rem_invariant.g${e}", envs[e]))
+  }
+  for e in 0..brks.size {
+    // An outer AVANT_NURSERY=0 pass would leave nothing young to report.
+    runs.push(run_job_env(dir, "rem_invariant", "rem_invariant.b${e}", "-u AVANT_NURSERY REM_INVARIANT_BREAK=1 ${brks[e]}"))
+  }
+  runs.push(run_job_env(dir, "rem_invariant", "rem_invariant.n0", "REM_INVARIANT_BREAK=1 AVANT_GC_VERIFY=1 AVANT_NURSERY=0"))
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "rem_invariant.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/rem_invariant.g${e}.out"), "rem_invariant: young-2 24\n", "rem_invariant.av ${what}: the Cell keeps the string stored behind a barrier")
+    c.eq_str(log_text("${dir}/rem_invariant.g${e}.err"), "", "rem_invariant.av ${what}: no stderr (no verifier report)")
+  }
+  for e in 0..brks.size {
+    err = log_text("${dir}/rem_invariant.b${e}.err")
+    c.eq_str(log_text("${dir}/rem_invariant.b${e}.out"), "rem_invariant: young-2 24\n", "rem_invariant.av, a store with no barrier, under ${brks[e]}: the trace still reaches the field (a root names the holder)")
+    c.expect(str_has(err, "avant gc verify: missing barrier: holder ") && str_has(err, "not remembered"), "rem_invariant.av, a store with no barrier, under ${brks[e]}: the verifier reports the holder that is not remembered")
+  }
+  c.eq_str(log_text("${dir}/rem_invariant.n0.out"), "rem_invariant: young-2 24\n", "rem_invariant.av, a store with no barrier, under AVANT_GC_VERIFY=1 AVANT_NURSERY=0: the same output")
+  c.eq_str(log_text("${dir}/rem_invariant.n0.err"), "", "rem_invariant.av, a store with no barrier, under AVANT_GC_VERIFY=1 AVANT_NURSERY=0: nothing is young, nothing is reported")
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -403,6 +448,7 @@ fn test_main(c: Checks) {
     test_empty_end(c, compiler, avant_test_root(), scratch_dir())
     test_field_rule(c, compiler, avant_test_root(), scratch_dir())
     test_rem_chain(c, compiler, avant_test_root(), scratch_dir())
+    test_rem_invariant(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

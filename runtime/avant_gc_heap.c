@@ -285,6 +285,9 @@ uint64_t gc_chunk_take(uint64_t n) {
         gc_heap.free_chunks -= n;
         for (k = first; k <= c; k++) {
           uint64_t b;
+          /* A taken chunk is in neither count until its taker gives it a
+           * kind (gc_chunk_account's comment). */
+          gc_chunk_account(k, -1);
           /* A decommitted chunk's data is read-write again (zero); its
            * side slices were madvised (zero) and its records keep their
            * addresses. A reused chunk's mark bits may be stale: a full
@@ -313,15 +316,58 @@ uint64_t gc_chunk_take(uint64_t n) {
   return c;
 }
 
+/* Chunk C's share of the two counts gc_heap_return starts from (the Valk
+ * stage, VALK-T2, O630), added (SIGN 1) or taken back (SIGN -1):
+ * gc_heap.free_resident_other holds its resident free bytes other than a
+ * small chunk's free blocks, which are gc_heap.free_resident's (the dirty
+ * free pages of a large-object chunk, a free chunk's whole data while it
+ * is dirty and committed), and gc_heap.clean_empty_chunks counts it when
+ * it is empty, not decommitted and holds no resident free byte (a small or
+ * large-object chunk with nothing in use and nothing resident, a free
+ * chunk that is committed and clean): the chunks gc_heap_return's first
+ * loop decommits whatever the total is. Called around the changes of a
+ * chunk's kind (a chunk gc_chunk_take hands out is in neither count until
+ * its taker has given it its kind and adds it); the changes inside a kind
+ * are counted where they happen (gc_block_take; take_run, give_run and
+ * trim_run of avant_gc_los.c; the madvises of gc_heap_return).
+ * AVANT_GC_VERIFY recounts both at every gc_heap_return and stops the
+ * program on a difference. */
+void gc_chunk_account(uint64_t c, int sign) {
+  const GcChunk *ch = &gc_heap.chunks[c];
+  uint64_t res = 0;
+  int clean = 0;
+  if (ch->kind == CHUNK_SMALL) {
+    clean = ch->used == 0 && ch->nres == 0;
+  } else if (ch->kind == CHUNK_LARGE) {
+    uint32_t w;
+    for (w = 0; w < PAGE_WORDS; w++) {
+      res += (uint64_t)__builtin_popcountll(ch->dirty_pages[w] & ~ch->alloc[w]) * PAGE_SIZE;
+    }
+    clean = ch->used == 0 && res == 0;
+  } else if (ch->kind == CHUNK_FREE && !ch->decommitted) {
+    res = ch->dirty ? CHUNK_SIZE : 0;
+    clean = res == 0;
+  }
+  if (sign > 0) {
+    gc_heap.clean_empty_chunks += (uint32_t)clean;
+    gc_heap.free_resident_other += res;
+  } else {
+    gc_heap.clean_empty_chunks -= (uint32_t)clean;
+    gc_heap.free_resident_other -= res;
+  }
+}
+
 /* Chunk C back to CHUNK_FREE (its data stays committed; dirty unless
  * the caller returned its pages). */
 void gc_chunk_give(uint64_t c) {
   uint8_t was = gc_heap.chunks[c].kind;
+  gc_chunk_account(c, -1);
   memset(&gc_heap.chunks[c], 0, sizeof(GcChunk));
   gc_heap.chunks[c].kind = CHUNK_FREE;
   gc_heap.chunks[c].dirty = was != CHUNK_FREE;
   gc_heap.chunks[c].idle = (uint32_t)gc_heap.return_clock;
   gc_heap.free_chunks++;
+  gc_chunk_account(c, 1);
 }
 
 /* Give the pages of [P, P + LEN) back to the OS (page-aligned): they stay
@@ -356,6 +402,7 @@ static uint64_t make_small_chunk(void) {
   if (dirty) {
     gc_heap.free_resident += CHUNK_SIZE;
   }
+  gc_chunk_account(c, 1);
   if (c < gc_heap.small_hint) {
     gc_heap.small_hint = c;
   }
@@ -394,6 +441,10 @@ Block *gc_block_take(void) {
   if (!b->clean) {
     gc_heap.free_resident -= BLOCK_SIZE;
     ch->nres--;
+  } else if (ch->used == 1 && ch->nres == 0) {
+    /* The chunk was empty with nothing resident (a new one, or one whose
+     * free blocks were all given back to the OS). */
+    gc_heap.clean_empty_chunks--;
   }
   b->clean = 0;
   memset(b->line_mark, 0, LINES_PER_BLOCK);
@@ -435,6 +486,9 @@ static void decommit_chunk(uint64_t c) {
   if (kind != CHUNK_FREE) {
     gc_chunk_give(c);
   }
+  /* A free chunk, committed: it leaves both counts (decommitted, it is in
+   * neither). */
+  gc_chunk_account(c, -1);
   gc_return_pages(chunk_base(c), CHUNK_SIZE);
   mprotect(chunk_base(c), CHUNK_SIZE, PROT_NONE);
   gc_return_pages(&gc_heap.starts[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t));
@@ -493,18 +547,49 @@ static uint64_t chunk_resident_free(uint64_t c) {
  * decommitted (madvised, made PROT_NONE, its side slices madvised; one
  * whose memory is already returned always is: keeping it costs only
  * commit charge), then free blocks are madvised one by one, then the
- * dirty free pages of large-object chunks. */
+ * dirty free pages of large-object chunks.
+ *
+ * Nothing to do is found at once (the Valk stage, VALK-T2, O630): the
+ * resident free bytes are a total kept as they change (gc_heap.free_resident
+ * and free_resident_other), and the chunks the first loop decommits
+ * whatever the total is (empty, committed, nothing resident) are counted
+ * (gc_heap.clean_empty_chunks, gc_chunk_account). With the total within
+ * the target the first loop decommits only those chunks and the second
+ * does nothing, so a call that finds the total within the target and no
+ * such chunk returns without reading the chunk map. Until VALK-T2 every
+ * call summed every chunk's resident free bytes and looked at every chunk
+ * (a young collection that empties a block calls this: 172 instructions
+ * at four chunks, sixteen popcounts for each large-object chunk, growing
+ * with the heap). AVANT_GC_VERIFY recounts both from the chunk map, as
+ * every call did. */
 void gc_heap_return(uint64_t live) {
   uint64_t keep = live / 4 > (4ull << 20) ? live / 4 : (4ull << 20);
   uint64_t hw = gc_heap.committed >> CHUNK_SHIFT;
   uint64_t now = gc_heap.return_clock;
-  uint64_t total = 0;
+  uint64_t total = gc_heap.free_resident + gc_heap.free_resident_other;
   uint64_t c;
   if (!hw) {
     return;
   }
-  for (c = 0; c < hw; c++) {
-    total += chunk_resident_free(c);
+  if (gc_heap.set.verify) {
+    uint64_t t = 0;
+    uint32_t e = 0;
+    for (c = 0; c < hw; c++) {
+      const GcChunk *ch = &gc_heap.chunks[c];
+      uint64_t r = chunk_resident_free(c);
+      t += r;
+      e += (uint32_t)(r == 0 && (((ch->kind == CHUNK_SMALL || ch->kind == CHUNK_LARGE) && ch->used == 0) ||
+                                 (ch->kind == CHUNK_FREE && !ch->decommitted)));
+    }
+    if (t != total) {
+      gc_die("avant gc verify: the total of the resident free bytes differs from the chunk map's");
+    }
+    if (e != gc_heap.clean_empty_chunks) {
+      gc_die("avant gc verify: the count of the empty chunks with nothing resident differs from the chunk map's");
+    }
+  }
+  if (total <= keep && gc_heap.clean_empty_chunks == 0) {
+    return;
   }
   for (c = hw; c-- > 0;) {
     GcChunk *ch = &gc_heap.chunks[c];
@@ -534,16 +619,23 @@ void gc_heap_return(uint64_t live) {
           ch->nres--;
           gc_heap.free_resident -= BLOCK_SIZE;
           total -= BLOCK_SIZE;
+          /* An empty chunk's last resident block: the next call
+           * decommits the chunk. */
+          if (ch->used == 0 && ch->nres == 0) {
+            gc_heap.clean_empty_chunks++;
+          }
         }
       }
     } else if (ch->kind == CHUNK_LARGE && ch->idle < now) {
       uint32_t p = 0;
+      uint64_t before = total;
       while (p < PAGES_PER_CHUNK && total > keep) {
         uint32_t q = p;
         /* One madvise per run of dirty free pages. */
         while (q < PAGES_PER_CHUNK && total > keep &&
                ((ch->dirty_pages[q >> 6] & ~ch->alloc[q >> 6]) >> (q & 63) & 1ULL)) {
           ch->dirty_pages[q >> 6] &= ~(1ULL << (q & 63));
+          gc_heap.free_resident_other -= PAGE_SIZE;
           total -= PAGE_SIZE;
           q++;
         }
@@ -553,6 +645,10 @@ void gc_heap_return(uint64_t live) {
         } else {
           p++;
         }
+      }
+      /* An empty chunk's last dirty pages: the next call decommits it. */
+      if (total != before && ch->used == 0 && chunk_resident_free(c) == 0) {
+        gc_heap.clean_empty_chunks++;
       }
     }
   }
@@ -881,17 +977,13 @@ int avant_is_heap(void *payload) {
 /* The contract (ABI name kept, gc-design.md §3.1): 1 when a young
  * collection can move this object, 0 when no collection before the next
  * full one moves it; .parallel keeps a raw address only on 0. Under S+
- * (GC_STICKY_COPY, Stage 28 W15c) a young block object may be copied, so
- * it is 1 for one that is not pinned; mature and large objects stay put,
- * so a parallel numeric loop can keep their address. Under candidate S
- * (GC_STICKY_COPY 0) no young collection moves anything, so it is 0 for
- * every object (Stage 28 W15b). (Under E, deleted in W15d, it was 1 for
- * every young block object.) */
+ * (Stage 28 W15c) a young block object may be copied, so it is 1 for one
+ * that is not pinned; mature and large objects stay put, so a parallel
+ * numeric loop can keep their address. (Under candidate S alone, a
+ * build deleted in the Valk stage's VALK-T2, no young collection moved
+ * anything and it was 0 for every object; under E, deleted in W15d, it
+ * was 1 for every young block object.) */
 int32_t avant_is_young(void *payload) {
-#if !GC_STICKY_COPY
-  (void)payload;
-  return 0;
-#else
   AvantHeader *h;
   if (!payload || ((uintptr_t)payload & (ALIGN - 1)) != 0) {
     return 0;
@@ -906,7 +998,6 @@ int32_t avant_is_young(void *payload) {
     return 1;
   }
   return 0;
-#endif
 }
 
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *)) {

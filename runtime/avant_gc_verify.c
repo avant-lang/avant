@@ -18,7 +18,8 @@
  * checks after a young collection's trace and copy (gc_verify_sticky: no
  * reachable young object left unpromoted, no reachable line about to be
  * freed, no reference to a moved object's old copy), before every young
- * collection (gc_verify_remembered: the generational invariant), at
+ * collection (gc_verify_remembered: the generational invariant, R1' and,
+ * for records, the invariant itself: yholders_check), at
  * every collection's start (gc_verify_no_stale_marks) and after a
  * defragmenting full collection (no reference to a block being freed).
  * Diagnostics only: they print and never change the heap. Under
@@ -210,9 +211,7 @@ static void verify_each_root(void (*fn)(void **), int rem) {
  * silent about dead mature objects, whose fields legitimately name
  * copied objects. The visited bit is VSEEN (the verifier's own);
  * verify_clear_traced resets it before gc_verify_young_copy returns. */
-#if GC_STICKY_COPY
 static uint64_t verify_stale_found(void *start, void *holder);
-#endif
 
 /* STALE (S+): count the fields of the reached objects that name a moved
  * object's old copy, as the trace reads them (verify_stale_found). */
@@ -222,7 +221,6 @@ static uint64_t verify_mark_reachable(int stale) {
   verify_each_root(verify_tls_slot, 1);
   while (gc_heap.work_n) {
     void *p = verify_pop();
-#if GC_STICKY_COPY
     if (stale) {
       EACH_REF_SLOT_WALK(p, slot, {
         void *st = verify_trace_r(*slot);
@@ -238,7 +236,6 @@ static uint64_t verify_mark_reachable(int stale) {
       });
       continue;
     }
-#endif
     EACH_REF_SLOT_WALK(p, slot, { verify_trace(*slot); });
   }
   return bad;
@@ -254,7 +251,6 @@ static uint64_t verify_mark_reachable(int stale) {
  * object must be marked (gc_reclaim_young_large then promotes it, else it
  * is freed). Each report names the object; the count is
  * gc_heap.verify_untraced. */
-#if GC_STICKY_COPY
 /* S+: a reference the collection did not rewrite names a moved object's
  * old copy (its header holds the forward). */
 static uint64_t verify_stale_start(void *start, const char *where, void *holder) {
@@ -278,7 +274,6 @@ static uint64_t verify_stale_found(void *start, void *holder) {
 static void verify_stale_tls(void **slot) {
   gc_heap.verify_untraced += verify_stale(*slot, "runtime root", (void *)slot);
 }
-#endif
 
 /* T's checks of one reached object V: NULL, or what is wrong. */
 static const char *sticky_why(void *v) {
@@ -313,14 +308,9 @@ static void verify_sticky_whole(void) {
   size_t i;
   uint64_t bad = 0;
   vb_ensure();
-#if GC_STICKY_COPY
   /* The fields of every reached object are checked for stale
    * references as the trace reads them (verify_mark_reachable). */
   bad += verify_mark_reachable(1);
-#else
-  (void)verify_mark_reachable(0);
-#endif
-#if GC_STICKY_COPY
   /* After S+'s copy and fix-up (before the old copies lose their start
    * bits): no root slot, runtime-held slot or field of a reachable object
    * may still name a moved object; verify_mark_reachable followed the
@@ -338,7 +328,6 @@ static void verify_sticky_whole(void) {
     }
     gc_each_runtime_root(verify_stale_tls);
   }
-#endif
   for (i = 0; i < gc_heap.vnoted_n; i++) {
     void *v = gc_heap.vnoted[i];
     AvantHeader *h = avant_header(v);
@@ -375,6 +364,8 @@ static void verify_sticky_whole(void) {
  * class, reported at the first collection after the bad store). The
  * five runtime builders that fill a born-mature buffer named by a young
  * array header (audit N2b) are not reported: R1'(b) names the buffer.
+ * A record is asked more since the Valk stage's VALK-T2 (O610): it must
+ * be remembered even when R1' names it (yholders_check).
  * Visited is VSEEN (verify_trace), named is MARKED; both are clear
  * when a collection starts (gc_verify_no_stale_marks) and cleared here.
  * The named objects are gc_heap.rnamed; the reports are counted in
@@ -534,13 +525,56 @@ static void rem_root_slot(void **slot) {
   rem_named_found(st);
 }
 
-/* The check: a reached non-young holder that is neither remembered nor
- * named must name no young object. A carded one remembered by its cards
- * (REMC without CARD_ALL) must name young objects only from slots of its
- * marked cards (the card invariant, Stage 28 W16t): a young object named
- * from a clear card is reported as a missing barrier too, since the young
- * collection would not scan that slot. Returns the fields found; the
- * first 32 are printed when PRINT. */
+/* Is H an element buffer: a pointer buffer (AVANT_TYPE_PTRS) or a buffer
+ * of by-value elements (a type map with a stride)? Every other object
+ * with references is a record (a class instance, a box, a closure's
+ * environment, a capture record, an array's or a hash's header). */
+static int verify_is_buffer(const AvantHeader *h) {
+  uint32_t id = h->type_id;
+  return id == AVANT_TYPE_PTRS || (id < MAX_TYPES && gc_heap.type_set[id] && gc_heap.types[id].stride != 0);
+}
+
+/* The check: a reached non-young holder that is not remembered must name
+ * no young object. Two forms.
+ *
+ * The invariant itself, for a record (the Valk stage, VALK-T2, O610): a
+ * record that names a young object is remembered (REM), whatever names
+ * the record. Generated code stores a reference into a record behind a
+ * barrier or while the record is open (allocated, barriered or an
+ * initialize's receiver since the last collecting call: young, or
+ * remembered until the next collection; D347, compiler/mir/fresh.av), and
+ * runtime C barriers its stores into records, so at every young
+ * collection the invariant holds of every record without the help of
+ * R1'. Until VALK-T2 a record R1' names this cycle (a root, a young
+ * object's field or a remembered object's field names it) was passed
+ * over, because the trace scans it and so repairs the miss: a store that
+ * lost its barrier (VALK-A1's planted defect: a fresh pass that ignores
+ * collecting calls, V14 off) was reported only once nothing named the
+ * record any more, which no program of the suite reaches. It is reported
+ * now at the first young collection after the store, with "not
+ * remembered" in the line.
+ *
+ * R1' (gc-design.md section 1.3), for an element buffer: one that a root,
+ * a young object's field or a remembered object's field names this cycle
+ * may hold young references unremembered, as before. That is the window
+ * the contract leaves open on purpose: the fill of a fresh buffer held in
+ * a slot, closed by one barrier when the fill ends (V14's older form, the
+ * only stores generated code makes with no barrier into a holder that is
+ * not open: compiler/mir/lower_arr.av, lower_block.av; mir.md 5.4), in
+ * which a buffer a collection promoted in the middle of its fill holds
+ * young elements until the closing barrier; and the runtime's builders
+ * of buffers a young header or a root names (gc-design.md 1.3). A
+ * missed closing barrier on such a buffer therefore stays invisible here
+ * while something names the buffer; V14 is its check.
+ *
+ * A carded holder remembered by its cards (REMC without CARD_ALL) must
+ * name young objects only from slots of its marked cards (the card
+ * invariant, Stage 28 W16t): a young object named from a clear card is
+ * reported as a missing barrier too, since the young collection would not
+ * scan that slot. Only holders the verifier's own trace reaches are
+ * asked: a dead object's fields are never read by the program or the
+ * collector, and may name an address a new young object has taken since.
+ * Returns the fields found; the first 32 are printed when PRINT. */
 static uint64_t yholders_check(int print) {
   size_t i;
   uint64_t found = 0;
@@ -549,7 +583,12 @@ static uint64_t yholders_check(int print) {
     void *st;
     AvantHeader *h = avant_header(v);
     int by_cards;
-    if (verify_names_young(v, &st) || (h->flags & AVANT_FLAG_REM) || vb_test(vb_named, v, AVANT_FLAG_MARKED)) {
+    int named;
+    if (verify_names_young(v, &st) || (h->flags & AVANT_FLAG_REM)) {
+      continue;
+    }
+    named = vb_test(vb_named, v, AVANT_FLAG_MARKED);
+    if (named && verify_is_buffer(h)) {
       continue;
     }
     by_cards = (h->flags & AVANT_FLAG_REMC) != 0;
@@ -564,9 +603,12 @@ static uint64_t yholders_check(int print) {
           Block *hb = block_of(h);
           fprintf(stderr,
                   "avant gc verify: missing barrier: holder %p field %ld names young %p "
-                  "(holder flags=0x%x type=%u space=%d; young flags=0x%x) before coll=%llu\n",
+                  "(holder flags=0x%x type=%u space=%d; young flags=0x%x)%s before coll=%llu\n",
                   v, (long)((uint8_t *)slot - (uint8_t *)v), y, h->flags, (unsigned)h->type_id,
                   hb ? (int)hb->space : -1, avant_header(y)->flags,
+                  named ? ", not remembered (a root, a young object or a remembered one names the holder, so "
+                          "this collection's trace still reaches the field)"
+                        : "",
                   (unsigned long long)avant_g_stats.collections);
         }
       }
@@ -1423,11 +1465,9 @@ static int vi_remembered(void) {
 /* T's examination of one slot, and of one object. */
 static inline void vi_t_slot(void **slot) {
   void *st = vi_trace(*slot);
-#if GC_STICKY_COPY
   if (st && (avant_header(st)->flags & AVANT_FLAG_FORWARDED)) {
     vi_cand++;
   }
-#endif
   vi_note(slot, st);
 }
 
@@ -1439,7 +1479,6 @@ static void vi_t_root(void **slot) {
   (void)vi_trace(*slot);
 }
 
-#if GC_STICKY_COPY
 static inline int vi_stale(void *p) {
   void *st = gc_object_payload(p, NULL, NULL);
   return st && (avant_header(st)->flags & AVANT_FLAG_FORWARDED);
@@ -1448,7 +1487,6 @@ static inline int vi_stale(void *p) {
 static void vi_stale_root(void **slot) {
   vi_cand += (uint64_t)vi_stale(*slot);
 }
-#endif
 
 
 /* The young blocks' objects that are not young (promoted in place, or
@@ -1497,7 +1535,6 @@ static int vi_sticky(void) {
     vi_t_object(verify_pop());
   }
   vi_sources(pages, vi_t_object);
-#if GC_STICKY_COPY
   for (t = gc_heap.threads; t; t = t->next) {
     EACH_FRAME_SLOT(gc_thread_frames(t), slot, {
       vi_cand += (uint64_t)vi_stale(*slot);
@@ -1505,7 +1542,6 @@ static int vi_sticky(void) {
     });
   }
   gc_each_runtime_root(vi_stale_root);
-#endif
   for (i = 0; i < gc_heap.vnoted_n; i++) {
     vi_cand += sticky_why(gc_heap.vnoted[i]) != NULL;
   }
