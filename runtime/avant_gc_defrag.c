@@ -25,11 +25,17 @@
  * No evacuation without a gain (Stage 29 W-FIX1c, O202). Moving anything
  * at all costs a pass over every live object to rewrite references
  * (gc_defrag_evacuate's fix-up), so the chosen blocks are evacuated only
- * when that frees at least one block net: the blocks freed less the
- * destination blocks their live objects fill (def_dest_blocks). And the
- * block the last evacuation filled last (gc_heap.def_last), sparse by
- * construction, is not a candidate: evacuated with the next sparse block
- * it would be copied again at every full collection for one block's gain.
+ * when that frees blocks net, the blocks freed less the destination
+ * blocks their live objects fill (def_dest_blocks): at least one, and at
+ * least one for every DEFRAG_GAIN_DIV blocks' worth of live lines the
+ * mark found, since the pass costs in proportion to them (a heap of up to
+ * 128 live blocks, 4 MiB, moves for one block; one of 8 MiB needs two).
+ * What is given up is bounded: sparse blocks that would have freed less
+ * than 1/128 of the live heap stay, and their free lines stay
+ * allocatable. And the block the last evacuation filled last
+ * (gc_heap.def_last), sparse by construction, is not a candidate:
+ * evacuated with the next sparse block it would be copied again at every
+ * full collection for one block's gain.
  * Before, a heap that did not change had its one sparse block (the last
  * destination) evacuated into a fresh block at every full collection:
  * the same few hundred bytes moved, no block gained, and 41% of the
@@ -268,10 +274,15 @@ void gc_defrag_evacuate(uint64_t live_lines_this) {
     free(cand);
     return;
   }
-  /* No evacuation without a gain: at least one block freed net. */
-  if (!gc_heap.set.stress && ncand < def_dest_blocks(cand, ncand) + 1) {
-    free(cand);
-    return;
+  /* No evacuation without a gain (the top of the file). */
+  if (!gc_heap.set.stress) {
+    size_t dest_n = def_dest_blocks(cand, ncand);
+    uint64_t need = (live_lines_this + (uint64_t)LINES_PER_BLOCK * DEFRAG_GAIN_DIV - 1) /
+                    ((uint64_t)LINES_PER_BLOCK * DEFRAG_GAIN_DIV);
+    if (ncand <= dest_n || (uint64_t)(ncand - dest_n) < need) {
+      free(cand);
+      return;
+    }
   }
   dest_cap_blocks = (size_t)(evac_bytes / BLOCK_SIZE) + 2;
   dest = (Block **)gc_xrealloc(NULL, dest_cap_blocks * sizeof(Block *));

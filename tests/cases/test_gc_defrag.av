@@ -66,11 +66,13 @@ fn stat_int(text: String, key: String): Int {
 }
 
 // O202 (Stage 29 W-FIX1c): no evacuation without a gain.
-// heap/defrag_gain.av (its comment has the two cases) prints the known
+// heap/defrag_gain.av (its comment has the three cases) prints the known
 // stdout plainly and under each environment above. Then each case alone,
 // with AVANT_GC_STATS=1 and every collector variable unset: 50 forced
 // full collections of a heap that does not change evacuate fewer than 5
-// blocks in all (0 today; 50 before W-FIX1c, one per collection), and a
+// blocks in all (0 today; 50 before W-FIX1c, one per collection); a
+// heap of 4.6 MiB with two sparse blocks is not walked to gain one
+// block (0 blocks evacuated; 2 with the one-block rule alone); and a
 // fragmented heap is still evacuated (at least 60 blocks; 98 today, 100
 // before).
 fn test_defrag_gain(c: Checks, compiler: String, root: String, dir: String) {
@@ -86,6 +88,7 @@ fn test_defrag_gain(c: Checks, compiler: String, root: String, dir: String) {
   }
   runs.push(run_job_env(dir, "defrag_gain", "defrag_gain.steady", "${clean} DEFRAG_GAIN_CASE=steady"))
   runs.push(run_job_env(dir, "defrag_gain", "defrag_gain.fragmented", "${clean} DEFRAG_GAIN_CASE=fragmented"))
+  runs.push(run_job_env(dir, "defrag_gain", "defrag_gain.tail", "${clean} DEFRAG_GAIN_CASE=tail"))
   run_waves(runs)
   for e in 0..envs.size {
     what = "plain"
@@ -93,7 +96,7 @@ fn test_defrag_gain(c: Checks, compiler: String, root: String, dir: String) {
       what = "under ${envs[e]}"
     }
     c.eq_int(runs[e].code, 0, "defrag_gain.av ${what}: exit 0")
-    c.eq_str(log_text("${dir}/defrag_gain.g${e}.out"), "steady 20992\nfragmented 33544192\n", "defrag_gain.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/defrag_gain.g${e}.out"), "steady 20992\ntail 300512\nfragmented 33544192\n", "defrag_gain.av ${what}: the known stdout")
     c.eq_str(log_text("${dir}/defrag_gain.g${e}.err"), "", "defrag_gain.av ${what}: no stderr (no verifier report)")
   }
   steady = log_text("${dir}/defrag_gain.steady.err")
@@ -105,6 +108,10 @@ fn test_defrag_gain(c: Checks, compiler: String, root: String, dir: String) {
   c.expect(ev >= 0 && ev < 5, "defrag_gain.av steady: a heap that does not change is not evacuated again at every full collection (fewer than 5 blocks in 50 collections)")
   c.expect(stat_int(frag, "def_evac_blocks") >= 60, "defrag_gain.av fragmented: a fragmented heap is still evacuated (at least 60 blocks)")
   c.eq_int(stat_int(frag, "def_evac_blocks"), stat_int(frag, "def_freed_blocks"), "defrag_gain.av fragmented: every evacuated block is freed")
+  tail = log_text("${dir}/defrag_gain.tail.err")
+  c.eq_int(runs[envs.size + 2].code, 0, "defrag_gain.av tail: exit 0")
+  c.eq_int(stat_int(tail, "full"), 21, "defrag_gain.av tail: 21 full collections")
+  c.eq_int(stat_int(tail, "def_evac_blocks"), 0, "defrag_gain.av tail: a heap of 146 blocks is not walked to gain one block")
 }
 
 fn test_main(c: Checks) {

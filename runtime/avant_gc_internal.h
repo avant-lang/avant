@@ -161,6 +161,13 @@
 #define HEAP_FACTOR 2
 #define MAX_TYPES 65535
 #define CACHE_BLOCKS 2
+/* The defragmenter's least gain (Stage 29 W-FIX1c, O202;
+ * avant_gc_defrag.c): an evacuation must free, net, at least one block
+ * for every DEFRAG_GAIN_DIV blocks' worth of live mature lines (and at
+ * least one), because its fix-up walks every live object. */
+#ifndef DEFRAG_GAIN_DIV
+#define DEFRAG_GAIN_DIV 128
+#endif
 #define GC_THREAD_ROOTS 8
 
 /* SCALAR_LOS_MIN: numeric (type-0) buffers at or above this size are

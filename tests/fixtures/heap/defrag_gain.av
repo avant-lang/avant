@@ -1,9 +1,10 @@
 // O202 (Stage 29 W-FIX1c): no evacuation without a gain. The mature
-// defragmenter moves blocks only when that frees at least one block net,
-// and never the block its last evacuation filled last; moving anything
+// defragmenter moves blocks only when that frees blocks net (at least
+// one, and at least one for every 128 blocks' worth of live lines), and
+// never the block its last evacuation filled last; moving anything
 // costs a pass over every live object to rewrite references.
 //
-// DEFRAG_GAIN_CASE picks what runs (both by default, one after the
+// DEFRAG_GAIN_CASE picks what runs (all three by default, one after the
 // other); tests/cases/test_gc_defrag.av reads the counters of each case
 // alone from AVANT_GC_STATS=1 with every collector variable unset:
 //
@@ -16,6 +17,14 @@
 //               (def_evac_blocks=0 today; the test asks for under 5).
 //               Under AVANT_GC_STRESS=1 the rule is off and the block
 //               moves every time, as before.
+//   tail        a list of 300,512 nodes (4.6 MiB: 146 blocks and a
+//               quarter of one), then 20 rounds of one small object
+//               kept and a forced full collection. The heap has at most
+//               two sparse blocks to join, a gain of one block, and
+//               joining them means a pass over the 300,512 nodes; a
+//               heap this size needs a gain of two, so nothing moves
+//               (def_evac_blocks=0; 2 with the one-block rule alone and
+//               before W-FIX1c).
 //   fragmented  16,384 one-line objects tenured, then every eighth kept:
 //               the survivors lie one to eight lines across 128 blocks.
 //               The full collections still evacuate them (98 blocks
@@ -83,6 +92,35 @@ fn chain(n: Int): Node {
   first
 }
 
+class Holder {
+  keep: Node?
+}
+
+fn tail: Int {
+  list = chain(300512)
+  h = Holder.new
+  c = 0
+  while c < 20 {
+    h.keep = Node.new
+    gcrt.avant_gc_collect()
+    c = c + 1
+  }
+  n = 0
+  cur: Node? = list
+  while node = cur {
+    cur = node.next
+    n = n + 1
+  }
+  if k = h.keep {
+    if next = k.next {
+      n = n + 1
+    }
+  } else {
+    n = n + 1
+  }
+  n
+}
+
 fn steady: Int {
   list = chain(20992)
   c = 0
@@ -138,6 +176,9 @@ fn main {
   which = env_get("DEFRAG_GAIN_CASE") ?? "all"
   if which == "all" || which == "steady" {
     puts("steady ${steady()}")
+  }
+  if which == "all" || which == "tail" {
+    puts("tail ${tail()}")
   }
   if which == "all" || which == "fragmented" {
     puts("fragmented ${fragmented()}")
