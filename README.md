@@ -3064,7 +3064,7 @@ fn main {
 }
 ```
 
-`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError`; its `timeout_ms` is the deadline for the connection and its handshake. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Never call `recv` from a server handler. A connection that is never closed keeps its thread until the process exits.
+`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError`; its `timeout_ms` is the deadline for the connection and its handshake. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Both timeouts are kept on the monotonic clock: setting the system's clock during the wait does not move them. Never call `recv` from a server handler. A connection that is never closed keeps its thread until the process exits.
 
 After `close`, every copy of the connection answers as closed, whatever connections are opened later: `send_text` and `send_bytes` return `false`, `recv` returns `nil`, `close_code` is 1006, and another `close` does nothing. A `WsConnection` may be captured by a `spawn` block, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return `nil`.
 

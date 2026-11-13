@@ -1,3 +1,6 @@
+/* pthread_condattr_setclock (O572), as the collector's units have it. */
+#define _GNU_SOURCE
+#define _DEFAULT_SOURCE
 #include "avant_rt.h"
 #include "avant_gc.h"
 #include "libusockets.h"
@@ -2970,7 +2973,18 @@ avant_int avant_ws_client_connect(const char *host, avant_int port,
   c->frag_opcode = -1;
   c->close_code = 1006;
   pthread_mutex_init(&c->mu, NULL);
-  pthread_cond_init(&c->cond, NULL);
+  /* The handshake's and recv's deadlines are kept on CLOCK_MONOTONIC
+   * (Stage 29 W-FIX1g, O572): read from the wall clock and waited for on
+   * it, a step of the system clock during the wait shortened or
+   * lengthened them (an hour back: the wait ended at once). The HTTP
+   * client's deadline is a timer of its loop and was never affected. */
+  {
+    pthread_condattr_t attr;
+    pthread_condattr_init(&attr);
+    pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    pthread_cond_init(&c->cond, &attr);
+    pthread_condattr_destroy(&attr);
+  }
   ws_accept_key(key_b64, strlen(key_b64), c->expected_accept);
   c->loop = us_create_loop(0, ws_client_wakeup, srv_pre, srv_post,
                            (unsigned int)sizeof(WsClient *));
@@ -3018,7 +3032,7 @@ avant_int avant_ws_client_connect(const char *host, avant_int port,
     set_status(1);
     return 0;
   }
-  clock_gettime(CLOCK_REALTIME, &deadline);
+  clock_gettime(CLOCK_MONOTONIC, &deadline);
   deadline.tv_sec += timeout_ms <= 0 ? 10 : timeout_ms / 1000;
   deadline.tv_nsec += (timeout_ms <= 0 ? 0 : (timeout_ms % 1000)) * 1000000L;
   if (deadline.tv_nsec >= 1000000000L) {
@@ -3185,7 +3199,7 @@ char *avant_ws_client_recv(avant_int id, avant_int timeout_ms) {
     }
   } else {
     struct timespec deadline;
-    clock_gettime(CLOCK_REALTIME, &deadline);
+    clock_gettime(CLOCK_MONOTONIC, &deadline);
     deadline.tv_sec += timeout_ms / 1000;
     deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
     if (deadline.tv_nsec >= 1000000000L) {

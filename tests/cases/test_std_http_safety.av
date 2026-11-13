@@ -20,7 +20,9 @@ import std.http
 // W-FIX1g, O518). And a client that waited for the server to close
 // after a complete response (Stage 29 W-FIX1g, O566). And a WebSocket
 // message the socket took in part (Stage 29 W-FIX1g). And the WebSocket
-// client's handshake: one longer than 2048 bytes (Stage 29 W-FIX1g).
+// client's handshake: one longer than 2048 bytes, and one the socket
+// takes in part (Stage 29 W-FIX1g, O571). And the WebSocket client's
+// deadlines under a step of the wall clock (Stage 29 W-FIX1g, O572).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -835,6 +837,46 @@ fn ws_handshake_cases(c: Checks, root: String) {
   expect_lines(c, out, want, "a WebSocket handshake longer than 2048 bytes:")
 }
 
+// The deadlines of Ws.connect and recv (Stage 29 W-FIX1g, O572) were
+// read from the wall clock and waited for on it, so a step of the system
+// clock during the wait moved them. A test cannot step the machine's
+// clock; the fixture runs under the LD_PRELOAD shim
+// tests/fixtures/http/clock_step.c instead, which answers
+// clock_gettime(CLOCK_REALTIME) an hour early: a deadline read from the
+// wall clock then lies an hour in the past and the wait ends at once
+// (on the starting head both end after 0 ms). What this shows is that
+// neither deadline is read from the wall clock any more; the kernel's
+// side of a real step (the futex's clock) is CLOCK_MONOTONIC's by the
+// condition variable's attribute, which the shim cannot reach.
+fn ws_deadline_cases(c: Checks, root: String) {
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    bin = "${scratch()}/ws-deadlines-${stamp}.bin"
+    so = "${scratch()}/clock-step-${stamp}.so"
+    clog = "${scratch()}/ws-deadlines-${stamp}.clog"
+    code = compile_av(compiler, "${root}/tests/fixtures/http/ws_deadlines.av", bin, clog)
+    c.eq_int(code, 0, "the WebSocket deadline fixture compiles")
+    cargs: Array(String) = []
+    cargs.push("cc")
+    cargs.push("-shared")
+    cargs.push("-fPIC")
+    cargs.push("-o")
+    cargs.push(so)
+    cargs.push("${root}/tests/fixtures/http/clock_step.c")
+    cargs.push("-ldl")
+    c.eq_int(process_run_out("/usr/bin/env", cargs, "${scratch()}/clock-step-${stamp}.cclog") ?? -1, 0, "the clock-step shim builds")
+    args: Array(String) = []
+    args.push("LD_PRELOAD=${so}")
+    args.push(bin)
+    log = "${scratch()}/ws-deadlines-${stamp}.log"
+    status = process_run_out("/usr/bin/env", args, log) ?? -1
+    c.eq_int(status, 0, "the WebSocket deadline fixture under a wall clock an hour back: status 0")
+    c.eq_str(file_read(log) ?? "", "connect: in time\nrecv: in time\n", "Ws.connect's and recv's deadlines under a wall clock an hour back")
+  } else {
+    c.expect(false, "AVANT_COMPILER is set for the WebSocket deadline test")
+  }
+}
+
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
   i = 0
   while i < want.size {
@@ -1036,5 +1078,6 @@ fn main: Int {
   client_framing_cases(c, avant_test_root())
   ws_big_cases(c, avant_test_root())
   ws_handshake_cases(c, avant_test_root())
+  ws_deadline_cases(c, avant_test_root())
   c.finish
 }
