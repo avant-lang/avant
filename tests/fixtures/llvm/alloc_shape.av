@@ -1,0 +1,23 @@
+// The allocation sequence's shape (Stage 29 VALK-A1; compiler.md L8: one
+// assertion per property, on the pre-optimization .ll of `avant
+// __emit-ll`), checked function by function by
+// tests/cases/test_alloc_shape.av. Each function below is the smallest one
+// that shows its property; the comment says what the test asserts.
+
+class Node {
+  next: Node?
+  v: Int
+}
+
+// M3 (O137): Node.new allocates inline and reads the fast path's six
+// thread-local globals, declared local-exec (one %fs-relative access each).
+fn fresh_node(v: Int): Node {
+  n = Node.new
+  n.v = v
+  n
+}
+
+fn main {
+  n = fresh_node(3)
+  puts(n.v)
+}

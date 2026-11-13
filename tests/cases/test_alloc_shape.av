@@ -1,0 +1,86 @@
+import harness
+
+// Per-function shape assertions on the allocation sequence (Stage 29
+// VALK-A1; research/valk/compiler.md L8, learned from Valk's
+// tests/codegen/run.sh): tests/fixtures/llvm/alloc_shape.av is emitted
+// with `avant __emit-ll` (the pre-optimization .ll, the same in every
+// mode) and each property is asserted on the one function that shows it,
+// so a later change that regresses the shape fails here, not only in an
+// instruction count. The fixture also runs (its output is checked), so
+// the shapes asserted are the shapes of a correct program.
+//
+// M3 (O137): the six thread-local globals of the inline allocation path
+// (avant_gc_fast_ok, avant_gc_bump, avant_gc_limit, avant_gc_block,
+// avant_gc_base, avant_gc_starts) are declared local-exec, as
+// avant_gc_top is, and no thread-local is declared without a model.
+
+fn log_text(path: String): String {
+  if t = file_read(path) {
+    return t
+  }
+  "(no log)"
+}
+
+// The text of the definition of SYM in the .ll text LL (from its `define`
+// line to its closing brace), or "" when it is not defined.
+fn ll_fn(ll: String, sym: String): String {
+  key = "@\"${sym}\"("
+  lines = ll.split("\n")
+  out = buf_new()
+  inside = false
+  for line in lines {
+    // a line that starts with `d`: a `define`, never a call
+    if !inside && line.size > 7 && line[0] == 100 && str_has(line, key) {
+      inside = true
+    }
+    if inside {
+      out.push_str(line)
+      out.push_str("\n")
+      if line == "}" {
+        return out.to_s
+      }
+    }
+  }
+  ""
+}
+
+fn count_of(hay: String, needle: String): Int {
+  hay.split(needle).size - 1
+}
+
+fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
+  src = "${root}/tests/fixtures/llvm/alloc_shape.av"
+  ll = "${dir}/alloc_shape.ll"
+  c.eq_int(emit_ll(compiler, src, ll, "${dir}/alloc_shape.ll.log"), 0, "alloc_shape.av: __emit-ll")
+  text = log_text(ll)
+  c.eq_int(compile_av(compiler, src, "${dir}/alloc_shape", "${dir}/alloc_shape.log"), 0, "alloc_shape.av: compiles")
+  c.eq_int(run_av_bin("${dir}/alloc_shape", "${dir}/alloc_shape.out"), 0, "alloc_shape.av: exit 0")
+  c.eq_str(log_text("${dir}/alloc_shape.out"), "3\n", "alloc_shape.av: output")
+
+  // M3: local-exec thread-locals.
+  for g in ["avant_gc_fast_ok", "avant_gc_bump", "avant_gc_limit", "avant_gc_block", "avant_gc_base", "avant_gc_starts", "avant_gc_top"] {
+    c.expect(str_has(text, "@${g} = external thread_local(localexec) global "), "M3: @${g} is declared local-exec")
+  }
+  c.eq_int(count_of(text, " thread_local global "), 0, "M3: no thread-local is declared without a model")
+  fnode = ll_fn(text, "av.alloc_shape/Node.new")
+  c.expect(str_has(fnode, "load ptr, ptr @avant_gc_bump") && str_has(fnode, "load ptr, ptr @avant_gc_limit"), "M3: Node.new allocates inline (it reads the bump cursor and the limit)")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_alloc_shape.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_alloc_shape(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}
