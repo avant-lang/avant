@@ -2910,7 +2910,7 @@ fn main {
 }
 ```
 
-Compiling this program prints one note, `re2c: pattern stays on PCRE2 (...)`: see "Two engines" below.
+Compiling this program prints one note on stderr, `re2c: pattern stays on PCRE2 (...)`: see "Two engines" below.
 
 | Call | Gives |
 | --- | --- |
@@ -2932,7 +2932,7 @@ Compiling this program prints one note, `re2c: pattern stays on PCRE2 (...)`: se
 - **At PCRE2's limits a match traps; it is never read as "no match".** A search that backtracks past PCRE2's match limit (ten million steps), or runs into its depth or memory limits, ends the program with the operation and PCRE2's reason: `avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`. There is no way yet to set a limit or to get the failure as a value, so a pattern or a text that comes from outside is yours to bound (its length, its shape) before matching.
 - A match that only nests deeply (a group repeated many thousands of times) is not a failure: it is answered, on a larger stack and then by PCRE2's interpreter, at a cost in memory that grows with the text. A pattern may have any number of groups PCRE2 accepts.
 
-**Two engines.** A string-literal pattern that needs at most one capture group and no named groups is compiled to a native scanner at compile time, by re2c. Any other pattern runs on PCRE2 with its JIT, and the compiler says so when it compiles your program. Both are inside the release: a program needs neither library on the machine. (Without any `re2c` binary, literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary.) PCRE2 backtracks, and backtracking can be catastrophic on adversarial patterns and texts.
+**Two engines.** A string-literal pattern that needs at most one capture group and no named groups is compiled to a native scanner at compile time, by re2c. Any other pattern runs on PCRE2 with its JIT; when the pattern (and its `caseless` argument, if given) is a literal, the compiler says so on stderr as it compiles your program, so `avant run` prints only the program's own output on stdout. Both are inside the release: a program needs neither library on the machine. (Without any `re2c` binary, literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary.) PCRE2 backtracks, and backtracking can be catastrophic on adversarial patterns and texts.
 
 ### std.http
 
