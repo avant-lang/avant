@@ -26,7 +26,8 @@
 #      AVANT_YOUNG_MB=1, AVANT_GC_STATS=1: 36 .out and 36 .err files):
 #      OUT/gcstats; with BASE_STATS (an earlier run's OUT/gcstats), stats.txt
 #      compares every file with the pause_*_ns fields removed
-#   6. only with WAVE_LA=1: LangArena prod once with C', then the LR table
+#   6. only with WAVE_LA=1: LangArena prod once with C' (the harness binary
+#      of tools/la-harness.sh, built once per checkout), then the LR table
 #      (tools/lr-table.sh), OUT/la; needs WAVE_LA_SIDE (a directory holding
 #      this checkout's copy as avant/ and LangArena/ side by side, the layout
 #      W12r used) and WAVE_LR_REFERENCE (the reference results directory of
@@ -140,8 +141,10 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
   else
     la="$out/la"; mkdir -p "$la"
     t0=$(now)
-    ( cd "$side/avant" && AVANT_COMPILER="$root/bin/avant-c-llvm" AVANT_CODEGEN=release AVANT_RESULTS_DIR="$la" \
-        timeout -k 10 2700 crystal run langarena/harness/measure.cr -- prod < /dev/null > "$la/la-prod.log" 2>&1 )
+    # The harness binary of that checkout, built once (tools/la-harness.sh, O115).
+    ( cd "$side/avant" && h=$(sh tools/la-harness.sh 2> "$la/harness-build.log" < /dev/null) && echo "harness: $h" > "$la/la-prod.log" \
+      && AVANT_COMPILER="$root/bin/avant-c-llvm" AVANT_CODEGEN=release AVANT_RESULTS_DIR="$la" \
+        timeout -k 10 2700 "$h" prod < /dev/null >> "$la/la-prod.log" 2>&1 )
     rc=$?; t1=$(now)
     ( cd "$side/avant" && sh tools/lr-table.sh avant "$root/langarena/tmp" "$side/LangArena/run.js" "$la/lr-avant.tsv" < /dev/null > "$la/lr-avant.log" 2>&1 \
       && sh tools/lr-table.sh table "$ref" "$la" "$side/LangArena/results/2026-10-21-kostya-ms7c37.js" < /dev/null > "$la/table.md" 2> "$la/table.log" )
