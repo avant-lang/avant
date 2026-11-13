@@ -3240,7 +3240,24 @@ typedef struct FetchState {
   size_t request_len;
   size_t sent;
   struct us_socket_t *sock;
+  /* Where the response ends (fetch_complete): 0 while its head has not
+   * all arrived; then one of the FETCH_* framings, the head's length,
+   * the body's length (FETCH_LENGTH), and for a chunked body the decoder
+   * and how far it has read. */
+  int framing;
+  size_t head_len;
+  size_t body_want;
+  size_t scanned;
+  struct phr_chunked_decoder chunks;
 } FetchState;
+
+enum {
+  FETCH_HEAD_PENDING = 0,
+  FETCH_UNTIL_CLOSE,
+  FETCH_LENGTH,
+  FETCH_CHUNKED,
+  FETCH_NO_BODY
+};
 
 static FetchState *fetch_of_socket(struct us_socket_t *s) {
   struct us_loop_t *loop = us_socket_context_loop(0, us_socket_context(0, s));
@@ -3269,6 +3286,94 @@ static struct us_socket_t *fetch_on_open(struct us_socket_t *s, int is_client,
   return s;
 }
 
+static int parse_response_head(const char *raw, size_t n, int *status,
+                               struct phr_header *headers,
+                               size_t *num_headers, int *pret);
+
+/* Whether the response in st->buf is complete by its own framing
+ * (Stage 29 W-FIX1g, O566). The exchange used to end only when the
+ * server closed the socket, and the length was looked at afterwards
+ * (avant_http_resp_body): a server that keeps the connection open after
+ * a complete answer (it ignores Connection: close, or a proxy keeps the
+ * connection) held the call until its deadline, which then failed it
+ * as a timeout. RFC 9112 6.3, in its order: a response to HEAD, a 1xx,
+ * 204 or 304 ends with its head (a 1xx is interim: the response that
+ * follows it is read until the close, as before); a chunked body ends
+ * after its last chunk and the trailer section; a Content-Length body
+ * after that many bytes; a body with neither (or another
+ * Transfer-Encoding, or a length that is not a number) when the server
+ * closes, as before. The head is parsed again as bytes arrive until it
+ * is whole, then never again; a chunked body is followed by the same
+ * decoder avant_http_resp_body uses, on a copy, a piece at a time. */
+static int fetch_complete(FetchState *st) {
+  if (st->framing == FETCH_HEAD_PENDING) {
+    int status = 0;
+    struct phr_header headers[HTTP_MAX_HEADERS];
+    size_t num_headers = 0;
+    int pret = 0;
+    const char *value = NULL;
+    size_t value_len = 0;
+    long want = 0;
+    if (!parse_response_head(st->buf, st->len, &status, headers,
+                             &num_headers, &pret)) {
+      if (pret == -2) {
+        return 0;
+      }
+      st->framing = FETCH_UNTIL_CLOSE;
+      return 0;
+    }
+    st->head_len = (size_t)pret;
+    st->scanned = st->head_len;
+    if (status >= 100 && status < 200) {
+      st->framing = FETCH_UNTIL_CLOSE;
+    } else if ((st->request_len >= 5 && memcmp(st->request, "HEAD ", 5) == 0) ||
+               status == 204 || status == 304) {
+      st->framing = FETCH_NO_BODY;
+    } else if (find_header(headers, num_headers, "Transfer-Encoding", &value,
+                           &value_len)) {
+      st->framing = ascii_ieq_contains(value, value_len, "chunked")
+                        ? FETCH_CHUNKED
+                        : FETCH_UNTIL_CLOSE;
+      memset(&st->chunks, 0, sizeof(st->chunks));
+      st->chunks.consume_trailer = 1;
+    } else if (find_header(headers, num_headers, "Content-Length", &value,
+                           &value_len) &&
+               parse_content_length(value, value_len, &want)) {
+      st->framing = FETCH_LENGTH;
+      st->body_want = (size_t)want;
+    } else {
+      st->framing = FETCH_UNTIL_CLOSE;
+    }
+  }
+  switch (st->framing) {
+    case FETCH_NO_BODY:
+      return 1;
+    case FETCH_LENGTH:
+      return st->len - st->head_len >= st->body_want;
+    case FETCH_CHUNKED:
+      while (st->scanned < st->len) {
+        char piece[16384];
+        size_t n = st->len - st->scanned;
+        ssize_t done;
+        if (n > sizeof(piece)) {
+          n = sizeof(piece);
+        }
+        memcpy(piece, st->buf + st->scanned, n);
+        st->scanned += n;
+        done = phr_decode_chunked(&st->chunks, piece, &n);
+        if (done != -2) {
+          /* The last chunk and the trailers are here (done >= 0), or the
+           * body is not valid chunked encoding (-1): nothing that
+           * arrives later changes how avant_http_resp_body reads it. */
+          return 1;
+        }
+      }
+      return 0;
+    default:
+      return 0;
+  }
+}
+
 static struct us_socket_t *fetch_on_data(struct us_socket_t *s, char *data,
                                          int length) {
   FetchState *st = fetch_of_socket(s);
@@ -3288,6 +3393,11 @@ static struct us_socket_t *fetch_on_data(struct us_socket_t *s, char *data,
   }
   memcpy(st->buf + st->len, data, (size_t)length);
   st->len += (size_t)length;
+  if (fetch_complete(st)) {
+    /* The whole response is here: the exchange ends now, whether or not
+     * the server closes (O566). */
+    return us_socket_close(0, s, 0, NULL);
+  }
   return s;
 }
 

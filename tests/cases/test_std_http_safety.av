@@ -17,7 +17,8 @@ import std.http
 // together on a server with more than one loop (Stage 29 W-FIX1e,
 // O564). And a route registered while the server serves (Stage 29
 // W-FIX1f, O594). And a header that would split the answer (Stage 29
-// W-FIX1g, O518).
+// W-FIX1g, O518). And a client that waited for the server to close
+// after a complete response (Stage 29 W-FIX1g, O566).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -629,6 +630,64 @@ fn header_split_cases(c: Checks, root: String) {
   }
 }
 
+// The port a fixture server wrote to `path` ("PORT\n"), 0 when it has
+// not within 10 s.
+fn wait_port(path: String): Int {
+  tries = 0
+  while tries < 500 {
+    if text = file_read(path) {
+      if text.size > 1 && text[text.size - 1] == 10 {
+        return str_slice(text, 0, text.size - 1).to_i ?? 0
+      }
+    }
+    sleep_ms(20)
+    tries += 1
+  }
+  0
+}
+
+// O566: the client read until the server closed, and looked at the
+// response's length only then, so a server that answers completely and
+// keeps the connection open (it ignores Connection: close) held the
+// call until its deadline, which failed it as a timeout. The client
+// stops at the end the framing gives: Content-Length, the last chunk
+// and its trailers (also with a Content-Length beside it), a 204, a
+// redirect's empty body; a body with neither still ends at the close.
+// The fixture sends some answers in pieces 0.1 s apart (half a head,
+// half a chunk size), so a client that stops too early is caught too.
+fn client_framing_cases(c: Checks, root: String) {
+  stamp = now_ms()
+  port_file = "${scratch()}/http-keep-${stamp}.port"
+  log = "${scratch()}/http-keep-${stamp}.log"
+  server = spawn {
+    args: Array(String) = []
+    args.push("${root}/tests/fixtures/http/keep_server.py")
+    args.push(port_file)
+    args.push("30")
+    process_run_out("/usr/bin/python3", args, log) ?? -1
+  }
+  port = wait_port(port_file)
+  c.expect(port > 0, "the keep-open server is listening")
+  paths = ["/cl", "/cl-late", "/chunked", "/chunked-late", "/both", "/204", "/redirect", "/close"]
+  wants = ["200 hello", "200 hello", "200 hello", "200 hello", "200 hello", "204 ", "200 hello", "200 until close"]
+  for i in 0..paths.size {
+    t0 = now_ms()
+    r = Http.get("http://127.0.0.1:${port}${paths[i]}", true, 4000)
+    took = now_ms() - t0
+    got = ""
+    if e = http_failure(r) {
+      got = e.message
+    } else if resp = r {
+      got = "${resp.status} ${String.from_utf8(resp.body) ?? "?"}"
+    }
+    c.eq_str(got, wants[i], "GET ${paths[i]} from a server that keeps the connection open")
+    c.expect(took < 2000, "GET ${paths[i]} returns when the response is complete, not at the deadline (${took} ms)")
+  }
+  if resp = Http.get("http://127.0.0.1:${port}/__stop", true, 4000) {
+  }
+  c.eq_int(server.join, 0, "the keep-open server ends")
+}
+
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
   i = 0
   while i < want.size {
@@ -827,5 +886,6 @@ fn main: Int {
   ws_route_cases(c)
   route_serving_cases(c, avant_test_root())
   header_split_cases(c, avant_test_root())
+  client_framing_cases(c, avant_test_root())
   c.finish
 }
