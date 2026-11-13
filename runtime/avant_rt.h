@@ -242,6 +242,16 @@ void avant_gc_native_end(void);
 size_t avant_str_n(const char *s);
 char *avant_str_empty(void);
 char *avant_str_concat(const char *a, const char *b);
+/* A C function's `String` result, made safe to store in a field: an
+ * address inside a heap object comes back as a fresh copy of the string
+ * there; anything else unchanged (the Valk stage, VALK-A2, O629). */
+char *avant_c_str(char *s);
+/* The collected heap's reserved range, its first byte and its size (zero
+ * until the heap is reserved): generated code tests a C function's
+ * `String` result against it and calls avant_c_str only for an address
+ * inside (compiler/llvm/emit_gc.av, ll_c_str). */
+extern uint64_t avant_gc_heap_lo;
+extern uint64_t avant_gc_heap_len;
 char *avant_str_cat_i32(const char *prefix, avant_int n);
 char *avant_str_from_i32_bytes(void *arr);
 char *avant_str_repeat_byte(avant_int b, avant_int n);

@@ -182,10 +182,40 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
     if cs.ret.is_string() {
       lw.c_string_present(dest, "${e.lib_name}.${e.callee}", e.loc)
     }
+    if lw.c_ret_string(cs.ret) {
+      return lw.c_string_owned(dest)
+    }
     return b.copy_local(dest)
   }
   lw.refuse(e.loc, "the C function ${e.lib_name}.${e.callee} (no checked signature)")
   zero
+}
+
+// A `fun` result declared `String` or `String?`.
+pub fn (lw: MirLower) c_ret_string(t: Ty): Bool {
+  if t.is_string() {
+    return true
+  }
+  if r = mir_opt_ref(t) {
+    return r.is_string()
+  }
+  false
+}
+
+// A C function declared to return a `String` may return an address inside
+// a heap object (`strchr` of a heap string): a root slot may hold one, a
+// reference-typed field may not (the field rule, D342 Q6;
+// runtime/avant_gc_internal.h), and nothing in the program says which the
+// result will reach. So the result passes through avant_c_str (the Valk
+// stage, VALK-A2, O629; D352): an address outside the collected heap (C's
+// own memory, a literal), null and the exact start of a heap string come
+// back as they are; an address inside a heap object comes back as a fresh
+// copy of the C string there. A collecting call: the copy allocates.
+pub fn (lw: MirLower) c_string_owned(dest: Int): MOperand {
+  b = lw.lw_b
+  args: Array(MOperand) = []
+  args.push(b.copy_local(dest))
+  lw.call_to(b.func.locals[dest].ty, "avant_c_str", args)
 }
 
 // A C function declared `: String` promises a string: a NULL it returns

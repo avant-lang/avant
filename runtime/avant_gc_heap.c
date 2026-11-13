@@ -187,6 +187,8 @@ static int reserve_all(uint64_t bytes) {
   gc_heap.cards = cd;
   gc_heap.chunks = ch;
   gc_heap.reserved = bytes;
+  avant_gc_heap_lo = (uint64_t)(uintptr_t)gc_heap.base;
+  avant_gc_heap_len = bytes;
   gc_heap.committed = 0;
   return 1;
 }
@@ -972,6 +974,23 @@ void *gc_object_payload(void *p, Block **ob, AvantHeader **ol) {
 
 int avant_is_heap(void *payload) {
   return gc_is_heap_payload(payload, NULL, NULL);
+}
+
+/* The heap's reservation as generated code reads it (avant_rt.h; the
+ * Valk stage, VALK-A2, O629): its first byte and its size, set once by
+ * gc_heap_reserve and zero before it. */
+uint64_t avant_gc_heap_lo;
+uint64_t avant_gc_heap_len;
+
+/* avant_gc.h. One compare for every address outside the committed heap
+ * (before the heap exists its base and committed size are zero, and no
+ * address passes). */
+__attribute__((visibility("hidden"))) int avant_gc_interior(const void *p) {
+  uintptr_t off;
+  if (!heap_offset(p, &off)) {
+    return 0;
+  }
+  return !gc_is_heap_payload((void *)(uintptr_t)p, NULL, NULL);
 }
 
 /* The contract (ABI name kept, gc-design.md §3.1): 1 when a young

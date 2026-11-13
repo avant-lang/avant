@@ -503,6 +503,46 @@ fn ll_bump_counter(e: LlEmit, ptr: String, by: String) {
   e.line("store i64 ${y}, ptr ${ptr}, align 8")
 }
 
+// _d = call avant_c_str(_s): a C function's `String` result (the Valk
+// stage, VALK-A2, O629; mir/lower_ffi.av c_string_owned). Only an address
+// inside the collected heap can need the runtime (it may name the inside
+// of an object, which a field may not hold), so the range test is here:
+// the address less the heap's first byte, compared with the heap's
+// reserved size (two globals the runtime sets once, when it reserves the
+// heap; both zero before, and then no address passes). C's own memory, a
+// literal and null pay the subtraction and the compare, and never the
+// call. The call form when inline fast paths are off.
+pub fn ll_c_str(e: LlEmit, args: Array(MOperand)): String {
+  e.used_heap_globals = true
+  e.need("avant_c_str")
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  s = e.value(args[0])
+  lo = e.tmp
+  e.line("${lo} = load i64, ptr @avant_gc_heap_lo, align 8")
+  si = e.tmp
+  e.line("${si} = ptrtoint ptr ${s} to i64")
+  off = e.tmp
+  e.line("${off} = sub i64 ${si}, ${lo}")
+  len = e.tmp
+  e.line("${len} = load i64, ptr @avant_gc_heap_len, align 8")
+  inh = e.tmp
+  e.line("${inh} = icmp ult i64 ${off}, ${len}")
+  x = e.tmp
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${inh}, i1 false)")
+  head = e.label
+  own = e.part("cstr")
+  cont = e.part("cstrd")
+  e.line("br i1 ${x}, label %${own}, label %${cont}")
+  e.block(own)
+  r = e.tmp
+  e.line("${r} = call ptr @avant_c_str(ptr ${s})")
+  e.line("br label %${cont}")
+  e.block(cont)
+  p = e.tmp
+  e.line("${p} = phi ptr [ ${s}, %${head} ], [ ${r}, %${own} ]")
+  p
+}
+
 // The safepoint poll at a loop head of a shared module (Stage 28 W17a,
 // gc-design.md 4.4): a volatile load of the request flag (kept in every
 // iteration), and the call, out of line, only when a collection is

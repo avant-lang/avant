@@ -439,6 +439,38 @@ fn test_rem_invariant(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_str(log_text("${dir}/rem_invariant.n0.err"), "", "rem_invariant.av, a store with no barrier, under AVANT_GC_VERIFY=1 AVANT_NURSERY=0: nothing is young, nothing is reported")
 }
 
+// O629 (the Valk stage, VALK-A2; D352): a C function's `String` result that
+// names the inside of a heap object. ffi/str_interior.av stores `strchr`
+// of a heap string in a field and runs young collections and a full one.
+// The result passes through avant_c_str (compiler/mir/lower_ffi.av,
+// runtime/avant_str.c), which returns a copy for an address inside a heap
+// object, so the field holds an object's start: every environment prints
+// the text before and after the collections and nothing on stderr. Without
+// the copy the field holds an address inside the string, and under
+// AVANT_GC_VERIFY=1 the program stops with "field rule" (the form the
+// check below would then see: a non-zero exit and that report).
+fn test_str_interior(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/ffi/str_interior.av", "${dir}/str_interior", "${dir}/str_interior.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "str_interior.av: compiles")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_NURSERY=0", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1", "AVANT_GC_VERIFY=1 AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "str_interior", "str_interior.g${e}", envs[e]))
+  }
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "str_interior.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/str_interior.g${e}.out"), "str_interior: =value=7 =value=7 1\n", "str_interior.av ${what}: the field holding a C function's String result reads the same after the collections")
+    c.eq_str(log_text("${dir}/str_interior.g${e}.err"), "", "str_interior.av ${what}: no stderr (no field-rule report)")
+  }
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -447,6 +479,7 @@ fn test_main(c: Checks) {
     test_stress_inline(c, compiler, avant_test_root(), scratch_dir())
     test_empty_end(c, compiler, avant_test_root(), scratch_dir())
     test_field_rule(c, compiler, avant_test_root(), scratch_dir())
+    test_str_interior(c, compiler, avant_test_root(), scratch_dir())
     test_rem_chain(c, compiler, avant_test_root(), scratch_dir())
     test_rem_invariant(c, compiler, avant_test_root(), scratch_dir())
   } else {

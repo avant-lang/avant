@@ -8,6 +8,7 @@ typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
 
 extern __avant_type_maps() -> void never
+extern avant_c_str(ref str) -> ref str collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_str(ref str) -> void never
 extern avant_trap_c_null(ref str) -> void never noreturn
@@ -17,12 +18,14 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @zlib.av:5:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
-  let _3: ref str
+  let _3: ref str slot
   let _4: bool
+  let _5: ref str
 
 bb0:
+  _3 = zero   @5:1
   gc.enter   @5:1
-  gc.roots _2   @5:1
+  gc.roots _2, _3   @5:1
   call __avant_type_maps() nocollect   @5:1
   call avant_io_init_argv(copy _1, copy _2) collects   @5:1
   _3 = call zlibVersion() collects   @6:9
@@ -34,7 +37,8 @@ bb1:
   unreachable   @6:9
 
 bb2:
-  call avant_puts_str(copy _3) nocollect   @6:3
+  _5 = call avant_c_str(copy _3) collects   @6:9
+  call avant_puts_str(copy _5) nocollect   @6:3
   _0 = const i32 0   @5:1
   gc.leave   @5:1
   return   @5:1
