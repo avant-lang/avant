@@ -150,7 +150,7 @@ static void defrag_rewrite_slot(void **slot) {
   void *w = *slot;
   Block *b = NULL;
   AvantHeader *ol = NULL;
-  void *start = gc_object_payload(w, &b, &ol);
+  void *start = gc_object_payload_fast(w, &b, &ol);
   void *to;
   if (!start) {
     return;

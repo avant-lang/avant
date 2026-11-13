@@ -1223,7 +1223,6 @@ void *gc_object_payload(void *p, Block **ob, AvantHeader **ol);
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *));
 void gc_zero_line_marks(Block *list);
 void gc_clear_side_marks(void);
-void gc_mark_object_lines(void *p);
 void gc_line_epoch_advance(void);
 
 /* avant_gc_alloc.c */
@@ -1583,6 +1582,40 @@ static inline uint64_t granule_of(const void *p) {
 static inline int start_bit_at(const void *p) {
   uint64_t g = granule_of(p);
   return (int)((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL);
+}
+
+/* gc_object_payload with its common case in line (Stage 29 W-FIX1c,
+ * O203): P is the exact start of an object in a small-object block in
+ * use, as nearly every traced field and root is. The tests are
+ * gc_is_heap_payload's own, in its order (8-aligned, the header inside
+ * the committed range, its start bit, the chunk's kind, the block in
+ * use), so the answer is the same; any other address (inside an object,
+ * a large object's, a static object's, outside the heap) takes the
+ * function. Before, every traced reference paid two calls for this
+ * (gc_object_payload, then gc_is_heap_payload inside it). */
+static inline void *gc_object_payload_fast(void *p, Block **ob, AvantHeader **ol) {
+  uintptr_t off = (uintptr_t)p - (uintptr_t)gc_heap.base - sizeof(AvantHeader);
+  if (!p) {
+    return NULL;
+  }
+  if (!((uintptr_t)p & (ALIGN - 1)) && off < gc_heap.committed) {
+    uint64_t g = off >> 3;
+    if ((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL) {
+      if (gc_heap.chunks[off >> CHUNK_SHIFT].kind == CHUNK_SMALL) {
+        Block *b = &gc_heap.blocks[off >> BLOCK_SHIFT];
+        if (b->in_use) {
+          if (ob) {
+            *ob = b;
+          }
+          if (ol) {
+            *ol = NULL;
+          }
+          return p;
+        }
+      }
+    }
+  }
+  return gc_object_payload(p, ob, ol);
 }
 
 static inline void start_bit_set(const void *p, int on) {

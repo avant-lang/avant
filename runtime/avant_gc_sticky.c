@@ -136,7 +136,7 @@ static uint64_t scan_cards(void *p, int from_mature);
 static int trace_ref(void **slot, void *p, int from_mature) {
   Block *b = NULL;
   AvantHeader *ol = NULL;
-  void *start = gc_object_payload(p, &b, &ol);
+  void *start = gc_object_payload_fast(p, &b, &ol);
   AvantHeader *h;
   if (!start) {
     return 0;
