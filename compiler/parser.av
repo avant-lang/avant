@@ -1896,7 +1896,16 @@ pub class Parser {
     arm
   }
 
-  pub fn parse_case_label: Int {
+  pub fn parse_case_label: CaseLabel {
+    label = CaseLabel.new(lb_int(), self.current.loc)
+    label.int_val = parse_case_int
+    label
+  }
+
+  // An integer label's value. The bound is 32 bits, stale since D314's
+  // 64-bit Int: W5a3 checks each label against the discriminant's type
+  // (O390).
+  pub fn parse_case_int: Int {
     neg = false
     if self.current.kind == tk_minus() {
       self.bump

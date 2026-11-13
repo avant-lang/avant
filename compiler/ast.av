@@ -101,9 +101,41 @@ pub class InterpPart {
   }
 }
 
+// A `case` label (Stage 29 W5a1): its kind says what was written; an
+// integer label's value is int_val. A member label (`case eof`, an enum
+// switch, D327) carries the member's name in text and gets its value in
+// int_val from the checker; a string label carries its bytes in text.
+// W5a2 adds member types and `nil`, W5a3 ranges.
+pub fn lb_int: Int { 1 }
+pub fn lb_string: Int { 2 }
+pub fn lb_member: Int { 3 }
+
+pub class CaseLabel {
+  pub kind: Int = 0
+  pub loc: Location
+  pub int_val: Int = 0
+  pub text: String = ""
+  // A label written `Type.member` (refused in an enum switch with a hint):
+  // the type's name; empty otherwise.
+  pub qual: String = ""
+
+  fn initialize(kind: Int, loc: Location) {
+    self.kind = kind
+    self.loc = loc
+  }
+}
+
+pub fn clone_case_label(l: CaseLabel): CaseLabel {
+  out = CaseLabel.new(l.kind, l.loc)
+  out.int_val = l.int_val
+  out.text = l.text
+  out.qual = l.qual
+  out
+}
+
 pub class SwitchCase {
   pub loc: Location
-  pub labels: Array(Int) = []
+  pub labels: Array(CaseLabel) = []
   pub body: Array(Stmt) = []
 
   fn initialize(loc: Location) {
@@ -721,7 +753,7 @@ pub fn clone_switch_case(c: SwitchCase): SwitchCase {
   out = SwitchCase.new(c.loc)
   i = 0
   while i < c.labels.size {
-    out.labels.push(c.labels[i])
+    out.labels.push(clone_case_label(c.labels[i]))
     i += 1
   }
   i = 0
