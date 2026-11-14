@@ -133,7 +133,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   // O682 (Stage 29 W5a2): the last arm is the default behind a range
   // test, so a four-member switch has three cases, and the trap stays.
   d4 = "${dir}/enum-ll-last.av"
-  _ = file_write(d4, "enum Four { a, b, c, d }\nfn f(x: Four): Int {\n  switch x {\n    case a { 10 }\n    case b { 20 }\n    case c { 30 }\n    case d { 40 }\n  }\n}\nfn main {\n  puts(f(Four.from_i(3) ?? Four.a))\n}\n")
+  _ = file_write(d4, "enum Four { a, b, c, d }\nfn f(x: Four): String {\n  switch x {\n    case a { \"a\" }\n    case b { \"b\" }\n    case c { \"c\" }\n    case d { \"d\" }\n  }\n}\nfn main {\n  h = spawn { 1 }\n  puts(f(Four.from_i(3) ?? Four.a))\n  puts(h.join)\n}\n")
   c.eq_int(emit_ll(compiler, d4, "${dir}/enum-ll-last.ll", "${dir}/enum-ll-last.log"), 0, "ll-last: emits")
   ll4 = log_text("${dir}/enum-ll-last.ll")
   labels = -1
@@ -146,7 +146,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   c.expect(str_has(ll4, "@avant_trap_enum_at("), "ll-last: the no-member path traps")
   // Every block the dispatch adds is numbered before the arms it enters:
   // an edge into a block numbered lower would be a back edge, which
-  // polls (mir/gc.av), and this program has no loop.
+  // polls in a program that spawns (mir/gc.av), and f has no loop.
   c.expect(!str_has(ll4, "avant_gc_poll"), "ll-last: no poll in a program without a loop")
 }
 
