@@ -104,6 +104,9 @@ pub class Checker {
   pub lib_vis: Hash(String, Int)
   pub known_mods: Hash(String, Int)
   pub current_fn: Function? = nil
+  // The `Mutex(T).new(name)` calls of the function being checked, whose
+  // names they consume (O687; checker/guard.av check_consumes).
+  pub consumes: Array(Expr) = []
   pub lam_exprs: Array(Expr)
   pub lam_scopes: Array(Int)
   pub lambda_infer: Bool = false
@@ -503,7 +506,13 @@ pub class Checker {
       i += 1
     }
     self.current_fn = fnn
+    saved_consumes = self.consumes
+    self.consumes = []
     check_body(fnn.body, ret, true)
+    if self.consumes.size > 0 && !self.has_err {
+      check_consumes(fnn.body)
+    }
+    self.consumes = saved_consumes
     self.current_fn = nil
     self.pop_scope
     self.self_ty = nil
@@ -3463,6 +3472,11 @@ pub class Checker {
         }
       }
       expr.resolved = ty_owned_symbol(ty, "new")
+      if is_mutex_ty(ty) {
+        // The value given to a Mutex is its own from now on (O687, D371;
+        // checker/guard.av).
+        check_mutex_new(expr, ty)
+      }
       return ty
     }
     shown = ty.show

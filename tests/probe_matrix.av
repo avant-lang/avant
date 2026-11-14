@@ -100,6 +100,11 @@ fn rules: Array(PRule) {
   // README "Channel and Mutex" (O541, Stage 29 W8Ca): inside `with` the
   // guarded value is never an argument, a stored value or a captured name.
   xs.push(rule("mutex-guard-escape", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  m = Mutex(PBox).new(PBox.new)\n  keep: Array(PBox) = []\n  m.with { |b|\n@\n  }\n  puts(keep.size)\n}\n", "", "keep.push(b)", "keep.push(PBox.new)", "Mutex.with: "))
+  // README "Channel and Mutex" (O687, D371, Stage 29 W8Cb): Mutex(T).new
+  // consumes the name it is given, and nothing from outside is stored
+  // into the guarded value.
+  xs.push(rule("mutex-new-consumed", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  b = PBox.new\n  m = Mutex(PBox).new(b)\n@\n}\n", "", "b.n += 1", "m.with { |x| x.n += 1 }", "was consumed by Mutex(PBox).new"))
+  xs.push(rule("mutex-with-inward", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n  pub child: PBox? = nil\n}\n\nfn main {\n  m = Mutex(PBox).new(PBox.new)\n  mine = PBox.new\n@\n  puts(mine.n)\n}\n", "", "m.with { |b| b.child = mine }", "m.with { |b| b.child = PBox.new }", "comes from outside it"))
   xs.push(rule("number-mix", "expr", "Int", "fn main {\n  pa: Int32 = 1\n  pn = 2\n@\n}\n", "", "pa + pn", "pn + pn", "binary operator expects matching types"))
   // README "Enums" and "Switch" (Stage 29 W5a1, D292, D293, D327, D358).
   esite = "enum Tok { a, b }\n\nenum PE: Error { bad }\n\nfn ef(n: Int): Int | PE {\n  if n > 0 {\n    return PE.bad\n  }\n  n\n}\n\nfn main {\n  t = Tok.from_i(probe_k()) ?? Tok.a\n@\n}\n"
