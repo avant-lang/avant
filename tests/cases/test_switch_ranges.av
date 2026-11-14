@@ -49,6 +49,16 @@ fn cases: Array(RCase) {
   xs.push(refused("width-suffix", "fn main {\n  x: UInt64 = 1u64\n  switch x {\n    case 5u64 { puts(1) }\n    else { }\n  }\n}\n", "a case label takes the type of the switch's value: write it without the suffix", "4:10"))
   xs.push(refused("width-float", "fn main {\n  switch 1.5 {\n    case 0 { puts(1) }\n    else { }\n  }\n}\n", "switch discriminant must be an integer (Int, Int32, UInt32, UInt64), Bool, String, an enum or a union, got Float64", "2:10"))
   xs.push(refused("width-duplicate-wrapped", "fn main {\n  x: UInt32 = 1\n  switch x {\n    case 4294967295 { puts(1) }\n    case 4294967295 { puts(2) }\n    else { }\n  }\n}\n", "duplicate case 4294967295", "5:5"))
+  // O236: `case true` and `case false`; a Bool switch without else names both.
+  xs.push(accepted("bool-forms", "class C {\n  pub a: Array(Int)\n  fn initialize(on: Bool) {\n    switch on {\n      case true { self.a = [1] }\n      case false { self.a = [1, 2] }\n    }\n  }\n}\nfn word(b: Bool): String {\n  switch b {\n    case true { \"yes\" }\n    case false { \"no\" }\n  }\n}\nfn sign(b: Bool): Int {\n  switch b {\n    case false { return -1 }\n    case true { return 1 }\n  }\n}\nfn main {\n  puts(word(argv().size > 0))\n  puts(word(argv().size > 9))\n  puts(sign(false))\n  puts(C.new(false).a.size)\n  switch argv().size == 1 {\n    case true { puts(\"one\") }\n    else { puts(\"not one\") }\n  }\n  x = switch 1 > 2 {\n    case false, true { 7 }\n  }\n  puts(x)\n}\n", "yes\nno\n-1\n2\none\n7\n"))
+  xs.push(refused("bool-one", "fn main {\n  switch argv().size > 0 {\n    case 1 { puts(1) }\n    else { }\n  }\n}\n", "a case label of a switch over Bool is true or false: write `case true`", "3:10"))
+  xs.push(refused("bool-zero", "fn main {\n  switch argv().size > 0 {\n    case 0 { puts(1) }\n    else { }\n  }\n}\n", "a case label of a switch over Bool is true or false: write `case false`", "3:10"))
+  xs.push(refused("bool-other-int", "fn main {\n  switch argv().size > 0 {\n    case 2 { puts(1) }\n    else { }\n  }\n}\n", "a case label of a switch over Bool is true or false", "3:10"))
+  xs.push(refused("bool-missing", "fn main {\n  switch argv().size > 0 {\n    case true { puts(1) }\n  }\n}\n", "switch over Bool does not cover false: name them or add else", "2:3"))
+  xs.push(refused("bool-missing-value", "fn f(b: Bool): Int {\n  switch b {\n    case false { 0 }\n  }\n}\nfn main { puts(f(true)) }\n", "switch over Bool does not cover true: name them or add else", "2:3"))
+  xs.push(refused("bool-else-beside-both", "fn main {\n  switch argv().size > 0 {\n    case true { puts(1) }\n    case false { puts(2) }\n    else { puts(3) }\n  }\n}\n", "both true and false are named; remove the else", "2:3"))
+  xs.push(refused("bool-label-on-int", "fn main {\n  switch argv().size {\n    case true { puts(1) }\n    else { }\n  }\n}\n", "true and false label a switch over Bool, not Int", "3:10"))
+  xs.push(refused("bool-duplicate", "fn main {\n  switch argv().size > 0 {\n    case true { puts(1) }\n    case true, false { puts(2) }\n  }\n}\n", "duplicate case true", "4:10"))
   xs
 }
 
@@ -92,6 +102,12 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   ll = log_text("${dir}/sr-ll-width.ll")
   c.expect(str_has(ll, "switch i32 "), "ll-width: one switch at the value's width")
   c.expect(str_has(ll, "i32 -1, label"), "ll-width: 4294967295 is the i32 -1")
+  bw = "${dir}/sr-ll-bool.av"
+  _ = file_write(bw, "fn f(b: Bool): Int {\n  switch b {\n    case true { 3 }\n    case false { 4 }\n  }\n}\nfn main {\n  puts(f(argv().size > 0))\n}\n")
+  c.eq_int(emit_ll(compiler, bw, "${dir}/sr-ll-bool.ll", "${dir}/sr-ll-bool.log"), 0, "ll-bool: emits")
+  bll = log_text("${dir}/sr-ll-bool.ll")
+  c.expect(!str_has(bll, "switch "), "ll-bool: no switch")
+  c.expect(str_has(bll, "br i1 "), "ll-bool: one branch on the value")
 }
 
 fn test_main(c: Checks) {

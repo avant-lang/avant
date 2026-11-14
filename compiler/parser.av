@@ -2266,6 +2266,15 @@ pub class Parser {
       _ = self.parse_interpolated_string
       return CaseLabel.new(lb_string(), iloc)
     }
+    if self.current.kind == tk_true() || self.current.kind == tk_false() {
+      // A Bool switch's `case true` (Stage 29 W5a3, O236).
+      btrue = self.current.kind == tk_true()
+      bl = CaseLabel.new(lb_bool(), self.bump.loc)
+      if btrue {
+        bl.int_val = 1
+      }
+      return bl
+    }
     if self.current.kind == tk_nil() {
       // A union switch's `case nil` (Stage 29 W5a2, O391).
       return CaseLabel.new(lb_nil(), self.bump.loc)

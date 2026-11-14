@@ -334,8 +334,8 @@ pub fn (lw: MirLower) lower_while(st: Stmt) {
   lw.lw_b.at(exit)
 }
 
-// `switch` (W5.3): the value (a Bool as i32), one MIR switch, each arm a
-// block; a value switch writes each arm's last expression into its
+// `switch` (W5.3): the value, one MIR switch (a Bool's: one branch), each
+// arm a block; a value switch writes each arm's last expression into its
 // result temporary, zeroed first (an arm without a value, or no match
 // without else, leaves the zero).
 pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
@@ -376,10 +376,9 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
       }
     }
     lw.at(e.loc)
-    if cty == mt_bool() {
-      tb = lw.lw_b.temp(mt_i32())
-      lw.lw_b.assign(lw.lw_b.pl(tb), lw.lw_b.rv_cast(cv, mt_i32()))
-      cv = lw.lw_b.copy_local(tb)
+    // A Bool switch (Stage 29 W5a3, O236) is one branch on the value.
+    on_bool = cty == mt_bool()
+    if on_bool {
       cty = mt_i32()
     }
     if cty != mt_i32() && cty != mt_i64() && cty != mt_u64() && cty != mt_u32() && cty != mt_u8() {
@@ -448,6 +447,17 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     lw.at(e.loc)
     if trap >= 0 {
       lw.enum_switch_on(cv, enum_ty, e, values, targets, arms, trap, pre)
+    } else if on_bool {
+      t_true = other
+      t_false = other
+      for bi in 0..values.size {
+        if values[bi] != 0 {
+          t_true = targets[bi]
+        } else {
+          t_false = targets[bi]
+        }
+      }
+      lw.lw_b.branch(cv, t_true, t_false)
     } else {
       lw.lw_b.switch_on(cv, values, targets, other)
     }

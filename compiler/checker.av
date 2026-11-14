@@ -1455,7 +1455,7 @@ pub class Checker {
           return block_leaves(e.else_body)
         }
         if c = e.cond, ct = c.ty {
-          return ct.is_enum || ct.is_union
+          return ct.is_enum || ct.is_union || ct.is_bool
         }
       }
     }
@@ -4057,14 +4057,15 @@ pub class Checker {
       return t_int()
     }
     // The discriminant's countable cases (Stage 29 W5a1, D292, D293):
-    // an enum's members, a union's members (W5a2, D293); W5a3 adds Bool.
-    // A switch over a countable type without else names every case.
+    // an enum's members, a union's members (W5a2, D293), Bool's true and
+    // false (W5a3, O236). A switch over a countable type without else
+    // names every case.
     countable = false
     disc = t_int()
     if cond = expr.cond {
       ct = check_expr(cond)
       disc = ct
-      if ct.is_enum || ct.is_union {
+      if ct.is_enum || ct.is_union || ct.is_bool {
         countable = true
       } else if !ct.is_integer && !ct.is_bool && !ct.is_string {
         fail(cond.loc, "switch discriminant must be an integer (Int, Int32, UInt32, UInt64), Bool, String, an enum or a union, got ${ct.show}")
@@ -4101,6 +4102,8 @@ pub class Checker {
             fail(label.loc, "duplicate case ${union_case_name(disc, lab)}")
           } else if label.kind == lb_member() {
             fail(label.loc, "duplicate case ${label.text}")
+          } else if label.kind == lb_bool() {
+            fail(label.loc, "duplicate case ${label.int_val != 0}")
           } else {
             fail(arm.loc, "duplicate case ${int_label_text(label)}")
           }
@@ -4115,7 +4118,11 @@ pub class Checker {
         fail(expr.loc, "switch over ${disc.show} does not cover ${join_names(missing)}: name them or add else")
       }
       if expr.has_else && missing.size == 0 {
-        fail(expr.loc, "every member of ${disc.show} is named; remove the else")
+        if disc.is_bool {
+          fail(expr.loc, "both true and false are named; remove the else")
+        } else {
+          fail(expr.loc, "every member of ${disc.show} is named; remove the else")
+        }
       }
     }
     // An arm that leaves (its last statement a return, break or
@@ -4222,6 +4229,26 @@ pub class Checker {
       }
       label.int_val = disc.enum_vals[idx]
       return true
+    }
+    if disc.is_bool {
+      // `case true` and `case false` (Stage 29 W5a3, O236).
+      if label.kind == lb_bool() {
+        return true
+      }
+      if label.kind == lb_int() && !label.neg && label.bits <= 1u64 {
+        word = "false"
+        if label.bits == 1u64 {
+          word = "true"
+        }
+        fail(label.loc, "a case label of a switch over Bool is true or false: write `case ${word}`")
+        return false
+      }
+      fail(label.loc, "a case label of a switch over Bool is true or false")
+      return false
+    }
+    if label.kind == lb_bool() {
+      fail(label.loc, "true and false label a switch over Bool, not ${disc.show}")
+      return false
     }
     if disc.is_string {
       if label.kind != lb_string() {
@@ -4380,9 +4407,17 @@ pub class Checker {
 
   // The countable cases of a discriminant type that the labels in
   // covered (by value) leave out, in declaration order (Stage 29 W5a1:
-  // an enum's members; W5a2 and W5a3 add union members and Bool).
+  // an enum's members; W5a2 union members, W5a3 Bool's true and false).
   pub fn switch_missing_cases(disc: Ty, covered: Hash(Int, Int)): Array(String) {
     missing: Array(String) = []
+    if disc.is_bool {
+      if !covered.has_key(1) {
+        missing.push("true")
+      }
+      if !covered.has_key(0) {
+        missing.push("false")
+      }
+    }
     if disc.is_union {
       for ui in 0..disc.members.size {
         if !covered.has_key(ui) {
