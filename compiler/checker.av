@@ -128,8 +128,9 @@ pub class Checker {
   pub default_owner: Ty? = nil
   // What a postfix `?` returns from, for its messages.
   pub try_body: String = "the function"
-  pub place_name: String = ""
-  pub place_depth: Int = 0
+  // The position of a `with` call used as a statement (check_stmt): its
+  // block's value is dropped, so the block ends however it likes.
+  pub with_drop: String = ""
   // Inside the block of `Array(T).new(n) { |i| ... }` (how deep): a
   // `break` or `continue` there gets its own message.
   pub in_build: Int = 0
@@ -224,8 +225,6 @@ pub class Checker {
     self.ready_adopt = false
     self.in_adopt = false
     self.in_task = 0
-    self.place_name = ""
-    self.place_depth = 0
     self.impls = []
     self.sig_params = []
     self.sig_ret = ty_void()
@@ -574,10 +573,6 @@ pub class Checker {
     }
     k = stmt.kind
     if k == st_return() {
-      if self.place_depth > 0 {
-        fail(stmt.loc, "return inside Mutex.with")
-        return
-      }
       if self.lambda_infer {
         if expr = stmt.expr {
           self.inferred_ret = check_expr(expr)
@@ -766,9 +761,7 @@ pub class Checker {
     }
     if k == st_break() {
       if self.loop_depth == 0 {
-        if self.place_depth > 0 {
-          fail(stmt.loc, "break inside Mutex.with")
-        } else if self.in_build > 0 {
+        if self.in_build > 0 {
           fail(stmt.loc, "break inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value")
         } else {
           fail(stmt.loc, "break is only valid inside a loop")
@@ -781,9 +774,7 @@ pub class Checker {
     }
     if k == st_continue() {
       if self.loop_depth == 0 {
-        if self.place_depth > 0 {
-          fail(stmt.loc, "continue inside Mutex.with")
-        } else if self.in_build > 0 {
+        if self.in_build > 0 {
           fail(stmt.loc, "continue inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value")
         } else {
           fail(stmt.loc, "continue is only valid inside a loop")
@@ -814,6 +805,11 @@ pub class Checker {
           }
         }
         got = t_int()
+        if expr.kind == ex_call() && expr.callee == "with" && (!at_tail || expected.is_void) {
+          // A `with` whose value nobody uses (O263): its block ends
+          // without a value (check_mutex_with).
+          self.with_drop = expr.loc.show
+        }
         if at_tail && !expected.is_void && is_int_literal(expr) {
           // A literal tail adopts the result type, as `return 0` does
           // (Stage 29 W-INT1: an Int32 function may end in `0`).
@@ -1346,10 +1342,6 @@ pub class Checker {
   // silently became `0` in an `Int` function; before W4a, the failure
   // was whichever member the result type happened to hold).
   pub fn split_try_success(got: Ty, loc: Location): Ty {
-    if self.place_depth > 0 {
-      fail(loc, "postfix ? inside Mutex.with cannot return; handle the failure with if-assign or ??")
-      return t_int()
-    }
     if self.try_in.size > 0 {
       fail(loc, "postfix ? inside ${self.try_in} cannot return the failure; handle it with if-assign or ??")
       return t_int()
@@ -4068,11 +4060,6 @@ pub class Checker {
     while i < block.body.size {
       stmt = block.body[i]
       if i == block.body.size - 1 {
-        if stmt.kind == st_return() && self.place_depth > 0 {
-          fail(stmt.loc, "return inside Mutex.with")
-          self.pop_scope
-          return t_int()
-        }
         if stmt.kind == st_expr() {
           if e = stmt.expr {
             ty = check_expr_flag(e, has_want, want)
@@ -4098,6 +4085,118 @@ pub class Checker {
 
   // std.sync's Mutex (Stage 29 W8Ca, O211): a class of another module
   // with that name is an ordinary class, and `with` an ordinary method.
+  // A `with` block's statements, checked as the code around it would
+  // check them (return against the function's result, break and
+  // continue against its loops); the value is the last expression's when
+  // want_value, else Void.
+  pub fn check_with_body(b: Block, want_value: Bool): Ty {
+    n = b.body.size
+    i = 0
+    while i < n {
+      st = b.body[i]
+      if i == n - 1 && want_value && st.kind == st_expr() {
+        if e = st.expr {
+          return check_expr(e)
+        }
+      }
+      if st.kind == st_while() && i > 0 {
+        annotate_vstep(b.body[i - 1], st)
+      }
+      self.clear_poison
+      scan_pending_stmt(st)
+      check_stmt(st, self.return_type, false)
+      if self.has_err {
+        return t_void()
+      }
+      register_spawn_pending(st)
+      fact_after_stmt(st)
+      i += 1
+    }
+    t_void()
+  }
+
+  // Whether a `return` or a postfix `?` appears in body (outside lambdas,
+  // which return from themselves).
+  pub fn leaves_by_return(body: Array(Stmt)): Bool {
+    for st in body {
+      if st.kind == st_return() {
+        return true
+      }
+      if leaves_by_return(st.pre) || leaves_by_return(st.then_body) || leaves_by_return(st.else_body) || leaves_by_return(st.body) {
+        return true
+      }
+      if e = st.expr, expr_has_try(e) {
+        return true
+      }
+      if e2 = st.value, expr_has_try(e2) {
+        return true
+      }
+      if e3 = st.cond, expr_has_try(e3) {
+        return true
+      }
+    }
+    false
+  }
+
+  pub fn expr_has_try(e: Expr): Bool {
+    if e.kind == ex_try() || e.kind == ex_lambda() {
+      return e.kind == ex_try()
+    }
+    if e.kind == ex_switch() && e.op == tk_return() {
+      return leaves_by_return(e.else_body)
+    }
+    if x1 = e.left, expr_has_try(x1) {
+      return true
+    }
+    if x2 = e.right, expr_has_try(x2) {
+      return true
+    }
+    if x3 = e.object, expr_has_try(x3) {
+      return true
+    }
+    if x4 = e.receiver, expr_has_try(x4) {
+      return true
+    }
+    if x5 = e.inner, expr_has_try(x5) {
+      return true
+    }
+    if x6 = e.cond, expr_has_try(x6) {
+      return true
+    }
+    for el in e.elems {
+      if expr_has_try(el) {
+        return true
+      }
+    }
+    for fe in e.field_exprs {
+      if expr_has_try(fe) {
+        return true
+      }
+    }
+    for part in e.parts {
+      if pe = part.expr, expr_has_try(pe) {
+        return true
+      }
+    }
+    for a in e.args {
+      if expr_has_try(a) {
+        return true
+      }
+    }
+    for c in e.cases {
+      if leaves_by_return(c.body) {
+        return true
+      }
+    }
+    if leaves_by_return(e.else_body) {
+      return true
+    }
+    if b = e.block {
+      return leaves_by_return(b.body)
+    }
+    false
+  }
+
   pub fn is_mutex_ty(ty: Ty): Bool {
     is_sync_ty(ty, "Mutex")
   }
@@ -4139,30 +4238,35 @@ pub class Checker {
         fail(expr.loc, "Mutex needs a gate field")
         return t_void()
       }
-      saved_name = self.place_name
-      saved_depth = self.place_depth
+      dropped = self.with_drop == expr.loc.show
+      self.with_drop = ""
+      if self.try_in.size > 0 && self.try_in != "a lambda whose result type is inferred" {
+        // `return` and `?` leave a `with` as they leave the code around
+        // it, which here cannot return (a spawn or parallel block, a
+        // field default): refused there as before (O263).
+        if leaves_by_return(b.body) {
+          fail(b.loc, "return or ? inside Mutex.with inside ${self.try_in}: ${self.try_in} cannot return")
+          return t_void()
+        }
+      }
       self.push_scope
       bind(b.params[0], t)
-      self.place_name = b.params[0]
-      self.place_depth += 1
-      // As `return`, a `break` or `continue` cannot leave the block: the
-      // lock is released at its end only (W10b: both back ends hung).
-      saved_loops = self.loop_depth
-      self.loop_depth = 0
-      result = check_block_value(b)
-      self.loop_depth = saved_loops
-      self.place_name = saved_name
-      self.place_depth = saved_depth
+      // `return`, `break`, `continue` and `?` leave the block as they
+      // leave any block, and the lowering releases the lock on every way
+      // out (O263, O313; mir/lower_task.av lower_mutex_with), as a
+      // `gc.hold` ends. Used as a statement, the block ends without a
+      // value; used as a value, its last expression is the value.
+      result = check_with_body(b, !dropped)
       self.pop_scope
       // The block's value leaves the lock (O231): it may not be, or hold,
       // a reference to mutable state (two tasks raced on a class handed
       // out this way and lost updates).
-      if !self.has_err && !leaves_mutex_with(result) {
+      if !self.has_err && !result.is_void && !leaves_mutex_with(result) {
         fail(b.body[b.body.size - 1].loc, "Mutex.with's value cannot be ${result.show}: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)")
       }
       // Nor may a statement hand the guarded value out (O541, D355;
       // checker/guard.av).
-      guard_with_block(b.params[0], b, true)
+      guard_with_block(b.params[0], b, !dropped)
       return result
     }
     fail(expr.loc, "Mutex.with needs a block")

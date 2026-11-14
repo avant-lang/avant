@@ -1,9 +1,9 @@
-// `break` inside a `Mutex.with` block inside a `while` (Stage 28 W10b):
-// the checker rejects it, as it rejects `return` there, since the lock is
-// released only at the block's end (until W10b both back ends accepted it
-// and the program hung on the next `with`). tests/cases/test_frontend.av
-// checks the diagnostic and its location on both back ends. No `fn main`,
-// so the differential leaves it out.
+// `break` inside a `Mutex.with` block inside a `while`. Stage 28 W10b
+// refused it: the lock was released only at the block's end, and the
+// program hung on the next `with`. Since Stage 29 W8Ca (O263, O313) the
+// lock is released on every way out of the block, so `break` leaves the
+// block and the loop, and the next `with` finds the lock free.
+// tests/cases/test_frontend.av runs it under the collector's modes.
 
 import std.sync
 
@@ -16,9 +16,13 @@ fn run: Int {
       if i == 1 {
         break
       }
-      0
     }
     i += 1
   }
   m.with { |x| x }
+}
+
+fn main {
+  puts(run())
+  puts(run())
 }

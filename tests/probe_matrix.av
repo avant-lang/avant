@@ -64,7 +64,7 @@ fn prelude_decls: String {
 }
 
 // The rules the README states that one program pair can show. Left out
-// for now: `Mutex.with`'s plain value and the captures of `spawn` and
+// for now: `Mutex.with`'s plain value (its statements' rule is in) and the captures of `spawn` and
 // `.parallel` (their programs need a task runtime and say more than one
 // thing at once; tests/cases/test_rules.av and test_threads_llvm.av hold
 // their cases), `if` on a non-Bool, the dangling-line rule (it is the
@@ -97,6 +97,9 @@ fn rules: Array(PRule) {
   // README "Visibility": a field without pub is private to its module.
   xs.push(rule("private-field", "expr", "Int", "import probe_mod\n\nfn main {\n  pb = PBox.new\n@\n}\n", "", "pb.secret", "pb.open", "is private to module probe_mod"))
   // README "Numbers": values of different number types do not mix.
+  // README "Channel and Mutex" (O541, Stage 29 W8Ca): inside `with` the
+  // guarded value is never an argument, a stored value or a captured name.
+  xs.push(rule("mutex-guard-escape", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  m = Mutex(PBox).new(PBox.new)\n  keep: Array(PBox) = []\n  m.with { |b|\n@\n  }\n  puts(keep.size)\n}\n", "", "keep.push(b)", "keep.push(PBox.new)", "Mutex.with: "))
   xs.push(rule("number-mix", "expr", "Int", "fn main {\n  pa: Int32 = 1\n  pn = 2\n@\n}\n", "", "pa + pn", "pn + pn", "binary operator expects matching types"))
   // README "Enums" and "Switch" (Stage 29 W5a1, D292, D293, D327, D358).
   esite = "enum Tok { a, b }\n\nenum PE: Error { bad }\n\nfn ef(n: Int): Int | PE {\n  if n > 0 {\n    return PE.bad\n  }\n  n\n}\n\nfn main {\n  t = Tok.from_i(probe_k()) ?? Tok.a\n@\n}\n"
