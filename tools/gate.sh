@@ -77,6 +77,21 @@
 #                   gains or loses is counted against every pass of the
 #                   group (new-L.tmp, gone-L.tmp), as is the repository's
 #                   snapshot around each pass.
+#   GATE_PRIVATE_TMP 1 (default): the whole gate runs in a private /tmp,
+#                   a tmpfs mounted in a mount namespace of its own
+#                   (unshare --user --mount; capabilities dropped after
+#                   the mount, TMPDIR unset), so the no-litter proof covers
+#                   everything the gate writes to /tmp and nothing another
+#                   lane does (the Valk stage, VALK-TM3, O693: with lanes
+#                   in parallel under the shared lock, another lane's own
+#                   /tmp entry, gone during a GC pass, failed the gate).
+#                   The checkout, GATE_OUT and the seed, when under /tmp,
+#                   are bound into the private one at the same paths. A
+#                   tmpfs, as the real /tmp is on this machine, so the
+#                   suites' files stay in memory as before and nothing is
+#                   left to remove. A machine that cannot make the
+#                   namespace fails the gate unless 0 is given: then the
+#                   real /tmp is snapshotted, as before.
 #   GATE_EMIT_BOUND seconds (default 20): the summary reports the C' (c-llvm)
 #                   __emit-ll time of compiler/main.av within or OVER it;
 #                   report only, never a failure (W11d).
@@ -108,6 +123,43 @@ seed=$(LETTERS_SEED=${GATE_SEED:-} sh tools/letters.sh --print-seed) || exit 2
 [ -x "$seed/avant" ] || { echo "gate: no avant in $seed" >&2; exit 2; }
 out=$(realpath -m "${GATE_OUT:-results/gate-$(date +%Y%m%d-%H%M%S)}")
 mkdir -p "$out" || exit 2
+
+# The private /tmp (GATE_PRIVATE_TMP, O693): the gate runs itself again
+# inside the namespace. GATE_IN_PRIVATE_TMP marks that run and is
+# removed at once, so nothing the gate starts inherits it (a gate a test
+# runs makes its own).
+case "${GATE_PRIVATE_TMP:-1}" in
+  0) private_tmp="off (GATE_PRIVATE_TMP=0): the real /tmp is snapshotted" ;;
+  1)
+    if [ "${GATE_IN_PRIVATE_TMP:-}" = 1 ]; then
+      private_tmp="a tmpfs in a mount namespace of its own (O693)"
+    else
+      unshare --user --map-current-user --mount --keep-caps true < /dev/null > "$out/private-tmp.log" 2>&1 || {
+        echo "gate: cannot make a private /tmp ($(tail -1 "$out/private-tmp.log")); GATE_PRIVATE_TMP=0 runs against the real /tmp" | tee "$out/summary.txt"
+        echo "GATE FAIL: no private /tmp" | tee -a "$out/summary.txt"
+        exit 1
+      }
+      # Fd 9 keeps the real /tmp reachable (/proc/self/fd/9) after the
+      # tmpfs covers it, to bind the checkout and GATE_OUT back when they
+      # lie under it.
+      # shellcheck disable=SC2016 # expanded by the inner shell
+      exec unshare --user --map-current-user --mount --keep-caps sh -c '
+        root=$1 out=$2 seed=$3; shift 3
+        exec 9< /tmp
+        mount -t tmpfs tmpfs /tmp || exit 2
+        for p in "$root" "$out" "$seed"; do
+          case "$p" in
+            /tmp/*) mkdir -p "$p" && mount --no-canonicalize --rbind "/proc/self/fd/9${p#/tmp}" "$p" || exit 2 ;;
+          esac
+        done
+        exec 9<&-
+        exec setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all env -u TMPDIR GATE_IN_PRIVATE_TMP=1 GATE_OUT="$out" GATE_SEED="$seed" sh "$root/tools/gate.sh" "$@"
+      ' gate "$root" "$out" "$seed" "$@" < /dev/null
+    fi
+    ;;
+  *) echo "gate: GATE_PRIVATE_TMP must be 0 or 1" >&2; exit 2 ;;
+esac
+unset GATE_IN_PRIVATE_TMP
 REUSE=${GATE_REUSE_C:-}
 case "$REUSE" in ''|1|proof) ;; *) echo "gate: GATE_REUSE_C must be unset, 1, or proof" >&2; exit 2 ;; esac
 SUITE_ENV=${GATE_SUITE_ENV:-}
@@ -137,6 +189,7 @@ snap() {
 }
 
 echo "gate: root=$root seed=$seed out=$out reuse=${REUSE:-no} suite-env=${SUITE_ENV:-none} gc-env=${GC_ENV:-none}" | tee "$out/summary.txt"
+echo "gate: private /tmp: $private_tmp" | tee -a "$out/summary.txt"
 
 # The runtime-C rooting lint (Stage 28 W16a, gc-design.md section 4.2
 # check 3; runtime/avant_gc.h's RC1-RC4).

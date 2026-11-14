@@ -69,6 +69,12 @@ fn test_tools(c: Checks) {
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/wave-final-stop.sh", wf], "${wf}.log"))
   whats.push("O669 wave-final.sh")
   names.push(["run-ends", "step-status", "term-leaves-nothing", "term-status", "term-within-kill-after", "term-summary", "expire-leaves-nothing", "expire-status", "expire-summary"])
+  // O693: the gate runs in a private /tmp: another lane's entry gone from
+  // outside leaves it green, litter from inside makes it red.
+  gt = "${scratch_dir()}/gate-private-tmp"
+  jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/gate-private-tmp.sh", gt], "${gt}.log"))
+  whats.push("O693 gate.sh")
+  names.push(["gone-pass-started", "gone-green", "gone-summary", "gone-private-line", "litter-red", "litter-named", "litter-entry", "litter-stays-private"])
   // The scripts at once: neither reads a clock the other could disturb
   // beyond wave-final-stop.sh's 10 s bound on a stop.
   run_jobs(jobs)
