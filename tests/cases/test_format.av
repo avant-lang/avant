@@ -21,6 +21,24 @@ fn read_or_empty(path: String): String {
   ""
 }
 
+// The corpus pass (`format --write` or `--check` on the copied corpus).
+// Under an outer AVANT_GC_STRESS (harness.gc_stress_outer) the formatter
+// runs without it: with it this file took 71 s alone, 6 s without (Stage
+// 29 W5d1, O602's line of about 60 s); the formatter's own allocation
+// under the stress mode is still run by the rest of this file.
+fn format_corpus(compiler: String, dir: String, flag: String, log: String): Int {
+  args: Array(String) = []
+  if gc_stress_outer() {
+    args.push("-u")
+    args.push("AVANT_GC_STRESS")
+  }
+  args.push(compiler)
+  args.push("format")
+  args.push(dir)
+  args.push(flag)
+  process_run_out("/usr/bin/env", args, log) ?? -1
+}
+
 fn test_format(c: Checks) {
   c.suite("tests/cases/test_format.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -360,6 +378,58 @@ fn test_format(c: Checks) {
     nd_log = "${scratch()}/format-${stamp}-notav.log"
     nd_code = run_format(compiler, "format", "${many}/missing.txt", nd_log, check_flags)
     c.eq_int(nd_code, 1, "a path that is neither .av nor a directory exits 1")
+
+    // Two tokens printed side by side stay two tokens (D49; Stage 29
+    // W5d1, O464): before, `. ..` became `...`, `? ?` became `??`,
+    // `! ==` became `!==` (`!=` and `=`) and `- ==` became `-==`.
+    join_src = "${scratch()}/format-${stamp}-join.av"
+    c.wrote(file_write(join_src, "fn main {\n  a = b . ..c\n  d = e ?? ? ?\n  f = ! ==\n  g = - ==\n  h = 5. ..k\n  m = n ?. ..<\n}\n"), "write joining tokens")
+    join_log = "${scratch()}/format-${stamp}-join.log"
+    join_code = run_format(compiler, "format", join_src, join_log, empty_flags)
+    c.eq_int(join_code, 0, "joining tokens: format exits 0")
+    c.eq_str(read_or_empty(join_log), "fn main {\n  a = b. ..c\n  d = e ??? ?\n  f = ! ==\n  g = - ==\n  h = 5. ..k\n  m = n?. ..<\n}\n", "tokens that would join keep a space between them")
+
+    // The self-check (Stage 29 W5d1, O464, D280): the canonical text is
+    // lexed by the compiler's lexer and must give the source's tokens
+    // and line breaks; AVANT_FORMAT_FAULT (the suite's only) breaks the
+    // reprint on purpose, and the file is left as it is.
+    fault_body = "fn main {\n  x = 1\n  puts(x)\n}\n"
+    faults = ["line", "space"]
+    fault_needles = ["a line break would become `x`", "`fn` would become `fnmain`"]
+    for fi in 0..faults.size {
+      fault = faults[fi]
+      fault_src = "${scratch()}/format-${stamp}-fault-${fault}.av"
+      c.wrote(file_write(fault_src, fault_body), "write fault ${fault}")
+      fault_log = "${scratch()}/format-${stamp}-fault-${fault}.log"
+      fault_args = ["AVANT_FORMAT_FAULT=${fault}", compiler, "format", fault_src, "--write"]
+      fault_code = process_run_out("/usr/bin/env", fault_args, fault_log) ?? -1
+      c.eq_int(fault_code, 1, "self-check (${fault}): format exits 1")
+      fault_out = read_or_empty(fault_log)
+      c.expect(str_has(fault_out, "format would change this program"), "self-check (${fault}): the error says so")
+      c.expect(str_has(fault_out, fault_needles[fi]), "self-check (${fault}): the error names the token")
+      c.eq_str(read_or_empty(fault_src), fault_body, "self-check (${fault}): the file is left as it is")
+    }
+
+    // The corpus formatted twice (Stage 29 W5d1, O464; Valk's
+    // fmt/corpus.sh): every source of the repository is formatted, each
+    // through the self-check, and the result formatted again changes
+    // nothing (the one non-canonical source, surface.av, included).
+    corpus = "${scratch()}/format-${stamp}-corpus"
+    mkdir_p(corpus)
+    tar_args = ["-c", "cd '${root}' && find compiler lib examples bench tests -name '*.av' | tar cf - -T - | tar xf - -C '${corpus}'"]
+    tar_code = process_run_out("/bin/sh", tar_args, "${corpus}.tar.log") ?? -1
+    c.eq_int(tar_code, 0, "copy the corpus")
+    cw_log = "${scratch()}/format-${stamp}-corpus-write.log"
+    cw_code = format_corpus(compiler, corpus, "--write", cw_log)
+    c.eq_int(cw_code, 0, "the corpus: format --write exits 0 (every self-check holds)")
+    c.eq_str(read_or_empty(cw_log), "", "the corpus: format --write reports nothing")
+    cc_log = "${scratch()}/format-${stamp}-corpus-check.log"
+    cc_code = format_corpus(compiler, corpus, "--check", cc_log)
+    c.eq_int(cc_code, 0, "the corpus formatted twice: --check exits 0")
+    c.eq_str(read_or_empty(cc_log), "canonical\n", "the corpus formatted twice: the second pass changes nothing")
+    c.eq_str(read_or_empty("${corpus}/tests/fixtures/format/surface.av"), read_or_empty(want_path), "the corpus: surface.av formats to its golden")
+    rm_rf(corpus)
+    rm_f("${corpus}.tar.log")
 
     flag_log = "${scratch()}/format-${stamp}-flag.log"
     flag_flags: Array(String) = []
