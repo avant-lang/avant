@@ -67,11 +67,14 @@ reap() { # STUBDIR
   for p in $(in_fake); do [ "$p" != $$ ] && kill -KILL "$p" 2>/dev/null; done
 }
 # Start wave-final.sh under an outer timeout of LIMIT seconds; $tp is that
-# timeout's PID.
+# timeout's PID. In an emptied environment: run inside a real final
+# evidence (the gate's suite under wave-final.sh), the caller's WAVE_LA,
+# WAVE_LA_SIDE and GATE_* would otherwise reach the fake run, whose
+# LangArena step would then run in the real checkout.
 start() { # NAME LIMIT [VAR=VALUE...]
   n=$1; l=$2; shift 2
   mkdir -p "$w/$n.stub"
-  env "$@" WF_STUB="$w/$n.stub" timeout -k 10 "$l" sh "$fake/tools/wave-final.sh" "$w/$n.out" < /dev/null > "$w/$n.log" 2>&1 &
+  env -i PATH="$PATH" HOME="$HOME" "$@" WF_STUB="$w/$n.stub" timeout -k 10 "$l" sh "$fake/tools/wave-final.sh" "$w/$n.out" < /dev/null > "$w/$n.log" 2>&1 &
   tp=$!
 }
 started() { # NAME: wait up to 60 s for the stub step to start
