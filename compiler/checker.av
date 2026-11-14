@@ -94,6 +94,9 @@ pub class Checker {
   // last error is another: the cascade rule lets the reader's own message
   // replace it.
   weak_at: Int = 0
+  // Set while a constructor's arguments are matched against initialize:
+  // its messages name the call as written, T.new (Stage 29 W5c2, O364).
+  pub in_new: Bool = false
   pub return_type: Ty
   pub loop_depth: Int = 0
   pub self_ty: Ty? = nil
@@ -3303,13 +3306,16 @@ pub class Checker {
     }
     ty = literal_int_ty(lit, has_want, want)
     if ty.is_unsigned {
-      if lit.int_suffix.size == 0 {
-        ty = t_int()
+      // An unsigned type has no negative value: the literal does not fit,
+      // whether the type is its suffix's or the context's (Stage 29 W5c2,
+      // O364; `a: UInt32 = -1` said `cannot assign Int to UInt32`).
+      if lit.value_str.size > 0 {
+        fail(expr.loc, "${lit.value_str} does not fit in ${ty.show}")
       } else {
         fail(expr.loc, "a negative literal does not fit in ${ty.show}")
-        lit.ty = ty
-        return ty
       }
+      lit.ty = ty
+      return ty
     }
     if lit.int_bits > literal_int_max(ty) + 1u64 {
       if lit.value_str.size > 0 {
@@ -4349,7 +4355,10 @@ pub class Checker {
           }
         }
         none: Ty? = nil
-        if sig = match_method(ty.name, "initialize", arg_tys, none, expr.loc, shown, ty.mod_name, int_literal_flags(expr.args)) {
+        self.in_new = true
+        found = match_method(ty.name, "initialize", arg_tys, none, expr.loc, shown, ty.mod_name, int_literal_flags(expr.args))
+        self.in_new = false
+        if sig = found {
           fill_defaults(expr, sig.node)
           i = 0
           while i < expr.args.size {

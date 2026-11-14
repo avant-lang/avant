@@ -96,6 +96,18 @@ fn cases: Array(TCase) {
   xs.push(only("casc-array-element", "fn main {\n  n = 5\n  xs: Array(Int32) = [1, n]\n  puts(xs.size)\n}\n", "array element is Int, expected Int32", "3:26"))
   xs.push(only("casc-method-arg", "class C {\n  fn go(n: Int): Int {\n    n\n  }\n}\n\nfn main {\n  c = C.new\n  puts(c.go(nosuch))\n}\n", "unknown name nosuch", "9:13"))
   xs.push(only("casc-lambda-arg", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(1) { |a, b| a + b })\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument", "6:17"))
+  // O364: a constructor's integer argument names the call as written; a negative literal where an unsigned type is wanted does not fit.
+  xs.push(only("ctor-int-mix", "class Nd {\n  a: Int32 = 0\n\n  fn initialize(a: Int32) {\n    self.a = a\n  }\n}\n\nfn main {\n  n = 5\n  d = Nd.new(n)\n  puts(d.a)\n}\n", "argument 1 of Nd.new is Int, expected Int32: Nd.new(a: Int32)", "11:9"))
+  xs.push(only("ctor-count", "class Nd {\n  a: Int32 = 0\n\n  fn initialize(a: Int32) {\n    self.a = a\n  }\n}\n\nfn main {\n  d = Nd.new(1, 2)\n  puts(d.a)\n}\n", "Nd.new takes 1 argument, given 2: Nd.new(a: Int32)", "10:9"))
+  xs.push(only("ctor-generic", "class Box(T) {\n  a: Int32 = 0\n\n  fn initialize(a: Int32, v: T) {\n    self.a = a\n  }\n}\n\nfn main {\n  n = 5\n  d = Box(Int).new(n, 1)\n  puts(d.a)\n}\n", "argument 1 of Box(Int).new is Int, expected Int32: Box(Int).new(a: Int32, v: Int)", "11:15"))
+  xs.push(only("ctor-direct-initialize", "class Nd {\n  a: Int32 = 0\n\n  fn initialize(a: Int32) {\n    self.a = a\n  }\n}\n\nfn main {\n  d = Nd.new(1)\n  n = 5\n  d.initialize(n)\n  puts(d.a)\n}\n", "argument 1 of Nd.initialize is Int, expected Int32: Nd.initialize(a: Int32)", "12:4"))
+  xs.push(only("unsigned-negative-declared", "fn main {\n  a: UInt32 = -1\n  puts(a)\n}\n", "a negative literal does not fit in UInt32", "2:15"))
+  xs.push(only("unsigned-negative-arg", "fn f(a: UInt32): UInt32 {\n  a\n}\n\nfn main {\n  puts(f(-1))\n}\n", "a negative literal does not fit in UInt32", "6:10"))
+  xs.push(only("unsigned-negative-operand", "fn main {\n  u: UInt64 = 5u64\n  puts(u + -1)\n}\n", "a negative literal does not fit in UInt64", "3:12"))
+  xs.push(only("unsigned-negative-element", "fn main {\n  xs: Array(UInt32) = [1, -2]\n  puts(xs.size)\n}\n", "a negative literal does not fit in UInt32", "2:27"))
+  xs.push(only("unsigned-negative-const", "const neg = -1\n\nfn main {\n  a: UInt32 = neg\n  puts(a)\n}\n", "the constant neg = -1 does not fit in UInt32", "4:15"))
+  xs.push(only("unsigned-negative-suffix", "fn main {\n  a = -1u64\n  puts(a)\n}\n", "a negative literal does not fit in UInt64", "2:7"))
+  xs.push(accepted("unsigned-negative-overload", "fn f(a: UInt32): Int {\n  1\n}\n\nfn f(a: Int): Int {\n  2\n}\n\nfn main {\n  puts(f(-1))\n  puts(f(1))\n}\n", "2\n2\n"))
   xs
 }
 
