@@ -3,7 +3,10 @@
 # New code, not a modification of upstream/run-gc.sh. README.md beside it
 # has the method and the notes; this header is the short form.
 #
-#   run.sh build            build every program into $BUILD
+#   run.sh build [ROW...]   build every program into $BUILD; with rows, only
+#                           what those rows use (O618), binaries.sha256
+#                           updated for them; avant-compiler.txt names the
+#                           Avant compiler of the directory's Avant binaries
 #   run.sh check            run every row once, untimed; verification only
 #   run.sh time [ROUNDS]    one unmeasured warm-up, then ROUNDS (default 7)
 #                           fresh processes per row, rows in rotating order
@@ -132,45 +135,139 @@ build_csharp() { # PROJECT OUTDIR TAG
     -p:RestoreIgnoreFailedSources=true -p:NuGetAudit=false </dev/null >"$BUILD/$3-build.log" 2>&1 || die "C# build failed: see $BUILD/$3-build.log"
 }
 
+emit() { printf '%s\n' "$*" >&3; }
+
+# build_row ROW: builds every binary ROW uses in any set (the headline,
+# variants and iso rows of one id share their build: `avant` is gc-avant
+# and gc-avant-iso). Writes the built paths, relative to $BUILD, to file
+# descriptor 3; the build tools' own output goes to standard error.
+build_row() {
+  local v=$HERE/variants u=$HERE/upstream
+  case "$1" in
+    # Avant: --release (the compiler's default level, x86-64-v2), and
+    # --release --cpu=v3; one --cpu=baseline build of the headline program.
+    avant)
+      build_avant "$HERE/main.av" "$BUILD/gc-avant" --release
+      build_avant "$v/iso/main.av" "$BUILD/gc-avant-iso" --release
+      emit gc-avant gc-avant-iso ;;
+    avant-v3)
+      build_avant "$HERE/main.av" "$BUILD/gc-avant-v3" --release --cpu=v3
+      build_avant "$v/iso/main.av" "$BUILD/gc-avant-iso-v3" --release --cpu=v3
+      emit gc-avant-v3 gc-avant-iso-v3 ;;
+    avant-baseline) build_avant "$HERE/main.av" "$BUILD/gc-avant-baseline" --release --cpu=baseline; emit gc-avant-baseline ;;
+    avant-young) build_avant "$v/young/main.av" "$BUILD/gc-avant-young" --release; emit gc-avant-young ;;
+    avant-young-v3) build_avant "$v/young/main.av" "$BUILD/gc-avant-young-v3" --release --cpu=v3; emit gc-avant-young-v3 ;;
+    avant-hints) build_avant "$v/hints/main.av" "$BUILD/gc-avant-hints" --release; emit gc-avant-hints ;;
+    avant-hints-v3) build_avant "$v/hints/main.av" "$BUILD/gc-avant-hints-v3" --release --cpu=v3; emit gc-avant-hints-v3 ;;
+    # Valk: upstream's flags (run-gc.sh: build --release), and --no-regions.
+    valk)
+      "$VALK" build "$u/main.valk" --release -o "$BUILD/gc-valk" </dev/null >/dev/null || die "valk build failed"
+      "$VALK" build "$v/iso/main.valk" --release -o "$BUILD/gc-valk-iso" </dev/null >/dev/null || die "valk iso build failed"
+      emit gc-valk gc-valk-iso ;;
+    valk-noregions)
+      "$VALK" build "$u/main.valk" --release --no-regions -o "$BUILD/gc-valk-noregions" </dev/null >/dev/null || die "valk --no-regions build failed"
+      emit gc-valk-noregions ;;
+    # Go: upstream's command (go build).
+    go | go-gogc-off)
+      go build -o "$BUILD/gc-go" "$u/main.go" </dev/null || die "go build failed"
+      if [ "$1" = go ]; then
+        go build -o "$BUILD/gc-go-iso" "$v/iso/main.go" </dev/null || die "go build failed"
+        emit gc-go gc-go-iso
+      else
+        emit gc-go
+      fi ;;
+    go-plain-sink) go build -o "$BUILD/gc-go-plain-sink" "$v/go-plain-sink/main.go" </dev/null || die "go build failed"; emit gc-go-plain-sink ;;
+    go-free-outside) go build -o "$BUILD/gc-go-free-outside" "$v/go-free-outside/main.go" </dev/null || die "go build failed"; emit gc-go-free-outside ;;
+    # D: upstream's flags for LDC.
+    d)
+      ldc2 -O3 -release -boundscheck=off -of="$BUILD/gc-d" "$u/main.d" </dev/null || die "ldc2 build failed"
+      ldc2 -O3 -release -boundscheck=off -of="$BUILD/gc-d-iso" "$v/iso/main.d" </dev/null || die "ldc2 build failed"
+      emit gc-d gc-d-iso ;;
+    d-minimize-outside) ldc2 -O3 -release -boundscheck=off -of="$BUILD/gc-d-minimize-outside" "$v/d-minimize-outside/main.d" </dev/null || die "ldc2 build failed"; emit gc-d-minimize-outside ;;
+    # C#: upstream's publish command.
+    csharp | csharp-notiered)
+      build_csharp "$u/gc-csharp.csproj" "$BUILD/csharp" csharp
+      if [ "$1" = csharp ]; then
+        build_csharp "$v/iso/gc-csharp.csproj" "$BUILD/csharp-iso" csharp-iso
+        emit csharp/gc-csharp.dll csharp-iso/gc-csharp.dll
+      else
+        emit csharp/gc-csharp.dll
+      fi ;;
+    # Crystal and Java: the new ports.
+    crystal)
+      CRYSTAL_CACHE_DIR="$BUILD/crystal-cache" crystal build --release -o "$BUILD/gc-cr" "$HERE/main.cr" </dev/null || die "crystal build failed"
+      CRYSTAL_CACHE_DIR="$BUILD/crystal-cache" crystal build --release -o "$BUILD/gc-cr-iso" "$v/iso/main.cr" </dev/null || die "crystal build failed"
+      emit gc-cr gc-cr-iso ;;
+    java | java-parallel)
+      mkdir -p "$BUILD/java"
+      javac -d "$BUILD/java" "$HERE/Main.java" </dev/null || die "javac failed"
+      (cd "$BUILD" && ls java/*.class) >&3
+      if [ "$1" = java ]; then
+        mkdir -p "$BUILD/java-iso"
+        javac -d "$BUILD/java-iso" "$v/iso/Main.java" </dev/null || die "javac failed"
+        (cd "$BUILD" && ls java-iso/*.class) >&3
+      fi ;;
+    *) die "build: unknown row $1" ;;
+  esac
+}
+
+# every_row: the row ids of every set, each once, in the sets' order.
+every_row() {
+  local set row
+  for set in headline variants iso; do
+    local rows_var=ROWS_$set
+    for row in ${!rows_var}; do say "$row"; done
+  done | awk '!seen[$0]++'
+}
+
+# note_compiler: the Avant compiler a build directory's Avant binaries
+# came from (O618), so two build directories (a base and a final
+# compiler) each say which they hold.
+note_compiler() {
+  {
+    say "compiler: $COMPILER"
+    say "sha256: $(sha256sum "$COMPILER" | cut -d' ' -f1)"
+    say "checkout: $AVANT_ROOT HEAD $(git -C "$AVANT_ROOT" rev-parse HEAD 2>/dev/null) ($(git -C "$AVANT_ROOT" status --porcelain 2>/dev/null | wc -l) changed paths)"
+    [ -f "$COMPILER.versions.txt" ] && sed 's/^/versions: /' "$COMPILER.versions.txt"
+    say "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$BUILD/avant-compiler.txt"
+}
+
+# do_build [ROW...]: with no row, every program of the headline, variants
+# and iso sets, and binaries.sha256 rewritten; with rows (O618), only what
+# those rows use, their lines of binaries.sha256 replaced and the others
+# kept, so a base and a final build directory can hold two rows each.
 do_build() {
   mkdir -p "$BUILD"
-  local v=$HERE/variants u=$HERE/upstream
+  local rows=("$@") all=0 row
+  if [ ${#rows[@]} = 0 ]; then
+    all=1
+    mapfile -t rows < <(every_row)
+  fi
   say "building into $BUILD"
-  # Avant: --release (the compiler's default level, x86-64-v2), and
-  # --release --cpu=v3; one --cpu=baseline build of the headline program.
-  build_avant "$HERE/main.av" "$BUILD/gc-avant" --release
-  build_avant "$HERE/main.av" "$BUILD/gc-avant-v3" --release --cpu=v3
-  build_avant "$HERE/main.av" "$BUILD/gc-avant-baseline" --release --cpu=baseline
-  build_avant "$v/young/main.av" "$BUILD/gc-avant-young" --release
-  build_avant "$v/young/main.av" "$BUILD/gc-avant-young-v3" --release --cpu=v3
-  build_avant "$v/hints/main.av" "$BUILD/gc-avant-hints" --release
-  build_avant "$v/hints/main.av" "$BUILD/gc-avant-hints-v3" --release --cpu=v3
-  build_avant "$v/iso/main.av" "$BUILD/gc-avant-iso" --release
-  build_avant "$v/iso/main.av" "$BUILD/gc-avant-iso-v3" --release --cpu=v3
-  # Valk: upstream's flags (run-gc.sh: build --release), and --no-regions.
-  "$VALK" build "$u/main.valk" --release -o "$BUILD/gc-valk" </dev/null >/dev/null || die "valk build failed"
-  "$VALK" build "$u/main.valk" --release --no-regions -o "$BUILD/gc-valk-noregions" </dev/null >/dev/null || die "valk --no-regions build failed"
-  "$VALK" build "$v/iso/main.valk" --release -o "$BUILD/gc-valk-iso" </dev/null >/dev/null || die "valk iso build failed"
-  # Go: upstream's command (go build).
-  go build -o "$BUILD/gc-go" "$u/main.go" </dev/null || die "go build failed"
-  go build -o "$BUILD/gc-go-plain-sink" "$v/go-plain-sink/main.go" </dev/null || die "go build failed"
-  go build -o "$BUILD/gc-go-free-outside" "$v/go-free-outside/main.go" </dev/null || die "go build failed"
-  go build -o "$BUILD/gc-go-iso" "$v/iso/main.go" </dev/null || die "go build failed"
-  # D: upstream's flags for LDC.
-  ldc2 -O3 -release -boundscheck=off -of="$BUILD/gc-d" "$u/main.d" </dev/null || die "ldc2 build failed"
-  ldc2 -O3 -release -boundscheck=off -of="$BUILD/gc-d-minimize-outside" "$v/d-minimize-outside/main.d" </dev/null || die "ldc2 build failed"
-  ldc2 -O3 -release -boundscheck=off -of="$BUILD/gc-d-iso" "$v/iso/main.d" </dev/null || die "ldc2 build failed"
-  # C#: upstream's publish command.
-  build_csharp "$u/gc-csharp.csproj" "$BUILD/csharp" csharp
-  build_csharp "$v/iso/gc-csharp.csproj" "$BUILD/csharp-iso" csharp-iso
-  # Crystal and Java: the new ports.
-  CRYSTAL_CACHE_DIR="$BUILD/crystal-cache" crystal build --release -o "$BUILD/gc-cr" "$HERE/main.cr" </dev/null || die "crystal build failed"
-  CRYSTAL_CACHE_DIR="$BUILD/crystal-cache" crystal build --release -o "$BUILD/gc-cr-iso" "$v/iso/main.cr" </dev/null || die "crystal build failed"
-  mkdir -p "$BUILD/java" "$BUILD/java-iso"
-  javac -d "$BUILD/java" "$HERE/Main.java" </dev/null || die "javac failed"
-  javac -d "$BUILD/java-iso" "$v/iso/Main.java" </dev/null || die "javac failed"
-  (cd "$BUILD" && sha256sum gc-avant* gc-valk* gc-go* gc-d gc-d-minimize-outside gc-d-iso gc-cr gc-cr-iso csharp/gc-csharp.dll csharp-iso/gc-csharp.dll java/*.class java-iso/*.class >"$BUILD/binaries.sha256")
-  say "built: $(wc -l <"$BUILD/binaries.sha256") files hashed in $BUILD/binaries.sha256"
+  case " ${rows[*]} " in *" avant"*) note_compiler ;; esac
+  local built=()
+  for row in "${rows[@]}"; do
+    local files
+    files=$(build_row "$row" 3>&1 1>&2) || exit 1
+    # shellcheck disable=SC2206
+    built+=($files)
+  done
+  if [ "$all" = 1 ]; then
+    (cd "$BUILD" && sha256sum gc-avant* gc-valk* gc-go* gc-d gc-d-minimize-outside gc-d-iso gc-cr gc-cr-iso csharp/gc-csharp.dll csharp-iso/gc-csharp.dll java/*.class java-iso/*.class >"$BUILD/binaries.sha256")
+    say "built: $(wc -l <"$BUILD/binaries.sha256") files hashed in $BUILD/binaries.sha256"
+    return
+  fi
+  local new
+  new=$(cd "$BUILD" && printf '%s\n' "${built[@]}" | awk '!seen[$0]++' | xargs sha256sum) || die "build: cannot hash ${built[*]}"
+  touch "$BUILD/binaries.sha256"
+  # Replace the lines of the paths just built (in place), append new ones.
+  awk -v new="$new" '
+    BEGIN { n = split(new, l, "\n"); for (i = 1; i <= n; i++) { p = substr(l[i], 67); line[p] = l[i]; order[i] = p } }
+    { p = substr($0, 67); if (p in line) { print line[p]; done[p] = 1 } else print }
+    END { for (i = 1; i <= n; i++) if (!(order[i] in done)) print line[order[i]] }
+  ' "$BUILD/binaries.sha256" >"$BUILD/binaries.sha256.new" && mv "$BUILD/binaries.sha256.new" "$BUILD/binaries.sha256"
+  say "built: ${#built[@]} files for rows ${rows[*]}; their lines of $BUILD/binaries.sha256 replaced ($(wc -l <"$BUILD/binaries.sha256") lines)"
 }
 
 # ------------------------------------------------------------ one run
@@ -494,11 +591,11 @@ do_cg() {
 }
 
 case "${1:-}" in
-  build) do_build ;;
+  build) shift; do_build "$@" ;;
   check) do_check ;;
   time) do_time "${2:-7}" ;;
   counts) do_counts ;;
   cg) shift; do_cg "$@" ;;
   versions) do_versions ;;
-  *) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) awk 'NR > 1 && /^set -u/ { exit } NR > 1' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
