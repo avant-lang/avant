@@ -850,7 +850,17 @@ int gc_is_heap_payload(void *p, Block **ob, AvantHeader **ol) {
   }
   g = off >> 3;
   if (!((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL)) {
-    return 0;
+    /* No start bit: an object the inline path allocated has none until
+     * something needs it (late start bits, the Valk stage, VALK-A2, M7;
+     * avant_gc_alloc.c): its block's are set now, and the bit is read
+     * again. */
+    if (gc_heap.chunks[off >> CHUNK_SHIFT].kind != CHUNK_SMALL || !gc_heap.blocks[off >> BLOCK_SHIFT].in_use) {
+      return 0;
+    }
+    gc_lazy_touch(&gc_heap.blocks[off >> BLOCK_SHIFT]);
+    if (!((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL)) {
+      return 0;
+    }
   }
   kind = gc_heap.chunks[off >> CHUNK_SHIFT].kind;
   if (kind == CHUNK_SMALL) {
@@ -931,6 +941,9 @@ void *gc_object_payload(void *p, Block **ob, AvantHeader **ol) {
     if (!b->in_use) {
       return NULL;
     }
+    /* The block's late start bits (M7): an address inside an object the
+     * inline path allocated is found by them like any other. */
+    gc_lazy_touch(b);
     g = (size_t)((off & (BLOCK_SIZE - 1)) >> 3);
     w = g >> 6;
     bits = b->start[w] & (~0ULL >> (63 - (g & 63)));
@@ -1021,6 +1034,9 @@ int32_t avant_is_young(void *payload) {
 
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *)) {
   int w;
+  /* Every object of the block: the ones the inline path allocated get
+   * their start bits first (M7). */
+  gc_lazy_touch(b);
   for (w = 0; w < START_WORDS; w++) {
     uint64_t bits = b->start[w];
     while (bits) {

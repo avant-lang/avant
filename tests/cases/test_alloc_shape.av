@@ -75,12 +75,43 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_str(log_text("${dir}/alloc_shape.out"), "3\n6\npair\nn2 n1\n", "alloc_shape.av: output")
 
   // M3: local-exec thread-locals.
-  for g in ["avant_gc_fast_ok", "avant_gc_bump", "avant_gc_limit", "avant_gc_block", "avant_gc_base", "avant_gc_starts", "avant_gc_top"] {
+  for g in ["avant_gc_bump", "avant_gc_limit", "avant_gc_top"] {
     c.expect(str_has(text, "@${g} = external thread_local(localexec) global "), "M3: @${g} is declared local-exec")
   }
   c.eq_int(count_of(text, " thread_local global "), 0, "M3: no thread-local is declared without a model")
   fnode = ll_fn(text, "av.alloc_shape/Node.new")
   c.expect(str_has(fnode, "load ptr, ptr @avant_gc_bump") && str_has(fnode, "load ptr, ptr @avant_gc_limit"), "M3: Node.new allocates inline (it reads the bump cursor and the limit)")
+
+  // M6 and M7 (the Valk stage, VALK-A2; O584, O615): the inline path is
+  // the limit compare, the cursor's store, the header and the zeroing. No
+  // guard beside the limit (the runtime publishes a null limit when the
+  // path may not run), no counter, no copy of the cursor in the block's
+  // record, no start bit (an unshared module's: the runtime sets it late).
+  for g in ["g_avant_shared", "avant_gc_fast_ok", "avant_gc_block", "avant_gc_base", "avant_gc_starts", "avant_gc_limit_mt", "avant_g_stats", "avant_since_gc", "avant_nursery_held", "avant_inline_allocs"] {
+    c.expect(!str_has(text, "@${g}"), "M6, M7: an unshared module's .ll does not name @${g}")
+  }
+  c.eq_int(count_of(fnode, " = icmp "), 1, "M6: Node.new's inline path has one compare, the cursor's new end against the limit")
+  c.expect(str_has(fnode, " = icmp ule i64 "), "M6: that compare is unsigned at-or-below")
+  c.eq_int(count_of(fnode, " = and i1 "), 0, "M6: Node.new's inline path joins no two conditions")
+  c.eq_int(count_of(fnode, "load ptr, ptr @"), 2, "M6: Node.new's inline path loads two globals, the cursor and the limit")
+  c.eq_int(count_of(fnode, ", ptr @avant_gc_bump, align 8"), 2, "M6: Node.new's inline path names the cursor twice, its load and its store")
+  c.expect(!str_has(fnode, ", i64 32\n"), "M6: Node.new's inline path keeps no copy of the cursor in the block's record (no address at offset 32)")
+  c.eq_int(count_of(fnode, " = load i64, "), 0, "M6, M7: Node.new's inline path reads no counter and no start word")
+  c.eq_int(count_of(fnode, " = lshr i64 ") + count_of(fnode, " = shl i64 "), 0, "M7: Node.new's inline path computes no start bit")
+  // A shared module's path reads its own limit and sets the start bit
+  // itself (the late start bits are the single mutator's).
+  ts = "${root}/tests/fixtures/threads/fresh.av"
+  tll = "${dir}/threads_fresh.ll"
+  c.eq_int(emit_ll(compiler, ts, tll, "${dir}/threads_fresh.ll.log"), 0, "threads/fresh.av: __emit-ll")
+  ttext = log_text(tll)
+  for g in ["avant_gc_bump", "avant_gc_limit_mt", "avant_gc_base", "avant_gc_starts"] {
+    c.expect(str_has(ttext, "@${g} = external thread_local(localexec) global "), "M6: a shared module declares @${g} local-exec")
+  }
+  for g in ["g_avant_shared", "avant_gc_fast_ok", "avant_gc_block", "avant_g_stats", "avant_since_gc", "avant_nursery_held", "avant_inline_allocs"] {
+    c.expect(!str_has(ttext, "@${g}"), "M6: a shared module's .ll does not name @${g}")
+  }
+  c.expect(!str_has(ttext, "@avant_gc_limit ") && !str_has(ttext, "@avant_gc_limit,"), "M6: a shared module reads avant_gc_limit_mt, never avant_gc_limit")
+  c.expect(str_has(ttext, "load ptr, ptr @avant_gc_starts") && str_has(ttext, " = shl i64 1, "), "M7: a shared module's inline path sets the start bit")
 
   // M4: no frame record without a slot, but in a thread's first frame.
   for f in ["fresh_node", "sum_nodes", "Node.new"] {

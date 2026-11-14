@@ -1986,3 +1986,200 @@ void gc_quarantine_release(void) {
     b = next;
   }
 }
+
+/* The eager comparison of the late start bits (the Valk stage, VALK-A2,
+ * M7; avant_gc_alloc.c, "Late start bits"). Until VALK-A2 every
+ * allocation set its object's start bit; now an unshared module's inline
+ * path sets none, and the runtime sets a young object's bit when a
+ * collection promotes it or a lookup needs its block's. A bit set where
+ * no object starts makes a lookup trust a word that is not a header, and
+ * a live object left without one is invisible to every lookup, walk and
+ * sweep that reads the bits: so under AVANT_GC_VERIFY=1 the bits the
+ * eager path would have set are kept beside the real ones
+ * (gc_heap.veager, one bit per granule as gc_heap.starts: written by
+ * gc_verify_starts_note for every object of the inline path when its
+ * run is counted, inline_walk, which reads only the bytes the path
+ * bumped since the last sync; a C allocation sets its real bit itself)
+ * and compared with what the late path does, at every collection:
+ *
+ *   gc_verify_starts_begin    before the collection: every object of
+ *       every noted run (its headers walked end to end, a filler passed
+ *       over) is one the eager path marked, and every eager bit that
+ *       has no real one lies in a run (so a lookup's build would set
+ *       it). A block object whose size was changed in place other than
+ *       by avant_gc_shrink stops the program here. Then the young
+ *       blocks' real start words are saved and the eager ones put in
+ *       their place while the verifier's own checks run
+ *       (gc_verify_begin, gc_verify_remembered, gc_verify_lost: they
+ *       read every object, as they did when every allocation set its
+ *       bit), and
+ *   gc_verify_starts_resume   puts the real ones back, so the collection
+ *       starts from the bits the program left, not from ones a check
+ *       built for it (gc_verify_starts_eager does both, and does the
+ *       same around gc_verify_sticky, whose lookups after a young
+ *       collection's trace would otherwise build every block that holds
+ *       a survivor);
+ *   gc_verify_starts_end      when a young collection has ended (after
+ *       gc_clear_noted) and when a full collection has marked: every bit
+ *       the collection set since it began is an eager one, and every
+ *       object of the cycle that survived where it lies (no longer
+ *       young, not moved, in a live line) has its bit. Then the eager
+ *       bits of those blocks are cleared: they describe one cycle's
+ *       allocations.
+ * The program stops at the first difference. */
+static inline uint64_t veager_word(uint64_t w) {
+  return w < gc_heap.veager_n ? gc_heap.veager[w] : 0;
+}
+
+void gc_verify_starts_note(const uint8_t *header) {
+  uint64_t g = granule_of(header);
+  uint64_t w = g >> 6;
+  if (w >= gc_heap.veager_n) {
+    uint64_t need = gc_heap.committed >> 9;
+    gc_heap.veager = gc_xrealloc(gc_heap.veager, (size_t)need * sizeof(uint64_t));
+    memset(gc_heap.veager + gc_heap.veager_n, 0, (size_t)(need - gc_heap.veager_n) * sizeof(uint64_t));
+    gc_heap.veager_n = need;
+  }
+  gc_heap.veager[w] |= 1ULL << (g & 63);
+}
+
+/* Block B's first start word, as an index of gc_heap.starts (and of the
+ * eager bits). */
+static inline uint64_t block_start_word(const Block *b) {
+  return (uint64_t)(b->base - gc_heap.base) >> 9;
+}
+
+void gc_verify_starts_begin(void) {
+  uint32_t n = gc_heap.young_blocks_n;
+  uint64_t in_runs = 0;
+  uint64_t missing = 0;
+  uint32_t i;
+  int w;
+  for (i = 0; i < gc_heap.lazy_n; i++) {
+    const uint8_t *p = gc_heap.lazy[i].lo;
+    const uint8_t *hi = gc_heap.lazy[i].hi;
+    while (p < hi) {
+      const AvantHeader *h = (const AvantHeader *)p;
+      uint64_t g = granule_of(p);
+      /* A filler (avant_gc_shrink: no HEAP flag) is passed over. */
+      if (h->flags & AVANT_FLAG_HEAP) {
+        /* An object C allocated in the hole has its own bit; one the
+         * inline path allocated is an eager one. */
+        if (!start_bit_at(p)) {
+          if (!((veager_word(g >> 6) >> (g & 63)) & 1ULL)) {
+            gc_die("avant gc verify: start bits: a late run names an address where no object was allocated");
+          }
+          in_runs++;
+        }
+      }
+      p += gc_obj_total(h);
+    }
+    if (p != hi) {
+      gc_die("avant gc verify: start bits: a late run does not end at an object's end");
+    }
+  }
+  for (i = 0; i < n; i++) {
+    const Block *b = gc_heap.young_blocks[i];
+    uint64_t w0 = block_start_word(b);
+    for (w = 0; w < START_WORDS; w++) {
+      missing += (uint64_t)__builtin_popcountll(veager_word(w0 + (uint64_t)w) & ~b->start[w]);
+    }
+  }
+  if (missing != in_runs) {
+    gc_die("avant gc verify: start bits: a young object has no start bit and lies in no late run");
+  }
+  if ((uint64_t)n * START_WORDS > gc_heap.vsaved_n) {
+    gc_heap.vsaved_n = (uint64_t)n * START_WORDS * 2;
+    gc_heap.vsaved = gc_xrealloc(gc_heap.vsaved, (size_t)gc_heap.vsaved_n * sizeof(uint64_t));
+    gc_heap.vtmp = gc_xrealloc(gc_heap.vtmp, (size_t)gc_heap.vsaved_n * sizeof(uint64_t));
+  }
+  if (n > gc_heap.vblocks_cap) {
+    gc_heap.vblocks_cap = n * 2;
+    gc_heap.vblocks = gc_xrealloc(gc_heap.vblocks, (size_t)gc_heap.vblocks_cap * sizeof(Block *));
+  }
+  if (n) {
+    memcpy(gc_heap.vblocks, gc_heap.young_blocks, (size_t)n * sizeof(Block *));
+  }
+  gc_heap.vblocks_n = n;
+  /* The bits as the collection finds them: gc_verify_starts_end compares
+   * with them. */
+  for (i = 0; i < n; i++) {
+    memcpy(gc_heap.vsaved + (size_t)i * START_WORDS, gc_heap.vblocks[i]->start, START_WORDS * sizeof(uint64_t));
+  }
+  gc_verify_starts_eager(1);
+}
+
+void gc_verify_starts_resume(void) {
+  gc_verify_starts_eager(0);
+}
+
+/* ON: the young blocks' real start words are put aside and the eager
+ * ones or-ed into their place, and the late runs are hidden, for a pass
+ * of the verifier's own (the checks before a collection; gc_verify_sticky
+ * after a young collection's trace and copy): it reads every object of
+ * the cycle as it did when every allocation set its bit, and its lookups
+ * build no block. Off: the real words and the runs are back as they
+ * were, so that what the collection itself set, and failed to set, is
+ * what gc_verify_starts_end reads. */
+void gc_verify_starts_eager(int on) {
+  uint32_t i;
+  int w;
+  if (on) {
+    if (gc_heap.vswapped) {
+      return;
+    }
+    for (i = 0; i < gc_heap.vblocks_n; i++) {
+      Block *b = gc_heap.vblocks[i];
+      uint64_t w0 = block_start_word(b);
+      memcpy(gc_heap.vtmp + (size_t)i * START_WORDS, b->start, START_WORDS * sizeof(uint64_t));
+      for (w = 0; w < START_WORDS; w++) {
+        b->start[w] |= veager_word(w0 + (uint64_t)w);
+      }
+    }
+    gc_heap.vlazy_open = gc_heap.lazy_open;
+    gc_heap.lazy_open = 0;
+    gc_heap.vswapped = 1;
+    return;
+  }
+  if (!gc_heap.vswapped) {
+    return;
+  }
+  for (i = 0; i < gc_heap.vblocks_n; i++) {
+    memcpy(gc_heap.vblocks[i]->start, gc_heap.vtmp + (size_t)i * START_WORDS, START_WORDS * sizeof(uint64_t));
+  }
+  gc_heap.lazy_open = gc_heap.vlazy_open;
+  gc_heap.vswapped = 0;
+}
+
+void gc_verify_starts_end(void) {
+  uint32_t i;
+  int w;
+  for (i = 0; i < gc_heap.vblocks_n; i++) {
+    const Block *b = gc_heap.vblocks[i];
+    uint64_t w0 = block_start_word(b);
+    /* A block the collection freed has nothing to compare (it is not
+     * taken again before the collection ends). */
+    for (w = 0; b->in_use && w < START_WORDS; w++) {
+      uint64_t e = veager_word(w0 + (uint64_t)w);
+      uint64_t now = b->start[w];
+      uint64_t was = gc_heap.vsaved[(size_t)i * START_WORDS + (size_t)w];
+      if ((now & ~was) & ~e) {
+        gc_die("avant gc verify: start bits: a collection set a start bit where no object was allocated");
+      }
+      while (e) {
+        int bit = __builtin_ctzll(e);
+        size_t off = ((size_t)w * 64 + (size_t)bit) * 8;
+        const AvantHeader *h = (const AvantHeader *)(b->base + off);
+        e &= e - 1;
+        if (line_live(b, (int)(off >> LINE_SHIFT)) && !(h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_FORWARDED)) &&
+            !((now >> bit) & 1ULL)) {
+          gc_die("avant gc verify: start bits: an object that survived a collection in place has no start bit");
+        }
+      }
+    }
+    if (w0 < gc_heap.veager_n) {
+      memset(gc_heap.veager + w0, 0, START_WORDS * sizeof(uint64_t));
+    }
+  }
+  gc_heap.vblocks_n = 0;
+}

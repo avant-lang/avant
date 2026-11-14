@@ -145,34 +145,32 @@ void avant_gc_frame_leave(struct AvantGcFrame *frame);
  * At most 8 per thread. */
 void avant_gc_add_root(void **slot);
 
-/* Inline nursery fast path (Collector II Wave 1). Generated code may
- * allocate without a call only while avant_gc_fast_ok is set: it bumps
- * avant_gc_bump by the aligned total, writes the header (HEAP|YOUNG),
- * zeroes the payload, sets the block start bit through
- * avant_gc_starts/avant_gc_base, and, when avant_gc_fast_ok is 1, adds
- * the total to avant_g_stats.allocated_bytes, avant_since_gc, and
- * avant_nursery_held. avant_gc_limit is the block limit capped by the
- * young threshold, and the runtime alone publishes or clears this
- * state. avant_gc_fast_ok is 1 while the program has one thread (the
- * path counts; code of an unshared module also requires g_avant_shared
- * to be 0) and 2 in a program with threads (Stage 28 W17b): the thread
- * bumps in a hole of its own young block that the runtime has charged
- * to the young budget, and the path counts nothing. AvantGcStats field
- * order is part of this ABI (allocated_bytes at offset 24). */
+/* Inline nursery fast path (Collector II Wave 1; the Valk stage,
+ * VALK-A2, M6 and M7). Generated code allocates without a call when the
+ * new end of its cursor (avant_gc_bump plus the aligned total) is at or
+ * below the limit the runtime publishes: avant_gc_limit for an unshared
+ * module, avant_gc_limit_mt for a shared one. It stores the new cursor,
+ * writes the header (HEAP|YOUNG) and zeroes the payload; a shared
+ * module's code also sets the block start bit through
+ * avant_gc_starts/avant_gc_base. Nothing else: the limit is null
+ * whenever the path may not run (no young hole, a program with threads
+ * for an unshared module, a no-GC region, the stress mode, a collection
+ * pending), the runtime counts the bytes from the cursor at its next
+ * entry, and an unshared module's objects get their start bits from the
+ * runtime (when a collection promotes them or a lookup needs them). The
+ * limit is the hole's limit capped by the young budget, and the runtime
+ * alone publishes or clears it. Until VALK-A2 the path also tested
+ * g_avant_shared, avant_gc_fast_ok and a null cursor, stored the cursor
+ * in the block's record (avant_gc_block), set the start bit in every
+ * module and kept four counters. */
 extern __thread uint8_t *avant_gc_bump;
 extern __thread uint8_t *avant_gc_limit;
+extern __thread uint8_t *avant_gc_limit_mt;
 extern __thread uint8_t *avant_gc_base;
 extern __thread uint64_t *avant_gc_starts;
-/* The current nursery block's record in the collector's side table;
- * generated code also stores the new cursor into its bump field at
- * offset 32 (the record's layout is the runtime's, not shipped), so the
- * C cursor and the block never disagree. */
-extern __thread void *avant_gc_block;
-extern __thread uint32_t avant_gc_fast_ok;
 extern uint64_t avant_nursery_held;
 extern uint64_t avant_young_bytes;
 extern uint64_t avant_since_gc;
-extern uint64_t avant_inline_allocs;
 void avant_type_map(uint32_t type_id, uint64_t word_bits);
 /* Stage 28 W1b: one 64-word chunk (word_base a multiple of 64) of a
  * type map of any length, with an element stride in words (0: one

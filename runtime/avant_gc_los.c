@@ -607,6 +607,9 @@ static void trim_run(AvantHeader *h, size_t new_size) {
  * (a large object never moves, so PAYLOAD stays valid if the lock wait
  * lets another thread collect). Hidden. */
 __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uint64_t new_size) {
+  /* It lowers the young budget's held bytes: the inline path's are
+   * counted first (gc_alloc_sync, M6). */
+  gc_alloc_sync();
   AvantHeader *h;
   int done = 0;
   if (!payload || new_size < SCALAR_LOS_MIN) {
@@ -671,6 +674,7 @@ int gc_rooted(void *payload) {
  * another runtime buffer). Takes the world lock; not a collecting call.
  * Hidden. */
 __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int drop) {
+  gc_alloc_sync();
   AvantHeader *h;
   int done = 0;
   if (!payload || atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 || gc_thread.collecting) {

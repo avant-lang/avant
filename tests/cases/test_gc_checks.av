@@ -471,6 +471,46 @@ fn test_str_interior(c: Checks, compiler: String, root: String, dir: String) {
   }
 }
 
+// The late start bits (the Valk stage, VALK-A2, M7; O584, O615):
+// ffi/late_starts.av (its C half in ffi/ffi.c). An object the inline
+// allocation path made has no start bit until something needs it; C holds
+// an address inside one in a root slot across a young collection, asks
+// avant_is_heap of one, pins one, pins one across a young collection, and
+// asks avant_is_heap of the survivors a young collection left in place
+// (in the holes of old blocks; past the copy's budget after a hold), among C allocations in the same hole and a
+// string the runtime shortens in place. Every environment prints the
+// same line with no stderr: under AVANT_GC_VERIFY=1 the eager comparison
+// (runtime/avant_gc_verify.c, gc_verify_starts_*) runs at every collection
+// and stops the program at a difference, and under AVANT_GC_STRESS=1 a
+// collection runs before every allocation. With gc_lazy_touch made a
+// no-op the program prints `late_starts: 164970 0 0 0 800 200 6 1 500`
+// (avant_is_heap and the pins do not find the objects) and the verifier
+// reports "young object not promoted"; with the bit of a survivor left in
+// place not set it prints `... 126 199 ...` and the verifier stops it
+// with "start bits: an object that survived a collection in place has no
+// start bit" (the record of VALK-A2, the planted defects).
+fn test_late_starts(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/late_starts.av", "${dir}/late_starts", "${dir}/late_starts.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "late_starts.av: compiles")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1", "AVANT_GC_VERIFY=1 AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "late_starts", "late_starts.g${e}", envs[e]))
+  }
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "late_starts.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/late_starts.g${e}.out"), "late_starts: 164970 10 10 10 800 200 6 1 500\n", "late_starts.av ${what}: the inside addresses, avant_is_heap and the pins find the inline path's objects, before and after a collection")
+    c.eq_str(log_text("${dir}/late_starts.g${e}.err"), "", "late_starts.av ${what}: no stderr (the eager comparison is silent)")
+  }
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -482,6 +522,7 @@ fn test_main(c: Checks) {
     test_str_interior(c, compiler, avant_test_root(), scratch_dir())
     test_rem_chain(c, compiler, avant_test_root(), scratch_dir())
     test_rem_invariant(c, compiler, avant_test_root(), scratch_dir())
+    test_late_starts(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

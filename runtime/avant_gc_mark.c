@@ -22,10 +22,19 @@
  * promotes every object it reaches (Stage 28 W15b), so no object is young
  * after it (its remembered set and young budget are empty,
  * gc_sticky_full_end); the flags are written only when one is set, so a
- * collection of a heap that is already mature dirties no header. */
+ * collection of a heap that is already mature dirties no header. An
+ * object promoted here gets its start bit too (the Valk stage, VALK-A2,
+ * M7: one the inline path allocated may have none yet, avant_gc_alloc.c,
+ * "Late start bits"; the sweep and the defragmenter find live objects by
+ * the bits), in the branch that clears YOUNG, so a mature object pays
+ * nothing; nor does an aged copy (SURVIVED: the young copy that made it
+ * set its bit). */
 static inline void mark_object(void *start, AvantHeader *h, Block *b) {
   size_t total = align_up(sizeof(AvantHeader) + (size_t)h->size);
   if (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
+    if (!(h->flags & AVANT_FLAG_SURVIVED)) {
+      start_bit_set(h, 1);
+    }
     h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
   }
   if (b) {
@@ -149,6 +158,10 @@ static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v)
   if (__builtin_expect((fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED | AVANT_FLAG_LARGE)) != 0, 0)) {
     if (fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
       h->flags = (uint16_t)(fl & ~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED));
+      /* Its late start bit (mark_object's comment). */
+      if (!(fl & AVANT_FLAG_SURVIVED)) {
+        start_bit_set(h, 1);
+      }
     }
     if (fl & AVANT_FLAG_LARGE) {
       return h->type_id != AVANT_TYPE_BYTES;

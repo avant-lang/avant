@@ -100,7 +100,18 @@ static void fix_extra_add(void *payload) {
  * tell a first survivor from an aged one (Stage 28 W15d); an object
  * still young keeps it (a young large object at its first survival).
  * An entry whose object holder aging moved (splus_age_holders: the keep
- * list does not know the entry) is told by its header's forward. */
+ * list does not know the entry) is told by its header's forward.
+ * And the late start bit (the Valk stage, VALK-A2, M7): a young block
+ * object this collection promoted and left in place (PROMOTED_NOW, not
+ * moved) gets its start bit here, where its header is read anyway. One
+ * the copy moved needs none for its old copy (its copy's was set,
+ * splus_copy), so a survivor of an evacuated block, the usual survivor,
+ * costs nothing here, and neither does an aged copy promoted in place at
+ * its second survival (SURVIVED: the copy that made it set its bit); an
+ * object that had its bit already for another reason (a C path's, a
+ * shared module's, a block a lookup built) has it set again. After this
+ * every block object that is not young has its start bit, as before
+ * VALK-A2. */
 void gc_clear_noted(void) {
   void **const noted = gc_heap.noted;
   /* The entries past the last one the copy did not move are all moved:
@@ -118,6 +129,11 @@ void gc_clear_noted(void) {
     f = h->flags;
     if (f & AVANT_FLAG_FORWARDED) {
       continue;
+    }
+    /* Promoted by this collection and not an aged copy (whose bit the
+     * copy set): the late start bit. */
+    if ((f & (AVANT_FLAG_PROMOTED_NOW | AVANT_FLAG_SURVIVED)) == AVANT_FLAG_PROMOTED_NOW) {
+      start_bit_set(h, 1);
     }
     f = (uint16_t)(f & ~(AVANT_FLAG_MARKED | AVANT_FLAG_PROMOTED_NOW | AVANT_FLAG_CARD_SCAN));
     if (!(f & AVANT_FLAG_YOUNG)) {
@@ -240,7 +256,12 @@ static __attribute__((noinline)) void y_work_grow(void) {
  * of scattered survivors grew without a full collection: heap/churn.av
  * 9 MB under E, 53 MB). SURVIVED (an aged object's) ends with the
  * collection (gc_clear_noted): S+'s copy reads it to decide where the
- * copy goes. */
+ * copy goes. An object the inline path allocated may have no start bit
+ * yet (the Valk stage, VALK-A2, M7; avant_gc_alloc.c, "Late start bits"):
+ * one promoted here that stays where it is gets its bit when the
+ * collection ends (gc_clear_noted), one the copy moves gets its copy's
+ * (splus_copy), and until then a lookup that needs it builds its block's
+ * (gc_lazy_touch). */
 static inline __attribute__((always_inline)) void promote_young(YCtx *c, void *start, AvantHeader *h, uint16_t fl,
                                                                 uintptr_t off) {
   size_t total = align_up(sizeof(AvantHeader) + (size_t)h->size);
@@ -1409,8 +1430,11 @@ static void mature_drop_empty(uint32_t empty) {
  * to B's allocation frontier. B's young range [young_lo, young_hi) is the
  * hull of the holes young allocation took in it since the last collection
  * (young_note_hole), and the frontier is the line after the last byte
- * allocated in the last of them: Block.bump, which every allocation path
- * keeps (bump_take, tl_bump, young_overflow, the inline sequence's store).
+ * allocated in the last of them: Block.bump, which every C allocation
+ * path keeps (bump_take, tl_bump, young_overflow) and which is given the
+ * inline path's cursor before a collection reads it (gc_alloc_sync,
+ * gc_tl_settle; until the Valk stage's VALK-A2 the inline sequence
+ * stored it at every allocation).
  * The cursor takes a block's holes in rising order, so every young object
  * of this cycle lies below the frontier, and the lines from it to young_hi
  * are the rest of the last hole: free when it was handed out (their start
@@ -1526,7 +1550,12 @@ void gc_sticky_collect(int tenure) {
     splus_evacuate();
   }
   if (gc_heap.set.verify) {
+    /* With the eager start bits in place of the real ones
+     * (gc_verify_starts_eager): its lookups must not build what the
+     * collection is to set. */
+    gc_verify_starts_eager(1);
     gc_verify_sticky();
+    gc_verify_starts_eager(0);
   }
   if (gc_heap.splus_on) {
     splus_finish();
@@ -1611,6 +1640,9 @@ void gc_sticky_collect(int tenure) {
     }
     gc_heap.young_blocks_n = 0;
   }
+  /* The inline runs whose start bits nothing needed are forgotten (M7:
+   * their survivors were promoted, with their bits; the rest is dead). */
+  gc_lazy_drop();
   /* The survivor blocks (YOUNG_AGE 2) are young blocks until the next
    * collection: their used lines are its young range, and neither young
    * nor mature allocation takes a block with one (young_hi set). */
@@ -1652,6 +1684,12 @@ void gc_sticky_collect(int tenure) {
     gc_heap_return(gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes);
   }
   gc_clear_noted();
+  if (gc_heap.set.verify) {
+    /* M7's eager comparison (avant_gc_verify.c): every object of the
+     * cycle that survived in place has its start bit, and no bit was set
+     * where the eager path would have set none. */
+    gc_verify_starts_end();
+  }
   /* The one young budget: the aged survivors that stay young (as E
    * counted its to-space); the young large objects that stay young only
    * under W15d's age rule (LARGE_AGE_BYTES 0): an age in allocated bytes

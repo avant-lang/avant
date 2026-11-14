@@ -91,8 +91,9 @@
  * avant_gc_sticky.c), the remembered set's "names a young object"
  * (slot_names_young, avant_gc_remset.c). The
  * allocation path's late start bits (VALK-A2, M7) rely on it too: a
- * trace that never asks a field's start bit lets a young object's bit be
- * set when its hole is retired.
+ * trace that never asks a field's start bit lets a young object the
+ * inline path allocated go without one until a collection promotes it
+ * or a lookup by the start bits needs its block's (gc_lazy_touch).
  *
  * What must keep it. Generated code and runtime C store only null, exact
  * starts and static addresses into reference-typed words. A view of
@@ -260,9 +261,13 @@
  * can be in a block. No block descriptor is allocated, no block hash
  * exists, and a lookup is address arithmetic.
  *
- * A block record is ABI by one field: the inline allocation path in
- * generated code stores its new cursor at offset 32 of the record
- * avant_gc_block points to (mir.md §5.5), so bump stays at offset 32.
+ * A block record is the runtime's alone since the Valk stage's VALK-A2
+ * (M6): until then the inline allocation path in generated code stored
+ * its new cursor at offset 32 of the record (bump); now the runtime
+ * copies the thread's cursor there when it needs it (gc_alloc_sync,
+ * gc_tl_settle: every slow allocation, every collection), so bump is the
+ * allocation frontier of the block's last hole whenever the runtime
+ * reads it.
  * line_mark and start point at the block's slices of gc_heap.lines and
  * gc_heap.starts (set when its chunk is committed; never changed), so code
  * indexes them as before. in_use is 1 while the block belongs to a
@@ -282,7 +287,7 @@ typedef struct Block {
   uint8_t young_lo;    /* 30: S: the lines young allocation used in this */
   uint8_t young_hi;    /* 31: block since the last collection, [lo, hi);
                         * hi 0: the block is not a young block (S) */
-  uint8_t *bump;       /* 32: ABI (the inline allocation path) */
+  uint8_t *bump;       /* 32: the cursor, as of the thread's last sync */
   uint8_t *limit;      /* 40 */
   uint64_t *start;     /* 48: START_WORDS words in gc_heap.starts */
   uint64_t idle;       /* 56: free: the return clock when freed; a young
@@ -290,7 +295,6 @@ typedef struct Block {
                         * bytes (S+) */
 } Block;
 
-_Static_assert(offsetof(Block, bump) == 32, "Block.bump is ABI at offset 32");
 _Static_assert(sizeof(Block) == 64, "a block record is 64 bytes");
 
 /* One chunk's entry in the chunk map (gc-design.md §2.2, §2.4). kind:
@@ -931,6 +935,10 @@ typedef struct GcSettings {
    * reference the collector does not know across one of these points
    * reads a moved or freed object at once. */
   int stress;
+  /* stats, verify or stress: the single mutator's inline allocations are
+   * read one by one when they are counted (inline_walk,
+   * avant_gc_alloc.c). */
+  int walk;
   /* AVANT_GC_VERIFY_STALL_MS (Stage 28 W18C, O125): under the verifier, a
    * handshake that has waited this long for a thread to reach a safepoint
    * reports it and keeps waiting; 10000 by default, 0 never. */
@@ -1163,6 +1171,51 @@ typedef struct GcHeap {
   /* An entry of the map is set (splus_finish clears them). */
   int evac_any;
 
+  /* avant_gc_alloc.c. Late start bits (the Valk stage, VALK-A2, M7; the
+   * comment of gc_alloc_sync_slow): the runs of objects the single
+   * mutator's inline path allocated since the last collection whose start
+   * bits are not all set, each [lo, hi), headers end to end (the path's
+   * objects and the C allocations among them), in the order the cursor
+   * made them (a block's runs are consecutive: the young cursor never
+   * comes back to a block); a run whose bits were set since is empty
+   * (lo == hi). lazy_hi: where the last run ends while the cursor may
+   * still continue it (the same hole, nothing built since), else NULL.
+   * lazy_idx: one entry per block of the committed heap, 1 + the index
+   * of the block's first run that may still be unbuilt, or 0;
+   * lazy_open: the blocks with a nonzero entry. All zero and empty
+   * between a collection's end and the next inline allocation, and
+   * always in a shared program. */
+  struct GcLazyRun {
+    uint8_t *lo;
+    uint8_t *hi;
+  } *lazy;
+  uint32_t lazy_n;
+  uint32_t lazy_cap;
+  uint8_t *lazy_hi;
+  uint32_t *lazy_idx;
+  uint64_t lazy_idx_n;
+  uint32_t lazy_open;
+  /* AVANT_GC_VERIFY's eager comparison (avant_gc_verify.c,
+   * gc_verify_starts_*): veager, one bit per granule of the committed
+   * heap as gc_heap.starts, the start bits the inline path's objects
+   * would have had if the path had set them (written when each run is
+   * counted); vsaved, the real start words of the young blocks as the
+   * collection found them. */
+  uint64_t *veager;
+  uint64_t veager_n;
+  uint64_t *vsaved;
+  uint64_t vsaved_n;
+  /* The real words while the eager ones stand in for them
+   * (gc_verify_starts_eager). */
+  uint64_t *vtmp;
+  /* Those young blocks (the collection resets its own list before it
+   * ends). */
+  Block **vblocks;
+  uint32_t vblocks_n;
+  uint32_t vblocks_cap;
+  int vswapped;
+  uint32_t vlazy_open;
+
   /* avant_gc_defrag.c: the evacuated blocks a defragmenting full
    * collection frees once every reference is rewritten. */
   BlockSet def_release;
@@ -1364,7 +1417,7 @@ typedef struct GcThread {
    * block; cur_whole: ycur's hole is a whole block. A collection clears
    * every thread's (gc_alloc_stop_all, avant_gc_alloc.c).
    *
-   * Hole accounting (a shared program, avant_gc_fast_ok == 2): the slow
+   * Hole accounting (a shared program, fast_ok 2 below): the slow
    * path charges the rest of the young hole it hands the thread,
    * [tl_start, tl_end), to the one young budget (avant_nursery_held) and
    * the thread then bumps in it without the world lock (the inline path
@@ -1372,9 +1425,24 @@ typedef struct GcThread {
    * used counted, the rest given back) at the thread's next slow
    * allocation, at every collection, and when it unregisters
    * (gc_tl_settle). tl_end NULL: nothing is charged. bump_p, limit_p and
-   * fast_ok_p are the addresses of the thread's avant_gc_bump,
-   * avant_gc_limit and avant_gc_fast_ok, so a collector on another thread
-   * can clear them while this one is stopped. */
+   * limit_mt_p are the addresses of the thread's avant_gc_bump,
+   * avant_gc_limit and avant_gc_limit_mt, so a collector on another
+   * thread can read its cursor and clear them while this one is stopped.
+   *
+   * The inline path's state (the Valk stage, VALK-A2, M6; until then the
+   * thread-locals avant_gc_fast_ok and avant_gc_limit, which generated
+   * code read): fast_ok is 0 (the path may not run), 1 (the program has
+   * one thread: the path's allocations are counted from the cursor,
+   * mark) or 2 (hole accounting). Generated code does not read it: it
+   * compares its cursor with the limit the runtime publishes, the hole's
+   * capped by the young budget
+   * (avant_gc_limit for an unshared module, avant_gc_limit_mt for a
+   * shared one; gc_fast_publish, avant_gc_alloc.c), which is null
+   * whenever the path may not run. mark: in state 1, the cursor up to
+   * which the counters (allocated bytes, the bytes since the last
+   * collection, the young budget's held bytes) and Block.bump are exact;
+   * the inline path's allocations since are [mark, avant_gc_bump), and
+   * gc_alloc_sync counts them. NULL in the other states. */
   Block *cur;
   uint8_t *limit;
   Block *fast_block;
@@ -1385,7 +1453,9 @@ typedef struct GcThread {
   uint8_t *tl_end;
   uint8_t **bump_p;
   uint8_t **limit_p;
-  uint32_t *fast_ok_p;
+  uint8_t **limit_mt_p;
+  uint32_t fast_ok;
+  uint8_t *mark;
   /* The thread's remembered-set buffer (Stage 28 W17b, MMTk's modbuf):
    * in a shared program a barrier appends the object it remembers here,
    * without a lock (the header's REM or REMC bit, set by an atomic or,
@@ -1501,6 +1571,13 @@ void gc_fast_clear(void);
 void gc_clear_alloc_cur(uint8_t space);
 void gc_alloc_stop_all(void);
 void gc_tl_settle(GcThread *t);
+void gc_alloc_sync_slow(void);
+void gc_lazy_build_block(Block *b);
+void gc_lazy_build_all(void);
+void gc_lazy_drop(void);
+/* Allocations generated code made without a call, counted when
+ * AVANT_GC_STATS is set (gc_alloc_sync_slow). */
+extern uint64_t avant_inline_allocs;
 void gc_alloc_thread_init(void);
 void gc_alloc_thread_leave(void);
 void gc_alloc_shared_now(void);
@@ -1640,6 +1717,11 @@ void gc_verify_sticky(void);
 void gc_verify_lost(void);
 void gc_verify_init(void);
 void gc_verify_begin(int full);
+void gc_verify_starts_note(const uint8_t *header);
+void gc_verify_starts_begin(void);
+void gc_verify_starts_resume(void);
+void gc_verify_starts_eager(int on);
+void gc_verify_starts_end(void);
 /* Set by a free of a mature object outside a collection (a growth's freed
  * buffer, a trim), under AVANT_GC_VERIFY: the incremental checks rebuild
  * their record (avant_gc_verify.c). */
@@ -1827,12 +1909,12 @@ static inline int gc_young_at(void *start, const Block *b, const AvantHeader *ol
 
 /* S_INLINE_HOLES (Q11; Stage 28 W15b item 3): 1 (the
  * default), the inline allocation path runs in holes of recycled blocks
- * as in whole free blocks: the slow path sets avant_gc_bump, avant_gc_limit
- * and avant_gc_block to the hole (the generated code stores its cursor
- * in Block.bump and needs nothing else), and the hole's start bits are
- * clear (gc-design.md §2.3: the sweeps clear the lines they free). 0
- * publishes the inline path only in whole blocks; holes are then filled
- * through the C path (kept for Q11's measurement). */
+ * as in whole free blocks: the slow path sets avant_gc_bump and publishes
+ * the limit at the hole's end (the generated code needs nothing else),
+ * and the hole's start bits are clear (gc-design.md §2.3: the sweeps
+ * clear the lines they free). 0 publishes the inline path only in whole
+ * blocks; holes are then filled through the C path (kept for Q11's
+ * measurement). */
 #ifndef S_INLINE_HOLES
 #define S_INLINE_HOLES 1
 #endif
@@ -2051,6 +2133,32 @@ static inline void gc_large_iter_init(LargeIter *it) {
 static inline void gc_init(void) {
   if (!gc_heap.inited) {
     gc_init_slow();
+  }
+}
+
+/* The single mutator's inline allocations since its last sync are
+ * counted and its block's record brought up to its cursor (the Valk
+ * stage, VALK-A2, M6; GcThread.mark, gc_alloc_sync_slow in
+ * avant_gc_alloc.c). Every runtime entry that reads a counter the inline
+ * path used to keep (avant_g_stats.allocated_bytes, avant_since_gc,
+ * avant_nursery_held, avant_inline_allocs), reads Block.bump, moves the
+ * thread's cursor or looks an address up by the start bits calls it
+ * first. Two loads and a compare when there is nothing to count. */
+static inline void gc_alloc_sync(void) {
+  uint8_t *m = gc_thread.mark;
+  if (m && m != avant_gc_bump) {
+    gc_alloc_sync_slow();
+  }
+}
+
+/* Before block B's start bits are read to find an object (the lookups
+ * of avant_gc_heap.c, gc_foreach_block_object): the start bits of the
+ * objects the inline path allocated in B are set now if they are not
+ * (late start bits, M7; gc_lazy_build_block). */
+static inline void gc_lazy_touch(Block *b) {
+  gc_alloc_sync();
+  if (__builtin_expect(gc_heap.lazy_open != 0, 0)) {
+    gc_lazy_build_block(b);
   }
 }
 

@@ -284,15 +284,29 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 // pointer to store into _d. A constant size and type fold the size tests
 // (and choose the call form when the fast path can never be taken).
 //
+// The path (the Valk stage, VALK-A2, M6 and M7): the cursor's new end is
+// compared with the limit the runtime publishes, and when it fits the
+// cursor is stored, the header written and the payload zeroed. Nothing
+// else: the runtime publishes a null limit whenever the path may not run
+// (no hole, a no-GC region, the stress mode, a collection pending; a null
+// limit fails the compare whatever the cursor holds), it counts the
+// bytes from the cursor at its next entry, takes the block record's copy
+// of the cursor then, and sets a young object's start bit when a
+// collection promotes it or a lookup needs it (runtime/avant_gc_alloc.c,
+// gc_fast_publish, gc_alloc_sync_slow, "Late start bits"). Until VALK-A2
+// the path tested g_avant_shared, avant_gc_fast_ok and a null cursor
+// before the limit, stored the cursor in the block's record, set the
+// start bit and kept four counters (22 of its 40 instructions in a loop
+// that allocates one small object).
+//
 // A shared module (Stage 28 W17b, 5.5's condition 1 lifted): every thread
-// has its own young cursor, so the path runs on any thread. It tests
-// avant_gc_fast_ok for either state the runtime publishes instead of
-// g_avant_shared and the single mutator's state: 1 (the program has one
-// thread yet; the path counts every allocation, as in an unshared
-// module) or 2 (the thread bumps in a hole the runtime charged to it,
-// hole accounting: the path counts nothing, and must not, since other
-// threads update the counters under the world lock). An unshared module
-// is unchanged.
+// has its own young cursor, so the path runs on any thread. It reads its
+// own limit, avant_gc_limit_mt, which the runtime also publishes while a
+// thread bumps in a hole charged to it (hole accounting); the limit of an
+// unshared module, avant_gc_limit, is null in a program with threads. And
+// its path sets the object's start bit itself: the late start bits are
+// the single mutator's (another thread may look an object up while its
+// allocator is still bumping in the same hole).
 // An empty payload is one word (Stage 29 W-INT1, as avant_alloc): a 0-byte
 // object at a block's end would have the next block's first address as
 // its payload.
@@ -332,25 +346,14 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
   e.need(callee)
   e.need_intrinsic("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
   shared = e.m.shared
-  c1 = ""
-  if !shared {
-    sh = e.tmp
-    e.line("${sh} = load i32, ptr @g_avant_shared, align 4")
-    c1 = e.tmp
-    e.line("${c1} = icmp eq i32 ${sh}, 0")
-  }
-  ok = e.tmp
-  e.line("${ok} = load i32, ptr @avant_gc_fast_ok, align 4")
-  c2 = e.tmp
+  limit = "@avant_gc_limit"
   if shared {
-    e.line("${c2} = icmp ne i32 ${ok}, 0")
-  } else {
-    e.line("${c2} = icmp eq i32 ${ok}, 1")
+    limit = "@avant_gc_limit_mt"
   }
   bump = e.tmp
   e.line("${bump} = load ptr, ptr @avant_gc_bump, align 8")
   lim = e.tmp
-  e.line("${lim} = load ptr, ptr @avant_gc_limit, align 8")
+  e.line("${lim} = load ptr, ptr ${limit}, align 8")
   if !const_size {
     t15 = e.tmp
     e.line("${t15} = add i64 ${size}, 15")
@@ -359,23 +362,12 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
   }
   bi = e.tmp
   e.line("${bi} = ptrtoint ptr ${bump} to i64")
-  c3 = e.tmp
-  e.line("${c3} = icmp ne i64 ${bi}, 0")
   ei = e.tmp
   e.line("${ei} = add i64 ${bi}, ${total}")
   li = e.tmp
   e.line("${li} = ptrtoint ptr ${lim} to i64")
-  c4 = e.tmp
-  e.line("${c4} = icmp ule i64 ${ei}, ${li}")
-  a12 = c2
-  if !shared {
-    a12 = e.tmp
-    e.line("${a12} = and i1 ${c1}, ${c2}")
-  }
-  a34 = e.tmp
-  e.line("${a34} = and i1 ${c3}, ${c4}")
   go = e.tmp
-  e.line("${go} = and i1 ${a12}, ${a34}")
+  e.line("${go} = icmp ule i64 ${ei}, ${li}")
   if !const_size {
     c5 = e.tmp
     e.line("${c5} = icmp ule i64 ${total}, 8192")
@@ -402,11 +394,6 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
   end = e.tmp
   e.line("${end} = getelementptr inbounds i8, ptr ${bump}, i64 ${total}")
   e.line("store ptr ${end}, ptr @avant_gc_bump, align 8")
-  blk = e.tmp
-  e.line("${blk} = load ptr, ptr @avant_gc_block, align 8")
-  bp = e.tmp
-  e.line("${bp} = getelementptr inbounds i8, ptr ${blk}, i64 32")
-  e.line("store ptr ${end}, ptr ${bp}, align 8")
   // The header: size | type << 32 | (HEAP | YOUNG) << 48.
   if const_size {
     hdr = (32800u64 << 48u64) | (tid.to_u64 << 32u64) | sz.to_u64
@@ -425,7 +412,25 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
   obj = e.tmp
   e.line("${obj} = getelementptr inbounds i8, ptr ${bump}, i64 8")
   e.line("call void @llvm.memset.p0.i64(ptr ${obj}, i8 0, i64 ${size}, i1 false)")
-  // set_start: avant_gc_starts[off >> 9] |= 1 << ((off >> 3) & 63).
+  if shared {
+    ll_alloc_start_bit(e, bump)
+  }
+  e.line("br label %${cont}")
+
+  e.block(slow)
+  s = ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
+  e.line("br label %${cont}")
+
+  e.block(cont)
+  r = e.tmp
+  e.line("${r} = phi ptr [ ${obj}, %${fast} ], [ ${s}, %${slow} ]")
+  r
+}
+
+// A shared module's inline allocation sets its object's start bit
+// (ll_alloc): avant_gc_starts[off >> 9] |= 1 << ((off >> 3) & 63), OFF
+// the header's offset from avant_gc_base.
+fn ll_alloc_start_bit(e: LlEmit, bump: String) {
   base = e.tmp
   e.line("${base} = load ptr, ptr @avant_gc_base, align 8")
   pi = e.tmp
@@ -451,38 +456,6 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
   nw = e.tmp
   e.line("${nw} = or i64 ${old}, ${mask}")
   e.line("store i64 ${nw}, ptr ${wp}, align 8")
-  // The counters: allocated_bytes (avant_g_stats + 24), since_gc,
-  // nursery_held by total; inline_allocs by one. In a shared module only
-  // in state 1 (the one thread counts); in state 2 the runtime does.
-  from = fast
-  if shared {
-    m1 = e.tmp
-    e.line("${m1} = icmp eq i32 ${ok}, 1")
-    cnt = e.part("count")
-    from = e.part("counted")
-    e.line("br i1 ${m1}, label %${cnt}, label %${from}")
-    e.block(cnt)
-  }
-  sp = e.tmp
-  e.line("${sp} = getelementptr inbounds i8, ptr @avant_g_stats, i64 24")
-  ll_bump_counter(e, sp, total)
-  ll_bump_counter(e, "@avant_since_gc", total)
-  ll_bump_counter(e, "@avant_nursery_held", total)
-  ll_bump_counter(e, "@avant_inline_allocs", "1")
-  if shared {
-    e.line("br label %${from}")
-    e.block(from)
-  }
-  e.line("br label %${cont}")
-
-  e.block(slow)
-  s = ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
-  e.line("br label %${cont}")
-
-  e.block(cont)
-  r = e.tmp
-  e.line("${r} = phi ptr [ ${obj}, %${from} ], [ ${s}, %${slow} ]")
-  r
 }
 
 // The birth barrier of an allocation's call result R (ll_alloc), when
@@ -493,14 +466,6 @@ fn ll_alloc_birth(e: LlEmit, r: String, birth: Bool): String {
     e.line("call void @avant_barrier(ptr ${r})")
   }
   r
-}
-
-fn ll_bump_counter(e: LlEmit, ptr: String, by: String) {
-  x = e.tmp
-  e.line("${x} = load i64, ptr ${ptr}, align 8")
-  y = e.tmp
-  e.line("${y} = add i64 ${x}, ${by}")
-  e.line("store i64 ${y}, ptr ${ptr}, align 8")
 }
 
 // _d = call avant_c_str(_s): a C function's `String` result (the Valk
@@ -567,10 +532,11 @@ pub fn ll_gc_poll(e: LlEmit) {
   e.block(cont)
 }
 
-// The runtime globals the allocation fast path reads (5.5), in the
-// order of 10.3. The six thread-local ones are local-exec (VALK-A1, O137),
-// as avant_gc_top is (D268): every program the compiler builds is an
-// executable that links the runtime statically, so each access is one
+// The runtime globals the allocation fast path reads (5.5): the cursor
+// and the module's limit, and for a shared module the block's base and
+// start bits (ll_alloc). They are thread-local and local-exec (VALK-A1,
+// O137), as avant_gc_top is (D268): every program the compiler builds is
+// an executable that links the runtime statically, so each access is one
 // %fs-relative load or store; without a model (general-dynamic, which the
 // linker relaxes) each address was formed apart (`mov %fs:0`, `lea`,
 // often a copy: two or three instructions more per access, O137). A
@@ -579,18 +545,15 @@ pub fn ll_gc_poll(e: LlEmit) {
 // initial-exec here and for avant_gc_top (general-dynamic in a library
 // that is dlopen'ed), chosen by the driver, which knows the output kind,
 // and passed to the emitter.
-pub fn ll_alloc_globals: String {
+pub fn ll_alloc_globals(shared: Bool): String {
   buf = buf_new()
-  buf.push_str("@g_avant_shared = external global i32\n")
-  buf.push_str("@avant_gc_fast_ok = external thread_local(localexec) global i32\n")
   buf.push_str("@avant_gc_bump = external thread_local(localexec) global ptr\n")
-  buf.push_str("@avant_gc_limit = external thread_local(localexec) global ptr\n")
-  buf.push_str("@avant_gc_block = external thread_local(localexec) global ptr\n")
-  buf.push_str("@avant_gc_base = external thread_local(localexec) global ptr\n")
-  buf.push_str("@avant_gc_starts = external thread_local(localexec) global ptr\n")
-  buf.push_str("@avant_g_stats = external global i64\n")
-  buf.push_str("@avant_since_gc = external global i64\n")
-  buf.push_str("@avant_nursery_held = external global i64\n")
-  buf.push_str("@avant_inline_allocs = external global i64\n")
+  if shared {
+    buf.push_str("@avant_gc_limit_mt = external thread_local(localexec) global ptr\n")
+    buf.push_str("@avant_gc_base = external thread_local(localexec) global ptr\n")
+    buf.push_str("@avant_gc_starts = external thread_local(localexec) global ptr\n")
+  } else {
+    buf.push_str("@avant_gc_limit = external thread_local(localexec) global ptr\n")
+  }
   buf.to_s
 }
