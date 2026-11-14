@@ -25,7 +25,8 @@ import std.http
 // takes in part (Stage 29 W-FIX1g, O571). And the WebSocket client's
 // deadlines under a step of the wall clock (Stage 29 W-FIX1g, O572).
 // And the client's request checks (Stage 29 W-FIX1h, O665); a response
-// literal and a status outside 100-599 (O661, D369).
+// literal and a status outside 100-599 (O661, D369); a response with
+// two Content-Length values (O664).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -864,6 +865,47 @@ fn client_request_cases(c: Checks, root: String) {
   c.eq_int(server.join, 0, "the echo server ends")
 }
 
+// How the client reads a response (Stage 29 W-FIX1h): GET each path of
+// tests/fixtures/http/keep_server.py (which closes after each answer
+// here) and compare "STATUS BODY", or the error, with its want (a want
+// ending in " from" gets the server's authority).
+fn client_response_round(c: Checks, root: String, what: String, paths: Array(String), wants: Array(String)) {
+  stamp = now_ms()
+  port_file = "${scratch()}/http-response-${stamp}.port"
+  log = "${scratch()}/http-response-${stamp}.log"
+  server = spawn {
+    args: Array(String) = []
+    args.push("${root}/tests/fixtures/http/keep_server.py")
+    args.push(port_file)
+    args.push("0")
+    process_run_out("/usr/bin/python3", args, log) ?? -1
+  }
+  port = wait_port(port_file)
+  c.expect(port > 0, "the answering server is listening (${what})")
+  for i in 0..paths.size {
+    want = wants[i]
+    if want.size > 5 && str_slice(want, want.size - 5, want.size) == " from" {
+      want = "${want} 127.0.0.1:${port}"
+    }
+    c.eq_str(outcome(Http.get("http://127.0.0.1:${port}${paths[i]}", false, 4000)), want, "${what}: ${paths[i]}")
+  }
+  if resp = Http.get("http://127.0.0.1:${port}/__stop", true, 4000) {
+  }
+  c.eq_int(server.join, 0, "the answering server ends (${what})")
+}
+
+// O664 (Stage 29 W-FIX1h): a response with two Content-Length values
+// was read by the first (RFC 9112 6.3: the user agent discards it, a
+// proxy may have read the other). Every repeat is refused, identical
+// or not, as a list in one line or as a folded line, the server's rule
+// for requests (D364, O522); one value is read as before.
+fn client_length_cases(c: Checks, root: String) {
+  invalid = "invalid HTTP response body from"
+  paths = ["/cl-differ", "/cl-differ-reversed", "/cl-same", "/cl-list", "/cl-folded", "/cl-bad", "/cl"]
+  wants = [invalid, invalid, invalid, invalid, invalid, invalid, "200 hello"]
+  client_response_round(c, root, "a response with more than one Content-Length is refused", paths, wants)
+}
+
 class BigSent {
   pub sent: String
 
@@ -1242,6 +1284,7 @@ fn main: Int {
   response_literal_cases(c)
   client_framing_cases(c, avant_test_root())
   client_request_cases(c, avant_test_root())
+  client_length_cases(c, avant_test_root())
   ws_big_cases(c, avant_test_root())
   ws_handshake_cases(c, avant_test_root())
   ws_deadline_cases(c, avant_test_root())

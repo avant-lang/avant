@@ -755,6 +755,34 @@ static int parse_content_length(const char *p, size_t n, long *out) {
   return 1;
 }
 
+/* A received response's Content-Length (Stage 29 W-FIX1h, O664): 0
+ * when it has none, 1 with its value in *out, -1 when its framing is
+ * invalid: more than one Content-Length line (identical or not), a list
+ * in one line, one continued on a folded line, or a value that is not a
+ * number. The client read the first line only, so a response with two
+ * values was read by one of them where a proxy may read the other (RFC
+ * 9112 6.3: the user agent closes the connection and discards such a
+ * response). The rule is the server's for requests (D364, O522). */
+static int resp_content_length(struct phr_header *headers, size_t count,
+                               long *out) {
+  size_t i;
+  int seen = 0;
+  for (i = 0; i < count; i++) {
+    long one = 0;
+    if (!headers[i].name ||
+        !ascii_ieq(headers[i].name, headers[i].name_len, "Content-Length", 14)) {
+      continue;
+    }
+    if (seen || (i + 1 < count && !headers[i + 1].name) ||
+        !parse_content_length(headers[i].value, headers[i].value_len, &one)) {
+      return -1;
+    }
+    *out = one;
+    seen = 1;
+  }
+  return seen;
+}
+
 /* ---- WebSocket helpers (RFC 6455) ---- */
 
 /* SHA-1 for Sec-WebSocket-Accept only: handshake naming, not a security
@@ -3491,13 +3519,18 @@ static int fetch_complete(FetchState *st) {
                         : FETCH_UNTIL_CLOSE;
       memset(&st->chunks, 0, sizeof(st->chunks));
       st->chunks.consume_trailer = 1;
-    } else if (find_header(headers, num_headers, "Content-Length", &value,
-                           &value_len) &&
-               parse_content_length(value, value_len, &want)) {
-      st->framing = FETCH_LENGTH;
-      st->body_want = (size_t)want;
     } else {
-      st->framing = FETCH_UNTIL_CLOSE;
+      int cl = resp_content_length(headers, num_headers, &want);
+      if (cl < 0) {
+        /* An invalid length (O664): the exchange ends now and
+         * avant_http_resp_body refuses the response. */
+        st->framing = FETCH_NO_BODY;
+      } else if (cl > 0) {
+        st->framing = FETCH_LENGTH;
+        st->body_want = (size_t)want;
+      } else {
+        st->framing = FETCH_UNTIL_CLOSE;
+      }
     }
   }
   switch (st->framing) {
@@ -3808,15 +3841,16 @@ char *avant_http_resp_body(const char *raw) {
       return out;
     }
   }
-  if (find_header(headers, num_headers, "Content-Length", &value,
-                  &value_len)) {
+  {
     long want = 0;
-    if (!parse_content_length(value, value_len, &want) ||
-        (size_t)want > body_len) {
+    int cl = resp_content_length(headers, num_headers, &want);
+    if (cl < 0 || (cl > 0 && (size_t)want > body_len)) {
       set_status(3);
       return make_bytes("", 0);
     }
-    return make_bytes(body, (size_t)want);
+    if (cl > 0) {
+      return make_bytes(body, (size_t)want);
+    }
   }
   return make_bytes(body, body_len);
 }
