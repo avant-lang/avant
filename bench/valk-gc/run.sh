@@ -9,7 +9,9 @@
 #                           fresh processes per row, rows in rotating order
 #   run.sh counts           no clock: AVANT_GC_STATS and instruction counts
 #                           per scenario (scenario-isolated builds), and the
-#                           collection counts the other runtimes print
+#                           collection counts the other runtimes print; each
+#                           process in an emptied environment without
+#                           address-space randomization (stable counts)
 #   run.sh cg [N...]        no clock: exact instructions per function of the
 #                           Avant scenario-isolated build under callgrind,
 #                           exclusive and inclusive, one process per
@@ -371,7 +373,25 @@ do_time() {
 # stat) for the three rows; user-mode instructions for the other
 # ahead-of-time programs; and the collection counts Go, D, Crystal and
 # Java print themselves.
+#
+# Every counted process runs in a fixed environment (O648, VALK-TM2):
+# emptied (env -i, PATH and HOME kept, then the variables a row needs)
+# and without address-space randomization (setarch -R). Measured on the
+# Avant iso program, 10 runs each (VALK-TM2's record, item 4): with the
+# caller's environment and randomization a count spread over about 2,900
+# instructions (2,884 at unit 0, 2,875 at scenario 5, 2,541 at scenario
+# 1), and it read about 14,500 higher than in an empty environment (the
+# runtime's getenv calls walk every variable: about 300 instructions per
+# variable, nothing per byte of a value); with both fixed the spread is
+# 2, 10 and 31. The randomization was the spread, the environment the
+# level; the executable's path moves the level too (by up to about 1,700
+# on scenario 5, the stack's layout): so two counts compare only when both
+# ran here, from one $BUILD.
+fixed_env() { # VAR=VALUE... CMD...: CMD in the fixed environment
+  env -i PATH="$PATH" HOME="$HOME" "$@"
+}
 do_counts() {
+  command -v setarch >/dev/null || die "counts needs setarch (util-linux) to turn off address-space randomization"
   local dir=$OUT/counts
   rm -rf "$dir"
   mkdir -p "$dir"
@@ -379,7 +399,7 @@ do_counts() {
   perf_ins() { # PREFIX CMD...: writes PREFIX.ins (instructions:u)
     local prefix=$1
     shift
-    timeout -k 10 "$LIMIT" perf stat -x, -e instructions:u -o "$prefix.perf" "$@" </dev/null >"$prefix.out" 2>"$prefix.err" || die "perf stat failed: $*"
+    fixed_env setarch -R timeout -k 10 "$LIMIT" perf stat -x, -e instructions:u -o "$prefix.perf" "$@" </dev/null >"$prefix.out" 2>"$prefix.err" || die "perf stat failed: $*"
     awk -F, '/instructions/ {print $1}' "$prefix.perf" >"$prefix.ins"
   }
   for u in "0" "${ISO_UNITS[@]}"; do
@@ -390,7 +410,7 @@ do_counts() {
       local margs=()
       [ "$mode" = full ] || margs=("$mode")
       # shellcheck disable=SC2086
-      AVANT_GC_STATS=1 timeout -k 10 "$LIMIT" "$BUILD/gc-avant-iso" "${margs[@]}" $nums </dev/null >"$dir/avant-$mode/$tag.out" 2>"$dir/avant-$mode/$tag.stats" || die "avant iso $mode $nums failed"
+      fixed_env AVANT_GC_STATS=1 setarch -R timeout -k 10 "$LIMIT" "$BUILD/gc-avant-iso" "${margs[@]}" $nums </dev/null >"$dir/avant-$mode/$tag.out" 2>"$dir/avant-$mode/$tag.stats" || die "avant iso $mode $nums failed"
       # shellcheck disable=SC2086
       [ "$u" = 0 ] || verify_output "$dir/avant-$mode/$tag.out" $nums || die "avant iso $mode $nums: verification"
       # shellcheck disable=SC2086
@@ -406,11 +426,11 @@ do_counts() {
     # Collection counts printed by the other runtimes (stderr or stdout).
     mkdir -p "$dir/go-gctrace" "$dir/d-profile" "$dir/crystal-gcstats" "$dir/java-xlog" "$dir/java-parallel-xlog"
     # shellcheck disable=SC2086
-    GODEBUG=gctrace=1 timeout -k 10 "$LIMIT" "$BUILD/gc-go-iso" $nums </dev/null >"$dir/go-gctrace/$tag.out" 2>"$dir/go-gctrace/$tag.err" || die "go gctrace $nums"
+    fixed_env GODEBUG=gctrace=1 setarch -R timeout -k 10 "$LIMIT" "$BUILD/gc-go-iso" $nums </dev/null >"$dir/go-gctrace/$tag.out" 2>"$dir/go-gctrace/$tag.err" || die "go gctrace $nums"
     # shellcheck disable=SC2086
-    timeout -k 10 "$LIMIT" "$BUILD/gc-d-iso" "--DRT-gcopt=profile:1" $nums </dev/null >"$dir/d-profile/$tag.out" 2>"$dir/d-profile/$tag.err" || die "d profile $nums"
+    fixed_env setarch -R timeout -k 10 "$LIMIT" "$BUILD/gc-d-iso" "--DRT-gcopt=profile:1" $nums </dev/null >"$dir/d-profile/$tag.out" 2>"$dir/d-profile/$tag.err" || die "d profile $nums"
     # shellcheck disable=SC2086
-    GC_PRINT_STATS=1 timeout -k 10 "$LIMIT" "$BUILD/gc-cr-iso" $nums </dev/null >"$dir/crystal-gcstats/$tag.out" 2>"$dir/crystal-gcstats/$tag.err" || die "crystal stats $nums"
+    fixed_env GC_PRINT_STATS=1 setarch -R timeout -k 10 "$LIMIT" "$BUILD/gc-cr-iso" $nums </dev/null >"$dir/crystal-gcstats/$tag.out" 2>"$dir/crystal-gcstats/$tag.err" || die "crystal stats $nums"
     # shellcheck disable=SC2086
     timeout -k 10 "$LIMIT" java -Xlog:gc -cp "$BUILD/java-iso" Main $nums </dev/null >"$dir/java-xlog/$tag.out" 2>"$dir/java-xlog/$tag.err" || die "java xlog $nums"
     # shellcheck disable=SC2086
@@ -431,7 +451,10 @@ do_counts() {
 # (with its callees'), sN.total (the process), sN.out (the program's
 # output, verified). The raw callgrind file is removed after the two
 # listings are made. AVANT_HEAP_RESERVE_GB=2 keeps the address range the
-# runtime reserves small enough for valgrind; it changes no count.
+# runtime reserves small enough for valgrind; it changes no count. The
+# process runs in counts' emptied environment (fixed_env, O648): callgrind
+# repeats exactly from run to run, but its count moves with the number of
+# variables the runtime's getenv calls walk.
 do_cg() {
   command -v valgrind >/dev/null && command -v callgrind_annotate >/dev/null || die "cg needs valgrind and callgrind_annotate"
   [ -x "$BUILD/gc-avant-iso" ] || die "no $BUILD/gc-avant-iso (run.sh build)"
@@ -448,7 +471,7 @@ do_cg() {
     tag=s$n
     rm -f "$dir/$tag".*
     # shellcheck disable=SC2086
-    AVANT_HEAP_RESERVE_GB=2 timeout -k 10 "$limit" valgrind --tool=callgrind --callgrind-out-file="$dir/$tag.callgrind" "$BUILD/gc-avant-iso" $nums </dev/null 2>"$dir/$tag.err" | head -c 50000000 >"$dir/$tag.out"
+    fixed_env AVANT_HEAP_RESERVE_GB=2 timeout -k 10 "$limit" valgrind --tool=callgrind --callgrind-out-file="$dir/$tag.callgrind" "$BUILD/gc-avant-iso" $nums </dev/null 2>"$dir/$tag.err" | head -c 50000000 >"$dir/$tag.out"
     [ "${PIPESTATUS[0]}" = 0 ] || die "cg: scenario $n failed or timed out (see $dir/$tag.err)"
     # shellcheck disable=SC2086
     verify_output "$dir/$tag.out" $nums || die "cg: scenario $n: verification"

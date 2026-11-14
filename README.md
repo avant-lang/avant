@@ -236,6 +236,7 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
   - [checks](#checks)
   - [golden files](#golden-files)
   - [serial and parallel tests](#serial-and-parallel-tests)
+  - [choosing by name](#choosing-by-name)
   - [test settings](#test-settings)
   - [reports](#reports)
 - [Formatter](#formatter)
@@ -3175,11 +3176,12 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 | `--jobs N` | how many test processes run at once (default: the online processors; `--jobs 1` runs one file at a time; `--jobs 0` is an error) |
 | `--shard I/N` | run slice `I` of `N`, counted from 1; it does not launch the other slices. May be combined with `--jobs` |
 | `--junit PATH` | write a JUnit report: one case per check `std.testing` records, one per file that records none, and one for a failed file whose checks all passed |
+| `--name PATTERN` | run only the checks, `t.test` bodies and `t.parallel` bodies whose names contain `PATTERN` ([Choosing by name](#choosing-by-name)) |
 | `--coverage` | instrument the tests, print a coverage table after the summary, write `coverage/lcov.info` |
 | `--skip-exclusive` | leave out the files listed in `[test] exclusive` (required when `--shard` would include one) |
 | `-h`, `--help` | print the flags and exit 0 |
 
-`--jobs=N`, `--shard=I/N` and `--junit=PATH` are the same flags. An unknown flag is an error. `avant test` does not pass arguments to the test programs, and a `--` on the command is an error.
+`--jobs=N`, `--shard=I/N`, `--junit=PATH` and `--name=PATTERN` are the same flags. An unknown flag is an error. `avant test` does not pass arguments to the test programs, and a `--` on the command is an error.
 
 For each file the runner prints its output, in source order, then `ok tests/test_greet.av`, or `FAIL tests/test_greet.av:` and how its process ended (`the test process exited with status 1`, `the test process killed by signal 13 (Broken pipe)`, `the compile exited with status 1`, `the parallel test "other" killed by signal 11 (Segmentation fault)`), and a total at the end (`0 failed, 1 passed`). Its own status is 1 when any file failed, when nothing was selected, or when the command was refused. Ctrl-C or `SIGTERM` stops every test process it started and removes its temporary files.
 
@@ -3272,6 +3274,12 @@ fn main: Int {
 ```
 
 In each of those processes the file runs again, but serial checks and `t.test` bodies are skipped and only that one parallel body runs; code in `main` outside those bodies runs in every process. Only `avant test` starts those processes. `avant run` on the file, or the compiled file run as a program, runs it once with every body in that one process, in source order: the same checks, without the overlap.
+
+### Choosing by name
+
+`avant test tests/test_greet.av --name empty` runs only what is named with `empty` in it: a check whose name contains the pattern, and a `t.test` or `t.parallel` body whose name contains it, which then runs whole, every check inside it included. A body whose name does not contain the pattern does not run, so a check inside a body is chosen by the body's name. The pattern is plain text, matched case for case anywhere in the name. Code in `main` outside the bodies still runs, as it does in a parallel test's process. The JUnit report lists only the checks that ran.
+
+Over several files, a file where nothing matches is left out of the report and the total. A pattern that matches nothing in any selected file is an error that names the pattern and the files: `--name nothing matches no check, test or parallel test in tests/test_greet.av`.
 
 ### Test settings
 

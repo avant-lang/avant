@@ -1,0 +1,88 @@
+import harness
+
+// The release and wave tools under tools/, through the shell scripts in
+// tests/tools/ (VALK-TM2): each prints one line per check, `ok: NAME` or
+// `FAIL: NAME: why`, and every NAME below is one check here, so a check
+// that did not run fails too. They test shell tools, not the collector:
+// under a GC environment pass they skip themselves (the default passes on
+// B and C' run them).
+
+fn tools_line(log: String, name: String): String {
+  for line in log.split("\n") {
+    if line == "ok: ${name}" {
+      return "ok"
+    }
+    if str_has(line, "FAIL: ${name}: ") {
+      return line
+    }
+  }
+  "no line for ${name}"
+}
+
+// Each script's checks, from its log, after the script ended with code.
+fn tools_checks(c: Checks, what: String, code: Int, log: String, names: Array(String)) {
+  text = file_read(log) ?? ""
+  c.eq_int(code, 0, "${what}: the script ran to its end")
+  c.expect(str_has(text, "\ndone\n") || (text.size >= 5 && str_slice(text, 0, 5) == "done\n"), "${what}: the script printed every check")
+  for n in names {
+    got = tools_line(text, n)
+    msg = "${what}: ${n}"
+    if got != "ok" {
+      msg = "${msg} (${got})"
+    }
+    c.expect(got == "ok", msg)
+  }
+}
+
+fn test_tools(c: Checks) {
+  c.suite("tests/cases/test_tools.av")
+  outer = gc_env_outer("")
+  if outer.size > 0 {
+    c.skip("the tools' checks", "outer ${outer}: shell tools, run by the default passes")
+    return
+  }
+  root = avant_test_root()
+  jobs: Array(HJob) = []
+  whats: Array(String) = []
+  names: Array(Array(String)) = []
+  // O676: two packages of one compiler are the same archive.
+  if compiler = env_get("AVANT_COMPILER") {
+    compiler = compiler_abs("tools", compiler)
+    slash = 0
+    for i in 0..compiler.size {
+      if compiler[i] == 47 {
+        slash = i
+      }
+    }
+    re2c = "${str_slice(compiler, 0, slash)}/re2c"
+    c.expect(file_exists(re2c), "O676: the re2c beside the compiler under test exists (${re2c})")
+    c.expect(file_exists("${root}/runtime/build/avant-bind"), "O676: runtime/build/avant-bind exists (sh runtime/build.sh)")
+    w = "${scratch_dir()}/package"
+    jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/package-repro.sh", compiler, re2c, w], "${w}.log"))
+    whats.push("O676 package.sh")
+    names.push(["packaged", "same-sha256", "same-bytes", "sha256-file", "commit-time", "source-date-epoch", "epoch-changes-sha256", "bad-epoch"])
+  } else {
+    c.expect(false, "O676: AVANT_COMPILER names the compiler under test")
+  }
+  // O669: a stopped wave-final.sh leaves no process of its steps.
+  wf = "${scratch_dir()}/wave-final"
+  jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/wave-final-stop.sh", wf], "${wf}.log"))
+  whats.push("O669 wave-final.sh")
+  names.push(["run-ends", "step-status", "term-leaves-nothing", "term-status", "term-within-kill-after", "term-summary", "expire-leaves-nothing", "expire-status", "expire-summary"])
+  // The scripts at once: neither reads a clock the other could disturb
+  // beyond wave-final-stop.sh's 10 s bound on a stop.
+  run_jobs(jobs)
+  for k in 0..jobs.size {
+    tools_checks(c, whats[k], jobs[k].code, jobs[k].log, names[k])
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_tools(c)
+  c.finish
+}

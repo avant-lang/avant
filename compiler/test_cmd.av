@@ -20,6 +20,7 @@ pub class FileRun {
   frags: Array(String)
   pending: Int = 0
   why: String = ""
+  unmatched: Bool = false
 
   fn initialize(abs: String, rel: String, bin: String) {
     self.abs = abs
@@ -56,6 +57,7 @@ pub class JobCmd {
   kind: Int = 0
   file: Int = 0
   names: String = ""
+  matches: String = ""
   signal: Int = 0
   unstarted: Bool = false
   what: String = ""
@@ -168,6 +170,7 @@ pub class TestHost {
   jobs: Int = 1
   coverage: Bool = false
   junit: Bool = false
+  filter: String = ""
   good: Int = 0
   bad: Int = 0
   cov: CovReport
@@ -357,18 +360,23 @@ fn listed(paths: Array(String), path: String): Bool {
   false
 }
 
-fn env_base(compiler: String, names: String, only: String, frag: String): Array(String) {
+// filter and matches (O330): `--name`'s pattern and the file in which a
+// test process writes how many names it matched; both empty except for a
+// file's serial run.
+fn env_base(compiler: String, names: String, only: String, frag: String, filter: String, matches: String): Array(String) {
   a: Array(String) = []
   a.push("AVANT_COMPILER=${compiler}")
   a.push("AVANT_TEST_LIST=")
   a.push("AVANT_TEST_ONLY=${only}")
   a.push("AVANT_TEST_NAMES=${names}")
+  a.push("AVANT_TEST_FILTER=${filter}")
+  a.push("AVANT_TEST_MATCHES=${matches}")
   a.push("AVANT_JUNIT_FRAGMENT=${frag}")
   a
 }
 
 fn env_plain(compiler: String, coverage: Bool, map: String): Array(String) {
-  a = env_base(compiler, "", "", "")
+  a = env_base(compiler, "", "", "", "", "")
   if coverage {
     a.push("AVANT_COVERAGE=1")
     a.push("AVANT_COVERAGE_MAP=${map}")
@@ -376,8 +384,8 @@ fn env_plain(compiler: String, coverage: Bool, map: String): Array(String) {
   a
 }
 
-fn env_run(compiler: String, names: String, only: String, coverage: Bool, frag: String): Array(String) {
-  a = env_base(compiler, names, only, frag)
+fn env_run(compiler: String, names: String, only: String, coverage: Bool, frag: String, filter: String, matches: String): Array(String) {
+  a = env_base(compiler, names, only, frag, filter, matches)
   if coverage {
     a.push("AVANT_COVERAGE=")
     a.push("AVANT_COVERAGE_LCOV=0")
@@ -474,10 +482,15 @@ fn queue_run(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
     frag = "${base}.junit"
     f.frags.push(frag)
   }
-  args = env_run(host.compiler, names, "", host.coverage, frag)
+  matches = ""
+  if host.filter.size > 0 {
+    matches = "${base}.matches"
+  }
+  args = env_run(host.compiler, names, "", host.coverage, frag, host.filter, matches)
   args.push(f.bin)
   run = JobCmd.new(args, "${base}.log", 1, at)
   run.names = names
+  run.matches = matches
   run.what = "the test process"
   sched.add(run)
 }
@@ -489,7 +502,7 @@ fn queue_parallels(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
       frag = "${host.fresh()}.junit"
       f.frags.push(frag)
     }
-    args = env_run(host.compiler, "", name, host.coverage, frag)
+    args = env_run(host.compiler, "", name, host.coverage, frag, "", "")
     args.push(f.bin)
     cmd = JobCmd.new(args, "${host.fresh()}.log", 2, at)
     cmd.what = "the parallel test \"${name}\""
@@ -607,6 +620,16 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
           seen.push(name)
           f.parallels.push(name)
         }
+      }
+      // `--name` (O330): a file whose serial run passed, matched no name
+      // and listed no parallel body was not selected: no line, not
+      // counted, not in the JUnit report.
+      if cmd.matches.size > 0 {
+        if cmd.code == 0 && f.ok && f.parallels.size == 0 && !file_exists(cmd.matches) {
+          f.unmatched = true
+          f.reported = true
+        }
+        rm_file(cmd.matches)
       }
       if f.parallels.size == 0 {
         emit_file(host, f)
@@ -880,6 +903,12 @@ fn write_junit(path: String, files: Array(FileRun)) {
   fb_tests = 0
   fb_bad = 0
   for f in files {
+    if f.unmatched {
+      for frag in f.frags {
+        rm_file(frag)
+      }
+      continue
+    }
     fragtext = ""
     for frag in f.frags {
       fragtext = append_text(fragtext, read_text(frag))
@@ -982,6 +1011,7 @@ pub fn driver_test(args: Array(String)) {
   junit = ""
   skip_ex = false
   coverage = false
+  name_pat = ""
   paths: Array(String) = []
   i = 0
   while i < args.size {
@@ -1019,6 +1049,25 @@ pub fn driver_test(args: Array(String)) {
     } else if str_starts(arg, "--junit=") {
       junit = str_slice(arg, 8, arg.size)
       i += 1
+    } else if arg == "--name" || str_starts(arg, "--name=") {
+      pat = ""
+      if arg == "--name" {
+        if i + 1 >= args.size {
+          test_fail("--name needs a pattern")
+        }
+        pat = args[i + 1]
+        i += 2
+      } else {
+        pat = str_slice(arg, 7, arg.size)
+        i += 1
+      }
+      if pat.size == 0 {
+        test_fail("--name needs a pattern that is not empty")
+      }
+      if name_pat.size > 0 {
+        test_fail("--name is given twice")
+      }
+      name_pat = pat
     } else if arg == "--skip-exclusive" {
       skip_ex = true
       i += 1
@@ -1031,6 +1080,7 @@ pub fn driver_test(args: Array(String)) {
       diag_puts("--jobs 1   one file at a time")
       diag_puts("--shard I/N   slice I of N, 1-based, round-robin")
       diag_puts("--junit PATH   write a JUnit report: one case per check std.testing records, one per file that records none, and one for a failed file whose checks all passed")
+      diag_puts("--name PATTERN   run only the checks, t.test bodies and t.parallel bodies whose names contain PATTERN")
       diag_puts("--skip-exclusive   omit [test] exclusive files")
       diag_puts("--coverage   instrument tests and print one coverage table")
       diag_exit(0)
@@ -1238,6 +1288,7 @@ pub fn driver_test(args: Array(String)) {
   host = TestHost.new(argv0, jobs)
   host.coverage = coverage
   host.junit = junit.size > 0
+  host.filter = name_pat
   if coverage {
     host.cov = CovReport.new(anchor)
     host.cov.use_excludes(cov_exclude)
@@ -1268,6 +1319,18 @@ pub fn driver_test(args: Array(String)) {
   }
   bad = host.bad
   good = host.good
+  // `--name` that no file matched (O330) is an error naming the pattern
+  // and the files.
+  if name_pat.size > 0 && bad + good == 0 {
+    if files.size == 1 {
+      test_fail("--name ${name_pat} matches no check, test or parallel test in ${files[0].rel}")
+    }
+    rels = files[0].rel
+    for k in 1..files.size {
+      rels = "${rels}, ${files[k].rel}"
+    }
+    test_fail("--name ${name_pat} matches no check, test or parallel test in the ${files.size} files: ${rels}")
+  }
   puts("${bad} failed, ${good} passed")
   lost = false
   if coverage {

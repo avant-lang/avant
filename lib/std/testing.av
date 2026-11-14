@@ -121,6 +121,10 @@ fn testing_run(bin: String, args: Array(String), out_path: String, err_path: Str
   wrapped.push("AVANT_TEST_ONLY")
   wrapped.push("-u")
   wrapped.push("AVANT_TEST_NAMES")
+  wrapped.push("-u")
+  wrapped.push("AVANT_TEST_FILTER")
+  wrapped.push("-u")
+  wrapped.push("AVANT_TEST_MATCHES")
   wrapped.push(bin)
   i = 0
   while i < args.size {
@@ -139,6 +143,9 @@ pub class Test {
   lost: Bool = false
   only: String = ""
   names_path: String = ""
+  filter: String = ""
+  matches_path: String = ""
+  matched: Int = 0
   names: Array(String)
   rec_name: Array(String)
   rec_ok: Array(Int)
@@ -154,6 +161,9 @@ pub class Test {
     self.lost = false
     self.only = ""
     self.names_path = ""
+    self.filter = ""
+    self.matches_path = ""
+    self.matched = 0
     self.names = []
     self.rec_name = []
     self.rec_ok = []
@@ -172,7 +182,31 @@ pub class Test {
       if v = env_get("AVANT_TEST_NAMES"), v.size > 0 {
         self.names_path = v
       }
+      // `avant test --name PATTERN` (O330, VALK-TM2): only the checks,
+      // `test` bodies and `parallel` bodies whose names contain PATTERN
+      // run; a selected body runs whole. The runner reads the file
+      // AVANT_TEST_MATCHES names to tell a file where nothing matched.
+      if v = env_get("AVANT_TEST_FILTER"), v.size > 0 {
+        self.filter = v
+      }
+      if v = env_get("AVANT_TEST_MATCHES"), v.size > 0 {
+        self.matches_path = v
+      }
     }
+  }
+
+  // Whether `--name` selects what is named `name`: always inside a
+  // selected body (depth > 0) and without a filter; at the top level when
+  // the name contains the pattern, which counts as a match.
+  fn picked(name: String): Bool {
+    if self.filter.size == 0 || self.depth > 0 {
+      return true
+    }
+    if testing_has(name, self.filter) {
+      self.matched += 1
+      return true
+    }
+    false
   }
 
   fn quiet: Bool {
@@ -329,7 +363,7 @@ pub class Test {
   }
 
   pub fn check(cond: Bool, name: String): Nil {
-    if self.quiet {
+    if self.quiet || !picked(name) {
       return nil
     }
     if cond {
@@ -341,7 +375,7 @@ pub class Test {
   }
 
   pub fn check_eq(got: Int, want: Int, name: String): Nil {
-    if self.quiet {
+    if self.quiet || !picked(name) {
       return nil
     }
     if got == want {
@@ -355,7 +389,7 @@ pub class Test {
   }
 
   pub fn check_eq(got: Bool, want: Bool, name: String): Nil {
-    if self.quiet {
+    if self.quiet || !picked(name) {
       return nil
     }
     if got == want {
@@ -369,7 +403,7 @@ pub class Test {
   }
 
   pub fn check_eq(got: String, want: String, name: String): Nil {
-    if self.quiet {
+    if self.quiet || !picked(name) {
       return nil
     }
     if got == want {
@@ -386,7 +420,7 @@ pub class Test {
     if self.mode == 1 {
       return nil
     }
-    if self.mode == 2 {
+    if self.mode == 2 || !picked(name) {
       return nil
     }
     self.depth += 1
@@ -443,6 +477,9 @@ pub class Test {
       }
       return nil
     }
+    if !picked(name) {
+      return nil
+    }
     if self.names_path.size > 0 {
       if remember_parallel(name) {
         write_parallel_names()
@@ -464,10 +501,10 @@ pub class Test {
   }
 
   pub fn golden(path: String, got: String): Nil {
-    if self.quiet {
+    label = "golden ${path}"
+    if self.quiet || !picked(label) {
       return nil
     }
-    label = "golden ${path}"
     if text = file_read(path) {
       if text == got {
         pass_line(label)
@@ -484,10 +521,10 @@ pub class Test {
   }
 
   pub fn run_golden(program: String, want: String): Nil {
-    if self.quiet {
+    label = "run_golden ${program}"
+    if self.quiet || !picked(label) {
       return nil
     }
-    label = "run_golden ${program}"
     compiler = ""
     if c = env_get("AVANT_COMPILER") {
       compiler = c
@@ -540,10 +577,10 @@ pub class Test {
   }
 
   pub fn rejects(source: String, substring: String): Nil {
-    if self.quiet {
+    label = "rejects ${source}"
+    if self.quiet || !picked(label) {
       return nil
     }
-    label = "rejects ${source}"
     compiler = ""
     if c = env_get("AVANT_COMPILER") {
       compiler = c
@@ -581,6 +618,11 @@ pub class Test {
 
   pub fn finish: Int {
     write_junit()
+    if self.matches_path.size > 0 && self.matched > 0 {
+      if e = testing_write_failure(file_write(self.matches_path, "${self.matched}\n")) {
+        report_lost("the --name matches were not written: ${e.message}")
+      }
+    }
     if self.mode == 1 {
       if self.dup {
         return 1
