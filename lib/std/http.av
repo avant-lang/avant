@@ -15,6 +15,7 @@ lib httpc {
   fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void))): Int
   fun avant_http_close(srv: Ptr(Void)): Int
   fun avant_http_route_while_serving(what: String)
+  fun avant_http_header_check(name: String, value: String)
   fun avant_http_req_is_ws(req: Ptr(Void)): Int
   fun avant_http_req_ws_upgrade(req: Ptr(Void), route: Int): Int
   fun avant_http_req_ws_id(req: Ptr(Void)): Int
@@ -154,7 +155,12 @@ pub struct Response {
     Response { status: status, headers: empty_headers(), head: "Content-Type: application/octet-stream\r\n", body: body }
   }
 
+  // A name that is not a token, or a value with a control character
+  // other than tab (CR and LF among them), traps (Stage 29 W-FIX1g,
+  // O518): appended as it came, such a value added header lines or a
+  // second answer to the response (response splitting).
   pub fn header(name: String, value: String): Response {
+    httpc.avant_http_header_check(name, value)
     if is_managed_header(name) {
       return self
     }
@@ -852,10 +858,11 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
       i += 1
     }
     buf.push_str("Content-Length: ${body.size}\r\nConnection: close\r\n\r\n")
-    if body.size > 0 {
-      text = String.from_utf8(body) ?? ""
-      buf.push_str(text)
-    }
+    // The body's bytes as they are (Stage 29 W-FIX1g): it went through
+    // String.from_utf8, so a body that is not valid UTF-8 was sent as
+    // nothing after a Content-Length of its size, and the server waited
+    // for it until the call's deadline.
+    buf.push_bytes(body)
     left = deadline - now_ms()
     if left <= 0 {
       return HttpError.new("request to ${p.authority} timed out")
@@ -875,9 +882,15 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     if httpc.avant_http_take_status() != 0 {
       return HttpError.new("invalid HTTP response from ${p.authority}")
     }
-    resp_body = httpc.avant_http_resp_body(raw)
-    if httpc.avant_http_take_status() != 0 {
-      return HttpError.new("invalid HTTP response body from ${p.authority}")
+    // The answer to HEAD has no body: its Content-Length is the length
+    // a GET's would have (RFC 9112 6.3), and reading it as this body's
+    // made every such answer invalid (Stage 29 W-FIX1g).
+    resp_body = "".bytes
+    if method != "HEAD" {
+      resp_body = httpc.avant_http_resp_body(raw)
+      if httpc.avant_http_take_status() != 0 {
+        return HttpError.new("invalid HTTP response body from ${p.authority}")
+      }
     }
     resp_headers = httpc.avant_http_resp_headers(raw)
     return Response {
