@@ -113,16 +113,6 @@ fn queue_round(port: Int, out: Channel(String), root: String, stamp: Int): Int {
   0
 }
 
-fn http_failure(r: Response | HttpError): HttpError? {
-  _ = r?
-  nil
-}
-
-fn ws_failure(r: WsConnection | HttpError): HttpError? {
-  _ = r?
-  nil
-}
-
 // "timed out in time" when the call failed as a timeout no earlier than
 // its limit and within 1.5 s after it (the slack is for a loaded
 // machine and the collector's check modes; alone it is a few ms).
@@ -143,10 +133,9 @@ fn timed(what: String, started: Int, limit: Int, message: String): String {
 fn timeout_round(port: Int, out: Channel(String)): Int {
   url = "http://127.0.0.1:${port}/"
   t0 = now_ms()
-  if e = http_failure(Http.get(url, true, 1000)) {
-    out.send(timed("get", t0, 1000, e.message))
-  } else {
-    out.send("get=answered")
+  switch Http.get(url, true, 1000) {
+    case e: HttpError { out.send(timed("get", t0, 1000, e.message)) }
+    case Response { out.send("get=answered") }
   }
   b = buf_new()
   for i in 0..8388608 {
@@ -154,16 +143,14 @@ fn timeout_round(port: Int, out: Channel(String)): Int {
   }
   big = b.to_s
   t0 = now_ms()
-  if e = http_failure(Http.post(url, big, true, 1000)) {
-    out.send(timed("post", t0, 1000, e.message))
-  } else {
-    out.send("post=answered")
+  switch Http.post(url, big, true, 1000) {
+    case e: HttpError { out.send(timed("post", t0, 1000, e.message)) }
+    case Response { out.send("post=answered") }
   }
   t0 = now_ms()
-  if e = ws_failure(Ws.connect("ws://127.0.0.1:${port}/", 1000)) {
-    out.send(timed("ws", t0, 1000, e.message))
-  } else {
-    out.send("ws=connected")
+  switch Ws.connect("ws://127.0.0.1:${port}/", 1000) {
+    case e: HttpError { out.send(timed("ws", t0, 1000, e.message)) }
+    case WsConnection { out.send("ws=connected") }
   }
   0
 }
@@ -763,10 +750,9 @@ fn client_framing_cases(c: Checks, root: String) {
     r = Http.request(method, "http://127.0.0.1:${port}${paths[i]}", "".bytes, hs, true, 4000)
     took = now_ms() - t0
     got = ""
-    if e = http_failure(r) {
-      got = e.message
-    } else if resp = r {
-      got = "${resp.status} ${String.from_utf8(resp.body) ?? "?"}"
+    switch r {
+      case e: HttpError { got = e.message }
+      case resp: Response { got = "${resp.status} ${String.from_utf8(resp.body) ?? "?"}" }
     }
     c.eq_str(got, wants[i], "${method} ${paths[i]} from a server that keeps the connection open")
     c.expect(took < 2000, "${method} ${paths[i]} returns when the response is complete, not at the deadline (${took} ms)")
@@ -779,13 +765,10 @@ fn client_framing_cases(c: Checks, root: String) {
 // The result of one client call as a line: "STATUS BODY" or the
 // HttpError's message.
 fn outcome(r: Response | HttpError): String {
-  if e = http_failure(r) {
-    return e.message
+  switch r {
+    case e: HttpError { e.message }
+    case resp: Response { "${resp.status} ${String.from_utf8(resp.body) ?? "?"}" }
   }
-  if resp = r {
-    return "${resp.status} ${String.from_utf8(resp.body) ?? "?"}"
-  }
-  "?"
 }
 
 // O665 (Stage 29 W-FIX1h): the client wrote the method, the URL's
@@ -851,10 +834,9 @@ fn client_request_cases(c: Checks, root: String) {
     hs.push(Header { name: "X-A", value: values[i] })
     c.eq_str(outcome(Http.request("GET", "${base}/echo", "".bytes, hs, false, 4000)), "invalid request header value of X-A (${value_wants[i]}): ${value_rule}", "a header value with a control character is refused (${i})")
   }
-  if e = ws_failure(Ws.connect("ws://127.0.0.1:${port}/echo\r\nX-Injected: 1", 4000)) {
-    c.eq_str(e.message, "invalid URL (byte 13 at ${base.size + 3}): ${url_rule}", "Ws.connect refuses a URL with CR LF")
-  } else {
-    c.expect(false, "Ws.connect refuses a URL with CR LF")
+  switch Ws.connect("ws://127.0.0.1:${port}/echo\r\nX-Injected: 1", 4000) {
+    case e: HttpError { c.eq_str(e.message, "invalid URL (byte 13 at ${base.size + 3}): ${url_rule}", "Ws.connect refuses a URL with CR LF") }
+    case WsConnection { c.expect(false, "Ws.connect refuses a URL with CR LF") }
   }
   ok: Array(Header) = []
   ok.push(Header { name: "X-Ok!#$%&'*+-.^_`|~", value: "a\tb \"c\" ${chr(195)}${chr(169)}" })
@@ -1083,16 +1065,17 @@ fn ws_target_round(root: String, n: Int, out: Channel(String)) {
   }
   port = wait_port(port_file)
   r = Ws.connect("ws://127.0.0.1:${port}/${repeat_byte(97, n)}", 5000)
-  if e = ws_failure(r) {
-    out.send("target ${n}: ${e.message}")
-  } else if conn = r {
-    _ = conn.send_text("hi")
-    if msg = conn.recv(5000) {
-      out.send("target ${n}: ${msg.text ?? "?"}")
-    } else {
-      out.send("target ${n}: connected, no answer")
+  switch r {
+    case e: HttpError { out.send("target ${n}: ${e.message}") }
+    case conn: WsConnection {
+      _ = conn.send_text("hi")
+      if msg = conn.recv(5000) {
+        out.send("target ${n}: ${msg.text ?? "?"}")
+      } else {
+        out.send("target ${n}: connected, no answer")
+      }
+      conn.close
     }
-    conn.close
   }
   _ = server.join
 }
@@ -1117,10 +1100,9 @@ fn ws_handshake_cases(c: Checks, root: String) {
   if quiet = Http.listen(0, "127.0.0.1", 1048576, 1) {
     long_url = "ws://127.0.0.1:${quiet.port}/${repeat_byte(97, 4194304)}"
     t0 = now_ms()
-    if e = ws_failure(Ws.connect(long_url, 1000)) {
-      out.send(timed("ws-long", t0, 1000, e.message))
-    } else {
-      out.send("ws-long=connected")
+    switch Ws.connect(long_url, 1000) {
+      case e: HttpError { out.send(timed("ws-long", t0, 1000, e.message)) }
+      case WsConnection { out.send("ws-long=connected") }
     }
     quiet.close
   } else {

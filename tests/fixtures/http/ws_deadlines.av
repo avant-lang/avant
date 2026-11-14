@@ -8,11 +8,6 @@ import std.http
 // LD_PRELOAD shim tests/fixtures/http/clock_step.c, which steps the wall
 // clock back an hour: a deadline taken from the wall clock then ends at
 // once. Without the shim (the run goldens) both end in time.
-fn failure(r: WsConnection | HttpError): HttpError? {
-  _ = r?
-  nil
-}
-
 fn in_time(what: String, took: Int): String {
   if took >= 1000 && took < 2500 {
     return "${what}: in time"
@@ -25,10 +20,9 @@ fn main: Int {
     t0 = now_ms()
     r = Ws.connect("ws://127.0.0.1:${quiet.port}/", 1000)
     took = now_ms() - t0
-    if e = failure(r) {
-      puts(in_time("connect", took))
-    } else {
-      puts("connect: connected")
+    switch r {
+      case HttpError { puts(in_time("connect", took)) }
+      case WsConnection { puts("connect: connected") }
     }
     quiet.close
   }

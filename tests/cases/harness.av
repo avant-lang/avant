@@ -408,12 +408,13 @@ pub class Checks {
   // A file the test writes (Stage 29 W4b2): passes when file_write
   // succeeded; a failure shows its IoError.
   pub fn wrote(r: Int | IoError, msg: String) {
-    if n = r {
-      self.expect(true, msg)
-    } else if e = io_failure(r) {
-      self.expect(false, msg)
-      self.lines.push("    ${e}")
-      self.lines.push("")
+    switch r {
+      case Int { self.expect(true, msg) }
+      case e: IoError {
+        self.expect(false, msg)
+        self.lines.push("    ${e}")
+        self.lines.push("")
+      }
     }
   }
 
@@ -615,13 +616,6 @@ pub fn dump_av_cov(compiler: String, src: String, log: String): Int {
   args.push("dump")
   args.push(src)
   process_run_out("/usr/bin/env", args, log) ?? -1
-}
-
-// The IoError of a failed file_write, else nil (until W5's switch reads
-// a failure member in place).
-pub fn io_failure(r: Int | IoError): IoError? {
-  _ = r?
-  nil
 }
 
 pub fn write_tmp(stem: String, stamp: Int, name: String, body: String): String {

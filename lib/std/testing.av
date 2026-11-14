@@ -101,12 +101,6 @@ fn testing_has(hay: String, needle: String): Bool {
   false
 }
 
-// A write's failure, or nil.
-fn testing_write_failure(r: Int | IoError): IoError? {
-  _ = r?
-  nil
-}
-
 fn testing_read(path: String): String {
   if text = file_read(path) {
     return text
@@ -318,8 +312,9 @@ pub class Test {
     // not written is a report without this process's checks, so the
     // run fails and says why (O416, Stage 29 W-FIX1d; the failure was
     // dropped).
-    if e = testing_write_failure(file_write(frag, b.to_s)) {
+    _ = file_write(frag, b.to_s) else e {
       report_lost("the JUnit fragment was not written: ${e.message}")
+      return
     }
   }
 
@@ -461,8 +456,9 @@ pub class Test {
     // The runner starts the parallel bodies from this file: if it is
     // not written they never run, so the run fails and says why (O416;
     // the failure was dropped).
-    if e = testing_write_failure(file_write(self.names_path, b.to_s)) {
+    _ = file_write(self.names_path, b.to_s) else e {
       report_lost("the parallel names were not written, so the parallel tests cannot run: ${e.message}")
+      return
     }
   }
 
@@ -623,8 +619,9 @@ pub class Test {
   pub fn finish: Int {
     write_junit()
     if self.matches_path.size > 0 && self.matched > 0 {
-      if e = testing_write_failure(file_write(self.matches_path, "${self.matched}\n")) {
-        report_lost("the --name matches were not written: ${e.message}")
+      switch file_write(self.matches_path, "${self.matched}\n") {
+        case Int { }
+        case e: IoError { report_lost("the --name matches were not written: ${e.message}") }
       }
     }
     if self.mode == 1 {
