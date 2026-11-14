@@ -649,3 +649,79 @@ pub class Held {
 pub struct Cell {
   pub n: Int
 }
+
+// A row of tests/goldens/list.txt (O355, Stage 29 W5d2): the one list of
+// dump goldens, which tests/bless_goldens.av writes and the test file a
+// row names checks.
+pub class GoldenRow {
+  pub stem: String
+  pub src: String
+  pub layers: Array(String)
+
+  pub fn initialize(stem: String, src: String, layers: Array(String)) {
+    self.stem = stem
+    self.src = src
+    self.layers = layers
+  }
+
+  // The stem's last part: tests/goldens/DIR/NAME is NAME.
+  pub fn name: String {
+    at = 0
+    for i in 0..self.stem.size {
+      if self.stem[i] == 47 {
+        at = i + 1
+      }
+    }
+    str_slice(self.stem, at, self.stem.size)
+  }
+
+  pub fn has(layer: String): Bool {
+    for l in self.layers {
+      if l == layer {
+        return true
+      }
+    }
+    false
+  }
+}
+
+// The rows of tests/goldens/list.txt that test (tests/cases/TEST.av)
+// checks, in the list's order; an unreadable list, a malformed row or
+// no row for test is a failed check, so a test never checks nothing.
+pub fn golden_rows(c: Checks, test: String): Array(GoldenRow) {
+  rows: Array(GoldenRow) = []
+  path = "${avant_test_root()}/tests/goldens/list.txt"
+  if text = file_read(path) {
+    for line in text.split("\n") {
+      if line.size == 0 || line[0] == 35 {
+        continue
+      }
+      words: Array(String) = []
+      for w in line.split(" ") {
+        if w.size > 0 {
+          words.push(w)
+        }
+      }
+      if words.size != 4 {
+        c.expect(false, "${path}: a row is TEST STEM SOURCE LAYERS: ${line}")
+        continue
+      }
+      if words[0] == test {
+        rows.push(GoldenRow.new(words[1], words[2], words[3].split(",")))
+      }
+    }
+  } else {
+    c.expect(false, "read ${path}")
+  }
+  c.expect(rows.size > 0, "${path} lists goldens for ${test}")
+  rows
+}
+
+// The names of test's rows (golden_rows), in order.
+pub fn golden_names_of(c: Checks, test: String): Array(String) {
+  names: Array(String) = []
+  for r in golden_rows(c, test) {
+    names.push(r.name)
+  }
+  names
+}
