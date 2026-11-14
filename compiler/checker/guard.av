@@ -4,6 +4,7 @@ import ast
 import token
 import checker
 import checker.spawn
+import typed_ir
 
 // What may happen to the guarded value inside `Mutex.with` (O541, D355;
 // Stage 29 W8Ca). The lock protects the cell only while the block runs,
@@ -26,8 +27,8 @@ import checker.spawn
 // the reference would outlive the lock.
 //
 // The walk runs after the block is checked (every node carries its
-// type), on the block's own statements; a method of the guarded class
-// that hands out `self` is the class's own doing, as the README says.
+// type), on the block's own statements; what the methods it calls do is
+// the rule on the classes a Mutex may guard (O709; check_guarded, below).
 pub class GuardWalk {
   pub place: String = ""
   // One scope per nested body: name -> 1 when the name is reached, 0 not.
@@ -794,6 +795,11 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
 // in the other branch of an `if` is refused too, and a use after a
 // `return` is not told apart.
 pub fn (checker_self: Checker) check_mutex_new(expr: Expr, ty: Ty) {
+  if ty.ty_args.size == 1 {
+    // What it guards is checked once the program is (O709).
+    checker_self.guarded.push(ty.ty_args[0])
+    checker_self.guarded_at.push(expr.loc)
+  }
   if checker_self.has_err || expr.args.size != 1 || ty.ty_args.size != 1 {
     return
   }
@@ -929,5 +935,656 @@ pub fn (checker_self: Checker) check_send(expr: Expr) {
     if !checker_self.send_crosses(t) {
       checker_self.fail(arg.loc, "Channel.send: a ${t.show} cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex; send plain values, or a Mutex(${t.show}) shared by both tasks")
     }
+  }
+}
+
+// ---- What a Mutex may guard (O709, D389: option 2; Stage 29 W8Cc).
+//
+// Inside `with` the rules above read the block's code, not the methods
+// it calls: `b.add(c)` with a method that keeps c, or `b.register(keep)`
+// with one that pushes self into keep, would let a reference from
+// outside reach the guarded value, or the guarded value be reached from
+// outside, without the lock. So `Mutex(T)` is accepted only when no
+// method of T, and of every class or struct a T can reach through its
+// fields, elements and members (the block may call their methods on a
+// reached receiver: `b.inner.add(c)`), does either. Checked once per
+// type, after the whole program is checked (every node has its type).
+//
+// In each such method (`initialize` aside: its receiver is new, so
+// storing its parameters there builds it; what its callers give it is
+// checked at the call: inside `with` by the inward rule, in a guarded
+// method by this one) a value is rooted at self (S: `self`, a field, a
+// name holding one, a value built from one) or at a parameter that can
+// hold a reference (P), the names following the values they are given
+// over the whole method. Then:
+//
+//   - a P value is stored nowhere (a field, an element, a hash entry,
+//     `push` or `fill`): it would keep its caller's reference;
+//   - an S value is stored only into a place rooted at self (S into S
+//     stays under the lock: `self.root = self.root.left`), or into a
+//     name of the method, which becomes rooted at self;
+//   - an S or P value is passed only to a method of a type this rule
+//     checks, to a builtin that reads it, or (S only) to a constructor,
+//     whose object is then rooted at self; any other call (a function, a
+//     method of another type, a fn value) may keep it;
+//   - a P value is not the method's result: inside `with` a method's
+//     result on a reached receiver is taken as reached from the guarded
+//     value (guard_reaches), so returning a parameter would carry the
+//     caller's reference in.
+//
+// A plain value (leaves_mutex_with) is a copy and goes anywhere.
+pub class ClassWalk {
+  pub mutex: String = ""
+  pub at: String = ""
+  pub owner: String = ""
+  pub method: String = ""
+  // name -> 1 rooted at self, 2 at a parameter, 3 either.
+  pub roots: Hash(String, Int) = Hash(String, Int).new
+  pub params: Hash(String, Int) = Hash(String, Int).new
+  // The methods of the checked types, by emit name.
+  pub checked: Hash(String, Int) = Hash(String, Int).new
+  pub changed: Bool = false
+
+  pub fn root_of(name: String): Int {
+    if v = self.roots.get(name) {
+      return v
+    }
+    0
+  }
+
+  pub fn add_root(name: String, bits: Int) {
+    if bits == 0 || name == "_" || name == "self" {
+      return
+    }
+    old = self.root_of(name)
+    nv = old | bits
+    if nv != old {
+      self.roots[name] = nv
+      self.changed = true
+    }
+  }
+}
+
+pub fn (checker_self: Checker) check_guarded_types {
+  i = 0
+  while i < checker_self.guarded.size {
+    if checker_self.any_err {
+      return
+    }
+    t = checker_self.guarded[i]
+    if !checker_self.guarded_ok.has_key(t.show) {
+      checker_self.guarded_ok[t.show] = 1
+      checker_self.check_guarded(t, checker_self.guarded_at[i])
+    }
+    i += 1
+  }
+}
+
+// The classes and structs a value of type t can reach, t included (a
+// Channel, a Mutex and a plain type end a path: they hold nothing the
+// guarded value's lock protects).
+pub fn (checker_self: Checker) guarded_reach(t: Ty, seen: Hash(String, Int), out: Array(Ty)) {
+  if checker_self.is_share_ty(t) || checker_self.leaves_mutex_with(t) {
+    return
+  }
+  if seen.has_key(t.show) {
+    return
+  }
+  seen[t.show] = 1
+  if t.is_class || t.is_struct {
+    out.push(t)
+    for f in t.fields {
+      checker_self.guarded_reach(f.ty, seen, out)
+    }
+  }
+  if e = t.inner {
+    checker_self.guarded_reach(e, seen, out)
+  }
+  if k = t.key {
+    checker_self.guarded_reach(k, seen, out)
+  }
+  if v = t.val {
+    checker_self.guarded_reach(v, seen, out)
+  }
+  for m in t.members {
+    checker_self.guarded_reach(m, seen, out)
+  }
+  for a in t.ty_args {
+    checker_self.guarded_reach(a, seen, out)
+  }
+}
+
+pub fn (checker_self: Checker) guarded_method_of(ms: FuncSig, t: Ty): Bool {
+  if ms.node.generic || ms.node.type_method || ms.owner != t.name {
+    return false
+  }
+  t.mod_name.size == 0 || ms.node.owner_mod.size == 0 || ms.node.owner_mod == t.mod_name
+}
+
+pub fn (checker_self: Checker) check_guarded(t: Ty, at: Location) {
+  seen = Hash(String, Int).new
+  types: Array(Ty) = []
+  checker_self.guarded_reach(t, seen, types)
+  if types.size == 0 {
+    return
+  }
+  checked = Hash(String, Int).new
+  for ct in types {
+    for ms in checker_self.methods {
+      if checker_self.guarded_method_of(ms, ct) && ms.node.name != "initialize" {
+        checked[ms.node.emit_name] = 1
+      }
+    }
+  }
+  for ct in types {
+    for ms in checker_self.methods {
+      if checker_self.guarded_method_of(ms, ct) && ms.node.name != "initialize" {
+        w = ClassWalk.new
+        w.mutex = "Mutex(${t.show})"
+        w.at = at.show
+        w.owner = ct.show
+        w.method = ms.node.name
+        w.checked = checked
+        i = 0
+        while i < ms.node.params.size && i < ms.params.size {
+          if !checker_self.leaves_mutex_with(ms.params[i]) {
+            w.params[ms.node.params[i].name] = 1
+            w.roots[ms.node.params[i].name] = 2
+          }
+          i += 1
+        }
+        // The names follow their values over the whole method: rounds
+        // until nothing changes (a name given another name's value).
+        rounds = 0
+        w.changed = true
+        while w.changed && rounds < 50 {
+          w.changed = false
+          checker_self.cw_alias_body(w, ms.node.body)
+          rounds += 1
+        }
+        checker_self.cw_body(w, ms.node.body)
+        if checker_self.any_err {
+          return
+        }
+        if !checker_self.leaves_mutex_with(ms.ret) && ms.node.body.size > 0 {
+          last = ms.node.body[ms.node.body.size - 1]
+          if (checker_self.cw_tail_root(w, ms.node.body) & 2) != 0 {
+            checker_self.cw_fail(w, last.loc, "returns a parameter's reference (or a value reached from one), which a with block would take as reached from the guarded value")
+            return
+          }
+        }
+      }
+    }
+  }
+}
+
+// Where e's value is rooted (ClassWalk.roots' bits); 0 for a plain value.
+pub fn (checker_self: Checker) cw_root(w: ClassWalk, e: Expr): Int {
+  if t = e.ty {
+    if checker_self.leaves_mutex_with(t) {
+      return 0
+    }
+  }
+  k = e.kind
+  if k == ex_name() {
+    if e.ident == "self" || e.implicit_field {
+      return 1
+    }
+    return w.root_of(e.ident)
+  }
+  if k == ex_field() {
+    if obj = e.object {
+      return checker_self.cw_root(w, obj)
+    }
+    return 0
+  }
+  if k == ex_index() {
+    if l = e.left {
+      return checker_self.cw_root(w, l)
+    }
+    return 0
+  }
+  if k == ex_call() {
+    // A call's value may be its receiver's part or one of its arguments
+    // (a builtin's `get_or`, a method that returns its parameter), and a
+    // constructor's object holds them.
+    bits = 0
+    if recv = e.receiver {
+      bits = checker_self.cw_root(w, recv)
+    }
+    for a in e.args {
+      bits = bits | checker_self.cw_root(w, a)
+    }
+    return bits
+  }
+  if k == ex_array() {
+    bits = 0
+    for el in e.elems {
+      bits = bits | checker_self.cw_root(w, el)
+    }
+    return bits
+  }
+  if k == ex_struct() {
+    bits = 0
+    for fe in e.field_exprs {
+      bits = bits | checker_self.cw_root(w, fe)
+    }
+    return bits
+  }
+  if k == ex_try() || k == ex_unary() {
+    if inner = e.inner {
+      return checker_self.cw_root(w, inner)
+    }
+    return 0
+  }
+  if k == ex_binary() {
+    bits = 0
+    if l = e.left {
+      bits = checker_self.cw_root(w, l)
+    }
+    if r = e.right {
+      bits = bits | checker_self.cw_root(w, r)
+    }
+    return bits
+  }
+  if k == ex_switch() {
+    bits = 0
+    for c in e.cases {
+      bits = bits | checker_self.cw_tail_root(w, c.body)
+    }
+    return bits | checker_self.cw_tail_root(w, e.else_body)
+  }
+  if k == ex_lambda() {
+    // A fn value holds what its body names.
+    if b = e.block {
+      return checker_self.cw_names_root(w, b.body)
+    }
+  }
+  0
+}
+
+pub fn (checker_self: Checker) cw_tail_root(w: ClassWalk, body: Array(Stmt)): Int {
+  if body.size == 0 {
+    return 0
+  }
+  st = body[body.size - 1]
+  if st.kind == st_expr() {
+    if e = st.expr {
+      return checker_self.cw_root(w, e)
+    }
+  }
+  if st.kind == st_if() {
+    return checker_self.cw_tail_root(w, st.then_body) | checker_self.cw_tail_root(w, st.else_body)
+  }
+  0
+}
+
+// The roots of every name a body mentions (a lambda's captures).
+pub fn (checker_self: Checker) cw_names_root(w: ClassWalk, body: Array(Stmt)): Int {
+  bits = 0
+  for st in body {
+    bits = bits | checker_self.cw_stmt_names(w, st)
+  }
+  bits
+}
+
+pub fn (checker_self: Checker) cw_stmt_names(w: ClassWalk, st: Stmt): Int {
+  bits = 0
+  for x in [st.expr, st.value, st.target, st.cond] {
+    if e = x {
+      bits = bits | checker_self.cw_expr_names(w, e)
+    }
+  }
+  for body in [st.pre, st.then_body, st.else_body, st.body] {
+    bits = bits | checker_self.cw_names_root(w, body)
+  }
+  bits
+}
+
+pub fn (checker_self: Checker) cw_expr_names(w: ClassWalk, e: Expr): Int {
+  bits = 0
+  if e.kind == ex_name() {
+    if e.ident == "self" || e.implicit_field {
+      bits = 1
+    } else {
+      bits = w.root_of(e.ident)
+    }
+  }
+  for x in [e.left, e.right, e.object, e.receiver, e.inner, e.cond, e.size_expr] {
+    if sub = x {
+      bits = bits | checker_self.cw_expr_names(w, sub)
+    }
+  }
+  for list in [e.args, e.elems, e.field_exprs] {
+    for sub in list {
+      bits = bits | checker_self.cw_expr_names(w, sub)
+    }
+  }
+  for part in e.parts {
+    if pe = part.expr {
+      bits = bits | checker_self.cw_expr_names(w, pe)
+    }
+  }
+  if b = e.block {
+    bits = bits | checker_self.cw_names_root(w, b.body)
+  }
+  for c in e.cases {
+    bits = bits | checker_self.cw_names_root(w, c.body)
+  }
+  bits | checker_self.cw_names_root(w, e.else_body)
+}
+
+// The name a place is rooted at when that name is the method's own (a
+// local, not self or a parameter), else "".
+pub fn (checker_self: Checker) cw_local_base(w: ClassWalk, e: Expr): String {
+  k = e.kind
+  if k == ex_name() {
+    if e.ident == "self" || e.implicit_field || w.params.has_key(e.ident) {
+      return ""
+    }
+    return e.ident
+  }
+  if k == ex_field() {
+    if obj = e.object {
+      return checker_self.cw_local_base(w, obj)
+    }
+  }
+  if k == ex_index() {
+    if l = e.left {
+      return checker_self.cw_local_base(w, l)
+    }
+  }
+  ""
+}
+
+// ---- the names' roots: every assignment, binding and store into a
+// local's object, over the whole method.
+
+pub fn (checker_self: Checker) cw_alias_body(w: ClassWalk, body: Array(Stmt)) {
+  for st in body {
+    checker_self.cw_alias_stmt(w, st)
+  }
+}
+
+pub fn (checker_self: Checker) cw_alias_stmt(w: ClassWalk, st: Stmt) {
+  if st.kind == st_assign() {
+    if target = st.target, value = st.value {
+      bits = checker_self.cw_root(w, value)
+      if target.kind == ex_name() && !target.implicit_field {
+        w.add_root(target.ident, bits)
+      } else {
+        // A store into an object a local holds: the local reaches it.
+        base = checker_self.cw_local_base(w, target)
+        if base.size > 0 {
+          w.add_root(base, bits)
+        }
+      }
+      checker_self.cw_alias_expr(w, value)
+    }
+  }
+  for el in st.pre {
+    if c = el.cond, el.bind.size > 0 {
+      w.add_root(el.bind, checker_self.cw_root(w, c))
+    }
+    checker_self.cw_alias_stmt(w, el)
+  }
+  if c = st.cond {
+    if st.bind.size > 0 {
+      w.add_root(st.bind, checker_self.cw_root(w, c))
+    }
+    if st.else_bind.size > 0 {
+      w.add_root(st.else_bind, checker_self.cw_root(w, c))
+    }
+    checker_self.cw_alias_expr(w, c)
+  }
+  if e = st.expr {
+    checker_self.cw_alias_expr(w, e)
+  }
+  checker_self.cw_alias_body(w, st.then_body)
+  checker_self.cw_alias_body(w, st.else_body)
+  checker_self.cw_alias_body(w, st.body)
+}
+
+pub fn (checker_self: Checker) cw_alias_expr(w: ClassWalk, e: Expr) {
+  if e.kind == ex_call() {
+    if recv = e.receiver, e.callee == "push" || e.callee == "fill" {
+      base = checker_self.cw_local_base(w, recv)
+      if base.size > 0 {
+        for a in e.args {
+          w.add_root(base, checker_self.cw_root(w, a))
+        }
+      }
+    }
+    if b = e.block {
+      // A builtin's block parameters are its receiver's elements.
+      if recv2 = e.receiver, e.resolved.size == 0 {
+        bits = checker_self.cw_root(w, recv2)
+        for p in b.params {
+          w.add_root(p, bits)
+        }
+      }
+      checker_self.cw_alias_body(w, b.body)
+    }
+  }
+  if e.kind == ex_lambda() {
+    if b = e.block {
+      checker_self.cw_alias_body(w, b.body)
+    }
+  }
+  if e.kind == ex_switch() {
+    if c = e.cond {
+      bits = checker_self.cw_root(w, c)
+      for cs in e.cases {
+        for label in cs.labels {
+          if label.bind.size > 0 {
+            w.add_root(label.bind, bits)
+          }
+        }
+        checker_self.cw_alias_body(w, cs.body)
+      }
+    }
+    checker_self.cw_alias_body(w, e.else_body)
+  }
+  for x in [e.left, e.right, e.object, e.receiver, e.inner, e.cond, e.size_expr] {
+    if sub = x {
+      checker_self.cw_alias_expr(w, sub)
+    }
+  }
+  for list in [e.args, e.elems, e.field_exprs] {
+    for sub in list {
+      checker_self.cw_alias_expr(w, sub)
+    }
+  }
+}
+
+// ---- the stores and the calls
+
+pub fn (checker_self: Checker) cw_fail(w: ClassWalk, loc: Location, what: String) {
+  checker_self.fail(loc, "${w.mutex} (at ${w.at}): ${w.owner}.${w.method} ${what}; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock (O709)")
+}
+
+// A store of value into a place whose holder is rooted at target_bits (a
+// local's object is rooted at self once a value rooted at self is stored
+// into it: cw_alias_stmt).
+pub fn (checker_self: Checker) cw_store(w: ClassWalk, target_bits: Int, value: Expr, into: String) {
+  bits = checker_self.cw_root(w, value)
+  if (bits & 2) != 0 {
+    checker_self.cw_fail(w, value.loc, "stores a parameter's reference (or a value reached from one) into ${into}")
+    return
+  }
+  if (bits & 1) != 0 && target_bits != 1 {
+    checker_self.cw_fail(w, value.loc, "stores self (or a value reached from it) into ${into}, which is not reached from self")
+  }
+}
+
+pub fn (checker_self: Checker) cw_body(w: ClassWalk, body: Array(Stmt)) {
+  for st in body {
+    checker_self.cw_stmt(w, st)
+    if checker_self.any_err {
+      return
+    }
+  }
+}
+
+pub fn (checker_self: Checker) cw_stmt(w: ClassWalk, st: Stmt) {
+  if st.kind == st_return() {
+    if e = st.expr {
+      checker_self.cw_expr(w, e)
+      if !checker_self.any_err && (checker_self.cw_root(w, e) & 2) != 0 {
+        checker_self.cw_fail(w, e.loc, "returns a parameter's reference (or a value reached from one), which a with block would take as reached from the guarded value")
+      }
+    }
+    return
+  }
+  if st.kind == st_assign() {
+    if target = st.target, value = st.value {
+      checker_self.cw_expr(w, value)
+      if checker_self.any_err {
+        return
+      }
+      if target.kind == ex_name() && !target.implicit_field {
+        return
+      }
+      holder = target
+      if target.kind == ex_field() {
+        if o = target.object {
+          holder = o
+        }
+      } else if target.kind == ex_index() {
+        if l = target.left {
+          holder = l
+        }
+        if ix = target.right {
+          checker_self.cw_expr(w, ix)
+        }
+      }
+      tb = 1
+      if !(target.kind == ex_name() && target.implicit_field) {
+        checker_self.cw_expr(w, holder)
+        tb = checker_self.cw_root_place(w, holder)
+      }
+      checker_self.cw_store(w, tb, value, "a field or an element")
+    }
+    return
+  }
+  for el in st.pre {
+    checker_self.cw_stmt(w, el)
+  }
+  for x in [st.expr, st.cond] {
+    if e = x {
+      checker_self.cw_expr(w, e)
+    }
+  }
+  checker_self.cw_body(w, st.then_body)
+  checker_self.cw_body(w, st.else_body)
+  checker_self.cw_body(w, st.body)
+}
+
+// The root of a place's holder, whatever its type (a plain struct
+// field's holder is still rooted where its object is).
+pub fn (checker_self: Checker) cw_root_place(w: ClassWalk, e: Expr): Int {
+  k = e.kind
+  if k == ex_name() {
+    if e.ident == "self" || e.implicit_field {
+      return 1
+    }
+    return w.root_of(e.ident)
+  }
+  if k == ex_field() {
+    if obj = e.object {
+      return checker_self.cw_root_place(w, obj)
+    }
+  }
+  if k == ex_index() {
+    if l = e.left {
+      return checker_self.cw_root_place(w, l)
+    }
+  }
+  checker_self.cw_root(w, e)
+}
+
+pub fn (checker_self: Checker) cw_expr(w: ClassWalk, e: Expr) {
+  if checker_self.any_err {
+    return
+  }
+  if e.kind == ex_call() {
+    checker_self.cw_call(w, e)
+    return
+  }
+  if e.kind == ex_lambda() {
+    if b = e.block {
+      checker_self.cw_body(w, b.body)
+    }
+    return
+  }
+  if e.kind == ex_switch() {
+    if c = e.cond {
+      checker_self.cw_expr(w, c)
+    }
+    for cs in e.cases {
+      checker_self.cw_body(w, cs.body)
+    }
+    checker_self.cw_body(w, e.else_body)
+    return
+  }
+  for x in [e.left, e.right, e.object, e.inner, e.size_expr] {
+    if sub = x {
+      checker_self.cw_expr(w, sub)
+    }
+  }
+  for list in [e.elems, e.field_exprs] {
+    for sub in list {
+      checker_self.cw_expr(w, sub)
+    }
+  }
+  for part in e.parts {
+    if pe = part.expr {
+      checker_self.cw_expr(w, pe)
+    }
+  }
+}
+
+pub fn (checker_self: Checker) cw_call(w: ClassWalk, e: Expr) {
+  if inner = e.inner {
+    checker_self.cw_expr(w, inner)
+  }
+  if recv = e.receiver {
+    checker_self.cw_expr(w, recv)
+  }
+  for a in e.args {
+    checker_self.cw_expr(w, a)
+  }
+  if checker_self.any_err {
+    return
+  }
+  if recv2 = e.receiver, e.resolved.size == 0 && (e.callee == "push" || e.callee == "fill") {
+    tb = checker_self.cw_root_place(w, recv2)
+    for a in e.args {
+      checker_self.cw_store(w, tb, a, "an array (${e.callee})")
+      if checker_self.any_err {
+        return
+      }
+    }
+  } else if e.resolved.size > 0 || e.indirect {
+    ctor = e.callee == "new" && !e.indirect
+    known = !e.indirect && w.checked.has_key(e.resolved)
+    for a in e.args {
+      bits = checker_self.cw_root(w, a)
+      if bits != 0 && !known {
+        if ctor && bits == 1 {
+          // The new object holds a reference reached from self and is
+          // rooted at self in turn (cw_root).
+        } else if (bits & 2) != 0 {
+          checker_self.cw_fail(w, a.loc, "passes a parameter's reference to ${e.callee}, which may keep it")
+          return
+        } else {
+          checker_self.cw_fail(w, a.loc, "passes self (or a value reached from it) to ${e.callee}, which may keep it")
+          return
+        }
+      }
+    }
+  }
+  if b = e.block {
+    checker_self.cw_body(w, b.body)
   }
 }

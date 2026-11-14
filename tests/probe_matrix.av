@@ -113,6 +113,9 @@ fn rules: Array(PRule) {
   // into the guarded value.
   xs.push(rule("mutex-new-consumed", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  b = PBox.new\n  m = Mutex(PBox).new(b)\n@\n}\n", "", "b.n += 1", "m.with { |x| x.n += 1 }", "was consumed by Mutex(PBox).new"))
   xs.push(rule("mutex-with-inward", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n  pub child: PBox? = nil\n}\n\nfn main {\n  m = Mutex(PBox).new(PBox.new)\n  mine = PBox.new\n@\n  puts(mine.n)\n}\n", "", "m.with { |b| b.child = mine }", "m.with { |b| b.child = PBox.new }", "comes from outside it"))
+  // README "Channel and Mutex" (O709, D389, Stage 29 W8Cc): no method of
+  // a class a Mutex guards keeps a reference from outside.
+  xs.push(rule("mutex-guarded-method", "stmt", "", "import std.sync\n\nclass PBad {\n  pub child: PBad? = nil\n\n  fn adopt(x: PBad) {\n    self.child = x\n  }\n}\n\nclass PGood {\n  pub child: PGood? = nil\n\n  fn grow {\n    self.child = PGood.new\n  }\n}\n\nfn main {\n@\n}\n", "", "pm = Mutex(PBad).new(PBad.new)\npm.with { |b| b.child = nil }", "pm = Mutex(PGood).new(PGood.new)\npm.with { |b| b.grow }", "PBad.adopt stores a parameter"))
   // README "Spawn" and "What may cross a task" (O641, Stage 29 W5d2): a
   // task captures by copy what may cross, never assigns a captured name,
   // and a captured Array is read-only on both sides until the join.

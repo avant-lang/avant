@@ -149,6 +149,26 @@ fn consume_cases: Array(RCase) {
   xs
 }
 
+// What a Mutex may guard (O709, D389 option 2; Stage 29 W8Cc): no method
+// of the guarded class, or of a class it holds, keeps a reference from
+// outside or hands out its own (W8Cb's F2: `add` keeping its argument,
+// `register` pushing self). The neighbours: a counter, new values pushed,
+// a list built with constructors from self's parts, a tail linked in, a
+// method comparing with another Box, a method returning a part of self.
+fn guarded_cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(refused("guarded-param-push", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub items: Array(Inner) = []\n\n  fn add(x: Inner) {\n    self.items.push(x)\n  }\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  c = Inner.new\n  m.with { |b| b.add(c) }\n  c.n = 5\n  puts(m.with { |b| b.items.size })\n}\n", "Box.add stores a parameter", "11:21"))
+  xs.push(refused("guarded-self-out", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n\n  fn register(keep: Array(Box)) {\n    keep.push(self)\n  }\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  keep: Array(Box) = []\n  m.with { |b| b.register(keep) }\n  keep[0].n = 5\n}\n", "Box.register stores self", "11:15"))
+  xs.push(refused("guarded-param-field", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub child: Inner? = nil\n\n  fn adopt(x: Inner) {\n    self.child = x\n  }\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n}\n", "Box.adopt stores a parameter", "11:18"))
+  xs.push(refused("guarded-reached-class", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Holder {\n  pub items: Array(Inner) = []\n\n  fn add(x: Inner) {\n    self.items.push(x)\n  }\n}\n\nclass Box {\n  pub h: Holder = Holder.new\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n}\n", "Holder.add stores a parameter", "11:21"))
+  xs.push(refused("guarded-returns-param", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub items: Array(Inner) = []\n\n  fn id(x: Inner): Inner {\n    x\n  }\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n}\n", "Box.id returns a parameter", "11:5"))
+  xs.push(refused("guarded-passes", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nfn keep_it(all: Array(Box), b: Box) {\n  all.push(b)\n}\n\nclass Box {\n  pub n: Int = 0\n\n  fn visit(all: Array(Box)) {\n    keep_it(all, self)\n  }\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n}\n", "Box.visit passes a parameter", "15:13"))
+  xs.push(refused("guarded-alias", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub items: Array(Inner) = []\n\n  fn add(x: Inner) {\n    y = x\n    self.items.push(y)\n  }\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n}\n", "Box.add stores a parameter", "12:21"))
+  xs.push(refused("guarded-via-fresh", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Node {\n  pub val: Inner? = nil\n  pub next: Node? = nil\n}\n\nclass Box {\n  pub head: Node? = nil\n\n  fn add(x: Inner) {\n    n = Node.new\n    n.val = x\n    self.head = n\n  }\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n}\n", "Box.add stores a parameter", "17:13"))
+  xs.push(accepted("guarded-neighbours", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Node {\n  pub v: Int = 0\n  pub next: Node? = nil\n\n  fn initialize(v: Int, next: Node?) {\n    self.v = v\n    self.next = next\n  }\n}\n\nclass Box {\n  pub n: Int = 0\n  pub items: Array(Inner) = []\n  pub head: Node? = nil\n  pub tail: Node? = nil\n\n  fn bump(by: Int) {\n    self.n += by\n  }\n\n  fn add_new(v: Int) {\n    i = Inner.new\n    i.n = v\n    self.items.push(i)\n    self.items.push(Inner.new)\n  }\n\n  fn cons(v: Int) {\n    self.head = Node.new(v, self.head)\n  }\n\n  fn append(v: Int) {\n    nd = Node.new(v, nil)\n    if t = self.tail {\n      t.next = nd\n    }\n    self.tail = nd\n    self.items.push(self.items[0])\n  }\n\n  fn same(o: Box): Bool {\n    self.n == o.n && o.items.size == self.items.size\n  }\n\n  fn first: Inner {\n    self.items[0]\n  }\n\n  fn total: Int {\n    s = 0\n    for it in self.items {\n      s += it.n\n    }\n    s\n  }\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  m.with { |b|\n    b.bump(2)\n    b.add_new(3)\n    b.cons(1)\n    b.append(4)\n  }\n  puts(m.with { |b| b.total })\n}\n", "6\n"))
+  xs
+}
+
 fn for_cases: Array(RCase) {
   xs: Array(RCase) = []
   xs.push(refused("for-counter-assign", "fn main {\n  for i in 0..10 {\n    i = 8\n  }\n}\n", "cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own", "3:7"))
@@ -239,6 +259,9 @@ fn test_main(c: Checks) {
     }
     for k in consume_cases() {
       all.push(k)
+    }
+    for gc in guarded_cases() {
+      all.push(gc)
     }
     for f in for_cases() {
       all.push(f)
