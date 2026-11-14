@@ -7,7 +7,7 @@
 # WORK is a new scratch directory; GATE is the gate script to test (the
 # checkout's tools/gate.sh by default; give another one to show it on a
 # base). The gate runs in a fake checkout (WORK/fake) whose letters,
-# lint and README scripts are stubs and whose compilers are one stub
+# lint, README and format scripts are stubs and whose compilers are one stub
 # script: `test` writes a JUnit file with one passing check, `__emit-ll`
 # writes the same text for every letter. Two GC environments run as two
 # concurrent passes. Two runs:
@@ -41,6 +41,7 @@ STUB
 printf '#!/bin/sh\necho "gc-lint: clean (stub)"\n' > "$fake/tools/gc-lint.sh"
 printf '#!/bin/sh\necho "README CHECK PASS (stub)"\n' > "$fake/tools/readme-check.sh"
 printf '#!/bin/sh\necho "README LINKS PASS (stub)"\n' > "$fake/tools/readme-links.sh"
+printf '#!/bin/sh\necho "FORMAT CHECK PASS (stub)"\n' > "$fake/tools/format-check.sh"
 cat > "$fake/tools/stub-avant" <<'STUB'
 #!/bin/sh
 # The stub compiler. STUB_WAIT=1: tell the caller this pass started
