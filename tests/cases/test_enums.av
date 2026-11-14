@@ -130,6 +130,20 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   _ = file_write(pr, "enum Tok { eof, name, number }\nfn main {\n  puts(Tok.number)\n}\n")
   c.eq_int(emit_ll(compiler, pr, "${dir}/enum-ll-print.ll", "${dir}/enum-ll-print.log"), 0, "ll-print: emits")
   c.expect(str_has(log_text("${dir}/enum-ll-print.ll"), "number"), "ll-print: the names are there when printed")
+  // O682 (Stage 29 W5a2): the last arm is the default behind a range
+  // test, so a four-member switch has three cases, and the trap stays.
+  d4 = "${dir}/enum-ll-last.av"
+  _ = file_write(d4, "enum Four { a, b, c, d }\nfn f(x: Four): Int {\n  switch x {\n    case a { 10 }\n    case b { 20 }\n    case c { 30 }\n    case d { 40 }\n  }\n}\nfn main {\n  puts(f(Four.from_i(3) ?? Four.a))\n}\n")
+  c.eq_int(emit_ll(compiler, d4, "${dir}/enum-ll-last.ll", "${dir}/enum-ll-last.log"), 0, "ll-last: emits")
+  ll4 = log_text("${dir}/enum-ll-last.ll")
+  labels = -1
+  for line in ll4.split("\n") {
+    if str_has(line, "switch i8 ") {
+      labels = line.split("label").size - 1
+    }
+  }
+  c.eq_int(labels, 4, "ll-last: one switch of three cases and a default")
+  c.expect(str_has(ll4, "@avant_trap_enum_at("), "ll-last: the no-member path traps")
 }
 
 fn test_main(c: Checks) {

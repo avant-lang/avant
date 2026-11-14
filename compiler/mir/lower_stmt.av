@@ -430,7 +430,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     }
     lw.at(e.loc)
     if trap >= 0 {
-      lw.lw_b.switch_on(cv, values, targets, trap)
+      lw.enum_switch_on(cv, enum_ty, e, values, targets, arms, trap)
     } else {
       lw.lw_b.switch_on(cv, values, targets, other)
     }
@@ -468,6 +468,80 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     }
   }
   lw.lw_b.c_i32(0)
+}
+
+// The dispatch of a switch over an enum that names every member (Stage
+// 29 W5a2, O682; chosen by time, D370: the record's item 1 table). The
+// last arm is the switch's default, so the switch has one case fewer
+// (LLVM keeps three or fewer cases as compares, where a four-entry jump
+// table cost Calculator::Interpreter 31%); the default block tests that
+// the value lies within the members' range before it runs the last arm,
+// and a value inside the range that is no member (a gap) is a case of its
+// own that goes to the trap. So the trap stays reachable by a value that
+// is no member, and only by one: the checked C boundary (D358) keeps it
+// unreachable from Avant code, and the members other than the last pay
+// nothing for it. Under coverage, for a one-arm switch and for sparse
+// values, the plain form: every member a case, the trap the default.
+pub fn (lw: MirLower) enum_switch_on(cv: MOperand, et: Ty?, e: Expr, values: Array(Int), targets: Array(Int), arms: Array(Int), trap: Int) {
+  b = lw.lw_b
+  t = et ?? return
+  if lw.lw_cov.on || e.cases.size < 2 {
+    b.switch_on(cv, values, targets, trap)
+    return
+  }
+  last = e.cases.size - 1
+  vals2: Array(Int) = []
+  tg2: Array(Int) = []
+  for i in 0..values.size {
+    inlast = false
+    for l in e.cases[last].labels {
+      if l.int_val == values[i] {
+        inlast = true
+      }
+    }
+    if !inlast {
+      vals2.push(values[i])
+      tg2.push(targets[i])
+    }
+  }
+  lo = values[0]
+  hi = values[0]
+  for w in values {
+    if w < lo {
+      lo = w
+    }
+    if w > hi {
+      hi = w
+    }
+  }
+  if hi - lo >= values.size * 4 + 16 {
+    // Sparse values (a C enum's flags, say): no range to test; every
+    // member a case, the trap the default.
+    b.switch_on(cv, values, targets, trap)
+    return
+  }
+  v = lo
+  while v <= hi {
+    found = false
+    for w2 in values {
+      if w2 == v {
+        found = true
+      }
+    }
+    if !found {
+      vals2.push(v)
+      tg2.push(trap)
+    }
+    v += 1
+  }
+  chk = b.block
+  b.switch_on(cv, vals2, tg2, chk)
+  b.at(chk)
+  cty = mir_scalar_ty(t)
+  c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), cv, b.c_int(cty, lo)))
+  c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), cv, b.c_int(cty, hi)))
+  inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+  b.branch(inside, arms[last], trap)
 }
 
 // An arm's statements; in a value switch its last expression, converted
