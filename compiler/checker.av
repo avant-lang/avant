@@ -549,10 +549,8 @@ pub class Checker {
         annotate_vstep(body[i - 1], body[i])
       }
       self.clear_poison
-      scan_pending_stmt(body[i])
-      check_stmt(body[i], expected, last)
+      check_block_stmt(body[i], expected, last)
       if !self.has_err {
-        register_spawn_pending(body[i])
         fact_after_stmt(body[i])
       }
       i += 1
@@ -1487,7 +1485,7 @@ pub class Checker {
         payload = s
       }
       for st in right_expr.else_body {
-        check_stmt(st, self.return_type, false)
+        check_block_stmt(st, self.return_type, false)
       }
       right_expr.ty = payload
       return payload
@@ -4524,7 +4522,7 @@ pub class Checker {
       bind(name, ty)
     }
     for stmt in body {
-      check_stmt(stmt, self.return_type, false)
+      check_block_stmt(stmt, self.return_type, false)
     }
     self.pop_scope
   }
@@ -4650,6 +4648,7 @@ pub class Checker {
       if i == block.body.size - 1 {
         if stmt.kind == st_expr() {
           if e = stmt.expr {
+            scan_pending_expr(e)
             ty = check_expr_flag(e, has_want, want)
             if ty.is_void {
               fail(stmt.loc, "block must end with a value")
@@ -4664,7 +4663,7 @@ pub class Checker {
         self.pop_scope
         return t_int()
       }
-      check_stmt(stmt, self.return_type, false)
+      check_block_stmt(stmt, self.return_type, false)
       i += 1
     }
     self.pop_scope
@@ -4684,6 +4683,7 @@ pub class Checker {
       st = b.body[i]
       if i == n - 1 && want_value && st.kind == st_expr() {
         if e = st.expr {
+          scan_pending_expr(e)
           return check_expr(e)
         }
       }
@@ -4691,12 +4691,10 @@ pub class Checker {
         annotate_vstep(b.body[i - 1], st)
       }
       self.clear_poison
-      scan_pending_stmt(st)
-      check_stmt(st, self.return_type, false)
+      check_block_stmt(st, self.return_type, false)
       if self.has_err {
         return t_void()
       }
-      register_spawn_pending(st)
       fact_after_stmt(st)
       i += 1
     }
@@ -4980,16 +4978,17 @@ pub class Checker {
               use_want = true
               use_ty = want
             }
+            scan_pending_expr(e)
             ty = check_expr_flag(e, use_want, use_ty)
             self.pop_scope
             return ty
           }
         }
-        check_stmt(stmt, self.return_type, false)
+        check_block_stmt(stmt, self.return_type, false)
         self.pop_scope
         return t_void()
       }
-      check_stmt(stmt, self.return_type, false)
+      check_block_stmt(stmt, self.return_type, false)
       i += 1
     }
     self.pop_scope
@@ -5073,18 +5072,20 @@ pub class Checker {
               use_want = true
               use_ty = want
             }
+            scan_pending_expr(e)
             result = check_expr_flag(e, use_want, use_ty)
           }
         } else if k == st_if() && st.else_body.size > 0 {
+          scan_pending_if_head(st)
           result = check_if_value(st, has_want, want)
         } else {
-          check_stmt(st, self.return_type, false)
+          check_block_stmt(st, self.return_type, false)
           if k == st_return() || k == st_break() || k == st_continue() {
             result = nil
           }
         }
       } else {
-        check_stmt(st, self.return_type, false)
+        check_block_stmt(st, self.return_type, false)
       }
       i += 1
     }

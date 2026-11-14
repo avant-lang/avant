@@ -376,6 +376,9 @@ pub fn (checker_self: Checker) pending_join(handle: String) {
 }
 
 pub fn (checker_self: Checker) scan_pending_stmt(stmt: Stmt) {
+  for st in stmt.pre {
+    checker_self.scan_pending_stmt(st)
+  }
   if e = stmt.expr {
     checker_self.scan_pending_expr(e)
   }
@@ -480,6 +483,35 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
     if inner = part.expr {
       checker_self.scan_pending_expr(inner)
     }
+  }
+}
+
+// One statement of any block, with the sender's rule (Q74-A) around it:
+// the statement is scanned for a mutation of an Array a running spawn
+// captured, then checked, and a spawn it starts is running for the
+// block's later statements. Every walk over a block's statements calls
+// this, and scans a value's tail expression with scan_pending_expr
+// (O748: the arms of a switch, value blocks, an `if` used as a value and
+// `?? return` called check_stmt directly, so a spawn started there was
+// never recorded and a later `push` raced the task; the tails of those
+// blocks and of a `with` body, and a binding chain's elements, were not
+// scanned).
+pub fn (checker_self: Checker) check_block_stmt(stmt: Stmt, expected: Ty, last: Bool) {
+  checker_self.scan_pending_stmt(stmt)
+  checker_self.check_stmt(stmt, expected, last)
+  if !checker_self.has_err {
+    checker_self.register_spawn_pending(stmt)
+  }
+}
+
+// The condition of an `if` used as a block's value: its branches go
+// through check_block_stmt themselves.
+pub fn (checker_self: Checker) scan_pending_if_head(stmt: Stmt) {
+  for el in stmt.pre {
+    checker_self.scan_pending_stmt(el)
+  }
+  if c = stmt.cond {
+    checker_self.scan_pending_expr(c)
   }
 }
 
