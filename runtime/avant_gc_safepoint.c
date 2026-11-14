@@ -173,7 +173,11 @@ static void hs_report_stalled(uint64_t waited_ns) {
 }
 
 /* The handshake's wait under the verifier: the condition wait with a
- * deadline, a report at every stall_ms waited. Under hs_mu. */
+ * deadline, a report at every stall_ms waited. The deadline is on
+ * CLOCK_MONOTONIC, hs_stopped_cv's clock (gc_heap_static_init; the Valk
+ * stage, VALK-TM3, O667): until then it was read from CLOCK_REALTIME,
+ * so a step of the wall clock during a stall moved the next report (a
+ * step forward of an hour held it back by an hour). Under hs_mu. */
 static void hs_wait_verify(uint64_t t0) {
   uint64_t step = gc_heap.set.stall_ms * 1000000ull;
   uint64_t next = t0 + step;
@@ -184,13 +188,8 @@ static void hs_wait_verify(uint64_t t0) {
       hs_report_stalled(now - t0);
       next = now + step;
     }
-    clock_gettime(CLOCK_REALTIME, &ts);
-    {
-      uint64_t left = next - now;
-      uint64_t ns = (uint64_t)ts.tv_nsec + left % 1000000000ull;
-      ts.tv_sec += (time_t)(left / 1000000000ull + ns / 1000000000ull);
-      ts.tv_nsec = (long)(ns % 1000000000ull);
-    }
+    ts.tv_sec = (time_t)(next / 1000000000ull);
+    ts.tv_nsec = (long)(next % 1000000000ull);
     pthread_cond_timedwait(&gc_heap.hs_stopped_cv, &gc_heap.hs_mu, &ts);
   }
 }

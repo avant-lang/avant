@@ -587,6 +587,31 @@ fn test_full_poison(c: Checks, compiler: String, root: String, dir: String) {
   }
 }
 
+// O667 (the Valk stage, VALK-TM3): the stalled handshake's report under
+// AVANT_GC_VERIFY_STALL_MS waits on a CLOCK_MONOTONIC deadline. ffi/stall.av
+// blocks a task in C for 1.5 s while the main thread collects; with a
+// 0.3 s bound the report comes after 0.3 s. Under the LD_PRELOAD shim
+// ffi/clock_ahead.c the wall clock reads an hour late: a deadline read
+// from it, and waited for on it, lies an hour away, and the collection
+// ended before any report (on the starting head: no stderr at all). A
+// test cannot step the machine's clock (operating.md); the kernel's side
+// of a real step is the condition variable's clock attribute.
+fn test_stall_clock(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/stall.av", "${dir}/stall_clock", "${dir}/stall_clock.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  jobs.push(HJob.new("/usr/bin/env", ["cc", "-shared", "-fPIC", "-o", "${dir}/clock_ahead.so", "${root}/tests/fixtures/ffi/clock_ahead.c", "-ldl"], "${dir}/clock_ahead.cclog"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "stall.av (O667): compiles")
+  c.eq_int(jobs[1].code, 0, "the clock-ahead shim builds")
+  runs: Array(HJob) = []
+  runs.push(run_job_env(dir, "stall_clock", "stall_clock.ahead", "AVANT_GC_VERIFY=1 AVANT_GC_VERIFY_STALL_MS=300 LD_PRELOAD=${dir}/clock_ahead.so"))
+  run_waves(runs)
+  c.eq_int(runs[0].code, 0, "stall.av under a wall clock an hour ahead: exit 0")
+  c.eq_str(log_text("${dir}/stall_clock.ahead.out"), "collected; the task blocked 1500 ms\n", "stall.av under a wall clock an hour ahead: the known stdout")
+  err = log_text("${dir}/stall_clock.ahead.err")
+  c.expect(str_has(err, "avant gc verify: a collection has waited 0.3 s for thread ") && str_has(err, "(the collection keeps waiting)"), "stall.av under a wall clock an hour ahead and a 0.3 s bound: the handshake's report comes at 0.3 s (its deadline is on CLOCK_MONOTONIC)")
+}
+
 // O121 (the Valk stage, VALK-TM3): a stress collection that finds no
 // other thread running keeps the world lock (gc_stop_world_held), so a
 // thread blocked on that lock is not handed it only to give it back and
@@ -623,6 +648,7 @@ fn test_main(c: Checks) {
     test_late_starts(c, compiler, avant_test_root(), scratch_dir())
     test_empty_arrays(c, compiler, avant_test_root(), scratch_dir())
     test_full_poison(c, compiler, avant_test_root(), scratch_dir())
+    test_stall_clock(c, compiler, avant_test_root(), scratch_dir())
     test_stress_held(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
