@@ -17,6 +17,7 @@ class NCase {
   pub pos: String = ""
   pub single: Bool = false
   pub absent: String = ""
+  pub ok: Bool = false
   // Other modules beside main.av: name, body, name, body, ...
   pub mods: Array(String) = []
 }
@@ -47,6 +48,16 @@ fn without(tag: String, src: String, needle: String, pos: String, absent: String
   f
 }
 
+// A program that compiles and prints out.
+fn accepted(tag: String, src: String, out: String): NCase {
+  f = NCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
 fn with_mods(f: NCase, mods: Array(String)): NCase {
   f.mods = mods
   f
@@ -65,6 +76,38 @@ fn cases: Array(NCase) {
   xs.push(without("type-fn-unknown-value-once", "fn main {\n  puts(nosuch.foo(1))\n}\n", "unknown name nosuch", "2:8", "on Int"))
   xs.push(only("type-fn-qualified", "fn main {\n  puts(m.T.foo(1))\n}\n", "unknown name m", "2:8"))
   xs.push(with_mods(only("type-fn-module", "import tmod\nfn main {\n  puts(tmod.T.foo(1))\n}\n", "tmod.T has no type-level function foo", "3:14"), ["tmod", "pub struct T {\n  x: Int\n}\n"]))
+  // O224: a type two modules publish, used bare, names both modules.
+  ta = "pub struct Token {\n  pub k: Int\n  pub fn self.make: Token {\n    Token { k: 1 }\n  }\n}\n"
+  tb = "pub struct Token {\n  pub s: String\n}\n"
+  two: Array(String) = ["lexa", ta, "lexb", tb]
+  clash = "Token is a type of both lexa and lexb: write lexa.Token or lexb.Token"
+  xs.push(with_mods(only("clash-param", "import lexa\nimport lexb\nfn f(t: Token): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", clash, "3:9"), two))
+  xs.push(with_mods(only("clash-literal", "import lexa\nimport lexb\nfn main {\n  t = Token { k: 1 }\n  puts(2)\n}\n", clash, "4:7"), two))
+  xs.push(with_mods(only("clash-local", "import lexa\nimport lexb\nfn main {\n  t: Token? = nil\n  puts(2)\n}\n", clash, "4:6"), two))
+  xs.push(with_mods(first("clash-arg", "import lexa\nimport lexb\nfn main {\n  ts: Array(Token) = []\n  puts(ts.size)\n}\n", clash, "4:13"), two))
+  xs.push(with_mods(only("clash-type-call", "import lexa\nimport lexb\nfn main {\n  t = Token.make\n  puts(2)\n}\n", clash, "4:7"), two))
+  xs.push(with_mods(only("clash-type-call-parens", "import lexa\nimport lexb\nfn main {\n  t = Token.make()\n  puts(2)\n}\n", clash, "4:7"), two))
+  xs.push(with_mods(only("clash-field-type", "import lexa\nimport lexb\nclass Box {\n  t: Token? = nil\n}\nfn main {\n  puts(Box.new.t == nil)\n}\n", clash, "4:6"), two))
+  // A field's type is resolved where the class is written: the one Token
+  // this module sees, though another module's Token exists (it said
+  // "unknown type Token").
+  seen: Array(String) = ["lexa", ta, "lexb", tb, "mid", "import lexb\npub fn mid: Int {\n  t = Token { s: \"x\" }\n  t.s.size\n}\n"]
+  xs.push(with_mods(accepted("clash-field-seen-one", "import lexa\nimport mid\nclass Box {\n  pub t: Token? = nil\n  pub ts: Array(Token) = []\n}\nstruct Pair {\n  a: Token\n  b: Int\n}\nfn main {\n  b = Box.new\n  b.t = Token { k: 4 }\n  if t = b.t {\n    puts(t.k)\n  }\n  b.ts.push(Token.make)\n  p = Pair { a: Token { k: 5 }, b: 6 }\n  puts(p.a.k + p.b + b.ts[0].k)\n  puts(mid())\n}\n", "4\n12\n1\n"), seen))
+  priv: Array(String) = ["lexa", "pub struct Token {\n  pub k: Int\n  fn self.make: Token {\n    Token { k: 1 }\n  }\n}\n"]
+  xs.push(with_mods(only("type-fn-private", "import lexa\nfn main {\n  t = Token.make\n  puts(1)\n}\n", "Token.make is private to module lexa; mark it pub", "3:12"), priv))
+  gen = "pub class Box(T) {\n  pub v: T\n  fn initialize(v: T) {\n    self.v = v\n  }\n}\n"
+  gens: Array(String) = ["ga", gen, "gb", gen]
+  gclash = "Box is a type of both ga and gb: write ga.Box or gb.Box"
+  xs.push(with_mods(first("clash-generic-new", "import ga\nimport gb\nfn main {\n  b = Box(Int).new(1)\n  puts(b.v)\n}\n", gclash, "4:7"), gens))
+  xs.push(with_mods(only("clash-generic-param", "import ga\nimport gb\nfn f(b: Box(Int)): Int {\n  b.v\n}\nfn main {\n  puts(1)\n}\n", gclash, "3:9"), gens))
+  xs.push(with_mods(only("clash-generic-field", "import ga\nimport gb\nclass K {\n  b: Box(Int)? = nil\n}\nfn main {\n  puts(1)\n}\n", gclash, "4:6"), gens))
+  hidden: Array(String) = ["ga", gen, "gb", gen, "hmid", "import ga\nimport gb\npub fn hmid: Int {\n  1\n}\n", "lexa", ta, "lexb", tb, "tmid", "import lexa\nimport lexb\npub fn tmid: Int {\n  2\n}\n"]
+  xs.push(with_mods(only("clash-field-unseen", "import hmid\nclass K {\n  b: Box(Int)? = nil\n}\nfn main {\n  puts(hmid())\n}\n", "unknown type Box", "3:6"), hidden))
+  xs.push(with_mods(only("clash-field-unseen-plain", "import tmid\nclass K {\n  t: Token? = nil\n}\nfn main {\n  puts(tmid())\n}\n", "unknown type Token", "3:6"), hidden))
+  three: Array(String) = ["lexa", ta, "lexb", tb, "lexc", "pub class Token {\n}\n"]
+  xs.push(with_mods(only("clash-three", "import lexa\nimport lexb\nimport lexc\nfn f(t: Token): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", "Token is a type of lexa, lexb and lexc: write lexa.Token, lexb.Token or lexc.Token", "4:9"), three))
+  fnty: Array(String) = ["alpha", "pub struct Value {\n  pub v: Int\n}\n", "beta", "pub fn Value: Int {\n  1\n}\n"]
+  xs.push(with_mods(only("clash-type-and-fn", "import alpha\nimport beta\nfn f(v: Value): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", "Value is a type of alpha and a function of beta: write alpha.Value or beta.Value", "3:9"), fnty))
   xs
 }
 
@@ -86,9 +129,24 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(NCase)) {
     jobs.push(compile_job("", compiler, src, "${dir}/nm-${f.tag}.bin", "${dir}/nm-${f.tag}.log"))
   }
   run_waves(jobs)
+  runs: Array(HJob) = []
+  for f1 in cases {
+    if f1.ok {
+      runs.push(run_job(dir, "nm-${f1.tag}.bin", "nm-${f1.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
   for i in 0..cases.size {
     f2 = cases[i]
     log = log_text("${dir}/nm-${f2.tag}.log")
+    if f2.ok {
+      c.eq_int(jobs[i].code, 0, "${f2.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f2.tag}: exit 0")
+      c.eq_str(log_text("${dir}/nm-${f2.tag}.run.out"), f2.want, "${f2.tag}: stdout")
+      k += 1
+      continue
+    }
     file = "nm-${f2.tag}.av"
     if f2.mods.size > 0 {
       file = "main.av"

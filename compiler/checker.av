@@ -1770,6 +1770,11 @@ pub class Checker {
         }
       }
       // `T.name` on a type without that type-level function (O166).
+      clash = receiver_clash(obj)
+      if clash.size > 0 {
+        fail(obj.loc, clash)
+        return t_int()
+      }
       tn = type_receiver(obj)
       if tn.size > 0 {
         fail_no_type_fn(expr.loc, obj, tn, expr.ident)
@@ -2422,7 +2427,7 @@ pub class Checker {
     if ty = lookup_named_type(expr.type_name, expr.loc, expr.mod_name) {
       return check_struct_fields(expr, ty, true)
     }
-    fail(expr.loc, "unknown type ${expr.type_name}")
+    // lookup_named_type said why (unknown, or ambiguous: O224).
     t_int()
   }
 
@@ -3920,8 +3925,14 @@ pub class Checker {
           } else {
             // `Channel(Int).new` with no such generic type (Stage 29
             // W1a): before, the call reading said "new is a type
-            // constructor".
-            fail(recv.loc, "unknown type ${recv.ident}")
+            // constructor". Two modules' generic types of that name are
+            // named both (O224).
+            clash = clash_message(recv.ident, self.current_module)
+            if clash.size > 0 {
+              fail(recv.loc, clash)
+            } else {
+              fail(recv.loc, "unknown type ${recv.ident}")
+            }
             return t_int()
           }
         }
@@ -3981,6 +3992,11 @@ pub class Checker {
     // A type without that type-level function (Stage 29 W5c1, O166):
     // before, its name was checked as a value ("unknown name T") and the
     // call then read as a method of Int.
+    clash = receiver_clash(recv)
+    if clash.size > 0 {
+      fail(recv.loc, clash)
+      return t_int()
+    }
     tn = type_receiver(recv)
     if tn.size > 0 {
       for a in expr.args {

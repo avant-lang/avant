@@ -2266,8 +2266,8 @@ fn main {
 A bare use that could mean either is refused, and nothing wins silently, not even the module's own name over an imported one:
 
 - **The same function in two modules.** A bare `value()` reports `ambiguous call to value: alpha.value and beta.value both match; write alpha.value() or beta.value()`.
-- **A function in one module, a type of the same name in another.** `ambiguous name value; qualify it`.
-- **The same type in two modules.** Write `beta.Token`. The message for the bare `Token` is still the unhelpful `unknown type Token`.
+- **A type in one module, a function of the same name in another.** A bare `Value` where a type is expected reports `Value is a type of alpha and a function of beta: write alpha.Value or beta.Value`.
+- **The same type in two modules.** A bare `Token` reports `Token is a type of both alpha and beta: write alpha.Token or beta.Token`. A module that sees only one of them (it imports one) names it bare.
 - **The same constant in two modules.** A bare `width` reports `width is a constant of both alpha and beta: write alpha.width or beta.width`.
 
 Three more rules:
