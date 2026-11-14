@@ -24,7 +24,8 @@ import std.http
 // client's handshake: one longer than 2048 bytes, and one the socket
 // takes in part (Stage 29 W-FIX1g, O571). And the WebSocket client's
 // deadlines under a step of the wall clock (Stage 29 W-FIX1g, O572).
-// And the client's request checks (Stage 29 W-FIX1h, O665).
+// And the client's request checks (Stage 29 W-FIX1h, O665); a response
+// literal and a status outside 100-599 (O661, D369).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -609,7 +610,8 @@ fn header_split_cases(c: Checks, root: String) {
     c.eq_int(code, 0, "the header-split fixture compiles")
     value_rule = "a header value holds no CR, LF or other control character but tab (RFC 9110)"
     name_rule = "is not a token: a header name is letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)"
-    kinds = ["crlf", "lf", "cr", "answer", "nul", "del", "name-crlf", "name-space", "name-colon", "name-empty", "ok"]
+    status_rule = "is not 100 to 599 (RFC 9110)"
+    kinds = ["crlf", "lf", "cr", "answer", "nul", "del", "name-crlf", "name-space", "name-colon", "name-empty", "status-99", "status-600", "status-neg", "status-big", "ok", "status-100", "status-599"]
     lines = [
       "avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
       "avant runtime: Response.header value of X-A holds a control character (byte 10 at 1): ${value_rule}\n",
@@ -621,6 +623,12 @@ fn header_split_cases(c: Checks, root: String) {
       "avant runtime: Response.header name \"X A\" ${name_rule}\n",
       "avant runtime: Response.header name \"X-A:\" ${name_rule}\n",
       "avant runtime: Response.header name \"\" ${name_rule}\n",
+      "avant runtime: a response's status 99 ${status_rule}\n",
+      "avant runtime: a response's status 600 ${status_rule}\n",
+      "avant runtime: a response's status -200 ${status_rule}\n",
+      "avant runtime: a response's status 99999999999 ${status_rule}\n",
+      "",
+      "",
       ""
     ]
     for i in 0..kinds.size {
@@ -646,14 +654,56 @@ fn header_split_cases(c: Checks, root: String) {
       if kind == "ok" {
         c.eq_int(status, 0, "Response.header ${kind}: answered, status 0")
         c.eq_str(wire, "header_split=1 answer(s) Content-Type: text/plain; charset=utf-8|X-Ok!#$%&'*+-.^_`|~: a\\tb \"c\" \\xc3\\xa9|Content-Length: 1|Connection: close", "Response.header ${kind}: the header on the wire as given")
+      } else if kind == "status-100" || kind == "status-599" {
+        // The ends of the range are answered (O661, D369).
+        c.eq_int(status, 0, "a response's ${kind}: answered, status 0")
+        c.eq_str(wire, "header_split=1 answer(s) Content-Type: text/plain; charset=utf-8|Content-Length: 1|Connection: close", "a response's ${kind}: on the wire")
       } else {
-        c.eq_int(status, 1, "Response.header ${kind}: status 1")
-        c.eq_str(text, lines[i], "Response.header ${kind}: the trap's line")
-        c.eq_str(wire, "header_split=nothing", "Response.header ${kind}: nothing on the wire")
+        what = "Response.header ${kind}"
+        if kind.size > 7 && str_slice(kind, 0, 7) == "status-" {
+          what = "a response's ${kind}"
+        }
+        c.eq_int(status, 1, "${what}: status 1")
+        c.eq_str(text, lines[i], "${what}: the trap's line")
+        c.eq_str(wire, "header_split=nothing", "${what}: nothing on the wire")
       }
     }
   } else {
     c.expect(false, "AVANT_COMPILER is set for the header-split test")
+  }
+}
+
+// O661 (Stage 29 W-FIX1h, D369): `Response.head` was a public field,
+// so a `Response { ... }` literal wrote any head bytes past
+// Response.header's check (CR LF among them). The field is private: a
+// literal outside std.http does not compile, and neither does reading
+// the field; a response built by Response.text and `header` does.
+fn response_literal_cases(c: Checks) {
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    srcs = [
+      "import std.http\n\nfn main {\n  r = Response { status: 200, headers: Response.text(\"x\").headers, head: \"X: 1\\r\\n\\r\\nforged\", body: \"x\".bytes }\n  puts(r.status)\n}\n",
+      "import std.http\n\nfn main {\n  puts(Response.text(\"x\").head)\n}\n",
+      "import std.http\n\nfn main {\n  r = Response.text(\"x\", 201).header(\"X-A\", \"1\")\n  puts(r.status)\n}\n"
+    ]
+    names = ["literal", "read", "built"]
+    for i in 0..srcs.size {
+      src = "${scratch()}/http-response-${stamp}-${names[i]}.av"
+      if wrote = file_write(src, srcs[i]) {
+      }
+      bin = "${scratch()}/http-response-${stamp}-${names[i]}.bin"
+      clog = "${scratch()}/http-response-${stamp}-${names[i]}.clog"
+      code = compile_av(compiler, src, bin, clog)
+      text = file_read(clog) ?? ""
+      if names[i] == "built" {
+        c.eq_int(code, 0, "a response built by Response.text and header compiles")
+      } else {
+        c.expect(code != 0, "Response.head outside std.http (${names[i]}): a compile error")
+        c.expect(str_has(text, "field head of Response is private to module std.http"), "Response.head outside std.http (${names[i]}): the field is private (${text})")
+      }
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER is set for the Response literal test")
   }
 }
 
@@ -1189,6 +1239,7 @@ fn main: Int {
   ws_route_cases(c)
   route_serving_cases(c, avant_test_root())
   header_split_cases(c, avant_test_root())
+  response_literal_cases(c)
   client_framing_cases(c, avant_test_root())
   client_request_cases(c, avant_test_root())
   ws_big_cases(c, avant_test_root())

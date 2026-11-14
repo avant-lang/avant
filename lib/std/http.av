@@ -143,11 +143,16 @@ pub struct Request {
 // a response built in code); headers set with `header` are kept
 // separately until the response is written. Content-Length and
 // Connection are managed by the server and the client; setting them
-// with `header` has no effect.
+// with `header` has no effect. The header lines set are kept in `head`,
+// which is private (Stage 29 W-FIX1h, O661, D369): a response is built
+// by `text` or `bytes` and `header`, so every line went through
+// `header`'s check, and a `Response { ... }` literal outside this module
+// does not compile. A status outside 100-599 traps when the answer is
+// written.
 pub struct Response {
   pub status: Int
   pub headers: Headers
-  pub head: String
+  head: String
   pub body: Bytes
 
   pub fn self.text(body: String, status: Int = 200): Response {

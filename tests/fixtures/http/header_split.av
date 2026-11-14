@@ -10,7 +10,9 @@ import std.http
 // (tests/fixtures/http/raw_client.py, mode header_split, run by
 // tests/cases/test_std_http_safety.av, which reads the wire); without
 // one it asks itself with Http.get. Without arguments (the run goldens)
-// the kind is crlf.
+// the kind is crlf. The kinds status-* answer with that status: one
+// outside 100-599 traps when the answer is written (Stage 29 W-FIX1h,
+// O661, D369).
 fn bad_header(kind: String): Response {
   r = Response.text("x")
   if kind == "crlf" {
@@ -33,6 +35,18 @@ fn bad_header(kind: String): Response {
     return r.header("X-A:", "1")
   } else if kind == "name-empty" {
     return r.header("", "1")
+  } else if kind == "status-99" {
+    return Response.text("x", 99)
+  } else if kind == "status-600" {
+    return Response.text("x", 600)
+  } else if kind == "status-neg" {
+    return Response.bytes("x".bytes, -200)
+  } else if kind == "status-big" {
+    return Response.text("x", 99999999999)
+  } else if kind == "status-100" {
+    return Response.text("x", 100)
+  } else if kind == "status-599" {
+    return Response.text("x", 599)
   }
   // "ok": a tab, a quote and bytes over 127 are a valid value; the
   // token's punctuation is a valid name.

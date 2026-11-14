@@ -674,10 +674,24 @@ char *avant_http_req_headers(void *reqp) {
                               raw_len);
 }
 
+/* A response's status outside 100-599 (Stage 29 W-FIX1h, O661, D369):
+ * written as it came, 99999 or -1 gave a status line no client can read
+ * (RFC 9110 15: a status code is three digits, its first 1 to 5). The
+ * program's error, trapped in the runtime's form before any byte of the
+ * answer is written. */
+__attribute__((noreturn, cold)) static void http_status_trap(avant_int status) {
+  fflush(stdout);
+  fprintf(stderr, "avant runtime: a response's status %lld is not 100 to 599 (RFC 9110)\n", (long long)status);
+  exit(1);
+}
+
 void avant_http_req_respond(void *reqp, avant_int status, const char *head,
                             const char *body) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
   const char *conn_header = NULL;
+  if (__builtin_expect(status < 100 || status > 599, 0)) {
+    http_status_trap(status);
+  }
   /* The head and body pointers name Avant heap objects held only in
    * C registers here; nothing below is a safepoint (no allocation, no
    * native wait), so no collection runs on any thread while the response
@@ -688,7 +702,7 @@ void avant_http_req_respond(void *reqp, avant_int status, const char *head,
   } else if (req->minor_version == 0) {
     conn_header = "keep-alive";
   }
-  write_response(req->conn, req->sock, avant_c_int(status), head, body,
+  write_response(req->conn, req->sock, (int32_t)status, head, body,
                  conn_header);
 }
 
