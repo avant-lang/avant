@@ -20,6 +20,10 @@
 #                           exclusive and inclusive, one process per
 #                           scenario (default every scenario; `4` runs 3
 #                           then 4)
+#   run.sh rounds [ROUNDS]  the loop of tools/rounds.py (O652): as `time`,
+#                           each run started by its spawner (wall and peak
+#                           RSS of the program's own process), the sides
+#                           of VALK_GC_SIDES in one session (O618)
 #   run.sh trees-counts     no clock: the tree ports (set trees, O386), each
 #                           in its own process: AVANT_GC_STATS and
 #                           instructions, in counts' fixed environment
@@ -35,6 +39,8 @@
 #   VALK_GC_SETS    which sets `check` and `time` run (default "headline
 #                   variants iso"; `trees` is the tree ports' set)
 #   VALK_GC_ROWS    restrict to these row ids  (default: all)
+#   VALK_GC_SIDES   `rounds`: "NAME=BUILD_DIR ..."  (default "this=$BUILD")
+#   VALK_GC_UNITS   `rounds`: iso scenarios to run (default: all; 4 is 3 4)
 #   VALK_GC_ALLOW_GOVERNOR=1  let `time` run without the performance
 #                   governor (a dry run; the session file says so)
 #   VALK_GC_CG_TIMEOUT  seconds one `cg` process may take (default 3600)
@@ -87,6 +93,15 @@ die() { printf 'run.sh: %s\n' "$*" >&2; exit 1; }
 want_row() {
   [ -z "$ONLY_ROWS" ] && return 0
   case " $ONLY_ROWS " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+# want_unit N: VALK_GC_UNITS (scenario numbers, `4` the unit `3 4`)
+# restricts the iso entries; unset, every entry. Only `rounds` reads it
+# (O382); `time` and `check` are as they were until VALK-D1 has merged.
+want_unit() {
+  [ -z "${UNITS_FILTER:-}" ] && return 0
+  case " $UNITS_FILTER " in *" $1 "*) return 0 ;; esac
   return 1
 }
 
@@ -402,7 +417,10 @@ units() {
     for row in ${!rows_var}; do
       want_row "$row" || continue
       if [ "$set" = iso ]; then
-        for u in "${ISO_UNITS[@]}"; do say "$set $row ${u// /+}"; done
+        for u in "${ISO_UNITS[@]}"; do
+          want_unit "${u##* }" || continue
+          say "$set $row ${u// /+}"
+        done
       else
         say "$set $row all"
       fi
@@ -531,6 +549,73 @@ do_time() {
     say "loadavg at end: $(cut -d' ' -f1-3 /proc/loadavg)"
   } >>"$dir/session.txt"
   say "raw files in $dir; tables: python3 $HERE/tables.py $OUT"
+}
+
+# rounds (O652): the timing loop of tools/rounds.py, through measure.py,
+# over the units `time` runs (VALK_GC_SETS, VALK_GC_ROWS, and
+# VALK_GC_UNITS for the iso entries), for every side of VALK_GC_SIDES
+# ("NAME=BUILD_DIR ...", default "this=$BUILD"): a base and a final build
+# directory are timed in one session, the side that goes first rotating
+# inside each unit. Writes $OUT/rounds (removed first): session.txt,
+# raw/round-R/SIDE--SET--ROW--UNIT.run and .out, sides/NAME.sha256 and
+# NAME.compiler.txt. `time` stays as it was until VALK-D1 has merged.
+do_rounds() {
+  local rounds=${1:-7} dir=$OUT/rounds sides=${VALK_GC_SIDES:-this=$BUILD}
+  case "$rounds" in '' | *[!0-9]* | 0) die "rounds: ROUNDS must be a positive number" ;; esac
+  local side name bdir line set row unit want saved=$BUILD
+  # The sides first: a bad one stops before the last session is removed.
+  for side in $sides; do
+    name=${side%%=*}
+    case "$name" in '' | *[!A-Za-z0-9_-]*) die "rounds: side name '$name': letters, digits, - and _ only" ;; esac
+    [ "$name" != "$side" ] && [ -d "${side#*=}" ] || die "rounds: side '$side' is not NAME=BUILD_DIR with a directory"
+  done
+  mkdir -p "$OUT"
+  rm -rf "$dir" "$OUT/rounds.rows.tsv" "$OUT/rounds.head.txt"
+  mapfile -t all < <(units)
+  [ ${#all[@]} -gt 0 ] || die "rounds: no unit to run (VALK_GC_SETS, VALK_GC_ROWS, VALK_GC_UNITS)"
+  {
+    do_versions
+    say "sets: $SETS"
+    [ -n "$ONLY_ROWS" ] && say "rows: $ONLY_ROWS"
+    [ -n "${VALK_GC_UNITS:-}" ] && say "iso units: $VALK_GC_UNITS"
+    [ -n "${VALK_GC_NOTE:-}" ] && say "note: $VALK_GC_NOTE"
+    say "sides: $sides"
+  } >"$OUT/rounds.head.txt"
+  for side in $sides; do
+    name=${side%%=*}
+    bdir=${side#*=}
+    bdir=$(CDPATH='' cd -- "$bdir" && pwd)
+    say "side $name: $bdir" >>"$OUT/rounds.head.txt"
+    [ -f "$bdir/avant-compiler.txt" ] && sed "s/^/side $name avant-/" "$bdir/avant-compiler.txt" >>"$OUT/rounds.head.txt"
+    BUILD=$bdir
+    for line in "${all[@]}"; do
+      read -r set row unit <<<"$line"
+      cmd_for "$set" "$row"
+      local args=()
+      case "$set" in
+        trees) want="checksum=$(tree_checksum "$row")"; unit=- ;;
+        iso) want="scenarios ${unit//+/ }"; read -ra args <<<"${unit//+/ }" ;;
+        *) want="scenarios 1 2 3 4 5 6 7" ;;
+      esac
+      local envs=${ENVV[*]:-}
+      printf '%s\t%s\t%s\t%s\t%s\t%s' "$name" "$set" "$row" "$unit" "$want" "${envs:--}"
+      printf '\t%s' "${CMD[@]}" "${args[@]}"
+      printf '\n'
+    done >>"$OUT/rounds.rows.tsv"
+  done
+  BUILD=$saved
+  say "commands:" >>"$OUT/rounds.head.txt"
+  sed 's/\t/ /g; s/^/  /' "$OUT/rounds.rows.tsv" >>"$OUT/rounds.head.txt"
+  python3 -I "$HERE/measure.py" rounds "$rounds" "$OUT/rounds.rows.tsv" "$OUT/rounds.head.txt" "$dir" </dev/null || die "rounds: the session stopped (see above)"
+  mkdir -p "$dir/sides"
+  for side in $sides; do
+    name=${side%%=*}
+    bdir=${side#*=}
+    [ -f "$bdir/binaries.sha256" ] && cp "$bdir/binaries.sha256" "$dir/sides/$name.sha256"
+    [ -f "$bdir/avant-compiler.txt" ] && cp "$bdir/avant-compiler.txt" "$dir/sides/$name.compiler.txt"
+  done
+  mv "$OUT/rounds.rows.tsv" "$OUT/rounds.head.txt" "$dir/"
+  say "rounds in $dir; tables: python3 $HERE/tables.py $OUT"
 }
 
 # counts: nothing here reads a clock. For each scenario, in its own
@@ -679,6 +764,7 @@ case "${1:-}" in
   build) shift; do_build "$@" ;;
   check) do_check ;;
   time) do_time "${2:-7}" ;;
+  rounds) UNITS_FILTER=${VALK_GC_UNITS:-} do_rounds "${2:-7}" ;;
   counts) do_counts ;;
   cg) shift; do_cg "$@" ;;
   trees-counts) do_trees_counts ;;

@@ -144,10 +144,11 @@ def build_spawn(d):
     return exe, "spawner: %s (%s -O2; %s), sha256 %s" % (exe, cc, ver, hashlib.sha256(open(exe, "rb").read()).hexdigest())
 
 
-def run_once(spawn, argv, cwd, out_path, err_path, limit, pin=None):
+def run_once(spawn, argv, cwd, out_path, err_path, limit, pin=None, env=None):
     """Runs argv (argv[0] a path, relative to cwd or absolute) under the
-    spawner. Returns a dict: wall_ns, exit (128 + n for a signal), rss_kb,
-    user_s, sys_s, timed_out."""
+    spawner, with env (a complete environment; None: this process's).
+    Returns a dict: wall_ns, exit (128 + n for a signal), rss_kb, user_s,
+    sys_s, timed_out."""
     res_path = out_path + ".res"
     old = None
     if pin is not None:
@@ -156,7 +157,7 @@ def run_once(spawn, argv, cwd, out_path, err_path, limit, pin=None):
     try:
         with open(out_path, "wb") as fo, open(err_path, "wb") as fe:
             proc = subprocess.Popen([spawn, res_path] + argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=fo, stderr=fe,
-                                    start_new_session=True)
+                                    start_new_session=True, env=env)
             try:
                 rc = proc.wait(timeout=limit)
                 timed_out = False
@@ -223,19 +224,21 @@ def session_close(note, meta):
     meta.close()
 
 
-def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None, raw="raw"):
+def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None, raw="raw", keep=False):
     """The loop. rows: dicts with id, argv, cwd, pin (bool: may be pinned),
-    fields (written into the raw file). check(row, result, out, err) returns
-    None when the run is a result, else the reason (the session stops).
-    order_of(r) gives round r's order (default: rotate). One unmeasured
-    warm-up of every row first; one raw file per run,
-    d/RAW/round-R/FILE.run (FILE: the row's "file", else its id)."""
+    env (optional: the run's complete environment), fields (written into
+    the raw file). check(row, result, out, err) returns None when the run
+    is a result, else the reason (the session stops). order_of(r) gives
+    round r's order (default: rotate). One unmeasured warm-up of every row
+    first; one raw file per run, d/RAW/round-R/FILE.run (FILE: the row's
+    "file", else its id), and with keep the run's standard output beside
+    it as FILE.out (bench/valk-gc reads its programs' own timings there)."""
     scratch = os.path.join(d, "scratch")
     os.makedirs(scratch, exist_ok=True)
     fo, fe = os.path.join(scratch, "out"), os.path.join(scratch, "err")
 
     def one(row, where):
-        res = run_once(spawn, row["argv"], row["cwd"], fo, fe, limit, pin if row.get("pin", True) else None)
+        res = run_once(spawn, row["argv"], row["cwd"], fo, fe, limit, pin if row.get("pin", True) else None, row.get("env"))
         if os.path.getsize(fo) > CAP or os.path.getsize(fe) > CAP:
             die("output over the cap: %s in %s" % (row["id"], where))
         out, err = open(fo, "rb").read(), open(fe, "rb").read()
@@ -266,6 +269,9 @@ def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None,
                 for k, v in row.get("fields", {}).items():
                     f.write("%s\t%s\n" % (k, v))
                 f.write("first_line\t%s\n" % out.split(b"\n", 1)[0].decode("utf-8", "replace").strip())
+            if keep:
+                with open(os.path.join(rd, row.get("file", row["id"]) + ".out"), "wb") as f:
+                    f.write(out)
         note("round %d: first %s, %s; loadavg %s" % (r, order[0]["id"], "backwards" if r % 2 == 0 else "forwards",
                                                      loadavg().split()[0]))
     for p in (fo, fe):

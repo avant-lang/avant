@@ -4,7 +4,8 @@
 usage: python3 tables.py OUT > tables.md
 
 OUT is the directory run.sh wrote (VALK_GC_OUT): OUT/raw (run.sh time),
-OUT/counts (run.sh counts) and OUT/trees-counts (run.sh trees-counts). Nothing is measured here; a table is only
+OUT/counts (run.sh counts), OUT/trees-counts (run.sh trees-counts) and
+OUT/rounds (run.sh rounds: tools/rounds.py's loop, O652). Nothing is measured here; a table is only
 a reading of those files, so it can be rebuilt at any time. Standard
 library only.
 """
@@ -359,6 +360,100 @@ def emit_trees_counts(out_dir):
     print(table(["Program", "instructions:u", "÷ hinted"] + [l for _, l in fields], rows))
 
 
+def load_rounds(d):
+    """{(side, set, row, unit): {"times": {k: [us]}, "wall_s": [], "rss_kb": [], "user_s": [], "n": n}} of
+    run.sh rounds' raw files (round-R/ID.run and ID.out)."""
+    runs, rd = {}, os.path.join(d, "raw")
+    for r in sorted(os.listdir(rd)) if os.path.isdir(rd) else []:
+        for f in sorted(os.listdir(os.path.join(rd, r))):
+            if not f.endswith(".run"):
+                continue
+            rec = dict(l.rstrip("\n").split("\t", 1) for l in open(os.path.join(rd, r, f)) if "\t" in l)
+            if rec.get("output") != "ok" or rec.get("exit") != "0":
+                sys.exit("tables.py: not a result: %s" % os.path.join(rd, r, f))
+            key = (rec["side"], rec["set"], rec["row"], rec["unit"])
+            x = runs.setdefault(key, {"times": {}, "wall_s": [], "rss_kb": [], "user_s": [], "n": 0})
+            for k, v in parse_times(os.path.join(rd, r, f[:-4] + ".out")).items():
+                x["times"].setdefault(k, []).append(v)
+            x["wall_s"].append(int(rec["wall_ns"]) / 1e9)
+            x["rss_kb"].append(int(rec["rss_kb"]))
+            x["user_s"].append(float(rec["user_s"]))
+            x["n"] += 1
+    return runs
+
+
+def emit_rounds(out_dir):
+    d = os.path.join(out_dir, "rounds")
+    if not os.path.isdir(os.path.join(d, "raw")):
+        return
+    runs = load_rounds(d)
+    if not runs:
+        return
+    sides = []
+    for line in read(os.path.join(d, "session.txt")).splitlines():
+        if line.startswith("sides: "):
+            sides = [x.split("=", 1)[0] for x in line[7:].split()]
+    for k in runs:
+        if k[0] not in sides:
+            sides.append(k[0])
+    print("## The rounds session (`run.sh rounds`, tools/rounds.py's loop)\n")
+    print("```")
+    print(read(os.path.join(d, "session.txt")).rstrip())
+    print("```\n")
+    print("Wall: the spawner's monotonic clock just before it starts the program and just after it reaps it; peak RSS: wait4's rusage of the program's own process; `time_us` from the program's own output. Median (minimum–maximum) of every measured round; never a best-of.\n")
+    secs = lambda s: "%.3f" % s
+    keys = sorted(runs, key=lambda k: (["headline", "variants", "iso", "trees"].index(k[1]) if k[1] in ("headline", "variants", "iso", "trees") else 9,
+                                       (HEADLINE + VARIANTS + TREES).index(k[2]) if k[2] in HEADLINE + VARIANTS + TREES else 99,
+                                       sides.index(k[0]), k[3]))
+    one = [k for k in keys if k[1] in ("headline", "variants")]
+    if one:
+        seven = [1, 2, 3, 4, 5, 6, 7]
+        n = max(runs[k]["n"] for k in one)
+        print("### Table R1. Seven scenarios in one process: `time_us` of each scenario in ms, the process's wall time and peak RSS; median (minimum–maximum) of %d rounds\n" % n)
+        rows = [["%s [%s]" % (LABEL.get(k[2], k[2]), k[0])] + [cell(runs[k]["times"].get(s, [])) for s in seven]
+                + [cell(runs[k]["wall_s"], secs), cell(runs[k]["rss_kb"], mb)] for k in one]
+        print(table(["Row [side]"] + [SHORT[s] for s in seven] + ["Wall, s", "Peak RSS, MB"], rows))
+    iso = [k for k in keys if k[1] == "iso"]
+    if iso:
+        print("### Table R2. One scenario per process (iso): `time_us` in ms and the process's peak RSS in MB, median (minimum–maximum)\n")
+        rows = []
+        for k in iso:
+            last = int(k[3].split("+")[-1])
+            x = runs[k]
+            rows.append(["%s [%s]" % (LABEL.get(k[2], k[2]), k[0]), SHORT[last], x["n"], cell(x["times"].get(last, [])),
+                         cell(x["rss_kb"], mb), cell(x["wall_s"], secs)])
+        print(table(["Row [side]", "Scenario", "Runs", "time_us, ms", "Peak RSS, MB", "Wall, s"], rows))
+    tr = [k for k in keys if k[1] == "trees"]
+    if tr:
+        print("### Table R3. The tree ports: wall time, user time and peak RSS of the process, median (minimum–maximum)\n")
+        rows = [["%s [%s]" % (LABEL.get(k[2], k[2]), k[0]), runs[k]["n"], cell(runs[k]["wall_s"], secs),
+                 cell(runs[k]["user_s"], secs), cell(runs[k]["rss_kb"], mb)] for k in tr]
+        print(table(["Program [side]", "Runs", "Wall, s", "User, s", "Peak RSS, MB"], rows))
+    if len(sides) > 1:
+        print("### Table R4. Each side against `%s`: medians' ratios, time and peak RSS, with the verdict over all runs\n" % sides[0])
+        rows = []
+        for k in keys:
+            if k[0] == sides[0]:
+                continue
+            b = runs.get((sides[0],) + k[1:])
+            if not b:
+                continue
+            x = runs[k]
+            if k[1] == "trees":
+                parts = [("whole", x["wall_s"], b["wall_s"])]
+            else:
+                ks = [int(k[3].split("+")[-1])] if k[1] == "iso" else [1, 2, 3, 4, 5, 6, 7]
+                parts = [(SHORT[s], x["times"].get(s, []), b["times"].get(s, [])) for s in ks]
+            for what, t, tb in parts:
+                if not t or not tb:
+                    continue
+                v = verdict(t, tb).replace("leads", "faster").replace("trails", "slower")
+                rows.append(["%s [%s]" % (LABEL.get(k[2], k[2]), k[0]), what, "%.3f" % (statistics.median(t) / statistics.median(tb)),
+                             "%.3f" % (statistics.median(x["rss_kb"]) / statistics.median(b["rss_kb"])), v])
+        print(table(["Row [side]", "Scenario", "Time ÷ %s" % sides[0], "Peak RSS ÷ %s (the process)" % sides[0], "Verdict (all runs)"], rows))
+        print("A verdict is `faster` when the side's slowest run is faster than `%s`'s fastest, `slower` the other way round, `ranges overlap` otherwise.\n" % sides[0])
+
+
 def main():
     if len(sys.argv) != 2:
         sys.stderr.write(__doc__)
@@ -369,6 +464,7 @@ def main():
     emit_raw(out_dir)
     emit_counts(out_dir)
     emit_trees_counts(out_dir)
+    emit_rounds(out_dir)
 
 
 if __name__ == "__main__":
