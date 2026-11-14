@@ -4066,8 +4066,8 @@ pub class Checker {
       disc = ct
       if ct.is_enum || ct.is_union {
         countable = true
-      } else if !ct.is_int && !ct.is_bool && !ct.is_string {
-        fail(cond.loc, "switch discriminant must be Int, Bool, String, an enum or a union, got ${ct.show}")
+      } else if !ct.is_integer && !ct.is_bool && !ct.is_string {
+        fail(cond.loc, "switch discriminant must be an integer (Int, Int32, UInt32, UInt64), Bool, String, an enum or a union, got ${ct.show}")
       }
     }
     covered = Hash(Int, Int).new
@@ -4102,7 +4102,7 @@ pub class Checker {
           } else if label.kind == lb_member() {
             fail(label.loc, "duplicate case ${label.text}")
           } else {
-            fail(arm.loc, "duplicate case ${lab}")
+            fail(arm.loc, "duplicate case ${int_label_text(label)}")
           }
         }
         seen[lab] = 1
@@ -4232,6 +4232,36 @@ pub class Checker {
     }
     if label.kind != lb_int() {
       fail(label.loc, "case label must be an integer literal")
+      return false
+    }
+    check_int_label(label, disc)
+  }
+
+  // An integer label as written (its sign and magnitude).
+  pub fn int_label_text(label: CaseLabel): String {
+    if label.neg && label.bits != 0u64 {
+      return "-${label.bits}"
+    }
+    "${label.bits}"
+  }
+
+  // An integer label against an integer discriminant's type (Stage 29
+  // W5a3, O390): it adopts that type, as a literal does, and must fit in
+  // it.
+  pub fn check_int_label(label: CaseLabel, disc: Ty): Bool {
+    if !disc.is_integer {
+      return true
+    }
+    if label.neg && disc.is_unsigned && label.bits != 0u64 {
+      fail(label.loc, "case label ${int_label_text(label)} does not fit in ${disc.show}")
+      return false
+    }
+    max = literal_int_max(disc)
+    if label.neg {
+      max = max + 1u64
+    }
+    if label.bits > max {
+      fail(label.loc, "case label ${int_label_text(label)} does not fit in ${disc.show}")
       return false
     }
     true

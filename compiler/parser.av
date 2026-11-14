@@ -2306,7 +2306,7 @@ pub class Parser {
       return label
     }
     label = CaseLabel.new(lb_int(), self.current.loc)
-    label.int_val = parse_case_int
+    parse_case_int(label)
     label
   }
 
@@ -2327,10 +2327,11 @@ pub class Parser {
     c >= 65 && c <= 90
   }
 
-  // An integer label's value. The bound is 32 bits, stale since D314's
-  // 64-bit Int: W5a3 checks each label against the discriminant's type
-  // (O390).
-  pub fn parse_case_int: Int {
+  // An integer label (a character literal is one): its magnitude and
+  // sign, and int_val its 64 bits. The checker checks it against the
+  // discriminant's type (Stage 29 W5a3, O390), as a literal adopts its
+  // context's; a suffix is refused, since the label takes that type.
+  pub fn parse_case_int(label: CaseLabel) {
     neg = false
     if self.current.kind == tk_minus() {
       self.bump
@@ -2339,29 +2340,24 @@ pub class Parser {
     }
     if self.current.kind != tk_integer() {
       fail(self.current.loc, "case label must be an integer literal")
-      return 0
+      return
     }
     tok = self.bump
     if !parse_int_tok(tok) {
-      return 0
+      return
     }
     if self.int_suffix.size != 0 {
-      fail(tok.loc, "case label must be an Int literal")
-      return 0
+      fail(tok.loc, "a case label takes the type of the switch's value: write it without the suffix")
+      return
     }
     bits = self.int_bits
+    label.bits = bits
+    label.neg = neg
     if neg {
-      if bits > 2147483648u64 {
-        fail(tok.loc, "case label does not fit in Int")
-        return 0
-      }
-      return 0 - bits.to_i()
+      label.int_val = (0u64 &- bits).wrap_i
+    } else {
+      label.int_val = bits.wrap_i
     }
-    if bits > 2147483647u64 {
-      fail(tok.loc, "case label does not fit in Int")
-      return 0
-    }
-    bits.to_i()
   }
 
   pub fn parse_for_operand: Expr {
