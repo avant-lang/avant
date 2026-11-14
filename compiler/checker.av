@@ -328,9 +328,11 @@ pub class Checker {
   // exception keeps the clearer message: when the statement's error is the
   // generic `expected T, got U` of an operand (check_expr_flag), the
   // reader's own message about it (`binary operator expects matching
-  // types`, `cannot assign`, `return type is`) takes its place.
-  pub fn cascaded: Bool {
-    if !self.poisoned {
+  // types`, `cannot assign`, `return type is`) takes its place. A name
+  // that does not exist (`unknown function f`) reads no type and is never
+  // a cascade: it is reported in a statement that already failed too.
+  pub fn cascaded(message: String): Bool {
+    if !self.poisoned || names_missing(message) {
       return false
     }
     if self.weak_at > 0 && self.weak_at == self.errors.pushes {
@@ -345,8 +347,17 @@ pub class Checker {
     true
   }
 
+  pub fn names_missing(message: String): Bool {
+    for w in ["unknown name ", "unknown function ", "unknown type ", "unknown module "] {
+      if message.size > w.size && str_slice(message, 0, w.size) == w {
+        return true
+      }
+    }
+    false
+  }
+
   pub fn fail(loc: Location, message: String) {
-    if cascaded {
+    if cascaded(message) {
       return
     }
     e = CompileError.new(loc, diag_code(4, message), message)
@@ -361,7 +372,7 @@ pub class Checker {
   // An error with a hint after it (" (did you mean `x`?)", Stage 29
   // W5c1): the code is the message's, whatever the hint says.
   pub fn fail_hint(loc: Location, message: String, hint: String) {
-    if cascaded {
+    if cascaded(message) {
       return
     }
     e = CompileError.new(loc, diag_code(4, message), "${message}${hint}")
