@@ -64,7 +64,13 @@ fn test_tools(c: Checks) {
   } else {
     c.expect(false, "O676: AVANT_COMPILER names the compiler under test")
   }
-  // The scripts at once.
+  // O669: a stopped wave-final.sh leaves no process of its steps.
+  wf = "${scratch_dir()}/wave-final"
+  jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/wave-final-stop.sh", wf], "${wf}.log"))
+  whats.push("O669 wave-final.sh")
+  names.push(["run-ends", "step-status", "term-leaves-nothing", "term-status", "term-within-kill-after", "term-summary", "expire-leaves-nothing", "expire-status", "expire-summary"])
+  // The scripts at once: neither reads a clock the other could disturb
+  // beyond wave-final-stop.sh's 10 s bound on a stop.
   run_jobs(jobs)
   for k in 0..jobs.size {
     tools_checks(c, whats[k], jobs[k].code, jobs[k].log, names[k])
