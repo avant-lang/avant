@@ -64,25 +64,58 @@ fn dump_mir(c: Checks, compiler: String, src: String, golden: String, stamp: Int
   expect_file(c, out, golden, key, root)
 }
 
-// A program that imports std has no --check layer: that dump reads one
-// file without the loader (D137, D142); and no MIR layer: its MIR names
-// the std files by the absolute path the compiler found them at (Stage
-// 28 W11; json.av runs against its run golden, std.http is
-// test_std_http_llvm.av).
-fn dump_imports(c: Checks, compiler: String, root: String, stamp: Int, src_rel: String, stem: String, key: String) {
-  src = "${root}/${src_rel}"
-  base = "${root}/tests/goldens/${stem}"
-  check_layer(c, compiler, "--tokens", src, "${base}.tok", stamp, "${key}-tok", root)
-  check_layer(c, compiler, "--ast", src, "${base}.ast", stamp, "${key}-ast", root)
+// Each row of tests/goldens/list.txt for this file (O355): every layer it
+// names, dumped and compared with tests/goldens/STEM.<layer>. A program
+// that imports std has no MIR layer: its MIR names the std files by the
+// absolute path the compiler found them at (Stage 28 W11; json.av runs
+// against its run golden, std.http is test_std_http_llvm.av).
+fn dump_row(c: Checks, compiler: String, root: String, stamp: Int, row: GoldenRow) {
+  src = "${root}/${row.src}"
+  base = "${root}/tests/goldens/${row.stem}"
+  kb = buf_new()
+  for i in 0..row.stem.size {
+    if row.stem[i] == 47 {
+      kb.push_byte(45)
+    } else {
+      kb.push_byte(row.stem[i])
+    }
+  }
+  key = kb.to_s
+  layers = ["tok", "ast", "check"]
+  flags = ["--tokens", "--ast", "--check"]
+  for i in 0..layers.size {
+    if row.has(layers[i]) {
+      check_layer(c, compiler, flags[i], src, "${base}.${layers[i]}", stamp, "${key}-${layers[i]}", root)
+    }
+  }
+  if row.has("mir") {
+    dump_mir(c, compiler, src, "${base}.mir", stamp, "${key}-mir", root)
+  }
 }
 
-fn dump_all(c: Checks, compiler: String, root: String, stamp: Int, src_rel: String, stem: String, key: String) {
-  src = "${root}/${src_rel}"
-  base = "${root}/tests/goldens/${stem}"
-  check_layer(c, compiler, "--tokens", src, "${base}.tok", stamp, "${key}-tok", root)
-  check_layer(c, compiler, "--ast", src, "${base}.ast", stamp, "${key}-ast", root)
-  check_layer(c, compiler, "--check", src, "${base}.check", stamp, "${key}-check", root)
-  dump_mir(c, compiler, src, "${base}.mir", stamp, "${key}-mir", root)
+// dump --check loads the program through the loader (O192, D352, Q159's
+// A): an import is followed and checked, an error in an imported module
+// fails the dump, and only the root file's declarations are printed.
+fn check_through_loader(c: Checks, compiler: String, stamp: Int) {
+  dir = "${scratch()}/goldens-${stamp}-loader"
+  mkdir_p(dir)
+  write_av(dir, "lmod", "pub fn lmod_value: Int {\n  41\n}\n")
+  write_av(dir, "lroot", "import lmod\n\nfn main {\n  puts(lmod_value() + 1)\n}\n")
+  out = "${dir}/lroot.check"
+  c.eq_int(dump_layer(compiler, "--check", "${dir}/lroot.av", out), 0, "dump --check follows an import")
+  got = file_read(out) ?? ""
+  c.expect(str_has(got, "(fn main : Void"), "dump --check prints the root's main")
+  c.expect(str_has(got, "(call lmod_value : Int)"), "dump --check types a call into the imported module")
+  c.expect(!str_has(got, "(fn lmod_value"), "dump --check prints the root file only")
+  write_av(dir, "lbad", "pub fn lbad_value: Int {\n  nosuch_name\n}\n")
+  write_av(dir, "lroot2", "import lbad\n\nfn main {\n  puts(lbad_value())\n}\n")
+  bad = "${dir}/lroot2.check"
+  c.eq_int(dump_layer(compiler, "--check", "${dir}/lroot2.av", bad), 1, "dump --check fails on an error in an imported module")
+  c.expect(str_has(file_read(bad) ?? "", "unknown name nosuch_name"), "dump --check reports the imported module's error")
+  write_av(dir, "lroot3", "import lnone\n\nfn main {\n  puts(1)\n}\n")
+  none = "${dir}/lroot3.check"
+  c.eq_int(dump_layer(compiler, "--check", "${dir}/lroot3.av", none), 1, "dump --check fails on a missing import")
+  c.expect(str_has(file_read(none) ?? "", "cannot find lnone.av"), "dump --check names the missing import")
 }
 
 fn test_goldens(c: Checks) {
@@ -90,49 +123,10 @@ fn test_goldens(c: Checks) {
   if compiler = env_get("AVANT_COMPILER") {
     root = avant_test_root()
     stamp = now_ms()
-    dump_all(c, compiler, root, stamp, "examples/hello.av", "examples/hello", "hello")
-    dump_all(c, compiler, root, stamp, "examples/fact.av", "examples/fact", "fact")
-    dump_all(c, compiler, root, stamp, "examples/vec2.av", "examples/vec2", "vec2")
-    dump_all(c, compiler, root, stamp, "examples/sieve.av", "examples/sieve", "sieve")
-    dump_all(c, compiler, root, stamp, "examples/methods.av", "examples/methods", "methods")
-    dump_all(c, compiler, root, stamp, "examples/trees.av", "examples/trees", "trees")
-    dump_all(c, compiler, root, stamp, "examples/binarytrees.av", "examples/binarytrees", "binarytrees")
-    dump_all(c, compiler, root, stamp, "examples/switch.av", "examples/switch", "switch")
-    dump_all(c, compiler, root, stamp, "examples/defaults.av", "examples/defaults", "defaults")
-    dump_all(c, compiler, root, stamp, "examples/sqrt.av", "examples/sqrt", "sqrt")
-    dump_all(c, compiler, root, stamp, "examples/zlib.av", "examples/zlib", "zlib")
-    dump_all(c, compiler, root, stamp, "examples/add.av", "examples/add", "add")
-    dump_all(c, compiler, root, stamp, "examples/errors.av", "examples/errors", "errors")
-    dump_all(c, compiler, root, stamp, "examples/collect.av", "examples/collect", "collect")
-    dump_imports(c, compiler, root, stamp, "examples/json.av", "examples/json", "json")
-    dump_imports(c, compiler, root, stamp, "examples/http.av", "examples/http", "http")
-    dump_all(c, compiler, root, stamp, "examples/spawn.av", "examples/spawn", "spawn")
-    dump_all(c, compiler, root, stamp, "examples/matmul.av", "examples/matmul", "matmul")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/part3/chr.av", "part3/chr", "p3-chr")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/part3/slice.av", "part3/slice", "p3-slice")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/part3/index.av", "part3/index", "p3-index")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/part3/buf.av", "part3/buf", "p3-buf")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/part3/conv.av", "part3/conv", "p3-conv")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/part3/exists.av", "part3/exists", "p3-exists")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/part3/argv.av", "part3/argv", "p3-argv")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/part3/env.av", "part3/env", "p3-env")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/part3/interp.av", "part3/interp", "p3-interp")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/part3/pop.av", "part3/pop", "p3-pop")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/part3/run.av", "part3/run", "p3-run")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/overloading/defaults.av", "overloading/defaults", "defaults")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/overloading/overload.av", "overloading/overload", "overload")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/overloading/operator.av", "overloading/operator", "operator")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/overloading/generic.av", "overloading/generic", "generic")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/macros/quote_fn.av", "macros/quote_fn", "quote")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/macros/splice_name.av", "macros/splice_name", "splice")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/macros/hygiene.av", "macros/hygiene", "hygiene")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/macros/fields.av", "macros/fields", "fields")
-    dump_all(c, compiler, root, stamp, "tests/fixtures/macros/method.av", "macros/method", "method")
-    modules_src = "${root}/tests/fixtures/modules/main.av"
-    modules_golden = "${root}/tests/goldens/modules/main"
-    check_layer(c, compiler, "--tokens", modules_src, "${modules_golden}.tok", stamp, "modules-tok", root)
-    check_layer(c, compiler, "--ast", modules_src, "${modules_golden}.ast", stamp, "modules-ast", root)
-    dump_mir(c, compiler, modules_src, "${modules_golden}.mir", stamp, "modules-mir", root)
+    for row in golden_rows(c, "test_goldens") {
+      dump_row(c, compiler, root, stamp, row)
+    }
+    check_through_loader(c, compiler, stamp)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

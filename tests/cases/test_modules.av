@@ -20,7 +20,8 @@ fn mod_runs(c: Checks, compiler: String, dir: String, name: String, want: String
 fn mod_fails(c: Checks, compiler: String, dir: String, name: String, needle: String, tag: String) {
   bin = "${dir}/${name}.bin"
   log = "${dir}/${name}.log"
-  compile_av(compiler, "${dir}/${name}.av", bin, log)
+  code = compile_av(compiler, "${dir}/${name}.av", bin, log)
+  c.expect(code != 0, "${tag} exits non-zero")
   c.expect(!file_exists(bin), "${tag} bin absent")
   if err = file_read(log) {
     c.expect(str_has(err, needle), tag)
@@ -86,6 +87,7 @@ fn test_modules(c: Checks) {
     hide_bin = "${dir}/hide.bin"
     hide_log = "${dir}/hide.log"
     hide_code = compile_av(compiler, "${dir}/hide.av", hide_bin, hide_log)
+    c.expect(hide_code != 0, "private helper exits non-zero")
     c.expect(!file_exists(hide_bin), "private helper bin absent")
     if err = file_read(hide_log) {
       c.expect(str_has(err, "unknown function hidden"), "private helper hidden")
@@ -98,7 +100,8 @@ fn test_modules(c: Checks) {
     write_av(dir, "cycle", "import ca\nfn main {\n  puts(from_a())\n}\n")
     cycle_bin = "${dir}/cycle.bin"
     cycle_log = "${dir}/cycle.log"
-    compile_av(compiler, "${dir}/cycle.av", cycle_bin, cycle_log)
+    cycle_code = compile_av(compiler, "${dir}/cycle.av", cycle_bin, cycle_log)
+    c.expect(cycle_code != 0, "cycle exits non-zero")
     c.expect(!file_exists(cycle_bin), "cycle bin absent")
     if err = file_read(cycle_log) {
       c.expect(str_has(err, "import cycle"), "import cycle")
@@ -124,7 +127,8 @@ fn test_modules(c: Checks) {
     write_av(dir, "bare", "import one\nimport two\nfn main {\n  b = Box.new(1)\n  puts(b.n)\n}\n")
     bare_bin = "${dir}/bare.bin"
     bare_log = "${dir}/bare.log"
-    compile_av(compiler, "${dir}/bare.av", bare_bin, bare_log)
+    bare_code = compile_av(compiler, "${dir}/bare.av", bare_bin, bare_log)
+    c.expect(bare_code != 0, "bare Box exits non-zero")
     c.expect(!file_exists(bare_bin), "bare Box bin absent")
     if err = file_read(bare_log) {
       c.expect(str_has(err, "ambiguous name Box"), "bare Box ambiguous")
@@ -240,7 +244,8 @@ fn test_modules(c: Checks) {
     _ = file_write("${sh}/nest/main.av", "import vec\nfn main {\n  puts(1)\n}\n")
     sh_bin = "${dir}/shadow.bin"
     sh_log = "${dir}/shadow.log"
-    compile_av(compiler, "${sh}/nest/main.av", sh_bin, sh_log)
+    sh_code = compile_av(compiler, "${sh}/nest/main.av", sh_bin, sh_log)
+    c.expect(sh_code != 0, "shadow exits non-zero")
     c.expect(!file_exists(sh_bin), "shadow bin absent")
     if err = file_read(sh_log) {
       c.expect(str_has(err, "import vec is ambiguous"), "shadow names both")
@@ -258,7 +263,8 @@ fn test_modules(c: Checks) {
     _ = file_write("${cyc}/main.av", "import a\nfn main {\n  puts(from_a())\n}\n")
     cyc_bin = "${dir}/cyc.bin"
     cyc_log = "${dir}/cyc.log"
-    compile_av(compiler, "${cyc}/main.av", cyc_bin, cyc_log)
+    cyc_code = compile_av(compiler, "${cyc}/main.av", cyc_bin, cyc_log)
+    c.expect(cyc_code != 0, "cross-dir cycle exits non-zero")
     c.expect(!file_exists(cyc_bin), "cross-dir cycle bin absent")
     if err = file_read(cyc_log) {
       c.expect(str_has(err, "import cycle"), "cross-dir cycle")
@@ -274,7 +280,8 @@ fn test_modules(c: Checks) {
     _ = file_write("${tw}/main.av", "import http.client\nfn main {\n  puts(go())\n}\n")
     tw_bin = "${dir}/twice.bin"
     tw_log = "${dir}/twice.log"
-    compile_av(compiler, "${tw}/main.av", tw_bin, tw_log)
+    tw_code = compile_av(compiler, "${tw}/main.av", tw_bin, tw_log)
+    c.expect(tw_code != 0, "two spellings exits non-zero")
     c.expect(!file_exists(tw_bin), "two spellings bin absent")
     if err = file_read(tw_log) {
       c.expect(str_has(err, "open the same file"), "two spellings")
@@ -312,7 +319,8 @@ fn test_modules(c: Checks) {
     _ = file_write("${both}/src/main.av", "import nest.use\nfn main {\n  puts(go())\n}\n")
     both_bin = "${dir}/bothroot.bin"
     both_log = "${dir}/bothroot.log"
-    compile_av(compiler, "${both}/src/main.av", both_bin, both_log)
+    both_code = compile_av(compiler, "${both}/src/main.av", both_bin, both_log)
+    c.expect(both_code != 0, "root and manifest exits non-zero")
     c.expect(!file_exists(both_bin), "root and manifest bin absent")
     if err = file_read(both_log) {
       c.expect(str_has(err, "import vec is ambiguous"), "root and manifest")
@@ -330,7 +338,8 @@ fn test_modules(c: Checks) {
     _ = file_write("${spell}/compiler/main.av", "import checker.use\nfn main {\n  puts(go())\n}\n")
     spell_bin = "${dir}/spell.bin"
     spell_log = "${dir}/spell.log"
-    compile_av(compiler, "${spell}/compiler/main.av", spell_bin, spell_log)
+    spell_code = compile_av(compiler, "${spell}/compiler/main.av", spell_bin, spell_log)
+    c.expect(spell_code != 0, "root two spellings exits non-zero")
     c.expect(!file_exists(spell_bin), "root two spellings bin absent")
     if err = file_read(spell_log) {
       c.expect(str_has(err, "open the same file"), "root two spellings")
@@ -347,7 +356,8 @@ fn test_modules(c: Checks) {
     _ = file_write("${seal}/main.av", "import greeter\nfn main {\n  puts(go())\n}\n")
     seal_bin = "${dir}/seal.bin"
     seal_log = "${dir}/seal.log"
-    compile_av(compiler, "${seal}/main.av", seal_bin, seal_log)
+    seal_code = compile_av(compiler, "${seal}/main.av", seal_bin, seal_log)
+    c.expect(seal_code != 0, "dep does not see consumer exits non-zero")
     c.expect(!file_exists(seal_bin), "dep does not see consumer bin absent")
     if err = file_read(seal_log) {
       c.expect(str_has(err, "cannot find hidden.av"), "dep does not see consumer")
@@ -378,7 +388,8 @@ fn test_modules(c: Checks) {
     _ = file_write(member, "struct Box {\n  n: Int\n}\nfn main {\n  b = Box { n: 1 }\n  puts(b.for)\n}\n")
     member_bin = "${dir}/member.bin"
     member_log = "${dir}/member.log"
-    compile_av(compiler, member, member_bin, member_log)
+    member_code = compile_av(compiler, member, member_bin, member_log)
+    c.expect(member_code != 0, "keyword member exits non-zero")
     c.expect(!file_exists(member_bin), "keyword member bin absent")
     if err = file_read(member_log) {
       c.expect(str_has(err, "no field for"), "keyword member is a name")
@@ -391,7 +402,8 @@ fn test_modules(c: Checks) {
     _ = file_write(lead, "import spawn\nfn main {\n  puts(1)\n}\n")
     lead_bin = "${dir}/lead.bin"
     lead_log = "${dir}/lead.log"
-    compile_av(compiler, lead, lead_bin, lead_log)
+    lead_code = compile_av(compiler, lead, lead_bin, lead_log)
+    c.expect(lead_code != 0, "leading keyword import exits non-zero")
     c.expect(!file_exists(lead_bin), "leading keyword import bin absent")
     if err = file_read(lead_log) {
       c.expect(str_has(err, "expected a name, found `spawn`"), "leading keyword import")
@@ -403,7 +415,8 @@ fn test_modules(c: Checks) {
     _ = file_write(decl, "fn spawn: Int { 1 }\nfn main {\n  puts(spawn())\n}\n")
     decl_bin = "${dir}/decl.bin"
     decl_log = "${dir}/decl.log"
-    compile_av(compiler, decl, decl_bin, decl_log)
+    decl_code = compile_av(compiler, decl, decl_bin, decl_log)
+    c.expect(decl_code != 0, "keyword function name exits non-zero")
     c.expect(!file_exists(decl_bin), "keyword function name bin absent")
     if err = file_read(decl_log) {
       c.expect(str_has(err, "expected function name"), "keyword function name")
@@ -415,7 +428,8 @@ fn test_modules(c: Checks) {
     _ = file_write(label, "struct Point {\n  x: Int\n}\nfn main {\n  p = Point { for: 1 }\n  puts(p.x)\n}\n")
     label_bin = "${dir}/label.bin"
     label_log = "${dir}/label.log"
-    compile_av(compiler, label, label_bin, label_log)
+    label_code = compile_av(compiler, label, label_bin, label_log)
+    c.expect(label_code != 0, "keyword field label exits non-zero")
     c.expect(!file_exists(label_bin), "keyword field label bin absent")
     if err = file_read(label_log) {
       c.expect(str_has(err, "expected an expression, found `{`"), "keyword field label")
@@ -489,7 +503,8 @@ fn test_field_privacy(c: Checks, compiler: String, dir: String) {
   _ = file_write("${boot}/compiler/main.av", "import ast\nfn main {\n  v = Node { n: 7 }\n  puts(v.n)\n}\n")
   boot_bin = "${dir}/boot.bin"
   boot_log = "${dir}/boot.log"
-  compile_av(compiler, "${boot}/compiler/main.av", boot_bin, boot_log)
+  boot_code = compile_av(compiler, "${boot}/compiler/main.av", boot_bin, boot_log)
+  c.expect(boot_code != 0, "a checkout's compiler/main.av is not exempt: exits non-zero")
   c.expect(!file_exists(boot_bin), "a checkout's compiler/main.av is not exempt: bin absent")
   if err = file_read(boot_log) {
     c.expect(str_has(err, "field n of Node is private to module ast"), "a checkout's compiler/main.av is not exempt")

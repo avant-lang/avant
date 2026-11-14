@@ -5,8 +5,10 @@
 // is its own program (trap_to_i_nan, trap_to_i_inf, trap_to_i_neg_inf,
 // trap_to_i_high, trap_to_i_low). Since Stage 29 W4b1 (D295 R1, R2) the
 // integer conversions keep the value or trap (tests/cases/test_numbers.av
-// has the traps) and wrap_i and wrap_u64 reinterpret the bits, as
-// to_i and to_u64 did here before; UInt64.abs is refused.
+// has the traps) and wrap_i, wrap_i32 and wrap_u64 reinterpret the bits,
+// as to_i and to_u64 did here before; UInt64.abs is refused. The Int32
+// conversions replace the lines that converted to Int twice once Int64
+// went (Stage 29 W5d2, O201).
 
 // n, unknown to every optimizer: the other branch (two clock reads a
 // thousand seconds apart) never runs.
@@ -38,7 +40,7 @@ fn main {
   m = opaque(-5)
   puts(m.to_f)
   puts(m.to_i)
-  puts(m.to_i)
+  puts(m.to_i32)
   puts(m.wrap_u64)
   puts(m.abs)
   puts((-2147483647 - opaque(0)).abs)
@@ -47,11 +49,11 @@ fn main {
   puts(q.wrap_i)
   puts(q.to_f)
   puts(q.abs)
-  puts(q.to_i)
+  puts(q.wrap_i32)
   big = 18446744073709551615u64 - opaque(0).to_u64
   puts(big.to_f)
   puts(big.wrap_i)
-  puts(big.wrap_i)
+  puts(big.wrap_i32)
   puts(big.to_u64)
   puts(opaque(3).to_i.to_u64.to_f)
 }

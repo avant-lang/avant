@@ -248,10 +248,13 @@ pub fn driver_format(args: Array(String)) {
 }
 
 // The hidden front-end dumps of one file (D137): tokens, AST, or the
-// checked tree, read without the loader, for the goldens. Not in the usage
-// text. The dumps are the bytes compiler/lex_dump.av printed; a front-end
-// error goes to stderr with status 1, as in dump (D142), so a golden can
-// never record one. A program that imports has no --check golden.
+// checked tree, for the goldens. Not in the usage text. The dumps are the
+// bytes compiler/lex_dump.av printed; a front-end error goes to stderr
+// with status 1, as in dump (D142), so a golden can never record one.
+// Tokens and the AST read the one file; the checked tree loads the
+// program through the loader, as compile and dump do, and prints the root
+// file's declarations only (D352, Q159's A; O192, Stage 29 W5d2), so a
+// program that imports has a --check golden of its own code.
 fn dump_layer_mode(arg: String): Bool {
   if arg == "--tokens" {
     return true
@@ -263,6 +266,10 @@ fn dump_layer_mode(arg: String): Bool {
 }
 
 fn driver_dump_layer(mode: String, path: String) {
+  if mode == "--check" {
+    driver_dump_checked(path)
+    return
+  }
   if src = source_read(path) {
     lex = Lexer.new(src)
     tokens = lex.tokenize
@@ -280,26 +287,39 @@ fn driver_dump_layer(mode: String, path: String) {
       diag_puts(e.show)
       diag_exit(1)
     }
-    if mode == "--ast" {
-      puts(dump_program(program))
-      return
-    }
-    expander = Expander.new(src, program)
-    expander.expand
-    if e = expander.err {
-      diag_puts(e.show)
-      diag_exit(1)
-    }
-    checker = Checker.new(src, program)
-    checker.check
-    if e = checker.err {
-      diag_puts(e.show)
-      diag_exit(1)
-    }
-    puts(dump_typed_program(program))
+    puts(dump_program(program))
     return
   }
   diag_puts("cannot read ${path}")
+  diag_exit(1)
+}
+
+// dump --check: the program as compile loads and checks it (the loader,
+// the expander, the checker), and the root file's checked tree.
+fn driver_dump_checked(path: String) {
+  loader = Loader.new()
+  if merged = loader.load_root(path) {
+    if e = loader.err {
+      diag_bag(loader.errors)
+      diag_exit(1)
+    }
+    src = Source.new(path, file_read(path) ?? "")
+    expander = Expander.new(src, merged)
+    expander.expand
+    if e = expander.err {
+      diag_bag(expander.errors)
+      diag_exit(1)
+    }
+    checker = Checker.new(src, merged)
+    checker.check
+    if e = checker.err {
+      diag_bag(checker.errors)
+      diag_exit(1)
+    }
+    puts(dump_typed_program(merged, merged.root_module))
+    return
+  }
+  diag_bag(loader.errors)
   diag_exit(1)
 }
 
