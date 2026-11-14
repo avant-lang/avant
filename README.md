@@ -1514,7 +1514,7 @@ fn main {
 error[E4000]: postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError, or handle the failure with if-assign or ??
 ```
 
-- In a lambda, `?` returns from the lambda. A `spawn` or `parallel` block and `Mutex.with` cannot return, so `?` is refused there.
+- In a lambda, `?` returns from the lambda. A `spawn` or `parallel` block cannot return, so `?` is refused there. Inside `Mutex.with`, `?` returns from the function as it would outside the block, and the lock is released.
 - A union with no failure member (`Int | String`) has nothing for these forms to open, and one whose every member is a failure (`IoError | ParseError`) has no value to give: both are compile errors.
 - An optional error (`ParseError?`) is read like any `T?`: if-assign and `??` give the error when it is not `nil`. `?` is refused on it.
 
@@ -2338,18 +2338,10 @@ The block takes one parameter. The statement form `parallel { }`, without a rece
 
 ### Channel and Mutex
 
-`Channel(T)` passes values between tasks; `Mutex(T)` guards one shared value. Both are ordinary generic classes written in Avant, and **they are not in the standard library yet**: until they are, the two classes are yours to paste. Both are printed here in full.
+`Channel(T)` passes values between tasks; `Mutex(T)` guards one shared value. Both are in the standard library's `std.sync`, for any type `T`.
 
 ```avant
-class Mutex(T) {                 // until Mutex is in the standard library, this class is yours to paste
-  cell: T
-  gate: UInt64
-
-  fn initialize(value: T) {
-    self.cell = value
-    self.gate = avant_gate_new()
-  }
-}
+import std.sync
 
 fn main {
   hits = Mutex(Int).new(0)
@@ -2357,10 +2349,7 @@ fn main {
   for i in 0..4 {
     handles.push(spawn {
       for j in 0..1000 {
-        hits.with { |n|
-          n += 1
-          n
-        }
+        hits.with { |n| n += 1 }
       }
       0                          // a spawn block ends with an Int, for now
     })
@@ -2372,14 +2361,16 @@ fn main {
 }
 ```
 
-- `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` holds the lock for the block; `x` is the guarded value, a place that dies with the block; the block must end with a value, which is the call's. `return`, `break` and `continue` inside `with` are errors. (`with` is a form the compiler provides for a class of this name and shape.)
-- **The block's value leaves the lock, so it is a plain value:** a number, a `Bool`, a `String`, `Bytes`, a struct or an optional of those, a `Channel` or a `Mutex`. Any other value (a class, an array, a hash, a `Buf`, a struct holding one) is a compile error, even a new object built in the block: it could be the guarded value or a part of it, which the lock no longer protects outside the block. To take a copy out, declare an array before the block and fill it inside (`xs.each { |x| snap.push(x) }`), ending the block with a plain value.
-- **The lock guards the cell, not what a reference stored in it points to.** With a class in a `Mutex`, do the work inside `with`. The compiler checks the block's value; it does not yet stop a block from storing the guarded object itself somewhere else (pushing it into an array declared outside, assigning a part of it to an outer name), which hands out a reference the lock no longer protects.
+- `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` holds the lock while the block runs; `x` names the guarded value, and assigning `x` changes it. Used as a value, the call gives the block's last expression; used as a statement, the block simply ends. `return`, `break`, `continue` and `?` leave the block as they leave any block, and the lock is released on every way out.
+- **Nothing the lock guards leaves the block.** Inside it, the guarded value and every reference reached from it (a field, an element, a name bound to one) may only be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand whose result is a plain value (`b.n`, `b.items.size`, `"${b}"`): never an argument, a stored value or a captured name, which would outlive the lock. Two stores keep it under the lock and are allowed: into the guarded value itself (`b.root = b.root.left`), and into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which then follows the same rule. A plain value (a number, a `Bool`, a `String`, `Bytes`, a struct or an optional of those, a `Channel` or a `Mutex`) is a copy and goes anywhere; the block's value, when it is used, must be one. To take a copy out, fill an array declared before the block with plain values (`b.items.each { |it| sizes.push(it.n) }`).
+- A method of the guarded class runs under the lock too, and what it does with `self` is the class's own doing: a method that stores `self` somewhere hands out what the lock protects.
+- The lock guards the cell, not other references to the same object: a value you keep after giving it to `Mutex(T).new` is not protected. Give the mutex a new object, and reach it only through `with`.
 
 A channel hands values from one task to another:
 
-<!-- check: run pre=channel_class -->
 ```avant
+import std.sync
+
 fn main {
   jobs = Channel(Int).new(4)          // buffered: four values may wait
   producer = spawn {
@@ -2399,99 +2390,8 @@ fn main {
 ```
 
 - `Channel(T).new` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` sends, `recv` returns `T?` (`nil` once the channel is closed and empty, so `while v = ch.recv { ... }` drains it), `close` closes.
-- The class as it stands works for element types that have a zero value (integers, `String`, structs of such fields), not for a class.
-- Waiting and waking go through the runtime's `avant_gate_*` functions, which is all the two classes are built on.
-
-<details>
-<summary>The <code>Channel(T)</code> class, to paste</summary>
-
-<!-- check: compile decls id=channel_class -->
-```avant
-class Channel(T) {
-  slots: Array(T)
-  cap: Int
-  count: Int
-  head: Int
-  closed: Int
-  has: Int
-  gate: UInt64
-  cell: T
-
-  fn initialize(n: Int = 0) {
-    self.cap = n
-    self.gate = avant_gate_new()
-    self.slots = Array(T).new(n)
-  }
-
-  fn send(value: T) {
-    avant_gate_lock(gate)
-    if cap == 0 {
-      while has == 1 {
-        avant_gate_wait(gate)
-      }
-      self.cell = value
-      self.has = 1
-      avant_gate_broadcast(gate)
-      while has == 1 {
-        if closed == 1 {
-          break
-        }
-        avant_gate_wait(gate)
-      }
-    } else {
-      while count == cap {
-        avant_gate_wait(gate)
-      }
-      slots[(head + count) % cap] = value
-      self.count = count + 1
-      avant_gate_broadcast(gate)
-    }
-    avant_gate_unlock(gate)
-  }
-
-  fn recv: T? {
-    avant_gate_lock(gate)
-    got: T? = nil
-    if cap == 0 {
-      while has == 0 {
-        if closed == 1 {
-          break
-        }
-        avant_gate_wait(gate)
-      }
-      if has == 1 {
-        got = cell
-        self.has = 0
-        avant_gate_broadcast(gate)
-      }
-    } else {
-      while count == 0 {
-        if closed == 1 {
-          break
-        }
-        avant_gate_wait(gate)
-      }
-      if count > 0 {
-        got = slots[head]
-        self.head = (head + 1) % cap
-        self.count = count - 1
-        avant_gate_broadcast(gate)
-      }
-    }
-    avant_gate_unlock(gate)
-    got
-  }
-
-  fn close {
-    avant_gate_lock(gate)
-    self.closed = 1
-    avant_gate_broadcast(gate)
-    avant_gate_unlock(gate)
-  }
-}
-```
-
-</details>
+- What a `send` carries crosses to another task, by the same rule as a `spawn` capture ([What may cross a task](#what-may-cross-a-task)): a class instance, a `Hash` or a struct holding one is a compile error. `T` may be any type, so a channel can carry other channels (a reply channel per request) or mutexes.
+- A `Channel` and a `Mutex` hold no memory outside the object: the program can make as many as it likes.
 
 ### Choosing a tool
 
@@ -2513,7 +2413,7 @@ What a `spawn` or `.parallel` block captures is checked at compile time:
 | a struct whose every field may cross | a copy |
 | a `String` | a shared pointer: it is immutable, and both tasks keep it alive |
 | an `Array` | shared for reading, until the join |
-| a `Channel` or a `Mutex` | shared: that is their purpose |
+| a `Channel` or a `Mutex` (`std.sync`) | shared: that is their purpose |
 | a class instance, a `Hash`, a `fn` value, a `JoinHandle`, or a struct holding one | **refused**: it is not copied, and sharing it would be a race |
 
 A mutable object reaches another task only inside a `Mutex`, or as the results of `.parallel`.
@@ -3614,9 +3514,8 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 | Reading standard input | planned | `file_read("/dev/stdin")` |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` for structs without writing it; `==` on arrays and hashes | planned | [operator methods](#operator-methods); a loop |
-| `Mutex.with` keeping a reference from leaving the lock | partly built: the block's value is checked, a store into something outside the block is not | do the work inside the block ([Channel and Mutex](#channel-and-mutex)) |
 | A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
-| `Channel` and `Mutex` in the standard library; a `spawn` result other than `Int` | decided | [copy the two classes](#channel-and-mutex) |
+| A `spawn` result other than `Int`; `for v in ch` over a channel | decided | end the block with an `Int`; `while v = ch.recv { ... }` |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |
 | The pool's size from `--avant-threads=N` only (a bad value an error) and a call in `std` to set it, every other argument the program's | decided | `--threads N`, which the runtime takes out of `argv()` |
 | TLS for `std.http` (`https`, `wss`) | decided | a TLS-terminating proxy in front |
