@@ -138,13 +138,24 @@ def table(header, rows):
     return "\n".join(out) + "\n"
 
 
-def scenario_table(data, order, numbers):
+def scenario_table(data, order, numbers, memory):
+    """Peak memory beside every time (O380, D342 Q5): memory "process" adds
+    the process's peak RSS as the last column (seven scenarios in one
+    process have one peak), "scenario" puts the peak RSS of the process
+    that ran the scenario beside each time (the isolated builds)."""
     rows = []
     for name in order:
         if name not in data or not data[name]["n"]:
             continue
-        rows.append([LABEL.get(name, name)] + [cell(data[name]["times"].get(k, [])) for k in numbers])
-    return table(["Row"] + [SHORT[k] for k in numbers], rows)
+        d = data[name]
+        if memory == "scenario":
+            cells = ["%s · %s MB" % (cell(d["times"].get(k, [])), mb(statistics.median(d["rss"][k])) if d["rss"].get(k) else "—")
+                     for k in numbers]
+            rows.append([LABEL.get(name, name)] + cells)
+        else:
+            rows.append([LABEL.get(name, name)] + [cell(d["times"].get(k, [])) for k in numbers] + [cell(d["rss_kb"], mb)])
+    head = ["Row"] + [SHORT[k] for k in numbers]
+    return table(head if memory == "scenario" else head + ["Peak RSS, MB (the process)"], rows)
 
 
 def verdict(avant, valk):
@@ -171,8 +182,8 @@ def emit_raw(out_dir):
     var = {r: load_row(os.path.join(raw, "variants", r)) for r in VARIANTS}
     n = max([d["n"] for d in head.values()] + [0])
     seven = [1, 2, 3, 4, 5, 6, 7]
-    print("## Table 1. The seven scenarios in one process: `time_us` of each scenario, in ms, median (minimum–maximum) of %d runs\n" % n)
-    print(scenario_table(head, HEADLINE, seven))
+    print("## Table 1. The seven scenarios in one process: `time_us` of each scenario, in ms, median (minimum–maximum) of %d runs, and the process's peak RSS\n" % n)
+    print(scenario_table(head, HEADLINE, seven, "process"))
     print("## Table 2. Avant against Valk, scenario by scenario (Table 1's runs)\n")
     rows = []
     for k in seven:
@@ -184,8 +195,14 @@ def emit_raw(out_dir):
             rows.append([SHORT[k], LABEL[a].split(" (")[0], cell(t), cell(v),
                          "%.2f" % (statistics.median(t) / statistics.median(v)), verdict(t, v)])
     print(table(["Scenario", "Avant row", "Avant, ms", "Valk, ms", "Avant ÷ Valk (medians)", "Verdict (all runs)"], rows))
+    if head["valk"]["n"]:
+        mem = ["%s %s MB (÷ Valk %.2f)" % (LABEL[a].split(" (")[0], mb(statistics.median(head[a]["rss_kb"])),
+                                           statistics.median(head[a]["rss_kb"]) / statistics.median(head["valk"]["rss_kb"]))
+               for a in ("avant", "avant-v3") if head[a]["n"]]
+        print("Peak RSS beside these times (one process runs the seven scenarios, so it has one peak; Table 1's runs, medians): %s; Valk %s MB. Per scenario: Table 10.\n"
+              % ("; ".join(mem), mb(statistics.median(head["valk"]["rss_kb"]))))
     print("A verdict is `leads` when Avant's slowest run is faster than Valk's fastest, `trails` when Avant's fastest is slower than Valk's slowest, `ranges overlap` otherwise.\n")
-    print("## Table 3. The labelled variants: `time_us` of each scenario, in ms, median (minimum–maximum); each variant under the row it is read against\n")
+    print("## Table 3. The labelled variants: `time_us` of each scenario, in ms, median (minimum–maximum), and the process's peak RSS; each variant under the row it is read against\n")
     order, seen = [], set()
     for v in VARIANTS:
         b = BASE[v]
@@ -195,7 +212,7 @@ def emit_raw(out_dir):
         order.append(v)
     both = dict(head)
     both.update(var)
-    print(scenario_table(both, order, seven))
+    print(scenario_table(both, order, seven, "process"))
     print("## Table 4. Whole process (the seven scenarios): wall time and peak RSS, median (minimum–maximum)\n")
     rows = []
     for name in HEADLINE + VARIANTS:
@@ -218,11 +235,24 @@ def emit_raw(out_dir):
         iso[r] = d
     eight = [1, 2, 3, 4, 5, 6, 7, 8]
     if any(d["n"] for d in iso.values()):
-        print("## Table 5. Scenario-isolated builds, one scenario per process: `time_us`, in ms, median (minimum–maximum). Scenario 8 is added by Avant and is not part of Valk's suite\n")
-        print(scenario_table(iso, HEADLINE, eight))
+        print("## Table 5. Scenario-isolated builds, one scenario per process: `time_us`, in ms, median (minimum–maximum), and beside it the median peak RSS of the process that ran the scenario (its range in Table 6). Scenario 8 is added by Avant and is not part of Valk's suite\n")
+        print(scenario_table(iso, HEADLINE, eight, "scenario"))
         print("## Table 6. Scenario-isolated builds: peak RSS of the process that ran the scenario, MB, median (minimum–maximum). Scenario 4's process also ran scenario 3\n")
         rows = [[LABEL[r]] + [cell(iso[r]["rss"].get(k, []), mb) for k in eight] for r in HEADLINE if iso[r]["n"]]
         print(table(["Row"] + [SHORT[k] for k in eight], rows))
+        print("## Table 10. The scoreboard, isolated (Table 5's runs): Avant against Valk and Go, time and peak RSS per scenario\n")
+        rows = []
+        for k in eight:
+            a, v, g = (iso[r]["times"].get(k, []) for r in ("avant", "valk", "go"))
+            am, vm, gm = (iso[r]["rss"].get(k, []) for r in ("avant", "valk", "go"))
+            if not a:
+                continue
+            ratio = lambda x, y: "%.2f" % (statistics.median(x) / statistics.median(y)) if x and y else "—"
+            rows.append([SHORT[k], cell(a), cell(am, mb), cell(v), cell(vm, mb), cell(g), cell(gm, mb),
+                         ratio(a, v), ratio(am, vm), verdict(a, v), ratio(a, g), ratio(am, gm), verdict(a, g)])
+        print(table(["Scenario", "Avant, ms", "Avant, MB", "Valk, ms", "Valk, MB", "Go, ms", "Go, MB", "÷ Valk, time", "÷ Valk, memory",
+                     "against Valk (all runs)", "÷ Go, time", "÷ Go, memory", "against Go (all runs)"], rows))
+        print("Avant is the `--release` row. Memory is the peak RSS of the process that ran the scenario (scenario 4's also ran 3). The verdicts are Table 2's, on time.\n")
     trees = {r: load_row(os.path.join(raw, "trees", r)) for r in TREES}
     if any(d["n"] for d in trees.values()):
         print("## Table 11. The tree ports (set `trees`, O386): whole process, wall time and peak RSS, median (minimum–maximum)\n")
