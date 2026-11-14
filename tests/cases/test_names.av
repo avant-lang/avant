@@ -168,6 +168,16 @@ fn cases: Array(NCase) {
   xs.push(only("open-arith", "fn main {\n  x: Int? = 2\n  puts(x + 1)\n}\n", "binary operator expects numeric operands, got Int? and Int; open it with `if v = x`, `x ?? fallback` or `x?`", "3:10"))
   xs.push(only("open-arg", "fn twice(n: Int): Int {\n  n * 2\n}\nfn main {\n  h = Hash(String, Int).new\n  puts(twice(h[\"a\"]))\n}\n", "argument 1 of twice is Int?, expected Int; open it with `if v = x`, `x ?? fallback` or `x?`", "6:15"))
   xs.push(without("open-not-optional", "fn main {\n  puts(5 == nil)\n}\n", "binary operator expects numeric operands, got Int and Nil", "2:10", "open it"))
+  // O345: an ambiguous function value is not told to call.
+  fva: Array(String) = ["ma", "pub fn helper(a: Int): Int {\n  a\n}\n", "mb", "pub fn helper(a: Int): Int {\n  a + 1\n}\n"]
+  xs.push(with_mods(without("value-two-modules", "import ma\nimport mb\nfn main {\n  f = helper\n  puts(1)\n}\n", "ambiguous function value helper: ma.helper and mb.helper both match, and a function value cannot be qualified yet; write a lambda that calls the one you mean, as { |a: Int| ma.helper(a) }", "4:7", "helper()"), fva))
+  xs.push(with_mods(first("value-two-modules-arg", "import ma\nimport mb\nfn apply(f: fn(Int): Int): Int {\n  f(1)\n}\nfn main {\n  puts(apply(helper))\n}\n", "ambiguous function value helper: ma.helper and mb.helper both match", "7:14"), fva))
+  xs.push(only("value-overloads", "fn show(x: Int): String {\n  \"i\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  f = show\n  puts(1)\n}\n", "ambiguous function value show: show(x: Int): String and show(s: String): String both match; give the value its fn type to pick one (f: fn(Int): String = show)", "8:7"))
+  xs.push(accepted("value-overloads-typed", "fn show(x: Int): String {\n  \"i\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  f: fn(Int): String = show\n  puts(f(1))\n}\n", "i\n"))
+  // O346: an ambiguous call within one module names each signature.
+  amb = "fn f(a: Int, b: Int?): Int {\n  1\n}\nfn f(a: Int?, b: Int): Int {\n  2\n}\n"
+  xs.push(only("ambiguous-one-module", amb + "fn main {\n  puts(f(1, 2))\n}\n", "ambiguous call to f: f(a: Int, b: Int?): Int and f(a: Int?, b: Int): Int both match", "8:8"))
+  xs.push(only("ambiguous-method", "class C {\n  fn m(a: Int, b: Int?): Int {\n    1\n  }\n  fn m(a: Int?, b: Int): Int {\n    2\n  }\n}\nfn main {\n  puts(C.new.m(1, 2))\n}\n", "ambiguous call to C.m: C.m(a: Int, b: Int?): Int and C.m(a: Int?, b: Int): Int both match", "10:13"))
   xs
 }
 

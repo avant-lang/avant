@@ -258,7 +258,8 @@ pub fn (checker_self: Checker) fail_ambiguous_call(loc: Location, name: String, 
     }
   }
   if mods.size < 2 {
-    checker_self.fail(loc, plain)
+    // Overloads of one module (O346): each signature that matched.
+    checker_self.fail(loc, "${plain}: ${checker_self.sigs_text(name, cands)} ${checker_self.both_word(cands.size)} match")
     return
   }
   defs = buf_new()
@@ -283,6 +284,89 @@ pub fn (checker_self: Checker) fail_ambiguous_call(loc: Location, name: String, 
     both = "all"
   }
   checker_self.fail(loc, "${plain}: ${defs.to_s} ${both} match; write ${calls.to_s}")
+}
+
+// "a(x: Int) and a(s: String)", "f(), g() and h()": the signatures of
+// a call's candidates, under the name the call wrote (O346).
+pub fn (checker_self: Checker) sigs_text(shown: String, cands: Array(FuncSig)): String {
+  b = buf_new()
+  for k in 0..cands.size {
+    if k > 0 {
+      if k == cands.size - 1 {
+        b.push_str(" and ")
+      } else {
+        b.push_str(", ")
+      }
+    }
+    b.push_str(checker_self.sig_text(shown, cands[k]))
+  }
+  b.to_s
+}
+
+pub fn (checker_self: Checker) both_word(n: Int): String {
+  if n > 2 {
+    return "all"
+  }
+  "both"
+}
+
+// A method call two or more methods of one type match equally (O346):
+// each signature.
+pub fn (checker_self: Checker) fail_ambiguous_method(loc: Location, shown: String, cands: Array(FuncSig)) {
+  checker_self.fail(loc, "ambiguous call to ${shown}: ${checker_self.sigs_text(shown, cands)} ${checker_self.both_word(cands.size)} match")
+}
+
+// A bare function name taken as a value that two or more functions match
+// (O345): from different modules, a function value cannot be qualified
+// yet (W6), so the hint is a lambda that calls the one meant, not a call;
+// within one module, the fn type that picks one.
+pub fn (checker_self: Checker) fail_ambiguous_value(loc: Location, name: String, cands: Array(FuncSig)) {
+  mods: Array(String) = []
+  for sig in cands {
+    seen = false
+    for m in mods {
+      if m == sig.node.mod_name {
+        seen = true
+      }
+    }
+    if !seen {
+      mods.push(sig.node.mod_name)
+    }
+  }
+  if mods.size < 2 {
+    first = cands[0]
+    checker_self.fail(loc, "ambiguous function value ${name}: ${checker_self.sigs_text(name, cands)} ${checker_self.both_word(cands.size)} match; give the value its fn type to pick one (f: ${checker_self.fn_sig_ty(first).show} = ${name})")
+    return
+  }
+  defs = buf_new()
+  for k in 0..mods.size {
+    if k > 0 {
+      if k == mods.size - 1 {
+        defs.push_str(" and ")
+      } else {
+        defs.push_str(", ")
+      }
+    }
+    defs.push_str("${mods[k]}.${name}")
+  }
+  first = cands[0]
+  lam = buf_new()
+  args = buf_new()
+  lam.push_str("{ |")
+  for i in 0..first.params.size {
+    pn = "a${i}"
+    if i < first.node.params.size {
+      pn = first.node.params[i].name
+    }
+    if i > 0 {
+      lam.push_str(", ")
+      args.push_str(", ")
+    }
+    lam.push_str("${pn}: ${first.params[i].show}")
+    args.push_str(pn)
+  }
+  lam.push_str("| ${first.node.mod_name}.${name}(${args.to_s}) }")
+  checker_self.fail(loc, "ambiguous function value ${name}: ${defs.to_s} ${checker_self.both_word(mods.size)} match, and a function value cannot be qualified yet; write a lambda that calls the one you mean, as ${lam.to_s}")
 }
 
 pub fn (checker_self: Checker) method_is_visible(fnn: Function, from_mod: String): Bool {

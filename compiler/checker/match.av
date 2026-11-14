@@ -761,7 +761,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
       x += 1
     }
     if cands.size > 1 {
-      checker_self.fail(loc, "ambiguous call to ${shown}.${name}")
+      checker_self.fail_ambiguous_method(loc, "${shown}.${name}", cands)
       return nil
     }
   }
@@ -787,7 +787,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
     return nil
   }
   if cands.size > 1 {
-    checker_self.fail(loc, "ambiguous call to ${shown}.${name}")
+    checker_self.fail_ambiguous_method(loc, "${shown}.${name}", cands)
     return nil
   }
   chosen = cands[0]
@@ -1027,7 +1027,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
     return checker_self.t_int()
   }
   if cands.size > 1 {
-    checker_self.fail(expr.loc, "ambiguous call to ${ty.show}.${expr.callee}")
+    checker_self.fail_ambiguous_method(expr.loc, "${ty.show}.${expr.callee}", cands)
     return checker_self.t_int()
   }
   sig = cands[0]
@@ -1356,7 +1356,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
     }
     cands = checker_self.collect_method_deferred(expr, owner, deferred, ctypes)
     if cands.size > 1 {
-      checker_self.fail(expr.loc, "ambiguous call to ${shown}.${expr.callee}")
+      checker_self.fail_ambiguous_method(expr.loc, "${shown}.${expr.callee}", cands)
       return checker_self.t_int()
     }
     if cands.size == 1 {
