@@ -217,8 +217,8 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "fn-lam-arity", "fn main {\n  f: fn(Int): Int = { |a, b| a }\n  puts(1)\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument")
     expect_err(c, compiler, stamp, "fn-lam-ty", "fn main {\n  f: fn(Int): Int = { |n: String| 1 }\n  puts(1)\n}\n", "lambda parameter is String, expected Int")
     expect_err(c, compiler, stamp, "fn-call-arity", "fn main {\n  f: fn(Int): Int = { |n| n }\n  puts(f(1, 2))\n}\n", "fn(Int): Int takes 1 argument, given 2")
-    expect_err(c, compiler, stamp, "fn-call-ty", "fn main {\n  f: fn(Int): Int = { |n| n }\n  puts(f(\"ab\"))\n}\n", "expected Int, got String")
-    expect_err(c, compiler, stamp, "fn-assign", "fn main {\n  g: fn(Int): Int = { |n| n }\n  f: fn(Int, String): Bool = g\n  puts(1)\n}\n", "expected fn(Int, String): Bool, got fn(Int): Int")
+    expect_err(c, compiler, stamp, "fn-call-ty", "fn main {\n  f: fn(Int): Int = { |n| n }\n  puts(f(\"ab\"))\n}\n", "argument 1 is String, expected Int")
+    expect_err(c, compiler, stamp, "fn-assign", "fn main {\n  g: fn(Int): Int = { |n| n }\n  f: fn(Int, String): Bool = g\n  puts(1)\n}\n", "cannot assign fn(Int): Int to fn(Int, String): Bool")
     expect_err(c, compiler, stamp, "fn-block", "fn main {\n  f: fn(Int): Int = { |n| n }\n  f(1) { |x| x }\n  puts(1)\n}\n", "function value does not take a block")
     expect_err(c, compiler, stamp, "fn-call-int", "fn main {\n  n = 1\n  puts((n)(2))\n}\n", "cannot call Int")
     expect_err(c, compiler, stamp, "fn-cret", "lib math {\n  fun make: fn(Int): Int\n}\nfn main {\n  puts(1)\n}\n", "C function pointers are not supported")
@@ -231,10 +231,10 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "fun-union-ret", "lib c {\n  fun labs(n: Int): Int | String\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int | String: C has one word there")
     expect_err(c, compiler, stamp, "fun-optfloat", "lib c {\n  fun fabs(x: Float64): Float64?\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Float64?: C has one word there")
     expect_err(c, compiler, stamp, "fn-ne", "fn main {\n  f: fn(): Int = { || 1 }\n  g: fn(): Int = { || 2 }\n  if f != g {\n    puts(1)\n  }\n}\n", "cannot compare fn values")
-    expect_err(c, compiler, stamp, "fn-ret", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Int): Bool = f\n  puts(1)\n}\n", "expected fn(Int): Bool, got fn(Int): Int")
-    expect_err(c, compiler, stamp, "fn-param", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Bool): Int = f\n  puts(1)\n}\n", "expected fn(Bool): Int, got fn(Int): Int")
+    expect_err(c, compiler, stamp, "fn-ret", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Int): Bool = f\n  puts(1)\n}\n", "cannot assign fn(Int): Int to fn(Int): Bool")
+    expect_err(c, compiler, stamp, "fn-param", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Bool): Int = f\n  puts(1)\n}\n", "cannot assign fn(Int): Int to fn(Bool): Int")
     expect_err(c, compiler, stamp, "fn-body", "fn main {\n  f: fn(): Bool = { || 1 }\n  puts(1)\n}\n", "last expression is Int, expected Bool")
-    expect_err(c, compiler, stamp, "fn-retstmt", "fn main {\n  f: fn(): Bool = { ||\n    return 1\n  }\n  puts(1)\n}\n", "expected Bool, got Int")
+    expect_err(c, compiler, stamp, "fn-retstmt", "fn main {\n  f: fn(): Bool = { ||\n    return 1\n  }\n  puts(1)\n}\n", "return type is Int, expected Bool")
     expect_err(c, compiler, stamp, "fn-empty", "fn main {\n  f: fn(): Int = { || }\n  puts(1)\n}\n", "missing return value")
     expect_err(c, compiler, stamp, "fn-self", "struct Rec {\n  base: Int\n  fn off: fn(): Int {\n    { ||\n      self.base = 2\n      base\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n", "a lambda holds a copy of the struct receiver")
     expect_err(c, compiler, stamp, "fn-selfdot", "struct Rec {\n  base: Int\n  fn off: fn(): Int {\n    { ||\n      self.base += 1\n      self.base\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n", "a lambda holds a copy of the struct receiver")
@@ -246,7 +246,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "gen-infer", "struct Tag(T) {\n}\nfn main {\n  t = Tag { }\n  puts(1)\n}\n", "cannot infer type argument")
     expect_err(c, compiler, stamp, "gen-infinite", "struct Node(T) {\n  next: Node(T)?\n}\nfn main {\n  n = Node(Int) { next: nil }\n  puts(1)\n}\n", "is infinite")
     expect_err(c, compiler, stamp, "gen-call", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n}\nfn main {\n  n = 1\n  x = Box(n)\n  puts(1)\n}\n", "type argument expected")
-    expect_err(c, compiler, stamp, "gen-conflict", "struct Pair(A, B) {\n  a: A\n  b: B\n}\nfn main {\n  p: Pair(String, Int) = Pair { a: 1, b: \"x\" }\n  puts(1)\n}\n", "expected String, got Int")
+    expect_err(c, compiler, stamp, "gen-conflict", "struct Pair(A, B) {\n  a: A\n  b: B\n}\nfn main {\n  p: Pair(String, Int) = Pair { a: 1, b: \"x\" }\n  puts(1)\n}\n", "conflicting type arguments")
     expect_err(c, compiler, stamp, "gen-lib", "lib math {\n  struct Point(T) {\n    x: Int\n  }\n}\nfn main {\n  puts(1)\n}\n", "lib structs take no type parameters")
     expect_err(c, compiler, stamp, "gen-comptime", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n}\ncomptime {\n  for f in Box.fields {\n    quote {\n      fn walk: Int {\n        1\n      }\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n", "cannot walk generic type")
     expect_err(c, compiler, stamp, "gen-deep", "class Box(T) {\n  value: T\n  fn initialize(value: T) {\n    self.value = value\n  }\n}\nstruct Evil(T) {\n  x: Evil(Box(T))\n}\nfn main {\n  e: Evil(Int)? = nil\n  puts(1)\n}\n", "type instantiation too deep")
@@ -278,7 +278,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "iface-ptr-int", "interface Show {\n  fn to_s: String\n}\nfn (p: Ptr(Int)) to_s: String { \"n\" }\nPtr(Int): Show\nfn main {\n  puts(1)\n}\n", "methods on Ptr(Int) cannot be declared")
     dir = "${scratch()}/errors-${stamp}"
     mkdir_p(dir)
-    write_av(dir, "priv", "pub interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  fn to_s: String { \"p\" }\n}\npub Hide: Show\n")
+    write_av(dir, "priv", "pub interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  pub n: Int\n  fn to_s: String { \"p\" }\n}\npub Hide: Show\n")
     write_av(dir, "priv_main", "import priv\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
     priv_bin = "${dir}/priv.bin"
     priv_log = "${dir}/priv.log"
@@ -290,7 +290,7 @@ fn test_errors(c: Checks) {
     } else {
       c.expect(false, "iface-private")
     }
-    write_av(dir, "hid", "interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  pub fn to_s: String { \"h\" }\n}\npub Hide: Show\n")
+    write_av(dir, "hid", "interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  pub n: Int\n  pub fn to_s: String { \"h\" }\n}\npub Hide: Show\n")
     write_av(dir, "hid_main", "import hid\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
     hid_bin = "${dir}/hid.bin"
     hid_log = "${dir}/hid.log"
@@ -302,7 +302,7 @@ fn test_errors(c: Checks) {
     } else {
       c.expect(false, "iface-vis")
     }
-    write_av(dir, "quiet", "pub interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  n: Int\n  pub fn to_s: String { \"q\" }\n}\nHide: Show\n")
+    write_av(dir, "quiet", "pub interface Show {\n  fn to_s: String\n}\npub struct Hide {\n  pub n: Int\n  pub fn to_s: String { \"q\" }\n}\nHide: Show\n")
     write_av(dir, "quiet_main", "import quiet\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n")
     quiet_bin = "${dir}/quiet.bin"
     quiet_log = "${dir}/quiet.log"

@@ -84,7 +84,7 @@ fn cases: Array(NCase) {
   xs.push(with_mods(only("clash-param", "import lexa\nimport lexb\nfn f(t: Token): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", clash, "3:9"), two))
   xs.push(with_mods(only("clash-literal", "import lexa\nimport lexb\nfn main {\n  t = Token { k: 1 }\n  puts(2)\n}\n", clash, "4:7"), two))
   xs.push(with_mods(only("clash-local", "import lexa\nimport lexb\nfn main {\n  t: Token? = nil\n  puts(2)\n}\n", clash, "4:6"), two))
-  xs.push(with_mods(first("clash-arg", "import lexa\nimport lexb\nfn main {\n  ts: Array(Token) = []\n  puts(ts.size)\n}\n", clash, "4:13"), two))
+  xs.push(with_mods(only("clash-arg", "import lexa\nimport lexb\nfn main {\n  ts: Array(Token) = []\n  puts(ts.size)\n}\n", clash, "4:13"), two))
   xs.push(with_mods(only("clash-type-call", "import lexa\nimport lexb\nfn main {\n  t = Token.make\n  puts(2)\n}\n", clash, "4:7"), two))
   xs.push(with_mods(only("clash-type-call-parens", "import lexa\nimport lexb\nfn main {\n  t = Token.make()\n  puts(2)\n}\n", clash, "4:7"), two))
   xs.push(with_mods(only("clash-field-type", "import lexa\nimport lexb\nclass Box {\n  t: Token? = nil\n}\nfn main {\n  puts(Box.new.t == nil)\n}\n", clash, "4:6"), two))
@@ -98,7 +98,7 @@ fn cases: Array(NCase) {
   gen = "pub class Box(T) {\n  pub v: T\n  fn initialize(v: T) {\n    self.v = v\n  }\n}\n"
   gens: Array(String) = ["ga", gen, "gb", gen]
   gclash = "Box is a type of both ga and gb: write ga.Box or gb.Box"
-  xs.push(with_mods(first("clash-generic-new", "import ga\nimport gb\nfn main {\n  b = Box(Int).new(1)\n  puts(b.v)\n}\n", gclash, "4:7"), gens))
+  xs.push(with_mods(only("clash-generic-new", "import ga\nimport gb\nfn main {\n  b = Box(Int).new(1)\n  puts(b.v)\n}\n", gclash, "4:7"), gens))
   xs.push(with_mods(only("clash-generic-param", "import ga\nimport gb\nfn f(b: Box(Int)): Int {\n  b.v\n}\nfn main {\n  puts(1)\n}\n", gclash, "3:9"), gens))
   xs.push(with_mods(only("clash-generic-field", "import ga\nimport gb\nclass K {\n  b: Box(Int)? = nil\n}\nfn main {\n  puts(1)\n}\n", gclash, "4:6"), gens))
   hidden: Array(String) = ["ga", gen, "gb", gen, "hmid", "import ga\nimport gb\npub fn hmid: Int {\n  1\n}\n", "lexa", ta, "lexb", tb, "tmid", "import lexa\nimport lexb\npub fn tmid: Int {\n  2\n}\n"]
@@ -122,7 +122,7 @@ fn cases: Array(NCase) {
   xs.push(only("count-method", cls + "fn main {\n  c = C.new\n  puts(c.twice(1, 2))\n}\n", "C.twice takes 1 argument, given 2: C.twice(a: Int): Int", "11:9"))
   xs.push(only("types-method", cls + "fn main {\n  c = C.new\n  puts(c.twice(\"a\"))\n}\n", "argument 1 of C.twice is String, expected Int: C.twice(a: Int): Int", "11:9"))
   xs.push(only("count-type-fn", cls + "fn main {\n  c = C.make()\n  puts(1)\n}\n", "C.make takes 1 argument, given 0: C.make(n: Int): C", "10:8"))
-  xs.push(first("count-lambda", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\nfn main {\n  puts(apply(1) { |a, b| a + b })\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument", "5:17"))
+  xs.push(only("count-lambda", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\nfn main {\n  puts(apply(1) { |a, b| a + b })\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument", "5:17"))
   xs.push(only("count-fn-value", "fn main {\n  f: fn(Int): Int = { |n| n }\n  puts(f(1, 2))\n}\n", "fn(Int): Int takes 1 argument, given 2", "3:8"))
   // O257, O340: "did you mean", one suggestion at most, only from what is
   // in scope at the error.
@@ -130,7 +130,7 @@ fn cases: Array(NCase) {
   xs.push(only("mean-param", "fn f(total: Int): Int {\n  totl + 1\n}\nfn main {\n  puts(f(1))\n}\n", "unknown name totl (did you mean `total`?)", "2:3"))
   xs.push(only("mean-field", "class Box {\n  width: Int = 2\n  fn area: Int {\n    widht * 2\n  }\n}\nfn main {\n  puts(Box.new.area)\n}\n", "unknown name widht (did you mean `width`?)", "4:5"))
   xs.push(only("mean-const", "const max_depth = 64\nfn main {\n  puts(max_dept)\n}\n", "unknown name max_dept (did you mean `max_depth`?)", "3:8"))
-  xs.push(first("mean-fn-value", "fn helper(n: Int): Int {\n  n\n}\nfn main {\n  f: fn(Int): Int = helpr\n  puts(f(1))\n}\n", "unknown function helpr (did you mean `helper`?)", "5:21"))
+  xs.push(only("mean-fn-value", "fn helper(n: Int): Int {\n  n\n}\nfn main {\n  f: fn(Int): Int = helpr\n  puts(f(1))\n}\n", "unknown function helpr (did you mean `helper`?)", "5:21"))
   xs.push(only("mean-call", add + "fn main {\n  puts(ad(1, 2))\n}\n", "unknown function ad (did you mean `add`?)", "5:8"))
   xs.push(only("mean-builtin-fn", "fn main {\n  put(1)\n}\n", "unknown function put (did you mean `puts`?)", "2:3"))
   xs.push(with_mods(only("mean-qualified", "import qm\nfn main {\n  puts(qm.doubel(2))\n}\n", "unknown function qm.doubel (did you mean `double`?)", "3:10"), ["qm", "pub fn double(n: Int): Int {\n  n * 2\n}\nfn doubles(n: Int): Int {\n  n\n}\n"]))
@@ -157,8 +157,8 @@ fn cases: Array(NCase) {
   xs.push(only("mean-string-field", "fn main {\n  s = \"abc\"\n  puts(s.sizee)\n}\n", "no method sizee on String (did you mean `size`?)", "3:9"))
   xs.push(only("mean-string-ext", "fn (s: String) shout: String {\n  s\n}\nfn main {\n  s = \"abc\"\n  puts(s.shuot)\n}\n", "(did you mean `shout`?)", "6:9"))
   xs.push(only("mean-array", "fn main {\n  xs = [1, 2]\n  xs.pussh(3)\n  puts(xs.size)\n}\n", "no method pussh on Array (did you mean `push`?)", "3:5"))
-  xs.push(first("mean-array-field", "fn main {\n  xs = [2, 1]\n  ys = xs.srted\n  puts(ys.size)\n}\n", "no method srted on Array (did you mean `sorted`?)", "3:10"))
-  xs.push(first("mean-hash", "fn main {\n  h = Hash(String, Int).new\n  puts(h.kyes.size)\n}\n", "no method kyes on Hash (did you mean `keys`?)", "3:9"))
+  xs.push(only("mean-array-field", "fn main {\n  xs = [2, 1]\n  ys = xs.srted\n  puts(ys.size)\n}\n", "no method srted on Array (did you mean `sorted`?)", "3:10"))
+  xs.push(only("mean-hash", "fn main {\n  h = Hash(String, Int).new\n  puts(h.kyes.size)\n}\n", "no method kyes on Hash (did you mean `keys`?)", "3:9"))
   xs.push(only("mean-int", "fn main {\n  n = 3\n  puts(n.to_ff)\n}\n", "no method to_ff on Int (did you mean `to_f`?)", "3:9"))
   xs.push(only("mean-float", "fn main {\n  f = 2.0\n  puts(f.sqtr)\n}\n", "no method sqtr on Float64 (did you mean `sqrt`?)", "3:9"))
   xs.push(only("mean-buf", "fn main {\n  b = buf_new()\n  b.push_srt(\"a\")\n  puts(b.to_s)\n}\n", "no method push_srt on Buf (did you mean `push_str`?)", "3:4"))
@@ -166,7 +166,7 @@ fn cases: Array(NCase) {
   xs.push(only("open-eq-nil", "fn main {\n  x: Int? = nil\n  puts(x == nil)\n}\n", "x is Int? and an optional is never compared with nil: test it with `if _ = x { ... } else { ... }`, or open it with `if v = x`, `x ?? fallback` or `x?`", "3:10"))
   xs.push(only("open-not-nil", "fn main {\n  x: Int? = 2\n  puts(nil != x)\n}\n", "x is Int? and an optional is never compared with nil", "3:12"))
   xs.push(only("open-field", "fn main {\n  s: String? = \"a\"\n  puts(s.size)\n}\n", "cannot read field size on String?; open it with `if v = s`, `s ?? fallback` or `s?`", "3:9"))
-  xs.push(first("open-method", "fn main {\n  s: String? = \"a,b\"\n  puts(s.split(\",\").size)\n}\n", "cannot call split on String?; open it with `if v = s`, `s ?? fallback` or `s?`", "3:9"))
+  xs.push(only("open-method", "fn main {\n  s: String? = \"a,b\"\n  puts(s.split(\",\").size)\n}\n", "cannot call split on String?; open it with `if v = s`, `s ?? fallback` or `s?`", "3:9"))
   xs.push(only("open-arith", "fn main {\n  x: Int? = 2\n  puts(x + 1)\n}\n", "binary operator expects numeric operands, got Int? and Int; open it with `if v = x`, `x ?? fallback` or `x?`", "3:10"))
   xs.push(only("open-arg", "fn twice(n: Int): Int {\n  n * 2\n}\nfn main {\n  h = Hash(String, Int).new\n  puts(twice(h[\"a\"]))\n}\n", "argument 1 of twice is Int?, expected Int; open it with `if v = x`, `x ?? fallback` or `x?`", "6:15"))
   xs.push(without("open-not-optional", "fn main {\n  puts(5 == nil)\n}\n", "cannot compare Int with Nil: == compares two values of one type", "2:10", "open it"))
@@ -174,7 +174,7 @@ fn cases: Array(NCase) {
   // one, never a call.
   fva: Array(String) = ["ma", "pub fn helper(a: Int): Int {\n  a\n}\n", "mb", "pub fn helper(a: Int): Int {\n  a + 1\n}\n"]
   xs.push(with_mods(without("value-two-modules", "import ma\nimport mb\nfn main {\n  f = helper\n  puts(1)\n}\n", "ambiguous function value helper: ma.helper and mb.helper both match; write ma.helper or mb.helper", "4:7", "helper()"), fva))
-  xs.push(with_mods(first("value-two-modules-arg", "import ma\nimport mb\nfn apply(f: fn(Int): Int): Int {\n  f(1)\n}\nfn main {\n  puts(apply(helper))\n}\n", "ambiguous function value helper: ma.helper and mb.helper both match", "7:14"), fva))
+  xs.push(with_mods(only("value-two-modules-arg", "import ma\nimport mb\nfn apply(f: fn(Int): Int): Int {\n  f(1)\n}\nfn main {\n  puts(apply(helper))\n}\n", "ambiguous function value helper: ma.helper and mb.helper both match", "7:14"), fva))
   xs.push(only("value-overloads", "fn show(x: Int): String {\n  \"i\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  f = show\n  puts(1)\n}\n", "ambiguous function value show: show(x: Int): String and show(s: String): String both match; give the value its fn type to pick one (f: fn(Int): String = show)", "8:7"))
   xs.push(accepted("value-overloads-typed", "fn show(x: Int): String {\n  \"i\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  f: fn(Int): String = show\n  puts(f(1))\n}\n", "i\n"))
   // O346: an ambiguous call within one module names each signature.
