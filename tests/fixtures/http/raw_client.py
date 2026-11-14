@@ -335,6 +335,18 @@ def hosts():
     case("1.0-two", b"GET /ping HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n", 400, True)
     case("1.0-none", b"GET /ping HTTP/1.0\r\n\r\n", 200, True)
     case("empty", b"GET /ping HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n", 200, True)
+    # O660 (Stage 29 W-FIX1h): the value is uri-host [ ":" port ] (RFC
+    # 9112 3.2, RFC 3986): anything else is 400 and close.
+    for name, value in [("space", b"a b"), ("at", b"user@a"), ("path", b"a/b"), ("query", b"a?b"),
+                        ("colons", b"a:1:2"), ("port-alpha", b"a:8x"), ("pct-bad", b"a%4"),
+                        ("pct-hex", b"a%zz"), ("v6-open", b"[::1"), ("v6-empty", b"[]"),
+                        ("v6-tail", b"[::1]x"), ("v6-space", b"[::1 ]"), ("quote", b"a\"b"),
+                        ("high", b"\xc3\xa9.example")]:
+        case("bad-" + name, b"GET /ping HTTP/1.1\r\nHost: " + value + b"\r\n\r\n" + hidden, 400, True)
+    for name, value in [("name", b"example.com"), ("port", b"example.com:8080"), ("v4", b"127.0.0.1:80"),
+                        ("v6", b"[::1]:8080"), ("v6-bare", b"[2001:db8::7]"), ("pct", b"a%41b"),
+                        ("subdelims", b"a!$&'()*+,;=-._~b"), ("port-empty", b"a:")]:
+        case("ok-" + name, b"GET /ping HTTP/1.1\r\nHost: " + value + b"\r\nConnection: close\r\n\r\n", 200, True)
     s = connect()
     s.sendall(get("/ping") + get("/ping"))
     got = read_answers(s, 2)

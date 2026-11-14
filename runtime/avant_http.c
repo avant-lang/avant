@@ -1736,6 +1736,81 @@ avant_int avant_http_req_ws_upgrade(void *reqp, avant_int route) {
   return 1;
 }
 
+/* RFC 3986's unreserved and sub-delims, the bytes of a reg-name (with
+ * pct-encoded triplets) and of an IPv6 or IPvFuture literal's inside
+ * (with ':'): one table, so the check is a load per byte. */
+static const unsigned char http_host_byte[256] = {
+  ['a'] = 1, ['b'] = 1, ['c'] = 1, ['d'] = 1, ['e'] = 1, ['f'] = 1, ['g'] = 1,
+  ['h'] = 1, ['i'] = 1, ['j'] = 1, ['k'] = 1, ['l'] = 1, ['m'] = 1, ['n'] = 1,
+  ['o'] = 1, ['p'] = 1, ['q'] = 1, ['r'] = 1, ['s'] = 1, ['t'] = 1, ['u'] = 1,
+  ['v'] = 1, ['w'] = 1, ['x'] = 1, ['y'] = 1, ['z'] = 1,
+  ['A'] = 1, ['B'] = 1, ['C'] = 1, ['D'] = 1, ['E'] = 1, ['F'] = 1, ['G'] = 1,
+  ['H'] = 1, ['I'] = 1, ['J'] = 1, ['K'] = 1, ['L'] = 1, ['M'] = 1, ['N'] = 1,
+  ['O'] = 1, ['P'] = 1, ['Q'] = 1, ['R'] = 1, ['S'] = 1, ['T'] = 1, ['U'] = 1,
+  ['V'] = 1, ['W'] = 1, ['X'] = 1, ['Y'] = 1, ['Z'] = 1,
+  ['0'] = 1, ['1'] = 1, ['2'] = 1, ['3'] = 1, ['4'] = 1, ['5'] = 1, ['6'] = 1,
+  ['7'] = 1, ['8'] = 1, ['9'] = 1,
+  ['-'] = 1, ['.'] = 1, ['_'] = 1, ['~'] = 1,
+  ['!'] = 1, ['$'] = 1, ['&'] = 1, ['\''] = 1, ['('] = 1, [')'] = 1, ['*'] = 1,
+  ['+'] = 1, [','] = 1, [';'] = 1, ['='] = 1
+};
+
+static int http_hex(unsigned char ch) {
+  return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') ||
+         (ch >= 'A' && ch <= 'F');
+}
+
+/* Whether a Host value is uri-host [ ":" port ] (RFC 9112 3.2, RFC
+ * 3986 3.2.2 and 3.2.3; Stage 29 W-FIX1h, O660): a reg-name (an IPv4
+ * address is one) of unreserved, sub-delims and pct-encoded bytes, or
+ * an IP literal in brackets, then an optional ':' and digits. Empty is
+ * valid (a target without an authority). The server checked only that
+ * there was one Host line: a value with a space, an '@', a path or a
+ * second ':' was accepted, and a router keyed on Host, or a proxy in
+ * front, could read another host in it. */
+static int http_host_valid(const char *p, size_t n) {
+  size_t i = 0;
+  if (n > 0 && p[0] == '[') {
+    for (i = 1; i < n && p[i] != ']'; i++) {
+      if (!http_host_byte[(unsigned char)p[i]] && p[i] != ':') {
+        return 0;
+      }
+    }
+    if (i == n || i == 1) {
+      return 0;
+    }
+    i++;
+  } else {
+    while (i < n && p[i] != ':') {
+      unsigned char ch = (unsigned char)p[i];
+      if (ch == '%') {
+        if (i + 2 >= n || !http_hex((unsigned char)p[i + 1]) ||
+            !http_hex((unsigned char)p[i + 2])) {
+          return 0;
+        }
+        i += 3;
+        continue;
+      }
+      if (!http_host_byte[ch]) {
+        return 0;
+      }
+      i++;
+    }
+  }
+  if (i == n) {
+    return 1;
+  }
+  if (p[i] != ':') {
+    return 0;
+  }
+  for (i++; i < n; i++) {
+    if (p[i] < '0' || p[i] > '9') {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 static void conn_process(Conn *conn, struct us_socket_t *s) {
   AvantHttpServer *srv = conn->srv;
 
@@ -1794,7 +1869,8 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
      * The same pass counts the Host lines (Stage 29 W-FIX1g, O472, H3):
      * RFC 9112 3.2 has a server answer 400 to an HTTP/1.1 request
      * without one and to any request with two (identical or not), and a
-     * Host continued on a folded line is an invalid value; a request
+     * Host continued on a folded line is an invalid value, as is one
+     * that is not uri-host [ ":" port ] (Stage 29 W-FIX1h, O660); a request
      * that names two hosts is read one way here and maybe the other way
      * by a proxy or a virtual-host router in front. */
     {
@@ -1806,7 +1882,8 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
           continue;
         }
         if (ascii_ieq(headers[hi].name, headers[hi].name_len, "Host", 4)) {
-          if (++hosts > 1 || (hi + 1 < num_headers && !headers[hi + 1].name)) {
+          if (++hosts > 1 || (hi + 1 < num_headers && !headers[hi + 1].name) ||
+              !http_host_valid(headers[hi].value, headers[hi].value_len)) {
             send_error(conn, s, 400);
             return;
           }
