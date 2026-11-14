@@ -766,6 +766,10 @@ void gc_alloc_shared_now(void) {
   }
   gc_lazy_build_all();
   gc_lazy_drop();
+  /* The proof's log is the single mutator's: from here nothing is
+   * logged and no complete collection is shortened. The one mutator is
+   * stopped at a safepoint, so it is not inside the log. */
+  gc_proof_break(PROOF_THREADS);
 }
 
 /* A thread that registers notes the addresses of its inline state for
@@ -1088,6 +1092,8 @@ static void account_alloc(size_t total, int nursery) {
     avant_nursery_held += total;
   } else {
     gc_heap.mature_since_full += total;
+    /* An object born old (no full collection marked it). */
+    gc_proof_break(PROOF_MATURE);
   }
   gc_note_peak();
 }

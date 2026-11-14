@@ -471,10 +471,11 @@ static int32_t claim(AvantHash *h, int32_t pos, uint8_t st) {
 }
 
 static void store_str_key(AvantHash *h, int32_t e, const char *key, uint32_t hv) {
-  ((const char **)h->keys)[e] = key;
-  /* A mature key buffer is not walked from the roots: the slot just
-   * stored may name a young string. */
+  /* A mature key buffer is not walked from the roots: the slot about to
+   * be stored may name a young string. The barrier before the store
+   * (RC5). */
   avant_barrier_slot(h->keys, &((void **)h->keys)[e]);
+  ((const char **)h->keys)[e] = key;
   hashes_of(h)[e] = hv;
 }
 
@@ -498,16 +499,16 @@ static void move_entry(AvantHash *dst, const AvantHash *src, void *okeys, void *
   }
   int32_t ne = claim(dst, i, st);
   if (key_is_str(src)) {
-    ((void **)dst->keys)[ne] = ((void **)okeys)[e];
     avant_barrier_slot(dst->keys, &((void **)dst->keys)[ne]);
+    ((void **)dst->keys)[ne] = ((void **)okeys)[e];
     hashes_of(dst)[ne] = hv;
   } else {
     ikey_put(src, dst->keys, ne, ikey_at(src, okeys, e));
   }
-  cp_w(val_at(src, dst->vals, ne), val_at(src, ovals, e), vw_of(src));
   if (val_is_ref(src)) {
     avant_barrier_slot(dst->vals, (void **)val_at(src, dst->vals, ne));
   }
+  cp_w(val_at(src, dst->vals, ne), val_at(src, ovals, e), vw_of(src));
 }
 
 /* Each allocation may collect (RC1, avant_gc.h), so the hash and the new
@@ -598,6 +599,14 @@ static void erase_open(AvantHash *h, int32_t e, int32_t mask, int str);
 static void erase(AvantHash *h, int32_t e) {
   int32_t mask = h->cap - 1;
   int str = key_is_str(h);
+  /* The entry's references are cleared and, in the open layout, the
+   * entries after it move back in the key and value buffers (RC5). */
+  if (str) {
+    avant_gc_overwrite(h->keys);
+  }
+  if (val_is_ref(h)) {
+    avant_gc_overwrite(h->vals);
+  }
   h->size -= 1;
   if (is_compact(h)) {
     erase_compact(h, e, mask, str);
@@ -607,7 +616,8 @@ static void erase(AvantHash *h, int32_t e) {
 }
 
 /* Compact: the entry is marked deleted (its references cleared) and its
- * index position's cluster slides back. */
+ * index position's cluster slides back.
+ * gc-lint: a store helper (erase makes the call on the two buffers first, RC5). */
 static void erase_compact(AvantHash *h, int32_t e, int32_t mask, int str) {
   int32_t i = (int32_t)(ent_hash(h, e) & (uint32_t)mask);
   uint32_t *ix = index_of(h);
@@ -643,7 +653,8 @@ static void erase_compact(AvantHash *h, int32_t e, int32_t mask, int str) {
 }
 
 /* Open: the entry's position is emptied and later entries of its cluster
- * move back into it. */
+ * move back into it.
+ * gc-lint: a store helper (erase makes the call on the two buffers first, RC5). */
 static void erase_open(AvantHash *h, int32_t e, int32_t mask, int str) {
   int32_t i = e;
   uint8_t *st = states_of(h);
@@ -707,10 +718,13 @@ void avant_hash_clear(void *hp) {
     return;
   }
   end = walk_end(h);
+  /* Every key and value reference leaves its buffer (RC5). */
   if (key_is_str(h)) {
+    avant_gc_overwrite(h->keys);
     memset(h->keys, 0, (size_t)end * sizeof(void *));
   }
   if (val_is_ref(h)) {
+    avant_gc_overwrite(h->vals);
     memset(h->vals, 0, (size_t)end * sizeof(void *));
   }
   memset(h->meta, 0, (size_t)meta_bytes(h, h->cap));
@@ -917,10 +931,11 @@ void avant_hash_set_ref_ik(void *hp, avant_int key, void *val) {
   AVANT_GC_ROOT(0, &h);
   AVANT_GC_ROOT(1, &val);
   void **slot = (void **)put_ik(h, key, NULL, 1);
-  *slot = val;
+  /* The barrier before the store (RC5). */
   if (h) {
     avant_barrier_slot(h->vals, slot);
   }
+  *slot = val;
 }
 
 void avant_hash_set_ref_sk(void *hp, const char *key, void *val) {
@@ -930,10 +945,11 @@ void avant_hash_set_ref_sk(void *hp, const char *key, void *val) {
   AVANT_GC_ROOT(1, &key);
   AVANT_GC_ROOT(2, &val);
   void **slot = (void **)put_sk(h, key, NULL, 1);
-  *slot = val;
+  /* The barrier before the store (RC5). */
   if (h) {
     avant_barrier_slot(h->vals, slot);
   }
+  *slot = val;
 }
 
 /* Hash.delete: removes the key and gives the address of a copy of the

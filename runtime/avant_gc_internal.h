@@ -21,6 +21,9 @@
  *                       path's state, avant_alloc
  *   avant_gc_los.c      the large-object space
  *   avant_gc_remset.c   the remembered set and the store barriers
+ *   avant_gc_proof.c    the proof that the old heap is unchanged (the
+ *                       complete collection): the log, the saved
+ *                       roots, the check
  *   avant_gc_sticky.c   the young collection (S+: promotion in place
  *                       and the opportunistic young copy) and the
  *                       noted list
@@ -642,6 +645,14 @@ typedef struct BlockSet {
  * W15a1). S+'s holder aging reads it (splus_age_holders). */
 #define AVANT_FLAG_PROMOTED_NOW 128u
 
+/* The proof's "logged since the last full collection" bit (GcProof
+ * below), internal to the runtime like REM: set on
+ * an object that is not young when the barrier's slow call logs the
+ * references it holds, cleared when the next full collection begins (the
+ * holders list). A header copied by the defragmenter never carries it
+ * (the bits are cleared before anything moves). */
+#define AVANT_FLAG_LOGGED 512u
+
 /* The collector's counters, per family (Stage 28 W14b2, gc-design.md
  * §1.7, O41). AvantGcStats (avant_rt.h, ABI: avant_g_stats) keeps its
  * seven; every other counter is a field of one family here, written
@@ -889,6 +900,25 @@ typedef struct GcStickyCounters {
   uint64_t aged_inplace_blocks;
 } GcStickyCounters;
 
+/* proof: the complete collection (GcProof
+ * below). asked: the full collections that checked the proof (every
+ * forced one, and every due one); held: the ones it held for (run as a
+ * young collection once the proof is used); fell[W]: the ones that traced
+ * because of W (GcProofWhy: the first reason met); logged and refs: the
+ * holders and the reference words the barrier's slow call logged;
+ * log_peak: the most words the log held at a check; roots: the root
+ * referents saved at the last full collection. */
+#define PROOF_WHYS 12
+typedef struct GcProofCounters {
+  uint64_t asked;
+  uint64_t held;
+  uint64_t fell[PROOF_WHYS];
+  uint64_t logged;
+  uint64_t refs;
+  uint64_t log_peak;
+  uint64_t roots;
+} GcProofCounters;
+
 typedef struct GcCounters {
   GcRootCounters root;
   GcRemCounters rem;
@@ -903,6 +933,7 @@ typedef struct GcCounters {
   GcPromCounters prom;
   GcSizeCounters size;
   GcStickyCounters sticky;
+  GcProofCounters proof;
   /* The largest live byte count a collection measured. */
   uint64_t peak_live;
 } GcCounters;
@@ -947,6 +978,95 @@ typedef struct GcSettings {
    * reports it and keeps waiting; 10000 by default, 0 never. */
   uint64_t stall_ms;
 } GcSettings;
+
+/* The proof that the old heap is unchanged (avant_gc_proof.c holds the
+ * argument and the code).
+ *
+ * Let F be the last full collection (or the program's start, when none
+ * ran: no object is old then). At F's end every object that is not young
+ * was marked by F, so it was reachable: these are the old objects. The
+ * proof holds at a later moment when nothing below happened since F:
+ *   - a reference word of an old object that named an old object at F
+ *     no longer holds that reference (the log: the barrier's slow call,
+ *     at an old object's first store since F, copies each such word of
+ *     it, slot and value, before the store; the check reads each slot
+ *     again);
+ *   - an old object a root named at F is named by no root (roots: the
+ *     referents of every frame slot, pin, task root and runtime-held slot
+ *     at F's end; the check walks the roots again);
+ *   - an object became old or was born old (a young collection promoted
+ *     one; an allocation in mature space), an old object was freed
+ *     outside a collection, an old holder too large to log was stored
+ *     into, the log grew past its limit, the program has more than one
+ *     thread or no young generation (broken, a GcProofWhy: it stays until
+ *     the next full collection ends).
+ * Then every path F followed to every old object is intact, so every old
+ * object is still reachable, and every object that is not reachable is
+ * young: a young collection frees exactly those, and is a complete
+ * collection. A wrong proof frees nothing wrongly (the young collection
+ * is the ordinary one); it would leave an unreachable old object in the
+ * heap. Under AVANT_GC_VERIFY=1 the oracle (avant_gc_verify.c,
+ * gc_verify_proof) checks the bookkeeping at every collection and the
+ * conclusion wherever the proof holds. */
+typedef enum GcProofWhy {
+  PROOF_INTACT = 0,
+  /* Sticky until the next full collection ends (GcProof.broken). */
+  PROOF_PROMOTED,  /* a young collection promoted an object */
+  PROOF_MATURE,    /* an object was born in mature space */
+  PROOF_FREED,     /* an old object was freed outside a collection */
+  PROOF_BIG,       /* a store into an old holder too large to log */
+  PROOF_LOG_FULL,  /* the log passed PROOF_LOG_MAX words */
+  PROOF_OVERWRITE, /* runtime C overwrote references with no barrier */
+  PROOF_THREADS,   /* the program has more than one thread */
+  PROOF_NURSERY,   /* AVANT_NURSERY=0: no young generation */
+  /* The check's own findings. */
+  PROOF_REF_LOST,  /* a logged holder no longer holds a logged reference */
+  PROOF_ROOT_LOST  /* a saved root referent is named by no root */
+} GcProofWhy;
+
+/* An old holder with more payload than this is not logged: a store into
+ * it breaks the proof (PROOF_BIG). 512 bytes: 64 reference words. Every
+ * carded buffer (a large pointer buffer) is above it. */
+#ifndef PROOF_HOLDER_MAX
+#define PROOF_HOLDER_MAX 512
+#endif
+/* The log's limit in words (two a logged reference): past it the proof is
+ * broken (PROOF_LOG_FULL) and nothing more is logged until the next full
+ * collection, so the barrier's slow call pays for at most this many words
+ * a full-collection cycle. Under AVANT_GC_VERIFY=1 there is no limit and
+ * every holder is logged whatever its size (the oracle reads the log). */
+#ifndef PROOF_LOG_MAX
+#define PROOF_LOG_MAX 16384
+#endif
+
+typedef struct GcProof {
+  /* A GcProofWhy: PROOF_INTACT while the proof may still hold. */
+  uint8_t broken;
+  /* The log: pairs of words, a reference word's address and the
+   * reference it held at F. */
+  void **log;
+  uint32_t log_n;
+  uint32_t log_cap;
+  /* The logged holders (their LOGGED bits are cleared when the next full
+   * collection begins). */
+  void **holders;
+  uint32_t holders_n;
+  uint32_t holders_cap;
+  /* The roots at F's end, in the order gc_proof walks them: pairs of
+   * words, the root's word and the start of the object it names (NULL:
+   * none). */
+  void **roots;
+  uint32_t roots_n;
+  uint32_t roots_cap;
+  /* The check's scratch: the saved referents whose root changed, and the
+   * current roots' referents. */
+  void **miss;
+  uint32_t miss_n;
+  uint32_t miss_cap;
+  void **cur;
+  uint32_t cur_n;
+  uint32_t cur_cap;
+} GcProof;
 
 /* The collector's state (Stage 28 W14b2, gc-design.md §1.1, O41): one
  * GcHeap, gc_heap (defined in avant_gc_heap.c), shared by every
@@ -1372,6 +1492,9 @@ typedef struct GcHeap {
    * tasks' capture records, under the world lock. */
   AvantGcTaskRoot *task_roots;
 
+  /* avant_gc_proof.c: the proof that the old heap is unchanged. */
+  GcProof proof;
+
   /* avant_gc_stats.c. */
   GcCounters ctr;
 } GcHeap;
@@ -1757,6 +1880,31 @@ void gc_quarantine_drop_seal(AvantHeader *h, int drop);
  * (avant_gc_los.c; Stage 28 W18C). */
 int gc_rooted(void *payload);
 void gc_large_give_held(AvantHeader *h);
+
+/* avant_gc_proof.c */
+void gc_proof_log(void *obj, AvantHeader *h);
+void gc_proof_break(GcProofWhy why);
+void gc_proof_full_begin(void);
+void gc_proof_full_end(void);
+GcProofWhy gc_proof_check(void);
+void gc_proof_each_root(void (*fn)(void *word, void *ctx), void *ctx);
+const char *gc_proof_why_name(GcProofWhy why);
+/* The barrier's slow call, for an object OBJ (header H) that is in the
+ * heap and not young, before the store it precedes: the first one since
+ * the last full collection logs OBJ's references (gc_proof_log). One load
+ * and one test once it is logged; nothing is logged once the proof is
+ * broken, except under AVANT_GC_VERIFY=1 (PROOF_LOG_MAX's comment). */
+static inline void gc_proof_store(void *obj, AvantHeader *h) {
+  if (!(h->flags & AVANT_FLAG_LOGGED) && (gc_heap.proof.broken == PROOF_INTACT || gc_heap.set.verify)) {
+    gc_proof_log(obj, h);
+  }
+}
+
+/* avant_gc_verify.c: the proof's oracle. */
+void gc_verify_proof(int full, int holds);
+void gc_verify_proof_rebase(void);
+void gc_verify_proof_gone(AvantHeader *h);
+void gc_verify_proof_logging(void *hp);
 
 /* avant_gc_collect.c */
 /* A collection (O42): GC_YOUNG collects the young generation (S+ may

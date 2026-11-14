@@ -29,7 +29,7 @@ gc_cflags=
 
 # The core units: the collector and the language traps. They fold into
 # one object, avant_rt.o, below (build_core).
-core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_sticky avant_gc_mark avant_gc_defrag avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots avant_gc_safepoint"
+core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_remset avant_gc_proof avant_gc_sticky avant_gc_mark avant_gc_defrag avant_gc_verify avant_gc_collect avant_gc_stats avant_gc_roots avant_gc_safepoint"
 
 # The objects every program links (pipeline.av runtime_object_names), into
 # OUT: avant_rt.o from the core units, then the others.

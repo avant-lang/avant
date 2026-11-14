@@ -1017,8 +1017,9 @@ static void *str_array_new(int32_t n) {
 
 static void str_array_put(AvantArray *a, char *p) {
   char **slot = &((char **)a->buf)[a->size++];
-  *slot = p;
+  /* The barrier before the store (RC5). */
   avant_barrier_slot(a->buf, slot);
+  *slot = p;
 }
 
 /* Keeps empty fields. Empty separator traps. RC1: the text, the

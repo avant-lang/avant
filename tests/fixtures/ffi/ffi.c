@@ -844,3 +844,49 @@ int64_t ffi_late_pinned(void *obj) {
   avant_unpin(obj);
   return n;
 }
+
+/* proof_oracle.av and complete.av: what
+ * only C can do to the proof that the old heap is unchanged, and what a
+ * program cannot read of the collector otherwise.
+ *
+ * ffi_proof_store stores V into the first reference word of HOLDER (a
+ * class instance whose first field is a reference): MODE 0 after
+ * avant_barrier on the holder, the order every store has (the barrier's
+ * slow call logs what the holder held before the store); MODE 1 before
+ * it; MODE 2 with no barrier at all. Under AVANT_GC_VERIFY=1 the two last
+ * stop the program when the store overwrites a reference the holder held
+ * at the last full collection: MODE 1 at the barrier ("a store came
+ * before its barrier"), MODE 2 at the next full collection or the
+ * program's exit ("a reference was overwritten with no barrier before
+ * the store"). Returns 1.
+ *
+ * ffi_gc_count gives one of the collector's public counters
+ * (avant_gc_stats): 0 the full collections, 1 the young ones, 2 the bytes
+ * the last collection found live. */
+typedef struct {
+  uint64_t collections;
+  uint64_t young_collections;
+  uint64_t full_collections;
+  uint64_t allocated_bytes;
+  uint64_t copied_bytes;
+  uint64_t live_bytes;
+  uint64_t peak_heap;
+} FfiGcStats;
+void avant_gc_stats(FfiGcStats *out);
+
+int64_t ffi_proof_store(void *holder, void *v, int64_t mode) {
+  if (mode == 0) {
+    avant_barrier(holder);
+  }
+  *(void **)holder = v;
+  if (mode == 1) {
+    avant_barrier(holder);
+  }
+  return 1;
+}
+
+int64_t ffi_gc_count(int64_t which) {
+  FfiGcStats st;
+  avant_gc_stats(&st);
+  return (int64_t)(which == 0 ? st.full_collections : which == 1 ? st.young_collections : st.live_bytes);
+}

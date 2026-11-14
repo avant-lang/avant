@@ -244,6 +244,8 @@ char *avant_buf_take_str(void *buf) {
     if (avant_gc_large_trim(p, (uint64_t)n + 1)) {
       p[n] = 0;
       avant_str_tag(p);
+      /* The Buf's reference to its storage is removed (RC5). */
+      avant_gc_overwrite(b);
       b->data = NULL;
       b->size = 0;
       b->cap = 0;

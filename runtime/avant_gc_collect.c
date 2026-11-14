@@ -275,6 +275,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
   int resume = 0;
   uint64_t t0;
+  GcProofWhy proof = PROOF_INTACT;
   /* The inline path's allocations are counted before the policy's
    * counters are read (M6, gc_alloc_sync). */
   gc_alloc_sync();
@@ -342,7 +343,27 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     } else {
       gc_verify_lost();
     }
+    /* The proof's oracle (avant_gc_verify.c): the verdict is taken
+     * at every collection, young ones too, and its conclusion checked
+     * wherever it holds. */
+    proof = gc_proof_check();
+    gc_verify_proof(full, proof == PROOF_INTACT);
     gc_verify_starts_resume();
+  } else if (full) {
+    proof = gc_proof_check();
+  }
+  if (full) {
+    /* The proof that the old heap is unchanged (avant_gc_proof.c): every full collection asks it, and counts
+     * the answer. (Computed and not used yet: the collection traces
+     * whatever it says.) Then the log is emptied: this collection's end
+     * is what the next one's proof starts from. */
+    gc_heap.ctr.proof.asked++;
+    if (proof == PROOF_INTACT) {
+      gc_heap.ctr.proof.held++;
+    } else {
+      gc_heap.ctr.proof.fell[proof]++;
+    }
+    gc_proof_full_begin();
   }
   gc_heap.young_clock += avant_nursery_held > gc_heap.young_carried
                               ? avant_nursery_held - gc_heap.young_carried
@@ -366,10 +387,18 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     uint64_t used = avant_nursery_held;
     uint64_t copied0 = avant_g_stats.copied_bytes;
     uint64_t inplace0 = gc_heap.ctr.sticky.inplace;
+    uint64_t prom0 = gc_heap.ctr.prom.copied;
     uint64_t surv;
     avant_g_stats.young_collections++;
     gc_sticky_collect(gc_heap.set.young_fixed ? 1 : 0);
     surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.sticky.inplace - inplace0);
+    /* An object this collection promoted, in place or by its copy, is old
+     * from now on and no full collection marked it (a young large
+     * object's promotion says so itself, promote_young_large). An aged
+     * copy stays young. */
+    if (gc_heap.ctr.sticky.inplace != inplace0 || gc_heap.ctr.prom.copied != prom0) {
+      gc_proof_break(PROOF_PROMOTED);
+    }
     if (!gc_heap.set.young_fixed && !gc_heap.stress_now) {
       young_size(used, surv);
     }
@@ -439,6 +468,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     if (why == GC_WHY_LIMIT && gc_heap.set.heap_max) {
       limit_progress_check();
     }
+    /* What the next proof starts from: the roots as they are now,
+     * an empty log. After everything this collection moves or frees. */
+    gc_proof_full_end();
   }
 
   if (full) {
@@ -565,6 +597,10 @@ void gc_init_slow(void) {
    * first out) and the report counts the exit's verification. */
   if (gc_heap.set.verify) {
     gc_verify_init();
+  }
+  /* No young generation: no complete collection is a young one. */
+  if (gc_heap.set.nursery_off) {
+    gc_proof_break(PROOF_NURSERY);
   }
 }
 

@@ -53,8 +53,9 @@ static void io_array_buf(AvantArray **ap, int32_t n) {
 
 static void io_array_put(AvantArray *a, char *p) {
   char **slot = &((char **)a->buf)[a->size++];
-  *slot = p;
+  /* The barrier before the store (RC5). */
   avant_barrier_slot(a->buf, slot);
+  *slot = p;
 }
 
 static char *cstr_dup(const char *s) {
@@ -893,6 +894,7 @@ static int cmp_names(const void *a, const void *b) {
 /* The names in directory path, except . and .., sorted, in C memory:
  * 0 and *out/*np, or the errno that stopped the listing (a name that
  * cannot be stored is ENOMEM, never a shorter list). */
+/* gc-lint: no reference word (names is malloc'ed C memory). */
 static int list_names(const char *path, char ***out, int32_t *np) {
   char **names = NULL;
   int32_t n = 0;

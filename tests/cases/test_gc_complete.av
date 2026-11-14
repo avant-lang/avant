@@ -1,0 +1,78 @@
+import harness
+import backends
+
+// The complete collection that proves the
+// old heap unchanged.
+//
+// ffi/proof_oracle.av: the oracle AVANT_GC_VERIFY=1 keeps for the proof's
+// log. A store into an old object behind its barrier is silent in every
+// environment; a store before its barrier, and a store with none, are
+// stopped under the verifier, each with its own report, and print the
+// same as the first without it.
+
+fn test_proof_oracle(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/proof_oracle.av", "${dir}/proof_oracle", "${dir}/proof_oracle.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "proof_oracle.av: compiles")
+  want = "proof_oracle: text-2\nproof_oracle: text-2 after the collection\n"
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "proof_oracle", "proof_oracle.g${e}", envs[e]))
+  }
+  // The two stores only C can make, without the verifier (an outer
+  // verifier pass would stop them) and under it (an outer AVANT_NURSERY=0
+  // pass has no log to check).
+  for m in 1..3 {
+    runs.push(run_job_env(dir, "proof_oracle", "proof_oracle.p${m}", "-u AVANT_GC_VERIFY PROOF_ORACLE_MODE=${m}"))
+    runs.push(run_job_env(dir, "proof_oracle", "proof_oracle.v${m}", "-u AVANT_NURSERY -u AVANT_GC_STRESS PROOF_ORACLE_MODE=${m} AVANT_GC_VERIFY=1"))
+  }
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "proof_oracle.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/proof_oracle.g${e}.out"), want, "proof_oracle.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/proof_oracle.g${e}.err"), "", "proof_oracle.av ${what}: no stderr (the oracle is silent on a store behind its barrier)")
+  }
+  for m in 1..3 {
+    what = "a store before its barrier"
+    needle = "avant gc verify: proof: a store came before its barrier: word +0 held "
+    last = "avant runtime: avant gc verify: proof: a reference was overwritten before the barrier that logs its holder"
+    if m == 2 {
+      what = "a store with no barrier"
+      needle = "avant gc verify: proof: a reference was overwritten with no barrier before the store: word +0 held "
+      last = "avant runtime: avant gc verify: proof: an old object changed without its log"
+    }
+    pi = envs.size + (m - 1) * 2
+    c.eq_int(runs[pi].code, 0, "proof_oracle.av, ${what}, without the verifier: exit 0")
+    c.eq_str(log_text("${dir}/proof_oracle.p${m}.out"), want, "proof_oracle.av, ${what}, without the verifier: the same stdout")
+    err = log_text("${dir}/proof_oracle.v${m}.err")
+    c.expect(runs[pi + 1].code != 0, "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the program is stopped")
+    c.expect(str_has(err, needle), "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the oracle's report names the word")
+    c.expect(str_has(err, "avant gc verify: proof:   holder ") && str_has(err, "avant gc verify: proof:   referent "), "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the report names the holder and the referent")
+    c.expect(str_has(err, last), "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the stop's own line")
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_gc_complete.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_proof_oracle(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

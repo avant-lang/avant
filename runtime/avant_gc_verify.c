@@ -11,6 +11,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <time.h>
+#include <execinfo.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -822,6 +823,9 @@ static int sd_probe(void) {
 static void verify_at_exit_check(void) {
   gc_verify_begin(1);
   gc_verify_remembered();
+  /* The proof's oracle once more: the log, every old object that
+   * is not logged, and the conclusion when the proof holds here. */
+  gc_verify_proof(1, gc_proof_check() == PROOF_INTACT);
 }
 
 static void verify_at_exit(void) {
@@ -2225,4 +2229,327 @@ void gc_verify_starts_end(void) {
     }
   }
   gc_heap.vblocks_n = 0;
+}
+
+/* The proof's oracle (the proof is
+ * avant_gc_proof.c's). Under AVANT_GC_VERIFY=1 the verifier keeps, from
+ * the end of each full collection, what the proof only argues about: the
+ * old objects (vp_old: every object the collection marked, one bit a
+ * granule at its header), every object that was not young then (vp_all:
+ * also the dead ones a live line kept), and a copy of every old object's
+ * payload at its own offset (vp_shadow). Against them it checks
+ *
+ *   the log, at every collection's start: a holder logged since the last
+ *   check must have been logged before its first store into a word that
+ *   held a reference, that is, the log has every reference the copy has
+ *   in the holder (vp_holder: "logged after its store" names the holder,
+ *   the word and the reference the copy holds there; the barrier's slow
+ *   call makes the same test as it logs, gc_verify_proof_logging, where
+ *   the late barrier's caller is still on the stack);
+ *
+ *   the stores, at every full collection's start, at the program's exit
+ *   and wherever the proof holds: an old object that is not logged holds
+ *   every reference the copy holds (vp_unlogged: "a reference was
+ *   overwritten with no barrier before the store" names the holder, the
+ *   word and the lost referent). This is the check that finds a store
+ *   path the barrier's slow call does not see, in generated code or in
+ *   runtime C, whether or not a complete collection follows it;
+ *
+ *   the conclusion, at every collection's start where the proof holds
+ *   (young or full, asked for or not: gc_proof_check is evaluated at
+ *   each): the trace from the roots alone, with no remembered set, must
+ *   reach every old object (vp_reach: "an old object is unreachable"
+ *   names it and the holders that named it at the last full collection),
+ *   and no object that is not young may exist that was not there at the
+ *   last full collection (an object promoted or born old that the proof
+ *   did not notice).
+ *
+ * Each report stops the program (gc_die). Nothing is checked in a
+ * program with threads or without a young generation (the proof never
+ * holds there and nothing is logged). Before the first full collection
+ * the three sets are empty: no object is old. */
+static uint64_t *vp_old;
+static uint64_t *vp_all;
+static size_t vp_words;
+static uint8_t *vp_shadow;
+static size_t vp_shadow_len;
+/* The holders and the log words the log check has read. */
+static uint32_t vp_holders_seen;
+static uint32_t vp_log_seen;
+
+static inline int vp_bit(const uint64_t *bits, const AvantHeader *h) {
+  uint64_t g = granule_of(h);
+  return (size_t)(g >> 6) < vp_words && ((bits[g >> 6] >> (g & 63)) & 1ULL);
+}
+
+static inline void vp_bit_set(uint64_t *bits, const AvantHeader *h) {
+  uint64_t g = granule_of(h);
+  bits[g >> 6] |= 1ULL << (g & 63);
+}
+
+static inline void *vp_shadow_word(void **slot) {
+  size_t off = (size_t)((uint8_t *)slot - (uint8_t *)gc_heap.base);
+  void *v;
+  memcpy(&v, vp_shadow + off, sizeof v);
+  return v;
+}
+
+/* Does the copy's word V name a heap object (it did at the last full
+ * collection: a field's word is null, a static address or a start)? */
+static inline int vp_heap_ref(void *v) {
+  uintptr_t off = (uintptr_t)v - (uintptr_t)gc_heap.base - sizeof(AvantHeader);
+  return off < vp_shadow_len;
+}
+
+static void vp_describe(const char *what, void *p) {
+  const AvantHeader *h = avant_header(p);
+  fprintf(stderr, "avant gc verify: proof:   %s %p type %u size %u flags %#x\n", what, p, (unsigned)h->type_id,
+          (unsigned)h->size, (unsigned)h->flags);
+}
+
+static void vp_rebase_one(AvantHeader *h, Block *b) {
+  (void)b;
+  if (!(h->flags & AVANT_FLAG_HEAP) || (h->flags & AVANT_FLAG_YOUNG)) {
+    return;
+  }
+  vp_bit_set(vp_all, h);
+  if (!full_marked(h)) {
+    return;
+  }
+  vp_bit_set(vp_old, h);
+  if (h->type_id != AVANT_TYPE_BYTES) {
+    size_t off = (size_t)((uint8_t *)payload_of(h) - (uint8_t *)gc_heap.base);
+    memcpy(vp_shadow + off, payload_of(h), (size_t)h->size);
+  }
+}
+
+/* A full collection ended (gc_proof_full_end): the three sets are taken
+ * again. */
+void gc_verify_proof_rebase(void) {
+  size_t words = (size_t)(((gc_heap.committed >> 3) + 63) / 64);
+  LargeIter it;
+  AvantHeader *lh;
+  vp_holders_seen = 0;
+  vp_log_seen = 0;
+  if (vp_shadow) {
+    munmap(vp_shadow, vp_shadow_len);
+    vp_shadow = NULL;
+    vp_shadow_len = 0;
+  }
+  if (gc_heap.proof.broken >= PROOF_THREADS) {
+    vp_words = 0;
+    return;
+  }
+  vp_old = gc_xrealloc(vp_old, words * sizeof(uint64_t));
+  vp_all = gc_xrealloc(vp_all, words * sizeof(uint64_t));
+  memset(vp_old, 0, words * sizeof(uint64_t));
+  memset(vp_all, 0, words * sizeof(uint64_t));
+  vp_words = words;
+  vp_shadow_len = (size_t)gc_heap.committed;
+  vp_shadow = mmap(NULL, vp_shadow_len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  if (vp_shadow == MAP_FAILED) {
+    gc_die("avant gc verify: proof: no memory for the copy of the old objects");
+  }
+  EACH_MATURE_BLOCK(mb, { gc_foreach_block_object(mb, vp_rebase_one); });
+  gc_large_iter_init(&it);
+  while ((lh = gc_large_next(&it))) {
+    vp_rebase_one(lh, NULL);
+  }
+}
+
+/* An old large object is freed outside a collection (avant_gc_large_drop):
+ * it leaves the sets, so an object at its address later is not taken for
+ * it. */
+void gc_verify_proof_gone(AvantHeader *h) {
+  uint64_t g = granule_of(h);
+  if ((size_t)(g >> 6) < vp_words) {
+    vp_old[g >> 6] &= ~(1ULL << (g & 63));
+    vp_all[g >> 6] &= ~(1ULL << (g & 63));
+  }
+}
+
+/* The log check of one holder H whose entries are the log's words
+ * [*J, ...), in the order the log walked H's reference words: a word
+ * that held a reference at the last full collection (the copy) must have
+ * an entry with that reference, or the holder was logged after a store
+ * into the word. A word the copy has empty may have an entry (a
+ * reference stored into an empty word before the holder was logged, as a
+ * fill in progress does, removes nothing; the check then asks that it
+ * stay, which is on the safe side). A holder that was not old at the last
+ * full collection (promoted since) has no copy: its entries are passed
+ * over. */
+static void vp_holder(void *hp, uint32_t *j) {
+  const GcProof *p = &gc_heap.proof;
+  const AvantHeader *h = avant_header(hp);
+  const uint8_t *lo = (const uint8_t *)hp;
+  const uint8_t *hi = lo + h->size;
+  uint32_t k = *j;
+  if (vp_bit(vp_old, h)) {
+    EACH_REF_SLOT(hp, slot, {
+      void *sv = vp_shadow_word(slot);
+      int has = k + 1 < p->log_n && p->log[k] == (void *)slot;
+      if (vp_heap_ref(sv) && (!has || p->log[k + 1] != sv)) {
+        fprintf(stderr,
+                "avant gc verify: proof: a holder was logged after its store: word +%ld held %p at the last full "
+                "collection, the log has %p there, before coll=%llu\n",
+                (long)((const uint8_t *)slot - lo), sv, has ? p->log[k + 1] : NULL,
+                (unsigned long long)avant_g_stats.collections);
+        vp_describe("holder", hp);
+        vp_describe("referent", sv);
+        gc_die("avant gc verify: proof: the log does not hold a holder's references as they were");
+      }
+      if (has) {
+        k += 2;
+      }
+    });
+  }
+  while (k + 1 < p->log_n && (const uint8_t *)p->log[k] >= lo && (const uint8_t *)p->log[k] < hi) {
+    k += 2;
+  }
+  *j = k;
+}
+
+/* An old object that is not logged holds what the copy holds. */
+static void vp_unlogged(AvantHeader *h, Block *b) {
+  void *hp = payload_of(h);
+  (void)b;
+  if (!vp_bit(vp_old, h) || (h->flags & AVANT_FLAG_LOGGED) || h->type_id == AVANT_TYPE_BYTES) {
+    return;
+  }
+  EACH_REF_SLOT(hp, slot, {
+    void *sv = vp_shadow_word(slot);
+    if (vp_heap_ref(sv) && *slot != sv) {
+      fprintf(stderr,
+              "avant gc verify: proof: a reference was overwritten with no barrier before the store: word +%ld held "
+              "%p at the last full collection and holds %p, before coll=%llu\n",
+              (long)((uint8_t *)slot - (uint8_t *)hp), sv, *slot, (unsigned long long)avant_g_stats.collections);
+      vp_describe("holder", hp);
+      vp_describe("referent", sv);
+      gc_die("avant gc verify: proof: an old object changed without its log");
+    }
+  });
+}
+
+/* The holders that named the unreachable old object X at the last full
+ * collection, by the copy (at most eight). */
+static void *vp_lost;
+static int vp_lost_n;
+
+static void vp_holder_of_lost(AvantHeader *h, Block *b) {
+  void *hp = payload_of(h);
+  (void)b;
+  if (!vp_bit(vp_old, h) || h->type_id == AVANT_TYPE_BYTES || vp_lost_n >= 8) {
+    return;
+  }
+  EACH_REF_SLOT(hp, slot, {
+    if (vp_shadow_word(slot) == vp_lost && vp_lost_n < 8) {
+      vp_lost_n++;
+      fprintf(stderr, "avant gc verify: proof:   held then by word +%ld (now %p) of a holder that is %s, %s\n",
+              (long)((uint8_t *)slot - (uint8_t *)hp), *slot,
+              (h->flags & AVANT_FLAG_LOGGED) ? "logged" : "not logged",
+              vb_test(vb_seen, hp, AVANT_FLAG_VSEEN) ? "reachable" : "unreachable");
+      vp_describe("holder", hp);
+    }
+  });
+}
+
+static void vp_reach(AvantHeader *h, Block *b) {
+  void *p = payload_of(h);
+  (void)b;
+  if (!(h->flags & AVANT_FLAG_HEAP) || (h->flags & AVANT_FLAG_YOUNG)) {
+    return;
+  }
+  if (!vp_bit(vp_all, h)) {
+    fprintf(stderr, "avant gc verify: proof: the proof holds and an object that is not young was not in the heap at "
+                    "the last full collection, before coll=%llu\n",
+            (unsigned long long)avant_g_stats.collections);
+    vp_describe("object", p);
+    gc_die("avant gc verify: proof: an object became old unnoticed");
+  }
+  if (vp_bit(vp_old, h) && !vb_test(vb_seen, p, AVANT_FLAG_VSEEN)) {
+    LargeIter it;
+    AvantHeader *lh;
+    fprintf(stderr, "avant gc verify: proof: the proof holds and an old object is unreachable, before coll=%llu\n",
+            (unsigned long long)avant_g_stats.collections);
+    vp_describe("referent", p);
+    vp_lost = p;
+    vp_lost_n = 0;
+    EACH_MATURE_BLOCK(mb, { gc_foreach_block_object(mb, vp_holder_of_lost); });
+    gc_large_iter_init(&it);
+    while ((lh = gc_large_next(&it))) {
+      vp_holder_of_lost(lh, NULL);
+    }
+    if (!vp_lost_n) {
+      fprintf(stderr, "avant gc verify: proof:   no old object held it then: a root did\n");
+    }
+    gc_die("avant gc verify: proof: the old heap changed and the proof held");
+  }
+}
+
+static void vp_each_object(void (*fn)(AvantHeader *, Block *)) {
+  LargeIter it;
+  AvantHeader *lh;
+  EACH_MATURE_BLOCK(mb, { gc_foreach_block_object(mb, fn); });
+  gc_large_iter_init(&it);
+  while ((lh = gc_large_next(&it))) {
+    fn(lh, NULL);
+  }
+}
+
+/* The barrier's slow call is logging the holder HP (gc_proof_log, before
+ * it reads a word): an old holder must still hold every reference the
+ * copy holds, or a store came before this barrier. Checked here, where
+ * the late barrier's caller is on the stack: the report gives the return
+ * addresses (addr2line on the program resolves them), which the checks at
+ * the next collection cannot. */
+void gc_verify_proof_logging(void *hp) {
+  const AvantHeader *h = avant_header(hp);
+  if (!vp_words || !vp_bit(vp_old, h) || h->type_id == AVANT_TYPE_BYTES) {
+    return;
+  }
+  EACH_REF_SLOT(hp, slot, {
+    void *sv = vp_shadow_word(slot);
+    if (vp_heap_ref(sv) && *slot != sv) {
+      void *bt[24];
+      int n;
+      fprintf(stderr,
+              "avant gc verify: proof: a store came before its barrier: word +%ld held %p at the last full "
+              "collection and holds %p when the holder is logged, after coll=%llu\n",
+              (long)((uint8_t *)slot - (uint8_t *)hp), sv, *slot, (unsigned long long)avant_g_stats.collections);
+      vp_describe("holder", hp);
+      vp_describe("referent", sv);
+      n = backtrace(bt, 24);
+      backtrace_symbols_fd(bt, n, 2);
+      gc_die("avant gc verify: proof: a reference was overwritten before the barrier that logs its holder");
+    }
+  });
+}
+
+/* At a collection's start (FULL: a full one, or the program's exit),
+ * with HOLDS the proof's verdict there (gc_proof_check). */
+void gc_verify_proof(int full, int holds) {
+  const GcProof *p = &gc_heap.proof;
+  if (p->broken >= PROOF_THREADS) {
+    return;
+  }
+  if (vp_words) {
+    uint32_t j = vp_log_seen;
+    while (vp_holders_seen < p->holders_n) {
+      vp_holder(p->holders[vp_holders_seen++], &j);
+    }
+    vp_log_seen = j;
+    if (full || holds) {
+      vp_each_object(vp_unlogged);
+    }
+  }
+  if (holds) {
+    vb_ensure();
+    verify_each_root(verify_tls_slot, 0);
+    while (gc_heap.work_n) {
+      void *o = verify_pop();
+      EACH_REF_SLOT_WALK(o, slot, { verify_trace(*slot); });
+    }
+    vp_each_object(vp_reach);
+    verify_clear_traced();
+  }
 }

@@ -199,6 +199,28 @@ static void print_sticky(StatsLine *l) {
            u(c->surv_blocks), u(c->aged_holders), u(c->aged_inplace_blocks));
 }
 
+/* The proof's segment, only in a program
+ * that forced a collection (avant_gc_collect, std.gc's gc.collect()), so
+ * the line of a program that never asks is what it was: the full
+ * collections that asked the proof, the ones it held for, the ones that
+ * traced with the first reason each met (GcProofWhy's names), and the
+ * log's size. */
+static void print_proof(StatsLine *l) {
+  const GcProofCounters *c = &gc_heap.ctr.proof;
+  int w;
+  if (!gc_heap.ctr.why.explicit_) {
+    return;
+  }
+  line_add(l, " proof_asked=%llu proof_held=%llu", u(c->asked), u(c->held));
+  for (w = 1; w < PROOF_WHYS - 1; w++) {
+    if (c->fell[w]) {
+      line_add(l, " proof_fell_%s=%llu", gc_proof_why_name((GcProofWhy)w), u(c->fell[w]));
+    }
+  }
+  line_add(l, " proof_logged=%llu proof_refs=%llu proof_log_peak=%llu proof_roots=%llu", u(c->logged), u(c->refs),
+           u(c->log_peak / 2), u(c->roots));
+}
+
 /* The verifier's segment (Stage 28 W18M item 7), only under
  * AVANT_GC_VERIFY, after the sticky family: which verifier ran
  * (incremental: soft-dirty tracking works; whole: it does not, and every
@@ -236,6 +258,7 @@ void gc_print_stats(void) {
   print_prom(&l);
   print_size(&l);
   print_sticky(&l);
+  print_proof(&l);
   print_verify(&l);
   line_add(&l, "\n");
   fwrite(l.buf, 1, l.n, stderr);

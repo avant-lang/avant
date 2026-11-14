@@ -75,7 +75,7 @@
  *     root slot (Stage 28 W14b2, gc-design.md section 1.4; it replaced a
  *     callback from the collector into avant_hash.c).
  *
- * The runtime-C contract, RC1-RC4 (Stage 28 W16a, gc-design.md section
+ * The runtime-C contract, RC1-RC5 (gc-design.md section
  * 4.2; it replaces W14b1's defer discipline and W15a1's named
  * safepoints). A runtime C function is a mutator like generated code:
  * any call that may collect (an allocation, a helper that allocates, a
@@ -117,13 +117,29 @@
  *   handles too (hash grow's new buffers; split's array being filled).
  *
  *   RC3. Barriers (D187). Every store of a reference into a heap object
- *   is followed by avant_barrier on that object (or avant_barrier_at on
- *   the stored-to address, or avant_barrier_slot with the slot) before
+ *   has avant_barrier on that object (or avant_barrier_at on the
+ *   stored-to address, or avant_barrier_slot with the slot) before the
+ *   store (RC5; it used to be allowed after the store) and so before
  *   the next call that may collect (C34: avant_hash_inc_slice and
  *   array_grow lost young keys and elements without one). A store into
  *   an element buffer that knows its slot uses avant_barrier_slot (card
  *   marking, Stage 28 W16t); a bulk copy or fill barriers the buffer
  *   with avant_barrier, which counts every card.
+ *
+ *   RC5. The barrier first. A store that
+ *     changes a reference word of an object the function did not
+ *     allocate in the same call comes after the barrier on that object
+ *     (avant_barrier, avant_barrier_slot: RC3's call, before the store
+ *     and not after it), and a function that only removes references or
+ *     moves them among the object's words (a clear, a delete that shifts,
+ *     a sort, a reverse) calls avant_gc_overwrite on it first. The
+ *     barrier's slow call logs what the object held at the last full
+ *     collection, which is what lets a complete collection prove the old
+ *     heap unchanged (avant_gc_proof.c); a store before it loses the
+ *     reference it overwrote from the log. AVANT_GC_VERIFY=1 stops the
+ *     program at the late barrier ("a store came before its barrier") or
+ *     at the next full collection ("a reference was overwritten with no
+ *     barrier before the store").
  *
  *   RC4. No-GC regions, only where C cannot root. Where references live
  *   inside a C library's own data structures while it calls back or
@@ -371,6 +387,10 @@ __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uin
  * avant_buf_bytes; 2: another runtime buffer; Stage 28 W18C, O145). Not a
  * collecting call. Hidden. */
 __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int drop);
+
+/* RC5: references among OBJ's words are about to be removed or moved
+ * (nothing is stored that OBJ does not hold). Never collects. */
+__attribute__((visibility("hidden"))) void avant_gc_overwrite(void *obj);
 /* AVANT_GC_VERIFY=1's own pages for a Buf's storage (Stage 28 W18C,
  * O145; avant_gc_alloc.c): NBYTES of scalar storage on its own page run
  * (a large Bytes object at any size), so that a growth that replaces it

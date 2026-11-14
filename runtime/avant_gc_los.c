@@ -380,6 +380,8 @@ static void promote_young_large(AvantHeader *h) {
   gc_heap.ctr.los.promoted_bytes += (uint64_t)bytes;
   gc_heap.ctr.prom.large += (uint64_t)bytes;
   gc_heap.promoted_since_full += (uint64_t)bytes;
+  /* An object old from now on that no full collection marked. */
+  gc_proof_break(PROOF_PROMOTED);
   h->flags = (uint16_t)(h->flags & (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED));
   if (gc_heap.young_large >= bytes) {
     gc_heap.young_large -= bytes;
@@ -540,6 +542,8 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
     avant_nursery_held += bytes;
   } else {
     gc_heap.mature_since_full += bytes;
+    /* A large object born old. */
+    gc_proof_break(PROOF_MATURE);
   }
   gc_note_peak();
   return payload_of(h);
@@ -688,6 +692,12 @@ __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int
     uint64_t bytes = (uint64_t)gc_large_bytes(h);
     if (!(h->flags & AVANT_FLAG_YOUNG)) {
       gc_verify_rebase = 1;
+      /* An old object freed outside a collection: what the proof
+       * saved may name it. */
+      gc_proof_break(PROOF_FREED);
+      if (gc_heap.set.verify) {
+        gc_verify_proof_gone(h);
+      }
     }
     gc_release_large(h);
     if (gc_heap.set.verify) {

@@ -199,11 +199,10 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
   }
   if (a->buf && a->size < a->cap) {
     slot = (uint8_t *)a->buf + (size_t)a->size * sizeof(void *);
+    /* The barrier before the store (RC5). */
+    avant_barrier_slot(a->buf, slot);
     memcpy(slot, &elem, sizeof(void *));
     a->size += 1;
-    if (a->buf) {
-      avant_barrier_slot(a->buf, slot);
-    }
     return;
   }
   {
@@ -228,8 +227,9 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
 void avant_array_set_ptr(void *arr, avant_int i, void *elem) {
   AvantArray *a = (AvantArray *)arr;
   if (a && a->buf) {
-    ((void **)a->buf)[i] = elem;
+    /* The barrier before the store (RC5). */
     avant_barrier_slot(a->buf, &((void **)a->buf)[i]);
+    ((void **)a->buf)[i] = elem;
   }
 }
 
@@ -724,6 +724,8 @@ void avant_array_sort_str(void *arr) {
     ARR_FROZEN_TRAP(a, AVANT_FROZEN_SORT);
   }
   if (a && a->buf && a->size > 1) {
+    /* The strings change places in their buffer (RC5). */
+    avant_gc_overwrite(a->buf);
     qsort(a->buf, (size_t)a->size, sizeof(char *), cmp_str);
   }
 }
@@ -762,6 +764,10 @@ void avant_array_reverse(void *arr, uint64_t elem_size) {
   if (!a || !a->buf || a->size <= 1 || elem_size == 0) {
     return;
   }
+  /* The elements change places in their buffer; references among them
+   * move to other words of it (RC5; nothing for a buffer without
+   * references). */
+  avant_gc_overwrite(a->buf);
   if (elem_size > sizeof(tmp)) {
     uint8_t *big = (uint8_t *)malloc((size_t)elem_size);
     if (!big) {
