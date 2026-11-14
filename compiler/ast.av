@@ -494,6 +494,39 @@ pub class ModInfo {
   }
 }
 
+// A module constant (Stage 29 W5b2, D314, D315, D327 Q7): `const name =
+// value` at module level, `pub const` exported; the value is a scalar
+// computed when compiling (checker/consts.av), and each use of the name
+// is that value written as a literal.
+pub class ConstDef {
+  pub loc: Location
+  pub name: String = ""
+  pub value: Expr
+  pub vis: Bool = false
+  pub mod_name: String = ""
+
+  fn initialize(loc: Location, name: String, value: Expr) {
+    self.loc = loc
+    self.name = name
+    self.value = value
+  }
+}
+
+// A constant's computed value (checker/consts.av): an Int (iv), a UInt64
+// (uv: a value written with the u64 suffix), a Float64 (fv) or a Bool
+// (bv), by kind (cv_* in checker/consts.av); state 0 not computed yet, 1
+// being computed (a reference back to it is a cycle), 2 computed, 3
+// refused.
+pub class ConstVal {
+  pub def: ConstDef? = nil
+  pub state: Int = 0
+  pub kind: Int = 0
+  pub iv: Int = 0
+  pub uv: UInt64 = 0u64
+  pub fv: Float64 = 0.0
+  pub bv: Bool = false
+}
+
 pub class Program {
   pub loc: Location
   pub structs: Array(StructDef) = []
@@ -509,6 +542,7 @@ pub class Program {
   pub mods: Array(ModInfo) = []
   pub interfaces: Array(InterfaceDef) = []
   pub opt_ins: Array(OptIn) = []
+  pub consts: Array(ConstDef) = []
   pub re2c_ids: Hash(String, Int)
   pub re2c_groups: Array(Int)
   pub re2c_obj: String = ""

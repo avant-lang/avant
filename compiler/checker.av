@@ -103,6 +103,10 @@ pub class Checker {
   pub lib_mod: Hash(String, String)
   pub lib_vis: Hash(String, Int)
   pub known_mods: Hash(String, Int)
+  // The module constants (Stage 29 W5b2, checker/consts.av), and each
+  // one's index there by module and name (const_slot).
+  pub const_list: Array(ConstVal)
+  pub const_vals: Hash(String, Int)
   pub current_fn: Function? = nil
   // The `Mutex(T).new(name)` calls of the function being checked, whose
   // names they consume (O687; checker/guard.av check_consumes).
@@ -226,6 +230,8 @@ pub class Checker {
     self.lib_vis = lv
     km = Hash(String, Int).new
     self.known_mods = km
+    self.const_list = []
+    self.const_vals = Hash(String, Int).new
     self.lam_exprs = []
     self.lam_scopes = []
     self.lambda_infer = false
@@ -1082,6 +1088,9 @@ pub class Checker {
       return
     }
     if target = stmt.target, value = stmt.value {
+      if refuse_const_write(target) {
+        return
+      }
       if target.kind == ex_name() {
         if target.ident == "self" {
           fail(stmt.loc, "cannot assign to self")
@@ -1199,6 +1208,9 @@ pub class Checker {
       return
     }
     if target = stmt.target, value = stmt.value {
+      if refuse_const_write(target) {
+        return
+      }
       if target.kind == ex_name() {
         if target.ident == "self" {
           fail(stmt.loc, "cannot assign to self")
@@ -1312,6 +1324,9 @@ pub class Checker {
       return check_switch(expr, has_want, want)
     }
     if k == ex_field() {
+      if inline_const(expr) {
+        return check_expr_core(expr, has_want, want)
+      }
       return check_field(expr)
     }
     if k == ex_struct() {
@@ -2690,6 +2705,10 @@ pub class Checker {
       expr.receiver = r
       return check_method_call(expr, r, has_want, want)
     }
+    // A module constant (Stage 29 W5b2): its value, written as a literal.
+    if inline_const(expr) {
+      return check_expr_core(expr, has_want, want)
+    }
     if has_want && want.is_fn {
       return check_fn_ref(expr, want)
     }
@@ -2754,7 +2773,10 @@ pub class Checker {
     if expr.int_bits <= literal_int_max(ty) {
       return ty
     }
-    if ty.is_int {
+    if expr.value_str.size > 0 {
+      // A constant written here as its value (checker/consts.av).
+      fail(expr.loc, "${expr.value_str} does not fit in ${ty.show}")
+    } else if ty.is_int {
       fail(expr.loc, "integer literal does not fit in Int; use ${expr.int_bits}u64")
     } else {
       fail(expr.loc, "integer literal does not fit in ${ty.show}")
@@ -2782,7 +2804,11 @@ pub class Checker {
       }
     }
     if lit.int_bits > literal_int_max(ty) + 1u64 {
-      fail(expr.loc, "integer literal does not fit in ${ty.show}")
+      if lit.value_str.size > 0 {
+        fail(expr.loc, "${lit.value_str} does not fit in ${ty.show}")
+      } else {
+        fail(expr.loc, "integer literal does not fit in ${ty.show}")
+      }
     }
     lit.ty = ty
     ty
@@ -2794,8 +2820,16 @@ pub class Checker {
     if e.kind == ex_int() {
       return true
     }
+    // A constant is its value written as a literal (Stage 29 W5b2,
+    // checker/consts.av), so it adopts the other operand's type as one.
+    if (e.kind == ex_name() || e.kind == ex_field()) && inline_const(e) {
+      return is_int_literal(e)
+    }
     if e.kind == ex_unary() && e.op == tk_minus() {
       if inner = e.inner {
+        if (inner.kind == ex_name() || inner.kind == ex_field()) && inline_const(inner) {
+          return inner.kind == ex_int()
+        }
         return inner.kind == ex_int()
       }
     }
@@ -2804,6 +2838,9 @@ pub class Checker {
 
   pub fn check_unary(expr: Expr, has_want: Bool, want: Ty): Ty {
     if inner = expr.inner {
+      if inner.kind == ex_name() || inner.kind == ex_field() {
+        _ = inline_const(inner)
+      }
       if expr.op == tk_minus() && inner.kind == ex_int() {
         return check_negated_literal(expr, inner, has_want, want)
       }
