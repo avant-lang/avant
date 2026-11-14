@@ -23,38 +23,37 @@ layout %(Int|prelude.IoError) = union { 0 tag: i32, 1 m0: i64, 2 m1: ref %prelud
 layout %(Array(String)|prelude.IoError) = union { 0 tag: i32, 1 m0: ref %Array(String), 2 m1: ref %prelude.IoError }  size 24 align 8
 layout %(Int|prelude.ProcessError) = union { 0 tag: i32, 1 m0: i64, 2 m1: ref %prelude.ProcessError }  size 24 align 8
 
-const str.0 = "%lld\0A"
-const str.1 = "b"
-const str.2 = "a"
-const str.3 = "c"
-const str.4 = "none"
-const str.5 = "hey"
-const str.6 = "AB"
-const str.7 = "z"
-const str.8 = "vv"
-const str.9 = "k"
-const str.10 = "q"
-const str.11 = "xkx"
-const str.12 = "ab"
-const str.13 = "AVANT_W7A_SURELY_UNSET"
-const str.14 = "unset"
-const str.15 = "/nonexistent/avant-w7a"
-const str.16 = "no file"
-const str.17 = "read"
-const str.18 = "write"
-const str.19 = "list"
-const str.20 = ""
-const str.21 = "cannot "
-const str.22 = " "
-const str.23 = ": "
-const str.24 = "avant_sys.avant_sys_strerror"
-const str.25 = " killed by signal "
-const str.26 = " ("
-const str.27 = "avant_sys.avant_sys_strsignal"
-const str.28 = ")"
-const str.29 = "cannot run "
-const str.30 = ": cannot open "
-const str.31 = "pt"
+const str.0 = "b"
+const str.1 = "a"
+const str.2 = "c"
+const str.3 = "none"
+const str.4 = "hey"
+const str.5 = "AB"
+const str.6 = "z"
+const str.7 = "vv"
+const str.8 = "k"
+const str.9 = "q"
+const str.10 = "xkx"
+const str.11 = "ab"
+const str.12 = "AVANT_W7A_SURELY_UNSET"
+const str.13 = "unset"
+const str.14 = "/nonexistent/avant-w7a"
+const str.15 = "no file"
+const str.16 = "read"
+const str.17 = "write"
+const str.18 = "list"
+const str.19 = ""
+const str.20 = "cannot "
+const str.21 = " "
+const str.22 = ": "
+const str.23 = "avant_sys.avant_sys_strerror"
+const str.24 = " killed by signal "
+const str.25 = " ("
+const str.26 = "avant_sys.avant_sys_strsignal"
+const str.27 = ")"
+const str.28 = "cannot run "
+const str.29 = ": cannot open "
+const str.30 = "pt"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -89,6 +88,7 @@ extern avant_hash_set_i32k_i32(ref, i64, i64) -> void collects
 extern avant_hash_set_str(ref, ref str, ref str) -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_f64(f64) -> void never
+extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i64) -> ref str collects
@@ -103,7 +103,6 @@ extern avant_sys_strerror(i64) -> ref str collects
 extern avant_sys_strsignal(i64) -> ref str collects
 extern avant_sys_write(ref str, ref str) -> i64 collects
 extern avant_trap_c_null(ref str) -> void never noreturn
-extern printf(ref str, ...) -> i32 never
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @results.av:16:1 {
   let _0: i32
@@ -535,7 +534,7 @@ bb4:
   goto bb5   @18:18
 
 bb5:
-  call printf(const str.0, copy _15) nocollect   @18:3
+  call avant_puts_i64(copy _15) nocollect   @18:3
   _19 = const i64 5   @19:10
   _20 = copy (*_5).1   @19:10
   _21 = cast copy _20 to i64   @19:10
@@ -566,7 +565,7 @@ bb9:
   goto bb10   @19:18
 
 bb10:
-  call printf(const str.0, copy _28) nocollect   @19:3
+  call avant_puts_i64(copy _28) nocollect   @19:3
   _32 = const i64 -1   @20:10
   _33 = copy (*_5).1   @20:10
   _34 = cast copy _33 to i64   @20:10
@@ -597,7 +596,7 @@ bb14:
   goto bb15   @20:19
 
 bb15:
-  call printf(const str.0, copy _41) nocollect   @20:3
+  call avant_puts_i64(copy _41) nocollect   @20:3
   _45 = call avant_array_index_i64(copy _5, const i64 9) collects   @21:10
   _46 = ge copy _45, const i64 0   @21:10
   branch copy _46, bb16, bb17   @21:10
@@ -625,7 +624,7 @@ bb20:
   goto bb21   @21:23
 
 bb21:
-  call printf(const str.0, copy _48) nocollect   @21:3
+  call avant_puts_i64(copy _48) nocollect   @21:3
   _52 = call avant_array_index_i64(copy _5, const i64 8) collects   @22:10
   _53 = ge copy _52, const i64 0   @22:10
   branch copy _53, bb22, bb23   @22:10
@@ -653,7 +652,7 @@ bb26:
   goto bb27   @22:23
 
 bb27:
-  call printf(const str.0, copy _55) nocollect   @22:3
+  call avant_puts_i64(copy _55) nocollect   @22:3
   _59 = const i32 0   @23:10
   _60 = addr.raw _59   @23:10
   _61 = call avant_array_min_i64(copy _5, copy _60) collects   @23:10
@@ -683,7 +682,7 @@ bb32:
   goto bb33   @23:15
 
 bb33:
-  call printf(const str.0, copy _64) nocollect   @23:3
+  call avant_puts_i64(copy _64) nocollect   @23:3
   _68 = const i32 0   @24:10
   _69 = addr.raw _68   @24:10
   _70 = call avant_array_max_i64(copy _5, copy _69) collects   @24:10
@@ -713,7 +712,7 @@ bb38:
   goto bb39   @24:15
 
 bb39:
-  call printf(const str.0, copy _73) nocollect   @24:3
+  call avant_puts_i64(copy _73) nocollect   @24:3
   _77 = call avant_alloc(const u64 16, const u32 1022) collects   @25:20
   _78 = copy _77   @25:3
   _79 = const i32 0   @26:10
@@ -745,7 +744,7 @@ bb44:
   goto bb45   @26:15
 
 bb45:
-  call printf(const str.0, copy _84) nocollect   @26:3
+  call avant_puts_i64(copy _84) nocollect   @26:3
   _88 = const i64 0   @27:10
   _89 = copy (*_78).1   @27:10
   _90 = cast copy _89 to i64   @27:10
@@ -776,7 +775,7 @@ bb49:
   goto bb50   @27:18
 
 bb50:
-  call printf(const str.0, copy _97) nocollect   @27:3
+  call avant_puts_i64(copy _97) nocollect   @27:3
   _101 = call avant_alloc(const u64 16, const u32 0) collects   @28:24
   (*_101)[const i64 0] = const f64 0x4004000000000000 /* 2.5 */   @28:25
   (*_101)[const i64 1] = const f64 0x3FE0000000000000 /* 0.5 */   @28:30
@@ -842,11 +841,11 @@ bb61:
   goto bb62   @30:25
 
 bb62:
-  call printf(const str.0, copy _116) nocollect   @30:3
+  call avant_puts_i64(copy _116) nocollect   @30:3
   _120 = call avant_alloc(const u64 24, const u32 65535) collects fresh   @31:23
-  (*_120)[const i64 0] = const str.1 fresh   @31:24
-  (*_120)[const i64 1] = const str.2 fresh   @31:29
-  (*_120)[const i64 2] = const str.3 fresh   @31:34
+  (*_120)[const i64 0] = const str.0 fresh   @31:24
+  (*_120)[const i64 1] = const str.1 fresh   @31:29
+  (*_120)[const i64 2] = const str.2 fresh   @31:34
   _121 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @31:23
   (*_121).0 = copy _120 fresh   @31:23
   (*_121).1 = const i32 3   @31:23
@@ -871,7 +870,7 @@ bb64:
   branch copy _132, bb65, bb66   @32:18
 
 bb65:
-  _131 = const str.4   @32:18
+  _131 = const str.3   @32:18
   goto bb67   @32:18
 
 bb66:
@@ -899,7 +898,7 @@ bb69:
   branch copy _142, bb70, bb71   @33:18
 
 bb70:
-  _141 = const str.4   @33:18
+  _141 = const str.3   @33:18
   goto bb72   @33:18
 
 bb71:
@@ -927,7 +926,7 @@ bb75:
   branch copy _149, bb76, bb77   @34:15
 
 bb76:
-  _148 = const str.4   @34:15
+  _148 = const str.3   @34:15
   goto bb78   @34:15
 
 bb77:
@@ -955,7 +954,7 @@ bb81:
   branch copy _156, bb82, bb83   @35:15
 
 bb82:
-  _155 = const str.4   @35:15
+  _155 = const str.3   @35:15
   goto bb84   @35:15
 
 bb83:
@@ -964,7 +963,7 @@ bb83:
 
 bb84:
   call avant_puts_str(copy _155) nocollect   @35:3
-  _157 = call avant_array_index_str(copy _122, const str.3) collects   @36:10
+  _157 = call avant_array_index_str(copy _122, const str.2) collects   @36:10
   _158 = ge copy _157, const i64 0   @36:10
   branch copy _158, bb85, bb86   @36:10
 
@@ -991,7 +990,7 @@ bb89:
   goto bb90   @36:25
 
 bb90:
-  call printf(const str.0, copy _160) nocollect   @36:3
+  call avant_puts_i64(copy _160) nocollect   @36:3
   _164 = call avant_alloc(const u64 8, const u32 65535) collects   @37:19
   _165 = call av.results/Pt.new(const i64 6) collects   @37:22
   (*_164)[const i64 0] = copy _165 fresh   @37:22
@@ -1022,11 +1021,11 @@ bb92:
 bb93:
   _177 = copy _171   @38:3
   _178 = copy (*_177).0   @39:12
-  call printf(const str.0, copy _178) nocollect   @39:5
+  call avant_puts_i64(copy _178) nocollect   @39:5
   goto bb94   @38:3
 
 bb94:
-  _179 = const str.5   @41:13
+  _179 = const str.4   @41:13
   _180 = const i64 0   @41:13
   _181 = call avant_str_size(copy _179) nocollect   @41:13
   _182 = union %(Nil|Int) tag 0   @41:13
@@ -1057,8 +1056,8 @@ bb98:
   goto bb99   @41:21
 
 bb99:
-  call printf(const str.0, copy _189) nocollect   @41:3
-  _193 = const str.5   @42:13
+  call avant_puts_i64(copy _189) nocollect   @41:3
+  _193 = const str.4   @42:13
   _194 = const i64 3   @42:13
   _195 = call avant_str_size(copy _193) nocollect   @42:13
   _196 = union %(Nil|Int) tag 0   @42:13
@@ -1089,8 +1088,8 @@ bb103:
   goto bb104   @42:21
 
 bb104:
-  call printf(const str.0, copy _203) nocollect   @42:3
-  _207 = const str.5   @43:19
+  call avant_puts_i64(copy _203) nocollect   @42:3
+  _207 = const str.4   @43:19
   _208 = const i64 2   @43:19
   _209 = call avant_str_size(copy _207) nocollect   @43:19
   _210 = union %(Nil|Int) tag 0   @43:19
@@ -1121,10 +1120,10 @@ bb108:
   goto bb109   @43:27
 
 bb109:
-  call printf(const str.0, copy _217) nocollect   @43:3
+  call avant_puts_i64(copy _217) nocollect   @43:3
   _221 = call avant_buf_new(const i64 0) collects   @44:8
   _222 = copy _221   @44:6
-  call avant_buf_push_str(copy _222, const str.6) collects   @45:5
+  call avant_buf_push_str(copy _222, const str.5) collects   @45:5
   _223 = const i64 1   @46:10
   _224 = copy (*_222).1   @46:10
   _225 = cast copy _224 to i64   @46:10
@@ -1156,7 +1155,7 @@ bb113:
   goto bb114   @46:18
 
 bb114:
-  call printf(const str.0, copy _233) nocollect   @46:3
+  call avant_puts_i64(copy _233) nocollect   @46:3
   _237 = const i64 2   @47:10
   _238 = copy (*_222).1   @47:10
   _239 = cast copy _238 to i64   @47:10
@@ -1188,13 +1187,13 @@ bb118:
   goto bb119   @47:18
 
 bb119:
-  call printf(const str.0, copy _247) nocollect   @47:3
+  call avant_puts_i64(copy _247) nocollect   @47:3
   _251 = call avant_hash_new(const i32 1, const i32 0) collects   @48:8
   _252 = copy _251   @48:6
-  call avant_hash_set_i32(copy _252, const str.2, const i64 1) collects   @49:11
+  call avant_hash_set_i32(copy _252, const str.1, const i64 1) collects   @49:11
   _253 = const i32 0   @50:10
   _254 = addr.raw _253   @50:10
-  _255 = call avant_hash_get_i32(copy _252, const str.2, copy _254) nocollect   @50:10
+  _255 = call avant_hash_get_i32(copy _252, const str.1, copy _254) nocollect   @50:10
   _256 = eq copy _253, const i32 1   @50:10
   branch copy _256, bb120, bb121   @50:10
 
@@ -1221,10 +1220,10 @@ bb124:
   goto bb125   @50:16
 
 bb125:
-  call printf(const str.0, copy _258) nocollect   @50:3
+  call avant_puts_i64(copy _258) nocollect   @50:3
   _262 = const i32 0   @51:10
   _263 = addr.raw _262   @51:10
-  _264 = call avant_hash_get_i32(copy _252, const str.7, copy _263) nocollect   @51:10
+  _264 = call avant_hash_get_i32(copy _252, const str.6, copy _263) nocollect   @51:10
   _265 = eq copy _262, const i32 1   @51:10
   branch copy _265, bb126, bb127   @51:10
 
@@ -1251,10 +1250,10 @@ bb130:
   goto bb131   @51:16
 
 bb131:
-  call printf(const str.0, copy _267) nocollect   @51:3
+  call avant_puts_i64(copy _267) nocollect   @51:3
   _271 = const i32 0   @52:10
   _272 = addr.raw _271   @52:10
-  _273 = call avant_hash_get_i32(copy _252, const str.2, copy _272) nocollect   @52:10
+  _273 = call avant_hash_get_i32(copy _252, const str.1, copy _272) nocollect   @52:10
   _274 = eq copy _271, const i32 1   @52:10
   branch copy _274, bb132, bb133   @52:10
 
@@ -1281,13 +1280,13 @@ bb136:
   goto bb137   @52:20
 
 bb137:
-  call printf(const str.0, copy _276) nocollect   @52:3
+  call avant_puts_i64(copy _276) nocollect   @52:3
   _280 = call avant_hash_new(const i32 1, const i32 1) collects   @53:8
   _281 = copy _280   @53:6
-  call avant_hash_set_str(copy _281, const str.9, const str.8) collects   @54:11
+  call avant_hash_set_str(copy _281, const str.8, const str.7) collects   @54:11
   _282 = const i32 0   @55:10
   _283 = addr.raw _282   @55:10
-  _284 = call avant_hash_get_str(copy _281, const str.9, copy _283) nocollect   @55:10
+  _284 = call avant_hash_get_str(copy _281, const str.8, copy _283) nocollect   @55:10
   _285 = eq copy _282, const i32 1   @55:10
   branch copy _285, bb138, bb139   @55:10
 
@@ -1304,7 +1303,7 @@ bb140:
   branch copy _288, bb141, bb142   @55:16
 
 bb141:
-  _287 = const str.4   @55:16
+  _287 = const str.3   @55:16
   goto bb143   @55:16
 
 bb142:
@@ -1315,7 +1314,7 @@ bb143:
   call avant_puts_str(copy _287) nocollect   @55:3
   _289 = const i32 0   @56:10
   _290 = addr.raw _289   @56:10
-  _291 = call avant_hash_get_str(copy _281, const str.10, copy _290) nocollect   @56:10
+  _291 = call avant_hash_get_str(copy _281, const str.9, copy _290) nocollect   @56:10
   _292 = eq copy _289, const i32 1   @56:10
   branch copy _292, bb144, bb145   @56:10
 
@@ -1332,7 +1331,7 @@ bb146:
   branch copy _295, bb147, bb148   @56:16
 
 bb147:
-  _294 = const str.4   @56:16
+  _294 = const str.3   @56:16
   goto bb149   @56:16
 
 bb148:
@@ -1343,7 +1342,7 @@ bb149:
   call avant_puts_str(copy _294) nocollect   @56:3
   _296 = const i32 0   @57:10
   _297 = addr.raw _296   @57:10
-  _298 = call avant_hash_get_str_slice(copy _281, const str.11, const i64 1, const i64 2, copy _297) nocollect   @57:10
+  _298 = call avant_hash_get_str_slice(copy _281, const str.10, const i64 1, const i64 2, copy _297) nocollect   @57:10
   _299 = eq copy _296, const i32 1   @57:10
   branch copy _299, bb150, bb151   @57:10
 
@@ -1360,7 +1359,7 @@ bb152:
   branch copy _302, bb153, bb154   @57:34
 
 bb153:
-  _301 = const str.4   @57:34
+  _301 = const str.3   @57:34
   goto bb155   @57:34
 
 bb154:
@@ -1371,7 +1370,7 @@ bb155:
   call avant_puts_str(copy _301) nocollect   @57:3
   _303 = const i32 0   @58:10
   _304 = addr.raw _303   @58:10
-  _305 = call avant_hash_get_str_slice(copy _281, const str.11, const i64 0, const i64 2, copy _304) nocollect   @58:10
+  _305 = call avant_hash_get_str_slice(copy _281, const str.10, const i64 0, const i64 2, copy _304) nocollect   @58:10
   _306 = eq copy _303, const i32 1   @58:10
   branch copy _306, bb156, bb157   @58:10
 
@@ -1388,7 +1387,7 @@ bb158:
   branch copy _309, bb159, bb160   @58:34
 
 bb159:
-  _308 = const str.4   @58:34
+  _308 = const str.3   @58:34
   goto bb161   @58:34
 
 bb160:
@@ -1429,7 +1428,7 @@ bb166:
   goto bb167   @61:14
 
 bb167:
-  call printf(const str.0, copy _317) nocollect   @61:3
+  call avant_puts_i64(copy _317) nocollect   @61:3
   _321 = const i32 0   @62:10
   _322 = addr.raw _321   @62:10
   _323 = call avant_hash_get_i32k_i32(copy _311, const i64 4, copy _322) nocollect   @62:10
@@ -1459,13 +1458,13 @@ bb172:
   goto bb173   @62:14
 
 bb173:
-  call printf(const str.0, copy _326) nocollect   @62:3
+  call avant_puts_i64(copy _326) nocollect   @62:3
   _330 = call avant_hash_new(const i32 1, const i32 0) collects   @63:8
   _331 = copy _330   @63:6
-  call avant_hash_set_i32(copy _331, const str.12, const i64 5) collects   @64:12
+  call avant_hash_set_i32(copy _331, const str.11, const i64 5) collects   @64:12
   _332 = const i32 0   @65:10
   _333 = addr.raw _332   @65:10
-  _334 = call avant_hash_get_concat(copy _331, const str.2, const str.1, copy _333) collects   @65:10
+  _334 = call avant_hash_get_concat(copy _331, const str.1, const str.0, copy _333) collects   @65:10
   _335 = eq copy _332, const i32 1   @65:10
   branch copy _335, bb174, bb175   @65:10
 
@@ -1492,10 +1491,10 @@ bb178:
   goto bb179   @65:32
 
 bb179:
-  call printf(const str.0, copy _337) nocollect   @65:3
+  call avant_puts_i64(copy _337) nocollect   @65:3
   _341 = const i32 0   @66:10
   _342 = addr.raw _341   @66:10
-  _343 = call avant_hash_get_concat(copy _331, const str.1, const str.2, copy _342) collects   @66:10
+  _343 = call avant_hash_get_concat(copy _331, const str.0, const str.1, copy _342) collects   @66:10
   _344 = eq copy _341, const i32 1   @66:10
   branch copy _344, bb180, bb181   @66:10
 
@@ -1522,10 +1521,10 @@ bb184:
   goto bb185   @66:32
 
 bb185:
-  call printf(const str.0, copy _346) nocollect   @66:3
+  call avant_puts_i64(copy _346) nocollect   @66:3
   _350 = const i32 0   @67:8
   _351 = addr.raw _350   @67:8
-  _352 = call avant_env_get(const str.13, copy _351) collects   @67:8
+  _352 = call avant_env_get(const str.12, copy _351) collects   @67:8
   _353 = eq copy _350, const i32 1   @67:8
   branch copy _353, bb186, bb187   @67:8
 
@@ -1542,7 +1541,7 @@ bb188:
   branch copy _356, bb189, bb190   @67:42
 
 bb189:
-  _355 = const str.14   @67:42
+  _355 = const str.13   @67:42
   goto bb191   @67:42
 
 bb190:
@@ -1551,7 +1550,7 @@ bb190:
 
 bb191:
   call avant_puts_str(copy _355) nocollect   @67:3
-  _357 = call av.prelude/file_read(const str.15) collects   @68:10
+  _357 = call av.prelude/file_read(const str.14) collects   @68:10
   _358 = copy _357.0   @68:3
   _359 = ne copy _358, const i32 0   @68:3
   branch copy _359, bb192, bb193   @68:3
@@ -1563,7 +1562,7 @@ bb192:
   goto bb194   @68:3
 
 bb193:
-  call avant_puts_str(const str.16) nocollect   @71:5
+  call avant_puts_str(const str.15) nocollect   @71:5
   goto bb194   @68:3
 
 bb194:
@@ -1603,7 +1602,7 @@ bb1:
 bb2:
   _7 = call avant_sys_errno() collects   @62:38
   _8 = call avant_alloc(const u64 24, const u32 2) collects fresh   @62:10
-  call av.prelude/IoError.initialize(copy _8, const str.17, copy _1, copy _7) nocollect   @62:10
+  call av.prelude/IoError.initialize(copy _8, const str.16, copy _1, copy _7) nocollect   @62:10
   _9 = union %(prelude.IoError|String) tag 0 (copy _8)   @62:10
   _0 = copy _9   @62:10
   gc.leave   @62:10
@@ -1633,7 +1632,7 @@ bb0:
 bb1:
   _6 = call avant_sys_errno() collects   @69:48
   _7 = call avant_alloc(const u64 24, const u32 2) collects fresh   @69:19
-  call av.prelude/IoError.initialize(copy _7, const str.18, copy _1, copy _6) nocollect   @69:19
+  call av.prelude/IoError.initialize(copy _7, const str.17, copy _1, copy _6) nocollect   @69:19
   _8 = union %(Int|prelude.IoError) tag 1 (copy _7)   @69:19
   _0 = copy _8   @69:5
   gc.leave   @69:5
@@ -1674,7 +1673,7 @@ bb1:
 bb2:
   _6 = call avant_sys_errno() collects   @79:38
   _7 = call avant_alloc(const u64 24, const u32 2) collects fresh   @79:10
-  call av.prelude/IoError.initialize(copy _7, const str.19, copy _1, copy _6) nocollect   @79:10
+  call av.prelude/IoError.initialize(copy _7, const str.18, copy _1, copy _6) nocollect   @79:10
   _8 = union %(Array(String)|prelude.IoError) tag 1 (copy _7)   @79:10
   _0 = copy _8   @79:10
   gc.leave   @79:10
@@ -1693,9 +1692,9 @@ bb0:
   _3 = zero   @84:5
   gc.enter   @84:5
   gc.roots _1, _2, _3   @84:5
-  _3 = const str.20   @85:60
+  _3 = const str.19   @85:60
   _4 = call avant_sys_run(copy _1, copy _2, copy _3) collects   @85:33
-  _5 = call av.prelude/process_result(copy _1, copy _4, const str.20) collects   @85:3
+  _5 = call av.prelude/process_result(copy _1, copy _4, const str.19) collects   @85:3
   _0 = copy _5   @85:3
   gc.leave   @85:3
   return   @85:3
@@ -1748,7 +1747,7 @@ bb0:
 bb1:
   _5 = call avant_sys_signal() collects   @95:47
   _6 = call avant_alloc(const u64 32, const u32 3) collects fresh   @95:24
-  call av.prelude/ProcessError.initialize(copy _6, copy _1, const i64 0, copy _5, const str.20) nocollect   @95:24
+  call av.prelude/ProcessError.initialize(copy _6, copy _1, const i64 0, copy _5, const str.19) nocollect   @95:24
   _7 = union %(Int|prelude.ProcessError) tag 1 (copy _6)   @95:24
   _0 = copy _7   @95:5
   gc.leave   @95:5
@@ -1781,7 +1780,7 @@ bb5:
 bb6:
   _14 = call avant_sys_errno() collects   @101:44
   _15 = call avant_alloc(const u64 32, const u32 3) collects fresh   @101:24
-  call av.prelude/ProcessError.initialize(copy _15, copy _1, copy _14, const i64 0, const str.20) nocollect   @101:24
+  call av.prelude/ProcessError.initialize(copy _15, copy _1, copy _14, const i64 0, const str.19) nocollect   @101:24
   _16 = union %(Int|prelude.ProcessError) tag 1 (copy _15)   @101:24
   _0 = copy _16   @101:5
   gc.leave   @101:5
@@ -1844,15 +1843,15 @@ bb0:
   branch copy _6, bb1, bb2   @27:39
 
 bb1:
-  call avant_trap_c_null(const str.24) nocollect   @27:39
+  call avant_trap_c_null(const str.23) nocollect   @27:39
   unreachable   @27:39
 
 bb2:
   _7 = call avant_c_str(copy _5) collects   @27:39
-  _8 = call avant_str_concat(const str.21, copy _2) collects   @27:5
-  _9 = call avant_str_concat(copy _8, const str.22) collects   @27:5
+  _8 = call avant_str_concat(const str.20, copy _2) collects   @27:5
+  _9 = call avant_str_concat(copy _8, const str.21) collects   @27:5
   _10 = call avant_str_concat(copy _9, copy _3) collects   @27:5
-  _11 = call avant_str_concat(copy _10, const str.23) collects   @27:5
+  _11 = call avant_str_concat(copy _10, const str.22) collects   @27:5
   _12 = call avant_str_concat(copy _11, copy _7) collects   @27:5
   _0 = copy _12   @27:5
   gc.leave   @27:5
@@ -1969,16 +1968,16 @@ bb2:
   branch copy _18, bb5, bb6   @50:5
 
 bb3:
-  call avant_trap_c_null(const str.27) nocollect   @48:62
+  call avant_trap_c_null(const str.26) nocollect   @48:62
   unreachable   @48:62
 
 bb4:
   _10 = call avant_c_str(copy _8) collects   @48:62
-  _11 = call avant_str_concat(copy _4, const str.25) collects   @48:14
+  _11 = call avant_str_concat(copy _4, const str.24) collects   @48:14
   _12 = call avant_str_concat(copy _11, copy _6) collects   @48:14
-  _13 = call avant_str_concat(copy _12, const str.26) collects   @48:14
+  _13 = call avant_str_concat(copy _12, const str.25) collects   @48:14
   _14 = call avant_str_concat(copy _13, copy _10) collects   @48:14
-  _15 = call avant_str_concat(copy _14, const str.28) collects   @48:14
+  _15 = call avant_str_concat(copy _14, const str.27) collects   @48:14
   _0 = copy _15   @48:7
   gc.leave   @48:7
   return   @48:7
@@ -1999,28 +1998,28 @@ bb6:
   branch copy _33, bb9, bb10   @53:37
 
 bb7:
-  call avant_trap_c_null(const str.24) nocollect   @51:69
+  call avant_trap_c_null(const str.23) nocollect   @51:69
   unreachable   @51:69
 
 bb8:
   _24 = call avant_c_str(copy _22) collects   @51:69
-  _25 = call avant_str_concat(const str.29, copy _19) collects   @51:14
-  _26 = call avant_str_concat(copy _25, const str.30) collects   @51:14
+  _25 = call avant_str_concat(const str.28, copy _19) collects   @51:14
+  _26 = call avant_str_concat(copy _25, const str.29) collects   @51:14
   _27 = call avant_str_concat(copy _26, copy _20) collects   @51:14
-  _28 = call avant_str_concat(copy _27, const str.23) collects   @51:14
+  _28 = call avant_str_concat(copy _27, const str.22) collects   @51:14
   _29 = call avant_str_concat(copy _28, copy _24) collects   @51:14
   _0 = copy _29   @51:7
   gc.leave   @51:7
   return   @51:7
 
 bb9:
-  call avant_trap_c_null(const str.24) nocollect   @53:37
+  call avant_trap_c_null(const str.23) nocollect   @53:37
   unreachable   @53:37
 
 bb10:
   _34 = call avant_c_str(copy _32) collects   @53:37
-  _35 = call avant_str_concat(const str.29, copy _30) collects   @53:5
-  _36 = call avant_str_concat(copy _35, const str.23) collects   @53:5
+  _35 = call avant_str_concat(const str.28, copy _30) collects   @53:5
+  _36 = call avant_str_concat(copy _35, const str.22) collects   @53:5
   _37 = call avant_str_concat(copy _36, copy _34) collects   @53:5
   _0 = copy _37   @53:5
   gc.leave   @53:5
@@ -2045,7 +2044,7 @@ fn av.results/Pt.new(_1: i64) -> ref %results.Pt frame @results.av:7:1 {
 
 bb0:
   _2 = call avant_alloc(const u64 16, const u32 1) collects fresh   @7:1
-  (*_2).1 = const str.31 fresh   @9:3
+  (*_2).1 = const str.30 fresh   @9:3
   call av.results/Pt.initialize(copy _2, copy _1) nocollect   @7:1
   _0 = copy _2   @7:1
   return   @7:1

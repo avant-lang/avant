@@ -222,11 +222,14 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   zero
 }
 
-// puts (calls.av:2043-2075): printf with the old formats for integers
-// and strings; puts_u prints the bits unsigned ("%u\n", "%llu\n"). A Float64 prints its one text and a
-// Bool the word true or false (Stage 29 W4b1, D293, D295 R7), through
-// avant_puts_f64 and avant_puts_bool; a String prints by its length
-// (avant_puts_str), a NUL byte included.
+// puts: a Float64 prints its one text and a Bool the word true or false
+//, through avant_puts_f64 and
+// avant_puts_bool; a String prints by its length (avant_puts_str), a NUL
+// byte included; an integer prints through avant_puts_i64 (Int, and
+// Int32 widened by its sign) or avant_puts_u64 (UInt64, UInt32 widened
+// by zero), each of which checks stdout after its write (it was printf,
+// whose failed write was found only later).
+// puts_u prints the bits unsigned at their own width.
 pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOperand {
   b = lw.lw_b
   ty = lw.ety(arg)
@@ -248,30 +251,21 @@ pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOpe
     b.call(-1, "avant_puts_bool", lw.one(w))
     return b.c_i32(0)
   }
-  fmt = "%d\n"
-  if unsigned {
-    // Its bits as an unsigned number at its own width (Stage 29 W-INT1).
-    fmt = "%u\n"
-    if ty == mt_i64() || ty == mt_u64() {
-      fmt = "%llu\n"
+  if unsigned || ty == mt_u32() || ty == mt_u64() {
+    if ty == mt_i32() {
+      v = lw.tmp(mt_u32(), b.rv_cast(v, mt_u32()))
+      ty = mt_u32()
     }
-  } else if ty == mt_u32() {
-    fmt = "%u\n"
-  } else if ty == mt_i64() {
-    fmt = "%lld\n"
-  } else if ty == mt_u64() {
-    fmt = "%llu\n"
-  } else if ty == mt_str() {
-    fmt = "%s\n"
-  } else if ty == mt_f64() {
-    fmt = "%g\n"
-  } else if ty == mt_bool() {
-    v = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
+    if ty != mt_u64() {
+      v = lw.tmp(mt_u64(), b.rv_cast(v, mt_u64()))
+    }
+    b.call(-1, "avant_puts_u64", lw.one(v))
+    return b.c_i32(0)
   }
-  args: Array(MOperand) = []
-  args.push(b.str_const(fmt))
-  args.push(v)
-  b.call(-1, "printf", args)
+  if ty != mt_i64() {
+    v = lw.tmp(mt_i64(), b.rv_cast(v, mt_i64()))
+  }
+  b.call(-1, "avant_puts_i64", lw.one(v))
   b.c_i32(0)
 }
 

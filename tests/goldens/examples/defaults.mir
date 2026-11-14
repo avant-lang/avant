@@ -4,8 +4,7 @@ file 0 "defaults.av"
 layout %defaults.CalcNode = class { 0 kind: i64, 1 name: ref str, 2 extra: i64 }  size 24 align 8 id 1
 layout %defaults.Named = class { 0 kind: i64, 1 name: ref str }  size 16 align 8 id 2
 
-const str.0 = "%lld\0A"
-const str.1 = ""
+const str.0 = ""
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -16,8 +15,8 @@ typemap 2 %defaults.Named stride 0 bits [0x2]
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_i64(i64) -> void never
 extern avant_str_size(ref str) -> i64 never
-extern printf(ref str, ...) -> i32 never
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @defaults.av:19:1 {
   let _0: i32
@@ -43,19 +42,19 @@ bb0:
   _3 = call av.defaults/CalcNode.new() collects   @20:15
   _4 = copy _3   @20:5
   _5 = copy (*_4).0   @21:9
-  call printf(const str.0, copy _5) nocollect   @21:3
+  call avant_puts_i64(copy _5) nocollect   @21:3
   _6 = copy (*_4).1   @22:9
   _7 = call avant_str_size(copy _6) nocollect   @22:14
-  call printf(const str.0, copy _7) nocollect   @22:3
+  call avant_puts_i64(copy _7) nocollect   @22:3
   _8 = copy (*_4).2   @23:9
-  call printf(const str.0, copy _8) nocollect   @23:3
+  call avant_puts_i64(copy _8) nocollect   @23:3
   _9 = call av.defaults/Named.new(const i64 5) collects   @24:12
   _10 = copy _9   @24:5
   _11 = copy (*_10).0   @25:9
-  call printf(const str.0, copy _11) nocollect   @25:3
+  call avant_puts_i64(copy _11) nocollect   @25:3
   _12 = copy (*_10).1   @26:9
   _13 = call avant_str_size(copy _12) nocollect   @26:14
-  call printf(const str.0, copy _13) nocollect   @26:3
+  call avant_puts_i64(copy _13) nocollect   @26:3
   _0 = const i32 0   @19:1
   gc.leave   @19:1
   return   @19:1
@@ -84,7 +83,7 @@ fn av.defaults/CalcNode.new() -> ref %defaults.CalcNode frame @defaults.av:1:1 {
 bb0:
   _1 = call avant_alloc(const u64 24, const u32 1) collects fresh   @1:1
   (*_1).0 = const i64 0   @2:3
-  (*_1).1 = const str.1 fresh   @3:3
+  (*_1).1 = const str.0 fresh   @3:3
   (*_1).2 = const i64 1   @4:3
   call av.defaults/CalcNode.initialize(copy _1) nocollect   @1:1
   _0 = copy _1   @1:1
@@ -99,7 +98,7 @@ fn av.defaults/Named.new(_1: i64) -> ref %defaults.Named frame @defaults.av:10:1
 bb0:
   _2 = call avant_alloc(const u64 16, const u32 2) collects fresh   @10:1
   (*_2).0 = const i64 0   @11:3
-  (*_2).1 = const str.1 fresh   @12:3
+  (*_2).1 = const str.0 fresh   @12:3
   call av.defaults/Named.initialize(copy _2, copy _1) nocollect   @10:1
   _0 = copy _2   @10:1
   return   @10:1

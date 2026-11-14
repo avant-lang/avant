@@ -58,14 +58,12 @@ layout %fn():String = fnval { 0 env: ref, 1 code: code(ref) -> ref str }  size 1
 layout %lambdas.Meth = struct { 0 base: i64 }  size 8 align 8
 layout %fn():Void = fnval { 0 env: ref, 1 code: code(ref) -> void }  size 16 align 8
 
-const str.0 = "%lld\0A"
-const str.1 = "%llu\0A"
-const str.2 = "still true"
-const str.3 = "now false"
-const str.4 = "ke"
-const str.5 = "pt"
-const str.6 = "!"
-const str.7 = "done"
+const str.0 = "still true"
+const str.1 = "now false"
+const str.2 = "ke"
+const str.3 = "pt"
+const str.4 = "!"
+const str.5 = "done"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -116,9 +114,10 @@ extern avant_array_push_i64(ref, i64) -> void collects
 extern avant_array_push_slot(ref, u64, u32) -> addr collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_f64(f64) -> void never
+extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
+extern avant_puts_u64(u64) -> void never
 extern avant_str_concat(ref str, ref str) -> ref str collects
-extern printf(ref str, ...) -> i32 never
 
 fn av.lambdas/add(_1: i64) -> %fn(Int):Int frame @lambdas.av:25:1 {
   let _0: %fn(Int):Int
@@ -597,16 +596,16 @@ bb0:
   _21 = copy _20   @78:3
   _22 = copy _21   @79:8
   _23 = call indirect copy _22(const i64 4) collects   @79:8
-  call printf(const str.0, copy _23) nocollect   @79:3
+  call avant_puts_i64(copy _23) nocollect   @79:3
   _24 = fnval %fn(Int,Int):Int (const ref null, const fn av.lambdas/main#lam2)   @80:9
   _25 = copy _24   @80:7
   _26 = copy _25   @81:8
   _27 = call indirect copy _26(const i64 4, const i64 2) collects   @81:8
-  call printf(const str.0, copy _27) nocollect   @81:3
+  call avant_puts_i64(copy _27) nocollect   @81:3
   _28 = call av.lambdas/add(const i64 1) collects   @82:8
   _29 = copy _28   @82:14
   _30 = call indirect copy _29(const i64 2) collects   @82:14
-  call printf(const str.0, copy _30) nocollect   @82:3
+  call avant_puts_i64(copy _30) nocollect   @82:3
   _3 = call avant_alloc(const u64 8, const u32 3) collects   @83:3
   (*_3).0 = const i64 1   @83:5
   _31 = call avant_alloc(const u64 8, const u32 9) collects fresh   @84:20
@@ -616,7 +615,7 @@ bb0:
   (*_3).0 = const i64 7   @85:5
   _34 = copy _33   @86:8
   _35 = call indirect copy _34() collects   @86:8
-  call printf(const str.0, copy _35) nocollect   @86:3
+  call avant_puts_i64(copy _35) nocollect   @86:3
   _4 = call avant_alloc(const u64 8, const u32 3) collects   @87:3
   (*_4).0 = const i64 1   @87:5
   _36 = call avant_alloc(const u64 8, const u32 10) collects fresh   @88:21
@@ -625,9 +624,9 @@ bb0:
   _38 = copy _37   @88:3
   _39 = copy _38   @92:8
   _40 = call indirect copy _39() collects   @92:8
-  call printf(const str.0, copy _40) nocollect   @92:3
+  call avant_puts_i64(copy _40) nocollect   @92:3
   _41 = copy (*_4).0   @93:8
-  call printf(const str.0, copy _41) nocollect   @93:3
+  call avant_puts_i64(copy _41) nocollect   @93:3
   _5 = call avant_alloc(const u64 8, const u32 3) collects   @94:3
   (*_5).0 = const i64 1   @94:8
   _42 = call avant_alloc(const u64 8, const u32 11) collects fresh   @95:26
@@ -640,16 +639,16 @@ bb0:
   _47 = copy _46   @96:3
   _48 = copy _47   @100:8
   _49 = call indirect copy _48() collects   @100:8
-  call printf(const str.0, copy _49) nocollect   @100:3
+  call avant_puts_i64(copy _49) nocollect   @100:3
   _50 = copy _44   @101:8
   _51 = call indirect copy _50() collects   @101:8
-  call printf(const str.0, copy _51) nocollect   @101:3
+  call avant_puts_i64(copy _51) nocollect   @101:3
   _52 = call av.lambdas/outer(const i64 4) collects   @102:8
   _53 = copy _52   @102:16
   _54 = call indirect copy _53() collects   @102:16
   _55 = copy _54   @102:18
   _56 = call indirect copy _55() collects   @102:18
-  call printf(const str.0, copy _56) nocollect   @102:3
+  call avant_puts_i64(copy _56) nocollect   @102:3
   _6 = call avant_alloc(const u64 8, const u32 3) collects   @103:3
   (*_6).0 = const i64 1   @103:10
   _57 = call avant_alloc(const u64 8, const u32 13) collects fresh   @104:32
@@ -660,11 +659,11 @@ bb0:
   _61 = call indirect copy _60() collects   @108:16
   _62 = copy _61   @108:14
   _63 = copy (*_6).0   @109:8
-  call printf(const str.0, copy _63) nocollect   @109:3
+  call avant_puts_i64(copy _63) nocollect   @109:3
   (*_6).0 = const i64 9   @110:10
   _64 = copy _62   @111:8
   _65 = call indirect copy _64() collects   @111:8
-  call printf(const str.0, copy _65) nocollect   @111:3
+  call avant_puts_i64(copy _65) nocollect   @111:3
   _66 = fnval %fn():fn():fn():Int (const ref null, const fn av.lambdas/main#lam8)   @112:33
   _67 = copy _66   @112:3
   _68 = copy _67   @120:8
@@ -673,7 +672,7 @@ bb0:
   _71 = call indirect copy _70() collects   @120:14
   _72 = copy _71   @120:16
   _73 = call indirect copy _72() collects   @120:16
-  call printf(const str.0, copy _73) nocollect   @120:3
+  call avant_puts_i64(copy _73) nocollect   @120:3
   _7 = call avant_alloc(const u64 8, const u32 3) collects   @121:3
   (*_7).0 = const i64 0   @121:5
   _8 = call avant_alloc(const u64 16, const u32 17) collects   @122:3
@@ -686,7 +685,7 @@ bb0:
   _76 = copy (*_8).0   @129:8
   _77 = copy _76   @129:8
   _78 = call indirect copy _77() collects   @129:8
-  call printf(const str.0, copy _78) nocollect   @129:3
+  call avant_puts_i64(copy _78) nocollect   @129:3
   _79 = call avant_alloc(const u64 16, const u32 1022) collects   @130:27
   _80 = copy _79   @130:3
   _81 = const i64 0   @131:5
@@ -733,24 +732,24 @@ bb3:
   _105 = copy _104   @137:42
   _106 = call indirect copy _105() collects   @137:42
   _107 = add.chk copy _100, copy _106   @137:32
-  call printf(const str.0, copy _107) nocollect   @137:3
+  call avant_puts_i64(copy _107) nocollect   @137:3
   _108 = call av.lambdas/boxed_param(const i64 3) collects   @138:8
   _109 = copy _108   @138:22
   _110 = call indirect copy _109() collects   @138:22
-  call printf(const str.0, copy _110) nocollect   @138:3
+  call avant_puts_i64(copy _110) nocollect   @138:3
   _111 = call av.lambdas/counter(const i64 10) collects   @139:8
   _112 = copy _111   @139:6
   _113 = call av.lambdas/counter(const i64 100) collects   @140:9
   _114 = copy _113   @140:7
   _115 = copy _112   @141:8
   _116 = call indirect copy _115() collects   @141:8
-  call printf(const str.0, copy _116) nocollect   @141:3
+  call avant_puts_i64(copy _116) nocollect   @141:3
   _117 = copy _112   @142:8
   _118 = call indirect copy _117() collects   @142:8
-  call printf(const str.0, copy _118) nocollect   @142:3
+  call avant_puts_i64(copy _118) nocollect   @142:3
   _119 = copy _114   @143:8
   _120 = call indirect copy _119() collects   @143:8
-  call printf(const str.0, copy _120) nocollect   @143:3
+  call avant_puts_i64(copy _120) nocollect   @143:3
   _10 = call avant_alloc(const u64 8, const u32 3) collects   @144:3
   (*_10).0 = const i64 5   @144:3
   _121 = call avant_alloc(const u64 8, const u32 20) collects fresh   @145:25
@@ -760,7 +759,7 @@ bb3:
   (*_10).0 = const i64 8   @146:8
   _124 = copy _123   @147:8
   _125 = call indirect copy _124() collects   @147:8
-  call printf(const str.0, copy _125) nocollect   @147:3
+  call avant_puts_i64(copy _125) nocollect   @147:3
   _11 = call avant_alloc(const u64 8, const u32 21) collects   @148:3
   (*_11).0 = const u64 8   @148:3
   _126 = call avant_alloc(const u64 8, const u32 22) collects fresh   @149:25
@@ -770,7 +769,7 @@ bb3:
   (*_11).0 = const u64 12   @150:5
   _129 = copy _128   @151:8
   _130 = call indirect copy _129() collects   @151:8
-  call printf(const str.1, copy _130) nocollect   @151:3
+  call avant_puts_u64(copy _130) nocollect   @151:3
   _12 = call avant_alloc(const u64 8, const u32 23) collects   @152:3
   (*_12).0 = const f64 0x3FF8000000000000 /* 1.5 */   @152:7
   _131 = call avant_alloc(const u64 8, const u32 24) collects fresh   @153:26
@@ -793,16 +792,16 @@ bb3:
   branch copy _140, bb4, bb5   @159:3
 
 bb4:
-  call avant_puts_str(const str.2) nocollect   @160:5
+  call avant_puts_str(const str.0) nocollect   @160:5
   goto bb6   @159:3
 
 bb5:
-  call avant_puts_str(const str.3) nocollect   @162:5
+  call avant_puts_str(const str.1) nocollect   @162:5
   goto bb6   @159:3
 
 bb6:
   _14 = call avant_alloc(const u64 8, const u32 27) collects   @164:3
-  _141 = call avant_str_concat(const str.4, const str.5) collects   @164:14
+  _141 = call avant_str_concat(const str.2, const str.3) collects   @164:14
   barrier copy _14   @164:7
   (*_14).0 = copy _141   @164:7
   _142 = call avant_alloc(const u64 8, const u32 28) collects fresh   @165:24
@@ -810,7 +809,7 @@ bb6:
   _143 = fnval %fn():String (copy _142, const fn av.lambdas/main#lam15)   @165:24
   _144 = copy _143   @165:3
   _145 = copy (*_14).0   @166:9
-  _146 = call avant_str_concat(copy _145, const str.6) collects   @166:13
+  _146 = call avant_str_concat(copy _145, const str.4) collects   @166:13
   barrier copy _14   @166:7
   (*_14).0 = copy _146   @166:7
   _147 = copy _144   @167:8
@@ -828,13 +827,13 @@ bb6:
   (*_153).0 = const i64 4   @170:10
   _154 = copy _152   @171:8
   _155 = call indirect copy _154() collects   @171:8
-  call printf(const str.0, copy _155) nocollect   @171:3
+  call avant_puts_i64(copy _155) nocollect   @171:3
   _156 = call av.lambdas/Node.new(const i64 5) collects   @172:14
   barrier copy _15   @172:8
   (*_15).0 = copy _156   @172:8
   _157 = copy _152   @173:8
   _158 = call indirect copy _157() collects   @173:8
-  call printf(const str.0, copy _158) nocollect   @173:3
+  call avant_puts_i64(copy _158) nocollect   @173:3
   _16 = call avant_alloc(const u64 16, const u32 31) collects   @174:3
   _159 = struct %lambdas.Pt (const i64 1, const i64 2)   @174:8
   (*_16).0 = copy _159   @174:6
@@ -845,7 +844,7 @@ bb6:
   (*_16).0.0 = const i64 7   @176:8
   _163 = copy _162   @177:8
   _164 = call indirect copy _163() collects   @177:8
-  call printf(const str.0, copy _164) nocollect   @177:3
+  call avant_puts_i64(copy _164) nocollect   @177:3
   _17 = call avant_alloc(const u64 8, const u32 33) collects   @178:3
   _165 = call avant_alloc(const u64 24, const u32 0) collects   @178:8
   (*_165)[const i64 0] = const i64 1   @178:9
@@ -865,7 +864,7 @@ bb6:
   call avant_array_push_i64(copy _170, const i64 4) collects   @180:5
   _171 = copy _169   @181:8
   _172 = call indirect copy _171() collects   @181:8
-  call printf(const str.0, copy _172) nocollect   @181:3
+  call avant_puts_i64(copy _172) nocollect   @181:3
   _18 = call avant_alloc(const u64 16, const u32 35) collects fresh   @182:3
   _173 = fnval %fn(Int):Int (const ref null, const fn av.lambdas/main#lam19)   @182:24
   (*_18).0 = copy _173 fresh   @182:3
@@ -875,13 +874,13 @@ bb6:
   _176 = copy _175   @183:3
   _177 = copy _176   @184:8
   _178 = call indirect copy _177() collects   @184:8
-  call printf(const str.0, copy _178) nocollect   @184:3
+  call avant_puts_i64(copy _178) nocollect   @184:3
   _179 = fnval %fn(Int):Int (const ref null, const fn av.lambdas/main#lam21)   @185:10
   barrier copy _18   @185:8
   (*_18).0 = copy _179   @185:8
   _180 = copy _176   @186:8
   _181 = call indirect copy _180() collects   @186:8
-  call printf(const str.0, copy _181) nocollect   @186:3
+  call avant_puts_i64(copy _181) nocollect   @186:3
   _182 = call av.lambdas/maybe(const i64 6) nocollect   @187:14
   _183 = copy _182.0   @187:3
   _184 = ne copy _183, const i32 0   @187:3
@@ -897,7 +896,7 @@ bb7:
   _188 = copy _187   @188:5
   _189 = copy _188   @189:10
   _190 = call indirect copy _189() collects   @189:10
-  call printf(const str.0, copy _190) nocollect   @189:5
+  call avant_puts_i64(copy _190) nocollect   @189:5
   goto bb8   @187:3
 
 bb8:
@@ -907,7 +906,7 @@ bb8:
   _194 = call av.lambdas/Meth.off(copy _193, const i64 1) collects   @192:12
   _195 = copy _194   @192:19
   _196 = call indirect copy _195(const i64 2) collects   @192:19
-  call printf(const str.0, copy _196) nocollect   @192:3
+  call avant_puts_i64(copy _196) nocollect   @192:3
   _197 = call av.lambdas/Acc.new() collects   @193:12
   _198 = copy _197   @193:7
   (*_198).0 = const i64 5   @194:13
@@ -916,12 +915,12 @@ bb8:
   (*_198).0 = const i64 100   @196:13
   _201 = copy _200   @197:8
   _202 = call indirect copy _201(const i64 2) collects   @197:8
-  call printf(const str.0, copy _202) nocollect   @197:3
+  call avant_puts_i64(copy _202) nocollect   @197:3
   _203 = fnval %fn():Void (const ref null, const fn av.lambdas/main#lam23)   @198:19
   _204 = copy _203   @198:3
   _205 = copy _204   @199:3
   call indirect copy _205() collects   @199:3
-  call avant_puts_str(const str.7) nocollect   @200:3
+  call avant_puts_str(const str.5) nocollect   @200:3
   _0 = const i32 0   @77:1
   gc.leave   @77:1
   return   @77:1

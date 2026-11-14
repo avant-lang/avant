@@ -1,8 +1,6 @@
 module spawn shared
 file 0 "spawn.av"
 
-const str.0 = "%lld\0A"
-
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
@@ -10,8 +8,8 @@ typemap 1023 %Hash stride 0 bits [0x7]
 extern __avant_type_maps() -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_join(ref) -> i64 collects
+extern avant_puts_i64(i64) -> void never
 extern avant_spawn(ptr, ref) -> ref collects
-extern printf(ref str, ...) -> i32 never
 
 fn av.spawn/six_times_seven() -> i64 leaf @spawn.av:1:1 {
   let _0: i64
@@ -40,7 +38,7 @@ bb0:
   _3 = call avant_spawn(const fn av.spawn/main#spawn1, const ref null) collects   @6:7
   _4 = copy _3   @6:5
   _5 = call avant_join(copy _4) collects   @7:9
-  call printf(const str.0, copy _5) nocollect   @7:3
+  call avant_puts_i64(copy _5) nocollect   @7:3
   _0 = const i32 0   @5:1
   gc.leave   @5:1
   return   @5:1

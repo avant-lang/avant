@@ -1,8 +1,7 @@
 module trap_neg
 file 0 "trap_neg.av"
 
-const str.0 = "%lld\0A"
-const str.1 = "not reached"
+const str.0 = "not reached"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -10,8 +9,8 @@ typemap 1023 %Hash stride 0 bits [0x7]
 
 extern __avant_type_maps() -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
-extern printf(ref str, ...) -> i32 never
 
 fn av.trap_neg/neg(_1: i64) -> i64 leaf @trap_neg.av:3:1 {
   let _0: i64
@@ -38,11 +37,11 @@ bb0:
   call __avant_type_maps() nocollect   @7:1
   call avant_io_init_argv(copy _1, copy _2) collects   @7:1
   _3 = call av.trap_neg/neg(const i64 5) nocollect   @8:8
-  call printf(const str.0, copy _3) nocollect   @8:3
+  call avant_puts_i64(copy _3) nocollect   @8:3
   _4 = sub.chk const i64 -9223372036854775807, const i64 1   @9:33
   _5 = call av.trap_neg/neg(copy _4) nocollect   @9:8
-  call printf(const str.0, copy _5) nocollect   @9:3
-  call avant_puts_str(const str.1) nocollect   @10:3
+  call avant_puts_i64(copy _5) nocollect   @9:3
+  call avant_puts_str(const str.0) nocollect   @10:3
   _0 = const i32 0   @7:1
   gc.leave   @7:1
   return   @7:1

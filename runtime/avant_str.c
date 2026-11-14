@@ -493,6 +493,40 @@ void avant_puts_str(const char *s) {
   avant_out_check();
 }
 
+/* puts of an integer: its decimal digits and a
+ * newline through stdout's buffer, checked after the write as every
+ * puts (avant_out_check); before, the generated code called
+ * printf, whose failed write was found only at the next check. Int32
+ * and UInt32 arrive widened by their sign or by zero; puts_u passes the
+ * bits as an unsigned number at their own width. */
+void avant_puts_u64(uint64_t v) {
+  char buf[24];
+  char *o = buf + sizeof(buf);
+  *--o = '\n';
+  do {
+    *--o = (char)('0' + (int)(v % 10u));
+    v /= 10u;
+  } while (v);
+  fwrite(o, 1, (size_t)(buf + sizeof(buf) - o), stdout);
+  avant_out_check();
+}
+
+void avant_puts_i64(int64_t v) {
+  char buf[24];
+  char *o = buf + sizeof(buf);
+  uint64_t u = v < 0 ? 0u - (uint64_t)v : (uint64_t)v;
+  *--o = '\n';
+  do {
+    *--o = (char)('0' + (int)(u % 10u));
+    u /= 10u;
+  } while (u);
+  if (v < 0) {
+    *--o = '-';
+  }
+  fwrite(o, 1, (size_t)(buf + sizeof(buf) - o), stdout);
+  avant_out_check();
+}
+
 void avant_puts_bool(int32_t v) {
   fputs(v ? "true\n" : "false\n", stdout);
   avant_out_check();

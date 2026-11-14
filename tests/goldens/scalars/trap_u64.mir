@@ -1,8 +1,7 @@
 module trap_u64
 file 0 "trap_u64.av"
 
-const str.0 = "%llu\0A"
-const str.1 = "not reached"
+const str.0 = "not reached"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -11,7 +10,7 @@ typemap 1023 %Hash stride 0 bits [0x7]
 extern __avant_type_maps() -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_str(ref str) -> void never
-extern printf(ref str, ...) -> i32 never
+extern avant_puts_u64(u64) -> void never
 
 fn av.trap_u64/sub(_1: u64, _2: u64) -> u64 leaf @trap_u64.av:3:1 {
   let _0: u64
@@ -38,10 +37,10 @@ bb0:
   call __avant_type_maps() nocollect   @7:1
   call avant_io_init_argv(copy _1, copy _2) collects   @7:1
   _3 = call av.trap_u64/sub(const u64 5, const u64 3) nocollect   @8:8
-  call printf(const str.0, copy _3) nocollect   @8:3
+  call avant_puts_u64(copy _3) nocollect   @8:3
   _4 = call av.trap_u64/sub(const u64 3, const u64 5) nocollect   @9:8
-  call printf(const str.0, copy _4) nocollect   @9:3
-  call avant_puts_str(const str.1) nocollect   @10:3
+  call avant_puts_u64(copy _4) nocollect   @9:3
+  call avant_puts_str(const str.0) nocollect   @10:3
   _0 = const i32 0   @7:1
   gc.leave   @7:1
   return   @7:1

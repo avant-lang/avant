@@ -22,7 +22,6 @@ const str.1 = "leaf-"
 const str.2 = "name-"
 const str.3 = ""
 const str.4 = "nil"
-const str.5 = "%lld\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -39,13 +38,13 @@ extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_array_push_slot(ref, u64, u32) -> addr collects
 extern avant_array_set_ptr(ref, i64, ref) -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_i64(i64) -> void never
 extern avant_str_cat_i32(ref str, i64) -> ref str collects
 extern avant_str_eq(ref str, ref str) -> i32 never
 extern avant_str_repeat_byte(i64, i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
 extern avant_trap_negative(i64, i32) -> void never noreturn
 extern avant_trap_size(i32) -> void never noreturn
-extern printf(ref str, ...) -> i32 never
 
 fn av.churn/no_leaf() -> ref %churn.Leaf leaf @churn.av:58:1 {
   let _0: ref %churn.Leaf
@@ -916,8 +915,8 @@ bb10:
   goto bb12   @212:5
 
 bb11:
-  call printf(const str.5, copy _12) nocollect   @220:3
-  call printf(const str.5, copy _24) nocollect   @221:3
+  call avant_puts_i64(copy _12) nocollect   @220:3
+  call avant_puts_i64(copy _24) nocollect   @221:3
   _0 = const i32 0   @189:1
   gc.leave   @189:1
   return   @189:1

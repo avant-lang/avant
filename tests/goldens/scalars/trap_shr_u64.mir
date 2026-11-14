@@ -1,8 +1,7 @@
 module trap_shr_u64
 file 0 "trap_shr_u64.av"
 
-const str.0 = "%llu\0A"
-const str.1 = "not reached"
+const str.0 = "not reached"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -12,9 +11,9 @@ extern __avant_type_maps() -> void never
 extern avant_clock_us() -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_str(ref str) -> void never
+extern avant_puts_u64(u64) -> void never
 extern avant_trap_convert(i64, i32) -> void never noreturn
 extern avant_trap_shift(i64, i32) -> void never noreturn
-extern printf(ref str, ...) -> i32 never
 
 fn av.trap_shr_u64/opaque(_1: i64) -> i64 leaf @trap_shr_u64.av:6:1 {
   let _0: i64
@@ -92,7 +91,7 @@ bb3:
 
 bb4:
   _11 = shr const u64 16, copy _8   @17:14
-  call printf(const str.0, copy _11) nocollect   @17:3
+  call avant_puts_u64(copy _11) nocollect   @17:3
   _12 = sub.chk const u64 18446744073709551615, copy _7   @18:42
   _13 = gt copy _12, const u64 63   @18:14
   branch copy _13, bb5, bb6   @18:14
@@ -104,8 +103,8 @@ bb5:
 
 bb6:
   _15 = shr const u64 16, copy _12   @18:14
-  call printf(const str.0, copy _15) nocollect   @18:3
-  call avant_puts_str(const str.1) nocollect   @19:3
+  call avant_puts_u64(copy _15) nocollect   @18:3
+  call avant_puts_str(const str.0) nocollect   @19:3
   _0 = const i32 0   @15:1
   gc.leave   @15:1
   return   @15:1

@@ -18,11 +18,10 @@ layout %Array(JoinHandle(Int)) = array { 0 data: ref %elems(JoinHandle(Int)), 1 
 layout %elems(String) = elems { 0: ref str }  size 8 align 8 id 65535
 layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 
-const str.0 = "%lld\0A"
-const str.1 = "msg"
-const str.2 = ""
-const str.3 = "-"
-const str.4 = "worker"
+const str.0 = "msg"
+const str.1 = ""
+const str.2 = "-"
+const str.3 = "worker"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -47,6 +46,7 @@ extern avant_gate_wait(ref, u64) -> void collects
 extern avant_gc_poll() -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_join(ref) -> i64 collects
+extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_spawn(ptr, ref) -> ref collects
 extern avant_str_cat_i32(ref str, i64) -> ref str collects
@@ -56,7 +56,6 @@ extern avant_str_size(ref str) -> i64 never
 extern avant_trap_frozen(i32) -> void never noreturn
 extern avant_trap_negative(i64, i32) -> void never noreturn
 extern avant_trap_size(i32) -> void never noreturn
-extern printf(ref str, ...) -> i32 never
 
 fn av.channels/produce(_1: ref %std.sync.Channel(Int), _2: i64, _3: i64) -> i64 frame @channels.av:11:1 {
   let _0: i64
@@ -257,13 +256,13 @@ bb2:
 
 bb3:
   _21 = call avant_join(copy _7) collects   @32:10
-  call printf(const str.0, copy _21) nocollect   @32:3
+  call avant_puts_i64(copy _21) nocollect   @32:3
   _22 = call avant_join(copy _10) collects   @33:10
-  call printf(const str.0, copy _22) nocollect   @33:3
-  call printf(const str.0, copy _11) nocollect   @34:3
+  call avant_puts_i64(copy _22) nocollect   @33:3
+  call avant_puts_i64(copy _11) nocollect   @34:3
   _23 = call av.std.sync/Channel(String).new(const i64 0) collects   @35:26
   _24 = copy _23   @35:9
-  _25 = const str.1   @36:10
+  _25 = const str.0   @36:10
   _26 = call avant_alloc(const u64 16, const u32 5) collects fresh   @37:8
   (*_26).0 = copy _24 fresh   @37:8
   (*_26).1 = copy _25 fresh   @37:8
@@ -271,7 +270,7 @@ bb3:
   _28 = copy _27   @37:6
   _29 = const i64 0   @46:8
   _30 = const i64 0   @47:9
-  _31 = const str.2   @48:8
+  _31 = const str.1   @48:8
   goto bb6   @49:3
 
 bb4:
@@ -297,9 +296,9 @@ bb7:
 
 bb8:
   _38 = call avant_join(copy _28) collects   @54:10
-  call printf(const str.0, copy _38) nocollect   @54:3
-  call printf(const str.0, copy _30) nocollect   @55:3
-  call printf(const str.0, copy _29) nocollect   @56:3
+  call avant_puts_i64(copy _38) nocollect   @54:3
+  call avant_puts_i64(copy _30) nocollect   @55:3
+  call avant_puts_i64(copy _29) nocollect   @56:3
   call avant_puts_str(copy _31) nocollect   @57:3
   _39 = call av.std.sync/Channel(String).new(const i64 4) collects   @58:28
   _40 = copy _39   @58:11
@@ -391,7 +390,7 @@ bb22:
   goto bb20   @76:16
 
 bb23:
-  call printf(const str.0, copy _57) nocollect   @77:3
+  call avant_puts_i64(copy _57) nocollect   @77:3
   _67 = copy _50   @78:12
   _68 = call avant_array_copy(copy _67, const u64 8, const u32 65535) collects   @78:25
   _69 = copy (*_68).1   @78:25
@@ -1474,7 +1473,7 @@ bb1:
 
 bb2:
   _9 = call avant_str_from_int(copy _7) collects   @40:31
-  _10 = call avant_str_concat(copy _6, const str.3) collects   @40:18
+  _10 = call avant_str_concat(copy _6, const str.2) collects   @40:18
   _11 = call avant_str_concat(copy _10, copy _9) collects   @40:18
   _12 = call av.std.sync/Channel(String).send(copy _4, copy _11) collects   @40:12
   _13 = add.chk copy _7, const i64 1   @41:13
@@ -1508,7 +1507,7 @@ bb0:
   _4 = copy _3   @63:18
   _5 = copy (*_2).1   @63:18
   _6 = copy _5   @63:18
-  _7 = call avant_str_cat_i32(const str.4, copy _6) collects   @64:20
+  _7 = call avant_str_cat_i32(const str.3, copy _6) collects   @64:20
   _8 = call av.std.sync/Channel(String).send(copy _4, copy _7) collects   @64:14
   _0 = copy _6   @63:18
   gc.leave   @63:18

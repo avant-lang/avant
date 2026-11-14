@@ -19,9 +19,8 @@ const str.6 = "last-"
 const str.7 = "bad string at "
 const str.8 = "bad box at "
 const str.9 = "bad scalar at "
-const str.10 = "%lld\0A"
-const str.11 = "node"
-const str.12 = ""
+const str.10 = "node"
+const str.11 = ""
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -35,12 +34,12 @@ typemap 5 %layouts.Box stride 0 bits [0x1c]
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_i32(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
-extern printf(ref str, ...) -> i32 never
 
 fn av.layouts/junk(_1: i64) -> i64 frame @layouts.av:120:1 {
   let _0: i64
@@ -256,7 +255,7 @@ bb2:
   branch copy _31, bb5, bb4   @157:36
 
 bb3:
-  call printf(const str.10, copy _3) nocollect   @169:3
+  call avant_puts_i64(copy _3) nocollect   @169:3
   _0 = const i32 0   @136:1
   gc.leave   @136:1
   return   @136:1
@@ -406,7 +405,7 @@ fn av.layouts/Node.new() -> ref %layouts.Node frame @layouts.av:13:1 {
 bb0:
   _1 = call avant_alloc(const u64 24, const u32 2) collects fresh   @13:1
   (*_1).1 = const ref %layouts.Node null fresh   @15:3
-  (*_1).2 = const str.11 fresh   @16:3
+  (*_1).2 = const str.10 fresh   @16:3
   _0 = copy _1   @13:1
   return   @13:1
 }
@@ -420,7 +419,7 @@ bb0:
   _1 = call avant_alloc(const u64 80, const u32 3) collects fresh   @19:1
   _2 = union %(Int|String) tag 0 (const i64 0)   @21:21
   (*_1).1 = copy _2 fresh   @21:3
-  (*_1).6 = const str.12 fresh   @26:3
+  (*_1).6 = const str.11 fresh   @26:3
   (*_1).7 = const ref str null fresh   @27:3
   _0 = copy _1   @19:1
   return   @19:1
@@ -432,7 +431,7 @@ fn av.layouts/Wide.new() -> ref %layouts.Wide frame @layouts.av:30:1 {
 
 bb0:
   _1 = call avant_alloc(const u64 568, const u32 4) collects fresh   @30:1
-  (*_1).70 = const str.12 fresh   @101:3
+  (*_1).70 = const str.11 fresh   @101:3
   _0 = copy _1   @30:1
   return   @30:1
 }
@@ -446,8 +445,8 @@ bb0:
   gc.enter   @110:1
   gc.roots _1   @110:1
   _2 = call avant_alloc(const u64 40, const u32 5) collects fresh   @110:1
-  (*_2).1.2 = const str.12 fresh   @112:3
-  (*_2).2 = const str.12 fresh   @113:3
+  (*_2).1.2 = const str.11 fresh   @112:3
+  (*_2).2 = const str.11 fresh   @113:3
   call av.layouts/Box.initialize(copy _2, copy _1) nocollect   @110:1
   _0 = copy _2   @110:1
   gc.leave   @110:1

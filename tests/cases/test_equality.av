@@ -8,8 +8,9 @@ import backends
 // (tests/fixtures/equality/) are checked by the run goldens in every
 // collector mode; this file holds the rules' refusals, their accepted
 // neighbours, and checks on the generated code:
-//   - a program that compares only scalars carries none of the functions
-//     the checker writes for ==;
+//   - a program that compares and prints only scalars carries none of the
+//     functions the checker writes for ==, and its integer puts is the
+//     runtime's (avant_puts_i64), never printf;
 //   - a struct's derived == is written once however often it is used.
 
 class RCase {
@@ -142,14 +143,16 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   }
 }
 
-// The generated code: nothing written for == unless asked; a derived ==
-// written once.
+// The generated code: nothing written for == unless asked; integer puts
+// through the runtime; a derived == written once.
 fn check_ll(c: Checks, compiler: String, dir: String) {
   plain = "${dir}/eq-ll-plain.av"
   _ = file_write(plain, "fn main {\n  n = 3\n  puts(n == 3)\n  puts(n)\n  w: Int32 = 2\n  puts(w)\n  puts(\"a\" == \"b\")\n}\n")
   c.eq_int(emit_ll(compiler, plain, "${dir}/eq-ll-plain.ll", "${dir}/eq-ll-plain.log"), 0, "ll-plain: emits")
   ll = log_text("${dir}/eq-ll-plain.ll")
   c.expect(!str_has(ll, "__avant_eq"), "ll-plain: no written ==")
+  c.expect(str_has(ll, "@avant_puts_i64("), "ll-plain: an integer's puts is the runtime's")
+  c.expect(!str_has(ll, "@printf("), "ll-plain: no printf")
   twice = "${dir}/eq-ll-twice.av"
   _ = file_write(twice, "struct P {\n  x: Int\n}\nfn main {\n  a = P { x: 1 }\n  puts(a == a)\n  puts(a != a)\n  puts([a] == [a])\n}\n")
   c.eq_int(emit_ll(compiler, twice, "${dir}/eq-ll-twice.ll", "${dir}/eq-ll-twice.log"), 0, "ll-twice: emits")

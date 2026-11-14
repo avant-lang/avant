@@ -20,11 +20,10 @@ layout %Array(fn():String) = array { 0 data: ref %elems(fn():String), 1 size: i3
 layout %elems(String) = elems { 0: ref str }  size 8 align 8
 layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 
-const str.0 = "%lld\0A"
-const str.1 = "a"
-const str.2 = "b"
-const str.3 = " "
-const str.4 = "="
+const str.0 = "a"
+const str.1 = "b"
+const str.2 = " "
+const str.3 = "="
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -45,10 +44,10 @@ extern avant_hash_new(i32, i32) -> ref collects
 extern avant_hash_set_i32(ref, ref str, i64) -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_bool(i32) -> void never
+extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i64) -> ref str collects
-extern printf(ref str, ...) -> i32 never
 
 fn av.fresh/maybe(_1: i64) -> %(Nil|Int) leaf @fresh.av:14:1 {
   let _0: %(Nil|Int)
@@ -234,10 +233,10 @@ bb2:
   goto bb4   @28:13
 
 bb3:
-  call printf(const str.0, copy _10) nocollect   @43:3
+  call avant_puts_i64(copy _10) nocollect   @43:3
   _36 = cast copy _12 to i32   @44:3
   call avant_puts_bool(copy _36) nocollect   @44:3
-  call printf(const str.0, copy _11) nocollect   @45:3
+  call avant_puts_i64(copy _11) nocollect   @45:3
   _37 = call avant_alloc(const u64 16, const u32 1022) collects   @46:26
   _38 = copy _37   @46:3
   _39 = call avant_alloc(const u64 16, const u32 0) collects   @47:8
@@ -355,11 +354,11 @@ bb20:
   _61 = copy _60   @49:27
   _62 = call indirect copy _61() collects   @49:27
   _63 = add.chk copy _56, copy _62   @49:18
-  call printf(const str.0, copy _63) nocollect   @49:3
+  call avant_puts_i64(copy _63) nocollect   @49:3
   _64 = call avant_hash_new(const i32 1, const i32 0) collects   @50:7
   _65 = copy _64   @50:5
-  call avant_hash_set_i32(copy _65, const str.1, const i64 1) collects   @51:10
-  call avant_hash_set_i32(copy _65, const str.2, const i64 2) collects   @52:10
+  call avant_hash_set_i32(copy _65, const str.0, const i64 1) collects   @51:10
+  call avant_hash_set_i32(copy _65, const str.1, const i64 2) collects   @52:10
   _66 = call avant_alloc(const u64 16, const u32 1022) collects   @53:29
   _67 = copy _66   @53:3
   _68 = copy _65   @54:3
@@ -395,7 +394,7 @@ bb24:
   _86 = copy (*_85)[const i64 0]   @55:11
   _87 = copy _86   @55:15
   _88 = call indirect copy _87() collects   @55:15
-  _89 = call avant_str_concat(copy _88, const str.3) collects   @55:18
+  _89 = call avant_str_concat(copy _88, const str.2) collects   @55:18
   _90 = copy (*_67).1   @55:29
   _91 = cast copy _90 to i64   @55:29
   check.bounds const i64 1, copy _91   @55:29
@@ -414,12 +413,12 @@ bb24:
   _100 = copy _99   @57:3
   _101 = copy _100   @63:8
   _102 = call indirect copy _101() collects   @63:8
-  call printf(const str.0, copy _102) nocollect   @63:3
+  call avant_puts_i64(copy _102) nocollect   @63:3
   _103 = call av.fresh/maybe(const i64 0) nocollect   @64:9
   (*_6).0 = copy _103   @64:7
   _104 = copy _100   @65:8
   _105 = call indirect copy _104() collects   @65:8
-  call printf(const str.0, copy _105) nocollect   @65:3
+  call avant_puts_i64(copy _105) nocollect   @65:3
   _0 = const i32 0   @21:1
   gc.leave   @21:1
   return   @21:1
@@ -478,7 +477,7 @@ bb0:
   _5 = copy (*_2).1   @54:40
   _6 = copy (*_5).0   @54:40
   _7 = call avant_str_from_int(copy _6) collects   @54:40
-  _8 = call avant_str_concat(copy _4, const str.4) collects   @54:32
+  _8 = call avant_str_concat(copy _4, const str.3) collects   @54:32
   _9 = call avant_str_concat(copy _8, copy _7) collects   @54:32
   _0 = copy _9   @54:32
   gc.leave   @54:32
