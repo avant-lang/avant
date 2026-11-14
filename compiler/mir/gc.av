@@ -52,8 +52,9 @@
 //    now the innermost function that has one.
 // 3. Polls (Stage 28 W17a; gc-design.md 4.4, the safepoints of a shared
 //    program): in a shared module, before the slot set is computed, every
-//    block a back edge enters (an edge to a block whose number is not
-//    greater than its source's, so every cycle has one) begins with
+//    block a back edge enters (an edge into a block on the path of a
+//    depth-first walk from the entry, so every cycle has one and no other
+//    edge is one: Stage 29 W5a3, O713) begins with
 //    `call avant_gc_poll() collects`, a collecting call like any other,
 //    when the loop it heads holds another loop's head (an outer loop,
 //    Stage 28 W17b), or when every reference live on entry to that block
@@ -254,27 +255,11 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
   n = f.blocks.size
   need0 = mir_slot_need(m, f, lv)
   ts = m.types
-  heads = mir_bools(n, false)
-  // last[h]: the last block of the loop h heads (its latest back edge's
-  // source), so the loop's blocks are h..last[h] in the lowering's order.
+  // The loop heads (mir/flow.av, O713): a real cycle's, by a
+  // depth-first walk; last[h] is the latest back edge's source, so the
+  // loop's blocks are h..last[h] in the lowering's order.
   last: Array(Int) = []
-  for b in 0..n {
-    last.push(-1)
-  }
-  for b in 0..n {
-    succ = mir_succ(f.blocks[b])
-    i = 0
-    while i < succ.size {
-      h = succ[i]
-      if h >= 0 && h <= b && h < n {
-        heads[h] = true
-        if b > last[h] {
-          last[h] = b
-        }
-      }
-      i += 1
-    }
-  }
+  heads = mir_loop_heads(f, last)
   // An outer loop (one whose blocks hold another loop's head) always
   // polls (Stage 28 W17b): its new slots cost nothing inside the inner
   // loop (no call there, so LLVM keeps a plain slot's value in a

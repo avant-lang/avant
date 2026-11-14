@@ -358,6 +358,7 @@ fn main {
 
 - An overflow, a division by zero or a shift outside the width while computing a constant is a compile error at the constant, and so is a value that is not a scalar: a `String`, an array or a call (constant strings and tables are not built yet). A constant used where its value does not fit is the literal's error, naming the constant (`the constant big = 3000000000 does not fit in Int32`).
 - Constants may use each other in any order; one that refers to itself is an error.
+- A constant may label a `switch` arm, or bound a range label, as its value written there would (`case max_depth`, `case lo..=hi`); a name that is not a constant is an error there, since a label is never a variable.
 - A constant cannot be assigned (`max_depth = 3`, `max_depth += 1` and `for max_depth in ...` are compile errors), and there is no `const` inside a function: a local is `name = value`. A parameter or a binding (`if v = ...`, `case n: Int`, a block's `|x|`) may take a constant's name inside its body.
 - A bare name is, in order: a local or parameter, a field of the receiver, a method of the receiver, a constant, a function. Another module's `pub const` is reached bare or as `module.name`; two constants of one name that a module sees (its own included) are ambiguous: qualify the one you mean ([Name clashes](#name-clashes)).
 
@@ -592,14 +593,17 @@ fn main {
   for i in 0..5 {          // 0, 1, 2, 3, 4
     sum += i
   }
+  for i in 1..=3 {         // 1, 2, 3
+    sum += i
+  }
   for x in [10, 20] {
     sum += x
   }
-  puts(sum)                // => 40
+  puts(sum)                // => 46
 }
 ```
 
-- **`..` excludes its end**, unlike Crystal's, Ruby's and Kotlin's. `for i in 1..n` never reaches `n`; write `1..n + 1` until the inclusive `a..=b` is built ([Not built yet](#not-built-yet)).
+- **`..` excludes its end**, unlike Crystal's, Ruby's and Kotlin's: `for i in 1..n` never reaches `n`. **`..=` includes it**, as Rust's: `for i in 1..=n` ends with `n`, even when `n` is the largest `Int` (the loop stops after its last value instead of computing the next one).
 - The bounds are evaluated once. The loop variable is a new name that exists only inside the loop (when a variable of that name already exists outside, the loop uses it, and it keeps its last value afterwards: pick a fresh name). `break`, `continue` and `return` behave as they do in `while`.
 - **The loop variable cannot be assigned.** It is a copy of the range's counter or of the array's element, made again at each step, so `i = 5`, `x += 1` and a field of a struct element (`p.x = 1`) are compile errors: the write would be lost, or would change the iteration. To change the array, store through an index: `xs[i] = v`, or `xs[i].x = v` for one field of a struct element. For a range that skips or repeats steps, use `while` with a counter of your own. A field of a *class* element is assignable: `c.x = 1` changes the object.
 - A range is only a `for` form: it is not a value you can store.
@@ -643,6 +647,26 @@ fn main {
 }
 ```
 
+A label may be a range of integers, written as in `for`: `lo..hi` excludes `hi`, `lo..=hi` includes it, and a character literal is an integer:
+
+```avant
+fn kind(c: Int): String {
+  switch c {
+    case 'a'..='z', 'A'..='Z', '_' { "name" }
+    case '0'..='9' { "digit" }
+    case 0..=' ' { "control or space" }
+    else { "other" }
+  }
+}
+
+fn main {
+  puts(kind('q'))    // => name
+  puts(kind('7'))    // => digit
+  puts(kind(' '))    // => control or space
+  puts(kind('+'))    // => other
+}
+```
+
 Over a `String`, the labels are string literals and the match is byte equality, as `==`:
 
 ```avant
@@ -678,9 +702,9 @@ fn main {
 }
 ```
 
-- The value is an `Int` (labels: integer literals), an enum (labels: its members, bare: `case eof`, not `case Tok.eof`), a `String` (labels: string literals, not interpolated) or a union (labels: its member types, with or without a binding, and `nil`; a binding is the arm's only label). A `Bool` is accepted too, with the labels `1` and `0` (`case true` is not a form yet): an `if` reads better. `Int32`, `UInt32` and `UInt64` values are not accepted yet: convert to `Int`.
-- A label may appear once.
-- Over an enum or a union, a switch without `else` names every member, as a statement and as a value (`switch over Tok does not cover name, number: name them or add else`), and an `else` beside every member is refused. Over the other types, a switch used as a value needs `else`, so every input produces a result; used as a statement, a value no arm names does nothing.
+- The value is an integer of any width, `Int`, `Int32`, `UInt32` or `UInt64` (labels: integer literals, character literals included, or [constants](#constants), each taking the value's type: `case 3000000000` over an `Int32` is `case label 3000000000 does not fit in Int32`), an enum (labels: its members, bare: `case eof`, not `case Tok.eof`), a `String` (labels: string literals, not interpolated) or a union (labels: its member types, with or without a binding, and `nil`; a binding is the arm's only label). Over a `Bool`, the labels are `true` and `false` (`case 1` is refused with the hint `case true`).
+- A label may appear once, and no two labels share a value: `case 5` beside `case 0..=9` is `case 5 overlaps case 0..=9`; an empty range (`case 5..5`) is an error. A range is tested with two comparisons before the switch, as the `if` chain it replaces (one case per value ran 5% to 9% slower: LLVM built tables).
+- Over an enum, a union or a `Bool`, a switch without `else` names every member (`true` and `false` for a `Bool`), as a statement and as a value (`switch over Tok does not cover name, number: name them or add else`), and an `else` beside every member is refused. Over the other types, a switch used as a value needs `else`, so every input produces a result; used as a statement, a value no arm names does nothing.
 - An arm may leave instead of giving a value (`return`, `break`, `continue`); it still counts as naming its members.
 - A switch used as a statement treats its arms as statements, as an `if` does: an arm may end with a value, which is dropped, unless it can be an error ([Errors cannot be dropped](#errors-cannot-be-dropped)).
 
@@ -713,7 +737,7 @@ fn main {
 - A member is written qualified, `Tok.eof`, everywhere except a [`case` label](#switch). Members are separated by commas or line breaks, a trailing comma allowed; a member's name is lower-case snake_case (a capital first letter is refused: a capital means a type).
 - An enum is its own type: an `Int` is not a `Tok` and a `Tok` is not an `Int`. `==` and `!=` compare two values of one enum; there is no arithmetic and no `<`.
 - What every enum has: `t.to_i` (its number), `t.name` (the member's exact name, as a `String`), `Tok.from_i(n)` and `Tok.from_name(s)` (a `Tok?`: `nil` when no member has that number or that exact name) and `Tok.members` (a new `Array(Tok)` in declaration order). `puts(t)` and `"${t}"` print the member's name.
-- Values are distinct and fit in `Int32`; a value may be negative (`low = -2`).
+- Values are distinct and fit in `Int32`; a value may be negative (`low = -2`) or a [constant](#constants) (`ok = http_ok`; the members after it count from its value).
 - An enum has no zero value: a field of an enum type has a default (`kind: Tok = Tok.eof`) or is set in `initialize`, and `Array(Tok).new(n)` needs its value (`Array(Tok).new(n, Tok.eof)`).
 - `fn` methods follow the members, with `self` the value:
 
@@ -736,7 +760,7 @@ fn main {
 }
 ```
 
-- An enum is stored in one byte when its values are within `0..255`, else in four. A program pays for the members' names only if it prints an enum, reads `name`, or calls `from_name`.
+- An enum is stored in one byte when its values are within `0..255` or `-128..127`, in two within `0..65535` or `-32768..32767`, else in four; an enum crossing to C is C's `int`. A program pays for the members' names only if it prints an enum, reads `name`, or calls `from_name`.
 - An enum marked `: Error` is a failure type ([An enum as an error](#an-enum-as-an-error)); one inside a `lib` block is a C enum ([avant bind](#avant-bind)). An enum has no payload: a member that carries data is a [union](#unions) member.
 
 ## Nil and unions
@@ -3598,7 +3622,7 @@ Avant will look familiar from almost anywhere, and it differs on purpose in a ha
 | a 32-bit `int` that wraps | `Int` is 64-bit and overflow traps; `&+` wraps on request; `Int32` is for dense storage ([Numbers](#numbers)) | a wrong number never passes silently |
 | numbers that convert themselves | no implicit conversion, between widths or to floats ([Conversions](#conversions)) | no silent truncation or precision loss |
 | integer division that floors (Python's `//`, Ruby's `/`) | `/` truncates toward zero and `%` follows the dividend, as in C, Go and Rust | |
-| `1..10` including 10 (Crystal, Ruby, Kotlin) | `..` excludes its end ([For](#for)) | ranges match zero-based indexes |
+| `1..10` including 10 (Crystal, Ruby, Kotlin) | `..` excludes its end, `..=` includes it ([For](#for)) | ranges match zero-based indexes |
 | truthiness: `if n`, `if list` | conditions are `Bool`; `if v = x` opens an optional ([Conditions that bind](#conditions-that-bind)) | |
 | inheritance, virtual methods, interface values | none: composition, interfaces as compile-time bounds, unions ([No inheritance](#no-inheritance)) | every call is direct, every layout known |
 | `mutating` or `&mut self` on methods that change a struct | a method may change its struct receiver; an argument is a copy ([Structs](#structs)) | Go's pointer receiver, taken automatically |
@@ -3629,9 +3653,7 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 
 | Missing | Status | Today |
 | --- | --- | --- |
-| Ranges in `switch` labels (`case 0..10`); `case true` | decided | an `if` chain |
 | Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
-| Inclusive range `a..=b` | decided | `a..b + 1` |
 | `Hash` with other key and value types; insertion order | decided | [three combinations](#key-and-value-types); sort the keys |
 | `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion; slices of strings and arrays | planned | `str_slice`, loops, [`std.regex`](#stdregex) |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#trailing-blocks) |

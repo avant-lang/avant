@@ -115,12 +115,19 @@ pub class InterpPart {
 // A union switch's label (Stage 29 W5a2, D293, O391) is a member type
 // (lb_type: tname, with the binding's name in bind when written
 // `case n: Int`) or `nil` (lb_nil); the checker puts the member's index
-// in the union in int_val. W5a3 adds ranges.
+// in the union in int_val. A Bool switch's labels are `true` and `false`
+// (lb_bool, int_val 1 or 0; Stage 29 W5a3, O236). A range label
+// (lb_range: `case 0..10`, `case 'a'..='z'`; W5a3, O493) holds its
+// bounds as two labels, lo and hi (each an integer or a name), incl when
+// written `..=`; the checker puts its first value in int_val and its last
+// in hi_val.
 pub fn lb_int: Int { 1 }
 pub fn lb_string: Int { 2 }
 pub fn lb_member: Int { 3 }
 pub fn lb_type: Int { 4 }
 pub fn lb_nil: Int { 5 }
+pub fn lb_bool: Int { 6 }
+pub fn lb_range: Int { 7 }
 
 pub class CaseLabel {
   pub kind: Int = 0
@@ -133,11 +140,33 @@ pub class CaseLabel {
   // A member-type label's type, and the name it binds ("" for none).
   pub tname: TypeName? = nil
   pub bind: String = ""
+  // An integer label as written (Stage 29 W5a3, O390): its magnitude and
+  // sign, checked against the discriminant's type by the checker (int_val
+  // holds the value's 64 bits, a UInt64 above Int's maximum included).
+  pub bits: UInt64 = 0u64
+  pub neg: Bool = false
+  pub lo: CaseLabel? = nil
+  pub hi: CaseLabel? = nil
+  pub incl: Bool = false
+  pub hi_val: Int = 0
 
   fn initialize(kind: Int, loc: Location) {
     self.kind = kind
     self.loc = loc
   }
+}
+
+// An integer label of value v, as if written.
+pub fn int_case_label(v: Int, loc: Location): CaseLabel {
+  out = CaseLabel.new(lb_int(), loc)
+  out.int_val = v
+  if v < 0 {
+    out.neg = true
+    out.bits = (0 &- v).wrap_u64
+  } else {
+    out.bits = v.to_u64
+  }
+  out
 }
 
 pub fn clone_case_label(l: CaseLabel): CaseLabel {
@@ -146,6 +175,16 @@ pub fn clone_case_label(l: CaseLabel): CaseLabel {
   out.text = l.text
   out.qual = l.qual
   out.bind = l.bind
+  out.bits = l.bits
+  out.neg = l.neg
+  out.incl = l.incl
+  out.hi_val = l.hi_val
+  if a = l.lo {
+    out.lo = clone_case_label(a)
+  }
+  if z = l.hi {
+    out.hi = clone_case_label(z)
+  }
   if tn = l.tname {
     out.tname = clone_type_name(tn)
   }
@@ -369,6 +408,16 @@ pub class EnumDecl {
   pub names: Array(String) = []
   pub vals: Array(Int) = []
   pub locs: Array(Location) = []
+  // A member's value may be a module constant (`ok = http_ok`, Stage 29
+  // W5a3, O726): from the first such member on (first_named), the
+  // checker computes the values once the constants are known, each
+  // member's way kept in val_kinds (0 the previous plus one, 1 a literal,
+  // 2 the constant val_quals[i].val_names[i]); the labels of from_i's
+  // switch are given them.
+  pub val_names: Array(String) = []
+  pub val_quals: Array(String) = []
+  pub val_kinds: Array(Int) = []
+  pub first_named: Int = -1
   // Declared in a lib block: C's int everywhere (D358).
   pub c_int: Bool = false
 

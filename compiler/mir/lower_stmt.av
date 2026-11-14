@@ -334,8 +334,8 @@ pub fn (lw: MirLower) lower_while(st: Stmt) {
   lw.lw_b.at(exit)
 }
 
-// `switch` (W5.3): the value (a Bool as i32), one MIR switch, each arm a
-// block; a value switch writes each arm's last expression into its
+// `switch` (W5.3): the value, one MIR switch (a Bool's: one branch), each
+// arm a block; a value switch writes each arm's last expression into its
 // result temporary, zeroed first (an arm without a value, or no match
 // without else, leaves the zero).
 pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
@@ -376,13 +376,12 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
       }
     }
     lw.at(e.loc)
-    if cty == mt_bool() {
-      tb = lw.lw_b.temp(mt_i32())
-      lw.lw_b.assign(lw.lw_b.pl(tb), lw.lw_b.rv_cast(cv, mt_i32()))
-      cv = lw.lw_b.copy_local(tb)
+    // A Bool switch (Stage 29 W5a3, O236) is one branch on the value.
+    on_bool = cty == mt_bool()
+    if on_bool {
       cty = mt_i32()
     }
-    if cty != mt_i32() && cty != mt_i64() && cty != mt_u64() && cty != mt_u32() && cty != mt_u8() {
+    if cty != mt_i32() && cty != mt_i64() && cty != mt_u64() && cty != mt_u32() && cty != mt_u8() && cty != mt_i8() && cty != mt_i16() && cty != mt_u16() {
       lw.refuse(c.loc, "switch on this type")
       return lw.lw_b.c_i32(0)
     }
@@ -407,11 +406,55 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     if et0 = enum_ty, !lw.lw_cov.on && e.cases.size > 1 && enum_labels_dense(e) {
       pre = lw.lw_b.block
     }
+    // A range label (Stage 29 W5a3, O493) is two compares before the
+    // switch, in a block numbered before the arms (no back edge, no
+    // poll): chosen by time (D370; the record's proving ground), where a
+    // case per value made LLVM build lookup and jump tables that ran 5%
+    // to 9% slower than the if chains, and the compares run level.
+    wide_lo: Array(Int) = []
+    wide_hi: Array(Int) = []
+    wide_tg: Array(Int) = []
+    wide_bl: Array(Int) = []
+    for wc in e.cases {
+      for wl in wc.labels {
+        if wl.kind == lb_range() {
+          wide_bl.push(lw.lw_b.block)
+        }
+      }
+    }
+    // A coverage build's label entries, numbered before the arms too, so
+    // the edge from an entry into its arm is no back edge (O713; the
+    // checker refused duplicate labels, so each label has one).
+    pre_en: Array(Int) = []
+    if lw.lw_cov.on {
+      for pc in e.cases {
+        for pl in pc.labels {
+          pre_en.push(lw.lw_b.block)
+        }
+      }
+    }
+    next_en = 0
     for i in 0..e.cases.size {
       arm = lw.lw_b.block
       arms.push(arm)
       j = 0
       while j < e.cases[i].labels.size {
+        rl = e.cases[i].labels[j]
+        if rl.kind == lb_range() {
+          rt = arm
+          if lw.lw_cov.on {
+            ren = pre_en[next_en]
+            next_en += 1
+            entries.push(ren)
+            entry_arm.push(i)
+            rt = ren
+          }
+          wide_lo.push(rl.int_val)
+          wide_hi.push(rl.hi_val)
+          wide_tg.push(rt)
+          j += 1
+          continue
+        }
         v = e.cases[i].labels[j].int_val
         seen = false
         for val in values {
@@ -422,7 +465,8 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
         if !seen {
           values.push(v)
           if lw.lw_cov.on {
-            en = lw.lw_b.block
+            en = pre_en[next_en]
+            next_en += 1
             entries.push(en)
             entry_arm.push(i)
             targets.push(en)
@@ -446,8 +490,28 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
       other = join
     }
     lw.at(e.loc)
+    for wk in 0..wide_lo.size {
+      wb = lw.lw_b
+      w1 = lw.tmp(mt_bool(), wb.rv_cmp(mop_ge(), cv, wb.c_int(cty, wide_lo[wk])))
+      w2 = lw.tmp(mt_bool(), wb.rv_cmp(mop_le(), cv, wb.c_int(cty, wide_hi[wk])))
+      win = lw.tmp(mt_bool(), wb.rv_bin(mop_and(), w1, w2))
+      wb.branch(win, wide_tg[wk], wide_bl[wk])
+      wb.at(wide_bl[wk])
+      lw.at(e.loc)
+    }
     if trap >= 0 {
       lw.enum_switch_on(cv, enum_ty, e, values, targets, arms, trap, pre)
+    } else if on_bool {
+      t_true = other
+      t_false = other
+      for bi in 0..values.size {
+        if values[bi] != 0 {
+          t_true = targets[bi]
+        } else {
+          t_false = targets[bi]
+        }
+      }
+      lw.lw_b.branch(cv, t_true, t_false)
     } else {
       lw.lw_b.switch_on(cv, values, targets, other)
     }
@@ -636,19 +700,12 @@ pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperan
     dest = b.temp(rty)
     b.assign(b.pl(dest), b.rv_zero)
   }
-  arms: Array(Int) = []
-  for i in 0..e.cases.size {
-    arms.push(b.block)
-  }
-  other = -1
-  if e.has_else || lw.lw_cov.on {
-    other = b.block
-  }
-  join = b.block
-  if other < 0 {
-    other = join
-  }
-  // The labels by size, in order of appearance.
+  // The dispatch's blocks are numbered before the arms (Stage 29 W5a3,
+  // O713): an edge into a block numbered lower than its source is a back
+  // edge, and a back edge polls in a program that spawns (mir/gc.av).
+  // The labels by size, in order of appearance: each size's block, and
+  // for each label its compare's next block and, under coverage, its
+  // entry.
   sizes: Array(Int) = []
   size_blocks: Array(Int) = []
   for i2 in 0..e.cases.size {
@@ -665,56 +722,93 @@ pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperan
       }
     }
   }
+  lab_arm: Array(Int) = []
+  lab_next: Array(Int) = []
+  lab_entry: Array(Int) = []
+  lab_size: Array(Int) = []
+  lab_text: Array(String) = []
+  lab_loc: Array(Location) = []
+  for k0 in 0..sizes.size {
+    for i5 in 0..e.cases.size {
+      for label3 in e.cases[i5].labels {
+        if label3.text.size != sizes[k0] {
+          continue
+        }
+        lab_arm.push(i5)
+        lab_size.push(k0)
+        lab_text.push(label3.text)
+        lab_loc.push(label3.loc)
+        nx = -1
+        if sizes[k0] != 0 {
+          nx = b.block
+        }
+        lab_next.push(nx)
+        en = -1
+        if lw.lw_cov.on {
+          en = b.block
+        }
+        lab_entry.push(en)
+      }
+    }
+  }
+  arms: Array(Int) = []
+  for i in 0..e.cases.size {
+    arms.push(b.block)
+  }
+  other = -1
+  if e.has_else || lw.lw_cov.on {
+    other = b.block
+  }
+  join = b.block
+  if other < 0 {
+    other = join
+  }
   lw.at(e.loc)
   args0: Array(MOperand) = []
   args0.push(b.copy_local(s))
   n = lw.call_to(mt_i64(), "avant_str_size", args0)
   b.switch_on(n, sizes, size_blocks, other)
-  cov_entries: Array(Int) = []
-  cov_arms: Array(Int) = []
-  cov_locs: Array(Location) = []
   for k in 0..sizes.size {
     b.at(size_blocks[k])
     open = true
-    for i3 in 0..e.cases.size {
-      for label2 in e.cases[i3].labels {
-        if label2.text.size != sizes[k] {
-          continue
-        }
-        target = arms[i3]
-        if lw.lw_cov.on {
-          // Each label enters through its own block, which counts it.
-          target = b.block
-          cov_entries.push(target)
-          cov_arms.push(arms[i3])
-          cov_locs.push(label2.loc)
-        }
-        if sizes[k] == 0 {
-          b.goto(target)
-          open = false
-        } else {
-          margs: Array(MOperand) = []
-          margs.push(b.copy_local(s))
-          margs.push(b.str_const(label2.text))
-          margs.push(b.c_i64(sizes[k]))
-          q = lw.call_to(mt_i32(), "memcmp", margs)
-          eq = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), q, b.c_i32(0)))
-          next = b.block
-          b.branch(eq, target, next)
-          b.at(next)
-          lw.at(e.loc)
-        }
+    for q in 0..lab_arm.size {
+      if lab_size[q] != k {
+        continue
+      }
+      target = arms[lab_arm[q]]
+      if lab_entry[q] >= 0 {
+        // Each label enters through its own block, which counts it.
+        target = lab_entry[q]
+      }
+      if sizes[k] == 0 {
+        b.goto(target)
+        open = false
+      } else {
+        margs: Array(MOperand) = []
+        margs.push(b.copy_local(s))
+        margs.push(b.str_const(lab_text[q]))
+        margs.push(b.c_i64(sizes[k]))
+        qv = lw.call_to(mt_i32(), "memcmp", margs)
+        eq = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), qv, b.c_i32(0)))
+        b.branch(eq, target, lab_next[q])
+        b.at(lab_next[q])
+        lw.at(e.loc)
+      }
+      if !open {
+        break
       }
     }
     if open {
       b.goto(other)
     }
   }
-  for q2 in 0..cov_entries.size {
-    b.at(cov_entries[q2])
-    lw.cov_branch(cov_locs[q2])
-    lw.at(e.loc)
-    b.goto(cov_arms[q2])
+  for q2 in 0..lab_arm.size {
+    if lab_entry[q2] >= 0 {
+      b.at(lab_entry[q2])
+      lw.cov_branch(lab_loc[q2])
+      lw.at(e.loc)
+      b.goto(arms[lab_arm[q2]])
+    }
   }
   for i4 in 0..e.cases.size {
     b.at(arms[i4])

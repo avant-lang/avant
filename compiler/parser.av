@@ -88,6 +88,10 @@ pub class Parser {
   int_suffix: String = ""
   in_quote: Bool = false
   for_id: Int = 0
+  // The end of the inclusive range whose body for_advance walks ("" for
+  // `..` and an array): its step stops after the last value (Stage 29
+  // W5a3).
+  for_last: String = ""
 
   fn initialize(source: Source, tokens: Array(Token)) {
     self.source = source
@@ -902,6 +906,9 @@ pub class Parser {
       }
       value = next
       fits = true
+      vkind = 0
+      vname = ""
+      vqual = ""
       if match_tok(tk_eq()) {
         self.skip_newlines
         neg = false
@@ -909,39 +916,60 @@ pub class Parser {
           neg = true
           self.bump
         }
-        if self.current.kind != tk_integer() {
-          fail(self.current.loc, "an enum member's value is an integer literal")
+        if self.current.kind == tk_ident() && !neg {
+          // A module constant (Stage 29 W5a3, O726): the checker computes
+          // this value and the ones after it (check_enum_consts).
+          vkind = 2
+          vname = self.bump.value
+          if self.current.kind == tk_dot() {
+            self.bump
+            vqual = vname
+            vname = self.take_name_after_dot.value
+          }
+          if decl.first_named < 0 {
+            decl.first_named = decl.names.size
+          }
+          value = 0
+        } else if self.current.kind != tk_integer() {
+          fail(self.current.loc, "an enum member's value is an integer literal or a constant")
           break
-        }
-        vt = self.bump
-        if parse_int_tok(vt) {
-          if self.int_suffix.size != 0 {
-            fail(vt.loc, "an enum member's value is an integer literal without a suffix")
+        } else {
+          vkind = 1
+          vt = self.bump
+          if parse_int_tok(vt) {
+            if self.int_suffix.size != 0 {
+              fail(vt.loc, "an enum member's value is an integer literal without a suffix")
+            }
+            bits = self.int_bits
+            if (neg && bits > 2147483648u64) || (!neg && bits > 2147483647u64) {
+              fits = false
+            } else if neg {
+              value = 0 - bits.to_i()
+            } else {
+              value = bits.to_i()
+            }
           }
-          bits = self.int_bits
-          if (neg && bits > 2147483648u64) || (!neg && bits > 2147483647u64) {
-            fits = false
-          } else if neg {
-            value = 0 - bits.to_i()
-          } else {
-            value = bits.to_i()
-          }
         }
-      } else if next > 2147483647 {
+      } else if next > 2147483647 && decl.first_named < 0 {
         fits = false
       }
       if !fits {
         fail(tok.loc, "the value of ${mname} does not fit in Int32")
         value = 0
       }
-      for j in 0..decl.vals.size {
-        if fits && decl.vals[j] == value {
-          fail(tok.loc, "members ${decl.names[j]} and ${mname} of ${name} have the same value ${value}")
+      if decl.first_named < 0 {
+        for j in 0..decl.vals.size {
+          if fits && decl.vals[j] == value {
+            fail(tok.loc, "members ${decl.names[j]} and ${mname} of ${name} have the same value ${value}")
+          }
         }
       }
       decl.names.push(mname)
       decl.vals.push(value)
       decl.locs.push(tok.loc)
+      decl.val_names.push(vname)
+      decl.val_quals.push(vqual)
+      decl.val_kinds.push(vkind)
       next = value + 1
       if self.current.kind == tk_comma() {
         self.bump
@@ -2055,11 +2083,25 @@ pub class Parser {
     for_assign(loc, name, for_binary(loc, tk_plus(), for_name_expr(loc, name), for_int_expr(loc, 1u64)))
   }
 
+  // The step of a `for` loop to its next value: the counter's increment;
+  // over an inclusive range (`a..=b`, Stage 29 W5a3), a break after the
+  // last value first, so a range that ends at the type's maximum never
+  // computes the value after it (the increment would overflow and trap).
+  pub fn for_step(loc: Location, counter: String, into: Array(Stmt)) {
+    if self.for_last.size > 0 {
+      stop = Stmt.new(st_if(), loc)
+      stop.cond = for_binary(loc, tk_eq_eq(), for_name_expr(loc, counter), for_name_expr(loc, self.for_last))
+      stop.then_body.push(Stmt.new(st_break(), loc))
+      into.push(stop)
+    }
+    into.push(for_inc(loc, counter))
+  }
+
   pub fn for_advance(body: Array(Stmt), counter: String, loc: Location): Array(Stmt) {
     out: Array(Stmt) = []
     for s in body {
       if s.kind == st_continue() {
-        out.push(for_inc(loc, counter))
+        for_step(loc, counter, out)
         out.push(s)
       } else if s.kind == st_while() {
         // A nested loop's `continue` is its own.
@@ -2143,7 +2185,10 @@ pub class Parser {
     self.skip_newlines
     id = self.for_id
     self.for_id += 1
-    if self.current.kind == tk_dot_dot() {
+    if self.current.kind == tk_dot_dot() || self.current.kind == tk_dot_dot_eq() {
+      // `a..b` excludes b; `a..=b` includes it (D314, D352): the loop
+      // runs while the counter is at most b and stops after b.
+      incl = self.current.kind == tk_dot_dot_eq()
       self.bump
       self.skip_newlines
       end_expr = self.parse_for_operand
@@ -2154,12 +2199,20 @@ pub class Parser {
       s.for_kind = 1
       s.pre.push(for_assign(loc, var_tok.value, first))
       s.pre.push(for_assign(loc, end_name, end_expr))
-      s.cond = for_binary(loc, tk_less(), for_name_expr(loc, var_tok.value), for_name_expr(loc, end_name))
+      op = tk_less()
+      self.for_last = ""
+      if incl {
+        op = tk_less_eq()
+        self.for_last = end_name
+      }
+      s.cond = for_binary(loc, op, for_name_expr(loc, var_tok.value), for_name_expr(loc, end_name))
       s.body = for_advance(raw_body, var_tok.value, loc)
-      s.body.push(for_inc(loc, var_tok.value))
+      for_step(loc, var_tok.value, s.body)
+      self.for_last = ""
       return s
     }
     raw_body2 = self.parse_block
+    self.for_last = ""
     xs_name = "__for${id}_xs"
     idx_name = "__for${id}_i"
     s2 = Stmt.new(st_while(), loc)
@@ -2266,6 +2319,15 @@ pub class Parser {
       _ = self.parse_interpolated_string
       return CaseLabel.new(lb_string(), iloc)
     }
+    if self.current.kind == tk_true() || self.current.kind == tk_false() {
+      // A Bool switch's `case true` (Stage 29 W5a3, O236).
+      btrue = self.current.kind == tk_true()
+      bl = CaseLabel.new(lb_bool(), self.bump.loc)
+      if btrue {
+        bl.int_val = 1
+      }
+      return bl
+    }
     if self.current.kind == tk_nil() {
       // A union switch's `case nil` (Stage 29 W5a2, O391).
       return CaseLabel.new(lb_nil(), self.bump.loc)
@@ -2289,6 +2351,25 @@ pub class Parser {
       tlabel.tname = self.parse_type_name
       return tlabel
     }
+    first = self.parse_case_bound
+    if self.current.kind != tk_dot_dot() && self.current.kind != tk_dot_dot_eq() {
+      return first
+    }
+    // A range label (Stage 29 W5a3, O493): `lo..hi` excludes hi, `lo..=hi`
+    // includes it, as in `for`.
+    range = CaseLabel.new(lb_range(), first.loc)
+    range.incl = self.current.kind == tk_dot_dot_eq()
+    self.bump
+    self.skip_newlines
+    range.lo = first
+    range.hi = self.parse_case_bound
+    range
+  }
+
+  // A label that may bound a range: an integer literal (a character
+  // literal is one), or a name: an enum member, a constant (`case
+  // max_depth`, `case limits.max`), checked by the checker.
+  pub fn parse_case_bound: CaseLabel {
     if self.current.kind == tk_ident() {
       tok = self.bump
       label = CaseLabel.new(lb_member(), tok.loc)
@@ -2305,9 +2386,9 @@ pub class Parser {
       }
       return label
     }
-    label = CaseLabel.new(lb_int(), self.current.loc)
-    label.int_val = parse_case_int
-    label
+    ilabel = CaseLabel.new(lb_int(), self.current.loc)
+    parse_case_int(ilabel)
+    ilabel
   }
 
   // Whether the label at the current token names a type: its last
@@ -2327,10 +2408,11 @@ pub class Parser {
     c >= 65 && c <= 90
   }
 
-  // An integer label's value. The bound is 32 bits, stale since D314's
-  // 64-bit Int: W5a3 checks each label against the discriminant's type
-  // (O390).
-  pub fn parse_case_int: Int {
+  // An integer label (a character literal is one): its magnitude and
+  // sign, and int_val its 64 bits. The checker checks it against the
+  // discriminant's type (Stage 29 W5a3, O390), as a literal adopts its
+  // context's; a suffix is refused, since the label takes that type.
+  pub fn parse_case_int(label: CaseLabel) {
     neg = false
     if self.current.kind == tk_minus() {
       self.bump
@@ -2339,29 +2421,24 @@ pub class Parser {
     }
     if self.current.kind != tk_integer() {
       fail(self.current.loc, "case label must be an integer literal")
-      return 0
+      return
     }
     tok = self.bump
     if !parse_int_tok(tok) {
-      return 0
+      return
     }
     if self.int_suffix.size != 0 {
-      fail(tok.loc, "case label must be an Int literal")
-      return 0
+      fail(tok.loc, "a case label takes the type of the switch's value: write it without the suffix")
+      return
     }
     bits = self.int_bits
+    label.bits = bits
+    label.neg = neg
     if neg {
-      if bits > 2147483648u64 {
-        fail(tok.loc, "case label does not fit in Int")
-        return 0
-      }
-      return 0 - bits.to_i()
+      label.int_val = (0u64 &- bits).wrap_i
+    } else {
+      label.int_val = bits.wrap_i
     }
-    if bits > 2147483647u64 {
-      fail(tok.loc, "case label does not fit in Int")
-      return 0
-    }
-    bits.to_i()
   }
 
   pub fn parse_for_operand: Expr {

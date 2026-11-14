@@ -100,6 +100,56 @@ pub fn mir_stmt_def(st: MStmt): Int {
   -1
 }
 
+// The loop heads of f (Stage 29 W5a3, O713): the targets of its back
+// edges, an edge into a block still on the path of a depth-first walk
+// from the entry. Every cycle has one, and an edge into a lower-numbered
+// block that closes no cycle (a dispatch block a lowering numbered after
+// the arm it enters) is none. last[h] is set to the highest-numbered
+// source of a back edge into h (-1 for a block that heads no loop).
+pub fn mir_loop_heads(f: MFunc, last: Array(Int)): Array(Bool) {
+  n = f.blocks.size
+  heads = mir_bools(n, false)
+  state: Array(Int) = []
+  for b0 in 0..n {
+    state.push(0)
+    last.push(-1)
+  }
+  path: Array(Int) = []
+  next: Array(Int) = []
+  if n > 0 {
+    path.push(0)
+    next.push(0)
+    state[0] = 1
+  }
+  while path.size > 0 {
+    top = path.size - 1
+    b = path[top]
+    succ = mir_succ(f.blocks[b])
+    if next[top] >= succ.size {
+      state[b] = 2
+      path.pop
+      next.pop
+      continue
+    }
+    h = succ[next[top]]
+    next[top] = next[top] + 1
+    if h < 0 || h >= n {
+      continue
+    }
+    if state[h] == 1 {
+      heads[h] = true
+      if b > last[h] {
+        last[h] = b
+      }
+    } else if state[h] == 0 {
+      state[h] = 1
+      path.push(h)
+      next.push(0)
+    }
+  }
+  heads
+}
+
 pub fn mir_succ(blk: MBlock): Array(Int) {
   if t = blk.term {
     return t.targets

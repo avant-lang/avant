@@ -44,9 +44,9 @@ pub fn mir_scalar_ty(t: Ty): Int {
 }
 
 // An enum declared in Avant (Stage 29 W5a1, D358, O394) is stored in the
-// smallest width that fits its values: one byte (u8) when every value is
-// in 0..255, else i32 (C's int; the MIR has no 8-bit signed or 16-bit
-// type, so a negative value or one above 255 takes four bytes).
+// smallest width that fits its values: one byte when every value is in
+// 0..255 (u8) or -128..127 (i8), else two (u16, i16; Stage 29 W5a3,
+// O685), else four (i32, C's int, which a C enum always is).
 // mir_enum_narrow is the switch the proving ground's Int32 build turns
 // off.
 pub fn mir_enum_narrow: Bool { true }
@@ -55,12 +55,29 @@ pub fn mir_enum_ty(t: Ty): Int {
   if !mir_enum_narrow() || t.enum_c_int {
     return mt_i32()
   }
+  lo = 0
+  hi = 0
   for v in t.enum_vals {
-    if v < 0 || v > 255 {
-      return mt_i32()
+    if v < lo {
+      lo = v
+    }
+    if v > hi {
+      hi = v
     }
   }
-  mt_u8()
+  if lo >= 0 && hi <= 255 {
+    return mt_u8()
+  }
+  if lo >= -128 && hi <= 127 {
+    return mt_i8()
+  }
+  if lo >= 0 && hi <= 65535 {
+    return mt_u16()
+  }
+  if lo >= -32768 && hi <= 32767 {
+    return mt_i16()
+  }
+  mt_i32()
 }
 
 // An optional reference is its reference's one pointer, `nil` the null

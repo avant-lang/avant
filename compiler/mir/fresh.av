@@ -22,8 +22,9 @@
 // until the next collection, and a thread is collected only at a
 // collecting call of its own (a safepoint: an allocation, a poll, a native
 // transition, any call that collects, an indirect call). In a shared
-// module the frame pass then adds a poll at loop heads, so here every
-// block a back edge enters closes every holder. A barrier on an open
+// module the frame pass then adds a poll at loop heads (the targets of a
+// depth-first walk's back edges, mir_loop_heads), so here every such block
+// closes every holder. A barrier on an open
 // holder is removed, and the store it preceded (if it is one through _h)
 // is marked `fresh`; every allocation whose result is the holder of a
 // removed barrier that served a store (or an initialize's receiver) is
@@ -235,16 +236,11 @@ fn mir_fresh_func(m: MModule, f: MFunc, edit: Bool): Array(UInt64) {
   nw = mir_nwords(n)
   preds = mir_preds(f)
   // Loop heads close every holder in a shared module (their poll).
+  // The same heads as the poll pass's (mir/flow.av mir_loop_heads, O713).
   head = mir_bools(nb, false)
   if m.shared {
-    for b in 0..nb {
-      succ = mir_succ(f.blocks[b])
-      for s in succ {
-        if s >= 0 && s <= b && s < nb {
-          head[s] = true
-        }
-      }
-    }
+    hlast: Array(Int) = []
+    head = mir_loop_heads(f, hlast)
   }
   entry = mir_zero_words(nw)
   if f.fresh_self && n > 1 {
