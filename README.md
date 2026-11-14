@@ -312,7 +312,32 @@ fn main: Int {
 
 A status outside `0..255` traps (`avant runtime: exit status 256 out of range (0..255)`, status 1) instead of reaching the OS cut to its low byte, where 256 failures would read as success.
 
-Command-line arguments come from `argv()` ([Program arguments](#program-arguments)). An entry point cannot return an error yet ([Not built yet](#not-built-yet)).
+An entry point may also fail: declared `fn main: Void | E` or `fn main: Int | E`, with every `E` marked `Error` ([Errors](#errors)), a failure it returns (or passes up with `?`) prints its text, `"${e}"`, and a newline to stderr after everything written to stdout, and the process exits with status 1. Success exits 0, or with the `Int`.
+
+<!-- check: run status=1 -->
+```avant
+class Missing: Error {
+  message: String
+
+  fn initialize(message: String) {
+    self.message = message
+  }
+}
+
+fn lookup(key: String): Int | Missing {
+  if key == "port" {
+    return 8080
+  }
+  Missing.new("no setting ${key}")
+}
+
+fn main: Void | Missing {
+  puts(lookup("port")?)    // => 8080
+  puts(lookup("host")?)    // stderr: no setting host; status 1
+}
+```
+
+Command-line arguments come from `argv()` ([Program arguments](#program-arguments)).
 
 ### Names and scope
 
@@ -3722,7 +3747,6 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 | `Hash` with other key and value types; insertion order | decided | [three combinations](#key-and-value-types); sort the keys |
 | `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion; slices of strings and arrays | planned | `str_slice`, loops, [`std.regex`](#stdregex) |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#trailing-blocks) |
-| `fn main` returning an error | decided | handle it in `main` |
 | `print` (no newline), writing to stderr, `exit(status)` | decided | `puts`; `main`'s result |
 | Reading standard input | planned | `file_read("/dev/stdin")` |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |

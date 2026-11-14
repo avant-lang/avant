@@ -307,6 +307,21 @@ avant_int avant_sys_write(const char *path, const char *body) {
   return (int32_t)n;
 }
 
+/* An entry point's failure: `fn main: Void |
+ * E` or `Int | E` returned a failure, whose text ("${e}") goes to stderr
+ * with a newline, after what the program wrote to stdout; the result, 1,
+ * is the exit status the generated main returns. */
+avant_int avant_main_fail(const char *text) {
+  size_t n = text ? avant_str_n(text) : 0;
+  fflush(stdout);
+  if (n) {
+    fwrite(text, 1, n, stderr);
+  }
+  fputc('\n', stderr);
+  fflush(stderr);
+  return 1;
+}
+
 avant_int avant_sys_errno(void) {
   return g_sys_errno;
 }

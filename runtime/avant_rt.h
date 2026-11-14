@@ -555,6 +555,7 @@ avant_int avant_sys_write(const char *path, const char *body);
 void *avant_sys_list(const char *path);
 avant_int avant_sys_run(const char *path, void *args, const char *out_path);
 avant_int avant_sys_errno(void);
+avant_int avant_main_fail(const char *text);
 avant_int avant_sys_stage(void);
 avant_int avant_sys_signal(void);
 char *avant_sys_strerror(avant_int code);

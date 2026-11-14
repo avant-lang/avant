@@ -82,6 +82,17 @@ fn cases: Array(RCase) {
   xs.push(accepted("union-text", "class Oops: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn f(n: Int): Int | String | Oops {\n  if n == 0 {\n    return 5\n  }\n  if n == 1 {\n    return \"five\"\n  }\n  Oops.new(\"no\")\n}\nfn main {\n  puts(\"\${f(0)} \${f(1)} \${f(2)}\")\n}\n", "5 five no\n"))
   xs.push(refused("union-text-struct", "${pt}fn f(n: Int): Int | P {\n  if n > 0 {\n    return n\n  }\n  P { x: 1, y: 2 }\n}\nfn main {\n  puts(\"\${f(1)}\")\n}\n", "cannot interpolate Int | P: its member P has no text", "12:11"))
   xs.push(refused("optional-text", "fn main {\n  a: Int? = 1\n  puts(\"\${a}\")\n}\n", "cannot interpolate Int?: it holds nil; open it with `if v = a`", "3:11"))
+  // fn main returning a failure
+  oops = "class Oops: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn check(n: Int): Int | Oops {\n  if n > 1 {\n    return Oops.new(\"big \${n}\")\n  }\n  n\n}\n"
+  xs.push(exits("main-void-fails", "${oops}fn main: Void | Oops {\n  puts(check(1)?)\n  puts(check(2)?)\n}\n", "1\n", 1, "big 2\n"))
+  xs.push(exits("main-void-ok", "${oops}fn main: Void | Oops {\n  puts(check(0)?)\n  if check(1)? == 1 {\n    return\n  }\n  puts(9)\n}\n", "0\n", 0, ""))
+  xs.push(exits("main-int-fails", "${oops}fn main: Int | Oops {\n  check(5)?\n}\n", "", 1, "big 5\n"))
+  xs.push(exits("main-int-ok", "${oops}fn main: Int | Oops {\n  check(1)? + 2\n}\n", "", 3, ""))
+  xs.push(exits("run-void-fails", "${oops}fn run: Void | Oops {\n  puts(check(3)?)\n}\n", "", 1, "big 3\n"))
+  xs.push(refused("main-string-oops", "${oops}fn main: String | Oops {\n  \"x\"\n}\n", "fn main returns String | Oops; an entry point returns nothing, an Int (the process status), or either with failures marked Error (Void | E, Int | E)", "13:10"))
+  xs.push(refused("main-not-error", "${pt}fn main: Void | P {\n}\n", "fn main returns Void | P; an entry point returns nothing, an Int (the process status), or either with failures marked Error (Void | E, Int | E): P is not marked Error", "5:17"))
+  xs.push(refused("main-string", "fn main: String {\n  \"x\"\n}\n", "fn main returns String; an entry point returns nothing", "1:1"))
+  xs.push(refused("main-void-nil", "${oops}fn main: Void | Oops {\n  a: Int? = nil\n  puts(a?)\n}\n", "postfix ? would return nil, but the function returns Void | Oops, which holds no nil; handle the nil with if-assign or ??", "15:9"))
   // nil typed by the other branches
   vt = "struct V {\n  x: Int\n}\n"
   xs.push(accepted("nil-if-join", "${vt}fn pick(n: Int): Int {\n  v = if n > 0 { V { x: n } } else { nil }\n  if got = v {\n    return got.x\n  }\n  -1\n}\nfn main {\n  puts(pick(4))\n  puts(pick(0))\n}\n", "4\n-1\n"))

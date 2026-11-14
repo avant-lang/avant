@@ -273,6 +273,8 @@ pub fn (checker_self: Checker) check: Program {
   checker_self.note_consts
   checker_self.check_enum_consts
   checker_self.check_type_names
+  checker_self.clear_poison
+  checker_self.prepare_entry
   for lb in checker_self.program.libs {
     checker_self.clear_poison
     checker_self.register_lib(lb)
@@ -610,7 +612,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   if fnn.name == "main" || fnn.name == "run" {
     if ret.is_void {
     } else if !ret.is_int {
-      checker_self.fail(fnn.loc, "fn ${fnn.name} returns ${ret.show}; the process status is Int")
+      checker_self.fail(fnn.loc, checker_self.entry_rule_text(fnn.name, ret.show))
       return
     }
   }

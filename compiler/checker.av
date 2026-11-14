@@ -161,6 +161,9 @@ pub class Checker {
   // checker/printing.av union_text): check_switch takes it instead of
   // checking the discriminant again, and clears it.
   pub switch_pre: Ty? = nil
+  // Checking the body of a `fn main: Void | E` (checker/entry.av): a bare
+  // return returns 0; a lambda's body clears it.
+  pub entry_void: Bool = false
   // Why the last inference failed, when a union's type parameters split
   // the argument in more than one way (checker/match.av infer_subst,
   // Stage 29 W5b1): added to "cannot infer type argument".
@@ -473,6 +476,11 @@ pub class Checker {
     self.pending_handles = []
     self.pending_arrays = []
     self.facts = FlowFacts.new
+    // `fn main: Void | E` ends returning 0 (checker/entry.av).
+    self.entry_void = fnn.entry_void
+    if fnn.entry_void && fallthrough(fnn.body) {
+      fnn.body.push(stmt_expr(fnn.loc, entry_zero(fnn.loc)))
+    }
     if !ret.is_void && fnn.body.size == 0 {
       fail(fnn.loc, "missing return value")
       self.current_module = saved_mod
@@ -649,6 +657,11 @@ pub class Checker {
         if !ty_assignable(got, expected) {
           fail(stmt.loc, "return type is ${got.show}, expected ${expected.show}")
         }
+      } else if self.entry_void {
+        // A bare return of `fn main: Void | E` returns 0.
+        zero = entry_zero(stmt.loc)
+        stmt.expr = zero
+        check_expr_as(zero, expected)
       } else {
         if !expected.is_void {
           fail(stmt.loc, "return needs a value of type ${expected.show}")
@@ -1568,6 +1581,12 @@ pub class Checker {
       return t_int()
     }
     ret = self.return_type
+    ret_shown = ret.show
+    if self.entry_void {
+      if cf = self.current_fn {
+        ret_shown = cf.entry_shown
+      }
+    }
     if got.is_union && ty_failures(got).size > 0 && !ty_has_success(got) {
       fail(loc, "postfix ? on ${got.show}: it has no success value (every member but nil is marked Error), so ? would pass up nil and continue with the error; open it with if-assign or ??")
       return t_int()
@@ -1586,8 +1605,10 @@ pub class Checker {
       if fails.size == 1 && fails[0].is_nil {
         if ret.is_void {
           fail(loc, "postfix ? would return nil, but ${self.try_body} returns nothing; give it a result that includes nil, or handle the nil with if-assign or ??")
+        } else if self.entry_void {
+          fail(loc, "postfix ? would return nil, but ${self.try_body} returns ${ret_shown}, which holds no nil; handle the nil with if-assign or ??")
         } else {
-          fail(loc, "postfix ? would return nil, but ${self.try_body} returns ${ret.show}; declare the result ${ty_nilable(ret).show}, or handle the nil with if-assign or ??")
+          fail(loc, "postfix ? would return nil, but ${self.try_body} returns ${ret_shown}; declare the result ${ty_nilable(ret).show}, or handle the nil with if-assign or ??")
         }
         return t_int()
       }
@@ -1595,7 +1616,7 @@ pub class Checker {
       if ret.is_void {
         fail(loc, "postfix ? on ${got.show} would return ${what}, but ${self.try_body} returns nothing; give it a result that includes ${what}, or handle the failure with if-assign or ??")
       } else {
-        fail(loc, "postfix ? on ${got.show} would return ${what}, but ${self.try_body} returns ${ret.show}; give it a result that includes ${what}, or handle the failure with if-assign or ??")
+        fail(loc, "postfix ? on ${got.show} would return ${what}, but ${self.try_body} returns ${ret_shown}; give it a result that includes ${what}, or handle the failure with if-assign or ??")
       }
     }
     t_int()

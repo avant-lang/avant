@@ -718,6 +718,8 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     // A postfix `?` in the body returns from the lambda (Stage 29 W1a, A3).
     saved_ret = checker_self.return_type
     saved_try = checker_self.try_in
+    saved_entry = checker_self.entry_void
+    checker_self.entry_void = false
     checker_self.return_type = ret
     saved_body = checker_self.try_body
     checker_self.try_in = ""
@@ -738,6 +740,7 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
       checker_self.check_body(b.body, ret, true)
     }
     checker_self.return_type = saved_ret
+    checker_self.entry_void = saved_entry
     checker_self.try_in = saved_try
     checker_self.try_body = saved_body
     checker_self.loop_depth = saved_loops
