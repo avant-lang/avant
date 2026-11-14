@@ -125,6 +125,7 @@ static void gc_settings_read(GcSettings *s) {
   s->verify = env_bool("AVANT_GC_VERIFY", 0);
   s->stats = env_bool("AVANT_GC_STATS", 0);
   s->stress = env_bool("AVANT_GC_STRESS", 0);
+  s->walk = s->stats | s->verify | s->stress;
   s->stall_ms = env_u64("AVANT_GC_VERIFY_STALL_MS", 10000, 0, 1ull << 40);
   for (i = 0; i < sizeof retired_knobs / sizeof retired_knobs[0]; i++) {
     const char *v = getenv(retired_knobs[i]);
@@ -274,6 +275,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
   int resume = 0;
   uint64_t t0;
+  /* The inline path's allocations are counted before the policy's
+   * counters are read (M6, gc_alloc_sync). */
+  gc_alloc_sync();
   if (gc_thread.collecting) {
     gc_die("GC reentered");
   }
@@ -322,12 +326,19 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   }
   if (gc_heap.set.verify) {
     gc_quarantine_release();
+    /* The eager comparison of the late start bits (M7), and the eager
+     * bits in place of the real ones while the checks below run: they
+     * read every object as they did when each allocation set its bit,
+     * and set none of the bits the collection itself must set. */
+    gc_alloc_sync();
+    gc_verify_starts_begin();
     gc_verify_begin(full);
     if (!full) {
       gc_verify_remembered();
     } else {
       gc_verify_lost();
     }
+    gc_verify_starts_resume();
   }
   gc_heap.young_clock += avant_nursery_held > gc_heap.young_carried
                               ? avant_nursery_held - gc_heap.young_carried
@@ -375,6 +386,15 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     /* The line marks: the epoch advances (no walk zeroing them). */
     gc_line_epoch_advance();
     gc_mark_roots();
+    /* Late start bits (the Valk stage, VALK-A2, M7): every object the
+     * mark reached has its bit now (mark_object), and the mark's lookups
+     * built the blocks they needed; the inline runs of the cycle are
+     * forgotten before anything is swept or moved. An object the mark
+     * did not reach never gets a bit. */
+    if (gc_heap.set.verify) {
+      gc_verify_starts_end();
+    }
+    gc_lazy_drop();
     frag_note();
     {
       Block *db;
@@ -554,6 +574,7 @@ void gc_verify_exit_run(void (*check)(void)) {
   if (gc_thread.collecting || gc_thread.nogc) {
     return;
   }
+  gc_alloc_sync();
   gc_lock(&gc_heap.world);
   if (!gc_thread.collector) {
     for (;;) {
@@ -589,6 +610,7 @@ void gc_verify_exit_run(void (*check)(void)) {
  * before it materializes the request). */
 void avant_gc_heap_goal_collect(void) {
   gc_init();
+  gc_alloc_sync();
   gc_safepoint();
   gc_lock(&gc_heap.world);
   gc_maybe_collect();
@@ -650,6 +672,7 @@ static int region_refuses(void) {
 
 void avant_gc_collect_young(void) {
   gc_init();
+  gc_alloc_sync();
   /* `gc.collect()` inside a hold (std.gc): deferred to the hold's end. */
   if (gc_thread.hold) {
     gc_thread.hold_young = 1;
@@ -671,6 +694,7 @@ void avant_gc_collect_young(void) {
 
 void avant_gc_collect(void) {
   gc_init();
+  gc_alloc_sync();
   gc_safepoint();
   gc_lock(&gc_heap.world);
   if (gc_thread.hold && !gc_thread.nogc) {
@@ -702,6 +726,7 @@ void avant_gc_hold_begin(void) {
     return;
   }
   if (gc_thread.hold++ == 0) {
+    gc_alloc_sync();
     gc_thread.hold_base = avant_g_stats.allocated_bytes;
     gc_thread.hold_site = __builtin_return_address(0);
     gc_thread.hold_young = 0;
@@ -723,6 +748,7 @@ void avant_gc_hold_end(void) {
   }
   young = gc_thread.hold_young;
   gc_thread.hold_young = 0;
+  gc_alloc_sync();
   gc_safepoint();
   gc_lock(&gc_heap.world);
   shared = atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;

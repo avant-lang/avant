@@ -781,3 +781,66 @@ int64_t ffi_rem_store(void *holder, void *v, int64_t barrier) {
   *(void **)holder = v;
   return 1;
 }
+
+/* late_starts.av (the Valk stage, VALK-A2, M7): the late start bits. An
+ * object generated code's inline path allocated has no start bit until
+ * something needs it (runtime/avant_gc_alloc.c, "Late start bits"), and
+ * only C can hold what needs it across a collection on purpose: an
+ * address inside such an object in a root slot. ffi_late_inside roots the
+ * address of OBJ's payload word WORD (a registered thread-local slot, as
+ * a runtime-held reference), runs a young collection, and reads the word
+ * back through the slot: the collection must find the object by that
+ * address (its block's start bits are built then), keep it alive, and
+ * rewrite the slot when it moves the object. Returns the word, or -1
+ * when it reads differently after the collection. ffi_late_is_heap asks
+ * avant_is_heap of the object's start outside any collection (a lookup
+ * that builds the bits on the spot); ffi_late_pinned pins the object,
+ * returns how many pins that added and unpins it (a pin of an address
+ * the lookup does not find is ignored: 0). ffi_late_pin_collect pins the
+ * object across a young collection, which therefore promotes it where it
+ * lies (a pinned object's block stays in place), and asks avant_is_heap
+ * of it afterwards: a survivor left in place has its start bit when the
+ * collection has ended. */
+static __thread void *ffi_late_slot;
+static __thread int ffi_late_rooted;
+
+int64_t ffi_late_inside(void *obj, int64_t word) {
+  int64_t before;
+  int64_t after;
+  if (!ffi_late_rooted) {
+    avant_gc_add_root(&ffi_late_slot);
+    ffi_late_rooted = 1;
+  }
+  ffi_late_slot = (int64_t *)obj + word;
+  before = *(int64_t *)ffi_late_slot;
+  avant_gc_collect_young();
+  after = *(int64_t *)ffi_late_slot;
+  ffi_late_slot = NULL;
+  return after == before ? after : -1;
+}
+
+int64_t ffi_late_is_heap(void *obj) {
+  return avant_is_heap(obj);
+}
+
+void avant_pin(void *payload);
+void avant_unpin(void *payload);
+int64_t avant_pin_count(void);
+
+int64_t ffi_late_pin_collect(void *obj) {
+  int64_t ok;
+  avant_pin(obj);
+  avant_gc_collect_young();
+  ok = avant_is_heap(obj);
+  avant_unpin(obj);
+  return ok;
+}
+
+int64_t ffi_late_pinned(void *obj) {
+  int64_t before = (int64_t)avant_pin_count();
+  int64_t n;
+  avant_pin(obj);
+  n = (int64_t)avant_pin_count() - before;
+  avant_unpin(obj);
+  return n;
+}

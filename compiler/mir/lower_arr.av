@@ -177,6 +177,23 @@ pub fn (lw: MirLower) array_header(aty: Int, d: Int, n: MOperand): MOperand {
   b.copy_local(a)
 }
 
+// An array known to be empty where it is made (`[]`, `Array(T).new(0)`): the
+// header alone, with no element buffer (the Valk stage, VALK-A2, O197).
+// The allocation zeroes it: a null data word, size 0, capacity 0, the
+// state every array operation already takes for "no elements" (an
+// element is reached only below the size; a push with size = capacity
+// calls the runtime, whose growth makes the first buffer of four
+// elements, the capacity an empty buffer grew to). Until VALK-A2 an empty
+// array was two objects, the header and a buffer of one unused word:
+// 1.93 million such buffers were 35.6 MB of the compiler's live heap.
+pub fn (lw: MirLower) array_header_empty(aty: Int): MOperand {
+  b = lw.lw_b
+  l = b.types.layout_of(aty)
+  a = b.temp(aty)
+  b.call(a, "avant_alloc", lw.two(b.c_u64(b.types.layouts[l].size.to_i), b.c_u32(1022)))
+  b.copy_local(a)
+}
+
 // `[e0, e1, ...]` (the old back end): the buffer first (n elements,
 // the element-buffer id), each element in order stored into it, then the
 // header. A reference-carrying element is a `fresh` store (V14): the
@@ -194,6 +211,9 @@ pub fn (lw: MirLower) lower_array_lit(e: Expr): MOperand {
   want = lw.elem_ty_of(e)
   n = e.elems.size
   lw.at(e.loc)
+  if n == 0 {
+    return lw.array_header_empty(aty)
+  }
   d = b.temp(b.types.ref_to(lw.elems_of(aty)))
   size = b.types.size_of(et) * n
   b.call(d, "avant_alloc", lw.two(b.c_u64(size.to_i), lw.buf_tid(aty)))
@@ -243,13 +263,18 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
     return b.c_i32(0)
   }
   nv = b.c_i32(0)
+  sized = false
   if se = e.size_expr {
     nv = lw.lower_expr(se)
+    sized = true
   }
   if lw.failed {
     return b.c_i32(0)
   }
   lw.at(e.loc)
+  if e.elems.size == 0 && (!sized || (nv.kind == mok_int() && nv.ival == 0)) {
+    return lw.array_header_empty(aty)
+  }
   k = b.temp(mt_int())
   b.assign(b.pl(k), b.rv_use(nv))
   neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(k), b.c_i64(0)))

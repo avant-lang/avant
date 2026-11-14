@@ -48,6 +48,9 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   if e.used_frame_global {
     ll_gc_frame_helpers(e)
   }
+  if e.used_alloc_slow {
+    ll_alloc_slow_helper(e)
+  }
   maps = e.out.to_s
 
   out = buf_new()
@@ -80,8 +83,12 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
     out.push_str("]\n\n")
   }
   if e.used_alloc_globals {
-    out.push_str(ll_alloc_globals())
+    out.push_str(ll_alloc_globals(m.shared))
     out.push_str("\n")
+  }
+  if e.used_heap_globals {
+    out.push_str("@avant_gc_heap_lo = external global i64\n")
+    out.push_str("@avant_gc_heap_len = external global i64\n\n")
   }
   if e.used_poll_global {
     out.push_str("@avant_gc_requested = external global i32\n\n")
@@ -445,6 +452,8 @@ fn ll_call(e: LlEmit, st: MStmt) {
       result = ll_emit_call(e, false, "double", "@${intr}", ll_args(e, st.args, s.params, true))
     } else if x.alloc {
       result = ll_alloc(e, x.name, st.args, st.fresh)
+    } else if x.name == "avant_c_str" && e.inline_fast {
+      result = ll_c_str(e, st.args)
     } else {
       args = ll_args(e, st.args, s.params, true)
       callee = ll_sym(x.name)

@@ -281,8 +281,8 @@ void gc_thread_registered(int foreign) {
    * Without this a new thread's first allocation could race with it
    * (found by W17a's rule 4 proof: "object too large" under
    * AVANT_GC_VERIFY=1, a corrupted header). While it is stopped its
-   * single-mutator inline state (avant_gc_fast_ok 1, whose path counts
-   * without a lock) is cleared: from now on a thread bumps only in a hole
+   * single-mutator inline state (state 1, whose allocations are
+   * counted from its cursor, without a lock) is cleared: from now on a thread bumps only in a hole
    * the slow path charged to it (Stage 28 W17b). */
   if (became_shared && gc_stop_world()) {
     gc_alloc_shared_now();

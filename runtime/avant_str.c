@@ -163,6 +163,29 @@ static char *empty_str(void) {
   return g_empty;
 }
 
+/* A C function's `String` result (the Valk stage, VALK-A2, O629; D352;
+ * compiler/mir/lower_ffi.av passes every one through here). C may return
+ * an address inside a heap object (`strchr` of a heap string): a root
+ * slot may hold one, a reference-typed field may not (the field rule,
+ * avant_gc_internal.h: a trace reads the eight bytes before a field's
+ * word as a header), and the program may store the result in either. An
+ * address outside the collected heap (C's own memory, a literal), null
+ * and the exact start of a heap string are returned as they are; an
+ * address inside the heap that is not an object's start is returned as a
+ * fresh copy of the C string there (to its terminator). The copy
+ * allocates, so this is a collecting call: S is a handle across it
+ * (dup_bytes_at: a root slot keeps the object S lies in and follows it
+ * when it moves). */
+char *avant_c_str(char *s) {
+  size_t n;
+  if (!avant_gc_interior(s)) {
+    return s;
+  }
+  n = strlen(s);
+  avant_size_check(n, AVANT_SIZE_STRING);
+  return dup_bytes(s, n);
+}
+
 char *avant_str_concat(const char *a, const char *b) {
   if (!a) {
     a = "";

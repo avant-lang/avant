@@ -187,6 +187,8 @@ static int reserve_all(uint64_t bytes) {
   gc_heap.cards = cd;
   gc_heap.chunks = ch;
   gc_heap.reserved = bytes;
+  avant_gc_heap_lo = (uint64_t)(uintptr_t)gc_heap.base;
+  avant_gc_heap_len = bytes;
   gc_heap.committed = 0;
   return 1;
 }
@@ -361,6 +363,7 @@ void gc_chunk_account(uint64_t c, int sign) {
  * the caller returned its pages). */
 void gc_chunk_give(uint64_t c) {
   uint8_t was = gc_heap.chunks[c].kind;
+  gc_heap.small_take = NULL;
   gc_chunk_account(c, -1);
   memset(&gc_heap.chunks[c], 0, sizeof(GcChunk));
   gc_heap.chunks[c].kind = CHUNK_FREE;
@@ -409,12 +412,15 @@ static uint64_t make_small_chunk(void) {
   return c;
 }
 
-/* A free block, its start bits and line marks clear, not yet in use
- * (gc_new_block makes it so): from the lowest small chunk that has one.
- * Never fails: past the reservation it dies. Memory is not charged
- * here; gc_heap.heap_bytes is gc_new_block's. */
-Block *gc_block_take(void) {
-  Block *b;
+/* The chunk the next block is taken from when the last one's cannot be
+ * used again (gc_heap.small_take's comment): the lowest small chunk with
+ * a free block, or a new one. Here, once per chunk taken from and not
+ * once per block (the Valk stage, VALK-A2, O651; until then
+ * gc_block_take tested it at every clean block), a chunk that is empty
+ * with nothing resident (a new one, or one whose free blocks were all
+ * given back to the OS) leaves gc_heap.clean_empty_chunks: its first
+ * block is about to be taken. */
+static __attribute__((noinline)) GcChunk *block_take_chunk(void) {
   GcChunk *ch = NULL;
   uint64_t hw;
   uint64_t c;
@@ -433,6 +439,25 @@ Block *gc_block_take(void) {
     ch = &gc_heap.chunks[c];
   }
   gc_heap.small_hint = c;
+  if (ch->used == 0 && ch->nres == 0) {
+    gc_heap.clean_empty_chunks--;
+  }
+  gc_heap.small_take = ch;
+  return ch;
+}
+
+/* A free block, its start bits and line marks clear, not yet in use
+ * (gc_new_block makes it so): from the lowest small chunk that has one
+ * (the chunk the last block came from while that still holds,
+ * gc_heap.small_take; block_take_chunk otherwise). Never fails: past the
+ * reservation it dies. Memory is not charged here; gc_heap.heap_bytes is
+ * gc_new_block's. */
+Block *gc_block_take(void) {
+  Block *b;
+  GcChunk *ch = gc_heap.small_take;
+  if (__builtin_expect(!ch || !ch->nfree, 0)) {
+    ch = block_take_chunk();
+  }
   b = ch->free;
   ch->free = b->next;
   ch->nfree--;
@@ -441,10 +466,6 @@ Block *gc_block_take(void) {
   if (!b->clean) {
     gc_heap.free_resident -= BLOCK_SIZE;
     ch->nres--;
-  } else if (ch->used == 1 && ch->nres == 0) {
-    /* The chunk was empty with nothing resident (a new one, or one whose
-     * free blocks were all given back to the OS). */
-    gc_heap.clean_empty_chunks--;
   }
   b->clean = 0;
   memset(b->line_mark, 0, LINES_PER_BLOCK);
@@ -471,6 +492,7 @@ void gc_block_give(Block *b) {
   gc_heap.free_resident += BLOCK_SIZE;
   if (c < gc_heap.small_hint) {
     gc_heap.small_hint = c;
+    gc_heap.small_take = NULL;
   }
 }
 
@@ -591,6 +613,9 @@ void gc_heap_return(uint64_t live) {
   if (total <= keep && gc_heap.clean_empty_chunks == 0) {
     return;
   }
+  /* What follows may leave the chunk blocks are being taken from empty
+   * with nothing resident, or decommit it: the next take looks again. */
+  gc_heap.small_take = NULL;
   for (c = hw; c-- > 0;) {
     GcChunk *ch = &gc_heap.chunks[c];
     int empty = ((ch->kind == CHUNK_SMALL || ch->kind == CHUNK_LARGE) && ch->used == 0) ||
@@ -836,6 +861,21 @@ size_t gc_obj_total(const AvantHeader *h) {
  * its start bit too, gc-design.md §2.3; it is set exactly while the
  * object lives). OL receives a large object's header, OB a block
  * object's block. */
+/* No start bit at granule G (offset OFF): an object the inline path
+ * allocated has none until something needs it (late start bits, the
+ * Valk stage, VALK-A2, M7; avant_gc_alloc.c): its block's are set now,
+ * and the bit is read again. Out of line and cold: the lookup itself
+ * stays as small as it was (with this code in its body every lookup
+ * cost more: about 0.8 M instructions on scenario 8 of the collector
+ * benchmark; the record of VALK-A2). */
+static __attribute__((noinline, cold)) int late_start(uintptr_t off, uint64_t g) {
+  if (gc_heap.chunks[off >> CHUNK_SHIFT].kind != CHUNK_SMALL || !gc_heap.blocks[off >> BLOCK_SHIFT].in_use) {
+    return 0;
+  }
+  gc_lazy_touch(&gc_heap.blocks[off >> BLOCK_SHIFT]);
+  return (int)((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL);
+}
+
 int gc_is_heap_payload(void *p, Block **ob, AvantHeader **ol) {
   uintptr_t off;
   uint64_t g;
@@ -847,7 +887,7 @@ int gc_is_heap_payload(void *p, Block **ob, AvantHeader **ol) {
     return 0;
   }
   g = off >> 3;
-  if (!((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL)) {
+  if (!((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL) && !late_start(off, g)) {
     return 0;
   }
   kind = gc_heap.chunks[off >> CHUNK_SHIFT].kind;
@@ -929,6 +969,9 @@ void *gc_object_payload(void *p, Block **ob, AvantHeader **ol) {
     if (!b->in_use) {
       return NULL;
     }
+    /* The block's late start bits (M7): an address inside an object the
+     * inline path allocated is found by them like any other. */
+    gc_lazy_touch(b);
     g = (size_t)((off & (BLOCK_SIZE - 1)) >> 3);
     w = g >> 6;
     bits = b->start[w] & (~0ULL >> (63 - (g & 63)));
@@ -974,6 +1017,23 @@ int avant_is_heap(void *payload) {
   return gc_is_heap_payload(payload, NULL, NULL);
 }
 
+/* The heap's reservation as generated code reads it (avant_rt.h; the
+ * Valk stage, VALK-A2, O629): its first byte and its size, set once by
+ * gc_heap_reserve and zero before it. */
+uint64_t avant_gc_heap_lo;
+uint64_t avant_gc_heap_len;
+
+/* avant_gc.h. One compare for every address outside the committed heap
+ * (before the heap exists its base and committed size are zero, and no
+ * address passes). */
+__attribute__((visibility("hidden"))) int avant_gc_interior(const void *p) {
+  uintptr_t off;
+  if (!heap_offset(p, &off)) {
+    return 0;
+  }
+  return !gc_is_heap_payload((void *)(uintptr_t)p, NULL, NULL);
+}
+
 /* The contract (ABI name kept, gc-design.md §3.1): 1 when a young
  * collection can move this object, 0 when no collection before the next
  * full one moves it; .parallel keeps a raw address only on 0. Under S+
@@ -1002,6 +1062,9 @@ int32_t avant_is_young(void *payload) {
 
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *)) {
   int w;
+  /* Every object of the block: the ones the inline path allocated get
+   * their start bits first (M7). */
+  gc_lazy_touch(b);
   for (w = 0; w < START_WORDS; w++) {
     uint64_t bits = b->start[w];
     while (bits) {

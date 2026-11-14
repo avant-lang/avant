@@ -21,10 +21,12 @@ avant_int avant_zlib_take_status(void) {
 
 /* The collector records the allocation size. The string length is that
  * size minus the trailing NUL, so a compressBound slack is dropped by
- * rewriting the header before the object is observed. */
+ * shortening the object in place before it is observed: through
+ * avant_gc_shrink (avant_gc.h; the Valk stage, VALK-A2), which leaves the
+ * slack as a filler so that the collector can still walk the hole's
+ * headers. */
 static void tag_len(char *out, size_t n) {
-  AvantHeader *h = avant_header(out);
-  h->size = (uint32_t)(n + 1);
+  avant_gc_shrink(out, (uint64_t)n + 1);
   out[n] = 0;
   avant_str_tag(out);
 }

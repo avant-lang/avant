@@ -1,0 +1,186 @@
+// The late start bits (the Valk stage, VALK-A2, M7; O584, O615). An object
+// generated code's inline allocation path made has no start bit until
+// something needs it: a collection that promotes it, or a lookup by the
+// start bits (runtime/avant_gc_alloc.c, "Late start bits"). The lookups
+// that need one for a young object are the ones only C makes on purpose,
+// so the C half (ffi_late_* in tests/fixtures/ffi/ffi.c, built with
+// `--cc`) makes them, on Cells this program allocates inline among
+// thousands of others:
+//
+//   - an address inside a Cell held in a root slot across a young
+//     collection (the collection must find the Cell by it, keep it and
+//     follow it when it moves);
+//   - avant_is_heap of a Cell outside any collection;
+//   - a pin of a Cell (a pin of an address no lookup finds is ignored);
+//   - a Cell pinned across a young collection, which promotes it where it
+//     lies, and avant_is_heap of it afterwards (a survivor left in place
+//     has its start bit when the collection has ended).
+//
+// Then the survivors a young collection leaves where they lie: old Cells
+// are thinned and a full collection frees their lines, so the next Cells
+// are allocated in the holes of blocks that hold mature lines, which a
+// young collection never evacuates; the ones kept are promoted in place
+// and avant_is_heap must know each of them afterwards (their start bits
+// are set when the collection ends).
+//
+// And the survivors past the copy's budget: 200,000 Cells built inside a
+// `gc.hold` survive the collection at its end together, more than one
+// young budget of them, so the copy takes one budget's worth and the
+// rest are promoted where they lie, in blocks no lookup has touched (the
+// case AVANT_GC_VERIFY=1's check of the bits can see: under it the holes
+// of old blocks are held back and the Cells above go to fresh blocks).
+// Under AVANT_GC_STRESS=1 a hold is inactive (lib/std/gc.av): each of
+// the 200,000 allocations has its own collection, and with the verifier
+// as well each of those collections checks a heap that grows by one
+// Cell, minutes of the same step. LATE_STARTS_HOLD=2000 builds 2,000
+// Cells here instead (one in ten asked, the same 200): the test's run
+// under the verifier and the stress mode together sets it; every other
+// run builds the 200,000.
+//
+// Between them the loop allocates strings through the runtime (C
+// allocations in the same hole, each with its own bit) and compresses one
+// with std.zlib, whose result the runtime shortens in place: the walk of
+// a hole's headers passes over all of them.
+//
+// Prints `late_starts: 164970 10 10 10 800 200 6 1 500` in every environment: the
+// sum of the words read back through the inside addresses, the Cells
+// avant_is_heap knew, the pins taken, the Cells avant_is_heap knew after
+// the collection they were pinned across, the Cells of the holes it knew
+// after their collection, the Cells of the hold it knew (one in a
+// thousand asked), the length of the last compressed text's round
+// trip, whether the kept Cells read back, and the old Cells left.
+
+import std.zlib
+import std.gc
+
+lib gcrt {
+  fun avant_gc_collect()
+}
+
+lib ls {
+  fun ffi_late_inside(o: Cell, word: Int): Int
+  fun ffi_late_is_heap(o: Cell): Int
+  fun ffi_late_pinned(o: Cell): Int
+  fun ffi_late_pin_collect(o: Cell): Int
+}
+
+class Cell {
+  a: Int
+  b: Int
+  c: Int
+}
+
+fn main {
+  keep: Array(Cell) = []
+  sum = 0
+  known = 0
+  pins = 0
+  stay = 0
+  round = 0
+  i = 0
+  while i < 10000 {
+    c = Cell.new
+    c.a = i
+    c.b = i * 2
+    c.c = i * 3
+    if i % 97 == 0 {
+      keep.push(c)
+    }
+    if i % 7 == 0 {
+      _s = "cell ${i}"
+    }
+    if i % 1000 == 999 {
+      // The address of c.c, in a root slot of C's across a young collection.
+      sum = sum + ls.ffi_late_inside(c, 2)
+    }
+    if i % 1000 == 250 {
+      stay = stay + ls.ffi_late_pin_collect(c)
+    }
+    if i % 1000 == 500 {
+      known = known + ls.ffi_late_is_heap(c)
+      pins = pins + ls.ffi_late_pinned(c)
+      raw = "abcabc".bytes
+      if back = raw.compress.uncompress {
+        round = back.size
+      }
+    }
+    i = i + 1
+  }
+  ok = 1
+  k = 0
+  while k < keep.size {
+    if keep[k].a != k * 97 || keep[k].c != k * 97 * 3 {
+      ok = 0
+    }
+    k = k + 1
+  }
+  // Old Cells, thinned to one in sixteen (a line holds eight), and a full
+  // collection: their blocks keep some lines and free the others.
+  old: Array(Cell) = []
+  i = 0
+  while i < 8000 {
+    m = Cell.new
+    m.a = i
+    old.push(m)
+    i = i + 1
+  }
+  gc.collect()
+  gc.collect()
+  thin: Array(Cell) = []
+  i = 0
+  while i < old.size {
+    if i % 16 == 0 {
+      thin.push(old[i])
+    }
+    i = i + 1
+  }
+  old = thin
+  gcrt.avant_gc_collect()
+  // New Cells in the holes; the kept ones survive a young collection in
+  // place.
+  fresh: Array(Cell) = []
+  i = 0
+  while i < 4000 {
+    n = Cell.new
+    n.b = i
+    if i % 5 == 0 {
+      fresh.push(n)
+    }
+    i = i + 1
+  }
+  gc.collect()
+  inplace = 0
+  i = 0
+  while i < fresh.size {
+    if fresh[i].b == i * 5 {
+      inplace = inplace + ls.ffi_late_is_heap(fresh[i])
+    }
+    i = i + 1
+  }
+  // More survivors than one young budget, in one collection.
+  // LATE_STARTS_HOLD=2000 builds 2,000 (the header's last paragraph).
+  count = 200000
+  if (env_get("LATE_STARTS_HOLD") ?? "") == "2000" {
+    count = 2000
+  }
+  big: Array(Cell) = []
+  gc.hold {
+    j = 0
+    while j < count {
+      b = Cell.new
+      b.c = j
+      big.push(b)
+      j = j + 1
+    }
+  }
+  gc.collect()
+  held = 0
+  i = 0
+  while i < big.size {
+    if big[i].c == i {
+      held = held + ls.ffi_late_is_heap(big[i])
+    }
+    i = i + count / 200
+  }
+  puts("late_starts: ${sum} ${known} ${pins} ${stay} ${inplace} ${held} ${round} ${ok} ${old.size}")
+}

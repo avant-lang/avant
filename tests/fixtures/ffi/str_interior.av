@@ -1,0 +1,57 @@
+// O629 (the Valk stage, VALK-A2; D352): a C function declared to return a
+// `String` may return an address inside a heap object. `strchr` of a heap
+// string returns the address of a byte of that string: in a root slot that
+// is allowed (the start bits resolve it), in a reference-typed field it
+// breaks the field rule (runtime/avant_gc_internal.h; D342 Q6): the traces
+// read the eight bytes before a field's word as a header. Here the result
+// is stored in a field and collections run: young ones, then a full one
+// (with the nursery off only the full one runs).
+//
+// Prints `str_interior: =value=7 =value=7 1` in every environment: the field
+// reads back the text from the `=` on, before and after the collections,
+// and the holder's other field is intact.
+
+import std.gc
+
+lib c {
+  fun strchr(s: String, ch: Int32): String?
+}
+
+lib gcrt {
+  fun avant_gc_collect()
+}
+
+class Holder {
+  tail: String?
+  n: Int
+}
+
+fn text(h: Holder): String {
+  if t = h.tail {
+    return t
+  }
+  "nil"
+}
+
+fn main {
+  h = Holder.new
+  h.n = 7
+  // A heap string: an interpolation is built at run time.
+  s = "key=value=${h.n}"
+  h.tail = c.strchr(s, 61)
+  before = text(h)
+  // Garbage around the string, so the collections have work.
+  i = 0
+  while i < 20000 {
+    _junk = "junk ${i}"
+    i = i + 1
+  }
+  gc.collect()
+  gc.collect()
+  gcrt.avant_gc_collect()
+  ok = 0
+  if h.n == 7 {
+    ok = 1
+  }
+  puts("str_interior: ${before} ${text(h)} ${ok}")
+}

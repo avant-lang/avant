@@ -217,6 +217,7 @@ static void print_verify(StatsLine *l) {
 void gc_print_stats(void) {
   StatsLine l;
   l.n = 0;
+  gc_alloc_sync();
   print_heap(&l);
   print_rem(&l);
   print_def(&l);
@@ -236,6 +237,7 @@ void gc_print_stats(void) {
 }
 
 void avant_gc_stats(AvantGcStats *out) {
+  gc_alloc_sync();
   if (out) {
     *out = avant_g_stats;
   }
