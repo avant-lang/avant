@@ -2383,6 +2383,7 @@ error[E5000]: cannot find greeter.av next to main.av or in fetched deps (run: av
 | move one package to a chosen version | change its `rev` in `avant.toml` to the new tag or commit, then `avant fetch` |
 | move every branch and tag pin to its current commit | `avant fetch --update` (deletes the checkouts, clones again, rewrites the lockfile) |
 | remove a package | delete its entry from `avant.toml`, delete `deps/NAME`, then `avant fetch` |
+| patch a package | clone it, commit the change on a branch, set its `git` to the clone and its `rev` to the branch, then `avant fetch` (a checkout fetched from another source is cloned again) |
 
 Commit the new `avant.lock` afterwards, so everyone fetches the same code. Removing the manifest entry alone is not enough: until its checkout is deleted, the compiler still finds its modules under `deps/`.
 
@@ -2410,7 +2411,7 @@ Publishing is pushing to any git host. A new version is a new tag or commit; exi
 
 Each clash is reported, never silently resolved.
 
-- **Two places provide the same module file.** Importing that name is a compile error that lists the files (`error[E5000]: import shared is ambiguous: ./deps/a/shared.av ./deps/b/shared.av`). There is no priority order, between dependencies or between a dependency and your own tree: a `shared.av` beside your root file clashes with a fetched one the same way. Rename one module, or stop fetching one package.
+- **Two places provide the same module file.** Importing that name is a compile error that lists the files (`error[E5000]: import shared is ambiguous: ./deps/a/shared.av ./deps/b/shared.av`). There is no priority order, between dependencies or between a dependency and your own tree: a `shared.av` beside your root file clashes with a fetched one the same way, so a local copy cannot shadow a dependency. Rename one module, or stop fetching one package; to change a dependency's code, patch a clone of it ([Updating and removing](#updating-and-removing)).
 - **One dependency name reaches two commits**, for example your manifest pins one and a dependency of a dependency asks for another. Fetch stops: `avant fetch: dependency greeter resolves to two different commits (...)`. Align your manifest's pin and fetch again. One name is one version in a project.
 - **Two modules publish the same name.** The ordinary [name clash](#name-clashes): qualify the use.
 

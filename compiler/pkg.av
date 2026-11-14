@@ -814,6 +814,14 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
     if update && file_exists(dest) {
       fs_remove_tree(dest)
     }
+    // A checkout fetched from another source than the manifest's (the
+    // lockfile names another git for it: a clone that patches the
+    // dependency, O229, Stage 29 W5d2) is cloned again from the new one;
+    // fetching its old origin would check out the old code and lock it
+    // under the new source.
+    if ent = lock.find(dep.name), ent.git != dep.git && file_exists(dest) {
+      fs_remove_tree(dest)
+    }
     locked_sha = ""
     if ent = lock.find(dep.name), ent.git == dep.git {
       locked_sha = ent.sha

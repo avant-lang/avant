@@ -135,6 +135,35 @@ fn test_packages(c: Checks) {
       c.expect(false, "read updated output")
     }
 
+    // A module beside the root file and a fetched one of the same name are
+    // two files for one import, an error naming both: the lookup has no
+    // priority order (D77, Q95 P2; O229, Stage 29 W5d2).
+    _ = file_write("${app}/greeter.av", "pub fn greeting: String {\n  \"local\"\n}\n")
+    loc_log = "${base}/local.log"
+    loc_code = compile_av(compiler, "${app}/main.av", "${base}/local-bin", loc_log)
+    c.expect(loc_code != 0, "a local module beside a fetched one does not compile")
+    loc_txt = file_read(loc_log) ?? ""
+    c.expect(str_has(loc_txt, "import greeter is ambiguous:"), "a local module beside a fetched one is ambiguous")
+    c.expect(str_has(loc_txt, "${app}/greeter.av") && str_has(loc_txt, "${app}/deps/greeter/greeter.av"), "the ambiguity names both files")
+    rm_f("${app}/greeter.av")
+
+    // Patching a dependency (O229): a clone with the change committed on a
+    // branch, named by the manifest's git and rev; a plain fetch replaces
+    // the checkout from the old URL and records the new source.
+    fork = "${base}/fork"
+    c.eq_int(process_run_out("/usr/bin/git", ["clone", "-q", dep, fork], glog) ?? -1, 0, "git clone the dep")
+    c.eq_int(process_run_out("/usr/bin/git", ["-C", fork, "checkout", "-q", "-b", "patch"], glog) ?? -1, 0, "git branch patch")
+    _ = file_write("${fork}/greeter.av", "pub fn greeting: String {\n  \"hello patched\"\n}\n")
+    c.eq_int(pkg_git(fork, "add", "-A", glog), 0, "git add the patch")
+    c.eq_int(pkg_git_commit(fork, "patch", glog), 0, "git commit the patch")
+    _ = file_write("${app}/avant.toml", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\ngreeter = { git = \"${fork}\", rev = \"patch\" }\n")
+    c.eq_int(pkg_fetch(compiler, app, false, fetch_log), 0, "fetch after the manifest names the patched clone")
+    c.expect(str_has(file_read("${app}/avant.lock") ?? "", "source = \"git+${fork}#"), "the lockfile records the patched clone")
+    c.eq_int(compile_av(compiler, "${app}/main.av", app_bin, app_clog), 0, "compile with the patched dep")
+    chmod_x(app_bin)
+    c.eq_int(run_av_bin(app_bin, app_rlog), 0, "run with the patched dep")
+    c.eq_str(file_read(app_rlog) ?? "", "hello patched\n", "the program runs the patched dependency")
+
     _ = file_write("${dep_a}/shared.av", "pub fn who: String {\n  \"A\"\n}\n")
     _ = file_write("${dep_b}/shared.av", "pub fn who: String {\n  \"B\"\n}\n")
     c.eq_int(pkg_git(dep_a, "init", "-q", glog), 0, "git init depA")
