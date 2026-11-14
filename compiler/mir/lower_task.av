@@ -567,10 +567,31 @@ pub fn (lw: MirLower) mutex_place(i: Int): MPlace {
   b.field(b.deref(b.pl(lw.lw_task.pholders[i])), lw.lw_task.pfields[i])
 }
 
+// A gate function's arguments (O690): the object in local h, which
+// holds the gate word as its field gi, and the word's byte offset in it.
+// The runtime reads the word at the object plus the offset only while
+// the calling thread runs, so no address inside a heap object is ever an
+// operand (the object may move at any collection; h is a root).
+pub fn (lw: MirLower) gate_args(h: Int, gi: Int): Array(MOperand) {
+  b = lw.lw_b
+  ts = b.types
+  off = 0
+  l = ts.layout_of(ts.pointee(b.func.locals[h].ty))
+  if l < 0 {
+    l = ts.layout_of(b.func.locals[h].ty)
+  }
+  if l >= 0 && gi >= 0 && gi < ts.layouts[l].offsets.size {
+    off = ts.layouts[l].offsets[gi]
+  } else {
+    lw.fail_build("internal error: the offset of a gate field is unknown (mir/lower_task.av gate_args)")
+  }
+  lw.two(b.copy_local(h), b.c_u64(off))
+}
+
 // `m.with { |x| ... }` (calls.av emit_mutex_with): the mutex once into
-// a local, `avant_gate_lock(m.gate)`, the block in place with x naming
+// a local, `avant_gate_lock(&m.gate)`, the block in place with x naming
 // `m.cell` (reads, assignments behind the barrier, field stores through
-// it), the value kept, `avant_gate_unlock(m.gate)`.
+// it), the value kept, `avant_gate_unlock(&m.gate)`.
 pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -588,16 +609,15 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   lw.at(e.loc)
   h = b.temp(mty)
   b.assign(b.pl(h), b.rv_use(o))
-  g = b.temp(mt_u64())
-  b.assign(b.pl(g), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), gi))))
-  b.call(-1, "avant_gate_lock", lw.one(b.copy_local(g)))
+  b.call(-1, "avant_gate_lock", lw.gate_args(h, gi))
   lw.lw_task.pnames.push(bl.params[0])
   lw.lw_task.pholders.push(h)
   lw.lw_task.pfields.push(ci)
-  // The lock is an entry of the pin stack (lower_ffi.av unpin: -2 - g),
+  // The lock is an entry of the pin stack (lower_ffi.av unpin: -2 - h),
   // so a return, a `?` that returns, a break or a continue out of the
   // block releases it, as they end a `gc.hold` (O263, O313).
-  lw.lw_ffi.pins.push(-2 - g)
+  lw.lw_ffi.with_gate[h] = gi
+  lw.lw_ffi.pins.push(-2 - h)
   lw.lw_ffi.pin_depth.push(lw.lw_heads.size)
   vt = ty_void()
   if t = e.ty {
@@ -620,7 +640,7 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   if v = got, !vt.is_void {
     r = lw.tmp(lw.ety(e), b.rv_use(v))
   }
-  b.call(-1, "avant_gate_unlock", lw.one(b.copy_local(g)))
+  b.call(-1, "avant_gate_unlock", lw.gate_args(h, gi))
   r
 }
 
@@ -657,12 +677,18 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
     return lw.call_to(mt_u64(), c, none)
   }
   if mir_gate_builtin(c) && e.args.size == 1 {
-    a = lw.lower_expr(e.args[0])
+    // The gate field's object and offset (O690; the checker allows only
+    // a field, whose place is its holder's local, a deref and the field).
+    p = lw.place_of(e.args[0])
     if lw.failed {
       return b.c_i32(0)
     }
+    if p.proj.size != 2 || p.proj[0].kind != mpk_deref() || p.proj[1].kind != mpk_field() {
+      lw.refuse(e.loc, "a gate that is not a field of its object")
+      return b.c_i32(0)
+    }
     lw.at(e.loc)
-    b.call(-1, c, lw.one(a))
+    b.call(-1, c, lw.gate_args(p.local, p.proj[1].field))
     return b.c_i32(0)
   }
   nil

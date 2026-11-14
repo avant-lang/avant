@@ -1,0 +1,81 @@
+// O691 (D371, Stage 29 W8Cb): a send on a closed channel returns false,
+// buffered or not, full or not, and never waits; a sender waiting for
+// room or for its receiver wakes with false when the channel closes. The
+// values sent before the close stay for the receivers to drain.
+import std.sync
+
+fn main {
+  // Closed, buffered with room: false, nothing stored.
+  a = Channel(Int).new(2)
+  a.close
+  puts(a.send(1))
+  puts(a.recv ?? -1)
+  // Buffered: true until closed; the value sent before stays.
+  b = Channel(Int).new(1)
+  puts(b.send(1))
+  b.close
+  puts(b.send(2))
+  puts(b.recv ?? -1)
+  puts(b.recv ?? -1)
+  // Rendezvous, closed: false at once.
+  c = Channel(Int).new
+  c.close
+  puts(c.send(3))
+  // Full and waiting: the close wakes the sender with false.
+  d = Channel(Int).new(1)
+  puts(d.send(1))
+  started = Channel(Int).new(1)
+  h = spawn {
+    _ = started.send(1)
+    n = 0
+    if d.send(2) {
+      n = 1
+    }
+    n
+  }
+  _ = started.recv
+  d.close
+  puts(h.join)
+  puts(d.recv ?? -1)
+  puts(d.recv ?? -1)
+  // Rendezvous and waiting for a receiver: the close wakes the sender
+  // with false, and its value is not received.
+  e = Channel(Int).new
+  ready = Channel(Int).new(1)
+  h2 = spawn {
+    _ = ready.send(1)
+    n = 0
+    if e.send(5) {
+      n = 1
+    }
+    n
+  }
+  _ = ready.recv
+  e.close
+  puts(h2.join)
+  puts(e.recv ?? -1)
+  // Rendezvous with a receiver: true, and the receiver gets each value
+  // once even with several senders.
+  f = Channel(Int).new
+  senders: Array(JoinHandle(Int)) = []
+  for i in 1..5 {
+    k = i
+    senders.push(spawn {
+      n = 0
+      if f.send(k) {
+        n = 1
+      }
+      n
+    })
+  }
+  total = 0
+  for i in 0..4 {
+    total += f.recv ?? 0
+  }
+  oks = 0
+  for s in senders {
+    oks += s.join
+  }
+  puts(total)
+  puts(oks)
+}

@@ -2366,8 +2366,9 @@ fn main {
 
 - `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` holds the lock while the block runs; `x` names the guarded value, and assigning `x` changes it. Used as a value, the call gives the block's last expression; used as a statement, the block simply ends. `return`, `break`, `continue` and `?` leave the block as they leave any block, and the lock is released on every way out.
 - **Nothing the lock guards leaves the block.** Inside it, the guarded value and every reference reached from it (a field, an element, a name bound to one) may only be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand whose result is a plain value (`b.n`, `b.items.size`, `"${b}"`): never an argument, a stored value or a captured name, which would outlive the lock. Two stores keep it under the lock and are allowed: into the guarded value itself (`b.root = b.root.left`), and into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which then follows the same rule. A plain value (a number, a `Bool`, a `String`, `Bytes`, a struct or an optional of those, a `Channel` or a `Mutex`) is a copy and goes anywhere; the block's value, when it is used, must be one. To take a copy out, fill an array declared before the block with plain values (`b.items.each { |it| sizes.push(it.n) }`).
-- A method of the guarded class runs under the lock too, and what it does with `self` is the class's own doing: a method that stores `self` somewhere hands out what the lock protects.
-- The lock guards the cell, not other references to the same object: a value you keep after giving it to `Mutex(T).new` is not protected. Give the mutex a new object, and reach it only through `with`.
+- A method of the guarded class runs under the lock too, and what it does with `self` and with its arguments is the class's own doing: the rule reads the block's code, not the methods it calls, so a method that stores `self` somewhere hands out what the lock protects, and one that stores an argument it was given (`b.add(c)`) keeps a reference from outside in it.
+- **Nothing from outside comes in either.** A value stored into the guarded value (`b.child = c`, `b.items.push(c)`) must be new (a constructor call or a literal, whose parts are new or plain), reached from the guarded value already, or plain: a reference the code outside keeps would reach it without the lock.
+- **`Mutex(T).new(v)` consumes `v`.** When `T` can hold a reference (it is not plain), the value given to the mutex is its own from then on: give it a new value (`Mutex(Box).new(Box.new)`, `Mutex(Array(Int)).new([])`), or a local variable, whose name cannot be used after the call. Before the call that variable is used as the guarded value is inside `with` (a receiver or a plain operand: `b.n = 5`, `b.items.push(Item.new)`), every value it holds is new, and the call is not in a loop the variable was declared outside of; so no other reference to the value exists when the mutex takes it. A field, an element, a parameter or a call's result is refused as the argument: another reference may reach it. The rule follows the order of the source, not its paths: a use after the call in the other branch of an `if` is refused too.
 
 A channel hands values from one task to another:
 
@@ -2392,8 +2393,9 @@ fn main {
 }
 ```
 
-- `Channel(T).new` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` sends, `recv` returns `T?` (`nil` once the channel is closed and empty, so `while v = ch.recv { ... }` drains it), `close` closes.
-- What a `send` carries crosses to another task, by the same rule as a `spawn` capture ([What may cross a task](#what-may-cross-a-task)): a class instance, a `Hash` or a struct holding one is a compile error. `T` may be any type, so a channel can carry other channels (a reply channel per request) or mutexes.
+- `Channel(T).new` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` sends and returns whether the value went into the channel, `recv` returns `T?` (`nil` once the channel is closed and empty, so `while v = ch.recv { ... }` drains it), `close` closes.
+- A `send` on a closed channel returns `false` at once, buffered or not, full or not; a send waiting for room or for its receiver returns `false` when the channel closes, and its value is not received. The values sent before the close stay for the receivers to drain. A program that only closes after its last send can ignore the result (`ch.send(v)` as a statement).
+- What a `send` carries crosses to another task, by the same rule as a `spawn` capture ([What may cross a task](#what-may-cross-a-task)): a class instance, a `Hash` or a struct holding one is a compile error. An `Array` is copied at the send, at every level of an array of arrays, so the receiver owns its own array and the sender may go on changing its one; its elements must cross in turn (`Array(Box)` is refused). `T` may be any type, so a channel can carry other channels (a reply channel per request) or mutexes.
 - A `Channel` and a `Mutex` hold no memory outside the object: the program can make as many as it likes.
 
 ### Choosing a tool
@@ -2415,7 +2417,7 @@ What a `spawn` or `.parallel` block captures is checked at compile time:
 | an integer, a `Bool`, a `Float64` | a copy |
 | a struct whose every field may cross | a copy |
 | a `String` | a shared pointer: it is immutable, and both tasks keep it alive |
-| an `Array` | shared for reading, until the join |
+| an `Array` | shared for reading, until the join; a `send` copies it |
 | a `Channel` or a `Mutex` (`std.sync`) | shared: that is their purpose |
 | a class instance, a `Hash`, a `fn` value, a `JoinHandle`, or a struct holding one | **refused**: it is not copied, and sharing it would be a race |
 
@@ -2423,9 +2425,9 @@ A mutable object reaches another task only inside a `Mutex`, or as the results o
 
 ### The thread pool
 
-The pool has one thread per online processor, counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number; the runtime removes the flag before `argv()` sees it (it is to become `--avant-threads=N`, leaving `--threads` to programs: [Not built yet](#not-built-yet)). Tasks beyond the pool's size wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
+The pool runs at most one task per online processor at once, a number counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number; the runtime removes the flag before `argv()` sees it (it is to become `--avant-threads=N`, leaving `--threads` to programs: [Not built yet](#not-built-yet)). Tasks beyond it wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
 
-A task that waits (in a channel's `recv` or `send`, or for a `Mutex`) keeps its pool thread while it waits. If every pool thread is held by a task waiting for something that only a task still in the queue would do, nothing can run and the program hangs without a message: with `--threads 2`, two consumers waiting in `recv` keep a producer spawned after them from ever starting. Spawn the tasks that send before the ones that wait for them, or keep fewer waiting tasks than the pool has threads.
+A task that waits (in a channel's `recv` or `send`, or for a `Mutex`) stops counting as running while it waits, so a queued task may start meanwhile: on a free pool thread, or on a new one when every thread holds a task, up to 1,024 threads (or `N`, if larger). So two consumers waiting in `recv` with `--threads 2` do not keep a producer spawned after them from starting. When the wait ends, the task goes on as soon as fewer than `N` tasks run. Past the thread limit, the runtime says so once on standard error (`avant runtime: tasks are queued while the pool's 1024 threads are all taken, …`) and the queued tasks wait for a thread to be free.
 
 ## Memory
 

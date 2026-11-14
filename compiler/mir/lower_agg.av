@@ -622,6 +622,14 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
   if lw.failed {
     return b.c_i32(0)
   }
+  if e.callee == "send" && rt.is_class && rt.mod_name == "std.sync" && (rt.origin == "Channel" || rt.name == "Channel") && args.size == 1 {
+    // What a send carries is the receiver's own (O688, D371): an Array
+    // is copied here, at every level of an array of arrays.
+    if at = args[0].ty, at.is_array {
+      lw.at(args[0].loc)
+      ops[0] = lw.send_copy(ops[0], lw.ety(args[0]), at)
+    }
+  }
   r = b.c_i32(0)
   if !rt.is_struct {
     r = lw.lower_expr(recv)
@@ -647,6 +655,38 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
   }
   lw.at(e.loc)
   lw.call_to(ret, sym, all)
+}
+
+// A copy of the array o (MIR type aty, Avant type t) for a send (O688):
+// `avant_array_copy`, the routine `sorted` copies with; when the
+// elements are arrays, each element is replaced by its own copy, so no
+// buffer is shared at any level.
+pub fn (lw: MirLower) send_copy(o: MOperand, aty: Int, t: Ty): MOperand {
+  b = lw.lw_b
+  h = lw.hold(o, aty)
+  c = b.temp(aty)
+  b.call(c, "avant_array_copy", lw.three(b.copy_local(h), lw.elem_size(aty), lw.buf_tid(aty)))
+  if inner = t.inner, inner.is_array {
+    ity = lw.elem_of(aty)
+    n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(c)), 1))))
+    nl = mir_bare_copy(n)
+    i = b.temp(mt_i32())
+    b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+    head = b.block
+    body = b.block
+    exit = b.block
+    b.goto(head)
+    b.at(head)
+    more = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(i), b.copy_local(nl)))
+    b.branch(more, body, exit)
+    b.at(body)
+    el = lw.block_elem(c, aty, i)
+    cp = lw.send_copy(el, ity, inner)
+    lw.block_store(c, aty, i, cp)
+    lw.block_step(i, head)
+    b.at(exit)
+  }
+  b.copy_local(c)
 }
 
 // A call of a program function by its resolved name (a constructor

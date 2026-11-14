@@ -5,8 +5,12 @@
 //                Channel(T).new(n) holds up to n values. send(value)
 //                sends, recv returns T? (nil once the channel is closed
 //                and empty, so `while v = ch.recv { ... }` drains it),
-//                close closes it: a send waiting on a closed rendezvous
-//                channel returns.
+//                close closes it. send returns whether the value went
+//                into the channel: on a closed channel it returns false
+//                at once, buffered or not, full or not, and a send
+//                waiting for room or for its receiver returns false when
+//                the channel closes (O691, D371). The values sent before
+//                the close stay for the receivers to drain.
 //   Mutex(T)     guards one value. `m.with { |x| ... }` holds the lock
 //                for the block, x naming the guarded value; the form is
 //                the compiler's (checker.av check_mutex_with, the
@@ -15,10 +19,13 @@
 //                and O541) are checker/guard.av's.
 //
 // Both stand on the runtime's gates (runtime/avant_task.c): a gate is a
-// number held in the object; the runtime keeps state for it only while a
-// thread locks or waits on it, so nothing is allocated per object and
-// nothing needs freeing (O532). The gate builtins (avant_gate_new, lock,
-// unlock, wait, broadcast) are names of `std` modules only (O436).
+// word in the object's `gate` field, which the gate builtins take (the
+// compiler passes the field's address, O690); an uncontended lock and
+// unlock are one atomic operation each on that word, and the runtime
+// keeps state for a gate only while a thread waits on it, so nothing is
+// allocated per object and nothing needs freeing (O532). The gate
+// builtins (avant_gate_new, lock, unlock, wait, broadcast) are names of
+// `std` modules only (O436).
 //
 // T is any type (O232): the slots are T?, so a class or another Channel
 // or Mutex is an element like an Int. What a send may carry is D35's
@@ -31,6 +38,10 @@ pub class Channel(T) {
   head: Int
   closed: Bool
   has: Bool
+  // A rendezvous channel's sends that put a value into cell, and its
+  // receives that took one: a sender waits until its own value is taken.
+  sent: Int
+  taken: Int
   gate: UInt64
   cell: T?
 
@@ -40,27 +51,44 @@ pub class Channel(T) {
     self.slots = Array(T?).new(n)
   }
 
-  pub fn send(value: T) {
+  pub fn send(value: T): Bool {
     avant_gate_lock(gate)
+    ok = false
     if cap == 0 {
-      while has {
-        avant_gate_wait(gate)
-      }
-      self.cell = value
-      self.has = true
-      avant_gate_broadcast(gate)
       while has && !closed {
         avant_gate_wait(gate)
       }
+      if !closed {
+        self.cell = value
+        self.has = true
+        self.sent = sent + 1
+        mine = sent
+        avant_gate_broadcast(gate)
+        while taken < mine && !closed {
+          avant_gate_wait(gate)
+        }
+        if taken >= mine {
+          ok = true
+        } else {
+          // Closed before a receiver took it: the value goes back.
+          self.cell = nil
+          self.has = false
+          avant_gate_broadcast(gate)
+        }
+      }
     } else {
-      while count == cap {
+      while count == cap && !closed {
         avant_gate_wait(gate)
       }
-      slots[(head + count) % cap] = value
-      self.count = count + 1
-      avant_gate_broadcast(gate)
+      if !closed {
+        slots[(head + count) % cap] = value
+        self.count = count + 1
+        avant_gate_broadcast(gate)
+        ok = true
+      }
     }
     avant_gate_unlock(gate)
+    ok
   }
 
   pub fn recv: T? {
@@ -74,6 +102,7 @@ pub class Channel(T) {
         got = cell
         self.cell = nil
         self.has = false
+        self.taken = taken + 1
         avant_gate_broadcast(gate)
       }
     } else {

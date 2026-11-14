@@ -104,6 +104,9 @@ pub class Checker {
   pub lib_vis: Hash(String, Int)
   pub known_mods: Hash(String, Int)
   pub current_fn: Function? = nil
+  // The `Mutex(T).new(name)` calls of the function being checked, whose
+  // names they consume (O687; checker/guard.av check_consumes).
+  pub consumes: Array(Expr) = []
   pub lam_exprs: Array(Expr)
   pub lam_scopes: Array(Int)
   pub lambda_infer: Bool = false
@@ -503,7 +506,13 @@ pub class Checker {
       i += 1
     }
     self.current_fn = fnn
+    saved_consumes = self.consumes
+    self.consumes = []
     check_body(fnn.body, ret, true)
+    if self.consumes.size > 0 && !self.has_err {
+      check_consumes(fnn.body)
+    }
+    self.consumes = saved_consumes
     self.current_fn = nil
     self.pop_scope
     self.self_ty = nil
@@ -573,6 +582,14 @@ pub class Checker {
     }
     k = stmt.kind
     if k == st_return() {
+      if self.try_in == "a spawn block" || self.try_in == "a parallel block" {
+        // D334: a spawn or `.parallel` block cannot return (O689, Stage 29
+        // W8Cb): its value is its last expression. Before, its statements
+        // were checked against Void, so `return 3` was a type mismatch and
+        // a bare `return` reached the MIR verifier.
+        fail(stmt.loc, "return inside ${self.try_in}: ${self.try_in} cannot return; its value is its last expression (D334)")
+        return
+      }
       if self.lambda_infer {
         if expr = stmt.expr {
           self.inferred_ret = check_expr(expr)
@@ -3463,6 +3480,11 @@ pub class Checker {
         }
       }
       expr.resolved = ty_owned_symbol(ty, "new")
+      if is_mutex_ty(ty) {
+        // The value given to a Mutex is its own from now on (O687, D371;
+        // checker/guard.av).
+        check_mutex_new(expr, ty)
+      }
       return ty
     }
     shown = ty.show
@@ -4323,6 +4345,13 @@ pub class Checker {
       got = check_expr_as(expr.args[0], t_uint64())
       if !got.is_uint64 {
         fail(expr.args[0].loc, "${expr.callee} expects UInt64")
+        return t_void()
+      }
+      // The gate is a word in its object: the call takes the field, whose
+      // address the lowering passes (O690, Stage 29 W8Cb).
+      a = expr.args[0]
+      if !(a.kind == ex_field() || (a.kind == ex_name() && a.implicit_field)) {
+        fail(a.loc, "${expr.callee} takes the object's gate field (a UInt64 field holding avant_gate_new())")
       }
       return t_void()
     }

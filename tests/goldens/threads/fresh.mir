@@ -45,9 +45,9 @@ extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_array_get_ptr(ref, i64) -> ref never
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_array_set_ptr(ref, i64, ref) -> void never
-extern avant_gate_lock(u64) -> void collects
+extern avant_gate_lock(ref, u64) -> void collects
 extern avant_gate_new() -> u64 collects
-extern avant_gate_unlock(u64) -> void collects
+extern avant_gate_unlock(ref, u64) -> void never
 extern avant_gc_poll() -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_join(ref) -> i64 collects
@@ -158,15 +158,14 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @fresh.av:25:1 {
   let _96: bool
   let _97: i32
   let _98: ref %std.sync.Mutex(fresh.Held) slot
-  let _99: u64
-  let _100: ref %fresh.Held
-  let _101: i64
-  let _102: ref str slot
-  let _103: ref %fresh.Held
+  let _99: ref %fresh.Held
+  let _100: i64
+  let _101: ref str slot
+  let _102: ref %fresh.Held
+  let _103: ref str slot
   let _104: ref str slot
-  let _105: ref str slot
+  let _105: ref str
   let _106: ref str
-  let _107: ref str slot
 
 bb0:
   _4 = zero   @25:1
@@ -207,12 +206,11 @@ bb0:
   _87 = zero   @25:1
   _93 = zero   @25:1
   _98 = zero   @25:1
-  _102 = zero   @25:1
+  _101 = zero   @25:1
+  _103 = zero   @25:1
   _104 = zero   @25:1
-  _105 = zero   @25:1
-  _107 = zero   @25:1
   gc.enter   @25:1
-  gc.roots _2, _4, _6, _8, _9, _13, _15, _16, _19, _24, _29, _34, _39, _40, _41, _42, _43, _44, _46, _49, _53, _55, _56, _62, _66, _70, _71, _72, _73, _75, _76, _77, _78, _80, _83, _84, _87, _93, _98, _102, _104, _105, _107   @25:1
+  gc.roots _2, _4, _6, _8, _9, _13, _15, _16, _19, _24, _29, _34, _39, _40, _41, _42, _43, _44, _46, _49, _53, _55, _56, _62, _66, _70, _71, _72, _73, _75, _76, _77, _78, _80, _83, _84, _87, _93, _98, _101, _103, _104   @25:1
   call __avant_type_maps() nocollect   @25:1
   call avant_io_init_argv(copy _1, copy _2) collects   @25:1
   _3 = zero   @25:1
@@ -381,18 +379,17 @@ bb7:
   _97 = cast copy _96 to i32   @54:3
   call avant_puts_bool(copy _97) nocollect   @54:3
   _98 = copy _77   @55:18
-  _99 = copy (*_98).1   @55:18
-  call avant_gate_lock(copy _99) collects   @55:18
-  _100 = copy (*_98).0   @55:27
-  _101 = copy (*_100).0   @55:28
-  _102 = call avant_str_from_int(copy _101) collects   @55:28
-  _103 = copy (*_98).0   @55:34
-  _104 = copy (*_103).1   @55:35
-  _105 = call avant_str_concat(copy _102, const str.0) collects   @55:24
-  _106 = call avant_str_concat(copy _105, copy _104) collects   @55:24
-  _107 = copy _106   @55:18
-  call avant_gate_unlock(copy _99) collects   @55:18
-  call avant_puts_str(copy _107) nocollect   @55:3
+  call avant_gate_lock(copy _98, const u64 8) collects   @55:18
+  _99 = copy (*_98).0   @55:27
+  _100 = copy (*_99).0   @55:28
+  _101 = call avant_str_from_int(copy _100) collects   @55:28
+  _102 = copy (*_98).0   @55:34
+  _103 = copy (*_102).1   @55:35
+  _104 = call avant_str_concat(copy _101, const str.0) collects   @55:24
+  _105 = call avant_str_concat(copy _104, copy _103) collects   @55:24
+  _106 = copy _105   @55:18
+  call avant_gate_unlock(copy _98, const u64 8) nocollect   @55:18
+  call avant_puts_str(copy _106) nocollect   @55:3
   _0 = const i32 0   @25:1
   gc.leave   @25:1
   return   @25:1
@@ -407,19 +404,19 @@ bb0:
   return   @20:3
 }
 
-fn av.std.sync/Mutex(fresh.Held).initialize(_1: ref %std.sync.Mutex(fresh.Held), _2: ref %fresh.Held) -> void frame @lib/std/sync.av:107:3 {
+fn av.std.sync/Mutex(fresh.Held).initialize(_1: ref %std.sync.Mutex(fresh.Held), _2: ref %fresh.Held) -> void frame @lib/std/sync.av:136:3 {
   let _1 (self): ref %std.sync.Mutex(fresh.Held) slot
   let _2 (value): ref %fresh.Held
   let _3: u64
 
 bb0:
-  gc.enter   @107:3
-  gc.roots _1   @107:3
-  (*_1).0 = copy _2 fresh   @108:15
-  _3 = call avant_gate_new() collects   @109:17
-  (*_1).1 = copy _3   @109:15
-  gc.leave   @107:3
-  return   @107:3
+  gc.enter   @136:3
+  gc.roots _1   @136:3
+  (*_1).0 = copy _2 fresh   @137:15
+  _3 = call avant_gate_new() collects   @138:17
+  (*_1).1 = copy _3   @138:15
+  gc.leave   @136:3
+  return   @136:3
 }
 
 fn av.fresh/Held.new(_1: i64) -> ref %fresh.Held frame @fresh.av:16:1 {
@@ -439,20 +436,20 @@ bb0:
   return   @16:1
 }
 
-fn av.std.sync/Mutex(fresh.Held).new(_1: ref %fresh.Held) -> ref %std.sync.Mutex(fresh.Held) frame @lib/std/sync.av:103:5 {
+fn av.std.sync/Mutex(fresh.Held).new(_1: ref %fresh.Held) -> ref %std.sync.Mutex(fresh.Held) frame @lib/std/sync.av:132:5 {
   let _0: ref %std.sync.Mutex(fresh.Held)
   let _1 (value): ref %fresh.Held slot
   let _2: ref %std.sync.Mutex(fresh.Held) slot
 
 bb0:
-  _2 = zero   @103:5
-  gc.enter   @103:5
-  gc.roots _1, _2   @103:5
-  _2 = call avant_alloc(const u64 16, const u32 2) collects fresh   @103:5
-  call av.std.sync/Mutex(fresh.Held).initialize(copy _2, copy _1) collects   @103:5
-  _0 = copy _2   @103:5
-  gc.leave   @103:5
-  return   @103:5
+  _2 = zero   @132:5
+  gc.enter   @132:5
+  gc.roots _1, _2   @132:5
+  _2 = call avant_alloc(const u64 16, const u32 2) collects fresh   @132:5
+  call av.std.sync/Mutex(fresh.Held).initialize(copy _2, copy _1) collects   @132:5
+  _0 = copy _2   @132:5
+  gc.leave   @132:5
+  return   @132:5
 }
 
 fn av.fresh/main#par1(_1: i64, _2: ref) -> void frame @fresh.av:28:21 {
@@ -604,46 +601,44 @@ fn av.fresh/main#spawn1(_1: ref) -> i64 frame @fresh.av:43:13 {
   let _3: ref %std.sync.Mutex(fresh.Held)
   let _4 (held): ref %std.sync.Mutex(fresh.Held)
   let _5: ref %std.sync.Mutex(fresh.Held) slot
-  let _6: u64
-  let _7: ref %fresh.Held
+  let _6: ref %fresh.Held
+  let _7: i64
   let _8: i64
-  let _9: i64
+  let _9: ref %fresh.Held
   let _10: ref %fresh.Held
-  let _11: ref %fresh.Held
-  let _12: ref str slot
-  let _13: ref str
+  let _11: ref str slot
+  let _12: ref str
+  let _13: ref %fresh.Held
   let _14: ref %fresh.Held
-  let _15: ref %fresh.Held
+  let _15: i64
   let _16: i64
-  let _17: i64
 
 bb0:
   _5 = zero   @43:13
-  _12 = zero   @43:13
+  _11 = zero   @43:13
   gc.enter   @43:13
-  gc.roots _5, _12   @43:13
+  gc.roots _5, _11   @43:13
   _2 = cast copy _1 to ref %spawn_cap(av.fresh/main#spawn1)   @43:13
   _3 = copy (*_2).0   @43:13
   _4 = copy _3   @43:13
   _5 = copy _4   @44:17
-  _6 = copy (*_5).1   @44:17
-  call avant_gate_lock(copy _6) collects   @44:17
-  _7 = copy (*_5).0   @45:15
-  _8 = copy (*_7).0   @45:16
-  _9 = add.chk copy _8, const i64 1   @45:19
-  _10 = copy (*_5).0   @45:9
-  (*_10).0 = copy _9   @45:13
-  _11 = copy (*_5).0   @46:20
-  _12 = copy (*_11).1   @46:21
-  _13 = call avant_str_concat(copy _12, const str.5) collects   @46:17
-  _14 = copy (*_5).0   @46:9
-  barrier copy _14   @46:15
-  (*_14).1 = copy _13   @46:15
-  _15 = copy (*_5).0   @47:9
-  _16 = copy (*_15).0   @47:10
-  _17 = copy _16   @44:17
-  call avant_gate_unlock(copy _6) collects   @44:17
-  _0 = copy _17   @43:13
+  call avant_gate_lock(copy _5, const u64 8) collects   @44:17
+  _6 = copy (*_5).0   @45:15
+  _7 = copy (*_6).0   @45:16
+  _8 = add.chk copy _7, const i64 1   @45:19
+  _9 = copy (*_5).0   @45:9
+  (*_9).0 = copy _8   @45:13
+  _10 = copy (*_5).0   @46:20
+  _11 = copy (*_10).1   @46:21
+  _12 = call avant_str_concat(copy _11, const str.5) collects   @46:17
+  _13 = copy (*_5).0   @46:9
+  barrier copy _13   @46:15
+  (*_13).1 = copy _12   @46:15
+  _14 = copy (*_5).0   @47:9
+  _15 = copy (*_14).0   @47:10
+  _16 = copy _15   @44:17
+  call avant_gate_unlock(copy _5, const u64 8) nocollect   @44:17
+  _0 = copy _16   @43:13
   gc.leave   @43:13
   return   @43:13
 }
