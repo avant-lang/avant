@@ -711,7 +711,8 @@ pub fn (checker_self: Checker) check_const_label(label: CaseLabel, disc: Ty): Bo
 // constants are: from the first such member on, each takes its
 // constant's value, its literal, or the previous plus one, within
 // Int32 and distinct (the parser checked the members before it); the
-// labels of the enum's from_i are given the values.
+// labels of the enum's from_i read them when they are checked
+// (checker.av check_enum_value_label).
 pub fn (checker_self: Checker) check_enum_consts {
   for sdef in checker_self.program.structs {
     if decl = sdef.enum_of, decl.first_named >= 0 {
@@ -767,31 +768,6 @@ pub fn (checker_self: Checker) check_enum_consts {
         }
         decl.vals[i] = value
         next = value + 1
-      }
-      // from_i's switch (enums.av: one arm per member, in order), as the
-      // expansion left it in the enum's methods.
-      for m in sdef.methods {
-        if m.name == "from_i" && m.type_method {
-          for st in m.body {
-            if st.kind == st_expr() {
-              if sw = st.expr, sw.kind == ex_switch() && sw.cases.size == decl.vals.size {
-                for k in 0..sw.cases.size {
-                  if sw.cases[k].labels.size == 1 {
-                    l = sw.cases[k].labels[0]
-                    v = decl.vals[k]
-                    l.int_val = v
-                    l.neg = v < 0
-                    if v < 0 {
-                      l.bits = (0 &- v).wrap_u64
-                    } else {
-                      l.bits = v.to_u64
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
       }
     }
   }

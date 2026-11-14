@@ -6,6 +6,7 @@
 //
 //   fn name: String                      switch self { case m { "m" } ... }
 //   fn self.from_i(n: Int): Tok?         switch n { case v { return Tok.m } ... }; nil
+//                                        (v the value of m, given by the checker)
 //   fn self.from_name(s: String): Tok?   switch s { case "m" { return Tok.m } ... }; nil
 //   fn self.members: Array(Tok)          [Tok.m, ...]
 //   fn message: String                   self.name (an enum marked Error
@@ -83,11 +84,14 @@ pub fn enum_from_i_method(loc: Location, owner: String, decl: EnumDecl): Functio
   fnn = enum_synth_fn(loc, owner, "from_i", enum_opt_type(loc, owner))
   fnn.type_method = true
   fnn.params.push(Param.new(loc, "n", TypeName.new(loc, "Int")))
-  // switch n { case v { return Owner.m } ... }; nil
+  // switch n { case v { return Owner.m } ... }; nil, each label the
+  // member's value, which the checker gives it (value_of)
   sw = Expr.new(ex_switch(), loc)
   sw.cond = enum_name_expr(loc, "n")
   for i in 0..decl.names.size {
-    label = int_case_label(decl.vals[i], loc)
+    label = CaseLabel.new(lb_member(), loc)
+    label.text = decl.names[i]
+    label.value_of = owner
     arm = SwitchCase.new(loc)
     arm.labels.push(label)
     arm.body.push(stmt_return(loc, enum_member_expr(loc, owner, decl.names[i])))

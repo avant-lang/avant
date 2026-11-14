@@ -4435,6 +4435,9 @@ pub class Checker {
       }
       return true
     }
+    if label.kind == lb_member() && label.value_of.size > 0 && disc.is_int {
+      return check_enum_value_label(label)
+    }
     if label.kind == lb_member() {
       return check_const_label(label, disc)
     }
@@ -4443,6 +4446,28 @@ pub class Checker {
       return false
     }
     check_int_label(label, disc)
+  }
+
+  // A label of an enum's from_i: the value of the
+  // member label.text of the enum label.value_of, known once the
+  // constants are (consts.av check_enum_consts), as an integer label.
+  pub fn check_enum_value_label(label: CaseLabel): Bool {
+    if et = lookup_named_type(label.value_of, label.loc, "") {
+      idx = et.enum_index(label.text)
+      if et.is_enum && idx >= 0 {
+        v = et.enum_vals[idx]
+        label.int_val = v
+        label.neg = v < 0
+        if v < 0 {
+          label.bits = (0 &- v).wrap_u64
+        } else {
+          label.bits = v.to_u64
+        }
+        return true
+      }
+    }
+    fail(label.loc, "${label.value_of} has no member ${label.text}")
+    false
   }
 
   // A range label (Stage 29 W5a3, O493): over an integer, its bounds

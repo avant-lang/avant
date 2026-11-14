@@ -149,24 +149,17 @@ pub class CaseLabel {
   pub hi: CaseLabel? = nil
   pub incl: Bool = false
   pub hi_val: Int = 0
+  // A member label of an integer switch that stands for the value of the
+  // enum member `text` of this enum: only the from_i
+  // every enum has (enums.av), resolved by the checker once the enum's
+  // values are known, so a value computed from a constant is the one
+  // checked whatever copy of the body is checked.
+  pub value_of: String = ""
 
   fn initialize(kind: Int, loc: Location) {
     self.kind = kind
     self.loc = loc
   }
-}
-
-// An integer label of value v, as if written.
-pub fn int_case_label(v: Int, loc: Location): CaseLabel {
-  out = CaseLabel.new(lb_int(), loc)
-  out.int_val = v
-  if v < 0 {
-    out.neg = true
-    out.bits = (0 &- v).wrap_u64
-  } else {
-    out.bits = v.to_u64
-  }
-  out
 }
 
 pub fn clone_case_label(l: CaseLabel): CaseLabel {
@@ -179,6 +172,7 @@ pub fn clone_case_label(l: CaseLabel): CaseLabel {
   out.neg = l.neg
   out.incl = l.incl
   out.hi_val = l.hi_val
+  out.value_of = l.value_of
   if a = l.lo {
     out.lo = clone_case_label(a)
   }
