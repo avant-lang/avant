@@ -152,6 +152,15 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   c.expect(str_has(rll, "i64 97, label") && str_has(rll, "i64 98, label") && str_has(rll, "i64 99, label"), "ll-range: a narrow range gives the switch a case per value")
   c.expect(str_has(rll, "icmp sge i64 ") && str_has(rll, ", 100") && str_has(rll, "icmp sle i64 ") && str_has(rll, ", 100000"), "ll-range: a wide range is two compares")
   c.expect(!str_has(rll, "i64 100, label"), "ll-range: a wide range gives no cases")
+  // O713: every block a dispatch adds is numbered before the arms it
+  // enters, so no edge into an arm is taken for a back edge: a program
+  // that spawns polls in its loops only (mir/gc.av), and these have none.
+  pw = "${dir}/sr-ll-nopoll.av"
+  _ = file_write(pw, "fn s(m: String): Int {\n  switch m {\n    case \"GET\", \"HEAD\" { 1 }\n    case \"POST\" { 2 }\n    case \"\" { 3 }\n    else { 0 }\n  }\n}\nfn r(c: Int): Int {\n  switch c {\n    case 'a'..='z' { 1 }\n    case 1000..=100000 { 2 }\n    case 200000..=300000 { 3 }\n    else { 0 }\n  }\n}\nfn main {\n  h = spawn { 1 }\n  puts(s(\"HEAD\") + r(argv().size))\n  puts(h.join)\n}\n")
+  c.eq_int(emit_ll(compiler, pw, "${dir}/sr-ll-nopoll.ll", "${dir}/sr-ll-nopoll.log"), 0, "ll-nopoll: emits")
+  pll = log_text("${dir}/sr-ll-nopoll.ll")
+  c.expect(str_has(pll, "@memcmp("), "ll-nopoll: the String switch compares")
+  c.expect(!str_has(pll, "avant_gc_poll"), "ll-nopoll: no poll in a program without a loop")
 }
 
 fn test_main(c: Checks) {
