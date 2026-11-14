@@ -302,6 +302,10 @@ pub class Function {
   // checker substituted (checker/match.av instantiate_function and
   // instantiate_method), in type-parameter order; empty otherwise.
   pub inst_args: Array(Ty) = []
+  // A function the compiler wrote (an enum's name, from_i, from_name,
+  // members, Stage 29 W5a1): lowered only when a call reaches it, so a
+  // program pays for an enum's name table only when it uses it (O394).
+  pub lazy: Bool = false
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -337,6 +341,19 @@ pub class ComptimeWalk {
   }
 }
 
+// An enum's members as written (Stage 29 W5a1, D292, D358): names, their
+// values (C's rule applied by the parser) and where each is written.
+pub class EnumDecl {
+  pub names: Array(String) = []
+  pub vals: Array(Int) = []
+  pub locs: Array(Location) = []
+  // Declared in a lib block: C's int everywhere (D358).
+  pub c_int: Bool = false
+
+  fn initialize {
+  }
+}
+
 pub class StructDef {
   pub loc: Location
   pub name: String = ""
@@ -348,6 +365,10 @@ pub class StructDef {
   pub vis: Bool = false
   pub mod_name: String = ""
   pub opt_ins: Array(TypeName) = []
+  // `enum Name { ... }` (Stage 29 W5a1): an enum is declared as a
+  // StructDef without fields, so its methods, visibility and module take
+  // the struct's paths; its type is a tyk_enum (resolve.av load_types).
+  pub enum_of: EnumDecl? = nil
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -995,6 +1016,7 @@ pub fn clone_function(fnn: Function): Function {
   out.mod_name = fnn.mod_name
   out.owner_mod = fnn.owner_mod
   out.as_value = fnn.as_value
+  out.lazy = fnn.lazy
   i = 0
   while i < fnn.box_names.size {
     out.box_names.push(fnn.box_names[i])

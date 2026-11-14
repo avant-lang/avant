@@ -122,6 +122,15 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
           return lw.lower_method_call(e, recv, rt, sym0, e.args)
         }
       }
+      if rt.is_enum && e.callee == "to_i" && e.args.size == 0 && e.resolved.size == 0 {
+        // `t.to_i` (Stage 29 W5a1): the value, extended to an Int.
+        v = lw.lower_expr(recv)
+        if lw.failed {
+          return zero
+        }
+        lw.at(e.loc)
+        return lw.tmp(mt_int(), lw.lw_b.rv_cast(v, mt_int()))
+      }
       if (mir_is_str_ty(rt) || rt.is_buf) && e.callee == "get" {
         return lw.lower_get(e, recv, rt, e.args)
       }
@@ -267,6 +276,12 @@ pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOpe
 }
 
 pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
+  if e.type_call {
+    // An enum's member (Stage 29 W5a1): its value, a constant.
+    if t = e.ty, t.is_enum {
+      return lw.enum_const(t, e.ident)
+    }
+  }
   if obj = e.object, ot = obj.ty {
     if e.method_call && e.resolved.size > 0 && !(ot.is_class || ot.is_struct) {
       if sym1 = lw.lw_fn_syms.get(e.resolved) {
@@ -475,4 +490,15 @@ pub fn (lw: MirLower) f64_to_i32(v: MOperand, loc: Location): MOperand {
   ok = lw.trap_open(inside, false)
   lw.trap_close(ok, "avant_trap_to_i", lw.one(b.copy_local(x)), loc)
   lw.tmp(mt_int(), b.rv_cast(b.copy_local(x), mt_int()))
+}
+
+// The value of the member named member of the enum t (Stage 29 W5a1), a
+// constant of the enum's width.
+pub fn (lw: MirLower) enum_const(t: Ty, member: String): MOperand {
+  idx = t.enum_index(member)
+  v = 0
+  if idx >= 0 {
+    v = t.enum_vals[idx]
+  }
+  lw.lw_b.c_int(mir_enum_ty(t), v)
 }

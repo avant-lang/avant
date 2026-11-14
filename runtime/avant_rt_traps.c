@@ -369,6 +369,16 @@ void avant_trap_c_null_at(const char *name, int32_t site) {
   trap_tail();
 }
 
+/* An enum value that is no member (Stage 29 W5a1, D358): a value a C
+ * function gave for an enum, or one reaching a switch that names every
+ * member. name is the enum's. */
+void avant_trap_enum_at(int64_t value, const char *name, int32_t site) {
+  g_trap_loc = site_text(site);
+  trap_head();
+  fprintf(stderr, "%lld is not a member of %s", (long long)value, name);
+  trap_tail();
+}
+
 /* The sited forms of the traps above that the generated code raises
  * (Stage 29 W4b2): the site, then the trap. */
 void avant_trap_bounds_at(avant_int index, avant_int size, int32_t site) {

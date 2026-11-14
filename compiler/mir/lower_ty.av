@@ -16,6 +16,9 @@ pub fn mir_scalar_ty(t: Ty): Int {
   if t.is_int {
     return mt_i64()
   }
+  if t.is_enum {
+    return mir_enum_ty(t)
+  }
   if t.is_int32 {
     return mt_i32()
   }
@@ -38,6 +41,26 @@ pub fn mir_scalar_ty(t: Ty): Int {
     return mt_str()
   }
   -1
+}
+
+// An enum declared in Avant (Stage 29 W5a1, D358, O394) is stored in the
+// smallest width that fits its values: one byte (u8) when every value is
+// in 0..255, else i32 (C's int; the MIR has no 8-bit signed or 16-bit
+// type, so a negative value or one above 255 takes four bytes).
+// mir_enum_narrow is the switch the proving ground's Int32 build turns
+// off.
+pub fn mir_enum_narrow: Bool { true }
+
+pub fn mir_enum_ty(t: Ty): Int {
+  if !mir_enum_narrow() || t.enum_c_int {
+    return mt_i32()
+  }
+  for v in t.enum_vals {
+    if v < 0 || v > 255 {
+      return mt_i32()
+    }
+  }
+  mt_u8()
 }
 
 // An optional reference is its reference's one pointer, `nil` the null
@@ -79,6 +102,9 @@ pub fn mir_str_builtin_arity(c: String): Int {
 // parentheses; any other type is refused before a symbol or a layout
 // needs it, so its shown name is enough here.
 pub fn mir_mty(t: Ty): String {
+  if t.is_enum {
+    return "${mir_module_part(t.mod_name)}.${t.name}"
+  }
   if t.is_struct || t.is_class {
     // A generic instance (W7a): its template's name and the type
     // arguments, `main.Pair(Int,String)` (resolve.av instantiate_template:
