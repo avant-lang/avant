@@ -29,6 +29,13 @@
 // rest are promoted where they lie, in blocks no lookup has touched (the
 // case AVANT_GC_VERIFY=1's check of the bits can see: under it the holes
 // of old blocks are held back and the Cells above go to fresh blocks).
+// Under AVANT_GC_STRESS=1 a hold is inactive (lib/std/gc.av): each of
+// the 200,000 allocations has its own collection, and with the verifier
+// as well each of those collections checks a heap that grows by one
+// Cell, minutes of the same step. LATE_STARTS_HOLD=2000 builds 2,000
+// Cells here instead (one in ten asked, the same 200): the test's run
+// under the verifier and the stress mode together sets it; every other
+// run builds the 200,000.
 //
 // Between them the loop allocates strings through the runtime (C
 // allocations in the same hole, each with its own bit) and compresses one
@@ -151,10 +158,15 @@ fn main {
     i = i + 1
   }
   // More survivors than one young budget, in one collection.
+  // LATE_STARTS_HOLD=2000 builds 2,000 (the header's last paragraph).
+  count = 200000
+  if (env_get("LATE_STARTS_HOLD") ?? "") == "2000" {
+    count = 2000
+  }
   big: Array(Cell) = []
   gc.hold {
     j = 0
-    while j < 200000 {
+    while j < count {
       b = Cell.new
       b.c = j
       big.push(b)
@@ -168,7 +180,7 @@ fn main {
     if big[i].c == i {
       held = held + ls.ffi_late_is_heap(big[i])
     }
-    i = i + 1000
+    i = i + count / 200
   }
   puts("late_starts: ${sum} ${known} ${pins} ${stay} ${inplace} ${held} ${round} ${ok} ${old.size}")
 }
