@@ -1127,12 +1127,20 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
    * once. (Before, only runtime C's allocations were stress points,
    * through a wrapper of their own, avant_alloc_c, Stage 28 W14b1; a
    * program whose allocations were all generated code's ran under the
-   * stress mode as it ran without it.) */
+   * stress mode as it ran without it.) Since the Valk stage's VALK-A2
+   * generated code's inline allocations call avant_alloc_slow, which
+   * runs the same stress point and then lets the inline sequence itself
+   * allocate (O599). */
   if (gc_heap.set.stress) {
-    gc_safepoint();
-    gc_lock(&gc_heap.world);
-    gc_stress_point();
-    pthread_mutex_unlock(&gc_heap.world);
+    if (gc_thread.stress_done) {
+      /* avant_alloc_slow ran this allocation's stress point already. */
+      gc_thread.stress_done = 0;
+    } else {
+      gc_safepoint();
+      gc_lock(&gc_heap.world);
+      gc_stress_point();
+      pthread_mutex_unlock(&gc_heap.world);
+    }
   }
   shared = atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;
   if (!shared) {
@@ -1235,6 +1243,97 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   }
   pthread_mutex_unlock(&gc_heap.world);
   return obj;
+}
+
+/* The young cursor is in a hole with room for TOTAL bytes (the current
+ * hole, the next one that fits, a new block), or 0: place_bump's search
+ * without its allocation. The single mutator's. */
+static int young_room(size_t total) {
+  Block *cur = gc_thread.ycur;
+  Block *b;
+  if (cur) {
+    if (gc_thread.cur != cur) {
+      gc_use_block(cur);
+    }
+    if (bump_fits(total)) {
+      return 1;
+    }
+  }
+  if (young_hole(total)) {
+    return bump_fits(total);
+  }
+  b = gc_new_block(SPACE_MATURE);
+  if (!b) {
+    return 0;
+  }
+  b->kept = SPLUS_FRESH;
+  young_take(b);
+  return bump_fits(total);
+}
+
+/* The inline allocation path's slow call (avant_rt.h; the Valk stage,
+ * VALK-A2, O599). Without AVANT_GC_STRESS=1 it is avant_alloc. Under it,
+ * until VALK-A2, the inline sequence never ran: the path was never
+ * published, so that every allocation reached avant_alloc and its stress
+ * point (W-FIX1c, O207), and a defect of the sequence that shows only
+ * when a collection follows it closely had no pass that forced one. Now
+ * the stress point runs here, as in avant_alloc, and then, for an object
+ * the inline path serves in a program with one thread, the young cursor
+ * is put in a hole with room for it, the limit is published at exactly
+ * the object's end and null is returned: the caller, the module's
+ * __avant_alloc_slow (compiler/llvm/emit_gc.av, ll_alloc_slow_helper),
+ * then makes the inline allocation itself with the emitted sequence
+ * (ll_alloc_take): it bumps, writes the header and zeroes the payload.
+ * The next allocation finds the limit spent and comes back here: its
+ * sync reads what the sequence wrote (inline_walk: the header, the
+ * cursor) and its stress point collects right after it. So under the
+ * stress mode every allocation still has a collection before it, and
+ * the emitted sequence runs for every allocation the inline path can
+ * serve. What runs is the helper's copy of the sequence (the size and
+ * the type as values); a site's own copy (the limit compare, the size
+ * and the type folded into constants) does not run under the stress
+ * mode, the limit being spent whenever a site tests it: AVANT_GC_VERIFY=1
+ * without the stress mode is the pass that checks the headers the sites
+ * write (inline_walk). Any other request (a large object, a program
+ * with threads, a no-GC region, the nursery off, a collection pending,
+ * no room) is allocated here as avant_alloc allocates it. */
+void *avant_alloc_slow(uint64_t nbytes, uint32_t type_id) {
+  size_t payload;
+  size_t total;
+  uint8_t *granted;
+  gc_init();
+  if (!gc_heap.set.stress) {
+    return avant_alloc(nbytes, type_id);
+  }
+  gc_alloc_sync();
+  granted = gc_thread.redo;
+  gc_thread.redo = NULL;
+  payload = nbytes ? (size_t)nbytes : 8;
+  total = align_up(sizeof(AvantHeader) + payload);
+  if ((granted && granted == avant_gc_bump) || nbytes > UINT32_MAX || type_id > UINT16_MAX ||
+      alloc_is_large(type_id, payload, total) ||
+      atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
+    return avant_alloc(nbytes, type_id);
+  }
+  gc_safepoint();
+  gc_lock(&gc_heap.world);
+  gc_stress_point();
+  pthread_mutex_unlock(&gc_heap.world);
+  if (gc_thread.nogc || gc_thread.collecting || gc_heap.set.nursery_off || gc_thread.alloc_mature ||
+      gc_heap.limit_pending || gc_heap.explicit_pending || gc_heap.mature_since_full >= gc_heap.full_trigger ||
+      avant_nursery_held + total >= avant_young_bytes || !young_room(total)) {
+    /* Not this one: avant_alloc allocates it, without a second
+     * collection. */
+    gc_thread.stress_done = 1;
+    return avant_alloc(nbytes, type_id);
+  }
+  gc_thread.fast_block = gc_thread.ycur;
+  avant_gc_base = gc_thread.ycur->base;
+  avant_gc_starts = gc_thread.ycur->start;
+  gc_thread.fast_ok = 1;
+  gc_fast_publish(avant_gc_bump + total);
+  gc_thread.redo = avant_gc_bump;
+  return NULL;
 }
 
 /* AVANT_GC_VERIFY=1's own pages for C-visible Buf storage (avant_gc.h;

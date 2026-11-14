@@ -242,9 +242,14 @@ fn test_empty_payload(c: Checks, compiler: String, root: String, dir: String) {
 // every collector variable unset it runs no collection, and the inline
 // build takes its allocations on the inline path (at least 39,000 of
 // the 40,000); under AVANT_GC_STRESS=1 every allocation is a stress
-// point: at least 40,000 collections, none of the allocations inline, in
-// the inline build and in the call-form build, and the same output.
-// Before W-FIX1c the stress runs made 0 collections, as the default ones.
+// point: at least 40,000 collections, in the inline build and in the
+// call-form build, and the same output. Before W-FIX1c the stress runs
+// made 0 collections, as the default ones. Since the Valk stage's
+// VALK-A2 (O599) the inline build's allocations also run the inline
+// sequence under the stress mode (avant_alloc_slow collects, makes room
+// for the object and answers null; the module's __avant_alloc_slow then
+// runs the sequence): at least 39,000 of the 40,000, where W-FIX1c's
+// form ran none.
 fn test_stress_inline(c: Checks, compiler: String, root: String, dir: String) {
   jobs: Array(HJob) = []
   jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/stress_inline.av", "${dir}/stress_inline", "${dir}/stress_inline.log"))
@@ -272,8 +277,9 @@ fn test_stress_inline(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_int(stat_value(stress, "alloc"), 1440000, "${what} under AVANT_GC_STRESS=1: the same allocations")
     c.eq_int(stat_value(plain, "collections"), 0, "${what}: no collection in the default environment")
     c.expect(stat_value(stress, "collections") >= 40000, "${what} under AVANT_GC_STRESS=1: a collection at every allocation (at least 40,000)")
-    c.eq_int(stat_value(stress, "inline_allocs"), 0, "${what} under AVANT_GC_STRESS=1: no allocation takes the inline path")
   }
+  c.expect(stat_value(log_text("${dir}/stress_inline.stress.err"), "inline_allocs") >= 39000, "stress_inline under AVANT_GC_STRESS=1: its allocations run the inline sequence, each after its collection")
+  c.eq_int(stat_value(log_text("${dir}/stress_inline_calls.stress.err"), "inline_allocs"), 0, "stress_inline_calls under AVANT_GC_STRESS=1: the call-form build has no inline allocation")
   c.expect(stat_value(log_text("${dir}/stress_inline.plain.err"), "inline_allocs") >= 39000, "stress_inline: its allocations take the inline path in the default environment")
   c.eq_int(stat_value(log_text("${dir}/stress_inline_calls.plain.err"), "inline_allocs"), 0, "stress_inline_calls: the call-form build has no inline allocation")
 }

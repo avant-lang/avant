@@ -1456,6 +1456,16 @@ typedef struct GcThread {
   uint8_t **limit_mt_p;
   uint32_t fast_ok;
   uint8_t *mark;
+  /* AVANT_GC_STRESS=1 (the Valk stage, VALK-A2, O599): the cursor where
+   * avant_alloc_slow last made room for one object and answered null
+   * (the inline path takes it at once and the cursor moves); NULL
+   * otherwise. A call that finds the cursor still there allocates
+   * itself, so no request is ever answered null twice. */
+  uint8_t *redo;
+  /* avant_alloc_slow ran the stress point of the allocation it then
+   * hands to avant_alloc (one the inline path does not serve after all):
+   * avant_alloc skips its own, once. */
+  int stress_done;
   /* The thread's remembered-set buffer (Stage 28 W17b, MMTk's modbuf):
    * in a shared program a barrier appends the object it remembers here,
    * without a lock (the header's REM or REMC bit, set by an atomic or,

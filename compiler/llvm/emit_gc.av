@@ -316,6 +316,10 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 // avant_alloc_in_mature or on an unregistered thread), is barriered once:
 // avant_barrier returns at once for a young object. The inline path's
 // result is always young: it bumps in the thread's young hole.
+//
+// The slow call is the module's __avant_alloc_slow (ll_alloc_slow_helper
+// below: the runtime's avant_alloc_slow, and under the stress mode the
+// inline allocation itself after it).
 pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): String {
   size = e.value(args[0])
   ty = e.value(args[1])
@@ -343,7 +347,6 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
     return ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
   }
   e.used_alloc_globals = true
-  e.need(callee)
   e.need_intrinsic("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
   shared = e.m.shared
   limit = "@avant_gc_limit"
@@ -391,6 +394,70 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
   e.line("br i1 ${go}, label %${fast}, label %${slow}")
 
   e.block(fast)
+  obj = ll_alloc_take(e, bump, total, const_size, sz, tid, size, ty, shared)
+  e.line("br label %${cont}")
+
+  e.block(slow)
+  e.used_alloc_slow = true
+  sc = e.tmp
+  e.line("${sc} = call ptr @__avant_alloc_slow(i64 ${size}, i32 ${ty})")
+  s = ll_alloc_birth(e, sc, birth)
+  e.line("br label %${cont}")
+
+  e.block(cont)
+  r = e.tmp
+  e.line("${r} = phi ptr [ ${obj}, %${fast} ], [ ${s}, %${slow} ]")
+  r
+}
+
+// The inline path's slow call, one per module (ll_alloc; the Valk stage,
+// VALK-A2, O599): the runtime's avant_alloc_slow, which is avant_alloc
+// but for one answer, null: "the hole now has room for exactly this
+// object, take it inline". Then the inline allocation is made here, by
+// the same sequence the sites run (ll_alloc_take) with the size and the
+// type as values and the cursor read again (no test: the runtime made the
+// room). The runtime answers so only under AVANT_GC_STRESS=1, after the
+// collection that mode runs before every allocation: the stress pass then
+// executes the emitted inline sequence at every allocation the inline
+// path serves, each with a collection right before it and one right after
+// (the next allocation's), where until VALK-A2 the sequence never ran
+// under that mode. Without the mode the branch on null is never taken.
+// What the stress pass runs is this function's copy of the sequence; a
+// site's own copy (its limit compare, a constant size and type folded
+// into the header) does not run under that mode, the limit being spent
+// whenever a site tests it; AVANT_GC_VERIFY=1 without the stress mode
+// checks the headers the sites write.
+// One function for the module, never inlined, and not code at every
+// site: with the null answer handled at the site (a jump back into the
+// inline block, or a second copy of it there) LLVM kept less of the code
+// around each allocation in registers (Maze::AStar +1.5% in
+// instructions, Binarytrees::Obj +0.9%); this way a site is what it was
+// but for the name it calls.
+pub fn ll_alloc_slow_helper(e: LlEmit) {
+  e.need("avant_alloc_slow")
+  e.need_intrinsic("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
+  e.out.push_str("define internal ptr @__avant_alloc_slow(i64 %size, i32 %ty) noinline #0 {\nentry:\n")
+  e.line("%s = call ptr @avant_alloc_slow(i64 %size, i32 %ty)")
+  e.line("%again = icmp eq ptr %s, null")
+  e.line("br i1 %again, label %redo, label %got")
+  e.block("got")
+  e.line("ret ptr %s")
+  e.block("redo")
+  e.line("%bump = load ptr, ptr @avant_gc_bump, align 8")
+  e.line("%up = add i64 %size, 15")
+  e.line("%total = and i64 %up, -8")
+  obj = ll_alloc_take(e, "%bump", "%total", false, 0, 0, "%size", "%ty", e.m.shared)
+  e.line("ret ptr ${obj}")
+  e.out.push_str("}\n\n")
+}
+
+// The inline allocation itself, at cursor BUMP for TOTAL bytes (the
+// limit allows it): the cursor's store, the header, the zeroed payload,
+// and a shared module's start bit; returns the payload's address. Emitted
+// at every inline site, where the limit compare passes (ll_alloc), and
+// once in the module's slow-call helper, where the runtime answers null
+// (ll_alloc_slow_helper).
+fn ll_alloc_take(e: LlEmit, bump: String, total: String, const_size: Bool, sz: Int, tid: Int, size: String, ty: String, shared: Bool): String {
   end = e.tmp
   e.line("${end} = getelementptr inbounds i8, ptr ${bump}, i64 ${total}")
   e.line("store ptr ${end}, ptr @avant_gc_bump, align 8")
@@ -415,16 +482,7 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
   if shared {
     ll_alloc_start_bit(e, bump)
   }
-  e.line("br label %${cont}")
-
-  e.block(slow)
-  s = ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
-  e.line("br label %${cont}")
-
-  e.block(cont)
-  r = e.tmp
-  e.line("${r} = phi ptr [ ${obj}, %${fast} ], [ ${s}, %${slow} ]")
-  r
+  obj
 }
 
 // A shared module's inline allocation sets its object's start bit

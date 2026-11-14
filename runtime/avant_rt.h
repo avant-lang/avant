@@ -163,6 +163,13 @@ void avant_gc_add_root(void **slot);
  * g_avant_shared, avant_gc_fast_ok and a null cursor, stored the cursor
  * in the block's record (avant_gc_block), set the start bit in every
  * module and kept four counters. */
+/* The inline path's slow call: avant_alloc, except that it may return
+ * null after making room in the thread's hole for exactly the object
+ * asked for and publishing the limit for it; the caller then takes the
+ * inline path without testing the limit again (only under
+ * AVANT_GC_STRESS=1; the Valk stage, VALK-A2, O599). Generated code
+ * alone calls it. */
+void *avant_alloc_slow(uint64_t nbytes, uint32_t type_id);
 extern __thread uint8_t *avant_gc_bump;
 extern __thread uint8_t *avant_gc_limit;
 extern __thread uint8_t *avant_gc_limit_mt;

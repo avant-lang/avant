@@ -91,7 +91,10 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
     c.expect(!str_has(text, "@${g}"), "M6, M7: an unshared module's .ll does not name @${g}")
   }
   c.eq_int(count_of(fnode, " = icmp "), 1, "M6: Node.new's inline path has one compare, the cursor's new end against the limit")
-  c.expect(str_has(fnode, " = icmp ule i64 "), "M6: that compare is unsigned at-or-below")
+  c.expect(str_has(fnode, " = icmp ule i64 "), "M6: the limit compare is unsigned at-or-below")
+  c.expect(str_has(fnode, "call ptr @__avant_alloc_slow(") && !str_has(fnode, "@avant_alloc("), "O599: Node.new's slow call is the module's __avant_alloc_slow")
+  c.expect(str_has(text, "%s = call ptr @avant_alloc_slow(i64 %size, i32 %ty)") && str_has(text, "%again = icmp eq ptr %s, null") && str_has(text, "%bump = load ptr, ptr @avant_gc_bump, align 8"), "O599: __avant_alloc_slow calls the runtime's avant_alloc_slow and, on its null answer, reads the cursor again for the inline allocation")
+  c.expect(str_has(text, "define internal ptr @__avant_alloc_slow(i64 %size, i32 %ty) noinline "), "O599: __avant_alloc_slow is one function of the module, never inlined")
   c.eq_int(count_of(fnode, " = and i1 "), 0, "M6: Node.new's inline path joins no two conditions")
   c.eq_int(count_of(fnode, "load ptr, ptr @"), 2, "M6: Node.new's inline path loads two globals, the cursor and the limit")
   c.eq_int(count_of(fnode, ", ptr @avant_gc_bump, align 8"), 2, "M6: Node.new's inline path names the cursor twice, its load and its store")

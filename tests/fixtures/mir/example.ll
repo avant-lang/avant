@@ -13,6 +13,7 @@ target triple = "x86_64-pc-linux-gnu"
 @avant_gc_top = external thread_local(localexec) global ptr
 
 declare ptr @avant_alloc(i64, i32)
+declare ptr @avant_alloc_slow(i64, i32)
 declare void @avant_barrier(ptr)
 declare void @avant_gc_frame_enter(ptr)
 declare void @avant_gc_frame_leave(ptr)
@@ -95,7 +96,7 @@ bb0.s3.fast:
   br label %bb0.s3.cont
 
 bb0.s3.slow:
-  %t14 = call ptr @avant_alloc(i64 8, i32 1)
+  %t14 = call ptr @__avant_alloc_slow(i64 8, i32 1)
   br label %bb0.s3.cont
 
 bb0.s3.cont:
@@ -296,6 +297,31 @@ unlink:
 leave:
   call void @avant_gc_frame_leave(ptr %f)
   ret void
+}
+
+define internal ptr @__avant_alloc_slow(i64 %size, i32 %ty) noinline #0 {
+entry:
+  %s = call ptr @avant_alloc_slow(i64 %size, i32 %ty)
+  %again = icmp eq ptr %s, null
+  br i1 %again, label %redo, label %got
+
+got:
+  ret ptr %s
+
+redo:
+  %bump = load ptr, ptr @avant_gc_bump, align 8
+  %up = add i64 %size, 15
+  %total = and i64 %up, -8
+  %t23 = getelementptr inbounds i8, ptr %bump, i64 %total
+  store ptr %t23, ptr @avant_gc_bump, align 8
+  %t24 = zext i32 %ty to i64
+  %t25 = shl i64 %t24, 32
+  %t26 = or i64 %size, %t25
+  %t27 = or i64 %t26, -9214364837600034816
+  store i64 %t27, ptr %bump, align 8
+  %t28 = getelementptr inbounds i8, ptr %bump, i64 8
+  call void @llvm.memset.p0.i64(ptr %t28, i8 0, i64 %size, i1 false)
+  ret ptr %t28
 }
 
 attributes #0 = { nounwind "frame-pointer"="all" "probe-stack"="inline-asm" }
