@@ -153,6 +153,49 @@ fn test_threads(c: Checks) {
     } else {
       c.expect(false, "read dashdash run")
     }
+
+    // O567 (D355, Stage 29 W8Cb; O488's probe): as many consumers as the
+    // pool runs at once wait in recv, then a producer is queued; a
+    // waiting task lets the pool start one more worker, so the program
+    // ends (it hung before). Under /usr/bin/timeout 10: 124 is a hang.
+    wbin = "${scratch()}/threads-${stamp}.waiters"
+    wcode = compile_av(compiler, "tests/fixtures/threads/waiters.av", wbin, "${scratch()}/threads-${stamp}.wlog")
+    c.eq_int(wcode, 0, "compile waiters fixture")
+    for pool in [1, 2, 4, 16] {
+      wl = "${scratch()}/threads-${stamp}.w${pool}"
+      wa: Array(String) = []
+      wa.push("10")
+      wa.push(wbin)
+      wa.push("--threads")
+      wa.push("${pool}")
+      wrc = run_args("/usr/bin/timeout", wa, wl)
+      c.eq_int(wrc, 0, "waiters with --threads ${pool} end")
+      if wo = file_read(wl) {
+        c.eq_str(wo, "true\ntrue\n", "waiters with --threads ${pool}: every value received, every lock taken")
+      } else {
+        c.expect(false, "read waiters --threads ${pool}")
+      }
+    }
+    // Past the pool's thread limit the program is told (the limit lowered
+    // to 2 for the test: one pool thread, three consumers, then the
+    // producer, which can never start; timeout ends it).
+    ll = "${scratch()}/threads-${stamp}.wlimit"
+    la: Array(String) = []
+    la.push("AVANT_POOL_THREAD_LIMIT=2")
+    la.push("/usr/bin/timeout")
+    la.push("3")
+    la.push(wbin)
+    la.push("3")
+    la.push("--threads")
+    la.push("1")
+    lrc = run_args("/usr/bin/env", la, ll)
+    c.eq_int(lrc, 124, "waiters past the thread limit wait (timeout ends them)")
+    if lo = file_read(ll) {
+      c.expect(has_sub(lo, "avant runtime: tasks are queued while the pool's 2 threads are all taken, some by tasks waiting on a Channel or a Mutex, and the pool starts no more (its limit is 2 threads)"), "the limit's message names the limit")
+      c.expect(has_sub(lo, "--threads N bounds the tasks that run at once"), "the limit's message names --threads")
+    } else {
+      c.expect(false, "read waiters past the limit")
+    }
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

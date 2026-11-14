@@ -11,10 +11,21 @@
 
 /*
  * Bounded pool shared by spawn and .parallel (D35, Q38-A).
- * The size is the program's chosen thread count (avant_chosen_threads:
- * --threads, else online processors). Workers
- * never touch g_world. Join or .parallel from a worker waits for a
- * pool thread, so a full pool deadlocks; those calls die.
+ * The bound is the program's chosen thread count (avant_chosen_threads:
+ * --threads, else online processors): at most that many tasks run at
+ * once. Workers never touch g_world. Join or .parallel from a worker
+ * waits for a pool thread, so a full pool deadlocks; those calls die.
+ *
+ * A task waiting on a gate gives its run back (Stage 29 W8Cb, O567,
+ * D355): a worker that waits in a Channel's send or recv or for a Mutex
+ * (pool_block, from the gate functions below) stops counting as running,
+ * so a queued task may start, on an idle worker or, when every worker
+ * is waiting, on a new one, up to POOL_THREAD_LIMIT threads (or the
+ * bound, if larger); past the limit the program is told once on
+ * standard error and the queued task waits. When the wait ends, the task
+ * waits for a run (pool_resume) before it goes on, so the bound holds.
+ * Before, as many waiting tasks as the pool had threads kept a queued
+ * task from ever starting, and the program hung with no message.
  */
 
 /* A spawned block returns an Avant Int (Stage 29 W-INT1: avant_int). */
@@ -52,12 +63,33 @@ typedef struct Job {
   struct Job *next;
 } Job;
 
+/* The pool's threads at most: the bound (avant_chosen_threads), or this
+ * many when the bound is smaller, so that tasks waiting on gates may
+ * hold threads while queued tasks start. */
+#define POOL_THREAD_LIMIT 1024
+
 static pthread_mutex_t pool_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t queue_cv = PTHREAD_COND_INITIALIZER;
+/* Tasks back from a gate wait, waiting for a run. */
+static pthread_cond_t resume_cv = PTHREAD_COND_INITIALIZER;
 static Job *queue_head;
 static Job *queue_tail;
 static int pool_started;
+/* Under pool_mu: the bound, the thread limit, the workers started, the
+ * ones running a task (not waiting on a gate), the ones waiting for a
+ * job, the ones started that have not looked for a job yet, the tasks
+ * waiting in pool_resume, and whether the limit's message was given. */
+static long pool_bound;
+static long pool_limit;
+static long pool_threads;
+static long pool_running;
+static long pool_idle;
+static long pool_starting;
+static long pool_resuming;
+static int pool_warned;
 static __thread int on_worker;
+/* This worker's task waits on a gate in the current gate call. */
+static __thread int pool_blocked;
 
 static void die_task(const char *msg) {
   fprintf(stderr, "avant runtime: %s\n", msg);
@@ -83,6 +115,48 @@ __attribute__((noreturn, cold)) static void trap_on_worker(const char *what) {
 
 static void *worker_main(void *p);
 
+/* A run is free and a task is queued: an idle worker takes it, else a
+ * new worker starts, up to the limit (pool_mu held). Tasks back from a
+ * gate wait go first. */
+static void pool_kick(void) {
+  if (pool_resuming > 0) {
+    if (pool_running < pool_bound) {
+      pthread_cond_signal(&resume_cv);
+    }
+    return;
+  }
+  if (!queue_head || pool_running >= pool_bound) {
+    return;
+  }
+  if (pool_idle > 0) {
+    pthread_cond_signal(&queue_cv);
+    return;
+  }
+  if (pool_starting > 0) {
+    /* A worker on its way takes the job when it first looks. */
+    return;
+  }
+  if (pool_threads < pool_limit) {
+    pthread_t th;
+    if (pthread_create(&th, NULL, worker_main, NULL) != 0) {
+      die_task("pool thread");
+    }
+    pthread_detach(th);
+    pool_threads++;
+    pool_starting++;
+    return;
+  }
+  if (!pool_warned) {
+    pool_warned = 1;
+    fprintf(stderr,
+            "avant runtime: tasks are queued while the pool's %ld threads are all taken, some by tasks waiting on a "
+            "Channel or a Mutex, and the pool starts no more (its limit is %ld threads); the queued tasks wait for a "
+            "thread to be free (--threads N bounds the tasks that run at once, and a task that waits lets a queued "
+            "one start while threads remain)\n",
+            pool_threads, pool_limit);
+  }
+}
+
 static void enqueue(Job *job) {
   job->next = NULL;
   if (queue_tail) {
@@ -91,7 +165,38 @@ static void enqueue(Job *job) {
     queue_head = job;
   }
   queue_tail = job;
-  pthread_cond_signal(&queue_cv);
+  pool_kick();
+}
+
+/* The worker's task is about to wait on a gate (a bucket's mutex may be
+ * held: the lock order is bucket, then pool_mu). Once per gate call. */
+static void pool_block(void) {
+  if (!on_worker || pool_blocked) {
+    return;
+  }
+  pool_blocked = 1;
+  pthread_mutex_lock(&pool_mu);
+  pool_running--;
+  pool_kick();
+  pthread_mutex_unlock(&pool_mu);
+}
+
+/* The gate call that waited is done (no bucket's mutex held): the task
+ * waits for a run, natively, before it goes on. */
+static void pool_resume(void) {
+  if (!pool_blocked) {
+    return;
+  }
+  pool_blocked = 0;
+  avant_gc_lock(&pool_mu);
+  pool_resuming++;
+  while (pool_running >= pool_bound) {
+    avant_gc_cond_wait(&resume_cv, &pool_mu);
+  }
+  pool_resuming--;
+  pool_running++;
+  pool_kick();
+  pthread_mutex_unlock(&pool_mu);
 }
 
 /* The program's one chosen thread count: the --threads flag when the
@@ -119,6 +224,23 @@ static long pool_count(void) {
   return (long)avant_chosen_threads();
 }
 
+/* The pool's thread limit for a bound of n: POOL_THREAD_LIMIT, or n when
+ * larger. AVANT_POOL_THREAD_LIMIT (2 to POOL_THREAD_LIMIT) can only
+ * lower it, never below n: tests/cases/test_threads.av sets it to reach
+ * the limit's message with a few waiting tasks; not a user knob. */
+static long pool_thread_limit(long n) {
+  long lim = POOL_THREAD_LIMIT;
+  const char *v = getenv("AVANT_POOL_THREAD_LIMIT");
+  if (v && *v) {
+    char *end = NULL;
+    long x = strtol(v, &end, 10);
+    if (end && *end == 0 && x >= 2 && x < lim) {
+      lim = x;
+    }
+  }
+  return n > lim ? n : lim;
+}
+
 /* Called at a collecting entry (spawn, .parallel): pool_mu through
  * avant_gc_lock (native while contended; Stage 28 W17a). */
 static void ensure_pool(void) {
@@ -130,8 +252,12 @@ static void ensure_pool(void) {
     return;
   }
   pool_started = 1;
-  pthread_mutex_unlock(&pool_mu);
   n = pool_count();
+  pool_bound = n;
+  pool_limit = pool_thread_limit(n);
+  pool_threads = n;
+  pool_starting = n;
+  pthread_mutex_unlock(&pool_mu);
   for (i = 0; i < n; i++) {
     pthread_t th;
     if (pthread_create(&th, NULL, worker_main, NULL) != 0) {
@@ -192,20 +318,31 @@ static void *worker_main(void *p) {
   /* Native while it waits for a job (rule 2): a collection never waits
    * for an idle worker. */
   avant_gc_native_begin();
+  /* Plain lock and wait: the thread is native here. */
+  pthread_mutex_lock(&pool_mu);
+  pool_starting--;
   for (;;) {
     Job *job;
-    /* Plain lock and wait: the thread is native here. */
-    pthread_mutex_lock(&pool_mu);
-    while (!queue_head) {
+    /* A job starts only within the bound, after the tasks back from a
+     * gate wait (pool_kick). */
+    while (!queue_head || pool_running >= pool_bound || pool_resuming > 0) {
+      pool_idle++;
       pthread_cond_wait(&queue_cv, &pool_mu);
+      pool_idle--;
     }
     job = queue_head;
     queue_head = job->next;
     if (!queue_head) {
       queue_tail = NULL;
     }
+    pool_running++;
+    /* Another queued job may start too, on another worker. */
+    pool_kick();
     pthread_mutex_unlock(&pool_mu);
     run_job(job);
+    pthread_mutex_lock(&pool_mu);
+    pool_running--;
+    pool_kick();
   }
   return NULL;
 }
@@ -488,6 +625,7 @@ static void gate_put_if_idle(GateBucket *b, GateEnt *e) {
  * (b->mu held on entry and on return). */
 static void gate_acquire(GateBucket *b, GateEnt *e) {
   while (e->locked) {
+    pool_block();
     e->lock_waiters++;
     avant_gc_cond_wait(&e->lock_cv, &b->mu);
     e->lock_waiters--;
@@ -521,6 +659,7 @@ void avant_gate_lock(uint64_t gate) {
   pthread_mutex_lock(&b->mu);
   gate_acquire(b, gate_take(b, gate));
   pthread_mutex_unlock(&b->mu);
+  pool_resume();
 }
 
 void avant_gate_unlock(uint64_t gate) {
@@ -540,10 +679,12 @@ void avant_gate_wait(uint64_t gate) {
   e = gate_held(b, gate, "gate wait without its lock");
   e->cond_waiters++;
   gate_give(e);
+  pool_block();
   avant_gc_cond_wait(&e->cond_cv, &b->mu);
   e->cond_waiters--;
   gate_acquire(b, e);
   pthread_mutex_unlock(&b->mu);
+  pool_resume();
 }
 
 void avant_gate_signal(uint64_t gate) {

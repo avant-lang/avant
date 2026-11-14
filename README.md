@@ -2425,9 +2425,9 @@ A mutable object reaches another task only inside a `Mutex`, or as the results o
 
 ### The thread pool
 
-The pool has one thread per online processor, counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number; the runtime removes the flag before `argv()` sees it (it is to become `--avant-threads=N`, leaving `--threads` to programs: [Not built yet](#not-built-yet)). Tasks beyond the pool's size wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
+The pool runs at most one task per online processor at once, a number counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number; the runtime removes the flag before `argv()` sees it (it is to become `--avant-threads=N`, leaving `--threads` to programs: [Not built yet](#not-built-yet)). Tasks beyond it wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
 
-A task that waits (in a channel's `recv` or `send`, or for a `Mutex`) keeps its pool thread while it waits. If every pool thread is held by a task waiting for something that only a task still in the queue would do, nothing can run and the program hangs without a message: with `--threads 2`, two consumers waiting in `recv` keep a producer spawned after them from ever starting. Spawn the tasks that send before the ones that wait for them, or keep fewer waiting tasks than the pool has threads.
+A task that waits (in a channel's `recv` or `send`, or for a `Mutex`) stops counting as running while it waits, so a queued task may start meanwhile: on a free pool thread, or on a new one when every thread holds a task, up to 1,024 threads (or `N`, if larger). So two consumers waiting in `recv` with `--threads 2` do not keep a producer spawned after them from starting. When the wait ends, the task goes on as soon as fewer than `N` tasks run. Past the thread limit, the runtime says so once on standard error (`avant runtime: tasks are queued while the pool's 1024 threads are all taken, …`) and the queued tasks wait for a thread to be free.
 
 ## Memory
 
