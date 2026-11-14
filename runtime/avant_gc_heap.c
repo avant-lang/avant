@@ -861,6 +861,21 @@ size_t gc_obj_total(const AvantHeader *h) {
  * its start bit too, gc-design.md §2.3; it is set exactly while the
  * object lives). OL receives a large object's header, OB a block
  * object's block. */
+/* No start bit at granule G (offset OFF): an object the inline path
+ * allocated has none until something needs it (late start bits, the
+ * Valk stage, VALK-A2, M7; avant_gc_alloc.c): its block's are set now,
+ * and the bit is read again. Out of line and cold: the lookup itself
+ * stays as small as it was (with this code in its body every lookup
+ * cost more: about 0.8 M instructions on scenario 8 of the collector
+ * benchmark; the record of VALK-A2). */
+static __attribute__((noinline, cold)) int late_start(uintptr_t off, uint64_t g) {
+  if (gc_heap.chunks[off >> CHUNK_SHIFT].kind != CHUNK_SMALL || !gc_heap.blocks[off >> BLOCK_SHIFT].in_use) {
+    return 0;
+  }
+  gc_lazy_touch(&gc_heap.blocks[off >> BLOCK_SHIFT]);
+  return (int)((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL);
+}
+
 int gc_is_heap_payload(void *p, Block **ob, AvantHeader **ol) {
   uintptr_t off;
   uint64_t g;
@@ -872,18 +887,8 @@ int gc_is_heap_payload(void *p, Block **ob, AvantHeader **ol) {
     return 0;
   }
   g = off >> 3;
-  if (!((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL)) {
-    /* No start bit: an object the inline path allocated has none until
-     * something needs it (late start bits, the Valk stage, VALK-A2, M7;
-     * avant_gc_alloc.c): its block's are set now, and the bit is read
-     * again. */
-    if (gc_heap.chunks[off >> CHUNK_SHIFT].kind != CHUNK_SMALL || !gc_heap.blocks[off >> BLOCK_SHIFT].in_use) {
-      return 0;
-    }
-    gc_lazy_touch(&gc_heap.blocks[off >> BLOCK_SHIFT]);
-    if (!((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL)) {
-      return 0;
-    }
+  if (!((gc_heap.starts[g >> 6] >> (g & 63)) & 1ULL) && !late_start(off, g)) {
+    return 0;
   }
   kind = gc_heap.chunks[off >> CHUNK_SHIFT].kind;
   if (kind == CHUNK_SMALL) {

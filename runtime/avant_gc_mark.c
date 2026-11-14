@@ -158,7 +158,18 @@ static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v)
   if (__builtin_expect((fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED | AVANT_FLAG_LARGE)) != 0, 0)) {
     if (fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
       h->flags = (uint16_t)(fl & ~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED));
-      /* Its late start bit (mark_object's comment). */
+      /* Its late start bit (mark_object's comment). Inline, and it is
+       * not free where no bit is set: with it here the C compiler makes
+       * the heap's address again for every object marked, 50
+       * instructions a node where the loop had 49 (scenario 2 of the
+       * collector benchmark +1.98% in instructions, +1.0% in cycles).
+       * The forms that give the 49 back were measured and cost more
+       * (the record of VALK-A2, timed/s2): the bit set by a cold
+       * function called with the header, 49 instructions and 13% more
+       * cycles a node on the server's Zen 1; every run's bits built
+       * before the mark, the loop as it was and scenario 8 above its
+       * base. A call with the granule, or the start words' address in
+       * the mark's context, saves nothing. */
       if (!(fl & AVANT_FLAG_SURVIVED)) {
         start_bit_set(h, 1);
       }
