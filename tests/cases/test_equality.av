@@ -82,6 +82,11 @@ fn cases: Array(RCase) {
   xs.push(accepted("union-text", "class Oops: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn f(n: Int): Int | String | Oops {\n  if n == 0 {\n    return 5\n  }\n  if n == 1 {\n    return \"five\"\n  }\n  Oops.new(\"no\")\n}\nfn main {\n  puts(\"\${f(0)} \${f(1)} \${f(2)}\")\n}\n", "5 five no\n"))
   xs.push(refused("union-text-struct", "${pt}fn f(n: Int): Int | P {\n  if n > 0 {\n    return n\n  }\n  P { x: 1, y: 2 }\n}\nfn main {\n  puts(\"\${f(1)}\")\n}\n", "cannot interpolate Int | P: its member P has no text", "12:11"))
   xs.push(refused("optional-text", "fn main {\n  a: Int? = 1\n  puts(\"\${a}\")\n}\n", "cannot interpolate Int?: it holds nil; open it with `if v = a`", "3:11"))
+  // nil typed by the other branches
+  vt = "struct V {\n  x: Int\n}\n"
+  xs.push(accepted("nil-if-join", "${vt}fn pick(n: Int): Int {\n  v = if n > 0 { V { x: n } } else { nil }\n  if got = v {\n    return got.x\n  }\n  -1\n}\nfn main {\n  puts(pick(4))\n  puts(pick(0))\n}\n", "4\n-1\n"))
+  xs.push(accepted("nil-switch-join", "${vt}fn pick(n: Int): Int {\n  v = switch n {\n    case 0 { nil }\n    case 1 { V { x: 10 } }\n    else { nil }\n  }\n  if got = v {\n    return got.x\n  }\n  -1\n}\nfn main {\n  puts(pick(1))\n  puts(pick(2))\n}\n", "10\n-1\n"))
+  xs.push(refused("nil-if-two-types", "fn main {\n  n = 1\n  v = if n > 0 { 1 } else if n < 0 { \"x\" } else { nil }\n}\n", "if branches have different types", "3:7"))
   // Type names
   xs.push(refused("struct-lower", "struct value {\n  n: Int\n}\nfn main { }\n", "the name of struct value is a type name, written with a capital first letter: write Value", "1:1"))
   xs.push(refused("class-lower", "class http_req {\n  n: Int = 0\n}\nfn main { }\n", "the name of class http_req is a type name, written with a capital first letter: write HttpReq", "1:1"))

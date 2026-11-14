@@ -4361,6 +4361,9 @@ pub class Checker {
     if branch_tys.size == 0 {
       return t_void()
     }
+    if joined = nil_join(branch_tys) {
+      return joined
+    }
     result = branch_tys[0]
     for branch_ty in branch_tys {
       if !branch_ty.same_as(result) {
@@ -5202,6 +5205,9 @@ pub class Checker {
       }
       return want
     }
+    if joined = nil_join(tys) {
+      return joined
+    }
     result = tys[0]
     for t3 in tys {
       if !t3.same_as(result) {
@@ -5209,6 +5215,39 @@ pub class Checker {
       }
     }
     result
+  }
+
+  // Branches where some give nil and the others one type T (or T?), with
+  // no declared type to take: together they are T?, as a declared T?
+  // would make them. nil when the branches are not of that shape.
+  pub fn nil_join(tys: Array(Ty)): Ty? {
+    has_nil = false
+    other: Ty? = nil
+    for t in tys {
+      if t.is_nil {
+        has_nil = true
+      } else {
+        inner = t
+        if t.is_nilable {
+          inner = ty_without_nil(t)
+        } else if t.is_union {
+          return nil
+        }
+        if o = other {
+          if !o.same_as(inner) {
+            return nil
+          }
+        } else {
+          other = inner
+        }
+      }
+    }
+    if has_nil {
+      if o2 = other {
+        return ty_nilable(o2)
+      }
+    }
+    nil
   }
 
   // A branch of an `if` used as a value: its last expression is the value
