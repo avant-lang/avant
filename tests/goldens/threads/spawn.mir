@@ -50,7 +50,9 @@ typemap 10 %spawn_cap(av.spawn/main#spawn7) stride 0 bits [0x1]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_array_freeze(ref, i32) -> void never
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
+extern avant_array_thaw(ref, i32, u64) -> void never
 extern avant_gc_poll() -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_join(ref) -> i64 collects
@@ -60,6 +62,7 @@ extern avant_str_cat_i32(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
+extern avant_trap_frozen(i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
 fn av.spawn/work(_1: i64) -> i64 leaf @spawn.av:27:1 {
@@ -122,10 +125,12 @@ fn av.spawn/churn_sum(_1: ref str, _2: i64) -> i64 frame @spawn.av:38:1 {
   let _24: ref str
   let _25: i64
   let _26: i64
-  let _27: i64
-  let _28: i32
+  let _27: i32
+  let _28: bool
   let _29: i64
-  let _30: i64
+  let _30: i32
+  let _31: i64
+  let _32: i64
 
 bb0:
   _4 = zero   @38:1
@@ -157,10 +162,10 @@ bb2:
   branch copy _14, bb4, bb5   @45:5
 
 bb3:
-  _28 = copy (*_4).1   @51:15
-  _29 = cast copy _28 to i64   @51:15
-  _30 = add.chk copy _5, copy _29   @51:9
-  _0 = copy _30   @51:9
+  _30 = copy (*_4).1   @51:15
+  _31 = cast copy _30 to i64   @51:15
+  _32 = add.chk copy _5, copy _31   @51:9
+  _0 = copy _32   @51:9
   gc.leave   @51:9
   return   @51:9
 
@@ -180,13 +185,22 @@ bb4:
   _25 = call avant_str_size(copy _24) nocollect   @46:46
   _26 = add.chk copy _20, copy _25   @46:36
   _5 = copy _26   @46:13
-  (*_4).1 = const i32 0   @47:11
-  goto bb5   @45:5
+  _27 = copy (*_4).2   @47:11
+  _28 = lt copy _27, const i32 0   @47:11
+  branch copy _28, bb6, bb7   @47:11
 
 bb5:
-  _27 = add copy _6, const i64 1   @49:11
-  _6 = copy _27   @49:7
+  _29 = add copy _6, const i64 1   @49:11
+  _6 = copy _29   @49:7
   goto bb1   @42:3
+
+bb6:
+  call avant_trap_frozen(const i32 2) nocollect   @47:11
+  unreachable   @47:11
+
+bb7:
+  (*_4).1 = const i32 0   @47:11
+  goto bb5   @45:5
 }
 
 fn av.spawn/make_words(_1: i64) -> ref %Array(String) frame @spawn.av:54:1 {
@@ -248,65 +262,67 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @spawn.av:64:1 {
   let _17 (rec): %spawn.Rec slot
   let _18: ref %spawn_cap(av.spawn/main#spawn3) slot
   let _19: ref str
-  let _20: ref
-  let _21 (h2): ref slot
-  let _22: ref %Array(String)
-  let _23 (many): ref %Array(String) slot
-  let _24: ref %spawn_cap(av.spawn/main#spawn4) slot
-  let _25: ref
-  let _26 (h3): ref slot
-  let _27: ref %env(av.spawn/main#lam1)
-  let _28: %fn():Void
-  let _29 (inc): %fn():Void slot
+  let _20: ref %Array(String)
+  let _21: ref
+  let _22 (h2): ref slot
+  let _23: ref %Array(String)
+  let _24 (many): ref %Array(String) slot
+  let _25: ref %spawn_cap(av.spawn/main#spawn4) slot
+  let _26: ref %Array(String)
+  let _27: ref
+  let _28 (h3): ref slot
+  let _29: ref %env(av.spawn/main#lam1)
   let _30: %fn():Void
-  let _31: ref %spawn_cap(av.spawn/main#spawn5) slot
-  let _32: i64
-  let _33: ref
-  let _34 (hb): ref slot
-  let _35: %fn():Void
-  let _36: ref %spawn_cap(av.spawn/main#spawn6) slot
-  let _37: i64
-  let _38: ref str
-  let _39: ref
-  let _40 (hl): ref slot
-  let _41: ref %Array(JoinHandle(Int))
-  let _42 (hs): ref %Array(JoinHandle(Int)) slot
-  let _43: ref %Array(String)
-  let _44 (tags): ref %Array(String) slot
-  let _45 (i): i64
-  let _46: bool
-  let _47: ref str
-  let _48 (tag): ref str slot
-  let _49: ref %spawn_cap(av.spawn/main#spawn7) slot
-  let _50: ref slot
-  let _51: i64
+  let _31 (inc): %fn():Void slot
+  let _32: %fn():Void
+  let _33: ref %spawn_cap(av.spawn/main#spawn5) slot
+  let _34: i64
+  let _35: ref
+  let _36 (hb): ref slot
+  let _37: %fn():Void
+  let _38: ref %spawn_cap(av.spawn/main#spawn6) slot
+  let _39: i64
+  let _40: ref str
+  let _41: ref
+  let _42 (hl): ref slot
+  let _43: ref %Array(JoinHandle(Int))
+  let _44 (hs): ref %Array(JoinHandle(Int)) slot
+  let _45: ref %Array(String)
+  let _46 (tags): ref %Array(String) slot
+  let _47 (i): i64
+  let _48: bool
+  let _49: ref str
+  let _50 (tag): ref str slot
+  let _51: ref %spawn_cap(av.spawn/main#spawn7) slot
   let _52: ref slot
-  let _53: ref %spawn.Holder slot
-  let _54 (holder): ref %spawn.Holder slot
-  let _55: i64
-  let _56: i64
+  let _53: i64
+  let _54: ref slot
+  let _55: ref %spawn.Holder slot
+  let _56 (holder): ref %spawn.Holder slot
   let _57: i64
   let _58: i64
   let _59: i64
   let _60: i64
   let _61: i64
-  let _62 (sum): i64
-  let _63: ref %Array(JoinHandle(Int)) slot
-  let _64: i32
-  let _65: i32
-  let _66: bool
-  let _67: ref %elems(JoinHandle(Int))
-  let _68: ref
-  let _69 (h): ref slot
-  let _70: i64
-  let _71: i64
-  let _72: ref slot
+  let _62: i64
+  let _63: i64
+  let _64 (sum): i64
+  let _65: ref %Array(JoinHandle(Int)) slot
+  let _66: i32
+  let _67: i32
+  let _68: bool
+  let _69: ref %elems(JoinHandle(Int))
+  let _70: ref
+  let _71 (h): ref slot
+  let _72: i64
   let _73: i64
-  let _74: ref str
-  let _75: i32
-  let _76: i64
-  let _77: ref %elems(String)
-  let _78: ref str
+  let _74: ref slot
+  let _75: i64
+  let _76: ref str
+  let _77: i32
+  let _78: i64
+  let _79: ref %elems(String)
+  let _80: ref str
 
 bb0:
   _3 = zero   @64:1
@@ -319,28 +335,28 @@ bb0:
   _15 = zero   @64:1
   _17 = zero   @64:1
   _18 = zero   @64:1
-  _21 = zero   @64:1
-  _23 = zero   @64:1
+  _22 = zero   @64:1
   _24 = zero   @64:1
-  _26 = zero   @64:1
-  _29 = zero   @64:1
+  _25 = zero   @64:1
+  _28 = zero   @64:1
   _31 = zero   @64:1
-  _34 = zero   @64:1
+  _33 = zero   @64:1
   _36 = zero   @64:1
-  _40 = zero   @64:1
+  _38 = zero   @64:1
   _42 = zero   @64:1
   _44 = zero   @64:1
-  _48 = zero   @64:1
-  _49 = zero   @64:1
+  _46 = zero   @64:1
   _50 = zero   @64:1
+  _51 = zero   @64:1
   _52 = zero   @64:1
-  _53 = zero   @64:1
   _54 = zero   @64:1
-  _63 = zero   @64:1
-  _69 = zero   @64:1
-  _72 = zero   @64:1
+  _55 = zero   @64:1
+  _56 = zero   @64:1
+  _65 = zero   @64:1
+  _71 = zero   @64:1
+  _74 = zero   @64:1
   gc.enter   @64:1
-  gc.roots _2, _3, _4, _5, _7, _9, _12, _13, _15, _17, _18, _21, _23, _24, _26, _29, _31, _34, _36, _40, _42, _44, _48, _49, _50, _52, _53, _54, _63, _69, _72   @64:1
+  gc.roots _2, _3, _4, _5, _7, _9, _12, _13, _15, _17, _18, _22, _24, _25, _28, _31, _33, _36, _38, _42, _44, _46, _50, _51, _52, _54, _55, _56, _65, _71, _74   @64:1
   call __avant_type_maps() nocollect   @64:1
   call avant_io_init_argv(copy _1, copy _2) collects   @64:1
   _3 = zero   @64:1
@@ -375,116 +391,120 @@ bb0:
   (*_18).0 = copy _19 fresh   @72:8
   (*_18).1 = copy _15 fresh   @72:8
   (*_18).2 = copy _17 fresh   @72:8
-  _20 = call avant_spawn(const fn av.spawn/main#spawn3, copy _18) collects   @72:8
-  _21 = copy _20   @72:6
-  _22 = call av.spawn/make_words(const i64 300) collects   @73:10
-  _23 = copy _22   @73:8
-  _24 = call avant_alloc(const u64 8, const u32 3) collects fresh   @74:8
-  (*_24).0 = copy _23 fresh   @74:8
-  _25 = call avant_spawn(const fn av.spawn/main#spawn4, copy _24) collects   @74:8
-  _26 = copy _25   @74:6
+  _20 = copy (*_18).1   @72:8
+  call avant_array_freeze(copy _20, const i32 1) nocollect   @72:8
+  _21 = call avant_spawn(const fn av.spawn/main#spawn3, copy _18) collects   @72:8
+  _22 = copy _21   @72:6
+  _23 = call av.spawn/make_words(const i64 300) collects   @73:10
+  _24 = copy _23   @73:8
+  _25 = call avant_alloc(const u64 8, const u32 3) collects fresh   @74:8
+  (*_25).0 = copy _24 fresh   @74:8
+  _26 = copy (*_25).0   @74:8
+  call avant_array_freeze(copy _26, const i32 1) nocollect   @74:8
+  _27 = call avant_spawn(const fn av.spawn/main#spawn4, copy _25) collects   @74:8
+  _28 = copy _27   @74:6
   _3 = call avant_alloc(const u64 8, const u32 4) collects   @83:3
   (*_3).0 = const i64 10   @83:5
-  _27 = call avant_alloc(const u64 8, const u32 5) collects fresh   @84:9
-  (*_27).0 = copy _3 fresh   @84:9
-  _28 = fnval %fn():Void (copy _27, const fn av.spawn/main#lam1)   @84:9
-  _29 = copy _28   @84:7
-  _30 = copy _29   @85:3
-  call indirect copy _30() collects   @85:3
-  _31 = call avant_alloc(const u64 8, const u32 0) collects   @86:8
-  _32 = copy (*_3).0   @86:8
-  (*_31).0 = copy _32   @86:8
-  _33 = call avant_spawn(const fn av.spawn/main#spawn5, copy _31) collects   @86:8
-  _34 = copy _33   @86:6
-  _35 = copy _29   @87:3
-  call indirect copy _35() collects   @87:3
-  _36 = call avant_alloc(const u64 16, const u32 6) collects fresh   @88:8
-  _37 = copy (*_4).0   @88:8
-  (*_36).0 = copy _37   @88:8
-  _38 = copy (*_5).0   @88:8
-  (*_36).1 = copy _38 fresh   @88:8
-  _39 = call avant_spawn(const fn av.spawn/main#spawn6, copy _36) collects   @88:8
-  _40 = copy _39   @88:6
-  _41 = call avant_alloc(const u64 16, const u32 1022) collects   @93:32
-  _42 = copy _41   @93:3
-  _43 = call avant_alloc(const u64 16, const u32 1022) collects   @94:25
-  _44 = copy _43   @94:3
-  _45 = const i64 0   @95:5
+  _29 = call avant_alloc(const u64 8, const u32 5) collects fresh   @84:9
+  (*_29).0 = copy _3 fresh   @84:9
+  _30 = fnval %fn():Void (copy _29, const fn av.spawn/main#lam1)   @84:9
+  _31 = copy _30   @84:7
+  _32 = copy _31   @85:3
+  call indirect copy _32() collects   @85:3
+  _33 = call avant_alloc(const u64 8, const u32 0) collects   @86:8
+  _34 = copy (*_3).0   @86:8
+  (*_33).0 = copy _34   @86:8
+  _35 = call avant_spawn(const fn av.spawn/main#spawn5, copy _33) collects   @86:8
+  _36 = copy _35   @86:6
+  _37 = copy _31   @87:3
+  call indirect copy _37() collects   @87:3
+  _38 = call avant_alloc(const u64 16, const u32 6) collects fresh   @88:8
+  _39 = copy (*_4).0   @88:8
+  (*_38).0 = copy _39   @88:8
+  _40 = copy (*_5).0   @88:8
+  (*_38).1 = copy _40 fresh   @88:8
+  _41 = call avant_spawn(const fn av.spawn/main#spawn6, copy _38) collects   @88:8
+  _42 = copy _41   @88:6
+  _43 = call avant_alloc(const u64 16, const u32 1022) collects   @93:32
+  _44 = copy _43   @93:3
+  _45 = call avant_alloc(const u64 16, const u32 1022) collects   @94:25
+  _46 = copy _45   @94:3
+  _47 = const i64 0   @95:5
   goto bb1   @96:3
 
 bb1:
   call avant_gc_poll() collects   @96:11
-  _46 = lt copy _45, const i64 24   @96:11
-  branch copy _46, bb2, bb3   @96:3
+  _48 = lt copy _47, const i64 24   @96:11
+  branch copy _48, bb2, bb3   @96:3
 
 bb2:
-  _47 = call avant_str_cat_i32(const str.7, copy _45) collects   @97:11
-  _48 = copy _47   @97:9
-  call avant_array_push_ptr(copy _44, copy _48, const u32 65535) collects   @98:9
-  _49 = call avant_alloc(const u64 8, const u32 10) collects fresh   @99:13
-  (*_49).0 = copy _48 fresh   @99:13
-  _50 = call avant_spawn(const fn av.spawn/main#spawn7, copy _49) collects   @99:13
-  call avant_array_push_ptr(copy _42, copy _50, const u32 65535) collects   @99:7
-  _51 = add copy _45, const i64 1   @100:11
-  _45 = copy _51   @100:7
+  _49 = call avant_str_cat_i32(const str.7, copy _47) collects   @97:11
+  _50 = copy _49   @97:9
+  call avant_array_push_ptr(copy _46, copy _50, const u32 65535) collects   @98:9
+  _51 = call avant_alloc(const u64 8, const u32 10) collects fresh   @99:13
+  (*_51).0 = copy _50 fresh   @99:13
+  _52 = call avant_spawn(const fn av.spawn/main#spawn7, copy _51) collects   @99:13
+  call avant_array_push_ptr(copy _44, copy _52, const u32 65535) collects   @99:7
+  _53 = add copy _47, const i64 1   @100:11
+  _47 = copy _53   @100:7
   goto bb1   @96:3
 
 bb3:
-  _52 = call avant_spawn(const fn av.spawn/main#spawn8, const ref null) collects   @102:23
-  _53 = call avant_alloc(const u64 16, const u32 1) collects fresh   @102:18
-  call av.spawn/Holder.initialize(copy _53, copy _52, const str.8) collects   @102:18
-  _54 = copy _53   @102:10
-  _55 = call avant_join(copy _7) collects   @103:10
-  call printf(const str.9, copy _55) nocollect   @103:3
-  _56 = call avant_join(copy _12) collects   @104:10
-  call printf(const str.9, copy _56) nocollect   @104:3
-  _57 = call avant_join(copy _21) collects   @105:10
-  call printf(const str.9, copy _57) nocollect   @105:3
-  _58 = call avant_join(copy _26) collects   @106:10
-  call printf(const str.9, copy _58) nocollect   @106:3
-  _59 = call avant_join(copy _34) collects   @107:10
-  call printf(const str.9, copy _59) nocollect   @107:3
-  _60 = copy (*_3).0   @108:8
-  call printf(const str.9, copy _60) nocollect   @108:3
-  _61 = call avant_join(copy _40) collects   @109:10
-  call printf(const str.9, copy _61) nocollect   @109:3
-  _62 = const i64 0   @110:7
-  _63 = copy _42   @111:3
-  _64 = const i32 0   @111:11
+  _54 = call avant_spawn(const fn av.spawn/main#spawn8, const ref null) collects   @102:23
+  _55 = call avant_alloc(const u64 16, const u32 1) collects fresh   @102:18
+  call av.spawn/Holder.initialize(copy _55, copy _54, const str.8) collects   @102:18
+  _56 = copy _55   @102:10
+  _57 = call avant_join(copy _7) collects   @103:10
+  call printf(const str.9, copy _57) nocollect   @103:3
+  _58 = call avant_join(copy _12) collects   @104:10
+  call printf(const str.9, copy _58) nocollect   @104:3
+  _59 = call avant_join(copy _22) collects   @105:10
+  call printf(const str.9, copy _59) nocollect   @105:3
+  _60 = call avant_join(copy _28) collects   @106:10
+  call printf(const str.9, copy _60) nocollect   @106:3
+  _61 = call avant_join(copy _36) collects   @107:10
+  call printf(const str.9, copy _61) nocollect   @107:3
+  _62 = copy (*_3).0   @108:8
+  call printf(const str.9, copy _62) nocollect   @108:3
+  _63 = call avant_join(copy _42) collects   @109:10
+  call printf(const str.9, copy _63) nocollect   @109:3
+  _64 = const i64 0   @110:7
+  _65 = copy _44   @111:3
+  _66 = const i32 0   @111:11
   goto bb4   @111:11
 
 bb4:
   call avant_gc_poll() collects   @111:11
-  _65 = copy (*_63).1   @111:11
-  _66 = lt copy _64, copy _65   @111:11
-  branch copy _66, bb5, bb7   @111:11
+  _67 = copy (*_65).1   @111:11
+  _68 = lt copy _66, copy _67   @111:11
+  branch copy _68, bb5, bb7   @111:11
 
 bb5:
-  _67 = copy (*_63).0   @111:11
-  _68 = copy (*_67)[copy _64]   @111:11
-  _69 = copy _68   @111:11
-  _70 = call avant_join(copy _69) collects   @111:30
-  _71 = add.chk copy _62, copy _70   @111:27
-  _62 = copy _71   @111:21
+  _69 = copy (*_65).0   @111:11
+  _70 = copy (*_69)[copy _66]   @111:11
+  _71 = copy _70   @111:11
+  _72 = call avant_join(copy _71) collects   @111:30
+  _73 = add.chk copy _64, copy _72   @111:27
+  _64 = copy _73   @111:21
   goto bb6   @111:11
 
 bb6:
-  _64 = add copy _64, const i32 1   @111:11
+  _66 = add copy _66, const i32 1   @111:11
   goto bb4   @111:11
 
 bb7:
-  call printf(const str.9, copy _62) nocollect   @112:3
-  _72 = copy (*_54).0   @113:14
-  _73 = call avant_join(copy _72) collects   @113:16
-  call printf(const str.9, copy _73) nocollect   @113:3
-  _74 = copy (*_54).1   @114:14
-  call avant_puts_str(copy _74) nocollect   @114:3
-  _75 = copy (*_44).1   @115:12
-  _76 = cast copy _75 to i64   @115:12
-  check.bounds const i64 23, copy _76   @115:12
-  _77 = copy (*_44).0   @115:12
-  _78 = copy (*_77)[const i64 23]   @115:12
-  call avant_puts_str(copy _78) nocollect   @115:3
+  call printf(const str.9, copy _64) nocollect   @112:3
+  _74 = copy (*_56).0   @113:14
+  _75 = call avant_join(copy _74) collects   @113:16
+  call printf(const str.9, copy _75) nocollect   @113:3
+  _76 = copy (*_56).1   @114:14
+  call avant_puts_str(copy _76) nocollect   @114:3
+  _77 = copy (*_46).1   @115:12
+  _78 = cast copy _77 to i64   @115:12
+  check.bounds const i64 23, copy _78   @115:12
+  _79 = copy (*_46).0   @115:12
+  _80 = copy (*_79)[const i64 23]   @115:12
+  call avant_puts_str(copy _80) nocollect   @115:3
   _0 = const i32 0   @64:1
   gc.leave   @64:1
   return   @64:1
@@ -600,6 +620,7 @@ fn av.spawn/main#spawn3(_1: ref) -> i64 frame @spawn.av:72:8 {
   let _20: i64
   let _21: i64
   let _22: i64
+  let _23: ref %Array(String)
 
 bb0:
   gc.enter   @72:8
@@ -627,6 +648,8 @@ bb0:
   _21 = copy _8.0   @72:74
   _22 = add.chk copy _20, copy _21   @72:69
   _0 = copy _22   @72:8
+  _23 = copy (*_2).1   @72:8
+  call avant_array_thaw(copy _23, const i32 1, const u64 8) nocollect   @72:8
   gc.leave   @72:8
   return   @72:8
 }
@@ -649,6 +672,7 @@ fn av.spawn/main#spawn4(_1: ref) -> i64 frame @spawn.av:74:8 {
   let _14: i64
   let _15: i64
   let _16: i64
+  let _17: ref %Array(String)
 
 bb0:
   gc.enter   @74:8
@@ -681,6 +705,8 @@ bb2:
 
 bb3:
   _0 = copy _5   @74:8
+  _17 = copy (*_2).0   @74:8
+  call avant_array_thaw(copy _17, const i32 1, const u64 8) nocollect   @74:8
   gc.leave   @74:8
   return   @74:8
 }

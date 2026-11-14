@@ -54,6 +54,36 @@ fn pool_worker_cases(c: Checks, compiler: String, stamp: Int) {
   }
 }
 
+// The freeze (Stage 29 W8Cc, O758, D389 (c)): a change to an Array a
+// running task reads, through a path the checker cannot see (an alias, a
+// call, a field holding it), stops the program: status 1, the line of
+// output printed before, then the trap naming the operation. Every
+// mutator, in the sender and in the task, an element of structs, an
+// array inside a captured array of arrays, and .parallel's captures. The
+// gate's collector passes run it in each mode. frozen_join.av (a run
+// golden) is the other half: after the join every path changes the
+// array again.
+fn frozen_cases(c: Checks, compiler: String, stamp: Int) {
+  bin = "${scratch()}/safety-frozen-${stamp}.bin"
+  clog = "${scratch()}/safety-frozen-${stamp}.clog"
+  code = compile_av(compiler, "${avant_test_root()}/tests/fixtures/threads/frozen_trap.av", bin, clog)
+  c.eq_int(code, 0, "the frozen-array fixture compiles")
+  kinds = ["sender-alias", "sender-call", "sender-field", "task-alias", "task-call", "task-field", "push", "pop", "clear", "fill", "sort", "sort-block", "reverse", "reserve", "store", "store-op", "element-field", "nested", "parallel"]
+  ops = ["push", "push", "push", "push", "push", "clear", "push", "pop", "clear", "fill", "sort", "sort", "reverse", "reserve", "an element store", "an element store", "an element store", "push", "push"]
+  i = 0
+  while i < kinds.size {
+    kind = kinds[i]
+    log = "${scratch()}/safety-frozen-${stamp}-${kind}.log"
+    args: Array(String) = []
+    args.push(kind)
+    status = process_run_out(bin, args, log) ?? -1
+    c.eq_int(status, 1, "frozen ${kind}: status 1")
+    want = "before\navant runtime: ${ops[i]} on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends; join the task first"
+    c.expect(str_has(file_read(log) ?? "", want), "frozen ${kind}: the trap names ${ops[i]} after the program's output")
+    i += 1
+  }
+}
+
 fn test_safety(c: Checks) {
   c.suite("tests/cases/test_safety.av")
 
@@ -166,6 +196,7 @@ fn test_safety(c: Checks) {
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
     pool_worker_cases(c, compiler, stamp)
+    frozen_cases(c, compiler, stamp)
 
     expect_trap_waveb(c, compiler, stamp, "oob-read", "fn main {\n  xs = [1, 2, 3]\n  puts(xs[10])\n}\n", "out of bounds")
     expect_trap_waveb(c, compiler, stamp, "oob-neg", "fn main {\n  xs = [1, 2, 3]\n  i = 0 - 1\n  puts(xs[i])\n}\n", "out of bounds")

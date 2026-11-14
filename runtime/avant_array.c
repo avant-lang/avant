@@ -2,6 +2,7 @@
 #include "avant_gc.h"
 
 #include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #if defined(__SSE2__)
@@ -14,6 +15,109 @@ typedef struct {
   int32_t size;
   int32_t cap;
 } AvantArray;
+
+/* The freeze (Stage 29 W8Cc, O758; avant_rt.h, AVANT_ARRAY_FROZEN). The
+ * cap word is read with a relaxed atomic load, a plain load on x86, and
+ * changed only by compare-and-swap while a task may hold the array, so
+ * spawns that capture one array from several threads (a task that
+ * spawns) and tasks ending at once keep the count exact. */
+static inline int32_t arr_cap_word(AvantArray *a) {
+  return __atomic_load_n(&a->cap, __ATOMIC_RELAXED);
+}
+
+#define ARR_FROZEN_TRAP(a, op)                                   \
+  do {                                                           \
+    if (__builtin_expect(arr_cap_word(a) < 0, 0)) {              \
+      avant_trap_frozen(op);                                     \
+    }                                                            \
+  } while (0)
+
+/* One more task reads arr; depth > 1 freezes the arrays it holds too, a
+ * level each (an Array(Array(T)) is depth 2), after arr itself, so its
+ * elements cannot change while they are counted. */
+void avant_array_freeze(void *arr, int32_t depth) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t c;
+  int32_t n;
+  if (!a) {
+    return;
+  }
+  c = arr_cap_word(a);
+  do {
+    if (c >= 0) {
+      n = AVANT_ARRAY_FROZEN | 1;
+    } else {
+      if ((c & 0x7fffffff) == 0x7fffffff) {
+        fflush(stdout);
+        fputs("avant runtime: an array is captured by more than 2147483646 running tasks\n", stderr);
+        exit(1);
+      }
+      n = c + 1;
+    }
+  } while (!__atomic_compare_exchange_n(&a->cap, &c, n, 1, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
+  if (depth > 1 && a->buf) {
+    int32_t i;
+    for (i = 0; i < a->size; i++) {
+      avant_array_freeze(((void **)a->buf)[i], depth - 1);
+    }
+  }
+}
+
+/* The capacity a frozen array's last thaw writes back: what its buffer
+ * holds, by the buffer's header (a frozen array never grows, so the
+ * buffer is the one it had; the header may round the bytes up, never
+ * past the memory it owns), at least the size. */
+static int32_t arr_thawed_cap(AvantArray *a, uint64_t elem_size) {
+  uint64_t c;
+  if (!a->buf) {
+    return 0;
+  }
+  if (elem_size == 0) {
+    return a->size;
+  }
+  c = (uint64_t)avant_header(a->buf)->size / elem_size;
+  if (c > (uint64_t)AVANT_SIZE_MAX) {
+    c = (uint64_t)AVANT_SIZE_MAX;
+  }
+  if (c < (uint64_t)a->size) {
+    c = (uint64_t)a->size;
+  }
+  return (int32_t)c;
+}
+
+/* One task that read arr has ended: the arrays it holds first (depth >
+ * 1), while arr is still frozen, then arr; the last thaw writes back the
+ * capacity. elem_size is the size of the innermost level's elements. A
+ * thaw of an array that is not frozen is the compiler's error. The task's
+ * end runs it (lower_task.av, thaw_captures); when a trap may end a task
+ * without ending the program (O194, W8Cd), that end must run it too. */
+void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t c;
+  int32_t n;
+  if (!a) {
+    return;
+  }
+  if (depth > 1 && a->buf) {
+    int32_t i;
+    for (i = 0; i < a->size; i++) {
+      avant_array_thaw(((void **)a->buf)[i], depth - 1, elem_size);
+    }
+  }
+  c = arr_cap_word(a);
+  do {
+    if (c >= 0) {
+      fflush(stdout);
+      fputs("avant runtime: internal error: a thaw of an array that is not frozen\n", stderr);
+      abort();
+    }
+    if ((c & 0x7fffffff) == 1) {
+      n = arr_thawed_cap(a, depth > 1 ? sizeof(void *) : elem_size);
+    } else {
+      n = c - 1;
+    }
+  } while (!__atomic_compare_exchange_n(&a->cap, &c, n, 1, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
+}
 
 /* min_cap is checked against the ceiling here, before anything is
  * allocated (Stage 29 W-INT1): every growth comes through this one. */
@@ -69,6 +173,9 @@ void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id)
     }
     return slot;
   }
+  /* A frozen array's cap word is negative, so its push always comes
+   * here: the fast path above needs no test of its own. */
+  ARR_FROZEN_TRAP(a, AVANT_FROZEN_PUSH);
   {
     AVANT_GC_SCOPE(1);
     AVANT_GC_ROOT(0, &a);
@@ -136,6 +243,9 @@ void *avant_array_get_ptr(void *arr, avant_int i) {
 
 void *avant_array_pop_ptr(void *arr) {
   AvantArray *a = (AvantArray *)arr;
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_POP);
+  }
   if (a && a->buf && a->size > 0) {
     a->size -= 1;
     return ((void **)a->buf)[a->size];
@@ -153,6 +263,7 @@ void avant_array_push_i32(void *arr, int32_t v) {
     a->size += 1;
     return;
   }
+  ARR_FROZEN_TRAP(a, AVANT_FROZEN_PUSH);
   {
     AVANT_GC_SCOPE(1);
     AVANT_GC_ROOT(0, &a);
@@ -176,6 +287,7 @@ void avant_array_push_i64(void *arr, int64_t v) {
     a->size += 1;
     return;
   }
+  ARR_FROZEN_TRAP(a, AVANT_FROZEN_PUSH);
   {
     AVANT_GC_SCOPE(1);
     AVANT_GC_ROOT(0, &a);
@@ -190,6 +302,7 @@ void avant_array_push_i64(void *arr, int64_t v) {
 void avant_array_clear(void *arr) {
   AvantArray *a = (AvantArray *)arr;
   if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_CLEAR);
     a->size = 0;
   }
 }
@@ -197,7 +310,11 @@ void avant_array_clear(void *arr) {
 /* gc-lint: holds nothing (the growth is its last statement; array_grow roots the array). */
 void avant_array_reserve(void *arr, avant_int n, uint64_t elem_size, uint32_t buf_type_id) {
   AvantArray *a = (AvantArray *)arr;
-  if (!a || n <= a->cap) {
+  if (!a) {
+    return;
+  }
+  ARR_FROZEN_TRAP(a, AVANT_FROZEN_RESERVE);
+  if (n <= a->cap) {
     return;
   }
   array_grow(a, n, elem_size, buf_type_id);
@@ -205,6 +322,9 @@ void avant_array_reserve(void *arr, avant_int n, uint64_t elem_size, uint32_t bu
 
 void *avant_array_pop_slot(void *arr, uint64_t elem_size) {
   AvantArray *a = (AvantArray *)arr;
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_POP);
+  }
   if (!a || !a->buf || a->size <= 0) {
     return NULL;
   }
@@ -466,6 +586,9 @@ static void sort_i32(int32_t *a, int32_t n) {
 
 void avant_array_sort_i32(void *arr) {
   AvantArray *a = (AvantArray *)arr;
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_SORT);
+  }
   if (!a || !a->buf || a->size <= 1) {
     return;
   }
@@ -529,6 +652,9 @@ void avant_array_sort_i64(void *arr) {
   int32_t *n32;
   int32_t n;
   int32_t i;
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_SORT);
+  }
   if (!a || !a->buf || a->size <= 1) {
     return;
   }
@@ -556,6 +682,9 @@ void avant_array_sort_u32(void *arr) {
   AvantArray *a = (AvantArray *)arr;
   uint32_t *u;
   int32_t i;
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_SORT);
+  }
   if (!a || !a->buf || a->size <= 1) {
     return;
   }
@@ -571,6 +700,9 @@ void avant_array_sort_u32(void *arr) {
 
 void avant_array_sort_u64(void *arr) {
   AvantArray *a = (AvantArray *)arr;
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_SORT);
+  }
   if (a && a->buf && a->size > 1) {
     qsort(a->buf, (size_t)a->size, sizeof(uint64_t), cmp_u64);
   }
@@ -578,6 +710,9 @@ void avant_array_sort_u64(void *arr) {
 
 void avant_array_sort_f64(void *arr) {
   AvantArray *a = (AvantArray *)arr;
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_SORT);
+  }
   if (a && a->buf && a->size > 1) {
     qsort(a->buf, (size_t)a->size, sizeof(double), cmp_f64);
   }
@@ -585,6 +720,9 @@ void avant_array_sort_f64(void *arr) {
 
 void avant_array_sort_str(void *arr) {
   AvantArray *a = (AvantArray *)arr;
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_SORT);
+  }
   if (a && a->buf && a->size > 1) {
     qsort(a->buf, (size_t)a->size, sizeof(char *), cmp_str);
   }
@@ -594,6 +732,9 @@ void avant_array_sort_bool(void *arr) {
   AvantArray *a = (AvantArray *)arr;
   int32_t i;
   int32_t zeros = 0;
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_SORT);
+  }
   if (!a || !a->buf || a->size <= 1) {
     return;
   }
@@ -615,6 +756,9 @@ void avant_array_reverse(void *arr, uint64_t elem_size) {
   int32_t i;
   int32_t j;
   uint8_t tmp[64];
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_REVERSE);
+  }
   if (!a || !a->buf || a->size <= 1 || elem_size == 0) {
     return;
   }
@@ -939,6 +1083,9 @@ double avant_array_sum_f64(void *arr) {
 
 void avant_array_fill_u8(void *arr, int32_t v) {
   AvantArray *a = (AvantArray *)arr;
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_FILL);
+  }
   if (!a || !a->buf || a->size <= 0) {
     return;
   }
@@ -950,6 +1097,9 @@ void avant_array_fill_i64(void *arr, int64_t v) {
   AvantArray *a = (AvantArray *)arr;
   int32_t i;
   int64_t *p;
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_FILL);
+  }
   if (!a || !a->buf || a->size <= 0) {
     return;
   }
@@ -986,6 +1136,9 @@ void avant_array_fill_i32(void *arr, int32_t v) {
   int32_t n;
   int32_t i;
   int32_t *p;
+  if (a) {
+    ARR_FROZEN_TRAP(a, AVANT_FROZEN_FILL);
+  }
   if (!a || !a->buf || a->size <= 0) {
     return;
   }

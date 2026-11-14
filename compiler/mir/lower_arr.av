@@ -412,10 +412,101 @@ pub fn (lw: MirLower) seq_place(h: Int, aty: Int, i: MOperand, proven: Bool): MP
   b.index(b.deref(b.pl(d)), i)
 }
 
+// ---- the freeze (Stage 29 W8Cc, O758, D389 (c))
+//
+// An Array a running task captured cannot change until the task ends
+// (D35, Q74-A): the checker refuses a change through the captured name,
+// and at run time a spawn or a .parallel freezes each captured array
+// (lower_task.av freeze_captures) and its end thaws it (thaw_captures).
+// A frozen array's cap word is negative (runtime/avant_rt.h,
+// AVANT_ARRAY_FROZEN): the runtime's mutators test it (push only on its
+// growth path, which a frozen array always takes), and the mutations
+// generated code makes itself test it here: an element store (`xs[i] =
+// v`, `xs[i] += v`, `xs[i].f = v`), `clear`, and a sort with a block.
+// The ops are avant_rt.h's AVANT_FROZEN_*.
+pub fn mir_frozen_clear: Int {
+  2
+}
+
+pub fn mir_frozen_sort: Int {
+  4
+}
+
+pub fn mir_frozen_store: Int {
+  7
+}
+
+// The trap of a change to a frozen array held in _h: one load of the cap
+// word and a compare, the trap in a cold block. Only a program that
+// spawns or uses .parallel (its module is shared: the pre-walk of every
+// function sets it before any is lowered, lower_task.av) can freeze an
+// array, so any other program's code is the same as without the freeze.
+pub fn (lw: MirLower) frozen_check(h: Int, op: Int, loc: Location) {
+  if !lw.lw_m.shared {
+    return
+  }
+  b = lw.lw_b
+  w = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 2))))
+  frozen = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), w, b.c_i32(0)))
+  ok = lw.trap_open(frozen, true)
+  lw.trap_close(ok, "avant_trap_frozen", lw.one(b.c_i32(op)), loc)
+}
+
+// The levels of an Array type (Array(Array(T)) has 2) and its innermost
+// array level: a freeze reaches every level, and a thaw writes back the
+// innermost level's capacity by its element size.
+pub fn mir_array_depth(t: Ty): Int {
+  d = 0
+  x = t
+  while x.is_array {
+    d += 1
+    if e = x.inner {
+      x = e
+    } else {
+      break
+    }
+  }
+  d
+}
+
+pub fn mir_array_innermost(t: Ty): Ty {
+  x = t
+  while x.is_array {
+    if e = x.inner, e.is_array {
+      x = e
+    } else {
+      break
+    }
+  }
+  x
+}
+
+// `avant_array_freeze(a, depth)` of the Array value v of type t.
+pub fn (lw: MirLower) freeze_array(v: MOperand, t: Ty, loc: Location) {
+  b = lw.lw_b
+  lw.at(loc)
+  b.call(-1, "avant_array_freeze", lw.two(v, b.c_i32(mir_array_depth(t))))
+}
+
+// `avant_array_thaw(a, depth, elem_size)` of the Array value v of type t.
+pub fn (lw: MirLower) thaw_array(v: MOperand, t: Ty, loc: Location) {
+  b = lw.lw_b
+  inner = lw.ty_at(mir_array_innermost(t), loc, "a captured Array")
+  if lw.failed {
+    return
+  }
+  lw.at(loc)
+  b.call(-1, "avant_array_thaw", lw.three(v, b.c_i32(mir_array_depth(t)), lw.elem_size(inner)))
+}
+
 // `xs[i]` and `b[i]` as a place (loops.av:4584-4739, emit_index_lvalue):
-// the index first, then the container.
+// the index first, then the container. Formed for a field store
+// (lw_task.store_check), an Array's place checks the freeze after the
+// bounds; the flag covers this index only, not the ones its operands hold.
 pub fn (lw: MirLower) index_place(e: Expr): MPlace {
   b = lw.lw_b
+  store = lw.lw_task.store_check
+  lw.lw_task.store_check = false
   if arr = e.left, ix = e.right {
     aty = lw.ety(arr)
     i = lw.snap(lw.lower_expr(ix), arr)
@@ -425,6 +516,13 @@ pub fn (lw: MirLower) index_place(e: Expr): MPlace {
     }
     lw.at(e.loc)
     h = lw.hold(a, aty)
+    if store && lw.lw_m.shared {
+      if at = arr.ty, at.is_array {
+        lw.seq_bounds(h, i, e.proven)
+        lw.frozen_check(h, mir_frozen_store(), e.loc)
+        return lw.seq_place(h, aty, i, true)
+      }
+    }
     return lw.seq_place(h, aty, i, e.proven)
   }
   lw.refuse(e.loc, "this index")
@@ -489,6 +587,7 @@ pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
           lw.at(st.loc)
           h = lw.hold(a, aty)
           lw.seq_bounds(h, i, t.proven)
+          lw.frozen_check(h, mir_frozen_store(), st.loc)
           b.call(-1, "avant_array_set_ptr", lw.three(b.copy_local(h), lw.dup(i), val))
           return
         }
@@ -501,6 +600,7 @@ pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
           val2 = lw.byte_of(val2, st.loc)
         }
         val2 = lw.snap(val2, t)
+        lw.lw_task.store_check = ct.is_array
         p = lw.index_place(t)
         if lw.failed {
           return
@@ -513,6 +613,7 @@ pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
         lw.refuse(st.loc, "compound assignment to an element of type ${want.show}")
         return
       }
+      lw.lw_task.store_check = ct.is_array
       p2 = lw.index_place(t)
       if lw.failed {
         return
@@ -703,6 +804,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     return lw.tmp(et, b.rv_use(b.copy(b.deref(b.pl(s)))))
   }
   if name == "clear" {
+    lw.frozen_check(h2, mir_frozen_clear(), e.loc)
     b.assign(b.field(b.deref(b.pl(h2)), 1), b.rv_use(b.c_i32(0)))
     return zero
   }

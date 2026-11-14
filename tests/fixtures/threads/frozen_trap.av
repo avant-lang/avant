@@ -1,0 +1,133 @@
+// An Array a running task reads cannot change until the task ends (Stage
+// 29 W8Cc, O758, D389 (c)): the checker refuses a change through the
+// captured name, and at run time every other path (an alias, a call, a
+// field holding the array) stops the program with a trap, status 1,
+// naming the operation. The argument names the case; without one (the
+// run goldens) it is sender-alias. Run by tests/cases/test_safety.av.
+//
+// In the sender's cases the task waits on a channel that is never sent
+// to, so it is still running when the sender makes its change.
+
+import std.sync
+
+struct P {
+  n: Int
+}
+
+class Holder {
+  pub xs: Array(Int) = []
+}
+
+fn grow(a: Array(Int)) {
+  a.push(9)
+}
+
+fn bump(ps: Array(P)) {
+  ps[0].n = 5
+}
+
+// The sender's change, through an alias, a call or a field; kind names
+// the operation.
+fn change(kind: String, xs: Array(Int)) {
+  ys = xs
+  if kind == "sender-alias" || kind == "push" {
+    ys.push(4)
+  } else if kind == "sender-call" {
+    grow(xs)
+  } else if kind == "sender-field" {
+    ho = Holder.new
+    ho.xs = xs
+    ho.xs.push(3)
+  } else if kind == "pop" {
+    _ = ys.pop
+  } else if kind == "clear" {
+    ys.clear
+  } else if kind == "fill" {
+    ys.fill(0)
+  } else if kind == "sort" {
+    ys.sort
+  } else if kind == "sort-block" {
+    ys.sort { |a, b| a < b }
+  } else if kind == "reverse" {
+    ys.reverse
+  } else if kind == "reserve" {
+    ys.reserve(100)
+  } else if kind == "store" {
+    ys[0] = 7
+  } else if kind == "store-op" {
+    ys[1] += 1
+  }
+}
+
+fn main: Int {
+  a = argv()
+  kind = "sender-alias"
+  if a.size > 1 {
+    kind = a[a.size - 1]
+  }
+  puts("before")
+  gate = Channel(Int).new
+  xs = [3, 1, 2]
+  if kind == "task-alias" || kind == "task-call" || kind == "task-field" {
+    // The task changes what it captured, through another path.
+    h = spawn {
+      if kind == "task-alias" {
+        ys = xs
+        ys.push(3)
+      } else if kind == "task-call" {
+        grow(xs)
+      } else {
+        ho = Holder.new
+        ho.xs = xs
+        ho.xs.clear
+      }
+      xs.size
+    }
+    puts(h.join)
+    return 0
+  }
+  if kind == "element-field" {
+    ps = [P { n: 1 }]
+    h1 = spawn {
+      _ = gate.recv
+      ps[0].n
+    }
+    bump(ps)
+    gate.send(1)
+    puts(h1.join)
+    return 0
+  }
+  if kind == "nested" {
+    xss = [[1, 2], [3]]
+    h2 = spawn {
+      _ = gate.recv
+      xss[0].size
+    }
+    inner = xss[0]
+    inner.push(5)
+    gate.send(1)
+    puts(h2.join)
+    return 0
+  }
+  if kind == "parallel" {
+    ws = [1, 2, 3, 4]
+    rs = [1, 2].parallel { |i| grow_and_size(ws, i) }
+    puts(rs[0])
+    return 0
+  }
+  h = spawn {
+    _ = gate.recv
+    xs.size
+  }
+  change(kind, xs)
+  gate.send(1)
+  puts(h.join)
+  0
+}
+
+fn grow_and_size(ws: Array(Int), i: Int): Int {
+  if i == 2 {
+    ws.push(i)
+  }
+  ws.size
+}

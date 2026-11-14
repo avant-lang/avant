@@ -151,6 +151,43 @@ pub fn (lw: MirLower) store_captures(e: Expr, c: Int, base: Int) {
   }
 }
 
+// The freeze of a task's captured arrays (O758, Stage 29 W8Cc, D389
+// (c); lower_arr.av "the freeze"): each Array capture in the record in
+// _c (from field base on) is frozen before the task starts, at every
+// level of an array of arrays, and thawed when the task ends, so no
+// path (an alias, a call, a field) changes it while the task reads it.
+pub fn (lw: MirLower) freeze_captures(e: Expr, c: Int, base: Int) {
+  lw.each_array_capture(e, c, base, true)
+}
+
+// The task's end (a spawn thunk's return, or the return of
+// `avant_parallel_for`): each frozen capture thawed. The hook O194
+// needs: when a trap may end a task without ending the program (W8Cd),
+// that end must thaw what the task's start froze, as this does.
+pub fn (lw: MirLower) thaw_captures(e: Expr, c: Int, base: Int) {
+  lw.each_array_capture(e, c, base, false)
+}
+
+pub fn (lw: MirLower) each_array_capture(e: Expr, c: Int, base: Int, freeze: Bool) {
+  b = lw.lw_b
+  ts = b.types
+  l = ts.layout_of(b.func.locals[c].ty)
+  i = 0
+  while i < e.cap_names.size && !lw.failed {
+    t = e.cap_tys[i]
+    if t.is_array {
+      lw.at(e.loc)
+      v = lw.tmp(ts.layouts[l].fields[base + i], b.rv_use(b.copy(b.field(b.deref(b.pl(c)), base + i))))
+      if freeze {
+        lw.freeze_array(v, t, e.loc)
+      } else {
+        lw.thaw_array(v, t, e.loc)
+      }
+    }
+    i += 1
+  }
+}
+
 // A new record of layout l in a fresh local: `avant_alloc(size, id)`.
 pub fn (lw: MirLower) new_record(l: Int, tid: Int, loc: Location): Int {
   b = lw.lw_b
@@ -186,6 +223,10 @@ pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
     }
     c = lw.new_record(l, tid, e.loc)
     lw.store_captures(e, c, 0)
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    lw.freeze_captures(e, c, 0)
     if lw.failed {
       return b.c_i32(0)
     }
@@ -260,9 +301,23 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   if lw.failed {
     return zero
   }
+  // The input and the captured arrays are frozen while the bodies run
+  // (O758): a body may reach them through an alias or a call.
+  rt = ty_int()
+  if t0 = recv.ty {
+    rt = t0
+  }
+  lw.freeze_array(b.copy_local(a), rt, e.loc)
+  lw.freeze_captures(e, c, 2)
+  if lw.failed {
+    return zero
+  }
   lw.at(e.loc)
   n64i = lw.tmp(mt_int(), b.rv_cast(lw.dup(n), mt_int()))
   b.call(-1, "avant_parallel_for", lw.three(n64i, b.c_fn(sym), b.copy_local(c)))
+  lw.thaw_captures(e, c, 2)
+  in0 = lw.tmp(aty, b.rv_use(b.copy(b.field(b.deref(b.pl(c)), 0))))
+  lw.thaw_array(in0, rt, e.loc)
   out
 }
 
@@ -478,6 +533,9 @@ pub fn (lw: MirLower) lower_spawn_thunk(t: MirTask) {
     if got = lw.task_value(bl, ty_int()), lw.open_now {
       lw.at(e.loc)
       b.assign(b.pl(0), b.rv_use(got))
+      if l >= 0 {
+        lw.thaw_captures(e, c, 0)
+      }
       b.ret
     }
     lw.finish_at(e.loc)

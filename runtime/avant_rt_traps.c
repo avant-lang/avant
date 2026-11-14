@@ -80,6 +80,28 @@ void avant_trap_empty_at(int32_t what, int32_t site) {
   trap_tail();
 }
 
+/* A change to an Array a running task reads (Stage 29 W8Cc, O758, D389
+ * (c); avant_rt.h, AVANT_ARRAY_FROZEN): op names the operation
+ * (AVANT_FROZEN_*). The checks inside the runtime's own functions (push's
+ * growth, pop, fill, sort, reverse, reserve) print no site; generated
+ * code's (an element store, clear, a sort with a block) call the _at
+ * form. */
+static const char *frozen_op(int32_t op) {
+  static const char *names[] = {"push", "pop", "clear", "fill", "sort", "reverse", "reserve", "an element store"};
+  return op >= 0 && op <= 7 ? names[op] : "a change";
+}
+
+void avant_trap_frozen(int32_t op) {
+  trap_head();
+  fprintf(stderr, "%s on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends; join the task first", frozen_op(op));
+  trap_tail();
+}
+
+void avant_trap_frozen_at(int32_t op, int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_frozen(op);
+}
+
 static __attribute__((noreturn, cold)) void avant_trap_bounds(avant_int index, avant_int size) {
   trap_head();
   fprintf(stderr, "index %lld out of bounds (size %lld)", (long long)index, (long long)size);

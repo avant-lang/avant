@@ -2461,7 +2461,7 @@ fn main {
 ```
 
 - A value the block captures is copied when the task is sent ([What may cross a task](#what-may-cross-a-task)); the block cannot assign a captured variable.
-- A captured `Array` is shared for reading: the block may not change it, and the sender may not change it until the handle is joined. Both are compile errors.
+- A captured `Array` is shared for reading: the block may not change it, and the sender may not change it until the task ends. Written through the captured name, either change is a compile error. Through any other path to the same array (another name for it, a function it is passed to, a field that holds it) the change stops the program at run time: `avant runtime: push on an array a running task reads: …`, status 1, naming the operation (`push`, `pop`, `clear`, `fill`, `sort`, `reverse`, `reserve` or an element store). The array is frozen from the `spawn` until the task ends (not until the join, so a dropped handle does not keep it frozen), at every level of an array of arrays; `.parallel`'s input and the arrays its block captures are frozen while its bodies run. A program that never spawns or uses `.parallel` keeps its code; in one that does, an element store and `clear` cost one compare more, and the runtime's mutators test the array once a call (a `push` with room only when it must grow).
 - Calling `.join` or `.parallel` from inside a pool worker is refused: at compile time when it is written in the block, at run time when it is reached through a call, with a trap (`avant runtime: .parallel called from a pool worker: …`, status 1). A nested `spawn` from a worker is allowed.
 
 ### Parallel
@@ -2557,7 +2557,7 @@ What a `spawn` or `.parallel` block captures is checked at compile time:
 | an integer, a `Bool`, a `Float64` | a copy |
 | a struct whose every field may cross | a copy |
 | a `String` | a shared pointer: it is immutable, and both tasks keep it alive |
-| an `Array` whose elements may cross | shared for reading, until the join; a `send` copies it |
+| an `Array` whose elements may cross | shared for reading and frozen until the task ends ([Spawn](#spawn)); a `send` copies it |
 | a `Channel` or a `Mutex` (`std.sync`) | shared: that is their purpose |
 | a class instance, a `Hash`, a `fn` value, a `JoinHandle`, a struct holding one, or an `Array` of those | **refused**: it is not copied, and sharing it would be a race (an `Array(Box)` shared for reading still hands each task the same `Box` objects) |
 

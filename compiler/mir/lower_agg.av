@@ -332,6 +332,28 @@ pub fn (lw: MirLower) field_of(t: Ty, name: String, loc: Location): Int {
   k
 }
 
+// Whether the field t is stored inside an Array's element, through
+// struct fields only (`xs[i].f`, `xs[i].pos.x`): the store changes the
+// array's buffer, so the index checks the freeze (O758, Stage 29 W8Cc;
+// lower_arr.av index_place). A class field reached from an element is
+// another object's.
+pub fn mir_field_in_element(t: Expr): Bool {
+  x = t
+  while x.kind == ex_field() {
+    if obj = x.object, ot = obj.ty, ot.is_struct {
+      x = obj
+    } else {
+      return false
+    }
+  }
+  if x.kind == ex_index() {
+    if l = x.left, lt = l.ty {
+      return lt.is_array
+    }
+  }
+  false
+}
+
 // The place an lvalue-like expression names (4.1): a local; an implicit
 // field or a struct receiver through _1; a field of a struct place; a
 // field of a class object, whose holder is a local (the object is loaded
@@ -488,7 +510,9 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
         if lw.failed {
           return
         }
+        lw.lw_task.store_check = mir_field_in_element(t)
         p = lw.place_of(t)
+        lw.lw_task.store_check = false
         if lw.failed {
           return
         }
@@ -500,7 +524,9 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
         lw.refuse(st.loc, "compound assignment to a field of type ${tt.show}")
         return
       }
+      lw.lw_task.store_check = mir_field_in_element(t)
       p2 = lw.place_of(t)
+      lw.lw_task.store_check = false
       if lw.failed {
         return
       }

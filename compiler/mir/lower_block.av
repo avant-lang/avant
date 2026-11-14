@@ -416,12 +416,20 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
     moved = b.block
     b.branch(cmp, moved, iexit)
     b.at(moved)
+    if !do_copy {
+      // O758 (Stage 29 W8Cc): a store of the sort in place checks the
+      // freeze (the comparator may have started a task that reads it).
+      lw.frozen_check(arr, mir_frozen_sort(), e.loc)
+    }
     lw.block_store(arr, aty, j, b.copy_local(pl))
     b.assign(b.pl(j), b.rv_use(b.copy_local(jml)))
     b.goto(ihead)
   }
   b.at(iexit)
   lw.at(e.loc)
+  if !do_copy {
+    lw.frozen_check(arr, mir_frozen_sort(), e.loc)
+  }
   lw.block_store(arr, aty, j, b.copy_local(vl))
   lw.block_step(i, head)
   b.at(exit)

@@ -388,6 +388,28 @@ void avant_array_push_i64(void *arr, int64_t v);
 void avant_array_clear(void *arr);
 void avant_array_reserve(void *arr, avant_int n, uint64_t elem_size, uint32_t buf_type_id);
 void *avant_array_pop_slot(void *arr, uint64_t elem_size);
+/* The freeze (Stage 29 W8Cc, O758, D389 (c)): an Array a running task
+ * captured cannot change until every such task has ended. A spawn and a
+ * .parallel freeze each captured Array (and, depth levels down, the
+ * arrays an array of arrays holds) before the task starts and thaw it
+ * when the task ends. The count lives in the array's cap word, whose
+ * sign bit is free (a capacity is at most AVANT_SIZE_MAX): while frozen
+ * the word is AVANT_ARRAY_FROZEN | count, and every operation that can
+ * change the array's length, buffer or elements tests the sign first
+ * and traps (avant_trap_frozen). The last thaw writes back the
+ * capacity, read from the buffer's header. */
+#define AVANT_ARRAY_FROZEN ((int32_t)0x80000000)
+void avant_array_freeze(void *arr, int32_t depth);
+void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size);
+/* What a frozen array refuses: the operation avant_trap_frozen names. */
+#define AVANT_FROZEN_PUSH 0
+#define AVANT_FROZEN_POP 1
+#define AVANT_FROZEN_CLEAR 2
+#define AVANT_FROZEN_FILL 3
+#define AVANT_FROZEN_SORT 4
+#define AVANT_FROZEN_REVERSE 5
+#define AVANT_FROZEN_RESERVE 6
+#define AVANT_FROZEN_STORE 7
 void avant_array_sort_i32(void *arr);
 void avant_array_sort_u32(void *arr);
 void avant_array_sort_i64(void *arr);
@@ -444,6 +466,8 @@ __attribute__((noreturn, cold)) void avant_trap_overflow_in(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_div_zero_in(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_bounds_in(avant_int index, avant_int size, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_empty_at(int32_t what, int32_t site);
+__attribute__((noreturn, cold)) void avant_trap_frozen(int32_t op);
+__attribute__((noreturn, cold)) void avant_trap_frozen_at(int32_t op, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_bounds_at(avant_int index, avant_int size, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_div_zero_at(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_overflow_at(int32_t site);

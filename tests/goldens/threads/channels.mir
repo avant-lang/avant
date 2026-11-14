@@ -53,6 +53,7 @@ extern avant_str_cat_i32(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
+extern avant_trap_frozen(i32) -> void never noreturn
 extern avant_trap_negative(i64, i32) -> void never noreturn
 extern avant_trap_size(i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
@@ -581,9 +582,11 @@ fn av.std.sync/Channel(Int).send(_1: ref %std.sync.Channel(Int), _2: i64) -> boo
   let _39: ref %Array((Nil|Int))
   let _40: i32
   let _41: i64
-  let _42: ref %elems((Nil|Int))
-  let _43: i64
-  let _44: i64
+  let _42: i32
+  let _43: bool
+  let _44: ref %elems((Nil|Int))
+  let _45: i64
+  let _46: i64
 
 bb0:
   gc.enter   @54:7
@@ -721,17 +724,26 @@ bb24:
   _40 = copy (*_39).1   @84:14
   _41 = cast copy _40 to i64   @84:14
   check.bounds copy _38, copy _41   @84:14
-  _42 = copy (*_39).0   @84:14
-  (*_42)[copy _38] = copy _33   @84:37
-  _43 = copy (*_1).2   @85:22
-  _44 = add.chk copy _43, const i64 1   @85:28
-  (*_1).2 = copy _44   @85:20
-  call avant_gate_broadcast(copy _1, const u64 56) nocollect   @86:9
-  _3 = const bool true   @87:12
-  goto bb25   @83:7
+  _42 = copy (*_39).2   @84:14
+  _43 = lt copy _42, const i32 0   @84:14
+  branch copy _43, bb26, bb27   @84:14
 
 bb25:
   goto bb3   @57:5
+
+bb26:
+  call avant_trap_frozen(const i32 7) nocollect   @84:14
+  unreachable   @84:14
+
+bb27:
+  _44 = copy (*_39).0   @84:14
+  (*_44)[copy _38] = copy _33   @84:37
+  _45 = copy (*_1).2   @85:22
+  _46 = add.chk copy _45, const i64 1   @85:28
+  (*_1).2 = copy _46   @85:20
+  call avant_gate_broadcast(copy _1, const u64 56) nocollect   @86:9
+  _3 = const bool true   @87:12
+  goto bb25   @83:7
 }
 
 fn av.std.sync/Channel(Int).recv(_1: ref %std.sync.Channel(Int)) -> %(Nil|Int) frame @lib/std/sync.av:94:7 {
@@ -769,13 +781,15 @@ fn av.std.sync/Channel(Int).recv(_1: ref %std.sync.Channel(Int)) -> %(Nil|Int) f
   let _31: ref %Array((Nil|Int))
   let _32: i32
   let _33: i64
-  let _34: ref %elems((Nil|Int))
-  let _35: i64
-  let _36: i64
+  let _34: i32
+  let _35: bool
+  let _36: ref %elems((Nil|Int))
   let _37: i64
   let _38: i64
   let _39: i64
   let _40: i64
+  let _41: i64
+  let _42: i64
 
 bb0:
   gc.enter   @94:7
@@ -878,21 +892,30 @@ bb16:
   _32 = copy (*_31).1   @114:14
   _33 = cast copy _32 to i64   @114:14
   check.bounds copy _30, copy _33   @114:14
-  _34 = copy (*_31).0   @114:14
-  (*_34)[copy _30] = copy _29   @114:21
-  _35 = copy (*_1).3   @115:22
-  _36 = add.chk copy _35, const i64 1   @115:27
-  _37 = copy (*_1).1   @115:34
-  _38 = rem.chk copy _36, copy _37   @115:32
-  (*_1).3 = copy _38   @115:19
-  _39 = copy (*_1).2   @116:22
-  _40 = sub.chk copy _39, const i64 1   @116:28
-  (*_1).2 = copy _40   @116:20
-  call avant_gate_broadcast(copy _1, const u64 56) nocollect   @117:9
-  goto bb17   @112:7
+  _34 = copy (*_31).2   @114:14
+  _35 = lt copy _34, const i32 0   @114:14
+  branch copy _35, bb18, bb19   @114:14
 
 bb17:
   goto bb3   @97:5
+
+bb18:
+  call avant_trap_frozen(const i32 7) nocollect   @114:14
+  unreachable   @114:14
+
+bb19:
+  _36 = copy (*_31).0   @114:14
+  (*_36)[copy _30] = copy _29   @114:21
+  _37 = copy (*_1).3   @115:22
+  _38 = add.chk copy _37, const i64 1   @115:27
+  _39 = copy (*_1).1   @115:34
+  _40 = rem.chk copy _38, copy _39   @115:32
+  (*_1).3 = copy _40   @115:19
+  _41 = copy (*_1).2   @116:22
+  _42 = sub.chk copy _41, const i64 1   @116:28
+  (*_1).2 = copy _42   @116:20
+  call avant_gate_broadcast(copy _1, const u64 56) nocollect   @117:9
+  goto bb17   @112:7
 }
 
 fn av.std.sync/Channel(Int).close(_1: ref %std.sync.Channel(Int)) -> void frame @lib/std/sync.av:124:7 {
@@ -1000,8 +1023,10 @@ fn av.std.sync/Channel(String).send(_1: ref %std.sync.Channel(String), _2: ref s
   let _36: i64
   let _37: i32
   let _38: i64
-  let _39: i64
-  let _40: i64
+  let _39: i32
+  let _40: bool
+  let _41: i64
+  let _42: i64
 
 bb0:
   gc.enter   @54:7
@@ -1138,16 +1163,25 @@ bb24:
   _37 = copy (*_31).1   @84:37
   _38 = cast copy _37 to i64   @84:37
   check.bounds copy _36, copy _38   @84:37
-  call avant_array_set_ptr(copy _31, copy _36, copy _2) nocollect   @84:37
-  _39 = copy (*_1).2   @85:22
-  _40 = add.chk copy _39, const i64 1   @85:28
-  (*_1).2 = copy _40   @85:20
-  call avant_gate_broadcast(copy _1, const u64 56) nocollect   @86:9
-  _3 = const bool true   @87:12
-  goto bb25   @83:7
+  _39 = copy (*_31).2   @84:37
+  _40 = lt copy _39, const i32 0   @84:37
+  branch copy _40, bb26, bb27   @84:37
 
 bb25:
   goto bb3   @57:5
+
+bb26:
+  call avant_trap_frozen(const i32 7) nocollect   @84:37
+  unreachable   @84:37
+
+bb27:
+  call avant_array_set_ptr(copy _31, copy _36, copy _2) nocollect   @84:37
+  _41 = copy (*_1).2   @85:22
+  _42 = add.chk copy _41, const i64 1   @85:28
+  (*_1).2 = copy _42   @85:20
+  call avant_gate_broadcast(copy _1, const u64 56) nocollect   @86:9
+  _3 = const bool true   @87:12
+  goto bb25   @83:7
 }
 
 fn av.std.sync/Channel(String).recv(_1: ref %std.sync.Channel(String)) -> ref str frame @lib/std/sync.av:94:7 {
@@ -1182,12 +1216,14 @@ fn av.std.sync/Channel(String).recv(_1: ref %std.sync.Channel(String)) -> ref st
   let _28: i64
   let _29: i32
   let _30: i64
-  let _31: i64
-  let _32: i64
+  let _31: i32
+  let _32: bool
   let _33: i64
   let _34: i64
   let _35: i64
   let _36: i64
+  let _37: i64
+  let _38: i64
 
 bb0:
   _2 = zero   @94:7
@@ -1289,20 +1325,29 @@ bb16:
   _29 = copy (*_27).1   @114:21
   _30 = cast copy _29 to i64   @114:21
   check.bounds copy _28, copy _30   @114:21
-  call avant_array_set_ptr(copy _27, copy _28, const ref str null) nocollect   @114:21
-  _31 = copy (*_1).3   @115:22
-  _32 = add.chk copy _31, const i64 1   @115:27
-  _33 = copy (*_1).1   @115:34
-  _34 = rem.chk copy _32, copy _33   @115:32
-  (*_1).3 = copy _34   @115:19
-  _35 = copy (*_1).2   @116:22
-  _36 = sub.chk copy _35, const i64 1   @116:28
-  (*_1).2 = copy _36   @116:20
-  call avant_gate_broadcast(copy _1, const u64 56) nocollect   @117:9
-  goto bb17   @112:7
+  _31 = copy (*_27).2   @114:21
+  _32 = lt copy _31, const i32 0   @114:21
+  branch copy _32, bb18, bb19   @114:21
 
 bb17:
   goto bb3   @97:5
+
+bb18:
+  call avant_trap_frozen(const i32 7) nocollect   @114:21
+  unreachable   @114:21
+
+bb19:
+  call avant_array_set_ptr(copy _27, copy _28, const ref str null) nocollect   @114:21
+  _33 = copy (*_1).3   @115:22
+  _34 = add.chk copy _33, const i64 1   @115:27
+  _35 = copy (*_1).1   @115:34
+  _36 = rem.chk copy _34, copy _35   @115:32
+  (*_1).3 = copy _36   @115:19
+  _37 = copy (*_1).2   @116:22
+  _38 = sub.chk copy _37, const i64 1   @116:28
+  (*_1).2 = copy _38   @116:20
+  call avant_gate_broadcast(copy _1, const u64 56) nocollect   @117:9
+  goto bb17   @112:7
 }
 
 fn av.std.sync/Channel(String).close(_1: ref %std.sync.Channel(String)) -> void frame @lib/std/sync.av:124:7 {
