@@ -647,3 +647,61 @@ pub fn (checker_self: Checker) fold_u64(e: Expr, op: Int, a: UInt64, b: UInt64):
   }
   cv_of_u64(r)
 }
+
+// A name as the label of a switch over an integer or a Bool (Stage 29
+// W5a3, O726): a module constant (D314, D380), which stands for its
+// value as written, so it takes the switch value's type and must fit
+// in it.
+pub fn (checker_self: Checker) check_const_label(label: CaseLabel, disc: Ty): Bool {
+  ne = Expr.new(ex_name(), label.loc)
+  ne.ident = label.text
+  if label.qual.size > 0 {
+    obj = Expr.new(ex_name(), label.loc)
+    obj.ident = label.qual
+    ne = Expr.new(ex_field(), label.loc)
+    ne.object = obj
+    ne.ident = label.text
+  }
+  what = "an integer literal or an integer constant"
+  if disc.is_bool {
+    what = "true, false or a Bool constant"
+  }
+  cv = checker_self.const_named(ne)
+  if c = cv {
+    if !checker_self.const_value(c, label.loc) {
+      return false
+    }
+    if disc.is_bool {
+      if c.kind != cv_bool() {
+        checker_self.fail(label.loc, "the constant ${checker_self.case_label_text(label)} = ${cv_text(c)} is not a Bool: a case label of a switch over Bool is ${what}")
+        return false
+      }
+      label.int_val = 0
+      if c.bv {
+        label.int_val = 1
+      }
+      return true
+    }
+    if c.kind == cv_int() {
+      label.neg = c.iv < 0
+      if label.neg {
+        label.bits = (0 &- c.iv).wrap_u64
+      } else {
+        label.bits = c.iv.to_u64
+      }
+      label.int_val = c.iv
+    } else if c.kind == cv_u64() {
+      label.neg = false
+      label.bits = c.uv
+      label.int_val = c.uv.wrap_i
+    } else {
+      checker_self.fail(label.loc, "the constant ${checker_self.case_label_text(label)} = ${cv_text(c)} is not an integer: a case label of a switch over ${disc.show} is ${what}")
+      return false
+    }
+    return checker_self.check_int_label(label, disc)
+  }
+  if !checker_self.has_err {
+    checker_self.fail(label.loc, "${checker_self.case_label_text(label)} is not a constant: a case label of a switch over ${disc.show} is ${what}")
+  }
+  false
+}

@@ -4252,6 +4252,9 @@ pub class Checker {
       if label.kind == lb_bool() {
         return true
       }
+      if label.kind == lb_member() {
+        return check_const_label(label, disc)
+      }
       if label.kind == lb_int() && !label.neg && label.bits <= 1u64 {
         word = "false"
         if label.bits == 1u64 {
@@ -4273,6 +4276,9 @@ pub class Checker {
         return false
       }
       return true
+    }
+    if label.kind == lb_member() {
+      return check_const_label(label, disc)
     }
     if label.kind != lb_int() {
       fail(label.loc, "case label must be an integer literal")
@@ -4405,7 +4411,7 @@ pub class Checker {
       return true
     }
     if label.neg && disc.is_unsigned && label.bits != 0u64 {
-      fail(label.loc, "case label ${int_label_text(label)} does not fit in ${disc.show}")
+      fail(label.loc, "case label ${int_fit_text(label)} does not fit in ${disc.show}")
       return false
     }
     max = literal_int_max(disc)
@@ -4413,10 +4419,19 @@ pub class Checker {
       max = max + 1u64
     }
     if label.bits > max {
-      fail(label.loc, "case label ${int_label_text(label)} does not fit in ${disc.show}")
+      fail(label.loc, "case label ${int_fit_text(label)} does not fit in ${disc.show}")
       return false
     }
     true
+  }
+
+  // A label in a message about its value: as written, and a constant's
+  // value beside its name.
+  pub fn int_fit_text(label: CaseLabel): String {
+    if label.kind == lb_member() {
+      return "${case_label_text(label)} = ${int_label_text(label)}"
+    }
+    int_label_text(label)
   }
 
   // A union switch's label (Stage 29 W5a2, D293, O391): a member type,

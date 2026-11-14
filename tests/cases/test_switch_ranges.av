@@ -77,6 +77,17 @@ fn cases: Array(RCase) {
   xs.push(refused("range-on-string", "fn main {\n  switch \"a\" {\n    case 0..=1 { puts(1) }\n    else { }\n  }\n}\n", "a range label needs a switch over an integer, got String", "3:10"))
   xs.push(refused("range-bound-too-big", "fn main {\n  x: Int32 = 1\n  switch x {\n    case 0..=3000000000 { puts(1) }\n    else { }\n  }\n}\n", "case label 3000000000 does not fit in Int32", "4:14"))
   xs.push(refused("range-bound-not-int", "fn main {\n  switch argv().size {\n    case 0..=\"z\" { puts(1) }\n    else { }\n  }\n}\n", "case label must be an integer literal", "3:14"))
+  // O726: constants as labels and as range bounds.
+  xs.push(accepted("const-labels", "const tab = 9\nconst lower_a = 'a'\nconst lower_z = 'z'\nconst big = 18446744073709551615u64\nconst neg = -2\nconst on = true\nfn kind(c: Int): String {\n  switch c {\n    case tab, ' ' { \"space\" }\n    case lower_a..=lower_z { \"lower\" }\n    case neg..0 { \"negative\" }\n    else { \"other\" }\n  }\n}\nfn top(u: UInt64): Int {\n  switch u {\n    case big { 1 }\n    else { 0 }\n  }\n}\nfn w(x: Int32): Int {\n  switch x {\n    case tab { 1 }\n    else { 0 }\n  }\n}\nfn main {\n  puts(kind(9))\n  puts(kind('q'))\n  puts(kind(-1))\n  puts(kind(0))\n  puts(top(18446744073709551615u64))\n  puts(w(9))\n  switch argv().size > 0 {\n    case on { puts(\"on\") }\n    case false { puts(\"off\") }\n  }\n}\n", "space\nlower\nnegative\nother\n1\n1\non\n"))
+  xs.push(refused("const-not-found", "fn main {\n  switch argv().size {\n    case nope { puts(1) }\n    else { }\n  }\n}\n", "nope is not a constant: a case label of a switch over Int is an integer literal or an integer constant", "3:10"))
+  xs.push(refused("const-does-not-fit", "const big = 3000000000\nfn main {\n  x: Int32 = 1\n  switch x {\n    case big { puts(1) }\n    else { }\n  }\n}\n", "case label big = 3000000000 does not fit in Int32", "5:10"))
+  xs.push(refused("const-negative-unsigned", "const neg = -1\nfn main {\n  x: UInt32 = 1\n  switch x {\n    case neg { puts(1) }\n    else { }\n  }\n}\n", "case label neg = -1 does not fit in UInt32", "5:10"))
+  xs.push(refused("const-float", "const half = 0.5\nfn main {\n  switch argv().size {\n    case half { puts(1) }\n    else { }\n  }\n}\n", "the constant half = 0.5 is not an integer", "4:10"))
+  xs.push(refused("const-bool-on-int", "const on = true\nfn main {\n  switch argv().size {\n    case on { puts(1) }\n    else { }\n  }\n}\n", "the constant on = true is not an integer", "4:10"))
+  xs.push(refused("const-int-on-bool", "const one = 1\nfn main {\n  switch argv().size > 0 {\n    case one { puts(1) }\n    else { }\n  }\n}\n", "the constant one = 1 is not a Bool: a case label of a switch over Bool is true, false or a Bool constant", "4:10"))
+  xs.push(refused("const-duplicate", "const tab = 9\nfn main {\n  switch argv().size {\n    case 9 { puts(1) }\n    case tab { puts(2) }\n    else { }\n  }\n}\n", "duplicate case tab", "5:10"))
+  xs.push(refused("const-overlap", "const lo = 1\nconst hi = 5\nfn main {\n  switch argv().size {\n    case lo..=hi { puts(1) }\n    case 3 { puts(2) }\n    else { }\n  }\n}\n", "case 3 overlaps case lo..=hi", "6:10"))
+  xs.push(refused("const-local-shadow", "const tab = 9\nfn main {\n  tab2 = 9\n  switch argv().size {\n    case tab2 { puts(1) }\n    else { }\n  }\n}\n", "tab2 is not a constant", "5:10"))
   xs
 }
 
