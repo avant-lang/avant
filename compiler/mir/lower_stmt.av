@@ -406,11 +406,54 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     if et0 = enum_ty, !lw.lw_cov.on && e.cases.size > 1 && enum_labels_dense(e) {
       pre = lw.lw_b.block
     }
+    // A wide range label (Stage 29 W5a3: more values than
+    // range_cases_max) is tested before the switch, each test in a block
+    // numbered before the arms (no back edge, no poll); a narrower one
+    // gives the switch a case per value, which LLVM clusters into range
+    // tests and tables.
+    wide_lo: Array(Int) = []
+    wide_hi: Array(Int) = []
+    wide_tg: Array(Int) = []
+    wide_bl: Array(Int) = []
+    for wc in e.cases {
+      for wl in wc.labels {
+        if wl.kind == lb_range() && range_is_wide(wl) {
+          wide_bl.push(lw.lw_b.block)
+        }
+      }
+    }
     for i in 0..e.cases.size {
       arm = lw.lw_b.block
       arms.push(arm)
       j = 0
       while j < e.cases[i].labels.size {
+        rl = e.cases[i].labels[j]
+        if rl.kind == lb_range() {
+          rt = arm
+          if lw.lw_cov.on {
+            ren = lw.lw_b.block
+            entries.push(ren)
+            entry_arm.push(i)
+            rt = ren
+          }
+          if range_is_wide(rl) {
+            wide_lo.push(rl.int_val)
+            wide_hi.push(rl.hi_val)
+            wide_tg.push(rt)
+          } else {
+            rv = rl.int_val
+            while true {
+              values.push(rv)
+              targets.push(rt)
+              if rv == rl.hi_val {
+                break
+              }
+              rv = rv &+ 1
+            }
+          }
+          j += 1
+          continue
+        }
         v = e.cases[i].labels[j].int_val
         seen = false
         for val in values {
@@ -445,6 +488,15 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
       other = join
     }
     lw.at(e.loc)
+    for wk in 0..wide_lo.size {
+      wb = lw.lw_b
+      w1 = lw.tmp(mt_bool(), wb.rv_cmp(mop_ge(), cv, wb.c_int(cty, wide_lo[wk])))
+      w2 = lw.tmp(mt_bool(), wb.rv_cmp(mop_le(), cv, wb.c_int(cty, wide_hi[wk])))
+      win = lw.tmp(mt_bool(), wb.rv_bin(mop_and(), w1, w2))
+      wb.branch(win, wide_tg[wk], wide_bl[wk])
+      wb.at(wide_bl[wk])
+      lw.at(e.loc)
+    }
     if trap >= 0 {
       lw.enum_switch_on(cv, enum_ty, e, values, targets, arms, trap, pre)
     } else if on_bool {
@@ -495,6 +547,17 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     }
   }
   lw.lw_b.c_i32(0)
+}
+
+// The most values a range label gives the switch as cases (Stage 29
+// W5a3); a wider range is two compares before it.
+pub fn range_cases_max: Int { 256 }
+
+// Whether range label l (its values int_val to hi_val) is tested before
+// the switch instead of giving it a case per value.
+pub fn range_is_wide(l: CaseLabel): Bool {
+  n = l.hi_val &- l.int_val
+  n < 0 || n >= range_cases_max()
 }
 
 // Whether an enum switch's labels are dense enough for a range test (the

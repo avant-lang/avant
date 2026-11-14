@@ -2327,6 +2327,25 @@ pub class Parser {
       tlabel.tname = self.parse_type_name
       return tlabel
     }
+    first = self.parse_case_bound
+    if self.current.kind != tk_dot_dot() && self.current.kind != tk_dot_dot_eq() {
+      return first
+    }
+    // A range label (Stage 29 W5a3, O493): `lo..hi` excludes hi, `lo..=hi`
+    // includes it, as in `for`.
+    range = CaseLabel.new(lb_range(), first.loc)
+    range.incl = self.current.kind == tk_dot_dot_eq()
+    self.bump
+    self.skip_newlines
+    range.lo = first
+    range.hi = self.parse_case_bound
+    range
+  }
+
+  // A label that may bound a range: an integer literal (a character
+  // literal is one), or a name: an enum member, a constant (`case
+  // max_depth`, `case limits.max`), checked by the checker.
+  pub fn parse_case_bound: CaseLabel {
     if self.current.kind == tk_ident() {
       tok = self.bump
       label = CaseLabel.new(lb_member(), tok.loc)
@@ -2343,9 +2362,9 @@ pub class Parser {
       }
       return label
     }
-    label = CaseLabel.new(lb_int(), self.current.loc)
-    parse_case_int(label)
-    label
+    ilabel = CaseLabel.new(lb_int(), self.current.loc)
+    parse_case_int(ilabel)
+    ilabel
   }
 
   // Whether the label at the current token names a type: its last

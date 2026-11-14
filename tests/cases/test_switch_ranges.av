@@ -63,6 +63,20 @@ fn cases: Array(RCase) {
   xs.push(accepted("for-inclusive", "fn main {\n  for i in 1..=3 {\n    puts(i)\n  }\n  for j in 5..=4 {\n    puts(j)\n  }\n  for k in 9223372036854775805..=9223372036854775807 {\n    puts(k)\n  }\n  m = -9223372036854775807 - 1\n  for n in m..=m {\n    puts(n)\n  }\n  for a in 0..=6 {\n    if a % 2 == 1 {\n      continue\n    }\n    for b in a..=a + 1 {\n      puts(a * 10 + b)\n    }\n  }\n  hit = 0\n  for z in 0..=9 {\n    if z == 4 {\n      hit = z\n      break\n    }\n  }\n  puts(hit)\n  for c in 0..2 {\n    puts(c)\n  }\n}\n", "1\n2\n3\n9223372036854775805\n9223372036854775806\n9223372036854775807\n-9223372036854775808\n0\n1\n22\n23\n44\n45\n66\n67\n4\n0\n1\n"))
   xs.push(refused("for-inclusive-float", "fn main {\n  for i in 0..=1.5 {\n    puts(i)\n  }\n}\n", "for range bounds must be Int, got Float64", "2:3"))
   xs.push(refused("for-inclusive-assign", "fn main {\n  for i in 0..=3 {\n    i = 5\n  }\n}\n", "cannot assign to i", "3:7"))
+  // O493: range labels over an integer, integer and character bounds.
+  xs.push(accepted("range-forms", "fn class_of(c: Int): String {\n  switch c {\n    case 'a'..='z', 'A'..='Z', '_' { \"name\" }\n    case '0'..='9' { \"digit\" }\n    case ' ', '\\t' { \"space\" }\n    else { \"other\" }\n  }\n}\nfn band(n: Int): Int {\n  switch n {\n    case -5..=-1 { -1 }\n    case 0..10 { 0 }\n    case 10, 11 { 1 }\n    case 1000..=1000000 { 2 }\n    case 1000001..9223372036854775807 { 3 }\n    else { 9 }\n  }\n}\nfn top(u: UInt64): Int {\n  switch u {\n    case 18446744073709551600..=18446744073709551615 { 1 }\n    case 9223372036854775800..=9223372036854775810 { 2 }\n    case 0..=9 { 3 }\n    else { 0 }\n  }\n}\nfn small(x: Int32): Int {\n  switch x {\n    case -2147483648..=-1 { 1 }\n    case 1..=2147483647 { 2 }\n    else { 0 }\n  }\n}\nfn main {\n  s = \"aZ_9 +\"\n  for i in 0..s.size {\n    puts(class_of(s[i]))\n  }\n  puts(band(-5))\n  puts(band(-1))\n  puts(band(0))\n  puts(band(9))\n  puts(band(10))\n  puts(band(12))\n  puts(band(999))\n  puts(band(1000))\n  puts(band(1000000))\n  puts(band(1000001))\n  puts(band(9223372036854775806))\n  puts(band(9223372036854775807))\n  puts(band(-6))\n  puts(top(18446744073709551615u64))\n  puts(top(18446744073709551600u64))\n  puts(top(18446744073709551599u64))\n  puts(top(9223372036854775807u64))\n  puts(top(9223372036854775808u64))\n  puts(top(9223372036854775810u64))\n  puts(top(9223372036854775811u64))\n  puts(top(9u64))\n  m: Int32 = -2147483648\n  puts(small(m))\n  puts(small(0))\n  puts(small(2147483647))\n  count = 0\n  for v in 0..=300 {\n    switch v {\n      case 0..=255 { count += 1 }\n      case 256..=300 { count += 100 }\n    }\n  }\n  puts(count)\n}\n", "name\nname\nname\ndigit\nspace\nother\n-1\n-1\n0\n0\n1\n9\n9\n2\n2\n3\n3\n9\n9\n1\n1\n0\n2\n2\n2\n0\n3\n1\n0\n2\n4756\n"))
+  xs.push(refused("range-overlap-single", "fn main {\n  switch argv().size {\n    case 0..=9 { puts(1) }\n    case 5 { puts(2) }\n    else { }\n  }\n}\n", "case 5 overlaps case 0..=9", "4:10"))
+  xs.push(refused("range-overlap-range", "fn main {\n  switch argv().size {\n    case 'a'..='z' { puts(1) }\n    case 'A'..'b' { puts(2) }\n    else { }\n  }\n}\n", "case 65..98 overlaps case 97..=122", "4:10"))
+  xs.push(refused("range-overlap-same-arm", "fn main {\n  switch argv().size {\n    case 3, 1..4 { puts(1) }\n    else { }\n  }\n}\n", "case 1..4 overlaps case 3", "3:13"))
+  xs.push(refused("range-overlap-wide-u64", "fn main {\n  u: UInt64 = 1u64\n  switch u {\n    case 9223372036854775807..=18446744073709551615 { puts(1) }\n    case 0..9223372036854775808 { puts(2) }\n  }\n}\n", "case 0..9223372036854775808 overlaps case 9223372036854775807..=18446744073709551615", "5:10"))
+  xs.push(refused("range-empty", "fn main {\n  switch argv().size {\n    case 5..5 { puts(1) }\n    else { }\n  }\n}\n", "the range 5..5 is empty", "3:10"))
+  xs.push(refused("range-empty-incl", "fn main {\n  switch argv().size {\n    case 9..=0 { puts(1) }\n    else { }\n  }\n}\n", "the range 9..=0 is empty", "3:10"))
+  xs.push(refused("range-empty-u64", "fn main {\n  u: UInt64 = 1u64\n  switch u {\n    case 18446744073709551615..=0 { puts(1) }\n    else { }\n  }\n}\n", "the range 18446744073709551615..=0 is empty", "4:10"))
+  xs.push(refused("range-on-enum", "enum Tok { a, b, c }\nfn main {\n  switch Tok.a {\n    case a..c { puts(1) }\n    else { }\n  }\n}\n", "a range label needs a switch over an integer, got Tok", "4:10"))
+  xs.push(refused("range-on-bool", "fn main {\n  switch argv().size > 0 {\n    case 0..=1 { puts(1) }\n  }\n}\n", "a range label needs a switch over an integer, got Bool", "3:10"))
+  xs.push(refused("range-on-string", "fn main {\n  switch \"a\" {\n    case 0..=1 { puts(1) }\n    else { }\n  }\n}\n", "a range label needs a switch over an integer, got String", "3:10"))
+  xs.push(refused("range-bound-too-big", "fn main {\n  x: Int32 = 1\n  switch x {\n    case 0..=3000000000 { puts(1) }\n    else { }\n  }\n}\n", "case label 3000000000 does not fit in Int32", "4:14"))
+  xs.push(refused("range-bound-not-int", "fn main {\n  switch argv().size {\n    case 0..=\"z\" { puts(1) }\n    else { }\n  }\n}\n", "case label must be an integer literal", "3:14"))
   xs
 }
 
@@ -112,6 +126,13 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   bll = log_text("${dir}/sr-ll-bool.ll")
   c.expect(!str_has(bll, "switch "), "ll-bool: no switch")
   c.expect(str_has(bll, "br i1 "), "ll-bool: one branch on the value")
+  rw = "${dir}/sr-ll-range.av"
+  _ = file_write(rw, "fn f(c: Int): Int {\n  switch c {\n    case 'a'..='c' { 1 }\n    case 100..=100000 { 2 }\n    else { 0 }\n  }\n}\nfn main {\n  puts(f(argv().size))\n}\n")
+  c.eq_int(emit_ll(compiler, rw, "${dir}/sr-ll-range.ll", "${dir}/sr-ll-range.log"), 0, "ll-range: emits")
+  rll = log_text("${dir}/sr-ll-range.ll")
+  c.expect(str_has(rll, "i64 97, label") && str_has(rll, "i64 98, label") && str_has(rll, "i64 99, label"), "ll-range: a narrow range gives the switch a case per value")
+  c.expect(str_has(rll, "icmp sge i64 ") && str_has(rll, ", 100") && str_has(rll, "icmp sle i64 ") && str_has(rll, ", 100000"), "ll-range: a wide range is two compares")
+  c.expect(!str_has(rll, "i64 100, label"), "ll-range: a wide range gives no cases")
 }
 
 fn test_main(c: Checks) {

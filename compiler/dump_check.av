@@ -183,37 +183,7 @@ pub fn dump_typed_expr(e: Expr): String {
       buf.push_str(" (case")
       for label in arm.labels {
         buf.push_str(" ")
-        if label.kind == lb_member() {
-          if label.qual.size > 0 {
-            buf.push_str(label.qual)
-            buf.push_str(".")
-          }
-          buf.push_str(label.text)
-        } else if label.kind == lb_nil() {
-          buf.push_str("nil")
-        } else if label.kind == lb_bool() {
-          if label.int_val != 0 {
-            buf.push_str("true")
-          } else {
-            buf.push_str("false")
-          }
-        } else if label.kind == lb_type() {
-          buf.push_str("(type ")
-          if label.bind.size > 0 {
-            buf.push_str(label.bind)
-            buf.push_str(" ")
-          }
-          if tn = label.tname {
-            buf.push_str(dump_type(tn))
-          }
-          buf.push_str(")")
-        } else if label.kind == lb_string() {
-          buf.push_str("(string ")
-          buf.push_str(escape_dump(label.text))
-          buf.push_str(")")
-        } else {
-          buf.push_fmt_i(label.int_val)
-        }
+        buf.push_str(dump_case_label(label))
       }
       for st in arm.body {
         buf.push_str(" ")

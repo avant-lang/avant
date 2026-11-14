@@ -646,6 +646,26 @@ fn main {
 }
 ```
 
+A label may be a range of integers, written as in `for`: `lo..hi` excludes `hi`, `lo..=hi` includes it, and a character literal is an integer:
+
+```avant
+fn kind(c: Int): String {
+  switch c {
+    case 'a'..='z', 'A'..='Z', '_' { "name" }
+    case '0'..='9' { "digit" }
+    case 0..=' ' { "control or space" }
+    else { "other" }
+  }
+}
+
+fn main {
+  puts(kind('q'))    // => name
+  puts(kind('7'))    // => digit
+  puts(kind(' '))    // => control or space
+  puts(kind('+'))    // => other
+}
+```
+
 Over a `String`, the labels are string literals and the match is byte equality, as `==`:
 
 ```avant
@@ -682,7 +702,7 @@ fn main {
 ```
 
 - The value is an integer of any width, `Int`, `Int32`, `UInt32` or `UInt64` (labels: integer literals, character literals included, each taking the value's type: `case 3000000000` over an `Int32` is `case label 3000000000 does not fit in Int32`), an enum (labels: its members, bare: `case eof`, not `case Tok.eof`), a `String` (labels: string literals, not interpolated) or a union (labels: its member types, with or without a binding, and `nil`; a binding is the arm's only label). Over a `Bool`, the labels are `true` and `false` (`case 1` is refused with the hint `case true`).
-- A label may appear once.
+- A label may appear once, and no two labels share a value: `case 5` beside `case 0..=9` is `case 5 overlaps case 0..=9`; an empty range (`case 5..5`) is an error. A range of up to 256 values gives the switch one case per value, which LLVM turns into range tests or a jump table; a wider one is two comparisons before it.
 - Over an enum, a union or a `Bool`, a switch without `else` names every member (`true` and `false` for a `Bool`), as a statement and as a value (`switch over Tok does not cover name, number: name them or add else`), and an `else` beside every member is refused. Over the other types, a switch used as a value needs `else`, so every input produces a result; used as a statement, a value no arm names does nothing.
 - An arm may leave instead of giving a value (`return`, `break`, `continue`); it still counts as naming its members.
 - A switch used as a statement treats its arms as statements, as an `if` does: an arm may end with a value, which is dropped, unless it can be an error ([Errors cannot be dropped](#errors-cannot-be-dropped)).
@@ -3632,7 +3652,6 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 
 | Missing | Status | Today |
 | --- | --- | --- |
-| Ranges in `switch` labels (`case 0..10`); `case true` | decided | an `if` chain |
 | Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
 | `Hash` with other key and value types; insertion order | decided | [three combinations](#key-and-value-types); sort the keys |
 | `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion; slices of strings and arrays | planned | `str_slice`, loops, [`std.regex`](#stdregex) |

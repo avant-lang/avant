@@ -4074,6 +4074,9 @@ pub class Checker {
     covered = Hash(Int, Int).new
     seen = Hash(Int, Int).new
     seen_str = Hash(String, Int).new
+    // An integer switch's labels, for the overlaps of its ranges.
+    ranges: Array(CaseLabel) = []
+    has_range = false
     for arm in expr.cases {
       if arm.labels.size == 0 {
         fail(arm.loc, "case needs a label")
@@ -4088,6 +4091,14 @@ pub class Checker {
       for label in arm.labels {
         if !check_case_label(label, disc) {
           continue
+        }
+        if label.kind == lb_range() {
+          ranges.push(label)
+          has_range = true
+          continue
+        }
+        if disc.is_integer {
+          ranges.push(label)
         }
         if label.kind == lb_string() {
           if prev_s = seen_str.get(label.text) {
@@ -4111,6 +4122,9 @@ pub class Checker {
         seen[lab] = 1
         covered[lab] = 1
       }
+    }
+    if has_range && !self.has_err {
+      check_label_overlaps(ranges, disc)
     }
     if countable && !self.has_err {
       missing = switch_missing_cases(disc, covered)
@@ -4206,6 +4220,9 @@ pub class Checker {
   // value in int_val; an integer discriminant's are integer literals.
   // False when the label was refused.
   pub fn check_case_label(label: CaseLabel, disc: Ty): Bool {
+    if label.kind == lb_range() {
+      return check_range_label(label, disc)
+    }
     if disc.is_union {
       return check_union_label(label, disc)
     }
@@ -4262,6 +4279,114 @@ pub class Checker {
       return false
     }
     check_int_label(label, disc)
+  }
+
+  // A range label (Stage 29 W5a3, O493): over an integer, its bounds
+  // labels of the value's type; `lo..hi` holds lo to hi - 1, `lo..=hi` lo
+  // to hi, and an empty range is an error. int_val becomes its first
+  // value and hi_val its last.
+  pub fn check_range_label(label: CaseLabel, disc: Ty): Bool {
+    if !disc.is_integer {
+      fail(label.loc, "a range label needs a switch over an integer, got ${disc.show}")
+      return false
+    }
+    first = 0
+    last = 0
+    if a = label.lo, z = label.hi {
+      if !check_case_label(a, disc) || !check_case_label(z, disc) {
+        return false
+      }
+      first = a.int_val
+      last = z.int_val
+    } else {
+      return false
+    }
+    if label.incl {
+      if case_ord(last, disc) < case_ord(first, disc) {
+        fail(label.loc, "the range ${case_label_text(label)} is empty")
+        return false
+      }
+    } else {
+      if case_ord(last, disc) <= case_ord(first, disc) {
+        fail(label.loc, "the range ${case_label_text(label)} is empty")
+        return false
+      }
+      last = last &- 1
+    }
+    label.int_val = first
+    label.hi_val = last
+    true
+  }
+
+  // A label's value in the order of the discriminant's type: a UInt64's
+  // 64 bits are held in an Int, so its order is the Int's with the sign
+  // bit flipped.
+  pub fn case_ord(v: Int, disc: Ty): Int {
+    if disc.is_uint64 {
+      return v &+ (-9223372036854775807 - 1)
+    }
+    v
+  }
+
+  // An integer, name or range label as written, for messages.
+  pub fn case_label_text(label: CaseLabel): String {
+    if label.kind == lb_range() {
+      op = ".."
+      if label.incl {
+        op = "..="
+      }
+      lo_text = ""
+      hi_text = ""
+      if a = label.lo {
+        lo_text = case_label_text(a)
+      }
+      if z = label.hi {
+        hi_text = case_label_text(z)
+      }
+      return "${lo_text}${op}${hi_text}"
+    }
+    if label.kind == lb_member() {
+      if label.qual.size > 0 {
+        return "${label.qual}.${label.text}"
+      }
+      return label.text
+    }
+    int_label_text(label)
+  }
+
+  // Two labels of an integer switch that share a value (Stage 29 W5a3):
+  // an error naming both, where one is a range (two equal values are
+  // the duplicate error).
+  pub fn check_label_overlaps(labels: Array(CaseLabel), disc: Ty) {
+    for j in 0..labels.size {
+      b = labels[j]
+      for i in 0..j {
+        a = labels[i]
+        if a.kind != lb_range() && b.kind != lb_range() {
+          continue
+        }
+        a_hi = a.int_val
+        if a.kind == lb_range() {
+          a_hi = a.hi_val
+        }
+        b_hi = b.int_val
+        if b.kind == lb_range() {
+          b_hi = b.hi_val
+        }
+        lo = case_ord(a.int_val, disc)
+        if case_ord(b.int_val, disc) > lo {
+          lo = case_ord(b.int_val, disc)
+        }
+        hi = case_ord(a_hi, disc)
+        if case_ord(b_hi, disc) < hi {
+          hi = case_ord(b_hi, disc)
+        }
+        if lo <= hi {
+          fail(b.loc, "case ${case_label_text(b)} overlaps case ${case_label_text(a)}")
+          return
+        }
+      }
+    }
   }
 
   // An integer label as written (its sign and magnitude).
