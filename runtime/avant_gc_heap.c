@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <time.h>
 
 /* The heap's shape (Stage 28 W12; the reservation, chunks and side
  * tables since W14a1): the reserved range and its block supply, the
@@ -27,7 +28,17 @@ __attribute__((constructor(101))) static void gc_heap_static_init(void) {
   pthread_mutex_init(&gc_heap.world, NULL);
   pthread_mutex_init(&gc_heap.threads_mu, NULL);
   pthread_mutex_init(&gc_heap.hs_mu, NULL);
-  pthread_cond_init(&gc_heap.hs_stopped_cv, NULL);
+  {
+    /* The handshake's stall report under AVANT_GC_VERIFY waits on this
+     * variable with a deadline (hs_wait_verify): on CLOCK_MONOTONIC, so a
+     * step of the wall clock does not move the report (the Valk stage,
+     * VALK-TM3, O667; W-FIX1g's WsClient.cond). */
+    pthread_condattr_t ca;
+    pthread_condattr_init(&ca);
+    pthread_condattr_setclock(&ca, CLOCK_MONOTONIC);
+    pthread_cond_init(&gc_heap.hs_stopped_cv, &ca);
+    pthread_condattr_destroy(&ca);
+  }
   pthread_cond_init(&gc_heap.hs_resume_cv, NULL);
   gc_heap.full_trigger = FULL_TRIGGER_MIN;
   gc_heap.set.defrag = 1;

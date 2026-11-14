@@ -426,6 +426,11 @@ fn test_rem_invariant(c: Checks, compiler: String, root: String, dir: String) {
     runs.push(run_job_env(dir, "rem_invariant", "rem_invariant.b${e}", "-u AVANT_NURSERY REM_INVARIANT_BREAK=1 ${brks[e]}"))
   }
   runs.push(run_job_env(dir, "rem_invariant", "rem_invariant.n0", "REM_INVARIANT_BREAK=1 AVANT_GC_VERIFY=1 AVANT_NURSERY=0"))
+  // O738 (the Valk stage, VALK-TM3): the store after the verifier's
+  // warm-up, so its incremental check (yholders_check_hot, the hot pages'
+  // slots only) is the one that must find it; with that check silenced
+  // the run reports nothing.
+  runs.push(run_job_env(dir, "rem_invariant", "rem_invariant.warm", "-u AVANT_NURSERY REM_INVARIANT_BREAK=1 REM_INVARIANT_WARM=1 AVANT_GC_VERIFY=1"))
   run_waves(runs)
   for e in 0..envs.size {
     what = "plain"
@@ -443,6 +448,9 @@ fn test_rem_invariant(c: Checks, compiler: String, root: String, dir: String) {
   }
   c.eq_str(log_text("${dir}/rem_invariant.n0.out"), "rem_invariant: young-2 24\n", "rem_invariant.av, a store with no barrier, under AVANT_GC_VERIFY=1 AVANT_NURSERY=0: the same output")
   c.eq_str(log_text("${dir}/rem_invariant.n0.err"), "", "rem_invariant.av, a store with no barrier, under AVANT_GC_VERIFY=1 AVANT_NURSERY=0: nothing is young, nothing is reported")
+  warm_err = log_text("${dir}/rem_invariant.warm.err")
+  c.eq_str(log_text("${dir}/rem_invariant.warm.out"), "rem_invariant: young-2 24\n", "rem_invariant.av, a store with no barrier after 300 young collections, under AVANT_GC_VERIFY=1: the same output")
+  c.expect(str_has(warm_err, "avant gc verify: missing barrier: holder ") && str_has(warm_err, "not remembered"), "rem_invariant.av, a store with no barrier after the verifier's warm-up: its incremental check finds the holder")
 }
 
 // O629 (the Valk stage, VALK-A2; D352): a C function's `String` result that
@@ -558,6 +566,82 @@ fn test_empty_arrays(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(stat_value(log_text("${dir}/empty_arrays.stats.err"), "alloc"), 1280144, "empty_arrays.av: an empty array is one object of 24 bytes (1,280,144 bytes allocated; 1,600,320 with a buffer each)")
 }
 
+// O650 (the Valk stage, VALK-TM3): under AVANT_GC_STRESS=1 a full
+// collection poisons what it frees, the lines a kept block frees and a
+// block it releases whole, as the young sweep poisons what it frees.
+// ffi/full_poison.av (its C half in ffi/full_poison.c) keeps a stale
+// address to a mature string that died at a full collection, in each of
+// the two shapes, and reads a byte through it: 219 (GC_POISON) under the
+// stress mode, with the nursery off and with a small young budget too;
+// before VALK-TM3 the strings' own letters (83 and 84). AVANT_GC_DEFRAG=0
+// keeps the blocks in place (an evacuated block was poisoned before).
+// Without the stress mode, and under the verifier, the read is not made.
+fn test_full_poison(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/full_poison.av", "${dir}/full_poison", "${dir}/full_poison.log", ["--cc", "${root}/tests/fixtures/ffi/full_poison.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "full_poison.av: compiles")
+  envs = ["-u AVANT_GC_VERIFY AVANT_GC_STRESS=1 AVANT_GC_DEFRAG=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1 AVANT_GC_DEFRAG=0 AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1 AVANT_GC_DEFRAG=0 AVANT_YOUNG_MB=1", "-u AVANT_GC_STRESS -u AVANT_GC_VERIFY", "-u AVANT_GC_STRESS AVANT_GC_VERIFY=1"]
+  wants = ["219 kept 219", "219 kept 219", "219 kept 219", "-1 kept -1", "-1 kept -1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "full_poison", "full_poison.g${e}", envs[e]))
+  }
+  run_waves(runs)
+  for e in 0..envs.size {
+    c.eq_int(runs[e].code, 0, "full_poison.av under ${envs[e]}: exit 0")
+    c.eq_str(log_text("${dir}/full_poison.g${e}.out"), "full_poison: released ${wants[e]} live 200 bad 0\n", "full_poison.av under ${envs[e]}: a stale read of a mature string a full collection freed (its block released, its lines in a kept block) reads the poison only under the stress mode; the live strings are intact")
+    c.eq_str(log_text("${dir}/full_poison.g${e}.err"), "", "full_poison.av under ${envs[e]}: no stderr")
+  }
+}
+
+// O667 (the Valk stage, VALK-TM3): the stalled handshake's report under
+// AVANT_GC_VERIFY_STALL_MS waits on a CLOCK_MONOTONIC deadline. ffi/stall.av
+// blocks a task in C for 1.5 s while the main thread collects; with a
+// 0.3 s bound the report comes after 0.3 s. Under the LD_PRELOAD shim
+// ffi/clock_ahead.c the wall clock reads an hour late: a deadline read
+// from it, and waited for on it, lies an hour away, and the collection
+// ended before any report (on the starting head: no stderr at all). A
+// test cannot step the machine's clock (operating.md); the kernel's side
+// of a real step is the condition variable's clock attribute.
+fn test_stall_clock(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/stall.av", "${dir}/stall_clock", "${dir}/stall_clock.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  jobs.push(HJob.new("/usr/bin/env", ["cc", "-shared", "-fPIC", "-o", "${dir}/clock_ahead.so", "${root}/tests/fixtures/ffi/clock_ahead.c", "-ldl"], "${dir}/clock_ahead.cclog"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "stall.av (O667): compiles")
+  c.eq_int(jobs[1].code, 0, "the clock-ahead shim builds")
+  runs: Array(HJob) = []
+  runs.push(run_job_env(dir, "stall_clock", "stall_clock.ahead", "AVANT_GC_VERIFY=1 AVANT_GC_VERIFY_STALL_MS=300 LD_PRELOAD=${dir}/clock_ahead.so"))
+  run_waves(runs)
+  c.eq_int(runs[0].code, 0, "stall.av under a wall clock an hour ahead: exit 0")
+  c.eq_str(log_text("${dir}/stall_clock.ahead.out"), "collected; the task blocked 1500 ms\n", "stall.av under a wall clock an hour ahead: the known stdout")
+  err = log_text("${dir}/stall_clock.ahead.err")
+  c.expect(str_has(err, "avant gc verify: a collection has waited 0.3 s for thread ") && str_has(err, "(the collection keeps waiting)"), "stall.av under a wall clock an hour ahead and a 0.3 s bound: the handshake's report comes at 0.3 s (its deadline is on CLOCK_MONOTONIC)")
+}
+
+// O121 (the Valk stage, VALK-TM3): a stress collection that finds no
+// other thread running keeps the world lock (gc_stop_world_held), so a
+// thread blocked on that lock is not handed it only to give it back and
+// wait for the collection's end. threads/parallel.av under the stress
+// mode: its known stdout (its run golden), and AVANT_GC_STATS'
+// handshakes_held, printed only under the stress mode, counts such
+// collections (7,226 and 7,382 of 8,510 and 8,616 in two runs; the field
+// did not exist on the starting head, where every one released the lock).
+fn test_stress_held(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/threads/parallel.av", "${dir}/stress_held", "${dir}/stress_held.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "threads/parallel.av (O121): compiles")
+  runs: Array(HJob) = []
+  runs.push(run_job_env(dir, "stress_held", "stress_held.s", "-u AVANT_GC_VERIFY -u AVANT_NURSERY AVANT_GC_STRESS=1 AVANT_GC_STATS=1"))
+  run_waves(runs)
+  c.eq_int(runs[0].code, 0, "threads/parallel.av under the stress mode: exit 0")
+  c.eq_str(log_text("${dir}/stress_held.s.out"), log_text("${root}/tests/goldens/runs/fixtures/threads/parallel.out"), "threads/parallel.av under the stress mode: its run golden's stdout")
+  err = log_text("${dir}/stress_held.s.err")
+  c.expect(stat_value(err, "handshakes_held") > 0, "threads/parallel.av under the stress mode: stress collections with no other thread running keep the world lock (handshakes_held ${stat_value(err, "handshakes_held")} of ${stat_value(err, "collections")} collections)")
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -571,6 +655,9 @@ fn test_main(c: Checks) {
     test_rem_invariant(c, compiler, avant_test_root(), scratch_dir())
     test_late_starts(c, compiler, avant_test_root(), scratch_dir())
     test_empty_arrays(c, compiler, avant_test_root(), scratch_dir())
+    test_full_poison(c, compiler, avant_test_root(), scratch_dir())
+    test_stall_clock(c, compiler, avant_test_root(), scratch_dir())
+    test_stress_held(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

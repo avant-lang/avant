@@ -596,6 +596,22 @@ fn test_user_test(c: Checks) {
       nf_text = nt
     }
     c.expect(ut_has(nf_text, "first path is not a selected test"), "first error names the path rule")
+
+    // O698 (the Valk stage, VALK-TM3): a test process's report lines are
+    // checked writes. With its standard output on /dev/full a test binary
+    // whose checks all pass stops with puts's message and status 1;
+    // before, it lost every line and exited 0. The same binary with a
+    // working standard output prints its lines and exits 0.
+    full_dir = "${root}/devfull"
+    mkdir_p(full_dir)
+    _ = file_write("${full_dir}/report.av", "import std.testing\nfn main: Int {\n  t = Test.new\n  t.check(true, \"one\")\n  t.check(1 + 1 == 2, \"two\")\n  t.finish\n}\n")
+    fq = ut_quote(full_dir)
+    full_rc = "${full_dir}/full.rc"
+    full_sh = "#!/bin/sh\n${ut_quote(compiler)} compile ${fq}/report.av ${fq}/report --debug > ${fq}/compile.log 2>&1 || { echo 90 > ${fq}/full.rc; echo 90 > ${fq}/plain.rc; exit 0; }\n${fq}/report > /dev/full 2> ${fq}/full.err; echo $? > ${fq}/full.rc\n${fq}/report > ${fq}/plain.out 2> ${fq}/plain.err; echo $? > ${fq}/plain.rc\n"
+    c.eq_int(ut_sh(full_sh, full_rc), 1, "O698: a test binary whose report goes to /dev/full exits 1")
+    c.eq_str(file_read("${full_dir}/full.err") ?? "", "avant runtime: cannot write to standard output: No space left on device\n", "O698: a test binary whose report goes to /dev/full names the stream and the reason")
+    c.eq_str(file_read("${full_dir}/plain.rc") ?? "", "0\n", "O698: the same test binary with a working standard output exits 0")
+    c.expect(ut_has(file_read("${full_dir}/plain.out") ?? "", "PASS two"), "O698: the same test binary with a working standard output prints its report")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

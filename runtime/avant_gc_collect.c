@@ -297,7 +297,11 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
    * one stopped until that collection was done; a collection the policy
    * asked for (the budget, the trigger, a stress point) is then
    * reconsidered, an explicit or heap-limit one runs. */
-  if (!gc_thread.collector) {
+  if (!gc_thread.collector && why == GC_WHY_STRESS && gc_stop_world_held()) {
+    /* A stress collection with no other thread running keeps the world
+     * lock (gc_stop_world_held, O121). */
+    resume = 1;
+  } else if (!gc_thread.collector) {
     for (;;) {
       int mine;
       pthread_mutex_unlock(&gc_heap.world);

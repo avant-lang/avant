@@ -550,6 +550,8 @@ char *avant_tmp_dir(void);
 char *avant_tmp_new_dir(void);
 /* A failed check (std.testing, D84): the process exits 1 if it would exit 0. */
 void avant_test_fail(void);
+/* std.testing's report line: all of it to standard output, or the process stops. */
+void avant_test_write(const char *s, avant_int n);
 void avant_tmp_keep(void);
 avant_int avant_job_start(const char *path, void *args, const char *out_path);
 avant_int avant_job_wait(void);

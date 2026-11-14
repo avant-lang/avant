@@ -173,7 +173,11 @@ static void hs_report_stalled(uint64_t waited_ns) {
 }
 
 /* The handshake's wait under the verifier: the condition wait with a
- * deadline, a report at every stall_ms waited. Under hs_mu. */
+ * deadline, a report at every stall_ms waited. The deadline is on
+ * CLOCK_MONOTONIC, hs_stopped_cv's clock (gc_heap_static_init; the Valk
+ * stage, VALK-TM3, O667): until then it was read from CLOCK_REALTIME,
+ * so a step of the wall clock during a stall moved the next report (a
+ * step forward of an hour held it back by an hour). Under hs_mu. */
 static void hs_wait_verify(uint64_t t0) {
   uint64_t step = gc_heap.set.stall_ms * 1000000ull;
   uint64_t next = t0 + step;
@@ -184,13 +188,8 @@ static void hs_wait_verify(uint64_t t0) {
       hs_report_stalled(now - t0);
       next = now + step;
     }
-    clock_gettime(CLOCK_REALTIME, &ts);
-    {
-      uint64_t left = next - now;
-      uint64_t ns = (uint64_t)ts.tv_nsec + left % 1000000000ull;
-      ts.tv_sec += (time_t)(left / 1000000000ull + ns / 1000000000ull);
-      ts.tv_nsec = (long)(ns % 1000000000ull);
-    }
+    ts.tv_sec = (time_t)(next / 1000000000ull);
+    ts.tv_nsec = (long)(next % 1000000000ull);
     pthread_cond_timedwait(&gc_heap.hs_stopped_cv, &gc_heap.hs_mu, &ts);
   }
 }
@@ -238,6 +237,52 @@ int gc_stop_world(void) {
         gc_heap.ctr.pause.hs_max_ns = dt;
       }
     }
+  }
+  pthread_mutex_unlock(&gc_heap.hs_mu);
+  return 1;
+}
+
+/* A stress collection's handshake without the world lock's round trip
+ * (the Valk stage, VALK-TM3, O121). The caller holds the world lock.
+ * When no other thread is running (each is native or stopped at a
+ * safepoint), there is nothing to wait for, so rule 1 (no runtime lock
+ * held while the collector waits) does not ask for the world lock to be
+ * released: the request is raised under hs_mu and the collection runs at
+ * once. Releasing it anyway, as gc_stop_world's caller must, handed it to
+ * a thread blocked on it in gc_lock (native while it waits): that thread
+ * turned running, met the request, gave the lock back and waited on
+ * hs_resume_cv until this collection's end, a condition-variable round
+ * trip and two lock hand-offs per collection (runtime_roots.av under the
+ * stress mode: 96% of its 966,833 collections found no thread running).
+ * Returns 1 with the request held (gc_resume_world ends it), as
+ * gc_stop_world does; 0 when another thread holds the request or one is
+ * running, with nothing changed (the request raised for the check is
+ * dropped and its waiters woken), and the caller takes the full
+ * handshake. The request is raised before the states are read, as in
+ * gc_stop_world (Dekker: a thread that turns running after the read sees
+ * it and waits at its safepoint; it holds no world lock, since this
+ * thread does). */
+int gc_stop_world_held(void) {
+  int others;
+  pthread_mutex_lock(&gc_heap.hs_mu);
+  if (atomic_load(&avant_gc_requested)) {
+    pthread_mutex_unlock(&gc_heap.hs_mu);
+    return 0;
+  }
+  atomic_store(&avant_gc_requested, 1);
+  if (others_running()) {
+    atomic_store(&avant_gc_requested, 0);
+    pthread_cond_broadcast(&gc_heap.hs_resume_cv);
+    pthread_mutex_unlock(&gc_heap.hs_mu);
+    return 0;
+  }
+  gc_thread.collector = 1;
+  others = gc_heap.threads && (gc_heap.threads != &gc_thread.reg || gc_heap.threads->next);
+  if (others) {
+    /* A handshake that waited for nothing, counted as gc_stop_world
+     * counts one (AVANT_GC_STATS' handshakes), and as held. */
+    gc_heap.ctr.pause.hs_n++;
+    gc_heap.ctr.pause.hs_held++;
   }
   pthread_mutex_unlock(&gc_heap.hs_mu);
   return 1;

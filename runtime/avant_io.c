@@ -1405,6 +1405,28 @@ void avant_test_fail(void) {
   __atomic_store_n(&g_test_failed, 1, __ATOMIC_RELAXED);
 }
 
+/* std.testing's report lines (testing_write; the Valk stage, VALK-TM3,
+ * O698): every byte of S written to standard output (a short write goes
+ * on, an interrupted one is retried); a write that fails stops the
+ * process as puts does (out_fail: "avant runtime: cannot write to
+ * standard output: REASON", status 1). Until VALK-TM3 testing_write
+ * called write(2) itself and ignored its result, so a test process whose
+ * standard output failed lost its report lines and still exited 0 when
+ * every check passed. */
+void avant_test_write(const char *s, avant_int n) {
+  size_t off = 0;
+  while (n > 0 && off < (size_t)n) {
+    ssize_t k = write(1, s + off, (size_t)n - off);
+    if (k < 0 && errno == EINTR) {
+      continue;
+    }
+    if (k <= 0) {
+      out_fail("standard output", k < 0 ? errno : EIO, 0);
+    }
+    off += (size_t)k;
+  }
+}
+
 static void test_status_at_exit(int status, void *arg) {
   (void)arg;
   if (status == 0 && __atomic_load_n(&g_test_failed, __ATOMIC_RELAXED)) {
