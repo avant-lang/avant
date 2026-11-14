@@ -24,6 +24,7 @@ import std.http
 // client's handshake: one longer than 2048 bytes, and one the socket
 // takes in part (Stage 29 W-FIX1g, O571). And the WebSocket client's
 // deadlines under a step of the wall clock (Stage 29 W-FIX1g, O572).
+// And the client's request checks (Stage 29 W-FIX1h, O665).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -722,6 +723,97 @@ fn client_framing_cases(c: Checks, root: String) {
   c.eq_int(server.join, 0, "the keep-open server ends")
 }
 
+// The result of one client call as a line: "STATUS BODY" or the
+// HttpError's message.
+fn outcome(r: Response | HttpError): String {
+  if e = http_failure(r) {
+    return e.message
+  }
+  if resp = r {
+    return "${resp.status} ${String.from_utf8(resp.body) ?? "?"}"
+  }
+  "?"
+}
+
+// O665 (Stage 29 W-FIX1h): the client wrote the method, the URL's
+// target and each header into the request as given, so CR LF in any of
+// them added request lines (the server here would have echoed an
+// X-Injected line) or a second request. A request that breaks
+// Response.header's rules (a method and a header name are tokens, a
+// value holds no control character but tab) or holds a space or a
+// control character in its URL is not sent: the call returns an
+// HttpError naming the part and the byte. A valid request is sent as
+// given, a tab in a value included; a caller's Content-Length and
+// Connection are the client's own and are skipped, as Response.header
+// skips them (a second Content-Length was a second reading of where
+// the body ends).
+fn client_request_cases(c: Checks, root: String) {
+  stamp = now_ms()
+  port_file = "${scratch()}/http-request-${stamp}.port"
+  log = "${scratch()}/http-request-${stamp}.log"
+  server = spawn {
+    args: Array(String) = []
+    args.push("${root}/tests/fixtures/http/keep_server.py")
+    args.push(port_file)
+    args.push("0")
+    process_run_out("/usr/bin/python3", args, log) ?? -1
+  }
+  port = wait_port(port_file)
+  c.expect(port > 0, "the echo server is listening")
+  base = "http://127.0.0.1:${port}"
+  token_rule = "letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)"
+  value_rule = "a header value holds no CR, LF or other control character but tab (RFC 9110)"
+  url_rule = "a URL holds no space or control character (RFC 3986)"
+  none: Array(Header) = []
+  methods = ["GET\r\nX-Injected: 1\r\nX: GET", "GET /echo HTTP/1.1", "", "G${chr(127)}T"]
+  method_wants = [
+    "invalid request method (byte 13 at 3): a method is a token: ${token_rule}",
+    "invalid request method (byte 32 at 3): a method is a token: ${token_rule}",
+    "invalid request method (empty): a method is a token: ${token_rule}",
+    "invalid request method (byte 127 at 1): a method is a token: ${token_rule}"
+  ]
+  for i in 0..methods.size {
+    c.eq_str(outcome(Http.request(methods[i], "${base}/echo", "".bytes, none, false, 4000)), method_wants[i], "a request method that is not a token is refused (${i})")
+  }
+  at = base.size + 5
+  tails = ["/echo\r\nX-Injected: 1", "/echo\nX-Injected: 1", "/echo x", "/echo?a=\tb", "/echo#\r\n"]
+  tail_bytes = [13, 10, 32, 9, 13]
+  tail_at = [at, at, at, at + 3, at + 1]
+  for i in 0..tails.size {
+    c.eq_str(outcome(Http.get("${base}${tails[i]}", false, 4000)), "invalid URL (byte ${tail_bytes[i]} at ${tail_at[i]}): ${url_rule}", "a URL with a control character or a space is refused (${i})")
+  }
+  c.eq_str(outcome(Http.get("http://127.0.0.1\r\nX-Injected: 1:${port}/echo", false, 4000)), "invalid URL (byte 13 at 16): ${url_rule}", "an authority with CR LF is refused")
+  names = ["X-Injected: 1\r\nX-A", "X A", "", "X-${chr(195)}${chr(169)}"]
+  name_wants = ["byte 58 at 10", "byte 32 at 1", "empty", "byte 195 at 2"]
+  for i in 0..names.size {
+    hs: Array(Header) = []
+    hs.push(Header { name: "X-Ok", value: "1" })
+    hs.push(Header { name: names[i], value: "1" })
+    c.eq_str(outcome(Http.request("GET", "${base}/echo", "".bytes, hs, false, 4000)), "invalid request header name (header 1, ${name_wants[i]}): a header name is ${token_rule}", "a header name that is not a token is refused (${i})")
+  }
+  values = ["1\r\nX-Injected: 1", "1\nX-Injected: 1", "1\r", "a${chr(0)}b", chr(127), "a${chr(27)}b"]
+  value_wants = ["byte 13 at 1", "byte 10 at 1", "byte 13 at 1", "byte 0 at 1", "byte 127 at 0", "byte 27 at 1"]
+  for i in 0..values.size {
+    hs: Array(Header) = []
+    hs.push(Header { name: "X-A", value: values[i] })
+    c.eq_str(outcome(Http.request("GET", "${base}/echo", "".bytes, hs, false, 4000)), "invalid request header value of X-A (${value_wants[i]}): ${value_rule}", "a header value with a control character is refused (${i})")
+  }
+  if e = ws_failure(Ws.connect("ws://127.0.0.1:${port}/echo\r\nX-Injected: 1", 4000)) {
+    c.eq_str(e.message, "invalid URL (byte 13 at ${base.size + 3}): ${url_rule}", "Ws.connect refuses a URL with CR LF")
+  } else {
+    c.expect(false, "Ws.connect refuses a URL with CR LF")
+  }
+  ok: Array(Header) = []
+  ok.push(Header { name: "X-Ok!#$%&'*+-.^_`|~", value: "a\tb \"c\" ${chr(195)}${chr(169)}" })
+  ok.push(Header { name: "content-length", value: "0" })
+  ok.push(Header { name: "Connection", value: "keep-alive" })
+  c.eq_str(outcome(Http.request("POST", "${base}/echo", "abc".bytes, ok, false, 4000)), "200 POST /echo HTTP/1.1|Host: 127.0.0.1:${port}|X-Ok!#$%&'*+-.^_`|~: a\tb \"c\" ${chr(195)}${chr(169)}|Content-Length: 3|Connection: close", "a valid request is sent as given, without the caller's Content-Length and Connection")
+  c.eq_str(outcome(Http.get("${base}/echo?q=%41~", false, 4000)), "200 GET /echo?q=%41~ HTTP/1.1|Host: 127.0.0.1:${port}|Content-Length: 0|Connection: close", "a valid target is sent as given")
+  if resp = Http.get("${base}/__stop", true, 4000) {
+  }
+  c.eq_int(server.join, 0, "the echo server ends")
+}
+
 class BigSent {
   pub sent: String
 
@@ -1098,6 +1190,7 @@ fn main: Int {
   route_serving_cases(c, avant_test_root())
   header_split_cases(c, avant_test_root())
   client_framing_cases(c, avant_test_root())
+  client_request_cases(c, avant_test_root())
   ws_big_cases(c, avant_test_root())
   ws_handshake_cases(c, avant_test_root())
   ws_deadline_cases(c, avant_test_root())

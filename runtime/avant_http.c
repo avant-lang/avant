@@ -2504,6 +2504,31 @@ static int http_tchar(unsigned char ch) {
          (ch >= '0' && ch <= '9') || (ch != 0 && strchr("!#$%&'*+-.^_`|~", ch));
 }
 
+/* The index of the first byte of s[0..n) that is not a token character,
+ * n when there is none: a token is that and not empty. */
+static size_t http_token_end(const char *s, size_t n) {
+  size_t i;
+  for (i = 0; i < n; i++) {
+    if (!http_tchar((unsigned char)s[i])) {
+      break;
+    }
+  }
+  return i;
+}
+
+/* The index of the first control byte other than tab (DEL among them)
+ * of s[0..n), n when there is none: what a field value may not hold. */
+static size_t http_value_end(const char *s, size_t n) {
+  size_t i;
+  for (i = 0; i < n; i++) {
+    unsigned char ch = (unsigned char)s[i];
+    if ((ch < 0x20 && ch != '\t') || ch == 0x7f) {
+      break;
+    }
+  }
+  return i;
+}
+
 /* Response.header's check (Stage 29 W-FIX1g, O518). The name and the
  * value were appended to the answer's head as they came, so a value
  * holding CR LF (a redirect target or a cookie built from request data)
@@ -2517,28 +2542,56 @@ void avant_http_header_check(const char *name, const char *value) {
   size_t nn = avant_str_n(name);
   size_t vn = avant_str_n(value);
   size_t i;
-  for (i = 0; i < nn; i++) {
-    if (!http_tchar((unsigned char)name[i])) {
-      break;
-    }
-  }
-  if (nn == 0 || i < nn) {
+  if (nn == 0 || http_token_end(name, nn) < nn) {
     fflush(stdout);
     fputs("avant runtime: Response.header name \"", stderr);
     put_escaped(name, nn);
     fputs("\" is not a token: a header name is letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)\n", stderr);
     exit(1);
   }
-  for (i = 0; i < vn; i++) {
-    unsigned char ch = (unsigned char)value[i];
-    if ((ch < 0x20 && ch != '\t') || ch == 0x7f) {
-      fflush(stdout);
-      fputs("avant runtime: Response.header value of ", stderr);
-      put_escaped(name, nn);
-      fprintf(stderr, " holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)\n", (unsigned)ch, i);
-      exit(1);
+  i = http_value_end(value, vn);
+  if (i < vn) {
+    fflush(stdout);
+    fputs("avant runtime: Response.header value of ", stderr);
+    put_escaped(name, nn);
+    fprintf(stderr, " holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)\n", (unsigned)(unsigned char)value[i], i);
+    exit(1);
+  }
+}
+
+/* The client's request checks (Stage 29 W-FIX1h, O665), the same rules
+ * as Response.header's: the method, the request target and each header
+ * were written into the request as given, so CR LF in any of them added
+ * request lines or a second request (request splitting). Each returns
+ * the index of the first byte that breaks its rule, or -1: a method
+ * and a header name are tokens (an empty one gives 0), a header value
+ * holds no control character but tab, and a URL (the request target
+ * and the authority) holds no control character and no space (RFC 3986
+ * has neither; a space would end the request line's target). The
+ * client returns its HttpError, as for its other refusals; the caller
+ * names the part and the byte. */
+avant_int avant_http_token_bad(const char *s) {
+  size_t n = avant_str_n(s);
+  size_t i = http_token_end(s, n);
+  return (n > 0 && i == n) ? -1 : (avant_int)i;
+}
+
+avant_int avant_http_value_bad(const char *s) {
+  size_t n = avant_str_n(s);
+  size_t i = http_value_end(s, n);
+  return i == n ? -1 : (avant_int)i;
+}
+
+avant_int avant_http_url_bad(const char *s) {
+  size_t n = avant_str_n(s);
+  size_t i;
+  for (i = 0; i < n; i++) {
+    unsigned char ch = (unsigned char)s[i];
+    if (ch <= 0x20 || ch == 0x7f) {
+      return (avant_int)i;
     }
   }
+  return -1;
 }
 
 avant_int avant_http_close(void *srvp) {
