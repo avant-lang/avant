@@ -24,8 +24,15 @@ pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
   if checker_self.is_share_ty(ty) {
     return true
   }
+  // A captured Array is shared with the task, frozen until the task
+  // ends (D35, Q74-A, O758), so its elements cross in turn: an Array of a
+  // class would put one mutable object in two tasks with no lock
+  // (O712, Stage 29 W8Cc; send's rule, checker/guard.av send_crosses).
   if ty.is_array {
-    return true
+    if e = ty.inner {
+      return checker_self.copyable_for_spawn(e)
+    }
+    return false
   }
   checker_self.copyable_bits(ty)
 }
@@ -602,6 +609,18 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
     return
   }
   if ty = checker_self.lookup(expr.ident) {
+    if ty.is_array && !checker_self.copyable_for_spawn(ty) {
+      leaf = ty
+      while leaf.is_array {
+        if e = leaf.inner {
+          leaf = e
+        } else {
+          break
+        }
+      }
+      checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: an ${ty.show} is shared with the task, and its elements (${leaf.show}) cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex")
+      return
+    }
     if !checker_self.copyable_for_spawn(ty) {
       checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: ${ty.show} is not copied at send (D35)")
       return

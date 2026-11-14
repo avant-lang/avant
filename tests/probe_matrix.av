@@ -124,6 +124,10 @@ fn rules: Array(PRule) {
   // A zero-argument mutator written without parentheses is a mutation (Stage 29 W-FIX1j, F1).
   xs.push(rule("spawn-sender-mutate-bare", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn { pxs.size }\npxs.clear\nputs(ph.join)", "pxs = [1, 2]\nph = spawn { pxs.size }\nputs(ph.join)\npxs.clear", "cannot mutate pxs while a spawn using it is running"))
   xs.push(rule("spawn-array-mutate-bare", "stmt", "", tsite, "", "pxs = [2, 1]\nph = spawn {\n  pxs.sort\n  pxs.size\n}\nputs(ph.join)", "pxs = [2, 1]\nph = spawn {\n  pys = pxs.sorted\n  pys.size\n}\nputs(ph.join)", "spawn cannot mutate captured Array pxs"))
+  // A captured Array is shared with the task, so its elements cross in
+  // turn (O712, Stage 29 W8Cc): an Array of a class is refused, an Array
+  // of Mutexes is not.
+  xs.push(rule("spawn-capture-array-class", "stmt", "", tsite, "", "pxs = [pb]\nph = spawn {\n  pc = pxs[0]\n  pc.n += 1\n  0\n}\nputs(ph.join)", "pxs = [pb.n]\nph = spawn {\n  pc = pxs[0]\n  pc + 1\n}\nputs(ph.join)", "its elements (PBox) cannot cross to another task"))
   // README "Parallel": its block captures by the same rule.
   xs.push(rule("parallel-capture-class", "stmt", "", tsite, "", "pys = [1, 2].parallel { |x| x + pb.n }\nputs(pys.size)", "pn = pb.n\npys = [1, 2].parallel { |x| x + pn }\nputs(pys.size)", "cannot capture pb: PBox is not copied at send"))
   // README "Channel and Mutex": the value of `with`, when it is used, is

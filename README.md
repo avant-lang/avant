@@ -2557,9 +2557,9 @@ What a `spawn` or `.parallel` block captures is checked at compile time:
 | an integer, a `Bool`, a `Float64` | a copy |
 | a struct whose every field may cross | a copy |
 | a `String` | a shared pointer: it is immutable, and both tasks keep it alive |
-| an `Array` | shared for reading, until the join; a `send` copies it |
+| an `Array` whose elements may cross | shared for reading, until the join; a `send` copies it |
 | a `Channel` or a `Mutex` (`std.sync`) | shared: that is their purpose |
-| a class instance, a `Hash`, a `fn` value, a `JoinHandle`, or a struct holding one | **refused**: it is not copied, and sharing it would be a race |
+| a class instance, a `Hash`, a `fn` value, a `JoinHandle`, a struct holding one, or an `Array` of those | **refused**: it is not copied, and sharing it would be a race (an `Array(Box)` shared for reading still hands each task the same `Box` objects) |
 
 A mutable object reaches another task only inside a `Mutex`, or as the results of `.parallel`.
 

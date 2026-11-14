@@ -901,14 +901,10 @@ pub fn (checker_self: Checker) guard_consume_at(w: GuardWalk, e: Expr) {
 // tasks with no lock, and is refused. An Array is copied at the send
 // (O688, D371; Stage 29 W8Cb: mir/lower_agg.av send_copy), so the
 // receiver owns an independent array; its elements cross in turn, and an
-// array of arrays is copied at every level.
+// array of arrays is copied at every level. Since O712 (Stage 29 W8Cc)
+// spawn's rule asks the same of a captured Array's elements, so the two
+// rules are one.
 pub fn (checker_self: Checker) send_crosses(t: Ty): Bool {
-  if t.is_array {
-    if e = t.inner {
-      return checker_self.send_crosses(e)
-    }
-    return false
-  }
   checker_self.copyable_for_spawn(t)
 }
 
