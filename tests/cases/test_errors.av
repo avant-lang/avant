@@ -163,6 +163,17 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "sender-spawn-body", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  g = spawn {\n    xs = [1, 2]\n    h = spawn { xs.size }\n    xs.push(3)\n    0\n  }\n  puts(g.join)\n}\n", "join first")
     expect_err(c, compiler, stamp, "sender-value-tail", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  xs = [1, 2]\n  v = switch k() {\n    case 1 {\n      h = spawn { xs.size }\n      xs.pop() + h.join\n    }\n    else {\n      0\n    }\n  }\n  puts(v)\n}\n", "join first")
     expect_err(c, compiler, stamp, "sender-binding-chain", "fn main {\n  xs = [1, 2]\n  h = spawn { xs.size }\n  if v = \"\${xs.pop()}\".to_i, v > 0 {\n    puts(v)\n  }\n  puts(h.join)\n}\n", "join first")
+    // Stage 29 W-FIX1j (F1): a zero-argument mutator written without
+    // parentheses is a mutation on both sides of the spawn.
+    expect_err(c, compiler, stamp, "sender-bare-pop", "fn main {\n  xs = [2, 1]\n  h = spawn { xs.size }\n  xs.pop\n  puts(h.join)\n}\n", "join first")
+    expect_err(c, compiler, stamp, "spawn-bare-pop", "fn main {\n  xs = [2, 1]\n  h = spawn {\n    xs.pop\n    xs.size\n  }\n  puts(h.join)\n}\n", "read-only until join")
+    expect_err(c, compiler, stamp, "sender-bare-clear", "fn main {\n  xs = [2, 1]\n  h = spawn { xs.size }\n  xs.clear\n  puts(h.join)\n}\n", "join first")
+    expect_err(c, compiler, stamp, "spawn-bare-clear", "fn main {\n  xs = [2, 1]\n  h = spawn {\n    xs.clear\n    xs.size\n  }\n  puts(h.join)\n}\n", "read-only until join")
+    expect_err(c, compiler, stamp, "sender-bare-sort", "fn main {\n  xs = [2, 1]\n  h = spawn { xs.size }\n  xs.sort\n  puts(h.join)\n}\n", "join first")
+    expect_err(c, compiler, stamp, "spawn-bare-sort", "fn main {\n  xs = [2, 1]\n  h = spawn {\n    xs.sort\n    xs.size\n  }\n  puts(h.join)\n}\n", "read-only until join")
+    expect_err(c, compiler, stamp, "sender-bare-reverse", "fn main {\n  xs = [2, 1]\n  h = spawn { xs.size }\n  xs.reverse\n  puts(h.join)\n}\n", "join first")
+    expect_err(c, compiler, stamp, "spawn-bare-reverse", "fn main {\n  xs = [2, 1]\n  h = spawn {\n    xs.reverse\n    xs.size\n  }\n  puts(h.join)\n}\n", "read-only until join")
+    expect_err(c, compiler, stamp, "sender-bare-nested", "fn main {\n  xs = [[2, 1]]\n  h = spawn { xs.size }\n  xs[0].clear\n  puts(h.join)\n}\n", "join first")
     expect_err(c, compiler, stamp, "unterm", "fn main {\n  puts(\"hello)\n}\n", "unterminated")
     expect_err(c, compiler, stamp, "clayout-literal", "lib math {\n  struct Point {\n    x: Int\n    y: Int\n  }\n}\nfn main {\n  p = Point { x: 1, y: 2 }\n  puts(1)\n}\n", "Point is a C layout; use Ptr(Point)")
     expect_err(c, compiler, stamp, "clayout-ann", "lib math {\n  struct Point {\n    x: Int\n  }\n}\nfn main {\n  n: Point = 1\n  puts(1)\n}\n", "Point is a C layout; use Ptr(Point)")

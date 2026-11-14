@@ -216,6 +216,10 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
   }
   if k == ex_field() {
     if obj = expr.object {
+      if checker_self.field_mutates_array(expr) && checker_self.spawn_array_frozen(obj) {
+        root = checker_self.expr_root_name(obj)
+        checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
+      }
       checker_self.walk_spawn_expr(obj, node, seen)
     }
     return
@@ -339,6 +343,50 @@ pub fn (checker_self: Checker) array_mutator(name: String): Bool {
   name == "reserve"
 }
 
+// The type of an Array name or of an element reached from one by
+// indexing (`xs`, `xs[0]`), as the scope declares it; nil for any other
+// expression. A zero-argument mutator written without parentheses
+// (`xs.pop`, `xs.clear`, `xs.sort`, `xs.reverse`) is a field node, and
+// this tells it from a struct field of the same name (Stage 29 W-FIX1j, F1).
+pub fn (checker_self: Checker) indexed_array_ty(expr: Expr): Ty? {
+  if expr.kind == ex_name() {
+    if checker_self.spawn_skip_has(expr.ident) {
+      return nil
+    }
+    if ty = checker_self.lookup(expr.ident) {
+      if ty.is_array {
+        return ty
+      }
+    }
+    return nil
+  }
+  if expr.kind == ex_index() {
+    if l = expr.left {
+      if at = checker_self.indexed_array_ty(l) {
+        if e = at.inner {
+          if e.is_array {
+            return e
+          }
+        }
+      }
+    }
+  }
+  nil
+}
+
+// Whether a field node is an Array mutator written without parentheses.
+pub fn (checker_self: Checker) field_mutates_array(expr: Expr): Bool {
+  if expr.kind != ex_field() || !checker_self.array_mutator(expr.ident) {
+    return false
+  }
+  if obj = expr.object {
+    if at = checker_self.indexed_array_ty(obj) {
+      return true
+    }
+  }
+  false
+}
+
 pub fn (checker_self: Checker) spawn_array_frozen(expr: Expr): Bool {
   root = checker_self.expr_root_name(expr)
   if root.size == 0 {
@@ -415,6 +463,14 @@ pub fn (checker_self: Checker) scan_pending_target(target: Expr) {
 
 pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
   k = expr.kind
+  if k == ex_field() && checker_self.field_mutates_array(expr) {
+    if obj = expr.object {
+      root = checker_self.expr_root_name(obj)
+      if root.size > 0 && checker_self.pending_has_array(root) {
+        checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
+      }
+    }
+  }
   if k == ex_field() {
     if expr.ident == "join" {
       if obj = expr.object, obj.kind == ex_name() {
