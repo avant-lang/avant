@@ -55,7 +55,7 @@ skipped cake,one,300
 What you just read:
 
 - **No ceremony.** No semicolons, no parentheses around conditions, no `let`. Types appear where they name a fact (a field, a parameter, a result) and are inferred everywhere else.
-- **Errors are values.** `parse` returns `Item | BadLine`. `??` supplies a fallback or leaves the function; `if item = parse(line)` opens the success. Nothing unwinds, and an error cannot be dropped by accident. (Printing the error's own message takes one more line today: [Reading the error itself](#reading-the-error-itself).)
+- **Errors are values.** `parse` returns `Item | BadLine`. `??` supplies a fallback or leaves the function; `if item = parse(line)` opens the success. Nothing unwinds, and an error cannot be dropped by accident. (To print the error's own message, `switch` over the result: [Reading the error itself](#reading-the-error-itself).)
 - **Values and objects.** A `struct` is a value with methods. A `class` (not shown here) is a reference. You choose per type.
 - **Concurrency is built in.** `.parallel` runs the block on a pool of OS threads and returns the results in input order.
 
@@ -781,7 +781,23 @@ fn main {
 }
 ```
 
-The union you will write most is a result that can fail, `T | SomeError`, and the forms above open it. A union of several ordinary types can be built, stored, passed and returned, but nothing takes it apart yet: the `switch` on a union's member is decided and not built ([Not built yet](#not-built-yet)). Until then, model "one of several shapes" as a class or struct with a `kind` field.
+The union you will write most is a result that can fail, `T | SomeError`, and the forms above open it. Any union is taken apart with [`switch`](#switch), one arm per member:
+
+```avant
+fn size_of(v: Int | String | Array(Int)): Int {
+  switch v {
+    case n: Int { n }
+    case s: String { s.size }
+    case xs: Array(Int) { xs.size }
+  }
+}
+
+fn main {
+  puts(size_of(3))           // => 3
+  puts(size_of("four"))      // => 4
+  puts(size_of([1, 2]))      // => 2
+}
+```
 
 ### What an optional costs
 
@@ -1502,7 +1518,7 @@ fn main {
 
 One rule says what fails: **in any union, the failures are `Nil` and every member marked `Error`; the rest is the success value**. Everything below follows from it.
 
-The `else` above cannot see the error yet; [Reading the error itself](#reading-the-error-itself) shows how to get at it.
+The `else` above does not see the error; a `switch` over the result does ([Reading the error itself](#reading-the-error-itself)).
 
 ### Propagate, replace, branch
 
@@ -1622,25 +1638,23 @@ fn parse_digit(s: String): Int | ParseError {
   c - 48
 }
 
-fn failure(r: Int | ParseError): ParseError? {
-  _ = r?
-  nil
-}
-
 fn main {
   puts(parse_digit("7") ?? -1)            // => 7
   puts(parse_digit("x") ?? -1)            // => -1
-  if e = failure(parse_digit("")) {
-    puts("failed: ${e}")                  // => failed: empty
-    switch e {
-      case empty { puts("nothing to read") }        // => nothing to read
-      case not_a_number { puts("not a digit") }
+  switch parse_digit("") {
+    case d: Int { puts(d) }
+    case e: ParseError {
+      puts("failed: ${e}")                // => failed: empty
+      switch e {
+        case empty { puts("nothing to read") }        // => nothing to read
+        case not_a_number { puts("not a digit") }
+      }
     }
   }
 }
 ```
 
-It follows the rules of every error: `?`, `??` and if-assign read it, a statement that drops it is refused, `_ =` discards it. Telling the members of a result apart (`Int | ParseError`) without the helper waits for `switch` on a union's member ([Not built yet](#not-built-yet)).
+It follows the rules of every error: `?`, `??` and if-assign read it, a statement that drops it is refused, `_ =` discards it, and a `switch` over the result names it as a member.
 
 ### Errors cannot be dropped
 
@@ -1665,19 +1679,17 @@ _ = parse_age("12")     // computed, then dropped: visibly
 
 ### Reading the error itself
 
-The forms above tell you *that* something failed. Reaching the error value, to print its message or read its fields, takes a small helper today, because the `else` of an if-assign does not see the failure and the `switch` that tells a union's members apart is not built ([Not built yet](#not-built-yet)). The helper turns "result or error" into "error or nothing" with one `?`:
+The forms above tell you *that* something failed. To reach the error value, to print its message or read its fields, `switch` over the result: the failure is a member like the others.
 
 <!-- check: run pre=parse_error_decl -->
 ```avant
-fn failure(r: Int | ParseError): ParseError? {
-  _ = r?        // a failure returns from here, as the ParseError
-  nil
-}
-
 fn main {
-  if e = failure(parse_age("old")) {
-    puts(e.message)             // => not a number: old
-    puts("giving up: ${e}")     // => giving up: not a number: old
+  switch parse_age("old") {
+    case age: Int { puts("age ${age}") }
+    case e: ParseError {
+      puts(e.message)             // => not a number: old
+      puts("giving up: ${e}")     // => giving up: not a number: old
+    }
   }
 }
 ```
@@ -3521,7 +3533,7 @@ Avant will look familiar from almost anywhere, and it differs on purpose in a ha
 
 - **Crystal and Ruby.** Yours already: `puts`, `size`, `push`, `nil`, blocks, `initialize` and `.new`, `Array(Int)`, `T?`, unions, `lib` and `fun`. Different: braces instead of `end`; `..` excludes its end and there is no `...`; no exceptions, no inheritance, no mixins; `Int` is 64-bit; `String#size` counts bytes; `h[k]` returns `V?` instead of raising; methods are private unless `pub`; macros are `quote` and a field walk, not a language.
 - **Go.** Yours already: structs with methods, byte strings, errors as values, no inheritance, channels, a 64-bit `int`. Different: an error is a member of the result type, passed up with `?` instead of `if err != nil`; overflow traps instead of wrapping; a missing key is `nil`, not a zero value; there are no interface values; what a task captures is checked, where a goroutine shares anything.
-- **Rust.** Yours already: `T?` is `Option<T>`, `T | E` is `Result<T, E>`, `?` propagates, `..` is exclusive, generics are monomorphized with trait-like bounds, things are private by default. Different: a garbage collector instead of ownership, so no lifetimes and no borrow checker; enums carry no data (a union member does) and `switch` does not take a union's member yet; no trait objects; overflow traps in release builds too.
+- **Rust.** Yours already: `T?` is `Option<T>`, `T | E` is `Result<T, E>`, `?` propagates, `..` is exclusive, generics are monomorphized with trait-like bounds, things are private by default. Different: a garbage collector instead of ownership, so no lifetimes and no borrow checker; enums carry no data (a union member does, and `switch` takes it apart as `match` does); no trait objects; overflow traps in release builds too.
 - **JavaScript, TypeScript and Python.** Yours already: `${}` interpolation, closures that capture by reference, no semicolons, types you rarely write. Different: compiled ahead of time and statically typed; integers are integers (`7 / 2` is `3`); no truthiness, no `undefined`, no exceptions; strings are bytes; threads instead of an event loop.
 - **C and C++.** Yours already: braces, value structs, the operator precedence (bitwise operators below comparisons included), C libraries one `lib` block away. Different: no manual memory, no headers, no preprocessor, no implicit conversions; what is undefined behavior in C (overflow, an index out of bounds) is a trap.
 - **Java, C#, Kotlin and Swift.** Yours already: classes as references, a collector, generics, optionals (Kotlin, Swift), value structs (C#, Swift). Different: no inheritance and no interfaces as values; no exceptions; `Int` is 64-bit where `int` is 32; an optional is opened with if-assign and `??`, not `?.` or `!!`.
@@ -3532,7 +3544,7 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 
 | Missing | Status | Today |
 | --- | --- | --- |
-| `switch` on a union's member, with ranges | decided | [a helper](#reading-the-error-itself) to read an error |
+| Ranges in `switch` labels (`case 0..10`); `case true` | decided | an `if` chain |
 | Module constants (`const max_depth = 64`) | decided | a function without arguments |
 | Inclusive range `a..=b` | decided | `a..b + 1` |
 | Digit separators (`1_000_000`), binary literals, character literals | decided | plain digits, hexadecimal, byte numbers |

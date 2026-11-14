@@ -10,11 +10,6 @@ lib ceil {
   fun ceil_sparse(path: String, n: Int): Int
 }
 
-fn read_failure(r: String | IoError): IoError? {
-  _ = r?
-  nil
-}
-
 fn main {
   args = argv()
   mode = args[1]
@@ -28,10 +23,9 @@ fn main {
       puts("could not make the sparse file")
       return
     }
-    if e = read_failure(file_read(path)) {
-      puts("errno ${e.errno}: ${e}")
-    } else {
-      puts("read a file past the ceiling")
+    switch file_read(path) {
+      case e: IoError { puts("errno ${e.errno}: ${e}") }
+      case String { puts("read a file past the ceiling") }
     }
     return
   } else if n = mode.to_i {
