@@ -1,5 +1,34 @@
 # Avant Language changelog
 
+## 0.43.0 - 2026-11-14
+
+### Added
+
+* `enum`: named members with numbers, `to_i`, `name`, `from_i`, `from_name`, `members`, methods, printing by name; `switch` over an enum by bare member labels, exhaustive without `else`; an enum marked `: Error` is a failure type; `avant bind` turns C enums into checked Avant enums.
+* `switch` on a `String` with string-literal labels.
+* `std.sync`: `Channel(T)` and `Mutex(T)` for any element type.
+* `avant version` and `avant --version`; `avant test --name PATTERN`.
+
+### Fixed
+
+* `std.http`: requests without `Host`, with two `Host` lines or with a repeated `Content-Length` are answered 400; `Response.header` refuses names and values that would split the response; a server with several loops survives WebSocket connections opening and closing together; registering a route while serving stops the program with a message instead of misrouting.
+* `std.http` client and WebSocket: `timeout_ms` covers the whole call; responses end where their framing says; HEAD and 304 have no body; non-UTF-8 bodies are sent; long or large WebSocket messages and handshakes are sent whole; closed connections answer as closed; deadlines ignore changes to the system clock.
+* A program started with SIGPIPE ignored still dies by SIGPIPE on a closed pipe; a failed write to standard output stops the program with a message and status 1.
+* Parameter defaults, imported generics and same-named types across modules resolve correctly.
+* A young collection no longer overflows the stack on a long chain of written old objects; a `Channel` or a `Mutex` no longer leaks C memory.
+* `avant test`: a failed file says how its process ended; JUnit reports stay valid XML; `.join` from a pool worker stops with a message.
+* The release archive is reproducible.
+
+### Changed
+
+* A `for` variable cannot be assigned; `Array(T).new(n, value)` with a reference `T` is refused, and `Array(T).new(n) { |i| ... }` builds each element.
+* Inside `Mutex.with` the guarded value cannot escape (passed, stored, returned or captured); as a statement it needs no trailing value, and `return`, `break`, `continue` and `?` release the lock. `Channel.send` refuses values that may not cross a task.
+* `fun` signatures accept only optional references as unions.
+* Every function probes its stack, so overflows through large frames always fault in the guard page.
+* Allocation and collection are cheaper: a full collection takes about a third of the instructions per live object, a young collection less than a third.
+* `AVANT_GC_VERIFY=1` and `AVANT_GC_STRESS=1` check more and run faster.
+* The release archive includes `examples/`, the license and the third-party notices.
+
 ## 0.42.0 - 2026-11-12
 
 ### Fixed
