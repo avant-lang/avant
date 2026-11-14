@@ -218,6 +218,28 @@ fn test_packages(c: Checks) {
       c.expect(false, "transitive binary exists")
     }
 
+    // One name reaching two commits (O284, Stage 29 W5c3): the app pins
+    // inner at its first commit (tag v1), outer2 asks for its second (v2).
+    app4 = "${base}/app4"
+    outer2 = "${base}/outer2"
+    pkg_mkdir(app4)
+    pkg_mkdir(outer2)
+    c.eq_int(pkg_git(inner, "tag", "v1", glog), 0, "git tag inner v1")
+    _ = file_write("${inner}/deep.av", "pub fn deep: String {\n  \"deep2\"\n}\n")
+    c.eq_int(pkg_git(inner, "add", "-A", glog), 0, "git add inner v2")
+    c.eq_int(pkg_git_commit(inner, "i2", glog), 0, "git commit inner v2")
+    c.eq_int(pkg_git(inner, "tag", "v2", glog), 0, "git tag inner v2")
+    _ = file_write("${outer2}/outer2.av", "import deep\npub fn outer2_msg: String {\n  deep()\n}\n")
+    _ = file_write("${outer2}/avant.toml", "[package]\nname = \"outer2\"\nversion = \"0.1.0\"\n\n[dependencies]\ninner = { git = \"${inner}\", rev = \"v2\" }\n")
+    c.eq_int(pkg_git(outer2, "init", "-q", glog), 0, "git init outer2")
+    c.eq_int(pkg_git(outer2, "add", "-A", glog), 0, "git add outer2")
+    c.eq_int(pkg_git_commit(outer2, "o2", glog), 0, "git commit outer2")
+    _ = file_write("${app4}/avant.toml", "[package]\nname = \"app4\"\nversion = \"0.1.0\"\n\n[dependencies]\ninner = { git = \"${inner}\", rev = \"v1\" }\nouter2 = { git = \"${outer2}\", rev = \"HEAD\" }\n")
+    two_log = "${base}/two.log"
+    c.expect(pkg_fetch(compiler, app4, false, two_log) != 0, "fetch of one name at two commits fails")
+    c.expect(str_has(file_read(two_log) ?? "", "avant fetch: dependency inner resolves to two different commits ("), "two commits: names the dependency")
+    c.expect(str_has(file_read(two_log) ?? "", "; a project uses one version of each dependency: pin the same commit for inner everywhere, then fetch again\n"), "two commits: says what to do")
+
     _ = file_write("${bad}/avant.toml", "[package]\nname = \"bad\"\nversion = \"0.1.0\"\n\n[dependencies]\nnope = { git = \"/nonexistent-avant-waveh\", rev = \"HEAD\" }\n")
     bad_log = "${base}/bad.log"
     bad_code = pkg_fetch(compiler, bad, false, bad_log)

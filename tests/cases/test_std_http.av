@@ -139,8 +139,8 @@ fn test_std_http(c: Checks) {
 
   if e = Http.get("https://example.com/") {
     c.expect(false, "https is HttpError")
-  } else {
-    c.expect(true, "https is HttpError")
+  } else err {
+    c.eq_str(err.message, "https is not supported yet: std.http speaks plain http:// only", "https is HttpError, saying what is supported")
   }
   if e = Http.get("ftp://example.com/") {
     c.expect(false, "ftp is HttpError")
@@ -155,8 +155,8 @@ fn test_std_http(c: Checks) {
   if wse = Ws.connect("wss://127.0.0.1:1/echo") {
     c.expect(false, "wss is HttpError")
     wse.close
-  } else {
-    c.expect(true, "wss is HttpError")
+  } else werr {
+    c.eq_str(werr.message, "wss is not supported yet: std.http speaks plain ws:// only", "wss is HttpError, saying what is supported")
   }
   if wse2 = Ws.connect("http://127.0.0.1:1/echo") {
     c.expect(false, "http scheme is HttpError for Ws")
