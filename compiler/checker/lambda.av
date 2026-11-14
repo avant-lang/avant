@@ -373,19 +373,55 @@ pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qu
     if saw_generic {
       checker_self.fail(expr.loc, "cannot infer type argument")
     } else {
-      // The lambda fits no function of that name (O257: it said
-      // "unknown function NAME").
-      list = buf_new()
+      // The functions of that name with a fn parameter where the lambda
+      // is: what makes them refuse the call is another argument (a
+      // non-generic fn parameter takes any lambda of its count; Stage 29
+      // W5c2, O764: it said "the block does not fit NAME"). One function:
+      // which argument and what it takes; several: each signature.
+      fits: Array(FuncSig) = []
       for i in 1..checker_self.functions.size {
         sig = checker_self.functions[i]
         if sig.name == expr.callee && checker_self.fn_candidate_q(sig.node, qual) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
+          fits.push(sig)
+        }
+      }
+      shown = expr.callee
+      if qual.size > 0 {
+        shown = "${qual}.${expr.callee}"
+      }
+      if fits.size == 1 {
+        tys: Array(Ty) = []
+        for k in 0..expr.args.size {
+          if deferred[k] == 1 && k < fits[0].params.size {
+            tys.push(fits[0].params[k])
+          } else {
+            tys.push(ctypes[k])
+          }
+        }
+        checker_self.fail_no_fit(expr.loc, shown, fits, tys)
+      } else {
+        list = buf_new()
+        for f in fits {
           if list.size > 0 {
             list.push_str(", ")
           }
-          list.push_str(checker_self.sig_text(expr.callee, sig))
+          list.push_str(checker_self.sig_text(shown, f))
         }
+        given = buf_new()
+        for k in 0..expr.args.size {
+          if k > 0 {
+            given.push_str(", ")
+          }
+          if deferred[k] == 1 && expr.args[k].kind == ex_name() {
+            given.push_str(expr.args[k].ident)
+          } else if deferred[k] == 1 {
+            given.push_str("a lambda")
+          } else {
+            given.push_str(ctypes[k].show)
+          }
+        }
+        checker_self.fail(expr.loc, "no overload of ${shown} takes (${given.to_s}): ${list.to_s}")
       }
-      checker_self.fail(expr.loc, "the block does not fit ${expr.callee}: ${list.to_s}")
     }
     return checker_self.t_int()
   }
