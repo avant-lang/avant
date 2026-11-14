@@ -98,6 +98,13 @@ fn rules: Array(PRule) {
   xs.push(rule("private-field", "expr", "Int", "import probe_mod\n\nfn main {\n  pb = PBox.new\n@\n}\n", "", "pb.secret", "pb.open", "is private to module probe_mod"))
   // README "Numbers": values of different number types do not mix.
   xs.push(rule("number-mix", "expr", "Int", "fn main {\n  pa: Int32 = 1\n  pn = 2\n@\n}\n", "", "pa + pn", "pn + pn", "binary operator expects matching types"))
+  // README "Enums" and "Switch" (Stage 29 W5a1, D292, D293, D327, D358).
+  esite = "enum Tok { a, b }\n\nenum PE: Error { bad }\n\nfn ef(n: Int): Int | PE {\n  if n > 0 {\n    return PE.bad\n  }\n  n\n}\n\nfn main {\n  t = Tok.from_i(probe_k()) ?? Tok.a\n@\n}\n"
+  xs.push(rule("enum-switch-missing", "stmt", "", esite, "", "switch t {\n  case a { puts(1) }\n}", "switch t {\n  case a { puts(1) }\n  case b { puts(2) }\n}", "switch over Tok does not cover b"))
+  xs.push(rule("enum-from-int", "stmt", "", esite, "", "pt: Tok = 1\nputs(pt)", "pt: Tok = Tok.from_i(1) ?? Tok.a\nputs(pt)", "expected Tok, got Int"))
+  xs.push(rule("enum-qualified-label", "stmt", "", esite, "", "switch t {\n  case Tok.a { puts(1) }\n  case b { puts(2) }\n}", "switch t {\n  case a { puts(1) }\n  case b { puts(2) }\n}", "write the member without its type in a case label"))
+  xs.push(rule("enum-else-beside-full", "stmt", "", esite, "", "switch t {\n  case a { puts(1) }\n  case b { puts(2) }\n  else { puts(3) }\n}", "switch t {\n  case a { puts(1) }\n  case b { puts(2) }\n}", "every member of Tok is named; remove the else"))
+  xs.push(rule("enum-error-dropped", "stmt", "", esite, "", "ef(1)", "_ = ef(1)", "drops a value that can be an error"))
   xs
 }
 
