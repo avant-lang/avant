@@ -646,6 +646,13 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
     if st.else_body.size > 0 || lw.lw_cov.on {
       b.at(bf)
       lw.cov_branch(st.loc)
+      if st.else_bind.size > 0 && st.else_body.size > 0 {
+        // `else e` (Stage 29 W5b1): e holds the failure.
+        lw.bind_failure(st.else_bind, src, uty, fails, st.loc)
+        if lw.failed {
+          return
+        }
+      }
       lw.lower_stmts(st.else_body)
       lw.goto_if_open(join, st.loc)
     }
@@ -658,7 +665,7 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
 // One binding of an if-assign or a chain element (Stage 29 W4a): the
 // union once; on a failure tag to bfail, else on to a fresh block where
 // the name holds the success part (the builder is left there).
-pub fn (lw: MirLower) lower_cond_bind(el: Stmt, bfail: Int) {
+pub fn (lw: MirLower) lower_cond_bind(el: Stmt, bfail: Int): Int {
   b = lw.lw_b
   if c = el.cond, uty = c.ty {
     success = ty_without_nil(uty)
@@ -670,7 +677,7 @@ pub fn (lw: MirLower) lower_cond_bind(el: Stmt, bfail: Int) {
     sty = lw.ty_at(success, el.loc, "a binding")
     u = lw.lower_expr(c)
     if lw.failed {
-      return
+      return -1
     }
     lw.at(el.loc)
     src = lw.hold(u, cty)
@@ -684,28 +691,29 @@ pub fn (lw: MirLower) lower_cond_bind(el: Stmt, bfail: Int) {
     b.at(bok)
     v = lw.unwrap(src, uty, success, el.loc)
     lw.bind_name(el.bind, success, sty, v, el.loc, false)
-    return
+    return src
   }
   lw.refuse(el.loc, "this if binding")
+  -1
 }
 
 // One element of a condition: a binding, or a Bool test whose false goes
 // to bfail; the builder is left where it holds.
-pub fn (lw: MirLower) lower_cond_element(el: Stmt, bfail: Int) {
+pub fn (lw: MirLower) lower_cond_element(el: Stmt, bfail: Int): Int {
   if el.bind.size > 0 {
-    lw.lower_cond_bind(el, bfail)
-    return
+    return lw.lower_cond_bind(el, bfail)
   }
   if c = el.cond {
     cv = lw.lower_expr(c)
     if lw.failed {
-      return
+      return -1
     }
     bok = lw.lw_b.block
     lw.at(el.loc)
     lw.lw_b.branch(cv, bok, bfail)
     lw.lw_b.at(bok)
   }
+  -1
 }
 
 // An `if` with a condition list, or one whose branches give a value
@@ -722,12 +730,12 @@ pub fn (lw: MirLower) lower_if_general(st: Stmt, mode: Int, dest: Int, want: Ty?
     join = b.block
   }
   for el in st.pre {
-    lw.lower_cond_element(el, belse)
+    _ = lw.lower_cond_element(el, belse)
     if lw.failed {
       return
     }
   }
-  lw.lower_cond_element(st, belse)
+  src = lw.lower_cond_element(st, belse)
   if lw.failed {
     return
   }
@@ -737,6 +745,16 @@ pub fn (lw: MirLower) lower_if_general(st: Stmt, mode: Int, dest: Int, want: Ty?
   if has_else {
     b.at(belse)
     lw.cov_branch(st.loc)
+    if st.else_bind.size > 0 && st.else_body.size > 0 && src >= 0 {
+      // `else e` (Stage 29 W5b1): only the binding's failure reaches
+      // belse (the checker refuses it beside a condition list).
+      if c = st.cond, uty = c.ty {
+        lw.bind_failure(st.else_bind, src, uty, ty_failures(uty), st.loc)
+        if lw.failed {
+          return
+        }
+      }
+    }
     lw.lower_branch(st.else_body, mode, dest, want)
     lw.goto_if_open(join, st.loc)
   }

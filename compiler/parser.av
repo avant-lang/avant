@@ -1818,6 +1818,7 @@ pub class Parser {
     self.skip_newlines
     then_body = self.parse_block
     else_body: Array(Stmt) = []
+    else_bind = ""
     self.skip_newlines
     if self.current.kind == tk_else() {
       self.bump
@@ -1825,10 +1826,16 @@ pub class Parser {
       if self.current.kind == tk_if() {
         else_body.push(self.parse_if)
       } else {
+        if self.current.kind == tk_ident() {
+          // `else e { }` (Stage 29 W5b1, D352): the failure's name.
+          else_bind = self.bump.value
+          self.skip_newlines
+        }
         else_body = self.parse_block
       }
     }
     s = Stmt.new(st_if(), loc)
+    s.else_bind = else_bind
     s.cond = cond
     s.then_body = then_body
     s.else_body = else_body

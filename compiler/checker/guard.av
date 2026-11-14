@@ -407,6 +407,15 @@ pub fn (checker_self: Checker) guard_stmt(w: GuardWalk, st: Stmt) {
     }
     checker_self.guard_body(w, st.then_body)
     w.pop
+    if c3 = st.cond, st.else_bind.size > 0 {
+      // `else e` (Stage 29 W5b1): the failure is reached when the
+      // condition's value is.
+      w.push
+      w.declare(st.else_bind, checker_self.guard_bad(w, c3))
+      checker_self.guard_body(w, st.else_body)
+      w.pop
+      return
+    }
     checker_self.guard_body(w, st.else_body)
     return
   }

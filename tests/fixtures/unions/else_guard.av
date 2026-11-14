@@ -1,6 +1,8 @@
-// The else guard (Stage 29 W5b1, D352): `n = f() else e { ...; leave }`.
-// On a failure the block runs with e holding it and leaves; after the
-// statement n has the success type. Run golden in every collector mode.
+// Reading a failure where it is handled (Stage 29 W5b1, D352). The else
+// guard, `n = f() else e { ...; leave }`: on a failure the block runs
+// with e holding it and leaves; after the statement n has the success
+// type. The else of an if-assign, `if v = f() { } else e { }`: the else
+// block reads the failure. Run golden in every collector mode.
 
 class BadLine: Error {
   message: String
@@ -132,6 +134,55 @@ fn last_good(xs: Array(String)): Int {
   last
 }
 
+// The else of an if-assign: a statement, a function's value, a value.
+fn report(lines: Array(String)) {
+  for s in lines {
+    if n = parse(s) {
+      puts("read ${n}")
+    } else e {
+      puts("skipped: ${e}")
+    }
+  }
+}
+
+fn describe(h: Hash(String, Int), k: String): String {
+  if v = lookup(h, k) {
+    "${k}=${v}"
+  } else e {
+    switch e {
+      case m: Missing { "${m}" }
+      case BadLine { "bad" }
+      case nil { "nothing" }
+    }
+  }
+}
+
+fn widths(xs: Array(String)): Array(Int) {
+  out: Array(Int) = []
+  for x in xs {
+    w = if c = code(x) {
+      c.size
+    } else e {
+      -e.to_i - 1
+    }
+    out.push(w)
+  }
+  out
+}
+
+fn later(xs: Array(String)): Array(String) {
+  msgs: Array(String) = []
+  for x in xs {
+    if n = parse(x) {
+      msgs.push("${n}")
+    } else e {
+      say = { || "late: ${e.message}" }
+      msgs.push(say())
+    }
+  }
+  msgs
+}
+
 fn main {
   puts(sum(["1", "x", "30", "y"]))
   puts(doubled("21") ?? -1)
@@ -149,4 +200,15 @@ fn main {
   puts(check_all(["1", "2"]))
   puts(check_all(["1", "no"]))
   puts(last_good(["3", "x", "5", "yy"]))
+  report(["8", "eight"])
+  puts(describe(h, "a"))
+  puts(describe(h, "zz"))
+  puts(describe(h, "bad"))
+  puts(describe(h, ""))
+  for w in widths(["ab", "", "abcdef"]) {
+    puts(w)
+  }
+  for m in later(["1", "one"]) {
+    puts(m)
+  }
 }

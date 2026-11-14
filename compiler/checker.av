@@ -663,6 +663,10 @@ pub class Checker {
       cap_kill_assigned_in(stmt.then_body)
       pop_guard_facts(saved_gcap, saved_gnn, saved_gpos, saved_gne)
       pop_loop_facts(saved_facts)
+      if stmt.else_bind.size > 0 {
+        check_else_bind(stmt)
+        return
+      }
       if stmt.else_body.size > 0 {
         check_block(stmt.else_body, expected, false)
         cap_kill_assigned_in(stmt.else_body)
@@ -873,7 +877,14 @@ pub class Checker {
       bind(stmt.bind, success)
       check_body(stmt.then_body, expected, false)
       self.pop_scope
-      if stmt.else_body.size > 0 {
+      if stmt.else_bind.size > 0 {
+        if fty = check_else_bind(stmt) {
+          self.push_scope
+          bind(stmt.else_bind, fty)
+          check_body(stmt.else_body, expected, false)
+          self.pop_scope
+        }
+      } else if stmt.else_body.size > 0 {
         check_block(stmt.else_body, expected, false)
       }
       if at_tail && !expected.is_void {
@@ -886,6 +897,26 @@ pub class Checker {
         }
       }
     }
+  }
+
+  // `if v = f() { } else e { }` (Stage 29 W5b1, D352): the failure the
+  // else block reads, of the if-assign's one binding (checked first), or
+  // nil after an error: a condition list has several failures, and an if
+  // without a binding has none.
+  pub fn check_else_bind(stmt: Stmt): Ty? {
+    n = stmt.else_bind
+    if stmt.pre.size > 0 {
+      fail(stmt.loc, "else ${n} reads the failure of an if-assign's one binding, and this condition has several elements: bind them one by one, or switch over the value")
+      return nil
+    }
+    if stmt.bind.size == 0 {
+      fail(stmt.loc, "else ${n} names the failure of an if-assign (if v = f() { } else ${n} { }); this if binds nothing")
+      return nil
+    }
+    if c = stmt.cond, ct = c.ty {
+      return else_failure(ct, c.loc, "else ${n}")
+    }
+    nil
   }
 
   // A module name used as a bare qualifier that is also a method of the
@@ -960,6 +991,10 @@ pub class Checker {
     check_cond_element(stmt)
     check_body(stmt.then_body, expected, false)
     self.pop_scope
+    if stmt.else_bind.size > 0 {
+      check_else_bind(stmt)
+      return
+    }
     if stmt.else_body.size > 0 {
       check_block(stmt.else_body, expected, false)
     }
@@ -4673,7 +4708,17 @@ pub class Checker {
     check_cond_element(stmt)
     t1 = check_value_branch(stmt.then_body, has_want, want)
     self.pop_scope
-    t2 = check_value_branch(stmt.else_body, has_want, want)
+    t2: Ty? = nil
+    if stmt.else_bind.size > 0 {
+      if fty = check_else_bind(stmt) {
+        self.push_scope
+        bind(stmt.else_bind, fty)
+        t2 = check_value_branch(stmt.else_body, has_want, want)
+        self.pop_scope
+      }
+    } else {
+      t2 = check_value_branch(stmt.else_body, has_want, want)
+    }
     if self.has_err {
       return t_int()
     }

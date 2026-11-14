@@ -63,6 +63,23 @@ fn cases: Array(RCase) {
   xs.push(accepted("guard-field-target", pre + "class Acc {\n  pub n: Int = 0\n}\nfn main {\n  a = Acc.new\n  for s in [\"3\", \"x\"] {\n    a.n = f(s) else e {\n      puts(\"kept \${a.n}: \${e.message}\")\n      break\n    }\n  }\n  puts(a.n)\n}\n", "kept 3: bad\n3\n"))
   xs.push(accepted("guard-discard", pre + "fn main {\n  for s in [\"1\", \"x\"] {\n    _ = f(s) else e {\n      puts(\"rejected \${s}\")\n      continue\n    }\n    puts(\"ok \${s}\")\n  }\n}\n", "ok 1\nrejected x\n"))
   xs.push(accepted("guard-nested-leave", pre + "fn h(s: String): String {\n  n = f(s) else e {\n    if s == \"\" {\n      return \"empty\"\n    } else {\n      return e.message\n    }\n  }\n  \"\${n}\"\n}\nfn main {\n  puts(h(\"\"))\n  puts(h(\"w\"))\n  puts(h(\"3\"))\n}\n", "empty\nbad\n3\n"))
+  xs.push(accepted("ifelse-reads", pre + "fn main {\n  for s in [\"4\", \"x\"] {\n    if n = f(s) {\n      puts(n)\n    } else e {\n      puts(\"failed: \${e.message}\")\n    }\n  }\n}\n", "4\nfailed: bad\n"))
+  xs.push(accepted("ifelse-union", pre + "fn main {\n  for s in [\"4\", \"x\", \"w\", \"\"] {\n    if n = g(s) {\n      puts(n)\n    } else e {\n      switch e {\n        case b: Bad { puts(b.message) }\n        case w: Worse { puts(w.message) }\n        case nil { puts(\"nil\") }\n      }\n    }\n  }\n}\n", "4\nbad\nworse\nnil\n"))
+  xs.push(accepted("ifelse-value-tail", pre + "fn h(s: String): String {\n  if n = f(s) {\n    \"n\${n}\"\n  } else e {\n    \"e:\${e.message}\"\n  }\n}\nfn main {\n  puts(h(\"3\"))\n  puts(h(\"q\"))\n}\n", "n3\ne:bad\n"))
+  xs.push(accepted("ifelse-value", pre + "fn main {\n  for s in [\"3\", \"q\"] {\n    t = if n = f(s) {\n      n * 10\n    } else e {\n      e.message.size\n    }\n    puts(t)\n  }\n}\n", "30\n3\n"))
+  xs.push(accepted("ifelse-shadows", pre + "fn main {\n  e = 7\n  if n = f(\"x\") {\n    puts(n)\n  } else e {\n    puts(e.message)\n  }\n  puts(e)\n}\n", "bad\n7\n"))
+  xs.push(accepted("ifelse-plain-else", pre + "fn main {\n  if n = f(\"x\") {\n    puts(n)\n  } else {\n    puts(\"no\")\n  }\n}\n", "no\n"))
+  xs.push(refused("ifelse-outside", pre + "fn main {\n  if n = f(\"x\") {\n    puts(n)\n  } else e {\n    puts(1)\n  }\n  puts(e.message)\n}\n", "unknown name e", "26:8"))
+  xs.push(refused("ifelse-in-then", pre + "fn main {\n  if n = f(\"x\") {\n    puts(e.message)\n  } else e {\n    puts(1)\n  }\n}\n", "unknown name e", "22:10"))
+  xs.push(refused("ifelse-no-binding", pre + "fn main {\n  x = 1\n  if x > 0 {\n    puts(x)\n  } else e {\n    puts(0)\n  }\n}\n", "else e names the failure of an if-assign (if v = f() { } else e { }); this if binds nothing", "22:3"))
+  xs.push(refused("ifelse-chain", pre + "fn main {\n  if a = f(\"1\"), b = f(\"2\") {\n    puts(a + b)\n  } else e {\n    puts(0)\n  }\n}\n", "else e reads the failure of an if-assign's one binding, and this condition has several elements", "21:3"))
+  xs.push(refused("ifelse-chain-test", pre + "fn main {\n  if a = f(\"1\"), a > 0 {\n    puts(a)\n  } else e {\n    puts(0)\n  }\n}\n", "this condition has several elements", "21:3"))
+  xs.push(refused("ifelse-nil-only", pre + "fn main {\n  if n = \"3\".to_i {\n    puts(n)\n  } else e {\n    puts(0)\n  }\n}\n", "else e on Int?: its only failure is nil, which carries nothing to read", "21:13"))
+  xs.push(refused("ifelse-no-failure", pre + "fn h(x: Int | String) {\n  if n = x {\n    puts(1)\n  } else e {\n    puts(0)\n  }\n}\nfn main {\n  h(1)\n}\n", "if-assign on Int | String: it has no failure member", "21:10"))
+  xs.push(refused("ifelse-type", pre + "fn main {\n  if n = f(\"x\") {\n    puts(n)\n  } else e {\n    x: Int = e\n    puts(x)\n  }\n}\n", "cannot assign Bad to Int", "24:14"))
+  xs.push(refused("ifelse-value-type", pre + "fn h(s: String): Int {\n  if n = f(s) {\n    n\n  } else e {\n    e\n  }\n}\nfn main {\n  puts(h(\"1\"))\n}\n", "expected Int, got Bad", "24:5"))
+  xs.push(refused("ifelse-escapes-with", "import std.sync\nclass PBox: Error {\n  pub message: String = \"p\"\n}\nfn main {\n  u: Int | PBox = PBox.new\n  m = Mutex(Int | PBox).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    if n = b {\n      puts(n)\n    } else e {\n      keep.push(e)\n    }\n  }\n  puts(keep.size)\n}\n", "Mutex.with: this argument is the guarded value or a reference reached from it (PBox)", "13:17"))
+  xs.push(accepted("ifelse-plain-with", "import std.sync\nclass PBox: Error {\n  pub message: String = \"p\"\n}\nfn main {\n  u: Int | PBox = PBox.new\n  m = Mutex(Int | PBox).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    if n = b {\n      puts(n)\n    } else e {\n      keep.push(PBox.new)\n    }\n  }\n  puts(keep.size)\n}\n", "1\n"))
   xs
 }
 
