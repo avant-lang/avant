@@ -19,10 +19,13 @@
 //                and O541) are checker/guard.av's.
 //
 // Both stand on the runtime's gates (runtime/avant_task.c): a gate is a
-// number held in the object; the runtime keeps state for it only while a
-// thread locks or waits on it, so nothing is allocated per object and
-// nothing needs freeing (O532). The gate builtins (avant_gate_new, lock,
-// unlock, wait, broadcast) are names of `std` modules only (O436).
+// word in the object's `gate` field, which the gate builtins take (the
+// compiler passes the field's address, O690); an uncontended lock and
+// unlock are one atomic operation each on that word, and the runtime
+// keeps state for a gate only while a thread waits on it, so nothing is
+// allocated per object and nothing needs freeing (O532). The gate
+// builtins (avant_gate_new, lock, unlock, wait, broadcast) are names of
+// `std` modules only (O436).
 //
 // T is any type (O232): the slots are T?, so a class or another Channel
 // or Mutex is an element like an Int. What a send may carry is D35's

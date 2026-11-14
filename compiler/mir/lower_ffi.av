@@ -563,10 +563,14 @@ pub fn (lw: MirLower) lower_pin(st: Stmt) {
 pub fn (lw: MirLower) unpin(h: Int) {
   args: Array(MOperand) = []
   if h < -1 {
-    // A `Mutex.with` block's lock, its gate in local -2 - h
+    // A `Mutex.with` block's lock, its mutex in local -2 - h
     // (lower_task.av lower_mutex_with).
-    args.push(lw.lw_b.copy_local(-2 - h))
-    lw.lw_b.call(-1, "avant_gate_unlock", args)
+    m = -2 - h
+    gi = 0
+    if g = lw.lw_ffi.with_gate.get(m) {
+      gi = g
+    }
+    lw.lw_b.call(-1, "avant_gate_unlock", lw.gate_args(m, gi))
     return
   }
   if h < 0 {

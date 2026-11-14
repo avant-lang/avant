@@ -4345,6 +4345,13 @@ pub class Checker {
       got = check_expr_as(expr.args[0], t_uint64())
       if !got.is_uint64 {
         fail(expr.args[0].loc, "${expr.callee} expects UInt64")
+        return t_void()
+      }
+      // The gate is a word in its object: the call takes the field, whose
+      // address the lowering passes (O690, Stage 29 W8Cb).
+      a = expr.args[0]
+      if !(a.kind == ex_field() || (a.kind == ex_name() && a.implicit_field)) {
+        fail(a.loc, "${expr.callee} takes the object's gate field (a UInt64 field holding avant_gate_new())")
       }
       return t_void()
     }

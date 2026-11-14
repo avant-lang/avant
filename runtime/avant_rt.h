@@ -495,11 +495,13 @@ void *avant_spawn(void *fn, void *arg);
 avant_int avant_join(void *handle);
 void avant_parallel_for(avant_int n, void *fn, void *ctx);
 uint64_t avant_gate_new(void);
-void avant_gate_lock(uint64_t gate);
-void avant_gate_unlock(uint64_t gate);
-void avant_gate_wait(uint64_t gate);
-void avant_gate_signal(uint64_t gate);
-void avant_gate_broadcast(uint64_t gate);
+/* The gate functions take the object holding the gate word and the word's
+ * byte offset in it (Stage 29 W8Cb, O690; avant_task.c). */
+void avant_gate_lock(void *obj, uint64_t off);
+void avant_gate_unlock(void *obj, uint64_t off);
+void avant_gate_wait(void *obj, uint64_t off);
+void avant_gate_signal(void *obj, uint64_t off);
+void avant_gate_broadcast(void *obj, uint64_t off);
 int64_t avant_clock_ms(void);
 int64_t avant_clock_us(void);
 
