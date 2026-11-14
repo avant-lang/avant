@@ -319,6 +319,7 @@ fn test_user_test(c: Checks) {
     help_sh = "#!/bin/sh\n${ut_quote(compiler)} test --help > ${ut_quote(root)}/test-help.log 2>&1; echo $? > ${ut_quote(help_rc)}\n"
     c.eq_int(ut_sh(help_sh, help_rc), 0, "O235: avant test --help exits 0")
     c.expect(ut_has(file_read("${root}/test-help.log") ?? "", "\n--junit PATH   write a JUnit report: one case per check std.testing records, one per file that records none, and one for a failed file whose checks all passed\n"), "O235: avant test --help says what --junit's cases are")
+    c.expect(ut_has(file_read("${root}/test-help.log") ?? "", "\n--name PATTERN   run only the checks, t.test bodies and t.parallel bodies whose names contain PATTERN\n"), "O330: avant test --help names --name")
 
     // O569 (Stage 29 W-FIX1e): seven writes of the compiler printed
     // `cannot write PATH` and dropped the reason; each now prints it
@@ -421,6 +422,66 @@ fn test_user_test(c: Checks) {
     c.eq_int(process_run_out("/usr/bin/env", ["-u", "AVANT_ROOT", lexe, "dump", "${ldir}/b64.av"], "${ldir}/gone.log") ?? -1, 1, "O617: a copy whose recorded library is gone fails")
     c.expect(ut_has(file_read("${ldir}/gone.log") ?? "", "cannot find std.base64: ${lexe}.versions.txt names the library ${ldir}/gone/lib, which does not exist; set AVANT_ROOT to the checkout whose lib/ this compiler should read"), "O617: and says which record named which library")
     rm_f(lexe)
+
+    // O330 (VALK-TM2): `avant test FILE --name PATTERN` runs only the
+    // checks, `t.test` bodies and `t.parallel` bodies whose names contain
+    // PATTERN (a selected body runs whole); the JUnit report lists only
+    // those; a pattern that matches nothing is an error naming the file
+    // and the pattern. One file holds a check, a `t.test` and a
+    // `t.parallel` of each kind, each run is one selection.
+    nm_dir = "${root}/o330"
+    mkdir_p("${nm_dir}/tests")
+    _ = file_write("${nm_dir}/avant.toml", "[package]\nname = \"o330\"\nversion = \"0.1.0\"\n")
+    _ = file_write("${nm_dir}/tests/test_pick.av", "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.check(true, \"alpha check\")\n  t.check_eq(2, 2, \"beta check\")\n  t.test(\"gamma test\") {\n    t.check(true, \"inside gamma\")\n  }\n  t.test(\"delta test\") {\n    t.check(true, \"inside delta\")\n  }\n  t.parallel(\"epsilon par\") {\n    t.check(true, \"inside epsilon\")\n  }\n  t.parallel(\"zeta par\") {\n    t.check(true, \"inside zeta\")\n  }\n  t.finish\n}\n")
+    _ = file_write("${nm_dir}/tests/test_other.av", "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.check(true, \"other check\")\n  t.finish\n}\n")
+    nm_pats = ["alpha", "gamma", "epsilon", "check"]
+    nm_want = ["alpha check", "inside gamma", "inside epsilon", "alpha check beta check"]
+    nm_what = ["one check", "one t.test body", "one t.parallel body", "every name that contains the pattern"]
+    all_names = ["alpha check", "beta check", "inside gamma", "inside delta", "inside epsilon", "inside zeta"]
+    for k in 0..nm_pats.size {
+      nm_rc = "${nm_dir}/run-${k}.rc"
+      nm_log = "${nm_dir}/run-${k}.log"
+      nm_xml = "${nm_dir}/run-${k}.xml"
+      nm_sh = "#!/bin/sh\ncd ${ut_quote(nm_dir)} && ${ut_quote(compiler)} test tests/test_pick.av --name ${ut_quote(nm_pats[k])} --junit ${ut_quote(nm_xml)} > ${ut_quote(nm_log)} 2>&1; echo $? > ${ut_quote(nm_rc)}\n"
+      c.eq_int(ut_sh(nm_sh, nm_rc), 0, "O330: --name ${nm_pats[k]} (${nm_what[k]}) passes")
+      nm_text = file_read(nm_log) ?? ""
+      nm_report = file_read(nm_xml) ?? ""
+      wants = " ${nm_want[k]} "
+      shown = true
+      hidden = true
+      listed_ok = true
+      unlisted_ok = true
+      for nm in all_names {
+        if ut_has(wants, " ${nm} ") {
+          shown = shown && ut_has(nm_text, "PASS ${nm}\n")
+          listed_ok = listed_ok && ut_has(nm_report, "<testcase name=\"${nm}\"")
+        } else {
+          hidden = hidden && !ut_has(nm_text, "PASS ${nm}\n")
+          unlisted_ok = unlisted_ok && !ut_has(nm_report, "<testcase name=\"${nm}\"")
+        }
+      }
+      c.expect(shown && hidden, "O330: --name ${nm_pats[k]} runs ${nm_what[k]} and nothing else")
+      c.expect(listed_ok && unlisted_ok, "O330: --name ${nm_pats[k]}: the JUnit report lists only what ran")
+      c.expect(ut_has(nm_text, "ok tests/test_pick.av\n") && ut_has(nm_text, "0 failed, 1 passed\n"), "O330: --name ${nm_pats[k]}: the file is reported")
+    }
+    // Several files: the one where nothing matches is not reported.
+    nm_rc = "${nm_dir}/two.rc"
+    nm_sh = "#!/bin/sh\ncd ${ut_quote(nm_dir)} && ${ut_quote(compiler)} test --name=gamma > ${ut_quote(nm_dir)}/two.log 2>&1; echo $? > ${ut_quote(nm_rc)}\n"
+    c.eq_int(ut_sh(nm_sh, nm_rc), 0, "O330: --name=PATTERN over a walk passes")
+    nm_text = file_read("${nm_dir}/two.log") ?? ""
+    c.expect(ut_has(nm_text, "ok tests/test_pick.av\n") && !ut_has(nm_text, "tests/test_other.av") && ut_has(nm_text, "0 failed, 1 passed\n"), "O330: a file where nothing matches is not reported or counted")
+    // The errors: a pattern that matches nothing, in one file and in a
+    // walk; a missing, an empty and a repeated --name.
+    nm_errs = ["test tests/test_pick.av --name nothing", "test --name nothing", "test tests/test_pick.av --name", "test tests/test_pick.av --name=", "test tests/test_pick.av --name alpha --name beta"]
+    nm_err_want = ["--name nothing matches no check, test or parallel test in tests/test_pick.av\n", "--name nothing matches no check, test or parallel test in the 2 files: tests/test_other.av, tests/test_pick.av\n", "--name needs a pattern\n", "--name needs a pattern that is not empty\n", "--name is given twice\n"]
+    nm_err_what = ["no match in the file", "no match in a walk", "--name without a pattern", "an empty pattern", "two --name flags"]
+    for k in 0..nm_errs.size {
+      nm_rc = "${nm_dir}/err-${k}.rc"
+      nm_log = "${nm_dir}/err-${k}.log"
+      nm_sh = "#!/bin/sh\ncd ${ut_quote(nm_dir)} && ${ut_quote(compiler)} ${nm_errs[k]} > ${ut_quote(nm_log)} 2>&1; echo $? > ${ut_quote(nm_rc)}\n"
+      c.eq_int(ut_sh(nm_sh, nm_rc), 1, "O330: ${nm_err_what[k]} is an error")
+      c.expect(ut_has(file_read(nm_log) ?? "", nm_err_want[k]), "O330: ${nm_err_what[k]} says ${nm_err_want[k].strip()}")
+    }
 
     fetch_body = "[package]\nname = \"fetch\"\nversion = \"0.1.0\"\n\n[test]\ndir = \"tests\"\nexclusive = [\"tests/test_bench.av\"]\n"
     _ = file_write("${root}/fetch/avant.toml", fetch_body)
