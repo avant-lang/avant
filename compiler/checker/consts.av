@@ -705,3 +705,94 @@ pub fn (checker_self: Checker) check_const_label(label: CaseLabel, disc: Ty): Bo
   }
   false
 }
+
+// The values of an enum whose members name constants (Stage 29 W5a3,
+// O726: `enum Status { ok = http_ok, created }`), computed once the
+// constants are: from the first such member on, each takes its
+// constant's value, its literal, or the previous plus one, within
+// Int32 and distinct (the parser checked the members before it); the
+// labels of the enum's from_i are given the values.
+pub fn (checker_self: Checker) check_enum_consts {
+  for sdef in checker_self.program.structs {
+    if decl = sdef.enum_of, decl.first_named >= 0 {
+      next = 0
+      if decl.first_named > 0 {
+        next = decl.vals[decl.first_named - 1] + 1
+      }
+      for i in decl.first_named..decl.names.size {
+        value = next
+        loc = decl.locs[i]
+        ok = true
+        if decl.val_kinds[i] == 2 {
+          cname = decl.val_names[i]
+          cv: ConstVal? = nil
+          if decl.val_quals[i].size > 0 {
+            cname = "${decl.val_quals[i]}.${decl.val_names[i]}"
+            cv = checker_self.find_qualified_const(decl.val_quals[i], decl.val_names[i], sdef.mod_name)
+          } else {
+            cv = checker_self.find_const(decl.val_names[i], sdef.mod_name, loc)
+          }
+          if c = cv {
+            if !checker_self.const_value(c, loc) {
+              ok = false
+            } else if c.kind == cv_int() && c.iv >= -2147483648 && c.iv <= 2147483647 {
+              value = c.iv
+            } else if c.kind == cv_u64() && c.uv <= 2147483647u64 {
+              value = c.uv.to_i
+            } else if c.kind == cv_int() || c.kind == cv_u64() {
+              checker_self.fail(loc, "the value of ${decl.names[i]}, the constant ${cname} = ${cv_text(c)}, does not fit in Int32")
+              ok = false
+            } else {
+              checker_self.fail(loc, "the constant ${cname} = ${cv_text(c)} is not an integer: an enum member's value is an integer literal or an integer constant")
+              ok = false
+            }
+          } else {
+            checker_self.fail(loc, "${cname} is not a constant: an enum member's value is an integer literal or a constant")
+            ok = false
+          }
+        } else if decl.val_kinds[i] == 1 {
+          value = decl.vals[i]
+        } else if next > 2147483647 {
+          checker_self.fail(loc, "the value of ${decl.names[i]} does not fit in Int32")
+          ok = false
+        }
+        if !ok {
+          value = 0
+        } else {
+          for j in 0..i {
+            if decl.vals[j] == value {
+              checker_self.fail(loc, "members ${decl.names[j]} and ${decl.names[i]} of ${sdef.name} have the same value ${value}")
+            }
+          }
+        }
+        decl.vals[i] = value
+        next = value + 1
+      }
+      // from_i's switch (enums.av: one arm per member, in order), as the
+      // expansion left it in the enum's methods.
+      for m in sdef.methods {
+        if m.name == "from_i" && m.type_method {
+          for st in m.body {
+            if st.kind == st_expr() {
+              if sw = st.expr, sw.kind == ex_switch() && sw.cases.size == decl.vals.size {
+                for k in 0..sw.cases.size {
+                  if sw.cases[k].labels.size == 1 {
+                    l = sw.cases[k].labels[0]
+                    v = decl.vals[k]
+                    l.int_val = v
+                    l.neg = v < 0
+                    if v < 0 {
+                      l.bits = (0 &- v).wrap_u64
+                    } else {
+                      l.bits = v.to_u64
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

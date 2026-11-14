@@ -451,7 +451,20 @@ pub fn dump_program(program: Program): String {
         buf.push_str(" (")
         buf.push_str(decl.names[i])
         buf.push_str(" ")
-        buf.push_fmt_i(decl.vals[i])
+        if decl.first_named >= 0 && i >= decl.first_named && decl.val_kinds[i] != 1 {
+          // Computed by the checker (O726): the constant, or the next.
+          if decl.val_kinds[i] == 2 {
+            if decl.val_quals[i].size > 0 {
+              buf.push_str(decl.val_quals[i])
+              buf.push_str(".")
+            }
+            buf.push_str(decl.val_names[i])
+          } else {
+            buf.push_str("next")
+          }
+        } else {
+          buf.push_fmt_i(decl.vals[i])
+        }
         buf.push_str(")")
       }
       buf.push_str(")")

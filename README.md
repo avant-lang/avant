@@ -737,7 +737,7 @@ fn main {
 - A member is written qualified, `Tok.eof`, everywhere except a [`case` label](#switch). Members are separated by commas or line breaks, a trailing comma allowed; a member's name is lower-case snake_case (a capital first letter is refused: a capital means a type).
 - An enum is its own type: an `Int` is not a `Tok` and a `Tok` is not an `Int`. `==` and `!=` compare two values of one enum; there is no arithmetic and no `<`.
 - What every enum has: `t.to_i` (its number), `t.name` (the member's exact name, as a `String`), `Tok.from_i(n)` and `Tok.from_name(s)` (a `Tok?`: `nil` when no member has that number or that exact name) and `Tok.members` (a new `Array(Tok)` in declaration order). `puts(t)` and `"${t}"` print the member's name.
-- Values are distinct and fit in `Int32`; a value may be negative (`low = -2`).
+- Values are distinct and fit in `Int32`; a value may be negative (`low = -2`) or a [constant](#constants) (`ok = http_ok`; the members after it count from its value).
 - An enum has no zero value: a field of an enum type has a default (`kind: Tok = Tok.eof`) or is set in `initialize`, and `Array(Tok).new(n)` needs its value (`Array(Tok).new(n, Tok.eof)`).
 - `fn` methods follow the members, with `self` the value:
 

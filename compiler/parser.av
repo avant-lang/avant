@@ -906,6 +906,9 @@ pub class Parser {
       }
       value = next
       fits = true
+      vkind = 0
+      vname = ""
+      vqual = ""
       if match_tok(tk_eq()) {
         self.skip_newlines
         neg = false
@@ -913,39 +916,60 @@ pub class Parser {
           neg = true
           self.bump
         }
-        if self.current.kind != tk_integer() {
-          fail(self.current.loc, "an enum member's value is an integer literal")
+        if self.current.kind == tk_ident() && !neg {
+          // A module constant (Stage 29 W5a3, O726): the checker computes
+          // this value and the ones after it (check_enum_consts).
+          vkind = 2
+          vname = self.bump.value
+          if self.current.kind == tk_dot() {
+            self.bump
+            vqual = vname
+            vname = self.take_name_after_dot.value
+          }
+          if decl.first_named < 0 {
+            decl.first_named = decl.names.size
+          }
+          value = 0
+        } else if self.current.kind != tk_integer() {
+          fail(self.current.loc, "an enum member's value is an integer literal or a constant")
           break
-        }
-        vt = self.bump
-        if parse_int_tok(vt) {
-          if self.int_suffix.size != 0 {
-            fail(vt.loc, "an enum member's value is an integer literal without a suffix")
+        } else {
+          vkind = 1
+          vt = self.bump
+          if parse_int_tok(vt) {
+            if self.int_suffix.size != 0 {
+              fail(vt.loc, "an enum member's value is an integer literal without a suffix")
+            }
+            bits = self.int_bits
+            if (neg && bits > 2147483648u64) || (!neg && bits > 2147483647u64) {
+              fits = false
+            } else if neg {
+              value = 0 - bits.to_i()
+            } else {
+              value = bits.to_i()
+            }
           }
-          bits = self.int_bits
-          if (neg && bits > 2147483648u64) || (!neg && bits > 2147483647u64) {
-            fits = false
-          } else if neg {
-            value = 0 - bits.to_i()
-          } else {
-            value = bits.to_i()
-          }
         }
-      } else if next > 2147483647 {
+      } else if next > 2147483647 && decl.first_named < 0 {
         fits = false
       }
       if !fits {
         fail(tok.loc, "the value of ${mname} does not fit in Int32")
         value = 0
       }
-      for j in 0..decl.vals.size {
-        if fits && decl.vals[j] == value {
-          fail(tok.loc, "members ${decl.names[j]} and ${mname} of ${name} have the same value ${value}")
+      if decl.first_named < 0 {
+        for j in 0..decl.vals.size {
+          if fits && decl.vals[j] == value {
+            fail(tok.loc, "members ${decl.names[j]} and ${mname} of ${name} have the same value ${value}")
+          }
         }
       }
       decl.names.push(mname)
       decl.vals.push(value)
       decl.locs.push(tok.loc)
+      decl.val_names.push(vname)
+      decl.val_quals.push(vqual)
+      decl.val_kinds.push(vkind)
       next = value + 1
       if self.current.kind == tk_comma() {
         self.bump

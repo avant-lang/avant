@@ -88,6 +88,14 @@ fn cases: Array(RCase) {
   xs.push(refused("const-duplicate", "const tab = 9\nfn main {\n  switch argv().size {\n    case 9 { puts(1) }\n    case tab { puts(2) }\n    else { }\n  }\n}\n", "duplicate case tab", "5:10"))
   xs.push(refused("const-overlap", "const lo = 1\nconst hi = 5\nfn main {\n  switch argv().size {\n    case lo..=hi { puts(1) }\n    case 3 { puts(2) }\n    else { }\n  }\n}\n", "case 3 overlaps case lo..=hi", "6:10"))
   xs.push(refused("const-local-shadow", "const tab = 9\nfn main {\n  tab2 = 9\n  switch argv().size {\n    case tab2 { puts(1) }\n    else { }\n  }\n}\n", "tab2 is not a constant", "5:10"))
+  // O726: an enum member's value may be a constant.
+  xs.push(accepted("enum-const-values", "const http_ok = 200\nconst base = 7\nenum Status { ok = http_ok, created, not_found = 404, later = base }\nenum Small { a = base, b }\nfn word(s: Status): String {\n  switch s {\n    case ok, created { \"fine\" }\n    case not_found { \"missing\" }\n    case later { \"later\" }\n  }\n}\nfn main {\n  puts(Status.created.to_i)\n  puts(Status.later.to_i)\n  if s = Status.from_i(201) {\n    puts(s)\n  }\n  if t = Status.from_i(7) {\n    puts(word(t))\n  }\n  puts(Status.from_i(8) ?? Status.ok)\n  puts(word(Status.ok))\n  puts(Small.b.to_i)\n  puts(\"\${Small.a}\")\n}\n", "201\n7\ncreated\nlater\nok\nfine\n8\na\n"))
+  xs.push(refused("enum-const-unknown", "enum Status { ok = nope }\nfn main {\n  puts(Status.ok.to_i)\n}\n", "nope is not a constant: an enum member's value is an integer literal or a constant", "1:15"))
+  xs.push(refused("enum-const-same-value", "const one = 1\nenum S { a = 1, b = one }\nfn main {\n  puts(S.a.to_i)\n}\n", "members a and b of S have the same value 1", "2:17"))
+  xs.push(refused("enum-const-next-same-value", "const one = 1\nenum S { a = one, b, c = 2 }\nfn main {\n  puts(S.a.to_i)\n}\n", "members b and c of S have the same value 2", "2:22"))
+  xs.push(refused("enum-const-too-big", "const big = 3000000000\nenum S { a = big }\nfn main {\n  puts(S.a.to_i)\n}\n", "the value of a, the constant big = 3000000000, does not fit in Int32", "2:10"))
+  xs.push(refused("enum-const-float", "const half = 0.5\nenum S { a = half }\nfn main {\n  puts(S.a.to_i)\n}\n", "the constant half = 0.5 is not an integer", "2:10"))
+  xs.push(refused("enum-value-string", "enum S { a = \"x\" }\nfn main {\n  puts(S.a.to_i)\n}\n", "an enum member's value is an integer literal or a constant", "1:14"))
   xs
 }
 
