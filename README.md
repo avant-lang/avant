@@ -579,7 +579,7 @@ fn main {
 
 ### Switch
 
-`switch` picks an arm by an integer, an [enum](#enums) member or a string. There is no fall-through; an arm may list several values.
+`switch` picks an arm by an integer, an [enum](#enums) member, a string or the member a [union](#unions) holds. There is no fall-through; an arm may list several values.
 
 ```avant
 fn name_of(kind: Int): String {
@@ -631,11 +631,28 @@ fn main {
 }
 ```
 
-- The value is an `Int` (labels: integer literals), an enum (labels: its members, bare: `case eof`, not `case Tok.eof`) or a `String` (labels: string literals, not interpolated). A `Bool` is accepted too, with the labels `1` and `0` (`case true` is not a form yet): an `if` reads better. `Int32`, `UInt32` and `UInt64` values are not accepted yet: convert to `Int`.
+Over a union, a label names a member type: `case n: Int` binds the value as an `Int` for that arm only, `case String` names the member without binding it, and `case nil` names `nil`. A switch without `else` names every member, the failures too:
+
+```avant
+fn describe(x: Int | String | Nil): String {
+  switch x {
+    case n: Int { "the number ${n}" }
+    case s: String { "the text ${s}" }
+    case nil { "nothing" }
+  }
+}
+
+fn main {
+  puts(describe(4))        // => the number 4
+  puts(describe("hi"))     // => the text hi
+  puts(describe(nil))      // => nothing
+}
+```
+
+- The value is an `Int` (labels: integer literals), an enum (labels: its members, bare: `case eof`, not `case Tok.eof`), a `String` (labels: string literals, not interpolated) or a union (labels: its member types, with or without a binding, and `nil`; a binding is the arm's only label). A `Bool` is accepted too, with the labels `1` and `0` (`case true` is not a form yet): an `if` reads better. `Int32`, `UInt32` and `UInt64` values are not accepted yet: convert to `Int`.
 - A label may appear once.
-- Over an enum, a switch without `else` names every member, as a statement and as a value (`switch over Tok does not cover name, number: name them or add else`), and an `else` beside every member is refused. Over the other types, a switch used as a value needs `else`, so every input produces a result; used as a statement, a value no arm names does nothing.
+- Over an enum or a union, a switch without `else` names every member, as a statement and as a value (`switch over Tok does not cover name, number: name them or add else`), and an `else` beside every member is refused. Over the other types, a switch used as a value needs `else`, so every input produces a result; used as a statement, a value no arm names does nothing.
 - An arm may leave instead of giving a value (`return`, `break`, `continue`); it still counts as naming its members.
-- There is no `switch` on a union's member yet ([Not built yet](#not-built-yet)).
 
 ## Enums
 

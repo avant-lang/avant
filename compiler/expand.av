@@ -878,6 +878,11 @@ pub class Expander {
       }
       i = 0
       while i < e.cases.size {
+        for label in e.cases[i].labels {
+          if label.bind.size > 0 {
+            into.push(label.bind)
+          }
+        }
         collect_introduced(e.cases[i].body, into)
         i += 1
       }
@@ -1109,6 +1114,11 @@ pub class Expander {
       i = 0
       while i < out.cases.size {
         arm = out.cases[i]
+        for label in arm.labels {
+          if mapped = map.get(label.bind) {
+            label.bind = mapped
+          }
+        }
         arm.body = rename_stmt_list(arm.body, map)
         i += 1
       }

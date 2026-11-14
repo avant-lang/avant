@@ -320,6 +320,133 @@ pub fn (lw: MirLower) tag_is(src: Int, uty: Ty, k: Int, eq: Bool): MOperand {
   lw.tmp(mt_bool(), b.rv_cmp(op, tag, b.c_i32(k)))
 }
 
+// ---- `switch` over a union (Stage 29 W5a2, D293, O210, O391)
+
+// One tag load and one switch on it (for an optional reference, one
+// null test); each arm that binds its member copies the payload as
+// if-assign does (unwrap), the name in scope for the arm. A switch
+// without else names every member (the checker's coverage), and a tag
+// is always one of the union's members (a union is only built by
+// coerce, retag and the zero value, whose tag 0 is its first member),
+// so the last arm is the switch's default: no impossible path exists.
+pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: Int): MOperand {
+  b = lw.lw_b
+  uty_m = lw.ty_at(uty, e.loc, "a union")
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  src = lw.hold(cv, uty_m)
+  dest = -1
+  if rty != mt_void() {
+    dest = b.temp(rty)
+    b.assign(b.pl(dest), b.rv_zero)
+  }
+  arms: Array(Int) = []
+  for i in 0..e.cases.size {
+    arms.push(b.block)
+  }
+  other = -1
+  if e.has_else || lw.lw_cov.on {
+    other = b.block
+  }
+  join = b.block
+  // The block each member enters by (its arm's, or under coverage a
+  // block of its own that counts the label), -1 for an unnamed member.
+  entry: Array(Int) = []
+  for m in uty.members {
+    entry.push(-1)
+  }
+  cov_entries: Array(Int) = []
+  cov_arms: Array(Int) = []
+  cov_locs: Array(Location) = []
+  for i2 in 0..e.cases.size {
+    for label in e.cases[i2].labels {
+      k = label.int_val
+      if k < 0 || k >= entry.size || entry[k] >= 0 {
+        continue
+      }
+      if lw.lw_cov.on {
+        en = b.block
+        cov_entries.push(en)
+        cov_arms.push(arms[i2])
+        cov_locs.push(label.loc)
+        entry[k] = en
+      } else {
+        entry[k] = arms[i2]
+      }
+    }
+  }
+  // The default: the else, or (without one) the last arm's member.
+  dflt = other
+  dmember = -1
+  if !e.has_else && !lw.lw_cov.on {
+    last = e.cases[e.cases.size - 1].labels
+    if last.size > 0 {
+      dmember = last[last.size - 1].int_val
+      dflt = entry[dmember]
+    }
+  }
+  if dflt < 0 {
+    dflt = join
+  }
+  lw.at(e.loc)
+  if r = mir_opt_ref(uty) {
+    kn = uty.tag_of(ty_nil())
+    kr = uty.tag_of(r)
+    tn = entry[kn]
+    tr = entry[kr]
+    if tn < 0 || kn == dmember {
+      tn = dflt
+    }
+    if tr < 0 || kr == dmember {
+      tr = dflt
+    }
+    b.branch(lw.ref_is_null(src, true), tn, tr)
+  } else {
+    tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
+    values: Array(Int) = []
+    targets: Array(Int) = []
+    for k2 in 0..entry.size {
+      if entry[k2] >= 0 && k2 != dmember && entry[k2] != dflt {
+        values.push(k2)
+        targets.push(entry[k2])
+      }
+    }
+    b.switch_on(tag, values, targets, dflt)
+  }
+  for q in 0..cov_entries.size {
+    b.at(cov_entries[q])
+    lw.cov_branch(cov_locs[q])
+    lw.at(e.loc)
+    b.goto(cov_arms[q])
+  }
+  for i3 in 0..e.cases.size {
+    arm = e.cases[i3]
+    b.at(arms[i3])
+    if arm.labels.size == 1 && arm.labels[0].kind == lb_type() && arm.labels[0].bind.size > 0 {
+      k3 = arm.labels[0].int_val
+      mt = uty.members[k3]
+      lw.at(arm.labels[0].loc)
+      v = lw.unwrap(src, uty, mt, arm.loc)
+      lw.bind_name(arm.labels[0].bind, mt, lw.ty_at(mt, arm.loc, "a binding"), v, arm.loc, false)
+    }
+    lw.lower_arm(arm.body, dest, e)
+    lw.goto_if_open(join, arm.loc)
+  }
+  if e.has_else || lw.lw_cov.on {
+    b.at(other)
+    lw.cov_branch(e.loc)
+    lw.lower_arm(e.else_body, dest, e)
+    lw.goto_if_open(join, e.loc)
+  }
+  b.at(join)
+  if dest >= 0 {
+    return b.copy_local(dest)
+  }
+  b.c_i32(0)
+}
+
 // ---- `??`, `.or`, postfix `?`, `if x = ...`
 
 // `l ?? r` and `l.or(r)` (the old back end's emit_coalesce): the left once; when it
