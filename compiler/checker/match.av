@@ -852,12 +852,19 @@ pub fn (checker_self: Checker) named_type_seen(name: String): Ty? {
 // O166). A local, a field of the receiver or a module of that name wins,
 // as in the checking of a name.
 pub fn (checker_self: Checker) type_receiver(recv: Expr): String {
-  segs: Array(String) = []
-  if recv.type_args.size > 0 || !checker_self.ident_chain(recv, segs) {
+  if recv.type_args.size > 0 {
     return ""
   }
-  if segs.size == 1 {
-    name = segs[0]
+  // Every method call and field read passes here: a bare name is read
+  // without building its chain (no allocation).
+  if recv.kind == ex_name() {
+    name = recv.ident
+    // Most receivers are values: a name no module declares as a type and
+    // without a builtin type's capital is one, at the cost of one lookup.
+    if listed = checker_self.type_list.get(name) {
+    } else if name.size == 0 || name[0] < 65 || name[0] > 90 {
+      return ""
+    }
     if found = checker_self.lookup(name) {
       return ""
     }
@@ -875,6 +882,33 @@ pub fn (checker_self: Checker) type_receiver(recv: Expr): String {
     }
     return ""
   }
+  if recv.kind != ex_field() {
+    return ""
+  }
+  // A chain names a type only from a module's name (`mod.T`): find its
+  // first name before building it.
+  root = recv
+  while root.kind == ex_field() {
+    if o = root.object {
+      root = o
+    } else {
+      return ""
+    }
+  }
+  if root.kind != ex_name() {
+    return ""
+  }
+  if k = checker_self.known_mods.get(root.ident) {
+  } else {
+    return ""
+  }
+  if found = checker_self.lookup(root.ident) {
+    return ""
+  }
+  segs: Array(String) = []
+  if !checker_self.ident_chain(recv, segs) {
+    return ""
+  }
   mod = checker_self.join_segs(segs, segs.size - 1)
   if checker_self.qualifier_ok(mod, checker_self.current_module) {
     if t = checker_self.resolver.get_named_in(mod, segs[segs.size - 1]) {
@@ -884,6 +918,15 @@ pub fn (checker_self: Checker) type_receiver(recv: Expr): String {
   ""
 }
 
+// A receiver `mod.T` that names another module's type (O166); "" for
+// anything else, cheaply (a bare name is found by check_name's hook).
+pub fn (checker_self: Checker) receiver_type_name(recv: Expr): String {
+  if recv.kind != ex_field() {
+    return ""
+  }
+  checker_self.type_receiver(recv)
+}
+
 // The ambiguity of a receiver that is a bare type name two modules (or a
 // module's type and another's function) publish (O224); "" otherwise.
 pub fn (checker_self: Checker) receiver_clash(recv: Expr): String {
@@ -891,19 +934,19 @@ pub fn (checker_self: Checker) receiver_clash(recv: Expr): String {
     return ""
   }
   name = recv.ident
-  if found = checker_self.lookup(name) {
-    return ""
+  if listed = checker_self.type_list.get(name) {
+    if found = checker_self.lookup(name) {
+      return ""
+    }
+    if ft = checker_self.implicit_field(name) {
+      return ""
+    }
+    if k = checker_self.known_mods.get(name) {
+      return ""
+    }
+    return checker_self.clash_message(name, checker_self.current_module)
   }
-  if ft = checker_self.implicit_field(name) {
-    return ""
-  }
-  if k = checker_self.known_mods.get(name) {
-    return ""
-  }
-  if checker_self.mods_of_type(name).size == 0 {
-    return ""
-  }
-  checker_self.clash_message(name, checker_self.current_module)
+  ""
 }
 
 // The error for `T.callee` when the type T (shown as tn) has no

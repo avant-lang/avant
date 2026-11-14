@@ -29,6 +29,11 @@ pub class Suggest {
   best_half: Int = 0
   best_rank: Int = 0
   limit: Int = 0
+  // The distance's three rows, kept across candidates: a failed compile
+  // offers thousands of names, and fresh rows for each were megabytes.
+  row2: Array(Int) = []
+  row1: Array(Int) = []
+  row0: Array(Int) = []
 
   fn initialize(name: String) {
     self.name = name
@@ -59,7 +64,7 @@ pub class Suggest {
     if diff > self.limit {
       return
     }
-    h = name_distance_half(self.name, cand)
+    h = distance(cand)
     if h >= 2 * self.limit + 1 || h >= 2 * self.name.size {
       return
     }
@@ -80,6 +85,16 @@ pub class Suggest {
     }
   }
 
+  // Whether cand's length lets it be near: the caller's cheap test before
+  // the work of finding out whether cand is in scope.
+  pub fn could(cand: String): Bool {
+    diff = cand.size - self.name.size
+    if diff < 0 {
+      diff = -diff
+    }
+    diff <= self.limit
+  }
+
   // Each name of a space-separated list, with one rank.
   pub fn offer_list(names: String, rank: Int) {
     start = 0
@@ -93,6 +108,11 @@ pub class Suggest {
       }
       i += 1
     }
+  }
+
+  // name_distance_half(self.name, cand), in the kept rows.
+  pub fn distance(cand: String): Int {
+    half_distance_in(self.name, cand, self.row2, self.row1, self.row0)
   }
 
   pub fn found: String {
@@ -132,13 +152,24 @@ pub fn bytes_before(a: String, b: String): Bool {
 // `widht`: the commonest slip of the fingers), a letter whose case alone
 // differs is one. Three rows of the table are kept.
 pub fn name_distance_half(a: String, b: String): Int {
-  prev2: Array(Int) = []
-  prev: Array(Int) = []
+  r2: Array(Int) = []
+  r1: Array(Int) = []
+  r0: Array(Int) = []
+  half_distance_in(a, b, r2, r1, r0)
+}
+
+// The distance with three rows the caller provides (their contents are
+// overwritten; their storage is reused).
+pub fn half_distance_in(a: String, b: String, r2: Array(Int), r1: Array(Int), r0: Array(Int)): Int {
+  prev2 = r2
+  prev = r1
+  cur = r0
+  prev2.clear
+  prev.clear
   for j in 0..b.size + 1 {
     prev.push(j * 2)
     prev2.push(j * 2)
   }
-  cur: Array(Int) = []
   for i in 1..a.size + 1 {
     cur.clear
     cur.push(i * 2)

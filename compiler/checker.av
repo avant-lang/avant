@@ -89,6 +89,11 @@ pub class Checker {
   pub return_type: Ty
   pub loop_depth: Int = 0
   pub self_ty: Ty? = nil
+  // Set while the receiver of `x.f` or `x.f(...)` is checked, a bare name
+  // (Stage 29 W5c1, O166): an unknown name there that names a type leaves
+  // the type's name in recv_type for the caller's message.
+  pub recv_name: Bool = false
+  pub recv_type: String = ""
   pub self_name: String = ""
   pub pending: Array(Function)
   pub instances: Array(Function)
@@ -1782,18 +1787,20 @@ pub class Checker {
         }
       }
       // `T.name` on a type without that type-level function (O166).
-      clash = receiver_clash(obj)
-      if clash.size > 0 {
-        fail(obj.loc, clash)
-        return t_int()
-      }
-      tn = type_receiver(obj)
+      tn = receiver_type_name(obj)
       if tn.size > 0 {
         fail_no_type_fn(expr.loc, obj, tn, expr.ident)
         return t_int()
       }
       mark = err_count
+      self.recv_name = obj.kind == ex_name()
+      self.recv_type = ""
       object = check_expr(obj)
+      self.recv_name = false
+      if self.recv_type.size > 0 {
+        fail_no_type_fn(expr.loc, obj, self.recv_type, expr.ident)
+        return t_int()
+      }
       if new_err_since(mark) && is_ident_chain(obj) {
         return t_int()
       }
@@ -2669,6 +2676,8 @@ pub class Checker {
   }
 
   pub fn check_name(expr: Expr, has_want: Bool, want: Ty): Ty {
+    as_recv = self.recv_name
+    self.recv_name = false
     if expr.ident == "self" {
       if cf = self.current_fn, cf.type_method {
         fail(expr.loc, "self is not available in a type-level function")
@@ -2739,6 +2748,21 @@ pub class Checker {
     }
     if got = check_fn_ref_bare(expr) {
       return got
+    }
+    if as_recv {
+      // The receiver of `T.f` names a type, not a value (O166, O224):
+      // the caller reports the missing type-level function; a type two
+      // modules publish is ambiguous here.
+      clash = receiver_clash(expr)
+      if clash.size > 0 {
+        fail(expr.loc, clash)
+        return t_int()
+      }
+      tn = type_receiver(expr)
+      if tn.size > 0 {
+        self.recv_type = tn
+        return t_int()
+      }
     }
     if is_generic_template(expr.ident) {
       fail(expr.loc, "${expr.ident} needs type arguments")
@@ -4019,12 +4043,16 @@ pub class Checker {
     // A type without that type-level function (Stage 29 W5c1, O166):
     // before, its name was checked as a value ("unknown name T") and the
     // call then read as a method of Int.
-    clash = receiver_clash(recv)
-    if clash.size > 0 {
-      fail(recv.loc, clash)
-      return t_int()
+    tn = receiver_type_name(recv)
+    mark = err_count
+    object = t_int()
+    if tn.size == 0 {
+      self.recv_name = recv.kind == ex_name()
+      self.recv_type = ""
+      object = check_expr(recv)
+      self.recv_name = false
+      tn = self.recv_type
     }
-    tn = type_receiver(recv)
     if tn.size > 0 {
       for a in expr.args {
         check_expr(a)
@@ -4032,8 +4060,6 @@ pub class Checker {
       fail_no_type_fn(expr.loc, recv, tn, expr.callee)
       return t_int()
     }
-    mark = err_count
-    object = check_expr(recv)
     if new_err_since(mark) && is_ident_chain(recv) {
       // An unknown name is reported once, not again as a method of the
       // Int that stands for it.

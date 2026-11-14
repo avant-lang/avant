@@ -65,7 +65,7 @@ pub fn (checker_self: Checker) offer_methods(sg: Suggest, ty: Ty, type_level: Bo
     if !hit && ty.origin.size > 0 && ms.node.generic && ms.owner == ty.origin {
       hit = true
     }
-    if hit && ms.node.type_method == type_level && (!zero_only || arity_ok(ms.node, 0)) {
+    if hit && ms.node.type_method == type_level && sg.could(ms.name) && (!zero_only || arity_ok(ms.node, 0)) {
       if ty.mod_name.size == 0 || ms.node.owner_mod.size == 0 || ms.node.owner_mod == ty.mod_name {
         if checker_self.method_is_visible(ms.node, checker_self.current_module) {
           sg.offer(ms.name, rank)
@@ -79,7 +79,7 @@ pub fn (checker_self: Checker) offer_methods(sg: Suggest, ty: Ty, type_level: Bo
 pub fn (checker_self: Checker) offer_functions(sg: Suggest, rank: Int) {
   for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
-    if checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) {
+    if sg.could(sig.name) && checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) {
       sg.offer(sig.name, rank)
     }
   }
@@ -240,7 +240,7 @@ pub fn (checker_self: Checker) builtin_hint(ty: Ty, name: String): String {
     owner = "Hash"
   }
   for ms in checker_self.methods {
-    if (ms.owner == owner || ms.owner == ty.name) && !ms.node.type_method && checker_self.method_is_visible(ms.node, checker_self.current_module) {
+    if (ms.owner == owner || ms.owner == ty.name) && !ms.node.type_method && sg.could(ms.name) && checker_self.method_is_visible(ms.node, checker_self.current_module) {
       sg.offer(ms.name, 1)
     }
   }
