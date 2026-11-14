@@ -450,12 +450,13 @@ char *avant_str_from_float(double n) {
 
 /* puts of a Float64 and of a Bool (Stage 29 W4b1, D293): the float's one
  * text and the words true and false, through stdout's buffer as puts's
- * printf. */
+ * printf. A failed write stops the program (avant_out_check, W-FIX1i). */
 void avant_puts_f64(double v) {
   char buf[48];
   int k = avant_fmt_float_text(buf, v);
   buf[k] = '\n';
   fwrite(buf, 1, (size_t)k + 1, stdout);
+  avant_out_check();
 }
 
 /* puts of a String: its bytes by length, so a NUL byte inside prints
@@ -466,10 +467,12 @@ void avant_puts_str(const char *s) {
     fwrite(s, 1, n, stdout);
   }
   putc('\n', stdout);
+  avant_out_check();
 }
 
 void avant_puts_bool(int32_t v) {
   fputs(v ? "true\n" : "false\n", stdout);
+  avant_out_check();
 }
 
 char *avant_str_from_bool(int32_t n) {
