@@ -2393,7 +2393,8 @@ fn main {
 }
 ```
 
-- `Channel(T).new` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` sends, `recv` returns `T?` (`nil` once the channel is closed and empty, so `while v = ch.recv { ... }` drains it), `close` closes.
+- `Channel(T).new` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` sends and returns whether the value went into the channel, `recv` returns `T?` (`nil` once the channel is closed and empty, so `while v = ch.recv { ... }` drains it), `close` closes.
+- A `send` on a closed channel returns `false` at once, buffered or not, full or not; a send waiting for room or for its receiver returns `false` when the channel closes, and its value is not received. The values sent before the close stay for the receivers to drain. A program that only closes after its last send can ignore the result (`ch.send(v)` as a statement).
 - What a `send` carries crosses to another task, by the same rule as a `spawn` capture ([What may cross a task](#what-may-cross-a-task)): a class instance, a `Hash` or a struct holding one is a compile error. An `Array` is copied at the send, at every level of an array of arrays, so the receiver owns its own array and the sender may go on changing its one; its elements must cross in turn (`Array(Box)` is refused). `T` may be any type, so a channel can carry other channels (a reply channel per request) or mutexes.
 - A `Channel` and a `Mutex` hold no memory outside the object: the program can make as many as it likes.
 
