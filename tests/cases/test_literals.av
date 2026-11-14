@@ -1,0 +1,361 @@
+import harness
+import backends
+
+// Stage 29 W5b2: literals and constants. Character literals and the
+// String escapes (D293, D352, O287); binary, octal and digit separators,
+// and a leading zero refused (D315, D352, O287, O493); a literal that
+// does not fit, at every integer width and in every context that gives
+// it a type (O455); module constants, `const` (D314, D315, D327 Q7), and
+// no module-level mutable state (D352, O298). Each program is compiled
+// in parallel; a refused one must leave no binary, say the expected
+// words and point at the expected line and column; an accepted one must
+// print what it should.
+
+class LCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): LCase {
+  f = LCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): LCase {
+  f = LCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn char_cases: Array(LCase) {
+  xs: Array(LCase) = []
+  xs.push(refused("char-empty", "fn main {\n  x = ''\n  puts(x)\n}\n", "empty character literal: a character literal holds one byte, as 'a'", "2:7"))
+  xs.push(refused("char-two", "fn main {\n  x = 'ab'\n  puts(x)\n}\n", "a character literal holds one byte: write a String in double quotes for several", "2:7"))
+  xs.push(refused("char-multibyte", "fn main {\n  x = 'é'\n  puts(x)\n}\n", "a character literal is one byte, and this character is 2 bytes in UTF-8: write it in a String", "2:7"))
+  xs.push(refused("char-code-multibyte", "fn main {\n  x = '\\u{e9}'\n  puts(x)\n}\n", "a character literal is one byte, and this code point is 2 bytes in UTF-8: write it in a String", "2:7"))
+  xs.push(refused("char-code-four", "fn main {\n  x = '\\u{1F600}'\n  puts(x)\n}\n", "this code point is 4 bytes in UTF-8", "2:7"))
+  xs.push(refused("char-unterminated", "fn main {\n  x = 'a\n  puts(x)\n}\n", "unterminated character literal", "2:7"))
+  xs.push(refused("char-escape-unknown", "fn main {\n  x = '\\e'\n  puts(x)\n}\n", "unknown character escape \\e; the escapes are \\n \\t \\r \\\\ \\0 \\xNN \\u{N} and \\'", "2:8"))
+  xs.push(refused("char-escape-dquote", "fn main {\n  x = '\\\"'\n  puts(x)\n}\n", "unknown character escape \\\"", "2:8"))
+  xs.push(refused("char-not-string", "fn main {\n  x = 'a'\n  s: String = x\n  puts(x)\n}\n", "expected String, got Int", "3:15"))
+  xs.push(refused("str-escape-e", "fn main {\n  x = \"\\e\"\n  puts(x)\n}\n", "unknown string escape \\e; the escapes are \\n \\t \\r \\\\ \\0 \\xNN \\u{N} and \\\" \\\$", "2:8"))
+  xs.push(refused("str-escape-squote", "fn main {\n  x = \"\\'\"\n  puts(x)\n}\n", "unknown string escape \\'", "2:8"))
+  xs.push(refused("str-x-one-digit", "fn main {\n  x = \"\\x4\"\n  puts(x)\n}\n", "\\x takes two hex digits: \\x41", "2:8"))
+  xs.push(refused("str-u-no-brace", "fn main {\n  x = \"\\u41\"\n  puts(x)\n}\n", "\\u takes a code point in braces: \\u{e9}", "2:8"))
+  xs.push(refused("str-u-empty", "fn main {\n  x = \"\\u{}\"\n  puts(x)\n}\n", "\\u takes a code point in braces: \\u{e9}", "2:8"))
+  xs.push(refused("str-u-too-big", "fn main {\n  x = \"\\u{110000}\"\n  puts(x)\n}\n", "\\u{...} is above 10FFFF, the last Unicode code point", "2:8"))
+  xs.push(refused("str-u-seven", "fn main {\n  x = \"\\u{0000041}\"\n  puts(x)\n}\n", "\\u{...} is above 10FFFF", "2:8"))
+  xs.push(refused("str-u-surrogate", "fn main {\n  x = \"\\u{d800}\"\n  puts(x)\n}\n", "\\u{...} names a surrogate (D800 to DFFF), which is not a character", "2:8"))
+  xs.push(accepted("char-values", "fn main {\n  puts('a')\n  puts('A' + 1)\n  puts('\\n')\n  puts('\\t')\n  puts('\\r')\n  puts('\\'')\n  puts('\\\\')\n  puts('\\0')\n  puts('\\x41')\n  puts('\\xff')\n  puts('\\u{7f}')\n  puts('\"')\n  puts('\$')\n  puts(' ')\n}\n", "97\n66\n10\n9\n13\n39\n92\n0\n65\n255\n127\n34\n36\n32\n"))
+  xs.push(accepted("char-adopts", "fn f(c: Int32): Int32 {\n  c + 1\n}\nfn main {\n  x: Int32 = 'z'\n  u: UInt32 = '0'\n  puts(f('a'))\n  puts(x - 'a')\n  puts(u)\n  bs: Array(Int32) = ['x', 'y']\n  puts(bs[1])\n}\n", "98\n25\n48\n121\n"))
+  xs.push(accepted("char-bytes", "fn kind(c: Int): String {\n  switch c {\n    case '+', '-' { \"sign\" }\n    case '0' { \"zero\" }\n    else { \"other\" }\n  }\n}\nfn main {\n  s = \"a+0\"\n  puts(s[0] == 'a')\n  puts(kind(s[1]))\n  puts(kind(s[2]))\n  puts(kind('q'))\n  if s[1] >= '0' && s[1] <= '9' {\n    puts(\"digit\")\n  }\n}\n", "true\nsign\nzero\nother\n"))
+  xs.push(accepted("str-escapes", "fn main {\n  a = \"a\\0b\"\n  puts(a.size)\n  puts(a[1])\n  puts(a == \"a\\0b\")\n  puts(a == \"a\\0c\")\n  puts(a == \"a\")\n  puts(\"\\x41\\x42\")\n  x = \"\\xff\"\n  puts(x.size)\n  puts(x[0])\n  e = \"caf\\u{e9}\"\n  puts(e.size)\n  puts(e == \"café\")\n  g = \"\\u{1F600}\"\n  puts(g.size)\n  puts(\"\${g[0]} \${g[3]}\")\n  n = 7\n  z = \"\${n}\\0\${n}\\0\"\n  puts(z.size)\n  puts(z[1])\n  puts(\"\\0\".size)\n  puts(\"\\0\\0\".size)\n  puts(\"\\u{41}\\u{0}\".size)\n}\n", "3\n0\ntrue\nfalse\nfalse\nAB\n1\n255\n5\ntrue\n4\n240 128\n4\n0\n1\n2\n2\n"))
+  xs
+}
+
+fn number_cases: Array(LCase) {
+  xs: Array(LCase) = []
+  xs.push(refused("sep-end", "fn main {\n  x = 1_\n  puts(x)\n}\n", "a `_` in a number stands between two digits", "2:8"))
+  xs.push(refused("sep-double", "fn main {\n  x = 1__000\n  puts(x)\n}\n", "a `_` in a number stands between two digits", "2:8"))
+  xs.push(refused("sep-before-suffix", "fn main {\n  x = 1_u64\n  puts(x)\n}\n", "a `_` in a number stands between two digits", "2:8"))
+  xs.push(refused("sep-before-point", "fn main {\n  x = 1_.5\n  puts(x)\n}\n", "a `_` in a number stands between two digits", "2:8"))
+  xs.push(refused("sep-after-point", "fn main {\n  x = 1.5_\n  puts(x)\n}\n", "a `_` in a number stands between two digits", "2:10"))
+  xs.push(refused("sep-exponent-end", "fn main {\n  x = 1e5_\n  puts(x)\n}\n", "a `_` in a number stands between two digits", "2:10"))
+  xs.push(refused("sep-after-prefix", "fn main {\n  x = 0x_ff\n  puts(x)\n}\n", "a `_` in a number stands between two digits, not after 0x", "2:9"))
+  xs.push(refused("sep-after-bin", "fn main {\n  x = 0b_1\n  puts(x)\n}\n", "a `_` in a number stands between two digits, not after 0b", "2:9"))
+  xs.push(refused("bin-empty", "fn main {\n  x = 0b\n  puts(x)\n}\n", "binary literal needs a digit after 0b", "2:9"))
+  xs.push(refused("oct-empty", "fn main {\n  x = 0o\n  puts(x)\n}\n", "octal literal needs a digit after 0o", "2:9"))
+  xs.push(refused("hex-empty", "fn main {\n  x = 0x\n  puts(x)\n}\n", "hex literal needs a digit after 0x", "2:9"))
+  xs.push(refused("bin-digit", "fn main {\n  x = 0b102\n  puts(x)\n}\n", "2 is not a binary digit", "2:11"))
+  xs.push(refused("oct-digit", "fn main {\n  x = 0o78\n  puts(x)\n}\n", "8 is not an octal digit", "2:10"))
+  xs.push(refused("bin-upper", "fn main {\n  x = 0B101\n  puts(x)\n}\n", "write the prefix in lower case: 0b", "2:7"))
+  xs.push(refused("oct-upper", "fn main {\n  x = 0O17\n  puts(x)\n}\n", "write the prefix in lower case: 0o", "2:7"))
+  xs.push(refused("leading-zero", "fn main {\n  x = 017\n  puts(x)\n}\n", "a number does not start with 0: write 17 for the decimal number, or 0o17 for an octal one", "2:7"))
+  xs.push(refused("leading-zero-sep", "fn main {\n  x = 0_17\n  puts(x)\n}\n", "a number does not start with 0: write 17 for the decimal number, or 0o17 for an octal one", "2:7"))
+  xs.push(refused("leading-zero-nine", "fn main {\n  x = 09\n  puts(x)\n}\n", "a number does not start with 0: write 9", "2:7"))
+  xs.push(refused("leading-zeros", "fn main {\n  x = 00\n  puts(x)\n}\n", "a number does not start with 0: write 0 for the decimal number, or 0o0 for an octal one", "2:7"))
+  xs.push(accepted("bases", "fn main {\n  puts(0b101)\n  puts(0o17)\n  puts(0o777)\n  puts(0xff)\n  puts(0XFF)\n  puts(0b1111_0000)\n  puts(0xdead_beef)\n  puts(0o7_7)\n  puts(0b1u64)\n  puts(0o1777777777777777777777u64)\n  puts(0b111111111111111111111111111111111111111111111111111111111111111)\n  x: Int32 = 0b1000\n  puts(x)\n  puts(-0b11)\n  puts(0)\n  puts(0.5)\n  puts(0e0)\n}\n", "5\n15\n511\n255\n255\n240\n3735928559\n63\n1\n18446744073709551615\n9223372036854775807\n8\n-3\n0\n0.5\n0.0\n"))
+  xs.push(accepted("separators", "fn main {\n  puts(1_000_000)\n  puts(1_0)\n  puts(9_223_372_036_854_775_807)\n  puts(18_446_744_073_709_551_615u64)\n  puts(1_000.000_5)\n  puts(1_0e1_0)\n  puts(2.5e-1_0 > 0.0)\n  xs: Array(UInt32) = [4_000_000_000]\n  puts(xs[0])\n  puts(-1_000)\n}\n", "1000000\n10\n9223372036854775807\n18446744073709551615\n1000.0005\n100000000000.0\ntrue\n4000000000\n-1000\n"))
+  xs
+}
+
+fn fit_cases: Array(LCase) {
+  xs: Array(LCase) = []
+  xs.push(refused("fit-int32-local", "fn main {\n  a: Int32 = 2147483648\n  puts(a)\n}\n", "integer literal does not fit in Int32", "2:14"))
+  xs.push(refused("fit-int32-arg", "fn f(a: Int32): Int32 {\n  a\n}\nfn main {\n  puts(f(2147483648))\n}\n", "integer literal does not fit in Int32", "5:10"))
+  xs.push(refused("fit-int32-tail", "fn f: Int32 {\n  2147483648\n}\nfn main {\n  puts(f())\n}\n", "integer literal does not fit in Int32", "2:3"))
+  xs.push(refused("fit-int32-return", "fn f: Int32 {\n  return 2147483648\n}\nfn main {\n  puts(f())\n}\n", "integer literal does not fit in Int32", "2:10"))
+  xs.push(refused("fit-int32-field-default", "class C {\n  pub a: Int32 = 2147483648\n}\nfn main {\n  puts(C.new.a)\n}\n", "integer literal does not fit in Int32", "2:18"))
+  xs.push(refused("fit-int32-struct-literal", "struct S {\n  a: Int32\n}\nfn main {\n  s = S { a: 2147483648 }\n  puts(s.a)\n}\n", "integer literal does not fit in Int32", "5:14"))
+  xs.push(refused("fit-int32-array", "fn main {\n  xs: Array(Int32) = [2147483648]\n  puts(xs[0])\n}\n", "integer literal does not fit in Int32", "2:23"))
+  xs.push(refused("fit-int32-push", "fn main {\n  xs: Array(Int32) = []\n  xs.push(2147483648)\n  puts(xs[0])\n}\n", "integer literal does not fit in Int32", "3:11"))
+  xs.push(refused("fit-int32-operand-right", "fn main {\n  a: Int32 = 1\n  puts(a + 2147483648)\n}\n", "integer literal does not fit in Int32", "3:12"))
+  xs.push(refused("fit-int32-operand-left", "fn main {\n  a: Int32 = 1\n  puts(2147483648 - a)\n}\n", "integer literal does not fit in Int32", "3:8"))
+  xs.push(refused("fit-int32-compare", "fn main {\n  a: Int32 = 1\n  puts(a == 2147483648)\n}\n", "integer literal does not fit in Int32", "3:13"))
+  xs.push(refused("fit-int32-assign", "fn main {\n  a: Int32 = 1\n  a = 2147483648\n  puts(a)\n}\n", "integer literal does not fit in Int32", "3:7"))
+  xs.push(refused("fit-int32-compound", "fn main {\n  a: Int32 = 1\n  a += 2147483648\n  puts(a)\n}\n", "integer literal does not fit in Int32", "3:8"))
+  xs.push(refused("fit-int32-field-assign", "class C {\n  pub a: Int32 = 0\n}\nfn main {\n  c = C.new\n  c.a = 2147483648\n  puts(c.a)\n}\n", "integer literal does not fit in Int32", "6:9"))
+  xs.push(refused("fit-int32-hex", "fn main {\n  a: Int32 = 0x8000_0000\n  puts(a)\n}\n", "integer literal does not fit in Int32", "2:14"))
+  xs.push(refused("fit-int32-bin", "fn main {\n  a: Int32 = 0b1000_0000_0000_0000_0000_0000_0000_0000\n  puts(a)\n}\n", "integer literal does not fit in Int32", "2:14"))
+  xs.push(refused("fit-int32-oct", "fn main {\n  a: Int32 = 0o20_000_000_000\n  puts(a)\n}\n", "integer literal does not fit in Int32", "2:14"))
+  xs.push(refused("fit-int32-negative", "fn main {\n  a: Int32 = -2147483649\n  puts(a)\n}\n", "integer literal does not fit in Int32", "2:14"))
+  xs.push(refused("fit-int32-negative-arg", "fn f(a: Int32): Int32 {\n  a\n}\nfn main {\n  puts(f(-2147483649))\n}\n", "integer literal does not fit in Int32", "5:10"))
+  xs.push(accepted("fit-int32-extremes", "struct S {\n  a: Int32\n}\nclass C {\n  pub a: Int32 = 2147483647\n}\nfn f(a: Int32): Int32 {\n  a\n}\nfn g: Int32 {\n  2147483647\n}\nfn main {\n  a: Int32 = 2147483647\n  puts(a)\n  puts(f(2147483647))\n  puts(g())\n  puts(C.new.a)\n  s = S { a: 2147483647 }\n  puts(s.a)\n  xs: Array(Int32) = [2147483647]\n  xs.push(2147483647)\n  puts(xs[1])\n  b: Int32 = 0\n  puts(b + 2147483647)\n  puts(a == 2147483647)\n  m: Int32 = -2147483648\n  puts(m)\n  puts(f(-2147483648))\n}\n", "2147483647\n2147483647\n2147483647\n2147483647\n2147483647\n2147483647\n2147483647\ntrue\n-2147483648\n-2147483648\n"))
+  xs.push(refused("fit-uint32-local", "fn main {\n  a: UInt32 = 4294967296\n  puts(a)\n}\n", "integer literal does not fit in UInt32", "2:15"))
+  xs.push(refused("fit-uint32-arg", "fn f(a: UInt32): UInt32 {\n  a\n}\nfn main {\n  puts(f(4294967296))\n}\n", "integer literal does not fit in UInt32", "5:10"))
+  xs.push(refused("fit-uint32-tail", "fn f: UInt32 {\n  4294967296\n}\nfn main {\n  puts(f())\n}\n", "integer literal does not fit in UInt32", "2:3"))
+  xs.push(refused("fit-uint32-return", "fn f: UInt32 {\n  return 4294967296\n}\nfn main {\n  puts(f())\n}\n", "integer literal does not fit in UInt32", "2:10"))
+  xs.push(refused("fit-uint32-field-default", "class C {\n  pub a: UInt32 = 4294967296\n}\nfn main {\n  puts(C.new.a)\n}\n", "integer literal does not fit in UInt32", "2:19"))
+  xs.push(refused("fit-uint32-struct-literal", "struct S {\n  a: UInt32\n}\nfn main {\n  s = S { a: 4294967296 }\n  puts(s.a)\n}\n", "integer literal does not fit in UInt32", "5:14"))
+  xs.push(refused("fit-uint32-array", "fn main {\n  xs: Array(UInt32) = [4294967296]\n  puts(xs[0])\n}\n", "integer literal does not fit in UInt32", "2:24"))
+  xs.push(refused("fit-uint32-push", "fn main {\n  xs: Array(UInt32) = []\n  xs.push(4294967296)\n  puts(xs[0])\n}\n", "integer literal does not fit in UInt32", "3:11"))
+  xs.push(refused("fit-uint32-operand-right", "fn main {\n  a: UInt32 = 1\n  puts(a + 4294967296)\n}\n", "integer literal does not fit in UInt32", "3:12"))
+  xs.push(refused("fit-uint32-operand-left", "fn main {\n  a: UInt32 = 1\n  puts(4294967296 - a)\n}\n", "integer literal does not fit in UInt32", "3:8"))
+  xs.push(refused("fit-uint32-compare", "fn main {\n  a: UInt32 = 1\n  puts(a == 4294967296)\n}\n", "integer literal does not fit in UInt32", "3:13"))
+  xs.push(refused("fit-uint32-assign", "fn main {\n  a: UInt32 = 1\n  a = 4294967296\n  puts(a)\n}\n", "integer literal does not fit in UInt32", "3:7"))
+  xs.push(refused("fit-uint32-compound", "fn main {\n  a: UInt32 = 1\n  a += 4294967296\n  puts(a)\n}\n", "integer literal does not fit in UInt32", "3:8"))
+  xs.push(refused("fit-uint32-field-assign", "class C {\n  pub a: UInt32 = 0\n}\nfn main {\n  c = C.new\n  c.a = 4294967296\n  puts(c.a)\n}\n", "integer literal does not fit in UInt32", "6:9"))
+  xs.push(refused("fit-uint32-hex", "fn main {\n  a: UInt32 = 0x1_0000_0000\n  puts(a)\n}\n", "integer literal does not fit in UInt32", "2:15"))
+  xs.push(refused("fit-uint32-bin", "fn main {\n  a: UInt32 = 0b1_0000_0000_0000_0000_0000_0000_0000_0000\n  puts(a)\n}\n", "integer literal does not fit in UInt32", "2:15"))
+  xs.push(refused("fit-uint32-oct", "fn main {\n  a: UInt32 = 0o40_000_000_000\n  puts(a)\n}\n", "integer literal does not fit in UInt32", "2:15"))
+  xs.push(accepted("fit-uint32-extremes", "struct S {\n  a: UInt32\n}\nclass C {\n  pub a: UInt32 = 4294967295\n}\nfn f(a: UInt32): UInt32 {\n  a\n}\nfn g: UInt32 {\n  4294967295\n}\nfn main {\n  a: UInt32 = 4294967295\n  puts(a)\n  puts(f(4294967295))\n  puts(g())\n  puts(C.new.a)\n  s = S { a: 4294967295 }\n  puts(s.a)\n  xs: Array(UInt32) = [4294967295]\n  xs.push(4294967295)\n  puts(xs[1])\n  b: UInt32 = 0\n  puts(b + 4294967295)\n  puts(a == 4294967295)\n}\n", "4294967295\n4294967295\n4294967295\n4294967295\n4294967295\n4294967295\n4294967295\ntrue\n"))
+  xs.push(refused("fit-int-local", "fn main {\n  a: Int = 9223372036854775808\n  puts(a)\n}\n", "integer literal does not fit in Int", "2:12"))
+  xs.push(refused("fit-int-arg", "fn f(a: Int): Int {\n  a\n}\nfn main {\n  puts(f(9223372036854775808))\n}\n", "integer literal does not fit in Int", "5:10"))
+  xs.push(refused("fit-int-tail", "fn f: Int {\n  9223372036854775808\n}\nfn main {\n  puts(f())\n}\n", "integer literal does not fit in Int", "2:3"))
+  xs.push(refused("fit-int-return", "fn f: Int {\n  return 9223372036854775808\n}\nfn main {\n  puts(f())\n}\n", "integer literal does not fit in Int", "2:10"))
+  xs.push(refused("fit-int-field-default", "class C {\n  pub a: Int = 9223372036854775808\n}\nfn main {\n  puts(C.new.a)\n}\n", "integer literal does not fit in Int", "2:16"))
+  xs.push(refused("fit-int-struct-literal", "struct S {\n  a: Int\n}\nfn main {\n  s = S { a: 9223372036854775808 }\n  puts(s.a)\n}\n", "integer literal does not fit in Int", "5:14"))
+  xs.push(refused("fit-int-array", "fn main {\n  xs: Array(Int) = [9223372036854775808]\n  puts(xs[0])\n}\n", "integer literal does not fit in Int", "2:21"))
+  xs.push(refused("fit-int-push", "fn main {\n  xs: Array(Int) = []\n  xs.push(9223372036854775808)\n  puts(xs[0])\n}\n", "integer literal does not fit in Int", "3:11"))
+  xs.push(refused("fit-int-operand-right", "fn main {\n  a: Int = 1\n  puts(a + 9223372036854775808)\n}\n", "integer literal does not fit in Int", "3:12"))
+  xs.push(refused("fit-int-operand-left", "fn main {\n  a: Int = 1\n  puts(9223372036854775808 - a)\n}\n", "integer literal does not fit in Int", "3:8"))
+  xs.push(refused("fit-int-compare", "fn main {\n  a: Int = 1\n  puts(a == 9223372036854775808)\n}\n", "integer literal does not fit in Int", "3:13"))
+  xs.push(refused("fit-int-assign", "fn main {\n  a: Int = 1\n  a = 9223372036854775808\n  puts(a)\n}\n", "integer literal does not fit in Int", "3:7"))
+  xs.push(refused("fit-int-compound", "fn main {\n  a: Int = 1\n  a += 9223372036854775808\n  puts(a)\n}\n", "integer literal does not fit in Int", "3:8"))
+  xs.push(refused("fit-int-field-assign", "class C {\n  pub a: Int = 0\n}\nfn main {\n  c = C.new\n  c.a = 9223372036854775808\n  puts(c.a)\n}\n", "integer literal does not fit in Int", "6:9"))
+  xs.push(refused("fit-int-hex", "fn main {\n  a: Int = 0x8000_0000_0000_0000\n  puts(a)\n}\n", "integer literal does not fit in Int", "2:12"))
+  xs.push(refused("fit-int-oct", "fn main {\n  a: Int = 0o1_000_000_000_000_000_000_000\n  puts(a)\n}\n", "integer literal does not fit in Int", "2:12"))
+  xs.push(refused("fit-int-negative", "fn main {\n  a: Int = -9223372036854775809\n  puts(a)\n}\n", "integer literal does not fit in Int", "2:12"))
+  xs.push(refused("fit-int-negative-arg", "fn f(a: Int): Int {\n  a\n}\nfn main {\n  puts(f(-9223372036854775809))\n}\n", "integer literal does not fit in Int", "5:10"))
+  xs.push(accepted("fit-int-extremes", "struct S {\n  a: Int\n}\nclass C {\n  pub a: Int = 9223372036854775807\n}\nfn f(a: Int): Int {\n  a\n}\nfn g: Int {\n  9223372036854775807\n}\nfn main {\n  a: Int = 9223372036854775807\n  puts(a)\n  puts(f(9223372036854775807))\n  puts(g())\n  puts(C.new.a)\n  s = S { a: 9223372036854775807 }\n  puts(s.a)\n  xs: Array(Int) = [9223372036854775807]\n  xs.push(9223372036854775807)\n  puts(xs[1])\n  b: Int = 0\n  puts(b + 9223372036854775807)\n  puts(a == 9223372036854775807)\n  m: Int = -9223372036854775808\n  puts(m)\n  puts(f(-9223372036854775808))\n}\n", "9223372036854775807\n9223372036854775807\n9223372036854775807\n9223372036854775807\n9223372036854775807\n9223372036854775807\n9223372036854775807\ntrue\n-9223372036854775808\n-9223372036854775808\n"))
+  xs.push(refused("fit-int-bare", "fn main {\n  x = 9223372036854775808\n  puts(x)\n}\n", "integer literal does not fit in Int; use 9223372036854775808u64", "2:7"))
+  xs.push(refused("fit-uint64-dec", "fn main {\n  x: UInt64 = 18446744073709551616\n  puts(x)\n}\n", "integer literal does not fit in UInt64, the widest integer type", "2:15"))
+  xs.push(refused("fit-uint64-suffix", "fn main {\n  x = 18446744073709551616u64\n  puts(x)\n}\n", "integer literal does not fit in UInt64, the widest integer type", "2:7"))
+  xs.push(refused("fit-uint64-hex", "fn main {\n  x = 0x1_0000_0000_0000_0000\n  puts(x)\n}\n", "integer literal does not fit in UInt64, the widest integer type", "2:7"))
+  xs.push(refused("fit-uint64-huge", "fn main {\n  x = 99999999999999999999999999\n  puts(x)\n}\n", "integer literal does not fit in UInt64, the widest integer type", "2:7"))
+  xs.push(refused("fit-uint64-negative", "fn main {\n  x = -1u64\n  puts(x)\n}\n", "a negative literal does not fit in UInt64", "2:7"))
+  xs.push(accepted("fit-uint64-extremes", "fn f(a: UInt64): UInt64 {\n  a\n}\nfn main {\n  x: UInt64 = 18446744073709551615u64\n  puts(x)\n  puts(f(18446744073709551615u64))\n  y: UInt64 = 9223372036854775808\n  puts(y)\n  puts(0xffff_ffff_ffff_ffffu64)\n}\n", "18446744073709551615\n18446744073709551615\n9223372036854775808\n18446744073709551615\n"))
+  xs
+}
+
+fn const_cases: Array(LCase) {
+  xs: Array(LCase) = []
+  xs.push(refused("const-assigned", "const n = 1\nfn main {\n  n = 2\n  puts(n)\n}\n", "n is a constant and cannot be assigned; a local needs another name", "3:3"))
+  xs.push(refused("const-compound", "const n = 1\nfn main {\n  n += 2\n  puts(n)\n}\n", "n is a constant and cannot be assigned; a local needs another name", "3:3"))
+  xs.push(refused("const-declared-local", "const n = 1\nfn main {\n  n: Int32 = 2\n  puts(n)\n}\n", "n is a constant and cannot be assigned", "3:3"))
+  xs.push(refused("const-for-var", "const n = 1\nfn main {\n  for n in 0..3 {\n    puts(n)\n  }\n}\n", "n is a constant and cannot be assigned", "3:3"))
+  xs.push(refused("const-string", "const a = \"x\"\nfn main {\n  puts(a)\n}\n", "a constant holds a scalar (an integer, a Float64, a Bool or a character literal): a String is not one yet (D327)", "1:11"))
+  xs.push(refused("const-interp", "const n = 1\nconst a = \"\${n}\"\nfn main {\n  puts(a)\n}\n", "a String is not one yet (D327)", "2:11"))
+  xs.push(refused("const-array", "const a = [1, 2]\nfn main {\n  puts(a)\n}\n", "a constant holds a scalar (an integer, a Float64, a Bool or a character literal), computed from literals, other constants and operators", "1:11"))
+  xs.push(refused("const-call", "fn seven: Int {\n  7\n}\nconst a = seven()\nfn main {\n  puts(a)\n}\n", "a constant's value is computed when compiling, from literals, other constants and operators: a call is not", "4:11"))
+  xs.push(refused("const-enum-member", "enum Tok { x, y }\nconst a = Tok.x\nfn main {\n  puts(a)\n}\n", "a constant holds a scalar", "2:14"))
+  xs.push(refused("const-unknown", "const a = zz + 1\nfn main {\n  puts(a)\n}\n", "a constant's value is computed when compiling, from literals, other constants and operators: zz is not a constant", "1:11"))
+  xs.push(refused("const-capital", "const MaxDepth = 1\nfn main {\n  puts(a)\n}\n", "a constant's name is snake_case, as a function's: const max_depth", "1:7"))
+  xs.push(refused("const-upper", "const MAX_DEPTH = 1\nfn main {\n  puts(a)\n}\n", "a constant's name is snake_case, as a function's: const max_depth", "1:7"))
+  xs.push(refused("const-typed", "const a: Int32 = 1\nfn main {\n  puts(a)\n}\n", "a constant has no declared type: each use is its value written as a literal, which takes its type from where it stands (const a = ...)", "1:8"))
+  xs.push(refused("const-no-value", "const a\nfn main {\n  puts(a)\n}\n", "expected `=` and the value after const a", "1:8"))
+  xs.push(refused("const-in-fn", "fn main {\n  const a = 1\n  puts(1)\n}\n", "const is declared at module level, outside every function; inside one, a local is `name = value`", "2:3"))
+  xs.push(refused("const-duplicate", "const a = 1\nconst a = 2\nfn main {\n  puts(a)\n}\n", "duplicate constant a (the first is at ", "2:7"))
+  xs.push(refused("const-fn-clash", "const a = 1\nfn a: Int {\n  2\n}\nfn main {\n  puts(a())\n}\n", "a is both a constant and a function of this module: rename one", "1:7"))
+  xs.push(refused("const-cycle", "const a = b + 1\nconst b = a\nfn main {\n  puts(a)\n}\n", "the value of constant a refers to a itself", "2:11"))
+  xs.push(refused("const-self", "const a = a\nfn main {\n  puts(a)\n}\n", "the value of constant a refers to a itself", "1:11"))
+  xs.push(refused("const-overflow-add", "const a = 9223372036854775807 + 1\nfn main {\n  puts(a)\n}\n", "the constant's value overflows Int", "1:31"))
+  xs.push(refused("const-overflow-mul", "const a = 4294967296 * 4294967296\nfn main {\n  puts(a)\n}\n", "the constant's value overflows Int", "1:22"))
+  xs.push(refused("const-overflow-neg", "const m = -9223372036854775808\nconst a = -m\nfn main {\n  puts(a)\n}\n", "the constant's value overflows Int", "2:11"))
+  xs.push(refused("const-overflow-u64", "const a = 1u64 - 2\nfn main {\n  puts(a)\n}\n", "the constant's value overflows UInt64", "1:16"))
+  xs.push(refused("const-negative-u64", "const a = -1u64\nfn main {\n  puts(a)\n}\n", "a negative literal does not fit in UInt64", "1:11"))
+  xs.push(refused("const-big", "const a = 9223372036854775808\nfn main {\n  puts(a)\n}\n", "integer literal does not fit in Int; use 9223372036854775808u64", "1:11"))
+  xs.push(refused("const-div-zero", "const a = 7 % (2 - 2)\nfn main {\n  puts(a)\n}\n", "the constant's value divides by zero", "1:13"))
+  xs.push(refused("const-shift", "const a = 1 << 64\nfn main {\n  puts(a)\n}\n", "shift amount 64 out of range for Int (0..63)", "1:13"))
+  xs.push(refused("const-float-inf", "const a = 1e308 * 10.0\nfn main {\n  puts(a)\n}\n", "the constant's value is not a finite Float64", "1:17"))
+  xs.push(refused("const-bool-mix", "const a = true + 1\nfn main {\n  puts(a)\n}\n", "the constant's value mixes a Bool and a number", "1:16"))
+  xs.push(refused("const-float-op", "const a = 1.5 % 2.0\nfn main {\n  puts(a)\n}\n", "this operator does not apply to Float64", "1:15"))
+  xs.push(refused("const-use-fit", "const big = 3000000000\nfn main {\n  x: Int32 = big\n  puts(x)\n}\n", "the constant big = 3000000000 does not fit in Int32", "3:14"))
+  xs.push(refused("const-use-fit-negative", "const low = -3000000000\nfn f(x: Int32): Int32 {\n  x\n}\nfn main {\n  puts(f(low))\n}\n", "the constant low = -3000000000 does not fit in Int32", "6:10"))
+  xs.push(refused("const-use-fit-operand", "const big = 5000000000\nfn main {\n  x: UInt32 = 1\n  puts(x + big)\n}\n", "the constant big = 5000000000 does not fit in UInt32", "4:12"))
+  xs.push(refused("const-float-as-int", "const r = 1.5\nfn main {\n  x: Int = r\n  puts(x)\n}\n", "expected Int, got Float64", "3:12"))
+  xs.push(refused("const-bool-as-int", "const on = true\nfn main {\n  puts(on + 1)\n}\n", "binary operator expects numeric operands, got Bool and Int", "3:11"))
+  xs.push(accepted("const-uses", "const max_depth = 64\nconst kb = 1024\nconst mb = kb * kb\nconst neg = -5\nconst ratio = 1.5 * 2\nconst debug = false\nconst big = 18446744073709551615u64\nconst letter = 'a'\nconst mask = (1 << 20) - 1\nconst min_int = -9223372036854775808\nconst later = early + 1\nconst early = 0x10\n\nclass C {\n  pub depth: Int32 = max_depth\n}\n\nfn half(n: Int32): Int32 {\n  n / 2\n}\n\nfn main {\n  puts(max_depth)\n  puts(mb)\n  puts(neg)\n  puts(ratio)\n  puts(debug)\n  puts(big)\n  puts(letter)\n  puts(mask)\n  puts(min_int)\n  puts(later)\n  x: Int32 = max_depth\n  puts(half(max_depth))\n  puts(x + kb)\n  puts(kb + x)\n  puts(-neg)\n  puts(C.new.depth)\n  f = 2.0 * max_depth\n  puts(f)\n  if !debug {\n    puts(\"ok\")\n  }\n  xs: Array(UInt32) = [kb, kb + 6]\n  puts(xs[1])\n  g = { |n: Int| n + max_depth }\n  puts(g(1))\n  switch 'a' {\n    case 'a' { puts(letter) }\n    else { puts(0) }\n  }\n  u: UInt64 = mb\n  puts(u)\n}\n", "64\n1048576\n-5\n3.0\nfalse\n18446744073709551615\n97\n1048575\n-9223372036854775808\n17\n32\n1088\n1088\n5\n64\n128.0\nok\n1030\n65\n97\n1048576\n"))
+  xs.push(accepted("const-folding", "const a = 17 / 5\nconst b = -17 % 5\nconst c = -17 >> 1\nconst d = 0b1100 & 0b1010\nconst e = 0b1100 | 0b1010\nconst f = 0b1100 ^ 0b1010\nconst g = ~0\nconst h = 3 < 4 && 2 >= 2\nconst i = 1.0 / 4\nconst j = 0xffff_ffff_ffff_ffffu64 >> 60\nconst k = !(1 == 2)\nconst l = 1 << 63\nfn main {\n  puts(\"\${a} \${b} \${c} \${d} \${e} \${f} \${g} \${h} \${i} \${j} \${k} \${l}\")\n}\n", "3 -2 -9 8 14 6 -1 true 0.25 15 true -9223372036854775808\n"))
+  xs.push(accepted("const-scopes", "const width = 3\nclass Box {\n  pub width: Int = 9\n  fn show: Int {\n    width\n  }\n  fn twice: Int {\n    size * 2\n  }\n  fn size: Int {\n    4\n  }\n}\nconst size = 100\nfn f(n: Int = width): Int {\n  n * 10\n}\nfn g(width: Int): Int {\n  width + 1\n}\nfn main {\n  b = Box.new\n  puts(b.show)\n  puts(b.twice)\n  puts(f())\n  puts(f(5))\n  puts(g(7))\n  h = spawn { width + size }\n  puts(h.join)\n}\n", "9\n8\n30\n50\n8\n103\n"))
+  xs.push(accepted("const-bindings", "const n = 1\nfn maybe: Int? {\n  if argv().size > 0 {\n    return 5\n  }\n  nil\n}\nfn main {\n  if n = maybe() {\n    puts(n)\n  }\n  x: Int | String = 7\n  switch x {\n    case n: Int { puts(n) }\n    case String { puts(0) }\n  }\n  [3].each { |n| puts(n) }\n  puts(n)\n}\n", "5\n7\n3\n1\n"))
+  xs
+}
+
+fn state_cases: Array(LCase) {
+  xs: Array(LCase) = []
+  xs.push(refused("state-assign", "count = 0\nfn main {\n  puts(count)\n}\n", "a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values", "1:1"))
+  xs.push(refused("state-declared", "count: Int = 0\nfn main {\n  puts(1)\n}\n", "a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values", "1:1"))
+  xs.push(refused("state-compound", "count += 1\nfn main {\n  puts(1)\n}\n", "a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values", "1:1"))
+  xs.push(refused("state-pub", "pub total = 1\nfn main {\n  puts(1)\n}\n", "a module has no variables, on purpose: a value that never changes is `const total = ...`, and state lives in a function's locals or is passed in values", "1:5"))
+  xs.push(refused("state-after-fn", "fn main {\n  puts(1)\n}\nlimit = 3\n", "a module has no variables, on purpose: a value that never changes is `const limit = ...`, and state lives in a function's locals or is passed in values", "4:1"))
+  xs.push(accepted("state-const", "const count = 0\nfn main {\n  puts(count)\n}\n", "0\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/lit-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/lit-${f.tag}.bin", "${dir}/lit-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "lit-${f2.tag}.bin", "lit-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/lit-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/lit-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/lit-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "lit-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+// The formatter prints every new literal as written (spacing normalized),
+// and formatting its own output changes nothing.
+fn check_format(c: Checks, compiler: String, dir: String) {
+  src = "${dir}/lit-format.av"
+  _ = file_write(src, "const  limit=1_000\npub   const  ratio = 0.5\n\nfn main {\n  x  =  'a'+'\\''\n  y = \"\\0\\x41\${'}'}\\u{e9}\"\n  a  =  1_000+0b1010_1010\n  b = 0o17*0xFF_ff\n  c = 1_000.5e1_0\n}\n")
+  args: Array(String) = ["format", src]
+  code = process_run_out(compiler, args, "${dir}/lit-format.out") ?? -1
+  c.eq_int(code, 0, "format: exit 0")
+  want = "const limit = 1_000\npub const ratio = 0.5\n\nfn main {\n  x = 'a' + '\\''\n  y = \"\\0\\x41\${'}'}\\u{e9}\"\n  a = 1_000 + 0b1010_1010\n  b = 0o17 * 0xFF_ff\n  c = 1_000.5e1_0\n}\n"
+  c.eq_str(log_text("${dir}/lit-format.out"), want, "format: as written")
+  again = "${dir}/lit-format2.av"
+  _ = file_write(again, want)
+  args2: Array(String) = ["format", again]
+  code2 = process_run_out(compiler, args2, "${dir}/lit-format2.out") ?? -1
+  c.eq_int(code2, 0, "format twice: exit 0")
+  c.eq_str(log_text("${dir}/lit-format2.out"), want, "format twice: unchanged")
+}
+
+// Constants across modules: a pub one is seen bare and qualified by the
+// modules that import it, a private one is not, two of one name are
+// ambiguous (the module's own included, D298), and none is assigned.
+fn check_const_modules(c: Checks, compiler: String, dir: String) {
+  d = "${dir}/kmods"
+  mkdir_p(d)
+  _ = file_write("${d}/kmod.av", "pub const width = 80\nconst secret = 7\npub const half = width / 2\n")
+  _ = file_write("${d}/kmod2.av", "pub const width = 40\n")
+  jobs: Array(HJob) = []
+  _ = file_write("${d}/kuse_ok.av", "import kmod\nfn main {\n  puts(width)\n  puts(kmod.width)\n  puts(half)\n  x: Int32 = kmod.half\n  puts(x + 1)\n  puts(kmod.half + x)\n}\n")
+  jobs.push(compile_job("", compiler, "${d}/kuse_ok.av", "${d}/kuse_ok.bin", "${d}/kuse_ok.log"))
+  _ = file_write("${d}/kuse_both_qualified.av", "import kmod\nimport kmod2\nfn main {\n  puts(kmod.width + kmod2.width)\n}\n")
+  jobs.push(compile_job("", compiler, "${d}/kuse_both_qualified.av", "${d}/kuse_both_qualified.bin", "${d}/kuse_both_qualified.log"))
+  _ = file_write("${d}/kuse_private.av", "import kmod\nfn main {\n  puts(secret)\n}\n")
+  jobs.push(compile_job("", compiler, "${d}/kuse_private.av", "${d}/kuse_private.bin", "${d}/kuse_private.log"))
+  _ = file_write("${d}/kuse_ambiguous.av", "import kmod\nimport kmod2\nfn main {\n  puts(width)\n}\n")
+  jobs.push(compile_job("", compiler, "${d}/kuse_ambiguous.av", "${d}/kuse_ambiguous.bin", "${d}/kuse_ambiguous.log"))
+  _ = file_write("${d}/kuse_own_and_imported.av", "import kmod\nconst width = 5\nfn main {\n  puts(width)\n}\n")
+  jobs.push(compile_job("", compiler, "${d}/kuse_own_and_imported.av", "${d}/kuse_own_and_imported.bin", "${d}/kuse_own_and_imported.log"))
+  _ = file_write("${d}/kuse_assign_qualified.av", "import kmod\nfn main {\n  kmod.width = 1\n}\n")
+  jobs.push(compile_job("", compiler, "${d}/kuse_assign_qualified.av", "${d}/kuse_assign_qualified.bin", "${d}/kuse_assign_qualified.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "modules ok: compiles")
+  r0: Array(HJob) = [run_job(d, "kuse_ok.bin", "kuse_ok.run")]
+  run_waves(r0)
+  c.eq_str(log_text("${d}/kuse_ok.run.out"), "80\n80\n40\n41\n80\n", "modules ok: stdout")
+  c.eq_int(jobs[1].code, 0, "modules both-qualified: compiles")
+  r1: Array(HJob) = [run_job(d, "kuse_both_qualified.bin", "kuse_both_qualified.run")]
+  run_waves(r1)
+  c.eq_str(log_text("${d}/kuse_both_qualified.run.out"), "120\n", "modules both-qualified: stdout")
+  c.expect(jobs[2].code != 0, "modules private: refused")
+  c.expect(str_has(log_text("${d}/kuse_private.log"), "unknown name secret"), "modules private: says unknown name secret")
+  c.expect(str_has(log_text("${d}/kuse_private.log"), "kuse_private.av:3:8\n"), "modules private: at 3:8")
+  c.expect(jobs[3].code != 0, "modules ambiguous: refused")
+  c.expect(str_has(log_text("${d}/kuse_ambiguous.log"), "width is a constant of both kmod and kmod2: write kmod.width or kmod2.width"), "modules ambiguous: says width is a constant of both kmod and kmod2: write kmod.width or kmod2.width")
+  c.expect(str_has(log_text("${d}/kuse_ambiguous.log"), "kuse_ambiguous.av:4:8\n"), "modules ambiguous: at 4:8")
+  c.expect(jobs[4].code != 0, "modules own-and-imported: refused")
+  c.expect(str_has(log_text("${d}/kuse_own_and_imported.log"), "width is a constant of both kuse_own_and_imported and kmod: write kuse_own_and_imported.width or kmod.width"), "modules own-and-imported: says width is a constant of both kuse_own_and_imported and kmod: write kuse_own_and_imported.width or kmod.width")
+  c.expect(str_has(log_text("${d}/kuse_own_and_imported.log"), "kuse_own_and_imported.av:4:8\n"), "modules own-and-imported: at 4:8")
+  c.expect(jobs[5].code != 0, "modules assign-qualified: refused")
+  c.expect(str_has(log_text("${d}/kuse_assign_qualified.log"), "kmod.width is a constant and cannot be assigned"), "modules assign-qualified: says kmod.width is a constant and cannot be assigned")
+  c.expect(str_has(log_text("${d}/kuse_assign_qualified.log"), "kuse_assign_qualified.av:3:7\n"), "modules assign-qualified: at 3:7")
+}
+
+// A constant is its value written as a literal: a program that uses
+// constants emits the .ll of the same program with the values written in.
+fn check_const_ll(c: Checks, compiler: String, dir: String) {
+  ka = "${dir}/kll-a"
+  kb = "${dir}/kll-b"
+  mkdir_p(ka)
+  mkdir_p(kb)
+  _ = file_write("${ka}/k.av", "const n = 7\nconst neg = -3\nconst on = true\nfn main {\n  x: Int32 = n\n  puts(x + neg)\n  puts(n * 2)\n  if on {\n    puts(0)\n  }\n}\n")
+  _ = file_write("${kb}/k.av", "//\n//\n//\nfn main {\n  x: Int32 = 7\n  puts(x + -3)\n  puts(7 * 2)\n  if true {\n    puts(0)\n  }\n}\n")
+  c.eq_int(emit_ll(compiler, "${ka}/k.av", "${ka}/k.ll", "${ka}/k.log"), 0, "const ll: emits")
+  c.eq_int(emit_ll(compiler, "${kb}/k.av", "${kb}/k.ll", "${kb}/k.log"), 0, "literal ll: emits")
+  c.eq_str(str_replace_all(log_text("${ka}/k.ll"), ka, kb), log_text("${kb}/k.ll"), "const ll: the literal's")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_literals.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    dir = scratch_dir()
+    all: Array(LCase) = []
+    for x in char_cases() {
+      all.push(x)
+    }
+    for x in number_cases() {
+      all.push(x)
+    }
+    for x in fit_cases() {
+      all.push(x)
+    }
+    for x in const_cases() {
+      all.push(x)
+    }
+    for x in state_cases() {
+      all.push(x)
+    }
+    run_cases(c, compiler, dir, all)
+    check_format(c, compiler, dir)
+    check_const_modules(c, compiler, dir)
+    check_const_ll(c, compiler, dir)
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

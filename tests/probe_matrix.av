@@ -128,6 +128,19 @@ fn rules: Array(PRule) {
   xs.push(rule("guard-no-failure", "stmt", "", main_site, "", "n = probe_k() else e {\n  return\n}\nputs(n)", "n = parse_age(\"1\") else e {\n  return\n}\nputs(n)", "else e needs a value that can fail"))
   xs.push(rule("guard-reads-own-name", "stmt", "", main_site, "", "n = parse_age(\"1\") else e {\n  puts(n)\n  return\n}\nputs(n)", "n = parse_age(\"1\") else e {\n  puts(e.message)\n  return\n}\nputs(n)", "unknown name n"))
   xs.push(rule("value-block-return-type", "stmt", "", "fn site: Int {\n@\n  0\n}\n\nfn main {\n  puts(site())\n}\n", "", "if [1].any { |x|\n  if x > 0 {\n    return \"one\"\n  }\n  false\n} {\n  puts(1)\n}", "if [1].any { |x|\n  if x > 0 {\n    return 1\n  }\n  false\n} {\n  puts(1)\n}", "return type is String, expected Int"))
+  // README "Constants" and "Literals" (Stage 29 W5b2, D314, D315, D327
+  // Q7, D352, O298, O455): a constant is not assigned and holds a scalar,
+  // a module has no variables, and a literal (or a constant written in)
+  // that does not fit its type is refused at every width.
+  ksite = "const limit = 3\n\nconst big = 3000000000\n\nfn main {\n@\n}\n"
+  xs.push(rule("const-assigned", "stmt", "", ksite, "", "limit = 4", "puts(limit)", "limit is a constant and cannot be assigned"))
+  xs.push(rule("const-non-scalar", "stmt", "", "const name = \"x\"\n\nfn main {\n@\n}\n", "const name = 'x'\n\nfn main {\n@\n}\n", "puts(name)", "puts(name)", "a String is not one yet"))
+  xs.push(rule("module-state", "stmt", "", "count = 0\n\nfn main {\n@\n}\n", "const count = 0\n\nfn main {\n@\n}\n", "puts(count)", "puts(count)", "a module has no variables"))
+  xs.push(rule("const-does-not-fit", "stmt", "", ksite, "", "fitv: Int32 = big\nputs(fitv)", "fitv: Int = big\nputs(fitv)", "the constant big = 3000000000 does not fit in Int32"))
+  xs.push(rule("literal-fit-int32", "stmt", "", main_site, "", "fitv: Int32 = 2147483648\nputs(fitv)", "fitv: Int32 = 2147483647\nputs(fitv)", "integer literal does not fit in Int32"))
+  xs.push(rule("literal-fit-uint32", "stmt", "", main_site, "", "fitv: UInt32 = 4294967296\nputs(fitv)", "fitv: UInt32 = 4294967295\nputs(fitv)", "integer literal does not fit in UInt32"))
+  xs.push(rule("literal-fit-int", "stmt", "", main_site, "", "fitv = 9223372036854775808\nputs(fitv)", "fitv = 9223372036854775807\nputs(fitv)", "integer literal does not fit in Int"))
+  xs.push(rule("literal-fit-uint64", "stmt", "", main_site, "", "fitv = 18446744073709551616u64\nputs(fitv)", "fitv = 18446744073709551615u64\nputs(fitv)", "integer literal does not fit in UInt64"))
   xs
 }
 

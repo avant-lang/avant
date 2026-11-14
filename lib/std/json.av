@@ -25,6 +25,23 @@ lib jsonc {
   fun avant_json_misuse(what: String)
 }
 
+// What a JSON value is (Stage 29 W5b2, O420): Json.kind and
+// JsonValue.kind. The values are the runtime's codes
+// (avant_json_kind), whose 0 is "no value": a Json always holds one.
+pub enum JsonKind {
+  null = 1
+  bool
+  int
+  float
+  str
+  arr
+  obj
+}
+
+// avant_json_kind of a node that is not there (a missing key, an index
+// past the end, the end of an iteration).
+const no_value = 0
+
 // A document that does not parse: the message says what yyjson found
 // and where ("invalid JSON at byte 7: unexpected character"); offset is
 // that byte offset, -1 when the error has none (Stage 29 W4b2, D295 R11).
@@ -47,7 +64,7 @@ fn json_error(code: Int): JsonError {
 }
 
 pub class JsonValue {
-  pub kind: Int = 0
+  pub kind: JsonKind = JsonKind.null
   pub int_val: Int = 0
   pub f64_val: Float64 = 0.0
   pub str_val: String = ""
@@ -94,36 +111,41 @@ pub struct Json {
     b
   }
 
-  pub fn kind: Int {
-    jsonc.avant_json_kind(self.node)
+  pub fn kind: JsonKind {
+    // A Json's node is a value (get, at and the iterator give nil for
+    // no_value), so the fallback is never taken.
+    JsonKind.from_i(jsonc.avant_json_kind(self.node)) ?? JsonKind.null
   }
 
+  // The is_* tests compare the runtime's code with the member's value
+  // rather than build a JsonKind? through kind: on the W5b2 proving
+  // ground's walk, the base's instructions (+0.02%) instead of +6.7%.
   pub fn is_null: Bool {
-    self.kind == 1
+    jsonc.avant_json_kind(self.node) == JsonKind.null.to_i
   }
 
   pub fn is_bool: Bool {
-    self.kind == 2
+    jsonc.avant_json_kind(self.node) == JsonKind.bool.to_i
   }
 
   pub fn is_int: Bool {
-    self.kind == 3
+    jsonc.avant_json_kind(self.node) == JsonKind.int.to_i
   }
 
   pub fn is_float: Bool {
-    self.kind == 4
+    jsonc.avant_json_kind(self.node) == JsonKind.float.to_i
   }
 
   pub fn is_str: Bool {
-    self.kind == 5
+    jsonc.avant_json_kind(self.node) == JsonKind.str.to_i
   }
 
   pub fn is_arr: Bool {
-    self.kind == 6
+    jsonc.avant_json_kind(self.node) == JsonKind.arr.to_i
   }
 
   pub fn is_obj: Bool {
-    self.kind == 7
+    jsonc.avant_json_kind(self.node) == JsonKind.obj.to_i
   }
 
   pub fn len: Int {
@@ -132,7 +154,7 @@ pub struct Json {
 
   pub fn get(key: String): Json? {
     child_node = jsonc.avant_json_get(self.node, key)
-    if jsonc.avant_json_kind(child_node) == 0 {
+    if jsonc.avant_json_kind(child_node) == no_value {
       return nil
     }
     Json { node: child_node, pool: self.pool }
@@ -140,7 +162,7 @@ pub struct Json {
 
   pub fn at(index: Int): Json? {
     child_node = jsonc.avant_json_at(self.node, index)
-    if jsonc.avant_json_kind(child_node) == 0 {
+    if jsonc.avant_json_kind(child_node) == no_value {
       return nil
     }
     Json { node: child_node, pool: self.pool }
@@ -148,7 +170,7 @@ pub struct Json {
 
   pub fn first: Json? {
     child_node = jsonc.avant_json_first(self.node)
-    if jsonc.avant_json_kind(child_node) == 0 {
+    if jsonc.avant_json_kind(child_node) == no_value {
       return nil
     }
     Json { node: child_node, pool: self.pool }
@@ -246,11 +268,11 @@ pub struct Json {
     v = JsonValue.new
     v.kind = self.kind
     if self.is_int {
-      // An integer beyond Int keeps its value as a float (kind 4).
+      // An integer beyond Int keeps its value as a float.
       if i = self.int {
         v.int_val = i
       } else {
-        v.kind = 4
+        v.kind = JsonKind.float
         v.f64_val = self.f64 ?? 0.0
       }
     } else if self.is_float {
@@ -305,7 +327,7 @@ pub class JsonIter {
       self.cur = jsonc.avant_json_next(self.cur)
     }
     self.idx += 1
-    if jsonc.avant_json_kind(self.cur) == 0 {
+    if jsonc.avant_json_kind(self.cur) == no_value {
       return nil
     }
     Json { node: self.cur, pool: self.pool }

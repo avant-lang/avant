@@ -30,32 +30,43 @@ pub fn hex_digit_val(c: Int): Int {
   -1
 }
 
-pub fn parse_u64_dec(s: String): UInt64 {
+// The value of an integer literal's digits in radix 2, 8, 10 or 16 (the
+// lexer checked them), or nil when it does not fit in 64 bits (Stage 29
+// W5b2, O455: the parser said so, where it used to trap).
+pub fn parse_u64_digits(s: String, radix: Int): UInt64? {
   n = 0u64
-  i = 0
-  while i < s.size {
-    c = s[i]
-    if ch_is_digit(c) {
-      d = (c - 48).to_u64
-      n = n * 10u64 + d
-    } else {
-      return 0u64
+  r = radix.to_u64
+  for i in 0..s.size {
+    v = hex_digit_val(s[i])
+    if v < 0 || v >= radix {
+      return nil
     }
-    i += 1
+    d = v.to_u64
+    if n > (18446744073709551615u64 - d) / r {
+      return nil
+    }
+    n = n * r + d
   }
   n
 }
 
-pub fn parse_u64_hex(s: String): UInt64 {
-  n = 0u64
-  for i in 0..s.size {
-    v = hex_digit_val(s[i])
-    if v < 0 {
-      return 0u64
+// A name in snake_case: a capital letter becomes `_` and its lower case
+// (none at the start, none after `_`), so MaxDepth and MAX_DEPTH are
+// max_depth.
+pub fn snake_case_of(name: String): String {
+  b = buf_new()
+  for i in 0..name.size {
+    c = name[i]
+    if c >= 65 && c <= 90 {
+      if i > 0 && name[i - 1] != 95 && !(name[i - 1] >= 65 && name[i - 1] <= 90) {
+        b.push_byte(95)
+      }
+      b.push_byte(c + 32)
+    } else {
+      b.push_byte(c)
     }
-    n = n * 16u64 + v.to_u64
   }
-  n
+  b.to_s
 }
 
 pub class TypeBody {
@@ -127,6 +138,9 @@ pub class Parser {
 
   pub fn is_top_starter(kind: Int): Bool {
     if kind == tk_fn() {
+      return true
+    }
+    if kind == tk_enum() || kind == tk_const() {
       return true
     }
     if kind == tk_struct() {
@@ -444,14 +458,28 @@ pub class Parser {
         fail(tok.loc, removed_int_message("the i64 suffix", raw))
       }
     }
-    bits = 0u64
-    if raw.size >= 2 && raw[0] == 48 && (raw[1] == 120 || raw[1] == 88) {
-      bits = parse_u64_hex(str_slice(raw, 2, raw.size))
-      self.int_bits = bits
-      self.int_suffix = suffix
-      return true
+    radix = 10
+    digits = raw
+    if raw.size >= 2 && raw[0] == 48 {
+      p = raw[1]
+      if p == 120 || p == 88 {
+        radix = 16
+      } else if p == 98 {
+        radix = 2
+      } else if p == 111 {
+        radix = 8
+      }
+      if radix != 10 {
+        digits = str_slice(raw, 2, raw.size)
+      }
     }
-    bits = parse_u64_dec(raw)
+    bits = 0u64
+    if got = parse_u64_digits(digits, radix) {
+      bits = got
+    } else {
+      fail(tok.loc, "integer literal does not fit in UInt64, the widest integer type")
+      return false
+    }
     self.int_bits = bits
     self.int_suffix = suffix
     true
@@ -481,6 +509,10 @@ pub class Parser {
         program.structs.push(parse_struct(vis))
       } else if k == tk_enum() {
         program.structs.push(parse_enum(vis))
+      } else if k == tk_const() {
+        if c = parse_const(vis) {
+          program.consts.push(c)
+        }
       } else if k == tk_class() {
         program.classes.push(parse_class(vis))
       } else if k == tk_lib() {
@@ -493,6 +525,16 @@ pub class Parser {
         program.functions.push(parse_fn("", vis))
       } else if k == tk_interface() {
         program.interfaces.push(parse_interface(vis))
+      } else if k == tk_ident() && self.err_count == 0 && module_state_ahead() {
+        // No module-level mutable state, on purpose (Stage 29 W5b2, D352,
+        // O298): a value that never changes is a constant. (After an
+        // earlier error, a statement here is more likely a function's
+        // that a missing brace left outside: the general message stays.)
+        name = self.current.value
+        fail(self.current.loc, "a module has no variables, on purpose: a value that never changes is `const ${name} = ...`, and state lives in a function's locals or is passed in values")
+        while self.current.kind != tk_newline() && self.current.kind != tk_eof() {
+          self.bump
+        }
       } else if k == tk_ident() {
         parse_opt_in(program, vis)
       } else if k == tk_quote() {
@@ -511,9 +553,9 @@ pub class Parser {
         fail(self.current.loc, "fun belongs in a lib block; there is no extern fn")
       } else {
         if vis {
-          fail(self.current.loc, "pub prefixes struct, class, enum, lib, fn, or interface")
+          fail(self.current.loc, "pub prefixes struct, class, enum, const, lib, fn, or interface")
         } else {
-          fail(self.current.loc, "expected struct, class, enum, lib, fn, interface, import, quote, or comptime, found ${token_name(k)}")
+          fail(self.current.loc, "expected struct, class, enum, const, lib, fn, interface, import, quote, or comptime, found ${token_name(k)}")
         }
       }
       if new_err_since(mark) {
@@ -1062,14 +1104,79 @@ pub class Parser {
     fnn
   }
 
+  // `const name = value` (Stage 29 W5b2, D314, D315): a snake_case name,
+  // no declared type (each use is the value written as a literal, which
+  // takes its type from where it stands), the value an expression the
+  // checker computes (checker/consts.av).
+  pub fn parse_const(vis: Bool): ConstDef? {
+    expect(tk_const())
+    tok = self.current
+    if tok.kind != tk_ident() {
+      fail(tok.loc, "expected a name after const, found ${token_name(tok.kind)}")
+      return nil
+    }
+    self.bump
+    name = tok.value
+    snake = snake_case_of(name)
+    if snake != name {
+      fail(tok.loc, "a constant's name is snake_case, as a function's: const ${snake}")
+      return nil
+    }
+    if self.current.kind == tk_colon() {
+      fail(self.current.loc, "a constant has no declared type: each use is its value written as a literal, which takes its type from where it stands (const ${name} = ...)")
+      return nil
+    }
+    if self.current.kind != tk_eq() {
+      fail(self.current.loc, "expected `=` and the value after const ${name}")
+      return nil
+    }
+    self.bump
+    value = parse_expr
+    c = ConstDef.new(tok.loc, name, value)
+    c.vis = vis
+    c
+  }
+
+  // `name = ...`, `name += ...` or `name: Type = ...` at module level: a
+  // lower-case name (an opt-in names a type, `Point: Show`) followed by
+  // an assignment, or by `:` and an `=` before the line ends.
+  pub fn module_state_ahead: Bool {
+    name = self.current.value
+    if name.size == 0 || (name[0] >= 65 && name[0] <= 90) {
+      return false
+    }
+    i = self.index + 1
+    if i >= self.tokens.size {
+      return false
+    }
+    k = self.tokens[i].kind
+    if k == tk_eq() || k == tk_plus_eq() || k == tk_minus_eq() || k == tk_star_eq() || k == tk_slash_eq() {
+      return true
+    }
+    if k != tk_colon() {
+      return false
+    }
+    while i < self.tokens.size {
+      k2 = self.tokens[i].kind
+      if k2 == tk_newline() || k2 == tk_eof() || k2 == tk_l_brace() {
+        return false
+      }
+      if k2 == tk_eq() {
+        return true
+      }
+      i += 1
+    }
+    false
+  }
+
   pub fn parse_opt_in(program: Program, vis: Bool) {
     target = self.parse_primary_type
     self.skip_newlines
     if self.current.kind != tk_colon() {
       if vis {
-        fail(target.loc, "pub prefixes struct, class, lib, fn, or interface")
+        fail(target.loc, "pub prefixes struct, class, enum, const, lib, fn, or interface")
       } else {
-        fail(target.loc, "expected struct, class, lib, fn, interface, import, quote, or comptime")
+        fail(target.loc, "expected struct, class, enum, const, lib, fn, interface, import, quote, or comptime")
       }
       return
     }
@@ -1565,6 +1672,16 @@ pub class Parser {
 
   pub fn parse_stmt: Stmt {
     k = self.current.kind
+    if k == tk_const() {
+      // A constant belongs to the module (Stage 29 W5b2, D314): a local
+      // is a name assigned with `=`.
+      loc0 = self.current.loc
+      fail(loc0, "const is declared at module level, outside every function; inside one, a local is `name = value`")
+      while self.current.kind != tk_newline() && self.current.kind != tk_eof() && self.current.kind != tk_r_brace() {
+        self.bump
+      }
+      return stmt_expr(loc0, Expr.new(ex_nil(), loc0))
+    }
     if k == tk_if() {
       return self.parse_if
     }
