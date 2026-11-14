@@ -40,7 +40,7 @@ pub fn (checker_self: Checker) check_float_method(expr: Expr): Ty {
   if expr.callee == "to_i" {
     return checker_self.expect_no_args(expr, checker_self.t_int(), "Float64.to_i takes no arguments")
   }
-  checker_self.fail(expr.loc, "no method ${expr.callee} on Float64")
+  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Float64", checker_self.builtin_hint(checker_self.t_float(), expr.callee))
   checker_self.t_float()
 }
 
@@ -66,7 +66,7 @@ pub fn (checker_self: Checker) check_int_method(expr: Expr, object: Ty): Ty {
     checker_self.fail(expr.loc, removed_int_message(expr.callee, now))
     return checker_self.t_int()
   }
-  checker_self.fail(expr.loc, "no method ${expr.callee} on ${object.show}")
+  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on ${object.show}", checker_self.builtin_hint(object, expr.callee))
   object
 }
 
@@ -655,7 +655,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
   if expr.callee == "parallel" {
     return checker_self.check_parallel(expr, array)
   }
-  checker_self.fail(expr.loc, "no method ${expr.callee} on Array")
+  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Array", checker_self.builtin_hint(array, expr.callee))
   checker_self.t_int()
 }
 
@@ -983,7 +983,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     }
     return ty_nilable(checker_self.t_int())
   }
-  checker_self.fail(expr.loc, "no method ${expr.callee} on Hash")
+  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Hash", checker_self.builtin_hint(hash, expr.callee))
   checker_self.t_int()
 }
 

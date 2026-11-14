@@ -180,6 +180,13 @@ fn rules: Array(PRule) {
   xs.push(rule("label-outside-type", "stmt", "", rsite, "", "switch rw {\n  case 3000000000 { puts(1) }\n  else { puts(2) }\n}", "switch rw {\n  case 2147483647 { puts(1) }\n  else { puts(2) }\n}", "case label 3000000000 does not fit in Int32"))
   xs.push(rule("bool-switch-missing", "stmt", "", rsite, "", "switch rb {\n  case true { puts(1) }\n}", "switch rb {\n  case true { puts(1) }\n  case false { puts(2) }\n}", "switch over Bool does not cover false"))
   xs.push(rule("bool-int-label", "stmt", "", rsite, "", "switch rb {\n  case 1 { puts(1) }\n  case false { puts(2) }\n}", "switch rb {\n  case true { puts(1) }\n  case false { puts(2) }\n}", "write `case true`"))
+  // README "Opening an optional" and "Compile errors" (Stage 29 W5c1,
+  // O257): an optional is opened or tested, never compared with nil or
+  // used as its value; a call gives what its function takes.
+  osite = "fn ptwo(a: Int, b: Int): Int {\n  a + b\n}\n\nfn main {\n  px: Int? = probe_k()\n@\n}\n"
+  xs.push(rule("nil-compare", "stmt", "", osite, "", "puts(px == nil)", "if _ = px {\n  puts(1)\n} else {\n  puts(0)\n}", "an optional is never compared with nil"))
+  xs.push(rule("optional-as-value", "stmt", "", osite, "", "puts(px + 1)", "puts((px ?? 0) + 1)", "open it with `if v = px`"))
+  xs.push(rule("arg-count", "stmt", "", osite, "", "puts(ptwo(1))", "puts(ptwo(1, 2))", "ptwo takes 2 arguments, given 1"))
   xs
 }
 

@@ -456,7 +456,7 @@ pub fn (checker_self: Checker) lookup_named_type(name: String, loc: Location, qu
   if qual.size > 0 {
     checker_self.fail(loc, "unknown type ${qual}.${name}")
   } else {
-    checker_self.fail(loc, "unknown type ${name}")
+    checker_self.fail_hint(loc, "unknown type ${name}", checker_self.type_hint_here(name))
   }
   nil
 }
@@ -520,6 +520,14 @@ pub fn (checker_self: Checker) type_part_seen(tn: TypeName): Bool {
 }
 
 pub fn (checker_self: Checker) resolve_in_module(tn: TypeName): Ty {
+  saved = checker_self.resolver.scope_mod
+  checker_self.resolver.scope_mod = checker_self.current_module
+  ty = checker_self.resolve_in_module_core(tn)
+  checker_self.resolver.scope_mod = saved
+  ty
+}
+
+pub fn (checker_self: Checker) resolve_in_module_core(tn: TypeName): Ty {
   if tn.pinned {
     return checker_self.resolver.resolve(tn)
   }

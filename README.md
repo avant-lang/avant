@@ -3578,7 +3578,7 @@ fn main {
 
 <!-- check: stderr -->
 ```text
-error[E4001]: unknown name cuont
+error[E4001]: unknown name cuont (did you mean `count`?)
   --> main.av:3:8
 3 |   puts(cuont)
   |        ^
@@ -3586,6 +3586,9 @@ error[E4001]: unknown name cuont
 
 - The compiler recovers and keeps going, per statement: one run reports every independent mistake it can find, in every function and imported file, up to 20 errors. With several, the run ends with `error: aborting due to N previous errors`, and past the cap with `error: and M more errors (limit 20)`.
 - A syntax error names what the parser expected and what it found, in source terms: ``error[E2004]: expected `{`, found a string``.
+- A name the compiler cannot find gets at most one suggestion, and only one that is in scope there: a local, a field, a method, a constant, a function, a type, an enum member or a builtin method, the nearest by spelling (at most a third of the name's letters changed, a letter's case counting half; a tie goes to the name found first in that order, then the first alphabetically).
+- A call whose arguments fit no function of that name says what it takes: `add takes 2 arguments, given 1: add(a: Int, b: Int): Int`; with several, each signature. Two that fit equally are named both: ``ambiguous call to f: f(a: Int, b: Int?): Int and f(a: Int?, b: Int): Int both match``.
+- A use of an optional as its value, and `x == nil`, say how to open it: ``cannot read field size on String?; open it with `if v = s`, `s ?? fallback` or `s?` ``.
 - The code's first digit names the phase: `E1xxx` lexer, `E2xxx` parser, `E3xxx` type resolution, `E4xxx` checker, `E5xxx` module loader, `E6xxx` macro expansion.
 
 Run-time failures are [traps](#traps).

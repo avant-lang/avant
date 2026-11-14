@@ -372,7 +372,19 @@ pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qu
     if saw_generic {
       checker_self.fail(expr.loc, "cannot infer type argument")
     } else {
-      checker_self.fail(expr.loc, "unknown function ${expr.callee}")
+      // The lambda fits no function of that name (O257: it said
+      // "unknown function NAME").
+      list = buf_new()
+      for i in 1..checker_self.functions.size {
+        sig = checker_self.functions[i]
+        if sig.name == expr.callee && checker_self.fn_candidate_q(sig.node, qual) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
+          if list.size > 0 {
+            list.push_str(", ")
+          }
+          list.push_str(checker_self.sig_text(expr.callee, sig))
+        }
+      }
+      checker_self.fail(expr.loc, "the block does not fit ${expr.callee}: ${list.to_s}")
     }
     return checker_self.t_int()
   }
@@ -480,7 +492,7 @@ pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
     checker_self.fail(expr.loc, "generic function is not a value")
     return checker_self.t_int()
   }
-  checker_self.fail(expr.loc, "unknown function ${expr.ident}")
+  checker_self.fail_hint(expr.loc, "unknown function ${expr.ident}", checker_self.fn_hint(expr.ident))
   checker_self.t_int()
 }
 
@@ -537,7 +549,7 @@ pub fn (checker_self: Checker) check_indirect_call(expr: Expr, callee: Ty): Ty {
     return ret
   }
   if expr.args.size != callee.members.size {
-    checker_self.fail(expr.loc, "takes ${callee.members.size} arguments, got ${expr.args.size}")
+    checker_self.fail(expr.loc, "${callee.show} takes ${checker_self.args_word(callee.members.size)}, given ${expr.args.size}")
     return ret
   }
   i = 0
@@ -656,7 +668,8 @@ pub fn (checker_self: Checker) mark_box(name: String, idx: Int) {
 pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
   if b = expr.block {
     if b.params.size != want.members.size {
-      checker_self.fail(expr.loc, "lambda takes ${want.members.size} arguments, got ${b.params.size}")
+      has = checker_self.count_word(b.params.size, "parameter")
+      checker_self.fail(expr.loc, "the lambda has ${has} where ${want.show} takes ${checker_self.args_word(want.members.size)}")
       return checker_self.t_int()
     }
     for mem in want.members {
