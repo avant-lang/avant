@@ -8,19 +8,22 @@ import std.gc
 // holder's field still named the old copy. `avant_alloc` and the
 // emitter's inline path now give such an object one word.
 //
-// Two parts. `round` allocates the three kinds of empty object (an empty
-// array literal's buffer, the buffer of `Array(T).new(0)` with a size
-// known only at run time, an empty class) with a 24-byte pad, so the
+// Two parts. `round` allocates the kinds of empty object (the buffer of
+// `Array(T).new(0)` with a size known only at run time, an empty class;
+// until the Valk stage's VALK-A2, O197, also an empty array literal's
+// buffer: such an array is now its header alone, and it is still made,
+// kept and pushed to here) with a 24-byte pad, so the
 // allocation point moves through every 8-byte position of a block; every
 // holder is kept, a young collection moves them, and each is then used
 // (under AVANT_GC_VERIFY=1 the verifier must stay silent). `extra`
 // allocates EMPTY_PAYLOAD_EXTRA more of each and keeps none:
 // tests/cases/test_gc_checks.av runs the program twice and checks that
-// 100,000 more steps allocate exactly 9,600,000 more bytes (three empty
-// objects of 16 bytes and two array headers of 24), in the inline build
-// and in the call-form build. With the emitter's two guards removed the
-// inline build's difference is 7,200,000: an empty object is its header
-// alone again. (avant_alloc's own line is not reached by generated code,
+// 100,000 more steps allocate exactly 8,000,000 more bytes (two empty
+// objects of 16 bytes and two array headers of 24; 9,600,000 when the
+// literal had a buffer too), in the inline build and in the call-form
+// build. With the emitter's two guards removed an empty object is its
+// header alone again (7,200,000 of the 9,600,000 when that was
+// measured, in W-FIX1b). (avant_alloc's own line is not reached by generated code,
 // which never passes 0 since the emitter's guard: removing it changes
 // nothing here. The layout that corrupted memory, such an object as the
 // last of a block, was reached by the compiler's own dump only; two

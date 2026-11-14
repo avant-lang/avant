@@ -1,0 +1,123 @@
+// O197 (the Valk stage, VALK-A2): an array known to be empty where it is
+// made (`[]`, `Array(T).new(0)`) is its header alone; its element buffer is
+// made at the first push. Every operation below runs on such an array
+// before anything was pushed, then after a push, a clear and a second
+// push; the output is the one an array with an (unused) buffer gave.
+
+import std.gc
+
+class Bag {
+  items: Array(Int) = []
+  names: Array(String) = []
+  n: Int
+}
+
+struct Pt {
+  x: Int
+  y: Int
+}
+
+fn show(tag: String, xs: Array(Int)) {
+  t = 0
+  for x in xs {
+    t = t + x
+  }
+  c = 0
+  xs.each { |x|
+    c = c + 1
+  }
+  some = xs.any { |x| x > 0 }
+  every = xs.all { |x| x > 0 }
+  puts("${tag}: size ${xs.size} sum ${xs.sum} loop ${t} each ${c} has1 ${xs.contains(1)} any ${some} all ${every}")
+}
+
+fn cat(xs: Array(String)): String {
+  t = ""
+  for x in xs {
+    t = t + x
+  }
+  t
+}
+
+fn main {
+  a: Array(Int) = []
+  show("lit", a)
+  a.sort
+  a.reverse
+  a.clear
+  b = a.sorted
+  show("sorted", b)
+  a.push(3)
+  a.push(1)
+  a.sort
+  show("pushed", a)
+  show("sorted still", b)
+  a.clear
+  show("cleared", a)
+  a.push(7)
+  show("again", a)
+
+  n = Array(Int).new(0)
+  show("new", n)
+  n.reserve(10)
+  show("reserved", n)
+  n.push(1)
+  show("new pushed", n)
+
+  s: Array(String) = []
+  puts("join [${cat(s)}] size ${s.size}")
+  s.push("x")
+  s.push("y")
+  puts("join [${cat(s)}] size ${s.size}")
+
+  f: Array(Float64) = []
+  puts("floats ${f.size} ${f.sum}")
+  f.push(1.5)
+  puts("floats ${f.size} ${f.sum}")
+
+  p: Array(Pt) = []
+  puts("structs ${p.size}")
+  p.push(Pt { x: 1, y: 2 })
+  puts("structs ${p.size} ${p[0].x + p[0].y}")
+
+  nested: Array(Array(Int)) = []
+  nested.push([])
+  nested.push([])
+  nested[1].push(5)
+  puts("nested ${nested.size} ${nested[0].size} ${nested[1].size} ${nested[1][0]}")
+
+  bag = Bag.new
+  bag.n = 2
+  puts("bag ${bag.items.size} ${bag.names.size}")
+  bag.items.push(4)
+  bag.names.push("n")
+  puts("bag ${bag.items.size} ${bag.items[0]} ${cat(bag.names)}")
+
+  // Many empty arrays kept across collections, then filled.
+  all: Array(Array(Int)) = []
+  i = 0
+  while i < 20000 {
+    e: Array(Int) = []
+    all.push(e)
+    i = i + 1
+  }
+  gc.collect()
+  gc.collect()
+  i = 0
+  total = 0
+  while i < all.size {
+    total = total + all[i].size
+    if i % 3 == 0 {
+      all[i].push(i)
+    }
+    i = i + 1
+  }
+  gc.collect()
+  i = 0
+  filled = 0
+  while i < all.size {
+    filled = filled + all[i].size
+    i = i + 1
+  }
+  puts("kept ${all.size} ${total} ${filled}")
+}

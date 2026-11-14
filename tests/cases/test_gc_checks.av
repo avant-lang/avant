@@ -195,13 +195,13 @@ fn stat_value(text: String, key: String): Int {
 
 // O360 (Stage 29 W-FIX1b): an object with no payload takes one word
 // (W-INT1's fix, which had no test). heap/empty_payload.av allocates
-// EMPTY_PAYLOAD_EXTRA steps of three empty objects (an empty array
-// literal's buffer, `Array(T).new(0)`'s with a run-time size, an empty
-// class) and two array headers: 100,000 more steps are exactly 9,600,000
-// more allocated bytes, in the inline build and in the call-form build,
-// under every collector mode. With the emitter's two guards removed the
-// inline build's four runs give 7,200,000 (the stress run allocates
-// through the runtime). The program also keeps, moves and uses empty
+// EMPTY_PAYLOAD_EXTRA steps of two empty objects (`Array(T).new(0)`'s
+// buffer with a run-time size, an empty class) and two array headers:
+// 100,000 more steps are exactly 8,000,000 more allocated bytes, in the
+// inline build and in the call-form build, under every collector mode.
+// (Until the Valk stage's VALK-A2, O197, an empty array literal had a
+// buffer too, a third empty object: 9,600,000; with the emitter's two
+// guards removed the inline build's four runs then gave 7,200,000.) The program also keeps, moves and uses empty
 // objects at every position of a block and prints 0.
 fn test_empty_payload(c: Checks, compiler: String, root: String, dir: String) {
   jobs: Array(HJob) = []
@@ -230,7 +230,7 @@ fn test_empty_payload(c: Checks, compiler: String, root: String, dir: String) {
       small = stat_value(log_text("${dir}/${bins[b]}.a${e}.err"), "alloc")
       large = stat_value(log_text("${dir}/${bins[b]}.b${e}.err"), "alloc")
       c.expect(small > 0, "${what}: the statistics line has alloc=")
-      c.eq_int(large - small, 9600000, "${what}: 100,000 steps of three empty objects allocate 9,600,000 bytes")
+      c.eq_int(large - small, 8000000, "${what}: 100,000 steps of two empty objects and two array headers allocate 8,000,000 bytes")
       k += 2
     }
   }
@@ -517,6 +517,41 @@ fn test_late_starts(c: Checks, compiler: String, root: String, dir: String) {
   }
 }
 
+// O197 (the Valk stage, VALK-A2): an array known to be empty where it is
+// made (`[]`, `Array(T).new(0)`) is its header alone; the first push makes
+// its buffer. heap/empty_arrays.av runs the array operations on such
+// arrays (before a push, after one, after a clear), as literals, as
+// class-field defaults, nested, and 20,000 of them kept across
+// collections and then filled: every environment prints what a compiler
+// that gave each empty array a buffer printed, with no stderr. And the
+// program allocates 1,280,144 bytes where it allocated 1,600,320: each of
+// its 20,011 empty arrays is 24 bytes, not 24 and 16.
+fn test_empty_arrays(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/empty_arrays.av", "${dir}/empty_arrays", "${dir}/empty_arrays.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "empty_arrays.av: compiles")
+  want = "lit: size 0 sum 0 loop 0 each 0 has1 false any false all true\nsorted: size 0 sum 0 loop 0 each 0 has1 false any false all true\npushed: size 2 sum 4 loop 4 each 2 has1 true any true all true\nsorted still: size 0 sum 0 loop 0 each 0 has1 false any false all true\ncleared: size 0 sum 0 loop 0 each 0 has1 false any false all true\nagain: size 1 sum 7 loop 7 each 1 has1 false any true all true\nnew: size 0 sum 0 loop 0 each 0 has1 false any false all true\nreserved: size 0 sum 0 loop 0 each 0 has1 false any false all true\nnew pushed: size 1 sum 1 loop 1 each 1 has1 true any true all true\njoin [] size 0\njoin [xy] size 2\nfloats 0 0.0\nfloats 1 1.5\nstructs 0\nstructs 1 3\nnested 2 0 1 5\nbag 0 0\nbag 1 4 n\nkept 20000 0 6667\n"
+  clean = "-u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_HEAP_RESERVE_GB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS AVANT_GC_STATS=1"
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "empty_arrays", "empty_arrays.g${e}", envs[e]))
+  }
+  runs.push(run_job_env(dir, "empty_arrays", "empty_arrays.stats", clean))
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "empty_arrays.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/empty_arrays.g${e}.out"), want, "empty_arrays.av ${what}: every operation on an array with no buffer gives what it gave on an empty buffer")
+    c.eq_str(log_text("${dir}/empty_arrays.g${e}.err"), "", "empty_arrays.av ${what}: no stderr")
+  }
+  c.eq_int(stat_value(log_text("${dir}/empty_arrays.stats.err"), "alloc"), 1280144, "empty_arrays.av: an empty array is one object of 24 bytes (1,280,144 bytes allocated; 1,600,320 with a buffer each)")
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -529,6 +564,7 @@ fn test_main(c: Checks) {
     test_rem_chain(c, compiler, avant_test_root(), scratch_dir())
     test_rem_invariant(c, compiler, avant_test_root(), scratch_dir())
     test_late_starts(c, compiler, avant_test_root(), scratch_dir())
+    test_empty_arrays(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
