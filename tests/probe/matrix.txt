@@ -6,8 +6,10 @@ discard-error if unsafe refused ok | error[E4000]: this statement drops a value 
 discard-error if safe accepted ok | 
 discard-error else unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 discard-error else safe accepted ok | 
-discard-error switch-arm unsafe refused other | error[E4000]: switch cases must all produce a value, or none
+discard-error switch-arm unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 discard-error switch-arm safe accepted ok | 
+discard-error union-arm unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
+discard-error union-arm safe accepted ok | 
 discard-error while unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 discard-error while safe accepted ok | 
 discard-error for unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
@@ -24,6 +26,8 @@ question-unreturnable if-expr unsafe refused ok | error[E4000]: postfix ? on Int
 question-unreturnable if-expr safe accepted ok | 
 question-unreturnable switch-expr unsafe refused ok | error[E4000]: postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError, or handle the failure with if-assign or ??
 question-unreturnable switch-expr safe accepted ok | 
+question-unreturnable union-switch-expr unsafe refused ok | error[E4000]: postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError, or handle the failure with if-assign or ??
+question-unreturnable union-switch-expr safe accepted ok | 
 question-unreturnable lambda unsafe refused other | error[E4000]: postfix ? inside a lambda whose result type is inferred cannot return the failure; handle it with if-assign or ??
 question-unreturnable lambda safe refused refused | error[E4000]: postfix ? inside a lambda whose result type is inferred cannot return the failure; handle it with if-assign or ??
 question-unreturnable binding-chain unsafe refused ok | error[E4000]: postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError, or handle the failure with if-assign or ??
@@ -44,6 +48,8 @@ field-read-before-set if-expr unsafe refused ok | error[E4000]: field xs of Prob
 field-read-before-set if-expr safe accepted ok | 
 field-read-before-set switch-expr unsafe refused ok | error[E4000]: field xs of Probe is read in initialize before it is set; set it before this read (self.xs = ...), give it a default (xs: Array(Int) = ...), or make it optional (xs: Array(Int)?)
 field-read-before-set switch-expr safe accepted ok | 
+field-read-before-set union-switch-expr unsafe refused ok | error[E4000]: field xs of Probe is read in initialize before it is set; set it before this read (self.xs = ...), give it a default (xs: Array(Int) = ...), or make it optional (xs: Array(Int)?)
+field-read-before-set union-switch-expr safe accepted ok | 
 field-read-before-set lambda unsafe refused ok | error[E4000]: a lambda uses the receiver in initialize before field xs of Probe is set; set it before this (self.xs = ...), give it a default (xs: Array(Int) = ...), or make it optional (xs: Array(Int)?)
 field-read-before-set lambda safe accepted ok | 
 field-read-before-set binding-chain unsafe refused ok | error[E4000]: field xs of Probe is read in initialize before it is set; set it before this read (self.xs = ...), give it a default (xs: Array(Int) = ...), or make it optional (xs: Array(Int)?)
@@ -66,6 +72,8 @@ bare-field-write else unsafe refused ok | error[E4000]: x is a field of Probe; w
 bare-field-write else safe accepted ok | 
 bare-field-write switch-arm unsafe refused ok | error[E4000]: x is a field of Probe; write self.x = ... to change the field, or choose another name for a local
 bare-field-write switch-arm safe accepted ok | 
+bare-field-write union-arm unsafe refused ok | error[E4000]: x is a field of Probe; write self.x = ... to change the field, or choose another name for a local
+bare-field-write union-arm safe accepted ok | 
 bare-field-write while unsafe refused ok | error[E4000]: x is a field of Probe; write self.x = ... to change the field, or choose another name for a local
 bare-field-write while safe accepted ok | 
 bare-field-write for unsafe refused ok | error[E4000]: x is a field of Probe; write self.x = ... to change the field, or choose another name for a local
@@ -84,6 +92,8 @@ for-variable-assign else unsafe refused ok | error[E4000]: cannot assign to i: a
 for-variable-assign else safe accepted ok | 
 for-variable-assign switch-arm unsafe refused ok | error[E4000]: cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own
 for-variable-assign switch-arm safe accepted ok | 
+for-variable-assign union-arm unsafe refused ok | error[E4000]: cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own
+for-variable-assign union-arm safe accepted ok | 
 for-variable-assign while unsafe refused ok | error[E4000]: cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own
 for-variable-assign while safe accepted ok | 
 for-variable-assign for unsafe refused ok | error[E4000]: cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own
@@ -100,6 +110,8 @@ private-field if-expr unsafe refused ok | error[E4000]: field secret of PBox is 
 private-field if-expr safe accepted ok | 
 private-field switch-expr unsafe refused ok | error[E4000]: field secret of PBox is private to module probe_mod; mark it pub
 private-field switch-expr safe accepted ok | 
+private-field union-switch-expr unsafe refused ok | error[E4000]: field secret of PBox is private to module probe_mod; mark it pub
+private-field union-switch-expr safe accepted ok | 
 private-field lambda unsafe refused ok | error[E4000]: field secret of PBox is private to module probe_mod; mark it pub
 private-field lambda safe accepted ok | 
 private-field binding-chain unsafe refused ok | error[E4000]: field secret of PBox is private to module probe_mod; mark it pub
@@ -122,6 +134,8 @@ mutex-guard-escape else unsafe refused ok | error[E4003]: Mutex.with: this argum
 mutex-guard-escape else safe accepted ok | 
 mutex-guard-escape switch-arm unsafe refused ok | error[E4003]: Mutex.with: this argument is the guarded value or a reference reached from it (PBox); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends
 mutex-guard-escape switch-arm safe accepted ok | 
+mutex-guard-escape union-arm unsafe refused ok | error[E4003]: Mutex.with: this argument is the guarded value or a reference reached from it (PBox); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends
+mutex-guard-escape union-arm safe accepted ok | 
 mutex-guard-escape while unsafe refused ok | error[E4003]: Mutex.with: this argument is the guarded value or a reference reached from it (PBox); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends
 mutex-guard-escape while safe accepted ok | 
 mutex-guard-escape for unsafe refused ok | error[E4003]: Mutex.with: this argument is the guarded value or a reference reached from it (PBox); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends
@@ -174,6 +188,8 @@ number-mix if-expr unsafe refused ok | error[E4004]: expected Int32, got Int
 number-mix if-expr safe accepted ok | 
 number-mix switch-expr unsafe refused ok | error[E4004]: expected Int32, got Int
 number-mix switch-expr safe accepted ok | 
+number-mix union-switch-expr unsafe refused ok | error[E4004]: expected Int32, got Int
+number-mix union-switch-expr safe accepted ok | 
 number-mix lambda unsafe refused ok | error[E4004]: expected Int32, got Int
 number-mix lambda safe accepted ok | 
 number-mix binding-chain unsafe refused ok | error[E4004]: expected Int32, got Int
@@ -196,6 +212,8 @@ enum-switch-missing else unsafe refused ok | error[E4000]: switch over Tok does 
 enum-switch-missing else safe accepted ok | 
 enum-switch-missing switch-arm unsafe refused ok | error[E4000]: switch over Tok does not cover b: name them or add else
 enum-switch-missing switch-arm safe accepted ok | 
+enum-switch-missing union-arm unsafe refused ok | error[E4000]: switch over Tok does not cover b: name them or add else
+enum-switch-missing union-arm safe accepted ok | 
 enum-switch-missing while unsafe refused ok | error[E4000]: switch over Tok does not cover b: name them or add else
 enum-switch-missing while safe accepted ok | 
 enum-switch-missing for unsafe refused ok | error[E4000]: switch over Tok does not cover b: name them or add else
@@ -214,6 +232,8 @@ enum-from-int else unsafe refused ok | error[E4004]: expected Tok, got Int
 enum-from-int else safe accepted ok | 
 enum-from-int switch-arm unsafe refused ok | error[E4004]: expected Tok, got Int
 enum-from-int switch-arm safe accepted ok | 
+enum-from-int union-arm unsafe refused ok | error[E4004]: expected Tok, got Int
+enum-from-int union-arm safe accepted ok | 
 enum-from-int while unsafe refused ok | error[E4004]: expected Tok, got Int
 enum-from-int while safe accepted ok | 
 enum-from-int for unsafe refused ok | error[E4004]: expected Tok, got Int
@@ -232,6 +252,8 @@ enum-qualified-label else unsafe refused ok | error[E4000]: write the member wit
 enum-qualified-label else safe accepted ok | 
 enum-qualified-label switch-arm unsafe refused ok | error[E4000]: write the member without its type in a case label: `case a`
 enum-qualified-label switch-arm safe accepted ok | 
+enum-qualified-label union-arm unsafe refused ok | error[E4000]: write the member without its type in a case label: `case a`
+enum-qualified-label union-arm safe accepted ok | 
 enum-qualified-label while unsafe refused ok | error[E4000]: write the member without its type in a case label: `case a`
 enum-qualified-label while safe accepted ok | 
 enum-qualified-label for unsafe refused ok | error[E4000]: write the member without its type in a case label: `case a`
@@ -250,6 +272,8 @@ enum-else-beside-full else unsafe refused ok | error[E4000]: every member of Tok
 enum-else-beside-full else safe accepted ok | 
 enum-else-beside-full switch-arm unsafe refused ok | error[E4000]: every member of Tok is named; remove the else
 enum-else-beside-full switch-arm safe accepted ok | 
+enum-else-beside-full union-arm unsafe refused ok | error[E4000]: every member of Tok is named; remove the else
+enum-else-beside-full union-arm safe accepted ok | 
 enum-else-beside-full while unsafe refused ok | error[E4000]: every member of Tok is named; remove the else
 enum-else-beside-full while safe accepted ok | 
 enum-else-beside-full for unsafe refused ok | error[E4000]: every member of Tok is named; remove the else
@@ -266,8 +290,10 @@ enum-error-dropped if unsafe refused ok | error[E4000]: this statement drops a v
 enum-error-dropped if safe accepted ok | 
 enum-error-dropped else unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | PE); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 enum-error-dropped else safe accepted ok | 
-enum-error-dropped switch-arm unsafe refused other | error[E4000]: switch cases must all produce a value, or none
+enum-error-dropped switch-arm unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | PE); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 enum-error-dropped switch-arm safe accepted ok | 
+enum-error-dropped union-arm unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | PE); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
+enum-error-dropped union-arm safe accepted ok | 
 enum-error-dropped while unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | PE); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 enum-error-dropped while safe accepted ok | 
 enum-error-dropped for unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | PE); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
@@ -278,3 +304,83 @@ enum-error-dropped builtin-block unsafe refused ok | error[E4000]: this statemen
 enum-error-dropped builtin-block safe accepted ok | 
 enum-error-dropped binding-chain unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | PE); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 enum-error-dropped binding-chain safe accepted ok | 
+union-switch-missing plain unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing plain safe accepted ok | 
+union-switch-missing if unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing if safe accepted ok | 
+union-switch-missing else unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing else safe accepted ok | 
+union-switch-missing switch-arm unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing switch-arm safe accepted ok | 
+union-switch-missing union-arm unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing union-arm safe accepted ok | 
+union-switch-missing while unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing while safe accepted ok | 
+union-switch-missing for unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing for safe accepted ok | 
+union-switch-missing lambda unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing lambda safe accepted ok | 
+union-switch-missing builtin-block unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing builtin-block safe accepted ok | 
+union-switch-missing binding-chain unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing binding-chain safe accepted ok | 
+union-binding-outside-arm plain unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm plain safe accepted ok | 
+union-binding-outside-arm if unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm if safe accepted ok | 
+union-binding-outside-arm else unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm else safe accepted ok | 
+union-binding-outside-arm switch-arm unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm switch-arm safe accepted ok | 
+union-binding-outside-arm union-arm unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm union-arm safe accepted ok | 
+union-binding-outside-arm while unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm while safe accepted ok | 
+union-binding-outside-arm for unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm for safe accepted ok | 
+union-binding-outside-arm lambda unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm lambda safe accepted ok | 
+union-binding-outside-arm builtin-block unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm builtin-block safe accepted ok | 
+union-binding-outside-arm binding-chain unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm binding-chain safe accepted ok | 
+union-case-nil-without-nil plain unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil plain safe accepted ok | 
+union-case-nil-without-nil if unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil if safe accepted ok | 
+union-case-nil-without-nil else unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil else safe accepted ok | 
+union-case-nil-without-nil switch-arm unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil switch-arm safe accepted ok | 
+union-case-nil-without-nil union-arm unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil union-arm safe accepted ok | 
+union-case-nil-without-nil while unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil while safe accepted ok | 
+union-case-nil-without-nil for unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil for safe accepted ok | 
+union-case-nil-without-nil lambda unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil lambda safe accepted ok | 
+union-case-nil-without-nil builtin-block unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil builtin-block safe accepted ok | 
+union-case-nil-without-nil binding-chain unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil binding-chain safe accepted ok | 
+union-label-not-member plain unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member plain safe accepted ok | 
+union-label-not-member if unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member if safe accepted ok | 
+union-label-not-member else unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member else safe accepted ok | 
+union-label-not-member switch-arm unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member switch-arm safe accepted ok | 
+union-label-not-member union-arm unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member union-arm safe accepted ok | 
+union-label-not-member while unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member while safe accepted ok | 
+union-label-not-member for unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member for safe accepted ok | 
+union-label-not-member lambda unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member lambda safe accepted ok | 
+union-label-not-member builtin-block unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member builtin-block safe accepted ok | 
+union-label-not-member binding-chain unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member binding-chain safe accepted ok | 

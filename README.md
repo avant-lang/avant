@@ -653,6 +653,7 @@ fn main {
 - A label may appear once.
 - Over an enum or a union, a switch without `else` names every member, as a statement and as a value (`switch over Tok does not cover name, number: name them or add else`), and an `else` beside every member is refused. Over the other types, a switch used as a value needs `else`, so every input produces a result; used as a statement, a value no arm names does nothing.
 - An arm may leave instead of giving a value (`return`, `break`, `continue`); it still counts as naming its members.
+- A switch used as a statement treats its arms as statements, as an `if` does: an arm may end with a value, which is dropped, unless it can be an error ([Errors cannot be dropped](#errors-cannot-be-dropped)).
 
 ## Enums
 

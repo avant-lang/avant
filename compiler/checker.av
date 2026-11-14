@@ -134,6 +134,10 @@ pub class Checker {
   // The position of a `with` call used as a statement (check_stmt): its
   // block's value is dropped, so the block ends however it likes.
   pub with_drop: String = ""
+  // Set by check_stmt for a switch used as a statement (Stage 29 W5a2,
+  // O634): its arms are statements, as an `if`'s; check_switch reads and
+  // clears it.
+  pub switch_stmt: Bool = false
   // Inside the block of `Array(T).new(n) { |i| ... }` (how deep): a
   // `break` or `continue` there gets its own message.
   pub in_build: Int = 0
@@ -826,6 +830,9 @@ pub class Checker {
           // A `with` whose value nobody uses (O263): its block ends
           // without a value (check_mutex_with).
           self.with_drop = expr.loc.show
+        }
+        if expr.kind == ex_switch() && expr.op != tk_if() && expr.op != tk_return() && (!at_tail || expected.is_void) {
+          self.switch_stmt = true
         }
         if at_tail && !expected.is_void && is_int_literal(expr) {
           // A literal tail adopts the result type, as `return 0` does
@@ -3838,6 +3845,8 @@ pub class Checker {
   }
 
   pub fn check_switch(expr: Expr, has_want: Bool, want: Ty): Ty {
+    stmt_mode = self.switch_stmt
+    self.switch_stmt = false
     if expr.op == tk_if() && expr.else_body.size == 1 {
       if t = check_if_value(expr.else_body[0], has_want, want) {
         return t
@@ -3909,6 +3918,18 @@ pub class Checker {
     }
     // An arm that leaves (its last statement a return, break or
     // continue; Stage 29 W4a) gives no value and joins nothing.
+    if stmt_mode {
+      // A switch used as a statement (O634): every arm is a block of
+      // statements, as an `if`'s branches; a value an arm ends with is
+      // dropped under the discard rule (D295).
+      for sarm in expr.cases {
+        check_switch_stmts(sarm.body, arm_binding(sarm), arm_binding_ty(sarm, disc))
+      }
+      if expr.has_else {
+        check_switch_stmts(expr.else_body, "", t_void())
+      }
+      return t_void()
+    }
     branch_tys: Array(Ty) = []
     i = 0
     while i < expr.cases.size {
@@ -4087,6 +4108,19 @@ pub class Checker {
       }
     }
     t_void()
+  }
+
+  // A statement switch's arm (O634): its statements, the binding in
+  // scope for them only.
+  pub fn check_switch_stmts(body: Array(Stmt), name: String, ty: Ty) {
+    self.push_scope
+    if name.size > 0 {
+      bind(name, ty)
+    }
+    for stmt in body {
+      check_stmt(stmt, self.return_type, false)
+    }
+    self.pop_scope
   }
 
   // A String label as written in a message: quoted, its quote and
