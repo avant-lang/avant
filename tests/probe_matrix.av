@@ -64,12 +64,19 @@ fn prelude_decls: String {
 }
 
 // The rules the README states that one program pair can show. Left out
-// for now: `Mutex.with`'s plain value (its statements' rule is in) and the captures of `spawn` and
-// `.parallel` (their programs need a task runtime and say more than one
-// thing at once; tests/cases/test_rules.av and test_threads_llvm.av hold
-// their cases), `if` on a non-Bool, the dangling-line rule (it is the
-// parser's, before any wrapper exists), and the never-read locals and
-// the walk's mutation rules (W6, W8: not built yet).
+// for now: the never-read locals and the walk's mutation rules (W6, W8:
+// not built yet).
+//
+// A rule whose programs need the task runtime (`spawn`, `.parallel`,
+// `std.sync`) is written as any other (O641, Stage 29 W5d2): its site
+// declares what the task needs (the import, the class, the values it
+// captures), and its marked text starts the task and joins it (a `spawn`
+// block ends with an Int, its handle is joined), so each wrapper wraps the
+// whole task. The matrix checks with `avant dump`, which never links or
+// runs a program, so a static rule needs no runtime at all; a rule that
+// shows only when the program runs (a trap, such as `.join` reached from a
+// pool worker through a call) is a test case, not a row
+// (tests/cases/test_safety.av, test_threads_llvm.av).
 //
 // Wrappers: a statement under `if`, `else`, a `switch` arm, `while`,
 // `for`, a lambda's body, a builtin's block (`each`) and a binding chain
@@ -106,6 +113,26 @@ fn rules: Array(PRule) {
   // into the guarded value.
   xs.push(rule("mutex-new-consumed", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  b = PBox.new\n  m = Mutex(PBox).new(b)\n@\n}\n", "", "b.n += 1", "m.with { |x| x.n += 1 }", "was consumed by Mutex(PBox).new"))
   xs.push(rule("mutex-with-inward", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n  pub child: PBox? = nil\n}\n\nfn main {\n  m = Mutex(PBox).new(PBox.new)\n  mine = PBox.new\n@\n  puts(mine.n)\n}\n", "", "m.with { |b| b.child = mine }", "m.with { |b| b.child = PBox.new }", "comes from outside it"))
+  // README "Spawn" and "What may cross a task" (O641, Stage 29 W5d2): a
+  // task captures by copy what may cross, never assigns a captured name,
+  // and a captured Array is read-only on both sides until the join.
+  tsite = "class PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  pb = PBox.new\n@\n  puts(pb.n)\n}\n"
+  xs.push(rule("spawn-capture-class", "stmt", "", tsite, "", "ph = spawn { pb.n }\nputs(ph.join)", "pn = pb.n\nph = spawn { pn }\nputs(ph.join)", "spawn cannot capture pb: PBox is not copied at send"))
+  xs.push(rule("spawn-assign-capture", "stmt", "", tsite, "", "pk = 1\nph = spawn {\n  pk = 2\n  pk\n}\nputs(ph.join)", "pk = 1\nph = spawn {\n  pj = 2\n  pj + pk\n}\nputs(ph.join)", "spawn cannot assign to pk"))
+  xs.push(rule("spawn-array-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn {\n  pxs.push(3)\n  pxs.size\n}\nputs(ph.join)", "pxs = [1, 2]\nph = spawn {\n  pxs.size\n}\nputs(ph.join)", "spawn cannot mutate captured Array pxs"))
+  xs.push(rule("spawn-sender-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn { pxs.size }\npxs.push(3)\nputs(ph.join)", "pxs = [1, 2]\nph = spawn { pxs.size }\nputs(ph.join)\npxs.push(3)", "cannot mutate pxs while a spawn using it is running"))
+  // README "Parallel": its block captures by the same rule.
+  xs.push(rule("parallel-capture-class", "stmt", "", tsite, "", "pys = [1, 2].parallel { |x| x + pb.n }\nputs(pys.size)", "pn = pb.n\npys = [1, 2].parallel { |x| x + pn }\nputs(pys.size)", "cannot capture pb: PBox is not copied at send"))
+  // README "Channel and Mutex": the value of `with`, when it is used, is
+  // a plain value.
+  xs.push(rule("mutex-with-value", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  m = Mutex(PBox).new(PBox.new)\n@\n}\n", "", "pv = m.with { |b| b }\nputs(pv.n)", "pv = m.with { |b| b.n }\nputs(pv)", "Mutex.with's value cannot be PBox"))
+  // README "If": conditions are Bool, there is no truthiness.
+  xs.push(rule("if-non-bool", "stmt", "", main_site, "", "if probe_k() {\n  puts(1)\n}", "if probe_k() > 0 {\n  puts(1)\n}", "if condition must be Bool"))
+  // README "Line breaks": a line that starts with `-` or `[`
+  // begins a statement, and one whose value nobody uses is an error
+  // that says how to continue the line before.
+  xs.push(rule("dangling-minus", "stmt", "", main_site, "", "pt = probe_k()\n- 1\nputs(pt)", "pt = probe_k() -\n  1\nputs(pt)", "this line starts with `-`"))
+  xs.push(rule("dangling-bracket", "stmt", "", main_site, "", "pt = probe_k()\n[pt, 1]\nputs(pt)", "pt = [probe_k(),\n  1]\nputs(pt.size)", "this line starts with `[`"))
   xs.push(rule("number-mix", "expr", "Int", "fn main {\n  pa: Int32 = 1\n  pn = 2\n@\n}\n", "", "pa + pn", "pn + pn", "binary operator expects matching types"))
   // README "Enums" and "Switch" (Stage 29 W5a1, D292, D293, D327, D358).
   esite = "enum Tok { a, b }\n\nenum PE: Error { bad }\n\nfn ef(n: Int): Int | PE {\n  if n > 0 {\n    return PE.bad\n  }\n  n\n}\n\nfn main {\n  t = Tok.from_i(probe_k()) ?? Tok.a\n@\n}\n"
