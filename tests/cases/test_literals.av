@@ -89,6 +89,75 @@ fn number_cases: Array(LCase) {
   xs
 }
 
+fn fit_cases: Array(LCase) {
+  xs: Array(LCase) = []
+  xs.push(refused("fit-int32-local", "fn main {\n  a: Int32 = 2147483648\n  puts(a)\n}\n", "integer literal does not fit in Int32", "2:14"))
+  xs.push(refused("fit-int32-arg", "fn f(a: Int32): Int32 {\n  a\n}\nfn main {\n  puts(f(2147483648))\n}\n", "integer literal does not fit in Int32", "5:10"))
+  xs.push(refused("fit-int32-tail", "fn f: Int32 {\n  2147483648\n}\nfn main {\n  puts(f())\n}\n", "integer literal does not fit in Int32", "2:3"))
+  xs.push(refused("fit-int32-return", "fn f: Int32 {\n  return 2147483648\n}\nfn main {\n  puts(f())\n}\n", "integer literal does not fit in Int32", "2:10"))
+  xs.push(refused("fit-int32-field-default", "class C {\n  pub a: Int32 = 2147483648\n}\nfn main {\n  puts(C.new.a)\n}\n", "integer literal does not fit in Int32", "2:18"))
+  xs.push(refused("fit-int32-struct-literal", "struct S {\n  a: Int32\n}\nfn main {\n  s = S { a: 2147483648 }\n  puts(s.a)\n}\n", "integer literal does not fit in Int32", "5:14"))
+  xs.push(refused("fit-int32-array", "fn main {\n  xs: Array(Int32) = [2147483648]\n  puts(xs[0])\n}\n", "integer literal does not fit in Int32", "2:23"))
+  xs.push(refused("fit-int32-push", "fn main {\n  xs: Array(Int32) = []\n  xs.push(2147483648)\n  puts(xs[0])\n}\n", "integer literal does not fit in Int32", "3:11"))
+  xs.push(refused("fit-int32-operand-right", "fn main {\n  a: Int32 = 1\n  puts(a + 2147483648)\n}\n", "integer literal does not fit in Int32", "3:12"))
+  xs.push(refused("fit-int32-operand-left", "fn main {\n  a: Int32 = 1\n  puts(2147483648 - a)\n}\n", "integer literal does not fit in Int32", "3:8"))
+  xs.push(refused("fit-int32-compare", "fn main {\n  a: Int32 = 1\n  puts(a == 2147483648)\n}\n", "integer literal does not fit in Int32", "3:13"))
+  xs.push(refused("fit-int32-assign", "fn main {\n  a: Int32 = 1\n  a = 2147483648\n  puts(a)\n}\n", "integer literal does not fit in Int32", "3:7"))
+  xs.push(refused("fit-int32-compound", "fn main {\n  a: Int32 = 1\n  a += 2147483648\n  puts(a)\n}\n", "integer literal does not fit in Int32", "3:8"))
+  xs.push(refused("fit-int32-field-assign", "class C {\n  pub a: Int32 = 0\n}\nfn main {\n  c = C.new\n  c.a = 2147483648\n  puts(c.a)\n}\n", "integer literal does not fit in Int32", "6:9"))
+  xs.push(refused("fit-int32-hex", "fn main {\n  a: Int32 = 0x8000_0000\n  puts(a)\n}\n", "integer literal does not fit in Int32", "2:14"))
+  xs.push(refused("fit-int32-bin", "fn main {\n  a: Int32 = 0b1000_0000_0000_0000_0000_0000_0000_0000\n  puts(a)\n}\n", "integer literal does not fit in Int32", "2:14"))
+  xs.push(refused("fit-int32-oct", "fn main {\n  a: Int32 = 0o20_000_000_000\n  puts(a)\n}\n", "integer literal does not fit in Int32", "2:14"))
+  xs.push(refused("fit-int32-negative", "fn main {\n  a: Int32 = -2147483649\n  puts(a)\n}\n", "integer literal does not fit in Int32", "2:14"))
+  xs.push(refused("fit-int32-negative-arg", "fn f(a: Int32): Int32 {\n  a\n}\nfn main {\n  puts(f(-2147483649))\n}\n", "integer literal does not fit in Int32", "5:10"))
+  xs.push(accepted("fit-int32-extremes", "struct S {\n  a: Int32\n}\nclass C {\n  pub a: Int32 = 2147483647\n}\nfn f(a: Int32): Int32 {\n  a\n}\nfn g: Int32 {\n  2147483647\n}\nfn main {\n  a: Int32 = 2147483647\n  puts(a)\n  puts(f(2147483647))\n  puts(g())\n  puts(C.new.a)\n  s = S { a: 2147483647 }\n  puts(s.a)\n  xs: Array(Int32) = [2147483647]\n  xs.push(2147483647)\n  puts(xs[1])\n  b: Int32 = 0\n  puts(b + 2147483647)\n  puts(a == 2147483647)\n  m: Int32 = -2147483648\n  puts(m)\n  puts(f(-2147483648))\n}\n", "2147483647\n2147483647\n2147483647\n2147483647\n2147483647\n2147483647\n2147483647\ntrue\n-2147483648\n-2147483648\n"))
+  xs.push(refused("fit-uint32-local", "fn main {\n  a: UInt32 = 4294967296\n  puts(a)\n}\n", "integer literal does not fit in UInt32", "2:15"))
+  xs.push(refused("fit-uint32-arg", "fn f(a: UInt32): UInt32 {\n  a\n}\nfn main {\n  puts(f(4294967296))\n}\n", "integer literal does not fit in UInt32", "5:10"))
+  xs.push(refused("fit-uint32-tail", "fn f: UInt32 {\n  4294967296\n}\nfn main {\n  puts(f())\n}\n", "integer literal does not fit in UInt32", "2:3"))
+  xs.push(refused("fit-uint32-return", "fn f: UInt32 {\n  return 4294967296\n}\nfn main {\n  puts(f())\n}\n", "integer literal does not fit in UInt32", "2:10"))
+  xs.push(refused("fit-uint32-field-default", "class C {\n  pub a: UInt32 = 4294967296\n}\nfn main {\n  puts(C.new.a)\n}\n", "integer literal does not fit in UInt32", "2:19"))
+  xs.push(refused("fit-uint32-struct-literal", "struct S {\n  a: UInt32\n}\nfn main {\n  s = S { a: 4294967296 }\n  puts(s.a)\n}\n", "integer literal does not fit in UInt32", "5:14"))
+  xs.push(refused("fit-uint32-array", "fn main {\n  xs: Array(UInt32) = [4294967296]\n  puts(xs[0])\n}\n", "integer literal does not fit in UInt32", "2:24"))
+  xs.push(refused("fit-uint32-push", "fn main {\n  xs: Array(UInt32) = []\n  xs.push(4294967296)\n  puts(xs[0])\n}\n", "integer literal does not fit in UInt32", "3:11"))
+  xs.push(refused("fit-uint32-operand-right", "fn main {\n  a: UInt32 = 1\n  puts(a + 4294967296)\n}\n", "integer literal does not fit in UInt32", "3:12"))
+  xs.push(refused("fit-uint32-operand-left", "fn main {\n  a: UInt32 = 1\n  puts(4294967296 - a)\n}\n", "integer literal does not fit in UInt32", "3:8"))
+  xs.push(refused("fit-uint32-compare", "fn main {\n  a: UInt32 = 1\n  puts(a == 4294967296)\n}\n", "integer literal does not fit in UInt32", "3:13"))
+  xs.push(refused("fit-uint32-assign", "fn main {\n  a: UInt32 = 1\n  a = 4294967296\n  puts(a)\n}\n", "integer literal does not fit in UInt32", "3:7"))
+  xs.push(refused("fit-uint32-compound", "fn main {\n  a: UInt32 = 1\n  a += 4294967296\n  puts(a)\n}\n", "integer literal does not fit in UInt32", "3:8"))
+  xs.push(refused("fit-uint32-field-assign", "class C {\n  pub a: UInt32 = 0\n}\nfn main {\n  c = C.new\n  c.a = 4294967296\n  puts(c.a)\n}\n", "integer literal does not fit in UInt32", "6:9"))
+  xs.push(refused("fit-uint32-hex", "fn main {\n  a: UInt32 = 0x1_0000_0000\n  puts(a)\n}\n", "integer literal does not fit in UInt32", "2:15"))
+  xs.push(refused("fit-uint32-bin", "fn main {\n  a: UInt32 = 0b1_0000_0000_0000_0000_0000_0000_0000_0000\n  puts(a)\n}\n", "integer literal does not fit in UInt32", "2:15"))
+  xs.push(refused("fit-uint32-oct", "fn main {\n  a: UInt32 = 0o40_000_000_000\n  puts(a)\n}\n", "integer literal does not fit in UInt32", "2:15"))
+  xs.push(accepted("fit-uint32-extremes", "struct S {\n  a: UInt32\n}\nclass C {\n  pub a: UInt32 = 4294967295\n}\nfn f(a: UInt32): UInt32 {\n  a\n}\nfn g: UInt32 {\n  4294967295\n}\nfn main {\n  a: UInt32 = 4294967295\n  puts(a)\n  puts(f(4294967295))\n  puts(g())\n  puts(C.new.a)\n  s = S { a: 4294967295 }\n  puts(s.a)\n  xs: Array(UInt32) = [4294967295]\n  xs.push(4294967295)\n  puts(xs[1])\n  b: UInt32 = 0\n  puts(b + 4294967295)\n  puts(a == 4294967295)\n}\n", "4294967295\n4294967295\n4294967295\n4294967295\n4294967295\n4294967295\n4294967295\ntrue\n"))
+  xs.push(refused("fit-int-local", "fn main {\n  a: Int = 9223372036854775808\n  puts(a)\n}\n", "integer literal does not fit in Int", "2:12"))
+  xs.push(refused("fit-int-arg", "fn f(a: Int): Int {\n  a\n}\nfn main {\n  puts(f(9223372036854775808))\n}\n", "integer literal does not fit in Int", "5:10"))
+  xs.push(refused("fit-int-tail", "fn f: Int {\n  9223372036854775808\n}\nfn main {\n  puts(f())\n}\n", "integer literal does not fit in Int", "2:3"))
+  xs.push(refused("fit-int-return", "fn f: Int {\n  return 9223372036854775808\n}\nfn main {\n  puts(f())\n}\n", "integer literal does not fit in Int", "2:10"))
+  xs.push(refused("fit-int-field-default", "class C {\n  pub a: Int = 9223372036854775808\n}\nfn main {\n  puts(C.new.a)\n}\n", "integer literal does not fit in Int", "2:16"))
+  xs.push(refused("fit-int-struct-literal", "struct S {\n  a: Int\n}\nfn main {\n  s = S { a: 9223372036854775808 }\n  puts(s.a)\n}\n", "integer literal does not fit in Int", "5:14"))
+  xs.push(refused("fit-int-array", "fn main {\n  xs: Array(Int) = [9223372036854775808]\n  puts(xs[0])\n}\n", "integer literal does not fit in Int", "2:21"))
+  xs.push(refused("fit-int-push", "fn main {\n  xs: Array(Int) = []\n  xs.push(9223372036854775808)\n  puts(xs[0])\n}\n", "integer literal does not fit in Int", "3:11"))
+  xs.push(refused("fit-int-operand-right", "fn main {\n  a: Int = 1\n  puts(a + 9223372036854775808)\n}\n", "integer literal does not fit in Int", "3:12"))
+  xs.push(refused("fit-int-operand-left", "fn main {\n  a: Int = 1\n  puts(9223372036854775808 - a)\n}\n", "integer literal does not fit in Int", "3:8"))
+  xs.push(refused("fit-int-compare", "fn main {\n  a: Int = 1\n  puts(a == 9223372036854775808)\n}\n", "integer literal does not fit in Int", "3:13"))
+  xs.push(refused("fit-int-assign", "fn main {\n  a: Int = 1\n  a = 9223372036854775808\n  puts(a)\n}\n", "integer literal does not fit in Int", "3:7"))
+  xs.push(refused("fit-int-compound", "fn main {\n  a: Int = 1\n  a += 9223372036854775808\n  puts(a)\n}\n", "integer literal does not fit in Int", "3:8"))
+  xs.push(refused("fit-int-field-assign", "class C {\n  pub a: Int = 0\n}\nfn main {\n  c = C.new\n  c.a = 9223372036854775808\n  puts(c.a)\n}\n", "integer literal does not fit in Int", "6:9"))
+  xs.push(refused("fit-int-hex", "fn main {\n  a: Int = 0x8000_0000_0000_0000\n  puts(a)\n}\n", "integer literal does not fit in Int", "2:12"))
+  xs.push(refused("fit-int-oct", "fn main {\n  a: Int = 0o1_000_000_000_000_000_000_000\n  puts(a)\n}\n", "integer literal does not fit in Int", "2:12"))
+  xs.push(refused("fit-int-negative", "fn main {\n  a: Int = -9223372036854775809\n  puts(a)\n}\n", "integer literal does not fit in Int", "2:12"))
+  xs.push(refused("fit-int-negative-arg", "fn f(a: Int): Int {\n  a\n}\nfn main {\n  puts(f(-9223372036854775809))\n}\n", "integer literal does not fit in Int", "5:10"))
+  xs.push(accepted("fit-int-extremes", "struct S {\n  a: Int\n}\nclass C {\n  pub a: Int = 9223372036854775807\n}\nfn f(a: Int): Int {\n  a\n}\nfn g: Int {\n  9223372036854775807\n}\nfn main {\n  a: Int = 9223372036854775807\n  puts(a)\n  puts(f(9223372036854775807))\n  puts(g())\n  puts(C.new.a)\n  s = S { a: 9223372036854775807 }\n  puts(s.a)\n  xs: Array(Int) = [9223372036854775807]\n  xs.push(9223372036854775807)\n  puts(xs[1])\n  b: Int = 0\n  puts(b + 9223372036854775807)\n  puts(a == 9223372036854775807)\n  m: Int = -9223372036854775808\n  puts(m)\n  puts(f(-9223372036854775808))\n}\n", "9223372036854775807\n9223372036854775807\n9223372036854775807\n9223372036854775807\n9223372036854775807\n9223372036854775807\n9223372036854775807\ntrue\n-9223372036854775808\n-9223372036854775808\n"))
+  xs.push(refused("fit-int-bare", "fn main {\n  x = 9223372036854775808\n  puts(x)\n}\n", "integer literal does not fit in Int; use 9223372036854775808u64", "2:7"))
+  xs.push(refused("fit-uint64-dec", "fn main {\n  x: UInt64 = 18446744073709551616\n  puts(x)\n}\n", "integer literal does not fit in UInt64, the widest integer type", "2:15"))
+  xs.push(refused("fit-uint64-suffix", "fn main {\n  x = 18446744073709551616u64\n  puts(x)\n}\n", "integer literal does not fit in UInt64, the widest integer type", "2:7"))
+  xs.push(refused("fit-uint64-hex", "fn main {\n  x = 0x1_0000_0000_0000_0000\n  puts(x)\n}\n", "integer literal does not fit in UInt64, the widest integer type", "2:7"))
+  xs.push(refused("fit-uint64-huge", "fn main {\n  x = 99999999999999999999999999\n  puts(x)\n}\n", "integer literal does not fit in UInt64, the widest integer type", "2:7"))
+  xs.push(refused("fit-uint64-negative", "fn main {\n  x = -1u64\n  puts(x)\n}\n", "a negative literal does not fit in UInt64", "2:7"))
+  xs.push(accepted("fit-uint64-extremes", "fn f(a: UInt64): UInt64 {\n  a\n}\nfn main {\n  x: UInt64 = 18446744073709551615u64\n  puts(x)\n  puts(f(18446744073709551615u64))\n  y: UInt64 = 9223372036854775808\n  puts(y)\n  puts(0xffff_ffff_ffff_ffffu64)\n}\n", "18446744073709551615\n18446744073709551615\n9223372036854775808\n18446744073709551615\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -148,6 +217,9 @@ fn test_main(c: Checks) {
       all.push(x)
     }
     for x in number_cases() {
+      all.push(x)
+    }
+    for x in fit_cases() {
       all.push(x)
     }
     run_cases(c, compiler, dir, all)

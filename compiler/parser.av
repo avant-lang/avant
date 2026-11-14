@@ -30,41 +30,22 @@ pub fn hex_digit_val(c: Int): Int {
   -1
 }
 
-pub fn parse_u64_dec(s: String): UInt64 {
-  n = 0u64
-  i = 0
-  while i < s.size {
-    c = s[i]
-    if ch_is_digit(c) {
-      d = (c - 48).to_u64
-      n = n * 10u64 + d
-    } else {
-      return 0u64
-    }
-    i += 1
-  }
-  n
-}
-
-pub fn parse_u64_hex(s: String): UInt64 {
-  n = 0u64
-  for i in 0..s.size {
-    v = hex_digit_val(s[i])
-    if v < 0 {
-      return 0u64
-    }
-    n = n * 16u64 + v.to_u64
-  }
-  n
-}
-
-// The digits of a binary (radix 2) or octal (8) literal, which the lexer
-// checked (Stage 29 W5b2, D315, D352).
-pub fn parse_u64_radix(s: String, radix: Int): UInt64 {
+// The value of an integer literal's digits in radix 2, 8, 10 or 16 (the
+// lexer checked them), or nil when it does not fit in 64 bits (Stage 29
+// W5b2, O455: the parser said so, where it used to trap).
+pub fn parse_u64_digits(s: String, radix: Int): UInt64? {
   n = 0u64
   r = radix.to_u64
   for i in 0..s.size {
-    n = n * r + (s[i] - 48).to_u64
+    v = hex_digit_val(s[i])
+    if v < 0 || v >= radix {
+      return nil
+    }
+    d = v.to_u64
+    if n > (18446744073709551615u64 - d) / r {
+      return nil
+    }
+    n = n * r + d
   }
   n
 }
@@ -455,24 +436,28 @@ pub class Parser {
         fail(tok.loc, removed_int_message("the i64 suffix", raw))
       }
     }
-    bits = 0u64
-    if raw.size >= 2 && raw[0] == 48 && (raw[1] == 120 || raw[1] == 88) {
-      bits = parse_u64_hex(str_slice(raw, 2, raw.size))
-      self.int_bits = bits
-      self.int_suffix = suffix
-      return true
-    }
-    if raw.size >= 2 && raw[0] == 48 && (raw[1] == 98 || raw[1] == 111) {
-      radix = 2
-      if raw[1] == 111 {
+    radix = 10
+    digits = raw
+    if raw.size >= 2 && raw[0] == 48 {
+      p = raw[1]
+      if p == 120 || p == 88 {
+        radix = 16
+      } else if p == 98 {
+        radix = 2
+      } else if p == 111 {
         radix = 8
       }
-      bits = parse_u64_radix(str_slice(raw, 2, raw.size), radix)
-      self.int_bits = bits
-      self.int_suffix = suffix
-      return true
+      if radix != 10 {
+        digits = str_slice(raw, 2, raw.size)
+      }
     }
-    bits = parse_u64_dec(raw)
+    bits = 0u64
+    if got = parse_u64_digits(digits, radix) {
+      bits = got
+    } else {
+      fail(tok.loc, "integer literal does not fit in UInt64, the widest integer type")
+      return false
+    }
     self.int_bits = bits
     self.int_suffix = suffix
     true
