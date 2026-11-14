@@ -35,9 +35,10 @@ __thread uint8_t *avant_gc_base;
 __thread uint64_t *avant_gc_starts;
 
 /* The inline path's state as code generated before VALK-A2 reads it (a
- * seed compiler's output: the compiler B of tools/letters.sh, built by
- * v0.42.0, tests avant_gc_fast_ok before it bumps, stores its cursor
- * through avant_gc_block and keeps the counters itself). Never set: such
+ * seed compiler's output: the compiler B of tools/letters.sh, while its
+ * seed is a release from before VALK-A2, as v0.42.0 is, tests
+ * avant_gc_fast_ok before it bumps, stores its cursor through
+ * avant_gc_block and keeps the counters itself). Never set: such
  * code always calls avant_alloc, which is correct for it and slower; the
  * new path has its own limit and no flag. To delete, with their lines in
  * avant_rt.exports, when a release with VALK-A2 is the seed. */
@@ -603,9 +604,10 @@ void gc_alloc_sync_slow(void) {
  * generated code only ever checks its cursor against the published
  * limit. Called at slow allocation entries; state
  * transitions clear eagerly below. Never under AVANT_GC_STRESS=1 (here
- * and in tl_grant): the path is then never published, so every
- * allocation of generated code reaches avant_alloc and its stress point
- * (Stage 29 W-FIX1c, O207). */
+ * and in tl_grant): the path is not published here then, so every
+ * allocation of generated code reaches its slow call and a stress point
+ * (Stage 29 W-FIX1c, O207); avant_alloc_slow alone publishes it under
+ * that mode, for the one object it was asked for (VALK-A2, O599). */
 static void gc_fast_refresh(void) {
   Block *cur = gc_thread.ycur;
   int cur_ok = S_INLINE_HOLES || gc_thread.cur_whole;

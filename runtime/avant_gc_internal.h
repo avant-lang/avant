@@ -1181,7 +1181,7 @@ typedef struct GcHeap {
   int evac_any;
 
   /* avant_gc_alloc.c. Late start bits (the Valk stage, VALK-A2, M7; the
-   * comment of gc_alloc_sync_slow): the runs of objects the single
+   * comment "Late start bits" there): the runs of objects the single
    * mutator's inline path allocated since the last collection whose start
    * bits are not all set, each [lo, hi), headers end to end (the path's
    * objects and the C allocations among them), in the order the cursor
@@ -1595,7 +1595,7 @@ void gc_lazy_build_block(Block *b);
 void gc_lazy_build_all(void);
 void gc_lazy_drop(void);
 /* Allocations generated code made without a call, counted when
- * AVANT_GC_STATS is set (gc_alloc_sync_slow). */
+ * AVANT_GC_STATS is set (inline_walk, avant_gc_alloc.c). */
 extern uint64_t avant_inline_allocs;
 void gc_alloc_thread_init(void);
 void gc_alloc_thread_leave(void);

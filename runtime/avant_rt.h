@@ -154,10 +154,12 @@ void avant_gc_add_root(void **slot);
  * module's code also sets the block start bit through
  * avant_gc_starts/avant_gc_base. Nothing else: the limit is null
  * whenever the path may not run (no young hole, a program with threads
- * for an unshared module, a no-GC region, the stress mode, a collection
- * pending), the runtime counts the bytes from the cursor at its next
- * entry, and an unshared module's objects get their start bits from the
- * runtime (when a collection promotes them or a lookup needs them). The
+ * for an unshared module, a no-GC region, a collection pending; under
+ * the stress mode it is null or spent whenever a site reads it,
+ * avant_alloc_slow below), the runtime counts the bytes from the cursor
+ * at its next entry, and an unshared module's objects get their start
+ * bits from the runtime (when a collection promotes them or a lookup
+ * needs them). The
  * limit is the hole's limit capped by the young budget, and the runtime
  * alone publishes or clears it. Until VALK-A2 the path also tested
  * g_avant_shared, avant_gc_fast_ok and a null cursor, stored the cursor
