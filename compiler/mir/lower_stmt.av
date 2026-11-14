@@ -393,6 +393,14 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     // label, the old back end's emit_switch: one branch slot per label).
     entries: Array(Int) = []
     entry_arm: Array(Int) = []
+    // The block of an exhaustive enum switch's range test
+    // (enum_switch_on), numbered before the arms: an edge to a block
+    // numbered lower than its source is a back edge, and a back edge
+    // polls (mir/gc.av).
+    pre = -1
+    if et0 = enum_ty, !lw.lw_cov.on && e.cases.size > 1 && enum_labels_dense(e) {
+      pre = lw.lw_b.block
+    }
     for i in 0..e.cases.size {
       arm = lw.lw_b.block
       arms.push(arm)
@@ -433,7 +441,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     }
     lw.at(e.loc)
     if trap >= 0 {
-      lw.enum_switch_on(cv, enum_ty, e, values, targets, arms, trap)
+      lw.enum_switch_on(cv, enum_ty, e, values, targets, arms, trap, pre)
     } else {
       lw.lw_b.switch_on(cv, values, targets, other)
     }
@@ -473,22 +481,44 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
   lw.lw_b.c_i32(0)
 }
 
+// Whether an enum switch's labels are dense enough for a range test (the
+// gaps inside it are cases of the switch): the range spans fewer values
+// than four per label plus 16. Sparse values (a C enum's flags) are not.
+pub fn enum_labels_dense(e: Expr): Bool {
+  n = 0
+  lo = 0
+  hi = 0
+  for arm in e.cases {
+    for l in arm.labels {
+      if n == 0 || l.int_val < lo {
+        lo = l.int_val
+      }
+      if n == 0 || l.int_val > hi {
+        hi = l.int_val
+      }
+      n += 1
+    }
+  }
+  n > 0 && hi - lo < n * 4 + 16
+}
+
 // The dispatch of a switch over an enum that names every member (Stage
 // 29 W5a2, O682; chosen by time, D370: the record's item 1 table). The
 // last arm is the switch's default, so the switch has one case fewer
 // (LLVM keeps three or fewer cases as compares, where a four-entry jump
-// table cost Calculator::Interpreter 31%); the default block tests that
-// the value lies within the members' range before it runs the last arm,
-// and a value inside the range that is no member (a gap) is a case of its
-// own that goes to the trap. So the trap stays reachable by a value that
-// is no member, and only by one: the checked C boundary (D358) keeps it
-// unreachable from Avant code, and the members other than the last pay
-// nothing for it. Under coverage, for a one-arm switch and for sparse
-// values, the plain form: every member a case, the trap the default.
-pub fn (lw: MirLower) enum_switch_on(cv: MOperand, et: Ty?, e: Expr, values: Array(Int), targets: Array(Int), arms: Array(Int), trap: Int) {
+// table cost Calculator::Interpreter 31%); the default is pre, a block
+// numbered before the arms, which tests that the value lies within the
+// members' range before it runs the last arm, and a value inside the
+// range that is no member (a gap) is a case of its own that goes to the
+// trap. So the trap stays reachable by a value that is no member, and
+// only by one: the checked C boundary (D358) keeps it unreachable from
+// Avant code, and the members other than the last pay nothing for it.
+// Without pre (coverage, a one-arm switch, sparse values), the plain
+// form: every member a case, the trap the default.
+pub fn (lw: MirLower) enum_switch_on(cv: MOperand, et: Ty?, e: Expr, values: Array(Int), targets: Array(Int), arms: Array(Int), trap: Int, pre: Int) {
   b = lw.lw_b
   t = et ?? return
-  if lw.lw_cov.on || e.cases.size < 2 {
+  if pre < 0 {
     b.switch_on(cv, values, targets, trap)
     return
   }
@@ -517,12 +547,6 @@ pub fn (lw: MirLower) enum_switch_on(cv: MOperand, et: Ty?, e: Expr, values: Arr
       hi = w
     }
   }
-  if hi - lo >= values.size * 4 + 16 {
-    // Sparse values (a C enum's flags, say): no range to test; every
-    // member a case, the trap the default.
-    b.switch_on(cv, values, targets, trap)
-    return
-  }
   v = lo
   while v <= hi {
     found = false
@@ -537,10 +561,9 @@ pub fn (lw: MirLower) enum_switch_on(cv: MOperand, et: Ty?, e: Expr, values: Arr
     }
     v += 1
   }
-  chk = b.block
-  b.switch_on(cv, vals2, tg2, chk)
-  b.at(chk)
   cty = mir_scalar_ty(t)
+  b.switch_on(cv, vals2, tg2, pre)
+  b.at(pre)
   c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), cv, b.c_int(cty, lo)))
   c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), cv, b.c_int(cty, hi)))
   inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))

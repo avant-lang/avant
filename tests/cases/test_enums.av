@@ -144,6 +144,10 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   }
   c.eq_int(labels, 4, "ll-last: one switch of three cases and a default")
   c.expect(str_has(ll4, "@avant_trap_enum_at("), "ll-last: the no-member path traps")
+  // Every block the dispatch adds is numbered before the arms it enters:
+  // an edge into a block numbered lower would be a back edge, which
+  // polls (mir/gc.av), and this program has no loop.
+  c.expect(!str_has(ll4, "avant_gc_poll"), "ll-last: no poll in a program without a loop")
 }
 
 fn test_main(c: Checks) {
