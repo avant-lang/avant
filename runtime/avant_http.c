@@ -479,11 +479,14 @@ static void conn_poll(struct us_socket_t *s, int events) {
 
 /* Writes p[*off .. len) to the socket, in pieces of at most `piece`
  * bytes (1 GiB, or less under AVANT_HTTP_WS_WRITE_CHUNK: the socket
- * takes an int length), and advances *off by what the socket took. Returns 1 when everything has gone and 0 when the socket took
+ * takes an int length), and advances *off by what the socket took.
+ * Returns 1 when everything has gone and 0 when the socket took
  * only a part: us_socket_write has then asked for the socket's writable
  * event, and the caller's on_writable handler calls this again with the
- * same offset. The server's output queue (conn_flush) and the client's
- * request (fetch_send; Stage 29 W-FIX1d, O513) are both sent by it. */
+ * same offset. The server's output queue (conn_flush), an answer past
+ * the piece (conn_send, O662), the client's request (fetch_send; Stage
+ * 29 W-FIX1d, O513) and the WebSocket client's handshake (O571) are sent
+ * by it. */
 static int sock_write_rest(struct us_socket_t *s, const char *p, size_t len,
                            size_t *off, size_t piece) {
   while (*off < len) {
@@ -1819,20 +1822,24 @@ static int http_host_valid(const char *p, size_t n) {
     }
     i++;
   } else {
-    while (i < n && p[i] != ':') {
+    /* The table first: a name's byte costs one load and one test (on
+     * the hello path's Host, "127.0.0.1:18301", about 20 instructions
+     * fewer per request than testing ':' and '%' first; the check as a
+     * whole is about 120; records/2026-11-14-s29-wfix1h, cost). */
+    while (i < n) {
       unsigned char ch = (unsigned char)p[i];
-      if (ch == '%') {
-        if (i + 2 >= n || !http_hex((unsigned char)p[i + 1]) ||
-            !http_hex((unsigned char)p[i + 2])) {
-          return 0;
-        }
-        i += 3;
+      if (http_host_byte[ch]) {
+        i++;
         continue;
       }
-      if (!http_host_byte[ch]) {
+      if (ch == ':') {
+        break;
+      }
+      if (ch != '%' || i + 2 >= n || !http_hex((unsigned char)p[i + 1]) ||
+          !http_hex((unsigned char)p[i + 2])) {
         return 0;
       }
-      i++;
+      i += 3;
     }
   }
   if (i == n) {
@@ -3621,7 +3628,8 @@ static int parse_response_head(const char *raw, size_t n, int *status,
  * after its last chunk and the trailer section; a Content-Length body
  * after that many bytes, and one with an invalid length (repeated, or
  * not a number) at once, to be refused (O664); a body with neither (or
- * another Transfer-Encoding) when the server closes, as before. The head is parsed again as bytes arrive until it
+ * another Transfer-Encoding) when the server closes, as before. The
+ * head is parsed again as bytes arrive until it
  * is whole, then never again; a chunked body is followed by the same
  * decoder avant_http_resp_body uses, on a copy, a piece at a time. */
 static int fetch_complete(FetchState *st) {
