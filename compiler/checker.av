@@ -4341,10 +4341,23 @@ pub class Checker {
 
   // The value of a block; with has_want its last expression is checked
   // against the wanted type, so a literal takes it (`[]`, `nil`, `0`).
+  // A last `if` with an else is the block's value (Stage 29 W5b1, O274):
+  // it becomes the node of an `if` used as a value (ast.av ex_switch, op
+  // tk_if), which every walker and the lowering already know. The other
+  // statements are checked as the code around them (O544): a `return`
+  // leaves the function, so it takes the function's result type.
   pub fn check_block_value_as(block: Block, has_want: Bool, want: Ty): Ty {
     if block.body.size == 0 {
       fail(block.loc, "block needs a value")
       return t_int()
+    }
+    tail = block.body[block.body.size - 1]
+    if tail.kind == st_if() && tail.else_body.size > 0 {
+      ife = Expr.new(ex_switch(), tail.loc)
+      ife.op = tk_if()
+      ife.has_else = true
+      ife.else_body.push(tail)
+      block.body[block.body.size - 1] = stmt_expr(tail.loc, ife)
     }
     self.push_scope
     last = block.body[block.body.size - 1]
@@ -4368,7 +4381,7 @@ pub class Checker {
         self.pop_scope
         return t_int()
       }
-      check_stmt(stmt, t_void(), false)
+      check_stmt(stmt, self.return_type, false)
       i += 1
     }
     self.pop_scope
