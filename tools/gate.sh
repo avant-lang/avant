@@ -14,7 +14,9 @@
 # and C' = D' byte for byte. Between the default suites and the GC passes
 # it runs the README checks on C' (tools/readme-check.sh, every ```avant
 # block compiled and run, and tools/readme-links.sh; Stage 29 W-FIX1f2,
-# O218): a red one fails the gate. Prints one summary line per suite, one
+# O218), and `avant format --check` over every tracked source
+# (tools/format-check.sh; Stage 29 W5d1, O170): a red one fails the
+# gate. Prints one summary line per suite, one
 # for the README checks, the fixed point, and a final `GATE PASS` or
 # `GATE FAIL: ...` line; exits 0 only on PASS (1 on any failure, 2 on
 # usage).
@@ -108,6 +110,7 @@
 # build-L.log and time-build-L.txt; suite-L.log, junit-L.xml, time-L.txt;
 # {before,after}-L.{tmp,repo} snapshots and the new-/gone- differences;
 # readme-check.log, readme-links.log and their litter-readme.{tmp,repo};
+# format-check.log, time-format-check.txt;
 # build-d-llvm.log, time-build-d-llvm.txt, emit-{c,d}-llvm.log,
 # time-emit-{c,d}-llvm.txt;
 # fixed-point.txt; identity.txt (C' against D'); reuse.txt when
@@ -277,6 +280,23 @@ readme_checks() {
   done
 }
 readme_checks
+
+# Every source canonical for `avant format` (Stage 29 W5d1, O170, O200),
+# on C' and alone (about 3 s): tools/format-check.sh runs `format
+# --check`, each file through the formatter's self-check (O464), over the
+# tracked .av files but tests/fixtures/format/surface.av (messy on
+# purpose) and FORMAT_SKIP. FORMAT_SKIP is the dated list of sources left
+# non-canonical because another lane held them when W5d1 merged; the
+# merge after each such lane formats its files and removes them from the
+# list. A stale entry (a path that is no longer tracked) fails the step.
+# 2026-11-14 (W5d1): empty, no running lane held a non-canonical source.
+FORMAT_SKIP=""
+format_check() {
+  env -u AVANT_BACKEND AVANT_COMPILER="$root/bin/avant-$C" /usr/bin/time -p -o "$out/time-format-check.txt" timeout -k 10 300 sh tools/format-check.sh $FORMAT_SKIP > "$out/format-check.log" 2>&1 < /dev/null
+  rc=$?
+  [ $rc -eq 0 ] || fail "format check: $(tail -1 "$out/format-check.log") (rc=$rc, format-check.log)"
+}
+format_check
 # One extra pass on C' per GC environment (O26), when asked: GATE_GC_ENV
 # is one environment or a `;`-separated list of them (O68). GC_LIST is
 # the list's non-empty entries, one per line; with one entry the pass is
@@ -420,6 +440,7 @@ ptimes() { [ -f "$1" ] && grep -E '^(real|user|sys) ' "$1" | tr '\n' ' '; }
     case "$L" in "$C"-gc*) tag="$L ($(gc_env_of "$L"))" ;; esac
     echo "suite $tag: $(grep -E 'failed, .* passed' "$out/suite-$L.log" | tail -1) $checks $jf $(ptimes "$out/time-$L.txt")$(grep -E '^rc=' "$out/suite-$L.log") new-tmp=$(wc -l < "$out/new-$L.tmp") gone-tmp=$(wc -l < "$out/gone-$L.tmp") new-repo=$(wc -l < "$out/new-$L.repo") gone-repo=$(wc -l < "$out/gone-$L.repo")"
   done
+  echo "format: $(tail -n 1 "$out/format-check.log" 2>/dev/null) $(ptimes "$out/time-format-check.txt")"
   echo "readme: $(tail -n 2 "$out/readme-check.log" 2>/dev/null | tr '\n' ' ')| $(tail -n 2 "$out/readme-links.log" 2>/dev/null | tr '\n' ' ')"
   cat "$out/fixed-point.txt"
   [ -f "$out/identity.txt" ] && cat "$out/identity.txt"
