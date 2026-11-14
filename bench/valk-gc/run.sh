@@ -165,12 +165,17 @@ build_csharp() { # PROJECT OUTDIR TAG
   local fw
   fw="net$(dotnet --version | cut -d. -f1).0"
   # Upstream's command (run-gc.sh), with the build directories kept out of
-  # the source directory.
+  # the source directory, and no build server left running after it: by
+  # default MSBuild's worker nodes and the Roslyn compiler server stay
+  # about ten minutes after a publish: under `ledger run` they held the
+  # machine lock that long (529 s after a full build), and a server that
+  # inherited build_row's descriptor 3 kept `build ROW` waiting for it.
   DOTNET_CLI_HOME="$BUILD/dotnet-home" DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 DOTNET_CLI_TELEMETRY_OPTOUT=1 \
-    dotnet publish "$1" --configuration Release --output "$2" --nologo \
+    MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_USE_MSBUILD_SERVER=0 \
+    dotnet publish "$1" --configuration Release --output "$2" --nologo -nodeReuse:false -p:UseSharedCompilation=false \
     -p:BaseIntermediateOutputPath="$BUILD/$3-obj/" -p:BaseOutputPath="$BUILD/$3-bin/" \
     -p:GcTargetFramework="$fw" -p:DisableTransitiveFrameworkReferenceDownloads=true \
-    -p:RestoreIgnoreFailedSources=true -p:NuGetAudit=false </dev/null >"$BUILD/$3-build.log" 2>&1 || die "C# build failed: see $BUILD/$3-build.log"
+    -p:RestoreIgnoreFailedSources=true -p:NuGetAudit=false </dev/null >"$BUILD/$3-build.log" 2>&1 3>&- || die "C# build failed: see $BUILD/$3-build.log"
 }
 
 emit() { printf '%s\n' "$*" >&3; }
