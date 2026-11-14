@@ -869,15 +869,39 @@ pub fn (checker_self: Checker) guard_consume_at(w: GuardWalk, e: Expr) {
 // task that receives it, so it obeys spawn's rule for what crosses
 // (checker/spawn.av copyable_for_spawn): a class instance, a Hash, a
 // Buf, a fn or a struct holding one would be one mutable object in two
-// tasks with no lock, and is refused; an Array crosses as it does for
-// spawn.
+// tasks with no lock, and is refused. An Array is copied at the send
+// (O688, D371; Stage 29 W8Cb: mir/lower_agg.av send_copy), so the
+// receiver owns an independent array; its elements cross in turn, and an
+// array of arrays is copied at every level.
+pub fn (checker_self: Checker) send_crosses(t: Ty): Bool {
+  if t.is_array {
+    if e = t.inner {
+      return checker_self.send_crosses(e)
+    }
+    return false
+  }
+  checker_self.copyable_for_spawn(t)
+}
+
 pub fn (checker_self: Checker) check_send(expr: Expr) {
   if checker_self.has_err || expr.args.size != 1 {
     return
   }
   arg = expr.args[0]
   if t = arg.ty {
-    if !checker_self.copyable_for_spawn(t) {
+    if t.is_array && !checker_self.send_crosses(t) {
+      leaf = t
+      while leaf.is_array {
+        if e = leaf.inner {
+          leaf = e
+        } else {
+          break
+        }
+      }
+      checker_self.fail(arg.loc, "Channel.send: an ${t.show} is copied at the send, but its elements (${leaf.show}) cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex")
+      return
+    }
+    if !checker_self.send_crosses(t) {
       checker_self.fail(arg.loc, "Channel.send: a ${t.show} cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex; send plain values, or a Mutex(${t.show}) shared by both tasks")
     }
   }

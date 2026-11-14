@@ -2394,7 +2394,7 @@ fn main {
 ```
 
 - `Channel(T).new` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` sends, `recv` returns `T?` (`nil` once the channel is closed and empty, so `while v = ch.recv { ... }` drains it), `close` closes.
-- What a `send` carries crosses to another task, by the same rule as a `spawn` capture ([What may cross a task](#what-may-cross-a-task)): a class instance, a `Hash` or a struct holding one is a compile error. `T` may be any type, so a channel can carry other channels (a reply channel per request) or mutexes.
+- What a `send` carries crosses to another task, by the same rule as a `spawn` capture ([What may cross a task](#what-may-cross-a-task)): a class instance, a `Hash` or a struct holding one is a compile error. An `Array` is copied at the send, at every level of an array of arrays, so the receiver owns its own array and the sender may go on changing its one; its elements must cross in turn (`Array(Box)` is refused). `T` may be any type, so a channel can carry other channels (a reply channel per request) or mutexes.
 - A `Channel` and a `Mutex` hold no memory outside the object: the program can make as many as it likes.
 
 ### Choosing a tool
@@ -2416,7 +2416,7 @@ What a `spawn` or `.parallel` block captures is checked at compile time:
 | an integer, a `Bool`, a `Float64` | a copy |
 | a struct whose every field may cross | a copy |
 | a `String` | a shared pointer: it is immutable, and both tasks keep it alive |
-| an `Array` | shared for reading, until the join |
+| an `Array` | shared for reading, until the join; a `send` copies it |
 | a `Channel` or a `Mutex` (`std.sync`) | shared: that is their purpose |
 | a class instance, a `Hash`, a `fn` value, a `JoinHandle`, or a struct holding one | **refused**: it is not copied, and sharing it would be a race |
 
