@@ -31,6 +31,24 @@ pub fn tyk_bytes: Int { 23 }
 // `Int` for one release and is gone (W-ADOPT, D300's one spelling).
 pub fn tyk_int32: Int { 24 }
 pub fn tyk_uint32: Int { 25 }
+// An enumeration (Stage 29 W5a1, D292, D358): a distinct type whose values
+// are its members, each an integer (enum_vals) with a name (enum_names),
+// in declaration order. Not an integer type: no arithmetic, no ordering,
+// no conversion; `==` and `!=` compare two values of one enum.
+pub fn tyk_enum: Int { 26 }
+
+// An enum's members (Stage 29 W5a1): names and values in declaration
+// order, the values distinct (C's rule: one more than the previous member
+// unless written).
+pub class TyEnum {
+  pub names: Array(String) = []
+  pub vals: Array(Int) = []
+  // A C enum (declared in a lib block): stored as C's int.
+  pub c_int: Bool = false
+
+  fn initialize {
+  }
+}
 
 pub class TyField {
   pub name: String = ""
@@ -75,6 +93,8 @@ pub class Ty {
   // Set on the type's one Ty when the resolver binds its declaration
   // (resolve.av load_types, instantiate_template), so every check sees it.
   pub error_mark: Bool = false
+  // An enum's members (tyk_enum), nil for every other type.
+  pub members_of: TyEnum? = nil
 
   fn initialize(kind: Int) {
     self.kind = kind
@@ -127,6 +147,42 @@ pub class Ty {
   pub fn is_iface: Bool { self.kind == tyk_iface() }
   pub fn is_var: Bool { self.kind == tyk_var() }
   pub fn is_module: Bool { self.kind == tyk_module() }
+  pub fn is_enum: Bool { self.kind == tyk_enum() }
+
+  // An enum's member names and values (empty for any other type).
+  pub fn enum_names: Array(String) {
+    if m = self.members_of {
+      return m.names
+    }
+    none: Array(String) = []
+    none
+  }
+  pub fn enum_vals: Array(Int) {
+    if m = self.members_of {
+      return m.vals
+    }
+    none: Array(Int) = []
+    none
+  }
+
+  // A C enum (declared in a lib block, Stage 29 W5a1): C's int.
+  pub fn enum_c_int: Bool {
+    if m = self.members_of {
+      return m.c_int
+    }
+    false
+  }
+
+  // The index of an enum's member named name, or -1.
+  pub fn enum_index(name: String): Int {
+    names = self.enum_names
+    for i in 0..names.size {
+      if names[i] == name {
+        return i
+      }
+    }
+    -1
+  }
   pub fn is_agg: Bool {
     if self.is_struct {
       return true
@@ -222,6 +278,9 @@ pub class Ty {
       return same_agg(other)
     }
     if k == tyk_class() {
+      return same_agg(other)
+    }
+    if k == tyk_enum() {
       return same_agg(other)
     }
     if k == tyk_opaque() {

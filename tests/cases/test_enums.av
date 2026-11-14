@@ -1,0 +1,153 @@
+import harness
+import backends
+
+// Stage 29 W5a1: enumerations and switch over them (D292, D293, D320,
+// D327, D358). Each program is compiled in parallel; a refused one must
+// leave no binary, say the expected words and point at the expected line
+// and column; an accepted one must print what it should. The programs
+// that run (tests/fixtures/enums/) are checked by the run goldens in every
+// collector mode; this file holds the rules' refusals, their accepted
+// neighbours, and two checks on the generated code:
+//   - a switch over an enum that names every member has a trap, never
+//     LLVM's unreachable, as the path no member takes (D358, point 10);
+//   - a program that neither prints an enum, nor calls from_name, nor
+//     reads members, carries no name table (O394).
+
+class RCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(refused("member-capital", "enum Tok { Eof }\nfn main { }\n", "an enum member is written in lower case: `eof`", "1:12"))
+  xs.push(refused("member-capital-camel", "enum E { NotFound }\nfn main { }\n", "an enum member is written in lower case: `not_found`", "1:10"))
+  xs.push(refused("member-duplicate", "enum Tok { a, a }\nfn main { }\n", "duplicate member a in enum Tok", "1:15"))
+  xs.push(refused("member-same-value", "enum S { ok = 1, fine = 1 }\nfn main { }\n", "members ok and fine of S have the same value 1", "1:18"))
+  xs.push(refused("member-same-value-implicit", "enum S { a = 1, b = 0, c }\nfn main { }\n", "members a and c of S have the same value 1", "1:24"))
+  xs.push(refused("member-too-big", "enum S { big = 3000000000 }\nfn main { }\n", "the value of big does not fit in Int32", "1:10"))
+  xs.push(refused("member-too-small", "enum S { low = -2147483649 }\nfn main { }\n", "the value of low does not fit in Int32", "1:10"))
+  xs.push(refused("member-next-too-big", "enum S { top = 2147483647, over }\nfn main { }\n", "the value of over does not fit in Int32", "1:28"))
+  xs.push(refused("member-value-not-literal", "enum S { a = 1 + 1 }\nfn main { }\n", "expected `,` or a line break after the enum member a", "1:16"))
+  xs.push(refused("enum-empty", "enum S { }\nfn main { }\n", "an enum needs a member", "1:1"))
+  xs.push(refused("enum-lower-name", "enum tok { a }\nfn main { }\n", "an enum's name is a type name, written with a capital first letter", "1:6"))
+  xs.push(refused("enum-builtin-member", "enum S { members }\nfn main { }\n", "a member members would hide S.members; choose another name", "1:10"))
+  xs.push(refused("enum-builtin-method", "enum S {\n  a\n\n  fn name: String { \"x\" }\n}\nfn main { }\n", "every enum has name; a method cannot take its name", "4:3"))
+  xs.push(refused("enum-other-interface", "interface Shape {\n  fn area: Int\n}\nenum S: Shape { a }\nfn main { }\n", "an enum can be marked Error; it implements no other interface", "4:9"))
+  xs.push(refused("int-as-enum", "enum Tok { eof, name, number }\nfn main {\n  t: Tok = 1\n  puts(t)\n}\n", "Tok", "3:12"))
+  xs.push(refused("enum-as-int", "enum Tok { eof, name, number }\nfn main {\n  n: Int = Tok.eof\n  puts(n)\n}\n", "Int", "3:15"))
+  xs.push(refused("enum-eq-int", "enum Tok { eof, name, number }\nfn main {\n  t = Tok.eof\n  puts(t == 1)\n}\n", "cannot compare Tok with Int: == and != compare two values of one enum", "4:10"))
+  xs.push(refused("enum-plus", "enum Tok { eof, name, number }\nfn main {\n  t = Tok.eof\n  puts(t + 1)\n}\n", "only == and != apply to Tok: an enum has no order and no arithmetic", "4:10"))
+  xs.push(refused("enum-order", "enum Tok { eof, name, number }\nfn main {\n  puts(Tok.eof < Tok.name)\n}\n", "only == and != apply to Tok: an enum has no order and no arithmetic", "3:16"))
+  xs.push(refused("enum-two-enums", "enum Tok { eof, name, number }\nenum Other { eof }\nfn main {\n  puts(Tok.eof == Other.eof)\n}\n", "Tok", "4:16"))
+  xs.push(refused("member-unknown", "enum Tok { eof, name, number }\nfn main {\n  puts(Tok.nope)\n}\n", "Tok has no member nope", "3:11"))
+  xs.push(refused("label-qualified", "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case Tok.eof { 1 }\n    case name, number { 2 }\n  }\n}\nfn main { puts(f(Tok.eof)) }\n", "write the member without its type in a case label: `case eof`", "4:10"))
+  xs.push(refused("label-unknown", "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case nope { 1 }\n    else { 2 }\n  }\n}\nfn main { puts(f(Tok.eof)) }\n", "Tok has no member nope", "4:10"))
+  xs.push(refused("label-integer", "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case 0 { 1 }\n    else { 2 }\n  }\n}\nfn main { puts(f(Tok.eof)) }\n", "a case label of a switch over Tok is one of its members, written bare", "4:10"))
+  xs.push(refused("label-duplicate", "enum Tok { eof, name, number }\nfn main {\n  switch Tok.eof {\n    case eof { puts(1) }\n    case name, eof { puts(2) }\n    case number { puts(3) }\n  }\n}\n", "duplicate case eof", "5:16"))
+  xs.push(refused("label-name-on-int", "fn main {\n  n = 1\n  switch n {\n    case one { puts(1) }\n    else { puts(2) }\n  }\n}\n", "case label must be an integer literal", "4:10"))
+  xs.push(refused("cover-missing-value", "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n  }\n}\nfn main { puts(f(Tok.eof)) }\n", "switch over Tok does not cover name, number: name them or add else", "3:3"))
+  xs.push(refused("cover-missing-statement", "enum Tok { eof, name, number }\nfn main {\n  switch Tok.name {\n    case name { puts(1) }\n  }\n}\n", "switch over Tok does not cover eof, number: name them or add else", "3:3"))
+  xs.push(refused("cover-else-beside-full", "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    case name, number { 2 }\n    else { 3 }\n  }\n}\nfn main { puts(f(Tok.eof)) }\n", "every member of Tok is named; remove the else", "3:3"))
+  xs.push(refused("field-no-default", "enum Tok { eof, name, number }\nclass C {\n  pub k: Tok\n}\nfn main {\n  puts(C.new.k)\n}\n", "field k of C has no zero value, no default", "3:7"))
+  xs.push(refused("struct-field-zero-array", "enum Tok { eof, name, number }\nfn main {\n  xs = Array(Tok).new(3)\n  puts(xs.size)\n}\n", "Array(Tok).new(n) needs an element value: Tok has no zero value; write Array(Tok).new(n, value)", "3:8"))
+  xs.push(refused("error-enum-dropped", "enum E: Error { bad }\nfn f(n: Int): Int | E {\n  if n > 0 {\n    return E.bad\n  }\n  n\n}\nfn main {\n  f(1)\n}\n", "this statement drops a value that can be an error (E | Int)", "9:3"))
+  xs.push(accepted("label-bare-neighbours", "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    case name, number { 2 }\n  }\n}\nfn g(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    else { 2 }\n  }\n}\nfn main {\n  puts(f(Tok.eof) + f(Tok.number) + g(Tok.name))\n  puts(Tok.from_i(1) ?? Tok.eof)\n  t = Tok.from_i(9) ?? Tok.number\n  puts(t)\n}\n", "5\nname\nnumber\n"))
+  xs.push(refused("str-label-interpolated", "fn f(s: String, x: Int): Int {\n  switch s {\n    case \"a\${x}\" { 1 }\n    else { 2 }\n  }\n}\nfn main { puts(f(\"a1\", 1)) }\n", "a case label is a literal", "3:10"))
+  xs.push(refused("str-label-duplicate", "fn f(s: String): Int {\n  switch s {\n    case \"GET\", \"GET\" { 1 }\n    else { 2 }\n  }\n}\nfn main { puts(f(\"GET\")) }\n", "duplicate case \"GET\"", "3:17"))
+  xs.push(refused("str-label-duplicate-arms", "fn f(s: String): Int {\n  switch s {\n    case \"a\" { 1 }\n    case \"b\", \"a\" { 2 }\n    else { 3 }\n  }\n}\nfn main { puts(f(\"a\")) }\n", "duplicate case \"a\"", "4:15"))
+  xs.push(refused("str-label-int", "fn f(s: String): Int {\n  switch s {\n    case 1 { 1 }\n    else { 2 }\n  }\n}\nfn main { puts(f(\"a\")) }\n", "a case label of a switch over String is a string literal", "3:10"))
+  xs.push(refused("str-value-needs-else", "fn f(s: String): Int {\n  switch s {\n    case \"a\" { 1 }\n  }\n}\nfn main { puts(f(\"a\")) }\n", "switch expression needs else", "2:3"))
+  xs.push(refused("int-label-string", "fn main {\n  n = 1\n  switch n {\n    case \"1\" { puts(1) }\n    else { puts(2) }\n  }\n}\n", "case label must be an integer literal", "4:10"))
+  xs.push(refused("enum-label-string", "enum Tok { eof, name, number }\nfn main {\n  switch Tok.eof {\n    case \"eof\" { puts(1) }\n    else { puts(2) }\n  }\n}\n", "a case label of a switch over Tok is one of its members, written bare", "4:10"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/enum-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/enum-${f.tag}.bin", "${dir}/enum-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "enum-${f2.tag}.bin", "enum-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/enum-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/enum-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/enum-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "enum-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+// The generated code: the trap of an exhaustive switch, and the name
+// table paid for only when used.
+fn check_ll(c: Checks, compiler: String, dir: String) {
+  sw = "${dir}/enum-ll-switch.av"
+  _ = file_write(sw, "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    case name, number { 2 }\n  }\n}\nfn main {\n  puts(f(Tok.from_i(1) ?? Tok.eof))\n}\n")
+  c.eq_int(emit_ll(compiler, sw, "${dir}/enum-ll-switch.ll", "${dir}/enum-ll-switch.log"), 0, "ll-switch: emits")
+  ll = log_text("${dir}/enum-ll-switch.ll")
+  c.expect(str_has(ll, "@avant_trap_enum_at("), "ll-switch: the no-member path traps")
+  c.expect(str_has(ll, "switch i8 "), "ll-switch: one switch on the enum's byte")
+  c.expect(!str_has(ll, "c\"number\\00\""), "ll-switch: no name table")
+  pr = "${dir}/enum-ll-print.av"
+  _ = file_write(pr, "enum Tok { eof, name, number }\nfn main {\n  puts(Tok.number)\n}\n")
+  c.eq_int(emit_ll(compiler, pr, "${dir}/enum-ll-print.ll", "${dir}/enum-ll-print.log"), 0, "ll-print: emits")
+  c.expect(str_has(log_text("${dir}/enum-ll-print.ll"), "number"), "ll-print: the names are there when printed")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_enums.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+    check_ll(c, compiler, scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

@@ -266,7 +266,20 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
   et = lw.elem_of(aty)
   want = lw.elem_ty_of(e)
   rc = b.types.ref_carrying(et)
-  if e.elems.size == 1 {
+  // `Array(E).new(n, E.m)` with m's value 0 (Stage 29 W5a1): the
+  // allocation is zeroed already, as for the zero of an Int.
+  zero_member = false
+  if e.elems.size == 1 && want.is_enum {
+    m0 = e.elems[0]
+    if m0.kind == ex_field() && m0.type_call {
+      ix = want.enum_index(m0.ident)
+      if ix >= 0 && want.enum_vals[ix] == 0 {
+        zero_member = true
+      }
+    }
+  }
+  if zero_member {
+  } else if e.elems.size == 1 {
     v = lw.lower_coerced(e.elems[0], et, want)
     if lw.failed {
       return b.c_i32(0)

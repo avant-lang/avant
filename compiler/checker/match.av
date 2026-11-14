@@ -694,6 +694,32 @@ pub fn (checker_self: Checker) type_call_target(recv: Expr, callee: String): Ty?
   none
 }
 
+// The enum a receiver names (`Tok`, `mod.Tok`; Stage 29 W5a1), when it
+// is a type name and not a value.
+pub fn (checker_self: Checker) enum_type_named(recv: Expr): Ty? {
+  none: Ty? = nil
+  segs: Array(String) = []
+  if !checker_self.ident_chain(recv, segs) {
+    return none
+  }
+  if segs.size == 1 {
+    if found = checker_self.lookup(segs[0]) {
+      return none
+    }
+    if t = checker_self.resolver.get_named(segs[0]), t.is_enum {
+      return t
+    }
+  } else if segs.size > 1 {
+    mod = checker_self.join_segs(segs, segs.size - 1)
+    if checker_self.qualifier_ok(mod, checker_self.current_module) {
+      if t = checker_self.resolver.get_named_in(mod, segs[segs.size - 1]), t.is_enum {
+        return t
+      }
+    }
+  }
+  none
+}
+
 pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
   if b = expr.block {
     checker_self.fail(expr.loc, "${ty.show}.${expr.callee} does not take a block")

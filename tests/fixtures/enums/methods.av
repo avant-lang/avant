@@ -1,0 +1,67 @@
+// Stage 29 W5a1 (D292, D358): methods in an enum's body, `self` the
+// value, a type-level function, and a switch over the enum with bare
+// labels that names every member (no else).
+
+enum Dir {
+  north, east
+  south
+  west
+
+  fn turn: Dir {
+    switch self {
+      case north { Dir.east }
+      case east { Dir.south }
+      case south { Dir.west }
+      case west { Dir.north }
+    }
+  }
+
+  fn opposite: Dir {
+    self.turn.turn
+  }
+
+  fn self.count: Int { Dir.members.size }
+}
+
+fn describe(d: Dir): String {
+  switch d {
+    case north, south { "vertical" }
+    case east, west { "horizontal" }
+  }
+}
+
+fn count_moves(ds: Array(Dir)): Int {
+  n = 0
+  for d in ds {
+    switch d {
+      case north { n += 1 }
+      case south { n += 10 }
+      case east, west { n += 100 }
+    }
+  }
+  n
+}
+
+fn first_west(ds: Array(Dir)): Int {
+  for i in 0..ds.size {
+    switch ds[i] {
+      case west { return i }
+      case north, east, south { continue }
+    }
+  }
+  -1
+}
+
+fn main {
+  d = Dir.north
+  for i in 0..5 {
+    d = d.turn
+  }
+  puts(d)
+  puts(d.opposite)
+  puts(Dir.count)
+  puts(describe(Dir.west))
+  puts(describe(Dir.south))
+  puts(count_moves([Dir.north, Dir.south, Dir.west, Dir.north]))
+  puts(first_west([Dir.north, Dir.east, Dir.west]))
+}

@@ -1,0 +1,162 @@
+// The functions every enum has (Stage 29 W5a1, D292, D320, D358), written
+// by the parser as Avant (parser.av parse_enum) and checked like any
+// method. Each is lazy (ast.av Function.lazy): the lowering emits it only
+// when a call reaches it, so a program that never prints an enum, never
+// calls from_name and never reads members pays for no name table (O394).
+//
+//   fn name: String                      switch self { case m { "m" } ... }
+//   fn self.from_i(n: Int): Tok?         switch n { case v { return Tok.m } ... }; nil
+//   fn self.from_name(s: String): Tok?   switch s { case "m" { return Tok.m } ... }; nil
+//   fn self.members: Array(Tok)          [Tok.m, ...]
+//   fn message: String                   self.name (an enum marked Error
+//                                        that defines none, D327)
+//
+// `t.to_i` is not a function: the checker types it and the lowering
+// extends the value (checker.av check_enum_method, mir lower_call.av).
+
+import location
+import token
+import ast
+
+// The names an enum gives itself: a method of these names, or a member
+// that would hide a type-level one, is refused (parser.av parse_enum).
+pub fn enum_builtin_names: Array(String) {
+  ["name", "to_i", "from_i", "from_name", "members"]
+}
+
+pub fn enum_synth_fn(loc: Location, owner: String, name: String, ret: TypeName): Function {
+  fnn = Function.new(loc, name)
+  fnn.owner = owner
+  fnn.vis = true
+  fnn.lazy = true
+  fnn.return_type = ret
+  fnn
+}
+
+pub fn enum_name_expr(loc: Location, ident: String): Expr {
+  e = Expr.new(ex_name(), loc)
+  e.ident = ident
+  e
+}
+
+// `Owner.member`.
+pub fn enum_member_expr(loc: Location, owner: String, member: String): Expr {
+  e = Expr.new(ex_field(), loc)
+  e.object = enum_name_expr(loc, owner)
+  e.ident = member
+  e
+}
+
+pub fn enum_str_expr(loc: Location, text: String): Expr {
+  e = Expr.new(ex_string(), loc)
+  e.value_str = text
+  e
+}
+
+pub fn enum_arm(loc: Location, label: CaseLabel, value: Expr): SwitchCase {
+  arm = SwitchCase.new(loc)
+  arm.labels.push(label)
+  arm.body.push(stmt_expr(loc, value))
+  arm
+}
+
+pub fn enum_name_method(loc: Location, owner: String, decl: EnumDecl): Function {
+  fnn = enum_synth_fn(loc, owner, "name", TypeName.new(loc, "String"))
+  sw = Expr.new(ex_switch(), loc)
+  sw.cond = enum_name_expr(loc, "self")
+  for i in 0..decl.names.size {
+    label = CaseLabel.new(lb_member(), loc)
+    label.text = decl.names[i]
+    sw.cases.push(enum_arm(loc, label, enum_str_expr(loc, decl.names[i])))
+  }
+  fnn.body.push(stmt_expr(loc, sw))
+  fnn
+}
+
+pub fn enum_opt_type(loc: Location, owner: String): TypeName {
+  tn = TypeName.new(loc, owner)
+  tn.nilable = true
+  tn
+}
+
+pub fn enum_from_i_method(loc: Location, owner: String, decl: EnumDecl): Function {
+  fnn = enum_synth_fn(loc, owner, "from_i", enum_opt_type(loc, owner))
+  fnn.type_method = true
+  fnn.params.push(Param.new(loc, "n", TypeName.new(loc, "Int")))
+  // switch n { case v { return Owner.m } ... }; nil
+  sw = Expr.new(ex_switch(), loc)
+  sw.cond = enum_name_expr(loc, "n")
+  for i in 0..decl.names.size {
+    label = CaseLabel.new(lb_int(), loc)
+    label.int_val = decl.vals[i]
+    arm = SwitchCase.new(loc)
+    arm.labels.push(label)
+    arm.body.push(stmt_return(loc, enum_member_expr(loc, owner, decl.names[i])))
+    sw.cases.push(arm)
+  }
+  fnn.body.push(stmt_expr(loc, sw))
+  fnn.body.push(stmt_expr(loc, Expr.new(ex_nil(), loc)))
+  fnn
+}
+
+pub fn enum_from_name_method(loc: Location, owner: String, decl: EnumDecl): Function {
+  fnn = enum_synth_fn(loc, owner, "from_name", enum_opt_type(loc, owner))
+  fnn.type_method = true
+  fnn.params.push(Param.new(loc, "s", TypeName.new(loc, "String")))
+  // switch s { case "m" { return Owner.m } ... }; nil (a String switch:
+  // the size, then one memcmp per name of that size)
+  sw = Expr.new(ex_switch(), loc)
+  sw.cond = enum_name_expr(loc, "s")
+  for i in 0..decl.names.size {
+    label = CaseLabel.new(lb_string(), loc)
+    label.text = decl.names[i]
+    arm = SwitchCase.new(loc)
+    arm.labels.push(label)
+    arm.body.push(stmt_return(loc, enum_member_expr(loc, owner, decl.names[i])))
+    sw.cases.push(arm)
+  }
+  fnn.body.push(stmt_expr(loc, sw))
+  fnn.body.push(stmt_expr(loc, Expr.new(ex_nil(), loc)))
+  fnn
+}
+
+pub fn enum_members_method(loc: Location, owner: String, decl: EnumDecl): Function {
+  ret = TypeName.new(loc, "Array")
+  ret.args.push(TypeName.new(loc, owner))
+  fnn = enum_synth_fn(loc, owner, "members", ret)
+  fnn.type_method = true
+  arr = Expr.new(ex_array(), loc)
+  for i in 0..decl.names.size {
+    arr.elems.push(enum_member_expr(loc, owner, decl.names[i]))
+  }
+  fnn.body.push(stmt_expr(loc, arr))
+  fnn
+}
+
+// An enum marked Error that defines no message (D327): its message is the
+// member's name.
+pub fn enum_message_method(loc: Location, owner: String): Function {
+  fnn = enum_synth_fn(loc, owner, "message", TypeName.new(loc, "String"))
+  self_name = Expr.new(ex_field(), loc)
+  self_name.object = enum_name_expr(loc, "self")
+  self_name.ident = "name"
+  fnn.body.push(stmt_expr(loc, self_name))
+  fnn
+}
+
+// A member written with capitals, in snake_case (`NotFound` -> `not_found`).
+pub fn enum_snake(name: String): String {
+  buf = buf_new()
+  for i in 0..name.size {
+    c = name[i]
+    if c >= 65 && c <= 90 {
+      if i > 0 && name[i - 1] != 95 {
+        buf.push_str("_")
+      }
+      buf.push_byte(c + 32)
+    } else {
+      buf.push_byte(c)
+    }
+  }
+  buf.to_s
+}

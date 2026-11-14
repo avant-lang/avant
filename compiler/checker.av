@@ -1412,6 +1412,13 @@ pub class Checker {
           }
           continue
         }
+        if ty.is_enum && !self.has_err {
+          // An enum prints its member's name (D292, D358).
+          if call = enum_text_call(inner, ty) {
+            part.expr = call
+          }
+          continue
+        }
         ok = false
         if ty.is_integer {
           ok = true
@@ -1431,6 +1438,27 @@ pub class Checker {
       }
     }
     t_string()
+  }
+
+  // What printing a value of the enum ty prints (Stage 29 W5a1, D358):
+  // the call of its `name` (an enum marked Error: its error text, D327),
+  // checked; inner is checked already.
+  pub fn enum_text_call(inner: Expr, ty: Ty): Expr? {
+    fa = Expr.new(ex_field(), inner.loc)
+    fa.object = inner
+    fa.ident = "name"
+    if ty.error_mark {
+      fa.ident = "__avant_error_text"
+    }
+    arg_tys: Array(Ty) = []
+    none: Ty? = nil
+    if sig = match_method(ty.name, fa.ident, arg_tys, none, inner.loc, ty.name, ty.mod_name, no_int_literals()) {
+      fa.method_call = true
+      fa.resolved = sig.node.emit_name
+      fa.ty = sig.ret
+      return fa
+    }
+    nil
   }
 
   pub fn check_float_field(expr: Expr): Ty {
@@ -1526,6 +1554,19 @@ pub class Checker {
 
   pub fn check_field(expr: Expr): Ty {
     if obj = expr.object {
+      // An enum's member (`Tok.eof`, Stage 29 W5a1, D292): a value of
+      // the enum, marked type_call for the lowering.
+      if et = enum_type_named(obj) {
+        if et.enum_index(expr.ident) >= 0 {
+          expr.type_call = true
+          return et
+        }
+        if tc = type_call_target(obj, expr.ident) {
+        } else {
+          fail(expr.loc, "${et.show} has no member ${expr.ident}")
+          return et
+        }
+      }
       if ty = type_call_target(obj, expr.ident) {
         // A type-level function in field form (`Money.zero`, declared
         // `fn self.zero: Money`), as a method without parameters is called
@@ -1546,6 +1587,10 @@ pub class Checker {
         }
       }
       object = check_expr(obj)
+      if object.is_enum {
+        // `t.to_i`, `t.name` and the enum's methods, as calls.
+        return paren_call_of(expr)
+      }
       if object.is_float {
         return check_float_field(expr)
       }
@@ -2854,6 +2899,27 @@ pub class Checker {
   // part of check_binary after the operands; Stage 29 W-INT1 split it so
   // a literal on the left can adopt the right's type first).
   pub fn binary_typed(expr: Expr, l: Expr, r: Expr, op: Int, left: Ty, right: Ty): Ty {
+    // Two values of one enum compare with == and != (D292); an enum has
+    // no order and no arithmetic, and is never a number.
+    if left.is_enum && right.is_enum && left.same_as(right) {
+      if op == tk_eq_eq() || op == tk_not_eq() {
+        return t_bool()
+      }
+      fail(expr.loc, "only == and != apply to ${left.show}: an enum has no order and no arithmetic")
+      return t_bool()
+    }
+    if left.is_enum || right.is_enum {
+      if op == tk_eq_eq() || op == tk_not_eq() {
+        fail(expr.loc, "cannot compare ${left.show} with ${right.show}: == and != compare two values of one enum")
+      } else {
+        et = left
+        if !left.is_enum {
+          et = right
+        }
+        fail(expr.loc, "only == and != apply to ${et.show}: an enum has no order and no arithmetic")
+      }
+      return t_bool()
+    }
     if left.is_fn {
       if op == tk_eq_eq() {
         fail(expr.loc, "cannot compare fn values")
@@ -3026,6 +3092,13 @@ pub class Checker {
         return t_void()
       }
       printed = check_expr(expr.args[0])
+      if printed.is_enum {
+        // puts(t) prints what "${t}" prints (D358).
+        if call = enum_text_call(expr.args[0], printed) {
+          expr.args[0] = call
+        }
+        return t_void()
+      }
       ok = false
       if printed.is_integer {
         ok = true
@@ -3725,6 +3798,19 @@ pub class Checker {
     if has_want {
       expected = want
     }
+    if object.is_enum {
+      // `t.to_i` (Stage 29 W5a1, D292): the member's value as an Int,
+      // extended by the lowering; every other name is a method (the
+      // ones every enum has, enums.av, and the enum's own).
+      if expr.callee == "to_i" && expr.args.size == 0 {
+        if b = expr.block {
+        } else {
+          expr.method_call = true
+          return t_int()
+        }
+      }
+      return dispatch_method(expr, object, expected)
+    }
     if object.is_agg {
       return dispatch_method(expr, object, expected)
     }
@@ -3750,23 +3836,57 @@ pub class Checker {
       fail(expr.loc, "an if used as a value leaves in every branch, so it has no value")
       return t_int()
     }
+    // The discriminant's countable cases (Stage 29 W5a1, D292, D293):
+    // an enum's members; W5a2 adds union members, W5a3 Bool. A switch
+    // over a countable type without else names every case.
+    countable = false
+    disc = t_int()
     if cond = expr.cond {
       ct = check_expr(cond)
-      if !ct.is_int && !ct.is_bool {
-        fail(cond.loc, "switch discriminant must be Int or Bool, got ${ct.show}")
+      disc = ct
+      if ct.is_enum {
+        countable = true
+      } else if !ct.is_int && !ct.is_bool && !ct.is_string {
+        fail(cond.loc, "switch discriminant must be Int, Bool, String or an enum, got ${ct.show}")
       }
     }
+    covered = Hash(Int, Int).new
     seen = Hash(Int, Int).new
+    seen_str = Hash(String, Int).new
     for arm in expr.cases {
       if arm.labels.size == 0 {
         fail(arm.loc, "case needs a label")
       }
       for label in arm.labels {
-        lab = label.to_i
+        if !check_case_label(label, disc) {
+          continue
+        }
+        if label.kind == lb_string() {
+          if prev_s = seen_str.get(label.text) {
+            fail(label.loc, "duplicate case ${quote_label(label.text)}")
+          }
+          seen_str[label.text] = 1
+          continue
+        }
+        lab = label.int_val
         if prev = seen.get(lab) {
-          fail(arm.loc, "duplicate case ${lab}")
+          if label.kind == lb_member() {
+            fail(label.loc, "duplicate case ${label.text}")
+          } else {
+            fail(arm.loc, "duplicate case ${lab}")
+          }
         }
         seen[lab] = 1
+        covered[lab] = 1
+      }
+    }
+    if countable && !self.has_err {
+      missing = switch_missing_cases(disc, covered)
+      if !expr.has_else && missing.size > 0 {
+        fail(expr.loc, "switch over ${disc.show} does not cover ${join_names(missing)}: name them or add else")
+      }
+      if expr.has_else && missing.size == 0 {
+        fail(expr.loc, "every member of ${disc.show} is named; remove the else")
       }
     }
     // An arm that leaves (its last statement a return, break or
@@ -3802,7 +3922,7 @@ pub class Checker {
       fail(expr.loc, "switch cases must all produce a value, or none")
       return t_int()
     }
-    if !expr.has_else {
+    if !expr.has_else && !countable {
       fail(expr.loc, "switch expression needs else")
       return t_int()
     }
@@ -3824,6 +3944,87 @@ pub class Checker {
       }
     }
     result
+  }
+
+  // A case label against the discriminant's type (Stage 29 W5a1): an
+  // enum's labels are its bare member names (D327), each getting its
+  // value in int_val; an integer discriminant's are integer literals.
+  // False when the label was refused.
+  pub fn check_case_label(label: CaseLabel, disc: Ty): Bool {
+    if disc.is_enum {
+      if label.kind != lb_member() {
+        fail(label.loc, "a case label of a switch over ${disc.show} is one of its members, written bare (case ${disc.enum_names[0]})")
+        return false
+      }
+      if label.qual.size > 0 {
+        fail(label.loc, "write the member without its type in a case label: `case ${label.text}`")
+        return false
+      }
+      idx = disc.enum_index(label.text)
+      if idx < 0 {
+        fail(label.loc, "${disc.show} has no member ${label.text}")
+        return false
+      }
+      label.int_val = disc.enum_vals[idx]
+      return true
+    }
+    if disc.is_string {
+      if label.kind != lb_string() {
+        fail(label.loc, "a case label of a switch over String is a string literal")
+        return false
+      }
+      return true
+    }
+    if label.kind != lb_int() {
+      fail(label.loc, "case label must be an integer literal")
+      return false
+    }
+    true
+  }
+
+  // A String label as written in a message: quoted, its quote and
+  // backslash escaped.
+  pub fn quote_label(text: String): String {
+    buf = buf_new()
+    buf.push_str("\"")
+    for i in 0..text.size {
+      c = text[i]
+      if c == 34 || c == 92 {
+        buf.push_byte(92)
+      }
+      buf.push_byte(c)
+    }
+    buf.push_str("\"")
+    buf.to_s
+  }
+
+  // The countable cases of a discriminant type that the labels in
+  // covered (by value) leave out, in declaration order (Stage 29 W5a1:
+  // an enum's members; W5a2 and W5a3 add union members and Bool).
+  pub fn switch_missing_cases(disc: Ty, covered: Hash(Int, Int)): Array(String) {
+    missing: Array(String) = []
+    if disc.is_enum {
+      names = disc.enum_names
+      vals = disc.enum_vals
+      for i in 0..names.size {
+        if covered.has_key(vals[i]) {
+          continue
+        }
+        missing.push(names[i])
+      }
+    }
+    missing
+  }
+
+  pub fn join_names(names: Array(String)): String {
+    buf = buf_new()
+    for i in 0..names.size {
+      if i > 0 {
+        buf.push_str(", ")
+      }
+      buf.push_str(names[i])
+    }
+    buf.to_s
   }
 
   pub fn check_spawn(expr: Expr): Ty {

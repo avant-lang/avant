@@ -101,9 +101,41 @@ pub class InterpPart {
   }
 }
 
+// A `case` label (Stage 29 W5a1): its kind says what was written; an
+// integer label's value is int_val. A member label (`case eof`, an enum
+// switch, D327) carries the member's name in text and gets its value in
+// int_val from the checker; a string label carries its bytes in text.
+// W5a2 adds member types and `nil`, W5a3 ranges.
+pub fn lb_int: Int { 1 }
+pub fn lb_string: Int { 2 }
+pub fn lb_member: Int { 3 }
+
+pub class CaseLabel {
+  pub kind: Int = 0
+  pub loc: Location
+  pub int_val: Int = 0
+  pub text: String = ""
+  // A label written `Type.member` (refused in an enum switch with a hint):
+  // the type's name; empty otherwise.
+  pub qual: String = ""
+
+  fn initialize(kind: Int, loc: Location) {
+    self.kind = kind
+    self.loc = loc
+  }
+}
+
+pub fn clone_case_label(l: CaseLabel): CaseLabel {
+  out = CaseLabel.new(l.kind, l.loc)
+  out.int_val = l.int_val
+  out.text = l.text
+  out.qual = l.qual
+  out
+}
+
 pub class SwitchCase {
   pub loc: Location
-  pub labels: Array(Int) = []
+  pub labels: Array(CaseLabel) = []
   pub body: Array(Stmt) = []
 
   fn initialize(loc: Location) {
@@ -270,6 +302,10 @@ pub class Function {
   // checker substituted (checker/match.av instantiate_function and
   // instantiate_method), in type-parameter order; empty otherwise.
   pub inst_args: Array(Ty) = []
+  // A function the compiler wrote (an enum's name, from_i, from_name,
+  // members, Stage 29 W5a1): lowered only when a call reaches it, so a
+  // program pays for an enum's name table only when it uses it (O394).
+  pub lazy: Bool = false
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -305,6 +341,19 @@ pub class ComptimeWalk {
   }
 }
 
+// An enum's members as written (Stage 29 W5a1, D292, D358): names, their
+// values (C's rule applied by the parser) and where each is written.
+pub class EnumDecl {
+  pub names: Array(String) = []
+  pub vals: Array(Int) = []
+  pub locs: Array(Location) = []
+  // Declared in a lib block: C's int everywhere (D358).
+  pub c_int: Bool = false
+
+  fn initialize {
+  }
+}
+
 pub class StructDef {
   pub loc: Location
   pub name: String = ""
@@ -316,6 +365,10 @@ pub class StructDef {
   pub vis: Bool = false
   pub mod_name: String = ""
   pub opt_ins: Array(TypeName) = []
+  // `enum Name { ... }` (Stage 29 W5a1): an enum is declared as a
+  // StructDef without fields, so its methods, visibility and module take
+  // the struct's paths; its type is a tyk_enum (resolve.av load_types).
+  pub enum_of: EnumDecl? = nil
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -386,6 +439,9 @@ pub class LibDef {
   pub name: String = ""
   pub funs: Array(FunDecl) = []
   pub layouts: Array(CLayout) = []
+  // C enums (Stage 29 W5a1, O393): an enum declared in a lib block, as
+  // avant bind writes one, keeps C's int (Int32) wherever it is stored.
+  pub enums: Array(StructDef) = []
   pub vis: Bool = false
   pub mod_name: String = ""
 
@@ -721,7 +777,7 @@ pub fn clone_switch_case(c: SwitchCase): SwitchCase {
   out = SwitchCase.new(c.loc)
   i = 0
   while i < c.labels.size {
-    out.labels.push(c.labels[i])
+    out.labels.push(clone_case_label(c.labels[i]))
     i += 1
   }
   i = 0
@@ -963,6 +1019,7 @@ pub fn clone_function(fnn: Function): Function {
   out.mod_name = fnn.mod_name
   out.owner_mod = fnn.owner_mod
   out.as_value = fnn.as_value
+  out.lazy = fnn.lazy
   i = 0
   while i < fnn.box_names.size {
     out.box_names.push(fnn.box_names[i])

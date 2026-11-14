@@ -1,0 +1,95 @@
+// Stage 29 W5a1 (D327 Q8, O273): an enum marked Error is a failure type:
+// `?`, if-assign and `??` read it by the one rule, `_ =` discards it, and
+// its message is the member's name unless the enum defines `fn message`.
+
+enum ParseError: Error { empty, not_a_number }
+
+enum NetError: Error {
+  refused
+  timed_out
+
+  fn message: String {
+    switch self {
+      case refused { "connection refused" }
+      case timed_out { "timed out" }
+    }
+  }
+}
+
+fn parse_digit(s: String): Int | ParseError {
+  if s.size == 0 {
+    return ParseError.empty
+  }
+  c = s[0]
+  if c < 48 || c > 57 {
+    return ParseError.not_a_number
+  }
+  c - 48
+}
+
+fn twice(s: String): Int | ParseError {
+  d = parse_digit(s)?
+  d * 2
+}
+
+fn connect(n: Int): String | NetError {
+  if n == 1 {
+    return NetError.refused
+  }
+  if n == 2 {
+    return NetError.timed_out
+  }
+  "connected"
+}
+
+// The README's helper ("Reading the error itself").
+fn failure(r: Int | ParseError): ParseError? {
+  _ = r?
+  nil
+}
+
+fn net_failure(r: String | NetError): NetError? {
+  _ = r?
+  nil
+}
+
+fn kind(e: ParseError): String {
+  switch e {
+    case empty { "nothing to read" }
+    case not_a_number { "not a digit" }
+  }
+}
+
+fn main {
+  puts(parse_digit("7") ?? -1)
+  puts(parse_digit("x") ?? -1)
+  if v = twice("4") {
+    puts(v)
+  }
+  puts(twice("") ?? -1)
+  _ = parse_digit("")
+  if e = failure(parse_digit("")) {
+    puts(e)
+    puts("failed: ${e}")
+    puts(e.message)
+    puts(e.name)
+    puts(kind(e))
+  }
+  if e2 = failure(parse_digit("?")) {
+    puts(kind(e2))
+  }
+  if _ = failure(parse_digit("3")) {
+    puts("failed")
+  } else {
+    puts("no failure")
+  }
+  puts(connect(0) ?? "no")
+  if n = net_failure(connect(1)) {
+    puts("${n}")
+    puts(n.name)
+  }
+  if n2 = net_failure(connect(2)) {
+    puts(n2.message)
+    puts(n2.to_i)
+  }
+}

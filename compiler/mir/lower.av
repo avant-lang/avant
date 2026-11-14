@@ -363,6 +363,10 @@ pub class MirLower {
     }
     i = 0
     while i < fns.size && !self.failed {
+      if fns[i].lazy {
+        i += 1
+        continue
+      }
       self.lw_cov.rank = i
       lower_function(fns[i])
       self.lower_pending_lambdas
@@ -377,6 +381,7 @@ pub class MirLower {
     lower_trampolines(fns)
     self.lower_cb_thunks
     self.lower_pending_lambdas
+    self.lower_lazy(fns)
     if self.failed {
       return
     }
@@ -389,6 +394,46 @@ pub class MirLower {
       }
     }
     self.cov_finish
+  }
+
+  // The lazy functions a call reaches (ast.av Function.lazy, Stage 29
+  // W5a1: an enum's name, from_i, from_name, members), lowered after the
+  // rest, until no new call reaches one (one may call another: an error
+  // enum's text calls its message, which calls name).
+  pub fn lower_lazy(fns: Array(Function)) {
+    called = Hash(String, Int).new
+    scanned = 0
+    done = Hash(String, Int).new
+    grow = true
+    while grow && !self.failed {
+      grow = false
+      while scanned < self.lw_m.funcs.size {
+        for bb in self.lw_m.funcs[scanned].blocks {
+          for st in bb.stmts {
+            if st.kind == msk_call() && st.callee.size > 0 {
+              called[st.callee] = 1
+            }
+          }
+        }
+        scanned += 1
+      }
+      for i in 0..fns.size {
+        f = fns[i]
+        if !f.lazy || self.failed {
+          continue
+        }
+        if sym = self.lw_fn_syms.get(f.emit_name) {
+          if done.has_key(sym) || !called.has_key(sym) {
+            continue
+          }
+          done[sym] = 1
+          self.lw_cov.rank = i
+          lower_function(f)
+          self.lower_pending_lambdas
+          grow = true
+        }
+      }
+    }
   }
 
   // The functions to lower, in program order (program_all_functions):

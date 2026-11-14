@@ -126,6 +126,7 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
   - [while](#while)
   - [for](#for)
   - [switch](#switch)
+- [Enums](#enums)
 - [Nil and unions](#nil-and-unions):
   - [opening an optional](#opening-an-optional)
   - [unions](#unions)
@@ -165,6 +166,7 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
   - [propagate, replace, branch](#propagate-replace-branch)
   - [declaring an error](#declaring-an-error)
   - [causes](#causes)
+  - [an enum as an error](#an-enum-as-an-error)
   - [errors cannot be dropped](#errors-cannot-be-dropped)
   - [reading the error itself](#reading-the-error-itself)
   - [traps](#traps)
@@ -379,6 +381,7 @@ fn main {
 | `Hash(K, V)` | hash table | [Hashes](#hashes) |
 | `T?` | `T` or `nil` | [Nil and unions](#nil-and-unions) |
 | `A \| B` | one of several types; with an `Error` member, a result that can fail | [Unions](#unions), [Errors](#errors) |
+| `enum E { a, b }` | one of a fixed list of named values | [Enums](#enums) |
 | `fn(T): U` | a function value | [Function values](#function-values) |
 | `JoinHandle(T)` | a running task | [Spawn](#spawn) |
 | `Ptr(T)` | a C pointer | [Layouts and Ptr](#layouts-and-ptr) |
@@ -575,7 +578,7 @@ fn main {
 
 ### Switch
 
-`switch` picks an arm by an integer. There is no fall-through; an arm may list several values.
+`switch` picks an arm by an integer, an [enum](#enums) member or a string. There is no fall-through; an arm may list several values.
 
 ```avant
 fn name_of(kind: Int): String {
@@ -593,10 +596,100 @@ fn main {
 }
 ```
 
-- The value is an `Int`, `Int32`, `UInt32` or `UInt64`; the labels are integer literals. A `Bool` is accepted too, with the labels `1` and `0` (`case true` is not a form yet): an `if` reads better.
-- A switch used as a value needs `else`, so every input produces a result. Used as a statement, a value no arm names does nothing.
-- An arm may leave instead of giving a value (`return`, `break`, `continue`).
-- There is no `switch` on strings or on a union's member yet ([Not built yet](#not-built-yet)).
+Over an enum, the labels are the members' names written bare, and a switch without `else` must name every member: add a member and the compiler lists each switch that misses it.
+
+```avant
+enum Tok { eof, name, number }
+
+fn describe(t: Tok): String {
+  switch t {
+    case eof { "end of file" }
+    case name, number { "text" }
+  }
+}
+
+fn main {
+  puts(describe(Tok.number))   // => text
+}
+```
+
+Over a `String`, the labels are string literals and the match is byte equality, as `==`:
+
+```avant
+fn code(method: String): Int {
+  switch method {
+    case "GET", "HEAD" { 1 }
+    case "POST" { 2 }
+    else { 0 }
+  }
+}
+
+fn main {
+  puts(code("HEAD"))   // => 1
+  puts(code("get"))    // => 0
+}
+```
+
+- The value is an `Int` (labels: integer literals), an enum (labels: its members, bare: `case eof`, not `case Tok.eof`) or a `String` (labels: string literals, not interpolated). A `Bool` is accepted too, with the labels `1` and `0` (`case true` is not a form yet): an `if` reads better. `Int32`, `UInt32` and `UInt64` values are not accepted yet: convert to `Int`.
+- A label may appear once.
+- Over an enum, a switch without `else` names every member, as a statement and as a value (`switch over Tok does not cover name, number: name them or add else`), and an `else` beside every member is refused. Over the other types, a switch used as a value needs `else`, so every input produces a result; used as a statement, a value no arm names does nothing.
+- An arm may leave instead of giving a value (`return`, `break`, `continue`); it still counts as naming its members.
+- There is no `switch` on a union's member yet ([Not built yet](#not-built-yet)).
+
+## Enums
+
+An `enum` is a type whose values are a fixed list of names. Each member has a number, written or counted (C's rule: the first is 0, each next one the previous plus one), and the members are written in lower case.
+
+```avant
+enum Tok {
+  eof
+  name
+  number
+}
+
+enum Status { ok = 200, created, not_found = 404 }
+
+fn main {
+  t = Tok.name
+  puts("${t}")                       // => name
+  puts(t.to_i)                       // => 1
+  if u = Tok.from_i(2) {
+    puts(u == Tok.number)            // => true
+  }
+  puts(Tok.from_name("eof") ?? Tok.name)   // => eof
+  puts(Status.created.to_i)          // => 201
+  puts(Tok.members.size)             // => 3
+}
+```
+
+- A member is written qualified, `Tok.eof`, everywhere except a [`case` label](#switch). Members are separated by commas or line breaks, a trailing comma allowed; a member's name is lower-case snake_case (a capital first letter is refused: a capital means a type).
+- An enum is its own type: an `Int` is not a `Tok` and a `Tok` is not an `Int`. `==` and `!=` compare two values of one enum; there is no arithmetic and no `<`.
+- What every enum has: `t.to_i` (its number), `t.name` (the member's exact name, as a `String`), `Tok.from_i(n)` and `Tok.from_name(s)` (a `Tok?`: `nil` when no member has that number or that exact name) and `Tok.members` (a new `Array(Tok)` in declaration order). `puts(t)` and `"${t}"` print the member's name.
+- Values are distinct and fit in `Int32`; a value may be negative (`low = -2`).
+- An enum has no zero value: a field of an enum type has a default (`kind: Tok = Tok.eof`) or is set in `initialize`, and `Array(Tok).new(n)` needs its value (`Array(Tok).new(n, Tok.eof)`).
+- `fn` methods follow the members, with `self` the value:
+
+```avant
+enum Dir {
+  north, east, south, west
+
+  fn turn: Dir {
+    switch self {
+      case north { Dir.east }
+      case east { Dir.south }
+      case south { Dir.west }
+      case west { Dir.north }
+    }
+  }
+}
+
+fn main {
+  puts(Dir.west.turn)      // => north
+}
+```
+
+- An enum is stored in one byte when its values are within `0..255`, else in four. A program pays for the members' names only if it prints an enum, reads `name`, or calls `from_name`.
+- An enum marked `: Error` is a failure type ([An enum as an error](#an-enum-as-an-error)); one inside a `lib` block is a C enum ([avant bind](#avant-bind)). An enum has no payload: a member that carries data is a [union](#unions) member.
 
 ## Nil and unions
 
@@ -1495,6 +1588,40 @@ fn main {
   puts("${e}")       // => bad config: unexpected end
 }
 ```
+
+### An enum as an error
+
+An enum marked `: Error` is a failure type whose failures are its members. Its message is the member's name, unless the enum defines `fn message: String`.
+
+```avant
+enum ParseError: Error { empty, not_a_number }
+
+fn parse_digit(s: String): Int | ParseError {
+  if s.size == 0 { return ParseError.empty }
+  c = s[0]
+  if c < 48 || c > 57 { return ParseError.not_a_number }
+  c - 48
+}
+
+fn failure(r: Int | ParseError): ParseError? {
+  _ = r?
+  nil
+}
+
+fn main {
+  puts(parse_digit("7") ?? -1)            // => 7
+  puts(parse_digit("x") ?? -1)            // => -1
+  if e = failure(parse_digit("")) {
+    puts("failed: ${e}")                  // => failed: empty
+    switch e {
+      case empty { puts("nothing to read") }        // => nothing to read
+      case not_a_number { puts("not a digit") }
+    }
+  }
+}
+```
+
+It follows the rules of every error: `?`, `??` and if-assign read it, a statement that drops it is refused, `_ =` discards it. Telling the members of a result apart (`Int | ParseError`) without the helper waits for `switch` on a union's member ([Not built yet](#not-built-yet)).
 
 ### Errors cannot be dropped
 
@@ -2673,6 +2800,7 @@ lib add {
 
 - Each C scalar type maps to its exact name (`unsigned char` and `uint8_t` to `UInt8`, `short` to `Int16`, `int` to `Int32`, `unsigned int` to `UInt32`, `float` to `Float32`). A type with no Avant name (`long double`) fails the bind with a message.
 - A `char *` result is bound as `String?`, since C returns NULL for "absent" or "failed"; a `char *` parameter is `String`.
+- A named C enum of four bytes becomes an `enum` inside the `lib` block: the name in CamelCase without a trailing `_t` (`enum http_method` is `HttpMethod`, `color_t` is `Color`), the constants lower-cased with their values (`HTTP_GET = 0` is `http_get = 0`). Functions and C layout fields of that type use it. An enum declared in a `lib` block keeps C's `int` wherever it is stored, and every value C gives (a result, a field, a callback's argument) is checked: one that is no member traps, naming the enum and the number. An alias (a second constant with the same value) is dropped and named in a comment; an anonymous enum, a value outside `Int32`, a constant that is no Avant member name and two constants that are equal after lower-casing leave the enum out with a comment, and its functions take `Int32`.
 - `--lib NAME` names the block.
 - It needs libclang 20 on the machine (`sudo apt install libclang1-20`); a release ships the `avant-bind` helper beside `avant`.
 
@@ -3463,7 +3591,7 @@ Avant will look familiar from almost anywhere, and it differs on purpose in a ha
 
 - **Crystal and Ruby.** Yours already: `puts`, `size`, `push`, `nil`, blocks, `initialize` and `.new`, `Array(Int)`, `T?`, unions, `lib` and `fun`. Different: braces instead of `end`; `..` excludes its end and there is no `...`; no exceptions, no inheritance, no mixins; `Int` is 64-bit; `String#size` counts bytes; `h[k]` returns `V?` instead of raising; methods are private unless `pub`; macros are `quote` and a field walk, not a language.
 - **Go.** Yours already: structs with methods, byte strings, errors as values, no inheritance, channels, a 64-bit `int`. Different: an error is a member of the result type, passed up with `?` instead of `if err != nil`; overflow traps instead of wrapping; a missing key is `nil`, not a zero value; there are no interface values; what a task captures is checked, where a goroutine shares anything.
-- **Rust.** Yours already: `T?` is `Option<T>`, `T | E` is `Result<T, E>`, `?` propagates, `..` is exclusive, generics are monomorphized with trait-like bounds, things are private by default. Different: a garbage collector instead of ownership, so no lifetimes and no borrow checker; no `match` yet and no trait objects; overflow traps in release builds too.
+- **Rust.** Yours already: `T?` is `Option<T>`, `T | E` is `Result<T, E>`, `?` propagates, `..` is exclusive, generics are monomorphized with trait-like bounds, things are private by default. Different: a garbage collector instead of ownership, so no lifetimes and no borrow checker; enums carry no data (a union member does) and `switch` does not take a union's member yet; no trait objects; overflow traps in release builds too.
 - **JavaScript, TypeScript and Python.** Yours already: `${}` interpolation, closures that capture by reference, no semicolons, types you rarely write. Different: compiled ahead of time and statically typed; integers are integers (`7 / 2` is `3`); no truthiness, no `undefined`, no exceptions; strings are bytes; threads instead of an event loop.
 - **C and C++.** Yours already: braces, value structs, the operator precedence (bitwise operators below comparisons included), C libraries one `lib` block away. Different: no manual memory, no headers, no preprocessor, no implicit conversions; what is undefined behavior in C (overflow, an index out of bounds) is a trap.
 - **Java, C#, Kotlin and Swift.** Yours already: classes as references, a collector, generics, optionals (Kotlin, Swift), value structs (C#, Swift). Different: no inheritance and no interfaces as values; no exceptions; `Int` is 64-bit where `int` is 32; an optional is opened with if-assign and `??`, not `?.` or `!!`.
@@ -3474,7 +3602,7 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 
 | Missing | Status | Today |
 | --- | --- | --- |
-| `switch` on a union's member, on strings, with ranges; `enum` | decided | [a helper](#reading-the-error-itself) to read an error; a `kind` field for "one of several shapes" |
+| `switch` on a union's member, with ranges | decided | [a helper](#reading-the-error-itself) to read an error |
 | Module constants (`const max_depth = 64`) | decided | a function without arguments |
 | Inclusive range `a..=b` | decided | `a..b + 1` |
 | Digit separators (`1_000_000`), binary literals, character literals | decided | plain digits, hexadecimal, byte numbers |

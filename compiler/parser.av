@@ -6,6 +6,7 @@ import lexer
 import type
 import ast
 import resolve
+import enums
 
 // A float literal's value (Stage 29 W4b1): String.to_f is a Float64? since
 // W4b1 and a Float64 in the seed v0.40.0, so the parser reads the lexer's
@@ -478,10 +479,16 @@ pub class Parser {
         }
       } else if k == tk_struct() {
         program.structs.push(parse_struct(vis))
+      } else if k == tk_enum() {
+        program.structs.push(parse_enum(vis))
       } else if k == tk_class() {
         program.classes.push(parse_class(vis))
       } else if k == tk_lib() {
-        program.libs.push(parse_lib(vis))
+        ldef = parse_lib(vis)
+        program.libs.push(ldef)
+        for en in ldef.enums {
+          program.structs.push(en)
+        }
       } else if k == tk_fn() {
         program.functions.push(parse_fn("", vis))
       } else if k == tk_interface() {
@@ -504,9 +511,9 @@ pub class Parser {
         fail(self.current.loc, "fun belongs in a lib block; there is no extern fn")
       } else {
         if vis {
-          fail(self.current.loc, "pub prefixes struct, class, lib, fn, or interface")
+          fail(self.current.loc, "pub prefixes struct, class, enum, lib, fn, or interface")
         } else {
-          fail(self.current.loc, "expected struct, class, lib, fn, interface, import, quote, or comptime, found ${token_name(k)}")
+          fail(self.current.loc, "expected struct, class, enum, lib, fn, interface, import, quote, or comptime, found ${token_name(k)}")
         }
       }
       if new_err_since(mark) {
@@ -769,6 +776,171 @@ pub class Parser {
     defn
   }
 
+  // `enum Name [: Error] { member [= value], ... fn ... }` (Stage 29
+  // W5a1, D292, D320, D327, D358): members separated by commas or line
+  // breaks (a trailing comma allowed), lower-case snake_case, each with a
+  // value by C's rule (written, else the previous one plus one, the first
+  // 0), distinct and within Int32; then the enum's methods. The parser
+  // adds the functions every enum has (enums.av).
+  pub fn parse_enum(vis: Bool): StructDef {
+    loc = expect(tk_enum()).loc
+    name_tok = expect(tk_ident())
+    name = name_tok.value
+    if name.size > 0 && !(name[0] >= 65 && name[0] <= 90) {
+      fail(name_tok.loc, "an enum's name is a type name, written with a capital first letter")
+    }
+    if self.current.kind == tk_l_paren() {
+      fail(self.current.loc, "an enum takes no type parameters")
+    }
+    opted = parse_opt_clause()
+    for tn in opted {
+      if !(tn.name == "Error" && tn.mod_name.size == 0 && tn.args.size == 0) {
+        fail(tn.loc, "an enum can be marked Error; it implements no other interface")
+      }
+    }
+    self.skip_newlines
+    expect(tk_l_brace())
+    self.skip_newlines
+    decl = EnumDecl.new
+    methods: Array(Function) = []
+    next = 0
+    builtin = enum_builtin_names()
+    mark0 = self.err_count
+    while true {
+      k = self.current.kind
+      if k == tk_r_brace() || k == tk_eof() {
+        break
+      }
+      if new_err_since(mark0) {
+        break
+      }
+      if k == tk_fn() || k == tk_pub() {
+        mvis = false
+        if k == tk_pub() {
+          mvis = true
+          self.bump
+          self.skip_newlines
+          if self.current.kind != tk_fn() {
+            fail(self.current.loc, "pub in an enum body prefixes fn")
+            break
+          }
+        }
+        fnn = parse_fn(name, mvis)
+        for b in builtin {
+          if fnn.name == b {
+            fail(fnn.loc, "every enum has ${b}; a method cannot take its name")
+          }
+        }
+        methods.push(fnn)
+        self.skip_newlines
+        continue
+      }
+      if k != tk_ident() {
+        fail(self.current.loc, "expected an enum member or fn, found ${token_name(k)}")
+        break
+      }
+      tok = self.bump
+      mname = tok.value
+      if methods.size > 0 {
+        fail(tok.loc, "an enum's members come before its methods")
+        break
+      }
+      if mname[0] >= 65 && mname[0] <= 90 {
+        fail(tok.loc, "an enum member is written in lower case: `${enum_snake(mname)}`")
+      }
+      for b in builtin {
+        if mname == b && b != "name" && b != "to_i" {
+          fail(tok.loc, "a member ${mname} would hide ${name}.${mname}; choose another name")
+        }
+      }
+      for prev in decl.names {
+        if prev == mname {
+          fail(tok.loc, "duplicate member ${mname} in enum ${name}")
+        }
+      }
+      value = next
+      fits = true
+      if match_tok(tk_eq()) {
+        self.skip_newlines
+        neg = false
+        if self.current.kind == tk_minus() {
+          neg = true
+          self.bump
+        }
+        if self.current.kind != tk_integer() {
+          fail(self.current.loc, "an enum member's value is an integer literal")
+          break
+        }
+        vt = self.bump
+        if parse_int_tok(vt) {
+          if self.int_suffix.size != 0 {
+            fail(vt.loc, "an enum member's value is an integer literal without a suffix")
+          }
+          bits = self.int_bits
+          if (neg && bits > 2147483648u64) || (!neg && bits > 2147483647u64) {
+            fits = false
+          } else if neg {
+            value = 0 - bits.to_i()
+          } else {
+            value = bits.to_i()
+          }
+        }
+      } else if next > 2147483647 {
+        fits = false
+      }
+      if !fits {
+        fail(tok.loc, "the value of ${mname} does not fit in Int32")
+        value = 0
+      }
+      for j in 0..decl.vals.size {
+        if fits && decl.vals[j] == value {
+          fail(tok.loc, "members ${decl.names[j]} and ${mname} of ${name} have the same value ${value}")
+        }
+      }
+      decl.names.push(mname)
+      decl.vals.push(value)
+      decl.locs.push(tok.loc)
+      next = value + 1
+      if self.current.kind == tk_comma() {
+        self.bump
+        self.skip_newlines
+      } else if self.current.kind == tk_newline() {
+        self.skip_newlines
+      } else if self.current.kind != tk_r_brace() {
+        fail(self.current.loc, "expected `,` or a line break after the enum member ${mname}, found ${token_name(self.current.kind)}")
+        break
+      }
+    }
+    expect(tk_r_brace())
+    if decl.names.size == 0 && !new_err_since(mark0) {
+      fail(loc, "an enum needs a member")
+    }
+    defn = StructDef.new(loc, name)
+    defn.enum_of = decl
+    defn.methods = methods
+    defn.opt_ins = opted
+    defn.vis = vis
+    defn.methods.push(enum_name_method(loc, name, decl))
+    defn.methods.push(enum_from_i_method(loc, name, decl))
+    defn.methods.push(enum_from_name_method(loc, name, decl))
+    defn.methods.push(enum_members_method(loc, name, decl))
+    if error_opted(opted) {
+      has_message = false
+      for m in methods {
+        if m.name == "message" && !m.type_method {
+          has_message = true
+        }
+      }
+      if !has_message {
+        defn.methods.push(enum_message_method(loc, name))
+      }
+      text = error_text_method(loc, name, defn.fields)
+      text.lazy = true
+      defn.methods.push(text)
+    }
+    defn
+  }
+
   pub fn parse_class(vis: Bool): ClassDef {
     loc = expect(tk_class()).loc
     name = expect(tk_ident()).value
@@ -931,11 +1103,22 @@ pub class Parser {
           break
         }
         self.skip_newlines
+      } else if self.current.kind == tk_enum() {
+        // A C enum (Stage 29 W5a1, O393): C's int wherever it is stored.
+        en = parse_enum(vis)
+        if decl = en.enum_of {
+          decl.c_int = true
+        }
+        defn.enums.push(en)
+        if new_err_since(mark0) {
+          break
+        }
+        self.skip_newlines
       } else if self.current.kind == tk_fn() {
         fail(self.current.loc, "inside lib, write fun (the C ABI), not fn")
         break
       } else if self.current.kind != tk_fun() {
-        fail(self.current.loc, "inside lib, write fun or struct")
+        fail(self.current.loc, "inside lib, write fun, struct or enum")
         break
       } else {
         defn.funs.push(self.parse_fun_decl)
@@ -1896,7 +2079,49 @@ pub class Parser {
     arm
   }
 
-  pub fn parse_case_label: Int {
+  // A case label: an integer literal, or a name (an enum member, Stage
+  // 29 W5a1, D327: `case eof`; a qualified `case Tok.eof` is kept so the
+  // checker can say to write it bare). The checker reads a member label
+  // against the discriminant's type.
+  pub fn parse_case_label: CaseLabel {
+    if self.current.kind == tk_string() {
+      // A String switch's label (Stage 29 W5a1, D293, O392).
+      tok0 = self.bump
+      slabel = CaseLabel.new(lb_string(), tok0.loc)
+      slabel.text = tok0.value
+      return slabel
+    }
+    if self.current.kind == tk_interp_open() {
+      iloc = self.current.loc
+      fail(iloc, "a case label is a literal")
+      _ = self.parse_interpolated_string
+      return CaseLabel.new(lb_string(), iloc)
+    }
+    if self.current.kind == tk_ident() {
+      tok = self.bump
+      label = CaseLabel.new(lb_member(), tok.loc)
+      label.text = tok.value
+      while self.current.kind == tk_dot() {
+        self.bump
+        next = self.take_name_after_dot
+        if label.qual.size > 0 {
+          label.qual = "${label.qual}.${label.text}"
+        } else {
+          label.qual = label.text
+        }
+        label.text = next.value
+      }
+      return label
+    }
+    label = CaseLabel.new(lb_int(), self.current.loc)
+    label.int_val = parse_case_int
+    label
+  }
+
+  // An integer label's value. The bound is 32 bits, stale since D314's
+  // 64-bit Int: W5a3 checks each label against the discriminant's type
+  // (O390).
+  pub fn parse_case_int: Int {
     neg = false
     if self.current.kind == tk_minus() {
       self.bump
