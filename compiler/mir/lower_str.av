@@ -237,6 +237,13 @@ pub fn (lw: MirLower) lower_str_binary(e: Expr, l: Expr, r: Expr): MOperand {
     }
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), q, b.c_i32(want)))
   }
+  // A String's order: avant_str_cmp's -1, 0 or 1
+  // against 0.
+  cop = mir_cmp_op(e.op)
+  if cop > 0 {
+    q2 = lw.call_to(mt_i32(), "avant_str_cmp", args)
+    return lw.tmp(mt_bool(), b.rv_cmp(cop, q2, b.c_i32(0)))
+  }
   lw.refuse(e.loc, "this operator on String")
   b.c_i32(0)
 }

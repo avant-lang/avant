@@ -3212,13 +3212,12 @@ pub class Checker {
       if op == tk_plus() {
         return t_string()
       }
-      if op == tk_eq_eq() {
+      // == and != compare the bytes; <, <=, > and >= order them byte by
+      // byte, a prefix first, as sort does.
+      if eq_is_compare(op) {
         return t_bool()
       }
-      if op == tk_not_eq() {
-        return t_bool()
-      }
-      fail(expr.loc, "unsupported operator on String")
+      fail(expr.loc, "unsupported operator on String (+ joins two Strings; ==, !=, <, <=, > and >= compare them)")
       return t_string()
     }
     if left.is_bytes && right.is_bytes {

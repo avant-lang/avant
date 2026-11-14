@@ -1035,7 +1035,8 @@ fn main {
 | `s[i]` | the byte at `i`, an `Int`; traps outside `0 <= i < size` |
 | `s.get(i)` | the byte, or `nil` outside the string (`Int?`) |
 | `a + b` | a new string |
-| `a == b`, `a != b` | equality by content. There is no `<` on strings; `sort`, `min` and `max` order them by bytes |
+| `a == b`, `a != b` | equality by content |
+| `a < b`, `<=`, `>`, `>=` | byte order, a prefix first: the order `sort`, `min` and `max` use |
 | `s.split(sep)` | `Array(String)`, empty fields kept; an empty separator traps |
 | `s.fields` | split on runs of whitespace, empty fields dropped |
 | `s.strip`, `s.strip_left`, `s.strip_right` | whitespace trimmed |

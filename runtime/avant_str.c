@@ -875,6 +875,25 @@ int32_t avant_str_eq(const char *a, const char *b) {
   return memcmp(a, b, na) == 0 ? 1 : 0;
 }
 
+/* String order: byte by byte, then the shorter
+ * first, as sort orders Strings (avant_array.c str_cmp_raw); -1, 0 or 1. */
+int32_t avant_str_cmp(const char *a, const char *b) {
+  if (!a) {
+    a = "";
+  }
+  if (!b) {
+    b = "";
+  }
+  size_t na = avant_str_n(a);
+  size_t nb = avant_str_n(b);
+  size_t n = na < nb ? na : nb;
+  int c = n ? memcmp(a, b, n) : 0;
+  if (c != 0) {
+    return c < 0 ? -1 : 1;
+  }
+  return na < nb ? -1 : (na > nb ? 1 : 0);
+}
+
 avant_int avant_str_size(const char *s) {
   return (avant_int)avant_str_n(s);
 }

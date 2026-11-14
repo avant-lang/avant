@@ -280,6 +280,7 @@ uint64_t avant_str_parse_u64(const char *s, avant_int base, int32_t *ok);
 double avant_str_parse_f64(const char *s);
 double avant_str_parse_f64_slice(const char *s, avant_int start, avant_int stop);
 int32_t avant_str_eq(const char *a, const char *b);
+int32_t avant_str_cmp(const char *a, const char *b);
 avant_int avant_str_size(const char *s);
 avant_int avant_str_byte(const char *s, avant_int i);
 int32_t avant_checksum_str(const char *s);
