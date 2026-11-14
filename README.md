@@ -35,11 +35,11 @@ fn parse(line: String): Item | BadLine {
 fn main {
   items: Array(Item) = []
   for line in ["tea,2,450", "cake,one,300", "milk,3,120"] {
-    if item = parse(line) {
-      items.push(item)
-    } else {
-      puts("skipped ${line}")
+    item = parse(line) else e {
+      puts("skipped: ${e.message}")
+      continue
     }
+    items.push(item)
   }
   totals = items.parallel { |item| item.total }
   puts("${items.size} items, ${totals.sum} cents")
@@ -48,14 +48,14 @@ fn main {
 
 <!-- check: output -->
 ```text
-skipped cake,one,300
+skipped: bad quantity: one
 2 items, 1260 cents
 ```
 
 What you just read:
 
 - **No ceremony.** No semicolons, no parentheses around conditions, no `let`. Types appear where they name a fact (a field, a parameter, a result) and are inferred everywhere else.
-- **Errors are values.** `parse` returns `Item | BadLine`. `??` supplies a fallback or leaves the function; `if item = parse(line)` opens the success. Nothing unwinds, and an error cannot be dropped by accident. (To print the error's own message, `switch` over the result: [Reading the error itself](#reading-the-error-itself).)
+- **Errors are values.** `parse` returns `Item | BadLine`. `??` supplies a fallback or leaves the function; `item = parse(line) else e { ... }` reads the failure in a block that must leave, and after it `item` is the success. Nothing unwinds, and an error cannot be dropped by accident.
 - **Values and objects.** A `struct` is a value with methods. A `class` (not shown here) is a reference. You choose per type.
 - **Concurrency is built in.** `.parallel` runs the block on a pool of OS threads and returns the results in input order.
 
@@ -510,7 +510,7 @@ fn main {
 }
 ```
 
-- The bound name exists only in the then-block: not in the `else`, not after the `if`.
+- The bound name exists only in the then-block: not in the `else`, not after the `if`. With one binding, `else e { ... }` names the failure for the `else` block ([Reading the error itself](#reading-the-error-itself)).
 - An `if` that binds is an expression like any other: `width = if v = cfg.get("width") { v } else { 80 }`.
 - A condition may be a comma list of bindings and `Bool` tests, evaluated left to right and stopping at the first that fails. Each bound name is in scope for the conditions after it. The `else` runs when any of them fails, and sees none of the names.
 - `while` takes the same conditions ([While](#while)).
@@ -1518,7 +1518,7 @@ fn main {
 
 One rule says what fails: **in any union, the failures are `Nil` and every member marked `Error`; the rest is the success value**. Everything below follows from it.
 
-The `else` above does not see the error; a `switch` over the result does ([Reading the error itself](#reading-the-error-itself)).
+The `else` above does not see the error; an `else` that names it does ([Reading the error itself](#reading-the-error-itself)).
 
 ### Propagate, replace, branch
 
@@ -1527,7 +1527,8 @@ The `else` above does not see the error; a `switch` over the result does ([Readi
 | `x?` | gives the value | returns the failure from the current function | the caller should decide |
 | `x ?? fallback` | gives the value | gives `fallback`, evaluated only then | a default makes sense |
 | `x ?? return v` (also `?? return`, `?? break`, `?? continue`) | gives the value | leaves | the failure ends this function or iteration |
-| `if v = x { ... } else { ... }` | runs the block with `v` | runs the `else` | each outcome needs code |
+| `v = x else e { ...; continue }` | gives the value | runs the block with `e`, which must leave | the failure is reported, then ends this function or iteration |
+| `if v = x { ... } else { ... }` | runs the block with `v` | runs the `else` (`else e` names the failure) | each outcome needs code |
 
 These are the forms of [Opening an optional](#opening-an-optional): `T?` is the union whose only failure is `nil`.
 
@@ -1654,7 +1655,7 @@ fn main {
 }
 ```
 
-It follows the rules of every error: `?`, `??` and if-assign read it, a statement that drops it is refused, `_ =` discards it, and a `switch` over the result names it as a member.
+It follows the rules of every error: `?`, `??`, if-assign and `else e` read it, a statement that drops it is refused, `_ =` discards it, and a `switch` over the result names it as a member.
 
 ### Errors cannot be dropped
 
@@ -1679,7 +1680,36 @@ _ = parse_age("12")     // computed, then dropped: visibly
 
 ### Reading the error itself
 
-The forms above tell you *that* something failed. To reach the error value, to print its message or read its fields, `switch` over the result: the failure is a member like the others.
+`?`, `??` and a plain `else` tell you *that* something failed. To reach the error value, to print its message or read its fields, name it with `else e`. After an assignment, `else e { ... }` is a guard: its block runs on a failure with `e` holding it, and it must leave (`return`, `break` or `continue`), so after it the variable holds the success and the code goes on without nesting. After an if-assign, `else e` names the failure for the `else` block, which need not leave.
+
+<!-- check: run pre=parse_error_decl -->
+```avant
+fn total_age(xs: Array(String)): Int {
+  total = 0
+  for s in xs {
+    age = parse_age(s) else e {
+      puts("skipped: ${e.message}")   // => skipped: not a number: old
+      continue
+    }
+    total += age
+  }
+  total
+}
+
+fn main {
+  puts(total_age(["40", "old", "31"]))  // => 71
+  if age = parse_age("200") {
+    puts("age ${age}")
+  } else e {
+    puts("giving up: ${e}")             // => giving up: out of range: 200
+  }
+}
+```
+
+- `e` has the failure's type: the one failure member, or the union of them when there are several (`Int | IoError | ParseError` gives `IoError | ParseError`), told apart with a `switch` inside the block.
+- The guard reads a failure that carries something: on a value whose only failure is `nil` (`Int?`), `else e` is refused; leave with `?? return`, `?? break` or `?? continue`. A guard without a name is refused for the same reason.
+- `else e` follows a plain assignment (`v = f()`, `self.n = f()`, or `_ = f()` to read only the failure), not `+=`; after an if-assign it needs the condition's one binding, not a list.
+- To handle each outcome on its own, a success included, `switch` over the result: the failure is a member like the others.
 
 <!-- check: run pre=parse_error_decl -->
 ```avant
@@ -1688,7 +1718,6 @@ fn main {
     case age: Int { puts("age ${age}") }
     case e: ParseError {
       puts(e.message)             // => not a number: old
-      puts("giving up: ${e}")     // => giving up: not a number: old
     }
   }
 }
@@ -1902,7 +1931,21 @@ fn main {
 }
 ```
 
-One limit: inside a builtin's block, `return` cannot carry a value yet (`return x` there is refused, because the block itself returns nothing). Set a variable and `break`, as `first_big` does, or use `for`, where `return x` works.
+`return x` inside a builtin's block leaves the enclosing function with `x`, checked against that function's result type, as it would be outside the block. A block whose value is used (`any`, `all`, `sort`, `Array(T).new(n) { ... }`) may end with an `if` with an `else`, whose branches give the value:
+
+```avant
+fn main {
+  xs = [3, 1, 2]
+  xs.sort { |a, b|
+    if a % 2 == b % 2 {
+      a < b
+    } else {
+      a % 2 == 1             // odd numbers first
+    }
+  }
+  puts("${xs[0]} ${xs[1]} ${xs[2]}")   // => 1 3 2
+}
+```
 
 ## Generics
 
@@ -1943,6 +1986,8 @@ fn main {
 ```
 
 Any other unknown name is an error, so a misspelt type is caught where it is written: `fn f(x: Strng)` reports ``unknown type Strng (did you mean `String`?)``.
+
+A type parameter may be a member of a union: `fn first_ok(xs: Array(T | ParseError)): T?` takes an `Array(Int | ParseError)` with `T` as `Int`, and `T?` takes an `Int?`. The one parameter left unbound takes the argument's other members. Two of them in one union (`r: T | E`) split `Int | ParseError` in two ways; another argument (`fn or_else(r: T | E, d: T): T`) or a declared result (`e: ParseError? = failure(r)`) fixes one, and otherwise the call says it cannot infer them.
 
 ### Generic types
 
