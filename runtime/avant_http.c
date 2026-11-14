@@ -3427,6 +3427,7 @@ typedef struct FetchState {
    * the body's length (FETCH_LENGTH), and for a chunked body the decoder
    * and how far it has read. */
   int framing;
+  size_t start;
   size_t head_len;
   size_t body_want;
   size_t scanned;
@@ -3478,14 +3479,13 @@ static int parse_response_head(const char *raw, size_t n, int *status,
  * (avant_http_resp_body): a server that keeps the connection open after
  * a complete answer (it ignores Connection: close, or a proxy keeps the
  * connection) held the call until its deadline, which then failed it
- * as a timeout. RFC 9112 6.3, in its order: a response to HEAD, a 204
- * or a 304 ends with its head; after a 1xx (an interim answer, which
- * the client does not read past) the exchange ends at the close, as
- * before; a chunked body ends
+ * as a timeout. RFC 9112 6.3, in its order: interim 1xx answers are
+ * skipped (O663) and a 101 ends at the close; a response to HEAD, a 204
+ * or a 304 ends with its head; a chunked body ends
  * after its last chunk and the trailer section; a Content-Length body
- * after that many bytes; a body with neither (or another
- * Transfer-Encoding, or a length that is not a number) when the server
- * closes, as before. The head is parsed again as bytes arrive until it
+ * after that many bytes, and one with an invalid length (repeated, or
+ * not a number) at once, to be refused (O664); a body with neither (or
+ * another Transfer-Encoding) when the server closes, as before. The head is parsed again as bytes arrive until it
  * is whole, then never again; a chunked body is followed by the same
  * decoder avant_http_resp_body uses, on a copy, a piece at a time. */
 static int fetch_complete(FetchState *st) {
@@ -3497,17 +3497,31 @@ static int fetch_complete(FetchState *st) {
     const char *value = NULL;
     size_t value_len = 0;
     long want = 0;
-    if (!parse_response_head(st->buf, st->len, &status, headers,
-                             &num_headers, &pret)) {
-      if (pret == -2) {
+    for (;;) {
+      if (!parse_response_head(st->buf + st->start, st->len - st->start,
+                               &status, headers, &num_headers, &pret)) {
+        if (pret == -2) {
+          return 0;
+        }
+        st->framing = FETCH_UNTIL_CLOSE;
         return 0;
       }
-      st->framing = FETCH_UNTIL_CLOSE;
-      return 0;
+      /* An interim answer (100 Continue, 102, 103 Early Hints) is a head
+       * with no body before the final answer (RFC 9110 15.2; Stage 29
+       * W-FIX1h, O663): the client returned it as the response, the final
+       * answer's bytes as its body. It is skipped, and the response is
+       * the answer after it (avant_http_fetch returns the bytes from
+       * st->start). A 101 ends the exchange's HTTP: it stays the answer,
+       * read until the close as before. */
+      if (status >= 100 && status < 200 && status != 101) {
+        st->start += (size_t)pret;
+        continue;
+      }
+      break;
     }
-    st->head_len = (size_t)pret;
+    st->head_len = st->start + (size_t)pret;
     st->scanned = st->head_len;
-    if (status >= 100 && status < 200) {
+    if (status == 101) {
       st->framing = FETCH_UNTIL_CLOSE;
     } else if ((st->request_len >= 5 && memcmp(st->request, "HEAD ", 5) == 0) ||
                status == 204 || status == 304) {
@@ -3742,7 +3756,7 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
     free(st);
     return avant_str_empty();
   }
-  out = make_bytes(st->buf ? st->buf : "", st->len);
+  out = make_bytes(st->buf ? st->buf + st->start : "", st->len - st->start);
   free(st->buf);
   free(st);
   return out;

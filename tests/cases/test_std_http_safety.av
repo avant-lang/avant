@@ -26,7 +26,7 @@ import std.http
 // deadlines under a step of the wall clock (Stage 29 W-FIX1g, O572).
 // And the client's request checks (Stage 29 W-FIX1h, O665); a response
 // literal and a status outside 100-599 (O661, D369); a response with
-// two Content-Length values (O664).
+// two Content-Length values (O664); interim 1xx answers (O663).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -906,6 +906,17 @@ fn client_length_cases(c: Checks, root: String) {
   client_response_round(c, root, "a response with more than one Content-Length is refused", paths, wants)
 }
 
+// O663 (Stage 29 W-FIX1h): an interim answer (100 Continue, 102, 103
+// Early Hints) before the final one was returned as the response, the
+// final answer's bytes as its body. The client reads past every interim
+// answer (RFC 9110 15.2), also when one arrives in pieces; an interim
+// answer and then the close is no response; a 101 is the answer still.
+fn client_interim_cases(c: Checks, root: String) {
+  paths = ["/100", "/103", "/1xx-many", "/1xx-split", "/1xx-only", "/101"]
+  wants = ["200 hello", "200 hello", "201 hello", "200 hello", "invalid HTTP response from", "101 "]
+  client_response_round(c, root, "interim answers are read past", paths, wants)
+}
+
 class BigSent {
   pub sent: String
 
@@ -1285,6 +1296,7 @@ fn main: Int {
   client_framing_cases(c, avant_test_root())
   client_request_cases(c, avant_test_root())
   client_length_cases(c, avant_test_root())
+  client_interim_cases(c, avant_test_root())
   ws_big_cases(c, avant_test_root())
   ws_handshake_cases(c, avant_test_root())
   ws_deadline_cases(c, avant_test_root())
