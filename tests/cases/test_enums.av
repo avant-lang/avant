@@ -72,6 +72,7 @@ fn cases: Array(RCase) {
   xs.push(refused("cover-else-beside-full", "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    case name, number { 2 }\n    else { 3 }\n  }\n}\nfn main { puts(f(Tok.eof)) }\n", "every member of Tok is named; remove the else", "3:3"))
   xs.push(refused("field-no-default", "enum Tok { eof, name, number }\nclass C {\n  pub k: Tok\n}\nfn main {\n  puts(C.new.k)\n}\n", "field k of C has no zero value, no default", "3:7"))
   xs.push(refused("struct-field-zero-array", "enum Tok { eof, name, number }\nfn main {\n  xs = Array(Tok).new(3)\n  puts(xs.size)\n}\n", "Array(Tok).new(n) needs an element value: Tok has no zero value; write Array(Tok).new(n, value)", "3:8"))
+  xs.push(refused("error-enum-dropped", "enum E: Error { bad }\nfn f(n: Int): Int | E {\n  if n > 0 {\n    return E.bad\n  }\n  n\n}\nfn main {\n  f(1)\n}\n", "this statement drops a value that can be an error (E | Int)", "9:3"))
   xs.push(accepted("label-bare-neighbours", "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    case name, number { 2 }\n  }\n}\nfn g(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    else { 2 }\n  }\n}\nfn main {\n  puts(f(Tok.eof) + f(Tok.number) + g(Tok.name))\n  puts(Tok.from_i(1) ?? Tok.eof)\n  t = Tok.from_i(9) ?? Tok.number\n  puts(t)\n}\n", "5\nname\nnumber\n"))
   xs
 }
