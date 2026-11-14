@@ -19,6 +19,7 @@ Seven scenarios that each isolate one cost of a garbage collector, taken from [V
 | `variants/d-minimize-outside/main.d` | D with `GC.minimize()` after scenario 4's timed region | modified from `upstream/main.d` |
 | `variants/iso/` | every program with scenario numbers as arguments (one scenario per process) and an eighth scenario added by Avant | modified from the seven programs above |
 | `run.sh`, `tables.py` | the runner and the table generator | new code (not a modification of `run-gc.sh`) |
+| `trees/` | two LangArena tasks, Binarytrees::Obj and Calculator::Ast, with and without `std.gc`'s hints ([The tree ports](#the-tree-ports-o386)) | LangArena's tasks as Avant's harness builds them; the unhinted forms modified from them |
 
 Every port and every variant begins with a header naming its source, the repository, the commit, the license and what was changed.
 
@@ -47,6 +48,23 @@ Each scenario prints `time_us`, `time_ms`, `mem_kb` and `verify`. The verificati
 - **Construction.** `Tree { left: build(), right: build() }` is `Tree.new(build_tree(), build_tree())` with an `initialize` that takes both children.
 - **`mem_kb`** prints 0: there is no public form for the heap in use. Upstream's own README says the column is not comparable between languages; the runner reports peak RSS for every row.
 
+## The tree ports (O386)
+
+Two LangArena tasks, each in two forms: as LangArena builds it, with `std.gc`'s hints, and without them. They are the bars the Valk stage's later waves are read on (VALK-S and VALK-R3: Binarytrees::Obj unhinted; VALK-R2: Calculator::Ast unhinted; VALK-D2), and they are not part of Valk's suite.
+
+| Path | What | Origin |
+| --- | --- | --- |
+| `trees/helper.av`, `trees/calc_lib.av` | the harness's helper and Calculator's library | copied from Avant's LangArena harness (`langarena` 37367d3: `helper.av`, `tasks/calc_lib.av`), a header added |
+| `trees/binarytrees_obj.av`, `trees/calc_ast.av` | Binarytrees::Obj and Calculator::Ast as LangArena builds them, with the hints | copied from `tasks/binarytrees_obj.av` and `tasks/calc_ast.av`, a header added |
+| `trees/binarytrees_obj_unhinted.av`, `trees/calc_ast_unhinted.av` | the same programs without the hints | modified from the two above |
+| `trees/cfg_binarytrees_obj.av`, `trees/cfg_calc_ast.av` | LangArena's prod configuration | written as the harness writes it from `run.js` (kostya/LangArena 3c9f84d) |
+
+The tasks are kostya/LangArena's (MIT, © 2026 Konstantin Makarchev); the Avant sources are the Avant project's. `run.sh build trees` stitches each program as the harness stitches a task (the helper, Calculator's library, the configuration, the task; each file after a `// file:` line) into `$BUILD/trees/ROW.av` and compiles it with the harness's flags, `--release --cpu=v3` (D284). Each prints only its checksum, LangArena's: 75497436 for Binarytrees::Obj, 1670614456 for Calculator::Ast, checked on every run.
+
+**The unhinted programs, by D222.** An unhinted program is its hinted program with the hints removed and nothing else: the same classes, functions, sizes, iterations and checksum. Binarytrees::Obj loses `import std.gc`, the `gc.collect()` before each tree and the `gc.hold { }` around building and summing it (each round is `tree_sum(make_tree(0, depth))`). Calculator::Ast loses `import std.gc`, the `gc.collect()` after the text is generated, the `gc.hold { }` around each round and the `gc.collect()` at the round's end; the loop that puts the sentinel back in the parsed slots stays (it is the program's own release of the round's trees, as the references drop theirs, not a hint). `diff trees/binarytrees_obj.av trees/binarytrees_obj_unhinted.av` shows the whole difference.
+
+**Rows.** The set `trees` (`binarytrees-obj`, `binarytrees-obj-unhinted`, `calc-ast`, `calc-ast-unhinted`) runs under `check`, `time` and `rounds` when it is named (`VALK_GC_SETS=trees`); `run.sh trees-counts` gives each program's `AVANT_GC_STATS=1` line and its user-mode instructions in `counts`' fixed environment (Table 12). Until VALK-D1 has merged, the set is outside the default sets and the full build, so `check`, `counts`, `cg` and `time` run what they ran before.
+
 ## Running
 
 ```sh
@@ -55,6 +73,9 @@ bench/valk-gc/run.sh build                               # every program, into $
 bench/valk-gc/run.sh build avant valk                    # only what the rows avant and valk use (headline and iso)
 bench/valk-gc/run.sh check                               # every row once, untimed: verification only
 bench/valk-gc/run.sh counts                              # no clock: AVANT_GC_STATS, instruction counts, the other runtimes' collection counts
+bench/valk-gc/run.sh build trees                         # the tree ports (O386), into $VALK_GC_BUILD/trees
+VALK_GC_SETS=trees bench/valk-gc/run.sh check            # the tree ports once each, checksums checked
+bench/valk-gc/run.sh trees-counts                        # no clock: the tree ports' AVANT_GC_STATS and instructions
 bench/valk-gc/run.sh cg 2 3 6                            # no clock: exact instructions per function of the Avant program, here for scenarios 2, 3 and 6
 bench/valk-gc/run.sh time 7                              # one warm-up round, then seven measured rounds (alone on the machine, governor performance)
 python3 bench/valk-gc/tables.py /tmp/valk-gc-build/out   # every table, regenerated from the raw per-run files

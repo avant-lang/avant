@@ -3,8 +3,8 @@
 
 usage: python3 tables.py OUT > tables.md
 
-OUT is the directory run.sh wrote (VALK_GC_OUT): OUT/raw (run.sh time)
-and OUT/counts (run.sh counts). Nothing is measured here; a table is only
+OUT is the directory run.sh wrote (VALK_GC_OUT): OUT/raw (run.sh time),
+OUT/counts (run.sh counts) and OUT/trees-counts (run.sh trees-counts). Nothing is measured here; a table is only
 a reading of those files, so it can be rebuilt at any time. Standard
 library only.
 """
@@ -53,6 +53,13 @@ LABEL = {
     "csharp-notiered": "C#, `DOTNET_TieredCompilation=0`",
     "java-parallel": "Java, `-XX:+UseParallelGC`",
 }
+TREES = ["binarytrees-obj", "binarytrees-obj-unhinted", "calc-ast", "calc-ast-unhinted"]
+LABEL.update({
+    "binarytrees-obj": "Binarytrees::Obj (LangArena's program, hinted)",
+    "binarytrees-obj-unhinted": "Binarytrees::Obj unhinted",
+    "calc-ast": "Calculator::Ast (LangArena's program, hinted)",
+    "calc-ast-unhinted": "Calculator::Ast unhinted",
+})
 # The row a variant is read against.
 BASE = {"avant-baseline": "avant", "avant-young": "avant", "avant-young-v3": "avant-v3",
         "avant-hints": "avant", "avant-hints-v3": "avant-v3", "valk-noregions": "valk",
@@ -215,6 +222,15 @@ def emit_raw(out_dir):
         print("## Table 6. Scenario-isolated builds: peak RSS of the process that ran the scenario, MB, median (minimum–maximum). Scenario 4's process also ran scenario 3\n")
         rows = [[LABEL[r]] + [cell(iso[r]["rss"].get(k, []), mb) for k in eight] for r in HEADLINE if iso[r]["n"]]
         print(table(["Row"] + [SHORT[k] for k in eight], rows))
+    trees = {r: load_row(os.path.join(raw, "trees", r)) for r in TREES}
+    if any(d["n"] for d in trees.values()):
+        print("## Table 11. The tree ports (set `trees`, O386): whole process, wall time and peak RSS, median (minimum–maximum)\n")
+        rows = []
+        for name in TREES:
+            d = trees[name]
+            if d["n"]:
+                rows.append([LABEL[name], d["n"], cell(d["wall_us"], lambda us: "%.3f" % (us / 1e6)), cell(d["rss_kb"], mb)])
+        print(table(["Program", "Runs", "Wall, s", "Peak RSS, MB (GNU time `%M`)"], rows))
 
 
 def stats_line(path):
@@ -319,6 +335,30 @@ def emit_counts(out_dir):
     print("These are whole-process counts (nothing is subtracted): a scenario's set-up collections and the forced ones are in them.\n")
 
 
+def emit_trees_counts(out_dir):
+    c = os.path.join(out_dir, "trees-counts")
+    if not os.path.isdir(c):
+        return
+    print("## Table 12. The tree ports (O386): one process each, no clock\n")
+    print("```")
+    print(read(os.path.join(c, "session.txt")).rstrip())
+    print("```\n")
+    print("Each program's whole process (its configuration is LangArena's prod: Binarytrees::Obj depth 20, 30 iterations and 6 warm-up rounds; Calculator::Ast 11,000 operations, 100 iterations and 20 warm-up rounds). The unhinted program is the hinted one without `std.gc`'s hints (`trees/`).\n")
+    fields = [("collections", "collections"), ("young", "young"), ("full", "full"), ("alloc", "allocated, bytes"),
+              ("copied", "copied, bytes"), ("prom_bytes", "promoted, bytes"), ("rem_adds", "remembered-set adds"),
+              ("peak_heap", "peak heap, bytes")]
+    st = {r: stats_line(os.path.join(c, r + ".stats")) if os.path.exists(os.path.join(c, r + ".stats")) else {} for r in TREES}
+    insn = {r: ins(os.path.join(c, r + ".ins")) for r in TREES}
+    rows = []
+    for r in TREES:
+        if insn[r] is None and not st[r]:
+            continue
+        base = r[:-len("-unhinted")] if r.endswith("-unhinted") else None
+        ratio = "%.2f" % (insn[r] / insn[base]) if base and insn[r] is not None and insn.get(base) else "—"
+        rows.append([LABEL[r], num(insn[r]), ratio] + [num(int(st[r][k])) if k in st[r] else "—" for k, _ in fields])
+    print(table(["Program", "instructions:u", "÷ hinted"] + [l for _, l in fields], rows))
+
+
 def main():
     if len(sys.argv) != 2:
         sys.stderr.write(__doc__)
@@ -328,6 +368,7 @@ def main():
     print("Scenarios, sizes and programs are Valk's (valk-lang/valk, `examples/bench/gc`, MIT, © 2024 Lorenz Vandevelde). Every number here was measured on this machine; Valk's published numbers come from another machine and are not in these tables.\n")
     emit_raw(out_dir)
     emit_counts(out_dir)
+    emit_trees_counts(out_dir)
 
 
 if __name__ == "__main__":

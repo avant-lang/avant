@@ -1,0 +1,304 @@
+// helper.av — bench/valk-gc/trees (VALK-B1, O386).
+// Origin: langarena/helper.av, from the Avant LangArena harness
+// (langarena 37367d3; tasks for kostya/LangArena, MIT, (c) 2026 Konstantin
+// Makarchev; the Avant sources are the Avant project's).
+// Changed: nothing but this header.
+class Rng {
+  last: Int
+
+  fn initialize {
+    self.last = 42
+  }
+
+  fn reset {
+    self.last = 42
+  }
+
+  fn next_int(max: Int): Int {
+    self.last = (self.last * 3877 + 29573) % 139968
+    (self.last.to_f / 139968.0 * max.to_f).to_i
+  }
+
+  fn next_range(from: Int, to: Int): Int {
+    next_int(to - from + 1) + from
+  }
+
+  fn next_float(max: Float64): Float64 {
+    self.last = (self.last * 3877 + 29573) % 139968
+    max * self.last.to_f / 139968.0
+  }
+}
+
+// djb2 at 32 bits, as the references' uint32_t (Int is 64-bit since
+// Avant Stage 29 W-INT1): the value wraps to its low 32 bits, signed.
+fn hash_byte(h: Int, b: Int): Int {
+  (((h << 5) &+ h) &+ b).wrap_i32.to_i
+}
+
+fn min_int(a: Int, b: Int): Int {
+  if a < b {
+    return a
+  }
+  b
+}
+
+fn max_int(a: Int, b: Int): Int {
+  if a > b {
+    return a
+  }
+  b
+}
+
+fn mod_pos(a: Int, m: Int): Int {
+  r = a % m
+  if r < 0 {
+    return r + m
+  }
+  r
+}
+
+fn pow2(n: Int): Int {
+  if n <= 0 {
+    return 1
+  }
+  1 << n
+}
+
+fn empty_ints: Array(Int) {
+  xs: Array(Int) = []
+  xs
+}
+
+fn empty_floats: Array(Float64) {
+  xs: Array(Float64) = []
+  xs
+}
+
+fn slice_str(s: String, start: Int, stop: Int): String {
+  str_slice(s, start, stop)
+}
+
+fn starts_with(s: String, p: String): Int {
+  if p.size > s.size {
+    return 0
+  }
+  for i in 0..p.size {
+    if s[i] != p[i] {
+      return 0
+    }
+  }
+  1
+}
+
+fn is_space(c: Int): Int {
+  if c == 32 || c == 9 || c == 10 || c == 13 {
+    return 1
+  }
+  0
+}
+
+fn strip_str(s: String): String {
+  s.strip()
+}
+
+fn repeat_pattern(pat: String, size: Int): String {
+  n = pat.size
+  if size <= 0 {
+    return ""
+  }
+  if n == 1 {
+    return repeat_byte(pat[0], size)
+  }
+  buf = buf_new(size)
+  for i in 0..size {
+    buf.push_byte(pat[i % n])
+  }
+  buf.to_s
+}
+
+fn fill_ints(n: Int, v: Int): Array(Int) {
+  xs = Array(Int).new(n)
+  if v != 0 {
+    xs.fill(v)
+  }
+  xs
+}
+
+fn fill_floats(n: Int, v: Float64): Array(Float64) {
+  xs = Array(Float64).new(n)
+  if v != 0.0 {
+    for i in 0..n {
+      xs[i] = v
+    }
+  }
+  xs
+}
+
+fn lshr(x: Int, n: Int): Int {
+  if n <= 0 {
+    return x
+  }
+  if n >= 32 {
+    return 0
+  }
+  m = 32 - n
+  bit = 1 << m
+  mask = bit - 1
+  (x >> n) & mask
+}
+
+fn prefix4(s: String): String {
+  str_slice(s, 0, 4)
+}
+
+fn round8(x: Float64): Float64 {
+  (x * 100000000.0 + 0.5).floor / 100000000.0
+}
+
+class Wide {
+  lo: Int
+  hi: Int
+
+  fn initialize(lo: Int, hi: Int) {
+    self.lo = lo
+    self.hi = hi
+  }
+}
+
+fn wide_from_i(n: Int): Wide {
+  h = 0
+  if n < 0 {
+    h = -1
+  }
+  Wide.new(n, h)
+}
+
+fn wide_add(a: Wide, b: Wide): Wide {
+  lo = wide_op(0, a.lo, a.hi, b.lo, b.hi)
+  Wide.new(lo, wide_hi())
+}
+
+fn wide_sub(a: Wide, b: Wide): Wide {
+  lo = wide_op(1, a.lo, a.hi, b.lo, b.hi)
+  Wide.new(lo, wide_hi())
+}
+
+fn wide_mul(a: Wide, b: Wide): Wide {
+  lo = wide_op(2, a.lo, a.hi, b.lo, b.hi)
+  Wide.new(lo, wide_hi())
+}
+
+fn wide_sdiv(a: Wide, b: Wide): Wide {
+  lo = wide_op(3, a.lo, a.hi, b.lo, b.hi)
+  Wide.new(lo, wide_hi())
+}
+
+fn wide_smod(a: Wide, b: Wide): Wide {
+  lo = wide_op(4, a.lo, a.hi, b.lo, b.hi)
+  Wide.new(lo, wide_hi())
+}
+
+fn wide_udiv(a: Wide, b: Wide): Wide {
+  lo = wide_op(5, a.lo, a.hi, b.lo, b.hi)
+  Wide.new(lo, wide_hi())
+}
+
+fn wide_shl(a: Wide, n: Int): Wide {
+  lo = wide_op(6, a.lo, a.hi, n, 0)
+  Wide.new(lo, wide_hi())
+}
+
+fn wide_shr(a: Wide, n: Int): Wide {
+  lo = wide_op(7, a.lo, a.hi, n, 0)
+  Wide.new(lo, wide_hi())
+}
+
+fn wide_and(a: Wide, b: Wide): Wide {
+  lo = wide_op(8, a.lo, a.hi, b.lo, b.hi)
+  Wide.new(lo, wide_hi())
+}
+
+fn wide_or(a: Wide, b: Wide): Wide {
+  lo = wide_op(9, a.lo, a.hi, b.lo, b.hi)
+  Wide.new(lo, wide_hi())
+}
+
+fn wide_lt_u(a: Wide, b: Wide): Int {
+  wide_op(11, a.lo, a.hi, b.lo, b.hi)
+}
+
+fn wide_eq(a: Wide, b: Wide): Int {
+  wide_op(12, a.lo, a.hi, b.lo, b.hi)
+}
+
+fn wide_lt_s(a: Wide, b: Wide): Int {
+  wide_op(13, a.lo, a.hi, b.lo, b.hi)
+}
+
+fn hex_of(n: Int): String {
+  if n == 0 {
+    return "0"
+  }
+  v = n
+  if v < 0 {
+    return "-" + hex_of(0 - v)
+  }
+  buf = buf_new(16)
+  digits: Array(Int) = []
+  while v > 0 {
+    digits.push(v % 16)
+    v = v / 16
+  }
+  i = digits.size
+  while i > 0 {
+    i -= 1
+    d = digits[i]
+    if d < 10 {
+      buf.push_byte(48 + d)
+    } else {
+      buf.push_byte(87 + d)
+    }
+  }
+  buf.to_s
+}
+
+fn append_byte(buf: Array(Int), b: Int) {
+  buf.push(b)
+}
+
+fn append_str(buf: Array(Int), s: String) {
+  n = s.size
+  for i in 0..n {
+    buf.push(s[i])
+  }
+}
+
+fn repeat_str(s: String, n: Int): String {
+  if n <= 0 {
+    return ""
+  }
+  if s.size == 1 {
+    return repeat_byte(s[0], n)
+  }
+  buf = buf_new(s.size * n)
+  for i in 0..n {
+    buf.push_str(s)
+  }
+  buf.to_s
+}
+
+fn bytes_eq(a: Array(Int), b: Array(Int)): Int {
+  if a.size != b.size {
+    return 0
+  }
+  for i in 0..a.size {
+    if a[i] != b[i] {
+      return 0
+    }
+  }
+  1
+}
+
+fn add_wrap_u32(acc: UInt64, n: Int): UInt64 {
+  (acc + n.to_u64) & 4294967295u64
+}

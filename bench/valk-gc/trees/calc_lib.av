@@ -1,0 +1,364 @@
+// calc_lib.av — bench/valk-gc/trees (VALK-B1, O386).
+// Origin: langarena/tasks/calc_lib.av, from the Avant LangArena harness
+// (langarena 37367d3; tasks for kostya/LangArena, MIT, (c) 2026 Konstantin
+// Makarchev; the Avant sources are the Avant project's).
+// Changed: nothing but this header.
+// One node shape. Children are optional references, one pointer each,
+// so a number is four words plus the header.
+// For a variable or an assignment, op is the numeric id of "v<id>".
+// kind is an enum (the reference's enum tag) and op an Int32 (its char
+// operator, calculator.c:23-38); the number is 64-bit, as its int64_t
+// (:48).
+enum NdKind { number, variable, binary, assignment }
+
+class Nd {
+  value: Int
+  left: Nd?
+  right: Nd?
+  kind: NdKind
+  op: Int32
+
+  fn initialize(kind: NdKind, op: Int32, value: Int) {
+    self.kind = kind
+    self.op = op
+    self.value = value
+  }
+}
+
+fn node_num(v: Int): Nd {
+  Nd.new(NdKind.number, 0, v)
+}
+
+fn node_var(id: Int): Nd {
+  Nd.new(NdKind.variable, id.to_i32, 0)
+}
+
+fn node_bin(op: Int, left: Nd, right: Nd): Nd {
+  n = Nd.new(NdKind.binary, op.to_i32, 0)
+  n.left = left
+  n.right = right
+  n
+}
+
+fn node_assign(id: Int, expr: Nd): Nd {
+  n = Nd.new(NdKind.assignment, id.to_i32, 0)
+  n.left = expr
+  n
+}
+
+fn checksum_var(id: Int): Int {
+  h = 5381
+  h = hash_byte(h, 118)
+  if id <= 0 {
+    return hash_byte(h, 48)
+  }
+  p = 1
+  x = id
+  while x >= 10 {
+    p *= 10
+    x = x / 10
+  }
+  x = id
+  while p > 0 {
+    d = x / p
+    h = hash_byte(h, 48 + d)
+    x -= d * p
+    p = p / 10
+  }
+  h
+}
+
+class Parser {
+  input: String
+  exprs: Array(Nd)
+  pos: Int
+  len: Int
+  current: Int
+  n: Int
+
+  fn initialize(input: String, exprs: Array(Nd)) {
+    self.input = input
+    self.exprs = exprs
+    self.len = input.size
+    self.n = 0
+    self.current = -1
+    if self.len > 0 {
+      self.current = input[0]
+    }
+  }
+
+  fn advance {
+    self.pos += 1
+    if self.pos >= self.len {
+      self.current = -1
+    } else {
+      self.current = self.input[self.pos]
+    }
+  }
+
+  fn skip_ws {
+    while is_space(self.current) == 1 {
+      self.advance
+    }
+  }
+
+  fn is_digit: Int {
+    switch self.current {
+      case '0'..='9' { 1 }
+      else { 0 }
+    }
+  }
+
+  fn is_letter: Int {
+    switch self.current {
+      case 'a'..='z', 'A'..='Z' { 1 }
+      else { 0 }
+    }
+  }
+
+  fn parse_number: Nd? {
+    v: Int = 0
+    while self.is_digit == 1 {
+      d = (self.current - 48).to_i
+      v = v * 10 + d
+      self.advance
+    }
+    node_num(v)
+  }
+
+  fn parse_variable: Nd? {
+    id = 0
+    if self.current == 118 {
+      self.advance
+      while self.is_digit == 1 {
+        id = id * 10 + (self.current - 48)
+        self.advance
+      }
+    } else {
+      while self.is_letter == 1 || self.is_digit == 1 {
+        self.advance
+      }
+    }
+    self.skip_ws
+    if self.current == 61 {
+      self.advance
+      expr = self.parse_expression ?? return nil
+      return node_assign(id, expr)
+    }
+    node_var(id)
+  }
+
+  fn parse_factor: Nd? {
+    self.skip_ws
+    switch self.current {
+      case '0'..='9' { return self.parse_number }
+      case 'a'..='z', 'A'..='Z' { return self.parse_variable }
+      case '(' {
+        self.advance
+        node = self.parse_expression
+        self.skip_ws
+        if self.current == ')' {
+          self.advance
+        }
+        return node
+      }
+      else {
+        self.advance
+        return node_num(0)
+      }
+    }
+  }
+
+  fn parse_term: Nd? {
+    node = self.parse_factor ?? return nil
+    keep = 1
+    while keep == 1 {
+      self.skip_ws
+      if self.current == '*' || self.current == '/' || self.current == '%' {
+        op = self.current
+        self.advance
+        right = self.parse_factor ?? return nil
+        node = node_bin(op, node, right)
+      } else {
+        keep = 0
+      }
+    }
+    node
+  }
+
+  fn parse_expression: Nd? {
+    node = self.parse_term ?? return nil
+    keep = 1
+    while keep == 1 {
+      self.skip_ws
+      if self.current == '+' || self.current == '-' {
+        op = self.current
+        self.advance
+        right = self.parse_term ?? return nil
+        node = node_bin(op, node, right)
+      } else {
+        keep = 0
+      }
+    }
+    node
+  }
+
+  fn parse {
+    while self.current != -1 {
+      self.skip_ws
+      if self.current == -1 {
+        break
+      }
+      node = self.parse_expression ?? break
+      self.exprs[self.n] = node
+      self.n += 1
+      self.skip_ws
+      while self.current == 10 {
+        self.advance
+        self.skip_ws
+      }
+    }
+  }
+}
+
+fn calc_expr_count(n: Int): Int {
+  n + 11
+}
+
+fn calc_fill(text: String, exprs: Array(Nd)): Int {
+  p = Parser.new(text, exprs)
+  p.parse
+  p.n
+}
+
+fn calc_generate(n: Int): String {
+  rng = Rng.new
+  buf = buf_new(64 + n * 64)
+  buf.push_str("v0 = 1\n")
+  for i in 0..10 {
+    v = i + 1
+    buf.push_str("v")
+    buf.push_fmt_i(v)
+    buf.push_str(" = v")
+    buf.push_fmt_i(v - 1)
+    buf.push_str(" + ")
+    buf.push_fmt_i(v)
+    buf.push_byte(10)
+  }
+  for i in 0..n {
+    v = i + 10
+    buf.push_str("v")
+    buf.push_fmt_i(v)
+    buf.push_str(" = v")
+    buf.push_fmt_i(v - 1)
+    buf.push_str(" + ")
+    k = rng.next_int(10)
+    if k == 0 {
+      buf.push_str("(v")
+      buf.push_fmt_i(v - 1)
+      buf.push_str(" / 3) * 4 - ")
+      buf.push_fmt_i(i)
+      buf.push_str(" / (3 + (18 - v")
+      buf.push_fmt_i(v - 2)
+      buf.push_str(")) % v")
+      buf.push_fmt_i(v - 3)
+      buf.push_str(" + 2 * ((9 - v")
+      buf.push_fmt_i(v - 6)
+      buf.push_str(") * (v")
+      buf.push_fmt_i(v - 5)
+      buf.push_str(" + 7))")
+    } else if k == 1 {
+      buf.push_str("v")
+      buf.push_fmt_i(v - 1)
+      buf.push_str(" + (v")
+      buf.push_fmt_i(v - 2)
+      buf.push_str(" + v")
+      buf.push_fmt_i(v - 3)
+      buf.push_str(") * v")
+      buf.push_fmt_i(v - 4)
+      buf.push_str(" - (v")
+      buf.push_fmt_i(v - 5)
+      buf.push_str(" /  v")
+      buf.push_fmt_i(v - 6)
+      buf.push_str(")")
+    } else if k == 2 {
+      buf.push_str("(3789 - (((v")
+      buf.push_fmt_i(v - 7)
+      buf.push_str(")))) + 1")
+    } else if k == 3 {
+      buf.push_str("4/2 * (1-3) + v")
+      buf.push_fmt_i(v - 9)
+      buf.push_str("/v")
+      buf.push_fmt_i(v - 5)
+    } else if k == 4 {
+      buf.push_str("1+2+3+4+5+6+v")
+      buf.push_fmt_i(v - 1)
+    } else if k == 5 {
+      buf.push_str("(99999 / v")
+      buf.push_fmt_i(v - 3)
+      buf.push_str(")")
+    } else if k == 6 {
+      buf.push_str("0 + 0 - v")
+      buf.push_fmt_i(v - 8)
+    } else if k == 7 {
+      buf.push_str("((((((((((v")
+      buf.push_fmt_i(v - 6)
+      buf.push_str(")))))))))) * 2")
+    } else if k == 8 {
+      buf.push_fmt_i(i)
+      buf.push_str(" * (v")
+      buf.push_fmt_i(v - 1)
+      buf.push_str("%6)%7")
+    } else {
+      buf.push_str("(1)/(0-v")
+      buf.push_fmt_i(v - 5)
+      buf.push_str(") + (v")
+      buf.push_fmt_i(v - 7)
+      buf.push_str(")")
+    }
+    buf.push_byte(10)
+  }
+  buf.to_s
+}
+
+fn eval_node(node: Nd, env: Array(Int)): Int {
+  k = node.kind
+  if k == NdKind.number {
+    return node.value
+  }
+  if k == NdKind.variable {
+    return env[node.op.to_i]
+  }
+  if k == NdKind.assignment {
+    a = node.left ?? return 0
+    v = eval_node(a, env)
+    env[node.op.to_i] = v
+    return v
+  }
+  if l = node.left, r = node.right {
+    left = eval_node(l, env)
+    right = eval_node(r, env)
+    switch node.op {
+      case '+' { return left &+ right }
+      case '-' { return left &- right }
+      case '*' { return left &* right }
+      case '/' { return left / right }
+      case '%' { return left % right }
+    }
+  }
+  0
+}
+
+fn eval_program(exprs: Array(Nd), n: Int, env: Array(Int)): Int {
+  i = 0
+  en = env.size
+  while i < en {
+    env[i] = 0
+    i += 1
+  }
+  v: Int = 0
+  for i in 0..n {
+    v = eval_node(exprs[i], env)
+  }
+  v
+}

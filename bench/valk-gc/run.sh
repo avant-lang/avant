@@ -20,6 +20,9 @@
 #                           exclusive and inclusive, one process per
 #                           scenario (default every scenario; `4` runs 3
 #                           then 4)
+#   run.sh trees-counts     no clock: the tree ports (set trees, O386), each
+#                           in its own process: AVANT_GC_STATS and
+#                           instructions, in counts' fixed environment
 #   run.sh versions         the toolchains, the machine, the governor
 #
 # Tables: python3 tables.py $OUT (regenerates every table from raw files).
@@ -29,7 +32,8 @@
 #   VALK_GC_OUT     raw per-run files          (default $BUILD/out)
 #   AVANT_BENCH_COMPILER  the Avant compiler   (default <root>/bin/avant-c-llvm)
 #   VALK            the Valk compiler          (default valk on PATH, else ~/.vman/bin/valk)
-#   VALK_GC_SETS    which sets `time` runs     (default "headline variants iso")
+#   VALK_GC_SETS    which sets `check` and `time` run (default "headline
+#                   variants iso"; `trees` is the tree ports' set)
 #   VALK_GC_ROWS    restrict to these row ids  (default: all)
 #   VALK_GC_ALLOW_GOVERNOR=1  let `time` run without the performance
 #                   governor (a dry run; the session file says so)
@@ -62,6 +66,20 @@ ROWS_iso="avant avant-v3 valk go d csharp crystal java"
 # One process per entry: the scenario numbers passed to an iso build.
 # `3 4` is scenario 4 (it needs the chain scenario 3 builds).
 ISO_UNITS=("1" "2" "3" "3 4" "5" "6" "7" "8")
+# Trees (O386): two LangArena tasks, each as LangArena builds it (with
+# std.gc's hints) and without the hints (trees/, README.md). Not in the
+# default sets or the full build until VALK-D1 has merged (its runs of
+# check, counts, cg and time must read what they read before): name the
+# set (VALK_GC_SETS=trees) and build it (run.sh build trees).
+ROWS_trees="binarytrees-obj binarytrees-obj-unhinted calc-ast calc-ast-unhinted"
+# The checksum each prints (LangArena's run.js, prod configuration).
+tree_checksum() {
+  case "$1" in
+    binarytrees-obj*) say 75497436 ;;
+    calc-ast*) say 1670614456 ;;
+    *) die "unknown tree row $1" ;;
+  esac
+}
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'run.sh: %s\n' "$*" >&2; exit 1; }
@@ -76,6 +94,11 @@ want_row() {
 cmd_for() {
   ENVV=()
   local b=$BUILD
+  if [ "$1" = trees ]; then
+    tree_checksum "$2" >/dev/null
+    CMD=("$b/trees/$2")
+    return
+  fi
   if [ "$1" = iso ]; then
     case "$2" in
       avant) CMD=("$b/gc-avant-iso") ;;
@@ -207,6 +230,28 @@ build_row() {
         javac -d "$BUILD/java-iso" "$v/iso/Main.java" </dev/null || die "javac failed"
         (cd "$BUILD" && ls java-iso/*.class) >&3
       fi ;;
+    # Trees (O386): stitched as LangArena's harness stitches a task (the
+    # helper, the task's library, its configuration, the task; each file
+    # after a "// file:" line), built with the harness's flags (--release
+    # --cpu=v3, D284).
+    trees)
+      local t
+      for t in $ROWS_trees; do build_row "$t"; done ;;
+    binarytrees-obj | binarytrees-obj-unhinted | calc-ast | calc-ast-unhinted)
+      local src=${1//-/_} parts=(helper.av) f
+      case "$1" in
+        binarytrees-obj*) parts+=(cfg_binarytrees_obj.av) ;;
+        calc-ast*) parts+=(calc_lib.av cfg_calc_ast.av) ;;
+      esac
+      parts+=("$src.av")
+      mkdir -p "$BUILD/trees"
+      for f in "${parts[@]}"; do
+        printf '// file: bench/valk-gc/trees/%s\n' "$f"
+        cat "$HERE/trees/$f"
+        printf '\n'
+      done >"$BUILD/trees/$1.av"
+      build_avant "$BUILD/trees/$1.av" "$BUILD/trees/$1" --release --cpu=v3
+      emit "trees/$1" ;;
     *) die "build: unknown row $1" ;;
   esac
 }
@@ -245,7 +290,7 @@ do_build() {
     mapfile -t rows < <(every_row)
   fi
   say "building into $BUILD"
-  case " ${rows[*]} " in *" avant"*) note_compiler ;; esac
+  case " ${rows[*]} " in *" avant"* | *" trees"* | *" binarytrees-obj"* | *" calc-ast"*) note_compiler ;; esac
   local built=()
   for row in "${rows[@]}"; do
     local files
@@ -331,6 +376,16 @@ run_one() {
   if [ "$rc" != 0 ]; then
     die "exit status $rc (124 is a timeout): ${ENVV[*]} ${CMD[*]} $* (see $prefix.err)"
   fi
+  case "$want" in
+    checksum=*)
+      # A tree port prints its checksum and nothing else.
+      if [ "$(cat "$prefix.out")" != "${want#checksum=}" ]; then
+        printf 'output %s, expected the checksum %s\n' "$(head -c 200 "$prefix.out")" "${want#checksum=}" | tee "$prefix.verify" >&2
+        die "verification failed: ${ENVV[*]} ${CMD[*]} $* (see $prefix.out)"
+      fi
+      echo ok >"$prefix.verify"
+      return ;;
+  esac
   # shellcheck disable=SC2086
   if ! verify_output "$prefix.out" $want >"$prefix.verify" 2>&1; then
     cat "$prefix.verify" >&2
@@ -359,6 +414,11 @@ units() {
 run_unit() {
   local dir=$1 round=$2 set=$3 row=$4 unit=$5
   cmd_for "$set" "$row"
+  if [ "$set" = trees ]; then
+    mkdir -p "$dir/trees/$row"
+    run_one "$dir/trees/$row/$round" "checksum=$(tree_checksum "$row")"
+    return
+  fi
   if [ "$set" = iso ]; then
     local nums=${unit//+/ } last=${unit##*+}
     mkdir -p "$dir/iso/$row/s$last"
@@ -546,6 +606,31 @@ do_counts() {
   say "counts in $dir; tables: python3 $HERE/tables.py $OUT"
 }
 
+# trees-counts (O386): no clock. Each tree row in its own process, in
+# counts' fixed environment (fixed_env, setarch -R): its AVANT_GC_STATS=1
+# line, its checksum checked, then its user-mode instructions (perf stat
+# -e instructions:u) in a second process. Written under $OUT/trees-counts:
+# ROW.out, ROW.stats, ROW.ins (and ROW.perf, ROW.err), session.txt.
+do_trees_counts() {
+  command -v setarch >/dev/null || die "trees-counts needs setarch (util-linux) to turn off address-space randomization"
+  local dir=$OUT/trees-counts row
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  for row in $ROWS_trees; do
+    want_row "$row" || continue
+    [ -x "$BUILD/trees/$row" ] || die "no $BUILD/trees/$row (run.sh build trees)"
+    fixed_env AVANT_GC_STATS=1 setarch -R timeout -k 10 "$LIMIT" "$BUILD/trees/$row" </dev/null >"$dir/$row.out" 2>"$dir/$row.stats" || die "trees-counts: $row failed"
+    [ "$(cat "$dir/$row.out")" = "$(tree_checksum "$row")" ] || die "trees-counts: $row printed $(head -c 200 "$dir/$row.out"), not its checksum"
+    fixed_env setarch -R timeout -k 10 "$LIMIT" perf stat -x, -e instructions:u -o "$dir/$row.perf" "$BUILD/trees/$row" </dev/null >"$dir/$row.perf-out" 2>"$dir/$row.err" || die "perf stat failed: $row"
+    cmp -s "$dir/$row.out" "$dir/$row.perf-out" || die "trees-counts: $row printed another output under perf"
+    rm -f "$dir/$row.perf-out"
+    awk -F, '/instructions/ {print $1}' "$dir/$row.perf" >"$dir/$row.ins"
+    say "trees-counts: $row: $(cat "$dir/$row.ins") instructions; $(grep '^avant gc:' "$dir/$row.stats" | head -1)"
+  done
+  { do_versions; say "binaries:"; (cd "$BUILD" && find trees -maxdepth 1 -type f ! -name '*.av' | sort | xargs sha256sum | sed 's/^/  /'); } >"$dir/session.txt"
+  say "trees-counts in $dir; tables: python3 $HERE/tables.py $OUT"
+}
+
 # cg: nothing here reads a clock either. Each scenario asked for (default
 # all eight; 4 runs 3 then 4) runs once, in its own process, under
 # `valgrind --tool=callgrind`, which counts every instruction the process
@@ -596,6 +681,7 @@ case "${1:-}" in
   time) do_time "${2:-7}" ;;
   counts) do_counts ;;
   cg) shift; do_cg "$@" ;;
+  trees-counts) do_trees_counts ;;
   versions) do_versions ;;
   *) awk 'NR > 1 && /^set -u/ { exit } NR > 1' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
