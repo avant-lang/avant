@@ -6,7 +6,7 @@
 //
 //   fn name: String                      switch self { case m { "m" } ... }
 //   fn self.from_i(n: Int): Tok?         switch n { case v { return Tok.m } ... }; nil
-//   fn self.from_name(s: String): Tok?   if s == "m" { return Tok.m } ...; nil
+//   fn self.from_name(s: String): Tok?   switch s { case "m" { return Tok.m } ... }; nil
 //   fn self.members: Array(Tok)          [Tok.m, ...]
 //   fn message: String                   self.name (an enum marked Error
 //                                        that defines none, D327)
@@ -103,17 +103,19 @@ pub fn enum_from_name_method(loc: Location, owner: String, decl: EnumDecl): Func
   fnn = enum_synth_fn(loc, owner, "from_name", enum_opt_type(loc, owner))
   fnn.type_method = true
   fnn.params.push(Param.new(loc, "s", TypeName.new(loc, "String")))
-  // if s == "m" { return Owner.m } ... nil
+  // switch s { case "m" { return Owner.m } ... }; nil (a String switch:
+  // the size, then one memcmp per name of that size)
+  sw = Expr.new(ex_switch(), loc)
+  sw.cond = enum_name_expr(loc, "s")
   for i in 0..decl.names.size {
-    eq = Expr.new(ex_binary(), loc)
-    eq.op = tk_eq_eq()
-    eq.left = enum_name_expr(loc, "s")
-    eq.right = enum_str_expr(loc, decl.names[i])
-    st = Stmt.new(st_if(), loc)
-    st.cond = eq
-    st.then_body.push(stmt_return(loc, enum_member_expr(loc, owner, decl.names[i])))
-    fnn.body.push(st)
+    label = CaseLabel.new(lb_string(), loc)
+    label.text = decl.names[i]
+    arm = SwitchCase.new(loc)
+    arm.labels.push(label)
+    arm.body.push(stmt_return(loc, enum_member_expr(loc, owner, decl.names[i])))
+    sw.cases.push(arm)
   }
+  fnn.body.push(stmt_expr(loc, sw))
   fnn.body.push(stmt_expr(loc, Expr.new(ex_nil(), loc)))
   fnn
 }
