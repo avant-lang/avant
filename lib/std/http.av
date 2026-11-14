@@ -16,6 +16,9 @@ lib httpc {
   fun avant_http_close(srv: Ptr(Void)): Int
   fun avant_http_route_while_serving(what: String)
   fun avant_http_header_check(name: String, value: String)
+  fun avant_http_token_bad(s: String): Int
+  fun avant_http_value_bad(s: String): Int
+  fun avant_http_url_bad(s: String): Int
   fun avant_http_req_is_ws(req: Ptr(Void)): Int
   fun avant_http_req_ws_upgrade(req: Ptr(Void), route: Int): Int
   fun avant_http_req_ws_id(req: Ptr(Void)): Int
@@ -140,11 +143,16 @@ pub struct Request {
 // a response built in code); headers set with `header` are kept
 // separately until the response is written. Content-Length and
 // Connection are managed by the server and the client; setting them
-// with `header` has no effect.
+// with `header` has no effect. The header lines set are kept in `head`,
+// which is private (Stage 29 W-FIX1h, O661, D369): a response is built
+// by `text` or `bytes` and `header`, so every line went through
+// `header`'s check, and a `Response { ... }` literal outside this module
+// does not compile. A status outside 100-599 traps when the answer is
+// written.
 pub struct Response {
   pub status: Int
   pub headers: Headers
-  pub head: String
+  head: String
   pub body: Bytes
 
   pub fn self.text(body: String, status: Int = 200): Response {
@@ -831,9 +839,61 @@ fn resolve_url(base: String, loc: String): String? {
   nil
 }
 
+// "byte B at I" for the byte of `s` a check stopped at, "empty" past its end.
+fn bad_byte(s: String, i: Int): String {
+  if i >= s.size {
+    return "empty"
+  }
+  "byte ${s[i]} at ${i}"
+}
+
+// The client's request checks (Stage 29 W-FIX1h, O665): the method, the
+// URL's target and each header were written into the request as given,
+// so CR LF in any of them added request lines or a second request
+// (request splitting). The rules are Response.header's: a method and a
+// header name are tokens, a header value holds no control character but
+// tab; and a URL holds no control character and no space. A request
+// that breaks one is not sent: the call returns an HttpError naming the
+// part and the byte, as for the client's other refusals.
+fn request_refusal(method: String, url: String, headers: Array(Header)): HttpError? {
+  token_rule = "letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)"
+  m = httpc.avant_http_token_bad(method)
+  if m >= 0 {
+    return HttpError.new("invalid request method (${bad_byte(method, m)}): a method is a token: ${token_rule}")
+  }
+  if refused = url_refusal(url) {
+    return refused
+  }
+  i = 0
+  while i < headers.size {
+    h = headers[i]
+    n = httpc.avant_http_token_bad(h.name)
+    if n >= 0 {
+      return HttpError.new("invalid request header name (header ${i}, ${bad_byte(h.name, n)}): a header name is ${token_rule}")
+    }
+    v = httpc.avant_http_value_bad(h.value)
+    if v >= 0 {
+      return HttpError.new("invalid request header value of ${h.name} (${bad_byte(h.value, v)}): a header value holds no CR, LF or other control character but tab (RFC 9110)")
+    }
+    i += 1
+  }
+  nil
+}
+
+fn url_refusal(url: String): HttpError? {
+  u = httpc.avant_http_url_bad(url)
+  if u >= 0 {
+    return HttpError.new("invalid URL (${bad_byte(url, u)}): a URL holds no space or control character (RFC 3986)")
+  }
+  nil
+}
+
 // One exchange, no redirects. `deadline` is a reading of `now_ms()`:
 // the exchange gets what is left until then when it starts.
 fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Header), deadline: Int): Response | HttpError {
+  if refused = request_refusal(method, url, headers) {
+    return refused
+  }
   if starts_with(url, "https://") {
     return HttpError.new("https is not supported until the TLS wave")
   }
@@ -850,11 +910,17 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     buf.push_str(p.authority)
     buf.push_str("\r\n")
     i = 0
+    // Content-Length and Connection are the client's (the request's
+    // length is its body's, and it closes after one exchange): a second
+    // Content-Length line from the caller was a second reading of where
+    // the body ends (Stage 29 W-FIX1h), as Response.header skips them.
     while i < headers.size {
-      buf.push_str(headers[i].name)
-      buf.push_str(": ")
-      buf.push_str(headers[i].value)
-      buf.push_str("\r\n")
+      if !is_managed_header(headers[i].name) {
+        buf.push_str(headers[i].name)
+        buf.push_str(": ")
+        buf.push_str(headers[i].value)
+        buf.push_str("\r\n")
+      }
       i += 1
     }
     buf.push_str("Content-Length: ${body.size}\r\nConnection: close\r\n\r\n")
@@ -1034,6 +1100,10 @@ pub class Ws {
     }
     if !starts_with(url, "ws://") {
       return HttpError.new("only ws:// URLs are supported")
+    }
+    // The handshake's request line and Host are the URL's (O665).
+    if refused = url_refusal(url) {
+      return refused
     }
     parsed = http_parse_url("http://${str_slice(url, 5, url.size)}")
     if p = parsed {

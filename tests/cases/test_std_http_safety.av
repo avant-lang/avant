@@ -24,6 +24,11 @@ import std.http
 // client's handshake: one longer than 2048 bytes, and one the socket
 // takes in part (Stage 29 W-FIX1g, O571). And the WebSocket client's
 // deadlines under a step of the wall clock (Stage 29 W-FIX1g, O572).
+// And the client's request checks (Stage 29 W-FIX1h, O665); a response
+// literal and a status outside 100-599 (O661, D369); a response with
+// two Content-Length values (O664); interim 1xx answers (O663); a Host
+// value that is not host[:port] (O660); the write paths past the piece
+// (O662).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -608,7 +613,8 @@ fn header_split_cases(c: Checks, root: String) {
     c.eq_int(code, 0, "the header-split fixture compiles")
     value_rule = "a header value holds no CR, LF or other control character but tab (RFC 9110)"
     name_rule = "is not a token: a header name is letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)"
-    kinds = ["crlf", "lf", "cr", "answer", "nul", "del", "name-crlf", "name-space", "name-colon", "name-empty", "ok"]
+    status_rule = "is not 100 to 599 (RFC 9110)"
+    kinds = ["crlf", "lf", "cr", "answer", "nul", "del", "name-crlf", "name-space", "name-colon", "name-empty", "status-99", "status-600", "status-neg", "status-big", "ok", "status-100", "status-599"]
     lines = [
       "avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
       "avant runtime: Response.header value of X-A holds a control character (byte 10 at 1): ${value_rule}\n",
@@ -620,6 +626,12 @@ fn header_split_cases(c: Checks, root: String) {
       "avant runtime: Response.header name \"X A\" ${name_rule}\n",
       "avant runtime: Response.header name \"X-A:\" ${name_rule}\n",
       "avant runtime: Response.header name \"\" ${name_rule}\n",
+      "avant runtime: a response's status 99 ${status_rule}\n",
+      "avant runtime: a response's status 600 ${status_rule}\n",
+      "avant runtime: a response's status -200 ${status_rule}\n",
+      "avant runtime: a response's status 99999999999 ${status_rule}\n",
+      "",
+      "",
       ""
     ]
     for i in 0..kinds.size {
@@ -645,14 +657,56 @@ fn header_split_cases(c: Checks, root: String) {
       if kind == "ok" {
         c.eq_int(status, 0, "Response.header ${kind}: answered, status 0")
         c.eq_str(wire, "header_split=1 answer(s) Content-Type: text/plain; charset=utf-8|X-Ok!#$%&'*+-.^_`|~: a\\tb \"c\" \\xc3\\xa9|Content-Length: 1|Connection: close", "Response.header ${kind}: the header on the wire as given")
+      } else if kind == "status-100" || kind == "status-599" {
+        // The ends of the range are answered (O661, D369).
+        c.eq_int(status, 0, "a response's ${kind}: answered, status 0")
+        c.eq_str(wire, "header_split=1 answer(s) Content-Type: text/plain; charset=utf-8|Content-Length: 1|Connection: close", "a response's ${kind}: on the wire")
       } else {
-        c.eq_int(status, 1, "Response.header ${kind}: status 1")
-        c.eq_str(text, lines[i], "Response.header ${kind}: the trap's line")
-        c.eq_str(wire, "header_split=nothing", "Response.header ${kind}: nothing on the wire")
+        what = "Response.header ${kind}"
+        if kind.size > 7 && str_slice(kind, 0, 7) == "status-" {
+          what = "a response's ${kind}"
+        }
+        c.eq_int(status, 1, "${what}: status 1")
+        c.eq_str(text, lines[i], "${what}: the trap's line")
+        c.eq_str(wire, "header_split=nothing", "${what}: nothing on the wire")
       }
     }
   } else {
     c.expect(false, "AVANT_COMPILER is set for the header-split test")
+  }
+}
+
+// O661 (Stage 29 W-FIX1h, D369): `Response.head` was a public field,
+// so a `Response { ... }` literal wrote any head bytes past
+// Response.header's check (CR LF among them). The field is private: a
+// literal outside std.http does not compile, and neither does reading
+// the field; a response built by Response.text and `header` does.
+fn response_literal_cases(c: Checks) {
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    srcs = [
+      "import std.http\n\nfn main {\n  r = Response { status: 200, headers: Response.text(\"x\").headers, head: \"X: 1\\r\\n\\r\\nforged\", body: \"x\".bytes }\n  puts(r.status)\n}\n",
+      "import std.http\n\nfn main {\n  puts(Response.text(\"x\").head)\n}\n",
+      "import std.http\n\nfn main {\n  r = Response.text(\"x\", 201).header(\"X-A\", \"1\")\n  puts(r.status)\n}\n"
+    ]
+    names = ["literal", "read", "built"]
+    for i in 0..srcs.size {
+      src = "${scratch()}/http-response-${stamp}-${names[i]}.av"
+      if wrote = file_write(src, srcs[i]) {
+      }
+      bin = "${scratch()}/http-response-${stamp}-${names[i]}.bin"
+      clog = "${scratch()}/http-response-${stamp}-${names[i]}.clog"
+      code = compile_av(compiler, src, bin, clog)
+      text = file_read(clog) ?? ""
+      if names[i] == "built" {
+        c.eq_int(code, 0, "a response built by Response.text and header compiles")
+      } else {
+        c.expect(code != 0, "Response.head outside std.http (${names[i]}): a compile error")
+        c.expect(str_has(text, "field head of Response is private to module std.http"), "Response.head outside std.http (${names[i]}): the field is private (${text})")
+      }
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER is set for the Response literal test")
   }
 }
 
@@ -720,6 +774,149 @@ fn client_framing_cases(c: Checks, root: String) {
   if resp = Http.get("http://127.0.0.1:${port}/__stop", true, 4000) {
   }
   c.eq_int(server.join, 0, "the keep-open server ends")
+}
+
+// The result of one client call as a line: "STATUS BODY" or the
+// HttpError's message.
+fn outcome(r: Response | HttpError): String {
+  if e = http_failure(r) {
+    return e.message
+  }
+  if resp = r {
+    return "${resp.status} ${String.from_utf8(resp.body) ?? "?"}"
+  }
+  "?"
+}
+
+// O665 (Stage 29 W-FIX1h): the client wrote the method, the URL's
+// target and each header into the request as given, so CR LF in any of
+// them added request lines (the server here would have echoed an
+// X-Injected line) or a second request. A request that breaks
+// Response.header's rules (a method and a header name are tokens, a
+// value holds no control character but tab) or holds a space or a
+// control character in its URL is not sent: the call returns an
+// HttpError naming the part and the byte. A valid request is sent as
+// given, a tab in a value included; a caller's Content-Length and
+// Connection are the client's own and are skipped, as Response.header
+// skips them (a second Content-Length was a second reading of where
+// the body ends).
+fn client_request_cases(c: Checks, root: String) {
+  stamp = now_ms()
+  port_file = "${scratch()}/http-request-${stamp}.port"
+  log = "${scratch()}/http-request-${stamp}.log"
+  server = spawn {
+    args: Array(String) = []
+    args.push("${root}/tests/fixtures/http/keep_server.py")
+    args.push(port_file)
+    args.push("0")
+    process_run_out("/usr/bin/python3", args, log) ?? -1
+  }
+  port = wait_port(port_file)
+  c.expect(port > 0, "the echo server is listening")
+  base = "http://127.0.0.1:${port}"
+  token_rule = "letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)"
+  value_rule = "a header value holds no CR, LF or other control character but tab (RFC 9110)"
+  url_rule = "a URL holds no space or control character (RFC 3986)"
+  none: Array(Header) = []
+  methods = ["GET\r\nX-Injected: 1\r\nX: GET", "GET /echo HTTP/1.1", "", "G${chr(127)}T"]
+  method_wants = [
+    "invalid request method (byte 13 at 3): a method is a token: ${token_rule}",
+    "invalid request method (byte 32 at 3): a method is a token: ${token_rule}",
+    "invalid request method (empty): a method is a token: ${token_rule}",
+    "invalid request method (byte 127 at 1): a method is a token: ${token_rule}"
+  ]
+  for i in 0..methods.size {
+    c.eq_str(outcome(Http.request(methods[i], "${base}/echo", "".bytes, none, false, 4000)), method_wants[i], "a request method that is not a token is refused (${i})")
+  }
+  at = base.size + 5
+  tails = ["/echo\r\nX-Injected: 1", "/echo\nX-Injected: 1", "/echo x", "/echo?a=\tb", "/echo#\r\n"]
+  tail_bytes = [13, 10, 32, 9, 13]
+  tail_at = [at, at, at, at + 3, at + 1]
+  for i in 0..tails.size {
+    c.eq_str(outcome(Http.get("${base}${tails[i]}", false, 4000)), "invalid URL (byte ${tail_bytes[i]} at ${tail_at[i]}): ${url_rule}", "a URL with a control character or a space is refused (${i})")
+  }
+  c.eq_str(outcome(Http.get("http://127.0.0.1\r\nX-Injected: 1:${port}/echo", false, 4000)), "invalid URL (byte 13 at 16): ${url_rule}", "an authority with CR LF is refused")
+  names = ["X-Injected: 1\r\nX-A", "X A", "", "X-${chr(195)}${chr(169)}"]
+  name_wants = ["byte 58 at 10", "byte 32 at 1", "empty", "byte 195 at 2"]
+  for i in 0..names.size {
+    hs: Array(Header) = []
+    hs.push(Header { name: "X-Ok", value: "1" })
+    hs.push(Header { name: names[i], value: "1" })
+    c.eq_str(outcome(Http.request("GET", "${base}/echo", "".bytes, hs, false, 4000)), "invalid request header name (header 1, ${name_wants[i]}): a header name is ${token_rule}", "a header name that is not a token is refused (${i})")
+  }
+  values = ["1\r\nX-Injected: 1", "1\nX-Injected: 1", "1\r", "a${chr(0)}b", chr(127), "a${chr(27)}b"]
+  value_wants = ["byte 13 at 1", "byte 10 at 1", "byte 13 at 1", "byte 0 at 1", "byte 127 at 0", "byte 27 at 1"]
+  for i in 0..values.size {
+    hs: Array(Header) = []
+    hs.push(Header { name: "X-A", value: values[i] })
+    c.eq_str(outcome(Http.request("GET", "${base}/echo", "".bytes, hs, false, 4000)), "invalid request header value of X-A (${value_wants[i]}): ${value_rule}", "a header value with a control character is refused (${i})")
+  }
+  if e = ws_failure(Ws.connect("ws://127.0.0.1:${port}/echo\r\nX-Injected: 1", 4000)) {
+    c.eq_str(e.message, "invalid URL (byte 13 at ${base.size + 3}): ${url_rule}", "Ws.connect refuses a URL with CR LF")
+  } else {
+    c.expect(false, "Ws.connect refuses a URL with CR LF")
+  }
+  ok: Array(Header) = []
+  ok.push(Header { name: "X-Ok!#$%&'*+-.^_`|~", value: "a\tb \"c\" ${chr(195)}${chr(169)}" })
+  ok.push(Header { name: "content-length", value: "0" })
+  ok.push(Header { name: "Connection", value: "keep-alive" })
+  c.eq_str(outcome(Http.request("POST", "${base}/echo", "abc".bytes, ok, false, 4000)), "200 POST /echo HTTP/1.1|Host: 127.0.0.1:${port}|X-Ok!#$%&'*+-.^_`|~: a\tb \"c\" ${chr(195)}${chr(169)}|Content-Length: 3|Connection: close", "a valid request is sent as given, without the caller's Content-Length and Connection")
+  c.eq_str(outcome(Http.get("${base}/echo?q=%41~", false, 4000)), "200 GET /echo?q=%41~ HTTP/1.1|Host: 127.0.0.1:${port}|Content-Length: 0|Connection: close", "a valid target is sent as given")
+  if resp = Http.get("${base}/__stop", true, 4000) {
+  }
+  c.eq_int(server.join, 0, "the echo server ends")
+}
+
+// How the client reads a response (Stage 29 W-FIX1h): GET each path of
+// tests/fixtures/http/keep_server.py (which closes after each answer
+// here) and compare "STATUS BODY", or the error, with its want (a want
+// ending in " from" gets the server's authority).
+fn client_response_round(c: Checks, root: String, what: String, paths: Array(String), wants: Array(String)) {
+  stamp = now_ms()
+  port_file = "${scratch()}/http-response-${stamp}.port"
+  log = "${scratch()}/http-response-${stamp}.log"
+  server = spawn {
+    args: Array(String) = []
+    args.push("${root}/tests/fixtures/http/keep_server.py")
+    args.push(port_file)
+    args.push("0")
+    process_run_out("/usr/bin/python3", args, log) ?? -1
+  }
+  port = wait_port(port_file)
+  c.expect(port > 0, "the answering server is listening (${what})")
+  for i in 0..paths.size {
+    want = wants[i]
+    if want.size > 5 && str_slice(want, want.size - 5, want.size) == " from" {
+      want = "${want} 127.0.0.1:${port}"
+    }
+    c.eq_str(outcome(Http.get("http://127.0.0.1:${port}${paths[i]}", false, 4000)), want, "${what}: ${paths[i]}")
+  }
+  if resp = Http.get("http://127.0.0.1:${port}/__stop", true, 4000) {
+  }
+  c.eq_int(server.join, 0, "the answering server ends (${what})")
+}
+
+// O664 (Stage 29 W-FIX1h): a response with two Content-Length values
+// was read by the first (RFC 9112 6.3: the user agent discards it, a
+// proxy may have read the other). Every repeat is refused, identical
+// or not, as a list in one line or as a folded line, the server's rule
+// for requests (D364, O522); one value is read as before.
+fn client_length_cases(c: Checks, root: String) {
+  invalid = "invalid HTTP response body from"
+  paths = ["/cl-differ", "/cl-differ-reversed", "/cl-same", "/cl-list", "/cl-folded", "/cl-bad", "/cl"]
+  wants = [invalid, invalid, invalid, invalid, invalid, invalid, "200 hello"]
+  client_response_round(c, root, "a response with more than one Content-Length is refused", paths, wants)
+}
+
+// O663 (Stage 29 W-FIX1h): an interim answer (100 Continue, 102, 103
+// Early Hints) before the final one was returned as the response, the
+// final answer's bytes as its body. The client reads past every interim
+// answer (RFC 9110 15.2), also when one arrives in pieces; an interim
+// answer and then the close is no response; a 101 is the answer still.
+fn client_interim_cases(c: Checks, root: String) {
+  paths = ["/100", "/103", "/1xx-many", "/1xx-split", "/1xx-only", "/101"]
+  wants = ["200 hello", "200 hello", "201 hello", "200 hello", "invalid HTTP response from", "101 "]
+  client_response_round(c, root, "interim answers are read past", paths, wants)
 }
 
 class BigSent {
@@ -795,6 +992,80 @@ fn ws_big_round(c: Checks, root: String, chunk: String, size: Int) {
 fn ws_big_cases(c: Checks, root: String) {
   ws_big_round(c, root, "", 8388608)
   ws_big_round(c, root, "65536", 1048581)
+}
+
+// O662 (Stage 29 W-FIX1h): three write paths took a length past
+// INT_MAX in an int or 32 bits: an answer's two parts handed to
+// us_socket_write2 (which adds them in an int), the answer's
+// Content-Length, and the WebSocket client's frame rest. The suite
+// cannot afford 2 GiB; under AVANT_HTTP_WS_WRITE_CHUNK=65536 (read by
+// the server at listen time and by each client call) the paths a
+// length past the piece (1 GiB) takes run with one of 1 MiB: the
+// answer written a piece at a time after its head, the client's
+// request and the WebSocket client's message a piece at a time. Each
+// arrives whole. (This shows the new paths; the defects themselves
+// needed 2 GiB, and the record has them at that size.)
+fn write_piece_cases(c: Checks) {
+  n = 1048581
+  b = buf_new()
+  for i in 0..n {
+    b.push_byte(97 + i % 26)
+  }
+  big = b.to_s
+  set_env("AVANT_HTTP_WS_WRITE_CHUNK", "65536")
+  listened = Http.listen(0, "127.0.0.1", 4194304, 1, 4194304)
+  if opened = listened {
+    server = opened
+    server.get("/big") { |req|
+      Response.text(big)
+    }
+    server.post("/size") { |req|
+      Response.text("${req.body.size} ${(String.from_utf8(req.body) ?? "?") == big}")
+    }
+    server.websocket("/ws") { |conn, msg|
+      _ = conn.send_text("${msg.body.size} ${(msg.text ?? "") == big}")
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    out = Channel(String).new(4)
+    task = spawn {
+      got = "no answer"
+      if resp = Http.get("http://127.0.0.1:${port}/big", false, 10000) {
+        got = "${resp.status} ${resp.body.size} ${(String.from_utf8(resp.body) ?? "") == big}"
+      }
+      out.send(got)
+      hs: Array(Header) = []
+      out.send(outcome(Http.request("POST", "http://127.0.0.1:${port}/size", big.bytes, hs, false, 10000)))
+      ws = "no connection"
+      if conn = Ws.connect("ws://127.0.0.1:${port}/ws", 10000) {
+        ws = "not sent"
+        if conn.send_text(big) {
+          ws = "no answer"
+          if msg = conn.recv(10000) {
+            ws = msg.text ?? "binary"
+          }
+        }
+        conn.close
+      }
+      out.send(ws)
+      stop(port)
+      0
+    }
+    server.serve
+    set_env("AVANT_HTTP_WS_WRITE_CHUNK", "")
+    c.eq_int(task.join, 0, "write-piece task")
+    want: Array(String) = []
+    want.push("200 ${n} true")
+    want.push("200 ${n} true")
+    want.push("${n} true")
+    expect_lines(c, out, want, "an answer, a request and a WebSocket client message past the write piece arrive whole:")
+  } else {
+    set_env("AVANT_HTTP_WS_WRITE_CHUNK", "")
+    c.expect(false, "listen for the write-piece test")
+  }
 }
 
 // Ws.connect with a target of `n` bytes against
@@ -958,9 +1229,10 @@ fn test_std_http_safety(c: Checks, root: String) {
     // O472 (H3): a request without Host, or with two, was answered (and
     // a request behind it too). RFC 9112 3.2: 400 for an HTTP/1.1
     // request without Host and for any request with more than one; the
-    // connection is closed.
+    // connection is closed. And for a value that is not uri-host
+    // [ ":" port ] (Stage 29 W-FIX1h, O660).
     hwant: Array(String) = []
-    hwant.push("hosts=none:400,two:400,same:400,case:400,folded:400,ws-none:400,1.0-two:400,1.0-none:200,empty:200,one:200")
+    hwant.push("hosts=none:400,two:400,same:400,case:400,folded:400,ws-none:400,1.0-two:400,1.0-none:200,empty:200,bad-space:400,bad-at:400,bad-path:400,bad-query:400,bad-colons:400,bad-port-alpha:400,bad-pct-bad:400,bad-pct-hex:400,bad-v6-open:400,bad-v6-empty:400,bad-v6-tail:400,bad-v6-space:400,bad-quote:400,bad-high:400,ok-name:200,ok-port:200,ok-v4:200,ok-v6:200,ok-v6-bare:200,ok-pct:200,ok-subdelims:200,ok-port-empty:200,one:200")
     expect_lines(c, out, hwant, "a request without Host, or with two, is refused:")
   } else {
     c.expect(false, "listen for the close-unread test")
@@ -1097,8 +1369,13 @@ fn main: Int {
   ws_route_cases(c)
   route_serving_cases(c, avant_test_root())
   header_split_cases(c, avant_test_root())
+  response_literal_cases(c)
   client_framing_cases(c, avant_test_root())
+  client_request_cases(c, avant_test_root())
+  client_length_cases(c, avant_test_root())
+  client_interim_cases(c, avant_test_root())
   ws_big_cases(c, avant_test_root())
+  write_piece_cases(c)
   ws_handshake_cases(c, avant_test_root())
   ws_deadline_cases(c, avant_test_root())
   c.finish

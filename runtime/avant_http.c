@@ -378,13 +378,16 @@ static unsigned int http_idle_timeout(void) {
   return HTTP_IDLE_TIMEOUT_S;
 }
 
-/* A WebSocket write hands the socket at most 1 GiB at a time (Stage 29
- * W-FIX1g, O519): uSockets takes an int length. AVANT_HTTP_WS_WRITE_CHUNK
- * is an internal variable for the suite, not a user setting: a server
- * created while it holds a number of bytes from 4096 to 1073741824 hands
- * the socket at most that much, so tests/cases/test_std_http_safety.av
- * runs the path a message of 1 GiB or more takes with one of 1 MiB. It
- * can only shrink the piece; any other value is ignored. */
+/* A write hands the socket at most 1 GiB at a time (Stage 29 W-FIX1g,
+ * O519, for the server's WebSocket messages; W-FIX1h, O662, for its HTTP
+ * answers, the client's request and the WebSocket client's frames):
+ * uSockets takes an int length. AVANT_HTTP_WS_WRITE_CHUNK is an internal
+ * variable for the suite, not a user setting: a server created, or a
+ * client call or connection begun, while it holds a number of bytes from
+ * 4096 to 1073741824 hands the socket at most that much, so
+ * tests/cases/test_std_http_safety.av runs the paths a length of 1 GiB
+ * or more takes with one of 1 MiB. It can only shrink the piece; any
+ * other value is ignored. */
 #define WS_WRITE_CHUNK 1073741824
 static size_t http_ws_write_chunk(void) {
   const char *v = getenv("AVANT_HTTP_WS_WRITE_CHUNK");
@@ -442,6 +445,24 @@ static size_t put_u32(char *dst, uint32_t v) {
   return n;
 }
 
+/* A length in decimal, all 64 bits of it (Stage 29 W-FIX1h, O662): the
+ * Content-Length was written through put_u32, so a body of 4 GiB or more
+ * would have been announced as its length modulo 2^32; the String cap
+ * (2^31 - 1 bytes) was all that kept it from happening. */
+static size_t put_size(char *dst, size_t v) {
+  char tmp[20];
+  size_t i = 0;
+  size_t n = 0;
+  do {
+    tmp[i++] = (char)('0' + (v % 10));
+    v /= 10;
+  } while (v > 0);
+  while (i > 0) {
+    dst[n++] = tmp[--i];
+  }
+  return n;
+}
+
 static size_t put_str(char *dst, const char *src, size_t len) {
   memcpy(dst, src, len);
   return len;
@@ -456,18 +477,21 @@ static void conn_poll(struct us_socket_t *s, int events) {
                  us_socket_context_loop(0, us_socket_context(0, s)), events);
 }
 
-/* Writes p[*off .. len) to the socket, in pieces of at most 1 GiB (the
- * socket takes an int length), and advances *off by what the socket
- * took. Returns 1 when everything has gone and 0 when the socket took
+/* Writes p[*off .. len) to the socket, in pieces of at most `piece`
+ * bytes (1 GiB, or less under AVANT_HTTP_WS_WRITE_CHUNK: the socket
+ * takes an int length), and advances *off by what the socket took.
+ * Returns 1 when everything has gone and 0 when the socket took
  * only a part: us_socket_write has then asked for the socket's writable
  * event, and the caller's on_writable handler calls this again with the
- * same offset. The server's output queue (conn_flush) and the client's
- * request (fetch_send; Stage 29 W-FIX1d, O513) are both sent by it. */
+ * same offset. The server's output queue (conn_flush), an answer past
+ * the piece (conn_send, O662), the client's request (fetch_send; Stage
+ * 29 W-FIX1d, O513) and the WebSocket client's handshake (O571) are sent
+ * by it. */
 static int sock_write_rest(struct us_socket_t *s, const char *p, size_t len,
-                           size_t *off) {
+                           size_t *off, size_t piece) {
   while (*off < len) {
     size_t rem = len - *off;
-    int chunk = rem > 1073741824 ? 1073741824 : (int)rem;
+    int chunk = rem > piece ? (int)piece : (int)rem;
     int written = us_socket_write(0, s, p + *off, chunk, 0);
     if (written > 0) {
       *off += (size_t)written;
@@ -520,8 +544,25 @@ static void conn_send(Conn *conn, struct us_socket_t *s, const char *a,
     return;
   }
   if (!conn_out_pending(conn)) {
-    int w = us_socket_write2(0, s, a, (int)an, b, (int)bn);
-    written = w > 0 ? (size_t)w : 0;
+    size_t piece = conn->srv->ws_write_chunk;
+    if (an + bn <= piece) {
+      int w = us_socket_write2(0, s, a, (int)an, b, (int)bn);
+      written = w > 0 ? (size_t)w : 0;
+    } else {
+      /* Past the piece (1 GiB) the two parts go one after the other, a
+       * piece at a time (Stage 29 W-FIX1h, O662): us_socket_write2 takes
+       * int lengths and adds them in an int, so an answer of 2 GiB or
+       * more overflowed inside the vendored code (undefined behaviour
+       * that happened to work on this build). */
+      size_t off = 0;
+      if (sock_write_rest(s, a, an, &off, piece)) {
+        size_t boff = 0;
+        (void)sock_write_rest(s, b, bn, &boff, piece);
+        written = an + boff;
+      } else {
+        written = off;
+      }
+    }
     if (written >= an + bn) {
       return;
     }
@@ -577,7 +618,7 @@ static void write_response(Conn *conn, struct us_socket_t *s, int32_t status,
   }
   if (n < sizeof(prefix)) {
     n += put_str(prefix + n, "Content-Length: ", 16);
-    n += put_u32(prefix + n, (uint32_t)body_len);
+    n += put_size(prefix + n, body_len);
     n += put_str(prefix + n, "\r\n", 2);
     if (conn_header) {
       n += put_str(prefix + n, "Connection: ", 12);
@@ -674,10 +715,24 @@ char *avant_http_req_headers(void *reqp) {
                               raw_len);
 }
 
+/* A response's status outside 100-599 (Stage 29 W-FIX1h, O661, D369):
+ * written as it came, 99999 or -1 gave a status line no client can read
+ * (RFC 9110 15: a status code is three digits, its first 1 to 5). The
+ * program's error, trapped in the runtime's form before any byte of the
+ * answer is written. */
+__attribute__((noreturn, cold)) static void http_status_trap(avant_int status) {
+  fflush(stdout);
+  fprintf(stderr, "avant runtime: a response's status %lld is not 100 to 599 (RFC 9110)\n", (long long)status);
+  exit(1);
+}
+
 void avant_http_req_respond(void *reqp, avant_int status, const char *head,
                             const char *body) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
   const char *conn_header = NULL;
+  if (__builtin_expect(status < 100 || status > 599, 0)) {
+    http_status_trap(status);
+  }
   /* The head and body pointers name Avant heap objects held only in
    * C registers here; nothing below is a safepoint (no allocation, no
    * native wait), so no collection runs on any thread while the response
@@ -688,7 +743,7 @@ void avant_http_req_respond(void *reqp, avant_int status, const char *head,
   } else if (req->minor_version == 0) {
     conn_header = "keep-alive";
   }
-  write_response(req->conn, req->sock, avant_c_int(status), head, body,
+  write_response(req->conn, req->sock, (int32_t)status, head, body,
                  conn_header);
 }
 
@@ -739,6 +794,34 @@ static int parse_content_length(const char *p, size_t n, long *out) {
   }
   *out = v;
   return 1;
+}
+
+/* A received response's Content-Length (Stage 29 W-FIX1h, O664): 0
+ * when it has none, 1 with its value in *out, -1 when its framing is
+ * invalid: more than one Content-Length line (identical or not), a list
+ * in one line, one continued on a folded line, or a value that is not a
+ * number. The client read the first line only, so a response with two
+ * values was read by one of them where a proxy may read the other (RFC
+ * 9112 6.3: the user agent closes the connection and discards such a
+ * response). The rule is the server's for requests (D364, O522). */
+static int resp_content_length(struct phr_header *headers, size_t count,
+                               long *out) {
+  size_t i;
+  int seen = 0;
+  for (i = 0; i < count; i++) {
+    long one = 0;
+    if (!headers[i].name ||
+        !ascii_ieq(headers[i].name, headers[i].name_len, "Content-Length", 14)) {
+      continue;
+    }
+    if (seen || (i + 1 < count && !headers[i + 1].name) ||
+        !parse_content_length(headers[i].value, headers[i].value_len, &one)) {
+      return -1;
+    }
+    *out = one;
+    seen = 1;
+  }
+  return seen;
 }
 
 /* ---- WebSocket helpers (RFC 6455) ---- */
@@ -1694,6 +1777,85 @@ avant_int avant_http_req_ws_upgrade(void *reqp, avant_int route) {
   return 1;
 }
 
+/* RFC 3986's unreserved and sub-delims, the bytes of a reg-name (with
+ * pct-encoded triplets) and of an IPv6 or IPvFuture literal's inside
+ * (with ':'): one table, so the check is a load per byte. */
+static const unsigned char http_host_byte[256] = {
+  ['a'] = 1, ['b'] = 1, ['c'] = 1, ['d'] = 1, ['e'] = 1, ['f'] = 1, ['g'] = 1,
+  ['h'] = 1, ['i'] = 1, ['j'] = 1, ['k'] = 1, ['l'] = 1, ['m'] = 1, ['n'] = 1,
+  ['o'] = 1, ['p'] = 1, ['q'] = 1, ['r'] = 1, ['s'] = 1, ['t'] = 1, ['u'] = 1,
+  ['v'] = 1, ['w'] = 1, ['x'] = 1, ['y'] = 1, ['z'] = 1,
+  ['A'] = 1, ['B'] = 1, ['C'] = 1, ['D'] = 1, ['E'] = 1, ['F'] = 1, ['G'] = 1,
+  ['H'] = 1, ['I'] = 1, ['J'] = 1, ['K'] = 1, ['L'] = 1, ['M'] = 1, ['N'] = 1,
+  ['O'] = 1, ['P'] = 1, ['Q'] = 1, ['R'] = 1, ['S'] = 1, ['T'] = 1, ['U'] = 1,
+  ['V'] = 1, ['W'] = 1, ['X'] = 1, ['Y'] = 1, ['Z'] = 1,
+  ['0'] = 1, ['1'] = 1, ['2'] = 1, ['3'] = 1, ['4'] = 1, ['5'] = 1, ['6'] = 1,
+  ['7'] = 1, ['8'] = 1, ['9'] = 1,
+  ['-'] = 1, ['.'] = 1, ['_'] = 1, ['~'] = 1,
+  ['!'] = 1, ['$'] = 1, ['&'] = 1, ['\''] = 1, ['('] = 1, [')'] = 1, ['*'] = 1,
+  ['+'] = 1, [','] = 1, [';'] = 1, ['='] = 1
+};
+
+static int http_hex(unsigned char ch) {
+  return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') ||
+         (ch >= 'A' && ch <= 'F');
+}
+
+/* Whether a Host value is uri-host [ ":" port ] (RFC 9112 3.2, RFC
+ * 3986 3.2.2 and 3.2.3; Stage 29 W-FIX1h, O660): a reg-name (an IPv4
+ * address is one) of unreserved, sub-delims and pct-encoded bytes, or
+ * an IP literal in brackets, then an optional ':' and digits. Empty is
+ * valid (a target without an authority). The server checked only that
+ * there was one Host line: a value with a space, an '@', a path or a
+ * second ':' was accepted, and a router keyed on Host, or a proxy in
+ * front, could read another host in it. */
+static int http_host_valid(const char *p, size_t n) {
+  size_t i = 0;
+  if (n > 0 && p[0] == '[') {
+    for (i = 1; i < n && p[i] != ']'; i++) {
+      if (!http_host_byte[(unsigned char)p[i]] && p[i] != ':') {
+        return 0;
+      }
+    }
+    if (i == n || i == 1) {
+      return 0;
+    }
+    i++;
+  } else {
+    /* The table first: a name's byte costs one load and one test (on
+     * the hello path's Host, "127.0.0.1:18301", about 20 instructions
+     * fewer per request than testing ':' and '%' first; the check as a
+     * whole is about 120; records/2026-11-14-s29-wfix1h, cost). */
+    while (i < n) {
+      unsigned char ch = (unsigned char)p[i];
+      if (http_host_byte[ch]) {
+        i++;
+        continue;
+      }
+      if (ch == ':') {
+        break;
+      }
+      if (ch != '%' || i + 2 >= n || !http_hex((unsigned char)p[i + 1]) ||
+          !http_hex((unsigned char)p[i + 2])) {
+        return 0;
+      }
+      i += 3;
+    }
+  }
+  if (i == n) {
+    return 1;
+  }
+  if (p[i] != ':') {
+    return 0;
+  }
+  for (i++; i < n; i++) {
+    if (p[i] < '0' || p[i] > '9') {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 static void conn_process(Conn *conn, struct us_socket_t *s) {
   AvantHttpServer *srv = conn->srv;
 
@@ -1752,7 +1914,8 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
      * The same pass counts the Host lines (Stage 29 W-FIX1g, O472, H3):
      * RFC 9112 3.2 has a server answer 400 to an HTTP/1.1 request
      * without one and to any request with two (identical or not), and a
-     * Host continued on a folded line is an invalid value; a request
+     * Host continued on a folded line is an invalid value, as is one
+     * that is not uri-host [ ":" port ] (Stage 29 W-FIX1h, O660); a request
      * that names two hosts is read one way here and maybe the other way
      * by a proxy or a virtual-host router in front. */
     {
@@ -1764,7 +1927,8 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
           continue;
         }
         if (ascii_ieq(headers[hi].name, headers[hi].name_len, "Host", 4)) {
-          if (++hosts > 1 || (hi + 1 < num_headers && !headers[hi + 1].name)) {
+          if (++hosts > 1 || (hi + 1 < num_headers && !headers[hi + 1].name) ||
+              !http_host_valid(headers[hi].value, headers[hi].value_len)) {
             send_error(conn, s, 400);
             return;
           }
@@ -1916,7 +2080,8 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
 static void conn_flush(Conn *conn, struct us_socket_t *s) {
   if (conn_out_pending(conn)) {
     size_t before = conn->out_off;
-    int done = sock_write_rest(s, conn->out, conn->out_len, &conn->out_off);
+    int done = sock_write_rest(s, conn->out, conn->out_len, &conn->out_off,
+                               conn->srv->ws_write_chunk);
     if (conn->out_off > before) {
       /* The client took queued bytes: it is not stalled (P192). */
       us_socket_timeout(0, s, conn->srv->idle_timeout);
@@ -2504,6 +2669,31 @@ static int http_tchar(unsigned char ch) {
          (ch >= '0' && ch <= '9') || (ch != 0 && strchr("!#$%&'*+-.^_`|~", ch));
 }
 
+/* The index of the first byte of s[0..n) that is not a token character,
+ * n when there is none: a token is that and not empty. */
+static size_t http_token_end(const char *s, size_t n) {
+  size_t i;
+  for (i = 0; i < n; i++) {
+    if (!http_tchar((unsigned char)s[i])) {
+      break;
+    }
+  }
+  return i;
+}
+
+/* The index of the first control byte other than tab (DEL among them)
+ * of s[0..n), n when there is none: what a field value may not hold. */
+static size_t http_value_end(const char *s, size_t n) {
+  size_t i;
+  for (i = 0; i < n; i++) {
+    unsigned char ch = (unsigned char)s[i];
+    if ((ch < 0x20 && ch != '\t') || ch == 0x7f) {
+      break;
+    }
+  }
+  return i;
+}
+
 /* Response.header's check (Stage 29 W-FIX1g, O518). The name and the
  * value were appended to the answer's head as they came, so a value
  * holding CR LF (a redirect target or a cookie built from request data)
@@ -2517,28 +2707,56 @@ void avant_http_header_check(const char *name, const char *value) {
   size_t nn = avant_str_n(name);
   size_t vn = avant_str_n(value);
   size_t i;
-  for (i = 0; i < nn; i++) {
-    if (!http_tchar((unsigned char)name[i])) {
-      break;
-    }
-  }
-  if (nn == 0 || i < nn) {
+  if (nn == 0 || http_token_end(name, nn) < nn) {
     fflush(stdout);
     fputs("avant runtime: Response.header name \"", stderr);
     put_escaped(name, nn);
     fputs("\" is not a token: a header name is letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)\n", stderr);
     exit(1);
   }
-  for (i = 0; i < vn; i++) {
-    unsigned char ch = (unsigned char)value[i];
-    if ((ch < 0x20 && ch != '\t') || ch == 0x7f) {
-      fflush(stdout);
-      fputs("avant runtime: Response.header value of ", stderr);
-      put_escaped(name, nn);
-      fprintf(stderr, " holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)\n", (unsigned)ch, i);
-      exit(1);
+  i = http_value_end(value, vn);
+  if (i < vn) {
+    fflush(stdout);
+    fputs("avant runtime: Response.header value of ", stderr);
+    put_escaped(name, nn);
+    fprintf(stderr, " holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)\n", (unsigned)(unsigned char)value[i], i);
+    exit(1);
+  }
+}
+
+/* The client's request checks (Stage 29 W-FIX1h, O665), the same rules
+ * as Response.header's: the method, the request target and each header
+ * were written into the request as given, so CR LF in any of them added
+ * request lines or a second request (request splitting). Each returns
+ * the index of the first byte that breaks its rule, or -1: a method
+ * and a header name are tokens (an empty one gives 0), a header value
+ * holds no control character but tab, and a URL (the request target
+ * and the authority) holds no control character and no space (RFC 3986
+ * has neither; a space would end the request line's target). The
+ * client returns its HttpError, as for its other refusals; the caller
+ * names the part and the byte. */
+avant_int avant_http_token_bad(const char *s) {
+  size_t n = avant_str_n(s);
+  size_t i = http_token_end(s, n);
+  return (n > 0 && i == n) ? -1 : (avant_int)i;
+}
+
+avant_int avant_http_value_bad(const char *s) {
+  size_t n = avant_str_n(s);
+  size_t i = http_value_end(s, n);
+  return i == n ? -1 : (avant_int)i;
+}
+
+avant_int avant_http_url_bad(const char *s) {
+  size_t n = avant_str_n(s);
+  size_t i;
+  for (i = 0; i < n; i++) {
+    unsigned char ch = (unsigned char)s[i];
+    if (ch <= 0x20 || ch == 0x7f) {
+      return (avant_int)i;
     }
   }
+  return -1;
 }
 
 avant_int avant_http_close(void *srvp) {
@@ -2598,6 +2816,7 @@ typedef struct WsClient {
   char *request; /* the handshake, malloc'd to its length */
   size_t request_len;
   size_t request_sent; /* how much of it the socket has taken */
+  size_t write_chunk; /* the most one write hands the socket (O662) */
   int want_close;
   WsClientMsg *in_head;
   WsClientMsg *in_tail;
@@ -2629,14 +2848,26 @@ static void ws_client_inbox_push(WsClient *c, int is_text, int is_close,
 
 static void ws_client_flush(WsClient *c) {
   pthread_mutex_lock(&c->mu);
+  size_t piece = c->write_chunk;
   while (c->out_head) {
     WsOut *node = c->out_head;
-    size_t remaining = node->len - node->off;
-    int written = us_socket_write(0, c->sock, node->data + node->off,
-                                  (int)remaining, 0);
-    if (written < 0) { written = 0; }
-    node->off += (size_t)written;
-    if (node->off < node->len) { break; }
+    int full = 0;
+    /* A piece at a time (Stage 29 W-FIX1h, O662): the frame's whole rest
+     * was passed as (int)remaining, negative for a frame over INT_MAX,
+     * which only Linux's send clamping made work. */
+    while (node->off < node->len) {
+      size_t remaining = node->len - node->off;
+      int want = remaining > piece ? (int)piece : (int)remaining;
+      int written = us_socket_write(0, c->sock, node->data + node->off,
+                                    want, 0);
+      if (written < 0) { written = 0; }
+      node->off += (size_t)written;
+      if (written < want) {
+        full = 1;
+        break;
+      }
+    }
+    if (full) { break; }
     c->out_head = node->next;
     if (!c->out_head) { c->out_tail = NULL; }
     free(node->data);
@@ -2841,7 +3072,8 @@ static struct us_socket_t *ws_client_on_open(struct us_socket_t *s,
    * part was cut and the server waited for the rest; the rest is now
    * sent each time the socket is writable (ws_client_on_writable), by
    * the loop the server's queue and the HTTP client use. */
-  (void)sock_write_rest(s, c->request, c->request_len, &c->request_sent);
+  (void)sock_write_rest(s, c->request, c->request_len, &c->request_sent,
+                          c->write_chunk);
   return s;
 }
 
@@ -2885,7 +3117,8 @@ static struct us_socket_t *ws_client_on_timeout(struct us_socket_t *s) {
 static struct us_socket_t *ws_client_on_writable(struct us_socket_t *s) {
   WsClient *c = ws_client_of_socket(s);
   if (c->request_sent < c->request_len) {
-    (void)sock_write_rest(s, c->request, c->request_len, &c->request_sent);
+    (void)sock_write_rest(s, c->request, c->request_len, &c->request_sent,
+                          c->write_chunk);
     return s;
   }
   ws_client_flush(c);
@@ -2969,6 +3202,9 @@ avant_int avant_ws_client_connect(const char *host, avant_int port,
     return 0;
   }
   c = (WsClient *)calloc(1, sizeof(WsClient));
+  if (c) {
+    c->write_chunk = http_ws_write_chunk();
+  }
   if (!c) { set_status(4); return 0; }
   c->frag_opcode = -1;
   c->close_code = 1006;
@@ -3326,12 +3562,14 @@ typedef struct FetchState {
   const char *request;
   size_t request_len;
   size_t sent;
+  size_t write_chunk; /* the most one write hands the socket (O662) */
   struct us_socket_t *sock;
   /* Where the response ends (fetch_complete): 0 while its head has not
    * all arrived; then one of the FETCH_* framings, the head's length,
    * the body's length (FETCH_LENGTH), and for a chunked body the decoder
    * and how far it has read. */
   int framing;
+  size_t start;
   size_t head_len;
   size_t body_want;
   size_t scanned;
@@ -3358,7 +3596,8 @@ static FetchState *fetch_of_socket(struct us_socket_t *s) {
  * pinned until the loop ends, so the rest is sent from it, in order,
  * each time the socket is writable again. */
 static void fetch_send(FetchState *st, struct us_socket_t *s) {
-  (void)sock_write_rest(s, st->request, st->request_len, &st->sent);
+  (void)sock_write_rest(s, st->request, st->request_len, &st->sent,
+                        st->write_chunk);
 }
 
 static struct us_socket_t *fetch_on_open(struct us_socket_t *s, int is_client,
@@ -3383,14 +3622,14 @@ static int parse_response_head(const char *raw, size_t n, int *status,
  * (avant_http_resp_body): a server that keeps the connection open after
  * a complete answer (it ignores Connection: close, or a proxy keeps the
  * connection) held the call until its deadline, which then failed it
- * as a timeout. RFC 9112 6.3, in its order: a response to HEAD, a 204
- * or a 304 ends with its head; after a 1xx (an interim answer, which
- * the client does not read past) the exchange ends at the close, as
- * before; a chunked body ends
+ * as a timeout. RFC 9112 6.3, in its order: interim 1xx answers are
+ * skipped (O663) and a 101 ends at the close; a response to HEAD, a 204
+ * or a 304 ends with its head; a chunked body ends
  * after its last chunk and the trailer section; a Content-Length body
- * after that many bytes; a body with neither (or another
- * Transfer-Encoding, or a length that is not a number) when the server
- * closes, as before. The head is parsed again as bytes arrive until it
+ * after that many bytes, and one with an invalid length (repeated, or
+ * not a number) at once, to be refused (O664); a body with neither (or
+ * another Transfer-Encoding) when the server closes, as before. The
+ * head is parsed again as bytes arrive until it
  * is whole, then never again; a chunked body is followed by the same
  * decoder avant_http_resp_body uses, on a copy, a piece at a time. */
 static int fetch_complete(FetchState *st) {
@@ -3402,17 +3641,31 @@ static int fetch_complete(FetchState *st) {
     const char *value = NULL;
     size_t value_len = 0;
     long want = 0;
-    if (!parse_response_head(st->buf, st->len, &status, headers,
-                             &num_headers, &pret)) {
-      if (pret == -2) {
+    for (;;) {
+      if (!parse_response_head(st->buf + st->start, st->len - st->start,
+                               &status, headers, &num_headers, &pret)) {
+        if (pret == -2) {
+          return 0;
+        }
+        st->framing = FETCH_UNTIL_CLOSE;
         return 0;
       }
-      st->framing = FETCH_UNTIL_CLOSE;
-      return 0;
+      /* An interim answer (100 Continue, 102, 103 Early Hints) is a head
+       * with no body before the final answer (RFC 9110 15.2; Stage 29
+       * W-FIX1h, O663): the client returned it as the response, the final
+       * answer's bytes as its body. It is skipped, and the response is
+       * the answer after it (avant_http_fetch returns the bytes from
+       * st->start). A 101 ends the exchange's HTTP: it stays the answer,
+       * read until the close as before. */
+      if (status >= 100 && status < 200 && status != 101) {
+        st->start += (size_t)pret;
+        continue;
+      }
+      break;
     }
-    st->head_len = (size_t)pret;
+    st->head_len = st->start + (size_t)pret;
     st->scanned = st->head_len;
-    if (status >= 100 && status < 200) {
+    if (status == 101) {
       st->framing = FETCH_UNTIL_CLOSE;
     } else if ((st->request_len >= 5 && memcmp(st->request, "HEAD ", 5) == 0) ||
                status == 204 || status == 304) {
@@ -3424,13 +3677,18 @@ static int fetch_complete(FetchState *st) {
                         : FETCH_UNTIL_CLOSE;
       memset(&st->chunks, 0, sizeof(st->chunks));
       st->chunks.consume_trailer = 1;
-    } else if (find_header(headers, num_headers, "Content-Length", &value,
-                           &value_len) &&
-               parse_content_length(value, value_len, &want)) {
-      st->framing = FETCH_LENGTH;
-      st->body_want = (size_t)want;
     } else {
-      st->framing = FETCH_UNTIL_CLOSE;
+      int cl = resp_content_length(headers, num_headers, &want);
+      if (cl < 0) {
+        /* An invalid length (O664): the exchange ends now and
+         * avant_http_resp_body refuses the response. */
+        st->framing = FETCH_NO_BODY;
+      } else if (cl > 0) {
+        st->framing = FETCH_LENGTH;
+        st->body_want = (size_t)want;
+      } else {
+        st->framing = FETCH_UNTIL_CLOSE;
+      }
     }
   }
   switch (st->framing) {
@@ -3570,6 +3828,7 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
     set_status(4);
     return avant_str_empty();
   }
+  st->write_chunk = http_ws_write_chunk();
   loop = us_create_loop(0, fetch_wakeup, srv_pre, srv_post,
                         (unsigned int)sizeof(FetchState *));
   if (!loop) {
@@ -3642,7 +3901,7 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
     free(st);
     return avant_str_empty();
   }
-  out = make_bytes(st->buf ? st->buf : "", st->len);
+  out = make_bytes(st->buf ? st->buf + st->start : "", st->len - st->start);
   free(st->buf);
   free(st);
   return out;
@@ -3741,15 +4000,16 @@ char *avant_http_resp_body(const char *raw) {
       return out;
     }
   }
-  if (find_header(headers, num_headers, "Content-Length", &value,
-                  &value_len)) {
+  {
     long want = 0;
-    if (!parse_content_length(value, value_len, &want) ||
-        (size_t)want > body_len) {
+    int cl = resp_content_length(headers, num_headers, &want);
+    if (cl < 0 || (cl > 0 && (size_t)want > body_len)) {
       set_status(3);
       return make_bytes("", 0);
     }
-    return make_bytes(body, (size_t)want);
+    if (cl > 0) {
+      return make_bytes(body, (size_t)want);
+    }
   }
   return make_bytes(body, body_len);
 }
