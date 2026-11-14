@@ -3,6 +3,8 @@ file 0 "elems.av"
 
 layout %elems(Int) = elems { 0: i64 }  size 8 align 8
 layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %elems(Int32) = elems { 0: i32 }  size 4 align 4
+layout %Array(Int32) = array { 0 data: ref %elems(Int32), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %elems(UInt64) = elems { 0: u64 }  size 8 align 8
 layout %Array(UInt64) = array { 0 data: ref %elems(UInt64), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %elems(Float64) = elems { 0: f64 }  size 8 align 8
@@ -13,7 +15,8 @@ layout %Array(Bool) = array { 0 data: ref %elems(Bool), 1 size: i32, 2 cap: i32 
 const str.0 = ""
 const str.1 = " "
 const str.2 = "%lld\0A"
-const str.3 = "%llu\0A"
+const str.3 = "%d\0A"
+const str.4 = "%llu\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -23,14 +26,17 @@ extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_array_contains_bool(ref, i32) -> i32 collects
 extern avant_array_contains_f64(ref, f64) -> i32 collects
+extern avant_array_contains_i32(ref, i32) -> i32 collects
 extern avant_array_contains_i64(ref, i64) -> i32 collects
 extern avant_array_fill_u8(ref, i32) -> void never
 extern avant_array_pop_slot(ref, u64) -> addr collects
+extern avant_array_push_i32(ref, i32) -> void collects
 extern avant_array_push_i64(ref, i64) -> void collects
 extern avant_array_push_slot(ref, u64, u32) -> addr collects
 extern avant_array_reverse(ref, u64) -> void collects
 extern avant_array_sort_bool(ref) -> void collects
 extern avant_array_sort_f64(ref) -> void collects
+extern avant_array_sort_i32(ref) -> void collects
 extern avant_array_sort_i64(ref) -> void collects
 extern avant_array_sort_u64(ref) -> void collects
 extern avant_array_sum_f64(ref) -> f64 collects
@@ -45,7 +51,7 @@ extern avant_str_from_int(i64) -> ref str collects
 extern avant_trap_empty(i32) -> void never noreturn
 extern printf(ref str, ...) -> i32 never
 
-fn av.elems/show(_1: ref %Array(Int)) -> ref str frame @elems.av:4:1 {
+fn av.elems/show(_1: ref %Array(Int)) -> ref str frame @elems.av:6:1 {
   let _0: ref str
   let _1 (xs): ref %Array(Int) slot
   let _2 (out): ref str slot
@@ -61,39 +67,39 @@ fn av.elems/show(_1: ref %Array(Int)) -> ref str frame @elems.av:4:1 {
   let _12: i64
 
 bb0:
-  _2 = zero   @4:1
-  _9 = zero   @4:1
-  _10 = zero   @4:1
-  gc.enter   @4:1
-  gc.roots _1, _2, _9, _10   @4:1
-  _2 = const str.0   @5:7
-  _3 = const i64 0   @6:5
-  goto bb1   @7:3
+  _2 = zero   @6:1
+  _9 = zero   @6:1
+  _10 = zero   @6:1
+  gc.enter   @6:1
+  gc.roots _1, _2, _9, _10   @6:1
+  _2 = const str.0   @7:7
+  _3 = const i64 0   @8:5
+  goto bb1   @9:3
 
 bb1:
-  _4 = copy (*_1).1   @7:15
-  _5 = cast copy _4 to i64   @7:15
-  _6 = lt copy _3, copy _5   @7:11
-  branch copy _6, bb2, bb3   @7:3
+  _4 = copy (*_1).1   @9:15
+  _5 = cast copy _4 to i64   @9:15
+  _6 = lt copy _3, copy _5   @9:11
+  branch copy _6, bb2, bb3   @9:3
 
 bb2:
-  _7 = copy (*_1).0   @8:22
-  _8 = copy (*_7)[copy _3]   @8:22
-  _9 = call avant_str_from_int(copy _8) collects   @8:22
-  _10 = call avant_str_concat(copy _9, const str.1) collects   @8:17
-  _11 = call avant_str_concat(copy _2, copy _10) collects   @8:15
-  _2 = copy _11   @8:9
-  _12 = add copy _3, const i64 1   @9:11
-  _3 = copy _12   @9:7
-  goto bb1   @7:3
+  _7 = copy (*_1).0   @10:22
+  _8 = copy (*_7)[copy _3]   @10:22
+  _9 = call avant_str_from_int(copy _8) collects   @10:22
+  _10 = call avant_str_concat(copy _9, const str.1) collects   @10:17
+  _11 = call avant_str_concat(copy _2, copy _10) collects   @10:15
+  _2 = copy _11   @10:9
+  _12 = add copy _3, const i64 1   @11:11
+  _3 = copy _12   @11:7
+  goto bb1   @9:3
 
 bb3:
-  _0 = copy _2   @11:3
-  gc.leave   @11:3
-  return   @11:3
+  _0 = copy _2   @13:3
+  gc.leave   @13:3
+  return   @13:3
 }
 
-fn av.elems/wides() -> void frame @elems.av:14:1 {
+fn av.elems/wides() -> void frame @elems.av:16:1 {
   let _1: ref %elems(Int) slot
   let _2: ref %Array(Int)
   let _3 (ls): ref %Array(Int) slot
@@ -114,270 +120,356 @@ fn av.elems/wides() -> void frame @elems.av:14:1 {
   let _18: i64
   let _19: ref %elems(Int)
   let _20: i64
-  let _21: ref %elems(UInt64) slot
-  let _22: ref %Array(UInt64)
-  let _23 (us): ref %Array(UInt64) slot
+  let _21: ref %elems(Int32) slot
+  let _22: ref %Array(Int32)
+  let _23 (ns): ref %Array(Int32) slot
   let _24: i32
   let _25: i64
-  let _26: ref %elems(UInt64)
-  let _27: u64
-  let _28: u64
-  let _29: i32
-  let _30: bool
-  let _31: addr u64
-  let _32: u64
-  let _33: ref %elems(Float64) slot
-  let _34: ref %Array(Float64)
-  let _35 (fs): ref %Array(Float64) slot
-  let _36: addr f64
-  let _37: i32
-  let _38: i64
-  let _39: ref %elems(Float64)
-  let _40: f64
-  let _41: f64
-  let _42: i32
-  let _43: bool
+  let _26: ref %elems(Int32)
+  let _27: i32
+  let _28: i32
+  let _29: i64
+  let _30: ref %elems(Int32)
+  let _31: i32
+  let _32: i32
+  let _33: bool
+  let _34: i32
+  let _35: i32
+  let _36: i64
+  let _37: ref %elems(Int32)
+  let _38: i32
+  let _39: i32
+  let _40: i32
+  let _41: i64
+  let _42: ref %elems(Int32)
+  let _43: i32
   let _44: i32
-  let _45: i32
-  let _46: i64
-  let _47: ref %elems(Float64)
-  let _48: f64
-  let _49: f64
-  let _50: i32
-  let _51: i64
-  let _52: ref %elems(Float64)
+  let _45: bool
+  let _46: addr i32
+  let _47: i32
+  let _48: i32
+  let _49: i64
+  let _50: ref %elems(UInt64) slot
+  let _51: ref %Array(UInt64)
+  let _52 (us): ref %Array(UInt64) slot
   let _53: i32
   let _54: i64
-  let _55: ref %elems(Float64)
-  let _56: f64
-  let _57: i32
-  let _58: bool
-  let _59: addr f64
-  let _60: f64
-  let _61: ref %elems(Bool) slot
-  let _62: ref %Array(Bool)
-  let _63 (bs): ref %Array(Bool) slot
-  let _64: addr bool
-  let _65: i32
-  let _66: i64
-  let _67: i32
-  let _68: i32
-  let _69: bool
-  let _70: i32
+  let _55: ref %elems(UInt64)
+  let _56: u64
+  let _57: u64
+  let _58: i32
+  let _59: bool
+  let _60: addr u64
+  let _61: u64
+  let _62: ref %elems(Float64) slot
+  let _63: ref %Array(Float64)
+  let _64 (fs): ref %Array(Float64) slot
+  let _65: addr f64
+  let _66: i32
+  let _67: i64
+  let _68: ref %elems(Float64)
+  let _69: f64
+  let _70: f64
   let _71: i32
-  let _72: i64
-  let _73: ref %elems(Bool)
-  let _74: bool
-  let _75: i32
-  let _76: i32
-  let _77: i64
-  let _78: ref %elems(Bool)
-  let _79: bool
-  let _80: i32
-  let _81: i32
+  let _72: bool
+  let _73: i32
+  let _74: i32
+  let _75: i64
+  let _76: ref %elems(Float64)
+  let _77: f64
+  let _78: f64
+  let _79: i32
+  let _80: i64
+  let _81: ref %elems(Float64)
   let _82: i32
   let _83: i64
-  let _84: ref %elems(Bool)
-  let _85: bool
+  let _84: ref %elems(Float64)
+  let _85: f64
   let _86: i32
-  let _87: i32
-  let _88: bool
-  let _89: addr bool
-  let _90: bool
-  let _91: i32
+  let _87: bool
+  let _88: addr f64
+  let _89: f64
+  let _90: ref %elems(Bool) slot
+  let _91: ref %Array(Bool)
+  let _92 (bs): ref %Array(Bool) slot
+  let _93: addr bool
+  let _94: i32
+  let _95: i64
+  let _96: i32
+  let _97: i32
+  let _98: bool
+  let _99: i32
+  let _100: i32
+  let _101: i64
+  let _102: ref %elems(Bool)
+  let _103: bool
+  let _104: i32
+  let _105: i32
+  let _106: i64
+  let _107: ref %elems(Bool)
+  let _108: bool
+  let _109: i32
+  let _110: i32
+  let _111: i32
+  let _112: i64
+  let _113: ref %elems(Bool)
+  let _114: bool
+  let _115: i32
+  let _116: i32
+  let _117: bool
+  let _118: addr bool
+  let _119: bool
+  let _120: i32
 
 bb0:
-  _1 = zero   @14:1
-  _3 = zero   @14:1
-  _21 = zero   @14:1
-  _23 = zero   @14:1
-  _33 = zero   @14:1
-  _35 = zero   @14:1
-  _61 = zero   @14:1
-  _63 = zero   @14:1
-  gc.enter   @14:1
-  gc.roots _1, _3, _21, _23, _33, _35, _61, _63   @14:1
-  _1 = call avant_alloc(const u64 24, const u32 0) collects   @15:8
-  (*_1)[const i64 0] = const i64 10   @15:9
-  (*_1)[const i64 1] = const i64 -20   @15:13
-  (*_1)[const i64 2] = const i64 30   @15:18
-  _2 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @15:8
-  (*_2).0 = copy _1 fresh   @15:8
-  (*_2).1 = const i32 3   @15:8
-  (*_2).2 = const i32 3   @15:8
-  _3 = copy _2   @15:6
-  call avant_array_push_i64(copy _3, const i64 5) collects   @16:5
-  call avant_array_sort_i64(copy _3) collects   @17:5
-  _4 = copy (*_3).1   @18:10
-  _5 = cast copy _4 to i64   @18:10
-  check.bounds const i64 0, copy _5   @18:10
-  _6 = copy (*_3).0   @18:10
-  _7 = copy (*_6)[const i64 0]   @18:10
-  call printf(const str.2, copy _7) nocollect   @18:3
-  _8 = call avant_array_sum_i64(copy _3) collects   @19:10
-  call printf(const str.2, copy _8) nocollect   @19:3
-  _9 = call avant_array_contains_i64(copy _3, const i64 30) collects   @20:10
-  _10 = eq copy _9, const i32 1   @20:10
-  _11 = cast copy _10 to i32   @20:3
-  call avant_puts_bool(copy _11) nocollect   @20:3
-  _12 = copy (*_3).1   @21:5
-  _13 = cast copy _12 to i64   @21:5
-  check.bounds const i64 1, copy _13   @21:5
-  _14 = copy (*_3).0   @21:5
-  _15 = copy (*_14)[const i64 1]   @21:9
-  _16 = add.chk copy _15, const i64 1000000000000   @21:9
-  (*_14)[const i64 1] = copy _16   @21:9
-  _17 = copy (*_3).1   @22:10
-  _18 = cast copy _17 to i64   @22:10
-  check.bounds const i64 1, copy _18   @22:10
-  _19 = copy (*_3).0   @22:10
-  _20 = copy (*_19)[const i64 1]   @22:10
-  call printf(const str.2, copy _20) nocollect   @22:3
-  _21 = call avant_alloc(const u64 24, const u32 0) collects   @24:8
-  (*_21)[const i64 0] = const u64 3   @24:9
-  (*_21)[const i64 1] = const u64 1   @24:15
-  (*_21)[const i64 2] = const u64 2   @24:21
-  _22 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @24:8
-  (*_22).0 = copy _21 fresh   @24:8
-  (*_22).1 = const i32 3   @24:8
-  (*_22).2 = const i32 3   @24:8
-  _23 = copy _22   @24:6
-  call avant_array_sort_u64(copy _23) collects   @25:5
-  _24 = copy (*_23).1   @26:10
-  _25 = cast copy _24 to i64   @26:10
-  check.bounds const i64 0, copy _25   @26:10
-  _26 = copy (*_23).0   @26:10
-  _27 = copy (*_26)[const i64 0]   @26:10
-  call printf(const str.3, copy _27) nocollect   @26:3
-  _28 = call avant_array_sum_u64(copy _23) collects   @27:10
-  call printf(const str.3, copy _28) nocollect   @27:3
-  _29 = copy (*_23).1   @28:10
-  _30 = eq copy _29, const i32 0   @28:10
-  branch copy _30, bb1, bb2   @28:10
+  _1 = zero   @16:1
+  _3 = zero   @16:1
+  _21 = zero   @16:1
+  _23 = zero   @16:1
+  _50 = zero   @16:1
+  _52 = zero   @16:1
+  _62 = zero   @16:1
+  _64 = zero   @16:1
+  _90 = zero   @16:1
+  _92 = zero   @16:1
+  gc.enter   @16:1
+  gc.roots _1, _3, _21, _23, _50, _52, _62, _64, _90, _92   @16:1
+  _1 = call avant_alloc(const u64 24, const u32 0) collects   @17:8
+  (*_1)[const i64 0] = const i64 10   @17:9
+  (*_1)[const i64 1] = const i64 -20   @17:13
+  (*_1)[const i64 2] = const i64 30   @17:18
+  _2 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @17:8
+  (*_2).0 = copy _1 fresh   @17:8
+  (*_2).1 = const i32 3   @17:8
+  (*_2).2 = const i32 3   @17:8
+  _3 = copy _2   @17:6
+  call avant_array_push_i64(copy _3, const i64 5) collects   @18:5
+  call avant_array_sort_i64(copy _3) collects   @19:5
+  _4 = copy (*_3).1   @20:10
+  _5 = cast copy _4 to i64   @20:10
+  check.bounds const i64 0, copy _5   @20:10
+  _6 = copy (*_3).0   @20:10
+  _7 = copy (*_6)[const i64 0]   @20:10
+  call printf(const str.2, copy _7) nocollect   @20:3
+  _8 = call avant_array_sum_i64(copy _3) collects   @21:10
+  call printf(const str.2, copy _8) nocollect   @21:3
+  _9 = call avant_array_contains_i64(copy _3, const i64 30) collects   @22:10
+  _10 = eq copy _9, const i32 1   @22:10
+  _11 = cast copy _10 to i32   @22:3
+  call avant_puts_bool(copy _11) nocollect   @22:3
+  _12 = copy (*_3).1   @23:5
+  _13 = cast copy _12 to i64   @23:5
+  check.bounds const i64 1, copy _13   @23:5
+  _14 = copy (*_3).0   @23:5
+  _15 = copy (*_14)[const i64 1]   @23:9
+  _16 = add.chk copy _15, const i64 1000000000000   @23:9
+  (*_14)[const i64 1] = copy _16   @23:9
+  _17 = copy (*_3).1   @24:10
+  _18 = cast copy _17 to i64   @24:10
+  check.bounds const i64 1, copy _18   @24:10
+  _19 = copy (*_3).0   @24:10
+  _20 = copy (*_19)[const i64 1]   @24:10
+  call printf(const str.2, copy _20) nocollect   @24:3
+  _21 = call avant_alloc(const u64 12, const u32 0) collects   @26:22
+  (*_21)[const i64 0] = const i32 7   @26:23
+  (*_21)[const i64 1] = const i32 -2147483648   @26:26
+  (*_21)[const i64 2] = const i32 2147483647   @26:39
+  _22 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @26:22
+  (*_22).0 = copy _21 fresh   @26:22
+  (*_22).1 = const i32 3   @26:22
+  (*_22).2 = const i32 3   @26:22
+  _23 = copy _22   @26:3
+  call avant_array_push_i32(copy _23, const i32 -4) collects   @27:5
+  call avant_array_sort_i32(copy _23) collects   @28:5
+  _24 = copy (*_23).1   @29:10
+  _25 = cast copy _24 to i64   @29:10
+  check.bounds const i64 0, copy _25   @29:10
+  _26 = copy (*_23).0   @29:10
+  _27 = copy (*_26)[const i64 0]   @29:10
+  call printf(const str.3, copy _27) nocollect   @29:3
+  _28 = copy (*_23).1   @30:10
+  _29 = cast copy _28 to i64   @30:10
+  check.bounds const i64 3, copy _29   @30:10
+  _30 = copy (*_23).0   @30:10
+  _31 = copy (*_30)[const i64 3]   @30:10
+  call printf(const str.3, copy _31) nocollect   @30:3
+  _32 = call avant_array_contains_i32(copy _23, const i32 -4) collects   @31:10
+  _33 = eq copy _32, const i32 1   @31:10
+  _34 = cast copy _33 to i32   @31:3
+  call avant_puts_bool(copy _34) nocollect   @31:3
+  _35 = copy (*_23).1   @32:5
+  _36 = cast copy _35 to i64   @32:5
+  check.bounds const i64 2, copy _36   @32:5
+  _37 = copy (*_23).0   @32:5
+  _38 = copy (*_37)[const i64 2]   @32:9
+  _39 = add.chk copy _38, const i32 1000   @32:9
+  (*_37)[const i64 2] = copy _39   @32:9
+  _40 = copy (*_23).1   @33:10
+  _41 = cast copy _40 to i64   @33:10
+  check.bounds const i64 2, copy _41   @33:10
+  _42 = copy (*_23).0   @33:10
+  _43 = copy (*_42)[const i64 2]   @33:10
+  call printf(const str.3, copy _43) nocollect   @33:3
+  _44 = copy (*_23).1   @34:10
+  _45 = eq copy _44, const i32 0   @34:10
+  branch copy _45, bb1, bb2   @34:10
 
 bb1:
-  call avant_trap_empty(const i32 0) nocollect   @28:10
-  unreachable   @28:10
+  call avant_trap_empty(const i32 0) nocollect   @34:10
+  unreachable   @34:10
 
 bb2:
-  _31 = call avant_array_pop_slot(copy _23, const u64 8) collects   @28:10
-  _32 = copy (*_31)   @28:10
-  call printf(const str.3, copy _32) nocollect   @28:3
-  _33 = call avant_alloc(const u64 24, const u32 0) collects   @30:8
-  (*_33)[const i64 0] = const f64 0x4004000000000000 /* 2.5 */   @30:9
-  (*_33)[const i64 1] = const f64 0xBFF4000000000000 /* -1.25 */   @30:14
-  (*_33)[const i64 2] = const f64 0x4022000000000000 /* 9.0 */   @30:21
-  _34 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @30:8
-  (*_34).0 = copy _33 fresh   @30:8
-  (*_34).1 = const i32 3   @30:8
-  (*_34).2 = const i32 3   @30:8
-  _35 = copy _34   @30:6
-  _36 = call avant_array_push_slot(copy _35, const u64 8, const u32 0) collects   @31:5
-  (*_36) = const f64 0x3FE0000000000000 /* 0.5 */   @31:5
-  call avant_array_sort_f64(copy _35) collects   @32:5
-  _37 = copy (*_35).1   @33:10
-  _38 = cast copy _37 to i64   @33:10
-  check.bounds const i64 0, copy _38   @33:10
-  _39 = copy (*_35).0   @33:10
-  _40 = copy (*_39)[const i64 0]   @33:10
-  call avant_puts_f64(copy _40) nocollect   @33:3
-  _41 = call avant_array_sum_f64(copy _35) collects   @34:10
-  call avant_puts_f64(copy _41) nocollect   @34:3
-  _42 = call avant_array_contains_f64(copy _35, const f64 0x4022000000000000 /* 9.0 */) collects   @35:10
-  _43 = eq copy _42, const i32 1   @35:10
-  _44 = cast copy _43 to i32   @35:3
-  call avant_puts_bool(copy _44) nocollect   @35:3
-  _45 = copy (*_35).1   @36:13
-  _46 = cast copy _45 to i64   @36:13
-  check.bounds const i64 2, copy _46   @36:13
-  _47 = copy (*_35).0   @36:13
-  _48 = copy (*_47)[const i64 2]   @36:13
-  _49 = mul copy _48, const f64 0x4000000000000000 /* 2.0 */   @36:17
-  _50 = copy (*_35).1   @36:5
-  _51 = cast copy _50 to i64   @36:5
-  check.bounds const i64 2, copy _51   @36:5
-  _52 = copy (*_35).0   @36:5
-  (*_52)[const i64 2] = copy _49   @36:9
-  _53 = copy (*_35).1   @37:10
-  _54 = cast copy _53 to i64   @37:10
-  check.bounds const i64 2, copy _54   @37:10
-  _55 = copy (*_35).0   @37:10
-  _56 = copy (*_55)[const i64 2]   @37:10
-  call avant_puts_f64(copy _56) nocollect   @37:3
-  _57 = copy (*_35).1   @38:10
-  _58 = eq copy _57, const i32 0   @38:10
-  branch copy _58, bb3, bb4   @38:10
+  _46 = call avant_array_pop_slot(copy _23, const u64 4) collects   @34:10
+  _47 = copy (*_46)   @34:10
+  call printf(const str.3, copy _47) nocollect   @34:3
+  _48 = copy (*_23).1   @35:10
+  _49 = cast copy _48 to i64   @35:10
+  call printf(const str.2, copy _49) nocollect   @35:3
+  _50 = call avant_alloc(const u64 24, const u32 0) collects   @37:8
+  (*_50)[const i64 0] = const u64 3   @37:9
+  (*_50)[const i64 1] = const u64 1   @37:15
+  (*_50)[const i64 2] = const u64 2   @37:21
+  _51 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @37:8
+  (*_51).0 = copy _50 fresh   @37:8
+  (*_51).1 = const i32 3   @37:8
+  (*_51).2 = const i32 3   @37:8
+  _52 = copy _51   @37:6
+  call avant_array_sort_u64(copy _52) collects   @38:5
+  _53 = copy (*_52).1   @39:10
+  _54 = cast copy _53 to i64   @39:10
+  check.bounds const i64 0, copy _54   @39:10
+  _55 = copy (*_52).0   @39:10
+  _56 = copy (*_55)[const i64 0]   @39:10
+  call printf(const str.4, copy _56) nocollect   @39:3
+  _57 = call avant_array_sum_u64(copy _52) collects   @40:10
+  call printf(const str.4, copy _57) nocollect   @40:3
+  _58 = copy (*_52).1   @41:10
+  _59 = eq copy _58, const i32 0   @41:10
+  branch copy _59, bb3, bb4   @41:10
 
 bb3:
-  call avant_trap_empty(const i32 0) nocollect   @38:10
-  unreachable   @38:10
+  call avant_trap_empty(const i32 0) nocollect   @41:10
+  unreachable   @41:10
 
 bb4:
-  _59 = call avant_array_pop_slot(copy _35, const u64 8) collects   @38:10
-  _60 = copy (*_59)   @38:10
-  call avant_puts_f64(copy _60) nocollect   @38:3
-  _61 = call avant_alloc(const u64 3, const u32 0) collects   @40:8
-  (*_61)[const i64 0] = const bool true   @40:9
-  (*_61)[const i64 1] = const bool false   @40:15
-  (*_61)[const i64 2] = const bool true   @40:22
-  _62 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @40:8
-  (*_62).0 = copy _61 fresh   @40:8
-  (*_62).1 = const i32 3   @40:8
-  (*_62).2 = const i32 3   @40:8
-  _63 = copy _62   @40:6
-  _64 = call avant_array_push_slot(copy _63, const u64 1, const u32 0) collects   @41:5
-  (*_64) = const bool false   @41:5
-  _65 = copy (*_63).1   @42:10
-  _66 = cast copy _65 to i64   @42:10
-  call printf(const str.2, copy _66) nocollect   @42:3
-  _67 = cast const bool false to i32   @43:10
-  _68 = call avant_array_contains_bool(copy _63, copy _67) collects   @43:10
-  _69 = eq copy _68, const i32 1   @43:10
-  _70 = cast copy _69 to i32   @43:3
-  call avant_puts_bool(copy _70) nocollect   @43:3
-  call avant_array_sort_bool(copy _63) collects   @44:5
-  _71 = copy (*_63).1   @45:10
-  _72 = cast copy _71 to i64   @45:10
-  check.bounds const i64 0, copy _72   @45:10
-  _73 = copy (*_63).0   @45:10
-  _74 = copy (*_73)[const i64 0]   @45:10
-  _75 = cast copy _74 to i32   @45:3
-  call avant_puts_bool(copy _75) nocollect   @45:3
-  _76 = copy (*_63).1   @46:10
-  _77 = cast copy _76 to i64   @46:10
-  check.bounds const i64 3, copy _77   @46:10
-  _78 = copy (*_63).0   @46:10
-  _79 = copy (*_78)[const i64 3]   @46:10
-  _80 = cast copy _79 to i32   @46:3
-  call avant_puts_bool(copy _80) nocollect   @46:3
-  _81 = cast const bool true to i32   @47:5
-  call avant_array_fill_u8(copy _63, copy _81) nocollect   @47:5
-  _82 = copy (*_63).1   @48:10
-  _83 = cast copy _82 to i64   @48:10
-  check.bounds const i64 1, copy _83   @48:10
-  _84 = copy (*_63).0   @48:10
-  _85 = copy (*_84)[const i64 1]   @48:10
-  _86 = cast copy _85 to i32   @48:3
-  call avant_puts_bool(copy _86) nocollect   @48:3
-  call avant_array_reverse(copy _63, const u64 1) collects   @49:5
-  _87 = copy (*_63).1   @50:10
-  _88 = eq copy _87, const i32 0   @50:10
-  branch copy _88, bb5, bb6   @50:10
+  _60 = call avant_array_pop_slot(copy _52, const u64 8) collects   @41:10
+  _61 = copy (*_60)   @41:10
+  call printf(const str.4, copy _61) nocollect   @41:3
+  _62 = call avant_alloc(const u64 24, const u32 0) collects   @43:8
+  (*_62)[const i64 0] = const f64 0x4004000000000000 /* 2.5 */   @43:9
+  (*_62)[const i64 1] = const f64 0xBFF4000000000000 /* -1.25 */   @43:14
+  (*_62)[const i64 2] = const f64 0x4022000000000000 /* 9.0 */   @43:21
+  _63 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @43:8
+  (*_63).0 = copy _62 fresh   @43:8
+  (*_63).1 = const i32 3   @43:8
+  (*_63).2 = const i32 3   @43:8
+  _64 = copy _63   @43:6
+  _65 = call avant_array_push_slot(copy _64, const u64 8, const u32 0) collects   @44:5
+  (*_65) = const f64 0x3FE0000000000000 /* 0.5 */   @44:5
+  call avant_array_sort_f64(copy _64) collects   @45:5
+  _66 = copy (*_64).1   @46:10
+  _67 = cast copy _66 to i64   @46:10
+  check.bounds const i64 0, copy _67   @46:10
+  _68 = copy (*_64).0   @46:10
+  _69 = copy (*_68)[const i64 0]   @46:10
+  call avant_puts_f64(copy _69) nocollect   @46:3
+  _70 = call avant_array_sum_f64(copy _64) collects   @47:10
+  call avant_puts_f64(copy _70) nocollect   @47:3
+  _71 = call avant_array_contains_f64(copy _64, const f64 0x4022000000000000 /* 9.0 */) collects   @48:10
+  _72 = eq copy _71, const i32 1   @48:10
+  _73 = cast copy _72 to i32   @48:3
+  call avant_puts_bool(copy _73) nocollect   @48:3
+  _74 = copy (*_64).1   @49:13
+  _75 = cast copy _74 to i64   @49:13
+  check.bounds const i64 2, copy _75   @49:13
+  _76 = copy (*_64).0   @49:13
+  _77 = copy (*_76)[const i64 2]   @49:13
+  _78 = mul copy _77, const f64 0x4000000000000000 /* 2.0 */   @49:17
+  _79 = copy (*_64).1   @49:5
+  _80 = cast copy _79 to i64   @49:5
+  check.bounds const i64 2, copy _80   @49:5
+  _81 = copy (*_64).0   @49:5
+  (*_81)[const i64 2] = copy _78   @49:9
+  _82 = copy (*_64).1   @50:10
+  _83 = cast copy _82 to i64   @50:10
+  check.bounds const i64 2, copy _83   @50:10
+  _84 = copy (*_64).0   @50:10
+  _85 = copy (*_84)[const i64 2]   @50:10
+  call avant_puts_f64(copy _85) nocollect   @50:3
+  _86 = copy (*_64).1   @51:10
+  _87 = eq copy _86, const i32 0   @51:10
+  branch copy _87, bb5, bb6   @51:10
 
 bb5:
-  call avant_trap_empty(const i32 0) nocollect   @50:10
-  unreachable   @50:10
+  call avant_trap_empty(const i32 0) nocollect   @51:10
+  unreachable   @51:10
 
 bb6:
-  _89 = call avant_array_pop_slot(copy _63, const u64 1) collects   @50:10
-  _90 = copy (*_89)   @50:10
-  _91 = cast copy _90 to i32   @50:3
-  call avant_puts_bool(copy _91) nocollect   @50:3
-  gc.leave   @14:1
-  return   @14:1
+  _88 = call avant_array_pop_slot(copy _64, const u64 8) collects   @51:10
+  _89 = copy (*_88)   @51:10
+  call avant_puts_f64(copy _89) nocollect   @51:3
+  _90 = call avant_alloc(const u64 3, const u32 0) collects   @53:8
+  (*_90)[const i64 0] = const bool true   @53:9
+  (*_90)[const i64 1] = const bool false   @53:15
+  (*_90)[const i64 2] = const bool true   @53:22
+  _91 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @53:8
+  (*_91).0 = copy _90 fresh   @53:8
+  (*_91).1 = const i32 3   @53:8
+  (*_91).2 = const i32 3   @53:8
+  _92 = copy _91   @53:6
+  _93 = call avant_array_push_slot(copy _92, const u64 1, const u32 0) collects   @54:5
+  (*_93) = const bool false   @54:5
+  _94 = copy (*_92).1   @55:10
+  _95 = cast copy _94 to i64   @55:10
+  call printf(const str.2, copy _95) nocollect   @55:3
+  _96 = cast const bool false to i32   @56:10
+  _97 = call avant_array_contains_bool(copy _92, copy _96) collects   @56:10
+  _98 = eq copy _97, const i32 1   @56:10
+  _99 = cast copy _98 to i32   @56:3
+  call avant_puts_bool(copy _99) nocollect   @56:3
+  call avant_array_sort_bool(copy _92) collects   @57:5
+  _100 = copy (*_92).1   @58:10
+  _101 = cast copy _100 to i64   @58:10
+  check.bounds const i64 0, copy _101   @58:10
+  _102 = copy (*_92).0   @58:10
+  _103 = copy (*_102)[const i64 0]   @58:10
+  _104 = cast copy _103 to i32   @58:3
+  call avant_puts_bool(copy _104) nocollect   @58:3
+  _105 = copy (*_92).1   @59:10
+  _106 = cast copy _105 to i64   @59:10
+  check.bounds const i64 3, copy _106   @59:10
+  _107 = copy (*_92).0   @59:10
+  _108 = copy (*_107)[const i64 3]   @59:10
+  _109 = cast copy _108 to i32   @59:3
+  call avant_puts_bool(copy _109) nocollect   @59:3
+  _110 = cast const bool true to i32   @60:5
+  call avant_array_fill_u8(copy _92, copy _110) nocollect   @60:5
+  _111 = copy (*_92).1   @61:10
+  _112 = cast copy _111 to i64   @61:10
+  check.bounds const i64 1, copy _112   @61:10
+  _113 = copy (*_92).0   @61:10
+  _114 = copy (*_113)[const i64 1]   @61:10
+  _115 = cast copy _114 to i32   @61:3
+  call avant_puts_bool(copy _115) nocollect   @61:3
+  call avant_array_reverse(copy _92, const u64 1) collects   @62:5
+  _116 = copy (*_92).1   @63:10
+  _117 = eq copy _116, const i32 0   @63:10
+  branch copy _117, bb7, bb8   @63:10
+
+bb7:
+  call avant_trap_empty(const i32 0) nocollect   @63:10
+  unreachable   @63:10
+
+bb8:
+  _118 = call avant_array_pop_slot(copy _92, const u64 1) collects   @63:10
+  _119 = copy (*_118)   @63:10
+  _120 = cast copy _119 to i32   @63:3
+  call avant_puts_bool(copy _120) nocollect   @63:3
+  gc.leave   @16:1
+  return   @16:1
 }
 
-fn av.elems/grids() -> void frame @elems.av:53:1 {
+fn av.elems/grids() -> void frame @elems.av:66:1 {
   let _1: ref %Array(Int)
   let _2 (grid): ref %Array(Int) slot
   let _3 (r): i64
@@ -400,76 +492,76 @@ fn av.elems/grids() -> void frame @elems.av:53:1 {
   let _20: i64
 
 bb0:
-  _2 = zero   @53:1
-  gc.enter   @53:1
-  gc.roots _2   @53:1
-  _1 = call avant_alloc(const u64 16, const u32 1022) collects   @54:10
-  _2 = copy _1   @54:8
-  _3 = const i64 0   @55:3
-  _4 = const i64 4   @55:3
-  goto bb1   @55:3
+  _2 = zero   @66:1
+  gc.enter   @66:1
+  gc.roots _2   @66:1
+  _1 = call avant_alloc(const u64 16, const u32 1022) collects   @67:10
+  _2 = copy _1   @67:8
+  _3 = const i64 0   @68:3
+  _4 = const i64 4   @68:3
+  goto bb1   @68:3
 
 bb1:
-  _5 = lt copy _3, copy _4   @55:3
-  branch copy _5, bb2, bb3   @55:3
+  _5 = lt copy _3, copy _4   @68:3
+  branch copy _5, bb2, bb3   @68:3
 
 bb2:
-  _6 = mul copy _3, const i64 10   @56:17
-  call avant_array_push_i64(copy _2, copy _6) collects   @56:9
-  _7 = add copy _3, const i64 1   @55:3
-  _3 = copy _7   @55:3
-  goto bb1   @55:3
+  _6 = mul copy _3, const i64 10   @69:17
+  call avant_array_push_i64(copy _2, copy _6) collects   @69:9
+  _7 = add copy _3, const i64 1   @68:3
+  _3 = copy _7   @68:3
+  goto bb1   @68:3
 
 bb3:
-  _8 = call av.elems/show(copy _2) collects   @58:8
-  call avant_puts_str(copy _8) nocollect   @58:3
-  _9 = const i64 0   @59:5
-  _10 = copy _2   @60:3
-  _11 = const i64 0   @60:3
-  goto bb4   @60:3
+  _8 = call av.elems/show(copy _2) collects   @71:8
+  call avant_puts_str(copy _8) nocollect   @71:3
+  _9 = const i64 0   @72:5
+  _10 = copy _2   @73:3
+  _11 = const i64 0   @73:3
+  goto bb4   @73:3
 
 bb4:
-  _12 = copy (*_10).1   @60:3
-  _13 = cast copy _12 to i64   @60:3
-  _14 = lt copy _11, copy _13   @60:3
-  branch copy _14, bb5, bb6   @60:3
+  _12 = copy (*_10).1   @73:3
+  _13 = cast copy _12 to i64   @73:3
+  _14 = lt copy _11, copy _13   @73:3
+  branch copy _14, bb5, bb6   @73:3
 
 bb5:
-  _15 = copy (*_10).0   @60:3
-  _16 = copy (*_15)[copy _11]   @60:3
-  _17 = copy _16   @60:3
-  _18 = gt copy _17, const i64 15   @61:10
-  branch copy _18, bb7, bb8   @61:5
+  _15 = copy (*_10).0   @73:3
+  _16 = copy (*_15)[copy _11]   @73:3
+  _17 = copy _16   @73:3
+  _18 = gt copy _17, const i64 15   @74:10
+  branch copy _18, bb7, bb8   @74:5
 
 bb6:
-  call printf(const str.2, copy _9) nocollect   @65:3
-  gc.leave   @53:1
-  return   @53:1
+  call printf(const str.2, copy _9) nocollect   @78:3
+  gc.leave   @66:1
+  return   @66:1
 
 bb7:
-  _19 = add.chk copy _9, const i64 1   @62:13
-  _9 = copy _19   @62:9
-  goto bb8   @61:5
+  _19 = add.chk copy _9, const i64 1   @75:13
+  _9 = copy _19   @75:9
+  goto bb8   @74:5
 
 bb8:
-  _20 = add copy _11, const i64 1   @60:3
-  _11 = copy _20   @60:3
-  goto bb4   @60:3
+  _20 = add copy _11, const i64 1   @73:3
+  _11 = copy _20   @73:3
+  goto bb4   @73:3
 }
 
-fn main(_1: i32, _2: ptr) -> i32 frame extern @elems.av:68:1 {
+fn main(_1: i32, _2: ptr) -> i32 frame extern @elems.av:81:1 {
   let _0: i32
   let _1 (argc): i32
   let _2 (argv): ptr slot
 
 bb0:
-  gc.enter   @68:1
-  gc.roots _2   @68:1
-  call __avant_type_maps() nocollect   @68:1
-  call avant_io_init_argv(copy _1, copy _2) collects   @68:1
-  call av.elems/wides() collects   @69:3
-  call av.elems/grids() collects   @70:3
-  _0 = const i32 0   @68:1
-  gc.leave   @68:1
-  return   @68:1
+  gc.enter   @81:1
+  gc.roots _2   @81:1
+  call __avant_type_maps() nocollect   @81:1
+  call avant_io_init_argv(copy _1, copy _2) collects   @81:1
+  call av.elems/wides() collects   @82:3
+  call av.elems/grids() collects   @83:3
+  _0 = const i32 0   @81:1
+  gc.leave   @81:1
+  return   @81:1
 }
