@@ -14,6 +14,53 @@ struct P {
   n: Int
 }
 
+// A method that changes its receiver writes the element it is called on
+// directly, through a field's method, through a
+// bare call of another such method.
+struct Pos {
+  x: Int
+
+  fn move(d: Int) {
+    self.x += d
+  }
+}
+
+struct Q {
+  n: Int
+  pos: Pos
+
+  fn bump {
+    self.n = self.n + 1
+  }
+
+  fn shift {
+    pos.move(1)
+  }
+
+  fn twice {
+    bump
+    self.bump
+  }
+
+  fn get: Int {
+    self.n + pos.x
+  }
+}
+
+// The sender's change to an element of a captured Array(Q), through a
+// call: kind names the method.
+fn change_q(kind: String, qs: Array(Q)) {
+  if kind == "method" {
+    qs[0].bump
+  } else if kind == "method-held" {
+    qs[0].shift
+  } else if kind == "method-bare" {
+    qs[0].twice
+  } else if kind == "method-field" {
+    qs[0].pos.move(2)
+  }
+}
+
 class Holder {
   pub xs: Array(Int) = []
 }
@@ -95,6 +142,27 @@ fn main: Int {
     bump(ps)
     gate.send(1)
     puts(h1.join)
+    return 0
+  }
+  if kind == "method" || kind == "method-held" || kind == "method-bare" || kind == "method-field" {
+    qs = [Q { n: 1, pos: Pos { x: 0 } }]
+    h3 = spawn {
+      _ = gate.recv
+      qs[0].get
+    }
+    change_q(kind, qs)
+    gate.send(1)
+    puts(h3.join)
+    return 0
+  }
+  if kind == "task-method" {
+    // The task changes an element of what it captured through a call.
+    qs2 = [Q { n: 1, pos: Pos { x: 0 } }]
+    h4 = spawn {
+      change_q("method", qs2)
+      qs2[0].get
+    }
+    puts(h4.join)
     return 0
   }
   if kind == "nested" {

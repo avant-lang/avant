@@ -27,6 +27,7 @@ import mir.lower
 import mir.lower_expr
 import mir.lower_stmt
 import mir.lower_call
+import receiver_writes
 
 // ---- types and layouts
 
@@ -661,7 +662,12 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
   if !rt.is_struct {
     r = lw.lower_expr(recv)
   } else {
+    // A method that changes its receiver, called on an Array's element
+    // (`xs[i].bump`), writes the array's buffer: the index checks the
+    // freeze, as an element store does.
+    lw.lw_task.store_check = lw.lw_m.shared && rw_element_place(recv) && lw.method_writes(e.resolved)
     p = lw.place_of(recv)
+    lw.lw_task.store_check = false
     if lw.failed {
       return b.c_i32(0)
     }
@@ -682,6 +688,23 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
   }
   lw.at(e.loc)
   lw.call_to(ret, sym, all)
+}
+
+// Whether the struct method with emit name sym changes its receiver
+// (receiver_writes.av), over the program's methods.
+pub fn (lw: MirLower) method_writes(sym: String): Bool {
+  if sym.size == 0 {
+    return false
+  }
+  if rw = lw.lw_task.writes {
+    return rw.writes(sym)
+  }
+  rw2 = ReceiverWrites.new
+  for ms in lw.lw_syms.methods {
+    rw2.add(ms.node)
+  }
+  lw.lw_task.writes = rw2
+  rw2.writes(sym)
 }
 
 // A copy of the array o (MIR type aty, Avant type t) for a send (O688):

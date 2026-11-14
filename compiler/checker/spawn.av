@@ -11,6 +11,7 @@ import loader
 import typed_ir
 import checker.names
 import checker
+import receiver_writes
 
 // std.sync's Channel and Mutex cross a task as shared handles (D35):
 // that is their purpose. A class of another module with one of those
@@ -196,6 +197,11 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
         root = checker_self.expr_root_name(recv)
         checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
       }
+      if checker_self.spawn_array_frozen(recv) && rw_element_place(recv) {
+        // A method on an element (`xs[0].bump`): refused once the
+        // program is checked if it changes its receiver.
+        checker_self.note_element_call(expr, recv, 1)
+      }
       checker_self.walk_spawn_expr(recv, node, seen)
     }
     for i in 0..expr.args.size {
@@ -226,6 +232,9 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
       if checker_self.field_mutates_array(expr) && checker_self.spawn_array_frozen(obj) {
         root = checker_self.expr_root_name(obj)
         checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
+      }
+      if expr.method_call && checker_self.spawn_array_frozen(obj) && rw_element_place(obj) {
+        checker_self.note_element_call(expr, obj, 1)
       }
       checker_self.walk_spawn_expr(obj, node, seen)
     }
@@ -479,6 +488,14 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
     }
   }
   if k == ex_field() {
+    // A method on an element of a pending array (`xs[0].bump`), told
+    // from a field read once the program is checked.
+    if obj = expr.object, obj.kind == ex_index() || obj.kind == ex_field() {
+      root = checker_self.expr_root_name(obj)
+      if root.size > 0 && checker_self.pending_has_array(root) {
+        checker_self.note_element_call(expr, obj, 2)
+      }
+    }
     if expr.ident == "join" {
       if obj = expr.object, obj.kind == ex_name() {
         checker_self.pending_join(obj.ident)
@@ -496,6 +513,12 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
       root = checker_self.expr_root_name(recv)
       if root.size > 0 && checker_self.pending_has_array(root) {
         checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
+      }
+    }
+    if recv = expr.receiver, recv.kind == ex_index() || recv.kind == ex_field() {
+      root = checker_self.expr_root_name(recv)
+      if root.size > 0 && checker_self.pending_has_array(root) {
+        checker_self.note_element_call(expr, recv, 2)
       }
     }
   }
@@ -631,5 +654,64 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
     seen[expr.ident] = 1
     node.cap_names.push(expr.ident)
     node.cap_tys.push(ty)
+  }
+}
+
+// ---- A method that changes its receiver, on an element.
+//
+// A struct method gets its receiver's address, so `xs[0].bump` with `fn
+// bump { self.n += 1 }` writes the element in xs's buffer, as `xs[0].n
+// += 1` does. Where the receiver is an element of an Array a running
+// task reads, through the captured name (in the task: walk_spawn_expr)
+// or the pending one (in the sender: scan_pending_expr), the call is
+// noted, and once the whole program is checked (every method body has
+// its types) it is refused when the method changes its receiver
+// (receiver_writes.av: an assignment to a place of self through struct
+// fields, or such a call on one, at any depth). A call through any other
+// path traps at run time (the freeze, mir/lower_agg.av
+// lower_method_call).
+pub fn (checker_self: Checker) note_element_call(expr: Expr, recv: Expr, side: Int) {
+  checker_self.elem_calls.push(expr)
+  checker_self.elem_roots.push(checker_self.expr_root_name(recv))
+  checker_self.elem_sides.push(side)
+}
+
+pub fn (checker_self: Checker) check_element_writes {
+  if checker_self.elem_calls.size == 0 || checker_self.any_err {
+    return
+  }
+  rw = ReceiverWrites.new
+  for ms in checker_self.methods {
+    rw.add(ms.node)
+  }
+  for f in checker_self.pending {
+    rw.add(f)
+  }
+  i = 0
+  while i < checker_self.elem_calls.size {
+    e = checker_self.elem_calls[i]
+    root = checker_self.elem_roots[i]
+    side = checker_self.elem_sides[i]
+    i += 1
+    recv: Expr? = nil
+    if e.kind == ex_call() {
+      recv = e.receiver
+    } else if e.kind == ex_field() && e.method_call {
+      recv = e.object
+    }
+    if r = recv, rt = r.ty, rt.is_struct, e.resolved.size > 0, rw_element_place(r) {
+      if rw.writes(e.resolved) {
+        name = e.callee
+        if e.kind == ex_field() {
+          name = e.ident
+        }
+        if side == 1 {
+          checker_self.fail(e.loc, "spawn cannot mutate captured Array ${root}: ${rt.show}.${name} changes its receiver, an element of ${root}; it is read-only until join")
+        } else {
+          checker_self.fail(e.loc, "cannot mutate ${root} while a spawn using it is running: ${rt.show}.${name} changes its receiver, an element of ${root}; join first")
+        }
+        return
+      }
+    }
   }
 }

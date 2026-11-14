@@ -1,0 +1,257 @@
+// Which struct methods change their receiver.
+//
+// A struct method gets its receiver by address (the change is the
+// caller's), so `xs[i].bump` with `fn bump { self.n += 1 }` writes the
+// element in the array's buffer, as `xs[i].n += 1` does. The task's and
+// the sender's rule for a captured Array (checker/spawn.av) and
+// the freeze at run time (mir/lower_arr.av) treat such a call as an
+// element store; this says which calls they are.
+//
+// A method writes its receiver when its body (a lambda's aside: a lambda
+// captures a struct receiver by value) assigns a place reached from
+// `self` through struct fields only (`self.n = v`, `self.pos.x += 1`), or
+// calls a method that writes its receiver on such a place (`self.bump`,
+// `bump`, `self.pos.move(1)`), at any depth. A place through an Array, a
+// Hash or a class is another object's, not the receiver's. Read on the
+// checked tree (every node has its type), so both the checker and the
+// lowering ask the same question of the same nodes.
+
+import location
+import type
+import ast
+
+pub class ReceiverWrites {
+  // The methods by emit name: their index in fns.
+  pub fns: Array(Function) = []
+  pub index: Hash(String, Int) = Hash(String, Int).new
+  // Per method: 1 writes self directly, 2 does not; its calls on self's
+  // places, by emit name, in `calls` from calls_at to calls_end.
+  direct: Hash(String, Int) = Hash(String, Int).new
+  calls: Array(String) = []
+  calls_at: Hash(String, Int) = Hash(String, Int).new
+  calls_end: Hash(String, Int) = Hash(String, Int).new
+  // The answers: 1 writes, 2 does not.
+  answer: Hash(String, Int) = Hash(String, Int).new
+  // The receiver's name in the method being read (`self`, or an
+  // external method's `fn (p: P) m`).
+  recv: String = "self"
+
+  pub fn add(f: Function) {
+    if f.emit_name.size > 0 && !self.index.has_key(f.emit_name) {
+      self.fns.push(f)
+      self.index[f.emit_name] = self.fns.size - 1
+    }
+  }
+
+  // Whether the method with emit name sym writes its receiver (directly
+  // or through the methods it calls on its receiver's places).
+  pub fn writes(sym: String): Bool {
+    if a = self.answer.get(sym) {
+      return a == 1
+    }
+    seen = Hash(String, Int).new
+    todo: Array(String) = []
+    todo.push(sym)
+    seen[sym] = 1
+    found = false
+    i = 0
+    while i < todo.size && !found {
+      s = todo[i]
+      i += 1
+      if a = self.answer.get(s) {
+        if a == 1 {
+          found = true
+        }
+        continue
+      }
+      self.scan(s)
+      if d = self.direct.get(s), d == 1 {
+        found = true
+        continue
+      }
+      lo = 0
+      hi = 0
+      if x = self.calls_at.get(s) {
+        lo = x
+      }
+      if y = self.calls_end.get(s) {
+        hi = y
+      }
+      j = lo
+      while j < hi {
+        c = self.calls[j]
+        if !seen.has_key(c) {
+          seen[c] = 1
+          todo.push(c)
+        }
+        j += 1
+      }
+    }
+    if found {
+      self.answer[sym] = 1
+    } else {
+      // Every method reached was read whole and none writes: none of
+      // them does (a cycle among them adds no write).
+      for k in seen.keys {
+        self.answer[k] = 2
+      }
+    }
+    found
+  }
+
+  // Reads one method's body once: its direct writes and its calls.
+  fn scan(sym: String) {
+    if self.direct.has_key(sym) {
+      return
+    }
+    w = 2
+    self.calls_at[sym] = self.calls.size
+    if ix = self.index.get(sym) {
+      f = self.fns[ix]
+      if f.owner.size > 0 && !f.type_method {
+        self.recv = "self"
+        if r = f.receiver {
+          self.recv = r.name
+        }
+        if self.stmts_write(f.body) {
+          w = 1
+        }
+      }
+    }
+    self.calls_end[sym] = self.calls.size
+    self.direct[sym] = w
+  }
+
+  fn stmts_write(body: Array(Stmt)): Bool {
+    hit = false
+    for st in body {
+      if self.stmt_writes(st) {
+        hit = true
+      }
+    }
+    hit
+  }
+
+  fn stmt_writes(st: Stmt): Bool {
+    hit = false
+    if st.kind == st_assign() {
+      if t = st.target {
+        if rw_self_place(t, self.recv) && t.kind != ex_name() {
+          hit = true
+        }
+        if self.expr_writes(t) {
+          hit = true
+        }
+      }
+    }
+    if self.opt_writes(st.expr) || self.opt_writes(st.value) || self.opt_writes(st.cond) {
+      hit = true
+    }
+    if self.stmts_write(st.pre) || self.stmts_write(st.then_body) || self.stmts_write(st.else_body) || self.stmts_write(st.body) {
+      hit = true
+    }
+    hit
+  }
+
+  fn opt_writes(e: Expr?): Bool {
+    if x = e {
+      return self.expr_writes(x)
+    }
+    false
+  }
+
+  // Whether e (or a node inside it) writes self; the calls on self's
+  // places are noted for writes.
+  fn expr_writes(e: Expr): Bool {
+    if e.kind == ex_lambda() {
+      return false
+    }
+    hit = false
+    if e.kind == ex_call() && e.resolved.size > 0 {
+      if r = e.receiver, rt = r.ty, rt.is_struct, rw_self_place(r, self.recv) {
+        self.calls.push(e.resolved)
+      }
+    }
+    if e.kind == ex_field() && e.method_call && e.resolved.size > 0 {
+      if o = e.object, ot = o.ty, ot.is_struct, rw_self_place(o, self.recv) {
+        self.calls.push(e.resolved)
+      }
+    }
+    if self.opt_writes(e.left) || self.opt_writes(e.right) || self.opt_writes(e.object) || self.opt_writes(e.cond) {
+      hit = true
+    }
+    if self.opt_writes(e.receiver) || self.opt_writes(e.inner) || self.opt_writes(e.size_expr) {
+      hit = true
+    }
+    for y in e.args {
+      if self.expr_writes(y) {
+        hit = true
+      }
+    }
+    for y in e.elems {
+      if self.expr_writes(y) {
+        hit = true
+      }
+    }
+    for y in e.field_exprs {
+      if self.expr_writes(y) {
+        hit = true
+      }
+    }
+    for p in e.parts {
+      if y = p.expr {
+        if self.expr_writes(y) {
+          hit = true
+        }
+      }
+    }
+    for cs in e.cases {
+      if self.stmts_write(cs.body) {
+        hit = true
+      }
+    }
+    if self.stmts_write(e.else_body) {
+      hit = true
+    }
+    if b = e.block {
+      if self.stmts_write(b.body) {
+        hit = true
+      }
+    }
+    hit
+  }
+}
+
+// Whether e is the receiver (named recv) or a place reached from it
+// through struct fields only (`self`, `self.pos`, `self.pos.x`, an
+// implicit field `pos`).
+pub fn rw_self_place(e: Expr, recv: String): Bool {
+  x = e
+  while x.kind == ex_field() && !x.method_call {
+    if o = x.object, ot = o.ty, ot.is_struct {
+      x = o
+    } else {
+      return false
+    }
+  }
+  x.kind == ex_name() && (x.ident == recv || x.implicit_field)
+}
+
+// Whether e is a place inside an Array's element through struct fields
+// only (`xs[i]`, `xs[i].pos`): a write there changes the array's buffer.
+pub fn rw_element_place(e: Expr): Bool {
+  x = e
+  while x.kind == ex_field() && !x.method_call {
+    if o = x.object, ot = o.ty, ot.is_struct {
+      x = o
+    } else {
+      return false
+    }
+  }
+  if x.kind == ex_index() {
+    if l = x.left, lt = l.ty {
+      return lt.is_array
+    }
+  }
+  false
+}
