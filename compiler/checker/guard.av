@@ -598,7 +598,18 @@ pub fn (checker_self: Checker) guard_expr(w: GuardWalk, e: Expr) {
       checker_self.guard_expr(w, c)
     }
     for cs in e.cases {
+      // A union switch's binding (Stage 29 W5a2) is a name of the
+      // block, reached when the union is: as an if-assign's.
+      w.push
+      if c2 = e.cond {
+        for label in cs.labels {
+          if label.bind.size > 0 {
+            w.declare(label.bind, checker_self.guard_bad(w, c2))
+          }
+        }
+      }
       checker_self.guard_body(w, cs.body)
+      w.pop
     }
     if e.has_else {
       checker_self.guard_body(w, e.else_body)
