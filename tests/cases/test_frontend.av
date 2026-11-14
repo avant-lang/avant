@@ -11,13 +11,14 @@ import backends
 // a value), types/generic_defaults.av (literal and nil field defaults of
 // generic class instances, typed by the checker, C14),
 // closures/block_break.av (`break` in a block builtin with no
-// `while` around it; `break`/`continue` of a loop inside a lambda). The
-// checker rejects `break` in a lambda body inside a `while`
-// (closures/refuse_break.av) and `break` inside `Mutex.with`
-// (closures/with_break.av) at the statement, writing no program.
+// `while` around it; `break`/`continue` of a loop inside a lambda),
+// closures/with_break.av (`break` inside `Mutex.with` leaves the block
+// and its loop and releases the lock: refused until Stage 29 W8Ca,
+// O263). The checker rejects `break` in a lambda body inside a `while`
+// (closures/refuse_break.av) at the statement, writing no program.
 
 fn ok_progs: Array(String) {
-  out: Array(String) = ["tests/fixtures/types/paths.av", "tests/fixtures/types/bump_method.av", "tests/fixtures/types/generic_defaults.av", "tests/fixtures/closures/block_break.av"]
+  out: Array(String) = ["tests/fixtures/types/paths.av", "tests/fixtures/types/bump_method.av", "tests/fixtures/types/generic_defaults.av", "tests/fixtures/closures/block_break.av", "tests/fixtures/closures/with_break.av"]
   out
 }
 
@@ -26,7 +27,8 @@ fn ok_wants: Array(String) {
   bumps = "2\n5\n8\n9\n"
   defaults = "no last\n5\nstack 1 0.5 true\nnone\nstack 0\n"
   blocks = "12\n1\ntrue\n25\n"
-  out: Array(String) = [paths, bumps, defaults, blocks]
+  withs = "2\n2\n"
+  out: Array(String) = [paths, bumps, defaults, blocks, withs]
   out
 }
 
@@ -34,22 +36,22 @@ fn ok_wants: Array(String) {
 // none since the bump constructor bump_method.av used is gone (Stage 29
 // W1a, D298; it gave nil without the nursery).
 fn ok_envs: Array(String) {
-  out: Array(String) = ["", "", "", ""]
+  out: Array(String) = ["", "", "", "", ""]
   out
 }
 
 fn bad_progs: Array(String) {
-  out: Array(String) = ["tests/fixtures/closures/refuse_break.av", "tests/fixtures/closures/with_break.av"]
+  out: Array(String) = ["tests/fixtures/closures/refuse_break.av"]
   out
 }
 
 fn bad_wants: Array(String) {
-  out: Array(String) = ["error[E4000]: break is only valid inside a loop", "error[E4000]: break inside Mutex.with"]
+  out: Array(String) = ["error[E4000]: break is only valid inside a loop"]
   out
 }
 
 fn bad_locs: Array(String) {
-  out: Array(String) = ["refuse_break.av:14:7", "with_break.av:25:9"]
+  out: Array(String) = ["refuse_break.av:14:7"]
   out
 }
 

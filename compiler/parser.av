@@ -1957,6 +1957,14 @@ pub class Parser {
     for f in e.field_exprs {
       for_advance_expr(f, counter, loc)
     }
+    // A `Mutex.with` block runs in place, and its `continue` is the
+    // enclosing loop's (Stage 29 W8Ca, O263); a builtin's block (`each`)
+    // is a loop of its own, like a nested while.
+    if e.callee == "with" {
+      if b = e.block {
+        b.body = for_advance(b.body, counter, loc)
+      }
+    }
   }
 
   pub fn parse_for: Stmt {

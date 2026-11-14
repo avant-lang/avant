@@ -12,17 +12,12 @@ import typed_ir
 import checker.names
 import checker
 
+// std.sync's Channel and Mutex cross a task as shared handles (D35):
+// that is their purpose. A class of another module with one of those
+// names is an ordinary class (Stage 29 W8Ca: before, any class named
+// Channel or Mutex crossed).
 pub fn (checker_self: Checker) is_share_ty(ty: Ty): Bool {
-  if ty.origin == "Channel" {
-    return true
-  }
-  if ty.name == "Channel" {
-    return true
-  }
-  if ty.origin == "Mutex" {
-    return true
-  }
-  ty.name == "Mutex"
+  checker_self.is_sync_ty(ty, "Channel") || checker_self.is_sync_ty(ty, "Mutex")
 }
 
 pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
@@ -516,10 +511,6 @@ pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
 
 pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: Hash(String, Int)) {
   if checker_self.spawn_skip_has(expr.ident) {
-    return
-  }
-  if checker_self.place_depth > 0 && expr.ident == checker_self.place_name {
-    checker_self.fail(expr.loc, "mutex place cannot escape")
     return
   }
   if ty = checker_self.lookup(expr.ident) {

@@ -1,0 +1,109 @@
+// Every way out of `Mutex.with` releases the lock (Stage 29 W8Ca, O263,
+// O313): a block that ends, one that returns from its function, a `?`
+// that returns a failure, a `break` and a `continue` out of the loop
+// around it, and a block used as a statement that ends without a value.
+// Eight tasks take each way out many times on one counter; a lock that
+// one way out kept would hang the next `with` (the suite's timeout), and
+// a lost update would show in the totals printed after the joins.
+
+import std.sync
+
+class Odd: Error {
+  pub message: String = "odd"
+}
+
+fn plain(m: Mutex(Int), times: Int) {
+  for i in 0..times {
+    m.with { |n| n += 1 }
+  }
+}
+
+// Returns from inside the block on every other call.
+fn by_return(m: Mutex(Int), i: Int): Int {
+  m.with { |n|
+    n += 1
+    if i % 2 == 0 {
+      return 1
+    }
+  }
+  0
+}
+
+// Leaves the loop from inside the block.
+fn by_break(m: Mutex(Int), times: Int): Int {
+  k = 0
+  while true {
+    m.with { |n|
+      n += 1
+      k += 1
+      if k == times {
+        break
+      }
+    }
+  }
+  k
+}
+
+// Skips the rest of the body from inside the block.
+fn by_continue(m: Mutex(Int), times: Int): Int {
+  skipped = 0
+  for i in 0..times {
+    m.with { |n|
+      n += 1
+      if i % 3 == 0 {
+        skipped += 1
+        continue
+      }
+      n += 0
+    }
+  }
+  skipped
+}
+
+fn check(i: Int): Int | Odd {
+  if i % 2 == 1 {
+    return Odd.new
+  }
+  i
+}
+
+// A `?` inside the block returns the failure.
+fn by_try(m: Mutex(Int), i: Int): Int | Odd {
+  m.with { |n|
+    n += 1
+    v = check(i)?
+    n += v - v
+  }
+  0
+}
+
+fn main {
+  m = Mutex(Int).new(0)
+  times = 500
+  hs: Array(JoinHandle(Int)) = []
+  for t in 0..8 {
+    hs.push(spawn {
+      plain(m, times)
+      returned = 0
+      for i in 0..times {
+        returned += by_return(m, i)
+      }
+      broke = by_break(m, times)
+      skipped = by_continue(m, times)
+      failed = 0
+      for i in 0..times {
+        if e = by_try(m, i) {
+        } else {
+          failed += 1
+        }
+      }
+      returned + broke + skipped + failed
+    })
+  }
+  sum = 0
+  for h in hs {
+    sum += h.join
+  }
+  puts(sum)
+  puts(m.with { |n| n })
+}

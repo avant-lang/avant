@@ -638,90 +638,6 @@ pub fn write_av(dir: String, name: String, body: String) {
   _ = file_write("${dir}/${name}.av", body)
 }
 
-pub class Channel(T) {
-  slots: Array(T?)
-  cap: Int
-  count: Int
-  head: Int
-  closed: Int
-  has: Int
-  gate: UInt64
-  cell: T?
-
-  fn initialize(n: Int = 0) {
-    self.cap = n
-    self.gate = avant_gate_new()
-    self.slots = Array(T?).new(n)
-  }
-
-  pub fn send(value: T) {
-    avant_gate_lock(gate)
-    if cap == 0 {
-      while has == 1 {
-        avant_gate_wait(gate)
-      }
-      self.cell = value
-      self.has = 1
-      avant_gate_broadcast(gate)
-      while has == 1 {
-        if closed == 1 {
-          break
-        }
-        avant_gate_wait(gate)
-      }
-    } else {
-      while count == cap {
-        avant_gate_wait(gate)
-      }
-      slots[(head + count) % cap] = value
-      self.count = count + 1
-      avant_gate_broadcast(gate)
-    }
-    avant_gate_unlock(gate)
-  }
-
-  pub fn recv: T? {
-    avant_gate_lock(gate)
-    got: T? = nil
-    if cap == 0 {
-      while has == 0 {
-        if closed == 1 {
-          break
-        }
-        avant_gate_wait(gate)
-      }
-      if has == 1 {
-        got = cell
-        self.has = 0
-        avant_gate_broadcast(gate)
-      }
-    } else {
-      while count == 0 {
-        if closed == 1 {
-          break
-        }
-        avant_gate_wait(gate)
-      }
-      if count > 0 {
-        got = slots[head]
-        slots[head] = nil
-        self.head = (head + 1) % cap
-        self.count = count - 1
-        avant_gate_broadcast(gate)
-      }
-    }
-    avant_gate_unlock(gate)
-    got
-  }
-
-  pub fn close {
-    avant_gate_lock(gate)
-    self.closed = 1
-    avant_gate_broadcast(gate)
-    avant_gate_unlock(gate)
-  }
-}
-
 pub class Held {
   pub n: Int
 
@@ -732,14 +648,4 @@ pub class Held {
 
 pub struct Cell {
   pub n: Int
-}
-
-pub class Mutex(T) {
-  cell: T
-  gate: UInt64
-
-  fn initialize(value: T) {
-    self.cell = value
-    self.gate = avant_gate_new()
-  }
 }
