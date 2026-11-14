@@ -2105,6 +2105,29 @@ pub class Parser {
       _ = self.parse_interpolated_string
       return CaseLabel.new(lb_string(), iloc)
     }
+    if self.current.kind == tk_nil() {
+      // A union switch's `case nil` (Stage 29 W5a2, O391).
+      return CaseLabel.new(lb_nil(), self.bump.loc)
+    }
+    if self.current.kind == tk_ident() && self.index + 1 < self.tokens.size && self.tokens[self.index + 1].kind == tk_colon() {
+      // A union member with a binding (Stage 29 W5a2, D293): `case n: Int`.
+      btok = self.bump
+      self.bump
+      self.skip_newlines
+      blabel = CaseLabel.new(lb_type(), btok.loc)
+      blabel.bind = btok.value
+      blabel.tname = self.parse_type_name
+      return blabel
+    }
+    if self.current.kind == tk_ident() && self.label_is_type {
+      // A union member's type without a binding (Stage 29 W5a2, O391):
+      // a capital first letter means a type (D358), as in `case Json`;
+      // `case Tok.eof` stays a member label.
+      tloc = self.current.loc
+      tlabel = CaseLabel.new(lb_type(), tloc)
+      tlabel.tname = self.parse_type_name
+      return tlabel
+    }
     if self.current.kind == tk_ident() {
       tok = self.bump
       label = CaseLabel.new(lb_member(), tok.loc)
@@ -2124,6 +2147,23 @@ pub class Parser {
     label = CaseLabel.new(lb_int(), self.current.loc)
     label.int_val = parse_case_int
     label
+  }
+
+  // Whether the label at the current token names a type: its last
+  // dotted part starts with a capital (`Json`, `json.Json`, `Array(Int)`),
+  // where `case Tok.eof` ends in a member.
+  pub fn label_is_type: Bool {
+    i = self.index
+    last = self.tokens[i].value
+    while i + 2 < self.tokens.size && self.tokens[i + 1].kind == tk_dot() {
+      i += 2
+      last = self.tokens[i].value
+    }
+    if last.size == 0 {
+      return false
+    }
+    c = last[0]
+    c >= 65 && c <= 90
   }
 
   // An integer label's value. The bound is 32 bits, stale since D314's

@@ -1,0 +1,135 @@
+import harness
+import backends
+
+// Stage 29 W5a2: switch over a union's members (D293, O210, O391) and a
+// statement switch's arms (O634). Each program is compiled in parallel;
+// a refused one must leave no binary, say the expected words and point
+// at the expected line and column; an accepted one must print what it
+// should. The programs that run (tests/fixtures/unions/) are checked by
+// the run goldens in every collector mode; this file holds the rules'
+// refusals, their accepted neighbours, and a check on the generated
+// code: one tag load and one switch, no trap.
+
+class RCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn cases: Array(RCase) {
+  xs: Array(RCase) = []
+  pre = "class Oops: Error {\n  pub message: String = \"oops\"\n}\nfn r(n: Int): Int | Oops | Nil {\n  if n > 0 {\n    return n\n  }\n  if n < 0 {\n    return Oops.new\n  }\n  nil\n}\n"
+  xs.push(refused("cover-missing", "fn f(x: Int | String): Int {\n  switch x {\n    case n: Int { n }\n  }\n}\nfn main { puts(f(1)) }\n", "switch over Int | String does not cover String: name them or add else", "2:3"))
+  xs.push(refused("cover-missing-failure", pre + "fn main {\n  switch r(1) {\n    case n: Int { puts(n) }\n    case nil { puts(0) }\n  }\n}\n", "does not cover Oops: name them or add else", "14:3"))
+  xs.push(refused("cover-missing-nil", pre + "fn main {\n  switch r(1) {\n    case n: Int { puts(n) }\n    case Oops { puts(1) }\n  }\n}\n", "does not cover nil: name them or add else", "14:3"))
+  xs.push(refused("cover-else-beside-full", "fn f(x: Int | String): Int {\n  switch x {\n    case Int { 1 }\n    case String { 2 }\n    else { 3 }\n  }\n}\nfn main { puts(f(1)) }\n", "every member of Int | String is named; remove the else", "2:3"))
+  xs.push(refused("binding-outside-arm", "fn main {\n  x: Int | String = 1\n  switch x {\n    case n: Int { puts(n) }\n    case String { puts(0) }\n  }\n  puts(n)\n}\n", "unknown name n", "7:8"))
+  xs.push(refused("binding-other-arm", "fn main {\n  x: Int | String = 1\n  switch x {\n    case n: Int { puts(n) }\n    case String { puts(n) }\n  }\n}\n", "unknown name n", "5:24"))
+  xs.push(refused("nil-without-nil", "fn main {\n  x: Int | String = 1\n  switch x {\n    case nil { puts(0) }\n    else { puts(1) }\n  }\n}\n", "case nil: Int | String has no nil member", "4:10"))
+  xs.push(refused("type-not-member", "fn main {\n  x: Int | String = 1\n  switch x {\n    case f: Float64 { puts(f) }\n    else { puts(1) }\n  }\n}\n", "Float64 is not a member of Int | String", "4:10"))
+  xs.push(refused("type-not-member-bare", "fn main {\n  x: Int | String = 1\n  switch x {\n    case Bool { puts(0) }\n    else { puts(1) }\n  }\n}\n", "Bool is not a member of Int | String", "4:10"))
+  xs.push(refused("type-unknown", "fn main {\n  x: Int | String = 1\n  switch x {\n    case Nope { puts(0) }\n    else { puts(1) }\n  }\n}\n", "unknown type Nope", "4:10"))
+  xs.push(refused("nil-written-as-type", "fn main {\n  x: Int? = 1\n  switch x {\n    case Nil { puts(0) }\n    case Int { puts(1) }\n  }\n}\n", "write `case nil` for the nil member", "4:10"))
+  xs.push(refused("binding-two-labels", "fn main {\n  x: Int | String = 1\n  switch x {\n    case n: Int, String { puts(0) }\n  }\n}\n", "a case that binds a value has one label", "4:10"))
+  xs.push(refused("binding-underscore", "fn main {\n  x: Int | String = 1\n  switch x {\n    case _: Int { puts(0) }\n    case String { puts(1) }\n  }\n}\n", "write the type alone to name a member without a binding", "4:10"))
+  xs.push(refused("label-duplicate", "fn main {\n  x: Int | String = 1\n  switch x {\n    case Int { puts(0) }\n    case n: Int { puts(n) }\n    case String { puts(1) }\n  }\n}\n", "duplicate case Int", "5:10"))
+  xs.push(refused("label-duplicate-nil", "fn main {\n  x: Int? = 1\n  switch x {\n    case nil { puts(0) }\n    case nil, Int { puts(1) }\n  }\n}\n", "duplicate case nil", "5:10"))
+  xs.push(refused("label-integer-on-union", "fn main {\n  x: Int | String = 1\n  switch x {\n    case 1 { puts(0) }\n    else { puts(1) }\n  }\n}\n", "a case label of a switch over Int | String is one of its member types", "4:10"))
+  xs.push(refused("label-type-on-int", "fn main {\n  x = 1\n  switch x {\n    case Int { puts(0) }\n    else { puts(1) }\n  }\n}\n", "a member-type or nil label needs a union to switch over, got Int", "4:10"))
+  xs.push(refused("label-nil-on-enum", "enum Tok { a, b }\nfn main {\n  switch Tok.a {\n    case nil { puts(0) }\n    else { puts(1) }\n  }\n}\n", "a member-type or nil label needs a union to switch over, got Tok", "4:10"))
+  xs.push(refused("value-needs-cover", "fn f(x: Int | String): Int {\n  switch x {\n    case Int { 1 }\n  }\n}\nfn main { puts(f(1)) }\n", "does not cover String", "2:3"))
+  xs.push(refused("binding-wrong-type", "fn main {\n  x: Int | String = 1\n  switch x {\n    case s: String { puts(s + 1) }\n    case Int { puts(0) }\n  }\n}\n", "expected String, got Int", "4:31"))
+  xs.push(refused("stmt-arm-drops-error", pre + "fn main {\n  switch 1 {\n    case 1 { r(1) }\n    else { puts(0) }\n  }\n}\n", "this statement drops a value that can be an error", "15:14"))
+  xs.push(refused("value-mixed-arms", "fn main {\n  x = switch 1 {\n    case 1 { 2 }\n    else { puts(0) }\n  }\n  puts(x)\n}\n", "switch cases must all produce a value, or none", "2:7"))
+  xs.push(accepted("stmt-arm-value", "fn main {\n  switch argv().size {\n    case 1 {\n      argv().size + 1\n    }\n    else {\n      puts(0)\n    }\n  }\n  puts(\"done\")\n}\n", "done\n"))
+  xs.push(accepted("stmt-arm-discard", pre + "fn main {\n  switch 1 {\n    case 1 { _ = r(1) }\n    else { puts(0) }\n  }\n  puts(\"done\")\n}\n", "done\n"))
+  xs.push(accepted("cover-neighbours", pre + "fn show(x: Int | Oops | Nil): String {\n  switch x {\n    case n: Int { \"n\${n}\" }\n    case e: Oops { \"e:\${e}\" }\n    case nil { \"nil\" }\n  }\n}\nfn main {\n  puts(show(r(2)))\n  puts(show(r(-1)))\n  puts(show(r(0)))\n  switch r(3) {\n    case n: Int { puts(n) }\n    else { puts(0) }\n  }\n}\n", "n2\ne:oops\nnil\n3\n"))
+  xs.push(accepted("binding-shadows", "fn main {\n  n = \"outer\"\n  x: Int | String = 5\n  switch x {\n    case n: Int { puts(n) }\n    case String { puts(0) }\n  }\n  puts(n)\n}\n", "5\nouter\n"))
+  xs.push(refused("guard-binding-escapes", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  u: PBox | Int = PBox.new\n  m = Mutex(PBox | Int).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    switch b {\n      case p: PBox { keep.push(p) }\n      case Int { }\n    }\n  }\n  puts(keep.size)\n}\n", "Mutex.with: this argument is the guarded value or a reference reached from it (PBox)", "13:32"))
+  xs.push(accepted("guard-binding-plain", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  u: PBox | Int = PBox.new\n  m = Mutex(PBox | Int).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    switch b {\n      case p: PBox { keep.push(PBox.new) }\n      case Int { }\n    }\n  }\n  puts(keep.size)\n}\n", "1\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/us-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/us-${f.tag}.bin", "${dir}/us-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "us-${f2.tag}.bin", "us-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/us-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/us-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/us-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "us-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+// The generated code: one load of the tag and one switch on it, the last
+// arm the default (a tag is always a member: no trap, no unreachable).
+fn check_ll(c: Checks, compiler: String, dir: String) {
+  sw = "${dir}/us-ll-switch.av"
+  _ = file_write(sw, "fn f(x: Int | String | Float64): Int {\n  switch x {\n    case n: Int { n }\n    case s: String { s.size }\n    case Float64 { 0 }\n  }\n}\nfn main {\n  puts(f(\"ab\"))\n}\n")
+  c.eq_int(emit_ll(compiler, sw, "${dir}/us-ll-switch.ll", "${dir}/us-ll-switch.log"), 0, "ll-switch: emits")
+  ll = log_text("${dir}/us-ll-switch.ll")
+  c.expect(str_has(ll, "switch i32 "), "ll-switch: one switch on the tag")
+  c.expect(!str_has(ll, "avant_trap_enum"), "ll-switch: no trap")
+  c.expect(!str_has(ll, "unreachable"), "ll-switch: no unreachable")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_union_switch.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+    check_ll(c, compiler, scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

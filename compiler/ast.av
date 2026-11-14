@@ -105,10 +105,15 @@ pub class InterpPart {
 // integer label's value is int_val. A member label (`case eof`, an enum
 // switch, D327) carries the member's name in text and gets its value in
 // int_val from the checker; a string label carries its bytes in text.
-// W5a2 adds member types and `nil`, W5a3 ranges.
+// A union switch's label (Stage 29 W5a2, D293, O391) is a member type
+// (lb_type: tname, with the binding's name in bind when written
+// `case n: Int`) or `nil` (lb_nil); the checker puts the member's index
+// in the union in int_val. W5a3 adds ranges.
 pub fn lb_int: Int { 1 }
 pub fn lb_string: Int { 2 }
 pub fn lb_member: Int { 3 }
+pub fn lb_type: Int { 4 }
+pub fn lb_nil: Int { 5 }
 
 pub class CaseLabel {
   pub kind: Int = 0
@@ -118,6 +123,9 @@ pub class CaseLabel {
   // A label written `Type.member` (refused in an enum switch with a hint):
   // the type's name; empty otherwise.
   pub qual: String = ""
+  // A member-type label's type, and the name it binds ("" for none).
+  pub tname: TypeName? = nil
+  pub bind: String = ""
 
   fn initialize(kind: Int, loc: Location) {
     self.kind = kind
@@ -130,6 +138,10 @@ pub fn clone_case_label(l: CaseLabel): CaseLabel {
   out.int_val = l.int_val
   out.text = l.text
   out.qual = l.qual
+  out.bind = l.bind
+  if tn = l.tname {
+    out.tname = clone_type_name(tn)
+  }
   out
 }
 
@@ -1075,6 +1087,11 @@ pub fn subst_type_in_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
   }
   i = 0
   while i < e.cases.size {
+    for label in e.cases[i].labels {
+      if tn = label.tname {
+        label.tname = subst_type_name(tn, from, to)
+      }
+    }
     subst_type_in_stmts(e.cases[i].body, from, to)
     i += 1
   }

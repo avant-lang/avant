@@ -76,10 +76,11 @@ fn prelude_decls: String {
 // (`if v = ..., cond`); an expression as the value of an `if` expression,
 // a `switch` expression, a lambda, inside a binding chain's body, a
 // method call's argument, an interpolation, a `for` body, a builtin's
-// block and the fallback of `??`. Left out: `?? return` (it ends the
-// function and wraps no expression of its own; the fallback row covers
-// the operand of `??`), a bare block (the language has none), and
-// `switch` on a union's member (not built).
+// block and the fallback of `??`; a statement in an arm of a `switch`
+// over a union's members and an expression as such a switch's value
+// (Stage 29 W5a2). Left out: `?? return` (it ends the function and wraps
+// no expression of its own; the fallback row covers the operand of
+// `??`) and a bare block (the language has none).
 fn rules: Array(PRule) {
   xs: Array(PRule) = []
   main_site = "fn main {\n@\n}\n"
@@ -113,6 +114,12 @@ fn rules: Array(PRule) {
   xs.push(rule("enum-qualified-label", "stmt", "", esite, "", "switch t {\n  case Tok.a { puts(1) }\n  case b { puts(2) }\n}", "switch t {\n  case a { puts(1) }\n  case b { puts(2) }\n}", "write the member without its type in a case label"))
   xs.push(rule("enum-else-beside-full", "stmt", "", esite, "", "switch t {\n  case a { puts(1) }\n  case b { puts(2) }\n  else { puts(3) }\n}", "switch t {\n  case a { puts(1) }\n  case b { puts(2) }\n}", "every member of Tok is named; remove the else"))
   xs.push(rule("enum-error-dropped", "stmt", "", esite, "", "ef(1)", "_ = ef(1)", "drops a value that can be an error"))
+  // README "Switch" over a union (Stage 29 W5a2, D293, O391).
+  usite = "class Oops: Error {\n  pub message: String = \"oops\"\n}\n\nfn uf(n: Int): Int | Oops | Nil {\n  if n > 1 {\n    return Oops.new\n  }\n  if n > 0 {\n    return nil\n  }\n  n\n}\n\nfn main {\n  u = uf(probe_k())\n@\n}\n"
+  xs.push(rule("union-switch-missing", "stmt", "", usite, "", "switch u {\n  case n: Int { puts(n) }\n  case nil { puts(0) }\n}", "switch u {\n  case n: Int { puts(n) }\n  case nil { puts(0) }\n  case Oops { puts(1) }\n}", "does not cover Oops"))
+  xs.push(rule("union-binding-outside-arm", "stmt", "", usite, "", "switch u {\n  case n: Int { puts(n) }\n  else { puts(0) }\n}\nputs(n)", "switch u {\n  case n: Int { puts(n) }\n  else { puts(0) }\n}\nputs(1)", "unknown name n"))
+  xs.push(rule("union-case-nil-without-nil", "stmt", "", usite, "", "w: Int | String = 1\nswitch w {\n  case nil { puts(0) }\n  else { puts(1) }\n}", "w: Int | String | Nil = 1\nswitch w {\n  case nil { puts(0) }\n  else { puts(1) }\n}", "has no nil member"))
+  xs.push(rule("union-label-not-member", "stmt", "", usite, "", "switch u {\n  case f: Float64 { puts(f) }\n  else { puts(0) }\n}", "switch u {\n  case f: Int { puts(f) }\n  else { puts(0) }\n}", "is not a member of"))
   xs
 }
 
@@ -122,11 +129,11 @@ fn probe_mod_src: String {
 }
 
 fn stmt_wrappers: Array(String) {
-  ["plain", "if", "else", "switch-arm", "while", "for", "lambda", "builtin-block", "binding-chain"]
+  ["plain", "if", "else", "switch-arm", "union-arm", "while", "for", "lambda", "builtin-block", "binding-chain"]
 }
 
 fn expr_wrappers: Array(String) {
-  ["plain", "if-expr", "switch-expr", "lambda", "binding-chain", "call-arg", "interpolation", "for", "builtin-block", "qq-fallback"]
+  ["plain", "if-expr", "switch-expr", "union-switch-expr", "lambda", "binding-chain", "call-arg", "interpolation", "for", "builtin-block", "qq-fallback"]
 }
 
 fn ind(s: String, pad: String): String {
@@ -154,6 +161,9 @@ fn wrap_stmt(w: String, s: String): String {
   }
   if w == "switch-arm" {
     return "  switch probe_k() {\n    case 1 {\n${ind(s, "      ")}\n    }\n    else {\n      puts(0)\n    }\n  }"
+  }
+  if w == "union-arm" {
+    return "  switch probe_maybe() {\n    case pw: Int {\n${ind(s, "      ")}\n    }\n    case nil {\n      puts(0)\n    }\n  }"
   }
   if w == "while" {
     return "  while probe_cond() {\n${ind(s, "    ")}\n    break\n  }"
@@ -184,6 +194,9 @@ fn wrap_expr(w: String, e: String): String {
   }
   if w == "switch-expr" {
     return "  px = switch probe_k() {\n    case 1 {\n      ${e}\n    }\n    else {\n      ${e}\n    }\n  }\n${use}"
+  }
+  if w == "union-switch-expr" {
+    return "  px = switch probe_maybe() {\n    case pw: Int {\n      ${e}\n    }\n    case nil {\n      ${e}\n    }\n  }\n${use}"
   }
   if w == "lambda" {
     return "  pf = { || ${e} }\n  px = pf()\n${use}"

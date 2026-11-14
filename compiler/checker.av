@@ -134,6 +134,10 @@ pub class Checker {
   // The position of a `with` call used as a statement (check_stmt): its
   // block's value is dropped, so the block ends however it likes.
   pub with_drop: String = ""
+  // Set by check_stmt for a switch used as a statement (Stage 29 W5a2,
+  // O634): its arms are statements, as an `if`'s; check_switch reads and
+  // clears it.
+  pub switch_stmt: Bool = false
   // Inside the block of `Array(T).new(n) { |i| ... }` (how deep): a
   // `break` or `continue` there gets its own message.
   pub in_build: Int = 0
@@ -826,6 +830,9 @@ pub class Checker {
           // A `with` whose value nobody uses (O263): its block ends
           // without a value (check_mutex_with).
           self.with_drop = expr.loc.show
+        }
+        if expr.kind == ex_switch() && expr.op != tk_if() && expr.op != tk_return() && (!at_tail || expected.is_void) {
+          self.switch_stmt = true
         }
         if at_tail && !expected.is_void && is_int_literal(expr) {
           // A literal tail adopts the result type, as `return 0` does
@@ -3838,6 +3845,8 @@ pub class Checker {
   }
 
   pub fn check_switch(expr: Expr, has_want: Bool, want: Ty): Ty {
+    stmt_mode = self.switch_stmt
+    self.switch_stmt = false
     if expr.op == tk_if() && expr.else_body.size == 1 {
       if t = check_if_value(expr.else_body[0], has_want, want) {
         return t
@@ -3846,17 +3855,17 @@ pub class Checker {
       return t_int()
     }
     // The discriminant's countable cases (Stage 29 W5a1, D292, D293):
-    // an enum's members; W5a2 adds union members, W5a3 Bool. A switch
-    // over a countable type without else names every case.
+    // an enum's members, a union's members (W5a2, D293); W5a3 adds Bool.
+    // A switch over a countable type without else names every case.
     countable = false
     disc = t_int()
     if cond = expr.cond {
       ct = check_expr(cond)
       disc = ct
-      if ct.is_enum {
+      if ct.is_enum || ct.is_union {
         countable = true
       } else if !ct.is_int && !ct.is_bool && !ct.is_string {
-        fail(cond.loc, "switch discriminant must be Int, Bool, String or an enum, got ${ct.show}")
+        fail(cond.loc, "switch discriminant must be Int, Bool, String, an enum or a union, got ${ct.show}")
       }
     }
     covered = Hash(Int, Int).new
@@ -3865,6 +3874,13 @@ pub class Checker {
     for arm in expr.cases {
       if arm.labels.size == 0 {
         fail(arm.loc, "case needs a label")
+      }
+      if arm.labels.size > 1 {
+        for bl in arm.labels {
+          if bl.bind.size > 0 {
+            fail(bl.loc, "a case that binds a value has one label: write `case ${bl.bind}: ...` as its own arm")
+          }
+        }
       }
       for label in arm.labels {
         if !check_case_label(label, disc) {
@@ -3879,7 +3895,9 @@ pub class Checker {
         }
         lab = label.int_val
         if prev = seen.get(lab) {
-          if label.kind == lb_member() {
+          if label.kind == lb_type() || label.kind == lb_nil() {
+            fail(label.loc, "duplicate case ${union_case_name(disc, lab)}")
+          } else if label.kind == lb_member() {
             fail(label.loc, "duplicate case ${label.text}")
           } else {
             fail(arm.loc, "duplicate case ${lab}")
@@ -3900,10 +3918,22 @@ pub class Checker {
     }
     // An arm that leaves (its last statement a return, break or
     // continue; Stage 29 W4a) gives no value and joins nothing.
+    if stmt_mode {
+      // A switch used as a statement (O634): every arm is a block of
+      // statements, as an `if`'s branches; a value an arm ends with is
+      // dropped under the discard rule (D295).
+      for sarm in expr.cases {
+        check_switch_stmts(sarm.body, arm_binding(sarm), arm_binding_ty(sarm, disc))
+      }
+      if expr.has_else {
+        check_switch_stmts(expr.else_body, "", t_void())
+      }
+      return t_void()
+    }
     branch_tys: Array(Ty) = []
     i = 0
     while i < expr.cases.size {
-      bt = check_switch_branch(expr.cases[i].body, has_want, want)
+      bt = check_switch_branch_bound(expr.cases[i].body, has_want, want, arm_binding(expr.cases[i]), arm_binding_ty(expr.cases[i], disc))
       if !arm_leaves(expr.cases[i].body) {
         branch_tys.push(bt)
       }
@@ -3960,6 +3990,13 @@ pub class Checker {
   // value in int_val; an integer discriminant's are integer literals.
   // False when the label was refused.
   pub fn check_case_label(label: CaseLabel, disc: Ty): Bool {
+    if disc.is_union {
+      return check_union_label(label, disc)
+    }
+    if label.kind == lb_type() || label.kind == lb_nil() {
+      fail(label.loc, "a member-type or nil label needs a union to switch over, got ${disc.show}")
+      return false
+    }
     if disc.is_enum {
       if label.kind != lb_member() {
         fail(label.loc, "a case label of a switch over ${disc.show} is one of its members, written bare (case ${disc.enum_names[0]})")
@@ -3991,6 +4028,101 @@ pub class Checker {
     true
   }
 
+  // A union switch's label (Stage 29 W5a2, D293, O391): a member type,
+  // with or without a binding, or `nil`; int_val becomes the member's
+  // index in the union (its tag).
+  pub fn check_union_label(label: CaseLabel, disc: Ty): Bool {
+    if label.kind == lb_nil() {
+      if !disc.includes_nil {
+        fail(label.loc, "case nil: ${disc.show} has no nil member")
+        return false
+      }
+      label.int_val = disc.tag_of(ty_nil())
+      return true
+    }
+    if label.kind != lb_type() {
+      fail(label.loc, "a case label of a switch over ${disc.show} is one of its member types, with or without a binding (case n: ${union_case_name(disc, first_payload_index(disc))}), or nil")
+      return false
+    }
+    if label.bind == "_" {
+      fail(label.loc, "write the type alone to name a member without a binding: `case ...`")
+      return false
+    }
+    t = t_int()
+    if tn = label.tname {
+      t = resolve_in_module(tn)
+    } else {
+      return false
+    }
+    self.pull_resolve
+    if self.has_err {
+      return false
+    }
+    if t.is_nil {
+      fail(label.loc, "write `case nil` for the nil member")
+      return false
+    }
+    if !disc.includes_member(t) {
+      fail(label.loc, "${t.show} is not a member of ${disc.show}")
+      return false
+    }
+    label.int_val = disc.tag_of(t)
+    true
+  }
+
+  // A union member as a label names it: its type, or nil.
+  pub fn union_case_name(disc: Ty, idx: Int): String {
+    if idx < 0 || idx >= disc.members.size {
+      return "nil"
+    }
+    m = disc.members[idx]
+    if m.is_nil {
+      return "nil"
+    }
+    m.show
+  }
+
+  pub fn first_payload_index(disc: Ty): Int {
+    for i in 0..disc.members.size {
+      if !disc.members[i].is_nil {
+        return i
+      }
+    }
+    0
+  }
+
+  // The name an arm's one label binds ("" for none), and its type: the
+  // union member it names.
+  pub fn arm_binding(arm: SwitchCase): String {
+    if arm.labels.size == 1 && arm.labels[0].kind == lb_type() && arm.labels[0].bind != "_" {
+      return arm.labels[0].bind
+    }
+    ""
+  }
+
+  pub fn arm_binding_ty(arm: SwitchCase, disc: Ty): Ty {
+    if arm.labels.size == 1 && arm.labels[0].kind == lb_type() && disc.is_union {
+      idx = arm.labels[0].int_val
+      if idx >= 0 && idx < disc.members.size {
+        return disc.members[idx]
+      }
+    }
+    t_void()
+  }
+
+  // A statement switch's arm (O634): its statements, the binding in
+  // scope for them only.
+  pub fn check_switch_stmts(body: Array(Stmt), name: String, ty: Ty) {
+    self.push_scope
+    if name.size > 0 {
+      bind(name, ty)
+    }
+    for stmt in body {
+      check_stmt(stmt, self.return_type, false)
+    }
+    self.pop_scope
+  }
+
   // A String label as written in a message: quoted, its quote and
   // backslash escaped.
   pub fn quote_label(text: String): String {
@@ -4012,6 +4144,13 @@ pub class Checker {
   // an enum's members; W5a2 and W5a3 add union members and Bool).
   pub fn switch_missing_cases(disc: Ty, covered: Hash(Int, Int)): Array(String) {
     missing: Array(String) = []
+    if disc.is_union {
+      for ui in 0..disc.members.size {
+        if !covered.has_key(ui) {
+          missing.push(union_case_name(disc, ui))
+        }
+      }
+    }
     if disc.is_enum {
       names = disc.enum_names
       vals = disc.enum_vals
@@ -4388,7 +4527,16 @@ pub class Checker {
   }
 
   pub fn check_switch_branch(body: Array(Stmt), has_want: Bool, want: Ty): Ty {
+    check_switch_branch_bound(body, has_want, want, "", t_void())
+  }
+
+  // A value switch's arm, with the name its label binds (Stage 29 W5a2)
+  // in scope for the arm only.
+  pub fn check_switch_branch_bound(body: Array(Stmt), has_want: Bool, want: Ty, name: String, bty: Ty): Ty {
     self.push_scope
+    if name.size > 0 {
+      bind(name, bty)
+    }
     if body.size == 0 {
       self.pop_scope
       return t_void()

@@ -42,17 +42,6 @@ fn connect(n: Int): String | NetError {
   "connected"
 }
 
-// The README's helper ("Reading the error itself").
-fn failure(r: Int | ParseError): ParseError? {
-  _ = r?
-  nil
-}
-
-fn net_failure(r: String | NetError): NetError? {
-  _ = r?
-  nil
-}
-
 fn kind(e: ParseError): String {
   switch e {
     case empty { "nothing to read" }
@@ -68,28 +57,37 @@ fn main {
   }
   puts(twice("") ?? -1)
   _ = parse_digit("")
-  if e = failure(parse_digit("")) {
-    puts(e)
-    puts("failed: ${e}")
-    puts(e.message)
-    puts(e.name)
-    puts(kind(e))
+  switch parse_digit("") {
+    case Int { }
+    case e: ParseError {
+      puts(e)
+      puts("failed: ${e}")
+      puts(e.message)
+      puts(e.name)
+      puts(kind(e))
+    }
   }
-  if e2 = failure(parse_digit("?")) {
-    puts(kind(e2))
+  switch parse_digit("?") {
+    case Int { }
+    case e2: ParseError { puts(kind(e2)) }
   }
-  if _ = failure(parse_digit("3")) {
-    puts("failed")
-  } else {
-    puts("no failure")
+  switch parse_digit("3") {
+    case Int { puts("no failure") }
+    case ParseError { puts("failed") }
   }
   puts(connect(0) ?? "no")
-  if n = net_failure(connect(1)) {
-    puts("${n}")
-    puts(n.name)
+  switch connect(1) {
+    case String { }
+    case n: NetError {
+      puts("${n}")
+      puts(n.name)
+    }
   }
-  if n2 = net_failure(connect(2)) {
-    puts(n2.message)
-    puts(n2.to_i)
+  switch connect(2) {
+    case String { }
+    case n2: NetError {
+      puts(n2.message)
+      puts(n2.to_i)
+    }
   }
 }
