@@ -81,6 +81,9 @@ pub class Parser {
   tokens: Array(Token)
   index: Int = 0
   allow_struct_lit: Bool = true
+  // Where a struct literal is not allowed ("a condition", "a `for`"),
+  // for the message that says to parenthesize one (Stage 29 W5c2, O238).
+  lit_place: String = ""
   failed: Bool = false
   pub err: CompileError? = nil
   pub errors: DiagBag
@@ -2651,21 +2654,73 @@ pub class Parser {
 
   pub fn parse_for_operand: Expr {
     old = self.allow_struct_lit
+    old_place = self.lit_place
     self.allow_struct_lit = false
+    self.lit_place = "a `for`"
     expr = self.parse_expr
     self.allow_struct_lit = old
+    self.lit_place = old_place
     expr
   }
 
   pub fn parse_cond_expr: Expr {
     old = self.allow_struct_lit
+    old_place = self.lit_place
     self.allow_struct_lit = false
+    self.lit_place = "a condition"
     expr = self.parse_expr
     if self.pred_block_ahead {
       expr = maybe_trailing_block(expr)
     }
     self.allow_struct_lit = old
+    self.lit_place = old_place
     expr
+  }
+
+  // A struct literal where the `{` opens a block (a condition, a `for`'s
+  // operand; Stage 29 W5c2, O238): a type's name, then `{ name: value`
+  // where the value cannot start a type (a declaration `{ x: Int`) or is
+  // followed by a comma. Reported with the parentheses that fix it, and
+  // parsed as the literal, so the block after it is read as written.
+  pub fn misplaced_literal_ahead(name: String): Bool {
+    if self.allow_struct_lit || name.size == 0 || name[0] < 65 || name[0] > 90 || !self.struct_literal_ahead {
+      return false
+    }
+    i = self.index + 1
+    while i < self.tokens.size && self.tokens[i].kind == tk_newline() {
+      i += 1
+    }
+    if i >= self.tokens.size || self.tokens[i].kind != tk_ident() {
+      return false
+    }
+    i += 1
+    while i < self.tokens.size && self.tokens[i].kind == tk_newline() {
+      i += 1
+    }
+    i += 1
+    while i < self.tokens.size && self.tokens[i].kind == tk_newline() {
+      i += 1
+    }
+    if i >= self.tokens.size {
+      return false
+    }
+    k = self.tokens[i].kind
+    if k == tk_ident() {
+      return i + 1 < self.tokens.size && self.tokens[i + 1].kind == tk_comma()
+    }
+    k != tk_fn() && k != tk_pound()
+  }
+
+  pub fn parse_misplaced_literal(tok: Token, qual: String): Expr {
+    shown = tok.value
+    if qual.size > 0 {
+      shown = "${qual}.${tok.value}"
+    }
+    fail(tok.loc, "a struct literal in ${self.lit_place} needs parentheses around it: (${shown} { ... })")
+    self.allow_struct_lit = true
+    e = parse_struct_literal(tok, qual)
+    self.allow_struct_lit = false
+    e
   }
 
   pub fn pred_block_ahead: Bool {
@@ -2838,6 +2893,8 @@ pub class Parser {
               fa.ident = field.value
               cur = fa
             }
+          } else if misplaced_literal_ahead(field.value) {
+            cur = parse_misplaced_literal(field, qual_of(cur))
           } else {
             fa = Expr.new(ex_field(), at)
             fa.object = cur
@@ -3170,6 +3227,9 @@ pub class Parser {
     }
     if self.allow_struct_lit && self.struct_literal_ahead {
       return parse_struct_literal(tok, "")
+    }
+    if misplaced_literal_ahead(tok.value) {
+      return parse_misplaced_literal(tok, "")
     }
     e = Expr.new(ex_name(), tok.loc)
     e.ident = tok.value

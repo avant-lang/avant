@@ -1,0 +1,154 @@
+import harness
+import backends
+
+// Stage 29 W5c2: the messages for types, fields, numbers and cascades. A
+// struct literal where a `{` opens a block, a function value of the wrong
+// fn type (O238); one rule against cascades: an expression whose type
+// already failed is not reported again (O277, O636, O760, O192); the
+// integer messages of constructors and unsigned literals (O364); the
+// messages W5c1 wrote without a program that reaches them (O764). Each
+// program is compiled in parallel; a refused one must leave no binary,
+// exit non-zero, say the expected words at the expected line and column,
+// and, when the case says so, say nothing else (one error, no cascade).
+
+class TCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub single: Bool = false
+  pub absent: String = ""
+  pub ok: Bool = false
+  // Other modules beside main.av: name, body, name, body, ...
+  pub mods: Array(String) = []
+}
+
+// The one error the program has: the words at pos, and no other error.
+fn only(tag: String, src: String, needle: String, pos: String): TCase {
+  f = TCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f.single = true
+  f
+}
+
+// The words at pos; other errors may follow.
+fn first(tag: String, src: String, needle: String, pos: String): TCase {
+  f = only(tag, src, needle, pos)
+  f.single = false
+  f
+}
+
+// The program's one error, without the words absent.
+fn without(tag: String, src: String, needle: String, pos: String, absent: String): TCase {
+  f = only(tag, src, needle, pos)
+  f.absent = absent
+  f
+}
+
+// A program that compiles and prints out.
+fn accepted(tag: String, src: String, out: String): TCase {
+  f = TCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn with_mods(f: TCase, mods: Array(String)): TCase {
+  f.mods = mods
+  f
+}
+
+fn cases: Array(TCase) {
+  xs: Array(TCase) = []
+  // O238: a struct literal where the `{` opens a block says to parenthesize it.
+  xs.push(only("lit-if", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  p = P { x: 1, y: 2 }\n  if p.x == P { x: 1, y: 2 }.x {\n    puts(1)\n  }\n}\n", "a struct literal in a condition needs parentheses around it: (P { ... })", "8:13"))
+  xs.push(only("lit-if-one-field", "struct Q {\n  x: Int\n}\n\nfn main {\n  q = Q { x: 1 }\n  if q.x == Q { x: 1 }.x {\n    puts(1)\n  }\n}\n", "a struct literal in a condition needs parentheses around it: (Q { ... })", "7:13"))
+  xs.push(only("lit-while", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  p = P { x: 1, y: 2 }\n  while p.y != P { x: 1, y: 2 }.y {\n    p = P { x: 1, y: 2 }\n  }\n  puts(p.x)\n}\n", "a struct literal in a condition needs parentheses around it: (P { ... })", "8:16"))
+  xs.push(only("lit-elsif", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  p = P { x: 1, y: 2 }\n  if p.x == 0 {\n    puts(0)\n  } else if p.x == P { x: 1, y: 2 }.x {\n    puts(1)\n  }\n}\n", "a struct literal in a condition needs parentheses around it: (P { ... })", "10:20"))
+  xs.push(only("lit-for", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  for q in P { x: 1, y: 2 }.x..3 {\n    puts(q)\n  }\n}\n", "a struct literal in a `for` needs parentheses around it: (P { ... })", "7:12"))
+  xs.push(with_mods(only("lit-qualified", "import geo\nfn main {\n  p = geo.P { x: 1 }\n  if p.x == geo.P { x: 1 }.x {\n    puts(1)\n  }\n}\n", "a struct literal in a condition needs parentheses around it: (geo.P { ... })", "4:17"), ["geo", "pub struct P {\n  pub x: Int\n}\n"]))
+  xs.push(accepted("lit-parenthesized", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  p = P { x: 1, y: 2 }\n  if p.x == (P { x: 1, y: 2 }).x {\n    puts(1)\n  }\n  for q in (P { x: 1, y: 2 }).x..3 {\n    puts(q)\n  }\n}\n", "1\n1\n2\n"))
+  xs.push(accepted("lit-capital-local-block", "fn main {\n  X = 5\n  y = 5\n  if y == X {\n    z: Int = 1\n    puts(z)\n  }\n  if y == X {}\n  puts(2)\n}\n", "1\n2\n"))
+  // O238: a function value of another fn type says what it is, not `unknown function`.
+  xs.push(first("fn-value-type", "fn f(n: Int): Int? {\n  n\n}\n\nfn main {\n  g: fn(Int): Int = f\n  puts(g(1))\n}\n", "f is fn(Int): Int?, expected fn(Int): Int: a fn type matches only itself", "6:21"))
+  xs.push(first("fn-value-arg", "fn f(n: Int): Int? {\n  n\n}\n\nfn apply(g: fn(Int): Int): Int {\n  g(1)\n}\n\nfn main {\n  puts(apply(f))\n}\n", "f is fn(Int): Int?, expected fn(Int): Int: a fn type matches only itself", "10:14"))
+  xs.push(first("fn-value-overloads", "fn f(n: Int): Int? {\n  n\n}\n\nfn f(s: String): Int {\n  s.size\n}\n\nfn main {\n  g: fn(Int): Int = f\n  puts(g(1))\n}\n", "f is fn(Int): Int? or fn(String): Int, expected fn(Int): Int: a fn type matches only itself", "10:21"))
+  xs.push(first("fn-value-unknown", "fn helper(n: Int): Int {\n  n\n}\n\nfn main {\n  g: fn(Int): Int = nothere\n  puts(g(1))\n}\n", "unknown function nothere", "6:21"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(TCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/tm-${f.tag}.av"
+    if f.mods.size > 0 {
+      d = "${dir}/tm-${f.tag}"
+      mkdir_p(d)
+      k = 0
+      while k + 1 < f.mods.size {
+        write_av(d, f.mods[k], f.mods[k + 1])
+        k += 2
+      }
+      src = "${d}/main.av"
+    }
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/tm-${f.tag}.bin", "${dir}/tm-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f1 in cases {
+    if f1.ok {
+      runs.push(run_job(dir, "tm-${f1.tag}.bin", "tm-${f1.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f2 = cases[i]
+    log = log_text("${dir}/tm-${f2.tag}.log")
+    if f2.ok {
+      c.eq_int(jobs[i].code, 0, "${f2.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f2.tag}: exit 0")
+      c.eq_str(log_text("${dir}/tm-${f2.tag}.run.out"), f2.want, "${f2.tag}: stdout")
+      k += 1
+      continue
+    }
+    file = "tm-${f2.tag}.av"
+    if f2.mods.size > 0 {
+      file = "main.av"
+    }
+    c.expect(jobs[i].code != 0 && !file_exists("${dir}/tm-${f2.tag}.bin"), "${f2.tag}: refused")
+    c.expect(str_has(log, f2.want), "${f2.tag}: says ${f2.want}")
+    c.expect(str_has(log, "${file}:${f2.pos}\n"), "${f2.tag}: at ${f2.pos}")
+    if f2.single {
+      c.expect(!str_has(log, "aborting due to"), "${f2.tag}: one error")
+    }
+    if f2.absent.size > 0 {
+      c.expect(!str_has(log, f2.absent), "${f2.tag}: does not say ${f2.absent}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_type_messages.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

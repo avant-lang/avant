@@ -478,6 +478,7 @@ pub fn (checker_self: Checker) check_fn_arg(arg: Expr, want: Ty): Ty {
 
 pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
   cands: Array(FuncSig) = []
+  others: Array(FuncSig) = []
   saw_generic = false
   for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
@@ -487,6 +488,8 @@ pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
       } else {
         if checker_self.fn_matches_want(sig, want) {
           cands.push(sig)
+        } else {
+          others.push(sig)
         }
       }
     }
@@ -506,6 +509,19 @@ pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
   }
   if saw_generic {
     checker_self.fail(expr.loc, "generic function is not a value")
+    return checker_self.t_int()
+  }
+  if others.size > 0 {
+    // The function exists with another type (Stage 29 W5c2, O238): a fn
+    // type matches only itself, so say what it is, not that it is unknown.
+    shown = buf_new()
+    for o in others {
+      if shown.size > 0 {
+        shown.push_str(" or ")
+      }
+      shown.push_str(checker_self.fn_sig_ty(o).show)
+    }
+    checker_self.fail(expr.loc, "${expr.ident} is ${shown.to_s}, expected ${want.show}: a fn type matches only itself")
     return checker_self.t_int()
   }
   checker_self.fail_hint(expr.loc, "unknown function ${expr.ident}", checker_self.fn_hint(expr.ident))
