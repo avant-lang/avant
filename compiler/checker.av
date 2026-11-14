@@ -138,6 +138,10 @@ pub class Checker {
   // O634): its arms are statements, as an `if`'s; check_switch reads and
   // clears it.
   pub switch_stmt: Bool = false
+  // A function's last switch, checked against the result type (Stage 29
+  // W5b1, O715): when every arm gives one type, that type is the
+  // switch's, converted once at the tail as before.
+  pub switch_tail: Bool = false
   // Why the last inference failed, when a union's type parameters split
   // the argument in more than one way (checker/match.av infer_subst,
   // Stage 29 W5b1): added to "cannot infer type argument".
@@ -842,10 +846,18 @@ pub class Checker {
         if expr.kind == ex_switch() && expr.op != tk_if() && expr.op != tk_return() && (!at_tail || expected.is_void) {
           self.switch_stmt = true
         }
+        tail_switch = at_tail && !expected.is_void && expr.kind == ex_switch() && expr.op != tk_return()
         if at_tail && !expected.is_void && is_int_literal(expr) {
           // A literal tail adopts the result type, as `return 0` does
           // (Stage 29 W-INT1: an Int32 function may end in `0`).
           got = check_expr_as(expr, expected)
+        } else if tail_switch && !switch_arms_leave(expr) {
+          // A last switch (or if used as a value) sees the result type,
+          // so its arms may give different members of a union result
+          // (Stage 29 W5b1, O715).
+          self.switch_tail = true
+          got = check_expr_as(expr, expected)
+          self.switch_tail = false
         } else {
           got = check_expr(expr)
         }
@@ -861,6 +873,9 @@ pub class Checker {
             if !got.is_void && stmt.lead != 0 && (expr.kind == ex_unary() || expr.kind == ex_array()) {
               fail(stmt.loc, "this line starts with `${lead_spelling(stmt.lead)}`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)")
             }
+          } else if got.is_void && tail_switch && block_leaves([stmt]) {
+            // Every arm leaves (O715): the switch gives no value and
+            // needs none.
           } else {
             if !ty_assignable(got, expected) {
               fail(stmt.loc, "last expression is ${got.show}, expected ${expected.show}")
@@ -1430,6 +1445,20 @@ pub class Checker {
       }
     }
     false
+  }
+
+  // Whether every arm of a switch (and its else) leaves (block_leaves):
+  // read before the switch is checked.
+  pub fn switch_arms_leave(e: Expr): Bool {
+    for cs in e.cases {
+      if !block_leaves(cs.body) {
+        return false
+      }
+    }
+    if e.has_else {
+      return block_leaves(e.else_body)
+    }
+    e.cases.size > 0
   }
 
   pub fn coalesce_result(left: Ty, right_expr: Expr, loc: Location, opname: String): Ty {
@@ -3978,6 +4007,8 @@ pub class Checker {
   pub fn check_switch(expr: Expr, has_want: Bool, want: Ty): Ty {
     stmt_mode = self.switch_stmt
     self.switch_stmt = false
+    tail_mode = self.switch_tail
+    self.switch_tail = false
     if expr.op == tk_if() && expr.else_body.size == 1 {
       if t = check_if_value(expr.else_body[0], has_want, want) {
         return t
@@ -4097,10 +4128,17 @@ pub class Checker {
       return t_int()
     }
     if has_want && !want.is_void {
+      one = true
       for branch_ty in branch_tys {
         if !ty_assignable(branch_ty, want) {
           fail(expr.loc, "switch branch is ${branch_ty.show}, expected ${want.show}")
         }
+        if !branch_ty.same_as(branch_tys[0]) {
+          one = false
+        }
+      }
+      if tail_mode && one && branch_tys.size > 0 {
+        return branch_tys[0]
       }
       return want
     }
