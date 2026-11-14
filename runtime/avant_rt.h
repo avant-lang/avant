@@ -256,6 +256,7 @@ int avant_fmt_float_text(char *out, double v);
 void avant_puts_f64(double v);
 void avant_puts_bool(int32_t v);
 void avant_puts_str(const char *s);
+void avant_out_check(void);
 int32_t avant_str_parse_i32(const char *s, avant_int base, int32_t *ok);
 int64_t avant_str_parse_i64(const char *s, avant_int base, int32_t *ok);
 uint64_t avant_str_parse_u64(const char *s, avant_int base, int32_t *ok);

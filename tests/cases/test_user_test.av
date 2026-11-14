@@ -40,9 +40,16 @@ fn ut_sh(body: String, rc_path: String): Int {
   script = "${rc_path}.sh"
   _ = file_write(script, body) ?? return 1
   chmod_x(script)
+  // Bounded (Stage 29 W-FIX1i): timeout signals the script's whole
+  // process group, so a child that loops fails its check instead of
+  // hanging the suite.
   sh_args: Array(String) = []
+  sh_args.push("-k")
+  sh_args.push("5")
+  sh_args.push("600")
+  sh_args.push("/bin/sh")
   sh_args.push(script)
-  _ = process_run("/bin/sh", sh_args)
+  _ = process_run("/usr/bin/timeout", sh_args)
   if text = file_read(rc_path) {
     t = text.strip()
     n = 0
@@ -243,21 +250,27 @@ fn test_user_test(c: Checks) {
     _ = file_write("${root}/o520/tests/test_sig.av", "import std.testing\n\n${sig_lib}fn main: Int {\n  t = Test.new\n  t.check(true, \"before the signal\")\n  sig: Int32 = 13\n  _ = c.raise(sig)\n  t.finish\n}\n")
     _ = file_write("${root}/o520/tests/test_exit.av", "import std.testing\n\nfn main: Int {\n  t = Test.new\n  t.check(true, \"holds\")\n  7\n}\n")
     _ = file_write("${root}/o520/tests/test_par.av", "import std.testing\n\n${sig_lib}fn main: Int {\n  t = Test.new\n  t.check(true, \"serial holds\")\n  t.parallel(\"dies\") {\n    sig: Int32 = 9\n    _ = c.raise(sig)\n    t.check(false, \"not reached\")\n  }\n  t.finish\n}\n")
-    o520_names = ["sig", "exit", "par"]
-    o520_why = ["the test process killed by signal 13 (Broken pipe)", "the test process exited with status 7", "the parallel test \"dies\" killed by signal 9 (Killed)"]
-    o520_xml = [o520_why[0], o520_why[1], "the parallel test &quot;dies&quot; killed by signal 9 (Killed)"]
+    // The last run is test_sig's again, started with SIGPIPE ignored as a
+    // CI runner starts its jobs (Stage 29 W-FIX1i): the test process still
+    // dies by it, since the runtime resets SIGPIPE to the default before
+    // main.
+    o520_names = ["sig", "exit", "par", "sig"]
+    o520_pre = ["", "", "", "trap '' PIPE\n"]
+    o520_tag = ["", "", "", " (SIGPIPE ignored by the parent)"]
+    o520_why = ["the test process killed by signal 13 (Broken pipe)", "the test process exited with status 7", "the parallel test \"dies\" killed by signal 9 (Killed)", "the test process killed by signal 13 (Broken pipe)"]
+    o520_xml = [o520_why[0], o520_why[1], "the parallel test &quot;dies&quot; killed by signal 9 (Killed)", o520_why[3]]
     i = 0
     while i < o520_names.size {
       nm = o520_names[i]
-      o_rc = "${root}/o520-${nm}.rc"
-      o_log = "${root}/o520-${nm}.log"
-      o_sh = "#!/bin/sh\ncd ${ut_quote(root)}/o520 && ${ut_quote(compiler)} test tests/test_${nm}.av --junit ${ut_quote(root)}/o520-${nm}.xml > ${ut_quote(o_log)} 2>&1; echo $? > ${ut_quote(o_rc)}\n"
-      c.eq_int(ut_sh(o_sh, o_rc), 1, "O520: tests/test_${nm}.av fails the run")
+      o_rc = "${root}/o520-${i}-${nm}.rc"
+      o_log = "${root}/o520-${i}-${nm}.log"
+      o_sh = "#!/bin/sh\n${o520_pre[i]}cd ${ut_quote(root)}/o520 && ${ut_quote(compiler)} test tests/test_${nm}.av --junit ${ut_quote(root)}/o520-${i}-${nm}.xml > ${ut_quote(o_log)} 2>&1; echo $? > ${ut_quote(o_rc)}\n"
+      c.eq_int(ut_sh(o_sh, o_rc), 1, "O520: tests/test_${nm}.av fails the run${o520_tag[i]}")
       o_text = file_read(o_log) ?? ""
-      c.expect(ut_has(o_text, "FAIL tests/test_${nm}.av: ${o520_why[i]}\n"), "O520: the FAIL line of tests/test_${nm}.av says how it ended (${o520_why[i]})")
-      o_xml = file_read("${root}/o520-${nm}.xml") ?? ""
-      c.expect(ut_has(nth_line(o_xml, 1), "<testsuites tests=") && ut_has(nth_line(o_xml, 1), "failures=\"1\""), "O520: the JUnit report counts tests/test_${nm}.av as a failure")
-      c.expect(ut_has(o_xml, "<failure message=\"${o520_xml[i]}\">"), "O520: the JUnit failure of tests/test_${nm}.av says how it ended")
+      c.expect(ut_has(o_text, "FAIL tests/test_${nm}.av: ${o520_why[i]}\n"), "O520: the FAIL line of tests/test_${nm}.av says how it ended (${o520_why[i]})${o520_tag[i]}")
+      o_xml = file_read("${root}/o520-${i}-${nm}.xml") ?? ""
+      c.expect(ut_has(nth_line(o_xml, 1), "<testsuites tests=") && ut_has(nth_line(o_xml, 1), "failures=\"1\""), "O520: the JUnit report counts tests/test_${nm}.av as a failure${o520_tag[i]}")
+      c.expect(ut_has(o_xml, "<failure message=\"${o520_xml[i]}\">"), "O520: the JUnit failure of tests/test_${nm}.av says how it ended${o520_tag[i]}")
       i += 1
     }
 

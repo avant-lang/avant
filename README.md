@@ -1710,6 +1710,8 @@ The second row is deliberate: a position for each check would cost time in hot l
 
 **A trap ends the whole process**, a server included: one bad index in an `std.http` handler closes every connection. Run servers under a supervisor (systemd's `Restart=`, a container restart policy), and treat request data with the non-trapping forms: `.get(i)`, `??`, the optional parsers. A trap that ends only its task, and a pre-forked server mode, are decided and not built.
 
+**A write to standard output that fails stops the program** as a trap does: `avant runtime: cannot write to standard output: No space left on device` (a full disk, `/dev/full`), exit status 1. `puts` of a `String`, `Float64` or `Bool` checks at once; an integer's `puts` is checked at the next of those or at exit. A closed pipe (`prog | head`) is the exception: the program dies by `SIGPIPE`, status 141 in a shell, as a C program does. That holds whatever the parent left: an ignored or blocked `SIGPIPE` (a CI runner, a shell's `trap '' PIPE`) is reset to the default before `main`.
+
 ### Nil, error or trap
 
 | The situation | Use | The caller |
