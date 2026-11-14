@@ -44,6 +44,62 @@ pub fn ch_is_hex(c: Int): Bool {
   false
 }
 
+// A hex digit's value, else -1.
+pub fn hex_val(c: Int): Int {
+  if ch_is_digit(c) {
+    return c - 48
+  }
+  if c >= 97 && c <= 102 {
+    return c - 87
+  }
+  if c >= 65 && c <= 70 {
+    return c - 55
+  }
+  -1
+}
+
+// The quote escapes of a String (34) or of a character literal (39).
+pub fn escape_quotes(qc: Int): String {
+  if qc == 39 {
+    return "\\'"
+  }
+  "\\\" \\$"
+}
+
+// Appends code point v (a Unicode scalar value) to buf as UTF-8.
+pub fn push_utf8(buf: Buf, v: Int) {
+  if v < 128 {
+    buf.push_byte(v)
+  } else if v < 2048 {
+    buf.push_byte(192 + v / 64)
+    buf.push_byte(128 + v % 64)
+  } else if v < 65536 {
+    buf.push_byte(224 + v / 4096)
+    buf.push_byte(128 + v / 64 % 64)
+    buf.push_byte(128 + v % 64)
+  } else {
+    buf.push_byte(240 + v / 262144)
+    buf.push_byte(128 + v / 4096 % 64)
+    buf.push_byte(128 + v / 64 % 64)
+    buf.push_byte(128 + v % 64)
+  }
+}
+
+// The number of bytes of the UTF-8 sequence that lead byte c starts (1 for
+// a byte that starts none).
+pub fn utf8_len(c: Int): Int {
+  if c >= 240 && c < 248 {
+    return 4
+  }
+  if c >= 224 {
+    return 3
+  }
+  if c >= 192 {
+    return 2
+  }
+  1
+}
+
 pub class Lexer {
   source: Source
   path: String = ""
@@ -60,6 +116,8 @@ pub class Lexer {
   str_kind: Int = 0
   str_frag: String = ""
   keep_comments: Bool = false
+  // Set by read_escape when the escape was \u{N} (a code point, not a byte).
+  esc_code: Bool = false
 
   fn initialize(source: Source) {
     self.source = source
@@ -316,36 +374,164 @@ pub class Lexer {
     Token.new(tk_integer(), loc, intern_str(text + suffix))
   }
 
-  pub fn read_escape: Int {
+  // One escape after a backslash (D293, D352): \n \t \r \\ \0, \xNN (one
+  // byte, two hex digits) and \u{N} (a code point, one to six hex digits;
+  // the caller encodes it as UTF-8 and esc_code says so). In a String also
+  // \" and \$; in a character literal (qc 39) \' instead. No \e (a GNU
+  // extension of C).
+  pub fn read_escape(qc: Int): Int {
+    self.esc_code = false
+    // The escape's backslash, which the caller consumed: errors point at it.
+    at = Location.new(self.path, self.line, self.column - 1, self.pos - 1)
     if self.at_end {
-      fail_tok(self.here, "unterminated string escape")
+      fail_tok(at, "unterminated string escape")
       return 0
     }
     c = self.peek
     self.bump
-    switch c {
-      case 110 {
-        10
+    if c == 110 {
+      return 10
+    }
+    if c == 116 {
+      return 9
+    }
+    if c == 114 {
+      return 13
+    }
+    if c == 92 {
+      return 92
+    }
+    if c == 48 {
+      return 0
+    }
+    if qc == 34 && (c == 34 || c == 36) {
+      return c
+    }
+    if qc == 39 && c == 39 {
+      return 39
+    }
+    if c == 120 {
+      h1 = hex_val(self.peek)
+      h2 = hex_val(self.peek_next)
+      if h1 < 0 || h2 < 0 {
+        fail_tok(at, "\\x takes two hex digits: \\x41")
+        return 0
       }
-      case 116 {
-        9
+      self.bump
+      self.bump
+      return h1 * 16 + h2
+    }
+    if c == 117 {
+      return read_code_escape(at)
+    }
+    what = "string"
+    if qc == 39 {
+      what = "character"
+    }
+    fail_tok(at, "unknown ${what} escape \\" + chr(c) + "; the escapes are \\n \\t \\r \\\\ \\0 \\xNN \\u{N} and " + escape_quotes(qc))
+    0
+  }
+
+  // \u{N}: one to six hex digits, a Unicode scalar value (not a surrogate,
+  // at most 10FFFF).
+  pub fn read_code_escape(at: Location): Int {
+    if self.peek != 123 {
+      fail_tok(at, "\\u takes a code point in braces: \\u{e9}")
+      return 0
+    }
+    self.bump
+    v = 0
+    n = 0
+    while hex_val(self.peek) >= 0 {
+      if n < 7 {
+        v = v * 16 + hex_val(self.peek)
       }
-      case 114 {
-        13
+      n += 1
+      self.bump
+    }
+    if self.peek != 125 || n == 0 {
+      fail_tok(at, "\\u takes a code point in braces: \\u{e9}")
+      return 0
+    }
+    self.bump
+    if n > 6 || v > 1114111 {
+      fail_tok(at, "\\u{...} is above 10FFFF, the last Unicode code point")
+      return 0
+    }
+    if v >= 55296 && v <= 57343 {
+      fail_tok(at, "\\u{...} names a surrogate (D800 to DFFF), which is not a character")
+      return 0
+    }
+    self.esc_code = true
+    v
+  }
+
+  // A character literal (D293): 'a' is the Int byte value 97, with the
+  // escapes of read_escape (\' for the quote); a character that is more
+  // than one byte in UTF-8 is an error, and there is no Char type. The
+  // token is an integer: its text the decimal value, or the source as
+  // written for the formatter.
+  pub fn read_char_token(loc: Location): Token {
+    start = self.pos
+    self.bump
+    c = self.peek
+    if self.at_end || c == 10 {
+      return fail_tok(loc, "unterminated character literal")
+    }
+    if c == 39 {
+      self.bump
+      return fail_tok(loc, "empty character literal: a character literal holds one byte, as 'a'")
+    }
+    v = c
+    if c == 92 {
+      self.bump
+      mark = self.err_count
+      v = self.read_escape(39)
+      if !new_err_since(mark) && self.esc_code && v > 127 {
+        b = buf_new()
+        push_utf8(b, v)
+        fail_tok(loc, "a character literal is one byte, and this code point is ${b.size} bytes in UTF-8: write it in a String")
       }
-      case 92 {
-        92
+      if new_err_since(mark) {
+        self.skip_char_rest
+        return Token.new(tk_eof(), loc, "")
       }
-      case 34 {
-        34
+    } else if c >= 128 {
+      n = utf8_len(c)
+      i = 0
+      while i < n && !self.at_end {
+        self.bump
+        i += 1
       }
-      case 36 {
-        36
+      self.skip_char_rest
+      return fail_tok(loc, "a character literal is one byte, and this character is ${n} bytes in UTF-8: write it in a String")
+    } else {
+      self.bump
+    }
+    if self.peek != 39 {
+      while !self.at_end && self.peek != 39 && self.peek != 10 {
+        self.bump
       }
-      else {
-        fail_tok(self.here, "unknown string escape \\" + chr(c))
-        0
+      if self.peek == 39 {
+        self.bump
+        return fail_tok(loc, "a character literal holds one byte: write a String in double quotes for several")
       }
+      return fail_tok(loc, "unterminated character literal")
+    }
+    self.bump
+    if self.keep_comments {
+      return Token.new(tk_integer(), loc, str_slice(self.source.text, start, self.pos))
+    }
+    Token.new(tk_integer(), loc, intern_str("${v}"))
+  }
+
+  // After a character literal's error: up to its closing quote on the line.
+  pub fn skip_char_rest {
+    while !self.at_end && self.peek != 39 && self.peek != 10 {
+      self.bump
+    }
+    if self.peek == 39 {
+      self.bump
     }
   }
 
@@ -374,13 +560,17 @@ pub class Lexer {
       if c == 92 {
         self.bump
         mark = self.err_count
-        e = self.read_escape
+        e = self.read_escape(34)
         if new_err_since(mark) {
           self.str_frag = ""
           self.str_kind = 2
           return
         }
-        buf.push_byte(e)
+        if self.esc_code {
+          push_utf8(buf, e)
+        } else {
+          buf.push_byte(e)
+        }
         continue
       }
       if c == 36 {
@@ -762,6 +952,9 @@ pub class Lexer {
       }
       case 34 {
         read_string_token(loc)
+      }
+      case 39 {
+        read_char_token(loc)
       }
       case 35 {
         self.bump

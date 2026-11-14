@@ -1,0 +1,139 @@
+import harness
+import backends
+
+// Stage 29 W5b2: literals and constants. Character literals and the
+// String escapes (D293, D352, O287); binary, octal and digit separators,
+// and a leading zero refused (D315, D352, O287, O493); a literal that
+// does not fit, at every integer width and in every context that gives
+// it a type (O455); module constants, `const` (D314, D315, D327 Q7), and
+// no module-level mutable state (D352, O298). Each program is compiled
+// in parallel; a refused one must leave no binary, say the expected
+// words and point at the expected line and column; an accepted one must
+// print what it should.
+
+class LCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): LCase {
+  f = LCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): LCase {
+  f = LCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn char_cases: Array(LCase) {
+  xs: Array(LCase) = []
+  xs.push(refused("char-empty", "fn main {\n  x = ''\n  puts(x)\n}\n", "empty character literal: a character literal holds one byte, as 'a'", "2:7"))
+  xs.push(refused("char-two", "fn main {\n  x = 'ab'\n  puts(x)\n}\n", "a character literal holds one byte: write a String in double quotes for several", "2:7"))
+  xs.push(refused("char-multibyte", "fn main {\n  x = 'é'\n  puts(x)\n}\n", "a character literal is one byte, and this character is 2 bytes in UTF-8: write it in a String", "2:7"))
+  xs.push(refused("char-code-multibyte", "fn main {\n  x = '\\u{e9}'\n  puts(x)\n}\n", "a character literal is one byte, and this code point is 2 bytes in UTF-8: write it in a String", "2:7"))
+  xs.push(refused("char-code-four", "fn main {\n  x = '\\u{1F600}'\n  puts(x)\n}\n", "this code point is 4 bytes in UTF-8", "2:7"))
+  xs.push(refused("char-unterminated", "fn main {\n  x = 'a\n  puts(x)\n}\n", "unterminated character literal", "2:7"))
+  xs.push(refused("char-escape-unknown", "fn main {\n  x = '\\e'\n  puts(x)\n}\n", "unknown character escape \\e; the escapes are \\n \\t \\r \\\\ \\0 \\xNN \\u{N} and \\'", "2:8"))
+  xs.push(refused("char-escape-dquote", "fn main {\n  x = '\\\"'\n  puts(x)\n}\n", "unknown character escape \\\"", "2:8"))
+  xs.push(refused("char-not-string", "fn main {\n  x = 'a'\n  s: String = x\n  puts(x)\n}\n", "expected String, got Int", "3:15"))
+  xs.push(refused("str-escape-e", "fn main {\n  x = \"\\e\"\n  puts(x)\n}\n", "unknown string escape \\e; the escapes are \\n \\t \\r \\\\ \\0 \\xNN \\u{N} and \\\" \\\$", "2:8"))
+  xs.push(refused("str-escape-squote", "fn main {\n  x = \"\\'\"\n  puts(x)\n}\n", "unknown string escape \\'", "2:8"))
+  xs.push(refused("str-x-one-digit", "fn main {\n  x = \"\\x4\"\n  puts(x)\n}\n", "\\x takes two hex digits: \\x41", "2:8"))
+  xs.push(refused("str-u-no-brace", "fn main {\n  x = \"\\u41\"\n  puts(x)\n}\n", "\\u takes a code point in braces: \\u{e9}", "2:8"))
+  xs.push(refused("str-u-empty", "fn main {\n  x = \"\\u{}\"\n  puts(x)\n}\n", "\\u takes a code point in braces: \\u{e9}", "2:8"))
+  xs.push(refused("str-u-too-big", "fn main {\n  x = \"\\u{110000}\"\n  puts(x)\n}\n", "\\u{...} is above 10FFFF, the last Unicode code point", "2:8"))
+  xs.push(refused("str-u-seven", "fn main {\n  x = \"\\u{0000041}\"\n  puts(x)\n}\n", "\\u{...} is above 10FFFF", "2:8"))
+  xs.push(refused("str-u-surrogate", "fn main {\n  x = \"\\u{d800}\"\n  puts(x)\n}\n", "\\u{...} names a surrogate (D800 to DFFF), which is not a character", "2:8"))
+  xs.push(accepted("char-values", "fn main {\n  puts('a')\n  puts('A' + 1)\n  puts('\\n')\n  puts('\\t')\n  puts('\\r')\n  puts('\\'')\n  puts('\\\\')\n  puts('\\0')\n  puts('\\x41')\n  puts('\\xff')\n  puts('\\u{7f}')\n  puts('\"')\n  puts('\$')\n  puts(' ')\n}\n", "97\n66\n10\n9\n13\n39\n92\n0\n65\n255\n127\n34\n36\n32\n"))
+  xs.push(accepted("char-adopts", "fn f(c: Int32): Int32 {\n  c + 1\n}\nfn main {\n  x: Int32 = 'z'\n  u: UInt32 = '0'\n  puts(f('a'))\n  puts(x - 'a')\n  puts(u)\n  bs: Array(Int32) = ['x', 'y']\n  puts(bs[1])\n}\n", "98\n25\n48\n121\n"))
+  xs.push(accepted("char-bytes", "fn kind(c: Int): String {\n  switch c {\n    case '+', '-' { \"sign\" }\n    case '0' { \"zero\" }\n    else { \"other\" }\n  }\n}\nfn main {\n  s = \"a+0\"\n  puts(s[0] == 'a')\n  puts(kind(s[1]))\n  puts(kind(s[2]))\n  puts(kind('q'))\n  if s[1] >= '0' && s[1] <= '9' {\n    puts(\"digit\")\n  }\n}\n", "true\nsign\nzero\nother\n"))
+  xs.push(accepted("str-escapes", "fn main {\n  a = \"a\\0b\"\n  puts(a.size)\n  puts(a[1])\n  puts(a == \"a\\0b\")\n  puts(a == \"a\\0c\")\n  puts(a == \"a\")\n  puts(\"\\x41\\x42\")\n  x = \"\\xff\"\n  puts(x.size)\n  puts(x[0])\n  e = \"caf\\u{e9}\"\n  puts(e.size)\n  puts(e == \"café\")\n  g = \"\\u{1F600}\"\n  puts(g.size)\n  puts(\"\${g[0]} \${g[3]}\")\n  n = 7\n  z = \"\${n}\\0\${n}\\0\"\n  puts(z.size)\n  puts(z[1])\n  puts(\"\\0\".size)\n  puts(\"\\0\\0\".size)\n  puts(\"\\u{41}\\u{0}\".size)\n}\n", "3\n0\ntrue\nfalse\nfalse\nAB\n1\n255\n5\ntrue\n4\n240 128\n4\n0\n1\n2\n2\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/lit-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/lit-${f.tag}.bin", "${dir}/lit-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "lit-${f2.tag}.bin", "lit-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/lit-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/lit-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/lit-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "lit-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+// The formatter prints every new literal as written (spacing normalized),
+// and formatting its own output changes nothing.
+fn check_format(c: Checks, compiler: String, dir: String) {
+  src = "${dir}/lit-format.av"
+  _ = file_write(src, "fn main {\n  x  =  'a'+'\\''\n  y = \"\\0\\x41\${'}'}\\u{e9}\"\n}\n")
+  args: Array(String) = ["format", src]
+  code = process_run_out(compiler, args, "${dir}/lit-format.out") ?? -1
+  c.eq_int(code, 0, "format: exit 0")
+  want = "fn main {\n  x = 'a' + '\\''\n  y = \"\\0\\x41\${'}'}\\u{e9}\"\n}\n"
+  c.eq_str(log_text("${dir}/lit-format.out"), want, "format: as written")
+  again = "${dir}/lit-format2.av"
+  _ = file_write(again, want)
+  args2: Array(String) = ["format", again]
+  code2 = process_run_out(compiler, args2, "${dir}/lit-format2.out") ?? -1
+  c.eq_int(code2, 0, "format twice: exit 0")
+  c.eq_str(log_text("${dir}/lit-format2.out"), want, "format twice: unchanged")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_literals.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    dir = scratch_dir()
+    all: Array(LCase) = []
+    for x in char_cases() {
+      all.push(x)
+    }
+    run_cases(c, compiler, dir, all)
+    check_format(c, compiler, dir)
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

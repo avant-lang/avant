@@ -99,6 +99,52 @@ pub fn (lw: MirLower) to_str(v: MOperand, t: Ty): MOperand {
   v
 }
 
+// A String literal's text (Stage 29 W5b2, O287): a static constant, which
+// the runtime reads as a C string; a text with a NUL byte (\0 or \x00)
+// is built at run time from its pieces and avant_str_from_byte(0), so its
+// size counts every byte (a static string has no length but its NUL).
+pub fn (lw: MirLower) text_value(text: String): MOperand {
+  b = lw.lw_b
+  has_nul = false
+  for i in 0..text.size {
+    if text[i] == 0 {
+      has_nul = true
+      break
+    }
+  }
+  if !has_nul {
+    return b.str_const(text)
+  }
+  acc: MOperand? = nil
+  start = 0
+  for i in 0..text.size + 1 {
+    if i == text.size || text[i] == 0 {
+      pieces: Array(MOperand) = []
+      if i > start {
+        pieces.push(b.str_const(str_slice(text, start, i)))
+      }
+      if i < text.size {
+        pieces.push(lw.str_call1("avant_str_from_byte", b.c_i64(0)))
+      }
+      for p in pieces {
+        if a = acc {
+          args: Array(MOperand) = []
+          args.push(a)
+          args.push(p)
+          acc = lw.str_call("avant_str_concat", args)
+        } else {
+          acc = p
+        }
+      }
+      start = i + 1
+    }
+  }
+  if a = acc {
+    return a
+  }
+  b.str_const("")
+}
+
 pub fn mir_part_has_switch(e: Expr, from: Int): Bool {
   for i in from..e.parts.size {
     if x = e.parts[i].expr, mir_has_switch(x) {
@@ -122,7 +168,7 @@ pub fn (lw: MirLower) lower_interp(e: Expr): MOperand {
       }
       lw.at(e.loc)
       args: Array(MOperand) = []
-      args.push(b.str_const(text))
+      args.push(lw.text_value(text))
       args.push(n)
       return lw.str_call("avant_str_cat_i32", args)
     }
@@ -131,7 +177,7 @@ pub fn (lw: MirLower) lower_interp(e: Expr): MOperand {
   for i in 0..e.parts.size {
     part = e.parts[i]
     if text = part.text, text.size > 0 {
-      pieces.push(b.str_const(text))
+      pieces.push(lw.text_value(text))
     }
     if inner = part.expr {
       if it = inner.ty {
