@@ -342,41 +342,51 @@ pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: In
     dest = b.temp(rty)
     b.assign(b.pl(dest), b.rv_zero)
   }
+  // The block each member enters by (its arm's, or under coverage a
+  // block of its own that counts the label), -1 for an unnamed member.
+  // The coverage entries are numbered before the arms, so the edge from
+  // one to its arm is not a back edge (which would poll, mir/gc.av).
+  entry_arm: Array(Int) = []
+  for m in uty.members {
+    entry_arm.push(-1)
+  }
+  cov_entries: Array(Int) = []
+  cov_arms: Array(Int) = []
+  cov_locs: Array(Location) = []
+  entry: Array(Int) = []
+  for m2 in uty.members {
+    entry.push(-1)
+  }
+  for i2 in 0..e.cases.size {
+    for label in e.cases[i2].labels {
+      k = label.int_val
+      if k < 0 || k >= entry_arm.size || entry_arm[k] >= 0 {
+        continue
+      }
+      entry_arm[k] = i2
+      if lw.lw_cov.on {
+        en = b.block
+        cov_entries.push(en)
+        cov_arms.push(i2)
+        cov_locs.push(label.loc)
+        entry[k] = en
+      }
+    }
+  }
   arms: Array(Int) = []
   for i in 0..e.cases.size {
     arms.push(b.block)
+  }
+  for k4 in 0..entry.size {
+    if entry_arm[k4] >= 0 && entry[k4] < 0 {
+      entry[k4] = arms[entry_arm[k4]]
+    }
   }
   other = -1
   if e.has_else || lw.lw_cov.on {
     other = b.block
   }
   join = b.block
-  // The block each member enters by (its arm's, or under coverage a
-  // block of its own that counts the label), -1 for an unnamed member.
-  entry: Array(Int) = []
-  for m in uty.members {
-    entry.push(-1)
-  }
-  cov_entries: Array(Int) = []
-  cov_arms: Array(Int) = []
-  cov_locs: Array(Location) = []
-  for i2 in 0..e.cases.size {
-    for label in e.cases[i2].labels {
-      k = label.int_val
-      if k < 0 || k >= entry.size || entry[k] >= 0 {
-        continue
-      }
-      if lw.lw_cov.on {
-        en = b.block
-        cov_entries.push(en)
-        cov_arms.push(arms[i2])
-        cov_locs.push(label.loc)
-        entry[k] = en
-      } else {
-        entry[k] = arms[i2]
-      }
-    }
-  }
   // The default: the else, or (without one) the last arm's member.
   dflt = other
   dmember = -1
@@ -419,7 +429,7 @@ pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: In
     b.at(cov_entries[q])
     lw.cov_branch(cov_locs[q])
     lw.at(e.loc)
-    b.goto(cov_arms[q])
+    b.goto(arms[cov_arms[q]])
   }
   for i3 in 0..e.cases.size {
     arm = e.cases[i3]
