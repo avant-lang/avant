@@ -582,6 +582,14 @@ pub class Checker {
     }
     k = stmt.kind
     if k == st_return() {
+      if self.try_in == "a spawn block" || self.try_in == "a parallel block" {
+        // D334: a spawn or `.parallel` block cannot return (O689, Stage 29
+        // W8Cb): its value is its last expression. Before, its statements
+        // were checked against Void, so `return 3` was a type mismatch and
+        // a bare `return` reached the MIR verifier.
+        fail(stmt.loc, "return inside ${self.try_in}: ${self.try_in} cannot return; its value is its last expression (D334)")
+        return
+      }
       if self.lambda_infer {
         if expr = stmt.expr {
           self.inferred_ret = check_expr(expr)
