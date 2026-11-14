@@ -363,6 +363,7 @@ void gc_chunk_account(uint64_t c, int sign) {
  * the caller returned its pages). */
 void gc_chunk_give(uint64_t c) {
   uint8_t was = gc_heap.chunks[c].kind;
+  gc_heap.small_take = NULL;
   gc_chunk_account(c, -1);
   memset(&gc_heap.chunks[c], 0, sizeof(GcChunk));
   gc_heap.chunks[c].kind = CHUNK_FREE;
@@ -411,12 +412,15 @@ static uint64_t make_small_chunk(void) {
   return c;
 }
 
-/* A free block, its start bits and line marks clear, not yet in use
- * (gc_new_block makes it so): from the lowest small chunk that has one.
- * Never fails: past the reservation it dies. Memory is not charged
- * here; gc_heap.heap_bytes is gc_new_block's. */
-Block *gc_block_take(void) {
-  Block *b;
+/* The chunk the next block is taken from when the last one's cannot be
+ * used again (gc_heap.small_take's comment): the lowest small chunk with
+ * a free block, or a new one. Here, once per chunk taken from and not
+ * once per block (the Valk stage, VALK-A2, O651; until then
+ * gc_block_take tested it at every clean block), a chunk that is empty
+ * with nothing resident (a new one, or one whose free blocks were all
+ * given back to the OS) leaves gc_heap.clean_empty_chunks: its first
+ * block is about to be taken. */
+static __attribute__((noinline)) GcChunk *block_take_chunk(void) {
   GcChunk *ch = NULL;
   uint64_t hw;
   uint64_t c;
@@ -435,6 +439,25 @@ Block *gc_block_take(void) {
     ch = &gc_heap.chunks[c];
   }
   gc_heap.small_hint = c;
+  if (ch->used == 0 && ch->nres == 0) {
+    gc_heap.clean_empty_chunks--;
+  }
+  gc_heap.small_take = ch;
+  return ch;
+}
+
+/* A free block, its start bits and line marks clear, not yet in use
+ * (gc_new_block makes it so): from the lowest small chunk that has one
+ * (the chunk the last block came from while that still holds,
+ * gc_heap.small_take; block_take_chunk otherwise). Never fails: past the
+ * reservation it dies. Memory is not charged here; gc_heap.heap_bytes is
+ * gc_new_block's. */
+Block *gc_block_take(void) {
+  Block *b;
+  GcChunk *ch = gc_heap.small_take;
+  if (__builtin_expect(!ch || !ch->nfree, 0)) {
+    ch = block_take_chunk();
+  }
   b = ch->free;
   ch->free = b->next;
   ch->nfree--;
@@ -443,10 +466,6 @@ Block *gc_block_take(void) {
   if (!b->clean) {
     gc_heap.free_resident -= BLOCK_SIZE;
     ch->nres--;
-  } else if (ch->used == 1 && ch->nres == 0) {
-    /* The chunk was empty with nothing resident (a new one, or one whose
-     * free blocks were all given back to the OS). */
-    gc_heap.clean_empty_chunks--;
   }
   b->clean = 0;
   memset(b->line_mark, 0, LINES_PER_BLOCK);
@@ -473,6 +492,7 @@ void gc_block_give(Block *b) {
   gc_heap.free_resident += BLOCK_SIZE;
   if (c < gc_heap.small_hint) {
     gc_heap.small_hint = c;
+    gc_heap.small_take = NULL;
   }
 }
 
@@ -593,6 +613,9 @@ void gc_heap_return(uint64_t live) {
   if (total <= keep && gc_heap.clean_empty_chunks == 0) {
     return;
   }
+  /* What follows may leave the chunk blocks are being taken from empty
+   * with nothing resident, or decommit it: the next take looks again. */
+  gc_heap.small_take = NULL;
   for (c = hw; c-- > 0;) {
     GcChunk *ch = &gc_heap.chunks[c];
     int empty = ((ch->kind == CHUNK_SMALL || ch->kind == CHUNK_LARGE) && ch->used == 0) ||

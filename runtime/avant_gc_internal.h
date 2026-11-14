@@ -985,6 +985,15 @@ typedef struct GcHeap {
    * from the lowest chunk that has one, so high chunks drain and free up
    * whole). */
   uint64_t small_hint;
+  /* The chunk gc_block_take took its last block from, while the next
+   * block may be taken from it without a look at the chunk map: it is
+   * chunks[small_hint], a small chunk, and not counted in
+   * clean_empty_chunks (a block of it is in use, or a free one is
+   * resident). NULL when that may no longer hold: a block was given back
+   * to a lower chunk (gc_block_give), gc_heap_return returned or
+   * decommitted something, a chunk changed its kind (gc_chunk_give). The
+   * Valk stage, VALK-A2, O651. */
+  GcChunk *small_take;
   /* Bytes of free blocks that are resident (not madvised). */
   uint64_t free_resident;
   /* The resident free bytes that are not free blocks (the dirty free
