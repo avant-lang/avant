@@ -1081,7 +1081,17 @@ pub fn (checker_self: Checker) check_guarded(t: Ty, at: Location) {
       if checker_self.guarded_method_of(ms, ct) && ms.node.name != "initialize" {
         w = ClassWalk.new
         w.mutex = "Mutex(${t.show})"
-        w.at = at.show
+        // The file's own name, not its path: a message is the same from
+        // any directory (the probe matrix compares it).
+        base = at.path
+        j = 0
+        while j < at.path.size {
+          if at.path[j] == 47 {
+            base = str_slice(at.path, j + 1, at.path.size)
+          }
+          j += 1
+        }
+        w.at = "${base}:${at.line}:${at.column}"
         w.owner = ct.show
         w.method = ms.node.name
         w.checked = checked
