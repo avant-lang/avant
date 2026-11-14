@@ -92,6 +92,17 @@ pub class Parser {
   // `..` and an array): its step stops after the last value (Stage 29
   // W5a3).
   for_last: String = ""
+  // The nesting bound (Stage 29 W5d1, O440): depth counts the blocks,
+  // expressions and type names open on the parser's stack; peak is the
+  // deepest level the expression being parsed reaches, which a chain
+  // built in a loop pushes one level down at each operator or postfix
+  // step (`a + b + c` and `a.b().c` reach two levels below their own,
+  // as the tree the checker walks does). The first place past
+  // nest_limit is the one error the parse reports.
+  depth: Int = 0
+  peak: Int = 0
+  too_deep: CompileError? = nil
+  deep: Bool = false
 
   fn initialize(source: Source, tokens: Array(Token)) {
     self.source = source
@@ -105,6 +116,64 @@ pub class Parser {
     self.int_suffix = ""
     self.in_quote = false
     self.for_id = 0
+    self.depth = 0
+    self.peak = 0
+    self.too_deep = nil
+    self.deep = false
+  }
+
+  // Valk's bound: a program nested deeper is a compile error, not a
+  // stack overflow in the checker or the lowering, where the crash
+  // cleanup cannot run (O173). The deepest shape the compiler walks,
+  // a block in a block, overflows its 8 MiB stack at about 1,900 levels.
+  pub fn nest_limit: Int {
+    1000
+  }
+
+  // Past the bound: the error, once, and the parse goes to the end of the
+  // file, so every loop above it ends; parse keeps this error alone.
+  pub fn nest_fail(loc: Location) {
+    if !self.deep {
+      self.deep = true
+      message = "this program nests deeper than ${self.nest_limit} levels (blocks, groups, calls and operator chains each count one): move the inner part into a function or a local value"
+      e = CompileError.new(loc, diag_code(2, message), message)
+      self.too_deep = e
+      fail(loc, message)
+    }
+    self.index = self.tokens.size - 1
+  }
+
+  // One level more for a block, an expression or a type name; false past
+  // the bound (the caller returns at once and does not call nest_leave).
+  pub fn nest_enter(loc: Location): Bool {
+    if self.deep || self.depth >= self.nest_limit {
+      nest_fail(loc)
+      return false
+    }
+    self.depth += 1
+    if self.depth > self.peak {
+      self.peak = self.depth
+    }
+    true
+  }
+
+  pub fn nest_leave {
+    self.depth -= 1
+  }
+
+  // A chain's step (a binary operator, a call, a field, an index, `?`)
+  // puts what the chain built so far (which reached left_peak) one level
+  // down, beside the step's own operands (which reached self.peak, each
+  // one level below the step).
+  pub fn nest_step(loc: Location, left_peak: Int): Bool {
+    if left_peak + 1 > self.peak {
+      self.peak = left_peak + 1
+    }
+    if self.peak > self.nest_limit {
+      nest_fail(loc)
+      return false
+    }
+    true
   }
 
   pub fn has_err: Bool {
@@ -569,6 +638,12 @@ pub class Parser {
         }
       }
       self.skip_newlines
+    }
+    if e = self.too_deep {
+      self.errors = DiagBag.new
+      self.errors.push(e)
+      self.err = e
+      self.failed = true
     }
     program
   }
@@ -1573,6 +1648,15 @@ pub class Parser {
 
   pub fn parse_type_name: TypeName {
     loc = self.current.loc
+    if !nest_enter(loc) {
+      return dummy_type(loc)
+    }
+    tn = parse_type_union(loc)
+    nest_leave
+    tn
+  }
+
+  pub fn parse_type_union(loc: Location): TypeName {
     first = self.parse_nilable_type
     if self.current.kind != tk_pipe() {
       return first
@@ -1681,9 +1765,12 @@ pub class Parser {
   }
 
   pub fn parse_block: Array(Stmt) {
+    stmts: Array(Stmt) = []
+    if !nest_enter(self.current.loc) {
+      return stmts
+    }
     expect(tk_l_brace())
     self.skip_newlines
-    stmts: Array(Stmt) = []
     while true {
       if self.current.kind == tk_r_brace() {
         break
@@ -1704,6 +1791,7 @@ pub class Parser {
     }
     lead_check(stmts)
     expect(tk_r_brace())
+    nest_leave
     stmts
   }
 
@@ -2521,6 +2609,11 @@ pub class Parser {
   }
 
   pub fn parse_expr_min(min_prec: Int): Expr {
+    if !nest_enter(self.current.loc) {
+      return dummy_expr(self.current.loc)
+    }
+    outer_peak = self.peak
+    self.peak = self.depth
     left = parse_postfix(self.parse_prefix)
     while true {
       self.skip_newlines_if_continuing
@@ -2530,6 +2623,8 @@ pub class Parser {
       }
       op = self.bump
       self.skip_newlines
+      left_peak = self.peak
+      self.peak = self.depth
       next_prec = prec + 1
       if op.kind == tk_question_question() {
         next_prec = prec
@@ -2560,7 +2655,14 @@ pub class Parser {
       bin.left = left
       bin.right = right
       left = bin
+      if !nest_step(op.loc, left_peak) {
+        break
+      }
     }
+    if outer_peak > self.peak {
+      self.peak = outer_peak
+    }
+    nest_leave
     left
   }
 
@@ -2569,6 +2671,8 @@ pub class Parser {
     keep = true
     while keep {
       self.skip_newlines_if_postfix
+      left_peak = self.peak
+      self.peak = self.depth
       k = self.current.kind
       if k == tk_dot() {
         at = self.bump.loc
@@ -2652,6 +2756,13 @@ pub class Parser {
         call.args = args
         cur = call
       } else {
+        keep = false
+      }
+      if !keep {
+        if left_peak > self.peak {
+          self.peak = left_peak
+        }
+      } else if !nest_step(self.current.loc, left_peak) {
         keep = false
       }
     }
@@ -3159,6 +3270,9 @@ pub class Parser {
   }
 
   pub fn parse_trailing_block: Block {
+    if !nest_enter(self.current.loc) {
+      return Block.new(self.current.loc)
+    }
     loc = expect(tk_l_brace()).loc
     self.skip_newlines
     block = Block.new(loc)
@@ -3212,6 +3326,7 @@ pub class Parser {
     }
     lead_check(block.body)
     expect(tk_r_brace())
+    nest_leave
     block
   }
 
