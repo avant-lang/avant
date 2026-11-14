@@ -11,8 +11,10 @@
 // or replacing a letter is two, swapping two neighbours is two, changing
 // only a letter's case is one (so `string` is nearest `String`). The bound is the type rule of Stage 29
 // W3a: at most a third of the name's length in whole steps, rounded up,
-// and at least one (`cuont` -> `count`, `Strng` -> `String`; a one- or
-// two-letter name takes one step). A tie goes to the smaller distance in
+// and at least one (`cuont` -> `count`, `Strng` -> `String`), and less
+// than the whole name: a suggestion keeps a letter of what was written,
+// so a one-letter name gets only a change of case (`n` is not "did you
+// mean `e`"). A tie goes to the smaller distance in
 // half steps, then the lower rank, then the name first in byte order, so
 // the result never depends on the order a table is walked in.
 //
@@ -58,7 +60,7 @@ pub class Suggest {
       return
     }
     h = name_distance_half(self.name, cand)
-    if h >= 2 * self.limit + 1 {
+    if h >= 2 * self.limit + 1 || h >= 2 * self.name.size {
       return
     }
     better = false
