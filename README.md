@@ -115,6 +115,7 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
 - [Basics](#basics):
   - [entry point](#entry-point)
   - [names and scope](#names-and-scope)
+  - [constants](#constants)
   - [functions](#functions)
   - [built-in types](#built-in-types)
   - [operators](#operators)
@@ -313,7 +314,7 @@ Command-line arguments come from `argv()` ([Program arguments](#program-argument
 
 ### Names and scope
 
-`=` binds a new name or assigns an existing one; there is no `let`, `var` or `const`. Locals are mutable. A name introduced in a block dies at its `}`; assigning a name that exists in an enclosing block writes that outer name.
+`=` binds a new name or assigns an existing one; there is no `let` or `var`. Locals are mutable. A name introduced in a block dies at its `}`; assigning a name that exists in an enclosing block writes that outer name.
 
 ```avant
 fn main {
@@ -330,7 +331,35 @@ fn main {
 - A declaration may state its type: `xs: Array(Int) = []`, `small: Int32 = 5`. It must when the value alone does not say it, as an empty `[]` does not.
 - `name : Type` is accepted; the [formatter](#formatter) prints `name: Type`.
 - `_ = expr` computes a value and drops it on purpose; `_` binds nothing and cannot be read.
-- There are no module-level constants or globals yet ([Not built yet](#not-built-yet)). A named number is a function without arguments: `fn max_depth: Int { 64 }`, called as `max_depth()`.
+- A module has no variables, on purpose: state lives in a function's locals and is passed in values, so no two tasks can share a global by accident. A value that never changes is a [constant](#constants); `count = 0` at module level is a compile error that says so.
+
+### Constants
+
+`const` names a value at module level; `pub const` exports it, as `pub fn` does. The name is snake_case, as a function's (a capital means a type). The value is a scalar (an integer, a `Float64`, a `Bool` or a [character literal](#literals)), computed when the program compiles from literals, other constants and operators, and each use is that value written in place, so a constant takes its type from where it stands, as a literal does.
+
+```avant
+const max_depth = 64
+const kib = 1 << 10
+const page = 4 * kib
+const ratio = 0.5
+
+fn half(n: Int32): Int32 {
+  n / 2
+}
+
+fn main {
+  // each use takes the type its place wants: Int32, UInt32, Float64
+  puts(half(max_depth))         // => 32
+  small: UInt32 = page
+  puts(small)                   // => 4096
+  puts(ratio * max_depth)       // => 32.0
+}
+```
+
+- An overflow, a division by zero or a shift outside the width while computing a constant is a compile error at the constant, and so is a value that is not a scalar: a `String`, an array or a call (constant strings and tables are not built yet). A constant used where its value does not fit is the literal's error, naming the constant (`the constant big = 3000000000 does not fit in Int32`).
+- Constants may use each other in any order; one that refers to itself is an error.
+- A constant cannot be assigned (`max_depth = 3`, `max_depth += 1` and `for max_depth in ...` are compile errors), and there is no `const` inside a function: a local is `name = value`. A parameter or a binding (`if v = ...`, `case n: Int`, a block's `|x|`) may take a constant's name inside its body.
+- A bare name is, in order: a local or parameter, a field of the receiver, a method of the receiver, a constant, a function. Another module's `pub const` is reached bare or as `module.name`; two constants of one name that a module sees (its own included) are ambiguous: qualify the one you mean ([Name clashes](#name-clashes)).
 
 ### Functions
 
@@ -850,13 +879,23 @@ fn main {
   z = 2 + x                      // and here
   puts(half(10) + y + z)         // => 89
   mask = 0xFF                    // hexadecimal
+  bits = 0b1010_0101             // binary, with a separator
+  mode = 0o755                   // octal
   top = 18446744073709551615u64  // the u64 suffix makes a UInt64
   puts(mask)                     // => 255
+  puts(bits)                     // => 165
+  puts(mode)                     // => 493
   puts(top)                      // => 18446744073709551615
+  puts(1_000_000)                // => 1000000
+  puts('A')                      // => 65
+  puts('\n')                     // => 10
 }
 ```
 
-A literal outside its type's range is a compile error (`integer literal does not fit in Int32`), and so is a float literal too large for `Float64` (`1e400`). Float literals need a digit on each side of the point (`0.5`, `2.0`, `1e3`, `1.5e-7`). There are no digit separators (`1_000`) or binary literals yet.
+- `0x`, `0b` and `0o` begin hexadecimal, binary and octal literals (the prefix in lower case; `0X` also works). A number does not start with 0 otherwise: `017` is a compile error that suggests `0o17` or `17`, since C reads it as octal.
+- `_` may stand between two digits of any literal, a float's included (`1_000.000_5`), and nowhere else: not first, last, doubled, after a prefix or before a suffix.
+- A **character literal** is the `Int` value of one byte: `'a'` is 97, and it adopts its context's type as any integer literal does. It takes the escapes of a string (below), with `\'` for the quote. A character that is more than one byte in UTF-8 (`'é'`, `'\u{e9}'`) is a compile error: write it in a `String`. There is no `Char` type.
+- A literal outside its type's range is a compile error (`integer literal does not fit in Int32`) at every integer width and wherever the type comes from (a declaration, an argument, a result, a field, an array, the other operand); above `UInt64` it is `integer literal does not fit in UInt64, the widest integer type`. A float literal too large for `Float64` (`1e400`) is an error too. Float literals need a digit on each side of the point (`0.5`, `2.0`, `1e3`, `1.5e-7`).
 
 ### Conversions
 
@@ -946,9 +985,9 @@ fn main {
 ### String literals
 
 - `"${expr}"` interpolates integers, floats, `Bool`s, strings and [errors](#declaring-an-error). A `$` that is not followed by `{` is a dollar sign: `"it costs $5"`.
-- Escapes: `\n`, `\t`, `\r`, `\\`, `\"` and `\$`. Any other escape is a compile error.
+- Escapes: `\n`, `\t`, `\r`, `\\`, `\"`, `\$`, `\0`, `\xNN` (one byte, two hex digits, which may make a string that is not UTF-8, as bytes from a file can) and `\u{N}` (a Unicode code point, one to six hex digits, stored as its UTF-8 bytes: `"caf\u{e9}"`). Any other escape is a compile error (there is no `\e`: write `\x1b`).
 - A raw string `r"..."` has no escapes and no interpolation, for paths and patterns: in `r"C:\tmp"` the backslash is a character.
-- A literal is one line. There are no multi-line or backtick strings, and no character literals: a byte is its number (`65` for `A`).
+- A literal is one line. There are no multi-line or backtick strings. A byte is a [character literal](#literals), `'A'`, or its number, `65`.
 
 ### Bytes, not characters
 
@@ -2162,7 +2201,7 @@ The same path found in two of those places is one file; two *different* files fo
 
 ### Visibility
 
-Names are private to their module unless marked `pub`: functions, types, **methods and fields** alike.
+Names are private to their module unless marked `pub`: functions, types, constants, **methods and fields** alike.
 
 - Outside its module a private field cannot be read, written, or named in a literal. A type with private fields is therefore built by a function of its own module, which keeps its invariants; a read-only view is a `pub fn`, which reads like a field (`account.balance`).
 - A test or another module sees `pub` names only.
@@ -2205,6 +2244,7 @@ A bare use that could mean either is refused, and nothing wins silently, not eve
 - **The same function in two modules.** A bare `value()` reports `ambiguous call to value: alpha.value and beta.value both match; write alpha.value() or beta.value()`.
 - **A function in one module, a type of the same name in another.** `ambiguous name value; qualify it`.
 - **The same type in two modules.** Write `beta.Token`. The message for the bare `Token` is still the unhelpful `unknown type Token`.
+- **The same constant in two modules.** A bare `width` reports `width is a constant of both alpha and beta: write alpha.width or beta.width`.
 
 Three more rules:
 
@@ -3566,7 +3606,7 @@ Avant will look familiar from almost anywhere, and it differs on purpose in a ha
 | a missing hash key that raises, or reads as zero | `h[k]` is `V?` ([Hashes](#hashes)) | absence is handled where it happens |
 | hashes that remember insertion order | iteration order is unspecified, for now | |
 | members public by default | functions, types, methods and fields are private to their module unless `pub` ([Visibility](#visibility)) | a module's surface is what it says it is |
-| `let`, `var`, `const` | `=` declares or assigns ([Names and scope](#names-and-scope)) | |
+| `let`, `var`; a `const` inside a function; global variables | `=` declares or assigns; `const` is a module's named value, and a module has no variables ([Names and scope](#names-and-scope), [Constants](#constants)) | no state shared by accident |
 | `Array<Int>`, `[]int`, `Vec<i32>` | `Array(Int)`; a single capital letter in a signature is a type parameter ([Generics](#generics)) | |
 | `return` inside a block returning from the block | in a builtin's block (`each`), `return` leaves the function; in a lambda, the lambda ([Builtin blocks are loops](#builtin-blocks-are-loops)) | |
 | a panic caught per request by the server | a trap ends the process: run servers under a supervisor ([Traps](#traps)) | no unwinding machinery; Erlang's "let it crash", at the one granularity Avant has today, the process |
@@ -3590,9 +3630,8 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 | Missing | Status | Today |
 | --- | --- | --- |
 | Ranges in `switch` labels (`case 0..10`); `case true` | decided | an `if` chain |
-| Module constants (`const max_depth = 64`) | decided | a function without arguments |
+| Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
 | Inclusive range `a..=b` | decided | `a..b + 1` |
-| Digit separators (`1_000_000`), binary literals, character literals | decided | plain digits, hexadecimal, byte numbers |
 | `Hash` with other key and value types; insertion order | decided | [three combinations](#key-and-value-types); sort the keys |
 | `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion; slices of strings and arrays | planned | `str_slice`, loops, [`std.regex`](#stdregex) |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#trailing-blocks) |
