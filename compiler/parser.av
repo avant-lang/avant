@@ -140,6 +140,9 @@ pub class Parser {
     if kind == tk_fn() {
       return true
     }
+    if kind == tk_enum() || kind == tk_const() {
+      return true
+    }
     if kind == tk_struct() {
       return true
     }
@@ -522,6 +525,16 @@ pub class Parser {
         program.functions.push(parse_fn("", vis))
       } else if k == tk_interface() {
         program.interfaces.push(parse_interface(vis))
+      } else if k == tk_ident() && self.err_count == 0 && module_state_ahead() {
+        // No module-level mutable state, on purpose (Stage 29 W5b2, D352,
+        // O298): a value that never changes is a constant. (After an
+        // earlier error, a statement here is more likely a function's
+        // that a missing brace left outside: the general message stays.)
+        name = self.current.value
+        fail(self.current.loc, "a module has no variables, on purpose: a value that never changes is `const ${name} = ...`, and state lives in a function's locals or is passed in values")
+        while self.current.kind != tk_newline() && self.current.kind != tk_eof() {
+          self.bump
+        }
       } else if k == tk_ident() {
         parse_opt_in(program, vis)
       } else if k == tk_quote() {
@@ -1122,6 +1135,38 @@ pub class Parser {
     c = ConstDef.new(tok.loc, name, value)
     c.vis = vis
     c
+  }
+
+  // `name = ...`, `name += ...` or `name: Type = ...` at module level: a
+  // lower-case name (an opt-in names a type, `Point: Show`) followed by
+  // an assignment, or by `:` and an `=` before the line ends.
+  pub fn module_state_ahead: Bool {
+    name = self.current.value
+    if name.size == 0 || (name[0] >= 65 && name[0] <= 90) {
+      return false
+    }
+    i = self.index + 1
+    if i >= self.tokens.size {
+      return false
+    }
+    k = self.tokens[i].kind
+    if k == tk_eq() || k == tk_plus_eq() || k == tk_minus_eq() || k == tk_star_eq() || k == tk_slash_eq() {
+      return true
+    }
+    if k != tk_colon() {
+      return false
+    }
+    while i < self.tokens.size {
+      k2 = self.tokens[i].kind
+      if k2 == tk_newline() || k2 == tk_eof() || k2 == tk_l_brace() {
+        return false
+      }
+      if k2 == tk_eq() {
+        return true
+      }
+      i += 1
+    }
+    false
   }
 
   pub fn parse_opt_in(program: Program, vis: Bool) {
