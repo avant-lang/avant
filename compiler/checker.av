@@ -1304,6 +1304,95 @@ pub class Checker {
     false
   }
 
+  // The failure an `else e` reads (Stage 29 W5b1, D352): the one failure
+  // member of got, or the union of them, read with `switch`; nil after
+  // an error when got has no failure to read (none, or only `nil`).
+  // what names the form for the messages.
+  pub fn else_failure(got: Ty, loc: Location, what: String): Ty? {
+    if success = failure_split(got, loc, what) {
+      fails = ty_failures(got)
+      if fails.size == 1 && fails[0].is_nil {
+        fail(loc, "${what} on ${got.show}: its only failure is nil, which carries nothing to read; leave with `?? return`, `?? break` or `?? continue`")
+        return nil
+      }
+      if fails.size == 1 {
+        return fails[0]
+      }
+      return ty_union_build(fails)
+    }
+    nil
+  }
+
+  // `n = f() else e { ... }` (Stage 29 W5b1, D352; parser.av
+  // parse_else_guard): on a failure the block runs with e holding it and
+  // must leave (return, break, continue), so after the statement the
+  // value is the success part. The name is required: a guard that does
+  // not read the failure is `?? return`, `?? break` or `?? continue`.
+  pub fn check_else_guard(l: Expr, guard: Expr): Ty {
+    left = check_expr(l)
+    if self.has_err {
+      return left
+    }
+    if guard.ident.size == 0 {
+      fail(guard.loc, "an else guard names the failure it reads: write `else e { ... }`; to leave without reading it, write `?? return`, `?? break` or `?? continue`")
+      return left
+    }
+    payload = left
+    if fty = else_failure(left, guard.loc, "else ${guard.ident}") {
+      if s = ty_success_part(left) {
+        payload = s
+      }
+      self.push_scope
+      bind(guard.ident, fty)
+      check_body(guard.else_body, self.return_type, false)
+      self.pop_scope
+      if !self.has_err && !block_leaves(guard.else_body) {
+        fail(guard.loc, "the block of else ${guard.ident} must leave (return, break or continue): after the guard the value is the success, so a failure cannot go on")
+      }
+    }
+    guard.ty = payload
+    payload
+  }
+
+  // Whether a block always leaves its function or loop iteration: its
+  // last statement is return, break or continue, an if/else whose two
+  // branches leave, a gc.hold or pin block that leaves, or a switch
+  // statement whose every arm leaves (with an else, or over an enum or
+  // a union, whose switch without else the checker has made cover every
+  // member).
+  pub fn block_leaves(body: Array(Stmt)): Bool {
+    if body.size == 0 {
+      return false
+    }
+    last = body[body.size - 1]
+    k = last.kind
+    if k == st_return() || k == st_break() || k == st_continue() {
+      return true
+    }
+    if k == st_hold() || k == st_pin() {
+      return block_leaves(last.body)
+    }
+    if k == st_if() {
+      return last.else_body.size > 0 && block_leaves(last.then_body) && block_leaves(last.else_body)
+    }
+    if k == st_expr() {
+      if e = last.expr, e.kind == ex_switch() && e.op != tk_return() && e.op != tk_if() {
+        for cs in e.cases {
+          if !block_leaves(cs.body) {
+            return false
+          }
+        }
+        if e.has_else {
+          return block_leaves(e.else_body)
+        }
+        if c = e.cond, ct = c.ty {
+          return ct.is_enum || ct.is_union
+        }
+      }
+    }
+    false
+  }
+
   pub fn coalesce_result(left: Ty, right_expr: Expr, loc: Location, opname: String): Ty {
     fails = ty_failures(left)
     if right_expr.kind == ex_switch() && right_expr.op == tk_return() {
@@ -2817,6 +2906,9 @@ pub class Checker {
     if l = expr.left, r = expr.right {
       op = expr.op
       if op == tk_question_question() {
+        if expr_is_else_guard(r) {
+          return check_else_guard(l, r)
+        }
         left = check_expr(l)
         if can_coalesce(left) {
           return coalesce_result(left, r, expr.loc, "??")

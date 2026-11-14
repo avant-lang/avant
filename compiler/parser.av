@@ -1664,7 +1664,7 @@ pub class Parser {
       self.skip_newlines
       expect(tk_eq())
       self.skip_newlines
-      value = maybe_trailing_block(self.parse_expr)
+      value = self.parse_else_guard(maybe_trailing_block(self.parse_expr))
       s = Stmt.new(st_assign(), loc)
       target = Expr.new(ex_name(), name.loc)
       target.ident = name.value
@@ -1685,6 +1685,11 @@ pub class Parser {
       op = self.bump
       self.skip_newlines
       value = maybe_trailing_block(self.parse_expr)
+      if op.kind == tk_eq() {
+        value = self.parse_else_guard(value)
+      } else if self.current.kind == tk_else() {
+        fail(self.current.loc, "an else guard follows a plain assignment: write `v = f() else e { ... }`, then update with v")
+      }
       s = Stmt.new(st_assign(), op.loc)
       s.target = expr2
       s.value = value
@@ -1692,6 +1697,38 @@ pub class Parser {
       return s
     }
     stmt_expr(expr2.loc, expr2)
+  }
+
+  // `n = f() else e { ...; continue }` (Stage 29 W5b1, D352): the else
+  // guard of a plain assignment. It is `f() ?? <the block>`, the block
+  // held by the switch node of `?? return` (op tk_return, ast.av) with
+  // the failure's name in ident and bool_val set: every walker already
+  // visits that node. The checker binds the name to the failure, asks
+  // the block to leave, and refuses a guard without a name.
+  pub fn parse_else_guard(value: Expr): Expr {
+    i = self.index
+    while i < self.tokens.size && self.tokens[i].kind == tk_newline() {
+      i += 1
+    }
+    if i >= self.tokens.size || self.tokens[i].kind != tk_else() {
+      return value
+    }
+    self.skip_newlines
+    at = self.bump.loc
+    right = Expr.new(ex_switch(), at)
+    right.op = tk_return()
+    right.has_else = true
+    right.bool_val = true
+    if self.current.kind == tk_ident() {
+      right.ident = self.bump.value
+    }
+    self.skip_newlines
+    right.else_body = self.parse_block
+    bin = Expr.new(ex_binary(), at)
+    bin.op = tk_question_question()
+    bin.left = value
+    bin.right = right
+    bin
   }
 
   pub fn maybe_trailing_block(expr: Expr): Expr {

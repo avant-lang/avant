@@ -1,0 +1,152 @@
+// The else guard (Stage 29 W5b1, D352): `n = f() else e { ...; leave }`.
+// On a failure the block runs with e holding it and leaves; after the
+// statement n has the success type. Run golden in every collector mode.
+
+class BadLine: Error {
+  message: String
+
+  fn initialize(message: String) {
+    self.message = message
+  }
+}
+
+struct Missing: Error {
+  key: String
+
+  fn message: String {
+    "no ${key}"
+  }
+}
+
+enum Code: Error { empty, too_long }
+
+fn parse(s: String): Int | BadLine {
+  n = s.to_i ?? return BadLine.new("not a number: ${s}")
+  n
+}
+
+fn lookup(h: Hash(String, Int), k: String): Int | Missing | BadLine | Nil {
+  if k == "" {
+    return nil
+  }
+  if k == "bad" {
+    return BadLine.new("bad key")
+  }
+  h[k] ?? return Missing { key: k }
+}
+
+fn code(s: String): String | Code {
+  if s.size == 0 {
+    return Code.empty
+  }
+  if s.size > 4 {
+    return Code.too_long
+  }
+  s
+}
+
+// continue: the failure reported, the loop goes on.
+fn sum(lines: Array(String)): Int {
+  total = 0
+  for i in 0..lines.size {
+    n = parse(lines[i]) else e {
+      puts("line ${i + 1}: ${e.message}")
+      continue
+    }
+    total += n
+  }
+  total
+}
+
+// return: the failure passed up as it is, or replaced.
+fn doubled(s: String): Int | BadLine {
+  n: Int = parse(s) else e {
+    return e
+  }
+  n * 2
+}
+
+fn or_zero(s: String): Int {
+  n = parse(s) else e {
+    return 0
+  }
+  n
+}
+
+// Several failure members: e is their union, read with switch.
+fn kinds(h: Hash(String, Int), keys: Array(String)) {
+  for k in keys {
+    v = lookup(h, k) else e {
+      switch e {
+        case m: Missing { puts("missing: ${m}") }
+        case b: BadLine { puts("bad: ${b.message}") }
+        case nil { puts("empty key") }
+      }
+      continue
+    }
+    puts("${k} = ${v}")
+  }
+}
+
+// break, an enum error, and a block that leaves by an if/else.
+fn first_code(xs: Array(String)): String {
+  found = "none"
+  for x in xs {
+    c = code(x) else e {
+      if e == Code.empty {
+        continue
+      } else {
+        break
+      }
+    }
+    found = c
+    break
+  }
+  found
+}
+
+// The success is discarded: only the failure is read.
+fn check_all(xs: Array(String)): Bool {
+  for x in xs {
+    _ = parse(x) else e {
+      puts("rejected: ${e}")
+      return false
+    }
+  }
+  true
+}
+
+// A block that captures the failure, and an existing variable updated.
+fn last_good(xs: Array(String)): Int {
+  last = -1
+  notes: Array(String) = []
+  for x in xs {
+    last = parse(x) else e {
+      notes.push(e.message)
+      fmt = { |s: String| "${s} (${e.message.size})" }
+      puts(fmt("skipped"))
+      continue
+    }
+  }
+  puts(notes.size)
+  last
+}
+
+fn main {
+  puts(sum(["1", "x", "30", "y"]))
+  puts(doubled("21") ?? -1)
+  switch doubled("q") {
+    case n: Int { puts(n) }
+    case e: BadLine { puts("doubled: ${e}") }
+  }
+  puts(or_zero("7"))
+  puts(or_zero("seven"))
+  h = Hash(String, Int).new
+  h["a"] = 1
+  kinds(h, ["a", "b", "bad", ""])
+  puts(first_code(["", "ab", "cd"]))
+  puts(first_code(["", "toolong", "cd"]))
+  puts(check_all(["1", "2"]))
+  puts(check_all(["1", "no"]))
+  puts(last_good(["3", "x", "5", "yy"]))
+}

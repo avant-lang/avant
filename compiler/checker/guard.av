@@ -545,6 +545,15 @@ pub fn (checker_self: Checker) guard_expr(w: GuardWalk, e: Expr) {
       checker_self.guard_expr(w, l)
     }
     if r = e.right {
+      if l2 = e.left, expr_is_else_guard(r) && r.ident.size > 0 {
+        // An else guard's failure (Stage 29 W5b1) is a name of its
+        // block, reached when the guarded value is: as an if-assign's.
+        w.push
+        w.declare(r.ident, checker_self.guard_bad(w, l2))
+        checker_self.guard_body(w, r.else_body)
+        w.pop
+        return
+      }
       checker_self.guard_expr(w, r)
     }
     return

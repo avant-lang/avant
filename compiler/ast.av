@@ -27,8 +27,15 @@ pub fn ex_interp: Int { 17 }
 // visits them as it visits a switch: op tk_return, the right side of
 // `x ?? return v` / `?? break` / `?? continue` (else_body is that one
 // statement; cond is nil, no cases); op tk_if, an `if` used as a value
-// (else_body is the if statement, which has an else).
+// (else_body is the if statement, which has an else). The else guard of
+// an assignment (`n = f() else e { ... }`, Stage 29 W5b1, D352) is the
+// right side of a `??` in the same node: op tk_return, bool_val set,
+// else_body its block and ident the failure's name.
 pub fn ex_switch: Int { 18 }
+
+pub fn expr_is_else_guard(e: Expr): Bool {
+  e.kind == ex_switch() && e.op == tk_return() && e.bool_val
+}
 pub fn ex_splice: Int { 19 }
 pub fn ex_lambda: Int { 20 }
 

@@ -1,0 +1,118 @@
+import harness
+import backends
+
+// Stage 29 W5b1: reading a failure where it is handled (D352). The else
+// guard of an assignment (`n = f() else e { ...; leave }`, O266) and the
+// else of an if-assign that binds the failure (`if v = f() { } else e
+// { }`, O209). Each program is compiled in parallel; a refused one must
+// leave no binary, say the expected words and point at the expected line
+// and column; an accepted one must print what it should. The programs
+// that run at length (tests/fixtures/unions/else_guard.av) are checked by
+// the run goldens in every collector mode.
+
+class RCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn cases: Array(RCase) {
+  xs: Array(RCase) = []
+  pre = "class Bad: Error {\n  pub message: String = \"bad\"\n}\nclass Worse: Error {\n  pub message: String = \"worse\"\n}\nfn f(s: String): Int | Bad {\n  n = s.to_i ?? return Bad.new\n  n\n}\nfn g(s: String): Int | Bad | Worse | Nil {\n  if s == \"w\" {\n    return Worse.new\n  }\n  if s == \"\" {\n    return nil\n  }\n  f(s)\n}\n"
+  xs.push(refused("guard-must-leave", pre + "fn main {\n  n = f(\"a\") else e {\n    puts(e.message)\n  }\n  puts(n)\n}\n", "the block of else e must leave (return, break or continue)", "21:14"))
+  xs.push(refused("guard-leaves-one-branch", pre + "fn main {\n  for s in [\"1\"] {\n    n = f(s) else e {\n      if e.message == \"bad\" {\n        continue\n      }\n    }\n    puts(n)\n  }\n}\n", "the block of else e must leave", "22:14"))
+  xs.push(refused("guard-not-union", pre + "fn main {\n  n = 5 else e {\n    return\n  }\n  puts(n)\n}\n", "else e needs a value that can fail (T? or T | E with E marked Error), got Int", "21:9"))
+  xs.push(refused("guard-no-failure", pre + "fn h(x: Int | String): Int {\n  n = x else e {\n    return 0\n  }\n  n\n}\nfn main {\n  puts(h(1))\n}\n", "else e on Int | String: it has no failure member", "21:9"))
+  xs.push(refused("guard-no-success", pre + "fn h(x: Bad | Worse): Int {\n  n = x else e {\n    return 0\n  }\n  1\n}\nfn main {\n  puts(h(Bad.new))\n}\n", "it has no success value, every member is a failure", "21:9"))
+  xs.push(refused("guard-nil-only", pre + "fn main {\n  n = \"3\".to_i else e {\n    return\n  }\n  puts(n)\n}\n", "else e on Int?: its only failure is nil, which carries nothing to read; leave with `?? return`, `?? break` or `?? continue`", "21:16"))
+  xs.push(refused("guard-reads-own-name", pre + "fn main {\n  n = f(\"a\") else e {\n    puts(n)\n    return\n  }\n  puts(n)\n}\n", "unknown name n", "22:10"))
+  xs.push(refused("guard-no-name", pre + "fn main {\n  n = f(\"a\") else {\n    return\n  }\n  puts(n)\n}\n", "an else guard names the failure it reads: write `else e { ... }`; to leave without reading it, write `?? return`, `?? break` or `?? continue`", "21:14"))
+  xs.push(refused("guard-name-after", pre + "fn main {\n  n = f(\"a\") else e {\n    return\n  }\n  puts(e)\n}\n", "unknown name e", "24:8"))
+  xs.push(refused("guard-compound", pre + "fn main {\n  n = 1\n  n += f(\"a\") else e {\n    return\n  }\n}\n", "an else guard follows a plain assignment", "22:15"))
+  xs.push(refused("guard-success-type", pre + "fn main {\n  n = f(\"1\") else e {\n    return\n  }\n  s: String = n\n  puts(s)\n}\n", "cannot assign Int to String", "24:15"))
+  xs.push(refused("guard-failure-type", pre + "fn main {\n  n = f(\"1\") else e {\n    x: Int = e\n    return\n  }\n  puts(n)\n}\n", "cannot assign Bad to Int", "22:14"))
+  xs.push(refused("guard-failures-union", pre + "fn main {\n  n = g(\"1\") else e {\n    puts(e.message)\n    return\n  }\n  puts(n)\n}\n", "cannot read field message on Nil | Bad | Worse", "22:11"))
+  xs.push(refused("guard-continue-outside-loop", pre + "fn main {\n  n = f(\"1\") else e {\n    continue\n  }\n  puts(n)\n}\n", "continue is only valid inside a loop", "22:5"))
+  xs.push(refused("guard-return-type", pre + "fn h(s: String): Int {\n  n = f(s) else e {\n    return e\n  }\n  n\n}\nfn main {\n  puts(h(\"1\"))\n}\n", "return type is Bad, expected Int", "22:12"))
+  xs.push(refused("guard-escapes-with", "import std.sync\nclass PBox: Error {\n  pub message: String = \"p\"\n}\nfn main {\n  u: Int | PBox = PBox.new\n  m = Mutex(Int | PBox).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    n = b else e {\n      keep.push(e)\n      return\n    }\n    puts(n)\n  }\n  puts(keep.size)\n}\n", "Mutex.with: this argument is the guarded value or a reference reached from it (PBox)", "11:17"))
+  xs.push(accepted("guard-plain-with", "import std.sync\nclass PBox: Error {\n  pub message: String = \"p\"\n}\nfn main {\n  u: Int | PBox = PBox.new\n  m = Mutex(Int | PBox).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    n = b else e {\n      keep.push(PBox.new)\n      puts(keep.size)\n      return\n    }\n    puts(n)\n  }\n  puts(keep.size)\n}\n", "1\n"))
+  xs.push(accepted("guard-paths", pre + "fn main {\n  for s in [\"4\", \"x\", \"\", \"w\", \"5\"] {\n    n = g(s) else e {\n      switch e {\n        case b: Bad { puts(\"bad \${b.message}\") }\n        case w: Worse { puts(w.message) }\n        case nil { puts(\"nil\") }\n      }\n      continue\n    }\n    puts(n + 1)\n  }\n}\n", "5\nbad bad\nnil\nworse\n6\n"))
+  xs.push(accepted("guard-shadows", pre + "fn main {\n  e = \"outer\"\n  for s in [\"x\", \"2\"] {\n    n = f(s) else e {\n      puts(e.message)\n      continue\n    }\n    puts(n)\n  }\n  puts(e)\n}\n", "bad\n2\nouter\n"))
+  xs.push(accepted("guard-in-lambda", pre + "fn main {\n  twice = { |s: String| \n    n = f(s) else e {\n      return -1\n    }\n    n * 2\n  }\n  puts(twice(\"4\"))\n  puts(twice(\"q\"))\n}\n", "8\n-1\n"))
+  xs.push(accepted("guard-declared", pre + "fn h(s: String): Int | Bad {\n  n: Int = f(s) else e {\n    return e\n  }\n  n + 1\n}\nfn main {\n  puts(h(\"2\") ?? 0)\n  puts(h(\"z\") ?? 0)\n}\n", "3\n0\n"))
+  xs.push(accepted("guard-field-target", pre + "class Acc {\n  pub n: Int = 0\n}\nfn main {\n  a = Acc.new\n  for s in [\"3\", \"x\"] {\n    a.n = f(s) else e {\n      puts(\"kept \${a.n}: \${e.message}\")\n      break\n    }\n  }\n  puts(a.n)\n}\n", "kept 3: bad\n3\n"))
+  xs.push(accepted("guard-discard", pre + "fn main {\n  for s in [\"1\", \"x\"] {\n    _ = f(s) else e {\n      puts(\"rejected \${s}\")\n      continue\n    }\n    puts(\"ok \${s}\")\n  }\n}\n", "ok 1\nrejected x\n"))
+  xs.push(accepted("guard-nested-leave", pre + "fn h(s: String): String {\n  n = f(s) else e {\n    if s == \"\" {\n      return \"empty\"\n    } else {\n      return e.message\n    }\n  }\n  \"\${n}\"\n}\nfn main {\n  puts(h(\"\"))\n  puts(h(\"w\"))\n  puts(h(\"3\"))\n}\n", "empty\nbad\n3\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/eg-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/eg-${f.tag}.bin", "${dir}/eg-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "eg-${f2.tag}.bin", "eg-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/eg-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/eg-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/eg-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "eg-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_else_guard.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

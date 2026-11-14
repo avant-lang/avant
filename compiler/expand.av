@@ -873,6 +873,9 @@ pub class Expander {
       return
     }
     if k == ex_switch() {
+      if expr_is_else_guard(e) && e.ident.size > 0 {
+        into.push(e.ident)
+      }
       if c = e.cond {
         collect_introduced_expr(c, into)
       }
@@ -1108,6 +1111,11 @@ pub class Expander {
     }
     if k == ex_switch() {
       out = clone_expr(e)
+      if expr_is_else_guard(e) {
+        if mapped0 = map.get(e.ident) {
+          out.ident = mapped0
+        }
+      }
       if c = e.cond {
         out.cond = rename_expr(c, map)
       }
