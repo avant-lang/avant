@@ -26,7 +26,9 @@ import std.http
 // deadlines under a step of the wall clock (Stage 29 W-FIX1g, O572).
 // And the client's request checks (Stage 29 W-FIX1h, O665); a response
 // literal and a status outside 100-599 (O661, D369); a response with
-// two Content-Length values (O664); interim 1xx answers (O663).
+// two Content-Length values (O664); interim 1xx answers (O663); a Host
+// value that is not host[:port] (O660); the write paths past the piece
+// (O662).
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -992,6 +994,80 @@ fn ws_big_cases(c: Checks, root: String) {
   ws_big_round(c, root, "65536", 1048581)
 }
 
+// O662 (Stage 29 W-FIX1h): three write paths took a length past
+// INT_MAX in an int or 32 bits: an answer's two parts handed to
+// us_socket_write2 (which adds them in an int), the answer's
+// Content-Length, and the WebSocket client's frame rest. The suite
+// cannot afford 2 GiB; under AVANT_HTTP_WS_WRITE_CHUNK=65536 (read by
+// the server at listen time and by each client call) the paths a
+// length past the piece (1 GiB) takes run with one of 1 MiB: the
+// answer written a piece at a time after its head, the client's
+// request and the WebSocket client's message a piece at a time. Each
+// arrives whole. (This shows the new paths; the defects themselves
+// needed 2 GiB, and the record has them at that size.)
+fn write_piece_cases(c: Checks) {
+  n = 1048581
+  b = buf_new()
+  for i in 0..n {
+    b.push_byte(97 + i % 26)
+  }
+  big = b.to_s
+  set_env("AVANT_HTTP_WS_WRITE_CHUNK", "65536")
+  listened = Http.listen(0, "127.0.0.1", 4194304, 1, 4194304)
+  if opened = listened {
+    server = opened
+    server.get("/big") { |req|
+      Response.text(big)
+    }
+    server.post("/size") { |req|
+      Response.text("${req.body.size} ${(String.from_utf8(req.body) ?? "?") == big}")
+    }
+    server.websocket("/ws") { |conn, msg|
+      _ = conn.send_text("${msg.body.size} ${(msg.text ?? "") == big}")
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    out = Channel(String).new(4)
+    task = spawn {
+      got = "no answer"
+      if resp = Http.get("http://127.0.0.1:${port}/big", false, 10000) {
+        got = "${resp.status} ${resp.body.size} ${(String.from_utf8(resp.body) ?? "") == big}"
+      }
+      out.send(got)
+      hs: Array(Header) = []
+      out.send(outcome(Http.request("POST", "http://127.0.0.1:${port}/size", big.bytes, hs, false, 10000)))
+      ws = "no connection"
+      if conn = Ws.connect("ws://127.0.0.1:${port}/ws", 10000) {
+        ws = "not sent"
+        if conn.send_text(big) {
+          ws = "no answer"
+          if msg = conn.recv(10000) {
+            ws = msg.text ?? "binary"
+          }
+        }
+        conn.close
+      }
+      out.send(ws)
+      stop(port)
+      0
+    }
+    server.serve
+    set_env("AVANT_HTTP_WS_WRITE_CHUNK", "")
+    c.eq_int(task.join, 0, "write-piece task")
+    want: Array(String) = []
+    want.push("200 ${n} true")
+    want.push("200 ${n} true")
+    want.push("${n} true")
+    expect_lines(c, out, want, "an answer, a request and a WebSocket client message past the write piece arrive whole:")
+  } else {
+    set_env("AVANT_HTTP_WS_WRITE_CHUNK", "")
+    c.expect(false, "listen for the write-piece test")
+  }
+}
+
 // Ws.connect with a target of `n` bytes against
 // tests/fixtures/http/ws_target_server.py, which reads the handshake
 // late with a small receive buffer: what the connection gave.
@@ -1299,6 +1375,7 @@ fn main: Int {
   client_length_cases(c, avant_test_root())
   client_interim_cases(c, avant_test_root())
   ws_big_cases(c, avant_test_root())
+  write_piece_cases(c)
   ws_handshake_cases(c, avant_test_root())
   ws_deadline_cases(c, avant_test_root())
   c.finish

@@ -378,13 +378,16 @@ static unsigned int http_idle_timeout(void) {
   return HTTP_IDLE_TIMEOUT_S;
 }
 
-/* A WebSocket write hands the socket at most 1 GiB at a time (Stage 29
- * W-FIX1g, O519): uSockets takes an int length. AVANT_HTTP_WS_WRITE_CHUNK
- * is an internal variable for the suite, not a user setting: a server
- * created while it holds a number of bytes from 4096 to 1073741824 hands
- * the socket at most that much, so tests/cases/test_std_http_safety.av
- * runs the path a message of 1 GiB or more takes with one of 1 MiB. It
- * can only shrink the piece; any other value is ignored. */
+/* A write hands the socket at most 1 GiB at a time (Stage 29 W-FIX1g,
+ * O519, for the server's WebSocket messages; W-FIX1h, O662, for its HTTP
+ * answers, the client's request and the WebSocket client's frames):
+ * uSockets takes an int length. AVANT_HTTP_WS_WRITE_CHUNK is an internal
+ * variable for the suite, not a user setting: a server created, or a
+ * client call or connection begun, while it holds a number of bytes from
+ * 4096 to 1073741824 hands the socket at most that much, so
+ * tests/cases/test_std_http_safety.av runs the paths a length of 1 GiB
+ * or more takes with one of 1 MiB. It can only shrink the piece; any
+ * other value is ignored. */
 #define WS_WRITE_CHUNK 1073741824
 static size_t http_ws_write_chunk(void) {
   const char *v = getenv("AVANT_HTTP_WS_WRITE_CHUNK");
@@ -442,6 +445,24 @@ static size_t put_u32(char *dst, uint32_t v) {
   return n;
 }
 
+/* A length in decimal, all 64 bits of it (Stage 29 W-FIX1h, O662): the
+ * Content-Length was written through put_u32, so a body of 4 GiB or more
+ * would have been announced as its length modulo 2^32; the String cap
+ * (2^31 - 1 bytes) was all that kept it from happening. */
+static size_t put_size(char *dst, size_t v) {
+  char tmp[20];
+  size_t i = 0;
+  size_t n = 0;
+  do {
+    tmp[i++] = (char)('0' + (v % 10));
+    v /= 10;
+  } while (v > 0);
+  while (i > 0) {
+    dst[n++] = tmp[--i];
+  }
+  return n;
+}
+
 static size_t put_str(char *dst, const char *src, size_t len) {
   memcpy(dst, src, len);
   return len;
@@ -456,18 +477,18 @@ static void conn_poll(struct us_socket_t *s, int events) {
                  us_socket_context_loop(0, us_socket_context(0, s)), events);
 }
 
-/* Writes p[*off .. len) to the socket, in pieces of at most 1 GiB (the
- * socket takes an int length), and advances *off by what the socket
- * took. Returns 1 when everything has gone and 0 when the socket took
+/* Writes p[*off .. len) to the socket, in pieces of at most `piece`
+ * bytes (1 GiB, or less under AVANT_HTTP_WS_WRITE_CHUNK: the socket
+ * takes an int length), and advances *off by what the socket took. Returns 1 when everything has gone and 0 when the socket took
  * only a part: us_socket_write has then asked for the socket's writable
  * event, and the caller's on_writable handler calls this again with the
  * same offset. The server's output queue (conn_flush) and the client's
  * request (fetch_send; Stage 29 W-FIX1d, O513) are both sent by it. */
 static int sock_write_rest(struct us_socket_t *s, const char *p, size_t len,
-                           size_t *off) {
+                           size_t *off, size_t piece) {
   while (*off < len) {
     size_t rem = len - *off;
-    int chunk = rem > 1073741824 ? 1073741824 : (int)rem;
+    int chunk = rem > piece ? (int)piece : (int)rem;
     int written = us_socket_write(0, s, p + *off, chunk, 0);
     if (written > 0) {
       *off += (size_t)written;
@@ -520,8 +541,25 @@ static void conn_send(Conn *conn, struct us_socket_t *s, const char *a,
     return;
   }
   if (!conn_out_pending(conn)) {
-    int w = us_socket_write2(0, s, a, (int)an, b, (int)bn);
-    written = w > 0 ? (size_t)w : 0;
+    size_t piece = conn->srv->ws_write_chunk;
+    if (an + bn <= piece) {
+      int w = us_socket_write2(0, s, a, (int)an, b, (int)bn);
+      written = w > 0 ? (size_t)w : 0;
+    } else {
+      /* Past the piece (1 GiB) the two parts go one after the other, a
+       * piece at a time (Stage 29 W-FIX1h, O662): us_socket_write2 takes
+       * int lengths and adds them in an int, so an answer of 2 GiB or
+       * more overflowed inside the vendored code (undefined behaviour
+       * that happened to work on this build). */
+      size_t off = 0;
+      if (sock_write_rest(s, a, an, &off, piece)) {
+        size_t boff = 0;
+        (void)sock_write_rest(s, b, bn, &boff, piece);
+        written = an + boff;
+      } else {
+        written = off;
+      }
+    }
     if (written >= an + bn) {
       return;
     }
@@ -577,7 +615,7 @@ static void write_response(Conn *conn, struct us_socket_t *s, int32_t status,
   }
   if (n < sizeof(prefix)) {
     n += put_str(prefix + n, "Content-Length: ", 16);
-    n += put_u32(prefix + n, (uint32_t)body_len);
+    n += put_size(prefix + n, body_len);
     n += put_str(prefix + n, "\r\n", 2);
     if (conn_header) {
       n += put_str(prefix + n, "Connection: ", 12);
@@ -2035,7 +2073,8 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
 static void conn_flush(Conn *conn, struct us_socket_t *s) {
   if (conn_out_pending(conn)) {
     size_t before = conn->out_off;
-    int done = sock_write_rest(s, conn->out, conn->out_len, &conn->out_off);
+    int done = sock_write_rest(s, conn->out, conn->out_len, &conn->out_off,
+                               conn->srv->ws_write_chunk);
     if (conn->out_off > before) {
       /* The client took queued bytes: it is not stalled (P192). */
       us_socket_timeout(0, s, conn->srv->idle_timeout);
@@ -2770,6 +2809,7 @@ typedef struct WsClient {
   char *request; /* the handshake, malloc'd to its length */
   size_t request_len;
   size_t request_sent; /* how much of it the socket has taken */
+  size_t write_chunk; /* the most one write hands the socket (O662) */
   int want_close;
   WsClientMsg *in_head;
   WsClientMsg *in_tail;
@@ -2801,14 +2841,26 @@ static void ws_client_inbox_push(WsClient *c, int is_text, int is_close,
 
 static void ws_client_flush(WsClient *c) {
   pthread_mutex_lock(&c->mu);
+  size_t piece = c->write_chunk;
   while (c->out_head) {
     WsOut *node = c->out_head;
-    size_t remaining = node->len - node->off;
-    int written = us_socket_write(0, c->sock, node->data + node->off,
-                                  (int)remaining, 0);
-    if (written < 0) { written = 0; }
-    node->off += (size_t)written;
-    if (node->off < node->len) { break; }
+    int full = 0;
+    /* A piece at a time (Stage 29 W-FIX1h, O662): the frame's whole rest
+     * was passed as (int)remaining, negative for a frame over INT_MAX,
+     * which only Linux's send clamping made work. */
+    while (node->off < node->len) {
+      size_t remaining = node->len - node->off;
+      int want = remaining > piece ? (int)piece : (int)remaining;
+      int written = us_socket_write(0, c->sock, node->data + node->off,
+                                    want, 0);
+      if (written < 0) { written = 0; }
+      node->off += (size_t)written;
+      if (written < want) {
+        full = 1;
+        break;
+      }
+    }
+    if (full) { break; }
     c->out_head = node->next;
     if (!c->out_head) { c->out_tail = NULL; }
     free(node->data);
@@ -3013,7 +3065,8 @@ static struct us_socket_t *ws_client_on_open(struct us_socket_t *s,
    * part was cut and the server waited for the rest; the rest is now
    * sent each time the socket is writable (ws_client_on_writable), by
    * the loop the server's queue and the HTTP client use. */
-  (void)sock_write_rest(s, c->request, c->request_len, &c->request_sent);
+  (void)sock_write_rest(s, c->request, c->request_len, &c->request_sent,
+                          c->write_chunk);
   return s;
 }
 
@@ -3057,7 +3110,8 @@ static struct us_socket_t *ws_client_on_timeout(struct us_socket_t *s) {
 static struct us_socket_t *ws_client_on_writable(struct us_socket_t *s) {
   WsClient *c = ws_client_of_socket(s);
   if (c->request_sent < c->request_len) {
-    (void)sock_write_rest(s, c->request, c->request_len, &c->request_sent);
+    (void)sock_write_rest(s, c->request, c->request_len, &c->request_sent,
+                          c->write_chunk);
     return s;
   }
   ws_client_flush(c);
@@ -3141,6 +3195,9 @@ avant_int avant_ws_client_connect(const char *host, avant_int port,
     return 0;
   }
   c = (WsClient *)calloc(1, sizeof(WsClient));
+  if (c) {
+    c->write_chunk = http_ws_write_chunk();
+  }
   if (!c) { set_status(4); return 0; }
   c->frag_opcode = -1;
   c->close_code = 1006;
@@ -3498,6 +3555,7 @@ typedef struct FetchState {
   const char *request;
   size_t request_len;
   size_t sent;
+  size_t write_chunk; /* the most one write hands the socket (O662) */
   struct us_socket_t *sock;
   /* Where the response ends (fetch_complete): 0 while its head has not
    * all arrived; then one of the FETCH_* framings, the head's length,
@@ -3531,7 +3589,8 @@ static FetchState *fetch_of_socket(struct us_socket_t *s) {
  * pinned until the loop ends, so the rest is sent from it, in order,
  * each time the socket is writable again. */
 static void fetch_send(FetchState *st, struct us_socket_t *s) {
-  (void)sock_write_rest(s, st->request, st->request_len, &st->sent);
+  (void)sock_write_rest(s, st->request, st->request_len, &st->sent,
+                        st->write_chunk);
 }
 
 static struct us_socket_t *fetch_on_open(struct us_socket_t *s, int is_client,
@@ -3761,6 +3820,7 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
     set_status(4);
     return avant_str_empty();
   }
+  st->write_chunk = http_ws_write_chunk();
   loop = us_create_loop(0, fetch_wakeup, srv_pre, srv_post,
                         (unsigned int)sizeof(FetchState *));
   if (!loop) {
