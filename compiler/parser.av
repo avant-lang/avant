@@ -88,6 +88,10 @@ pub class Parser {
   int_suffix: String = ""
   in_quote: Bool = false
   for_id: Int = 0
+  // The end of the inclusive range whose body for_advance walks ("" for
+  // `..` and an array): its step stops after the last value (Stage 29
+  // W5a3).
+  for_last: String = ""
 
   fn initialize(source: Source, tokens: Array(Token)) {
     self.source = source
@@ -2055,11 +2059,25 @@ pub class Parser {
     for_assign(loc, name, for_binary(loc, tk_plus(), for_name_expr(loc, name), for_int_expr(loc, 1u64)))
   }
 
+  // The step of a `for` loop to its next value: the counter's increment;
+  // over an inclusive range (`a..=b`, Stage 29 W5a3), a break after the
+  // last value first, so a range that ends at the type's maximum never
+  // computes the value after it (the increment would overflow and trap).
+  pub fn for_step(loc: Location, counter: String, into: Array(Stmt)) {
+    if self.for_last.size > 0 {
+      stop = Stmt.new(st_if(), loc)
+      stop.cond = for_binary(loc, tk_eq_eq(), for_name_expr(loc, counter), for_name_expr(loc, self.for_last))
+      stop.then_body.push(Stmt.new(st_break(), loc))
+      into.push(stop)
+    }
+    into.push(for_inc(loc, counter))
+  }
+
   pub fn for_advance(body: Array(Stmt), counter: String, loc: Location): Array(Stmt) {
     out: Array(Stmt) = []
     for s in body {
       if s.kind == st_continue() {
-        out.push(for_inc(loc, counter))
+        for_step(loc, counter, out)
         out.push(s)
       } else if s.kind == st_while() {
         // A nested loop's `continue` is its own.
@@ -2143,7 +2161,10 @@ pub class Parser {
     self.skip_newlines
     id = self.for_id
     self.for_id += 1
-    if self.current.kind == tk_dot_dot() {
+    if self.current.kind == tk_dot_dot() || self.current.kind == tk_dot_dot_eq() {
+      // `a..b` excludes b; `a..=b` includes it (D314, D352): the loop
+      // runs while the counter is at most b and stops after b.
+      incl = self.current.kind == tk_dot_dot_eq()
       self.bump
       self.skip_newlines
       end_expr = self.parse_for_operand
@@ -2154,12 +2175,20 @@ pub class Parser {
       s.for_kind = 1
       s.pre.push(for_assign(loc, var_tok.value, first))
       s.pre.push(for_assign(loc, end_name, end_expr))
-      s.cond = for_binary(loc, tk_less(), for_name_expr(loc, var_tok.value), for_name_expr(loc, end_name))
+      op = tk_less()
+      self.for_last = ""
+      if incl {
+        op = tk_less_eq()
+        self.for_last = end_name
+      }
+      s.cond = for_binary(loc, op, for_name_expr(loc, var_tok.value), for_name_expr(loc, end_name))
       s.body = for_advance(raw_body, var_tok.value, loc)
-      s.body.push(for_inc(loc, var_tok.value))
+      for_step(loc, var_tok.value, s.body)
+      self.for_last = ""
       return s
     }
     raw_body2 = self.parse_block
+    self.for_last = ""
     xs_name = "__for${id}_xs"
     idx_name = "__for${id}_i"
     s2 = Stmt.new(st_while(), loc)

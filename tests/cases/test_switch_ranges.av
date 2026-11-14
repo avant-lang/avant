@@ -59,6 +59,10 @@ fn cases: Array(RCase) {
   xs.push(refused("bool-else-beside-both", "fn main {\n  switch argv().size > 0 {\n    case true { puts(1) }\n    case false { puts(2) }\n    else { puts(3) }\n  }\n}\n", "both true and false are named; remove the else", "2:3"))
   xs.push(refused("bool-label-on-int", "fn main {\n  switch argv().size {\n    case true { puts(1) }\n    else { }\n  }\n}\n", "true and false label a switch over Bool, not Int", "3:10"))
   xs.push(refused("bool-duplicate", "fn main {\n  switch argv().size > 0 {\n    case true { puts(1) }\n    case true, false { puts(2) }\n  }\n}\n", "duplicate case true", "4:10"))
+  // O447, O493: `a..=b`, the inclusive range of `for`.
+  xs.push(accepted("for-inclusive", "fn main {\n  for i in 1..=3 {\n    puts(i)\n  }\n  for j in 5..=4 {\n    puts(j)\n  }\n  for k in 9223372036854775805..=9223372036854775807 {\n    puts(k)\n  }\n  m = -9223372036854775807 - 1\n  for n in m..=m {\n    puts(n)\n  }\n  for a in 0..=6 {\n    if a % 2 == 1 {\n      continue\n    }\n    for b in a..=a + 1 {\n      puts(a * 10 + b)\n    }\n  }\n  hit = 0\n  for z in 0..=9 {\n    if z == 4 {\n      hit = z\n      break\n    }\n  }\n  puts(hit)\n  for c in 0..2 {\n    puts(c)\n  }\n}\n", "1\n2\n3\n9223372036854775805\n9223372036854775806\n9223372036854775807\n-9223372036854775808\n0\n1\n22\n23\n44\n45\n66\n67\n4\n0\n1\n"))
+  xs.push(refused("for-inclusive-float", "fn main {\n  for i in 0..=1.5 {\n    puts(i)\n  }\n}\n", "for range bounds must be Int, got Float64", "2:3"))
+  xs.push(refused("for-inclusive-assign", "fn main {\n  for i in 0..=3 {\n    i = 5\n  }\n}\n", "cannot assign to i", "3:7"))
   xs
 }
 

@@ -592,14 +592,17 @@ fn main {
   for i in 0..5 {          // 0, 1, 2, 3, 4
     sum += i
   }
+  for i in 1..=3 {         // 1, 2, 3
+    sum += i
+  }
   for x in [10, 20] {
     sum += x
   }
-  puts(sum)                // => 40
+  puts(sum)                // => 46
 }
 ```
 
-- **`..` excludes its end**, unlike Crystal's, Ruby's and Kotlin's. `for i in 1..n` never reaches `n`; write `1..n + 1` until the inclusive `a..=b` is built ([Not built yet](#not-built-yet)).
+- **`..` excludes its end**, unlike Crystal's, Ruby's and Kotlin's: `for i in 1..n` never reaches `n`. **`..=` includes it**, as Rust's: `for i in 1..=n` ends with `n`, even when `n` is the largest `Int` (the loop stops after its last value instead of computing the next one).
 - The bounds are evaluated once. The loop variable is a new name that exists only inside the loop (when a variable of that name already exists outside, the loop uses it, and it keeps its last value afterwards: pick a fresh name). `break`, `continue` and `return` behave as they do in `while`.
 - **The loop variable cannot be assigned.** It is a copy of the range's counter or of the array's element, made again at each step, so `i = 5`, `x += 1` and a field of a struct element (`p.x = 1`) are compile errors: the write would be lost, or would change the iteration. To change the array, store through an index: `xs[i] = v`, or `xs[i].x = v` for one field of a struct element. For a range that skips or repeats steps, use `while` with a counter of your own. A field of a *class* element is assignable: `c.x = 1` changes the object.
 - A range is only a `for` form: it is not a value you can store.
@@ -3598,7 +3601,7 @@ Avant will look familiar from almost anywhere, and it differs on purpose in a ha
 | a 32-bit `int` that wraps | `Int` is 64-bit and overflow traps; `&+` wraps on request; `Int32` is for dense storage ([Numbers](#numbers)) | a wrong number never passes silently |
 | numbers that convert themselves | no implicit conversion, between widths or to floats ([Conversions](#conversions)) | no silent truncation or precision loss |
 | integer division that floors (Python's `//`, Ruby's `/`) | `/` truncates toward zero and `%` follows the dividend, as in C, Go and Rust | |
-| `1..10` including 10 (Crystal, Ruby, Kotlin) | `..` excludes its end ([For](#for)) | ranges match zero-based indexes |
+| `1..10` including 10 (Crystal, Ruby, Kotlin) | `..` excludes its end, `..=` includes it ([For](#for)) | ranges match zero-based indexes |
 | truthiness: `if n`, `if list` | conditions are `Bool`; `if v = x` opens an optional ([Conditions that bind](#conditions-that-bind)) | |
 | inheritance, virtual methods, interface values | none: composition, interfaces as compile-time bounds, unions ([No inheritance](#no-inheritance)) | every call is direct, every layout known |
 | `mutating` or `&mut self` on methods that change a struct | a method may change its struct receiver; an argument is a copy ([Structs](#structs)) | Go's pointer receiver, taken automatically |
@@ -3631,7 +3634,6 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 | --- | --- | --- |
 | Ranges in `switch` labels (`case 0..10`); `case true` | decided | an `if` chain |
 | Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
-| Inclusive range `a..=b` | decided | `a..b + 1` |
 | `Hash` with other key and value types; insertion order | decided | [three combinations](#key-and-value-types); sort the keys |
 | `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion; slices of strings and arrays | planned | `str_slice`, loops, [`std.regex`](#stdregex) |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#trailing-blocks) |
