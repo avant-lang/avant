@@ -372,9 +372,18 @@ pub fn dump_typed_fn(fnn: Function): String {
 }
 
 pub fn dump_typed_program(program: Program): String {
+  dump_typed_program(program, "")
+}
+
+// The checked tree of one module of a loaded program (dump --check prints
+// the root's: O192, D352), every declaration when module is "".
+pub fn dump_typed_program(program: Program, module: String): String {
   buf = buf_new()
   buf.push_str("(program")
   for s in program.structs {
+    if module.size > 0 && s.mod_name != module {
+      continue
+    }
     if decl = s.enum_of {
       // An enum (Stage 29 W5a1): its members and their values.
       buf.push_str(" (enum ")
@@ -394,11 +403,17 @@ pub fn dump_typed_program(program: Program): String {
     buf.push_str(")")
   }
   for c in program.classes {
+    if module.size > 0 && c.mod_name != module {
+      continue
+    }
     buf.push_str(" (class ")
     buf.push_str(c.name)
     buf.push_str(")")
   }
   for function in program.functions {
+    if module.size > 0 && function.mod_name != module {
+      continue
+    }
     buf.push_str(" ")
     buf.push_str(dump_typed_fn(function))
   }
