@@ -558,6 +558,35 @@ fn test_empty_arrays(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(stat_value(log_text("${dir}/empty_arrays.stats.err"), "alloc"), 1280144, "empty_arrays.av: an empty array is one object of 24 bytes (1,280,144 bytes allocated; 1,600,320 with a buffer each)")
 }
 
+// O650 (the Valk stage, VALK-TM3): under AVANT_GC_STRESS=1 a full
+// collection poisons what it frees, the lines a kept block frees and a
+// block it releases whole, as the young sweep poisons what it frees.
+// ffi/full_poison.av (its C half in ffi/full_poison.c) keeps a stale
+// address to a mature string that died at a full collection, in each of
+// the two shapes, and reads a byte through it: 219 (GC_POISON) under the
+// stress mode, with the nursery off and with a small young budget too;
+// before VALK-TM3 the strings' own letters (83 and 84). AVANT_GC_DEFRAG=0
+// keeps the blocks in place (an evacuated block was poisoned before).
+// Without the stress mode, and under the verifier, the read is not made.
+fn test_full_poison(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/full_poison.av", "${dir}/full_poison", "${dir}/full_poison.log", ["--cc", "${root}/tests/fixtures/ffi/full_poison.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "full_poison.av: compiles")
+  envs = ["-u AVANT_GC_VERIFY AVANT_GC_STRESS=1 AVANT_GC_DEFRAG=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1 AVANT_GC_DEFRAG=0 AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1 AVANT_GC_DEFRAG=0 AVANT_YOUNG_MB=1", "-u AVANT_GC_STRESS -u AVANT_GC_VERIFY", "-u AVANT_GC_STRESS AVANT_GC_VERIFY=1"]
+  wants = ["219 kept 219", "219 kept 219", "219 kept 219", "-1 kept -1", "-1 kept -1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "full_poison", "full_poison.g${e}", envs[e]))
+  }
+  run_waves(runs)
+  for e in 0..envs.size {
+    c.eq_int(runs[e].code, 0, "full_poison.av under ${envs[e]}: exit 0")
+    c.eq_str(log_text("${dir}/full_poison.g${e}.out"), "full_poison: released ${wants[e]} live 200 bad 0\n", "full_poison.av under ${envs[e]}: a stale read of a mature string a full collection freed (its block released, its lines in a kept block) reads the poison only under the stress mode; the live strings are intact")
+    c.eq_str(log_text("${dir}/full_poison.g${e}.err"), "", "full_poison.av under ${envs[e]}: no stderr")
+  }
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -571,6 +600,7 @@ fn test_main(c: Checks) {
     test_rem_invariant(c, compiler, avant_test_root(), scratch_dir())
     test_late_starts(c, compiler, avant_test_root(), scratch_dir())
     test_empty_arrays(c, compiler, avant_test_root(), scratch_dir())
+    test_full_poison(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

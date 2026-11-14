@@ -302,12 +302,30 @@ void gc_mark_roots(void) {
 int gc_keep_if_live(Block *b) {
   uint64_t freed = 0;
   if (gc_block_live_lines(b) == 0) {
+    /* AVANT_GC_STRESS=1: a block the full sweep releases is poisoned, as
+     * an evacuated block is (the Valk stage, VALK-TM3, O650; before it
+     * the full sweep poisoned nothing, so a stale reference to a mature
+     * object that died here read its old bytes). */
+    gc_poison(b->base, BLOCK_SIZE);
     return 0;
   }
   /* Word-wise (Stage 28 W15d, O94): the young sweep's pass over the whole
    * block clears the free lines' start bits and leaves the cursor on the
    * first hole, as the byte loop and gc_reset_block_bump did. */
   (void)gc_sweep_block_lines(b, 0, LINES_PER_BLOCK, &freed);
+  if (gc_heap.set.stress) {
+    /* And every line a kept block frees is poisoned, as the young sweep
+     * poisons the young lines it frees (O650): the line marks are exact
+     * (mark_lines marks every line an object touches), so a line no live
+     * object marked holds nothing live. A line free before this
+     * collection is poisoned again: it held nothing either. */
+    int l;
+    for (l = 0; l < LINES_PER_BLOCK; l++) {
+      if (!line_live(b, l)) {
+        gc_poison(b->base + (size_t)l * LINE_SIZE, LINE_SIZE);
+      }
+    }
+  }
   return 1;
 }
 

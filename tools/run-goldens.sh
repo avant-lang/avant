@@ -162,6 +162,7 @@ skip_reason() { # PATH -> prints a reason when the program is excluded
     examples/http.av) echo "opens a loopback listener and connects to it (no network ports here)" ;;
     tests/fixtures/format/*) echo "formatter input, not a program" ;;
     tests/fixtures/ffi/ceiling.av) echo "size-ceiling probes, run per mode by tests/cases/test_ceiling.av (every mode traps)" ;;
+    tests/fixtures/ffi/full_poison.av) echo "a stale read whose output names the mode (O650), run per mode by tests/cases/test_gc_checks.av" ;;
   esac
 }
 # A program that opens or connects to a network port (a listener, a
