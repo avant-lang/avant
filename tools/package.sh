@@ -20,6 +20,9 @@
 #
 # Writes OUT_DIR/avant-linux-x86_64/, OUT_DIR/avant-linux-x86_64.tar.gz,
 # and OUT_DIR/avant-linux-x86_64.tar.gz.sha256 (checkable from OUT_DIR).
+# The same files give the same archive, byte for byte (O676): its
+# entries carry the commit's time (SOURCE_DATE_EPOCH overrides it), so a
+# rebuilt release can be checked against the published sha256.
 set -eu
 
 if [ "$#" -lt 3 ] || [ "$#" -gt 4 ]; then
@@ -49,8 +52,24 @@ fail() {
 [ -x "$root/runtime/build/avant-bind" ] || fail "runtime/build/avant-bind is missing (run sh runtime/build.sh with llvm-config and libclang)"
 [ -z "$versions" ] || [ -f "$versions" ] || fail "versions file is missing: $versions"
 
+# A reproducible archive (O676, VALK-TM2): the same files packaged twice
+# give the same bytes. Entries in name order, owner and group 0, the mode
+# bits normalized (a directory's come from the umask otherwise), and every
+# entry's mtime fixed: SOURCE_DATE_EPOCH when set, else the time of this
+# checkout's commit, else 0 outside a git checkout. gzip -n writes no name
+# and no time into its header.
+if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+  epoch=$SOURCE_DATE_EPOCH
+else
+  epoch=$(git -C "$root" log -1 --format=%ct HEAD 2>/dev/null) || epoch=0
+  [ -n "$epoch" ] || epoch=0
+fi
+case "$epoch" in
+  *[!0-9]*) fail "SOURCE_DATE_EPOCH is not a number of seconds: $epoch" ;;
+esac
+
 mkdir -p "$out"
-rm -rf "$dir" "$out/$name.tar.gz" "$out/$name.tar.gz.sha256"
+rm -rf "$dir" "$out/$name.tar" "$out/$name.tar.gz" "$out/$name.tar.gz.sha256"
 mkdir -p "$dir/lib/std" "$dir/runtime/build"
 
 install -m 755 "$compiler" "$dir/avant"
@@ -171,7 +190,9 @@ done | sed 's/^GLIBC_//' | sort -uV | tail -n 1)
 echo "glibc-floor: $floor" >> "$dir/versions.txt"
 echo "package: glibc floor $floor"
 
-# Reproducible archive metadata: sorted names, fixed owner and mode bits.
-tar -C "$out" --sort=name --owner=0 --group=0 --numeric-owner -czf "$out/$name.tar.gz" "$name"
+# The archive (O676): see the epoch above.
+tar -C "$out" --sort=name --owner=0 --group=0 --numeric-owner --mode='u+rwX,go+rX,go-w' \
+  --mtime="@$epoch" --format=gnu -cf "$out/$name.tar" "$name"
+gzip -n -f "$out/$name.tar"
 ( cd "$out" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" )
 echo "package: $out/$name.tar.gz"
