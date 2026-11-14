@@ -25,6 +25,9 @@
 #            (built once per release; the letters and the gate stay
 #            --debug)
 #
+# Each compiler step also writes OUT.versions.txt beside the compiler it
+# built (record below): what `avant version` prints for it.
+#
 # The names keep the letter and the back end that built it (c-llvm,
 # d-llvm; the old back end's C, letter c, retired with it at W11). C' is
 # built by B and D' by C'; C' is judged only by D' and the suite (C' = D'
@@ -39,7 +42,7 @@
 # a user program never does.
 #
 # Environment:
-#   LETTERS_SEED      seed directory with avant (default bin/v0.41.0, the
+#   LETTERS_SEED      seed directory with avant (default bin/v0.42.0, the
 #                     release; a seed must emit W15a1's call table, so
 #                     v0.35.0 and v0.36.0 no longer build a correct B since
 #                     the C-stack scans retired); relative to the checkout.
@@ -67,16 +70,16 @@ cd "$root" || exit 2
 COMPILER_LINK="runtime/build/avant_llvm.o"
 
 # The default seed (D178, D189; Stage 28 W12r, W14b2, W16b, then the
-# v0.37.0 to v0.41.0 releases): bin/v0.41.0, the release archive unpacked (CI pins the
+# v0.37.0 to v0.42.0 releases): bin/v0.42.0, the release archive unpacked (CI pins the
 # same asset). The v0.36.0 release predates W15a1's call table: the code it
 # emits holds references in registers across runtime helpers that now
 # collect, which only the conservative C-stack pin scan made safe, and W16b
 # retired the scan, so a B it builds is wrong (the local seed
 # bin/seeds/s28-w16b bridged that gap until v0.37.0). This is the one place
 # the default is computed; tools/gate.sh asks --print-seed (O31).
-default_seed=bin/v0.41.0
+default_seed=bin/v0.42.0
 if [ -z "${LETTERS_SEED:-}" ] && [ ! -x "$default_seed/avant" ]; then
-  echo "letters: the default seed $default_seed is missing: unpack the v0.41.0 release archive there, or set LETTERS_SEED to a seed built after Stage 28 W15a (v0.36.0's B needs the retired C-stack scan)" >&2
+  echo "letters: the default seed $default_seed is missing: unpack the v0.42.0 release archive there, or set LETTERS_SEED to a seed built after Stage 28 W15a (v0.36.0's B needs the retired C-stack scan)" >&2
   exit 2
 fi
 seed=$(realpath -m "${LETTERS_SEED:-$default_seed}")
@@ -113,8 +116,33 @@ build() {
   [ -x "$2" ] || { echo "letters: no compiler at $2" >&2; exit 1; }
   timer=""
   [ -n "$time_dir" ] && timer="/usr/bin/time -p -o $time_dir/time-build-$1.txt"
+  rm -f "$3.versions.txt"
   # shellcheck disable=SC2086 # timer and the flag are words or empty
-  env -u AVANT_BACKEND -u AVANT_ROOT timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null
+  env -u AVANT_BACKEND -u AVANT_ROOT timeout -k 10 900 $timer "$2" compile compiler/main.av "$3" "$4" ${5:-} "$COMPILER_LINK" < /dev/null || return $?
+  record "$3" "$1"
+}
+
+# record OUT STEP: writes OUT.versions.txt, the build's record that
+# `avant version` prints (O534, Stage 29 W-FIX1e): avant.toml's version,
+# the commit (unknown outside git), `dirty: yes` when compiler/, lib/ or
+# runtime/ differ from that commit (untracked files there included), and
+# the step, and `lib:` the checkout's lib/ (physical path) that the
+# compiler reads its standard library from when AVANT_ROOT is not set
+# (O617, VALK-TM: a kept or copied compiler keeps its own library, or
+# says it is gone). The compiler carries none of it, so a compiler stays
+# byte-identical across commits that do not change it.
+record() {
+  v=$(sed -n 's/^version = "\(.*\)"$/\1/p' avant.toml | head -n 1)
+  c=$(git rev-parse HEAD 2>/dev/null) || c=unknown
+  {
+    [ -z "$v" ] || echo "version: $v"
+    echo "avant: $c"
+    if [ "$c" != unknown ] && [ -n "$(git status --porcelain -- compiler lib runtime 2>/dev/null)" ]; then
+      echo "dirty: yes"
+    fi
+    echo "built: tools/letters.sh $2"
+    echo "lib: $(pwd -P)/lib"
+  } > "$1.versions.txt"
 }
 
 # B must carry no LLVM stack maps (the runtime walks none since W12r).

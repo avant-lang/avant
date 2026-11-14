@@ -1,5 +1,28 @@
 # Avant Language changelog
 
+## 0.43.0 - 2026-11-14
+
+### Fixed
+
+* `std.http`: requests without `Host`, with two `Host` lines or with a repeated `Content-Length` are answered 400; `Response.header` refuses names and values that would split the response; a server with several loops survives WebSocket connections opening and closing together; registering a route while serving stops the program with a message instead of misrouting.
+* `std.http` client and WebSocket: `timeout_ms` covers the whole call; responses end where their framing says; HEAD and 304 have no body; non-UTF-8 bodies are sent; long or large WebSocket messages and handshakes are sent whole; closed connections answer as closed; deadlines ignore changes to the system clock.
+* Parameter defaults, imported generics and same-named types across modules resolve correctly.
+* A young collection no longer overflows the stack on a long chain of written old objects.
+* `avant test`: a failed file says how its process ended; JUnit reports stay valid XML; `.join` from a pool worker stops with a message.
+
+### Changed
+
+* A `for` variable cannot be assigned; `Array(T).new(n, value)` with a reference `T` is refused, and `Array(T).new(n) { |i| ... }` builds each element.
+* `Mutex.with`'s block value must be a plain value; `fun` signatures accept only optional references as unions.
+* Every function probes its stack, so overflows through large frames always fault in the guard page.
+* Allocation and collection are cheaper: a full collection takes about a third of the instructions per live object, a young collection less than a third.
+* `AVANT_GC_VERIFY=1` and `AVANT_GC_STRESS=1` check more and run faster.
+* The release archive includes `examples/`, the license and the third-party notices.
+
+### Added
+
+* `avant version` and `avant --version`.
+
 ## 0.42.0 - 2026-11-12
 
 ### Fixed

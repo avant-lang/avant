@@ -1,0 +1,95 @@
+// The fresh exemption across a constructor's `initialize` (Stage 29
+// VALK-A1, M5, O204, O337; compiler/mir/fresh.av), at run time: the
+// stores into an object its constructor just allocated keep no barrier
+// test while no collecting call lies between the allocation and them, and
+// keep it after one. tests/cases/test_alloc_shape.av runs this program
+// plainly and under the collector's environments, and asserts the shapes
+// on tests/fixtures/llvm/alloc_shape.av. Every 97th Named meets two young
+// collections inside its initialize (gc.collect() twice: it survives the
+// first and is promoted at the second) before the store that keeps its
+// barrier, so the promoted case is reached in every environment. A
+// compiler that drops that barrier is refused by the MIR verifier (V14);
+// with V14 disabled as well this program still runs correctly, because
+// the object is named by a root slot of its constructing frame at the next
+// collection, which scans it (results/2026-11-13-valk-a1/demo-fresh).
+import std.gc
+
+class Named {
+  next: Named?
+  label: String
+  v: Int
+
+  fn initialize(next: Named?, k: Int) {
+    // No collecting call since the allocation: no barrier test.
+    self.next = next
+    if k % 97 == 0 {
+      gc.collect()
+      gc.collect()
+    }
+    // "n-${k}" allocates (a collecting call): this store keeps its test.
+    self.label = "n-${k}"
+    self.v = k
+  }
+}
+
+class Tree {
+  left: Tree?
+  right: Tree?
+
+  fn initialize(left: Tree? = nil, right: Tree? = nil) {
+    self.left = left
+    self.right = right
+  }
+
+  fn check: Int {
+    r = 1
+    if l = self.left {
+      r = r + l.check
+    }
+    if x = self.right {
+      r = r + x.check
+    }
+    r
+  }
+}
+
+// Scenario 7's shape: children first, then the parent with both.
+fn build(depth: Int): Tree {
+  if depth <= 0 {
+    return Tree.new
+  }
+  Tree.new(build(depth - 1), build(depth - 1))
+}
+
+fn chain_sum(n: Named?): Int {
+  s = 0
+  cur = n
+  while c = cur {
+    s = s + c.v + c.label.size
+    cur = c.next
+  }
+  s
+}
+
+fn main {
+  keep: Array(Named) = []
+  prev: Named? = nil
+  for i in 0..60000 {
+    n = Named.new(prev, i)
+    prev = n
+    if i % 600 == 599 {
+      keep.push(n)
+      prev = nil
+    }
+  }
+  total = 0
+  for n in keep {
+    total = total + chain_sum(n)
+  }
+  puts("chains ${keep.size} ${total}")
+  nodes = 0
+  for r in 0..40 {
+    nodes = nodes + build(10).check
+  }
+  puts("trees ${nodes}")
+}

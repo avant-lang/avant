@@ -14,19 +14,20 @@ lib httpc {
   fun avant_http_port(srv: Ptr(Void)): Int
   fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void))): Int
   fun avant_http_close(srv: Ptr(Void)): Int
+  fun avant_http_route_while_serving(what: String)
+  fun avant_http_header_check(name: String, value: String)
   fun avant_http_req_is_ws(req: Ptr(Void)): Int
-  fun avant_http_req_ws_upgrade(req: Ptr(Void)): Int
+  fun avant_http_req_ws_upgrade(req: Ptr(Void), route: Int): Int
   fun avant_http_req_ws_id(req: Ptr(Void)): Int
-  fun avant_http_req_ws_server(req: Ptr(Void)): Ptr(Void)
   fun avant_http_req_ws_conn(req: Ptr(Void)): Ptr(Void)
   fun avant_ws_event_conn(ev: Ptr(Void)): Ptr(Void)
-  fun avant_ws_send_text_direct(handle: Ptr(Void), data: String): Int
-  fun avant_ws_send_text_bytes_direct(handle: Ptr(Void), data: Bytes): Int
-  fun avant_ws_send_bytes_direct(handle: Ptr(Void), data: Bytes): Int
-  fun avant_ws_close_direct(handle: Ptr(Void), code: Int, reason: String): Int
+  fun avant_ws_send_text_direct(handle: Ptr(Void), id: Int, data: String): Int
+  fun avant_ws_send_text_bytes_direct(handle: Ptr(Void), id: Int, data: Bytes): Int
+  fun avant_ws_send_bytes_direct(handle: Ptr(Void), id: Int, data: Bytes): Int
+  fun avant_ws_close_direct(handle: Ptr(Void), id: Int, code: Int, reason: String): Int
   fun avant_ws_event_kind(ev: Ptr(Void)): Int
   fun avant_ws_event_conn_id(ev: Ptr(Void)): Int
-  fun avant_ws_event_server(ev: Ptr(Void)): Ptr(Void)
+  fun avant_ws_event_route(ev: Ptr(Void)): Int
   fun avant_ws_event_path(ev: Ptr(Void)): String
   fun avant_ws_event_is_text(ev: Ptr(Void)): Int
   fun avant_ws_event_data(ev: Ptr(Void)): Bytes
@@ -36,13 +37,13 @@ lib httpc {
   fun avant_ws_send_text_bytes_by_id(id: Int, data: Bytes): Int
   fun avant_ws_send_bytes_by_id(id: Int, data: Bytes): Int
   fun avant_ws_close_by_id(id: Int, code: Int, reason: String): Int
-  fun avant_ws_client_connect(host: String, port: Int, target: String, key: String, timeout_ms: Int): Ptr(Void)
-  fun avant_ws_client_recv(handle: Ptr(Void), timeout_ms: Int): Bytes
+  fun avant_ws_client_connect(host: String, port: Int, target: String, key: String, timeout_ms: Int): Int
+  fun avant_ws_client_recv(id: Int, timeout_ms: Int): Bytes
   fun avant_ws_client_last_is_text: Int
-  fun avant_ws_client_close_code(handle: Ptr(Void)): Int
-  fun avant_ws_client_send_text(handle: Ptr(Void), data: String): Int
-  fun avant_ws_client_send_bytes(handle: Ptr(Void), data: Bytes): Int
-  fun avant_ws_client_close(handle: Ptr(Void)): Int
+  fun avant_ws_client_close_code(id: Int): Int
+  fun avant_ws_client_send_text(id: Int, data: String): Int
+  fun avant_ws_client_send_bytes(id: Int, data: Bytes): Int
+  fun avant_ws_client_close(id: Int): Int
   fun avant_ws_client_key: String
   fun avant_http_fetch(host: String, port: Int, request: String, timeout_ms: Int): Bytes
   fun avant_http_resp_status(raw: Bytes): Int
@@ -154,7 +155,12 @@ pub struct Response {
     Response { status: status, headers: empty_headers(), head: "Content-Type: application/octet-stream\r\n", body: body }
   }
 
+  // A name that is not a token, or a value with a control character
+  // other than tab (CR and LF among them), traps (Stage 29 W-FIX1g,
+  // O518): appended as it came, such a value added header lines or a
+  // second answer to the response (response splitting).
   pub fn header(name: String, value: String): Response {
+    httpc.avant_http_header_check(name, value)
     if is_managed_header(name) {
       return self
     }
@@ -240,11 +246,13 @@ pub struct WsSender {
   }
 }
 
-// A live WebSocket connection. The value is two scalars (the server
-// handle and a connection id); the runtime finds the connection again
-// by id from any thread. The value itself stays on the loop thread
-// (a raw pointer may not cross a `spawn` boundary); `sender` above is
-// the half that may cross.
+// A live WebSocket connection. The value is the connection's id and
+// the address of its record in the runtime. The record is never freed
+// and the runtime checks the id against it on every operation, so a
+// value kept after its connection closed, or after `serve` returned,
+// answers false and touches nothing else. The value itself stays on
+// the loop thread (a raw pointer may not cross a `spawn` boundary);
+// `sender` above is the half that may cross.
 // `send_text` and `send_bytes` return false when the connection is
 // closed or its bounded send queue is full. They may be called from
 // any task: a send from a task other than the connection's loop thread
@@ -253,7 +261,6 @@ pub struct WsSender {
 // the close handshake is the runtime's, with the peer's code and
 // reason delivered to the `websocket_close` handler.
 pub struct WsConn {
-  srv: Ptr(Void)
   id: Int
   handle: Ptr(Void)
 
@@ -262,24 +269,24 @@ pub struct WsConn {
   }
 
   pub fn send_text(text: String): Bool {
-    httpc.avant_ws_send_text_direct(self.handle, text) != 0
+    httpc.avant_ws_send_text_direct(self.handle, self.id, text) != 0
   }
 
   pub fn send_bytes(data: Bytes): Bool {
-    httpc.avant_ws_send_bytes_direct(self.handle, data) != 0
+    httpc.avant_ws_send_bytes_direct(self.handle, self.id, data) != 0
   }
 
   // Sends a received message onward with its kind preserved, without
   // materializing a string for a text message.
   pub fn send_message(msg: WsMessage): Bool {
     if msg.is_text {
-      return httpc.avant_ws_send_text_bytes_direct(self.handle, msg.body) != 0
+      return httpc.avant_ws_send_text_bytes_direct(self.handle, self.id, msg.body) != 0
     }
-    httpc.avant_ws_send_bytes_direct(self.handle, msg.body) != 0
+    httpc.avant_ws_send_bytes_direct(self.handle, self.id, msg.body) != 0
   }
 
   pub fn close(code: Int = 1000, reason: String = ""): Bool {
-    httpc.avant_ws_close_direct(self.handle, code, reason) != 0
+    httpc.avant_ws_close_direct(self.handle, self.id, code, reason) != 0
   }
 }
 
@@ -289,9 +296,13 @@ struct Route {
   handler: fn(Request): Response
 }
 
+// next is the index of the next route on the same path, -1 after the
+// last: a message runs every route of its path, in the order they were
+// registered, without comparing a path.
 struct WsRoute {
   path: String
   handler: fn(WsConn, WsMessage)
+  next: Int
 }
 
 struct WsOpenRoute {
@@ -312,25 +323,62 @@ class HttpState {
   ws_routes: Array(WsRoute) = []
   ws_open_routes: Array(WsOpenRoute) = []
   ws_close_routes: Array(WsCloseRoute) = []
-  ws_conn_ids: Array(Int) = []
-  ws_conn_paths: Array(String) = []
   closed: Bool = false
   serving: Bool = false
   bound_port: Int = 0
 
+  // The route tables are read by every loop thread while `serve` runs,
+  // with no lock, so a route added then is pushed onto an array the
+  // loops are reading (Stage 29 W-FIX1f, O594: routes answered by
+  // another route's handler, and crashes). Every route method checks
+  // here, on the registering thread, and traps while serving: the
+  // README's rule, register every route before `serve`. Nothing is
+  // added to the request or message path.
   fn add(method: String, path: String, handler: fn(Request): Response) {
+    if self.serving {
+      httpc.avant_http_route_while_serving("route ${method} ${path}")
+    }
     self.routes.push(Route { method: method, path: path, handler: handler })
   }
 
   fn add_ws(path: String, handler: fn(WsConn, WsMessage)) {
-    self.ws_routes.push(WsRoute { path: path, handler: handler })
+    if self.serving {
+      httpc.avant_http_route_while_serving("websocket route ${path}")
+    }
+    k = self.ws_routes.size
+    i = self.first_ws_route(path)
+    if i >= 0 {
+      while self.ws_routes[i].next >= 0 {
+        i = self.ws_routes[i].next
+      }
+      self.ws_routes[i].next = k
+    }
+    self.ws_routes.push(WsRoute { path: path, handler: handler, next: -1 })
+  }
+
+  // The index of the first message route on path, -1 when it has none.
+  fn first_ws_route(path: String): Int {
+    i = 0
+    while i < self.ws_routes.size {
+      if self.ws_routes[i].path == path {
+        return i
+      }
+      i += 1
+    }
+    -1
   }
 
   fn add_ws_open(path: String, handler: fn(WsConn)) {
+    if self.serving {
+      httpc.avant_http_route_while_serving("websocket_open route ${path}")
+    }
     self.ws_open_routes.push(WsOpenRoute { path: path, handler: handler })
   }
 
   fn add_ws_close(path: String, handler: fn(WsConn, Int, String)) {
+    if self.serving {
+      httpc.avant_http_route_while_serving("websocket_close route ${path}")
+    }
     self.ws_close_routes.push(WsCloseRoute { path: path, handler: handler })
   }
 
@@ -359,27 +407,6 @@ class HttpState {
     false
   }
 
-  fn register_ws_conn(id: Int, path: String) {
-    self.ws_conn_ids.push(id)
-    self.ws_conn_paths.push(path)
-  }
-
-
-  fn unregister_ws_conn(id: Int) {
-    i = 0
-    while i < self.ws_conn_ids.size {
-      if self.ws_conn_ids[i] == id {
-        last = self.ws_conn_ids.size - 1
-        self.ws_conn_ids[i] = self.ws_conn_ids[last]
-        self.ws_conn_paths[i] = self.ws_conn_paths[last]
-        self.ws_conn_ids.pop
-        self.ws_conn_paths.pop
-        return
-      }
-      i += 1
-    }
-  }
-
   fn ws_open_dispatch(path: String, conn: WsConn) {
     i = 0
     while i < self.ws_open_routes.size {
@@ -390,8 +417,6 @@ class HttpState {
       i += 1
     }
   }
-
-
 
   fn dispatch(req: Request): Response {
     i = 0
@@ -425,14 +450,14 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
   }
   // A well-formed WebSocket handshake (validated in C) upgrades here
   // when a websocket route owns the path; without one it falls through
-  // to ordinary routing and its 404.
+  // to ordinary routing and its 404. The connection's C record keeps
+  // its path's first message route (O564: the loop threads share no
+  // table of connections; the route tables are only read while serving).
   if httpc.avant_http_req_is_ws(raw) != 0 && state.has_ws_route(path) {
-    if httpc.avant_http_req_ws_upgrade(raw) != 0 {
+    if httpc.avant_http_req_ws_upgrade(raw, state.first_ws_route(path)) != 0 {
       wid = httpc.avant_http_req_ws_id(raw)
-      wsrv = httpc.avant_http_req_ws_server(raw)
       whandle = httpc.avant_http_req_ws_conn(raw)
-      conn = WsConn { srv: wsrv, id: wid, handle: whandle }
-      state.register_ws_conn(wid, path)
+      conn = WsConn { id: wid, handle: whandle }
       state.ws_open_dispatch(path, conn)
     }
     return
@@ -464,50 +489,29 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
 fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
   kind = httpc.avant_ws_event_kind(raw)
   wid = httpc.avant_ws_event_conn_id(raw)
-  wsrv = httpc.avant_ws_event_server(raw)
   whandle = httpc.avant_ws_event_conn(raw)
-  conn = WsConn { srv: wsrv, id: wid, handle: whandle }
+  conn = WsConn { id: wid, handle: whandle }
   if kind == 1 {
-    // Route and connection-path lookup are inlined here rather than
-    // called as HttpState methods: each Avant call is a collector
-    // frame entry, and this path runs once per message.
-    path = ""
-    i = 0
-    while i < state.ws_conn_ids.size {
-      if state.ws_conn_ids[i] == wid {
-        path = state.ws_conn_paths[i]
-        i = state.ws_conn_ids.size
-      } else {
-        i += 1
-      }
-    }
-    if path.size == 0 {
-      path = httpc.avant_ws_event_path(raw)
-    }
-    is_text = httpc.avant_ws_event_is_text(raw) != 0
-    data = httpc.avant_ws_event_data(raw)
-    msg = WsMessage { is_text: is_text, body: data }
-    for r in state.ws_routes {
-      if r.path == path {
+    // The route walk is inlined here rather than called as an
+    // HttpState method: each Avant call is a collector frame entry, and
+    // this path runs once per message. The first route comes from the
+    // connection's own C record (set at the upgrade, O564), the rest by
+    // each route's next: no path is compared.
+    i = httpc.avant_ws_event_route(raw)
+    if i >= 0 {
+      is_text = httpc.avant_ws_event_is_text(raw) != 0
+      data = httpc.avant_ws_event_data(raw)
+      msg = WsMessage { is_text: is_text, body: data }
+      while i >= 0 {
+        r = state.ws_routes[i]
         (r.handler)(conn, msg)
+        i = r.next
       }
     }
     return
   }
   if kind == 2 {
-    path = ""
-    i = 0
-    while i < state.ws_conn_ids.size {
-      if state.ws_conn_ids[i] == wid {
-        path = state.ws_conn_paths[i]
-        i = state.ws_conn_ids.size
-      } else {
-        i += 1
-      }
-    }
-    if path.size == 0 {
-      path = httpc.avant_ws_event_path(raw)
-    }
+    path = httpc.avant_ws_event_path(raw)
     code = httpc.avant_ws_event_code(raw)
     reason = httpc.avant_ws_event_reason(raw)
     for rc in state.ws_close_routes {
@@ -515,7 +519,6 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
         (rc.handler)(conn, code, reason)
       }
     }
-    state.unregister_ws_conn(wid)
   }
 }
 
@@ -596,8 +599,9 @@ pub struct Server {
   }
 
   // Runs the event loop until `close` is called from another task.
-  // Register every route before serving: the route table is read on
-  // the loop thread while `serve` blocks. Returns when the loop has
+  // Register every route before serving: the route tables are read by
+  // the loop threads while `serve` blocks, and a route method called
+  // while serving (from a handler) traps. Returns when the loop has
   // drained, after which the listen port is released.
   pub fn serve {
     if self.state.closed {
@@ -827,7 +831,9 @@ fn resolve_url(base: String, loc: String): String? {
   nil
 }
 
-fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Header), timeout_ms: Int): Response | HttpError {
+// One exchange, no redirects. `deadline` is a reading of `now_ms()`:
+// the exchange gets what is left until then when it starts.
+fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Header), deadline: Int): Response | HttpError {
   if starts_with(url, "https://") {
     return HttpError.new("https is not supported until the TLS wave")
   }
@@ -852,11 +858,16 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
       i += 1
     }
     buf.push_str("Content-Length: ${body.size}\r\nConnection: close\r\n\r\n")
-    if body.size > 0 {
-      text = String.from_utf8(body) ?? ""
-      buf.push_str(text)
+    // The body's bytes as they are (Stage 29 W-FIX1g): it went through
+    // String.from_utf8, so a body that is not valid UTF-8 was sent as
+    // nothing after a Content-Length of its size, and the server waited
+    // for it until the call's deadline.
+    buf.push_bytes(body)
+    left = deadline - now_ms()
+    if left <= 0 {
+      return HttpError.new("request to ${p.authority} timed out")
     }
-    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s, timeout_ms)
+    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s, left)
     code = httpc.avant_http_take_status()
     if code == 1 {
       return HttpError.new("could not connect to ${p.authority}")
@@ -871,9 +882,15 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     if httpc.avant_http_take_status() != 0 {
       return HttpError.new("invalid HTTP response from ${p.authority}")
     }
-    resp_body = httpc.avant_http_resp_body(raw)
-    if httpc.avant_http_take_status() != 0 {
-      return HttpError.new("invalid HTTP response body from ${p.authority}")
+    // The answer to HEAD has no body: its Content-Length is the length
+    // a GET's would have (RFC 9112 6.3), and reading it as this body's
+    // made every such answer invalid (Stage 29 W-FIX1g).
+    resp_body = "".bytes
+    if method != "HEAD" {
+      resp_body = httpc.avant_http_resp_body(raw)
+      if httpc.avant_http_take_status() != 0 {
+        return HttpError.new("invalid HTTP response body from ${p.authority}")
+      }
     }
     resp_headers = httpc.avant_http_resp_headers(raw)
     return Response {
@@ -926,13 +943,22 @@ pub class Http {
     Http.request("POST", url, body.bytes, hs, follow, timeout_ms)
   }
 
+  // `timeout_ms` is a deadline for the whole call: every redirect it
+  // follows, each one's connect, request and complete response. When
+  // it passes first the call returns an HttpError, whatever has
+  // arrived. Zero or less means the default, 10000.
   pub fn self.request(method: String, url: String, body: Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {
     cur_method = method
     cur_url = url
     cur_body = body
     hops = 0
+    limit = timeout_ms
+    if limit <= 0 {
+      limit = 10000
+    }
+    deadline = now_ms() + limit
     while true {
-      resp = http_fetch_once(cur_method, cur_url, cur_body, headers, timeout_ms)?
+      resp = http_fetch_once(cur_method, cur_url, cur_body, headers, deadline)?
       redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
       if !follow || !redirect {
         return resp
@@ -959,22 +985,27 @@ pub class Http {
 // HttpError, never a silent downgrade. A connection that is never
 // closed leaks its loop thread until the process exits; there is no
 // finalizer.
+// The value is the connection's id in the runtime, a number that is
+// never given twice: after `close`, every copy of the value finds
+// nothing there, so `send_text` and `send_bytes` return false, `recv`
+// returns nil, `close_code` is 1006 and a second `close` does nothing,
+// whatever connections were opened since.
 pub struct WsConnection {
-  handle: Ptr(Void)
+  id: Int
 
   pub fn send_text(text: String): Bool {
-    httpc.avant_ws_client_send_text(self.handle, text) != 0
+    httpc.avant_ws_client_send_text(self.id, text) != 0
   }
 
   pub fn send_bytes(data: Bytes): Bool {
-    httpc.avant_ws_client_send_bytes(self.handle, data) != 0
+    httpc.avant_ws_client_send_bytes(self.id, data) != 0
   }
 
   // The next message, or nil when the connection has closed. With a
   // timeout, nil also means the timeout passed; `close_code` says
   // which: it is 1006 until a close frame arrives.
   pub fn recv(timeout_ms: Int = -1): WsMessage? {
-    data = httpc.avant_ws_client_recv(self.handle, timeout_ms)
+    data = httpc.avant_ws_client_recv(self.id, timeout_ms)
     if httpc.avant_http_take_status() != 0 {
       return nil
     }
@@ -983,13 +1014,13 @@ pub struct WsConnection {
   }
 
   pub fn close_code: Int {
-    httpc.avant_ws_client_close_code(self.handle)
+    httpc.avant_ws_client_close_code(self.id)
   }
 
-  // Safe to call more than once: the runtime keeps a registry of
-  // live client handles and a second close is a no-op.
+  // Safe to call more than once, through any copy: a second close
+  // does nothing. A `recv` waiting in another task returns nil.
   pub fn close {
-    httpc.avant_ws_client_close(self.handle)
+    httpc.avant_ws_client_close(self.id)
   }
 }
 
@@ -1007,7 +1038,7 @@ pub class Ws {
     parsed = http_parse_url("http://${str_slice(url, 5, url.size)}")
     if p = parsed {
       key = httpc.avant_ws_client_key()
-      handle = httpc.avant_ws_client_connect(p.host, p.port, p.target, key, timeout_ms)
+      id = httpc.avant_ws_client_connect(p.host, p.port, p.target, key, timeout_ms)
       code = httpc.avant_http_take_status()
       if code == 1 {
         return HttpError.new("could not connect to ${p.authority}")
@@ -1018,7 +1049,7 @@ pub class Ws {
       if code != 0 {
         return HttpError.new("websocket handshake with ${p.authority} failed")
       }
-      return WsConnection { handle: handle }
+      return WsConnection { id: id }
     }
     HttpError.new("invalid URL: ${url}")
   }

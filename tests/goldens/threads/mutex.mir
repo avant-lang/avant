@@ -123,8 +123,8 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @mutex.av:46:1 {
   let _25: i64
   let _26: i64
   let _27: u64
-  let _28: ref %mutex.Held
-  let _29: ref %mutex.Mutex(mutex.Held)
+  let _28: ref %mutex.Held slot
+  let _29: ref %mutex.Mutex(mutex.Held) slot
   let _30 (held): ref %mutex.Mutex(mutex.Held) slot
   let _31: ref %spawn_cap(av.mutex/main#spawn2) slot
   let _32: ref
@@ -141,8 +141,8 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @mutex.av:46:1 {
   let _43: i64
   let _44: u64
   let _45 (after): i64
-  let _46: %mutex.Cell
-  let _47: ref %mutex.Mutex(mutex.Cell)
+  let _46: %mutex.Cell slot
+  let _47: ref %mutex.Mutex(mutex.Cell) slot
   let _48 (cell): ref %mutex.Mutex(mutex.Cell) slot
   let _49: ref %spawn_cap(av.mutex/main#spawn3) slot
   let _50: ref
@@ -153,7 +153,7 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @mutex.av:46:1 {
   let _55: ref str
   let _56: ref str slot
   let _57: u64
-  let _58: ref %mutex.Mutex(String)
+  let _58: ref %mutex.Mutex(String) slot
   let _59 (text): ref %mutex.Mutex(String) slot
   let _60: ref %elems(JoinHandle(Int)) slot
   let _61: ref %Array(JoinHandle(Int))
@@ -203,15 +203,20 @@ bb0:
   _14 = zero   @46:1
   _20 = zero   @46:1
   _23 = zero   @46:1
+  _28 = zero   @46:1
+  _29 = zero   @46:1
   _30 = zero   @46:1
   _31 = zero   @46:1
   _33 = zero   @46:1
   _35 = zero   @46:1
+  _46 = zero   @46:1
+  _47 = zero   @46:1
   _48 = zero   @46:1
   _49 = zero   @46:1
   _51 = zero   @46:1
   _53 = zero   @46:1
   _56 = zero   @46:1
+  _58 = zero   @46:1
   _59 = zero   @46:1
   _60 = zero   @46:1
   _62 = zero   @46:1
@@ -224,15 +229,14 @@ bb0:
   _85 = zero   @46:1
   _92 = zero   @46:1
   gc.enter   @46:1
-  gc.roots _2, _4, _5, _7, _10, _11, _14, _20, _23, _30, _31, _33, _35, _48, _49, _51, _53, _56, _59, _60, _62, _64, _65, _68, _74, _77, _84, _85, _92   @46:1
+  gc.roots _2, _4, _5, _7, _10, _11, _14, _20, _23, _28, _29, _30, _31, _33, _35, _46, _47, _48, _49, _51, _53, _56, _58, _59, _60, _62, _64, _65, _68, _74, _77, _84, _85, _92   @46:1
   call __avant_type_maps() nocollect   @46:1
   call avant_io_init_argv(copy _1, copy _2) collects   @46:1
   _3 = call av.mutex/Mutex(Int).new(const i64 0) collects   @47:21
   _4 = copy _3   @47:9
   _5 = call avant_alloc(const u64 0, const u32 65535) collects   @48:32
-  _6 = call avant_alloc(const u64 16, const u32 1022) collects   @48:32
-  barrier copy _6   @48:32
-  (*_6).0 = copy _5   @48:32
+  _6 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @48:32
+  (*_6).0 = copy _5 fresh   @48:32
   (*_6).1 = const i32 0   @48:32
   (*_6).2 = const i32 0   @48:32
   _7 = copy _6   @48:3
@@ -245,9 +249,8 @@ bb1:
   branch copy _9, bb2, bb3   @50:3
 
 bb2:
-  _10 = call avant_alloc(const u64 8, const u32 6) collects   @51:13
-  barrier copy _10   @51:13
-  (*_10).0 = copy _4   @51:13
+  _10 = call avant_alloc(const u64 8, const u32 6) collects fresh   @51:13
+  (*_10).0 = copy _4 fresh   @51:13
   _11 = call avant_spawn(const fn av.mutex/main#spawn1, copy _10) collects   @51:13
   call avant_array_push_ptr(copy _7, copy _11, const u32 65535) collects   @51:7
   _12 = add copy _8, const i64 1   @52:11
@@ -290,11 +293,11 @@ bb7:
   call avant_gate_unlock(copy _27) collects   @57:19
   call printf(const str.0, copy _26) nocollect   @57:3
   _28 = call av.mutex/Held.new(const i64 5) collects   @58:30
-  _29 = call av.mutex/Mutex(mutex.Held).new(copy _28) collects   @58:21
+  _29 = call avant_alloc(const u64 16, const u32 3) collects fresh   @58:21
+  call av.mutex/Mutex(mutex.Held).initialize(copy _29, copy _28) collects   @58:21
   _30 = copy _29   @58:8
-  _31 = call avant_alloc(const u64 8, const u32 7) collects   @59:8
-  barrier copy _31   @59:8
-  (*_31).0 = copy _30   @59:8
+  _31 = call avant_alloc(const u64 8, const u32 7) collects fresh   @59:8
+  (*_31).0 = copy _30 fresh   @59:8
   _32 = call avant_spawn(const fn av.mutex/main#spawn2, copy _31) collects   @59:8
   _33 = copy _32   @59:6
   _34 = call avant_join(copy _33) collects   @65:10
@@ -315,11 +318,11 @@ bb7:
   _45 = copy _43   @66:9
   call printf(const str.0, copy _45) nocollect   @70:3
   _46 = struct %mutex.Cell (const i64 1, const str.1)   @71:26
-  _47 = call av.mutex/Mutex(mutex.Cell).new(copy _46) collects   @71:21
+  _47 = call avant_alloc(const u64 24, const u32 4) collects fresh   @71:21
+  call av.mutex/Mutex(mutex.Cell).initialize(copy _47, copy _46) collects   @71:21
   _48 = copy _47   @71:8
-  _49 = call avant_alloc(const u64 8, const u32 8) collects   @72:8
-  barrier copy _49   @72:8
-  (*_49).0 = copy _48   @72:8
+  _49 = call avant_alloc(const u64 8, const u32 8) collects fresh   @72:8
+  (*_49).0 = copy _48 fresh   @72:8
   _50 = call avant_spawn(const fn av.mutex/main#spawn3, copy _49) collects   @72:8
   _51 = copy _50   @72:6
   _52 = call avant_join(copy _51) collects   @84:10
@@ -332,12 +335,12 @@ bb7:
   _57 = copy (*_53).1   @85:18
   call avant_gate_unlock(copy _57) collects   @85:18
   call avant_puts_str(copy _56) nocollect   @85:3
-  _58 = call av.mutex/Mutex(String).new(const str.2) collects   @86:23
+  _58 = call avant_alloc(const u64 16, const u32 5) collects fresh   @86:23
+  call av.mutex/Mutex(String).initialize(copy _58, const str.2) collects   @86:23
   _59 = copy _58   @86:8
   _60 = call avant_alloc(const u64 0, const u32 65535) collects   @87:32
-  _61 = call avant_alloc(const u64 16, const u32 1022) collects   @87:32
-  barrier copy _61   @87:32
-  (*_61).0 = copy _60   @87:32
+  _61 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @87:32
+  (*_61).0 = copy _60 fresh   @87:32
   (*_61).1 = const i32 0   @87:32
   (*_61).2 = const i32 0   @87:32
   _62 = copy _61   @87:3
@@ -350,9 +353,8 @@ bb8:
   branch copy _63, bb9, bb10   @89:3
 
 bb9:
-  _64 = call avant_alloc(const u64 8, const u32 9) collects   @90:13
-  barrier copy _64   @90:13
-  (*_64).0 = copy _59   @90:13
+  _64 = call avant_alloc(const u64 8, const u32 9) collects fresh   @90:13
+  (*_64).0 = copy _59 fresh   @90:13
   _65 = call avant_spawn(const fn av.mutex/main#spawn4, copy _64) collects   @90:13
   call avant_array_push_ptr(copy _62, copy _65, const u32 65535) collects   @90:7
   _66 = add copy _8, const i64 1   @101:11
@@ -426,10 +428,7 @@ fn av.mutex/Held.initialize(_1: ref %mutex.Held, _2: i64) -> void frame @mutex.a
   let _2 (n): i64
 
 bb0:
-  gc.enter   @14:3
-  gc.roots   @14:3
   (*_1).0 = copy _2   @15:12
-  gc.leave   @14:3
   return   @14:3
 }
 
@@ -456,8 +455,7 @@ fn av.mutex/Mutex(mutex.Held).initialize(_1: ref %mutex.Mutex(mutex.Held), _2: r
 bb0:
   gc.enter   @28:3
   gc.roots _1   @28:3
-  barrier copy _1   @29:15
-  (*_1).0 = copy _2   @29:15
+  (*_1).0 = copy _2 fresh   @29:15
   _3 = call avant_gate_new() collects   @30:17
   (*_1).1 = copy _3   @30:15
   gc.leave   @28:3
@@ -472,8 +470,7 @@ fn av.mutex/Mutex(mutex.Cell).initialize(_1: ref %mutex.Mutex(mutex.Cell), _2: %
 bb0:
   gc.enter   @28:3
   gc.roots _1   @28:3
-  barrier copy _1   @29:15
-  (*_1).0 = copy _2   @29:15
+  (*_1).0 = copy _2 fresh   @29:15
   _3 = call avant_gate_new() collects   @30:17
   (*_1).1 = copy _3   @30:15
   gc.leave   @28:3
@@ -488,8 +485,7 @@ fn av.mutex/Mutex(String).initialize(_1: ref %mutex.Mutex(String), _2: ref str) 
 bb0:
   gc.enter   @28:3
   gc.roots _1   @28:3
-  barrier copy _1   @29:15
-  (*_1).0 = copy _2   @29:15
+  (*_1).0 = copy _2 fresh   @29:15
   _3 = call avant_gate_new() collects   @30:17
   (*_1).1 = copy _3   @30:15
   gc.leave   @28:3
@@ -505,9 +501,8 @@ bb0:
   _2 = zero   @10:1
   gc.enter   @10:1
   gc.roots _2   @10:1
-  _2 = call avant_alloc(const u64 16, const u32 1) collects   @10:1
-  barrier copy _2   @12:3
-  (*_2).1 = const str.2   @12:3
+  _2 = call avant_alloc(const u64 16, const u32 1) collects fresh   @10:1
+  (*_2).1 = const str.2 fresh   @12:3
   call av.mutex/Held.initialize(copy _2, copy _1) collects   @10:1
   _0 = copy _2   @10:1
   gc.leave   @10:1
@@ -539,7 +534,7 @@ bb0:
   _2 = zero   @24:1
   gc.enter   @24:1
   gc.roots _1, _2   @24:1
-  _2 = call avant_alloc(const u64 16, const u32 3) collects   @24:1
+  _2 = call avant_alloc(const u64 16, const u32 3) collects fresh   @24:1
   call av.mutex/Mutex(mutex.Held).initialize(copy _2, copy _1) collects   @24:1
   _0 = copy _2   @24:1
   gc.leave   @24:1
@@ -555,7 +550,7 @@ bb0:
   _2 = zero   @24:1
   gc.enter   @24:1
   gc.roots _1, _2   @24:1
-  _2 = call avant_alloc(const u64 24, const u32 4) collects   @24:1
+  _2 = call avant_alloc(const u64 24, const u32 4) collects fresh   @24:1
   call av.mutex/Mutex(mutex.Cell).initialize(copy _2, copy _1) collects   @24:1
   _0 = copy _2   @24:1
   gc.leave   @24:1
@@ -571,7 +566,7 @@ bb0:
   _2 = zero   @24:1
   gc.enter   @24:1
   gc.roots _1, _2   @24:1
-  _2 = call avant_alloc(const u64 16, const u32 5) collects   @24:1
+  _2 = call avant_alloc(const u64 16, const u32 5) collects fresh   @24:1
   call av.mutex/Mutex(String).initialize(copy _2, copy _1) collects   @24:1
   _0 = copy _2   @24:1
   gc.leave   @24:1

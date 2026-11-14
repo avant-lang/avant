@@ -895,9 +895,8 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
     }
   }
   lock_path2 = pkg_join(dir, "avant.lock")
-  w = file_write(lock_path2, pkg_lock_render(resolved)) ?? -1
-  if w < 0 {
-    diag_puts("avant fetch: cannot write ${lock_path2}")
+  if e = write_failure(file_write(lock_path2, pkg_lock_render(resolved))) {
+    diag_puts("avant fetch: ${e.message}")
     return false
   }
   true

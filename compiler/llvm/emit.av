@@ -95,9 +95,16 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   out.push_str("\n")
   out.push_str(body)
   out.push_str(maps)
-  out.push_str("attributes #0 = { nounwind \"frame-pointer\"=\"all\" }\n")
+  // Every function probes its stack (O439, Stage 29 W-FIX1b): a frame
+  // larger than a page touches each page it takes, so a stack overflow
+  // faults in the guard page and never steps over it into whatever is
+  // mapped below (a pool thread's guard is one 4 KB page). LLVM emits
+  // the probe only for a frame over 4,096 bytes: no LangArena task has
+  // one (their binaries are byte-identical), and the compiler's own
+  // build runs 0.011% more instructions.
+  out.push_str("attributes #0 = { nounwind \"frame-pointer\"=\"all\" \"probe-stack\"=\"inline-asm\" }\n")
   if e.used_stubs {
-    out.push_str("attributes #1 = { cold noinline noreturn nounwind \"frame-pointer\"=\"all\" }\n")
+    out.push_str("attributes #1 = { cold noinline noreturn nounwind \"frame-pointer\"=\"all\" \"probe-stack\"=\"inline-asm\" }\n")
   }
   ll_loop_md(e, out)
   out.to_s
@@ -437,7 +444,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
       e.need_intrinsic("declare double @${intr}(double)")
       result = ll_emit_call(e, false, "double", "@${intr}", ll_args(e, st.args, s.params, true))
     } else if x.alloc {
-      result = ll_alloc(e, x.name, st.args)
+      result = ll_alloc(e, x.name, st.args, st.fresh)
     } else {
       args = ll_args(e, st.args, s.params, true)
       callee = ll_sym(x.name)

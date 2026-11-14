@@ -263,7 +263,10 @@ pub fn (lw: MirLower) lower_cb_thunks {
       }
       j += 1
     }
-    b.begin_fn(cb.sym, b.sig(ps, ret, false), lw.mloc(cb.loc), "callback")
+    cbf = b.begin_fn(cb.sym, b.sig(ps, ret, false), lw.mloc(cb.loc), "callback")
+    // C calls it, on any thread: its frame registers a thread C started
+    // and returns it to running (gc.av's first-frame rule).
+    cbf.entry = true
     lw.lw_ret = ret
     lw.at(cb.loc)
     args: Array(MOperand) = []

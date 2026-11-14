@@ -35,6 +35,24 @@ fn expect_compile_error(c: Checks, compiler: String, stamp: Int, tag: String, bo
   }
 }
 
+// .join and .parallel reached through a call from a pool worker (Stage
+// 29 W-FIX1f, O234): a trap, status 1, after the output printed before
+// it (they aborted, status 134). The rule itself is W8C's.
+fn pool_worker_cases(c: Checks, compiler: String, stamp: Int) {
+  bin = "${scratch()}/safety-pool-worker-${stamp}.bin"
+  clog = "${scratch()}/safety-pool-worker-${stamp}.clog"
+  code = compile_av(compiler, "${avant_test_root()}/tests/fixtures/threads/pool_worker_trap.av", bin, clog)
+  c.eq_int(code, 0, "the pool-worker fixture compiles")
+  for kind in ["parallel", "join"] {
+    log = "${scratch()}/safety-pool-worker-${stamp}-${kind}.log"
+    args: Array(String) = []
+    args.push(kind)
+    status = process_run_out(bin, args, log) ?? -1
+    c.eq_int(status, 1, ".${kind} reached through a call from a pool worker: status 1")
+    c.eq_str(file_read(log) ?? "", "before\navant runtime: .${kind} called from a pool worker: .join and .parallel cannot be called inside a spawn block or a .parallel body, directly or through a call\n", ".${kind} reached through a call from a pool worker: the trap's line after the program's output")
+  }
+}
+
 fn test_safety(c: Checks) {
   c.suite("tests/cases/test_safety.av")
 
@@ -146,6 +164,7 @@ fn test_safety(c: Checks) {
 
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
+    pool_worker_cases(c, compiler, stamp)
 
     expect_trap_waveb(c, compiler, stamp, "oob-read", "fn main {\n  xs = [1, 2, 3]\n  puts(xs[10])\n}\n", "out of bounds")
     expect_trap_waveb(c, compiler, stamp, "oob-neg", "fn main {\n  xs = [1, 2, 3]\n  i = 0 - 1\n  puts(xs[i])\n}\n", "out of bounds")

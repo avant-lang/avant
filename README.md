@@ -567,7 +567,8 @@ fn main {
 ```
 
 - **`..` excludes its end**, unlike Crystal's, Ruby's and Kotlin's. `for i in 1..n` never reaches `n`; write `1..n + 1` until the inclusive `a..=b` is built ([Not built yet](#not-built-yet)).
-- The bounds are evaluated once. The loop variable is a new name that exists only inside the loop. `break`, `continue` and `return` behave as they do in `while`.
+- The bounds are evaluated once. The loop variable is a new name that exists only inside the loop (when a variable of that name already exists outside, the loop uses it, and it keeps its last value afterwards: pick a fresh name). `break`, `continue` and `return` behave as they do in `while`.
+- **The loop variable cannot be assigned.** It is a copy of the range's counter or of the array's element, made again at each step, so `i = 5`, `x += 1` and a field of a struct element (`p.x = 1`) are compile errors: the write would be lost, or would change the iteration. To change the array, store through an index: `xs[i] = v`, or `xs[i].x = v` for one field of a struct element. For a range that skips or repeats steps, use `while` with a counter of your own. A field of a *class* element is assignable: `c.x = 1` changes the object.
 - A range is only a `for` form: it is not a value you can store.
 - Arrays and hashes also have `each` ([Array operations](#array-operations), [Hash operations](#hash-operations)).
 - A struct literal in a `for`'s range or array needs parentheses, brackets or a call around it, as in a [condition](#if): `for p in [Point { x: 1, y: 2 }]`.
@@ -599,7 +600,7 @@ fn main {
 
 ## Nil and unions
 
-`T?` is "a `T`, or `nil`". Absence is in the type, so the compiler makes you look before you use the value, and there is no null pointer error to meet at run time.
+`T?` is "a `T`, or `nil`". Absence is in the type, so the compiler makes you look before you use the value, and there is no null pointer error to meet at run time (a C pointer, [`Ptr(T)`](#layouts-and-ptr), is the one exception: it is C's).
 
 ```avant
 fn find(names: Array(String), wanted: String): Int? {
@@ -964,15 +965,19 @@ fn main {
   a = [1, 2, 3]                       // Array(Int), from its elements
   b: Array(String) = []               // an empty literal needs a declared type
   c = Array(Float64).new(4)           // four elements, each 0.0
-  d = Array(Node).new(2, Node.new)    // two references to the same Node
+  d = Array(String).new(2, "none")    // two elements, each "none"
   e: Array(Int32) = [1, 2, 3]         // dense: 4 bytes per element
-  puts(a.size + b.size + c.size + d.size + e.size)   // => 12
+  f = Array(Node).new(2) { |i| Node.new }                  // two elements, each its own Node
+  g = Array(Array(Int)).new(3) { |y| Array(Int).new(4) }   // a grid of 3 rows of 4
+  g[0][0] = 7
+  puts(g[1][0])                       // => 0
+  puts(a.size + b.size + c.size + d.size + e.size + f.size + g.size)   // => 17
 }
 ```
 
 - `Array(T).new(n)` makes `n` elements, each the element type's zero: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a struct of such fields.
-- `Array(T).new(n, value)` makes `n` copies of `value` (for a class, an `Array`, a `Hash` or a `Buf`: `n` references to the same object). It is required when `T` has no zero (a class, an `Array`, a `Hash`): `Array(Node).new(n)` alone is a compile error that names both ways out, this form and `[]` with `push`.
-- For a grid, push a fresh row per iteration (`rows.push(Array(Int).new(width))`): `Array(Array(Int)).new(2, [0, 0])` would hold the same row twice.
+- `Array(T).new(n, value)` makes `n` copies of `value`, for a `T` whose copies are independent: a number, a `Bool`, a `String`, `Bytes`, a struct of those, and `nil` for any `T?`. When `T` is, or holds, a reference to an object that can change (a class, an `Array`, a `Hash`, a `Buf`, a struct or an optional holding one) it is a compile error: every element would be the same object, and a change through one would show in all.
+- `Array(T).new(n) { |i| ... }` builds each element: the block runs once per index, `0` to `n - 1` in order, and its value is that element. It is the form for a `T` with no zero (`Array(Node).new(n)` alone is a compile error that names the ways out) and for a grid, whose rows must each be their own array. `return` inside the block returns from the enclosing function, as in `each`; `break` and `continue` are compile errors, since every index gets a value. To put one shared object in every element on purpose, say so: `Array(Node).new(n) { |i| shared }`.
 - A negative `n` traps (`avant runtime: Array size -5 is negative`).
 
 ### Indexing and bounds
@@ -1146,7 +1151,7 @@ When in doubt, start with a struct: it allocates nothing and cannot be changed b
 
 A struct literal names every field, in any order. A copy is independent of the original.
 
-A method may change its struct receiver, and the change is the caller's: no `mutating` mark is needed. A struct passed as an argument is a copy, so a change made through a parameter stays in the callee. The same line runs through arrays: `xs[i].x = v` changes the element in place, while `for p in xs` and `q = xs[i]` give copies, and a change to `p` or `q` does not reach the array.
+A method may change its struct receiver, and the change is the caller's: no `mutating` mark is needed. A struct passed as an argument is a copy, so a change made through a parameter stays in the callee. The same line runs through arrays: `xs[i].x = v` changes the element in place, while `q = xs[i]` gives a copy, and a change to `q` does not reach the array. `for p in xs` gives a copy too, and assigning to `p` or to a field of it is a compile error ([For](#for)).
 
 ```avant
 struct Vec {
@@ -1305,6 +1310,10 @@ fn main {
   puts(pad("ab", 4, "*"))  // => ab**
 }
 ```
+
+- A default is evaluated at each call that leaves its argument out. It belongs to the function's own module: it may call that module's private functions, and a name in it never means something of the caller's (a function, a method or a local of the same name), however the call is written.
+- A default may name an earlier parameter (`fn span(a: Int, b: Int = a + 1)`). It reads that parameter's value, with its declared type: the argument is evaluated once, so `span(next())` calls `next` once.
+- A method whose parameters all have defaults may be called without parentheses, like a method without parameters: `conn.recv` is `conn.recv()`.
 
 ### Operator methods
 
@@ -1697,7 +1706,7 @@ fn main {
 
 ### Builtin blocks are loops
 
-The blocks of the builtins (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `spawn`, `Mutex.with`) are not function values: the compiler inlines them. The difference shows in what `return` and `break` mean.
+The blocks of the builtins (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `spawn`, `Mutex.with`, `Array(T).new(n) { ... }`) are not function values: the compiler inlines them. The difference shows in what `return` and `break` mean.
 
 | Inside | `return` | `break` |
 | --- | --- | --- |
@@ -1814,6 +1823,7 @@ fn main {
 - A struct literal infers its arguments the same way: `Pair { first: 1, second: "x" }` is `Pair(Int, String)`.
 - A generic class may name itself (`next: Link(T)?`): a class is a pointer. A struct is copied inline, so a struct that contains itself, generic or not, is an error.
 - `Array`, `Hash`, `Ptr` and `JoinHandle` are built in; they are not generic types you could declare.
+- A generic type or function imported from another module takes the types of the module that uses it, `pub` or private: with `Box` imported, `Box(Point)` and `Box.new(Point { ... })` work for a `Point` declared here. A type argument is a name like any other where it is written: a private type of another module is unknown there, also as an element type (`Array(Hidden)`) or inside a union or a function type.
 
 ## Interfaces
 
@@ -2182,7 +2192,7 @@ fn main {
 
 - A value the block captures is copied when the task is sent ([What may cross a task](#what-may-cross-a-task)); the block cannot assign a captured variable.
 - A captured `Array` is shared for reading: the block may not change it, and the sender may not change it until the handle is joined. Both are compile errors.
-- Calling `.join` or `.parallel` from inside a pool worker is refused: at compile time when it is written in the block, at run time (the program stops) when it is reached through a call. A nested `spawn` from a worker is allowed.
+- Calling `.join` or `.parallel` from inside a pool worker is refused: at compile time when it is written in the block, at run time when it is reached through a call, with a trap (`avant runtime: .parallel called from a pool worker: …`, status 1). A nested `spawn` from a worker is allowed.
 
 ### Parallel
 
@@ -2236,7 +2246,8 @@ fn main {
 ```
 
 - `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` holds the lock for the block; `x` is the guarded value, a place that dies with the block; the block must end with a value, which is the call's. `return`, `break` and `continue` inside `with` are errors. (`with` is a form the compiler provides for a class of this name and shape.)
-- **The lock guards the cell, not what a reference stored in it points to.** With a class in a `Mutex`, do the work inside `with` and return plain values (an `Int`, a `String`): a block that returns the object itself hands out a reference the lock no longer protects, and the compiler does not stop it yet.
+- **The block's value leaves the lock, so it is a plain value:** a number, a `Bool`, a `String`, `Bytes`, a struct or an optional of those, a `Channel` or a `Mutex`. Any other value (a class, an array, a hash, a `Buf`, a struct holding one) is a compile error, even a new object built in the block: it could be the guarded value or a part of it, which the lock no longer protects outside the block. To take a copy out, declare an array before the block and fill it inside (`xs.each { |x| snap.push(x) }`), ending the block with a plain value.
+- **The lock guards the cell, not what a reference stored in it points to.** With a class in a `Mutex`, do the work inside `with`. The compiler checks the block's value; it does not yet stop a block from storing the guarded object itself somewhere else (pushing it into an array declared outside, assigning a part of it to an outer name), which hands out a reference the lock no longer protects.
 
 A channel hands values from one task to another:
 
@@ -2382,7 +2393,9 @@ A mutable object reaches another task only inside a `Mutex`, or as the results o
 
 ### The thread pool
 
-The pool has one thread per online processor, counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number; the runtime removes the flag before `argv()` sees it. Tasks beyond the pool's size wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
+The pool has one thread per online processor, counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number; the runtime removes the flag before `argv()` sees it (it is to become `--avant-threads=N`, leaving `--threads` to programs: [Not built yet](#not-built-yet)). Tasks beyond the pool's size wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
+
+A task that waits (in a channel's `recv` or `send`, or for a `Mutex`) keeps its pool thread while it waits. If every pool thread is held by a task waiting for something that only a task still in the queue would do, nothing can run and the program hangs without a message: with `--threads 2`, two consumers waiting in `recv` keep a producer spawned after them from ever starting. Spawn the tasks that send before the ones that wait for them, or keep fewer waiting tasks than the pool has threads.
 
 ## Memory
 
@@ -2469,7 +2482,7 @@ No setting is needed. Every one is an environment variable read once when the pr
 | `AVANT_HEAP_RESERVE_GB` | `64` | the address space reserved for the heap, in GiB (halved automatically if the OS refuses) |
 | `AVANT_GC_STATS` | `0` | `1` prints one line of collector statistics on stderr at exit |
 | `AVANT_GC_VERIFY` | `0` | `1` runs the collector's self-checks (slow; for debugging the runtime) |
-| `AVANT_GC_STRESS` | `0` | `1` collects before every runtime allocation (very slow; for testing) |
+| `AVANT_GC_STRESS` | `0` | `1` collects before every allocation (very slow; for testing) |
 
 The two a user is likely to meet are `AVANT_HEAP_MAX_MB`, to cap a service, and `AVANT_GC_STATS`, to see what the collector did.
 
@@ -2495,6 +2508,7 @@ A `lib NAME { ... }` block holds `fun` declarations: `fun` for a C function, `fn
 
 - A `String` argument is passed as a `char *`.
 - A result declared `String?` is a `char *` that may be NULL: NULL reads as `nil`, and passing `nil` passes NULL. A result declared `String` is a promise that the string is there: a NULL traps, naming the function (`avant runtime: C function c.getenv returned NULL for String (declare String?)`).
+- The only unions a `fun` signature may use are the optional references, each one pointer with `nil` as NULL: `String?`, `Bytes?`, and an array, a hash, a `Buf` or a class with `?`. Any other union (`Int?`, `Int | String`, `Ptr(T)?`) is a compile error there: C has one word in that place, and such a union is a tag and a payload.
 - C++ is reached only through `extern "C"` functions.
 
 ### C types
@@ -2552,6 +2566,8 @@ fn main {
 ```
 
 `Ptr(T)` is for a layout `T`, and `Ptr(Void)` for a pointer you only pass around. A `Ptr` of anything else (`Ptr(Int)`) has no fields to read and cannot be given methods. Memory you got from C is C's: the collector neither moves nor frees it. There is no `sizeof` yet: the size passed to `malloc` is yours to state.
+
+A `Ptr` can be NULL (an unchecked `malloc`), and Avant has no test for that yet. A field read or written through a NULL `Ptr` is a segmentation fault, as in C: the program ends with no Avant message, and what it had printed without flushing is lost. Check in C before handing the pointer over. A `fun` signature cannot say `Ptr(T)?` to get a test: it is refused, because `Ptr(T)?` is not a nullable pointer today (it would be read as a tag and a pointer). A `String` field that C left NULL (or that `release` made null) reads as `""`.
 
 ### Strings in C memory
 
@@ -2724,7 +2740,7 @@ The prelude is the set of names every program can use without an import. The typ
 | Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
 | Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `bytes_to_str`, `buf_new` ([String operations](#string-operations)) |
 
-Runnable programs that use them live in [examples/](examples), in the repository.
+Runnable programs that use them live in [examples/](examples): in the repository, and in the release archive beside `avant`.
 
 ### Output
 
@@ -2894,7 +2910,7 @@ fn main {
 }
 ```
 
-Compiling this program prints one note, `re2c: pattern stays on PCRE2 (...)`: see "Two engines" below.
+Compiling this program prints one note on stderr, `re2c: pattern stays on PCRE2 (...)`: see "Two engines" below.
 
 | Call | Gives |
 | --- | --- |
@@ -2916,7 +2932,7 @@ Compiling this program prints one note, `re2c: pattern stays on PCRE2 (...)`: se
 - **At PCRE2's limits a match traps; it is never read as "no match".** A search that backtracks past PCRE2's match limit (ten million steps), or runs into its depth or memory limits, ends the program with the operation and PCRE2's reason: `avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`. There is no way yet to set a limit or to get the failure as a value, so a pattern or a text that comes from outside is yours to bound (its length, its shape) before matching.
 - A match that only nests deeply (a group repeated many thousands of times) is not a failure: it is answered, on a larger stack and then by PCRE2's interpreter, at a cost in memory that grows with the text. A pattern may have any number of groups PCRE2 accepts.
 
-**Two engines.** A string-literal pattern that needs at most one capture group and no named groups is compiled to a native scanner at compile time, by re2c. Any other pattern runs on PCRE2 with its JIT, and the compiler says so when it compiles your program. Both are inside the release: a program needs neither library on the machine. (Without any `re2c` binary, literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary.) PCRE2 backtracks, and backtracking can be catastrophic on adversarial patterns and texts.
+**Two engines.** A string-literal pattern that needs at most one capture group and no named groups is compiled to a native scanner at compile time, by re2c. Any other pattern runs on PCRE2 with its JIT; when the pattern (and its `caseless` argument, if given) is a literal, the compiler says so on stderr as it compiles your program, so `avant run` prints only the program's own output on stdout. Both are inside the release: a program needs neither library on the machine. (Without any `re2c` binary, literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary.) PCRE2 backtracks, and backtracking can be catastrophic on adversarial patterns and texts.
 
 ### std.http
 
@@ -2970,10 +2986,10 @@ fn main {
 ```
 
 - **Listening**: `Http.listen(port, host = "127.0.0.1", max_body = 1048576, loops = 0, max_message = 1048576)`. `server.port` is the bound port.
-- **Routes** are exact paths: `get`, `post`, `put`, `delete`, `patch`, or `route(method, path)`. There is no pattern router, no middleware and no streaming. Register every route before `serve`.
-- **A handler** gets a `Request` (`method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes`) and returns a `Response`: `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)`, then `.header(name, value)`. `Content-Length` and `Connection` are the server's to set.
+- **Routes** are exact paths: `get`, `post`, `put`, `delete`, `patch`, or `route(method, path)`. There is no pattern router, no middleware and no streaming. Register every route before `serve`: the loop threads read the routes without a lock, so a route method (the WebSocket ones too) called while the server serves, from a handler, traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`, status 1).
+- **A handler** gets a `Request` (`method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes`) and returns a `Response`: `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)`, then `.header(name, value)`. `Content-Length` and `Connection` are the server's to set. A header's name must be a token (letters, digits and the punctuation RFC 9110 allows) and its value may hold no control character but tab: anything else traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`), because a CR or LF there would add header lines or a second answer (response splitting). Check text taken from a request before putting it in a header.
 - **Headers** (`req.headers`, `resp.headers`): `get(name)` (`String?`), `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)`.
-- **Bodies** are buffered up to `max_body` (1 MiB by default): a larger one is answered 413, a chunked request body 411, a malformed request 400, and so is one whose `Content-Length` lines disagree.
+- **Bodies** are buffered up to `max_body` (1 MiB by default): a larger one is answered 413, a chunked request body 411, a malformed request 400, and so is one with more than one `Content-Length` value (two lines or a list in one, even when they agree), an HTTP/1.1 request without `Host`, and a request with two `Host` lines; each of these closes the connection.
 - **Connections** are kept alive, and pipelined requests are answered in order, each with its own write for now. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on the same port.
 - **Handlers must not block the loop.** Hand slow work to `spawn`.
 - **An idle connection is closed**: an HTTP connection on which nothing has happened for about 30 seconds (no request bytes arrived, no answer bytes left). A WebSocket connection has no such timeout.
@@ -3000,7 +3016,9 @@ fn main {
 }
 ```
 
-`Http.get(url, follow = true, timeout_ms = 10000)`, `Http.post(url, body, ...)` with a `String` body, and `Http.request(method, url, body, headers, ...)` with `body` as `Bytes` and `headers` as an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`), return `Response | HttpError`. A call blocks its thread until the response is complete, so do not make one from a server handler: `spawn` first.
+`Http.get(url, follow = true, timeout_ms = 10000)`, `Http.post(url, body, ...)` with a `String` body, and `Http.request(method, url, body, headers, ...)` with `body` as `Bytes` and `headers` as an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`), return `Response | HttpError`. A call blocks its thread until the response is complete, so do not make one from a server handler: `spawn` first. The response is complete when its framing says so (its `Content-Length`, the last chunk of a chunked body, or the head alone for a HEAD request, a 204 and a 304), whether or not the server then closes the connection; a response with neither length nor chunks ends when the server closes.
+
+`timeout_ms` is a deadline for the whole call: the connection, the request, the complete response, and every redirect the call follows. When it passes first, the call returns an `HttpError` (`request to 127.0.0.1:8080 timed out`), whatever part of a response had arrived; a server that keeps sending slowly does not extend it. The deadline is kept within a few milliseconds. Zero or less means the default, 10000.
 
 #### WebSocket server
 
@@ -3024,7 +3042,7 @@ fn main {
 ```
 
 - A message is text (`msg.text` is its `String`, `msg.is_text`) or binary (`msg.body`, `msg.is_binary`). `msg.body` is always the payload.
-- On a connection: `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")`; each returns `Bool`.
+- On a connection: `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")`; each returns `Bool`: `false` when the connection is closed or its send queue is full (a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole). A `WsConn` kept after its connection closed, or after `serve` returned, answers `false` to all four.
 - `websocket_open(path) { |conn| ... }` and `websocket_close(path) { |conn, code, reason| ... }` run once per connection (code 1006 when it dropped without a close frame).
 - Ping, the close handshake and fragmentation are handled for you. A message over `max_message` (1 MiB by default) closes the connection with code 1009 and never reaches the handler. `server.close` sends code 1001 to open connections.
 - A connection stays on its loop thread. To answer from a `spawn` block, capture `conn.sender` and send through that.
@@ -3046,7 +3064,9 @@ fn main {
 }
 ```
 
-`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError`. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Never call `recv` from a server handler. A connection that is never closed keeps its thread until the process exits.
+`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError`; its `timeout_ms` is the deadline for the connection and its handshake. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Both timeouts are kept on the monotonic clock: setting the system's clock during the wait does not move them. Never call `recv` from a server handler. A connection that is never closed keeps its thread until the process exits.
+
+After `close`, every copy of the connection answers as closed, whatever connections are opened later: `send_text` and `send_bytes` return `false`, `recv` returns `nil`, `close_code` is 1006, and another `close` does nothing. A `WsConnection` may be captured by a `spawn` block, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return `nil`.
 
 ### std.zlib
 
@@ -3126,14 +3146,14 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 | --- | --- |
 | `--jobs N` | how many test processes run at once (default: the online processors; `--jobs 1` runs one file at a time; `--jobs 0` is an error) |
 | `--shard I/N` | run slice `I` of `N`, counted from 1; it does not launch the other slices. May be combined with `--jobs` |
-| `--junit PATH` | write a JUnit report: one case per check for files that use `std.testing`, one case per file otherwise |
+| `--junit PATH` | write a JUnit report: one case per check `std.testing` records, one per file that records none, and one for a failed file whose checks all passed |
 | `--coverage` | instrument the tests, print a coverage table after the summary, write `coverage/lcov.info` |
 | `--skip-exclusive` | leave out the files listed in `[test] exclusive` (required when `--shard` would include one) |
 | `-h`, `--help` | print the flags and exit 0 |
 
 `--jobs=N`, `--shard=I/N` and `--junit=PATH` are the same flags. An unknown flag is an error. `avant test` does not pass arguments to the test programs, and a `--` on the command is an error.
 
-For each file the runner prints its output, in source order, then `ok tests/test_greet.av` or `FAIL tests/test_greet.av`, and a total at the end (`0 failed, 1 passed`). Its own status is 1 when any file failed, when nothing was selected, or when the command was refused. Ctrl-C or `SIGTERM` stops every test process it started and removes its temporary files.
+For each file the runner prints its output, in source order, then `ok tests/test_greet.av`, or `FAIL tests/test_greet.av:` and how its process ended (`the test process exited with status 1`, `the test process killed by signal 13 (Broken pipe)`, `the compile exited with status 1`, `the parallel test "other" killed by signal 11 (Segmentation fault)`), and a total at the end (`0 failed, 1 passed`). Its own status is 1 when any file failed, when nothing was selected, or when the command was refused. Ctrl-C or `SIGTERM` stops every test process it started and removes its temporary files.
 
 ### Checks
 
@@ -3223,7 +3243,7 @@ fn main: Int {
 }
 ```
 
-In each of those processes the file runs again, but serial checks and `t.test` bodies are skipped and only that one parallel body runs; code in `main` outside those bodies runs in every process. `avant run` on the file runs it once, without the parallel bodies: only `avant test` starts them.
+In each of those processes the file runs again, but serial checks and `t.test` bodies are skipped and only that one parallel body runs; code in `main` outside those bodies runs in every process. Only `avant test` starts those processes. `avant run` on the file, or the compiled file run as a program, runs it once with every body in that one process, in source order: the same checks, without the overlap.
 
 ### Test settings
 
@@ -3251,7 +3271,7 @@ first = ["tests/test_slow.av"]
 
 ### Reports
 
-**JUnit** (`--junit PATH`) is for test analytics. A test file that uses `std.testing` contributes one `<testcase>` per check, named by the check; any other test file contributes one case, named by its path. It is off unless you ask; a project does not gain a `junit.xml` by surprise.
+**JUnit** (`--junit PATH`) is for test analytics. A test file that uses `std.testing` contributes one `<testcase>` per check, named by the check; any other test file contributes one case, named by its path. A file that failed without a failed case (its process killed by a signal, or exiting with a status and no failed check) adds one case named by its path, whose failure message says how the process ended; a failed case named by its path carries the file's output. A byte XML cannot hold, in that output or in a check's name (a control character such as a terminal colour's escape, or a byte that is not UTF-8), is written as `\xNN` (`\x1b`), so the report always parses. It is off unless you ask; a project does not gain a `junit.xml` by surprise.
 
 **Coverage** (`--coverage`) compiles each selected file with counters, runs them, prints one table after the summary and writes `coverage/lcov.info` in the current directory (one file, overwritten by each run). Without the flag nothing is instrumented and nothing is written.
 
@@ -3315,6 +3335,7 @@ avant format . --check
 | `avant bind HEADER.h` | `avant b` | prints a `lib` block for a C header ([avant bind](#avant-bind)) |
 | `avant dump FILE.av` | `avant d` | prints the program's mid-level IR without linking |
 | `avant help` | `-h`, `--help` | the usage text |
+| `avant version` | `--version` | the version and the commit the binary was built from, as `avant 0.42.0 (commit e030096…)`; `, with uncommitted changes` when its `compiler/`, `lib/` or `runtime/` differed from that commit |
 
 `FILE.av` is always one root file; the compiler follows its imports. Flags for `run` and `compile`:
 
@@ -3391,7 +3412,7 @@ Run-time failures are [traps](#traps).
 
 ### Temporary files
 
-`compile`, `run`, `test`, `fetch` and `bind` keep every intermediate file (IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp`). It is removed when the command exits, on an error, Ctrl-C, `SIGTERM` or a crash included (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`: the process still dies by the signal); only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it.
+`compile`, `run`, `test`, `fetch` and `bind` keep every intermediate file (IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp`). It is removed when the command exits, on an error, Ctrl-C, `SIGTERM`, `SIGHUP`, a closed pipe (`SIGPIPE`, as in `avant test | head`) or a crash included (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`): the process still dies by the signal. Only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it.
 
 `--keep-tmp` keeps the directory for debugging and prints its path. A program run on its own keeps its directory with `AVANT_KEEP_TMP=1`.
 
@@ -3465,10 +3486,11 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 | Reading standard input | planned | `file_read("/dev/stdin")` |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` for structs without writing it; `==` on arrays and hashes | planned | [operator methods](#operator-methods); a loop |
-| `Mutex.with` keeping a reference from leaving the lock | a defect, being fixed | return plain values from the block ([Channel and Mutex](#channel-and-mutex)) |
+| `Mutex.with` keeping a reference from leaving the lock | partly built: the block's value is checked, a store into something outside the block is not | do the work inside the block ([Channel and Mutex](#channel-and-mutex)) |
 | A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
 | `Channel` and `Mutex` in the standard library; a `spawn` result other than `Int` | decided | [copy the two classes](#channel-and-mutex) |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |
+| The pool's size from `--avant-threads=N` only (a bad value an error) and a call in `std` to set it, every other argument the program's | decided | `--threads N`, which the runtime takes out of `argv()` |
 | TLS for `std.http` (`https`, `wss`) | decided | a TLS-terminating proxy in front |
 | A trap that ends only its task; a pre-forked server mode | decided | a supervisor that restarts the process |
 | Positions in traps raised inside runtime functions | planned | the message names the operation and its values |
@@ -3483,13 +3505,13 @@ Every number here was measured on one machine (an AMD Ryzen 7 5700G), each langu
 
 [LangArena](https://github.com/kostya/LangArena) runs the same tasks in many languages. Seconds, lower is better; **bold** is the best of the five. One process per task, timed by its wall clock, with peak memory from `/usr/bin/time`: the same wrapper for every language. Avant measured on 2026-11-12 (the development tree after release 0.41.0, `--release --cpu=v3`, one run, the machine otherwise idle, governor `performance`, all 50 task checksums correct); the other languages on 2026-11-07.
 
-| Language | 49 tasks (s) | Average peak memory |
+| Language | 50 tasks (s) | Average peak memory |
 | --- | ---: | ---: |
-| Avant | **38.201** | **20.3 MB** |
-| C | 58.583 | 23.4 MB |
-| Rust | 58.926 | 29.8 MB |
-| Crystal | 85.670 | 67.1 MB |
-| Go | 117.876 | 64.3 MB |
+| Avant | **39.200** | **19.9 MB** |
+| C | 59.890 | 22.9 MB |
+| Rust | 59.945 | 29.3 MB |
+| Crystal | 87.011 | 65.9 MB |
+| Go | 119.708 | 63.0 MB |
 
 **The total flatters Avant.** Much of that gap is not the language: the four `Matmul` rows and `Hash::CRC32` are not comparable programs, two rows carry collection hints, and several rows measure C libraries ([Reading these numbers](#reading-these-numbers)). The honest reading is task by task.
 
@@ -3510,6 +3532,7 @@ Every number here was measured on one machine (an AMD Ryzen 7 5700G), each langu
 | `Json::ParseMapping` | 0.234 | **0.229** | 0.425 | 1.546 | 2.871 |
 | `CSV::Parse` | **0.759** | 2.247 | 0.881 | 3.418 | 3.000 |
 | `Etc::Sieve` | 1.450 | **0.920** | 0.979 | 2.360 | 1.896 |
+| `Etc::TextRaytracer` | **0.999** | 1.307 | 1.019 | 1.341 | 1.831 |
 | `Etc::NeuralNet` | 1.305 | **1.073** | 1.165 | 1.260 | 2.219 |
 | `Etc::CacheSimulation` | **0.492** | 0.762 | 0.863 | 1.298 | 1.638 |
 | `Etc::GameOfLife` | 1.433 | 1.487 | 1.503 | 2.816 | **0.980** |
@@ -3547,7 +3570,7 @@ Every number here was measured on one machine (an AMD Ryzen 7 5700G), each langu
 
 ### Where Avant loses
 
-Among these five, Avant is the fastest on 26 of the 49 tasks. Against the best of *every* language measured on this machine (C and C++ under both GCC and Clang included, so a wider field than the table above), its time is at or ahead of the best on 24 tasks, the median task is 1.02× the best, and three tasks are more than 1.5× behind. The worst rows by time:
+Among these five, Avant is the fastest on 27 of the 50 tasks. Against the best of *every* language measured on this machine (C and C++ under both GCC and Clang included, so a wider field than the table above), its time is at or ahead of the best on 25 tasks, the median task is 1.01× the best, and three tasks are more than 1.5× behind. The worst rows by time:
 
 | Task | Avant (s) | Best (s) | Behind by |
 | --- | ---: | ---: | ---: |
@@ -3560,7 +3583,7 @@ Among these five, Avant is the fastest on 26 of the 49 tasks. Against the best o
 | `Etc::NeuralNet` | 1.305 | 0.948 (C++, Clang) | 1.38× |
 | `Etc::LogParser` | 0.467 | 0.348 (Rust) | 1.34× |
 
-Memory, the same way: at or below the best on 31 tasks, the median task at 0.90× the best, five tasks more than 1.5× above it. The worst rows by peak memory:
+Memory, the same way: at or below the best on 32 tasks, the median task at 0.90× the best, five tasks more than 1.5× above it. The worst rows by peak memory:
 
 | Task | Avant (MB) | Best (MB) | Above by |
 | --- | ---: | ---: | ---: |
@@ -3629,11 +3652,11 @@ These notes are about [LangArena](#langarena).
 - **Build flags.** Avant: `--release --cpu=v3` (x86-64-v3). C and C++: LangArena's `-O3 -march=native -mtune=native` (Zen 3 here, a superset of v3); the C column is Clang, the faster of the two C compilers measured (GCC: 59.499 s, 23.4 MB). Rust (`cargo build --release`), Go and Crystal (`--release`): their defaults.
 - **The whole process is timed**: start-up, data preparation, warm-up and the timed iterations. LangArena's published numbers count only the timed iterations.
 - **Compiled-in task sizes.** Avant's task configuration is compiled into the program as constants, while the other languages read `run.js` at run time, so LLVM can specialize Avant's loops on the sizes.
-- **Rows that are not comparable programs.** The four `Matmul` tasks: Avant's port sums with eight independent accumulators, which vectorizes, and the references use one. `Hash::CRC32`: Avant calls a runtime builtin written in C with slice-by-4 tables, and every reference is the bitwise loop. `Compress::LZWEncode` and `LZWDecode`: Avant keys the dictionary by integer, C by string. Together these seven rows are 7.6 of the 20.4 seconds between Avant's total and C's.
+- **Rows that are not comparable programs.** The four `Matmul` tasks: Avant's port sums with eight independent accumulators, which vectorizes, and the references use one. `Hash::CRC32`: Avant calls a runtime builtin written in C with slice-by-4 tables, and every reference is the bitwise loop. `Compress::LZWEncode` and `LZWDecode`: Avant keys the dictionary by integer, C by string. Together these seven rows are 7.6 of the 20.7 seconds between Avant's total and C's.
 - **Rows that measure C, not Avant.** `Hash::SHA256` and `Hash::CRC32` call runtime builtins that do the whole task in C, where the references implement it in the language; the Burrows-Wheeler transform inside `Compress::BWTEncode` and `BWTDecode` is runtime C too.
 - **Rows that carry collection hints.** `Binarytrees::Obj` and `Calculator::Ast` call `gc.hold` and `gc.collect()` ([Collection hints](#collection-hints)) in their Avant source: the same algorithm as the references, with the programmer telling the collector when not to run and when everything is dead. No reference program has an equivalent. Read these two rows as what a hinted program does, not as the collector's ordinary behaviour: without the hints, `Binarytrees::Obj` is several times slower than every language in the table.
 - **Library-leaning rows.** `Json::ParseDom` and `Json::ParseMapping` (yyjson in Avant and C; simdjson in C++; serde in Rust), `Base64::Encode` and `Decode` (the aklomp codec in Avant and C), `Template::Regex` and `Etc::LogParser` (PCRE2 in Avant and C, RE2 in C++, the `regex` crate in Rust): the speed is those libraries', reached through Avant's bindings. `Sort::Self` is each language's own library sort, by the task's definition. In `CSV::Parse`, Rust and C++ use CSV libraries; in `Json::Generate`, C and C++ use JSON libraries and Avant writes into its own buffer.
-- **Scope.** 49 of LangArena's 50 tasks: `Etc::TextRaytracer` is left out because it is invalid for Avant (`--release` hoists its pure render out of the timed loop).
+- **Scope.** All 50 of LangArena's tasks. `Etc::TextRaytracer` runs its whole render (0.999 s, level with Rust's 1.019 s); it was left out while an earlier build hoisted that render out of the timed loop.
 - **Equivalent programs is the rule**: Avant's tasks are meant to follow the algorithms and the data widths of the C and Rust references, and a row that does not is named above until it is rewritten.
 
 ## Goals
@@ -3651,7 +3674,7 @@ The bars are measurable, and [LangArena](#langarena) is the public scoreboard:
 | Interop | C libraries usable with little ceremony |
 | Concurrency | built in, and obvious |
 
-Where Avant stands today (2026-11-12): on LangArena, the median task is at 1.02× the best language's time and 0.90× its memory, with three tasks beyond the 1.5× bar in time and five in memory, and twelve tasks behind Crystal or Go ([Where Avant loses](#where-avant-loses)). Allocation-heavy code is the weakest area ([What allocation costs today](#what-allocation-costs-today)). On HTTP, Avant's server is level with the fastest servers at 64 connections without pipelining, and slower than the servers that batch their writes when requests are pipelined ([HTTP and WebSocket servers](#http-and-websocket-servers)). On expressiveness, Avant's LangArena sources are 5,482 lines against Crystal's 4,220 (30% more, and 18% more once compressed): not Crystal's density yet, and the forms that will close the gap are listed in [Not built yet](#not-built-yet). Each of these is treated as a defect until it is fixed, and the numbers on this page are printed as measured, the bad rows beside the good ones.
+Where Avant stands today (2026-11-12): on LangArena, the median task is at 1.01× the best language's time and 0.90× its memory, with three tasks beyond the 1.5× bar in time and five in memory, and twelve tasks behind Crystal or Go ([Where Avant loses](#where-avant-loses)). Allocation-heavy code is the weakest area ([What allocation costs today](#what-allocation-costs-today)). On HTTP, Avant's server is level with the fastest servers at 64 connections without pipelining, and slower than the servers that batch their writes when requests are pipelined ([HTTP and WebSocket servers](#http-and-websocket-servers)). On expressiveness, Avant's LangArena sources are 5,482 lines against Crystal's 4,220 (30% more, and 18% more once compressed): not Crystal's density yet, and the forms that will close the gap are listed in [Not built yet](#not-built-yet). Each of these is treated as a defect until it is fixed, and the numbers on this page are printed as measured, the bad rows beside the good ones.
 
 Avant is not a better TypeScript, not a borrow-checker language, not a dynamic language with types bolted on, and not a research language. It does not try to please everyone.
 
@@ -3679,7 +3702,7 @@ Running it again updates the install in place. It refuses, with a message, on an
 
 ### Manual install
 
-Download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases), extract it anywhere, and put the extracted `avant-linux-x86_64` directory on your `PATH`. Keep its files together: the compiler finds `re2c`, the standard library and the runtime beside itself.
+Download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases), extract it anywhere, and put the extracted `avant-linux-x86_64` directory on your `PATH`. Keep its files together: the compiler finds `re2c`, the standard library and the runtime beside itself. `avant version` prints the release and the commit it was built from, read from the archive's `versions.txt`.
 
 ### Requirements
 
@@ -3690,7 +3713,7 @@ Download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-la
 | `git` | `avant fetch` only | |
 | libclang 20 | `avant bind` only | `sudo apt install libclang1-20` |
 
-Nothing else. The archive carries `avant` with LLVM 20 linked in (there is no separate backend program), `re2c`, `avant-bind`, the standard library, and the runtime with PCRE2, zlib and the other C libraries inside. No environment variable needs to be set: the compiler turns a program into machine code with the LLVM it carries, and links it with `cc`.
+Nothing else. The archive carries `avant` with LLVM 20 linked in (there is no separate backend program), `re2c`, `avant-bind`, the standard library, and the runtime with PCRE2, zlib and the other C libraries inside; beside them, `examples/` (the runnable programs this page points to), `versions.txt` (the release and its commit, which `avant version` prints), Avant's `LICENSE`, and `third_party/` with the notices and licenses of those C libraries. No environment variable needs to be set: the compiler turns a program into machine code with the LLVM it carries, and links it with `cc`.
 
 ## Contributing
 
@@ -3710,7 +3733,7 @@ This is the only back end. The earlier one, which emitted [myc](https://github.c
 
 You need a C compiler, the C library's development files and binutils (`ld`, `objcopy`); LLVM 20's static archives (Debian and Ubuntu: `llvm-20-dev`, `libzstd-dev`), which `runtime/build.sh` merges into `runtime/build/avant_llvm.o` (through `tools/build-llvm.sh`) and only the compiler links; `re2c` for regex literals (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`); and, for the `bind` helper, `llvm-config` and libclang 20 (without them the build skips it with a notice).
 
-The compiler is built by a published release, the seed: **v0.41.0 or later**, unpacked at `bin/v0.41.0` (or wherever `LETTERS_SEED` points). An older release cannot build this tree: `Int` became 64-bit in v0.41.0, and the runtime has one ABI.
+The compiler is built by a published release, the seed: **v0.41.0 or later**, unpacked at `bin/v0.42.0` (or wherever `LETTERS_SEED` points). An older release cannot build this tree: `Int` became 64-bit in v0.41.0, and the runtime has one ABI.
 
 ```sh
 sh runtime/build.sh
@@ -3719,13 +3742,13 @@ sh runtime/build.sh
 ./bin/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o   # rebuild with itself
 ```
 
-`AVANT_ROOT` overrides where a compiler looks for `runtime/build` and `lib/std`. `avant dump FILE.av` prints a program's MIR. `tools/bind.c` is the `avant bind` translator, built by `runtime/build.sh` into `runtime/build/avant-bind`; in a checkout the compiler runs that one, elsewhere the `avant-bind` beside itself.
+`AVANT_ROOT` overrides where a compiler looks for `runtime/build` and `lib/std`; without it, a compiler built by `tools/letters.sh` reads the `lib/` its `OUT.versions.txt` names, and any other (a release, a bare copy) the nearest `lib/` in its own directory or one above it. `avant dump FILE.av` prints a program's MIR. `tools/bind.c` is the `avant bind` translator, built by `runtime/build.sh` into `runtime/build/avant-bind`; in a checkout the compiler runs that one, elsewhere the `avant-bind` beside itself.
 
 ### The gate and the suite
 
 | Command | What it proves |
 | --- | --- |
-| `sh tools/letters.sh` | builds the runtime, B (`bin/avant-b`, built by the seed) and C′ (`bin/avant-c-llvm`, built by B). `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′) or `c-release` (the `--release` compiler a release ships) builds one |
+| `sh tools/letters.sh` | builds the runtime, B (`bin/avant-b`, built by the seed) and C′ (`bin/avant-c-llvm`, built by B). `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′) or `c-release` (the `--release` compiler a release ships) builds one. Beside each compiler it writes `OUT.versions.txt`, the build's record that `avant version` prints (the compiler itself carries no version, so it stays byte-identical across commits that do not change it); its `lib:` line names the checkout's `lib/`, which that compiler reads its standard library from when `AVANT_ROOT` is not set, wherever the compiler is copied, and a compiler whose recorded library is gone says so instead of reading another |
 | `sh tools/gate.sh` | the full gate: B, C′, the suite on both, D′, and the fixed point (C′ and D′ emit the same LLVM IR for the compiler and are byte-identical) |
 | `sh tools/run-goldens.sh` | compiles and runs every example, runnable fixture and LangArena task and compares stdout, stderr and exit status with its golden (`GOLDEN_MODE=--release`, or empty, for the other modes) |
 
@@ -3735,6 +3758,8 @@ The suite is the native test runner on the compiler's own tests:
 AVANT_COMPILER=./bin/avant-b ./bin/avant-b test
 AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm test
 ```
+
+`tests/cases/test_probe_matrix.av` checks seven of the checker's rules, each shown by a pair of programs (an unsafe one the compiler must refuse, a safe twin it must accept) under every statement and expression wrapper of the language, against the table `tests/probe/matrix.txt`; `AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm run tests/probe_matrix.av` writes the table again, to be committed only after its diff is read.
 
 - Each `tests/cases/test_*.av` is one program; helpers shared by several live in `tests/cases/harness.av`. Run one file with `avant test tests/cases/test_ffi.av`, or one slice with `--shard 2/4`.
 - The files listed in `[test] exclusive` (they probe the collector, rewrite `PATH`, use git, or write a coverage report of their own) run alone, in a command without `--shard`; a shard that would include one needs `--skip-exclusive`. `test_fixed_point.av`, which compiles the compiler, is listed in `[test] first` so it starts before the rest.

@@ -18,7 +18,8 @@
  * checks after a young collection's trace and copy (gc_verify_sticky: no
  * reachable young object left unpromoted, no reachable line about to be
  * freed, no reference to a moved object's old copy), before every young
- * collection (gc_verify_remembered: the generational invariant), at
+ * collection (gc_verify_remembered: the generational invariant, R1' and,
+ * for records, the invariant itself: yholders_check), at
  * every collection's start (gc_verify_no_stale_marks) and after a
  * defragmenting full collection (no reference to a block being freed).
  * Diagnostics only: they print and never change the heap. Under
@@ -191,13 +192,7 @@ static void verify_tls_slot(void **slot) {
 static void verify_each_root(void (*fn)(void **), int rem) {
   ThreadReg *t;
   for (t = gc_heap.threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      uint32_t k;
-      for (k = 0; k < f->n; k++) {
-        fn(f->slots[k]);
-      }
-    }
+    EACH_FRAME_SLOT(gc_thread_frames(t), slot, { fn(slot); });
   }
   for (PinEnt *p = gc_heap.pins; p; p = p->next) {
     fn(&p->payload);
@@ -216,9 +211,7 @@ static void verify_each_root(void (*fn)(void **), int rem) {
  * silent about dead mature objects, whose fields legitimately name
  * copied objects. The visited bit is VSEEN (the verifier's own);
  * verify_clear_traced resets it before gc_verify_young_copy returns. */
-#if GC_STICKY_COPY
 static uint64_t verify_stale_found(void *start, void *holder);
-#endif
 
 /* STALE (S+): count the fields of the reached objects that name a moved
  * object's old copy, as the trace reads them (verify_stale_found). */
@@ -228,9 +221,8 @@ static uint64_t verify_mark_reachable(int stale) {
   verify_each_root(verify_tls_slot, 1);
   while (gc_heap.work_n) {
     void *p = verify_pop();
-#if GC_STICKY_COPY
     if (stale) {
-      EACH_REF_SLOT(p, slot, {
+      EACH_REF_SLOT_WALK(p, slot, {
         void *st = verify_trace_r(*slot);
         if (st) {
           bad += verify_stale_found(st, p);
@@ -244,8 +236,7 @@ static uint64_t verify_mark_reachable(int stale) {
       });
       continue;
     }
-#endif
-    EACH_REF_SLOT(p, slot, { verify_trace(*slot); });
+    EACH_REF_SLOT_WALK(p, slot, { verify_trace(*slot); });
   }
   return bad;
 }
@@ -260,7 +251,6 @@ static uint64_t verify_mark_reachable(int stale) {
  * object must be marked (gc_reclaim_young_large then promotes it, else it
  * is freed). Each report names the object; the count is
  * gc_heap.verify_untraced. */
-#if GC_STICKY_COPY
 /* S+: a reference the collection did not rewrite names a moved object's
  * old copy (its header holds the forward). */
 static uint64_t verify_stale_start(void *start, const char *where, void *holder) {
@@ -284,7 +274,6 @@ static uint64_t verify_stale_found(void *start, void *holder) {
 static void verify_stale_tls(void **slot) {
   gc_heap.verify_untraced += verify_stale(*slot, "runtime root", (void *)slot);
 }
-#endif
 
 /* T's checks of one reached object V: NULL, or what is wrong. */
 static const char *sticky_why(void *v) {
@@ -319,14 +308,9 @@ static void verify_sticky_whole(void) {
   size_t i;
   uint64_t bad = 0;
   vb_ensure();
-#if GC_STICKY_COPY
   /* The fields of every reached object are checked for stale
    * references as the trace reads them (verify_mark_reachable). */
   bad += verify_mark_reachable(1);
-#else
-  (void)verify_mark_reachable(0);
-#endif
-#if GC_STICKY_COPY
   /* After S+'s copy and fix-up (before the old copies lose their start
    * bits): no root slot, runtime-held slot or field of a reachable object
    * may still name a moved object; verify_mark_reachable followed the
@@ -334,19 +318,16 @@ static void verify_sticky_whole(void) {
   {
     ThreadReg *t;
     for (t = gc_heap.threads; t; t = t->next) {
-      Frame *f;
-      for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-        uint32_t k;
-        for (k = 0; k < f->n; k++) {
-          bad += verify_stale(*f->slots[k], "root", (void *)f->slots[k]);
+      EACH_FRAME(gc_thread_frames(t), f, {
+        EACH_SLOT_OF(f, slot, {
+          bad += verify_stale(*slot, "root", (void *)slot);
           /* A slot location inside a moved object (Stage 28 W15d). */
-          bad += verify_stale((void *)f->slots[k], "root location", (void *)f);
-        }
-      }
+          bad += verify_stale((void *)slot, "root location", (void *)f);
+        });
+      });
     }
     gc_each_runtime_root(verify_stale_tls);
   }
-#endif
   for (i = 0; i < gc_heap.vnoted_n; i++) {
     void *v = gc_heap.vnoted[i];
     AvantHeader *h = avant_header(v);
@@ -383,6 +364,8 @@ static void verify_sticky_whole(void) {
  * class, reported at the first collection after the bad store). The
  * five runtime builders that fill a born-mature buffer named by a young
  * array header (audit N2b) are not reported: R1'(b) names the buffer.
+ * A record is asked more since the Valk stage's VALK-T2 (O610): it must
+ * be remembered even when R1' names it (yholders_check).
  * Visited is VSEEN (verify_trace), named is MARKED; both are clear
  * when a collection starts (gc_verify_no_stale_marks) and cleared here.
  * The named objects are gc_heap.rnamed; the reports are counted in
@@ -426,6 +409,36 @@ static uint64_t verify_lost_found(void *p, void *found, const char *where, void 
   return 1;
 }
 
+/* The field rule's check (the Valk stage, VALK-T, O585; D342 Q6; the
+ * rule is stated at the top of avant_gc_internal.h): FOUND is
+ * gc_object_payload(P) for the word P of HOLDER's field SLOT. A field
+ * that names the inside of an object breaks what the traces rely on (they
+ * classify a field by the range test alone and read the header right
+ * before the address), so it is not counted like the other reports: the
+ * program stops here, before the collection that would misread it. A
+ * field naming heap memory where no object lives is verify_lost_found's
+ * report. Asked of every field the verifier reads before a collection:
+ * every field of every object the roots reach and of every remembered
+ * object (the whole checks; an incremental check counts a broken field as
+ * a candidate, which runs the whole check). */
+static inline int field_rule_broken(void *p, void *found) {
+  return found && found != p;
+}
+
+static void verify_field_rule(void *p, void *found, void **slot, void *holder) {
+  if (!field_rule_broken(p, found)) {
+    return;
+  }
+  fprintf(stderr,
+          "avant gc verify: field rule: holder %p (type %u size %u flags 0x%x) field %ld holds %p, an address "
+          "inside object %p (type %u size %u) before coll=%llu\n",
+          holder, (unsigned)avant_header(holder)->type_id, (unsigned)avant_header(holder)->size,
+          (unsigned)avant_header(holder)->flags, (long)((uint8_t *)slot - (uint8_t *)holder), p, found,
+          (unsigned)avant_header(found)->type_id, (unsigned)avant_header(found)->size,
+          (unsigned long long)avant_g_stats.collections);
+  gc_die("avant gc verify: a reference-typed field holds an address inside an object (the field rule)");
+}
+
 static void lost_root_slot(void **slot) {
   void *st = verify_trace_r(*slot);
   verify_lost_found(*slot, st, "root", (void *)slot);
@@ -438,9 +451,10 @@ void gc_verify_lost(void) {
   verify_each_root(lost_root_slot, 0);
   while (gc_heap.work_n) {
     void *p = verify_pop();
-    EACH_REF_SLOT(p, slot, {
+    EACH_REF_SLOT_WALK(p, slot, {
       void *st = verify_trace_r(*slot);
       verify_lost_found(*slot, st, "field of", p);
+      verify_field_rule(*slot, st, slot, p);
     });
   }
   verify_clear_traced();
@@ -473,8 +487,15 @@ static void rem_named_found(void *start) {
   gc_heap.rnamed[gc_heap.rnamed_n++] = start;
 }
 
-static void rem_named(void *p) {
-  rem_named_found(gc_object_payload(p, NULL, NULL));
+/* A remembered object's field (R1'(c)), in the whole check: the young
+ * collection traces it whether or not the roots reach its holder, so the
+ * field rule and the lost-reference check are asked of it here too (the
+ * Valk stage, VALK-T, O585). */
+static void rem_named_field(void *holder, void **slot) {
+  void *st = gc_object_payload(*slot, NULL, NULL);
+  verify_lost_found(*slot, st, "field of remembered", holder);
+  verify_field_rule(*slot, st, slot, holder);
+  rem_named_found(st);
 }
 
 /* The reached holders that are not young and name a young object in a
@@ -504,13 +525,56 @@ static void rem_root_slot(void **slot) {
   rem_named_found(st);
 }
 
-/* The check: a reached non-young holder that is neither remembered nor
- * named must name no young object. A carded one remembered by its cards
- * (REMC without CARD_ALL) must name young objects only from slots of its
- * marked cards (the card invariant, Stage 28 W16t): a young object named
- * from a clear card is reported as a missing barrier too, since the young
- * collection would not scan that slot. Returns the fields found; the
- * first 32 are printed when PRINT. */
+/* Is H an element buffer: a pointer buffer (AVANT_TYPE_PTRS) or a buffer
+ * of by-value elements (a type map with a stride)? Every other object
+ * with references is a record (a class instance, a box, a closure's
+ * environment, a capture record, an array's or a hash's header). */
+static int verify_is_buffer(const AvantHeader *h) {
+  uint32_t id = h->type_id;
+  return id == AVANT_TYPE_PTRS || (id < MAX_TYPES && gc_heap.type_set[id] && gc_heap.types[id].stride != 0);
+}
+
+/* The check: a reached non-young holder that is not remembered must name
+ * no young object. Two forms.
+ *
+ * The invariant itself, for a record (the Valk stage, VALK-T2, O610): a
+ * record that names a young object is remembered (REM), whatever names
+ * the record. Generated code stores a reference into a record behind a
+ * barrier or while the record is open (allocated, barriered or an
+ * initialize's receiver since the last collecting call: young, or
+ * remembered until the next collection; D347, compiler/mir/fresh.av), and
+ * runtime C barriers its stores into records, so at every young
+ * collection the invariant holds of every record without the help of
+ * R1'. Until VALK-T2 a record R1' names this cycle (a root, a young
+ * object's field or a remembered object's field names it) was passed
+ * over, because the trace scans it and so repairs the miss: a store that
+ * lost its barrier (VALK-A1's planted defect: a fresh pass that ignores
+ * collecting calls, V14 off) was reported only once nothing named the
+ * record any more, which no program of the suite reaches. It is reported
+ * now at the first young collection after the store, with "not
+ * remembered" in the line.
+ *
+ * R1' (gc-design.md section 1.3), for an element buffer: one that a root,
+ * a young object's field or a remembered object's field names this cycle
+ * may hold young references unremembered, as before. That is the window
+ * the contract leaves open on purpose: the fill of a fresh buffer held in
+ * a slot, closed by one barrier when the fill ends (V14's older form, the
+ * only stores generated code makes with no barrier into a holder that is
+ * not open: compiler/mir/lower_arr.av, lower_block.av; mir.md 5.4), in
+ * which a buffer a collection promoted in the middle of its fill holds
+ * young elements until the closing barrier; and the runtime's builders
+ * of buffers a young header or a root names (gc-design.md 1.3). A
+ * missed closing barrier on such a buffer therefore stays invisible here
+ * while something names the buffer; V14 is its check.
+ *
+ * A carded holder remembered by its cards (REMC without CARD_ALL) must
+ * name young objects only from slots of its marked cards (the card
+ * invariant, Stage 28 W16t): a young object named from a clear card is
+ * reported as a missing barrier too, since the young collection would not
+ * scan that slot. Only holders the verifier's own trace reaches are
+ * asked: a dead object's fields are never read by the program or the
+ * collector, and may name an address a new young object has taken since.
+ * Returns the fields found; the first 32 are printed when PRINT. */
 static uint64_t yholders_check(int print) {
   size_t i;
   uint64_t found = 0;
@@ -519,14 +583,19 @@ static uint64_t yholders_check(int print) {
     void *st;
     AvantHeader *h = avant_header(v);
     int by_cards;
-    if (verify_names_young(v, &st) || (h->flags & AVANT_FLAG_REM) || vb_test(vb_named, v, AVANT_FLAG_MARKED)) {
+    int named;
+    if (verify_names_young(v, &st) || (h->flags & AVANT_FLAG_REM)) {
+      continue;
+    }
+    named = vb_test(vb_named, v, AVANT_FLAG_MARKED);
+    if (named && verify_is_buffer(h)) {
       continue;
     }
     by_cards = (h->flags & AVANT_FLAG_REMC) != 0;
     if (by_cards && !rem_by_cards(h)) {
       continue;
     }
-    EACH_REF_SLOT(v, slot, {
+    EACH_REF_SLOT_WALK(v, slot, {
       void *y;
       if ((!by_cards || !gc_heap.cards[gc_card_index(slot)]) && verify_names_young(*slot, &y)) {
         found++;
@@ -534,9 +603,12 @@ static uint64_t yholders_check(int print) {
           Block *hb = block_of(h);
           fprintf(stderr,
                   "avant gc verify: missing barrier: holder %p field %ld names young %p "
-                  "(holder flags=0x%x type=%u space=%d; young flags=0x%x) before coll=%llu\n",
+                  "(holder flags=0x%x type=%u space=%d; young flags=0x%x)%s before coll=%llu\n",
                   v, (long)((uint8_t *)slot - (uint8_t *)v), y, h->flags, (unsigned)h->type_id,
                   hb ? (int)hb->space : -1, avant_header(y)->flags,
+                  named ? ", not remembered (a root, a young object or a remembered one names the holder, so "
+                          "this collection's trace still reaches the field)"
+                        : "",
                   (unsigned long long)avant_g_stats.collections);
         }
       }
@@ -559,9 +631,10 @@ static void verify_remembered_whole(void) {
     void *p = verify_pop();
     int py = (avant_header(p)->flags & AVANT_FLAG_YOUNG) != 0;
     int ny = 0;
-    EACH_REF_SLOT(p, slot, {
+    EACH_REF_SLOT_WALK(p, slot, {
       void *st = verify_trace_r(*slot);
       verify_lost_found(*slot, st, "field of", p);
+      verify_field_rule(*slot, st, slot, p);
       if (st) {
         if (py) {
           rem_named_found(st);
@@ -584,9 +657,9 @@ static void verify_remembered_whole(void) {
       void *obj = gc_heap.remset[ri];
       if (gc_is_heap_payload(obj, NULL, NULL)) {
         if (rem_by_cards(avant_header(obj))) {
-          EACH_CARD_SLOT(obj, slot, { rem_named(*slot); });
+          EACH_CARD_SLOT(obj, slot, { rem_named_field(obj, slot); });
         } else {
-          EACH_REF_SLOT(obj, slot, { rem_named(*slot); });
+          EACH_REF_SLOT_WALK(obj, slot, { rem_named_field(obj, slot); });
         }
       }
     }
@@ -626,12 +699,9 @@ static void verify_no_stale_one(AvantHeader *h, Block *b) {
 }
 
 void gc_verify_no_stale_marks(void) {
-  Block *b;
   LargeIter it;
   AvantHeader *lh;
-  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
-    gc_foreach_block_object(b, verify_no_stale_one);
-  }
+  EACH_MATURE_BLOCK(mb, { gc_foreach_block_object(mb, verify_no_stale_one); });
   gc_large_iter_init(&it);
   while ((lh = gc_large_next(&it))) {
     verify_no_stale_one(lh, NULL);
@@ -798,7 +868,6 @@ static void sd_walk_page(Block *b, int page) {
 static int verify_no_stale_marks_incr(void) {
   size_t pages = gc_heap.committed / PAGE_SIZE;
   size_t blocks = gc_heap.committed >> BLOCK_SHIFT;
-  Block *b;
   LargeIter it;
   AvantHeader *lh;
   if (pages > sd_map_cap) {
@@ -815,24 +884,24 @@ static int verify_no_stale_marks_incr(void) {
       sd_dirty += (size_t)((sd_map[i] >> 55) & 1ULL);
     }
   }
-  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
+  EACH_MATURE_BLOCK(b, {
     size_t bi = (size_t)(b->base - gc_heap.base) >> BLOCK_SHIFT;
     size_t p0 = (size_t)(b->base - gc_heap.base) / PAGE_SIZE;
     int p;
     if (bi >= blocks || bi / 64 >= sd_seen_words || !((sd_seen[bi / 64] >> (bi % 64)) & 1)) {
       gc_foreach_block_object(b, verify_no_stale_one);
       gc_heap.v_pages_checked += BLOCK_SIZE / PAGE_SIZE;
-      continue;
-    }
-    for (p = 0; p < (int)(BLOCK_SIZE / PAGE_SIZE); p++) {
-      if (sd_map[p0 + (size_t)p] & SD_BIT) {
-        sd_walk_page(b, p);
-        gc_heap.v_pages_checked++;
-      } else {
-        gc_heap.v_pages_skipped++;
+    } else {
+      for (p = 0; p < (int)(BLOCK_SIZE / PAGE_SIZE); p++) {
+        if (sd_map[p0 + (size_t)p] & SD_BIT) {
+          sd_walk_page(b, p);
+          gc_heap.v_pages_checked++;
+        } else {
+          gc_heap.v_pages_skipped++;
+        }
       }
     }
-  }
+  });
   gc_large_iter_init(&it);
   while ((lh = gc_large_next(&it))) {
     verify_no_stale_one(lh, NULL);
@@ -844,16 +913,15 @@ static int verify_no_stale_marks_incr(void) {
 static void sd_stamp(void) {
   size_t blocks = gc_heap.committed >> BLOCK_SHIFT;
   size_t words = (blocks + 63) / 64;
-  Block *b;
   if (words > sd_seen_words) {
     sd_seen = gc_xrealloc(sd_seen, words * sizeof(uint64_t));
     sd_seen_words = words;
   }
   memset(sd_seen, 0, sd_seen_words * sizeof(uint64_t));
-  for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
+  EACH_MATURE_BLOCK(b, {
     size_t bi = (size_t)(b->base - gc_heap.base) >> BLOCK_SHIFT;
     sd_seen[bi / 64] |= 1ULL << (bi % 64);
-  }
+  });
 }
 
 /* The choice between the two forms (Stage 28 W18S, O150; W18M item 7
@@ -1191,7 +1259,7 @@ static inline int vi_lost(void *p, void *found) {
         vis_s_ = vis_n_;                                                                \
       }                                                                                 \
     } else {                                                                            \
-      EACH_REF_SLOT(vis_p_, SLOT, {                                                     \
+      EACH_REF_SLOT_WALK(vis_p_, SLOT, {                                                     \
         if ((ALL) || vi_hot(SLOT)) {                                                    \
           CALL;                                                                         \
         }                                                                               \
@@ -1293,6 +1361,8 @@ static void vi_sources(size_t pages, void (*examine)(void *)) {
 static inline void vi_m_slot(void **slot, int py, int *ny) {
   void *st = vi_trace(*slot);
   vi_cand += (uint64_t)vi_lost(*slot, st);
+  /* The field rule (verify_field_rule: the whole check reports it). */
+  vi_cand += (uint64_t)field_rule_broken(*slot, st);
   /* An object the last whole T proved unreached is named again. */
   vi_cand += (uint64_t)(st && vr_unreached(st));
   vi_note(slot, st);
@@ -1305,6 +1375,15 @@ static inline void vi_m_slot(void **slot, int py, int *ny) {
       *ny = 1;
     }
   }
+}
+
+/* rem_named_field in an incremental check: a broken or lost field is a
+ * candidate. */
+static void vi_rem_named_field(void **slot) {
+  void *st = gc_object_payload(*slot, NULL, NULL);
+  vi_cand += (uint64_t)vi_lost(*slot, st);
+  vi_cand += (uint64_t)field_rule_broken(*slot, st);
+  rem_named_found(st);
 }
 
 static void vi_m_object(void *p) {
@@ -1359,11 +1438,11 @@ static int vi_remembered(void) {
         if (rem_by_cards(avant_header(obj))) {
           EACH_CARD_SLOT(obj, slot, {
             if (vi_hot(slot)) {
-              rem_named(*slot);
+              vi_rem_named_field(slot);
             }
           });
         } else {
-          VI_EACH_SLOT(obj, vi_all(obj), slot, rem_named(*slot));
+          VI_EACH_SLOT(obj, vi_all(obj), slot, vi_rem_named_field(slot));
         }
       }
     }
@@ -1386,11 +1465,9 @@ static int vi_remembered(void) {
 /* T's examination of one slot, and of one object. */
 static inline void vi_t_slot(void **slot) {
   void *st = vi_trace(*slot);
-#if GC_STICKY_COPY
   if (st && (avant_header(st)->flags & AVANT_FLAG_FORWARDED)) {
     vi_cand++;
   }
-#endif
   vi_note(slot, st);
 }
 
@@ -1402,7 +1479,6 @@ static void vi_t_root(void **slot) {
   (void)vi_trace(*slot);
 }
 
-#if GC_STICKY_COPY
 static inline int vi_stale(void *p) {
   void *st = gc_object_payload(p, NULL, NULL);
   return st && (avant_header(st)->flags & AVANT_FLAG_FORWARDED);
@@ -1411,7 +1487,6 @@ static inline int vi_stale(void *p) {
 static void vi_stale_root(void **slot) {
   vi_cand += (uint64_t)vi_stale(*slot);
 }
-#endif
 
 
 /* The young blocks' objects that are not young (promoted in place, or
@@ -1460,19 +1535,13 @@ static int vi_sticky(void) {
     vi_t_object(verify_pop());
   }
   vi_sources(pages, vi_t_object);
-#if GC_STICKY_COPY
   for (t = gc_heap.threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      uint32_t k;
-      for (k = 0; k < f->n; k++) {
-        vi_cand += (uint64_t)vi_stale(*f->slots[k]);
-        vi_cand += (uint64_t)vi_stale((void *)f->slots[k]);
-      }
-    }
+    EACH_FRAME_SLOT(gc_thread_frames(t), slot, {
+      vi_cand += (uint64_t)vi_stale(*slot);
+      vi_cand += (uint64_t)vi_stale((void *)slot);
+    });
   }
   gc_each_runtime_root(vi_stale_root);
-#endif
   for (i = 0; i < gc_heap.vnoted_n; i++) {
     vi_cand += sticky_why(gc_heap.vnoted[i]) != NULL;
   }
@@ -1499,7 +1568,7 @@ static int vi_sticky(void) {
      * passes over less). */
     vr_record(0);
     for (i = 0; vr_valid && i < gc_heap.noted_n; i++) {
-      void *n = gc_heap.noted[i];
+      void *n = gc_noted_object((uint32_t)i);
       if (avant_header(n)->flags & AVANT_FLAG_FORWARDED) {
         n = gc_forward_of(avant_header(n));
       }
@@ -1590,7 +1659,7 @@ static void verify_defrag_fields(AvantHeader *h, Block *b) {
     return;
   }
   p = payload_of(h);
-  EACH_REF_SLOT(p, slot, { verify_defrag_word(*slot, "field", (void *)slot); });
+  EACH_REF_SLOT_WALK(p, slot, { verify_defrag_word(*slot, "field", (void *)slot); });
 }
 
 static void verify_defrag_tls(void **slot) {
@@ -1605,12 +1674,7 @@ void gc_verify_defrag(void) {
   uint32_t i;
   pthread_mutex_lock(&gc_heap.threads_mu);
   for (t = gc_heap.threads; t; t = t->next) {
-    Frame *f;
-    for (f = t->head ? *t->head : NULL; f; f = f->prev) {
-      for (i = 0; i < f->n; i++) {
-        verify_defrag_word(*f->slots[i], "root slot", (void *)f->slots[i]);
-      }
-    }
+    EACH_FRAME_SLOT(gc_thread_frames(t), slot, { verify_defrag_word(*slot, "root slot", (void *)slot); });
   }
   pthread_mutex_unlock(&gc_heap.threads_mu);
   for (PinEnt *pe = gc_heap.pins; pe; pe = pe->next) {

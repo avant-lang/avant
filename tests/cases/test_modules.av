@@ -438,6 +438,10 @@ fn test_modules(c: Checks) {
     }
     test_fn_scopes(c, compiler, dir)
     test_field_privacy(c, compiler, dir)
+    test_default_modules(c, compiler, dir)
+    test_default_once(c, compiler, dir)
+    test_generic_modules(c, compiler, dir)
+    test_same_name_methods(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
@@ -492,6 +496,87 @@ fn test_field_privacy(c: Checks, compiler: String, dir: String) {
   } else {
     c.expect(false, "a checkout's compiler/main.av is not exempt")
   }
+}
+
+// A parameter default belongs to its declaration (O343, O17, O223, Stage
+// 29 W-FIX1b): spliced into a call, it is checked in the callee's module,
+// with none of the caller's names in scope, whatever the call's form: a
+// qualified call, an unqualified one, a constructor, a method with and
+// without parentheses, a type-level function. Before, only the qualified
+// call did; the others reported `unknown function secret`, or called the
+// calling module's function of that name. An earlier parameter named by a
+// default is that parameter's value (test_default_once).
+fn test_default_modules(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "dlib", "fn secret: Int {\n  7\n}\n\npub fn pick(n: Int = secret()): Int {\n  n\n}\n\npub fn span(a: Int, b: Int = a + secret()): Int {\n  a * 100 + b\n}\n\npub fn same(a: String, b: String = a): String {\n  \"\${a}\${b}\"\n}\n\npub class Box {\n  pub v: Int = 0\n\n  fn initialize(v: Int = secret()) {\n    self.v = v\n  }\n\n  pub fn plus(k: Int = secret()): Int {\n    v + k\n  }\n\n  pub fn self.make(k: Int = secret()): Int {\n    k\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn far(k: Int = secret()): Int {\n    x + k\n  }\n}\n\npub fn (s: String) pad(k: Int = secret()): Int {\n  s.size + k\n}\n")
+  write_av(dir, "dplain", "import dlib\n\nfn main {\n  puts(dlib.pick())\n  puts(pick())\n  b = Box.new\n  puts(b.v)\n  puts(b.plus())\n  puts(b.plus)\n  puts(Box.make())\n  puts(Box.make)\n  p = Pt { x: 1 }\n  puts(p.far)\n  puts(\"ab\".pad)\n}\n")
+  mod_runs(c, compiler, dir, "dplain", "7\n7\n7\n14\n14\n7\n7\n8\n9\n", "a default names a function private to its module: every call form")
+  write_av(dir, "dsame", "import dlib\n\nfn secret: Int {\n  1000\n}\n\nfn mine: Int {\n  3\n}\n\nclass User {\n  n: Int = 0\n\n  fn secret: Int {\n    5000\n  }\n\n  fn go: Int {\n    pick() + Box.new.plus\n  }\n}\n\nfn wrap(x: T): Int {\n  pick() + Box.new.v\n}\n\nfn main {\n  puts(dlib.pick())\n  puts(pick())\n  b = Box.new\n  puts(b.v)\n  puts(b.plus())\n  puts(b.plus)\n  puts(Box.make())\n  puts(Box.make)\n  puts(User.new.go)\n  puts(wrap(1) + wrap(\"s\"))\n  secret = { |k: Int| k + 90000 }\n  puts(pick() + secret(1))\n  x = 4\n  puts(span(x + mine()))\n  puts(span(1, 2))\n  puts(same(\"ab\"))\n  puts(dsame.secret())\n}\n")
+  mod_runs(c, compiler, dir, "dsame", "7\n7\n7\n14\n14\n7\n7\n21\n28\n90008\n714\n102\nabab\n1000\n", "the calling module's function, method and local of the same name do not capture a default")
+}
+
+// A default that names an earlier parameter reads that parameter's value
+// (O546, Stage 29 W-FIX1d): the argument as the call passes it, evaluated
+// once, with the parameter's declared type. Before, a copy of the
+// argument's expression stood in for the name: the argument ran once for
+// its parameter and once more for each mention (`pair(tick(t))` left two
+// ticks and returned 1102), and again each time a lambda in the default
+// ran; a default that used an optional parameter as declared, or called a
+// function with such a default of its own, did not compile. Every call
+// path counts its ticks: functions unqualified, imported and qualified,
+// two defaults in a row, a constructor, a method of a class and of a
+// struct, a type-level function, a generic function's instance.
+fn test_default_once(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "olib", "pub class Tally {\n  pub n: Int = 0\n}\n\npub fn tick(t: Tally): Int {\n  t.n += 1\n  t.n\n}\n\npub fn pair(a: Int, b: Int = a + 100): Int {\n  a * 1000 + b\n}\n\npub fn triple(a: Int, b: Int = a + 1, c: Int = a + b): Int {\n  a * 10000 + b * 100 + c\n}\n\npub fn outer(a: Int, b: Int = pair(a)): Int {\n  a * 100000 + b\n}\n\npub class Box {\n  pub v: Int\n  pub w: Int\n\n  pub fn initialize(v: Int, w: Int = v * 2) {\n    self.v = v\n    self.w = w\n  }\n\n  pub fn add(a: Int, b: Int = a + 100): Int {\n    self.v + a * 1000 + b\n  }\n\n  pub fn self.make(a: Int, b: Int = a + 100): Int {\n    a * 1000 + b\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn shift(a: Int, b: Int = a + 100): Int {\n    self.x + a * 1000 + b\n  }\n}\n\npub fn same(a: T, b: T = a): T {\n  b\n}\n")
+  write_av(dir, "oeval", "import olib\n\nfn pair2(a: Int, b: Int = a + 100): Int {\n  a * 1000 + b\n}\n\nfn opt(a: Int?, b: Int = a ?? 7): Int {\n  b\n}\n\nfn text(a: String, b: Int = a.size): Int {\n  b\n}\n\nfn apply(a: Int, f: fn(Int): Int = { |x| x + a }): Int {\n  f(1) + f(2)\n}\n\nfn shadow(a: Int, f: fn(Int): Int = { |a| a * 2 }): Int {\n  f(a + 1)\n}\n\nfn twice(a: Int, b: Int = apply(a)): Int {\n  a + b\n}\n\nfn main {\n  t = Tally.new\n  puts(\"unqualified \${pair2(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"imported \${pair(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"qualified \${olib.pair(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"two defaults \${triple(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  b = Box.new(tick(t))\n  puts(\"constructor \${b.v} \${b.w} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"method \${b.add(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"type-level \${Box.make(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  p = Pt { x: 5 }\n  puts(\"struct method \${p.shift(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"generic \${same(tick(t))} ticks \${t.n}\")\n  puts(\"literal \${pair2(7)} string \${text(\"abc\")}\")\n  t = Tally.new\n  puts(\"both written \${pair2(tick(t), tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"lambda \${apply(tick(t) * 10)} ticks \${t.n}\")\n}\n")
+  mod_runs(c, compiler, dir, "oeval", "unqualified 1101 ticks 1\nimported 1101 ticks 1\nqualified 1101 ticks 1\ntwo defaults 10203 ticks 1\nconstructor 1 2 ticks 1\nmethod 1102 ticks 1\ntype-level 1101 ticks 1\nstruct method 1106 ticks 1\ngeneric 1 ticks 1\nliteral 7107 string 3\nboth written 1002 ticks 2\nlambda 23 ticks 1\n", "an argument a default names is evaluated once on every call path")
+  write_av(dir, "odecl", "import olib\n\nfn pair2(a: Int, b: Int = a + 100): Int {\n  a * 1000 + b\n}\n\nfn opt(a: Int?, b: Int = a ?? 7): Int {\n  b\n}\n\nfn text(a: String, b: Int = a.size): Int {\n  b\n}\n\nfn apply(a: Int, f: fn(Int): Int = { |x| x + a }): Int {\n  f(1) + f(2)\n}\n\nfn shadow(a: Int, f: fn(Int): Int = { |a| a * 2 }): Int {\n  f(a + 1)\n}\n\nfn twice(a: Int, b: Int = apply(a)): Int {\n  a + b\n}\n\nfn main {\n  t = Tally.new\n  puts(\"nested \${outer(tick(t))} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"optional \${opt(tick(t))} \${opt(nil)} ticks \${t.n}\")\n  t = Tally.new\n  run: fn(Int): Int = { |k|\n    apply(tick(t) * 10) + k\n  }\n  puts(\"inside a lambda \${run(1000)} ticks \${t.n}\")\n  t = Tally.new\n  puts(\"lambda through a default \${twice(tick(t) * 10)} ticks \${t.n}\")\n  a = 99\n  puts(\"a block's own parameter \${shadow(5)}; the caller's a \${apply(3)} \${a}\")\n}\n")
+  mod_runs(c, compiler, dir, "odecl", "nested 101101 ticks 1\noptional 1 7 ticks 1\ninside a lambda 1023 ticks 1\nlambda through a default 33 ticks 1\na block's own parameter 12; the caller's a 9 99\n", "a default reads its earlier parameter as declared: optional, through another default, in a lambda")
+}
+
+// An imported generic takes types of the module that uses it (O255,
+// Stage 29 W-FIX1b): before, `Box(Point)` with Box imported and Point
+// declared here reported `unknown type Point`, because the instance's
+// fields and methods read the argument's name again inside Box's module.
+// An instance now carries each argument pinned to the type it named where
+// it was written. Privacy holds where a name is written: a private type
+// of another module is refused as an argument, an element type, or a
+// part of a union or a function type.
+fn test_generic_modules(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "gbx", "pub class Box(T) {\n  pub item: T\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  pub fn get: T {\n    item\n  }\n\n  pub fn set(v: T) {\n    self.item = v\n  }\n\n  pub fn pair: Duo(T, Int) {\n    Duo { a: item, b: 2 }\n  }\n\n  pub fn many(n: Int): Array(T) {\n    Array(T).new(n) { |i| item }\n  }\n}\n\npub struct Duo(A, B) {\n  pub a: A\n  pub b: B\n\n  pub fn first: A {\n    a\n  }\n}\n\npub fn wrap(x: T): Box(T) {\n  Box.new(x)\n}\n\npub fn firsts(xs: Array(T)): T {\n  xs[0]\n}\n\npub fn twice(x: T, f: fn(T): T): T {\n  f(f(x))\n}\n")
+  write_av(dir, "gtag", "import gbx\n\npub struct Tag {\n  pub name: String\n}\n\nstruct Hidden {\n  pub n: Int\n}\n\npub fn tagged(name: String): Box(Tag) {\n  Box.new(Tag { name: name })\n}\n\npub fn hidden_n: Int {\n  h = Box.new(Hidden { n: 41 })\n  d = Duo { a: Hidden { n: 1 }, b: h.get }\n  d.first.n + d.b.n\n}\n")
+  write_av(dir, "gmain", "import gbx\n\npub struct Point {\n  x: Int\n  y: Int\n}\n\nstruct Local {\n  n: Int\n}\n\nclass Node {\n  v: Int = 0\n\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn main {\n  b = Box(Point).new(Point { x: 1, y: 2 })\n  puts(b.item.x)\n  c = Box.new(Point { x: 3, y: 4 })\n  puts(c.get.y)\n  l = Box(Local).new(Local { n: 5 })\n  l.set(Local { n: 6 })\n  puts(l.get.n)\n  n = Box.new(Node.new(7))\n  puts(n.item.v)\n  d = Duo(Point, Local) { a: Point { x: 8, y: 0 }, b: Local { n: 9 } }\n  puts(d.first.x + d.b.n)\n  puts(l.pair.a.n + l.pair.b)\n  puts(l.many(3).size)\n  w = wrap(Local { n: 10 })\n  puts(w.get.n)\n  puts(firsts([Point { x: 11, y: 0 }]).x)\n  tw = twice(Local { n: 3 }) { |v| Local { n: v.n * 2 } }\n  puts(tw.n)\n  nested = Box(Box(Local)).new(Box.new(Local { n: 13 }))\n  puts(nested.get.get.n)\n  arr = Box(Array(Point)).new([Point { x: 14, y: 0 }])\n  puts(arr.item[0].x)\n  opt = Box(Local?).new(nil)\n  opt.set(Local { n: 15 })\n  if o = opt.get {\n    puts(o.n)\n  }\n}\n")
+  mod_runs(c, compiler, dir, "gmain", "1\n4\n6\n7\n17\n8\n3\n10\n11\n12\n13\n14\n15\n", "an imported generic class, struct and function take types of the importing module, pub and private")
+  write_av(dir, "gthree", "import gbx\nimport gtag\n\nstruct Local {\n  n: Int\n}\n\nfn main {\n  t = tagged(\"a\")\n  puts(t.get.name)\n  u = Box(Tag).new(Tag { name: \"b\" })\n  puts(u.item.name)\n  both = Duo(Tag, Local) { a: Tag { name: \"c\" }, b: Local { n: 1 } }\n  puts(\"\${both.a.name}\${both.b.n}\")\n  puts(hidden_n())\n  puts(wrap(Tag { name: \"d\" }).get.name)\n}\n")
+  mod_runs(c, compiler, dir, "gthree", "a\nb\nc1\n42\nd\n", "three modules: a generic of one, a type of another, a type of the root")
+  write_av(dir, "gpriv1", "import gbx\nimport gtag\n\nfn main {\n  b = Box(Hidden).new(Hidden { n: 1 })\n  puts(b.item.n)\n}\n")
+  mod_fails(c, compiler, dir, "gpriv1", "unknown type Hidden", "a private type of another module is not a type argument here")
+  write_av(dir, "gpriv2", "import gbx\nimport gtag\n\nfn main {\n  xs: Array(Hidden) = []\n  puts(xs.size)\n}\n")
+  mod_fails(c, compiler, dir, "gpriv2", "unknown type Hidden", "nor an element type")
+  write_av(dir, "gpriv3", "import gbx\nimport gtag\n\nfn take(d: Duo(Int, Hidden)): Int {\n  d.a\n}\n\nfn main {\n  puts(1)\n}\n")
+  mod_fails(c, compiler, dir, "gpriv3", "unknown type Hidden", "nor an argument of a generic struct in a signature")
+  write_av(dir, "gpriv4", "import gbx\nimport gtag\n\nfn main {\n  f: fn(Int): Hidden? = nil\n  u: Int | Hidden = 1\n  puts(1)\n}\n")
+  mod_fails(c, compiler, dir, "gpriv4", "unknown type Hidden", "nor a function type's result")
+  write_av(dir, "gsame1", "pub struct Item {\n  pub v: Int\n}\n\npub fn one: Item {\n  Item { v: 1 }\n}\n")
+  write_av(dir, "gsame2", "pub struct Item {\n  pub v: String\n}\n\npub fn two: Item {\n  Item { v: \"two\" }\n}\n")
+  write_av(dir, "gsame", "import gbx\nimport gsame1\nimport gsame2\n\nfn main {\n  a = Box(gsame1.Item).new(one())\n  b = Box(gsame2.Item).new(two())\n  puts(\"\${a.get.v} \${b.get.v}\")\n  c = wrap(one())\n  d = wrap(two())\n  puts(\"\${c.item.v} \${d.item.v}\")\n}\n")
+  mod_runs(c, compiler, dir, "gsame", "1 two\n1 two\n", "one generic over two types of the same name from two modules")
+  write_av(dir, "gown", "import gbx\nimport gsame1\n\nstruct Item {\n  w: Int\n}\n\nfn main {\n  a = Box(gown.Item).new(gown.Item { w: 5 })\n  b = Box(gsame1.Item).new(one())\n  puts(a.item.w + b.item.v)\n}\n")
+  mod_runs(c, compiler, dir, "gown", "6\n", "the root's own type and an imported one of the same name")
+  write_av(dir, "gamb", "import gbx\nimport gsame1\nimport gsame2\n\nfn main {\n  a = Box(Item).new(one())\n  puts(a.get.v)\n}\n")
+  mod_fails(c, compiler, dir, "gamb", "ambiguous name Item; qualify it", "an argument two imports declare is ambiguous")
+}
+
+// O165's probe (Stage 29 W-FIX1b): two modules declare a class Item and
+// a struct Pt, each with methods, operators, a type-level function, a
+// generic method and an external method of the same names; every call
+// reaches its own module's. What the probe found and this wave fixed: a
+// parameter of such a type (`fn +(o: Item)`) was `unknown type Item`
+// (resolve_value_in_module looked the name up bare).
+fn test_same_name_methods(c: Checks, compiler: String, dir: String) {
+  write_av(dir, "sna", "pub class Item {\n  pub v: Int = 0\n\n  fn initialize(v: Int) {\n    self.v = v\n  }\n\n  pub fn label: String {\n    \"a\${v}\"\n  }\n\n  pub fn bump(n: Int): Int {\n    self.v += n\n    v\n  }\n\n  pub fn +(o: Item): Item {\n    Item.new(v + o.v)\n  }\n\n  pub fn ==(o: Item): Bool {\n    v == o.v\n  }\n\n  pub fn self.zero: Item {\n    Item.new(0)\n  }\n\n  pub fn pick(x: T): T {\n    x\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn far: Int {\n    x + 100\n  }\n\n  pub fn grow(k: Int) {\n    self.x += k\n  }\n}\n\npub fn (i: Item) ext: String {\n  \"ext-a\${i.v}\"\n}\n\npub fn make_a(v: Int): Item {\n  Item.new(v)\n}\n")
+  write_av(dir, "snb", "pub class Item {\n  pub name: String = \"\"\n  pub w: Int = 7\n\n  fn initialize(name: String, w: Int) {\n    self.name = name\n    self.w = w\n  }\n\n  pub fn label: String {\n    \"b-\${name}\"\n  }\n\n  pub fn bump(n: Int): Int {\n    self.w -= n\n    w\n  }\n\n  pub fn +(o: Item): Item {\n    Item.new(\"\${name}\${o.name}\", w * o.w)\n  }\n\n  pub fn ==(o: Item): Bool {\n    name == o.name\n  }\n\n  pub fn self.zero: Item {\n    Item.new(\"zero\", 0)\n  }\n\n  pub fn pick(x: T): T {\n    x\n  }\n}\n\npub struct Pt {\n  pub x: Int\n  pub y: Int\n\n  pub fn far: Int {\n    x * y\n  }\n\n  pub fn grow(k: Int) {\n    self.y += k\n  }\n}\n\npub fn (i: Item) ext: String {\n  \"ext-b\${i.name}\"\n}\n\npub fn make_b(name: String): Item {\n  Item.new(name, 2)\n}\n")
+  write_av(dir, "snmain", "import sna\nimport snb\nfn main {\n  a = sna.Item.new(1)\n  b = snb.Item.new(\"x\", 3)\n  puts(a.label)\n  puts(b.label)\n  puts(a.label())\n  puts(b.label())\n  puts(a.bump(5))\n  puts(b.bump(1))\n  puts(a.ext)\n  puts(b.ext)\n  s = a + sna.Item.new(10)\n  puts(s.v)\n  t = b + snb.Item.new(\"y\", 5)\n  puts(\"\${t.name} \${t.w}\")\n  puts(a == sna.Item.new(6))\n  puts(b == snb.Item.new(\"x\", 0))\n  puts(sna.Item.zero.v)\n  puts(snb.Item.zero.name)\n  puts(a.pick(\"p\"))\n  puts(b.pick(4))\n  c = make_a(9)\n  d = make_b(\"q\")\n  puts(\"\${c.label} \${d.label}\")\n  as = [a, c]\n  bs = [b, d]\n  for i in as {\n    puts(i.label)\n  }\n  bs.each { |i| puts(i.label) }\n  p = sna.Pt { x: 1 }\n  q = snb.Pt { x: 2, y: 3 }\n  puts(\"\${p.far} \${q.far}\")\n  p.grow(1)\n  q.grow(1)\n  puts(\"\${p.x} \${q.y}\")\n  ps = [snb.Pt { x: 5, y: 5 }]\n  ps[0].grow(2)\n  puts(ps[0].far)\n}\n")
+  mod_runs(c, compiler, dir, "snmain", "a1\nb-x\na1\nb-x\n6\n2\next-a6\next-bx\n16\nxy 10\ntrue\ntrue\n0\nzero\np\n4\na9 b-q\na6\na9\nb-x\nb-q\n101 6\n2 4\n35\n", "two modules declare a class and a struct of one name with methods of the same names")
 }
 
 fn main: Int {

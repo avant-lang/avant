@@ -118,20 +118,18 @@ pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
 // type-level calls, calls.av:1384-1427; a `nil` or a bare T passed to a
 // `T?` parameter of a plain function or method does not compile there:
 // D196).
-pub fn (lw: MirLower) lower_args_to(args: Array(Expr), params: Array(Ty)): Array(MOperand) {
+//
+// frame is the call's argument frame (Expr.int_bits of a call whose
+// defaults may name an earlier parameter, else 0; checker/match.av
+// fill_defaults): each argument's operand, as the call passes it, is
+// kept under its hidden name while the later arguments are lowered, so
+// a default that names the parameter reads that operand (lower_name) and
+// the argument is evaluated once (O546).
+pub fn (lw: MirLower) lower_args_to(args: Array(Expr), params: Array(Ty), frame: UInt64): Array(MOperand) {
   out: Array(MOperand) = []
+  mark = lw.lw_arg_names.size
   i = 0
   while i < args.size {
-    if i < params.size {
-      a0 = args[i]
-      if t0 = a0.ty {
-      } else if !params[i].is_union && (a0.kind == ex_int() || a0.kind == ex_float() || a0.kind == ex_bool() || a0.kind == ex_string()) {
-        // W8a: a parameter default the checker spliced in untyped (`caseless:
-        // Bool = false`) takes its parameter's type, as a field default does
-        // (lower_coerced).
-        a0.ty = params[i]
-      }
-    }
     o = lw.lower_expr(args[i])
     if i < params.size {
       if t = args[i].ty {
@@ -144,9 +142,34 @@ pub fn (lw: MirLower) lower_args_to(args: Array(Expr), params: Array(Ty)): Array
       j += 1
     }
     out.push(o)
+    if frame != 0u64 {
+      lw.lw_arg_names.push(arg_frame_name(frame, i))
+      lw.lw_arg_ops.push(o)
+    }
     i += 1
   }
+  while lw.lw_arg_names.size > mark {
+    lw.lw_arg_names.pop
+    lw.lw_arg_ops.pop
+  }
   out
+}
+
+// The operand of the argument a hidden name stands for, or nil: the name
+// is not one, or its call is not being lowered in this function (a
+// lambda's body reads it as the capture it is).
+pub fn (lw: MirLower) arg_frame_op(name: String): MOperand? {
+  if name.size == 0 || name[0] != 36 {
+    return nil
+  }
+  i = lw.lw_arg_names.size - 1
+  while i >= 0 {
+    if lw.lw_arg_names[i] == name {
+      return lw.lw_arg_ops[i]
+    }
+    i -= 1
+  }
+  nil
 }
 
 // A union value of type from as type to: one arm per member of from

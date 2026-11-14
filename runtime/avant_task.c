@@ -69,6 +69,23 @@ static void die_task(const char *msg) {
   abort();
 }
 
+/* .join or .parallel reached from a pool worker through a call (the
+ * checker refuses one written in a spawn block or a .parallel body): a
+ * misuse, so it ends like the runtime's traps (trap_head and trap_tail
+ * in avant_rt_traps.c, whose form avant_re.c's traps repeat): the
+ * program's stdout flushed, one line naming what happened and the
+ * rule, status 1 (Stage 29 W-FIX1f, O234: it aborted, status 134).
+ * die_task stays for the pool's own failures. what is ".join" or
+ * ".parallel". */
+__attribute__((noreturn, cold)) static void trap_on_worker(const char *what) {
+  fflush(stdout);
+  fprintf(stderr,
+          "avant runtime: %s called from a pool worker: .join and .parallel cannot be called inside a spawn block "
+          "or a .parallel body, directly or through a call\n",
+          what);
+  exit(1);
+}
+
 static void *worker_main(void *p);
 
 static void enqueue(Job *job) {
@@ -272,7 +289,7 @@ avant_int avant_join(void *handle) {
     return 0;
   }
   if (on_worker) {
-    die_task("join from a pool worker");
+    trap_on_worker(".join");
   }
   /* The wait is native (Stage 28 W17a, rule 2): other threads collect
    * meanwhile and may move the handle, which this function holds in a
@@ -310,7 +327,7 @@ void avant_parallel_for(avant_int n, void *fn, void *ctx) {
     return;
   }
   if (on_worker) {
-    die_task("parallel from a pool worker");
+    trap_on_worker(".parallel");
   }
   /* The context is rooted before the first call that may collect (RC1;
    * ensure_pool's lock may wait natively), and read from the root after

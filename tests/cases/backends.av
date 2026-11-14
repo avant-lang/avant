@@ -89,8 +89,10 @@ pub fn run_job(dir: String, bin: String, key: String): HJob {
 // The same with environment words (`VAR=value ...`) for the program.
 // Under an outer AVANT_GC_STRESS (harness.gc_stress_outer, W14b1) a run
 // whose words set AVANT_GC_VERIFY runs without the stress mode: the
-// verifier's whole-heap checks at a collection per helper call do not
-// fit the suite's time; the run without words is the stress run.
+// verifier's whole-heap checks at a collection per allocation do not fit
+// the suite's time (VALK-TM, O602, measured with the mode kept:
+// test_gc_hints.av's gc_hold under AVANT_GC_VERIFY=1 had not ended after
+// 465 s, its file 34 s without); the run without words is the stress run.
 pub fn run_job_env(dir: String, bin: String, key: String, envs: String): HJob {
   e = envs
   if gc_stress_outer() && str_has(envs, "AVANT_GC_VERIFY") {

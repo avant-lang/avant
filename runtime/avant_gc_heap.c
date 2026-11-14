@@ -53,6 +53,47 @@ int gc_type_word_is_ref(const AvantHeader *h, size_t w) {
   return (m->words[w / 64] >> (w % 64)) & 1u;
 }
 
+/* gc_heap.refs[ID] from the type's map (EACH_REF_SLOT, the Valk stage,
+ * VALK-T, O578): the list of a small record's reference words, or
+ * TYPE_REFS_WALK. Called whenever the map of ID changes, and once for
+ * AVANT_TYPE_PTRS (gc_init_slow). */
+void gc_type_refs_update(uint32_t id) {
+  uint64_t d = 0;
+  unsigned n = 0;
+  uint32_t c;
+  const TypeMap *m;
+  if (id > 65535u) {
+    return;
+  }
+  if (id == AVANT_TYPE_PTRS) {
+    gc_heap.refs[id] = TYPE_REFS_WALK;
+    return;
+  }
+  if (id == AVANT_TYPE_BYTES || id >= MAX_TYPES || !gc_heap.type_set[id]) {
+    gc_heap.refs[id] = 0;
+    return;
+  }
+  m = &gc_heap.types[id];
+  if (m->stride) {
+    gc_heap.refs[id] = TYPE_REFS_WALK;
+    return;
+  }
+  for (c = 0; c < m->nchunks; c++) {
+    uint64_t w = m->words[c];
+    while (w) {
+      uint64_t i = (uint64_t)c * 64 + (uint64_t)__builtin_ctzll(w);
+      w &= w - 1;
+      if (n == TYPE_REFS_MAX || i > 255) {
+        gc_heap.refs[id] = TYPE_REFS_WALK;
+        return;
+      }
+      n++;
+      d |= i << (8 * n);
+    }
+  }
+  gc_heap.refs[id] = d | n;
+}
+
 void gc_die(const char *msg) {
   fprintf(stderr, "avant runtime: %s\n", msg);
   abort();
@@ -244,6 +285,9 @@ uint64_t gc_chunk_take(uint64_t n) {
         gc_heap.free_chunks -= n;
         for (k = first; k <= c; k++) {
           uint64_t b;
+          /* A taken chunk is in neither count until its taker gives it a
+           * kind (gc_chunk_account's comment). */
+          gc_chunk_account(k, -1);
           /* A decommitted chunk's data is read-write again (zero); its
            * side slices were madvised (zero) and its records keep their
            * addresses. A reused chunk's mark bits may be stale: a full
@@ -272,15 +316,58 @@ uint64_t gc_chunk_take(uint64_t n) {
   return c;
 }
 
+/* Chunk C's share of the two counts gc_heap_return starts from (the Valk
+ * stage, VALK-T2, O630), added (SIGN 1) or taken back (SIGN -1):
+ * gc_heap.free_resident_other holds its resident free bytes other than a
+ * small chunk's free blocks, which are gc_heap.free_resident's (the dirty
+ * free pages of a large-object chunk, a free chunk's whole data while it
+ * is dirty and committed), and gc_heap.clean_empty_chunks counts it when
+ * it is empty, not decommitted and holds no resident free byte (a small or
+ * large-object chunk with nothing in use and nothing resident, a free
+ * chunk that is committed and clean): the chunks gc_heap_return's first
+ * loop decommits whatever the total is. Called around the changes of a
+ * chunk's kind (a chunk gc_chunk_take hands out is in neither count until
+ * its taker has given it its kind and adds it); the changes inside a kind
+ * are counted where they happen (gc_block_take; take_run, give_run and
+ * trim_run of avant_gc_los.c; the madvises of gc_heap_return).
+ * AVANT_GC_VERIFY recounts both at every gc_heap_return and stops the
+ * program on a difference. */
+void gc_chunk_account(uint64_t c, int sign) {
+  const GcChunk *ch = &gc_heap.chunks[c];
+  uint64_t res = 0;
+  int clean = 0;
+  if (ch->kind == CHUNK_SMALL) {
+    clean = ch->used == 0 && ch->nres == 0;
+  } else if (ch->kind == CHUNK_LARGE) {
+    uint32_t w;
+    for (w = 0; w < PAGE_WORDS; w++) {
+      res += (uint64_t)__builtin_popcountll(ch->dirty_pages[w] & ~ch->alloc[w]) * PAGE_SIZE;
+    }
+    clean = ch->used == 0 && res == 0;
+  } else if (ch->kind == CHUNK_FREE && !ch->decommitted) {
+    res = ch->dirty ? CHUNK_SIZE : 0;
+    clean = res == 0;
+  }
+  if (sign > 0) {
+    gc_heap.clean_empty_chunks += (uint32_t)clean;
+    gc_heap.free_resident_other += res;
+  } else {
+    gc_heap.clean_empty_chunks -= (uint32_t)clean;
+    gc_heap.free_resident_other -= res;
+  }
+}
+
 /* Chunk C back to CHUNK_FREE (its data stays committed; dirty unless
  * the caller returned its pages). */
 void gc_chunk_give(uint64_t c) {
   uint8_t was = gc_heap.chunks[c].kind;
+  gc_chunk_account(c, -1);
   memset(&gc_heap.chunks[c], 0, sizeof(GcChunk));
   gc_heap.chunks[c].kind = CHUNK_FREE;
   gc_heap.chunks[c].dirty = was != CHUNK_FREE;
   gc_heap.chunks[c].idle = (uint32_t)gc_heap.return_clock;
   gc_heap.free_chunks++;
+  gc_chunk_account(c, 1);
 }
 
 /* Give the pages of [P, P + LEN) back to the OS (page-aligned): they stay
@@ -304,6 +391,7 @@ static uint64_t make_small_chunk(void) {
   ch->used = 0;
   ch->free = NULL;
   ch->nfree = BLOCKS_PER_CHUNK;
+  ch->nres = dirty ? (uint8_t)BLOCKS_PER_CHUNK : 0;
   for (i = (int)BLOCKS_PER_CHUNK - 1; i >= 0; i--) {
     Block *b = &gc_heap.blocks[b0 + (uint64_t)i];
     b->in_use = 0;
@@ -314,6 +402,7 @@ static uint64_t make_small_chunk(void) {
   if (dirty) {
     gc_heap.free_resident += CHUNK_SIZE;
   }
+  gc_chunk_account(c, 1);
   if (c < gc_heap.small_hint) {
     gc_heap.small_hint = c;
   }
@@ -351,6 +440,11 @@ Block *gc_block_take(void) {
   b->next = NULL;
   if (!b->clean) {
     gc_heap.free_resident -= BLOCK_SIZE;
+    ch->nres--;
+  } else if (ch->used == 1 && ch->nres == 0) {
+    /* The chunk was empty with nothing resident (a new one, or one whose
+     * free blocks were all given back to the OS). */
+    gc_heap.clean_empty_chunks--;
   }
   b->clean = 0;
   memset(b->line_mark, 0, LINES_PER_BLOCK);
@@ -373,6 +467,7 @@ void gc_block_give(Block *b) {
   b->next = ch->free;
   ch->free = b;
   ch->nfree++;
+  ch->nres++;
   gc_heap.free_resident += BLOCK_SIZE;
   if (c < gc_heap.small_hint) {
     gc_heap.small_hint = c;
@@ -391,6 +486,9 @@ static void decommit_chunk(uint64_t c) {
   if (kind != CHUNK_FREE) {
     gc_chunk_give(c);
   }
+  /* A free chunk, committed: it leaves both counts (decommitted, it is in
+   * neither). */
+  gc_chunk_account(c, -1);
   gc_return_pages(chunk_base(c), CHUNK_SIZE);
   mprotect(chunk_base(c), CHUNK_SIZE, PROT_NONE);
   gc_return_pages(&gc_heap.starts[b0 * START_WORDS], CHUNK_START_WORDS * sizeof(uint64_t));
@@ -402,17 +500,28 @@ static void decommit_chunk(uint64_t c) {
   gc_heap.chunks[c].decommitted = 1;
 }
 
-/* The resident free bytes of chunk C: free blocks not madvised, the
+/* The resident free bytes of chunk C: free blocks not madvised (counted
+ * in GcChunk.nres as blocks join and leave the free list and are
+ * madvised; until the Valk stage's VALK-T a walk of the free list at
+ * every call, which a young collection that emptied a block makes: O577;
+ * AVANT_GC_VERIFY still walks it and stops on a count that differs), the
  * dirty free pages of a large-object chunk, or a free chunk's whole data
  * while it is dirty. */
 static uint64_t chunk_resident_free(uint64_t c) {
   GcChunk *ch = &gc_heap.chunks[c];
   uint64_t n = 0;
   if (ch->kind == CHUNK_SMALL) {
-    Block *b;
-    for (b = ch->free; b; b = b->next) {
-      if (!b->clean) {
-        n += BLOCK_SIZE;
+    n = (uint64_t)ch->nres * BLOCK_SIZE;
+    if (gc_heap.set.verify) {
+      uint64_t w = 0;
+      Block *b;
+      for (b = ch->free; b; b = b->next) {
+        if (!b->clean) {
+          w += BLOCK_SIZE;
+        }
+      }
+      if (w != n) {
+        gc_die("avant gc verify: a chunk's count of resident free blocks differs from its free list");
       }
     }
   } else if (ch->kind == CHUNK_LARGE) {
@@ -438,18 +547,49 @@ static uint64_t chunk_resident_free(uint64_t c) {
  * decommitted (madvised, made PROT_NONE, its side slices madvised; one
  * whose memory is already returned always is: keeping it costs only
  * commit charge), then free blocks are madvised one by one, then the
- * dirty free pages of large-object chunks. */
+ * dirty free pages of large-object chunks.
+ *
+ * Nothing to do is found at once (the Valk stage, VALK-T2, O630): the
+ * resident free bytes are a total kept as they change (gc_heap.free_resident
+ * and free_resident_other), and the chunks the first loop decommits
+ * whatever the total is (empty, committed, nothing resident) are counted
+ * (gc_heap.clean_empty_chunks, gc_chunk_account). With the total within
+ * the target the first loop decommits only those chunks and the second
+ * does nothing, so a call that finds the total within the target and no
+ * such chunk returns without reading the chunk map. Until VALK-T2 every
+ * call summed every chunk's resident free bytes and looked at every chunk
+ * (a young collection that empties a block calls this: 172 instructions
+ * at four chunks, sixteen popcounts for each large-object chunk, growing
+ * with the heap). AVANT_GC_VERIFY recounts both from the chunk map, as
+ * every call did. */
 void gc_heap_return(uint64_t live) {
   uint64_t keep = live / 4 > (4ull << 20) ? live / 4 : (4ull << 20);
   uint64_t hw = gc_heap.committed >> CHUNK_SHIFT;
   uint64_t now = gc_heap.return_clock;
-  uint64_t total = 0;
+  uint64_t total = gc_heap.free_resident + gc_heap.free_resident_other;
   uint64_t c;
   if (!hw) {
     return;
   }
-  for (c = 0; c < hw; c++) {
-    total += chunk_resident_free(c);
+  if (gc_heap.set.verify) {
+    uint64_t t = 0;
+    uint32_t e = 0;
+    for (c = 0; c < hw; c++) {
+      const GcChunk *ch = &gc_heap.chunks[c];
+      uint64_t r = chunk_resident_free(c);
+      t += r;
+      e += (uint32_t)(r == 0 && (((ch->kind == CHUNK_SMALL || ch->kind == CHUNK_LARGE) && ch->used == 0) ||
+                                 (ch->kind == CHUNK_FREE && !ch->decommitted)));
+    }
+    if (t != total) {
+      gc_die("avant gc verify: the total of the resident free bytes differs from the chunk map's");
+    }
+    if (e != gc_heap.clean_empty_chunks) {
+      gc_die("avant gc verify: the count of the empty chunks with nothing resident differs from the chunk map's");
+    }
+  }
+  if (total <= keep && gc_heap.clean_empty_chunks == 0) {
+    return;
   }
   for (c = hw; c-- > 0;) {
     GcChunk *ch = &gc_heap.chunks[c];
@@ -476,18 +616,26 @@ void gc_heap_return(uint64_t live) {
         if (!b->clean && b->idle < now) {
           gc_return_pages(b->base, BLOCK_SIZE);
           b->clean = 1;
+          ch->nres--;
           gc_heap.free_resident -= BLOCK_SIZE;
           total -= BLOCK_SIZE;
+          /* An empty chunk's last resident block: the next call
+           * decommits the chunk. */
+          if (ch->used == 0 && ch->nres == 0) {
+            gc_heap.clean_empty_chunks++;
+          }
         }
       }
     } else if (ch->kind == CHUNK_LARGE && ch->idle < now) {
       uint32_t p = 0;
+      uint64_t before = total;
       while (p < PAGES_PER_CHUNK && total > keep) {
         uint32_t q = p;
         /* One madvise per run of dirty free pages. */
         while (q < PAGES_PER_CHUNK && total > keep &&
                ((ch->dirty_pages[q >> 6] & ~ch->alloc[q >> 6]) >> (q & 63) & 1ULL)) {
           ch->dirty_pages[q >> 6] &= ~(1ULL << (q & 63));
+          gc_heap.free_resident_other -= PAGE_SIZE;
           total -= PAGE_SIZE;
           q++;
         }
@@ -498,8 +646,49 @@ void gc_heap_return(uint64_t live) {
           p++;
         }
       }
+      /* An empty chunk's last dirty pages: the next call decommits it. */
+      if (total != before && ch->used == 0 && chunk_resident_free(c) == 0) {
+        gc_heap.clean_empty_chunks++;
+      }
     }
   }
+}
+
+/* The mature space's blocks in order in its list alone (GcSpace's
+ * comment; the Valk stage, VALK-T, O577): back is emptied into list and
+ * rev cleared, the order unchanged. For the code that walks the blocks in
+ * order through Block.next: a full collection (its sweep, its
+ * defragmentation, the young allocator's list rebuilt after it) and
+ * mature allocation looking for a hole (place). O(the space's blocks)
+ * when there is something to do, nothing otherwise. */
+void gc_mature_normalize(void) {
+  GcSpace *sp = &gc_heap.space[SPACE_MATURE];
+  Block *head = sp->rev ? sp->back : sp->list;
+  Block *tail = sp->rev ? sp->list : sp->back;
+  Block *r = NULL;
+  if (!sp->rev && !sp->back) {
+    return;
+  }
+  /* The order is HEAD from its top down, then TAIL from its bottom up:
+   * TAIL reversed, appended to HEAD. */
+  while (tail) {
+    Block *n = tail->next;
+    tail->next = r;
+    r = tail;
+    tail = n;
+  }
+  if (!head) {
+    head = r;
+  } else {
+    Block *t = head;
+    while (t->next) {
+      t = t->next;
+    }
+    t->next = r;
+  }
+  sp->list = head;
+  sp->back = NULL;
+  sp->rev = 0;
 }
 
 /* The live lines of B, eight line marks at a time against the epoch
@@ -507,14 +696,32 @@ void gc_heap_return(uint64_t live) {
  * before, a byte loop over the 128 marks). */
 int gc_block_live_lines(Block *b) {
   uint64_t epoch8 = line_epoch8();
-  int n = 0;
+  uint64_t sum = 0;
+  int k;
+  /* Each word's live bytes as 0 or 1 per byte, added byte-wise (sixteen
+   * words: no byte passes 16), and the bytes summed once at the end (the
+   * Valk stage, VALK-T, O600: one multiply a block, not one a word). */
+  for (k = 0; k < LINE_WORDS; k++) {
+    uint64_t m;
+    memcpy(&m, b->line_mark + 8 * k, sizeof m);
+    sum += live_bytes_mask(m, epoch8) >> 7;
+  }
+  return (int)((sum * 0x0101010101010101ULL) >> 56);
+}
+
+/* Whether B has a live line (the young collection's first question of
+ * every young block; the Valk stage, VALK-T, O600: it counted them). */
+int gc_block_any_live(const Block *b) {
+  uint64_t epoch8 = line_epoch8();
   int k;
   for (k = 0; k < LINE_WORDS; k++) {
     uint64_t m;
     memcpy(&m, b->line_mark + 8 * k, sizeof m);
-    n += live_byte_count(live_bytes_mask(m, epoch8));
+    if (live_bytes_mask(m, epoch8)) {
+      return 1;
+    }
   }
-  return n;
+  return 0;
 }
 
 /* The line sweep of block B over the lines LO..HI (Stage 28 W15c, O87;
@@ -529,13 +736,20 @@ int gc_block_live_lines(Block *b) {
  * gc_reset_block_bump's find_hole did in three passes. Returns the live
  * line count and leaves the block's bump and limit on its first hole (as
  * gc_reset_block_bump does: search 0; a full block's cursor at its end).
- * *FREED counts the freed lines of the range. */
+ * *FREED counts the freed lines of the range. A block with no live line
+ * is left as it is (the Valk stage, VALK-T, O600): its whole range is
+ * counted freed and 0 returned; the caller frees such a block (the young
+ * sweep; the full sweep does not come here with one), and a block taken
+ * again has its start bits, line marks and cursor set anew
+ * (gc_block_take, gc_new_block), so clearing them here was work nothing
+ * read. */
 int gc_sweep_block_lines(Block *b, int lo, int hi, uint64_t *freed) {
   uint64_t epoch8 = line_epoch8();
   uint64_t live_bits[LINE_WORDS];
   uint64_t range_lo = (uint64_t)lo;
   uint64_t range_hi = (uint64_t)hi;
-  int live = 0;
+  uint64_t sum = 0;
+  int live;
   int k;
   int first_free = -1;
   int hole_end = LINES_PER_BLOCK;
@@ -543,7 +757,16 @@ int gc_sweep_block_lines(Block *b, int lo, int hi, uint64_t *freed) {
     uint64_t m;
     memcpy(&m, b->line_mark + 8 * k, sizeof m);
     live_bits[k] = live_bytes_mask(m, epoch8);
-    live += live_byte_count(live_bits[k]);
+    sum += live_bits[k] >> 7;
+  }
+  live = (int)((sum * 0x0101010101010101ULL) >> 56);
+  if (live == 0) {
+    int a = lo < 0 ? 0 : lo;
+    int z = hi > LINES_PER_BLOCK ? LINES_PER_BLOCK : hi;
+    if (z > a) {
+      *freed += (uint64_t)(z - a);
+    }
+    return 0;
   }
   for (k = 0; k < LINE_WORDS; k++) {
     uint64_t freeb = ~live_bits[k] & 0x8080808080808080ULL;
@@ -754,17 +977,13 @@ int avant_is_heap(void *payload) {
 /* The contract (ABI name kept, gc-design.md §3.1): 1 when a young
  * collection can move this object, 0 when no collection before the next
  * full one moves it; .parallel keeps a raw address only on 0. Under S+
- * (GC_STICKY_COPY, Stage 28 W15c) a young block object may be copied, so
- * it is 1 for one that is not pinned; mature and large objects stay put,
- * so a parallel numeric loop can keep their address. Under candidate S
- * (GC_STICKY_COPY 0) no young collection moves anything, so it is 0 for
- * every object (Stage 28 W15b). (Under E, deleted in W15d, it was 1 for
- * every young block object.) */
+ * (Stage 28 W15c) a young block object may be copied, so it is 1 for one
+ * that is not pinned; mature and large objects stay put, so a parallel
+ * numeric loop can keep their address. (Under candidate S alone, a
+ * build deleted in the Valk stage's VALK-T2, no young collection moved
+ * anything and it was 0 for every object; under E, deleted in W15d, it
+ * was 1 for every young block object.) */
 int32_t avant_is_young(void *payload) {
-#if !GC_STICKY_COPY
-  (void)payload;
-  return 0;
-#else
   AvantHeader *h;
   if (!payload || ((uintptr_t)payload & (ALIGN - 1)) != 0) {
     return 0;
@@ -779,7 +998,6 @@ int32_t avant_is_young(void *payload) {
     return 1;
   }
   return 0;
-#endif
 }
 
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *)) {
@@ -840,15 +1058,6 @@ void gc_clear_side_marks(void) {
   }
 }
 
-void gc_mark_object_lines(void *p) {
-  Block *b = NULL;
-  if (!gc_is_heap_payload(p, &b, NULL) || !b) {
-    return;
-  }
-  AvantHeader *h = avant_header(p);
-  mark_lines(b, (size_t)((uint8_t *)h - b->base), gc_obj_total(h));
-}
-
 void avant_type_map(uint32_t type_id, uint64_t word_bits) {
   gc_init();
   if (type_id == AVANT_TYPE_PTRS) {
@@ -867,6 +1076,7 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
   m->stride = 0;
   m->nrefs = (uint32_t)__builtin_popcountll(word_bits);
   gc_heap.type_set[type_id] = 1;
+  gc_type_refs_update(type_id);
 }
 
 /* Stage 28 W1b. Registers bits for payload words word_base ..
@@ -921,4 +1131,5 @@ void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_ba
   m->nrefs -= (uint32_t)__builtin_popcountll(m->words[chunk]);
   m->words[chunk] = bits;
   m->nrefs += (uint32_t)__builtin_popcountll(bits);
+  gc_type_refs_update(type_id);
 }

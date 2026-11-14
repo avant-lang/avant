@@ -17,6 +17,8 @@
 #   GOLDEN_MODE      compile flag: --debug (default), --release, or "" (bare)
 #   GOLDEN_OUT       report directory (default results/run-goldens-YYYYmmdd-HHMMSS)
 #   GOLDEN_KEEP=1    keep the work directory (binaries, outputs) in GOLDEN_OUT/work
+#   GOLDEN_HARNESS_FRESH=1  build the LangArena harness into the work
+#                    directory for this run instead of reusing the cached one
 # --bless writes each program's result as its golden instead of comparing
 # (a program that fails to compile is reported and gets no golden).
 #
@@ -26,7 +28,8 @@
 #   fixtures   every tests/fixtures/**/*.av that has `fn main`, except
 #              tests/fixtures/format/ (formatter inputs, not programs)
 #   langarena  the 50 LangArena tasks in `test` mode through the harness
-#              (langarena/harness/measure.cr, built once into the work dir);
+#              (langarena/harness/measure.cr: the checkout's cached binary,
+#              tools/la-harness.sh, rebuilt only when its source changed);
 #              compared per task: the checksum, ok, exit status,
 #              compile/timeout flags, the program's stdout and stderr (the
 #              harness's wall/RSS/compile-time lines are not compared)
@@ -68,7 +71,7 @@
 # program has its own work directory (GOLDEN_OUT/work/p/N: binary, run
 # directory, outputs, TMPDIR); each LangArena task is its own harness
 # process (AVANT_TASK_LIST of one task, its own results directory), after
-# the harness is built once (the build starts first). A program that names
+# the harness binary is ready (the cached one, or its build, starts first). A program that names
 # a fixed port (serial_reason below) runs under one lock, never beside
 # another such program. Results, the report and the summary are written in
 # the sequential order, by one aggregation pass: the same files as the
@@ -287,13 +290,23 @@ prog_job() {
   fi
 }
 
-# The harness, built once (the first job when a task is queued).
+# The harness (the first job when a task is queued): the checkout's cached
+# binary from tools/la-harness.sh, built only when langarena/harness/measure.cr
+# changed (O115); GOLDEN_HARNESS_FRESH=1 builds a fresh one into the work
+# directory instead, as every run did before.
 build_job() {
-  if timeout -k 10 900 crystal build --no-debug -o "$work/measure" langarena/harness/measure.cr > "$out/harness-build.log" 2>&1 < /dev/null; then
+  if [ "${GOLDEN_HARNESS_FRESH:-0}" = 1 ]; then
+    if timeout -k 10 900 crystal build --no-debug -o "$work/measure" langarena/harness/measure.cr > "$out/harness-build.log" 2>&1 < /dev/null; then
+      echo "$work/measure" > "$work/measure.path"; echo ok > "$work/measure.done"
+    else
+      echo failed > "$work/measure.done"
+    fi
+  elif sh tools/la-harness.sh > "$work/measure.path" 2> "$out/harness-build.log" < /dev/null; then
     echo ok > "$work/measure.done"
   else
     echo failed > "$work/measure.done"
   fi
+  echo "harness: $(cat "$work/measure.path" 2>/dev/null)$([ "${GOLDEN_HARNESS_FRESH:-0}" = 1 ] && echo " (fresh, GOLDEN_HARNESS_FRESH=1)")" >> "$out/harness-build.log"
 }
 
 # task_job NAME: one task through the harness in `test` mode, its own
@@ -305,7 +318,7 @@ task_job() {
   # shellcheck disable=SC2086
   env -u AVANT_SKIP_OK -u AVANT_PROBE_SCALE -u AVANT_TASK_LIST -u AVANT_BACKEND TMPDIR="$d/tmp" $ENVW AVANT_COMPILER="$COMPILER" AVANT_CODEGEN=$codegen \
     AVANT_RESULTS_DIR="$d/la" AVANT_TASK_LIST="$1" AVANT_TASK_TIMEOUT_S=120 AVANT_COMPILE_TIMEOUT_S=120 \
-    timeout -k 10 2700 "$work/measure" test > "$d/la.log" 2>&1 < /dev/null
+    timeout -k 10 2700 "$(cat "$work/measure.path")" test > "$d/la.log" 2>&1 < /dev/null
   echo "harness rc=$?" >> "$d/la.log"
   echo "total=$(secs "$t0j" "$(now)")" > "$d/time"
 }

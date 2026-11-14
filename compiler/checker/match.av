@@ -186,22 +186,117 @@ pub fn (checker_self: Checker) subst_for_method(sig: FuncSig, call_owner: String
   checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected)
 }
 
+// The defaults of the parameters a call leaves out, spliced in as
+// arguments and marked (Expr.is_default), so a call that is checked again
+// (a generic function's instance, a receiver checked twice) drops them
+// first (drop_spliced_defaults) and no default is taken for an argument
+// the caller wrote.
+//
+// Where a default names an earlier parameter it reads that parameter's
+// value: the argument as the call passes it, evaluated once (O546, Stage
+// 29 W-FIX1d). The name becomes a hidden one, `$F.J`: argument J of the
+// call's argument frame F, a number this call keeps in its int_bits (a
+// call has no other use for the field; 0 when no default of the call
+// names an earlier parameter). check_default_arg declares the
+// hidden names with the parameters' types, and the back end binds each
+// to the operand it lowered for that argument (mir lower_args_to).
+// Before, a copy of the argument's expression stood in for the name, so
+// the argument was evaluated once for its parameter and once more for
+// each mention (and each time a lambda in the default ran), and the
+// default was typed by the argument's type instead of the parameter's.
 pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
   while expr.args.size < fnn.params.size {
     i = expr.args.size
     if d = fnn.params[i].default {
-      cloned = clone_expr(d)
-      from: Array(String) = []
-      to: Array(Expr) = []
-      for j in 0..i {
-        from.push(fnn.params[j].name)
-        to.push(expr.args[j])
+      spliced = clone_expr(d)
+      dk = d.kind
+      if i > 0 && !(dk == ex_int() || dk == ex_float() || dk == ex_bool() || dk == ex_string() || dk == ex_nil()) {
+        // The call takes a frame only when a default does name an
+        // earlier parameter: a number tried here is given back unused.
+        fresh = expr.int_bits == 0u64
+        if fresh {
+          checker_self.arg_frames = checker_self.arg_frames + 1
+          expr.int_bits = checker_self.arg_frames.to_u64
+        }
+        from: Array(String) = []
+        to: Array(Expr) = []
+        for j in 0..i {
+          from.push(fnn.params[j].name)
+          ref = Expr.new(ex_name(), d.loc)
+          ref.int_bits = expr.int_bits
+          ref.op = j
+          to.push(ref)
+        }
+        spliced = rewrite_expr_names(spliced, from, to)
+        used = false
+        for ref in to {
+          if ref.ident.size > 0 {
+            used = true
+          }
+        }
+        if fresh && !used {
+          expr.int_bits = 0u64
+          checker_self.arg_frames = checker_self.arg_frames - 1
+        }
       }
-      expr.args.push(rewrite_expr_names(cloned, from, to))
+      spliced.is_default = true
+      expr.args.push(spliced)
     } else {
       checker_self.fail(expr.loc, "${fnn.name} takes ${fnn.params.size} arguments, got ${expr.args.size}")
       return
     }
+  }
+}
+
+// A default spliced into a call by fill_defaults, checked against its
+// parameter (O343, O17, Stage 29 W-FIX1b): a default belongs to its
+// declaration, so it is checked in the callee's module, with no local of
+// the caller in scope and no receiver, whatever the call's form (before,
+// an unqualified call, a constructor and a method call checked it in the
+// calling module: a private function of the callee's module was unknown
+// there, and a function of the same name in the calling module was
+// called instead). The one scope it is checked in holds the earlier
+// parameters under their hidden names (fill_defaults), each with its
+// declared type from params, the callee's parameter types as this call
+// sees them. The enclosing lambdas' floors are lowered to that scope for
+// the check, so a hidden name is a capture only of a lambda written
+// inside the default.
+pub fn (checker_self: Checker) check_default_arg(expr: Expr, i: Int, params: Array(Ty), fnn: Function): Ty {
+  saved_mod = checker_self.current_module
+  saved_scopes = checker_self.scopes
+  saved_self = checker_self.self_ty
+  saved_name = checker_self.self_name
+  saved_floors = checker_self.lam_scopes
+  fresh: Array(Scope) = []
+  checker_self.scopes = fresh
+  checker_self.push_scope
+  if expr.int_bits != 0u64 {
+    for j in 0..i {
+      if j < params.size {
+        checker_self.bind(arg_frame_name(expr.int_bits, j), params[j])
+      }
+    }
+  }
+  floors: Array(Int) = []
+  for f in saved_floors {
+    floors.push(0)
+  }
+  checker_self.lam_scopes = floors
+  checker_self.current_module = fnn.mod_name
+  checker_self.self_ty = nil
+  checker_self.self_name = ""
+  got = checker_self.check_expr_as(expr.args[i], params[i])
+  checker_self.self_name = saved_name
+  checker_self.self_ty = saved_self
+  checker_self.current_module = saved_mod
+  checker_self.lam_scopes = saved_floors
+  checker_self.scopes = saved_scopes
+  got
+}
+
+pub fn (checker_self: Checker) drop_spliced_defaults(expr: Expr) {
+  while expr.args.size > 0 && expr.args[expr.args.size - 1].is_default {
+    expr.args.pop
   }
 }
 
@@ -457,32 +552,32 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
         mod_ok = false
       }
       if mod_ok {
-      if sig.name == name {
-        is_inst = false
-        for j in 0..checker_self.instances.size {
-          if checker_self.instances[j].ol_index == sig.node.ol_index {
-            is_inst = true
-          }
-        }
-        if !is_inst && checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
-          if sig.node.generic {
-            saw_generic = true
-            if subst = checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected) {
-              cands.push(sig)
+        if sig.name == name {
+          is_inst = false
+          for j in 0..checker_self.instances.size {
+            if checker_self.instances[j].ol_index == sig.node.ol_index {
+              is_inst = true
             }
-          } else {
-            ok = true
-            for k in 0..arg_tys.size {
-              if !ty_assignable(arg_tys[k], sig.params[k]) {
-                ok = false
+          }
+          if !is_inst && checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
+            if sig.node.generic {
+              saw_generic = true
+              if subst = checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected) {
+                cands.push(sig)
+              }
+            } else {
+              ok = true
+              for k in 0..arg_tys.size {
+                if !ty_assignable(arg_tys[k], sig.params[k]) {
+                  ok = false
+                }
+              }
+              if ok {
+                cands.push(sig)
               }
             }
-            if ok {
-              cands.push(sig)
-            }
           }
         }
-      }
       }
     }
     x += 1
@@ -654,7 +749,19 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
     checker_self.fail(expr.loc, "type-level functions on generic types are not supported yet")
     return checker_self.t_int()
   }
+  given = expr.args.size
   checker_self.fill_defaults(expr, sig.node)
+  // The defaults it spliced are checked like any argument (O17: they
+  // reached the back end untyped).
+  for di in given..expr.args.size {
+    if di < sig.params.size {
+      dgot = checker_self.check_default_arg(expr, di, sig.params, sig.node)
+      if !ty_assignable(dgot, sig.params[di]) {
+        dn = di + 1
+        checker_self.fail(expr.args[di].loc, "argument ${dn} of ${ty.show}.${expr.callee} is ${dgot.show}, expected ${sig.params[di].show}")
+      }
+    }
+  }
   expr.resolved = sig.node.emit_name
   expr.type_call = true
   sig.ret
@@ -691,7 +798,7 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
       if i < arg_tys.size {
         got = arg_tys[i]
       } else {
-        got = checker_self.check_expr_as(expr.args[i], sig.params[i])
+        got = checker_self.check_default_arg(expr, i, sig.params, sig.node)
       }
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {
@@ -900,11 +1007,17 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
     }
   }
   base = deferred.size
+  given = expr.args.size
   checker_self.fill_defaults(expr, sig.node)
   i = base
   while i < expr.args.size {
     if i < sig.params.size {
-      got = checker_self.check_expr_as(expr.args[i], sig.params[i])
+      got = checker_self.t_int()
+      if i < given {
+        got = checker_self.check_expr_as(expr.args[i], sig.params[i])
+      } else {
+        got = checker_self.check_default_arg(expr, i, sig.params, sig.node)
+      }
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
         checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
@@ -978,7 +1091,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
       if i < arg_tys.size {
         got = arg_tys[i]
       } else {
-        got = checker_self.check_expr_as(expr.args[i], sig.params[i])
+        got = checker_self.check_default_arg(expr, i, sig.params, sig.node)
       }
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {
