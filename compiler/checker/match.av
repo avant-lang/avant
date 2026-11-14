@@ -34,6 +34,9 @@ pub fn (checker_self: Checker) unify_ty(pattern: Ty, actual: Ty, keys: Array(Str
   if pattern.is_var {
     return checker_self.subst_put(keys, vals, pattern.name, actual)
   }
+  if pattern.is_union {
+    return checker_self.unify_union(pattern, actual, keys, vals) == 1
+  }
   if pattern.is_array {
     if actual.is_array {
       if pe = pattern.inner, ae = actual.inner {
@@ -100,13 +103,120 @@ pub fn (checker_self: Checker) unify_ty(pattern: Ty, actual: Ty, keys: Array(Str
   actual.same_as(pattern)
 }
 
+// A union pattern against an argument's type (Stage 29 W5b1, O492):
+// the argument's members (or the argument itself) less those the
+// pattern names, concretely or through a type parameter already bound;
+// the one unbound parameter left takes the rest (`T | Bad` against
+// `Int | Bad` gives T = Int; against `Int` too, since an `Int` is
+// assignable to the union). 1 when it unifies, 0 when it cannot, 2 when
+// two or more unbound parameters remain (`T | E` against `Int | Bad`):
+// the split is ambiguous until another argument or the expected result
+// binds one of them. A pattern without parameters asks for an argument
+// assignable to it, as a call to a function that is not generic does.
+pub fn (checker_self: Checker) unify_union(pattern: Ty, actual: Ty, keys: Array(String), vals: Array(Ty)): Int {
+  if !ty_has_var(pattern) {
+    if ty_assignable(actual, pattern) {
+      return 1
+    }
+    return 0
+  }
+  rest: Array(Ty) = []
+  if actual.is_union {
+    for am in actual.members {
+      rest.push(am)
+    }
+  } else {
+    rest.push(actual)
+  }
+  free: Array(String) = []
+  for pm in pattern.members {
+    if pm.is_var {
+      if bound = checker_self.subst_get(keys, vals, pm.name) {
+        bms: Array(Ty) = []
+        if bound.is_union {
+          bms = bound.members
+        } else {
+          bms.push(bound)
+        }
+        for bm in bms {
+          rest = union_rest_without(rest, bm)
+        }
+      } else {
+        seen = false
+        for fname in free {
+          if fname == pm.name {
+            seen = true
+          }
+        }
+        if !seen {
+          free.push(pm.name)
+        }
+      }
+    } else if ty_has_var(pm) {
+      // A member with a parameter inside (`Array(T) | Bad`): the first
+      // remaining member it unifies with.
+      j = 0
+      found = -1
+      while j < rest.size && found < 0 {
+        if checker_self.unify_ty(pm, rest[j], keys, vals) {
+          found = j
+        }
+        j += 1
+      }
+      if found >= 0 {
+        rest = union_rest_without(rest, rest[found])
+      }
+    } else {
+      rest = union_rest_without(rest, pm)
+    }
+  }
+  if free.size == 0 {
+    if rest.size == 0 {
+      return 1
+    }
+    return 0
+  }
+  if free.size > 1 {
+    return 2
+  }
+  if rest.size == 0 {
+    return 0
+  }
+  if checker_self.subst_put(keys, vals, free[0], ty_union_build(rest)) {
+    return 1
+  }
+  0
+}
+
+pub fn union_rest_without(rest: Array(Ty), m: Ty): Array(Ty) {
+  out: Array(Ty) = []
+  for r in rest {
+    if !r.same_as(m) {
+      out.push(r)
+    }
+  }
+  out
+}
+
 pub fn (checker_self: Checker) infer_subst(tparams: Array(String), params: Array(Ty), arg_tys: Array(Ty), ret: Ty, expected: Ty?): Array(Ty)? {
   keys: Array(String) = []
   vals: Array(Ty) = []
+  later: Array(Int) = []
+  checker_self.infer_note = ""
   i = 0
   while i < params.size {
-    if i < arg_tys.size && !checker_self.unify_ty(params[i], arg_tys[i], keys, vals) {
-      return nil
+    if i < arg_tys.size {
+      if params[i].is_union {
+        u = checker_self.unify_union(params[i], arg_tys[i], keys, vals)
+        if u == 0 {
+          return nil
+        }
+        if u == 2 {
+          later.push(i)
+        }
+      } else if !checker_self.unify_ty(params[i], arg_tys[i], keys, vals) {
+        return nil
+      }
     }
     i += 1
   }
@@ -116,6 +226,14 @@ pub fn (checker_self: Checker) infer_subst(tparams: Array(String), params: Array
       if e = expected, !e.is_void && !checker_self.unify_ty(ret, e, keys, vals) {
         return nil
       }
+    }
+  }
+  // A union argument whose split was ambiguous, once the others and the
+  // expected result have bound what they can (unify_union).
+  for li in later {
+    if checker_self.unify_union(params[li], arg_tys[li], keys, vals) != 1 {
+      checker_self.infer_note = ": the type parameters of ${params[li].show} split ${arg_tys[li].show} in more than one way; give the result a declared type, or pass an argument that fixes one of them"
+      return nil
     }
   }
   out: Array(Ty) = []
@@ -472,7 +590,8 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
   }
   if cands.size == 0 {
     if saw_generic {
-      checker_self.fail(loc, "cannot infer type argument")
+      checker_self.fail(loc, "cannot infer type argument${checker_self.infer_note}")
+      checker_self.infer_note = ""
       return nil
     }
     only: FuncSig? = nil
