@@ -320,36 +320,110 @@ pub class Lexer {
     ""
   }
 
+  // A digit of base 2, 8, 10 or 16.
+  pub fn digit_of(c: Int, base: Int): Bool {
+    if base == 16 {
+      return ch_is_hex(c)
+    }
+    if base == 10 {
+      return ch_is_digit(c)
+    }
+    c >= 48 && c < 48 + base
+  }
+
+  // The digits of one run (an integer part, a fraction, an exponent),
+  // with `_` between two digits (D315); false after an error.
+  pub fn scan_digits(base: Int): Bool {
+    while true {
+      c = self.peek
+      if c == 95 {
+        if !digit_of(self.peek_next, base) {
+          fail_tok(self.here, "a `_` in a number stands between two digits")
+          return false
+        }
+        self.bump
+        continue
+      }
+      if !digit_of(c, base) {
+        return true
+      }
+      self.bump
+    }
+    true
+  }
+
+  // A number's text without its separators (the formatter keeps them).
+  pub fn number_text(start: Int): String {
+    raw = str_slice(self.source.text, start, self.pos)
+    if self.keep_comments {
+      return raw
+    }
+    b = buf_new()
+    for i in 0..raw.size {
+      if raw[i] != 95 {
+        b.push_byte(raw[i])
+      }
+    }
+    b.to_s
+  }
+
+  // 0x, 0b and 0o (D315, D352): a prefix in lower case (0X too, as
+  // before), at least one digit after it, `_` only between digits; a
+  // decimal digit that is no digit of the base is an error.
+  pub fn read_prefixed(loc: Location, start: Int, base: Int, name: String, p: String): Token {
+    self.bump
+    self.bump
+    if self.peek == 95 {
+      return fail_tok(self.here, "a `_` in a number stands between two digits, not after ${p}")
+    }
+    if !digit_of(self.peek, base) {
+      return fail_tok(self.here, "${name} literal needs a digit after ${p}")
+    }
+    if !scan_digits(base) {
+      return Token.new(tk_eof(), loc, "")
+    }
+    if ch_is_digit(self.peek) {
+      article = "a"
+      if base == 8 {
+        article = "an"
+      }
+      return fail_tok(self.here, "${chr(self.peek)} is not ${article} ${name} digit")
+    }
+    text = number_text(start)
+    suffix = self.read_int_suffix
+    if suffix.size == 0 {
+      return Token.new(tk_integer(), loc, intern_str(text))
+    }
+    Token.new(tk_integer(), loc, intern_str(text + suffix))
+  }
+
   pub fn read_number(loc: Location): Token {
     start = self.pos
     if self.peek == 48 {
       n = self.peek_next
       if n == 120 || n == 88 {
-        self.bump
-        self.bump
-        if !ch_is_hex(self.peek) {
-          return fail_tok(self.here, "hex literal needs a digit after 0x")
-        }
-        while ch_is_hex(self.peek) {
-          self.bump
-        }
-        text = str_slice(self.source.text, start, self.pos)
-        suffix = self.read_int_suffix
-        if suffix.size == 0 {
-          return Token.new(tk_integer(), loc, intern_str(text))
-        }
-        return Token.new(tk_integer(), loc, intern_str(text + suffix))
+        return read_prefixed(loc, start, 16, "hex", "0x")
+      }
+      if n == 98 {
+        return read_prefixed(loc, start, 2, "binary", "0b")
+      }
+      if n == 111 {
+        return read_prefixed(loc, start, 8, "octal", "0o")
+      }
+      if n == 66 || n == 79 {
+        return fail_tok(loc, "write the prefix in lower case: 0${chr(n + 32)}")
       }
     }
-    while ch_is_digit(self.peek) {
-      self.bump
+    if !scan_digits(10) {
+      return Token.new(tk_eof(), loc, "")
     }
+    int_end = self.pos
     is_float = false
     if self.peek == 46 && ch_is_digit(self.peek_next) {
       is_float = true
       self.bump
-      while ch_is_digit(self.peek) {
-        self.bump
+      if !scan_digits(10) {
+        return Token.new(tk_eof(), loc, "")
       }
     }
     if self.exponent_ahead {
@@ -359,13 +433,31 @@ pub class Lexer {
       if s == 43 || s == 45 {
         self.bump
       }
-      while ch_is_digit(self.peek) {
-        self.bump
+      if !scan_digits(10) {
+        return Token.new(tk_eof(), loc, "")
       }
     }
-    text = str_slice(self.source.text, start, self.pos)
+    text = number_text(start)
     if is_float {
       return Token.new(tk_float(), loc, intern_str(text))
+    }
+    if int_end - start > 1 && self.source.text[start] == 48 {
+      digits = number_text(start)
+      i = 0
+      while i < digits.size - 1 && (digits[i] == 48 || digits[i] == 95) {
+        i += 1
+      }
+      rest = str_slice(digits, i, digits.size)
+      octal = true
+      for j in 0..rest.size {
+        if rest[j] > 55 {
+          octal = false
+        }
+      }
+      if octal {
+        return fail_tok(loc, "a number does not start with 0: write ${rest} for the decimal number, or 0o${rest} for an octal one")
+      }
+      return fail_tok(loc, "a number does not start with 0: write ${rest}")
     }
     suffix = self.read_int_suffix
     if suffix.size == 0 {

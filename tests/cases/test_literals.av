@@ -63,6 +63,32 @@ fn char_cases: Array(LCase) {
   xs
 }
 
+fn number_cases: Array(LCase) {
+  xs: Array(LCase) = []
+  xs.push(refused("sep-end", "fn main {\n  x = 1_\n  puts(x)\n}\n", "a `_` in a number stands between two digits", "2:8"))
+  xs.push(refused("sep-double", "fn main {\n  x = 1__000\n  puts(x)\n}\n", "a `_` in a number stands between two digits", "2:8"))
+  xs.push(refused("sep-before-suffix", "fn main {\n  x = 1_u64\n  puts(x)\n}\n", "a `_` in a number stands between two digits", "2:8"))
+  xs.push(refused("sep-before-point", "fn main {\n  x = 1_.5\n  puts(x)\n}\n", "a `_` in a number stands between two digits", "2:8"))
+  xs.push(refused("sep-after-point", "fn main {\n  x = 1.5_\n  puts(x)\n}\n", "a `_` in a number stands between two digits", "2:10"))
+  xs.push(refused("sep-exponent-end", "fn main {\n  x = 1e5_\n  puts(x)\n}\n", "a `_` in a number stands between two digits", "2:10"))
+  xs.push(refused("sep-after-prefix", "fn main {\n  x = 0x_ff\n  puts(x)\n}\n", "a `_` in a number stands between two digits, not after 0x", "2:9"))
+  xs.push(refused("sep-after-bin", "fn main {\n  x = 0b_1\n  puts(x)\n}\n", "a `_` in a number stands between two digits, not after 0b", "2:9"))
+  xs.push(refused("bin-empty", "fn main {\n  x = 0b\n  puts(x)\n}\n", "binary literal needs a digit after 0b", "2:9"))
+  xs.push(refused("oct-empty", "fn main {\n  x = 0o\n  puts(x)\n}\n", "octal literal needs a digit after 0o", "2:9"))
+  xs.push(refused("hex-empty", "fn main {\n  x = 0x\n  puts(x)\n}\n", "hex literal needs a digit after 0x", "2:9"))
+  xs.push(refused("bin-digit", "fn main {\n  x = 0b102\n  puts(x)\n}\n", "2 is not a binary digit", "2:11"))
+  xs.push(refused("oct-digit", "fn main {\n  x = 0o78\n  puts(x)\n}\n", "8 is not an octal digit", "2:10"))
+  xs.push(refused("bin-upper", "fn main {\n  x = 0B101\n  puts(x)\n}\n", "write the prefix in lower case: 0b", "2:7"))
+  xs.push(refused("oct-upper", "fn main {\n  x = 0O17\n  puts(x)\n}\n", "write the prefix in lower case: 0o", "2:7"))
+  xs.push(refused("leading-zero", "fn main {\n  x = 017\n  puts(x)\n}\n", "a number does not start with 0: write 17 for the decimal number, or 0o17 for an octal one", "2:7"))
+  xs.push(refused("leading-zero-sep", "fn main {\n  x = 0_17\n  puts(x)\n}\n", "a number does not start with 0: write 17 for the decimal number, or 0o17 for an octal one", "2:7"))
+  xs.push(refused("leading-zero-nine", "fn main {\n  x = 09\n  puts(x)\n}\n", "a number does not start with 0: write 9", "2:7"))
+  xs.push(refused("leading-zeros", "fn main {\n  x = 00\n  puts(x)\n}\n", "a number does not start with 0: write 0 for the decimal number, or 0o0 for an octal one", "2:7"))
+  xs.push(accepted("bases", "fn main {\n  puts(0b101)\n  puts(0o17)\n  puts(0o777)\n  puts(0xff)\n  puts(0XFF)\n  puts(0b1111_0000)\n  puts(0xdead_beef)\n  puts(0o7_7)\n  puts(0b1u64)\n  puts(0o1777777777777777777777u64)\n  puts(0b111111111111111111111111111111111111111111111111111111111111111)\n  x: Int32 = 0b1000\n  puts(x)\n  puts(-0b11)\n  puts(0)\n  puts(0.5)\n  puts(0e0)\n}\n", "5\n15\n511\n255\n255\n240\n3735928559\n63\n1\n18446744073709551615\n9223372036854775807\n8\n-3\n0\n0.5\n0.0\n"))
+  xs.push(accepted("separators", "fn main {\n  puts(1_000_000)\n  puts(1_0)\n  puts(9_223_372_036_854_775_807)\n  puts(18_446_744_073_709_551_615u64)\n  puts(1_000.000_5)\n  puts(1_0e1_0)\n  puts(2.5e-1_0 > 0.0)\n  xs: Array(UInt32) = [4_000_000_000]\n  puts(xs[0])\n  puts(-1_000)\n}\n", "1000000\n10\n9223372036854775807\n18446744073709551615\n1000.0005\n100000000000.0\ntrue\n4000000000\n-1000\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -99,11 +125,11 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(LCase)) {
 // and formatting its own output changes nothing.
 fn check_format(c: Checks, compiler: String, dir: String) {
   src = "${dir}/lit-format.av"
-  _ = file_write(src, "fn main {\n  x  =  'a'+'\\''\n  y = \"\\0\\x41\${'}'}\\u{e9}\"\n}\n")
+  _ = file_write(src, "fn main {\n  x  =  'a'+'\\''\n  y = \"\\0\\x41\${'}'}\\u{e9}\"\n  a  =  1_000+0b1010_1010\n  b = 0o17*0xFF_ff\n  c = 1_000.5e1_0\n}\n")
   args: Array(String) = ["format", src]
   code = process_run_out(compiler, args, "${dir}/lit-format.out") ?? -1
   c.eq_int(code, 0, "format: exit 0")
-  want = "fn main {\n  x = 'a' + '\\''\n  y = \"\\0\\x41\${'}'}\\u{e9}\"\n}\n"
+  want = "fn main {\n  x = 'a' + '\\''\n  y = \"\\0\\x41\${'}'}\\u{e9}\"\n  a = 1_000 + 0b1010_1010\n  b = 0o17 * 0xFF_ff\n  c = 1_000.5e1_0\n}\n"
   c.eq_str(log_text("${dir}/lit-format.out"), want, "format: as written")
   again = "${dir}/lit-format2.av"
   _ = file_write(again, want)
@@ -119,6 +145,9 @@ fn test_main(c: Checks) {
     dir = scratch_dir()
     all: Array(LCase) = []
     for x in char_cases() {
+      all.push(x)
+    }
+    for x in number_cases() {
       all.push(x)
     }
     run_cases(c, compiler, dir, all)

@@ -58,6 +58,17 @@ pub fn parse_u64_hex(s: String): UInt64 {
   n
 }
 
+// The digits of a binary (radix 2) or octal (8) literal, which the lexer
+// checked (Stage 29 W5b2, D315, D352).
+pub fn parse_u64_radix(s: String, radix: Int): UInt64 {
+  n = 0u64
+  r = radix.to_u64
+  for i in 0..s.size {
+    n = n * r + (s[i] - 48).to_u64
+  }
+  n
+}
+
 pub class TypeBody {
   fields: Array(Field) = []
   methods: Array(Function) = []
@@ -447,6 +458,16 @@ pub class Parser {
     bits = 0u64
     if raw.size >= 2 && raw[0] == 48 && (raw[1] == 120 || raw[1] == 88) {
       bits = parse_u64_hex(str_slice(raw, 2, raw.size))
+      self.int_bits = bits
+      self.int_suffix = suffix
+      return true
+    }
+    if raw.size >= 2 && raw[0] == 48 && (raw[1] == 98 || raw[1] == 111) {
+      radix = 2
+      if raw[1] == 111 {
+        radix = 8
+      }
+      bits = parse_u64_radix(str_slice(raw, 2, raw.size), radix)
       self.int_bits = bits
       self.int_suffix = suffix
       return true
