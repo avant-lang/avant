@@ -138,6 +138,14 @@ pub class Checker {
   // O634): its arms are statements, as an `if`'s; check_switch reads and
   // clears it.
   pub switch_stmt: Bool = false
+  // A function's last switch, checked against the result type (Stage 29
+  // W5b1, O715): when every arm gives one type, that type is the
+  // switch's, converted once at the tail as before.
+  pub switch_tail: Bool = false
+  // Why the last inference failed, when a union's type parameters split
+  // the argument in more than one way (checker/match.av infer_subst,
+  // Stage 29 W5b1): added to "cannot infer type argument".
+  pub infer_note: String = ""
   // Inside the block of `Array(T).new(n) { |i| ... }` (how deep): a
   // `break` or `continue` there gets its own message.
   pub in_build: Int = 0
@@ -663,6 +671,10 @@ pub class Checker {
       cap_kill_assigned_in(stmt.then_body)
       pop_guard_facts(saved_gcap, saved_gnn, saved_gpos, saved_gne)
       pop_loop_facts(saved_facts)
+      if stmt.else_bind.size > 0 {
+        check_else_bind(stmt)
+        return
+      }
       if stmt.else_body.size > 0 {
         check_block(stmt.else_body, expected, false)
         cap_kill_assigned_in(stmt.else_body)
@@ -834,10 +846,18 @@ pub class Checker {
         if expr.kind == ex_switch() && expr.op != tk_if() && expr.op != tk_return() && (!at_tail || expected.is_void) {
           self.switch_stmt = true
         }
+        tail_switch = at_tail && !expected.is_void && expr.kind == ex_switch() && expr.op != tk_return()
         if at_tail && !expected.is_void && is_int_literal(expr) {
           // A literal tail adopts the result type, as `return 0` does
           // (Stage 29 W-INT1: an Int32 function may end in `0`).
           got = check_expr_as(expr, expected)
+        } else if tail_switch && !switch_arms_leave(expr) {
+          // A last switch (or if used as a value) sees the result type,
+          // so its arms may give different members of a union result
+          // (Stage 29 W5b1, O715).
+          self.switch_tail = true
+          got = check_expr_as(expr, expected)
+          self.switch_tail = false
         } else {
           got = check_expr(expr)
         }
@@ -853,6 +873,9 @@ pub class Checker {
             if !got.is_void && stmt.lead != 0 && (expr.kind == ex_unary() || expr.kind == ex_array()) {
               fail(stmt.loc, "this line starts with `${lead_spelling(stmt.lead)}`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)")
             }
+          } else if got.is_void && tail_switch && block_leaves([stmt]) {
+            // Every arm leaves (O715): the switch gives no value and
+            // needs none.
           } else {
             if !ty_assignable(got, expected) {
               fail(stmt.loc, "last expression is ${got.show}, expected ${expected.show}")
@@ -873,7 +896,14 @@ pub class Checker {
       bind(stmt.bind, success)
       check_body(stmt.then_body, expected, false)
       self.pop_scope
-      if stmt.else_body.size > 0 {
+      if stmt.else_bind.size > 0 {
+        if fty = check_else_bind(stmt) {
+          self.push_scope
+          bind(stmt.else_bind, fty)
+          check_body(stmt.else_body, expected, false)
+          self.pop_scope
+        }
+      } else if stmt.else_body.size > 0 {
         check_block(stmt.else_body, expected, false)
       }
       if at_tail && !expected.is_void {
@@ -886,6 +916,26 @@ pub class Checker {
         }
       }
     }
+  }
+
+  // `if v = f() { } else e { }` (Stage 29 W5b1, D352): the failure the
+  // else block reads, of the if-assign's one binding (checked first), or
+  // nil after an error: a condition list has several failures, and an if
+  // without a binding has none.
+  pub fn check_else_bind(stmt: Stmt): Ty? {
+    n = stmt.else_bind
+    if stmt.pre.size > 0 {
+      fail(stmt.loc, "else ${n} reads the failure of an if-assign's one binding, and this condition has several elements: bind them one by one, or switch over the value")
+      return nil
+    }
+    if stmt.bind.size == 0 {
+      fail(stmt.loc, "else ${n} names the failure of an if-assign (if v = f() { } else ${n} { }); this if binds nothing")
+      return nil
+    }
+    if c = stmt.cond, ct = c.ty {
+      return else_failure(ct, c.loc, "else ${n}")
+    }
+    nil
   }
 
   // A module name used as a bare qualifier that is also a method of the
@@ -960,6 +1010,10 @@ pub class Checker {
     check_cond_element(stmt)
     check_body(stmt.then_body, expected, false)
     self.pop_scope
+    if stmt.else_bind.size > 0 {
+      check_else_bind(stmt)
+      return
+    }
     if stmt.else_body.size > 0 {
       check_block(stmt.else_body, expected, false)
     }
@@ -1302,6 +1356,109 @@ pub class Checker {
       }
     }
     false
+  }
+
+  // The failure an `else e` reads (Stage 29 W5b1, D352): the one failure
+  // member of got, or the union of them, read with `switch`; nil after
+  // an error when got has no failure to read (none, or only `nil`).
+  // what names the form for the messages.
+  pub fn else_failure(got: Ty, loc: Location, what: String): Ty? {
+    if success = failure_split(got, loc, what) {
+      fails = ty_failures(got)
+      if fails.size == 1 && fails[0].is_nil {
+        fail(loc, "${what} on ${got.show}: its only failure is nil, which carries nothing to read; leave with `?? return`, `?? break` or `?? continue`")
+        return nil
+      }
+      if fails.size == 1 {
+        return fails[0]
+      }
+      return ty_union_build(fails)
+    }
+    nil
+  }
+
+  // `n = f() else e { ... }` (Stage 29 W5b1, D352; parser.av
+  // parse_else_guard): on a failure the block runs with e holding it and
+  // must leave (return, break, continue), so after the statement the
+  // value is the success part. The name is required: a guard that does
+  // not read the failure is `?? return`, `?? break` or `?? continue`.
+  pub fn check_else_guard(l: Expr, guard: Expr): Ty {
+    left = check_expr(l)
+    if self.has_err {
+      return left
+    }
+    if guard.ident.size == 0 {
+      fail(guard.loc, "an else guard names the failure it reads: write `else e { ... }`; to leave without reading it, write `?? return`, `?? break` or `?? continue`")
+      return left
+    }
+    payload = left
+    if fty = else_failure(left, guard.loc, "else ${guard.ident}") {
+      if s = ty_success_part(left) {
+        payload = s
+      }
+      self.push_scope
+      bind(guard.ident, fty)
+      check_body(guard.else_body, self.return_type, false)
+      self.pop_scope
+      if !self.has_err && !block_leaves(guard.else_body) {
+        fail(guard.loc, "the block of else ${guard.ident} must leave (return, break or continue): after the guard the value is the success, so a failure cannot go on")
+      }
+    }
+    guard.ty = payload
+    payload
+  }
+
+  // Whether a block always leaves its function or loop iteration: its
+  // last statement is return, break or continue, an if/else whose two
+  // branches leave, a gc.hold or pin block that leaves, or a switch
+  // statement whose every arm leaves (with an else, or over an enum or
+  // a union, whose switch without else the checker has made cover every
+  // member).
+  pub fn block_leaves(body: Array(Stmt)): Bool {
+    if body.size == 0 {
+      return false
+    }
+    last = body[body.size - 1]
+    k = last.kind
+    if k == st_return() || k == st_break() || k == st_continue() {
+      return true
+    }
+    if k == st_hold() || k == st_pin() {
+      return block_leaves(last.body)
+    }
+    if k == st_if() {
+      return last.else_body.size > 0 && block_leaves(last.then_body) && block_leaves(last.else_body)
+    }
+    if k == st_expr() {
+      if e = last.expr, e.kind == ex_switch() && e.op != tk_return() && e.op != tk_if() {
+        for cs in e.cases {
+          if !block_leaves(cs.body) {
+            return false
+          }
+        }
+        if e.has_else {
+          return block_leaves(e.else_body)
+        }
+        if c = e.cond, ct = c.ty {
+          return ct.is_enum || ct.is_union
+        }
+      }
+    }
+    false
+  }
+
+  // Whether every arm of a switch (and its else) leaves (block_leaves):
+  // read before the switch is checked.
+  pub fn switch_arms_leave(e: Expr): Bool {
+    for cs in e.cases {
+      if !block_leaves(cs.body) {
+        return false
+      }
+    }
+    if e.has_else {
+      return block_leaves(e.else_body)
+    }
+    e.cases.size > 0
   }
 
   pub fn coalesce_result(left: Ty, right_expr: Expr, loc: Location, opname: String): Ty {
@@ -2817,6 +2974,9 @@ pub class Checker {
     if l = expr.left, r = expr.right {
       op = expr.op
       if op == tk_question_question() {
+        if expr_is_else_guard(r) {
+          return check_else_guard(l, r)
+        }
         left = check_expr(l)
         if can_coalesce(left) {
           return coalesce_result(left, r, expr.loc, "??")
@@ -3837,16 +3997,21 @@ pub class Checker {
     t_int()
   }
 
+  // An `each` block (Stage 29 W5b1, O544): its statements are checked as
+  // the code around it, so a `return` leaves the function with the
+  // function's result type.
   pub fn check_block_void(block: Block, pname: String, pty: Ty) {
     self.push_scope
     bind(pname, pty)
-    check_body(block.body, t_void(), false)
+    check_body(block.body, self.return_type, false)
     self.pop_scope
   }
 
   pub fn check_switch(expr: Expr, has_want: Bool, want: Ty): Ty {
     stmt_mode = self.switch_stmt
     self.switch_stmt = false
+    tail_mode = self.switch_tail
+    self.switch_tail = false
     if expr.op == tk_if() && expr.else_body.size == 1 {
       if t = check_if_value(expr.else_body[0], has_want, want) {
         return t
@@ -3966,10 +4131,17 @@ pub class Checker {
       return t_int()
     }
     if has_want && !want.is_void {
+      one = true
       for branch_ty in branch_tys {
         if !ty_assignable(branch_ty, want) {
           fail(expr.loc, "switch branch is ${branch_ty.show}, expected ${want.show}")
         }
+        if !branch_ty.same_as(branch_tys[0]) {
+          one = false
+        }
+      }
+      if tail_mode && one && branch_tys.size > 0 {
+        return branch_tys[0]
       }
       return want
     }
@@ -4210,10 +4382,23 @@ pub class Checker {
 
   // The value of a block; with has_want its last expression is checked
   // against the wanted type, so a literal takes it (`[]`, `nil`, `0`).
+  // A last `if` with an else is the block's value (Stage 29 W5b1, O274):
+  // it becomes the node of an `if` used as a value (ast.av ex_switch, op
+  // tk_if), which every walker and the lowering already know. The other
+  // statements are checked as the code around them (O544): a `return`
+  // leaves the function, so it takes the function's result type.
   pub fn check_block_value_as(block: Block, has_want: Bool, want: Ty): Ty {
     if block.body.size == 0 {
       fail(block.loc, "block needs a value")
       return t_int()
+    }
+    tail = block.body[block.body.size - 1]
+    if tail.kind == st_if() && tail.else_body.size > 0 {
+      ife = Expr.new(ex_switch(), tail.loc)
+      ife.op = tk_if()
+      ife.has_else = true
+      ife.else_body.push(tail)
+      block.body[block.body.size - 1] = stmt_expr(tail.loc, ife)
     }
     self.push_scope
     last = block.body[block.body.size - 1]
@@ -4237,7 +4422,7 @@ pub class Checker {
         self.pop_scope
         return t_int()
       }
-      check_stmt(stmt, t_void(), false)
+      check_stmt(stmt, self.return_type, false)
       i += 1
     }
     self.pop_scope
@@ -4581,7 +4766,17 @@ pub class Checker {
     check_cond_element(stmt)
     t1 = check_value_branch(stmt.then_body, has_want, want)
     self.pop_scope
-    t2 = check_value_branch(stmt.else_body, has_want, want)
+    t2: Ty? = nil
+    if stmt.else_bind.size > 0 {
+      if fty = check_else_bind(stmt) {
+        self.push_scope
+        bind(stmt.else_bind, fty)
+        t2 = check_value_branch(stmt.else_body, has_want, want)
+        self.pop_scope
+      }
+    } else {
+      t2 = check_value_branch(stmt.else_body, has_want, want)
+    }
     if self.has_err {
       return t_int()
     }

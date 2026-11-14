@@ -120,6 +120,14 @@ fn rules: Array(PRule) {
   xs.push(rule("union-binding-outside-arm", "stmt", "", usite, "", "switch u {\n  case n: Int { puts(n) }\n  else { puts(0) }\n}\nputs(n)", "switch u {\n  case n: Int { puts(n) }\n  else { puts(0) }\n}\nputs(1)", "unknown name n"))
   xs.push(rule("union-case-nil-without-nil", "stmt", "", usite, "", "w: Int | String = 1\nswitch w {\n  case nil { puts(0) }\n  else { puts(1) }\n}", "w: Int | String | Nil = 1\nswitch w {\n  case nil { puts(0) }\n  else { puts(1) }\n}", "has no nil member"))
   xs.push(rule("union-label-not-member", "stmt", "", usite, "", "switch u {\n  case f: Float64 { puts(f) }\n  else { puts(0) }\n}", "switch u {\n  case f: Int { puts(f) }\n  else { puts(0) }\n}", "is not a member of"))
+  // README "Reading the error itself" (Stage 29 W5b1, D352): the else
+  // guard's block leaves, it reads a value that can fail, and its own
+  // name is not bound inside it; a return in a builtin's value block has
+  // the function's result type (O544).
+  xs.push(rule("guard-must-leave", "stmt", "", main_site, "", "n = parse_age(\"1\") else e {\n  puts(e.message)\n}\nputs(n)", "n = parse_age(\"1\") else e {\n  puts(e.message)\n  return\n}\nputs(n)", "the block of else e must leave"))
+  xs.push(rule("guard-no-failure", "stmt", "", main_site, "", "n = probe_k() else e {\n  return\n}\nputs(n)", "n = parse_age(\"1\") else e {\n  return\n}\nputs(n)", "else e needs a value that can fail"))
+  xs.push(rule("guard-reads-own-name", "stmt", "", main_site, "", "n = parse_age(\"1\") else e {\n  puts(n)\n  return\n}\nputs(n)", "n = parse_age(\"1\") else e {\n  puts(e.message)\n  return\n}\nputs(n)", "unknown name n"))
+  xs.push(rule("value-block-return-type", "stmt", "", "fn site: Int {\n@\n  0\n}\n\nfn main {\n  puts(site())\n}\n", "", "if [1].any { |x|\n  if x > 0 {\n    return \"one\"\n  }\n  false\n} {\n  puts(1)\n}", "if [1].any { |x|\n  if x > 0 {\n    return 1\n  }\n  false\n} {\n  puts(1)\n}", "return type is String, expected Int"))
   xs
 }
 

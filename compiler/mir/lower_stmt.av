@@ -31,6 +31,12 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
       return
     }
     if i == body.size - 1 && st.kind == st_expr() && lw.lw_ret != mt_void() {
+      if e = st.expr, et = e.ty, et.is_void && e.kind == ex_switch() {
+        // A last switch whose every arm leaves (Stage 29 W5b1, O715):
+        // a statement; nothing follows it.
+        lw.lower_stmt(st)
+        return
+      }
       if e = st.expr {
         lw.cov_stmt(st)
         v = lw.lower_ret_value(e)
