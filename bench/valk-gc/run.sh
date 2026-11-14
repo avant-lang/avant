@@ -280,6 +280,12 @@ governors() {
   cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort | uniq -c | awk '{printf "%s%s x%s", sep, $2, $1; sep = ", "} END {print ""}'
 }
 
+# all_performance: true when every CPU has a governor file and each reads
+# performance.
+all_performance() {
+  [ "$(cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort -u)" = performance ]
+}
+
 do_versions() {
   say "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   say "kernel: $(uname -sr)"
@@ -314,7 +320,9 @@ do_time() {
   local gov
   gov=$(governors)
   local dir=$OUT/raw
-  if [ "$gov" != "performance x$(nproc)" ]; then
+  # Every CPU's governor file, counted (O740): not against nproc, which
+  # inside a timed slot (numactl --cpunodebind) is one node's CPUs.
+  if ! all_performance; then
     [ "${VALK_GC_ALLOW_GOVERNOR:-0}" = 1 ] || die "the governor is not performance on every CPU ($gov): no timed run"
   fi
   rm -rf "$dir"
