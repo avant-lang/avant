@@ -1272,6 +1272,49 @@ static inline int vi_all(void *p) {
   return (avant_header(p)->flags & AVANT_FLAG_YOUNG) || !heap_offset(p, &off);
 }
 
+/* yholders_check in an incremental check (the Valk stage, VALK-TM3,
+ * O738): the same question of the same holders, asked of the slots
+ * VI_EACH_SLOT examines (every slot of a young holder, the slots on hot
+ * pages of the others) instead of every slot. A slot on a page not
+ * written since the last verification held, then, a reference that the
+ * collection after it left naming a mature object or nothing (a young
+ * collection promotes or frees every young object and fixes up every
+ * slot naming a moved one, which writes its page), and it still holds
+ * it: it cannot name a young object now, as vi_m_slot's skip of the same
+ * slots says (M's incremental form). Until VALK-TM3 every slot of every
+ * holder was walked and looked up at every incremental check: a buffer
+ * of N references that names one young object costs N lookups a
+ * collection, n^2/2 over a stress run that fills it (late_starts.av,
+ * O738). A candidate sends the check to the whole form, which walks
+ * every slot and prints, as before. */
+static uint64_t yholders_check_hot(void) {
+  size_t i;
+  uint64_t found = 0;
+  for (i = 0; i < g_yholders_n; i++) {
+    void *v = g_yholders[i];
+    void *st;
+    AvantHeader *h = avant_header(v);
+    int by_cards;
+    if (verify_names_young(v, &st) || (h->flags & AVANT_FLAG_REM)) {
+      continue;
+    }
+    if (vb_test(vb_named, v, AVANT_FLAG_MARKED) && verify_is_buffer(h)) {
+      continue;
+    }
+    by_cards = (h->flags & AVANT_FLAG_REMC) != 0;
+    if (by_cards && !rem_by_cards(h)) {
+      continue;
+    }
+    VI_EACH_SLOT(v, vi_all(v), slot, {
+      void *y;
+      if ((!by_cards || !gc_heap.cards[gc_card_index(slot)]) && verify_names_young(*slot, &y)) {
+        found++;
+      }
+    });
+  }
+  return found;
+}
+
 /* Was START, a block object that is not young, unreached by the last
  * whole T (and not visited since)? The last whole trace proved it
  * unreached; nothing has named it since, or M would have found the slot
@@ -1447,7 +1490,7 @@ static int vi_remembered(void) {
       }
     }
   }
-  vi_cand += yholders_check(0);
+  vi_cand += yholders_check_hot();
   vi_m_end();
   if (vi_cand) {
     return 0;

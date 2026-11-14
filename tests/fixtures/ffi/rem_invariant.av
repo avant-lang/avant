@@ -19,6 +19,7 @@
 // (tests/cases/test_gc_checks.av). Until VALK-T2 nothing was reported:
 // VALK-A1's planted defect (a compiler whose fresh pass ignores collecting
 // calls) ran silent under the verifier for the same reason.
+// REM_INVARIANT_WARM=1 makes the store after the verifier's warm-up.
 import std.gc
 
 class Cell {
@@ -37,6 +38,18 @@ fn main {
   barrier = 1
   if v = env_get("REM_INVARIANT_BREAK"), v == "1" {
     barrier = 0
+  }
+  // REM_INVARIANT_WARM=1 (the Valk stage, VALK-TM3, O738): 300 young
+  // collections first, so under AVANT_GC_VERIFY=1 the verifier is past
+  // its warm-up (SD_WARM, 256 verifications) and checks incrementally
+  // when the store is made: the missing barrier is then found by the
+  // incremental check's question of the hot pages (yholders_check_hot).
+  if v = env_get("REM_INVARIANT_WARM"), v == "1" {
+    warm = 0
+    for i in 0..300 {
+      warm = warm + "warm-${i}".size
+      gc.collect()
+    }
   }
   c = Cell.new("old")
   // Two young collections: the Cell survives the first and is promoted at

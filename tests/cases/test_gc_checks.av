@@ -426,6 +426,11 @@ fn test_rem_invariant(c: Checks, compiler: String, root: String, dir: String) {
     runs.push(run_job_env(dir, "rem_invariant", "rem_invariant.b${e}", "-u AVANT_NURSERY REM_INVARIANT_BREAK=1 ${brks[e]}"))
   }
   runs.push(run_job_env(dir, "rem_invariant", "rem_invariant.n0", "REM_INVARIANT_BREAK=1 AVANT_GC_VERIFY=1 AVANT_NURSERY=0"))
+  // O738 (the Valk stage, VALK-TM3): the store after the verifier's
+  // warm-up, so its incremental check (yholders_check_hot, the hot pages'
+  // slots only) is the one that must find it; with that check silenced
+  // the run reports nothing.
+  runs.push(run_job_env(dir, "rem_invariant", "rem_invariant.warm", "-u AVANT_NURSERY REM_INVARIANT_BREAK=1 REM_INVARIANT_WARM=1 AVANT_GC_VERIFY=1"))
   run_waves(runs)
   for e in 0..envs.size {
     what = "plain"
@@ -443,6 +448,9 @@ fn test_rem_invariant(c: Checks, compiler: String, root: String, dir: String) {
   }
   c.eq_str(log_text("${dir}/rem_invariant.n0.out"), "rem_invariant: young-2 24\n", "rem_invariant.av, a store with no barrier, under AVANT_GC_VERIFY=1 AVANT_NURSERY=0: the same output")
   c.eq_str(log_text("${dir}/rem_invariant.n0.err"), "", "rem_invariant.av, a store with no barrier, under AVANT_GC_VERIFY=1 AVANT_NURSERY=0: nothing is young, nothing is reported")
+  warm_err = log_text("${dir}/rem_invariant.warm.err")
+  c.eq_str(log_text("${dir}/rem_invariant.warm.out"), "rem_invariant: young-2 24\n", "rem_invariant.av, a store with no barrier after 300 young collections, under AVANT_GC_VERIFY=1: the same output")
+  c.expect(str_has(warm_err, "avant gc verify: missing barrier: holder ") && str_has(warm_err, "not remembered"), "rem_invariant.av, a store with no barrier after the verifier's warm-up: its incremental check finds the holder")
 }
 
 // O629 (the Valk stage, VALK-A2; D352): a C function's `String` result that
