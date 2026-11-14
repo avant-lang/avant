@@ -88,11 +88,11 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "gc-hold-tail", "import std.gc\nfn f(k: Int): Int {\n  gc.hold {\n    if k > 1 {\n      return 1\n    }\n  }\n}\nfn main {\n  puts(f(2))\n}\n", "missing return value")
     // Stage 29 W1a (A6): parser messages name the tokens (they printed the
     // kinds' numbers: "expected 28, found 5").
-    expect_err(c, compiler, stamp, "tokens-brace", "fn main {\n  x = 1\n  switch x {\n    case \"a\" {\n    }\n  }\n}\n", "expected `{`, found a string")
+    expect_err(c, compiler, stamp, "tokens-brace", "fn main {\n  x = 1\n  switch x {\n    case 1 \"a\" {\n    }\n  }\n}\n", "expected `{`, found a string")
     expect_err(c, compiler, stamp, "tokens-in", "fn main {\n  for i, x in [1] {\n  }\n}\n", "expected `in`, found `,`")
     expect_err(c, compiler, stamp, "tokens-paren", "fn main {\n  puts((0..10).step(2))\n}\n", "expected `)`, found `..`")
     expect_err(c, compiler, stamp, "tokens-expr", "fn main {\n  x = 3\n  x %= 3\n}\n", "expected an expression, found `=`")
-    expect_err(c, compiler, stamp, "tokens-top", "42\n", "expected struct, class, lib, fn, interface, import, quote, or comptime, found an integer")
+    expect_err(c, compiler, stamp, "tokens-top", "42\n", "expected struct, class, enum, lib, fn, interface, import, quote, or comptime, found an integer")
     // Stage 29 W1a (A5): a builtin's unknown name in field form reads as a
     // method that does not exist (the field form is a call).
     expect_err(c, compiler, stamp, "parens-unknown", "fn main {\n  s = \"x\"\n  puts(s.nosuch)\n}\n", "no method nosuch on String")
@@ -138,7 +138,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "struct-default", "struct Point {\n  x: Int = 0\n}\nfn main {\n  puts(1)\n}\n", "struct fields have no defaults")
     expect_err(c, compiler, stamp, "dup-case", "fn main {\n  switch 1 {\n    case 1 {\n      puts(1)\n    }\n    case 1 {\n      puts(2)\n    }\n  }\n}\n", "duplicate case")
     expect_err(c, compiler, stamp, "switch-else", "fn f(n: Int): String {\n  switch n {\n    case 0 {\n      \"zero\"\n    }\n  }\n}\nfn main {\n  puts(f(0))\n}\n", "needs else")
-    expect_err(c, compiler, stamp, "switch-str", "fn main {\n  switch \"x\" {\n    case 0 {\n      puts(1)\n    }\n  }\n}\n", "Int or Bool")
+    expect_err(c, compiler, stamp, "switch-float", "fn main {\n  switch 1.5 {\n    case 0 {\n      puts(1)\n    }\n  }\n}\n", "Int, Bool, String or an enum")
     expect_err(c, compiler, stamp, "field-default", "class Box {\n  k: Int = 2\n  n: Int = self.k + 1\n  fn initialize {\n  }\n}\nfn main {\n  puts(Box.new().n)\n}\n", "a field default cannot use self")
     expect_err(c, compiler, stamp, "spawn-class", "class Box {\n  n: Int\n  fn initialize(n: Int) {\n    self.n = n\n  }\n}\nfn main {\n  b = Box.new(1)\n  h = spawn { b.n }\n  puts(h.join)\n}\n", "cannot capture")
     expect_err(c, compiler, stamp, "spawn-array-store", "fn main {\n  xs = [1, 2, 3]\n  h = spawn {\n    xs[0] = 9\n    1\n  }\n  puts(h.join)\n}\n", "read-only until join")
@@ -155,7 +155,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "clayout-empty", "lib math {\n  struct Point {\n  }\n}\nfn main {\n  puts(1)\n}\n", "C layout needs a field")
     expect_err(c, compiler, stamp, "clayout-default", "lib math {\n  struct Point {\n    x: Int = 1\n  }\n}\nfn main {\n  puts(1)\n}\n", "C layout fields have no defaults")
     expect_err(c, compiler, stamp, "clayout-fn", "lib math {\n  struct Point {\n    fn f: Int {\n      1\n    }\n  }\n}\nfn main {\n  puts(1)\n}\n", "C layout fields are name: Type only")
-    expect_err(c, compiler, stamp, "lib-class", "lib math {\n  class Foo {\n  }\n}\nfn main {\n  puts(1)\n}\n", "inside lib, write fun or struct")
+    expect_err(c, compiler, stamp, "lib-class", "lib math {\n  class Foo {\n  }\n}\nfn main {\n  puts(1)\n}\n", "inside lib, write fun, struct or enum")
     expect_err(c, compiler, stamp, "ptr-generic", "lib math {\n  struct Point {\n    x: Int\n  }\n}\nfn (p: Ptr(Point)) id(x: T): T {\n  x\n}\nfn main {\n  puts(1)\n}\n", "Ptr methods are not generic")
     expect_err(c, compiler, stamp, "ptr-int", "fn (p: Ptr(Int)) id: Int {\n  1\n}\nfn main {\n  puts(1)\n}\n", "methods on Ptr(Int) are not Stage 18 Ptr methods")
     expect_err(c, compiler, stamp, "opaque-field", "lib sqlite3 {\n  fun open: Ptr(Sqlite3)\n}\nfn main {\n  db = sqlite3.open()\n  puts(db.x)\n}\n", "no field x on Ptr(Sqlite3)")
@@ -175,6 +175,14 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "fn-block", "fn main {\n  f: fn(Int): Int = { |n| n }\n  f(1) { |x| x }\n  puts(1)\n}\n", "function value does not take a block")
     expect_err(c, compiler, stamp, "fn-call-int", "fn main {\n  n = 1\n  puts((n)(2))\n}\n", "cannot call Int")
     expect_err(c, compiler, stamp, "fn-cret", "lib math {\n  fun make: fn(Int): Int\n}\nfn main {\n  puts(1)\n}\n", "C function pointers are not supported")
+    // A union in a `fun` signature that is not one pointer (O549, Stage 29
+    // W-FIX1d): it compiled, and C read a tag or a payload as the value.
+    // The optional references stay (tests/fixtures/ffi/opt_refs.av).
+    expect_err(c, compiler, stamp, "fun-optptr-ret", "lib c {\n  struct Pair {\n    a: Int32\n    b: Int32\n  }\n  fun malloc(size: Int): Ptr(Pair)?\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Ptr(Pair)?: C has one pointer there, and Ptr(T)? is a tag and a pointer in Avant, not a nullable pointer (that is not decided yet); declare Ptr(Pair)")
+    expect_err(c, compiler, stamp, "fun-optptr-param", "lib c {\n  fun free(p: Ptr(Void)?)\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Ptr(Void)?: C has one pointer there")
+    expect_err(c, compiler, stamp, "fun-optint", "lib c {\n  fun labs(n: Int?): Int\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int?: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL")
+    expect_err(c, compiler, stamp, "fun-union-ret", "lib c {\n  fun labs(n: Int): Int | String\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int | String: C has one word there")
+    expect_err(c, compiler, stamp, "fun-optfloat", "lib c {\n  fun fabs(x: Float64): Float64?\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Float64?: C has one word there")
     expect_err(c, compiler, stamp, "fn-ne", "fn main {\n  f: fn(): Int = { || 1 }\n  g: fn(): Int = { || 2 }\n  if f != g {\n    puts(1)\n  }\n}\n", "cannot compare fn values")
     expect_err(c, compiler, stamp, "fn-ret", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Int): Bool = f\n  puts(1)\n}\n", "expected fn(Int): Bool, got fn(Int): Int")
     expect_err(c, compiler, stamp, "fn-param", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Bool): Int = f\n  puts(1)\n}\n", "expected fn(Bool): Int, got fn(Int): Int")
@@ -202,8 +210,8 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "join-in-spawn", "fn main {\n  h = spawn { 1 }\n  t = spawn { h.join }\n  puts(t.join)\n}\n", "join inside a pool worker")
     expect_err(c, compiler, stamp, "parallel-in-spawn", "fn main {\n  xs = [1]\n  t = spawn {\n    ys = xs.parallel { |item| item }\n    1\n  }\n  puts(t.join)\n}\n", "parallel inside a pool worker")
     expect_err(c, compiler, stamp, "join-in-parallel", "fn main {\n  xs = [1]\n  ys = xs.parallel { |item|\n    h = spawn { 1 }\n    h.join\n  }\n  puts(ys[0])\n}\n", "join inside a pool worker")
-    expect_err(c, compiler, stamp, "mutex-escape", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = 0u64\n  }\n}\nfn main {\n  mu = Mutex.new(1)\n  y = 0\n  n = mu.with { |x|\n    y = x\n    x\n  }\n  puts(n)\n}\n", "mutex place cannot escape")
-    expect_err(c, compiler, stamp, "mutex-return", "class Mutex(T) {\n  cell: T\n  gate: UInt64\n  fn initialize(value: T) {\n    self.cell = value\n    self.gate = 0u64\n  }\n}\nfn main {\n  mu = Mutex.new(1)\n  n = mu.with { |x|\n    return x\n  }\n  puts(n)\n}\n", "return inside Mutex.with")
+    expect_err(c, compiler, stamp, "mutex-escape", "import std.sync\n\nfn main {\n  seed: Array(Int) = []\n  mu = Mutex.new(seed)\n  y: Array(Int) = []\n  n = mu.with { |x|\n    y = x\n    x.size\n  }\n  puts(n)\n}\n", "Mutex.with: the value stored into y, declared before the block, is the guarded value or a reference reached from it (Array(Int))")
+    expect_err(c, compiler, stamp, "mutex-return", "import std.sync\n\nfn main {\n  mu = Mutex.new(1)\n  h = spawn {\n    mu.with { |x|\n      return x\n    }\n    0\n  }\n  puts(h.join)\n}\n", "return or ? inside Mutex.with inside a spawn block: a spawn block cannot return")
     expect_err(c, compiler, stamp, "iface-no-opt", "interface Show {\n  fn to_s: String\n}\nstruct Vec2 {\n  x: Int\n  fn to_s: String { \"v\" }\n}\nfn show(v: T: Show): String { v.to_s }\nfn main {\n  puts(show(Vec2 { x: 1 }))\n}\n", "does not implement")
     expect_err(c, compiler, stamp, "iface-missing", "interface Show {\n  fn to_s: String\n}\nstruct Vec2: Show {\n  x: Int\n}\nfn main {\n  puts(1)\n}\n", "missing to_s")
     expect_err(c, compiler, stamp, "iface-ret", "interface Show {\n  fn to_s: String\n}\nstruct Vec2: Show {\n  x: Int\n  fn to_s: Int { 1 }\n}\nfn main {\n  puts(1)\n}\n", "returns Int, expected String")

@@ -361,6 +361,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   } else {
     avant_g_stats.full_collections++;
     gc_heap.return_clock++;
+    /* A full collection walks the mature blocks in order (its sweep, its
+     * defragmentation, gc_sticky_full_end): the order in one list. */
+    gc_mature_normalize();
     /* Non-moving for young objects: they are promoted where they lie
      * (defragmentation may move mature blocks, below). */
     gc_los_spare_drop();
@@ -519,6 +522,9 @@ void gc_init_slow(void) {
     return;
   }
   gc_heap.inited = 1;
+  /* A pointer buffer is walked word by word (EACH_REF_SLOT's list says
+   * so; every other entry starts as "no reference word"). */
+  gc_type_refs_update(AVANT_TYPE_PTRS);
   gc_settings_read(&gc_heap.set);
   if (gc_heap.set.young_fixed) {
     avant_young_bytes = gc_heap.set.young_fixed;

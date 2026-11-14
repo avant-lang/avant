@@ -1,0 +1,45 @@
+// Stage 29 W5a1 (D293, O392): switch on a String. The labels are string
+// literals, the match is byte equality, an arm may list several labels;
+// a value switch needs else, a statement without else does nothing on a
+// miss. Labels of one size, of several sizes, the empty string, bytes
+// past 127 and a long label.
+
+fn code(method: String): Int {
+  switch method {
+    case "GET", "HEAD" { 1 }
+    case "POST" { 2 }
+    case "PUT", "PATCH" { 3 }
+    case "" { 9 }
+    else { 0 }
+  }
+}
+
+fn word(s: String): String {
+  switch s {
+    case "café" { "accent" }
+    case "a fairly long label of more than thirty-two bytes" { "long" }
+    case "ab", "ba", "aa" { "two" }
+    else { "?" }
+  }
+}
+
+fn main {
+  for m in ["GET", "HEAD", "POST", "PUT", "PATCH", "", "get", "GETS", "DELETE", "POS"] {
+    puts("${m}=${code(m)}")
+  }
+  puts(word("café"))
+  puts(word("a fairly long label of more than thirty-two bytes"))
+  puts(word("a fairly long label of more than thirty-two byteS"))
+  puts(word("ba"))
+  puts(word("bb"))
+  n = 0
+  for s in ["x", "y", "zz", "x"] {
+    switch s {
+      case "x" { n += 1 }
+      case "zz" { n += 10 }
+    }
+  }
+  puts(n)
+  built = "PO" + "ST"
+  puts(code(built))
+}

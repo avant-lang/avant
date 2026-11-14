@@ -14,11 +14,11 @@
  * the files and is private to them). A runtime unit outside the
  * collector (strings, arrays, hashes, Buf, JSON, HTTP, I/O, tasks,
  * codecs) includes this header and calls only what it declares. Every
- * function here but the two runtime-internal entries at the end is also
+ * function here but the runtime-internal entries is also
  * declared, identically, by the shipped avant_rt.h, which generated
  * code uses; the declarations are repeated so this file states the
  * collector's surface on its own, and a mismatch with avant_rt.h is a
- * compile error. g_avant_shared, avant_alloc_c, the no-GC region (avant_gc_nogc_begin/end) and the
+ * compile error. g_avant_shared, the no-GC region (avant_gc_nogc_begin/end) and the
  * handle scopes (AvantGcFrame's fields, AVANT_GC_SCOPE) are the
  * names here avant_rt.h does not ship (it declares avant_gc_top and the
  * frame entries generated code uses, Stage 28 W18).
@@ -149,7 +149,9 @@
  *   "gc-lint: holds nothing" naming why.
  *
  *   How it is checked (gc-design.md section 4.2): AVANT_GC_STRESS=1 runs
- *   a young collection before every runtime C allocation that moves
+ *   a young collection before every allocation (avant_alloc; generated
+ *   code's allocations too since Stage 29 W-FIX1c, the inline path being
+ *   off under it) that moves
  *   every young object S+ can move and fills freed memory with 0xdb
  *   (the stress mode, avant_gc_collect.c), so a function that breaks
  *   RC1 or RC2 reads poison or an old copy at once; AVANT_GC_VERIFY=1's
@@ -263,9 +265,12 @@
  *                          stderr at exit
  *   AVANT_GC_STRESS        switch, default 0: the full stress mode
  *                          (testing; W14b1, full since Stage 28 W16a):
- *                          a young collection before every runtime C
- *                          allocation (unshared programs, outside no-GC
- *                          regions); every young collection evacuates
+ *                          a young collection before every allocation
+ *                          (outside no-GC regions): runtime C's, and
+ *                          since Stage 29 W-FIX1c generated code's and
+ *                          user C's, the inline allocation path being
+ *                          never published under it (O207); every
+ *                          young collection evacuates
  *                          every young block nothing names imprecisely
  *                          (mixed blocks too), and freed memory (free
  *                          young lines, evacuated blocks, freed large
@@ -284,9 +289,9 @@ void avant_barrier(void *obj);
 void avant_barrier_slot(void *obj, void *slot);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
-/* Runtime-internal (Stage 28 W14b2, O37): avant_alloc_c below is an
- * entry of avant_rt.o that only the runtime's other objects call, as are
- * avant_gc_nogc_begin/end (below). avant_rt.h does not
+/* Runtime-internal (Stage 28 W14b2, O37): avant_gc_nogc_begin/end
+ * (below) are entries of avant_rt.o that only the runtime's other
+ * objects call. avant_rt.h does not
  * declare them, and their visibility is hidden: no linked image exports
  * them (the second section of avant_rt.exports). avant_gc_quiet_defer_enter
  * went in Stage 28 W16a with the regions it opened. */
@@ -438,13 +443,9 @@ static inline void avant_gc_scope_close_(AvantGcFrame *f) {
   } while (0)
 #define AVANT_GC_UNSCOPE() avant_gc_scope_close_(&gc_scope_)
 
-/* Runtime C allocates through avant_alloc_c (Stage 28 W14b1): the same
- * allocation as avant_alloc, plus the stress point of AVANT_GC_STRESS=1
- * (a young collection before it, outside defer regions, in unshared
- * programs). Every runtime unit that includes this header calls it under
- * the name avant_alloc; generated code and user C (avant_rt.h) keep
- * calling avant_alloc itself. */
-__attribute__((visibility("hidden"))) void *avant_alloc_c(uint64_t nbytes, uint32_t type_id);
-#define avant_alloc(nbytes, type_id) avant_alloc_c((nbytes), (type_id))
+/* Runtime C allocates through avant_alloc itself, as generated code and
+ * user C do (until Stage 29 W-FIX1c through a wrapper, avant_alloc_c,
+ * that carried the stress point of AVANT_GC_STRESS=1; the stress point is
+ * avant_alloc's own now, so every allocation has it). */
 
 #endif

@@ -1,3 +1,6 @@
+/* pthread_condattr_setclock (O572), as the collector's units have it. */
+#define _GNU_SOURCE
+#define _DEFAULT_SOURCE
 #include "avant_rt.h"
 #include "avant_gc.h"
 #include "libusockets.h"
@@ -241,17 +244,34 @@ typedef struct WsOut {
 } WsOut;
 
 /* A live WebSocket connection. Owned by its Conn; registered in the
- * server's list so an Avant WsConn value (server pointer plus id, two
- * scalars that may cross a spawn boundary) can find it again from any
- * thread without holding a C pointer that could dangle. */
+ * server's list so a WsSender (a bare id) can find it again from any
+ * thread without holding a C pointer that could dangle.
+ *
+ * The record is type-stable (Stage 29 W-FIX1d, O515): it comes from
+ * ws_record_take and goes back with ws_record_release to a free list,
+ * never to malloc, so the address an Avant WsConn value carries beside
+ * its id can always be read. id is the connection's number while the
+ * record is in use and 0 while it is free; a number is never given
+ * twice. A WsConn whose id is not the record's is a value of a
+ * connection that has closed: every operation through it answers
+ * "closed" (ws_record_is). id and owner_tid are read by such values
+ * from any thread, so both are stored and loaded atomically.
+ *
+ * route is the index, in the server's WebSocket message routes, of the
+ * first route on the connection's path (-1 when the path has none),
+ * given by std.http at the upgrade and read for every message by
+ * avant_ws_event_route (Stage 29 W-FIX1e, O564). Only the owner thread
+ * writes it and reads it, so the loop threads share no table of
+ * connections. */
 typedef struct AvantWsConn {
-  int32_t id;
+  int64_t id;
   AvantHttpServer *srv;
   struct HttpLoop *loop;
   struct us_socket_t *sock;
   struct Conn *conn;
   pthread_t owner_tid;
   char *path;
+  avant_int route;
   char *frag;
   size_t frag_len;
   size_t frag_cap;
@@ -322,8 +342,8 @@ struct AvantHttpServer {
   int32_t max_body;
   int32_t max_message;
   unsigned int idle_timeout;
+  size_t ws_write_chunk; /* the most a WebSocket write hands the socket */
   AvantWsConn *ws_all;
-  AvantWsConn *ws_dead;
 };
 
 typedef struct ConnNode {
@@ -356,6 +376,25 @@ static unsigned int http_idle_timeout(void) {
     }
   }
   return HTTP_IDLE_TIMEOUT_S;
+}
+
+/* A WebSocket write hands the socket at most 1 GiB at a time (Stage 29
+ * W-FIX1g, O519): uSockets takes an int length. AVANT_HTTP_WS_WRITE_CHUNK
+ * is an internal variable for the suite, not a user setting: a server
+ * created while it holds a number of bytes from 4096 to 1073741824 hands
+ * the socket at most that much, so tests/cases/test_std_http_safety.av
+ * runs the path a message of 1 GiB or more takes with one of 1 MiB. It
+ * can only shrink the piece; any other value is ignored. */
+#define WS_WRITE_CHUNK 1073741824
+static size_t http_ws_write_chunk(void) {
+  const char *v = getenv("AVANT_HTTP_WS_WRITE_CHUNK");
+  if (v && v[0] >= '0' && v[0] <= '9') {
+    long n = strtol(v, NULL, 10);
+    if (n >= 4096 && n <= WS_WRITE_CHUNK) {
+      return (size_t)n;
+    }
+  }
+  return WS_WRITE_CHUNK;
 }
 
 static HttpLoop *loop_of_socket(struct us_socket_t *s) {
@@ -415,6 +454,29 @@ static int conn_out_pending(const Conn *conn) {
 static void conn_poll(struct us_socket_t *s, int events) {
   us_poll_change((struct us_poll_t *)s,
                  us_socket_context_loop(0, us_socket_context(0, s)), events);
+}
+
+/* Writes p[*off .. len) to the socket, in pieces of at most 1 GiB (the
+ * socket takes an int length), and advances *off by what the socket
+ * took. Returns 1 when everything has gone and 0 when the socket took
+ * only a part: us_socket_write has then asked for the socket's writable
+ * event, and the caller's on_writable handler calls this again with the
+ * same offset. The server's output queue (conn_flush) and the client's
+ * request (fetch_send; Stage 29 W-FIX1d, O513) are both sent by it. */
+static int sock_write_rest(struct us_socket_t *s, const char *p, size_t len,
+                           size_t *off) {
+  while (*off < len) {
+    size_t rem = len - *off;
+    int chunk = rem > 1073741824 ? 1073741824 : (int)rem;
+    int written = us_socket_write(0, s, p + *off, chunk, 0);
+    if (written > 0) {
+      *off += (size_t)written;
+    }
+    if (written < chunk) {
+      return 0;
+    }
+  }
+  return 1;
 }
 
 /* Appends n bytes to the output queue; 0 when memory ran out. */
@@ -852,7 +914,92 @@ static int ws_utf8_valid(const unsigned char *p, size_t n) {
  * only across a non-blocking write or a bounded enqueue. */
 static pthread_mutex_t g_ws_mu = PTHREAD_MUTEX_INITIALIZER;
 static AvantWsConn *g_ws_all;
-static int32_t g_next_ws_id;
+static int64_t g_next_ws_id;
+/* Records no connection uses, linked by next_all, under g_ws_mu. Its
+ * length is bounded by the largest number of connections open at once. */
+static AvantWsConn *g_ws_free;
+
+/* Is this record still the connection numbered id? The one check every
+ * operation through a WsConn value makes before it reads anything else
+ * of the record. */
+static int ws_record_is(const AvantWsConn *ws, avant_int id) {
+  return id != 0 && __atomic_load_n(&ws->id, __ATOMIC_ACQUIRE) == id;
+}
+
+static int ws_record_owned(const AvantWsConn *ws) {
+  return pthread_equal(pthread_self(),
+                       __atomic_load_n(&ws->owner_tid, __ATOMIC_RELAXED));
+}
+
+/* A record with every field but its lock cleared and id 0, from the
+ * free list or new; NULL when memory ran out. Every field of
+ * AvantWsConn other than id, owner_tid and qmu is reset here. */
+static AvantWsConn *ws_record_take(void) {
+  AvantWsConn *ws;
+  pthread_mutex_lock(&g_ws_mu);
+  ws = g_ws_free;
+  if (ws) { g_ws_free = ws->next_all; }
+  pthread_mutex_unlock(&g_ws_mu);
+  if (!ws) {
+    ws = (AvantWsConn *)calloc(1, sizeof(AvantWsConn));
+    if (!ws) { return NULL; }
+    pthread_mutex_init(&ws->qmu, NULL);
+  }
+  ws->srv = NULL;
+  ws->loop = NULL;
+  ws->sock = NULL;
+  ws->conn = NULL;
+  ws->path = NULL;
+  ws->route = -1;
+  ws->frag = NULL;
+  ws->frag_len = 0;
+  ws->frag_cap = 0;
+  ws->frag_opcode = -1;
+  ws->out_head = NULL;
+  ws->out_tail = NULL;
+  ws->out_bytes = 0;
+  ws->close_sent = 0;
+  ws->close_received = 0;
+  ws->received_code = 0;
+  ws->dead = 0;
+  ws->event_dispatched = 0;
+  ws->pending_close_code = 0;
+  ws->shutdown_after_flush = 0;
+  ws->next_all = NULL;
+  ws->next_global = NULL;
+  return ws;
+}
+
+/* The connection is over (or was never registered): its buffers and
+ * queue are freed and the record goes back to the free list with id 0.
+ * The caller has already taken it out of the server's and the global
+ * list, so no sender by id can reach it; its owner thread is the only
+ * other user of the queue and is the caller, or is gone. */
+static void ws_record_release(AvantWsConn *ws) {
+  WsOut *node = ws->out_head;
+  while (node) {
+    WsOut *next = node->next;
+    free(node->data);
+    free(node);
+    node = next;
+  }
+  ws->out_head = NULL;
+  ws->out_tail = NULL;
+  ws->out_bytes = 0;
+  free(ws->frag);
+  ws->frag = NULL;
+  ws->frag_len = 0;
+  ws->frag_cap = 0;
+  free(ws->path);
+  ws->path = NULL;
+  ws->dead = 1;
+  ws->sock = NULL;
+  pthread_mutex_lock(&g_ws_mu);
+  __atomic_store_n(&ws->id, 0, __ATOMIC_RELEASE);
+  ws->next_all = g_ws_free;
+  g_ws_free = ws;
+  pthread_mutex_unlock(&g_ws_mu);
+}
 
 static size_t ws_frame_header(char *dst, int opcode, size_t len) {
   size_t n = 0;
@@ -873,18 +1020,29 @@ static size_t ws_frame_header(char *dst, int opcode, size_t len) {
   return n;
 }
 
-/* Loop thread only. Writes as much of the queue as the kernel takes. */
+/* Loop thread only. Writes as much of the queue as the kernel takes,
+ * each piece at most the server's ws_write_chunk (a frame's rest may be
+ * larger than an int since W-FIX1g). */
 static void ws_flush(AvantWsConn *ws) {
+  size_t chunk = ws->srv->ws_write_chunk;
   pthread_mutex_lock(&ws->qmu);
   while (ws->out_head) {
     WsOut *node = ws->out_head;
-    size_t remaining = node->len - node->off;
-    int written = us_socket_write(0, ws->sock, node->data + node->off,
-                                  (int)remaining, 0);
-    if (written < 0) { written = 0; }
-    node->off += (size_t)written;
-    ws->out_bytes -= (size_t)written;
-    if (node->off < node->len) {
+    int full = 0;
+    while (node->off < node->len) {
+      size_t remaining = node->len - node->off;
+      int piece = remaining > chunk ? (int)chunk : (int)remaining;
+      int written = us_socket_write(0, ws->sock, node->data + node->off,
+                                    piece, 0);
+      if (written < 0) { written = 0; }
+      node->off += (size_t)written;
+      ws->out_bytes -= (size_t)written;
+      if (written < piece) {
+        full = 1;
+        break;
+      }
+    }
+    if (full) {
       break;
     }
     ws->out_head = node->next;
@@ -903,11 +1061,17 @@ static void ws_flush(AvantWsConn *ws) {
 }
 
 /* Enqueue one already-framed buffer (takes ownership). Caller holds no
- * locks; returns 0 when the byte bound would be exceeded. */
-static int ws_enqueue(AvantWsConn *ws, char *framed, size_t framed_len) {
+ * locks; returns 0 when the byte bound would be exceeded. begun says
+ * that the frame's first bytes are already on the wire and this is its
+ * rest: it is queued whatever the bound (Stage 29 W-FIX1g). Refusing it
+ * left half a frame on the wire, whose stated length then swallowed the
+ * next frames as payload; the bound only decides whether a new frame
+ * starts, so the queue holds at most one frame's rest past it. */
+static int ws_enqueue(AvantWsConn *ws, char *framed, size_t framed_len,
+                      int begun) {
   WsOut *node;
   pthread_mutex_lock(&ws->qmu);
-  if (ws->out_bytes + framed_len > WS_QUEUE_MAX_BYTES) {
+  if (!begun && ws->out_bytes + framed_len > WS_QUEUE_MAX_BYTES) {
     pthread_mutex_unlock(&ws->qmu);
     free(framed);
     return 0;
@@ -942,13 +1106,21 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
     queued = ws->out_head != NULL;
     pthread_mutex_unlock(&ws->qmu);
     if (!queued) {
-      int total = (int)(header_len + len);
+      /* Lengths stay size_t (Stage 29 W-FIX1g, O519): the total was an
+       * int, so a payload within 10 bytes of 2^31 made it negative, any
+       * count the socket took passed for the whole frame, and send
+       * returned true with only that part on the wire. The socket is
+       * handed at most ws_write_chunk of the payload; the rest is queued
+       * like any rest. */
+      size_t total = header_len + len;
+      size_t chunk = ws->srv->ws_write_chunk;
+      size_t first = len > chunk ? chunk : len;
       int written = us_socket_write2(0, ws->sock, header, (int)header_len,
-                                     payload, (int)len);
-      if (written >= total) {
+                                     payload, (int)first);
+      if (written < 0) { written = 0; }
+      if ((size_t)written >= total) {
         return 1;
       }
-      if (written < 0) { written = 0; }
       if ((size_t)written < header_len) {
         size_t rem_h = header_len - (size_t)written;
         size_t framed_len = rem_h + len;
@@ -956,7 +1128,7 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
         if (!framed) { return 0; }
         memcpy(framed, header + written, rem_h);
         if (len > 0) { memcpy(framed + rem_h, payload, len); }
-        return ws_enqueue(ws, framed, framed_len);
+        return ws_enqueue(ws, framed, framed_len, written > 0);
       }
       {
         size_t rem = len - ((size_t)written - header_len);
@@ -964,7 +1136,17 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
         char *framed = (char *)malloc(rem ? rem : 1);
         if (!framed) { return 0; }
         if (rem > 0) { memcpy(framed, src, rem); }
-        return ws_enqueue(ws, framed, rem);
+        if (!ws_enqueue(ws, framed, rem, 1)) {
+          return 0;
+        }
+        if ((size_t)written == header_len + first) {
+          /* The socket took the whole piece: it has not asked for the
+           * writable event, so the rest is written now, a piece at a
+           * time, until the socket is full (ws_flush asks for the event
+           * then). */
+          ws_flush(ws);
+        }
+        return 1;
       }
     }
   }
@@ -975,13 +1157,13 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
     memcpy(framed, header, header_len);
     if (len > 0) { memcpy(framed + header_len, payload, len); }
     if (!pthread_equal(pthread_self(), ws->owner_tid)) {
-      int ok = ws_enqueue(ws, framed, framed_len);
+      int ok = ws_enqueue(ws, framed, framed_len, 0);
       if (ok && ws->loop && ws->loop->loop) {
         us_wakeup_loop(ws->loop->loop);
       }
       return ok;
     }
-    return ws_enqueue(ws, framed, framed_len);
+    return ws_enqueue(ws, framed, framed_len, 0);
   }
 }
 
@@ -1079,8 +1261,9 @@ avant_int avant_ws_event_conn_id(void *evp) {
   return ((AvantWsEvent *)evp)->ws->id;
 }
 
-void *avant_ws_event_server(void *evp) {
-  return ((AvantWsEvent *)evp)->srv;
+/* The connection's first message route, set at the upgrade (O564). */
+avant_int avant_ws_event_route(void *evp) {
+  return ((AvantWsEvent *)evp)->ws->route;
 }
 
 char *avant_ws_event_path(void *evp) {
@@ -1147,10 +1330,6 @@ avant_int avant_ws_send_bytes_by_id(avant_int id, const char *data) {
 int32_t avant_ws_close_conn(void *srvp, avant_int id, avant_int code,
                             const char *reason);
 
-void *avant_http_req_ws_server(void *reqp) {
-  return ((AvantHttpReq *)reqp)->srv;
-}
-
 int32_t avant_ws_close_conn(void *srvp, avant_int id, avant_int code,
                             const char *reason) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
@@ -1193,20 +1372,25 @@ void *avant_ws_event_conn(void *evp) {
   return ((AvantWsEvent *)evp)->ws;
 }
 
-/* Loop-thread send through the connection pointer itself: no registry
+/* Loop-thread send through the connection's record itself: no registry
  * lock, because the owner thread is the only socket writer and the
- * only thread that frees queue state. A call from any other thread
- * falls back to the locked by-id path. The pointer stays valid after
- * close because a closed connection's shell is retained, marked dead,
- * until server teardown. */
-static int32_t ws_send_direct(void *handle, int32_t is_text,
+ * only thread that releases the record. The value carries the record's
+ * address and the connection's id (Stage 29 W-FIX1d, O515: it carried
+ * the address alone, and a WsConn kept after `serve` returned read a
+ * record the server's teardown had freed). The record is type-stable
+ * and the id is checked first: a value of a connection that has closed
+ * answers 0 here, whether its record is free or serves a later
+ * connection. On the owner thread a matching id cannot change under
+ * the call (only this thread releases the record); from any other
+ * thread the send goes by the value's id under the registry's lock. */
+static int32_t ws_send_direct(void *handle, avant_int id, int32_t is_text,
                               const char *data) {
   AvantWsConn *ws = (AvantWsConn *)handle;
   size_t len;
   int ok;
-  if (!ws) { return 0; }
-  if (!pthread_equal(pthread_self(), ws->owner_tid)) {
-    return ws_send_common(NULL, ws->id, is_text, data);
+  if (!ws || !ws_record_is(ws, id)) { return 0; }
+  if (!ws_record_owned(ws)) {
+    return ws_send_common(NULL, id, is_text, data);
   }
   if (ws->dead || ws->close_sent) { return 0; }
   len = avant_str_n(data);
@@ -1214,27 +1398,30 @@ static int32_t ws_send_direct(void *handle, int32_t is_text,
   return ok;
 }
 
-avant_int avant_ws_send_text_direct(void *handle, const char *data) {
-  return ws_send_direct(handle, 1, data);
+avant_int avant_ws_send_text_direct(void *handle, avant_int id,
+                                    const char *data) {
+  return ws_send_direct(handle, id, 1, data);
 }
 
-avant_int avant_ws_send_text_bytes_direct(void *handle, const char *data) {
-  return ws_send_direct(handle, 1, data);
+avant_int avant_ws_send_text_bytes_direct(void *handle, avant_int id,
+                                          const char *data) {
+  return ws_send_direct(handle, id, 1, data);
 }
 
-avant_int avant_ws_send_bytes_direct(void *handle, const char *data) {
-  return ws_send_direct(handle, 0, data);
+avant_int avant_ws_send_bytes_direct(void *handle, avant_int id,
+                                     const char *data) {
+  return ws_send_direct(handle, id, 0, data);
 }
 
-avant_int avant_ws_close_direct(void *handle, avant_int code,
-                              const char *reason) {
+avant_int avant_ws_close_direct(void *handle, avant_int id, avant_int code,
+                                const char *reason) {
   AvantWsConn *ws = (AvantWsConn *)handle;
   unsigned char payload[125];
   size_t reason_len;
   int ok;
-  if (!ws) { return 0; }
-  if (!pthread_equal(pthread_self(), ws->owner_tid)) {
-    return avant_ws_close_conn(NULL, ws->id, code, reason);
+  if (!ws || !ws_record_is(ws, id)) { return 0; }
+  if (!ws_record_owned(ws)) {
+    return avant_ws_close_conn(NULL, id, code, reason);
   }
   if (ws->dead || ws->close_sent) { return 0; }
   reason_len = avant_str_n(reason);
@@ -1454,7 +1641,7 @@ avant_int avant_http_req_ws_id(void *reqp) {
   return req->ws_conn ? req->ws_conn->id : 0;
 }
 
-avant_int avant_http_req_ws_upgrade(void *reqp) {
+avant_int avant_http_req_ws_upgrade(void *reqp, avant_int route) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
   AvantHttpServer *srv = req->srv;
   AvantWsConn *ws;
@@ -1463,14 +1650,14 @@ avant_int avant_http_req_ws_upgrade(void *reqp) {
   int response_len;
   size_t path_len = 0;
   if (!req->is_ws || req->upgraded) { return 0; }
-  ws = (AvantWsConn *)calloc(1, sizeof(AvantWsConn));
+  ws = ws_record_take();
   if (!ws) { return 0; }
   while (path_len < req->target_len && req->target[path_len] != '?') {
     path_len++;
   }
   ws->path = (char *)malloc(path_len + 1);
   if (!ws->path) {
-    free(ws);
+    ws_record_release(ws);
     return 0;
   }
   memcpy(ws->path, req->target, path_len);
@@ -1484,19 +1671,17 @@ avant_int avant_http_req_ws_upgrade(void *reqp) {
                           accept);
   if (response_len < 0 ||
       us_socket_write(0, req->sock, response, response_len, 0) != response_len) {
-    free(ws->path);
-    free(ws);
+    ws_record_release(ws);
     return 0;
   }
   ws->srv = srv;
+  ws->route = route;
   ws->loop = loop_of_socket(req->sock);
   ws->sock = req->sock;
   ws->conn = req->conn;
-  ws->owner_tid = pthread_self();
-  ws->frag_opcode = -1;
-  pthread_mutex_init(&ws->qmu, NULL);
+  __atomic_store_n(&ws->owner_tid, pthread_self(), __ATOMIC_RELAXED);
   pthread_mutex_lock(&g_ws_mu);
-  ws->id = ++g_next_ws_id;
+  __atomic_store_n(&ws->id, ++g_next_ws_id, __ATOMIC_RELEASE);
   ws->next_all = srv->ws_all;
   srv->ws_all = ws;
   ws->next_global = g_ws_all;
@@ -1559,27 +1744,49 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
      * W-FIX1a, P193): lines that disagree, or one continued on a folded
      * line, give two readings of where the body ends, and a proxy in
      * front may take the other one (request smuggling). RFC 9112 6.3:
-     * 400 and close. Lines repeating the same number are one value, as
-     * that section allows; a list in one line ("5, 5") is not a number
-     * here and is refused like any other non-number, as before. */
+     * 400 and close. Every repeat is refused too, identical or not
+     * (Stage 29 W-FIX1g, O522, the owner's choice; nginx does the same):
+     * two lines "5" and one line "5, 5" are the same list (RFC 9110 5.3),
+     * and a list in one line is not a number here, so both spellings
+     * are 400, where two identical lines used to be one value.
+     * The same pass counts the Host lines (Stage 29 W-FIX1g, O472, H3):
+     * RFC 9112 3.2 has a server answer 400 to an HTTP/1.1 request
+     * without one and to any request with two (identical or not), and a
+     * Host continued on a folded line is an invalid value; a request
+     * that names two hosts is read one way here and maybe the other way
+     * by a proxy or a virtual-host router in front. */
     {
       size_t hi;
+      int hosts = 0;
       for (hi = 0; hi < num_headers; hi++) {
         long one = 0;
-        if (!headers[hi].name ||
-            !ascii_ieq(headers[hi].name, headers[hi].name_len,
+        if (!headers[hi].name) {
+          continue;
+        }
+        if (ascii_ieq(headers[hi].name, headers[hi].name_len, "Host", 4)) {
+          if (++hosts > 1 || (hi + 1 < num_headers && !headers[hi + 1].name)) {
+            send_error(conn, s, 400);
+            return;
+          }
+          continue;
+        }
+        if (!ascii_ieq(headers[hi].name, headers[hi].name_len,
                        "Content-Length", 14)) {
           continue;
         }
         if ((hi + 1 < num_headers && !headers[hi + 1].name) ||
             !parse_content_length(headers[hi].value, headers[hi].value_len,
                                   &one) ||
-            (has_cl && one != content_length)) {
+            has_cl) {
           send_error(conn, s, 400);
           return;
         }
         content_length = one;
         has_cl = 1;
+      }
+      if (hosts == 0 && minor_version >= 1) {
+        send_error(conn, s, 400);
+        return;
       }
     }
     if (has_cl && content_length > srv->max_body) {
@@ -1707,16 +1914,14 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
  * shutdown of a finished connection, the requests still in the input
  * buffer (which may queue again), the close a peer's FIN asked for. */
 static void conn_flush(Conn *conn, struct us_socket_t *s) {
-  while (conn_out_pending(conn)) {
-    size_t rem = conn->out_len - conn->out_off;
-    int chunk = rem > 1073741824 ? 1073741824 : (int)rem;
-    int written = us_socket_write(0, s, conn->out + conn->out_off, chunk, 0);
-    if (written > 0) {
+  if (conn_out_pending(conn)) {
+    size_t before = conn->out_off;
+    int done = sock_write_rest(s, conn->out, conn->out_len, &conn->out_off);
+    if (conn->out_off > before) {
       /* The client took queued bytes: it is not stalled (P192). */
-      conn->out_off += (size_t)written;
       us_socket_timeout(0, s, conn->srv->idle_timeout);
     }
-    if (written < chunk) {
+    if (!done) {
       /* us_socket_write polls for readable again; this connection is
        * read only when its queue is empty. */
       conn_poll(s, LIBUS_SOCKET_WRITABLE);
@@ -1799,47 +2004,6 @@ static struct us_socket_t *srv_on_data(struct us_socket_t *s, char *data,
   return s;
 }
 
-static void ws_free(AvantWsConn *ws) {
-  WsOut *node = ws->out_head;
-  while (node) {
-    WsOut *next = node->next;
-    free(node->data);
-    free(node);
-    node = next;
-  }
-  free(ws->frag);
-  free(ws->path);
-  pthread_mutex_destroy(&ws->qmu);
-  free(ws);
-}
-
-/* Close-time release: buffers and queue go back, but the shell stays
- * allocated, marked dead, on the server's dead list until teardown,
- * so a WsConn value an Avant program still holds can be sent on and
- * answered 0 rather than dereferencing freed memory. */
-static void ws_release_shell(AvantWsConn *ws) {
-  WsOut *node = ws->out_head;
-  while (node) {
-    WsOut *next = node->next;
-    free(node->data);
-    free(node);
-    node = next;
-  }
-  ws->out_head = NULL;
-  ws->out_tail = NULL;
-  ws->out_bytes = 0;
-  free(ws->frag);
-  ws->frag = NULL;
-  ws->frag_len = 0;
-  ws->frag_cap = 0;
-  free(ws->path);
-  ws->path = NULL;
-  ws->dead = 1;
-  ws->sock = NULL;
-  ws->next_all = ws->srv->ws_dead;
-  ws->srv->ws_dead = ws;
-}
-
 static struct us_socket_t *srv_on_close(struct us_socket_t *s, int code,
                                         void *reason) {
   ConnNode *node = (ConnNode *)us_socket_ext(0, s);
@@ -1877,7 +2041,7 @@ static struct us_socket_t *srv_on_close(struct us_socket_t *s, int code,
       }
     }
     pthread_mutex_unlock(&g_ws_mu);
-    ws_release_shell(ws);
+    ws_record_release(ws);
   }
   free(node->conn.buf);
   node->conn.buf = NULL;
@@ -2080,10 +2244,15 @@ static void srv_teardown(AvantHttpServer *srv) {
   listen_reg_remove(srv);
   /* Live connections free their own WsConn in srv_on_close; anything
    * registered here at teardown belongs to a socket already gone. */
-  pthread_mutex_lock(&g_ws_mu);
-  while (srv->ws_all) {
-    AvantWsConn *ws = srv->ws_all;
+  for (;;) {
+    AvantWsConn *ws;
     AvantWsConn **link2 = &g_ws_all;
+    pthread_mutex_lock(&g_ws_mu);
+    ws = srv->ws_all;
+    if (!ws) {
+      pthread_mutex_unlock(&g_ws_mu);
+      break;
+    }
     srv->ws_all = ws->next_all;
     while (*link2 && *link2 != ws) {
       link2 = &(*link2)->next_global;
@@ -2091,13 +2260,8 @@ static void srv_teardown(AvantHttpServer *srv) {
     if (*link2 == ws) {
       *link2 = ws->next_global;
     }
-    ws_free(ws);
-  }
-  pthread_mutex_unlock(&g_ws_mu);
-  while (srv->ws_dead) {
-    AvantWsConn *ws = srv->ws_dead;
-    srv->ws_dead = ws->next_all;
-    ws_free(ws);
+    pthread_mutex_unlock(&g_ws_mu);
+    ws_record_release(ws);
   }
   for (i = 0; i < srv->nloops; i++) {
     loop_teardown(&srv->loops[i]);
@@ -2202,6 +2366,7 @@ void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
   srv->max_body = (int32_t)max_body;
   srv->max_message = max_message > 0 ? (int32_t)max_message : 1048576;
   srv->idle_timeout = http_idle_timeout();
+  srv->ws_write_chunk = http_ws_write_chunk();
   srv->loops = (HttpLoop *)calloc((size_t)n, sizeof(HttpLoop));
   if (!srv->loops) {
     free(srv);
@@ -2298,6 +2463,84 @@ avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
   return 0;
 }
 
+/* A route method of std.http called while its server serves (Stage 29
+ * W-FIX1f, O594): the loop threads read the route tables with no lock,
+ * so the route is refused. The trap's form is the runtime's (trap_head
+ * and trap_tail in avant_rt_traps.c, as avant_regex_closed has it): the
+ * program's stdout flushed, one line on stderr, status 1. what names
+ * the route ("route GET /x", "websocket route /x"). */
+__attribute__((noreturn, cold)) void avant_http_route_while_serving(const char *what) {
+  fflush(stdout);
+  fprintf(stderr, "avant runtime: %s registered while the server is serving: register every route before serve\n", what);
+  exit(1);
+}
+
+/* Writes at most 64 bytes of p to stderr, a byte that is not printable
+ * ASCII (or is a quote or a backslash) as \r, \n, \t or \xNN. */
+static void put_escaped(const char *p, size_t n) {
+  size_t i;
+  for (i = 0; i < n && i < 64; i++) {
+    unsigned char ch = (unsigned char)p[i];
+    if (ch == '\r') {
+      fputs("\\r", stderr);
+    } else if (ch == '\n') {
+      fputs("\\n", stderr);
+    } else if (ch == '\t') {
+      fputs("\\t", stderr);
+    } else if (ch < 0x20 || ch >= 0x7f || ch == '"' || ch == '\\') {
+      fprintf(stderr, "\\x%02x", ch);
+    } else {
+      fputc(ch, stderr);
+    }
+  }
+  if (n > 64) {
+    fputs("...", stderr);
+  }
+}
+
+/* RFC 9110 5.6.2: tchar, the bytes of a token (a field name). */
+static int http_tchar(unsigned char ch) {
+  return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+         (ch >= '0' && ch <= '9') || (ch != 0 && strchr("!#$%&'*+-.^_`|~", ch));
+}
+
+/* Response.header's check (Stage 29 W-FIX1g, O518). The name and the
+ * value were appended to the answer's head as they came, so a value
+ * holding CR LF (a redirect target or a cookie built from request data)
+ * added header lines or began the body, and a second answer could
+ * follow: response splitting. A name must be a token (RFC 9110 5.1) and
+ * a value may hold no control character but tab (5.5: CR, LF and NUL
+ * are refused, and the other controls with them); anything else is the
+ * program's error, and it traps in the runtime's form (the program's
+ * stdout flushed, one line on stderr, status 1), naming the rule. */
+void avant_http_header_check(const char *name, const char *value) {
+  size_t nn = avant_str_n(name);
+  size_t vn = avant_str_n(value);
+  size_t i;
+  for (i = 0; i < nn; i++) {
+    if (!http_tchar((unsigned char)name[i])) {
+      break;
+    }
+  }
+  if (nn == 0 || i < nn) {
+    fflush(stdout);
+    fputs("avant runtime: Response.header name \"", stderr);
+    put_escaped(name, nn);
+    fputs("\" is not a token: a header name is letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)\n", stderr);
+    exit(1);
+  }
+  for (i = 0; i < vn; i++) {
+    unsigned char ch = (unsigned char)value[i];
+    if ((ch < 0x20 && ch != '\t') || ch == 0x7f) {
+      fflush(stdout);
+      fputs("avant runtime: Response.header value of ", stderr);
+      put_escaped(name, nn);
+      fprintf(stderr, " holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)\n", (unsigned)ch, i);
+      exit(1);
+    }
+  }
+}
+
 avant_int avant_http_close(void *srvp) {
   AvantHttpServer *srv = (AvantHttpServer *)srvp;
   int i;
@@ -2352,8 +2595,9 @@ typedef struct WsClient {
   int closed;
   int close_sent;
   int close_code;
-  char request[2048];
-  int request_len;
+  char *request; /* the handshake, malloc'd to its length */
+  size_t request_len;
+  size_t request_sent; /* how much of it the socket has taken */
   int want_close;
   WsClientMsg *in_head;
   WsClientMsg *in_tail;
@@ -2361,6 +2605,7 @@ typedef struct WsClient {
   WsOut *out_tail;
   pthread_mutex_t mu;
   pthread_cond_t cond;
+  int users; /* operations in progress on it, under g_ws_client_mu */
 } WsClient;
 
 static void ws_client_inbox_push(WsClient *c, int is_text, int is_close,
@@ -2591,10 +2836,12 @@ static struct us_socket_t *ws_client_on_open(struct us_socket_t *s,
   c->sock = s;
   /* The handshake goes out only now: writing on a still-connecting
    * socket corrupts the semi-socket state machine (the fetch rule). */
-  if (c->request_len > 0) {
-    us_socket_write(0, s, c->request, c->request_len, 0);
-    c->request_len = 0;
-  }
+  /* All of it, under the call's deadline (Stage 29 W-FIX1g, O571): one
+   * us_socket_write ignored its count, so a handshake the socket took in
+   * part was cut and the server waited for the rest; the rest is now
+   * sent each time the socket is writable (ws_client_on_writable), by
+   * the loop the server's queue and the HTTP client use. */
+  (void)sock_write_rest(s, c->request, c->request_len, &c->request_sent);
   return s;
 }
 
@@ -2636,7 +2883,12 @@ static struct us_socket_t *ws_client_on_timeout(struct us_socket_t *s) {
 }
 
 static struct us_socket_t *ws_client_on_writable(struct us_socket_t *s) {
-  ws_client_flush(ws_client_of_socket(s));
+  WsClient *c = ws_client_of_socket(s);
+  if (c->request_sent < c->request_len) {
+    (void)sock_write_rest(s, c->request, c->request_len, &c->request_sent);
+    return s;
+  }
+  ws_client_flush(c);
   return s;
 }
 
@@ -2691,45 +2943,56 @@ static void ws_client_free(WsClient *c) {
   if (c->loop) { us_loop_free(c->loop); }
   free(c->buf);
   free(c->frag);
+  free(c->request);
   pthread_mutex_destroy(&c->mu);
   pthread_cond_destroy(&c->cond);
   free(c);
 }
 
-static int ws_client_alive(void *handle);
-static void ws_client_register(WsClient *c);
-static int ws_client_unregister(void *handle);
+static avant_int ws_client_register(WsClient *c);
 
-/* Status through avant_http_take_status: 1 connect failure, 2 timeout,
- * 3 invalid handshake. */
-void *avant_ws_client_connect(const char *host, avant_int port,
-                              const char *target, const char *key_b64,
-                              avant_int timeout_ms) {
+/* The connection's id, never 0; 0 with a status through
+ * avant_http_take_status: 1 connect failure, 2 timeout, 3 invalid
+ * handshake, 4 out of memory. */
+avant_int avant_ws_client_connect(const char *host, avant_int port,
+                                  const char *target, const char *key_b64,
+                                  avant_int timeout_ms) {
   WsClient *c;
+  avant_int id;
   struct us_socket_context_options_t options;
-  char request[2048];
   int request_len;
   struct timespec deadline;
   set_status(0);
   /* A port outside 0..65535 cannot connect (Stage 29 W-INT1). */
   if (port < 0 || port > 65535) {
     set_status(1);
-    return NULL;
+    return 0;
   }
   c = (WsClient *)calloc(1, sizeof(WsClient));
-  if (!c) { set_status(4); return NULL; }
+  if (!c) { set_status(4); return 0; }
   c->frag_opcode = -1;
   c->close_code = 1006;
   pthread_mutex_init(&c->mu, NULL);
-  pthread_cond_init(&c->cond, NULL);
+  /* The handshake's and recv's deadlines are kept on CLOCK_MONOTONIC
+   * (Stage 29 W-FIX1g, O572): read from the wall clock and waited for on
+   * it, a step of the system clock during the wait shortened or
+   * lengthened them (an hour back: the wait ended at once). The HTTP
+   * client's deadline is a timer of its loop and was never affected. */
+  {
+    pthread_condattr_t attr;
+    pthread_condattr_init(&attr);
+    pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    pthread_cond_init(&c->cond, &attr);
+    pthread_condattr_destroy(&attr);
+  }
   ws_accept_key(key_b64, strlen(key_b64), c->expected_accept);
   c->loop = us_create_loop(0, ws_client_wakeup, srv_pre, srv_post,
                            (unsigned int)sizeof(WsClient *));
-  if (!c->loop) { ws_client_free(c); set_status(1); return NULL; }
+  if (!c->loop) { ws_client_free(c); set_status(1); return 0; }
   *(WsClient **)us_loop_ext(c->loop) = c;
   memset(&options, 0, sizeof(options));
   c->ctx = us_create_socket_context(0, c->loop, 0, options);
-  if (!c->ctx) { ws_client_free(c); set_status(1); return NULL; }
+  if (!c->ctx) { ws_client_free(c); set_status(1); return 0; }
   us_socket_context_on_open(0, c->ctx, ws_client_on_open);
   us_socket_context_on_data(0, c->ctx, ws_client_on_data);
   us_socket_context_on_writable(0, c->ctx, ws_client_on_writable);
@@ -2737,30 +3000,39 @@ void *avant_ws_client_connect(const char *host, avant_int port,
   us_socket_context_on_timeout(0, c->ctx, ws_client_on_timeout);
   us_socket_context_on_end(0, c->ctx, ws_client_on_end);
   us_socket_context_on_connect_error(0, c->ctx, ws_client_on_connect_error);
-  request_len = snprintf(request, sizeof(request),
-                         "GET %s HTTP/1.1\r\nHost: %s:%d\r\n"
-                         "Upgrade: websocket\r\nConnection: Upgrade\r\n"
-                         "Sec-WebSocket-Key: %s\r\n"
-                         "Sec-WebSocket-Version: 13\r\n\r\n",
-                         target, host, (int)port, key_b64);
-  memcpy(c->request, request, (size_t)request_len);
-  c->request_len = request_len;
+  /* The handshake is built to its own length (Stage 29 W-FIX1g): it was
+   * formatted into 2048 bytes on the stack and then copied by the length
+   * snprintf would have written, so a target or a host longer than about
+   * 1,900 bytes overran both buffers (glibc's fortified memcpy stopped
+   * the program: "buffer overflow detected", SIGABRT). */
+#define WS_CLIENT_HANDSHAKE "GET %s HTTP/1.1\r\nHost: %s:%d\r\n" \
+                            "Upgrade: websocket\r\nConnection: Upgrade\r\n" \
+                            "Sec-WebSocket-Key: %s\r\n" \
+                            "Sec-WebSocket-Version: 13\r\n\r\n"
+  request_len = snprintf(NULL, 0, WS_CLIENT_HANDSHAKE, target, host,
+                         (int)port, key_b64);
+  c->request = request_len > 0 ? (char *)malloc((size_t)request_len + 1) : NULL;
+  if (!c->request) { ws_client_free(c); set_status(4); return 0; }
+  snprintf(c->request, (size_t)request_len + 1, WS_CLIENT_HANDSHAKE, target,
+           host, (int)port, key_b64);
+#undef WS_CLIENT_HANDSHAKE
+  c->request_len = (size_t)request_len;
   {
     struct us_socket_t *sock = us_socket_context_connect(
         0, c->ctx, host, (int)port, NULL, 0, 0);
     if (!sock) {
       ws_client_free(c);
       set_status(1);
-      return NULL;
+      return 0;
     }
     c->sock = sock;
   }
   if (pthread_create(&c->thread, NULL, ws_client_thread_main, c) != 0) {
     ws_client_free(c);
     set_status(1);
-    return NULL;
+    return 0;
   }
-  clock_gettime(CLOCK_REALTIME, &deadline);
+  clock_gettime(CLOCK_MONOTONIC, &deadline);
   deadline.tv_sec += timeout_ms <= 0 ? 10 : timeout_ms / 1000;
   deadline.tv_nsec += (timeout_ms <= 0 ? 0 : (timeout_ms % 1000)) * 1000000L;
   if (deadline.tv_nsec >= 1000000000L) {
@@ -2788,82 +3060,133 @@ void *avant_ws_client_connect(const char *host, avant_int port,
       avant_gc_native_end();
       ws_client_free(c);
       set_status(failed ? 1 : 2);
-      return NULL;
+      return 0;
     }
   }
-  ws_client_register(c);
-  return c;
+  id = ws_client_register(c);
+  if (id == 0) {
+    c->closed = 1;
+    c->want_close = 1;
+    us_wakeup_loop(c->loop);
+    avant_gc_native_begin();
+    pthread_join(c->thread, NULL);
+    avant_gc_native_end();
+    ws_client_free(c);
+    set_status(4);
+    return 0;
+  }
+  return id;
 }
 
 static __thread int32_t g_ws_client_last_is_text;
 
-/* Live client handles, so a second close on a copied WsConnection
- * value is a no-op instead of a use-after-free: membership is tested
- * by pointer value alone, without dereferencing the handle. */
+/* The open client connections, by id (Stage 29 W-FIX1d, O516). An
+ * Avant WsConnection value is the id alone. The registry used to hold
+ * addresses and the value was the address: after close freed a
+ * WsClient, the next Ws.connect was given the same address, and a copy
+ * of the closed value then sent on, and closed, the new connection; and
+ * an operation tested membership and then used the client with no lock
+ * held, so a close on another thread in between freed it under the
+ * operation. An id is never given twice, so a copy of a closed value
+ * finds nothing and every operation through it gives its "closed"
+ * answer. An operation takes the client with ws_client_acquire, which
+ * counts it as a user under the registry's lock, and gives it back with
+ * ws_client_release; close takes the client out of the registry first,
+ * so no new user can find it, and frees it only when its users are
+ * gone. */
 typedef struct WsClientReg {
+  avant_int id;
   WsClient *c;
   struct WsClientReg *next;
 } WsClientReg;
 
 static pthread_mutex_t g_ws_client_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_ws_client_idle = PTHREAD_COND_INITIALIZER;
 static WsClientReg *g_ws_clients;
+static avant_int g_ws_client_next_id;
 
-static int ws_client_alive(void *handle) {
+/* The open client numbered id, counted as in use; NULL when there is
+ * none (closed, or never opened). */
+static WsClient *ws_client_acquire(avant_int id) {
   WsClientReg *r;
-  int found = 0;
+  WsClient *c = NULL;
   pthread_mutex_lock(&g_ws_client_mu);
   for (r = g_ws_clients; r; r = r->next) {
-    if (r->c == (WsClient *)handle) { found = 1; break; }
+    if (r->id == id) {
+      c = r->c;
+      c->users++;
+      break;
+    }
   }
   pthread_mutex_unlock(&g_ws_client_mu);
-  return found;
+  return c;
 }
 
-static void ws_client_register(WsClient *c) {
+static void ws_client_release(WsClient *c) {
+  pthread_mutex_lock(&g_ws_client_mu);
+  c->users--;
+  if (c->users == 0) {
+    pthread_cond_broadcast(&g_ws_client_idle);
+  }
+  pthread_mutex_unlock(&g_ws_client_mu);
+}
+
+/* The new id, or 0 when memory ran out. */
+static avant_int ws_client_register(WsClient *c) {
   WsClientReg *r = (WsClientReg *)malloc(sizeof(WsClientReg));
-  if (!r) { return; }
+  avant_int id;
+  if (!r) { return 0; }
   r->c = c;
   pthread_mutex_lock(&g_ws_client_mu);
+  id = ++g_ws_client_next_id;
+  r->id = id;
   r->next = g_ws_clients;
   g_ws_clients = r;
   pthread_mutex_unlock(&g_ws_client_mu);
+  return id;
 }
 
-static int ws_client_unregister(void *handle) {
+/* Takes the client numbered id out of the registry and returns it; NULL
+ * when it is not there (a second close). */
+static WsClient *ws_client_unregister(avant_int id) {
   WsClientReg **link = &g_ws_clients;
-  int found = 0;
+  WsClient *c = NULL;
   pthread_mutex_lock(&g_ws_client_mu);
   while (*link) {
-    if ((*link)->c == (WsClient *)handle) {
+    if ((*link)->id == id) {
       WsClientReg *dead = *link;
       *link = dead->next;
+      c = dead->c;
       free(dead);
-      found = 1;
       break;
     }
     link = &(*link)->next;
   }
   pthread_mutex_unlock(&g_ws_client_mu);
-  return found;
+  return c;
 }
 
 avant_int avant_ws_client_last_is_text(void) { return g_ws_client_last_is_text; }
 
-avant_int avant_ws_client_close_code(void *handle) {
-  WsClient *c = (WsClient *)handle;
-  if (!c || !ws_client_alive(handle)) { return 1006; }
-  return c->close_code;
+avant_int avant_ws_client_close_code(avant_int id) {
+  WsClient *c = ws_client_acquire(id);
+  avant_int code;
+  if (!c) { return 1006; }
+  code = c->close_code;
+  ws_client_release(c);
+  return code;
 }
 
 /* One queued message as Bytes; status 1 when the connection is closed
  * with nothing queued, 2 on timeout. timeout_ms < 0 waits forever. */
 /* gc-lint: holds nothing (the message is C memory; nothing heap is read after make_bytes). */
-char *avant_ws_client_recv(void *handle, avant_int timeout_ms) {
-  WsClient *c = (WsClient *)handle;
+char *avant_ws_client_recv(avant_int id, avant_int timeout_ms) {
+  WsClient *c = ws_client_acquire(id);
   WsClientMsg *m;
   char *out;
+  int closed;
   set_status(0);
-  if (!c || !ws_client_alive(handle)) {
+  if (!c) {
     set_status(1);
     return avant_str_empty();
   }
@@ -2876,7 +3199,7 @@ char *avant_ws_client_recv(void *handle, avant_int timeout_ms) {
     }
   } else {
     struct timespec deadline;
-    clock_gettime(CLOCK_REALTIME, &deadline);
+    clock_gettime(CLOCK_MONOTONIC, &deadline);
     deadline.tv_sec += timeout_ms / 1000;
     deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
     if (deadline.tv_nsec >= 1000000000L) {
@@ -2894,9 +3217,13 @@ char *avant_ws_client_recv(void *handle, avant_int timeout_ms) {
     c->in_head = m->next;
     if (!c->in_head) { c->in_tail = NULL; }
   }
+  closed = c->closed;
   pthread_mutex_unlock(&c->mu);
+  /* The client is not read after this: a close on another thread may
+   * free it from here on (and the allocation below may collect). */
+  ws_client_release(c);
   if (!m) {
-    set_status(c->closed ? 1 : 2);
+    set_status(closed ? 1 : 2);
     return avant_str_empty();
   }
   if (m->is_close) {
@@ -2912,19 +3239,21 @@ char *avant_ws_client_recv(void *handle, avant_int timeout_ms) {
   return out;
 }
 
-avant_int avant_ws_client_send_text(void *handle, const char *data) {
-  WsClient *c = (WsClient *)handle;
+avant_int avant_ws_client_send_text(avant_int id, const char *data) {
+  WsClient *c = ws_client_acquire(id);
   int ok;
-  if (!c || !ws_client_alive(handle)) { return 0; }
+  if (!c) { return 0; }
   ok = ws_client_send_frame(c, 1, data, avant_str_n(data));
+  ws_client_release(c);
   return ok;
 }
 
-avant_int avant_ws_client_send_bytes(void *handle, const char *data) {
-  WsClient *c = (WsClient *)handle;
+avant_int avant_ws_client_send_bytes(avant_int id, const char *data) {
+  WsClient *c = ws_client_acquire(id);
   int ok;
-  if (!c || !ws_client_alive(handle)) { return 0; }
+  if (!c) { return 0; }
   ok = ws_client_send_frame(c, 2, data, avant_str_n(data));
+  ws_client_release(c);
   return ok;
 }
 
@@ -2954,19 +3283,30 @@ char *avant_ws_client_key(void) {
   return make_string(out, (size_t)o);
 }
 
-avant_int avant_ws_client_close(void *handle) {
-  WsClient *c = (WsClient *)handle;
+avant_int avant_ws_client_close(avant_int id) {
+  WsClient *c = ws_client_unregister(id);
   unsigned char payload[2] = {0x03, 0xe8};
-  if (!c || !ws_client_unregister(handle)) { return 0; }
+  if (!c) { return 0; }
   if (!c->close_sent) {
     c->close_sent = 1;
     ws_client_send_frame(c, 8, (const char *)payload, 2);
   }
+  /* A recv waiting on another thread sees the close and returns. */
+  pthread_mutex_lock(&c->mu);
   c->closed = 1;
+  pthread_cond_broadcast(&c->cond);
+  pthread_mutex_unlock(&c->mu);
   c->want_close = 1;
   us_wakeup_loop(c->loop);
   avant_gc_native_begin();
   pthread_join(c->thread, NULL);
+  /* Operations that found the client before it left the registry
+   * finish first; none can start now. */
+  pthread_mutex_lock(&g_ws_client_mu);
+  while (c->users > 0) {
+    pthread_cond_wait(&g_ws_client_idle, &g_ws_client_mu);
+  }
+  pthread_mutex_unlock(&g_ws_client_mu);
   avant_gc_native_end();
   ws_client_free(c);
   return 1;
@@ -2974,17 +3314,51 @@ avant_int avant_ws_client_close(void *handle) {
 
 /* ---- client fetch primitive ---- */
 
+/* request is the whole request (the head and the body), pinned for the
+ * loop; sent is how much of it the socket has taken. sock is the
+ * socket until it is closed (fetch_on_close clears it), which is how
+ * the deadline's timer knows whether there is still something to end. */
 typedef struct FetchState {
   char *buf;
   size_t len;
   size_t cap;
   int failed;
   const char *request;
+  size_t request_len;
+  size_t sent;
+  struct us_socket_t *sock;
+  /* Where the response ends (fetch_complete): 0 while its head has not
+   * all arrived; then one of the FETCH_* framings, the head's length,
+   * the body's length (FETCH_LENGTH), and for a chunked body the decoder
+   * and how far it has read. */
+  int framing;
+  size_t head_len;
+  size_t body_want;
+  size_t scanned;
+  struct phr_chunked_decoder chunks;
 } FetchState;
+
+enum {
+  FETCH_HEAD_PENDING = 0,
+  FETCH_UNTIL_CLOSE,
+  FETCH_LENGTH,
+  FETCH_CHUNKED,
+  FETCH_NO_BODY
+};
 
 static FetchState *fetch_of_socket(struct us_socket_t *s) {
   struct us_loop_t *loop = us_socket_context_loop(0, us_socket_context(0, s));
   return *(FetchState **)us_loop_ext(loop);
+}
+
+/* Sends what is left of the request (Stage 29 W-FIX1d, O513: the one
+ * write of fetch_on_open ignored its count and fetch_on_writable was
+ * empty, so a request the socket took only in part was cut there and
+ * the server waited for the rest). Nothing is copied: the request stays
+ * pinned until the loop ends, so the rest is sent from it, in order,
+ * each time the socket is writable again. */
+static void fetch_send(FetchState *st, struct us_socket_t *s) {
+  (void)sock_write_rest(s, st->request, st->request_len, &st->sent);
 }
 
 static struct us_socket_t *fetch_on_open(struct us_socket_t *s, int is_client,
@@ -2995,8 +3369,97 @@ static struct us_socket_t *fetch_on_open(struct us_socket_t *s, int is_client,
   (void)ip_length;
   /* The request goes out only now: writing on a still-connecting
    * socket corrupts the semi-socket state machine. */
-  us_socket_write(0, s, st->request, (int)avant_str_n(st->request), 0);
+  fetch_send(st, s);
   return s;
+}
+
+static int parse_response_head(const char *raw, size_t n, int *status,
+                               struct phr_header *headers,
+                               size_t *num_headers, int *pret);
+
+/* Whether the response in st->buf is complete by its own framing
+ * (Stage 29 W-FIX1g, O566). The exchange used to end only when the
+ * server closed the socket, and the length was looked at afterwards
+ * (avant_http_resp_body): a server that keeps the connection open after
+ * a complete answer (it ignores Connection: close, or a proxy keeps the
+ * connection) held the call until its deadline, which then failed it
+ * as a timeout. RFC 9112 6.3, in its order: a response to HEAD, a 204
+ * or a 304 ends with its head; after a 1xx (an interim answer, which
+ * the client does not read past) the exchange ends at the close, as
+ * before; a chunked body ends
+ * after its last chunk and the trailer section; a Content-Length body
+ * after that many bytes; a body with neither (or another
+ * Transfer-Encoding, or a length that is not a number) when the server
+ * closes, as before. The head is parsed again as bytes arrive until it
+ * is whole, then never again; a chunked body is followed by the same
+ * decoder avant_http_resp_body uses, on a copy, a piece at a time. */
+static int fetch_complete(FetchState *st) {
+  if (st->framing == FETCH_HEAD_PENDING) {
+    int status = 0;
+    struct phr_header headers[HTTP_MAX_HEADERS];
+    size_t num_headers = 0;
+    int pret = 0;
+    const char *value = NULL;
+    size_t value_len = 0;
+    long want = 0;
+    if (!parse_response_head(st->buf, st->len, &status, headers,
+                             &num_headers, &pret)) {
+      if (pret == -2) {
+        return 0;
+      }
+      st->framing = FETCH_UNTIL_CLOSE;
+      return 0;
+    }
+    st->head_len = (size_t)pret;
+    st->scanned = st->head_len;
+    if (status >= 100 && status < 200) {
+      st->framing = FETCH_UNTIL_CLOSE;
+    } else if ((st->request_len >= 5 && memcmp(st->request, "HEAD ", 5) == 0) ||
+               status == 204 || status == 304) {
+      st->framing = FETCH_NO_BODY;
+    } else if (find_header(headers, num_headers, "Transfer-Encoding", &value,
+                           &value_len)) {
+      st->framing = ascii_ieq_contains(value, value_len, "chunked")
+                        ? FETCH_CHUNKED
+                        : FETCH_UNTIL_CLOSE;
+      memset(&st->chunks, 0, sizeof(st->chunks));
+      st->chunks.consume_trailer = 1;
+    } else if (find_header(headers, num_headers, "Content-Length", &value,
+                           &value_len) &&
+               parse_content_length(value, value_len, &want)) {
+      st->framing = FETCH_LENGTH;
+      st->body_want = (size_t)want;
+    } else {
+      st->framing = FETCH_UNTIL_CLOSE;
+    }
+  }
+  switch (st->framing) {
+    case FETCH_NO_BODY:
+      return 1;
+    case FETCH_LENGTH:
+      return st->len - st->head_len >= st->body_want;
+    case FETCH_CHUNKED:
+      while (st->scanned < st->len) {
+        char piece[16384];
+        size_t n = st->len - st->scanned;
+        ssize_t done;
+        if (n > sizeof(piece)) {
+          n = sizeof(piece);
+        }
+        memcpy(piece, st->buf + st->scanned, n);
+        st->scanned += n;
+        done = phr_decode_chunked(&st->chunks, piece, &n);
+        if (done != -2) {
+          /* The last chunk and the trailers are here (done >= 0), or the
+           * body is not valid chunked encoding (-1): nothing that
+           * arrives later changes how avant_http_resp_body reads it. */
+          return 1;
+        }
+      }
+      return 0;
+    default:
+      return 0;
+  }
 }
 
 static struct us_socket_t *fetch_on_data(struct us_socket_t *s, char *data,
@@ -3018,6 +3481,11 @@ static struct us_socket_t *fetch_on_data(struct us_socket_t *s, char *data,
   }
   memcpy(st->buf + st->len, data, (size_t)length);
   st->len += (size_t)length;
+  if (fetch_complete(st)) {
+    /* The whole response is here: the exchange ends now, whether or not
+     * the server closes (O566). */
+    return us_socket_close(0, s, 0, NULL);
+  }
   return s;
 }
 
@@ -3025,6 +3493,7 @@ static struct us_socket_t *fetch_on_close(struct us_socket_t *s, int code,
                                           void *reason) {
   (void)code;
   (void)reason;
+  fetch_of_socket(s)->sock = NULL;
   return s;
 }
 
@@ -3033,10 +3502,34 @@ static struct us_socket_t *fetch_on_end(struct us_socket_t *s) {
   return us_socket_close(0, s, 0, NULL);
 }
 
+/* The socket's own timeout is not armed (see fetch_on_deadline); the
+ * handler stays so that one armed by a later change still ends the
+ * exchange as a timeout. */
 static struct us_socket_t *fetch_on_timeout(struct us_socket_t *s) {
   FetchState *st = fetch_of_socket(s);
   st->failed = 2;
   return us_socket_close(0, s, 0, NULL);
+}
+
+/* timeout_ms is a deadline for the whole exchange: the connect, the
+ * request and the complete response (Stage 29 W-FIX1d, O514). It was
+ * armed as the socket's timeout before the connect and uSockets clears
+ * a socket's timeout when the connection is established, so it covered
+ * the connect only: a server that accepted and never answered held the
+ * call until that server closed. It is now a timer of the fetch's own
+ * loop, set once and never re-armed, so data that keeps arriving does
+ * not extend it. When it fires with the socket still open the exchange
+ * failed as a timeout, whatever has arrived: a response that is not
+ * complete is not a response. Its precision is the timer's (timerfd,
+ * milliseconds), not the 4-second sweep uSockets counts socket
+ * timeouts in, which made a 10 s connect timeout 12 s and a 1 s one
+ * 4 s. */
+static void fetch_on_deadline(struct us_timer_t *t) {
+  FetchState *st = *(FetchState **)us_timer_ext(t);
+  if (st->sock) {
+    st->failed = 2;
+    us_socket_close(0, st->sock, 0, NULL);
+  }
 }
 
 static struct us_socket_t *fetch_on_connect_error(struct us_socket_t *s,
@@ -3048,6 +3541,7 @@ static struct us_socket_t *fetch_on_connect_error(struct us_socket_t *s,
 }
 
 static struct us_socket_t *fetch_on_writable(struct us_socket_t *s) {
+  fetch_send(fetch_of_socket(s), s);
   return s;
 }
 
@@ -3062,9 +3556,10 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
   struct us_socket_context_t *ctx;
   struct us_socket_context_options_t options;
   struct us_socket_t *sock;
+  struct us_timer_t *deadline;
   FetchState *st;
   char *out;
-  int timeout_s;
+  int deadline_ms;
   set_status(0);
   if (port < 0 || port > 65535) {
     set_status(1);
@@ -3098,8 +3593,20 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
   us_socket_context_on_timeout(0, ctx, fetch_on_timeout);
   us_socket_context_on_end(0, ctx, fetch_on_end);
   us_socket_context_on_connect_error(0, ctx, fetch_on_connect_error);
+  /* The timer does not keep the loop running (fallthrough): the loop
+   * ends when the socket is closed, and the timer is closed after it. */
+  deadline = us_create_timer(loop, 1, (unsigned int)sizeof(FetchState *));
+  if (!deadline) {
+    us_socket_context_free(0, ctx);
+    us_loop_free(loop);
+    free(st);
+    set_status(4);
+    return avant_str_empty();
+  }
+  *(FetchState **)us_timer_ext(deadline) = st;
   sock = us_socket_context_connect(0, ctx, host, (int)port, NULL, 0, 0);
   if (!sock) {
+    us_timer_close(deadline);
     us_socket_context_free(0, ctx);
     us_loop_free(loop);
     free(st->buf);
@@ -3107,9 +3614,11 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
     set_status(1);
     return avant_str_empty();
   }
-  timeout_s = timeout_ms <= 0 ? 10 : (timeout_ms > INT32_MAX ? INT32_MAX / 1000 : (int)((timeout_ms + 999) / 1000));
-  us_socket_timeout(0, sock, (unsigned int)timeout_s);
+  st->sock = sock;
+  deadline_ms = timeout_ms <= 0 ? 10000 : (timeout_ms > INT32_MAX ? INT32_MAX : (int)timeout_ms);
+  us_timer_set(deadline, fetch_on_deadline, deadline_ms, 0);
   st->request = request;
+  st->request_len = avant_str_n(request);
   /* The loop runs native (rule 3); its callbacks read the request, which
    * is pinned for the loop (a collection on another thread may run
    * meanwhile and must not move or free it). */
@@ -3118,6 +3627,7 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
   us_loop_run(loop);
   avant_gc_native_end();
   avant_unpin((void *)request);
+  us_timer_close(deadline);
   us_socket_context_free(0, ctx);
   us_loop_free(loop);
   if (st->failed == 1) {
@@ -3126,7 +3636,7 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
     free(st);
     return avant_str_empty();
   }
-  if (st->failed == 2 && st->len == 0) {
+  if (st->failed == 2) {
     set_status(2);
     free(st->buf);
     free(st);
@@ -3194,6 +3704,13 @@ char *avant_http_resp_body(const char *raw) {
   set_status(0);
   if (!parse_response_head(raw, n, &status, headers, &num_headers, &pret)) {
     set_status(3);
+    return make_bytes("", 0);
+  }
+  /* A 204 or a 304 has no body whatever its head says (RFC 9112 6.3):
+   * a 304's Content-Length is the length the full answer would have, so
+   * reading it as this body's length made the response invalid (Stage 29
+   * W-FIX1g). A HEAD's answer is the caller's to know (http_fetch_once). */
+  if (status == 204 || status == 304) {
     return make_bytes("", 0);
   }
   body = raw + pret;

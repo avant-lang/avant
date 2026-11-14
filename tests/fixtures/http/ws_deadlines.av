@@ -1,0 +1,69 @@
+import std.http
+
+// The deadlines of Ws.connect and recv (Stage 29 W-FIX1g, O572): each
+// waits 1000 ms for what never comes (a handshake from a listener that
+// is never served; a message from a route that never sends) and says
+// whether it ended in time (no earlier than 1000 ms, within 1.5 s
+// after). Run by tests/cases/test_std_http_safety.av under the
+// LD_PRELOAD shim tests/fixtures/http/clock_step.c, which steps the wall
+// clock back an hour: a deadline taken from the wall clock then ends at
+// once. Without the shim (the run goldens) both end in time.
+fn failure(r: WsConnection | HttpError): HttpError? {
+  _ = r?
+  nil
+}
+
+fn in_time(what: String, took: Int): String {
+  if took >= 1000 && took < 2500 {
+    return "${what}: in time"
+  }
+  "${what}: after ${took} ms"
+}
+
+fn main: Int {
+  if quiet = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    t0 = now_ms()
+    r = Ws.connect("ws://127.0.0.1:${quiet.port}/", 1000)
+    took = now_ms() - t0
+    if e = failure(r) {
+      puts(in_time("connect", took))
+    } else {
+      puts("connect: connected")
+    }
+    quiet.close
+  }
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened
+    server.websocket("/silent") { |conn, msg|
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    client = spawn {
+      if conn = Ws.connect("ws://127.0.0.1:${port}/silent", 5000) {
+        t0 = now_ms()
+        got = "nil"
+        if msg = conn.recv(1000) {
+          got = "a message"
+        }
+        took = now_ms() - t0
+        if got == "nil" {
+          puts(in_time("recv", took))
+        } else {
+          puts("recv: ${got}")
+        }
+        conn.close
+      } else {
+        puts("recv: connect failed")
+      }
+      if resp = Http.get("http://127.0.0.1:${port}/__stop", true, 5000) {
+      }
+      0
+    }
+    server.serve
+    _ = client.join
+  }
+  0
+}

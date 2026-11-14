@@ -15,11 +15,14 @@
 #   run.sh shipped [RUNS]   Valk's own run.sh, unchanged, for the seven
 #                     tier-1 programs it knows (default RUNS=5); timed
 #   run.sh check      every row once, untimed; output against expected/
-#   run.sh counts     no clock: perf stat instructions:u per row
+#   run.sh counts     no clock: perf stat instructions:u per row,
+#                     VALK_BENCH_COUNT_RUNS runs (default 3) every thread
+#                     and one of the main thread (measure.py)
 #   run.sh time [ROUNDS]    one unmeasured warm-up, then ROUNDS (default 7)
 #                     fresh processes per row, rows in rotating order;
 #                     wall time by a nanosecond clock, peak RSS, the output
-#                     checked on every run, one raw file per run
+#                     checked on every run, one raw file per run (the loop
+#                     of tools/rounds.py)
 #
 # Tables: python3 tables.py $VALK_BENCH_OUT (regenerates every table from
 # the raw files).
@@ -31,6 +34,7 @@
 #                    shipped switch levelled v3 lto)
 #   VALK_BENCH_ROWS  restrict to these row ids (default: all)
 #   VALK_BENCH_TIMEOUT  seconds per run (default 120)
+#   VALK_BENCH_COUNT_RUNS  counts: runs per row, every thread (default 3)
 #   VALK_BENCH_ALLOW_GOVERNOR=1  let `time` and `shipped` run without the
 #                    performance governor or beside other work (a dry run;
 #                    the session is marked "disturbed, not evidence")

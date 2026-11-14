@@ -8,7 +8,9 @@
 # directory with an empty environment (only HOME, PATH=/usr/bin:/bin, and
 # TMPDIR, all inside the work directory), compiles and runs programs that
 # use every std module, compiles and runs programs in each codegen mode
-# (--debug, bare, --release), runs `avant test` on a small project, and runs
+# (--debug, bare, --release), runs `avant test` on a small project, checks
+# that examples/, LICENSE and the third-party notices are there and that
+# `avant version` prints versions.txt's version and commit, and runs
 # `avant bind` when the bundled helper's libraries are present. It first
 # proves that the release carries no myc-llvm (Stage 28 W10; the
 # compiler's one back end is the in-process LLVM since W11): none in the
@@ -332,7 +334,7 @@ fn main {
       0
     }
     server.serve
-    dummy = handle.join
+    _ = handle.join
   }
 }
 EOF
@@ -365,6 +367,48 @@ if run avant-test "$avant" test; then
   fi
 else
   fail avant-test "exit status $?"
+fi
+
+# What the archive carries for its user (O294, Stage 29 W-FIX1e): the
+# examples the README points to (examples/hello.av run from the
+# install), Avant's LICENSE, and the third-party notices with each
+# vendored library's license.
+if [ -f "$inst/examples/hello.av" ] && [ -f "$inst/examples/c/add.c" ]; then
+  pass examples-shipped
+else
+  fail examples-shipped "examples/hello.av or examples/c/add.c is missing from the install"
+fi
+expect example-hello "Hello Avant" "$avant" run "$inst/examples/hello.av"
+missing=""
+for f in LICENSE third_party/NOTICE.md third_party/base64/LICENSE third_party/pcre2/LICENCE.md third_party/pcre2/deps/sljit/LICENSE third_party/uSockets/LICENSE third_party/zlib/LICENSE third_party/yyjson/LICENSE third_party/picohttpparser/LICENSE; do
+  [ -s "$inst/$f" ] || missing="$missing $f"
+done
+if [ -z "$missing" ]; then
+  pass licenses-shipped
+else
+  fail licenses-shipped "missing or empty:$missing"
+fi
+
+# `avant version` and `--version` (O534) print the version and the
+# commit of the archive's versions.txt (its `version:` line, else a
+# release's `tag: vX`).
+want_v=$(sed -n 's/^version: //p' "$inst/versions.txt" | head -n 1)
+[ -n "$want_v" ] || want_v=$(sed -n 's/^tag: v//p' "$inst/versions.txt" | head -n 1)
+want_c=$(sed -n 's/^avant: //p' "$inst/versions.txt" | head -n 1)
+if run version "$avant" version && run dash-version "$avant" --version; then
+  got_v=$(cat "$work/logs/version.log")
+  case "$got_v" in
+    "avant $want_v (commit $want_c)" | "avant $want_v (commit $want_c, with uncommitted changes)")
+      if [ "$got_v" = "$(cat "$work/logs/dash-version.log")" ]; then
+        pass version
+      else
+        fail version "--version prints something else than version"
+      fi
+      ;;
+    *) fail version "prints '$got_v', not avant $want_v (commit $want_c)" ;;
+  esac
+else
+  fail version "exit status $?"
 fi
 
 helper="$inst/avant-bind"

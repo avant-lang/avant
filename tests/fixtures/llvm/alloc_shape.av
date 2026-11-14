@@ -1,0 +1,82 @@
+// The allocation sequence's shape (Stage 29 VALK-A1; compiler.md L8: one
+// assertion per property, on the pre-optimization .ll of `avant
+// __emit-ll`), checked function by function by
+// tests/cases/test_alloc_shape.av. Each function below is the smallest one
+// that shows its property; the comment says what the test asserts.
+
+class Node {
+  next: Node?
+  v: Int
+}
+
+// M3 (O137): Node.new allocates inline and reads the fast path's six
+// thread-local globals, declared local-exec (one %fs-relative access each).
+fn fresh_node(v: Int): Node {
+  n = Node.new
+  n.v = v
+  n
+}
+
+// M4 (O176): a frame function with no root slot links no frame record.
+// fresh_node calls Node.new (a collecting call) and keeps no reference
+// across it, so neither it nor Node.new (no reference argument) has a
+// %gcf record; `main` keeps its record (a thread's first Avant frame).
+fn sum_nodes(k: Int): Int {
+  t = 0
+  for i in 0..k {
+    t += fresh_node(i).v
+  }
+  t
+}
+
+// M5 (O204, O337): Tree.new(a, b) is lowered where it is called: `pair`
+// allocates inline (its slow path barriers the result once, at birth) and
+// calls Tree.initialize, whose two stores into the new object have no
+// barrier test: no collecting call lies between the allocation and them.
+class Tree {
+  left: Tree?
+  right: Tree?
+
+  fn initialize(left: Tree?, right: Tree?) {
+    self.left = left
+    self.right = right
+  }
+}
+
+fn pair(a: Tree?, b: Tree?): Tree {
+  Tree.new(a, b)
+}
+
+// M5's other side: in Named.initialize the string interpolation (a
+// collecting call) lies between the allocation and `self.label = ...`,
+// which keeps its barrier test; `self.next = next` before it has none.
+class Named {
+  next: Named?
+  label: String
+
+  fn initialize(next: Named?, k: Int) {
+    self.next = next
+    self.label = "n${k}"
+  }
+}
+
+// M8: link's barrier tests the header's flags with one masked compare
+// (flags & 0x8030 above 0x8000: HEAP, and YOUNG or REM).
+fn link(a: Node, b: Node) {
+  a.next = b
+}
+
+fn main {
+  n = fresh_node(3)
+  link(n, fresh_node(4))
+  puts(n.v)
+  puts(sum_nodes(4))
+  t = pair(pair(nil, nil), nil)
+  if l = t.left {
+    puts("pair")
+  }
+  m = Named.new(Named.new(nil, 1), 2)
+  if x = m.next {
+    puts("${m.label} ${x.label}")
+  }
+}

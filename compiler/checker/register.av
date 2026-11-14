@@ -422,6 +422,9 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
           return
         }
       }
+      if !checker_self.fun_union_ok(pty, cfun.params[k].loc) {
+        return
+      }
       params.push(pty)
       k += 1
     }
@@ -441,6 +444,9 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
       }
       if ty.is_fn {
         checker_self.fail(t.loc, "C function pointers are not supported")
+        return
+      }
+      if !checker_self.fun_union_ok(ty, t.loc) {
         return
       }
       ret = ty
@@ -539,12 +545,24 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
     ret = ty
   }
   checker_self.resolver.clear_tparams
+  // An instance's signature names its type arguments as they were
+  // written where the generic is used (pinned): that module's rule,
+  // already applied there. The template's own signature was checked
+  // with its parameters open.
   i = 0
   while i < params.size {
-    checker_self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
+    if !type_name_has_pinned(fnn.params[i].type) {
+      checker_self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
+    }
     i += 1
   }
-  checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
+  ret_pinned = false
+  if rt = fnn.return_type {
+    ret_pinned = type_name_has_pinned(rt)
+  }
+  if !ret_pinned {
+    checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
+  }
   checker_self.current_module = saved_mod
   if fnn.name == "main" || fnn.name == "run" {
     if ret.is_void {
@@ -736,12 +754,24 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
     ret = ty
   }
   checker_self.resolver.clear_tparams
+  // An instance's signature names its type arguments as they were
+  // written where the generic is used (pinned): that module's rule,
+  // already applied there. The template's own signature was checked
+  // with its parameters open.
   i = 0
   while i < params.size {
-    checker_self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
+    if !type_name_has_pinned(fnn.params[i].type) {
+      checker_self.ensure_pub_sig_ty(params[i], fnn.params[i].loc, fnn)
+    }
     i += 1
   }
-  checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
+  ret_pinned = false
+  if rt = fnn.return_type {
+    ret_pinned = type_name_has_pinned(rt)
+  }
+  if !ret_pinned {
+    checker_self.ensure_pub_sig_ty(ret, fnn.loc, fnn)
+  }
   checker_self.current_module = saved_mod
   if fnn.name == "initialize" {
     if !ret.is_void {
@@ -1014,4 +1044,29 @@ pub fn (checker_self: Checker) method_indices_named(name: String): Array(Int) {
     return checker_self.method_lists[k]
   }
   checker_self.none_named
+}
+
+// A union in a `fun` signature (O549, Stage 29 W-FIX1d): C receives and
+// returns one word there, so only a union that is one word is what it
+// says: an optional reference, a pointer with `nil` as NULL (`String?`,
+// `Bytes?`, `Array(T)?`, `Hash(K, V)?`, `Buf?`, a class `C?`, a
+// `JoinHandle(T)?`; each checked both ways with a C function). Any other
+// union is a tag and a payload in Avant: declared in a `fun` it compiled,
+// and C read or wrote one of the two words as if it were the value
+// (`Int?` gave 72340172838076673 for twice 21, `Ptr(Pair)?` as malloc's
+// result a segmentation fault). It is refused until the nullable pointer
+// is decided (W9): the refusal holds whichever way that goes.
+pub fn (checker_self: Checker) fun_union_ok(ty: Ty, loc: Location): Bool {
+  if !ty.is_union {
+    return true
+  }
+  if m = ty_opt_ref(ty) {
+    return true
+  }
+  if ty.members.size == 2 && ty.includes_nil && ty_without_nil(ty).is_ptr {
+    checker_self.fail(loc, "a fun signature cannot use ${ty.show}: C has one pointer there, and Ptr(T)? is a tag and a pointer in Avant, not a nullable pointer (that is not decided yet); declare ${ty_without_nil(ty).show}")
+    return false
+  }
+  checker_self.fail(loc, "a fun signature cannot use ${ty.show}: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL (String?, Bytes?, an array, a hash, a Buf or a class with ?)")
+  false
 }

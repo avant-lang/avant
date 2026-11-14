@@ -11,13 +11,17 @@
 # after each suite (no litter); builds D' (C' compiles the compiler,
 # bin/avant-d-llvm); checks the fixed point (the pre-optimization .ll of
 # compiler/main.av, `avant __emit-ll`, from C' and from D', byte for byte)
-# and C' = D' byte for byte. Prints one summary line per suite, the fixed
-# point, and a final `GATE PASS` or `GATE FAIL: ...` line; exits 0 only on
-# PASS (1 on any failure, 2 on usage).
+# and C' = D' byte for byte. Between the default suites and the GC passes
+# it runs the README checks on C' (tools/readme-check.sh, every ```avant
+# block compiled and run, and tools/readme-links.sh; Stage 29 W-FIX1f2,
+# O218): a red one fails the gate. Prints one summary line per suite, one
+# for the README checks, the fixed point, and a final `GATE PASS` or
+# `GATE FAIL: ...` line; exits 0 only on PASS (1 on any failure, 2 on
+# usage).
 #
 # Environment:
 #   GATE_SEED       seed directory holding avant (default: tools/letters.sh's,
-#                   bin/v0.41.0; `sh tools/letters.sh --print-seed`)
+#                   bin/v0.42.0; `sh tools/letters.sh --print-seed`)
 #   GATE_OUT        output directory (default results/gate-YYYYmmdd-HHMMSS);
 #                   keep it under results/ or outside the repository, since the
 #                   repository snapshot excludes only .git/ and results/
@@ -88,6 +92,7 @@
 # build-runtime.log,
 # build-L.log and time-build-L.txt; suite-L.log, junit-L.xml, time-L.txt;
 # {before,after}-L.{tmp,repo} snapshots and the new-/gone- differences;
+# readme-check.log, readme-links.log and their litter-readme.{tmp,repo};
 # build-d-llvm.log, time-build-d-llvm.txt, emit-{c,d}-llvm.log,
 # time-emit-{c,d}-llvm.txt;
 # fixed-point.txt; identity.txt (C' against D'); reuse.txt when
@@ -197,6 +202,28 @@ for L in b $C; do
   [ "$L" = b ] && [ -n "$REUSE" ] && keep="AVANT_FIXED_POINT_KEEP=$out/kept-c"
   suite_pass "$L" "$L" "$keep $SUITE_ENV"
 done
+
+# The README's programs and links (Stage 29 W-FIX1f2, O218), on C' and
+# alone (a few seconds): every ```avant block compiled and run against
+# what the README says it prints (tools/readme-check.sh), and every
+# heading, anchor and relative link (tools/readme-links.sh). A red check
+# fails the gate; the repository and /tmp are snapshotted around them.
+readme_checks() {
+  snap "$out/before-readme"
+  env -u AVANT_BACKEND AVANT_COMPILER="$root/bin/avant-$C" timeout -k 10 900 sh tools/readme-check.sh > "$out/readme-check.log" 2>&1 < /dev/null
+  rc=$?
+  [ $rc -eq 0 ] || fail "README check: $(tail -1 "$out/readme-check.log") (rc=$rc, readme-check.log)"
+  timeout -k 10 300 sh tools/readme-links.sh > "$out/readme-links.log" 2>&1 < /dev/null
+  rc=$?
+  [ $rc -eq 0 ] || fail "README links: $(tail -1 "$out/readme-links.log") (rc=$rc, readme-links.log)"
+  snap "$out/after-readme"
+  LC_ALL=C comm -3 "$out/before-readme.tmp" "$out/after-readme.tmp" > "$out/litter-readme.tmp"
+  LC_ALL=C comm -3 "$out/before-readme.repo" "$out/after-readme.repo" > "$out/litter-readme.repo"
+  for k in litter-readme.tmp litter-readme.repo; do
+    [ -s "$out/$k" ] && fail "litter: $k has $(wc -l < "$out/$k") entries"
+  done
+}
+readme_checks
 # One extra pass on C' per GC environment (O26), when asked: GATE_GC_ENV
 # is one environment or a `;`-separated list of them (O68). GC_LIST is
 # the list's non-empty entries, one per line; with one entry the pass is
@@ -340,6 +367,7 @@ ptimes() { [ -f "$1" ] && grep -E '^(real|user|sys) ' "$1" | tr '\n' ' '; }
     case "$L" in "$C"-gc*) tag="$L ($(gc_env_of "$L"))" ;; esac
     echo "suite $tag: $(grep -E 'failed, .* passed' "$out/suite-$L.log" | tail -1) $checks $jf $(ptimes "$out/time-$L.txt")$(grep -E '^rc=' "$out/suite-$L.log") new-tmp=$(wc -l < "$out/new-$L.tmp") gone-tmp=$(wc -l < "$out/gone-$L.tmp") new-repo=$(wc -l < "$out/new-$L.repo") gone-repo=$(wc -l < "$out/gone-$L.repo")"
   done
+  echo "readme: $(tail -n 2 "$out/readme-check.log" 2>/dev/null | tr '\n' ' ')| $(tail -n 2 "$out/readme-links.log" 2>/dev/null | tr '\n' ' ')"
   cat "$out/fixed-point.txt"
   [ -f "$out/identity.txt" ] && cat "$out/identity.txt"
   [ -f "$out/reuse.txt" ] && cat "$out/reuse.txt"

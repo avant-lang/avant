@@ -108,6 +108,7 @@ pub fn reserved_c_names: Hash(String, Int) {
   "avant_trap_c_range",
   "avant_trap_exit_status",
   "avant_trap_c_null",
+  "avant_trap_enum",
   "avant_trap_overflow_in",
   "avant_trap_div_zero_in",
   "avant_trap_empty_at",
@@ -123,6 +124,7 @@ pub fn reserved_c_names: Hash(String, Int) {
   "avant_trap_negative_at",
   "avant_trap_exit_status_at",
   "avant_trap_c_null_at",
+  "avant_trap_enum_at",
   "avant_checked_add_i64",
   "avant_checked_sub_i64",
   "avant_checked_mul_i64",
@@ -304,7 +306,13 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
     }
     return tn
   }
-  TypeName.new(loc, ty.name)
+  // A named type (a struct, a class, an instance of a generic one, a C
+  // layout): pinned to its module, so the name means this type wherever
+  // an instance reads it (O255).
+  named = TypeName.new(loc, ty.name)
+  named.mod_name = ty.mod_name
+  named.pinned = true
+  named
 }
 
 pub class ImplFact {

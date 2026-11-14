@@ -1,0 +1,126 @@
+// `Array(T).new(n) { |i| ... }` under the collector (D329, Stage 29
+// W-FIX1b): the buffer fills while the block allocates, so collections
+// run between the stores, the buffer is promoted or born mature while
+// elements are still young, and every element must survive. Each build
+// is read back after more garbage. The two store forms are both here: a
+// fresh fill closed by one barrier (a block that cannot return) and a
+// barrier at each store (a block that can).
+
+class Node {
+  pub v: Int = 0
+  pub tail: Array(Int) = []
+
+  fn initialize(v: Int) {
+    self.v = v
+    self.tail = [v, v + 1]
+  }
+}
+
+struct Rec {
+  n: Int
+  name: String
+  node: Node
+}
+
+fn garbage(words: Int): Int {
+  junk = Array(Int).new(words)
+  junk[words - 1] = words
+  junk[words - 1]
+}
+
+fn sum_nodes(ns: Array(Node)): Int {
+  t = 0
+  for n in ns {
+    t += n.v + n.tail[1]
+  }
+  t
+}
+
+// A large buffer (born mature), small garbage per element.
+fn many(n: Int): Array(Node) {
+  Array(Node).new(n) { |i|
+    g = garbage(8)
+    Node.new(i + g - 8)
+  }
+}
+
+// A small buffer (young, promoted mid-fill), much garbage per element.
+fn few(n: Int): Array(Node) {
+  Array(Node).new(n) { |i|
+    g = garbage(4096)
+    Node.new(i + g - 4096)
+  }
+}
+
+// The block can return: a barrier at each store.
+fn until(n: Int, stop: Int) {
+  ns = Array(Node).new(n) { |i|
+    if i == stop {
+      puts("left at ${i}")
+      return
+    }
+    g = garbage(512)
+    Node.new(i + g - 512)
+  }
+  _ = garbage(100000)
+  puts(sum_nodes(ns))
+}
+
+fn recs(n: Int): Array(Rec) {
+  Array(Rec).new(n) { |i|
+    _ = garbage(256)
+    Rec { n: i, name: "r${i}", node: Node.new(i) }
+  }
+}
+
+fn grid(h: Int, w: Int): Array(Array(Node)) {
+  Array(Array(Node)).new(h) { |y|
+    Array(Node).new(w) { |x|
+      _ = garbage(64)
+      Node.new(y * 1000 + x)
+    }
+  }
+}
+
+fn main {
+  a = many(3000)
+  _ = garbage(200000)
+  puts(sum_nodes(a))
+  b = few(60)
+  _ = garbage(200000)
+  puts(sum_nodes(b))
+  until(400, 400)
+  until(400, 123)
+  rs = recs(500)
+  _ = garbage(200000)
+  t = 0
+  for i in 0..rs.size {
+    t += rs[i].n + rs[i].node.v + rs[i].name.size
+  }
+  puts(t)
+  g = grid(40, 25)
+  _ = garbage(200000)
+  t2 = 0
+  for row in g {
+    t2 += sum_nodes(row)
+  }
+  puts(t2)
+  ss = Array(String).new(2000) { |i| "s${i}" }
+  _ = garbage(200000)
+  puts("${ss[0]} ${ss[1999]} ${ss.size}")
+  os = Array(Node?).new(1000) { |i|
+    o: Node? = nil
+    if i % 3 != 0 {
+      o = Node.new(i)
+    }
+    o
+  }
+  _ = garbage(200000)
+  some = 0
+  for i in 0..os.size {
+    if o = os[i] {
+      some += o.v
+    }
+  }
+  puts(some)
+}

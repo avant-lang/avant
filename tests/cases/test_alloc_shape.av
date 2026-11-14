@@ -1,0 +1,157 @@
+import harness
+import backends
+
+// Per-function shape assertions on the allocation sequence (Stage 29
+// VALK-A1; research/valk/compiler.md L8, learned from Valk's
+// tests/codegen/run.sh): tests/fixtures/llvm/alloc_shape.av is emitted
+// with `avant __emit-ll` (the pre-optimization .ll, the same in every
+// mode) and each property is asserted on the one function that shows it,
+// so a later change that regresses the shape fails here, not only in an
+// instruction count. The fixture also runs (its output is checked), so
+// the shapes asserted are the shapes of a correct program.
+//
+// M3 (O137): the six thread-local globals of the inline allocation path
+// (avant_gc_fast_ok, avant_gc_bump, avant_gc_limit, avant_gc_block,
+// avant_gc_base, avant_gc_starts) are declared local-exec, as
+// avant_gc_top is, and no thread-local is declared without a model.
+//
+// M4 (O176): a frame function with no root slot links no frame record
+// (no %gcf, no frame-helper call): fresh_node, sum_nodes and Node.new
+// here; `main` keeps its record, and so does the thunk C calls in
+// tests/fixtures/ffi/first_frame.av (`check#cb`, the first-frame rule)
+// while the functions it calls (`check`, `fill`) have none.
+//
+// M5 (O204, O337): a constructor with an `initialize` and no field code
+// is lowered at its call site (`pair` allocates inline and calls
+// Tree.initialize, never Tree.new), and the stores of an initialize into
+// its new object have no barrier test while no collecting call lies
+// between the allocation and them (Tree.initialize: none; Named.initialize:
+// one, the store after the string interpolation); the allocation's slow
+// path barriers its result once (avant_barrier, the birth barrier).
+// tests/fixtures/llvm/fresh_init.av runs both shapes under the
+// collector's environments.
+//
+// M8: the barrier's inline test of the holder's header flags is one
+// masked compare (`and i16 flags, 0x8030`, then `icmp ugt` against 0x8000),
+// not two tests and an `and` (link here).
+
+// The text of the definition of SYM in the .ll text LL (from its `define`
+// line to its closing brace), or "" when it is not defined.
+fn ll_fn(ll: String, sym: String): String {
+  key = "@\"${sym}\"("
+  if sym == "main" {
+    key = "@main("
+  }
+  lines = ll.split("\n")
+  out = buf_new()
+  inside = false
+  for line in lines {
+    // a line that starts with `d`: a `define`, never a call
+    if !inside && line.size > 7 && line[0] == 100 && str_has(line, key) {
+      inside = true
+    }
+    if inside {
+      out.push_str(line)
+      out.push_str("\n")
+      if line == "}" {
+        return out.to_s
+      }
+    }
+  }
+  ""
+}
+
+fn count_of(hay: String, needle: String): Int {
+  hay.split(needle).size - 1
+}
+
+fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
+  src = "${root}/tests/fixtures/llvm/alloc_shape.av"
+  ll = "${dir}/alloc_shape.ll"
+  c.eq_int(emit_ll(compiler, src, ll, "${dir}/alloc_shape.ll.log"), 0, "alloc_shape.av: __emit-ll")
+  text = log_text(ll)
+  c.eq_int(compile_av(compiler, src, "${dir}/alloc_shape", "${dir}/alloc_shape.log"), 0, "alloc_shape.av: compiles")
+  c.eq_int(run_av_bin("${dir}/alloc_shape", "${dir}/alloc_shape.out"), 0, "alloc_shape.av: exit 0")
+  c.eq_str(log_text("${dir}/alloc_shape.out"), "3\n6\npair\nn2 n1\n", "alloc_shape.av: output")
+
+  // M3: local-exec thread-locals.
+  for g in ["avant_gc_fast_ok", "avant_gc_bump", "avant_gc_limit", "avant_gc_block", "avant_gc_base", "avant_gc_starts", "avant_gc_top"] {
+    c.expect(str_has(text, "@${g} = external thread_local(localexec) global "), "M3: @${g} is declared local-exec")
+  }
+  c.eq_int(count_of(text, " thread_local global "), 0, "M3: no thread-local is declared without a model")
+  fnode = ll_fn(text, "av.alloc_shape/Node.new")
+  c.expect(str_has(fnode, "load ptr, ptr @avant_gc_bump") && str_has(fnode, "load ptr, ptr @avant_gc_limit"), "M3: Node.new allocates inline (it reads the bump cursor and the limit)")
+
+  // M4: no frame record without a slot, but in a thread's first frame.
+  for f in ["fresh_node", "sum_nodes", "Node.new"] {
+    body = ll_fn(text, "av.alloc_shape/${f}")
+    c.expect(body.size > 0, "M4: ${f} is defined")
+    c.expect(!str_has(body, "%gcf") && !str_has(body, "@__avant_frame_push") && !str_has(body, "@avant_gc_frame_enter"), "M4: ${f} (no root slot) links no frame record")
+  }
+  mbody = ll_fn(text, "main")
+  c.expect(str_has(mbody, "%gcf = alloca") && str_has(mbody, "call void @__avant_frame_push(ptr %gcf)"), "M4: main keeps its frame record (a thread's first Avant frame)")
+  ff = "${root}/tests/fixtures/ffi/first_frame.av"
+  fll = "${dir}/first_frame.ll"
+  c.eq_int(emit_ll(compiler, ff, fll, "${dir}/first_frame.ll.log"), 0, "first_frame.av: __emit-ll")
+  ftext = log_text(fll)
+  thunk = ll_fn(ftext, "av.first_frame/check#cb")
+  c.expect(str_has(thunk, "%gcf = alloca { ptr, ptr, i32, i32, i32 }") && str_has(thunk, "call void @__avant_frame_push(ptr %gcf)"), "M4: the C callback's thunk check#cb keeps a record with no slot (the first-frame rule)")
+  for f in ["check", "fill"] {
+    body = ll_fn(ftext, "av.first_frame/${f}")
+    c.expect(body.size > 0 && !str_has(body, "%gcf"), "M4: first_frame.av's ${f} (no root slot) links no frame record")
+  }
+
+  // M5: the constructor at its call site, no barrier on the fresh object.
+  tinit = ll_fn(text, "av.alloc_shape/Tree.initialize")
+  c.expect(tinit.size > 0, "M5: Tree.initialize is defined")
+  c.eq_int(count_of(tinit, "@avant_barrier"), 0, "M5: Tree.initialize stores into its new object with no barrier test")
+  ninit = ll_fn(text, "av.alloc_shape/Named.initialize")
+  c.eq_int(count_of(ninit, "call void @avant_barrier(ptr"), 1, "M5: Named.initialize keeps one barrier test, the store after its collecting call")
+  pbody = ll_fn(text, "av.alloc_shape/pair")
+  c.expect(str_has(pbody, "load ptr, ptr @avant_gc_bump") && str_has(pbody, "call void @\"av.alloc_shape/Tree.initialize\"(") && !str_has(pbody, "@\"av.alloc_shape/Tree.new\""), "M5: pair allocates inline and calls Tree.initialize, not Tree.new")
+  c.eq_int(count_of(pbody, "call void @avant_barrier(ptr"), 1, "M5: pair barriers the allocation's slow-path result once (the birth barrier)")
+
+  // M8: one masked compare.
+  lbody = ll_fn(text, "av.alloc_shape/link")
+  c.expect(str_has(lbody, " = and i16 ") && str_has(lbody, ", -32720") && str_has(lbody, " = icmp ugt i16 ") && str_has(lbody, ", -32768"), "M8: link's barrier test is flags & 0x8030 compared above 0x8000")
+  c.eq_int(count_of(lbody, " = and i16 "), 1, "M8: link's barrier test has one mask, not two")
+  c.eq_int(count_of(lbody, " = and i1 "), 0, "M8: link's barrier test joins no two conditions")
+
+  // M5 at run time, plainly and under the collector's environments.
+  fsrc = "${root}/tests/fixtures/llvm/fresh_init.av"
+  c.eq_int(compile_av(compiler, fsrc, "${dir}/fresh_init", "${dir}/fresh_init.log"), 0, "fresh_init.av: compiles")
+  fenvs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for i in 0..fenvs.size {
+    runs.push(run_job_env(dir, "fresh_init", "fresh_init.e${i}", fenvs[i]))
+  }
+  run_waves(runs)
+  for i in 0..fenvs.size {
+    what = "plain"
+    if fenvs[i].size > 0 {
+      what = "under ${fenvs[i]}"
+    }
+    c.eq_int(runs[i].code, 0, "fresh_init.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/fresh_init.e${i}.out"), "chains 100 1800378890\ntrees 81880\n", "fresh_init.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/fresh_init.e${i}.err"), "", "fresh_init.av ${what}: no stderr (no verifier report)")
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_alloc_shape.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_alloc_shape(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

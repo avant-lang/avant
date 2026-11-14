@@ -10,25 +10,42 @@ exit or a timeout stops the session: such a run is not a result).
 
   check        every row once, untimed. Writes check/<id>.out and
                check/summary.tsv.
-  counts       every row once under `perf stat -e instructions:u`.
-               Writes counts/<id>.perf and counts/instructions.tsv.
-  time ROUNDS  one unmeasured warm-up of every row, then ROUNDS fresh
-               processes per row. The order rotates: round r starts
-               r * (rows // ROUNDS) rows further into the list, and every
-               other round walks it backwards. Wall time is
-               time.monotonic_ns() around the process (GNU time is the
-               process started, so its start-up is inside the interval:
-               the same for every row); peak RSS, user and system time
-               are GNU time's. One raw file per run:
+  counts       every row VALK_BENCH_COUNT_RUNS times (default 3) under
+               `perf stat -e instructions:u` (every thread of the process),
+               and once more with `--no-inherit` (the main thread only,
+               with its task-clock). Writes counts/<id>.<n>.perf,
+               counts/<id>.main.perf and counts/instructions.tsv: the
+               median count, its minimum and maximum (a row whose work
+               varies by run, such as Rust's lru, shows its range), the
+               main thread's count, its share of the process's CPU time in
+               that run, and "threaded" when the share is under 95% (a
+               collector or worker threads, as in Go's allocating rows:
+               such a row's count includes work its wall time overlaps).
+  time ROUNDS  the loop of tools/rounds.py (the one copy, O221): one
+               unmeasured warm-up of every row, then ROUNDS fresh processes
+               per row. The order rotates: round r starts (r - 1) *
+               (rows // ROUNDS) rows further into the list, and every other
+               round walks it backwards from there. Each run is started by
+               the spawner of tools/rounds.py (a small C program compiled
+               into the session's directory): wall time is its monotonic
+               clock just before vfork and just after wait4, so no wrapper's
+               start-up is inside (GNU time's was, O387); peak RSS, user
+               and system time are wait4's rusage of the program's own
+               process. One raw file per run:
                time/<session>/round-<r>/<id>.run.
 """
 import hashlib
 import os
+import resource
+import statistics
 import subprocess
 import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.dont_write_bytecode = True  # no __pycache__ in tools/
+sys.path.insert(0, os.path.join(HERE, "..", "..", "tools"))
+import rounds  # noqa: E402  the loop and the spawner (tools/rounds.py)
 OUT = os.environ["VALK_BENCH_OUT"]
 LIMIT = float(os.environ.get("VALK_BENCH_TIMEOUT", "120"))
 CAP = 50_000_000
@@ -115,41 +132,64 @@ def cmd_check(rows):
     sys.exit(1 if failed else 0)
 
 
+def perf_count(path):
+    with open(path) as f:
+        for line in f:
+            parts = line.split(",")
+            if len(parts) > 2 and parts[2].startswith("instructions"):
+                return int(parts[0])
+    return None
+
+
 def cmd_counts(rows):
     d = os.path.join(OUT, "counts")
     os.makedirs(d, exist_ok=True)
+    n = int(os.environ.get("VALK_BENCH_COUNT_RUNS", "3"))
+    if n < 1:
+        die("VALK_BENCH_COUNT_RUNS must be at least 1")
     lines = []
     for row in rows:
-        perf = os.path.join(d, fname(row["id"]) + ".perf")
-        _, code, out, err = run(row, ["perf", "stat", "-x,", "-e", "instructions:u", "-o", perf])
-        verify(row, code, out, err, "counts")
-        count = None
+        counts = []
+        for i in range(1, n + 1):
+            perf = os.path.join(d, "%s.%d.perf" % (fname(row["id"]), i))
+            _, code, out, err = run(row, ["perf", "stat", "-x,", "-e", "instructions:u", "-o", perf])
+            verify(row, code, out, err, "counts")
+            c = perf_count(perf)
+            if c is None:
+                die("no instruction count for %s (%s)" % (row["id"], perf))
+            counts.append(c)
+        # The main thread alone, and its share of the process's CPU time in
+        # the same run: perf's task-clock of the main thread against the
+        # rusage of perf and the program together (perf's own share is about
+        # 1%). Comparing counts of different runs cannot tell threads from a
+        # program whose work varies by run (Rust's lru).
+        perf = os.path.join(d, fname(row["id"]) + ".main.perf")
+        r0 = resource.getrusage(resource.RUSAGE_CHILDREN)
+        _, code, out, err = run(row, ["perf", "stat", "--no-inherit", "-x,", "-e", "instructions:u,task-clock", "-o", perf])
+        r1 = resource.getrusage(resource.RUSAGE_CHILDREN)
+        verify(row, code, out, err, "counts (main thread)")
+        main_c = perf_count(perf)
+        main_ms = None
         with open(perf) as f:
             for line in f:
                 parts = line.split(",")
-                if len(parts) > 2 and parts[2].startswith("instructions"):
-                    count = int(parts[0])
-        if count is None:
-            die("no instruction count for %s (%s)" % (row["id"], perf))
-        lines.append("%s\t%d" % (row["id"], count))
+                if len(parts) > 2 and parts[2].startswith("task-clock"):
+                    main_ms = float(parts[0])
+        if main_c is None or main_ms is None:
+            die("no main-thread count for %s (%s)" % (row["id"], perf))
+        cpu = (r1.ru_utime - r0.ru_utime) + (r1.ru_stime - r0.ru_stime)
+        share = main_ms / 1000 / cpu if cpu > 0 else 1.0
+        med = int(statistics.median(counts))
+        threaded = "threaded" if share < 0.95 else ""
+        lines.append("%s\t%d\t%d\t%d\t%d\t%d\t%.3f\t%s" % (row["id"], med, min(counts), max(counts), n, main_c, share, threaded))
         print(lines[-1])
     with open(os.path.join(d, "instructions.tsv"), "w") as f:
-        f.write("id\tinstructions:u\n" + "\n".join(lines) + "\n")
+        f.write("id\tinstructions:u (median, every thread)\tmin\tmax\truns\tinstructions:u (main thread, --no-inherit)"
+                "\tmain thread's share of the CPU time\tthreaded\n" + "\n".join(lines) + "\n")
 
 
-def governors():
-    seen = {}
-    base = "/sys/devices/system/cpu"
-    for name in sorted(os.listdir(base)):
-        p = os.path.join(base, name, "cpufreq", "scaling_governor")
-        if name.startswith("cpu") and os.path.exists(p):
-            g = open(p).read().strip()
-            seen[g] = seen.get(g, 0) + 1
-    return seen
-
-
-def cmd_time(rows, rounds):
-    gov = governors()
+def cmd_time(rows, nrounds):
+    gov = rounds.governors()
     dry = bool(os.environ.get("VALK_BENCH_ALLOW_GOVERNOR"))
     if list(gov) != ["performance"] and not dry:
         die("governor is %s, not performance: no timed work (VALK_BENCH_ALLOW_GOVERNOR=1 for a dry run)" % gov)
@@ -164,43 +204,29 @@ def cmd_time(rows, rounds):
         print(s)
 
     note("session: %s" % session)
-    note("rounds: %d (after one unmeasured warm-up of every row)" % rounds)
+    note("rounds: %d (after one unmeasured warm-up of every row)" % nrounds)
     note("rows: %d (%s)" % (len(rows), " ".join(sorted({r["set"] for r in rows}))))
     note("governor: %s" % ", ".join("%s x%d" % kv for kv in gov.items()))
     note("kernel: %s" % os.uname().release)
     note("loadavg before: %s" % open("/proc/loadavg").read().strip())
     if dry or list(gov) != ["performance"]:
         note("DISTURBED, NOT EVIDENCE: a dry run (VALK_BENCH_ALLOW_GOVERNOR), the machine was not reserved")
-    wrapper_file = os.path.join(d, "gnu-time.tmp")
-    wrapper = ["/usr/bin/time", "-f", "%e %M %U %S", "-o", wrapper_file]
-    note("command per run: (cd <dir>; /usr/bin/time -f '%e %M %U %S' -o <file> <binary> <args>) < /dev/null, wall by time.monotonic_ns() around it")
+    spawn, sline = rounds.build_spawn(d)
+    note(sline)
+    note("command per run: (cd <dir>; <spawner> <result> <binary> <args>) < /dev/null; wall by the spawner's monotonic clock "
+         "around vfork and wait4; peak RSS, user and system time from wait4's rusage of the program (tools/rounds.py)")
 
-    for row in rows:  # the warm-up
-        _, code, out, err = run(row, wrapper)
-        verify(row, code, out, err, "the warm-up")
-    note("warm-up done: %s" % open("/proc/loadavg").read().strip())
+    def check(row, res, out, err):
+        if res["exit"] != 0:
+            return "exit %d; stderr: %s" % (res["exit"], err[-400:].decode("utf-8", "replace"))
+        if out != expected(row["program"]):
+            return "wrong output"
+        return None
 
-    n = len(rows)
-    step = max(1, n // rounds)
-    for r in range(1, rounds + 1):
-        order = rows[(r - 1) * step % n:] + rows[:(r - 1) * step % n]
-        if r % 2 == 0:
-            order = order[::-1]
-        rd = os.path.join(d, "round-%d" % r)
-        os.makedirs(rd)
-        for pos, row in enumerate(order, 1):
-            wall, code, out, err = run(row, wrapper)
-            verify(row, code, out, err, "round %d" % r)
-            elapsed, rss, user, system = open(wrapper_file).read().split()[-4:]
-            with open(os.path.join(rd, fname(row["id"]) + ".run"), "w") as f:
-                f.write("id\t%s\nround\t%d\nposition\t%d\nwall_ns\t%d\nrss_kb\t%s\n"
-                        "gnu_time_elapsed_s\t%s\nuser_s\t%s\nsys_s\t%s\nexit\t%d\noutput_sha256\t%s\noutput\tok\n"
-                        % (row["id"], r, pos, wall, rss, elapsed, user, system, code, hashlib.sha256(out).hexdigest()))
-        note("round %d: first %s, %s; loadavg %s" % (r, order[0]["id"], "backwards" if r % 2 == 0 else "forwards",
-                                                     open("/proc/loadavg").read().split()[0]))
-    os.remove(wrapper_file)
+    rrows = [{"id": r["id"], "file": fname(r["id"]), "program": r["program"], "argv": [r["binary"]] + r["args"], "cwd": r["cwd"]} for r in rows]
+    rounds.measure(spawn, rrows, nrounds, d, LIMIT, check, note, raw="")
     note("loadavg after: %s" % open("/proc/loadavg").read().strip())
-    note("governor after: %s" % ", ".join("%s x%d" % kv for kv in governors().items()))
+    note("governor after: %s" % ", ".join("%s x%d" % kv for kv in rounds.governors().items()))
     meta.close()
     with open(os.path.join(OUT, "time", "latest"), "w") as f:
         f.write(session + "\n")

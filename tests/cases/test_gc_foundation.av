@@ -16,13 +16,30 @@ import backends
 // default environment (no suite program did before), with Json.parse on
 // tenured texts between full collections (C31's default-mode exposure).
 // A run with AVANT_GC_STATS=1 checks that full collections ran; one under
-// AVANT_NURSERY=0 that the remembered set stays empty (O9).
+// AVANT_NURSERY=0 that the remembered set stays empty (O9). Under an outer
+// AVANT_GC_STRESS (the gate's stress pass) the program keeps the stress
+// mode in every run that does not ask for the verifier (O173's test half,
+// Stage 29 W-FIX1c: it ran without it from W14b1, when it took more than
+// 900 s under it, until card marking, W16t; 18 s now, 21 s with
+// AVANT_YOUNG_MB=1), and the statistics run checks that it did: at least
+// one collection for each of its 300,000 rounds.
 //
 // Each program runs plain and under each GC environment below: the known
 // stdout, no stderr (no verifier report), exit 0.
 
 fn gc_envs: Array(String) {
   ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "AVANT_GC_VERIFY=1 AVANT_NURSERY=0"]
+}
+
+// The number after `key=` in an AVANT_GC_STATS=1 line, or -1.
+fn stat_int(text: String, key: String): Int {
+  parts = text.split(" ")
+  for p in parts {
+    if p.size > key.size + 1 && str_slice(p, 0, key.size + 1) == "${key}=" {
+      return str_slice(p, key.size + 1, p.size).strip.to_i ?? -1
+    }
+  }
+  -1
 }
 
 fn test_gc_foundation(c: Checks, compiler: String, root: String, dir: String) {
@@ -42,19 +59,12 @@ fn test_gc_foundation(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_int(jobs[p].code, 0, "${names[p]}.av: compiles")
     e = 0
     while e < envs.size {
-      ev = envs[e]
-      // Under an outer AVANT_GC_STRESS full_default.av runs without it:
-      // 300,000 rounds over a remembered 50,000-element array, one young
-      // collection per helper call, take more than 900 s (W14b1).
-      if names[p] == "full_default" && gc_stress_outer() {
-        ev = "-u AVANT_GC_STRESS ${ev}"
-      }
-      runs.push(run_job_env(dir, names[p], "${names[p]}.g${e}", ev))
+      runs.push(run_job_env(dir, names[p], "${names[p]}.g${e}", envs[e]))
       e += 1
     }
     p += 1
   }
-  runs.push(run_job_env(dir, "full_default", "full_default.stats", "-u AVANT_GC_STRESS AVANT_GC_STATS=1"))
+  runs.push(run_job_env(dir, "full_default", "full_default.stats", "AVANT_GC_STATS=1"))
   runs.push(run_job_env(dir, "full_default", "full_default.nursery0", "-u AVANT_GC_STRESS -u AVANT_YOUNG_MB AVANT_NURSERY=0 AVANT_GC_STATS=1"))
   run_waves(runs)
   p = 0
@@ -80,6 +90,9 @@ fn test_gc_foundation(c: Checks, compiler: String, root: String, dir: String) {
     c.skip("full_default.av: full collections in the default environment", "outer ${outer}")
   } else {
     c.expect(!str_has(stats, " full=0 "), "full_default.av: full collections in the default environment")
+  }
+  if outer == "AVANT_GC_STRESS" {
+    c.expect(stat_int(stats, "collections") >= 300000, "full_default.av under the outer AVANT_GC_STRESS: it keeps the stress mode (at least a collection per round, 300,000)")
   }
   // O9 (Stage 29 W1b, checked against today's collector): with no young
   // generation nothing is remembered, so the remembered set stays empty

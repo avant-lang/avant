@@ -121,12 +121,14 @@ void gc_keep_add(void *obj) {
   gc_heap.keep[gc_heap.keep_n++] = obj;
 }
 
-/* Does a field of OBJ name a young object (gc_young_at: one with
- * YOUNG)? */
-static int slot_names_young(void *p) {
-  Block *b = NULL;
-  AvantHeader *ol = NULL;
-  void *start = gc_object_payload(p, &b, &ol);
+/* Does a field's word P name a young object (one with YOUNG)? By the
+ * field rule (avant_gc_internal.h; the Valk stage, VALK-T, O585) the range
+ * test alone says whether P names a heap object, and then P is its
+ * start (until VALK-T: gc_object_payload's lookup of every field). */
+static inline int slot_names_young(void *p) {
+  Block *b;
+  AvantHeader *ol;
+  void *start = gc_field_object(p, &b, &ol);
   return start && gc_young_at(start, b, ol);
 }
 
@@ -137,12 +139,7 @@ static int rem_names_young(void *obj) {
   }
   EACH_REF_SLOT(obj, slot, {
     if (!found) {
-      Block *b = NULL;
-      AvantHeader *ol = NULL;
-      void *start = gc_object_payload(*slot, &b, &ol);
-      if (start) {
-        found = gc_young_at(start, b, ol);
-      }
+      found = slot_names_young(*slot);
     }
   });
   return found;
@@ -171,7 +168,10 @@ void gc_rem_keep_young_holders(void) {
 }
 
 /* After a young collection (Stage 28 W16t): the cards of every carded
- * object it reached (the noted list) are made exact, and the object is
+ * object it reached (the carded list: the large pointer buffers among
+ * the noted objects, in the same order; until the Valk stage's VALK-T
+ * this read every noted entry's header to find them, O579) are made
+ * exact, and the object is
  * remembered (REMC) when a card is still marked. One scanned only by its
  * marked cards (CARD_SCAN) has those cards rechecked: a card stays marked
  * when one of its slots names an object still young (an aged copy, a
@@ -183,8 +183,8 @@ void gc_rem_keep_young_holders(void) {
  * needs no card (it is traced whole while young). */
 void gc_cards_settle(void) {
   uint32_t i;
-  for (i = 0; i < gc_heap.noted_n; i++) {
-    void *p = gc_heap.noted[i];
+  for (i = 0; i < gc_heap.carded_n; i++) {
+    void *p = gc_heap.carded[i];
     AvantHeader *h = avant_header(p);
     int any = 0;
     if ((h->flags & (AVANT_FLAG_FORWARDED | AVANT_FLAG_YOUNG)) || !gc_carded(h)) {

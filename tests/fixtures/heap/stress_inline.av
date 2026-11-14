@@ -1,0 +1,69 @@
+// O207 (Stage 29 W-FIX1c): a program whose allocations are all generated
+// code's, taken on the inline path. Until W-FIX1c AVANT_GC_STRESS=1 added
+// no collection to such a program (its stress points were runtime C's
+// allocations and helper entries only: the collector's suite ran 645
+// collections under it against 646 without), so the stress mode did not
+// check that generated code keeps its references in root slots across an
+// allocation. Now every allocation is a stress point: the inline path is
+// never published under the stress mode, and avant_alloc collects first.
+//
+// 20,000 rounds of two allocations (a Cell of two words, a Wide of four)
+// and nothing else that allocates: no string is built, no array grows.
+// Each round reads, through the cell it has just allocated, the cells of
+// the two rounds before (each has been through at least two collections
+// under the stress mode, so it was copied and then promoted) and the
+// Wide hanging from the previous one. tests/cases/test_gc_checks.av
+// counts the collections: none in the default environment, at least one
+// per allocation under AVANT_GC_STRESS=1.
+
+class Wide {
+  a: Int
+  b: Int
+  c: Int
+  d: Int
+}
+
+class Cell {
+  v: Int
+  prev: Cell?
+  w: Wide?
+}
+
+fn main {
+  n = 20000
+  last: Cell? = nil
+  bad = 0
+  for i in 0..n {
+    c = Cell.new
+    w = Wide.new
+    w.a = i
+    w.d = i + 7
+    c.v = i
+    c.w = w
+    c.prev = last
+    if p = c.prev {
+      if p.v != i - 1 {
+        bad += 1
+      }
+      if pw = p.w {
+        if pw.a != i - 1 || pw.d != i + 6 {
+          bad += 1
+        }
+      } else {
+        bad += 1
+      }
+      if q = p.prev {
+        if q.v != i - 2 {
+          bad += 1
+        }
+        p.prev = nil
+      }
+    }
+    last = c
+  }
+  if bad == 0 {
+    puts("stress_inline: 0 bad")
+  } else {
+    puts("stress_inline: bad")
+  }
+}

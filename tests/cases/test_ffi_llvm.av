@@ -55,15 +55,22 @@ fn both_progs: Array(String) {
 // back again starts with empty runtime-root slots.
 // opt_ptr.av (Stage 29 W3b, B13): `String?` is a C `char *` that may be
 // NULL, as a `fun` result and parameter (before, a NULL result crashed).
+// opt_refs.av (Stage 29 W-FIX1d, O549): every optional reference (a
+// String, Bytes, an array, a hash, a Buf, a class, a JoinHandle, each
+// with ?) is one pointer in a `fun` signature, nil as NULL, both ways.
 // release.av (Stage 28 W16c, D266): the `release` statement on Q9's two
 // cases (C keeps a pointer, C copies the struct), on fields C stored
 // itself, on whole and nested structs, and in a bounded loop.
+// first_frame.av (Stage 29 VALK-A1, M4): C threads calling a callback
+// whose functions have no root slot; the thunk's frame record still
+// registers each thread (the first-frame rule, compiler/mir/gc.av).
+// release.av stays the last (its heap-limit runs below read the last want).
 fn new_progs: Array(String) {
-  ["tests/fixtures/ffi/byval.av", "tests/fixtures/ffi/fresh.av", "tests/fixtures/ffi/foreign.av", "tests/fixtures/ffi/foreign_exit.av", "tests/fixtures/ffi/rereg.av", "tests/fixtures/ffi/cscalars.av", "tests/fixtures/ffi/opt_ptr.av", "tests/fixtures/ffi/release.av"]
+  ["tests/fixtures/ffi/byval.av", "tests/fixtures/ffi/fresh.av", "tests/fixtures/ffi/foreign.av", "tests/fixtures/ffi/foreign_exit.av", "tests/fixtures/ffi/rereg.av", "tests/fixtures/ffi/cscalars.av", "tests/fixtures/ffi/opt_ptr.av", "tests/fixtures/ffi/opt_refs.av", "tests/fixtures/ffi/first_frame.av", "tests/fixtures/ffi/release.av"]
 }
 
 fn new_wants: Array(String) {
-  ["42\n7\n9\n4.0\n6.0\n1.0\n3.25\n5\n1.5\n123\n15\n321\n5\n10\n15\n3008\n105\n11\n87615\n28\n1004\n6007890\n", "short abc\n0\n0\n1\n0\n1\n649351\n42\n0\n", "main bad: 0\ncallback bad: 0\n", "main bad: 0\ncallback bad: 0\n", "main bad: 0\nthread bad: 0\n", "-127\n127\n255\n0\n32767\n60000\n4294967295\n4294967295\n4294967296\n-128\n1.5\n100000001\n7.5\n16\n8\n12\n250 7 65535 -300 -5 4000000000 0.25\n1 9 65534 -32768 127 4294967295 1.5\n32904.5\n", "nil\n\"here\"\n\"=value\"\nnil\n\"C\"\n\"C\"\nnil\n", "q9 pins: 3\nchurn true\nC's kept pointer reads the original: 1\nthe struct C copied reads the original: 1\nthe field reads the last value: 1\nafter release, pins: 0\nthe released field reads null from C: 1\nreleased twice, pins: 0\nchurn after release true\nnever stored: pins 0, note null 1\nC's own value kept: 1\nAvant's value overwritten by C, pins: 1\nreleased: pins 1, C's value kept 1\nstruct pins: 3\nnested released: pins 2, tag null 1, n 5\nstruct released: pins 0, name null 1, note null 1, id 9\ninside pin(s): pins 1\nafter pin(s): pins 0\nstored twice, one released: pins 1, note still reads it 1\nboth released: pins 0\na literal released: pins 0, name null 1\nbounded rounds ok: 400, pins 0\n"]
+  ["42\n7\n9\n4.0\n6.0\n1.0\n3.25\n5\n1.5\n123\n15\n321\n5\n10\n15\n3008\n105\n11\n87615\n28\n1004\n6007890\n", "short abc\n0\n0\n1\n0\n1\n649351\n42\n0\n", "main bad: 0\ncallback bad: 0\n", "main bad: 0\ncallback bad: 0\n", "main bad: 0\nthread bad: 0\n", "-127\n127\n255\n0\n32767\n60000\n4294967295\n4294967295\n4294967296\n-128\n1.5\n100000001\n7.5\n16\n8\n12\n250 7 65535 -300 -5 4000000000 0.25\n1 9 65534 -32768 127 4294967295 1.5\n32904.5\n", "nil\n\"here\"\n\"=value\"\nnil\n\"C\"\n\"C\"\nnil\n", "String?: NULL reads nil; nil passed is NULL: true; a value passed is not NULL: true; handed back: abc\nBytes?: NULL reads nil; nil passed is NULL: true; a value passed is not NULL: true; handed back: 3\nArray(Int)?: NULL reads nil; nil passed is NULL: true; a value passed is not NULL: true; handed back: 3\nHash(String, Int)?: NULL reads nil; nil passed is NULL: true; a value passed is not NULL: true; handed back: 1\nBuf?: NULL reads nil; nil passed is NULL: true; a value passed is not NULL: true; handed back: buf\nK?: NULL reads nil; nil passed is NULL: true; a value passed is not NULL: true; handed back: 7\nJoinHandle(Int)?: NULL reads nil; nil passed is NULL: true; a value passed is not NULL: true; handed back: 41\n", "main bad: 0\ncallback bad: 0\n", "q9 pins: 3\nchurn true\nC's kept pointer reads the original: 1\nthe struct C copied reads the original: 1\nthe field reads the last value: 1\nafter release, pins: 0\nthe released field reads null from C: 1\nreleased twice, pins: 0\nchurn after release true\nnever stored: pins 0, note null 1\nC's own value kept: 1\nAvant's value overwritten by C, pins: 1\nreleased: pins 1, C's value kept 1\nstruct pins: 3\nnested released: pins 2, tag null 1, n 5\nstruct released: pins 0, name null 1, note null 1, id 9\ninside pin(s): pins 1\nafter pin(s): pins 0\nstored twice, one released: pins 1, note still reads it 1\nboth released: pins 0\na literal released: pins 0, name null 1\nbounded rounds ok: 400, pins 0\n"]
 }
 
 // release.av's bounded loop (Stage 28 W16c, D266): 400 fresh 256 KiB
@@ -276,6 +283,26 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   run_waves(gr)
   c.expect(gr[0].code != 0, "root_guard.av: rg_bad stops the program")
   c.expect(str_has(log_text("${dir}/root_guard.r.err"), "avant_gc_root_begin without avant_gc_enter: the innermost frame is a generated function's frame record"), "root_guard.av: the guard's message (after rg_good, with its own frame, returned 1)")
+  // O439 (Stage 29 W-FIX1b): a stack overflow through 32 KB frames on a
+  // pool thread faults in the thread's guard page on every one of 40
+  // runs (the stack probe every function carries). Without the probe
+  // 8 runs of 180 stepped over the guard.
+  sg: Array(HJob) = []
+  sg.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/stack_guard.av", "${dir}/stack_guard", "${dir}/stack_guard.log", flags_of("tests/fixtures/ffi/stack_guard.av", root)))
+  run_waves(sg)
+  c.eq_int(sg[0].code, 0, "stack_guard.av: compiles")
+  sgr: Array(HJob) = []
+  for si in 0..40 {
+    sgr.push(run_job_env(dir, "stack_guard", "stack_guard.r${si}", ""))
+  }
+  run_waves(sgr)
+  in_guard = 0
+  for si2 in 0..40 {
+    if sgr[si2].code == 42 && log_text("${dir}/stack_guard.r${si2}.err") == "fault in the guard page\n" {
+      in_guard += 1
+    }
+  }
+  c.eq_int(in_guard, 40, "stack_guard.av: 40 of 40 overflows fault in the guard page")
   // O145 (Stage 28 W18C): a C pointer from avant_buf_bytes kept across a
   // growth of its Buf faults under AVANT_GC_VERIFY=1 and is reported, for a
   // small Buf and a large one; plain, the program prints the same and

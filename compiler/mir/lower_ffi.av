@@ -66,6 +66,11 @@ pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
     if t.fields[j].ty.c_scalar > 0 {
       ft = lw.c_scalar_mty(t.fields[j].ty.c_scalar)
     }
+    if t.fields[j].ty.is_enum {
+      // C's int (D358): read through enum_from_c, written through
+      // enum_to_c.
+      ft = mt_i32()
+    }
     if lw.failed {
       return -1
     }
@@ -96,6 +101,9 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
         has_cb = true
       } else if param.c_scalar > 0 {
         ps.push(lw.c_scalar_mty(param.c_scalar))
+      } else if param.is_enum {
+        // C's int (D358).
+        ps.push(mt_i32())
       } else {
         ps.push(lw.ty_at(param, e.loc, "a C parameter"))
       }
@@ -103,6 +111,9 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
     ret = lw.ty_at(cs.ret, e.loc, "a C result")
     if cs.ret.c_scalar > 0 {
       ret = lw.c_scalar_mty(cs.ret.c_scalar)
+    }
+    if cs.ret.is_enum {
+      ret = mt_i32()
     }
     if lw.failed {
       return zero
@@ -124,6 +135,9 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
         }
         if cs.params[i].c_scalar > 0 {
           o = lw.to_c_scalar(o, cs.params[i].c_scalar, a.loc)
+        }
+        if cs.params[i].is_enum {
+          o = lw.enum_to_c(o, cs.params[i])
         }
         // A reference the C function holds, or an aggregate the emitter
         // passes by the C ABI (C3), is a bare local of the call.
@@ -161,6 +175,9 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
     }
     if cs.ret.c_scalar > 0 {
       return lw.from_c_scalar(b.copy_local(dest), cs.ret.c_scalar)
+    }
+    if cs.ret.is_enum {
+      return lw.enum_from_c(b.copy_local(dest), cs.ret, e.loc)
     }
     if cs.ret.is_string() {
       lw.c_string_present(dest, "${e.lib_name}.${e.callee}", e.loc)
@@ -241,12 +258,20 @@ pub fn (lw: MirLower) lower_cb_thunks {
     ps: Array(Int) = []
     j = 0
     while j < cb.fty.members.size {
-      ps.push(lw.ty_at(cb.fty.members[j], cb.loc, "a C callback parameter"))
+      if cb.fty.members[j].is_enum {
+        // C's int, checked on the way in (Stage 29 W5a1, D358).
+        ps.push(mt_i32())
+      } else {
+        ps.push(lw.ty_at(cb.fty.members[j], cb.loc, "a C callback parameter"))
+      }
       j += 1
     }
     ret = mt_void()
     if r = cb.fty.inner {
       ret = lw.ty_at(r, cb.loc, "a C callback result")
+      if r.is_enum {
+        ret = mt_i32()
+      }
     }
     if lw.failed {
       return
@@ -263,7 +288,10 @@ pub fn (lw: MirLower) lower_cb_thunks {
       }
       j += 1
     }
-    b.begin_fn(cb.sym, b.sig(ps, ret, false), lw.mloc(cb.loc), "callback")
+    cbf = b.begin_fn(cb.sym, b.sig(ps, ret, false), lw.mloc(cb.loc), "callback")
+    // C calls it, on any thread: its frame registers a thread C started
+    // and returns it to running (gc.av's first-frame rule).
+    cbf.entry = true
     lw.lw_ret = ret
     lw.at(cb.loc)
     args: Array(MOperand) = []
@@ -272,11 +300,19 @@ pub fn (lw: MirLower) lower_cb_thunks {
     }
     j = 0
     while j < ps.size {
-      args.push(b.copy_local(j + 1))
+      if cb.fty.members[j].is_enum {
+        args.push(lw.enum_from_c(b.copy_local(j + 1), cb.fty.members[j], cb.loc))
+      } else {
+        args.push(b.copy_local(j + 1))
+      }
       j += 1
     }
     if ret == mt_void() {
       b.call(-1, cb.target, args)
+    } else if rt = cb.fty.inner, rt.is_enum {
+      d0 = b.temp(lw.ty_at(rt, cb.loc, "a C callback result"))
+      b.call(d0, cb.target, args)
+      b.assign(b.pl(0), b.rv_use(lw.enum_to_c(b.copy_local(d0), rt)))
     } else {
       d = b.temp(ret)
       b.call(d, cb.target, args)
@@ -380,6 +416,28 @@ pub fn (lw: MirLower) c_field_scalar(e: Expr): Int {
     }
   }
   0
+}
+
+// The enum type of a C layout's field that e names (directly or through
+// a Ptr), else nil (Stage 29 W5a1).
+pub fn (lw: MirLower) c_field_enum(e: Expr): Ty? {
+  none: Ty? = nil
+  if e.kind == ex_field() && !e.method_call {
+    if obj = e.object, ot = obj.ty {
+      lay = ot
+      if ot.is_ptr {
+        if inner = ot.inner {
+          lay = inner
+        }
+      }
+      if lay.is_clayout {
+        if ft = lay.field_named(e.ident), ft.is_enum {
+          return ft
+        }
+      }
+    }
+  }
+  none
 }
 
 pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
@@ -504,6 +562,13 @@ pub fn (lw: MirLower) lower_pin(st: Stmt) {
 
 pub fn (lw: MirLower) unpin(h: Int) {
   args: Array(MOperand) = []
+  if h < -1 {
+    // A `Mutex.with` block's lock, its gate in local -2 - h
+    // (lower_task.av lower_mutex_with).
+    args.push(lw.lw_b.copy_local(-2 - h))
+    lw.lw_b.call(-1, "avant_gate_unlock", args)
+    return
+  }
   if h < 0 {
     // A `gc.hold` block's entry (lower_hold).
     lw.lw_b.call(-1, "avant_gc_hold_end", args)
@@ -609,4 +674,59 @@ pub fn (lw: MirLower) lower_re2c_compile(e: Expr): MOperand? {
     return lw.call_to(lw.ety(e), sym, args)
   }
   nil
+}
+
+// ---- Enums at the C boundary (Stage 29 W5a1, D358, point 10)
+
+// An enum passed to C is C's int: a narrow (one-byte) enum is widened,
+// one instruction.
+pub fn (lw: MirLower) enum_to_c(v: MOperand, t: Ty): MOperand {
+  if mir_enum_ty(t) == mt_i32() {
+    return v
+  }
+  lw.tmp(mt_i32(), lw.lw_b.rv_cast(v, mt_i32()))
+}
+
+// An enum C gave (a `fun` result, a C layout's field): C's int, checked
+// to be a member (a value that is none traps naming the enum and the
+// number: one range test when the values are contiguous, else a switch),
+// then the enum's width.
+pub fn (lw: MirLower) enum_from_c(v: MOperand, t: Ty, loc: Location): MOperand {
+  b = lw.lw_b
+  x = b.temp(mt_i32())
+  b.assign(b.pl(x), b.rv_use(v))
+  vals = t.enum_vals
+  lo = vals[0]
+  hi = vals[0]
+  for w in vals {
+    if w < lo {
+      lo = w
+    }
+    if w > hi {
+      hi = w
+    }
+  }
+  ok = -1
+  if hi - lo + 1 == vals.size {
+    c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(x), b.c_i32(lo)))
+    c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), b.copy_local(x), b.c_i32(hi)))
+    inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+    ok = lw.trap_open(inside, false)
+  } else {
+    ok = b.block
+    bad = b.block
+    targets: Array(Int) = []
+    for w2 in vals {
+      targets.push(ok)
+    }
+    b.switch_on(b.copy_local(x), vals, targets, bad)
+    b.at(bad)
+  }
+  x64 = lw.tmp(mt_i64(), b.rv_cast(b.copy_local(x), mt_i64()))
+  lw.trap_close(ok, "avant_trap_enum", lw.two(x64, b.str_const(t.show)), loc)
+  et = mir_enum_ty(t)
+  if et == mt_i32() {
+    return b.copy_local(x)
+  }
+  lw.tmp(et, b.rv_cast(b.copy_local(x), et))
 }

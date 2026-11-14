@@ -1,0 +1,111 @@
+// std.sync: what tasks share (Stage 29 W8Ca; D35, D299, D300, D355).
+//
+//   Channel(T)   passes values from task to task. Channel(T).new is a
+//                rendezvous channel (a send waits for its receive);
+//                Channel(T).new(n) holds up to n values. send(value)
+//                sends, recv returns T? (nil once the channel is closed
+//                and empty, so `while v = ch.recv { ... }` drains it),
+//                close closes it: a send waiting on a closed rendezvous
+//                channel returns.
+//   Mutex(T)     guards one value. `m.with { |x| ... }` holds the lock
+//                for the block, x naming the guarded value; the form is
+//                the compiler's (checker.av check_mutex_with, the
+//                lowering in mir/lower_task.av), on this class's two
+//                fields, and its rules (what may leave the block, O231
+//                and O541) are checker/guard.av's.
+//
+// Both stand on the runtime's gates (runtime/avant_task.c): a gate is a
+// number held in the object; the runtime keeps state for it only while a
+// thread locks or waits on it, so nothing is allocated per object and
+// nothing needs freeing (O532). The gate builtins (avant_gate_new, lock,
+// unlock, wait, broadcast) are names of `std` modules only (O436).
+//
+// T is any type (O232): the slots are T?, so a class or another Channel
+// or Mutex is an element like an Int. What a send may carry is D35's
+// rule for what crosses a task (checker/guard.av check_send).
+
+pub class Channel(T) {
+  slots: Array(T?)
+  cap: Int
+  count: Int
+  head: Int
+  closed: Bool
+  has: Bool
+  gate: UInt64
+  cell: T?
+
+  fn initialize(n: Int = 0) {
+    self.cap = n
+    self.gate = avant_gate_new()
+    self.slots = Array(T?).new(n)
+  }
+
+  pub fn send(value: T) {
+    avant_gate_lock(gate)
+    if cap == 0 {
+      while has {
+        avant_gate_wait(gate)
+      }
+      self.cell = value
+      self.has = true
+      avant_gate_broadcast(gate)
+      while has && !closed {
+        avant_gate_wait(gate)
+      }
+    } else {
+      while count == cap {
+        avant_gate_wait(gate)
+      }
+      slots[(head + count) % cap] = value
+      self.count = count + 1
+      avant_gate_broadcast(gate)
+    }
+    avant_gate_unlock(gate)
+  }
+
+  pub fn recv: T? {
+    avant_gate_lock(gate)
+    got: T? = nil
+    if cap == 0 {
+      while !has && !closed {
+        avant_gate_wait(gate)
+      }
+      if has {
+        got = cell
+        self.cell = nil
+        self.has = false
+        avant_gate_broadcast(gate)
+      }
+    } else {
+      while count == 0 && !closed {
+        avant_gate_wait(gate)
+      }
+      if count > 0 {
+        got = slots[head]
+        slots[head] = nil
+        self.head = (head + 1) % cap
+        self.count = count - 1
+        avant_gate_broadcast(gate)
+      }
+    }
+    avant_gate_unlock(gate)
+    got
+  }
+
+  pub fn close {
+    avant_gate_lock(gate)
+    self.closed = true
+    avant_gate_broadcast(gate)
+    avant_gate_unlock(gate)
+  }
+}
+
+pub class Mutex(T) {
+  cell: T
+  gate: UInt64
+
+  fn initialize(value: T) {
+    self.cell = value
+    self.gate = avant_gate_new()
+  }
+}

@@ -26,6 +26,14 @@ pub fn shim_process_run(path: String, args: Array(String)): Int {
   sys_shim.avant_fs_run(path, args)
 }
 
+// A write's failure, or nil (O569, Stage 29 W-FIX1e): its message is
+// `cannot write PATH: REASON`, which the compiler prints or returns
+// where it used to drop the reason with `?? -1`.
+pub fn write_failure(r: Int | IoError): IoError? {
+  _ = r?
+  nil
+}
+
 pub fn source_read(path: String): Source? {
   if text = file_read(path) {
     return Source.new(path, text)

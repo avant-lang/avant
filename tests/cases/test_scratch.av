@@ -44,6 +44,21 @@ fn first_line(path: String): String {
   ""
 }
 
+// A script run under timeout (Stage 29 W-FIX1i): timeout signals its
+// whole process group, the script's pipeline included, so a child that
+// loops is stopped and its check fails instead of hanging the suite. The
+// script's own `$?` reports a child's signal as 128 + n (timeout's own
+// status would not: it cannot re-raise a signal its parent ignored).
+fn bounded_sh(script: String, secs: String): Array(String) {
+  args: Array(String) = []
+  args.push("-k")
+  args.push("5")
+  args.push(secs)
+  args.push("/bin/sh")
+  args.push(script)
+  args
+}
+
 fn read_all(path: String): String {
   if text = file_read(path) {
     return text.strip()
@@ -255,7 +270,7 @@ fn test_scratch(c: Checks) {
     // private directory (a compiler crash is the same runtime path) dies
     // by the signal and leaves nothing in TMPDIR.
     crash_src = "${work}/crash.av"
-    _ = file_write(crash_src, "lib crash_c {\n  fun avant_tmp_dir: String\n  fun raise(sig: Int32): Int32\n  fun abort\n}\nfn main {\n  puts(crash_c.avant_tmp_dir())\n  if v = env_get(\"CRASH_SIG\") {\n    if v == \"abort\" {\n      crash_c.abort()\n    }\n    puts(crash_c.raise((v.to_i ?? 0).to_i32))\n  }\n}\n")
+    _ = file_write(crash_src, "lib crash_c {\n  fun avant_tmp_dir: String\n  fun raise(sig: Int32): Int32\n  fun abort\n}\nfn main {\n  puts(crash_c.avant_tmp_dir())\n  if v = env_get(\"CRASH_SIG\") {\n    if v == \"abort\" {\n      crash_c.abort()\n    }\n    if v == \"pipe\" {\n      while true {\n        puts(\"more\")\n      }\n    }\n    puts(crash_c.raise((v.to_i ?? 0).to_i32))\n  }\n}\n")
     crash_bin = "${work}/crash.bin"
     c.eq_int(compile_av(compiler, crash_src, crash_bin, "${work}/crash.clog"), 0, "crash program compiles")
     crashes = ["11", "7", "8", "abort"]
@@ -268,13 +283,85 @@ fn test_scratch(c: Checks) {
       crc = "${work}/crash-${q}.rc"
       csh = "${work}/crash-${q}.sh"
       _ = file_write(csh, "#!/bin/sh\nAVANT_KEEP_TMP= TMPDIR='${cbase}' CRASH_SIG=${crashes[q]} '${crash_bin}' > '${work}/crash-${q}.log' 2>&1\necho $? > '${crc}'\n")
-      ch_args: Array(String) = []
-      ch_args.push(csh)
-      _ = process_run("/bin/sh", ch_args)
+      _ = process_run("/usr/bin/timeout", bounded_sh(csh, "60"))
       c.eq_int(nth_line(read_all(crc), 0).to_i ?? -1, crash_codes[q], "a program killed by ${crash_names[q]} still dies by it")
       cleft = dir_list(cbase) ?? empty_strs()
       c.eq_int(cleft.size, 0, "${crash_names[q]} leaves nothing in TMPDIR")
       q += 1
+    }
+
+    // O521 (Stage 29 W-FIX1e): a program whose standard output is a pipe
+    // its reader closed (`prog | head`) dies by SIGPIPE, and SIGPIPE was
+    // not among the signals that remove the directory. The program, then
+    // `avant test` itself, each cut by `head -c 1`.
+    pbase = "${work}/pipe-base"
+    mkdir_p(pbase)
+    prc = "${work}/pipe.rc"
+    psh = "${work}/pipe.sh"
+    // Stage 29 W-FIX1i: each run also starts with SIGPIPE ignored, as a
+    // CI runner starts its jobs (sh passes an ignored signal on). The
+    // runtime resets it to the default before main, so the program still
+    // dies by it; before, the loop wrote to the closed pipe forever. Every
+    // run is bounded (bounded_sh), so a regression fails instead of
+    // hanging the suite.
+    pipe_modes = ["", "trap '' PIPE\n"]
+    pipe_names = ["", " (SIGPIPE ignored by the parent)"]
+    pm = 0
+    while pm < pipe_modes.size {
+      pbase = "${work}/pipe-base-${pm}"
+      mkdir_p(pbase)
+      prc = "${work}/pipe-${pm}.rc"
+      psh = "${work}/pipe-${pm}.sh"
+      _ = file_write(psh, "#!/bin/sh\n${pipe_modes[pm]}(AVANT_KEEP_TMP= TMPDIR='${pbase}' CRASH_SIG=pipe '${crash_bin}' 2> '${work}/pipe-${pm}.log'; echo $? > '${prc}') | head -c 1 > /dev/null\n")
+      _ = process_run("/usr/bin/timeout", bounded_sh(psh, "60"))
+      c.eq_int(nth_line(read_all(prc), 0).to_i ?? -1, 141, "a program cut by a closed pipe still dies by SIGPIPE${pipe_names[pm]}")
+      pleft = dir_list(pbase) ?? empty_strs()
+      c.eq_int(pleft.size, 0, "SIGPIPE leaves nothing in TMPDIR${pipe_names[pm]}")
+      pm += 1
+    }
+    loud = scratch_dir()
+    mkdir_p("${loud}/tests")
+    _ = file_write("${loud}/avant.toml", "[package]\nname = \"loud\"\nversion = \"0.1.0\"\n")
+    _ = file_write("${loud}/tests/test_loud.av", "import std.testing\n\nfn main: Int {\n  t = Test.new\n  for i in 0..5000 {\n    t.check(true, \"one of 5000 checks whose output fills the pipe\")\n  }\n  t.finish\n}\n")
+    pm = 0
+    while pm < pipe_modes.size {
+      rbase = "${work}/pipe-runner-base-${pm}"
+      mkdir_p(rbase)
+      rrc = "${work}/pipe-runner-${pm}.rc"
+      rsh = "${work}/pipe-runner-${pm}.sh"
+      _ = file_write(rsh, "#!/bin/sh\ncd '${loud}' || exit 9\n${pipe_modes[pm]}(AVANT_KEEP_TMP= TMPDIR='${rbase}' '${abs_c}' test 2> '${work}/pipe-runner-${pm}.log'; echo $? > '${rrc}') | head -c 1 > /dev/null\n")
+      _ = process_run("/usr/bin/timeout", bounded_sh(rsh, "300"))
+      c.eq_int(nth_line(read_all(rrc), 0).to_i ?? -1, 141, "avant test cut by a closed pipe dies by SIGPIPE${pipe_names[pm]}")
+      rleft = dir_list(rbase) ?? empty_strs()
+      c.eq_int(rleft.size, 0, "avant test cut by a closed pipe leaves nothing in TMPDIR${pipe_names[pm]}")
+      pm += 1
+    }
+
+    // Stage 29 W-FIX1i: a write to standard output that fails (here
+    // /dev/full, ENOSPC) is never silent: puts of a String, a Float64 or
+    // a Bool stops the program at once, and a failed write left in the
+    // buffer (an integer's puts) is found at exit; each names the stream
+    // and the reason on stderr, exits 1 and removes the private directory.
+    // The String loop ended only by the check: bounded, as above.
+    full_src = "${work}/full.av"
+    _ = file_write(full_src, "lib full_c {\n  fun avant_tmp_dir: String\n}\nfn main {\n  _ = full_c.avant_tmp_dir()\n  v = env_get(\"FULL\") ?? \"\"\n  if v == \"loop\" {\n    while true {\n      puts(\"more\")\n    }\n  }\n  if v == \"float\" {\n    puts(1.5)\n  }\n  if v == \"bool\" {\n    puts(true)\n  }\n  if v == \"int\" {\n    puts(7)\n  }\n  puts(\"done\")\n}\n")
+    full_bin = "${work}/full.bin"
+    c.eq_int(compile_av(compiler, full_src, full_bin, "${work}/full.clog"), 0, "the /dev/full program compiles")
+    fulls = ["loop", "float", "bool", "int", "str"]
+    fq = 0
+    while fq < fulls.size {
+      fbase = "${work}/full-base-${fq}"
+      mkdir_p(fbase)
+      frc = "${work}/full-${fq}.rc"
+      fsh = "${work}/full-${fq}.sh"
+      flog = "${work}/full-${fq}.log"
+      _ = file_write(fsh, "#!/bin/sh\nAVANT_KEEP_TMP= TMPDIR='${fbase}' FULL=${fulls[fq]} '${full_bin}' > /dev/full 2> '${flog}'\necho $? > '${frc}'\n")
+      _ = process_run("/usr/bin/timeout", bounded_sh(fsh, "60"))
+      c.eq_int(nth_line(read_all(frc), 0).to_i ?? -1, 1, "a failed write to stdout (${fulls[fq]}) exits 1")
+      c.expect(str_has(read_all(flog), "avant runtime: cannot write to standard output: No space left on device"), "a failed write to stdout (${fulls[fq]}) names the stream and the reason")
+      fleft = dir_list(fbase) ?? empty_strs()
+      c.eq_int(fleft.size, 0, "a failed write to stdout (${fulls[fq]}) leaves nothing in TMPDIR")
+      fq += 1
     }
     c.expect(str_has(unset_dir, "/tmp/avant-"), "no TMPDIR falls back to /tmp")
     c.expect(!file_exists(unset_dir), "fallback directory removed")

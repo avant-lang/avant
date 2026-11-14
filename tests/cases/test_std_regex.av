@@ -19,27 +19,60 @@ fn repeated(piece: String, n: Int, tail: String): String {
   b.to_s
 }
 
+fn rx_quote(s: String): String {
+  b = buf_new()
+  b.push_str("'")
+  for i in 0..s.size {
+    if s[i] == 39 {
+      b.push_str("'\\''")
+    } else {
+      b.push_byte(s[i])
+    }
+  }
+  b.push_str("'")
+  b.to_s
+}
+
+fn rx_sh(cmd: String): Int {
+  args: Array(String) = []
+  args.push("-c")
+  args.push(cmd)
+  process_run("/bin/sh", args) ?? -1
+}
+
+// A child program with a literal pattern: compiled, then run, then run
+// again by `avant run`. The compiler's re2c notes are diagnostics, on
+// stderr (O233, Stage 29 W-FIX1f2: they were printed on stdout, where
+// `avant run` put them ahead of the program's output): `compile_has`
+// must be on the compile's stderr and on `avant run`'s, `compile_lacks`
+// on neither stream, and stdout must hold no note: the compile prints
+// only its own line, and `avant run` exactly the program's `out`.
 fn regex_child(c: Checks, compiler: String, stamp: Int, tag: String, body: String, compile_has: String, compile_lacks: String, out: String) {
   src = "${scratch()}/regex-${stamp}-${tag}.av"
   bin = "${scratch()}/regex-${stamp}-${tag}.bin"
   clog = "${scratch()}/regex-${stamp}-${tag}.log"
+  cout = "${scratch()}/regex-${stamp}-${tag}.cout"
   rlog = "${scratch()}/regex-${stamp}-${tag}.out"
+  aout = "${scratch()}/regex-${stamp}-${tag}.aout"
+  aerr = "${scratch()}/regex-${stamp}-${tag}.aerr"
   _ = file_write(src, body)
-  code = compile_av(compiler, src, bin, clog)
+  code = rx_sh("${rx_quote(compiler)} compile ${rx_quote(src)} ${rx_quote(bin)} --debug > ${rx_quote(cout)} 2> ${rx_quote(clog)} < /dev/null")
   c.eq_int(code, 0, "compile ${tag}")
   c.expect(file_exists(bin), "${tag} bin")
+  cstdout = file_read(cout) ?? ""
   if err = file_read(clog) {
     if compile_has.size > 0 {
-      c.expect(str_has(err, compile_has), "${tag} compile says ${compile_has}")
+      c.expect(str_has(err, compile_has), "${tag} compile says ${compile_has} on stderr")
     }
     if compile_lacks.size > 0 {
-      c.expect(!str_has(err, compile_lacks), "${tag} compile lacks ${compile_lacks}")
+      c.expect(!str_has(err, compile_lacks) && !str_has(cstdout, compile_lacks), "${tag} compile lacks ${compile_lacks}")
     }
   } else {
     if compile_has.size > 0 {
       c.expect(false, "${tag} compile log")
     }
   }
+  c.expect(!str_has(cstdout, "re2c:"), "${tag} compile prints no re2c note on stdout")
   chmod_x(bin)
   run_code = run_av_bin(bin, rlog)
   c.eq_int(run_code, 0, "run ${tag}")
@@ -47,6 +80,12 @@ fn regex_child(c: Checks, compiler: String, stamp: Int, tag: String, body: Strin
     c.eq_str(got, out, "${tag} stdout")
   } else {
     c.expect(false, "${tag} stdout missing")
+  }
+  acode = rx_sh("${rx_quote(compiler)} run ${rx_quote(src)} > ${rx_quote(aout)} 2> ${rx_quote(aerr)} < /dev/null")
+  c.eq_int(acode, 0, "avant run ${tag}")
+  c.eq_str(file_read(aout) ?? "", out, "${tag}: avant run's stdout is the program's output only")
+  if compile_has.size > 0 {
+    c.expect(str_has(file_read(aerr) ?? "", compile_has), "${tag}: avant run says ${compile_has} on stderr")
   }
 }
 

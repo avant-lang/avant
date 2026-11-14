@@ -1,0 +1,160 @@
+// Stage 29 W-FIX1d (O549): the unions a `fun` signature may use are the
+// optional references, each one pointer with `nil` as NULL. Every kind
+// crosses here both ways: a NULL result reads nil, nil is passed as NULL,
+// a value is passed as its pointer and comes back the same value. Any
+// other union in a `fun` signature is refused (tests/cases/test_errors.av).
+// ffi.c holds one trio of C functions per kind.
+lib probe {
+  fun ffi_opt_null_s: String?
+  fun ffi_opt_same_s(p: String?): String?
+  fun ffi_opt_is_null_s(p: String?): Int
+  fun ffi_opt_null_b: Bytes?
+  fun ffi_opt_same_b(p: Bytes?): Bytes?
+  fun ffi_opt_is_null_b(p: Bytes?): Int
+  fun ffi_opt_null_a: Array(Int)?
+  fun ffi_opt_same_a(p: Array(Int)?): Array(Int)?
+  fun ffi_opt_is_null_a(p: Array(Int)?): Int
+  fun ffi_opt_null_h: Hash(String, Int)?
+  fun ffi_opt_same_h(p: Hash(String, Int)?): Hash(String, Int)?
+  fun ffi_opt_is_null_h(p: Hash(String, Int)?): Int
+  fun ffi_opt_null_u: Buf?
+  fun ffi_opt_same_u(p: Buf?): Buf?
+  fun ffi_opt_is_null_u(p: Buf?): Int
+  fun ffi_opt_null_k: K?
+  fun ffi_opt_same_k(p: K?): K?
+  fun ffi_opt_is_null_k(p: K?): Int
+  fun ffi_opt_null_j: JoinHandle(Int)?
+  fun ffi_opt_same_j(p: JoinHandle(Int)?): JoinHandle(Int)?
+  fun ffi_opt_is_null_j(p: JoinHandle(Int)?): Int
+}
+
+class K {
+  pub v: Int = 7
+}
+
+fn mk_hash: Hash(String, Int) {
+  h = Hash(String, Int).new
+  h["a"] = 1
+  h
+}
+
+fn mk_buf: Buf {
+  b = buf_new()
+  b.push_str("buf")
+  b
+}
+
+fn main {
+  line = "String?:"
+  if v = probe.ffi_opt_null_s() {
+    line = "${line} NULL read as a value"
+  } else {
+    line = "${line} NULL reads nil;"
+  }
+  none_s: String? = nil
+  line = "${line} nil passed is NULL: ${probe.ffi_opt_is_null_s(none_s) == 1};"
+  some_s: String? = "abc"
+  line = "${line} a value passed is not NULL: ${probe.ffi_opt_is_null_s(some_s) == 0};"
+  if v = probe.ffi_opt_same_s(some_s) {
+    line = "${line} handed back: ${v}"
+  } else {
+    line = "${line} handed back as nil"
+  }
+  puts(line)
+  line = "Bytes?:"
+  if v = probe.ffi_opt_null_b() {
+    line = "${line} NULL read as a value"
+  } else {
+    line = "${line} NULL reads nil;"
+  }
+  none_b: Bytes? = nil
+  line = "${line} nil passed is NULL: ${probe.ffi_opt_is_null_b(none_b) == 1};"
+  some_b: Bytes? = "abc".bytes
+  line = "${line} a value passed is not NULL: ${probe.ffi_opt_is_null_b(some_b) == 0};"
+  if v = probe.ffi_opt_same_b(some_b) {
+    line = "${line} handed back: ${v.size}"
+  } else {
+    line = "${line} handed back as nil"
+  }
+  puts(line)
+  line = "Array(Int)?:"
+  if v = probe.ffi_opt_null_a() {
+    line = "${line} NULL read as a value"
+  } else {
+    line = "${line} NULL reads nil;"
+  }
+  none_a: Array(Int)? = nil
+  line = "${line} nil passed is NULL: ${probe.ffi_opt_is_null_a(none_a) == 1};"
+  some_a: Array(Int)? = [1, 2, 3]
+  line = "${line} a value passed is not NULL: ${probe.ffi_opt_is_null_a(some_a) == 0};"
+  if v = probe.ffi_opt_same_a(some_a) {
+    line = "${line} handed back: ${v.size}"
+  } else {
+    line = "${line} handed back as nil"
+  }
+  puts(line)
+  line = "Hash(String, Int)?:"
+  if v = probe.ffi_opt_null_h() {
+    line = "${line} NULL read as a value"
+  } else {
+    line = "${line} NULL reads nil;"
+  }
+  none_h: Hash(String, Int)? = nil
+  line = "${line} nil passed is NULL: ${probe.ffi_opt_is_null_h(none_h) == 1};"
+  some_h: Hash(String, Int)? = mk_hash()
+  line = "${line} a value passed is not NULL: ${probe.ffi_opt_is_null_h(some_h) == 0};"
+  if v = probe.ffi_opt_same_h(some_h) {
+    line = "${line} handed back: ${v.size}"
+  } else {
+    line = "${line} handed back as nil"
+  }
+  puts(line)
+  line = "Buf?:"
+  if v = probe.ffi_opt_null_u() {
+    line = "${line} NULL read as a value"
+  } else {
+    line = "${line} NULL reads nil;"
+  }
+  none_u: Buf? = nil
+  line = "${line} nil passed is NULL: ${probe.ffi_opt_is_null_u(none_u) == 1};"
+  some_u: Buf? = mk_buf()
+  line = "${line} a value passed is not NULL: ${probe.ffi_opt_is_null_u(some_u) == 0};"
+  if v = probe.ffi_opt_same_u(some_u) {
+    line = "${line} handed back: ${v.to_s}"
+  } else {
+    line = "${line} handed back as nil"
+  }
+  puts(line)
+  line = "K?:"
+  if v = probe.ffi_opt_null_k() {
+    line = "${line} NULL read as a value"
+  } else {
+    line = "${line} NULL reads nil;"
+  }
+  none_k: K? = nil
+  line = "${line} nil passed is NULL: ${probe.ffi_opt_is_null_k(none_k) == 1};"
+  some_k: K? = K.new
+  line = "${line} a value passed is not NULL: ${probe.ffi_opt_is_null_k(some_k) == 0};"
+  if v = probe.ffi_opt_same_k(some_k) {
+    line = "${line} handed back: ${v.v}"
+  } else {
+    line = "${line} handed back as nil"
+  }
+  puts(line)
+  line = "JoinHandle(Int)?:"
+  if v = probe.ffi_opt_null_j() {
+    line = "${line} NULL read as a value"
+  } else {
+    line = "${line} NULL reads nil;"
+  }
+  none_j: JoinHandle(Int)? = nil
+  line = "${line} nil passed is NULL: ${probe.ffi_opt_is_null_j(none_j) == 1};"
+  some_j: JoinHandle(Int)? = spawn { 41 }
+  line = "${line} a value passed is not NULL: ${probe.ffi_opt_is_null_j(some_j) == 0};"
+  if v = probe.ffi_opt_same_j(some_j) {
+    line = "${line} handed back: ${v.join}"
+  } else {
+    line = "${line} handed back as nil"
+  }
+  puts(line)
+}

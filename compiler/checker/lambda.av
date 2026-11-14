@@ -605,10 +605,6 @@ pub fn (checker_self: Checker) pop_lambda {
 }
 
 pub fn (checker_self: Checker) note_capture(name: String, ty: Ty) {
-  if checker_self.place_depth > 0 && name == checker_self.place_name && checker_self.lam_exprs.size > 0 {
-    checker_self.fail(checker_self.lam_exprs[checker_self.lam_exprs.size - 1].loc, "mutex place cannot escape")
-    return
-  }
   nlam = checker_self.lam_exprs.size
   if nlam == 0 {
     return
@@ -678,6 +674,8 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     // not one its `break` or `continue` can leave.
     saved_loops = checker_self.loop_depth
     checker_self.loop_depth = 0
+    saved_build = checker_self.in_build
+    checker_self.in_build = 0
     i = 0
     while i < b.params.size {
       pty = want.members[i]
@@ -729,6 +727,7 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     checker_self.try_in = saved_try
     checker_self.try_body = saved_body
     checker_self.loop_depth = saved_loops
+    checker_self.in_build = saved_build
     checker_self.pop_lambda
     if !result_ret.is_void && result_ret.is_var {
       checker_self.fail(expr.loc, "cannot infer type argument")
@@ -957,8 +956,8 @@ pub fn (checker_self: Checker) mark_error(ty: Ty, tn: TypeName, type_name: Strin
     checker_self.fail(tn.loc, "Error does not take type arguments")
     return
   }
-  if !(ty.is_class || ty.is_struct) {
-    checker_self.fail(tn.loc, "${ty.show} cannot be marked Error; only a class or a struct can")
+  if !(ty.is_class || ty.is_struct || ty.is_enum) {
+    checker_self.fail(tn.loc, "${ty.show} cannot be marked Error; only a class, a struct or an enum can")
     return
   }
   found = false

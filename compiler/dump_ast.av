@@ -236,7 +236,19 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(" (case")
       for label in arm.labels {
         buf.push_str(" ")
-        buf.push_fmt_i(label.to_i)
+        if label.kind == lb_member() {
+          if label.qual.size > 0 {
+            buf.push_str(label.qual)
+            buf.push_str(".")
+          }
+          buf.push_str(label.text)
+        } else if label.kind == lb_string() {
+          buf.push_str("(string ")
+          buf.push_str(escape_dump(label.text))
+          buf.push_str(")")
+        } else {
+          buf.push_fmt_i(label.int_val)
+        }
       }
       for st in arm.body {
         buf.push_str(" ")
@@ -435,6 +447,20 @@ pub fn dump_program(program: Program): String {
   buf = buf_new()
   buf.push_str("(program")
   for s in program.structs {
+    if decl = s.enum_of {
+      // An enum (Stage 29 W5a1): its members and their values.
+      buf.push_str(" (enum ")
+      buf.push_str(s.name)
+      for i in 0..decl.names.size {
+        buf.push_str(" (")
+        buf.push_str(decl.names[i])
+        buf.push_str(" ")
+        buf.push_fmt_i(decl.vals[i])
+        buf.push_str(")")
+      }
+      buf.push_str(")")
+      continue
+    }
     buf.push_str(" (struct ")
     buf.push_str(s.name)
     buf.push_str(")")

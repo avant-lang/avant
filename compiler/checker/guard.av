@@ -1,0 +1,573 @@
+import location
+import type
+import ast
+import token
+import checker
+import checker.spawn
+
+// What may happen to the guarded value inside `Mutex.with` (O541, D355;
+// Stage 29 W8Ca). The lock protects the cell only while the block runs,
+// so the guarded value, and every reference reached from it, may only be
+// a receiver (`b.items.push(x)`, `b.n += 1`) or an operand whose result
+// is a plain value (`b.n`, `b.items.size`, `"${b}"`, `b.next == nil`):
+// never an argument, a value stored where it outlives the block, a
+// returned value, or a captured name. A plain value (checker/spawn.av
+// leaves_mutex_with: a number, a Bool, a String, Bytes, a share type, a
+// struct, optional or union of those) is a copy and goes anywhere.
+//
+// Two stores keep the reference under the lock, and are allowed: into
+// the guarded value itself (`b.root = b.root.left`), and into a name
+// declared inside the block (`n = b.head`), which is then reached too and
+// follows the same rule (a `for` variable over a reached array, a block
+// parameter of a call on a reached receiver, an if-assign or `while`
+// binding are such names). A store into anything else (a name declared
+// before the block, a field or element of another object, a name of the
+// block that already holds something that is not reached) is refused:
+// the reference would outlive the lock.
+//
+// The walk runs after the block is checked (every node carries its
+// type), on the block's own statements; a method of the guarded class
+// that hands out `self` is the class's own doing, as the README says.
+pub class GuardWalk {
+  pub place: String = ""
+  // One scope per nested body: name -> 1 when the name is reached, 0 not.
+  pub scopes: Array(Hash(String, Int)) = []
+  // The scope index a lambda's or a spawn block's body starts at, -1
+  // outside one: a reached name declared below it is captured there.
+  pub floor: Int = -1
+
+  fn initialize(place: String) {
+    self.place = place
+  }
+
+  pub fn push {
+    self.scopes.push(Hash(String, Int).new)
+  }
+
+  pub fn pop {
+    dropped = self.scopes.pop
+  }
+
+  pub fn declare(name: String, reached: Bool) {
+    v = 0
+    if reached {
+      v = 1
+    }
+    self.scopes[self.scopes.size - 1][name] = v
+  }
+
+  // The scope index declaring name in the walk, or -1.
+  pub fn index_of(name: String): Int {
+    i = self.scopes.size - 1
+    while i >= 0 {
+      if v = self.scopes[i].get(name) {
+        return i
+      }
+      i -= 1
+    }
+    -1
+  }
+
+  pub fn is_reached(name: String): Bool {
+    i = self.index_of(name)
+    if i < 0 {
+      return false
+    }
+    if v = self.scopes[i].get(name) {
+      return v == 1
+    }
+    false
+  }
+}
+
+pub fn (checker_self: Checker) guard_with_block(place: String, b: Block, value_used: Bool) {
+  if checker_self.has_err {
+    return
+  }
+  w = GuardWalk.new(place)
+  w.push
+  w.declare(place, true)
+  w.push
+  last = b.body.size - 1
+  i = 0
+  while i < b.body.size {
+    st = b.body[i]
+    if i == last && value_used && st.kind == st_expr() {
+      // The block's value: its type is checked by leaves_mutex_with
+      // (O231) in checker.av check_mutex_with.
+      if e = st.expr {
+        checker_self.guard_expr(w, e)
+      }
+    } else {
+      checker_self.guard_stmt(w, st)
+    }
+    if checker_self.has_err {
+      return
+    }
+    i += 1
+  }
+}
+
+// Whether the value of e is plain: a copy that holds no reference to
+// mutable state (an unchecked node counts as plain: it has no value).
+pub fn (checker_self: Checker) guard_plain(e: Expr): Bool {
+  if t = e.ty {
+    return checker_self.leaves_mutex_with(t)
+  }
+  true
+}
+
+// Whether e is the guarded value or a reference reached from it.
+pub fn (checker_self: Checker) guard_bad(w: GuardWalk, e: Expr): Bool {
+  checker_self.guard_reaches(w, e) && !checker_self.guard_plain(e)
+}
+
+// Whether e's value may be the guarded value or a part of it: a reached
+// name, or a field, an element or a method's result read through a
+// reached reference (a plain value on the way, such as a Mutex or a
+// Channel held by the guarded value, ends the path).
+pub fn (checker_self: Checker) guard_reaches(w: GuardWalk, e: Expr): Bool {
+  k = e.kind
+  if k == ex_name() {
+    if e.implicit_field {
+      return false
+    }
+    return w.is_reached(e.ident)
+  }
+  if k == ex_field() {
+    if obj = e.object {
+      return checker_self.guard_bad(w, obj)
+    }
+    return false
+  }
+  if k == ex_index() {
+    if l = e.left {
+      return checker_self.guard_bad(w, l)
+    }
+    return false
+  }
+  if k == ex_call() {
+    if recv = e.receiver {
+      return checker_self.guard_bad(w, recv)
+    }
+    return false
+  }
+  if k == ex_try() || k == ex_unary() {
+    if inner = e.inner {
+      return checker_self.guard_reaches(w, inner)
+    }
+    return false
+  }
+  if k == ex_binary() {
+    if l = e.left, checker_self.guard_reaches(w, l) {
+      return true
+    }
+    if r = e.right, checker_self.guard_reaches(w, r) {
+      return true
+    }
+    return false
+  }
+  if k == ex_switch() {
+    if e.op == tk_return() {
+      return false
+    }
+    for c in e.cases {
+      if checker_self.guard_tail_reaches(w, c.body) {
+        return true
+      }
+    }
+    return checker_self.guard_tail_reaches(w, e.else_body)
+  }
+  false
+}
+
+// Whether a body used as a value (a switch arm, an if's branches) may
+// end in a reached reference.
+pub fn (checker_self: Checker) guard_tail_reaches(w: GuardWalk, body: Array(Stmt)): Bool {
+  if body.size == 0 {
+    return false
+  }
+  st = body[body.size - 1]
+  if st.kind == st_expr() {
+    if e = st.expr {
+      return checker_self.guard_reaches(w, e)
+    }
+    return false
+  }
+  if st.kind == st_if() {
+    return checker_self.guard_tail_reaches(w, st.then_body) || checker_self.guard_tail_reaches(w, st.else_body)
+  }
+  false
+}
+
+pub fn (checker_self: Checker) guard_fail(e: Expr, role: String) {
+  shown = "a value"
+  if t = e.ty {
+    shown = t.show
+  }
+  checker_self.fail(e.loc, "Mutex.with: ${role} is the guarded value or a reference reached from it (${shown}); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends")
+}
+
+// A value in a place where it outlives the expression: refused when it
+// is reached and not plain.
+pub fn (checker_self: Checker) guard_use(w: GuardWalk, e: Expr, role: String) {
+  checker_self.guard_expr(w, e)
+  if !checker_self.has_err && checker_self.guard_bad(w, e) {
+    checker_self.guard_fail(e, role)
+  }
+}
+
+pub fn (checker_self: Checker) guard_body(w: GuardWalk, body: Array(Stmt)) {
+  w.push
+  for st in body {
+    checker_self.guard_stmt(w, st)
+    if checker_self.has_err {
+      w.pop
+      return
+    }
+  }
+  w.pop
+}
+
+pub fn (checker_self: Checker) guard_stmt(w: GuardWalk, st: Stmt) {
+  k = st.kind
+  if k == st_expr() {
+    if e = st.expr {
+      checker_self.guard_expr(w, e)
+    }
+    return
+  }
+  if k == st_return() {
+    if e = st.expr {
+      checker_self.guard_use(w, e, "the returned value")
+    }
+    return
+  }
+  if k == st_assign() {
+    checker_self.guard_assign(w, st)
+    return
+  }
+  if k == st_if() {
+    w.push
+    for el in st.pre {
+      if c = el.cond {
+        checker_self.guard_expr(w, c)
+        if el.bind.size > 0 {
+          w.declare(el.bind, checker_self.guard_bad(w, c))
+        }
+      }
+    }
+    if c2 = st.cond {
+      checker_self.guard_expr(w, c2)
+      if st.bind.size > 0 {
+        w.declare(st.bind, checker_self.guard_bad(w, c2))
+      }
+    }
+    checker_self.guard_body(w, st.then_body)
+    w.pop
+    checker_self.guard_body(w, st.else_body)
+    return
+  }
+  if k == st_while() {
+    w.push
+    for p in st.pre {
+      checker_self.guard_stmt(w, p)
+    }
+    if c = st.cond {
+      checker_self.guard_expr(w, c)
+    }
+    checker_self.guard_body(w, st.body)
+    w.pop
+    return
+  }
+  if k == st_pin() || k == st_release() || k == st_hold() {
+    if e = st.expr {
+      checker_self.guard_expr(w, e)
+    }
+    checker_self.guard_body(w, st.body)
+  }
+}
+
+pub fn (checker_self: Checker) guard_assign(w: GuardWalk, st: Stmt) {
+  if target = st.target, value = st.value {
+    checker_self.guard_expr(w, value)
+    if checker_self.has_err {
+      return
+    }
+    bad = checker_self.guard_bad(w, value)
+    if target.kind == ex_name() {
+      name = target.ident
+      if name == "_" {
+        return
+      }
+      if name == w.place {
+        // A store into the guarded cell itself.
+        return
+      }
+      if w.index_of(name) >= 0 {
+        if bad && !w.is_reached(name) {
+          checker_self.guard_fail(value, "the value stored into ${name}, which holds a value not reached from the guarded one,")
+        }
+        return
+      }
+      outer = false
+      if t = checker_self.lookup(name) {
+        outer = true
+      }
+      if target.implicit_field {
+        outer = true
+      }
+      if f = checker_self.implicit_field(name) {
+        outer = true
+      }
+      if outer {
+        if bad {
+          checker_self.guard_fail(value, "the value stored into ${name}, declared before the block,")
+        }
+        return
+      }
+      // A name the block declares: reached when its value is.
+      w.declare(name, bad)
+      return
+    }
+    // A field or an element: allowed into the guarded value itself.
+    holder: Expr? = nil
+    if target.kind == ex_field() {
+      holder = target.object
+    } else if target.kind == ex_index() {
+      holder = target.left
+      if ix = target.right {
+        checker_self.guard_expr(w, ix)
+      }
+    }
+    if h = holder {
+      checker_self.guard_expr(w, h)
+      if checker_self.guard_bad(w, h) {
+        return
+      }
+    }
+    if bad {
+      checker_self.guard_fail(value, "the value stored into a field or element of an object that is not the guarded one")
+    }
+  }
+}
+
+pub fn (checker_self: Checker) guard_expr(w: GuardWalk, e: Expr) {
+  if checker_self.has_err {
+    return
+  }
+  k = e.kind
+  if k == ex_name() {
+    checker_self.guard_name(w, e)
+    return
+  }
+  if k == ex_call() {
+    checker_self.guard_call(w, e)
+    return
+  }
+  if k == ex_unary() || k == ex_try() {
+    if inner = e.inner {
+      checker_self.guard_expr(w, inner)
+      if k == ex_try() && checker_self.guard_reaches(w, inner) {
+        if t = inner.ty {
+          for f in ty_failures(t) {
+            if !checker_self.leaves_mutex_with(f) {
+              checker_self.guard_fail(inner, "the failure that ? returns")
+              return
+            }
+          }
+        }
+      }
+    }
+    return
+  }
+  if k == ex_binary() {
+    if l = e.left {
+      checker_self.guard_expr(w, l)
+    }
+    if r = e.right {
+      checker_self.guard_expr(w, r)
+    }
+    return
+  }
+  if k == ex_field() {
+    if obj = e.object {
+      checker_self.guard_expr(w, obj)
+    }
+    return
+  }
+  if k == ex_index() {
+    if l = e.left {
+      checker_self.guard_expr(w, l)
+    }
+    if r = e.right {
+      checker_self.guard_expr(w, r)
+    }
+    return
+  }
+  if k == ex_struct() {
+    for fv in e.field_exprs {
+      checker_self.guard_use(w, fv, "this field's value")
+    }
+    return
+  }
+  if k == ex_array() {
+    for el in e.elems {
+      checker_self.guard_use(w, el, "this element")
+    }
+    return
+  }
+  if k == ex_array_new() {
+    if size = e.size_expr {
+      checker_self.guard_expr(w, size)
+    }
+    for fv in e.elems {
+      checker_self.guard_use(w, fv, "this element")
+    }
+    return
+  }
+  if k == ex_interp() {
+    for part in e.parts {
+      if inner = part.expr {
+        checker_self.guard_expr(w, inner)
+      }
+    }
+    return
+  }
+  if k == ex_switch() {
+    if c = e.cond {
+      checker_self.guard_expr(w, c)
+    }
+    for cs in e.cases {
+      checker_self.guard_body(w, cs.body)
+    }
+    if e.has_else {
+      checker_self.guard_body(w, e.else_body)
+    }
+    return
+  }
+  if k == ex_lambda() {
+    if b = e.block {
+      checker_self.guard_captured_body(w, b)
+    }
+  }
+}
+
+// A name read inside a lambda or a spawn block that it does not declare
+// is captured: the guarded place never may be, a reached reference
+// neither.
+pub fn (checker_self: Checker) guard_name(w: GuardWalk, e: Expr) {
+  if w.floor < 0 || e.implicit_field {
+    return
+  }
+  i = w.index_of(e.ident)
+  if i < 0 || i >= w.floor {
+    return
+  }
+  if e.ident == w.place {
+    checker_self.fail(e.loc, "Mutex.with: the guarded value ${e.ident} cannot be captured by a lambda or a spawn block, which may run after the lock is released")
+    return
+  }
+  if w.is_reached(e.ident) && !checker_self.guard_plain(e) {
+    checker_self.guard_fail(e, "the captured name ${e.ident}")
+  }
+}
+
+pub fn (checker_self: Checker) guard_captured_body(w: GuardWalk, b: Block) {
+  saved = w.floor
+  w.push
+  if w.floor < 0 {
+    w.floor = w.scopes.size - 1
+  }
+  for p in b.params {
+    w.declare(p, false)
+  }
+  for st in b.body {
+    checker_self.guard_stmt(w, st)
+    if checker_self.has_err {
+      break
+    }
+  }
+  w.pop
+  w.floor = saved
+}
+
+pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
+  if inner = e.inner {
+    checker_self.guard_expr(w, inner)
+  }
+  if e.indirect && e.callee.size > 0 {
+    callee = Expr.new(ex_name(), e.loc)
+    callee.ident = e.callee
+    checker_self.guard_name(w, callee)
+  }
+  if e.callee == "spawn" && !e.method_call {
+    is_spawn = true
+    if r = e.receiver {
+      is_spawn = false
+    }
+    if is_spawn {
+      if b = e.block {
+        checker_self.guard_captured_body(w, b)
+      }
+      return
+    }
+  }
+  recv_bad = false
+  if recv = e.receiver {
+    checker_self.guard_expr(w, recv)
+    recv_bad = checker_self.guard_bad(w, recv)
+  }
+  for arg in e.args {
+    checker_self.guard_use(w, arg, "this argument")
+    if checker_self.has_err {
+      return
+    }
+  }
+  if b = e.block {
+    // A builtin's block runs here, inline: its parameters are the
+    // receiver's elements (reached when the receiver is), and its value
+    // goes into the call's result (`map`, `parallel`, the array building
+    // form), which is reached only when the receiver is: a reached value
+    // at its end is refused otherwise.
+    w.push
+    for p in b.params {
+      w.declare(p, recv_bad)
+    }
+    last = b.body.size - 1
+    i = 0
+    while i < b.body.size {
+      st = b.body[i]
+      if i == last && !recv_bad && st.kind == st_expr() {
+        if v = st.expr {
+          checker_self.guard_use(w, v, "the block's value")
+        }
+      } else {
+        checker_self.guard_stmt(w, st)
+      }
+      if checker_self.has_err {
+        break
+      }
+      i += 1
+    }
+    w.pop
+  }
+}
+
+// Channel.send (D35; Stage 29 W8Ca, O232): the value crosses to the
+// task that receives it, so it obeys spawn's rule for what crosses
+// (checker/spawn.av copyable_for_spawn): a class instance, a Hash, a
+// Buf, a fn or a struct holding one would be one mutable object in two
+// tasks with no lock, and is refused; an Array crosses as it does for
+// spawn.
+pub fn (checker_self: Checker) check_send(expr: Expr) {
+  if checker_self.has_err || expr.args.size != 1 {
+    return
+  }
+  arg = expr.args[0]
+  if t = arg.ty {
+    if !checker_self.copyable_for_spawn(t) {
+      checker_self.fail(arg.loc, "Channel.send: a ${t.show} cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex; send plain values, or a Mutex(${t.show}) shared by both tasks")
+    }
+  }
+}

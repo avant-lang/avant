@@ -1,0 +1,58 @@
+// The first-frame rule (Stage 29 VALK-A1, M4, O176): a frame function with
+// no root slot links no frame record, except a function a thread's first
+// Avant frame can be. Here four C threads that Avant never started call
+// `check` (through its thunk `check#cb`) while the main thread allocates
+// and collects (tests/fixtures/ffi/ffi.c, foreign_start/foreign_wait, as
+// foreign.av). Neither `check#cb` nor `check` nor `fill` holds a reference
+// across a collecting call, so none has a slot: without the rule no frame
+// would run on those threads, and their allocations would come from a
+// thread that is not registered and is native for the collector. The
+// thunk keeps its record (MFunc.first_frame), which registers each thread
+// at its first callback and makes it running for the callback and native
+// after it; `check` and `fill` link none.
+lib fc {
+  fun foreign_start(f: fn(Int32): Int32, n: Int32, rounds: Int32)
+  fun foreign_wait: Int32
+}
+
+class Cell {
+  v: Int
+  w: Int
+}
+
+// One allocation, no reference kept across a collecting call: no slot.
+fn fill(i: Int): Int {
+  c = Cell.new
+  c.v = i
+  c.w = i * 3
+  c.v + c.w
+}
+
+fn check(i: Int32): Int32 {
+  k = i.to_i
+  if fill(k) != k * 4 {
+    return 1
+  }
+  if fill(k + 1) != (k + 1) * 4 {
+    return 1
+  }
+  0
+}
+
+fn main {
+  fc.foreign_start(check, 4, 5000)
+  mine: Array(String) = []
+  for j in 0..2000 {
+    mine.push("main-init")
+  }
+  bad = 0
+  for r in 0..100000 {
+    at = r % 2000
+    if mine[at].size < 6 {
+      bad += 1
+    }
+    mine[at] = "main-${r}"
+  }
+  puts("main bad: ${bad}")
+  puts("callback bad: ${fc.foreign_wait()}")
+}

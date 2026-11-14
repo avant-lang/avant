@@ -65,6 +65,64 @@ fn tm_many_classes: String {
   b.to_s
 }
 
+// O578 (the Valk stage, VALK-T): the collector reads a small record's
+// reference words from a per-type list (at most seven reference words,
+// all among the first 256 payload words) and walks every other type's
+// bitmap. One class on each side of each limit: R7 and R8 (seven and
+// eight references), Far and Far2 (a reference at payload word 255 and
+// at word 256), and Mix (seven references between scalars). Every field
+// of 150 objects of each must read back after the churn and after a full
+// collection.
+fn tm_ref_class(b: Buf, name: String, ints: Int, refs: Int, mixed: Bool) {
+  b.push_str("class ${name} {\n")
+  if !mixed {
+    for k in 0..ints {
+      b.push_str("  f${k}: Int\n")
+    }
+  }
+  for k in 0..refs {
+    if mixed {
+      b.push_str("  f${k}: Int\n")
+    }
+    b.push_str("  a${k}: String\n")
+  }
+  b.push_str("  fn initialize(i: Int) {\n")
+  for k in 0..refs {
+    b.push_str("    self.a${k} = \"${name}-\${i}-${k}\"\n")
+  }
+  b.push_str("  }\n  fn wrong(i: Int): Int {\n    w = 0\n")
+  for k in 0..refs {
+    b.push_str("    if self.a${k} != \"${name}-\${i}-${k}\" {\n      w = w + 1\n    }\n")
+  }
+  b.push_str("    w\n  }\n}\n\n")
+}
+
+fn tm_ref_lists: String {
+  b = buf_new(65536)
+  b.push_str("lib gcrt {\n  fun avant_gc_collect()\n}\n\n")
+  b.push_str(tm_common())
+  tm_ref_class(b, "R7", 0, 7, false)
+  tm_ref_class(b, "R8", 0, 8, false)
+  tm_ref_class(b, "Far", 255, 1, false)
+  tm_ref_class(b, "Far2", 256, 1, false)
+  tm_ref_class(b, "Mix", 0, 7, true)
+  b.push_str("fn main: Int {\n")
+  names = ["R7", "R8", "Far", "Far2", "Mix"]
+  for n in 0..names.size {
+    b.push_str("  x${n}: Array(${names[n]}) = []\n")
+  }
+  b.push_str("  i = 0\n  while i < 150 {\n")
+  for n in 0..names.size {
+    b.push_str("    x${n}.push(${names[n]}.new(i))\n")
+  }
+  b.push_str("    i = i + 1\n  }\n  churn(200000)\n  gcrt.avant_gc_collect()\n  churn(1000)\n  wrong = 0\n  i = 0\n  while i < 150 {\n")
+  for n in 0..names.size {
+    b.push_str("    wrong = wrong + x${n}[i].wrong(i)\n")
+  }
+  b.push_str("    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n")
+  b.to_s
+}
+
 fn tm_run_env(bin: String, name: String, value: String, log: String): Int {
   args: Array(String) = []
   args.push("${name}=${value}")
@@ -75,7 +133,8 @@ fn tm_run_env(bin: String, name: String, value: String, log: String): Int {
 fn tm_run_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log: String): Int {
   args: Array(String) = []
   // Under an outer AVANT_GC_STRESS a verifier run leaves the stress mode
-  // out (a whole-heap check at a collection per helper call; W14b1).
+  // out (a whole-heap check at a collection per allocation; W14b1;
+  // VALK-TM, O602, measured with it kept: this file 232 s, 18 s without).
   if gc_stress_outer() && (n1 == "AVANT_GC_VERIFY" || n2 == "AVANT_GC_VERIFY") {
     args.push("-u")
     args.push("AVANT_GC_STRESS")
@@ -118,6 +177,20 @@ fn tm_case(c: Checks, compiler: String, stem: String, name: String, src: String,
   }
 }
 
+// tm_case, and one more run with the nursery off: every collection is a
+// full one, so the full mark reads every object of the fixture.
+fn tm_case_full(c: Checks, compiler: String, stem: String, name: String, src: String, want: String) {
+  tm_case(c, compiler, stem, name, src, want)
+  bin = "${stem}-${name}.bin"
+  log4 = "${stem}-${name}.run4"
+  c.eq_int(tm_run_env(bin, "AVANT_NURSERY", "0", log4), 0, "${name}: runs with the nursery off")
+  if out4 = file_read(log4) {
+    c.eq_str(out4, want, "${name}: values read back with the nursery off")
+  } else {
+    c.expect(false, "${name}: read nursery-off run")
+  }
+}
+
 fn test_gc_typemaps(c: Checks) {
   c.suite("tests/cases/test_gc_typemaps.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -129,6 +202,7 @@ fn test_gc_typemaps(c: Checks) {
     tm_case(c, compiler, stem, "union-offset", tm_union_offset(), "0\n")
     tm_case(c, compiler, stem, "barriers", tm_barriers(), "0\n0\n")
     tm_case(c, compiler, stem, "many-classes", tm_many_classes(), "0\n")
+    tm_case_full(c, compiler, stem, "ref-lists", tm_ref_lists(), "0\n")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

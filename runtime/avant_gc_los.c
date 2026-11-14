@@ -112,6 +112,10 @@ static uint64_t make_large_chunk(void) {
     gc_heap.lchunks = gc_xrealloc(gc_heap.lchunks, gc_heap.lchunks_cap * sizeof(uint32_t));
   }
   gc_heap.lchunks[gc_heap.lchunks_n++] = (uint32_t)c;
+  /* Its dirty pages are resident and free; a clean one is empty with
+   * nothing resident (gc_heap_return's counts; the Valk stage, VALK-T2,
+   * O630). */
+  gc_chunk_account(c, 1);
   return c;
 }
 
@@ -142,6 +146,19 @@ static AvantHeader *take_run(size_t payload) {
     }
     ch = &gc_heap.chunks[c];
     run = chunk_base(c) + ((size_t)p << PAGE_SHIFT);
+    /* gc_heap_return's counts (the Valk stage, VALK-T2, O630): an empty
+     * chunk with nothing resident is no longer one, and the run's dirty
+     * pages are no longer free. */
+    if (ch->used == 0) {
+      uint32_t w;
+      uint64_t dirty_free = 0;
+      for (w = 0; w < PAGE_WORDS; w++) {
+        dirty_free |= ch->dirty_pages[w] & ~ch->alloc[w];
+      }
+      if (!dirty_free) {
+        gc_heap.clean_empty_chunks--;
+      }
+    }
     bits_set(ch->alloc, (uint32_t)p, (uint32_t)n, 1);
     ch->used = (uint16_t)(ch->used + n);
     for (k = 0; k < n; k++) {
@@ -149,6 +166,7 @@ static AvantHeader *take_run(size_t payload) {
       gc_heap.pages[c * PAGES_PER_CHUNK + pg] = (uint32_t)p + 1;
       if ((ch->dirty_pages[pg >> 6] >> (pg & 63)) & 1ULL) {
         memset(run + ((size_t)k << PAGE_SHIFT), 0, PAGE_SIZE);
+        gc_heap.free_resident_other -= PAGE_SIZE;
       }
     }
     bits_set(ch->dirty_pages, (uint32_t)p, (uint32_t)n, 1);
@@ -207,6 +225,9 @@ static void give_run(AvantHeader *h) {
       gc_heap.pages[c * PAGES_PER_CHUNK + p + k] = 0;
     }
     ch->idle = (uint32_t)gc_heap.return_clock;
+    /* gc_heap_return's count (O630): the run's pages are free and dirty
+     * (take_run marks every page it hands out dirty). */
+    gc_heap.free_resident_other += n << PAGE_SHIFT;
     return;
   }
   {
@@ -550,6 +571,9 @@ static void trim_run(AvantHeader *h, size_t new_size) {
       gc_heap.pages[c * PAGES_PER_CHUNK + p + k] = 0;
     }
     ch->idle = (uint32_t)gc_heap.return_clock;
+    /* gc_heap_return's count (O630): the pages given back are free and
+     * dirty. */
+    gc_heap.free_resident_other += (uint64_t)n << PAGE_SHIFT;
   } else {
     uint64_t nch = ch->head;
     uint64_t keep = (n_new + PAGES_PER_CHUNK - 1) / PAGES_PER_CHUNK;
@@ -606,16 +630,13 @@ __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uin
  * slot of its frame chain (generated code's frames, user C's, runtime C's
  * handle scopes) or a runtime root. */
 static int thread_roots_name(const uint8_t *lo, const uint8_t *hi) {
-  Frame *f;
   uint32_t i;
-  for (f = avant_gc_top; f; f = f->prev) {
-    for (i = 0; i < f->n; i++) {
-      const uint8_t *v = f->slots[i] ? (const uint8_t *)*f->slots[i] : NULL;
-      if (v >= lo && v < hi) {
-        return 1;
-      }
+  EACH_FRAME_SLOT(avant_gc_top, slot, {
+    const uint8_t *v = slot ? (const uint8_t *)*slot : NULL;
+    if (v >= lo && v < hi) {
+      return 1;
     }
-  }
+  });
   for (i = 0; i < gc_thread.nroots; i++) {
     const uint8_t *v = (const uint8_t *)*gc_thread.roots[i];
     if (v >= lo && v < hi) {

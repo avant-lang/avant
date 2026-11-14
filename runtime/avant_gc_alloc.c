@@ -35,24 +35,84 @@ uint64_t avant_since_gc;
 /* Nursery allocations taken by generated code without a call. */
 uint64_t avant_inline_allocs;
 
-static int find_hole(Block *b, size_t need) {
+/* The first line of B at or after FROM that is live (LIVE 1) or free
+ * (LIVE 0), or LINES_PER_BLOCK: the line marks read a word (eight lines)
+ * at a time against the epoch, as gc_sweep_block_lines reads them (the
+ * Valk stage, VALK-T, O600; until then find_hole compared them a byte at
+ * a time, 43% of a small program's stress collection). */
+static inline int next_line(const Block *b, int from, int live, uint64_t epoch8) {
+  int k = from >> 3;
+  int sh = 8 * (from & 7);
+  while (k < LINE_WORDS) {
+    uint64_t m;
+    uint64_t bits;
+    memcpy(&m, b->line_mark + 8 * k, sizeof m);
+    bits = live_bytes_mask(m, epoch8);
+    if (!live) {
+      bits = ~bits & 0x8080808080808080ULL;
+    }
+    bits >>= sh;
+    if (bits) {
+      return 8 * k + (sh >> 3) + (__builtin_ctzll(bits) >> 3);
+    }
+    sh = 0;
+    k++;
+  }
+  return LINES_PER_BLOCK;
+}
+
+/* AVANT_GC_VERIFY's check of find_hole: the search a line at a time, as
+ * it was until the Valk stage's VALK-T; the program stops when the two
+ * disagree on whether B has a hole of NEED bytes from its search cursor
+ * or on where it is ([*LO, *HI) in lines). */
+static void find_hole_check(const Block *b, size_t need, int found, int lo, int hi) {
   int i = b->search;
-  while (i < LINES_PER_BLOCK) {
+  int ok = 0;
+  int j = 0;
+  while (i < LINES_PER_BLOCK && !ok) {
     if (line_live(b, i)) {
       i++;
       continue;
     }
-    int j = i;
+    j = i;
     while (j < LINES_PER_BLOCK && !line_live(b, j)) {
       j++;
     }
-    size_t hole = (size_t)(j - i) * LINE_SIZE;
-    if (hole >= need) {
+    if ((size_t)(j - i) * LINE_SIZE >= need) {
+      ok = 1;
+    } else {
+      i = j;
+    }
+  }
+  if (ok != found || (ok && (i != lo || j != hi))) {
+    gc_die("avant gc verify: the hole search by words and the search by lines disagree");
+  }
+}
+
+/* The first hole of B at or after its search cursor that holds NEED
+ * bytes: bump and limit are set to it. A hole is a run of free lines. */
+static int find_hole(Block *b, size_t need) {
+  uint64_t epoch8 = line_epoch8();
+  int i = b->search;
+  while (i < LINES_PER_BLOCK) {
+    int j;
+    i = next_line(b, i, 0, epoch8);
+    if (i >= LINES_PER_BLOCK) {
+      break;
+    }
+    j = next_line(b, i + 1, 1, epoch8);
+    if ((size_t)(j - i) * LINE_SIZE >= need) {
+      if (gc_heap.set.verify) {
+        find_hole_check(b, need, 1, i, j);
+      }
       b->bump = b->base + (size_t)i * LINE_SIZE;
       b->limit = b->base + (size_t)j * LINE_SIZE;
       return 1;
     }
     i = j;
+  }
+  if (gc_heap.set.verify) {
+    find_hole_check(b, need, 0, 0, 0);
   }
   return 0;
 }
@@ -73,6 +133,9 @@ void gc_cache_or_free_block(Block *b) {
    * cursors first (gc_alloc_stop_all); the mature cursor is global. */
   if (gc_heap.space[SPACE_MATURE].cur == b) {
     gc_clear_alloc_cur(SPACE_MATURE);
+  }
+  if (gc_heap.def_last == b) {
+    gc_heap.def_last = NULL;
   }
   /* Out of use: no lookup finds it, as when it left the block hash. A
    * cached block stays charged to gc_heap.heap_bytes; a released one goes back
@@ -151,8 +214,15 @@ Block *gc_new_block(uint8_t space) {
   b->bump = b->base;
   b->limit = b->base + BLOCK_SIZE;
   b->in_use = 1;
-  b->next = gc_heap.space[space].list;
-  gc_heap.space[space].list = b;
+  /* At the head of the space's order (GcSpace's comment: the top of the
+   * back stack while the order is reversed). */
+  if (gc_heap.space[space].rev) {
+    b->next = gc_heap.space[space].back;
+    gc_heap.space[space].back = b;
+  } else {
+    b->next = gc_heap.space[space].list;
+    gc_heap.space[space].list = b;
+  }
   return b;
 }
 
@@ -233,11 +303,14 @@ void gc_fast_clear(void) {
  * Anything else clears it, so
  * generated code only ever checks fast_ok, the shared flag, and the
  * cursor against the limit. Called at slow allocation entries; state
- * transitions clear eagerly below. */
+ * transitions clear eagerly below. Never under AVANT_GC_STRESS=1 (here
+ * and in tl_grant): the path is then never published, so every
+ * allocation of generated code reaches avant_alloc and its stress point
+ * (Stage 29 W-FIX1c, O207). */
 static void gc_fast_refresh(void) {
   Block *cur = gc_thread.ycur;
   int cur_ok = S_INLINE_HOLES || gc_thread.cur_whole;
-  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 &&
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 && !gc_heap.set.stress &&
       !gc_thread.nogc && !gc_thread.collecting && !gc_heap.set.nursery_off && !gc_thread.alloc_mature &&
       !gc_heap.limit_pending && !gc_heap.explicit_pending && gc_heap.mature_since_full < gc_heap.full_trigger && cur && gc_thread.cur == cur &&
       cur_ok && avant_gc_bump) {
@@ -280,7 +353,7 @@ void gc_tl_settle(GcThread *t) {
  * previous charge was settled at the slow path's start. */
 static void tl_grant(void) {
   Block *y = gc_thread.ycur;
-  if (!gc_thread.reg.head || gc_thread.nogc || gc_thread.collecting || gc_heap.set.nursery_off ||
+  if (gc_heap.set.stress || !gc_thread.reg.head || gc_thread.nogc || gc_thread.collecting || gc_heap.set.nursery_off ||
       gc_thread.alloc_mature || gc_heap.limit_pending || gc_heap.explicit_pending ||
       gc_heap.mature_since_full >= gc_heap.full_trigger || avant_nursery_held >= avant_young_bytes ||
       !y || gc_thread.cur != y || !(S_INLINE_HOLES || gc_thread.cur_whole) || !avant_gc_bump ||
@@ -524,6 +597,7 @@ static AvantHeader *young_overflow(size_t total) {
       if (!o) {
         return NULL;
       }
+      o->kept = SPLUS_FRESH;
     }
     young_note_hole(o);
     gc_thread.overflow = o;
@@ -578,7 +652,10 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
    * walks every full block. Recycle only after a collection cleared
    * the fresh bit, and then only forward from the cursor. */
   if (bspace == space && !gc_heap.space[space].fresh) {
-    Block *b = cur ? cur->next : gc_heap.space[space].list;
+    Block *b;
+    /* The walk follows the space's order through Block.next. */
+    gc_mature_normalize();
+    b = cur ? cur->next : gc_heap.space[space].list;
     for (; b; b = b->next) {
       if (b->young_hi) {
         continue;
@@ -622,6 +699,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     gc_die("heap limit");
   }
   if (space == SPACE_NURSERY) {
+    b->kept = SPLUS_FRESH;
     young_take(b);
   } else {
     gc_heap.space[space].cur = b;
@@ -649,6 +727,7 @@ static AvantHeader *place_bump(size_t total) {
   if (!b) {
     return NULL;
   }
+  b->kept = SPLUS_FRESH;
   young_take(b);
   if (!bump_fits(total)) {
     return NULL;
@@ -706,6 +785,23 @@ static int alloc_is_large(uint32_t type_id, size_t payload, size_t total) {
 void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   int shared;
   gc_init();
+  /* AVANT_GC_STRESS=1: every allocation is a stress point, a young
+   * collection before it (gc_stress_point: not inside a no-GC region or a
+   * collection, and only with a young generation). Generated code's
+   * allocations all come here under it, since the inline path is never
+   * published (gc_fast_refresh, tl_grant; Stage 29 W-FIX1c, O207), as do
+   * runtime C's and user C's: a caller that holds a reference outside a
+   * root slot across any allocation reads a moved or poisoned object at
+   * once. (Before, only runtime C's allocations were stress points,
+   * through a wrapper of their own, avant_alloc_c, Stage 28 W14b1; a
+   * program whose allocations were all generated code's ran under the
+   * stress mode as it ran without it.) */
+  if (gc_heap.set.stress) {
+    gc_safepoint();
+    gc_lock(&gc_heap.world);
+    gc_stress_point();
+    pthread_mutex_unlock(&gc_heap.world);
+  }
   shared = atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;
   if (!shared) {
     gc_fast_refresh();
@@ -858,24 +954,5 @@ __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes)
     gc_collect(GC_YOUNG, 1, GC_WHY_BUDGET);
   }
   pthread_mutex_unlock(&gc_heap.world);
-}
-
-/* avant_alloc as runtime C calls it (avant_gc.h maps avant_alloc to this
- * name in every runtime unit outside the collector; Stage 28 W14b1). The
- * same allocation, plus AVANT_GC_STRESS's stress point first, so a
- * stress run collects at every runtime C allocation and not at the
- * generated code's, which roots everything across avant_alloc by
- * construction (D165). */
-__attribute__((visibility("hidden"))) void *avant_alloc_c(uint64_t nbytes, uint32_t type_id) {
-  void *p;
-  gc_init();
-  if (gc_heap.set.stress) {
-    gc_safepoint();
-    gc_lock(&gc_heap.world);
-    gc_stress_point();
-    pthread_mutex_unlock(&gc_heap.world);
-  }
-  p = avant_alloc(nbytes, type_id);
-  return p;
 }
 

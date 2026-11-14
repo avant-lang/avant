@@ -1,0 +1,64 @@
+import std.http
+
+// A route registered while the server serves (Stage 29 W-FIX1f, O594):
+// the handler of GET /add, on a loop thread while the server's other
+// loop serves, registers one more route with the method its argument
+// names (get, post, put, delete, patch, route, websocket,
+// websocket_open, websocket_close). The route method traps: one line on
+// stderr, status 1, and the request is never answered. Without the trap
+// the route is added, the request answered, and the program prints
+// "answered 200" and ends with status 0. Run by
+// tests/cases/test_std_http_safety.av once per method; without an
+// argument (the run goldens) the method is get.
+fn main: Int {
+  a = argv()
+  kind = "get"
+  if a.size > 1 {
+    kind = a[a.size - 1]
+  }
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 2) {
+    server = opened
+    server.get("/add") { |req|
+      if kind == "get" {
+        server.get("/x") { |r| Response.text("x") }
+      } else if kind == "post" {
+        server.post("/x") { |r| Response.text("x") }
+      } else if kind == "put" {
+        server.put("/x") { |r| Response.text("x") }
+      } else if kind == "delete" {
+        server.delete("/x") { |r| Response.text("x") }
+      } else if kind == "patch" {
+        server.patch("/x") { |r| Response.text("x") }
+      } else if kind == "route" {
+        server.route("OPTIONS", "/x") { |r| Response.text("x") }
+      } else if kind == "websocket" {
+        server.websocket("/w") { |conn, msg| }
+      } else if kind == "websocket_open" {
+        server.websocket_open("/w") { |conn| }
+      } else if kind == "websocket_close" {
+        server.websocket_close("/w") { |conn, code, reason| }
+      }
+      Response.text("added")
+    }
+    server.get("/__stop") { |req|
+      server.close
+      Response.text("bye")
+    }
+    port = server.port
+    client = spawn {
+      if resp = Http.get("http://127.0.0.1:${port}/add", true, 5000) {
+        puts("answered ${resp.status}")
+      } else {
+        puts("no answer")
+      }
+      if resp = Http.get("http://127.0.0.1:${port}/__stop", true, 5000) {
+      }
+      0
+    }
+    server.serve
+    _ = client.join
+    return 0
+  }
+  puts("listen failed")
+  1
+}

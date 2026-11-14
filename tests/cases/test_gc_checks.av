@@ -70,11 +70,13 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   keys: Array(String) = []
   envs: Array(String) = []
   wants: Array(String) = []
-  // The heap-limit runs leave out an outer AVANT_GC_STRESS (400,000
-  // pushes into a remembered array, one young collection each), and the
-  // stress runs an outer AVANT_GC_VERIFY (a whole-heap check at each of
-  // millions of collections).
-  lenvs = ["-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=24", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=24 AVANT_GC_VERIFY=1", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=24 AVANT_NURSERY=0", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=32 AVANT_NURSERY=0"]
+  // The heap-limit runs keep an outer AVANT_GC_STRESS (VALK-TM, O602:
+  // 0.6 to 6.9 s each with it), except the one under AVANT_GC_VERIFY=1:
+  // with the stress mode it did not end in 600 s (a whole-heap check at
+  // each of 400,000 pushes' collections). The stress runs leave out an
+  // outer AVANT_GC_VERIFY (a whole-heap check at each of millions of
+  // collections).
+  lenvs = ["AVANT_HEAP_MAX_MB=24", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=24 AVANT_GC_VERIFY=1", "AVANT_HEAP_MAX_MB=24 AVANT_NURSERY=0", "AVANT_HEAP_MAX_MB=32 AVANT_NURSERY=0"]
   e = 0
   while e < lenvs.size {
     progs.push("limit_defer")
@@ -91,7 +93,7 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   keys.push("task_pins.g0")
   envs.push("")
   wants.push("sum: 1490\npins left: 0\n")
-  renvs = ["-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=32", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=32 AVANT_GC_VERIFY=1"]
+  renvs = ["AVANT_HEAP_MAX_MB=32", "AVANT_HEAP_MAX_MB=32 AVANT_GC_VERIFY=1"]
   e = 0
   while e < renvs.size {
     progs.push("task_records")
@@ -133,9 +135,9 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   }
   // heap/limit_region.av (gc-design.md §5.4, Stage 28 W15a1): a split
   // that alone allocates more than the limit dies naming the region.
-  runs.push(run_job_env(dir, "limit_region", "limit_region.l", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=4"))
+  runs.push(run_job_env(dir, "limit_region", "limit_region.l", "AVANT_HEAP_MAX_MB=4"))
   // C39: near-limit thrash ends in "heap limit".
-  tenvs = ["-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=8", "-u AVANT_GC_STRESS AVANT_HEAP_MAX_MB=8 AVANT_YOUNG_MB=1"]
+  tenvs = ["AVANT_HEAP_MAX_MB=8", "AVANT_HEAP_MAX_MB=8 AVANT_YOUNG_MB=1"]
   e = 0
   while e < tenvs.size {
     runs.push(run_job_env(dir, "limit_defer", "limit_defer.t${e}", tenvs[e]))
@@ -180,10 +182,273 @@ fn test_gc_checks(c: Checks, compiler: String, root: String, dir: String) {
   }
 }
 
+// The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
+fn stat_value(text: String, key: String): Int {
+  parts = text.split(" ")
+  for p in parts {
+    if p.size > key.size + 1 && str_slice(p, 0, key.size + 1) == "${key}=" {
+      return str_slice(p, key.size + 1, p.size).strip.to_i ?? -1
+    }
+  }
+  -1
+}
+
+// O360 (Stage 29 W-FIX1b): an object with no payload takes one word
+// (W-INT1's fix, which had no test). heap/empty_payload.av allocates
+// EMPTY_PAYLOAD_EXTRA steps of three empty objects (an empty array
+// literal's buffer, `Array(T).new(0)`'s with a run-time size, an empty
+// class) and two array headers: 100,000 more steps are exactly 9,600,000
+// more allocated bytes, in the inline build and in the call-form build,
+// under every collector mode. With the emitter's two guards removed the
+// inline build's four runs give 7,200,000 (the stress run allocates
+// through the runtime). The program also keeps, moves and uses empty
+// objects at every position of a block and prints 0.
+fn test_empty_payload(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/empty_payload.av", "${dir}/empty_payload", "${dir}/empty_payload.log"))
+  jobs.push(compile_job("AVANT_LLVM_CALL_FORMS=1", compiler, "${root}/tests/fixtures/heap/empty_payload.av", "${dir}/empty_payload_calls", "${dir}/empty_payload_calls.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "empty_payload.av: compiles")
+  c.eq_int(jobs[1].code, 0, "empty_payload.av: compiles with the call forms")
+  bins = ["empty_payload", "empty_payload_calls"]
+  envs = ["-u AVANT_GC_STRESS", "-u AVANT_GC_STRESS AVANT_GC_VERIFY=1", "-u AVANT_GC_STRESS AVANT_YOUNG_MB=1", "-u AVANT_GC_STRESS AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for b in 0..bins.size {
+    for e in 0..envs.size {
+      runs.push(run_job_env(dir, bins[b], "${bins[b]}.a${e}", "${envs[e]} AVANT_GC_STATS=1 EMPTY_PAYLOAD_EXTRA=1000"))
+      runs.push(run_job_env(dir, bins[b], "${bins[b]}.b${e}", "${envs[e]} AVANT_GC_STATS=1 EMPTY_PAYLOAD_EXTRA=101000"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for b in 0..bins.size {
+    for e in 0..envs.size {
+      what = "${bins[b]} under '${envs[e]}'"
+      c.eq_int(runs[k].code, 0, "${what}: exit 0")
+      c.eq_int(runs[k + 1].code, 0, "${what}, 100,000 more steps: exit 0")
+      c.eq_str(log_text("${dir}/${bins[b]}.b${e}.out"), "0\n", "${what}: every empty object survives its moves")
+      small = stat_value(log_text("${dir}/${bins[b]}.a${e}.err"), "alloc")
+      large = stat_value(log_text("${dir}/${bins[b]}.b${e}.err"), "alloc")
+      c.expect(small > 0, "${what}: the statistics line has alloc=")
+      c.eq_int(large - small, 9600000, "${what}: 100,000 steps of three empty objects allocate 9,600,000 bytes")
+      k += 2
+    }
+  }
+}
+
+// O207 (Stage 29 W-FIX1c): AVANT_GC_STRESS=1 reaches generated code's
+// allocations. heap/stress_inline.av makes 40,000 allocations, all
+// generated code's and nothing else (1,440,000 bytes exactly). With
+// every collector variable unset it runs no collection, and the inline
+// build takes its allocations on the inline path (at least 39,000 of
+// the 40,000); under AVANT_GC_STRESS=1 every allocation is a stress
+// point: at least 40,000 collections, none of the allocations inline, in
+// the inline build and in the call-form build, and the same output.
+// Before W-FIX1c the stress runs made 0 collections, as the default ones.
+fn test_stress_inline(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/stress_inline.av", "${dir}/stress_inline", "${dir}/stress_inline.log"))
+  jobs.push(compile_job("AVANT_LLVM_CALL_FORMS=1", compiler, "${root}/tests/fixtures/heap/stress_inline.av", "${dir}/stress_inline_calls", "${dir}/stress_inline_calls.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "stress_inline.av: compiles")
+  c.eq_int(jobs[1].code, 0, "stress_inline.av: compiles with the call forms")
+  clean = "-u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_HEAP_RESERVE_GB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS AVANT_GC_STATS=1"
+  bins = ["stress_inline", "stress_inline_calls"]
+  runs: Array(HJob) = []
+  for b in 0..bins.size {
+    runs.push(run_job_env(dir, bins[b], "${bins[b]}.plain", clean))
+    runs.push(run_job_env(dir, bins[b], "${bins[b]}.stress", "${clean} AVANT_GC_STRESS=1"))
+  }
+  run_waves(runs)
+  for b in 0..bins.size {
+    what = bins[b]
+    plain = log_text("${dir}/${what}.plain.err")
+    stress = log_text("${dir}/${what}.stress.err")
+    c.eq_int(runs[b * 2].code, 0, "${what}: exit 0")
+    c.eq_int(runs[b * 2 + 1].code, 0, "${what} under AVANT_GC_STRESS=1: exit 0")
+    c.eq_str(log_text("${dir}/${what}.plain.out"), "stress_inline: 0 bad\n", "${what}: the known stdout")
+    c.eq_str(log_text("${dir}/${what}.stress.out"), "stress_inline: 0 bad\n", "${what} under AVANT_GC_STRESS=1: the known stdout")
+    c.eq_int(stat_value(plain, "alloc"), 1440000, "${what}: 40,000 allocations of generated code and no other (1,440,000 bytes)")
+    c.eq_int(stat_value(stress, "alloc"), 1440000, "${what} under AVANT_GC_STRESS=1: the same allocations")
+    c.eq_int(stat_value(plain, "collections"), 0, "${what}: no collection in the default environment")
+    c.expect(stat_value(stress, "collections") >= 40000, "${what} under AVANT_GC_STRESS=1: a collection at every allocation (at least 40,000)")
+    c.eq_int(stat_value(stress, "inline_allocs"), 0, "${what} under AVANT_GC_STRESS=1: no allocation takes the inline path")
+  }
+  c.expect(stat_value(log_text("${dir}/stress_inline.plain.err"), "inline_allocs") >= 39000, "stress_inline: its allocations take the inline path in the default environment")
+  c.eq_int(stat_value(log_text("${dir}/stress_inline_calls.plain.err"), "inline_allocs"), 0, "stress_inline_calls: the call-form build has no inline allocation")
+}
+
+// O551 (Stage 29 W-FIX1c): avant_alloc's own guard (a 0-byte request
+// takes one word), which generated code never reaches, and the layout it
+// makes impossible, reached on purpose. ffi/empty_end.av (its C half in
+// ffi/ffi.c) asks avant_alloc for 0 bytes from C: once anywhere, and
+// with exactly one word left in the last block of the heap's highest
+// chunk, then keeps the object in a rooted holder across a young
+// collection. Every environment prints `empty_end: 0 bad`. With every
+// collector variable unset the position must be reached (at least once;
+// twice today), so a change of the allocator's order that loses the
+// layout fails here instead of passing with nothing checked. With
+// avant_alloc's line removed the default run prints `6 bad`: 3 objects
+// not one word, 2 with a block's first address as their payload
+// address, 1 the holder still names by its old copy after the
+// collection (splus_new_addr leaves an address at the end of the
+// committed heap unchanged).
+fn test_empty_end(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/empty_end.av", "${dir}/empty_end", "${dir}/empty_end.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "empty_end.av: compiles")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "empty_end", "empty_end.g${e}", envs[e]))
+  }
+  runs.push(run_job_env(dir, "empty_end", "empty_end.clean", "-u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_HEAP_RESERVE_GB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS -u AVANT_GC_STATS EMPTY_END_REPORT=1"))
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "empty_end.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/empty_end.g${e}.out"), "empty_end: 0 bad\n", "empty_end.av ${what}: an empty object takes one word and survives its move")
+    c.eq_str(log_text("${dir}/empty_end.g${e}.err"), "", "empty_end.av ${what}: no stderr (no verifier report)")
+  }
+  clean = log_text("${dir}/empty_end.clean.out")
+  c.eq_int(runs[envs.size].code, 0, "empty_end.av, every collector variable unset: exit 0")
+  c.expect(str_has(clean, "empty_end: 0 bad\n"), "empty_end.av, every collector variable unset: 0 bad")
+  c.expect(str_has(clean, "\nreached ") && !str_has(clean, "\nreached 0,"), "empty_end.av, every collector variable unset: the position is reached (one word left in the last block of the highest chunk)")
+}
+
+// O585 (the Valk stage, VALK-T; D342 Q6): the field rule and its check.
+// ffi/field_rule.av (its C half in ffi/ffi.c) keeps a pointer buffer that
+// names another by its start across a young collection: `field_rule: 1`
+// and no stderr in every environment. With FIELD_RULE_BREAK=1 a slot is
+// given an address inside the other buffer, which the rule forbids in a
+// field: under AVANT_GC_VERIFY=1 (alone, with a small young budget, with
+// the nursery off, under the stress mode) the program must stop before
+// the collection traces the field, naming the rule and the holder. The
+// breaking form is never run without the verifier (the traces trust the
+// rule). With the check removed from the verifier the breaking runs exit
+// 0 with no report.
+fn test_field_rule(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/field_rule.av", "${dir}/field_rule", "${dir}/field_rule.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "field_rule.av: compiles")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  brks = ["AVANT_GC_VERIFY=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_NURSERY=0", "AVANT_GC_VERIFY=1 AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "field_rule", "field_rule.g${e}", envs[e]))
+  }
+  for e in 0..brks.size {
+    runs.push(run_job_env(dir, "field_rule", "field_rule.b${e}", "FIELD_RULE_BREAK=1 ${brks[e]}"))
+  }
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "field_rule.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/field_rule.g${e}.out"), "field_rule: 1\n", "field_rule.av ${what}: a field naming an object's start survives the collection")
+    c.eq_str(log_text("${dir}/field_rule.g${e}.err"), "", "field_rule.av ${what}: no stderr (no verifier report)")
+  }
+  for e in 0..brks.size {
+    err = log_text("${dir}/field_rule.b${e}.err")
+    c.expect(runs[envs.size + e].code != 0, "field_rule.av, a field holding an address inside an object, under ${brks[e]}: the program stops")
+    c.expect(str_has(err, "avant gc verify: field rule: holder ") && str_has(err, "an address inside object "), "field_rule.av, a field holding an address inside an object, under ${brks[e]}: the verifier names the rule and the holder")
+    c.eq_str(log_text("${dir}/field_rule.b${e}.out"), "", "field_rule.av, a field holding an address inside an object, under ${brks[e]}: stopped before the collection ended")
+  }
+}
+
+// A chain of remembered old objects (the Valk stage, VALK-T):
+// heap/rem_chain.av makes a list of 200,000 nodes old, writes a young
+// object into every node (each node is remembered and names a young
+// object) and runs a young collection with the list's head in a root.
+// Every environment prints `200000 200000` with no stderr. Before the
+// fix the young trace called itself once per node of such a chain and
+// the program ended with exit 139 (a stack overflow) plainly, at 1 MB
+// and under the verifier.
+fn test_rem_chain(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  no_flags: Array(String) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/heap/rem_chain.av", "${dir}/rem_chain", "${dir}/rem_chain.log", no_flags))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "rem_chain.av: compiles")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "rem_chain", "rem_chain.g${e}", envs[e]))
+  }
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "rem_chain.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/rem_chain.g${e}.out"), "200000 200000\n", "rem_chain.av ${what}: every node of the remembered chain keeps its young object")
+    c.eq_str(log_text("${dir}/rem_chain.g${e}.err"), "", "rem_chain.av ${what}: no stderr (no verifier report)")
+  }
+}
+
+// O610 (the Valk stage, VALK-T2): the verifier's check of the
+// generational invariant itself. ffi/rem_invariant.av (its C half in
+// ffi/ffi.c) stores a young string into a Cell two young collections
+// promoted, behind avant_barrier: `rem_invariant: young-2 24` and no
+// stderr in every environment. With REM_INVARIANT_BREAK=1 the store has no
+// barrier: the Cell is in a slot of main, so the collection's trace scans
+// it and the output is the same, and under AVANT_GC_VERIFY=1 (alone, with
+// a small young budget, under the stress mode) the verifier must report
+// the holder as not remembered. With the nursery off nothing is young and
+// nothing is reported. Before VALK-T2 the breaking runs printed no report.
+fn test_rem_invariant(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/rem_invariant.av", "${dir}/rem_invariant", "${dir}/rem_invariant.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "rem_invariant.av: compiles")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  brks = ["AVANT_GC_VERIFY=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "rem_invariant", "rem_invariant.g${e}", envs[e]))
+  }
+  for e in 0..brks.size {
+    // An outer AVANT_NURSERY=0 pass would leave nothing young to report.
+    runs.push(run_job_env(dir, "rem_invariant", "rem_invariant.b${e}", "-u AVANT_NURSERY REM_INVARIANT_BREAK=1 ${brks[e]}"))
+  }
+  runs.push(run_job_env(dir, "rem_invariant", "rem_invariant.n0", "REM_INVARIANT_BREAK=1 AVANT_GC_VERIFY=1 AVANT_NURSERY=0"))
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "rem_invariant.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/rem_invariant.g${e}.out"), "rem_invariant: young-2 24\n", "rem_invariant.av ${what}: the Cell keeps the string stored behind a barrier")
+    c.eq_str(log_text("${dir}/rem_invariant.g${e}.err"), "", "rem_invariant.av ${what}: no stderr (no verifier report)")
+  }
+  for e in 0..brks.size {
+    err = log_text("${dir}/rem_invariant.b${e}.err")
+    c.eq_str(log_text("${dir}/rem_invariant.b${e}.out"), "rem_invariant: young-2 24\n", "rem_invariant.av, a store with no barrier, under ${brks[e]}: the trace still reaches the field (a root names the holder)")
+    c.expect(str_has(err, "avant gc verify: missing barrier: holder ") && str_has(err, "not remembered"), "rem_invariant.av, a store with no barrier, under ${brks[e]}: the verifier reports the holder that is not remembered")
+  }
+  c.eq_str(log_text("${dir}/rem_invariant.n0.out"), "rem_invariant: young-2 24\n", "rem_invariant.av, a store with no barrier, under AVANT_GC_VERIFY=1 AVANT_NURSERY=0: the same output")
+  c.eq_str(log_text("${dir}/rem_invariant.n0.err"), "", "rem_invariant.av, a store with no barrier, under AVANT_GC_VERIFY=1 AVANT_NURSERY=0: nothing is young, nothing is reported")
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_checks.av")
   if compiler = env_get("AVANT_COMPILER") {
     test_gc_checks(c, compiler, avant_test_root(), scratch_dir())
+    test_empty_payload(c, compiler, avant_test_root(), scratch_dir())
+    test_stress_inline(c, compiler, avant_test_root(), scratch_dir())
+    test_empty_end(c, compiler, avant_test_root(), scratch_dir())
+    test_field_rule(c, compiler, avant_test_root(), scratch_dir())
+    test_rem_chain(c, compiler, avant_test_root(), scratch_dir())
+    test_rem_invariant(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

@@ -67,6 +67,16 @@ fn mir_v15(v: MVerifier) {
   }
 }
 
+// V16 as restated by Stage 29 VALK-A1 (M4, gc.av rule 2): a frame
+// function links a record (bb0 begins with the zeroed non-parameter
+// slots, gc.enter and gc.roots of every slot in local order, and no other
+// gc.enter or gc.roots follows) or links none (no frame statement at all).
+// It must link one when it has a slot, or when a thread's first Avant
+// frame can be its own (MFunc.first_frame: main, a C callback's thunk, a
+// task's thunk; the record registers the thread). The frame pass links
+// none exactly when neither holds; a record with no slot elsewhere is
+// correct and accepted (the builder's modules have them). V17 checks the
+// returns of a function that links one.
 fn mir_v16(v: MVerifier) {
   f = v.func
   if f.kind == mfk_unset() {
@@ -86,6 +96,14 @@ fn mir_v16(v: MVerifier) {
       }
     }
     k += 1
+  }
+  if !mir_has_gc_stmt(f) {
+    if slots.size > 0 {
+      v.ferr(16, "a frame function with slots links no frame record")
+    } else if f.first_frame {
+      v.ferr(16, "a thread's first Avant frame can be this function's (main, a C callback's or a task's thunk) and it links no frame record")
+    }
+    return
   }
   bb0 = f.blocks[0]
   idx = 0
@@ -119,6 +137,19 @@ fn mir_v16(v: MVerifier) {
   }
 }
 
+// Whether f has a frame statement (gc.enter, gc.roots or gc.leave)
+// anywhere: a frame function without one links no record (V16).
+fn mir_has_gc_stmt(f: MFunc): Bool {
+  for blk in f.blocks {
+    for st in blk.stmts {
+      if mir_is_gc_stmt(st) {
+        return true
+      }
+    }
+  }
+  false
+}
+
 fn mir_is_zero_of(st: MStmt, l: Int): Bool {
   if st.kind != msk_assign() {
     return false
@@ -141,9 +172,16 @@ fn mir_same_ints(a: Array(Int), b: Array(Int)): Bool {
   true
 }
 
+// V17: every return of a frame function that links a record has
+// gc.leave immediately before it, and gc.leave is nowhere else. A frame
+// function with no frame statement links none (V16 says when that is
+// allowed) and has nothing to unlink.
 fn mir_v17(v: MVerifier) {
   f = v.func
   if f.kind != mfk_frame() {
+    return
+  }
+  if !mir_has_gc_stmt(f) {
     return
   }
   b = 0
@@ -396,17 +434,42 @@ fn mir_v11_report(v: MVerifier, b: Int, j: Int, st: MStmt, w: Int, x: UInt64) {
   }
 }
 
-// V14: rd[l] is 0 (no definition reaches), 1 (only alloc results), or 2
-// (another definition reaches); pend[l] says a fresh store through l
-// awaits its closing barrier.
+// V14, the fresh exemption (Stage 28 W4; restated by Stage 29 VALK-A1,
+// M5, mir/fresh.av). A `fresh` store needs no barrier of its own when
+// either form holds:
+// - open: its holder _h is open at the store: on every path, since the
+//   last collecting or indirect call and the last redefinition of _h, an
+//   allocation marked `fresh` defined _h (young, or barriered at birth on
+//   its slow path), or `barrier copy _h` ran that is not the slot form
+//   (one followed by an element store of _h's buffer marks one card), or
+//   _h is _1 of an `initialize` (MFunc.fresh_self) and the function has
+//   not collected since its entry. A barrier's effect (young, remembered,
+//   cards counted as marked) lasts until the next collection, which only a
+//   collecting call of the thread's own can start (in a shared module a
+//   loop's poll is one, explicit at stage final).
+// - closed fill (W1b): every reaching definition of _h is an allocation's
+//   result in this function (rd 1), every path from the store to a
+//   redefinition of _h or to a return passes a closing `barrier copy _h`
+//   (pend), and _h is a slot at stage final.
+// And at stage final every call of an `initialize` passes an open first
+//   argument (the receiver its entry assumes open; the fresh pass puts a
+//   barrier before a call whose receiver is not, such as a method's own
+//   `initialize(...)`).
+// Two dataflows: the open sets (op, one bit per local, an intersection),
+// then, only over the holders of the stores the first found not open,
+// the closed-fill form (rd: 0 no definition reaches, 1 only alloc
+// results, 2 another; pd: a closed-fill store awaits its closing barrier;
+// both indexed by the holder's place in that short list, so a function
+// with many locals and blocks pays for the few holders, VALK-A1).
 fn mir_v14(v: MVerifier) {
   f = v.func
-  any = false
+  any = f.fresh_self
   b = 0
   while b < f.blocks.size {
     j = 0
     while j < f.blocks[b].stmts.size {
-      if f.blocks[b].stmts[j].fresh {
+      st = f.blocks[b].stmts[j]
+      if st.fresh || mir_v14_init_call(v, st) {
         any = true
       }
       j += 1
@@ -416,40 +479,88 @@ fn mir_v14(v: MVerifier) {
   if !any {
     return
   }
-  // rd and pd of every block's exit, block b's at b * n (rd) and b * nw
-  // (pd, word bit sets); the entry of the block being visited in rd, pd.
   n = f.locals.size
   nb = f.blocks.size
   nw = mir_nwords(n)
   preds = mir_preds(f)
-  rd_out = mir_ints(nb * n, 0)
-  pd_out = mir_zero_words(nb * nw)
-  rd = mir_ints(n, 0)
-  pd = mir_zero_words(nw)
+  op_out = mir_zero_words(nb * nw)
+  for i in 0..op_out.size {
+    op_out[i] = ~0u64
+  }
+  op = mir_zero_words(nw)
+  none: Array(Int) = []
   changed = true
   while changed {
     changed = false
     for b in 0..nb {
-      mir_v14_in(f, b, preds, rd_out, pd_out, rd, pd)
-      mir_v14_block(v, b, rd, pd, false)
-      for k in 0..n {
-        if rd[k] != rd_out[b * n + k] {
-          rd_out[b * n + k] = rd[k]
+      mir_v14_op_in(f, b, preds, op_out, op)
+      mir_v14_block(v, b, op, none, none, none, false)
+      for w in 0..nw {
+        if op[w] != op_out[b * nw + w] {
+          op_out[b * nw + w] = op[w]
           changed = true
         }
       }
-      for w in 0..nw {
-        if pd[w] != pd_out[b * nw + w] {
-          pd_out[b * nw + w] = pd[w]
+    }
+  }
+  // The final walk of the open sets: the receivers' errors, and the
+  // holders of the fresh stores that are not open (hs, idx: local to its
+  // place in hs, or -1).
+  idx = mir_ints(n, -1)
+  hs: Array(Int) = []
+  for b in 0..nb {
+    mir_v14_op_in(f, b, preds, op_out, op)
+    mir_v14_block(v, b, op, idx, hs, none, true)
+  }
+  if hs.size == 0 {
+    return
+  }
+  k = hs.size
+  kw = mir_nwords(k)
+  rd_out = mir_ints(nb * k, 0)
+  pd_out = mir_zero_words(nb * kw)
+  rd = mir_ints(k, 0)
+  pd = mir_zero_words(kw)
+  changed = true
+  while changed {
+    changed = false
+    for b in 0..nb {
+      mir_v14_op_in(f, b, preds, op_out, op)
+      mir_v14_fill_in(f, b, preds, rd_out, pd_out, idx, hs, rd, pd)
+      mir_v14_fill_block(v, b, op, idx, rd, pd, false)
+      for i in 0..k {
+        if rd[i] != rd_out[b * k + i] {
+          rd_out[b * k + i] = rd[i]
+          changed = true
+        }
+      }
+      for w in 0..kw {
+        if pd[w] != pd_out[b * kw + w] {
+          pd_out[b * kw + w] = pd[w]
           changed = true
         }
       }
     }
   }
   for b in 0..nb {
-    mir_v14_in(f, b, preds, rd_out, pd_out, rd, pd)
-    mir_v14_block(v, b, rd, pd, true)
+    mir_v14_op_in(f, b, preds, op_out, op)
+    mir_v14_fill_in(f, b, preds, rd_out, pd_out, idx, hs, rd, pd)
+    mir_v14_fill_block(v, b, op, idx, rd, pd, true)
   }
+}
+
+// Whether st calls an `initialize` (MFunc.fresh_self) of this module.
+fn mir_v14_init_call(v: MVerifier, st: MStmt): Bool {
+  if st.kind != msk_call() {
+    return false
+  }
+  if fo = st.indirect {
+    return false
+  }
+  if g = v.m.func(st.callee) {
+    return g.fresh_self
+  }
+  false
 }
 
 fn mir_ints(n: Int, x: Int): Array(Int) {
@@ -460,47 +571,138 @@ fn mir_ints(n: Int, x: Int): Array(Int) {
   xs
 }
 
-// The entry of block b into rd and pd: rd the most of the predecessors'
-// exits (bb0: the parameters are defined, 2), pd their union.
-fn mir_v14_in(f: MFunc, b: Int, preds: Array(Array(Int)), rd_out: Array(Int), pd_out: Array(UInt64), rd: Array(Int), pd: Array(UInt64)) {
-  n = f.locals.size
-  nw = mir_nwords(n)
-  k = 0
-  while k < n {
-    rd[k] = 0
-    k += 1
-  }
-  w = 0
-  while w < nw {
-    pd[w] = 0u64
-    w += 1
-  }
-  i = 0
-  while i < preds[b].size {
-    p = preds[b][i]
-    if b > 0 {
-      for k in 0..n {
-        if rd_out[p * n + k] > rd[k] {
-          rd[k] = rd_out[p * n + k]
-        }
-      }
-    }
+// The open set at the entry of block b: the intersection of its
+// predecessors' exits; bb0: _1 of an initialize; a block no edge enters:
+// nothing.
+fn mir_v14_op_in(f: MFunc, b: Int, preds: Array(Array(Int)), op_out: Array(UInt64), op: Array(UInt64)) {
+  nw = op.size
+  if b == 0 || preds[b].size == 0 {
     for w in 0..nw {
-      pd[w] = pd[w] | pd_out[p * nw + w]
+      op[w] = 0u64
     }
-    i += 1
+    if b == 0 && f.fresh_self && f.locals.size > 1 {
+      mir_bit_on(op, 0, 1)
+    }
+    return
   }
-  if b == 0 {
-    k = 1
-    while k <= f.nparams {
-      rd[k] = 2
-      k += 1
+  for w in 0..nw {
+    op[w] = ~0u64
+  }
+  for p in preds[b] {
+    for w in 0..nw {
+      op[w] = op[w] & op_out[p * nw + w]
     }
   }
 }
 
-// The forward transfer of one block, in place; report adds the errors.
-fn mir_v14_block(v: MVerifier, b: Int, rd: Array(Int), pd: Array(UInt64), report: Bool) {
+// The closed-fill state at the entry of block b, over the holders hs: rd
+// the most of the predecessors' exits (bb0: a parameter is defined, 2),
+// pd their union.
+fn mir_v14_fill_in(f: MFunc, b: Int, preds: Array(Array(Int)), rd_out: Array(Int), pd_out: Array(UInt64), idx: Array(Int), hs: Array(Int), rd: Array(Int), pd: Array(UInt64)) {
+  k = rd.size
+  kw = pd.size
+  for i in 0..k {
+    rd[i] = 0
+  }
+  for w in 0..kw {
+    pd[w] = 0u64
+  }
+  for p in preds[b] {
+    if b > 0 {
+      for i in 0..k {
+        if rd_out[p * k + i] > rd[i] {
+          rd[i] = rd_out[p * k + i]
+        }
+      }
+    }
+    for w in 0..kw {
+      pd[w] = pd[w] | pd_out[p * kw + w]
+    }
+  }
+  if b == 0 {
+    for i in 0..k {
+      if f.is_param(hs[i]) {
+        rd[i] = 2
+      }
+    }
+  }
+}
+
+// Whether stmts[j], a barrier on h, is the slot form: the next statement
+// is an element store of h's buffer (the emitter's avant_barrier_slot,
+// which marks one card), so it opens nothing.
+fn mir_v14_slot_form(stmts: Array(MStmt), j: Int, h: Int): Bool {
+  k = j + 1
+  if k >= stmts.size || stmts[k].kind != msk_assign() {
+    return false
+  }
+  if p = stmts[k].place {
+    return p.local == h && p.proj.size >= 2 && p.proj[0].kind == mpk_deref() && p.proj[1].kind == mpk_index()
+  }
+  false
+}
+
+// The open set's transfer of one statement, in place.
+fn mir_v14_op_step(v: MVerifier, blk: MBlock, j: Int, op: Array(UInt64)) {
+  st = blk.stmts[j]
+  if st.kind == msk_barrier() && st.args.size == 1 {
+    h = mir_bare_local(st.args[0])
+    if h >= 0 && !mir_v14_slot_form(blk.stmts, j, h) {
+      mir_bit_on(op, 0, h)
+    }
+  }
+  if st.kind == msk_call() && (st.collects || mir_is_indirect(st)) {
+    for w in 0..op.size {
+      op[w] = 0u64
+    }
+  }
+  d = mir_stmt_def(st)
+  if d >= 0 {
+    mir_bit_off(op, 0, d)
+    if st.kind == msk_call() && st.fresh {
+      if e = v.m.ext(st.callee), e.alloc {
+        mir_bit_on(op, 0, d)
+      }
+    }
+  }
+}
+
+// The open sets through block b. With report (the final walk): a
+// receiver of an initialize that is not open is an error (stage final),
+// and the holder of each fresh store that is not open joins hs.
+fn mir_v14_block(v: MVerifier, b: Int, op: Array(UInt64), idx: Array(Int), hs: Array(Int), none: Array(Int), report: Bool) {
+  f = v.func
+  blk = f.blocks[b]
+  j = 0
+  while j < blk.stmts.size {
+    st = blk.stmts[j]
+    if report && v.stage == mst_final() && mir_v14_init_call(v, st) {
+      h = -1
+      if st.args.size > 0 {
+        h = mir_bare_local(st.args[0])
+      }
+      if h < 0 || !mir_bit(op, 0, h) {
+        v.err(14, b, j, st.loc, "the receiver of a call to ${st.callee} is not open (an object just allocated, or barriered, with no collecting call since)")
+      }
+    }
+    if report && st.fresh && st.kind == msk_assign() {
+      if p = st.place {
+        if p.last_deref != 0 {
+          v.err(14, b, j, st.loc, "the holder of a fresh store is not a local")
+        } else if !mir_bit(op, 0, p.local) && idx[p.local] < 0 {
+          idx[p.local] = hs.size
+          hs.push(p.local)
+        }
+      }
+    }
+    mir_v14_op_step(v, blk, j, op)
+    j += 1
+  }
+}
+
+// The closed-fill form through block b over the holders (idx); op is
+// carried along to tell a store that is not open. report adds the errors.
+fn mir_v14_fill_block(v: MVerifier, b: Int, op: Array(UInt64), idx: Array(Int), rd: Array(Int), pd: Array(UInt64), report: Bool) {
   f = v.func
   blk = f.blocks[b]
   j = 0
@@ -508,51 +710,51 @@ fn mir_v14_block(v: MVerifier, b: Int, rd: Array(Int), pd: Array(UInt64), report
     st = blk.stmts[j]
     if st.kind == msk_barrier() && st.args.size == 1 {
       h = mir_bare_local(st.args[0])
-      if h >= 0 {
-        mir_bit_off(pd, 0, h)
+      if h >= 0 && idx[h] >= 0 {
+        mir_bit_off(pd, 0, idx[h])
       }
     }
     d = mir_stmt_def(st)
-    if d >= 0 {
-      if mir_bit(pd, 0, d) && report {
+    if d >= 0 && idx[d] >= 0 {
+      i = idx[d]
+      if mir_bit(pd, 0, i) && report {
         v.err(14, b, j, st.loc, "_${d} is redefined before the closing barrier of its fresh fill")
       }
-      mir_bit_off(pd, 0, d)
-      rd[d] = 2
+      mir_bit_off(pd, 0, i)
+      rd[i] = 2
       if st.kind == msk_call() {
         if e = v.m.ext(st.callee), e.alloc {
-          rd[d] = 1
+          rd[i] = 1
         }
       }
     }
-    if st.fresh {
-      if p = st.place {
-        if p.last_deref != 0 {
-          if report {
-            v.err(14, b, j, st.loc, "the holder of a fresh store is not a local")
-          }
-        } else {
-          h = p.local
-          if report && rd[h] == 2 {
-            v.err(14, b, j, st.loc, "fresh store through _${h}, which is not only the result of an allocation in this function")
-          }
-          if report && v.stage == mst_final() && !f.locals[h].slot {
-            v.err(14, b, j, st.loc, "fresh store through _${h}, which is not a slot")
-          }
-          mir_bit_on(pd, 0, h)
+    if st.fresh && st.kind == msk_assign() {
+      if p = st.place, p.last_deref == 0 && !mir_bit(op, 0, p.local) && idx[p.local] >= 0 {
+        h = p.local
+        if report && rd[idx[h]] == 2 {
+          v.err(14, b, j, st.loc, "fresh store through _${h}, which is not only the result of an allocation in this function")
         }
+        if report && v.stage == mst_final() && !f.locals[h].slot {
+          v.err(14, b, j, st.loc, "fresh store through _${h}, which is not a slot")
+        }
+        mir_bit_on(pd, 0, idx[h])
       }
     }
+    mir_v14_op_step(v, blk, j, op)
     j += 1
   }
   if report {
     if t = blk.term, t.kind == mtk_return() {
-      k = 0
-      while k < f.locals.size {
-        if mir_bit(pd, 0, k) {
-          v.err(14, b, -1, t.loc, "return before the closing barrier of the fresh fill through _${k}")
+      for i in 0..rd.size {
+        if mir_bit(pd, 0, i) {
+          k = 0
+          while k < f.locals.size {
+            if idx[k] == i {
+              v.err(14, b, -1, t.loc, "return before the closing barrier of the fresh fill through _${k}")
+            }
+            k += 1
+          }
         }
-        k += 1
       }
     }
   }

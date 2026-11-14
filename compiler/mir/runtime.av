@@ -160,6 +160,9 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_array_fill_i64", "ref, i64", "void", n, "")
   t.row("avant_array_fill_u8", "ref, i32", "void", n, "")
   t.row("avant_str_size", "ref str", "i64", n, "")
+  // libc's memcmp for a String switch's labels (Stage 29 W5a1, O392):
+  // never collects; LLVM expands it at a constant size.
+  t.row("memcmp", "ref str, ref str, i64", "i32", n, "")
   t.row("avant_str_byte", "ref str, i64", "i64", n, "")
   t.row("avant_str_eq", "ref str, ref str", "i32", n, "")
   t.row("avant_str_parse_i32", "ref str, i64, ptr", "i32", n, "")
@@ -191,6 +194,9 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_trap_negative", "i64, i32", "void", n, "noreturn")
   t.row("avant_trap_exit_status", "i64", "void", n, "noreturn")
   t.row("avant_trap_c_null", "ref str", "void", n, "noreturn")
+  // An enum value that is no member (Stage 29 W5a1, D358): the value and
+  // the enum's name.
+  t.row("avant_trap_enum", "i64, ref str", "void", n, "noreturn")
   // std's contract traps (W4b2, R11): no collection, no return.
   t.row("avant_regex_closed", "", "void", n, "noreturn")
   t.row("avant_json_misuse", "ref str", "void", n, "noreturn")
@@ -212,6 +218,7 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_trap_negative_at", "i64, i32, i32", "void", n, "noreturn")
   t.row("avant_trap_exit_status_at", "i64, i32", "void", n, "noreturn")
   t.row("avant_trap_c_null_at", "ref str, i32", "void", n, "noreturn")
+  t.row("avant_trap_enum_at", "i64, ref str, i32", "void", n, "noreturn")
   t.row("avant_checked_add_i64", "i64, i64", "i64", n, "")
   t.row("avant_checked_sub_i64", "i64, i64", "i64", n, "")
   t.row("avant_checked_mul_i64", "i64, i64", "i64", n, "")

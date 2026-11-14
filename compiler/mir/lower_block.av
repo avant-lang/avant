@@ -35,6 +35,12 @@ import mir.lower_fn
 
 // The block forms, or nil for a call this file does not lower.
 pub fn (lw: MirLower) lower_block_call(e: Expr): MOperand? {
+  if bl0 = e.block, e.callee == "Array.new" && e.args.size == 1 && bl0.params.size == 1 {
+    if r0 = e.receiver {
+    } else {
+      return lw.arr_build(e, bl0)
+    }
+  }
   if bl = e.block, recv = e.receiver, rt = recv.ty {
     c = e.callee
     if rt.is_array && e.args.size == 0 {
@@ -151,6 +157,115 @@ pub fn (lw: MirLower) block_value(bl: Block, cont: Int, exit: Int): MOperand {
   }
   lw.refuse(last.loc, "a block that does not end with a value")
   b.c_bool(false)
+}
+
+// `Array(T).new(n) { |i| ... }` (D329, Stage 29 W-FIX1b): n once, with
+// `Array(T).new(n)`'s two traps (negative, the ceiling); a zeroed buffer
+// of n elements; then for i from 0 to n - 1 the block with i bound, and
+// its value stored into element i; then the header with size = cap = n,
+// as lower_array_new. The buffer is held in a slot while it fills (the
+// block may collect); elements not yet built are zero bytes, which the
+// collector reads as no reference. A reference-carrying element is a
+// `fresh` store with one closing `barrier`, as an array literal's (V14),
+// unless the block can return from the function (a `return` or a
+// postfix `?` lowered inside it: a fresh fill may not be left open):
+// then each store goes behind the buffer's barrier, as block_store's.
+pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  aty = lw.ety(e)
+  if lw.failed {
+    return zero
+  }
+  nv = lw.lower_expr(e.args[0])
+  if lw.failed {
+    return zero
+  }
+  lw.at(e.loc)
+  k = b.temp(mt_int())
+  b.assign(b.pl(k), b.rv_use(nv))
+  neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(k), b.c_i64(0)))
+  ok = lw.trap_open(neg, true)
+  lw.trap_close(ok, "avant_trap_negative", lw.two(b.copy_local(k), b.c_i32(0)), e.loc)
+  big = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(k), b.c_i64(2147483647)))
+  ok2 = lw.trap_open(big, true)
+  lw.trap_close(ok2, "avant_trap_size", lw.one(b.c_i32(2)), e.loc)
+  n64 = lw.tmp(mt_u64(), b.rv_cast(b.copy_local(k), mt_u64()))
+  bytes = lw.tmp(mt_u64(), b.rv_bin(mop_mul(), n64, lw.elem_size(aty)))
+  d = b.temp(b.types.ref_to(lw.elems_of(aty)))
+  b.call(d, "avant_alloc", lw.two(bytes, lw.buf_tid(aty)))
+  et = lw.elem_of(aty)
+  want = lw.elem_ty_of(e)
+  rc = b.types.ref_carrying(et)
+  i = b.temp(mt_int())
+  b.assign(b.pl(i), b.rv_use(b.c_i64(0)))
+  head = b.block
+  body = b.block
+  step = b.block
+  exit = b.block
+  b.goto(head)
+  b.at(head)
+  c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(i), b.copy_local(k)))
+  b.branch(c, body, exit)
+  b.at(body)
+  lw.bind_name(bl.params[0], ty_int(), mt_int(), b.copy_local(i), bl.loc, true)
+  fresh_fill = false
+  if bl.body.size == 0 {
+    lw.refuse(bl.loc, "an empty value block")
+    return zero
+  }
+  first: Array(Stmt) = []
+  j = 0
+  while j < bl.body.size - 1 {
+    first.push(bl.body[j])
+    j += 1
+  }
+  lw.block_body(first, step, exit)
+  if lw.failed {
+    return zero
+  }
+  if lw.open_now {
+    last = bl.body[bl.body.size - 1]
+    if x = last.expr {
+      v = lw.lower_coerced(x, et, want)
+      if lw.failed {
+        return zero
+      }
+      lw.at(x.loc)
+      p = b.index(b.deref(b.pl(d)), b.copy_local(i))
+      if rc {
+        leaves = false
+        for bi in body..b.func.blocks.size {
+          if t = b.func.blocks[bi].term, t.kind == mtk_return() {
+            leaves = true
+          }
+        }
+        if leaves {
+          b.barrier(d)
+          b.assign(p, b.rv_use(v))
+        } else {
+          b.assign_fresh(p, b.rv_use(v))
+          fresh_fill = true
+        }
+      } else {
+        b.assign(p, b.rv_use(v))
+      }
+    } else {
+      lw.refuse(last.loc, "a block that does not end with a value")
+      return zero
+    }
+  }
+  lw.goto_if_open(step, e.loc)
+  b.at(step)
+  lw.at(e.loc)
+  b.assign(b.pl(i), b.rv_bin(mop_add(), b.copy_local(i), b.c_i64(1)))
+  b.goto(head)
+  b.at(exit)
+  lw.at(e.loc)
+  if fresh_fill {
+    b.barrier(d)
+  }
+  lw.array_header(aty, d, lw.tmp(mt_i32(), b.rv_cast(b.copy_local(k), mt_i32())))
 }
 
 // `xs.each { |x| ... }` (emit_array_each, builtins.av:1632-1684).

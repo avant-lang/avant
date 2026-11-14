@@ -2,11 +2,16 @@
  * tests/cases/test_ffi_llvm.av): every scalar conversion, strings and
  * bytes, opaque pointers, C layouts, callbacks, and structs by value
  * (byval.av, the SysV C ABI). Compiled with `--cc`. */
+#define _GNU_SOURCE
+#include <pthread.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* ---- scalars */
 int ffi_add_i32(int a, int b) { return a + b; }
@@ -511,4 +516,268 @@ int32_t ox_run(foreign_cb_t f, int32_t n) {
     avant_gc_native_end();
   }
   return (int32_t)(ox_rss_kb() - before);
+}
+
+/* ---- stack_guard.av (Stage 29 W-FIX1b, O439): a SIGSEGV handler on an
+ * alternate stack that says where the fault was against the faulting
+ * thread's stack: in its guard page (the overflow was caught there), or
+ * past it (a frame larger than the guard stepped over it). It ends the
+ * program with status 42. ffi_guard_install() is called on the thread
+ * that will overflow. */
+static void ffi_guard_on_segv(int sig, siginfo_t *si, void *ctx) {
+  (void)sig;
+  (void)ctx;
+  pthread_attr_t a;
+  void *lo = 0;
+  size_t size = 0, guard = 0;
+  if (pthread_getattr_np(pthread_self(), &a) == 0) {
+    pthread_attr_getstack(&a, &lo, &size);
+    pthread_attr_getguardsize(&a, &guard);
+  }
+  uintptr_t f = (uintptr_t)si->si_addr, l = (uintptr_t)lo;
+  const char *msg = "fault inside the stack or above it\n";
+  if (f >= l - guard && f < l) {
+    msg = "fault in the guard page\n";
+  } else if (f < l - guard) {
+    msg = "fault PAST the guard page: the guard was skipped\n";
+  }
+  ssize_t w = write(2, msg, strlen(msg));
+  (void)w;
+  _exit(42);
+}
+
+void ffi_guard_install(void) {
+  stack_t ss;
+  ss.ss_sp = malloc(1 << 16);
+  ss.ss_size = 1 << 16;
+  ss.ss_flags = 0;
+  sigaltstack(&ss, 0);
+  struct sigaction sa;
+  memset(&sa, 0, sizeof sa);
+  sa.sa_sigaction = ffi_guard_on_segv;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+  sigaction(SIGSEGV, &sa, 0);
+  sigaction(SIGBUS, &sa, 0);
+}
+
+/* opt_refs.av (Stage 29 W-FIX1d, O549): an optional reference is one
+ * pointer at the C boundary, nil as NULL. One trio per kind, because a C
+ * name is bound with one signature. */
+#define FFI_OPT_TRIO(k) \
+  void *ffi_opt_null_##k(void) { return NULL; } \
+  void *ffi_opt_same_##k(void *p) { return p; } \
+  long ffi_opt_is_null_##k(void *p) { return p == NULL; }
+FFI_OPT_TRIO(s)
+FFI_OPT_TRIO(b)
+FFI_OPT_TRIO(a)
+FFI_OPT_TRIO(h)
+FFI_OPT_TRIO(u)
+FFI_OPT_TRIO(k)
+FFI_OPT_TRIO(j)
+
+/* empty_end.av (Stage 29 W-FIX1c, O551): an object with no payload at
+ * the last word of the heap's highest block. With avant_alloc's guard
+ * (a 0-byte request takes one word) removed, the object's payload
+ * address there is the first address past the committed heap; a young
+ * collection copies the object and, when its copy finds a free block
+ * without committing a new chunk, the fix-up leaves every reference to
+ * it naming the old copy (splus_new_addr returns an address at or past
+ * the committed range unchanged). The steps:
+ *   1. objects allocated in mature space, kept on a chain, until the
+ *      mature cursor has left four blocks free in its 4 MiB chunk (a
+ *      fresh chunk's blocks are taken lowest first, so they are its last
+ *      four);
+ *   2. young 16-byte objects, dropped, until the young cursor is in the
+ *      chunk's last block; a young collection, which frees the four
+ *      blocks; then the same objects again until the young cursor is in
+ *      the last block with exactly one word left (a 24-byte one shifts
+ *      the parity once): freed blocks are taken last freed first, so
+ *      other blocks of the four are still free then;
+ *   3. avant_alloc(0, bytes): without the guard it takes that word; with
+ *      it the object takes two words elsewhere. It is stored in a rooted
+ *      holder and a young collection runs.
+ * Returned, packed: bit 0..15 how many times step 3's position was
+ * reached, 16..31 empty objects whose payload was not one word, 32..47
+ * ones whose payload address was a block's first address, 48..62 ones the
+ * holder no longer named as an object after the collection. */
+typedef struct FfiHeader {
+  uint32_t size;
+  uint16_t type_id;
+  uint16_t flags;
+} FfiHeader;
+void *avant_alloc(uint64_t nbytes, uint32_t type_id);
+void avant_alloc_in_mature(int32_t on);
+void avant_gc_add_root(void **slot);
+void avant_gc_collect_young(void);
+void avant_gc_collect(void);
+void avant_barrier(void *obj);
+int avant_is_heap(void *payload);
+#define FFI_TYPE_PTRS 65535u
+#define FFI_BLOCK ((uintptr_t)32768)
+#define FFI_CHUNK ((uintptr_t)4 << 20)
+#define FFI_FLAG_FORWARDED 4u
+static __thread void *ffi_ee_keep;
+static __thread void *ffi_ee_chain;
+static __thread int ffi_ee_rooted;
+
+static uintptr_t ffi_ee_block(void *payload) {
+  return (((uintptr_t)payload - 8) % FFI_CHUNK) / FFI_BLOCK;
+}
+
+static uintptr_t ffi_ee_rest(void *payload, uintptr_t total) {
+  return FFI_BLOCK - (((uintptr_t)payload - 8) % FFI_BLOCK) - total;
+}
+
+/* Young 16-byte objects, dropped, until one lies in block LAST of its
+ * chunk (WORD 0), or until the cursor there has one word left (WORD 1). */
+static int ffi_ee_young_to(uintptr_t last, int word) {
+  int i;
+  for (i = 0; i < 6 * 2048; i++) {
+    void *p = avant_alloc(8, 0);
+    uintptr_t rest;
+    if (ffi_ee_block(p) != last) {
+      continue;
+    }
+    if (!word) {
+      return 1;
+    }
+    rest = ffi_ee_rest(p, 16);
+    if (rest % 16 == 0 && rest >= 32) {
+      p = avant_alloc(16, 0);
+      if (ffi_ee_block(p) != last) {
+        continue;
+      }
+      rest = ffi_ee_rest(p, 24);
+    }
+    if (rest == 8) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+int64_t ffi_empty_end(int64_t rounds) {
+  int64_t reached = 0, nonword = 0, atblock = 0, stale = 0;
+  int64_t r;
+  uintptr_t last = FFI_CHUNK / FFI_BLOCK - 1;
+  if (!ffi_ee_rooted) {
+    avant_gc_add_root(&ffi_ee_keep);
+    avant_gc_add_root(&ffi_ee_chain);
+    ffi_ee_rooted = 1;
+  }
+  ffi_ee_keep = avant_alloc(64 * sizeof(void *), FFI_TYPE_PTRS);
+  /* The guard itself, wherever the cursor is. */
+  {
+    void *e = avant_alloc(0, 0);
+    if (((FfiHeader *)e - 1)->size != 8) {
+      nonword++;
+    }
+  }
+  for (r = 0; r < rounds && r < 60; r++) {
+    int i;
+    int at = 0;
+    /* Step 1: 2,048-byte objects (16 to a block), each naming the one
+     * before, until one ends the fifth block from the chunk's end. */
+    avant_alloc_in_mature(1);
+    for (i = 0; i < 16 * 300 && !at; i++) {
+      void **f = (void **)avant_alloc(2040, FFI_TYPE_PTRS);
+      f[0] = ffi_ee_chain;
+      ffi_ee_chain = f;
+      at = ffi_ee_block(f) == last - 4 && ffi_ee_rest(f, 2048) == 0;
+    }
+    avant_alloc_in_mature(0);
+    /* Step 2. */
+    if (!at || !ffi_ee_young_to(last, 0)) {
+      continue;
+    }
+    avant_gc_collect_young();
+    if (!ffi_ee_young_to(last, 1)) {
+      continue;
+    }
+    reached++;
+    /* Step 3. */
+    {
+      void **keep;
+      void *e = avant_alloc(0, 0);
+      void *e2;
+      if (((FfiHeader *)e - 1)->size != 8) {
+        nonword++;
+      }
+      if ((uintptr_t)e % FFI_BLOCK == 0) {
+        atblock++;
+      }
+      keep = (void **)ffi_ee_keep;
+      keep[r] = e;
+      avant_barrier(keep);
+      avant_gc_collect_young();
+      keep = (void **)ffi_ee_keep;
+      e2 = keep[r];
+      if (!avant_is_heap(e2) || (((FfiHeader *)e2 - 1)->flags & FFI_FLAG_FORWARDED)) {
+        stale++;
+      }
+    }
+  }
+  ffi_ee_chain = NULL;
+  return reached | (nonword << 16) | (atblock << 32) | (stale << 48);
+}
+
+/* field_rule.av (the Valk stage, VALK-T, O585; D342 Q6): the field rule's
+ * check. A reference-typed field holds null, an exact start or a static
+ * address, never an address inside an object (runtime/avant_gc_internal.h
+ * states the rule and what relies on it). A rooted pointer buffer names a
+ * second one by its start, which is allowed; with BRK set its next slot
+ * is given an address two words into that object, which only C can
+ * store, and a young collection is asked for (then, in the breaking
+ * form, a full one: with the nursery off no young one runs). Under
+ * AVANT_GC_VERIFY=1 the
+ * verifier reads the field before the collection traces it and stops the
+ * program with "field rule" and the holder; without the verifier the
+ * breaking form is never run (a trace that reads a header right before
+ * that address reads the object's own words). Returns 1 when the holder's
+ * first slot still names a heap object after the collection. */
+static __thread void *ffi_fr_holder;
+static __thread int ffi_fr_rooted;
+
+int64_t ffi_field_rule(int64_t brk) {
+  void **h;
+  void **t;
+  if (!ffi_fr_rooted) {
+    avant_gc_add_root(&ffi_fr_holder);
+    ffi_fr_rooted = 1;
+  }
+  ffi_fr_holder = avant_alloc(4 * sizeof(void *), FFI_TYPE_PTRS);
+  t = (void **)avant_alloc(4 * sizeof(void *), FFI_TYPE_PTRS);
+  h = (void **)ffi_fr_holder;
+  h[0] = t;
+  if (brk) {
+    h[1] = (void *)(t + 2);
+  }
+  avant_barrier(h);
+  avant_gc_collect_young();
+  if (brk) {
+    /* With the nursery off no young collection runs: the full one's
+     * verification reads the field. */
+    avant_gc_collect();
+  }
+  h = (void **)ffi_fr_holder;
+  return h[0] != NULL && avant_is_heap(h[0]);
+}
+
+/* rem_invariant.av (the Valk stage, VALK-T2, O610): a store of V into the
+ * first reference word of HOLDER (a class instance whose first field is a
+ * reference), behind avant_barrier when BARRIER is set and with no barrier
+ * otherwise, which only C can do. A holder that is mature and not
+ * remembered then names a young object: the state AVANT_GC_VERIFY=1's
+ * check of the generational invariant reports at the next young
+ * collection, even while a root names the holder (and the collection's
+ * trace therefore repairs it). Returns 1. */
+void avant_barrier(void *obj);
+
+int64_t ffi_rem_store(void *holder, void *v, int64_t barrier) {
+  if (barrier) {
+    avant_barrier(holder);
+  }
+  *(void **)holder = v;
+  return 1;
 }

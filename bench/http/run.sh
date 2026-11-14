@@ -93,14 +93,34 @@
 set -eu
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 AVANT_ROOT=$(CDPATH= cd -- "$HERE/../.." && pwd)
-BUILD=${HTTP_BENCH_BUILD:-/tmp/http-ws-bench-build}
+BUILD=${HTTP_BENCH_BUILD:-${TMPDIR:-/tmp}/http-ws-bench-build}
+
+# workbench: the directory that holds refs/ (the read-only reference
+# clones): AVANT_WORKBENCH when set, else the directory of the main
+# checkout, which git names for a worktree too (a wave's worktree under
+# /home/coghi/avant-scratch/WAVE/side/avant shares the main checkout's
+# .git), else the checkout's parent (Stage 29 W-FIX1f, O598: the
+# checkout's parent alone was wrong in a worktree).
+workbench() {
+  if [ -n "${AVANT_WORKBENCH:-}" ]; then
+    printf '%s\n' "$AVANT_WORKBENCH"
+    return 0
+  fi
+  common=$(git -C "$AVANT_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  if [ -n "$common" ] && [ -d "$common/../../refs" ]; then
+    (CDPATH= cd -- "$common/../.." && pwd)
+    return 0
+  fi
+  (CDPATH= cd -- "$AVANT_ROOT/.." && pwd)
+}
 # h2o (the C row) builds from the workbench clone at refs/h2o;
 # libh2o-evloop and its generated flag file live in H2O_BUILD, and
 # wslay (h2o's WebSocket dependency) comes from pkg-config when the
-# system has it, else from an extraction of the Ubuntu packages
-# (WSLAY_ROOT, with a libwslay.pc pointing at it in WSLAY_PC).
-H2O_SRC=${H2O_SRC:-$AVANT_ROOT/../refs/h2o}
-H2O_BUILD=${H2O_BUILD:-/tmp/h2o-build}
+# system has it (Ubuntu's libwslay-dev), else from an extraction of the
+# Ubuntu packages (WSLAY_ROOT, with a libwslay.pc pointing at it in
+# WSLAY_PC).
+H2O_SRC=${H2O_SRC:-$(workbench)/refs/h2o}
+H2O_BUILD=${H2O_BUILD:-${TMPDIR:-/tmp}/h2o-build}
 WSLAY_ROOT=${WSLAY_ROOT:-/tmp/wslay/root/usr}
 WSLAY_PC=${WSLAY_PC:-/tmp/wslay/pc}
 mkdir -p "$BUILD"
@@ -127,6 +147,13 @@ build_h2o() {
   elif [ -f "$WSLAY_PC/libwslay.pc" ]; then
     PKG_CONFIG_PATH=$WSLAY_PC${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
     export PKG_CONFIG_PATH
+  else
+    say "the h2o row needs wslay: install libwslay-dev, or set WSLAY_ROOT and WSLAY_PC to an extraction of it"
+    return 1
+  fi
+  if [ ! -f "$H2O_SRC/CMakeLists.txt" ]; then
+    say "the h2o row needs h2o's source at $H2O_SRC: set H2O_SRC, or AVANT_WORKBENCH to the directory that holds refs/h2o"
+    return 1
   fi
   if [ ! -f "$H2O_BUILD/libh2o-evloop.a" ]; then
     cmake -S "$H2O_SRC" -B "$H2O_BUILD" -DCMAKE_BUILD_TYPE=Release -DWITH_MRUBY=OFF >/dev/null
@@ -145,41 +172,85 @@ build_h2o() {
   fresh "$BUILD/h2o_ws" "$HERE/h2o_ws.c" || cc -O2 -DH2O_USE_LIBUV=0 -D_GNU_SOURCE -pthread $h2o_inc -o "$BUILD/h2o_ws" "$HERE/h2o_ws.c" "$H2O_BUILD/libh2o-evloop.a" $wslay_link -lssl -lcrypto -lz -lzstd -lcap -lpthread -lm -ldl
 }
 
+# build_row ROW: builds that row's servers (its HTTP server, and its
+# WebSocket server where it has one) when they are older than their
+# sources. Only the rows a command names are built (Stage 29 W-FIX1f,
+# O598: every row was built first, so one Avant row needed every
+# toolchain); `all` and `run.sh build` build every row.
+build_row() {
+  case "$1" in
+    avant | avant-nosigpipe)
+      if ! fresh "$BUILD/avant_server" "$HERE/avant_server.av" || ! fresh "$BUILD/avant_server" "$AVANT_ROOT/runtime/build/avant_http.o" || ! fresh "$BUILD/avant_server" "$AVANT_ROOT/runtime/build/avant_task.o" || ! fresh "$BUILD/avant_server" "$AVANT_ROOT/runtime/build/avant_io.o"; then
+        (cd "$AVANT_ROOT" && "$COMPILER" compile bench/http/avant_server.av "$BUILD/avant_server" --release >/dev/null)
+      fi
+      if ! fresh "$BUILD/avant_ws" "$HERE/avant_ws.av" || ! fresh "$BUILD/avant_ws" "$AVANT_ROOT/runtime/build/avant_http.o" || ! fresh "$BUILD/avant_ws" "$AVANT_ROOT/runtime/build/avant_task.o" || ! fresh "$BUILD/avant_ws" "$AVANT_ROOT/runtime/build/avant_io.o"; then
+        (cd "$AVANT_ROOT" && "$COMPILER" compile bench/http/avant_ws.av "$BUILD/avant_ws" --release >/dev/null)
+      fi ;;
+    h2o)
+      build_h2o ;;
+    rust)
+      fresh "$BUILD/rust_server" "$HERE/rust_server.rs" || rustc -O -o "$BUILD/rust_server" "$HERE/rust_server.rs"
+      fresh "$BUILD/rust_ws" "$HERE/rust_ws.rs" || rustc -O -o "$BUILD/rust_ws" "$HERE/rust_ws.rs" ;;
+    go)
+      fresh "$BUILD/go_server" "$HERE/go_server.go" || (cd "$HERE" && go build -o "$BUILD/go_server" go_server.go)
+      fresh "$BUILD/go_ws" "$HERE/go_ws.go" || (cd "$HERE" && go build -o "$BUILD/go_ws" go_ws.go) ;;
+    crystal)
+      # Crystal is single-threaded unless built with -Dpreview_mt (one
+      # scheduler thread per core, fibers run truly in parallel); the
+      # run.sh freshness check makes a flag change rebuild the binaries.
+      if ! fresh "$BUILD/crystal_server" "$HERE/crystal_server.cr" || ! fresh "$BUILD/crystal_server" "$HERE/run.sh"; then
+        (cd "$HERE" && crystal build --release -Dpreview_mt -o "$BUILD/crystal_server" crystal_server.cr)
+      fi
+      if ! fresh "$BUILD/crystal_ws" "$HERE/crystal_ws.cr" || ! fresh "$BUILD/crystal_ws" "$HERE/run.sh"; then
+        (cd "$HERE" && crystal build --release -Dpreview_mt -o "$BUILD/crystal_ws" crystal_ws.cr)
+      fi ;;
+    hyper | hyper-nodate)
+      # Rust hyper and Go fasthttp: the versions are the committed
+      # Cargo.lock's and go.sum's (the first build downloads them).
+      cargo build --release --locked --quiet --manifest-path "$HERE/rust_hyper/Cargo.toml" --target-dir "$BUILD/rust_hyper" ;;
+    fasthttp | fasthttp-nodate)
+      if ! fresh "$BUILD/go_fasthttp" "$HERE/go_fasthttp/main.go" || ! fresh "$BUILD/go_fasthttp" "$HERE/go_fasthttp/go.sum"; then
+        (cd "$HERE/go_fasthttp" && go build -o "$BUILD/go_fasthttp" .)
+      fi ;;
+    valk)
+      # The valk row needs the Valk toolchain; without one it is left out.
+      if command -v valk >/dev/null 2>&1; then
+        fresh "$BUILD/valk_server" "$HERE/valk_server.valk" || valk build "$HERE/valk_server.valk" --release -o "$BUILD/valk_server" >/dev/null
+      else
+        say "valk is not installed: the valk row is left out"
+      fi ;;
+    *)
+      say "unknown row: $1"
+      return 1 ;;
+  esac
+}
+
+# The WebSocket load generator, for the first mode's WebSocket phases.
+build_ws_load() {
+  fresh "$BUILD/ws_load" "$HERE/ws_load.go" || (cd "$HERE" && go build -o "$BUILD/ws_load" ws_load.go)
+}
+
 build_all() {
   say "building servers into $BUILD"
-  if ! fresh "$BUILD/avant_server" "$HERE/avant_server.av" || ! fresh "$BUILD/avant_server" "$AVANT_ROOT/runtime/build/avant_http.o" || ! fresh "$BUILD/avant_server" "$AVANT_ROOT/runtime/build/avant_task.o" || ! fresh "$BUILD/avant_server" "$AVANT_ROOT/runtime/build/avant_io.o"; then
-    (cd "$AVANT_ROOT" && "$COMPILER" compile bench/http/avant_server.av "$BUILD/avant_server" --release >/dev/null)
-  fi
-  if ! fresh "$BUILD/avant_ws" "$HERE/avant_ws.av" || ! fresh "$BUILD/avant_ws" "$AVANT_ROOT/runtime/build/avant_http.o" || ! fresh "$BUILD/avant_ws" "$AVANT_ROOT/runtime/build/avant_task.o" || ! fresh "$BUILD/avant_ws" "$AVANT_ROOT/runtime/build/avant_io.o"; then
-    (cd "$AVANT_ROOT" && "$COMPILER" compile bench/http/avant_ws.av "$BUILD/avant_ws" --release >/dev/null)
-  fi
-  build_h2o
-  fresh "$BUILD/rust_server" "$HERE/rust_server.rs" || rustc -O -o "$BUILD/rust_server" "$HERE/rust_server.rs"
-  fresh "$BUILD/rust_ws" "$HERE/rust_ws.rs" || rustc -O -o "$BUILD/rust_ws" "$HERE/rust_ws.rs"
-  fresh "$BUILD/go_server" "$HERE/go_server.go" || (cd "$HERE" && go build -o "$BUILD/go_server" go_server.go)
-  fresh "$BUILD/go_ws" "$HERE/go_ws.go" || (cd "$HERE" && go build -o "$BUILD/go_ws" go_ws.go)
-  fresh "$BUILD/ws_load" "$HERE/ws_load.go" || (cd "$HERE" && go build -o "$BUILD/ws_load" ws_load.go)
-  # Crystal is single-threaded unless built with -Dpreview_mt (one
-  # scheduler thread per core, fibers run truly in parallel); the
-  # run.sh freshness check makes a flag change rebuild the binaries.
-  if ! fresh "$BUILD/crystal_server" "$HERE/crystal_server.cr" || ! fresh "$BUILD/crystal_server" "$HERE/run.sh"; then
-    (cd "$HERE" && crystal build --release -Dpreview_mt -o "$BUILD/crystal_server" crystal_server.cr)
-  fi
-  if ! fresh "$BUILD/crystal_ws" "$HERE/crystal_ws.cr" || ! fresh "$BUILD/crystal_ws" "$HERE/run.sh"; then
-    (cd "$HERE" && crystal build --release -Dpreview_mt -o "$BUILD/crystal_ws" crystal_ws.cr)
-  fi
-  # Rust hyper and Go fasthttp: the versions are the committed
-  # Cargo.lock's and go.sum's (the first build downloads them).
-  cargo build --release --locked --quiet --manifest-path "$HERE/rust_hyper/Cargo.toml" --target-dir "$BUILD/rust_hyper"
-  if ! fresh "$BUILD/go_fasthttp" "$HERE/go_fasthttp/main.go" || ! fresh "$BUILD/go_fasthttp" "$HERE/go_fasthttp/go.sum"; then
-    (cd "$HERE/go_fasthttp" && go build -o "$BUILD/go_fasthttp" .)
-  fi
-  # The valk row needs the Valk toolchain; without one it is left out.
-  if command -v valk >/dev/null 2>&1; then
-    fresh "$BUILD/valk_server" "$HERE/valk_server.valk" || valk build "$HERE/valk_server.valk" --release -o "$BUILD/valk_server" >/dev/null
-  else
-    say "valk is not installed: the valk row is left out"
-  fi
+  for row in avant h2o rust go crystal hyper fasthttp valk; do
+    build_row "$row"
+  done
+  build_ws_load
+}
+
+# build_rows ROW...: every row when one of them is `all`, else the rows
+# named.
+build_rows() {
+  for r in "$@"; do
+    if [ "$r" = all ]; then
+      build_all
+      return 0
+    fi
+  done
+  say "building $* into $BUILD"
+  for r in "$@"; do
+    build_row "$r"
+  done
 }
 
 port_open() {
@@ -640,8 +711,8 @@ expand_rows() {
 
 if [ "${1:-}" = check ]; then
   shift
-  build_all
   if [ $# -eq 0 ]; then set -- all; fi
+  build_rows "$@"
   # shellcheck disable=SC2046 # the row list is split on purpose
   if check_mode $(expand_rows "$@"); then say "check: every row passed"; else say "check: FAILURES above"; exit 1; fi
   exit 0
@@ -649,8 +720,8 @@ fi
 
 if [ "${1:-}" = syscalls ]; then
   shift
-  build_all
   if [ $# -eq 0 ]; then set -- all; fi
+  build_rows "$@"
   # shellcheck disable=SC2046 # the row list is split on purpose
   syscalls_mode $(expand_rows "$@")
   say "done"
@@ -664,8 +735,8 @@ if [ "${1:-}" = build ]; then
 fi
 
 if [ -n "$METHOD" ]; then
-  build_all
   if [ $# -eq 0 ]; then set -- all; fi
+  build_rows "$@"
   method_mode "$@"
   say "done"
   exit 0
@@ -677,7 +748,10 @@ want() {
   [ "$ONLY" = "all" ] || [ "$ONLY" = "$1" ]
 }
 
-build_all
+build_rows "$ONLY"
+case "$ONLY" in
+  all | avant | h2o | rust | go | crystal) build_ws_load ;;
+esac
 if want avant; then http_phase avant "$BUILD/avant_server"; ws_phase avant "$BUILD/avant_ws"; fi
 if want h2o; then http_phase h2o "$BUILD/h2o_server" $HPORT; ws_phase h2o "$BUILD/h2o_ws" $WPORT; fi
 if want rust; then http_phase rust "$BUILD/rust_server" $HPORT; ws_phase rust "$BUILD/rust_ws" $WPORT; fi

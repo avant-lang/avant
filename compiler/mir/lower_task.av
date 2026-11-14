@@ -376,7 +376,10 @@ pub fn (lw: MirLower) begin_task(t: MirTask, ps: Array(Int), ret: Int, rec: Int,
   b = lw.lw_b
   e = t.expr
   lw.begin_at(e.loc)
-  b.begin_fn(t.sym, b.sig(ps, ret, false), lw.mloc(e.loc), "task")
+  tf = b.begin_fn(t.sym, b.sig(ps, ret, false), lw.mloc(e.loc), "task")
+  // The runtime calls it as a worker's or a spawned thread's first Avant
+  // function (gc.av's first-frame rule).
+  tf.entry = true
   lw.lw_cl.base = t.sym
   lw.lw_main = false
   lw.lw_ret = mt_void()
@@ -585,16 +588,27 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   lw.at(e.loc)
   h = b.temp(mty)
   b.assign(b.pl(h), b.rv_use(o))
-  g = lw.tmp(mt_u64(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), gi))))
-  b.call(-1, "avant_gate_lock", lw.one(g))
+  g = b.temp(mt_u64())
+  b.assign(b.pl(g), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), gi))))
+  b.call(-1, "avant_gate_lock", lw.one(b.copy_local(g)))
   lw.lw_task.pnames.push(bl.params[0])
   lw.lw_task.pholders.push(h)
   lw.lw_task.pfields.push(ci)
+  // The lock is an entry of the pin stack (lower_ffi.av unpin: -2 - g),
+  // so a return, a `?` that returns, a break or a continue out of the
+  // block releases it, as they end a `gc.hold` (O263, O313).
+  lw.lw_ffi.pins.push(-2 - g)
+  lw.lw_ffi.pin_depth.push(lw.lw_heads.size)
   vt = ty_void()
   if t = e.ty {
     vt = t
   }
-  got = lw.task_value(bl, vt)
+  got: MOperand? = nil
+  if bl.body.size > 0 {
+    got = lw.task_value(bl, vt)
+  }
+  lw.lw_ffi.pins.pop
+  lw.lw_ffi.pin_depth.pop
   lw.lw_task.pnames.pop
   lw.lw_task.pholders.pop
   lw.lw_task.pfields.pop
@@ -606,8 +620,7 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   if v = got, !vt.is_void {
     r = lw.tmp(lw.ety(e), b.rv_use(v))
   }
-  g2 = lw.tmp(mt_u64(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), gi))))
-  b.call(-1, "avant_gate_unlock", lw.one(g2))
+  b.call(-1, "avant_gate_unlock", lw.one(b.copy_local(g)))
   r
 }
 
@@ -625,7 +638,7 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
         if rt.is_array && c == "parallel" {
           return lw.lower_parallel(e, recv)
         }
-        if rt.is_class && c == "with" && (rt.origin == "Mutex" || rt.name == "Mutex") {
+        if rt.is_class && c == "with" && rt.mod_name == "std.sync" && (rt.origin == "Mutex" || rt.name == "Mutex") {
           return lw.lower_mutex_with(e, recv, rt, bl)
         }
       }

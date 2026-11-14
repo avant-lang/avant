@@ -472,6 +472,7 @@ static volatile pid_t g_wait_child;
 static volatile pid_t g_jobs[JOB_MAX];
 static volatile int32_t g_njobs;
 static int32_t g_job_status;
+static int32_t g_job_signal;
 
 static int32_t run_child(const char *path, void *args, const char *out_path, const char *err_path, int no_stdin) {
   char **argv;
@@ -630,7 +631,8 @@ avant_int avant_job_start(const char *path, void *args, const char *out_path) {
 
 /* Waits for any started job to finish. Returns its pid, or -1 when no job
  * is running; avant_job_status then gives its exit code (128+n for a
- * signal). */
+ * signal) and avant_job_signal the signal that ended it (0 when it
+ * exited), so the runner can tell `exit 141` from SIGPIPE (O520). */
 avant_int avant_job_wait(void) {
   for (;;) {
     int st = 0;
@@ -654,6 +656,7 @@ avant_int avant_job_wait(void) {
         g_jobs[i] = g_jobs[g_njobs - 1];
         g_njobs = g_njobs - 1;
         g_job_status = exit_code_of(st);
+        g_job_signal = WIFSIGNALED(st) ? WTERMSIG(st) : 0;
         return (int32_t)pid;
       }
     }
@@ -662,6 +665,10 @@ avant_int avant_job_wait(void) {
 
 avant_int avant_job_status(void) {
   return g_job_status;
+}
+
+avant_int avant_job_signal(void) {
+  return g_job_signal;
 }
 
 /* A blocking run of a tool the compiler starts (myc-llvm, cc, re2c, the
@@ -982,8 +989,8 @@ void *avant_sys_list(const char *path) {
  * marker in each directory tells a child that it is nested.
  *
  * Removal runs at exit (atexit covers normal and error exits, traps
- * included) and on SIGINT, SIGTERM, and SIGHUP, after which the signal is
- * re-raised so the status stays 128+n. Only the creating process removes:
+ * included) and on SIGINT, SIGTERM, SIGHUP and SIGPIPE, after which the
+ * signal is re-raised so the status stays 128+n. Only the creating process removes:
  * a forked child that never execs must not delete its parent's tree. A
  * crash or kill -9 leaves one directory. AVANT_KEEP_TMP=1 (set by the
  * compiler's --keep-tmp) keeps it; the top-level process prints the path.
@@ -1178,6 +1185,77 @@ static void tmp_stop_children(void) {
   }
 }
 
+/* Standard output and standard error (Stage 29 W-FIX1i). A write that
+ * fails is never silent: puts checks the stream after every write
+ * (avant_out_check), and at exit a failed flush, or an error a write
+ * left on the stream, stops the program with a message naming the
+ * stream, status 1, as a trap does. */
+static int g_out_failed;
+
+__attribute__((noreturn)) static void out_fail(const char *stream, int e, int at_exit) {
+  g_out_failed = 1;
+  fprintf(stderr, "avant runtime: cannot write to %s: %s\n", stream, e ? strerror(e) : "an earlier write was lost");
+  if (at_exit) {
+    _exit(1);
+  }
+  exit(1);
+}
+
+/* The stream's error flag set by this write or an earlier one (printf
+ * included): flushing again what is buffered names the reason. At exit
+ * the stream is flushed without its lock, as glibc's own exit flush
+ * does, so a thread that exits while another holds stdout cannot hang. */
+static void out_check(int at_exit) {
+  int e = 0;
+  int bad;
+  if (g_out_failed) {
+    return;
+  }
+  bad = at_exit ? fflush_unlocked(stdout) != 0 : fflush(stdout) != 0;
+  if (bad) {
+    e = errno;
+  } else if (!ferror_unlocked(stdout)) {
+    if (ferror_unlocked(stderr)) {
+      out_fail("standard error", 0, at_exit);
+    }
+    return;
+  }
+  out_fail("standard output", e, at_exit);
+}
+
+/* puts's check, after its write (avant_str.c). The unlocked read of the
+ * flag is the fast path: a write that failed sets it for good. */
+void avant_out_check(void) {
+  if (ferror_unlocked(stdout)) {
+    out_check(0);
+  }
+}
+
+static void out_check_at_exit(void) {
+  out_check(1);
+}
+
+/* An Avant program's SIGPIPE has the default action whatever its parent
+ * left (D330 made whole, Stage 29 W-FIX1i): an inherited SIG_IGN (a CI
+ * runner, a shell's trap '' PIPE) or a blocked SIGPIPE is reset
+ * before main, so `prog | head` ends the program the same way under any
+ * parent, status 141, and tmp_catch below then removes the private
+ * directory on it. std.http's sockets never raise it (every socket write
+ * carries MSG_NOSIGNAL: uSockets' bsd_send and bsd_write2). The exit
+ * check is registered first, so it runs after tmp_finish. */
+__attribute__((constructor)) static void avant_io_start(void) {
+  struct sigaction sa;
+  sigset_t set;
+  memset(&sa, 0, sizeof sa);
+  sa.sa_handler = SIG_DFL;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGPIPE, &sa, NULL);
+  sigemptyset(&set);
+  sigaddset(&set, SIGPIPE);
+  sigprocmask(SIG_UNBLOCK, &set, NULL);
+  atexit(out_check_at_exit);
+}
+
 static void tmp_on_signal(int sig) {
   struct sigaction sa;
   if (g_tmp_ready && getpid() == g_tmp_owner) {
@@ -1191,7 +1269,8 @@ static void tmp_on_signal(int sig) {
   raise(sig);
 }
 
-/* An ignored signal stays ignored (nohup, a parent's choice); a handler
+/* An ignored signal stays ignored (nohup, a parent's choice; SIGPIPE is
+ * reset to the default before, avant_io_start); a handler
  * someone else installed stays theirs. Only the default is replaced. */
 static void tmp_catch(int sig) {
   struct sigaction old;
@@ -1249,6 +1328,12 @@ static void tmp_create(void) {
   tmp_catch(SIGINT);
   tmp_catch(SIGTERM);
   tmp_catch(SIGHUP);
+  /* A closed pipe on standard output (`prog | head`) is an ordinary way
+   * for a command-line program to end (O521, Stage 29 W-FIX1e): the
+   * directory goes and the program still dies by SIGPIPE, status 141
+   * (D330 keeps SIGPIPE's default action; avant_io_start resets an
+   * inherited SIG_IGN). std.http's sockets never raise it (MSG_NOSIGNAL). */
+  tmp_catch(SIGPIPE);
   /* A crash removes the directory too (O35, Stage 29 W1b): the handler
    * cleans up and re-raises the signal with its default action, so the
    * process still dies by it (a core dump included). A crash with no

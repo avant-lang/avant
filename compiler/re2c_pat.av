@@ -6,11 +6,16 @@ pub class Re2cPlan {
   pub ids: Hash(String, Int)
   pub groups: Array(Int)
   pub count: Int = 0
+  // The compiler's notes on patterns that stay on PCRE2, for its caller
+  // to print on stderr (Stage 29 W-FIX1f2, O233: they were printed on
+  // stdout, where `avant run` put them ahead of the program's output).
+  pub notes: Array(String)
 
   fn initialize {
     h = Hash(String, Int).new
     self.ids = h
     self.groups = []
+    self.notes = []
     self.src = ""
     self.count = 0
   }
@@ -685,6 +690,7 @@ pub class Re2cCollect {
   flags: Array(Int)
   groups: Array(Int)
   bodies: Array(String)
+  notes: Array(String)
 
   fn initialize {
     h = Hash(String, Int).new
@@ -693,6 +699,7 @@ pub class Re2cCollect {
     self.flags = []
     self.groups = []
     self.bodies = []
+    self.notes = []
   }
 
   pub fn note_pat(pat: String, flags: Int) {
@@ -705,13 +712,13 @@ pub class Re2cCollect {
     }
     ngroups = re2c_capture_groups(pat)
     if ngroups < 0 {
-      puts("re2c: pattern stays on PCRE2 (capture groups beyond the first): ${re2c_show(pat)}")
+      self.notes.push("re2c: pattern stays on PCRE2 (capture groups beyond the first): ${re2c_show(pat)}")
       return
     }
     tr = RePat.new
     body = tr.translate(pat, flags)
     if tr.bad {
-      puts("re2c: pattern stays on PCRE2 (${tr.why}): ${re2c_show(pat)}")
+      self.notes.push("re2c: pattern stays on PCRE2 (${tr.why}): ${re2c_show(pat)}")
       return
     }
     self.pats.push(pat)
@@ -989,6 +996,7 @@ pub fn re2c_plan(program: Program): Re2cPlan {
   for sdef in program.structs {
     col.walk_fns(sdef.methods)
   }
+  plan.notes = col.notes
   if col.pats.size == 0 {
     return plan
   }

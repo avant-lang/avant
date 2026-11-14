@@ -12,17 +12,12 @@ import typed_ir
 import checker.names
 import checker
 
+// std.sync's Channel and Mutex cross a task as shared handles (D35):
+// that is their purpose. A class of another module with one of those
+// names is an ordinary class (Stage 29 W8Ca: before, any class named
+// Channel or Mutex crossed).
 pub fn (checker_self: Checker) is_share_ty(ty: Ty): Bool {
-  if ty.origin == "Channel" {
-    return true
-  }
-  if ty.name == "Channel" {
-    return true
-  }
-  if ty.origin == "Mutex" {
-    return true
-  }
-  ty.name == "Mutex"
+  checker_self.is_sync_ty(ty, "Channel") || checker_self.is_sync_ty(ty, "Mutex")
 }
 
 pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
@@ -37,6 +32,10 @@ pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
 
 pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
   if ty.is_integer {
+    return true
+  }
+  // An enum is a number (Stage 29 W5a1).
+  if ty.is_enum {
     return true
   }
   if ty.is_uint64 {
@@ -60,6 +59,40 @@ pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
     return true
   }
   false
+}
+
+// What may leave a `Mutex.with` block as its value (O231, Stage 29
+// W-FIX1b): spawn's rule for what crosses a task (a share type, or bits
+// that hold no reference to mutable state), without the frozen array
+// (that rule freezes a named array while a task is pending; a value has
+// no name to freeze) and with what holds no mutable state either:
+// `Bytes`, `nil`, and a union or a struct of such members. A class, an
+// array, a hash, a `Buf`, a `fn` or a pointer may be the guarded object
+// or a part of it: outside the block the lock no longer protects it.
+pub fn (checker_self: Checker) leaves_mutex_with(ty: Ty): Bool {
+  if checker_self.is_share_ty(ty) {
+    return true
+  }
+  if ty.is_nil || ty.is_bytes {
+    return true
+  }
+  if ty.is_union {
+    for m in ty.members {
+      if !checker_self.leaves_mutex_with(m) {
+        return false
+      }
+    }
+    return true
+  }
+  if ty.is_struct {
+    for field in ty.fields {
+      if !checker_self.leaves_mutex_with(field.ty) {
+        return false
+      }
+    }
+    return true
+  }
+  checker_self.copyable_bits(ty)
 }
 
 pub fn (checker_self: Checker) collect_spawn_captures(expr: Expr, body: Array(Stmt)) {
@@ -478,10 +511,6 @@ pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
 
 pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: Hash(String, Int)) {
   if checker_self.spawn_skip_has(expr.ident) {
-    return
-  }
-  if checker_self.place_depth > 0 && expr.ident == checker_self.place_name {
-    checker_self.fail(expr.loc, "mutex place cannot escape")
     return
   }
   if ty = checker_self.lookup(expr.ident) {

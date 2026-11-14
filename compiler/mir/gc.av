@@ -29,6 +29,27 @@
 //    Then the prologue of 5.1 (zero every non-parameter slot, gc.enter,
 //    gc.roots of every slot in local order) and a gc.leave before each
 //    return.
+//    A frame function with no slot links no frame record (Stage 29
+//    VALK-A1, M4, O176): no gc.enter, gc.roots or gc.leave. It holds no
+//    reference across any collecting call (a reference live there would
+//    be a slot by (a), an argument of an external's call by (c)), so no
+//    collection below it has anything of it to find or to move, and its
+//    record was 22 to 28 instructions of linking and unlinking per call
+//    (a constructor whose arguments hold no reference then inlines).
+//    The first-frame rule: a function a thread's first Avant frame can
+//    belong to keeps its record even with no slot: `main`, a C
+//    callback's thunk and a task's thunk (MFunc.first_frame). Its record is
+//    what registers a thread C started (avant_gc_frame_enter), returns a
+//    foreign thread to running for the callback and to native after it
+//    (rule 4 of gc-design.md 4.4), and initializes the heap; so every
+//    other Avant function runs below a frame record of its thread, as
+//    before, and a function without one needs nothing from the chain. A
+//    shared module follows the same rule: a thread stops only at a
+//    collecting call (a poll, an allocation, a native transition), where
+//    a function without a slot holds nothing (W17a's safepoints). What
+//    the rule changes is a diagnostic's reach: the stalled-handshake
+//    report (AVANT_GC_VERIFY_STALL_MS) names the innermost frame record,
+//    now the innermost function that has one.
 // 3. Polls (Stage 28 W17a; gc-design.md 4.4, the safepoints of a shared
 //    program): in a shared module, before the slot set is computed, every
 //    block a back edge enters (an edge to a block whose number is not
@@ -51,6 +72,7 @@ import mir.types
 import mir.ir
 import mir.runtime
 import mir.flow
+import mir.fresh
 
 fn mir_in_set(cand: Hash(String, Int), name: String): Bool {
   if v = cand.get(name) {
@@ -328,6 +350,12 @@ fn mir_add_frame(m: MModule, f: MFunc) {
     }
     k += 1
   }
+  if slots.size == 0 && !f.first_frame {
+    // No record (rule 2 above): nothing is added, so the liveness is
+    // still the function's own, every block's transfer included.
+    f.live = lv
+    return
+  }
   pro: Array(MStmt) = []
   i = 0
   while i < slots.size {
@@ -381,5 +409,8 @@ pub fn mir_frame_pass(m: MModule) {
 // Both passes, in the order of 5.9.
 pub fn mir_gc_passes(m: MModule) {
   mir_leaf_pass(m)
+  // VALK-A1 (M5): barriers on open holders go before the slot set is
+  // computed (fresh.av).
+  mir_fresh_pass(m)
   mir_frame_pass(m)
 }

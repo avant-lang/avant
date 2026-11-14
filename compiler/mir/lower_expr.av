@@ -185,7 +185,7 @@ pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
     }
     return b.c_f64(mir_f64_bits(v), text)
   }
-  if ty == mt_i64() || ty == mt_i32() || ty == mt_u32() {
+  if ty == mt_i64() || ty == mt_i32() || ty == mt_u32() || ty == mt_u8() {
     v64 = e.int_bits.wrap_i
     if neg {
       v64 = 0 &- v64
@@ -202,6 +202,11 @@ pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
 pub fn (lw: MirLower) lower_name(e: Expr): MOperand {
   if e.fn_ref {
     return lw.lower_fn_ref(e)
+  }
+  if lw.lw_arg_names.size > 0 {
+    if o = lw.arg_frame_op(e.ident) {
+      return lw.dup(o)
+    }
   }
   if e.implicit_field || lw.is_struct_self(e) || lw.mutex_index(e.ident) >= 0 {
     return lw.lower_place_read(e)
