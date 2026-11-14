@@ -1769,7 +1769,17 @@ pub class Checker {
           obj = call
         }
       }
+      // `T.name` on a type without that type-level function (O166).
+      tn = type_receiver(obj)
+      if tn.size > 0 {
+        fail_no_type_fn(expr.loc, obj, tn, expr.ident)
+        return t_int()
+      }
+      mark = err_count
       object = check_expr(obj)
+      if new_err_since(mark) && is_ident_chain(obj) {
+        return t_int()
+      }
       if object.is_enum {
         // `t.to_i`, `t.name` and the enum's methods, as calls.
         return paren_call_of(expr)
@@ -3820,6 +3830,13 @@ pub class Checker {
     false
   }
 
+  // A name or a chain of names (`a`, `m.T`): what an unknown name stands
+  // for, so a failure in it is not reported again by what reads it.
+  pub fn is_ident_chain(expr: Expr): Bool {
+    segs: Array(String) = []
+    ident_chain(expr, segs)
+  }
+
   pub fn join_segs(segs: Array(String), n: Int): String {
     buf = buf_new()
     for i in 0..n {
@@ -3961,7 +3978,27 @@ pub class Checker {
         }
       }
     }
+    // A type without that type-level function (Stage 29 W5c1, O166):
+    // before, its name was checked as a value ("unknown name T") and the
+    // call then read as a method of Int.
+    tn = type_receiver(recv)
+    if tn.size > 0 {
+      for a in expr.args {
+        check_expr(a)
+      }
+      fail_no_type_fn(expr.loc, recv, tn, expr.callee)
+      return t_int()
+    }
+    mark = err_count
     object = check_expr(recv)
+    if new_err_since(mark) && is_ident_chain(recv) {
+      // An unknown name is reported once, not again as a method of the
+      // Int that stands for it.
+      for a in expr.args {
+        check_expr(a)
+      }
+      return t_int()
+    }
     if expr.callee == "or" {
       if b = expr.block {
         fail(expr.loc, "or does not take a block")

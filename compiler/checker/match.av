@@ -813,6 +813,70 @@ pub fn (checker_self: Checker) type_call_target(recv: Expr, callee: String): Ty?
   none
 }
 
+// The type a receiver names when it is a type and not a value (`T`,
+// `mod.T`, `String`), shown as written; "" otherwise (Stage 29 W5c1,
+// O166). A local, a field of the receiver or a module of that name wins,
+// as in the checking of a name.
+pub fn (checker_self: Checker) type_receiver(recv: Expr): String {
+  segs: Array(String) = []
+  if recv.type_args.size > 0 || !checker_self.ident_chain(recv, segs) {
+    return ""
+  }
+  if segs.size == 1 {
+    name = segs[0]
+    if found = checker_self.lookup(name) {
+      return ""
+    }
+    if ft = checker_self.implicit_field(name) {
+      return ""
+    }
+    if k = checker_self.known_mods.get(name) {
+      return ""
+    }
+    if t = checker_self.resolver.get_named(name) {
+      return name
+    }
+    if checker_self.is_generic_template(name) || is_builtin_type_name(name) {
+      return name
+    }
+    return ""
+  }
+  mod = checker_self.join_segs(segs, segs.size - 1)
+  if checker_self.qualifier_ok(mod, checker_self.current_module) {
+    if t = checker_self.resolver.get_named_in(mod, segs[segs.size - 1]) {
+      return "${mod}.${segs[segs.size - 1]}"
+    }
+  }
+  ""
+}
+
+// The error for `T.callee` when the type T (shown as tn) has no
+// type-level function of that name (O166).
+pub fn (checker_self: Checker) fail_no_type_fn(loc: Location, recv: Expr, tn: String, callee: String) {
+  segs: Array(String) = []
+  if checker_self.ident_chain(recv, segs) {
+    ty: Ty? = nil
+    if segs.size == 1 {
+      ty = checker_self.resolver.get_named(segs[0])
+    } else {
+      ty = checker_self.resolver.get_named_in(checker_self.join_segs(segs, segs.size - 1), segs[segs.size - 1])
+    }
+    if t = ty {
+      for sig in checker_self.methods {
+        if sig.owner == t.name && sig.name == callee && !sig.node.type_method && checker_self.method_is_visible(sig.node, checker_self.current_module) {
+          checker_self.fail(loc, "${tn}.${callee} is an instance method; call it on a value")
+          return
+        }
+      }
+    }
+  }
+  checker_self.fail(loc, "${tn} has no type-level function ${callee}")
+}
+
+pub fn is_builtin_type_name(name: String): Bool {
+  name == "Int" || name == "Int32" || name == "UInt32" || name == "UInt64" || name == "Bool" || name == "Float64" || name == "String" || name == "Array" || name == "Hash" || name == "Buf" || name == "Bytes" || name == "Ptr"
+}
+
 // The enum a receiver names (`Tok`, `mod.Tok`; Stage 29 W5a1), when it
 // is a type name and not a value.
 pub fn (checker_self: Checker) enum_type_named(recv: Expr): Ty? {
@@ -881,7 +945,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
     if saw_instance {
       checker_self.fail(expr.loc, "${ty.show}.${expr.callee} is an instance method; call it on a value")
     } else {
-      checker_self.fail(expr.loc, "no type-level function ${expr.callee} on ${ty.show}")
+      checker_self.fail(expr.loc, "${ty.show} has no type-level function ${expr.callee}")
     }
     return checker_self.t_int()
   }

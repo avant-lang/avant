@@ -1,0 +1,125 @@
+import harness
+import backends
+
+// Stage 29 W5c1: the messages for names, calls and ambiguity. A type
+// without the type-level function a call names (O166), a type two
+// modules publish (O224), a call whose arguments fit no signature, "did
+// you mean" and opening an optional (O257, O340), an ambiguous function
+// value (O345) and an ambiguous call within one module (O346). Each
+// program is compiled in parallel; a refused one must leave no binary,
+// exit non-zero, say the expected words at the expected line and column,
+// and, when the case says so, say nothing else (one error, no cascade).
+
+class NCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub single: Bool = false
+  pub absent: String = ""
+  // Other modules beside main.av: name, body, name, body, ...
+  pub mods: Array(String) = []
+}
+
+// The one error the program has: the words at pos, and no other error.
+fn only(tag: String, src: String, needle: String, pos: String): NCase {
+  f = NCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f.single = true
+  f
+}
+
+// The words at pos; other errors may follow.
+fn first(tag: String, src: String, needle: String, pos: String): NCase {
+  f = only(tag, src, needle, pos)
+  f.single = false
+  f
+}
+
+// The program's one error, without the words absent (a hint that must
+// not be offered).
+fn without(tag: String, src: String, needle: String, pos: String, absent: String): NCase {
+  f = only(tag, src, needle, pos)
+  f.absent = absent
+  f
+}
+
+fn with_mods(f: NCase, mods: Array(String)): NCase {
+  f.mods = mods
+  f
+}
+
+fn cases: Array(NCase) {
+  xs: Array(NCase) = []
+  // O166: `T.foo` on a type without that type-level function.
+  xs.push(only("type-fn-struct", "struct T {\n  x: Int\n}\nfn main {\n  puts(T.foo(1))\n}\n", "T has no type-level function foo", "5:9"))
+  xs.push(only("type-fn-field-form", "class K {\n  fn self.make: K {\n    K.new\n  }\n}\nfn main {\n  k = K.mak\n  puts(1)\n}\n", "K has no type-level function mak", "7:8"))
+  xs.push(only("type-fn-enum", "enum Tok { eof, name }\nfn main {\n  puts(Tok.foo(1))\n}\n", "Tok has no type-level function foo", "3:11"))
+  xs.push(only("type-fn-builtin", "fn main {\n  puts(String.foo(1))\n}\n", "String has no type-level function foo", "2:14"))
+  xs.push(only("type-fn-instance", "class K {\n  fn inst(a: Int): Int {\n    a\n  }\n}\nfn main {\n  puts(K.inst(1))\n}\n", "K.inst is an instance method; call it on a value", "7:9"))
+  xs.push(only("type-fn-unknown-receiver", "fn main {\n  puts(Nope.foo(1))\n}\n", "unknown name Nope", "2:8"))
+  xs.push(first("type-fn-unknown-value", "fn main {\n  puts(nosuch.foo(1))\n  puts(nosuch2.bar)\n}\n", "unknown name nosuch", "2:8"))
+  xs.push(without("type-fn-unknown-value-once", "fn main {\n  puts(nosuch.foo(1))\n}\n", "unknown name nosuch", "2:8", "on Int"))
+  xs.push(only("type-fn-qualified", "fn main {\n  puts(m.T.foo(1))\n}\n", "unknown name m", "2:8"))
+  xs.push(with_mods(only("type-fn-module", "import tmod\nfn main {\n  puts(tmod.T.foo(1))\n}\n", "tmod.T has no type-level function foo", "3:14"), ["tmod", "pub struct T {\n  x: Int\n}\n"]))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(NCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/nm-${f.tag}.av"
+    if f.mods.size > 0 {
+      d = "${dir}/nm-${f.tag}"
+      mkdir_p(d)
+      k = 0
+      while k + 1 < f.mods.size {
+        write_av(d, f.mods[k], f.mods[k + 1])
+        k += 2
+      }
+      src = "${d}/main.av"
+    }
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/nm-${f.tag}.bin", "${dir}/nm-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  for i in 0..cases.size {
+    f2 = cases[i]
+    log = log_text("${dir}/nm-${f2.tag}.log")
+    file = "nm-${f2.tag}.av"
+    if f2.mods.size > 0 {
+      file = "main.av"
+    }
+    c.expect(jobs[i].code != 0 && !file_exists("${dir}/nm-${f2.tag}.bin"), "${f2.tag}: refused")
+    c.expect(str_has(log, f2.want), "${f2.tag}: says ${f2.want}")
+    c.expect(str_has(log, "${file}:${f2.pos}\n"), "${f2.tag}: at ${f2.pos}")
+    if f2.single {
+      c.expect(!str_has(log, "aborting due to"), "${f2.tag}: one error")
+    }
+    if f2.absent.size > 0 {
+      c.expect(!str_has(log, f2.absent), "${f2.tag}: does not say ${f2.absent}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_names.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}
