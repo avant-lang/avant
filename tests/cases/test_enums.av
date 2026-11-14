@@ -74,6 +74,13 @@ fn cases: Array(RCase) {
   xs.push(refused("struct-field-zero-array", "enum Tok { eof, name, number }\nfn main {\n  xs = Array(Tok).new(3)\n  puts(xs.size)\n}\n", "Array(Tok).new(n) needs an element value: Tok has no zero value; write Array(Tok).new(n, value)", "3:8"))
   xs.push(refused("error-enum-dropped", "enum E: Error { bad }\nfn f(n: Int): Int | E {\n  if n > 0 {\n    return E.bad\n  }\n  n\n}\nfn main {\n  f(1)\n}\n", "this statement drops a value that can be an error (E | Int)", "9:3"))
   xs.push(accepted("label-bare-neighbours", "enum Tok { eof, name, number }\nfn f(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    case name, number { 2 }\n  }\n}\nfn g(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    else { 2 }\n  }\n}\nfn main {\n  puts(f(Tok.eof) + f(Tok.number) + g(Tok.name))\n  puts(Tok.from_i(1) ?? Tok.eof)\n  t = Tok.from_i(9) ?? Tok.number\n  puts(t)\n}\n", "5\nname\nnumber\n"))
+  xs.push(refused("str-label-interpolated", "fn f(s: String, x: Int): Int {\n  switch s {\n    case \"a\${x}\" { 1 }\n    else { 2 }\n  }\n}\nfn main { puts(f(\"a1\", 1)) }\n", "a case label is a literal", "3:10"))
+  xs.push(refused("str-label-duplicate", "fn f(s: String): Int {\n  switch s {\n    case \"GET\", \"GET\" { 1 }\n    else { 2 }\n  }\n}\nfn main { puts(f(\"GET\")) }\n", "duplicate case \"GET\"", "3:17"))
+  xs.push(refused("str-label-duplicate-arms", "fn f(s: String): Int {\n  switch s {\n    case \"a\" { 1 }\n    case \"b\", \"a\" { 2 }\n    else { 3 }\n  }\n}\nfn main { puts(f(\"a\")) }\n", "duplicate case \"a\"", "4:15"))
+  xs.push(refused("str-label-int", "fn f(s: String): Int {\n  switch s {\n    case 1 { 1 }\n    else { 2 }\n  }\n}\nfn main { puts(f(\"a\")) }\n", "a case label of a switch over String is a string literal", "3:10"))
+  xs.push(refused("str-value-needs-else", "fn f(s: String): Int {\n  switch s {\n    case \"a\" { 1 }\n  }\n}\nfn main { puts(f(\"a\")) }\n", "switch expression needs else", "2:3"))
+  xs.push(refused("int-label-string", "fn main {\n  n = 1\n  switch n {\n    case \"1\" { puts(1) }\n    else { puts(2) }\n  }\n}\n", "case label must be an integer literal", "4:10"))
+  xs.push(refused("enum-label-string", "enum Tok { eof, name, number }\nfn main {\n  switch Tok.eof {\n    case \"eof\" { puts(1) }\n    else { puts(2) }\n  }\n}\n", "a case label of a switch over Tok is one of its members, written bare", "4:10"))
   xs
 }
 

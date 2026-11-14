@@ -352,6 +352,9 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     if lw.failed {
       return lw.lw_b.c_i32(0)
     }
+    if ct0 = c.ty, ct0.is_string {
+      return lw.lower_str_switch(e, cv, rty)
+    }
     cty = mt_i32()
     // A switch over an enum without else names every member (the
     // checker's coverage, Stage 29 W5a1): no match is a value that is no
@@ -512,3 +515,115 @@ pub fn (lw: MirLower) enum_trap(v: MOperand, t: Ty, loc: Location) {
   b.unreachable
 }
 
+// A switch over a String (Stage 29 W5a1, D293, O392; the lowering chosen
+// by measurement, the record's cost table): the discriminant's size, one
+// switch on it, and within one size each label's bytes compared with
+// memcmp at that constant size (LLVM expands it into word compares); a
+// label of size 0 matches on the size alone. No match is the else, or
+// nothing.
+pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperand {
+  b = lw.lw_b
+  s = b.temp(mt_str())
+  b.assign(b.pl(s), b.rv_use(cv))
+  dest = -1
+  if rty != mt_void() {
+    dest = b.temp(rty)
+    b.assign(b.pl(dest), b.rv_zero)
+  }
+  arms: Array(Int) = []
+  for i in 0..e.cases.size {
+    arms.push(b.block)
+  }
+  other = -1
+  if e.has_else || lw.lw_cov.on {
+    other = b.block
+  }
+  join = b.block
+  if other < 0 {
+    other = join
+  }
+  // The labels by size, in order of appearance.
+  sizes: Array(Int) = []
+  size_blocks: Array(Int) = []
+  for i2 in 0..e.cases.size {
+    for label in e.cases[i2].labels {
+      seen = false
+      for z in sizes {
+        if z == label.text.size {
+          seen = true
+        }
+      }
+      if !seen {
+        sizes.push(label.text.size)
+        size_blocks.push(b.block)
+      }
+    }
+  }
+  lw.at(e.loc)
+  args0: Array(MOperand) = []
+  args0.push(b.copy_local(s))
+  n = lw.call_to(mt_i64(), "avant_str_size", args0)
+  b.switch_on(n, sizes, size_blocks, other)
+  cov_entries: Array(Int) = []
+  cov_arms: Array(Int) = []
+  cov_locs: Array(Location) = []
+  for k in 0..sizes.size {
+    b.at(size_blocks[k])
+    open = true
+    for i3 in 0..e.cases.size {
+      for label2 in e.cases[i3].labels {
+        if label2.text.size != sizes[k] {
+          continue
+        }
+        target = arms[i3]
+        if lw.lw_cov.on {
+          // Each label enters through its own block, which counts it.
+          target = b.block
+          cov_entries.push(target)
+          cov_arms.push(arms[i3])
+          cov_locs.push(label2.loc)
+        }
+        if sizes[k] == 0 {
+          b.goto(target)
+          open = false
+        } else {
+          margs: Array(MOperand) = []
+          margs.push(b.copy_local(s))
+          margs.push(b.str_const(label2.text))
+          margs.push(b.c_i64(sizes[k]))
+          q = lw.call_to(mt_i32(), "memcmp", margs)
+          eq = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), q, b.c_i32(0)))
+          next = b.block
+          b.branch(eq, target, next)
+          b.at(next)
+          lw.at(e.loc)
+        }
+      }
+    }
+    if open {
+      b.goto(other)
+    }
+  }
+  for q2 in 0..cov_entries.size {
+    b.at(cov_entries[q2])
+    lw.cov_branch(cov_locs[q2])
+    lw.at(e.loc)
+    b.goto(cov_arms[q2])
+  }
+  for i4 in 0..e.cases.size {
+    b.at(arms[i4])
+    lw.lower_arm(e.cases[i4].body, dest, e)
+    lw.goto_if_open(join, e.cases[i4].loc)
+  }
+  if e.has_else || lw.lw_cov.on {
+    b.at(other)
+    lw.cov_branch(e.loc)
+    lw.lower_arm(e.else_body, dest, e)
+    lw.goto_if_open(join, e.loc)
+  }
+  b.at(join)
+  if dest >= 0 {
+    return b.copy_local(dest)
+  }
+  b.c_i32(0)
+}

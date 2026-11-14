@@ -3846,18 +3846,26 @@ pub class Checker {
       disc = ct
       if ct.is_enum {
         countable = true
-      } else if !ct.is_int && !ct.is_bool {
-        fail(cond.loc, "switch discriminant must be Int, Bool or an enum, got ${ct.show}")
+      } else if !ct.is_int && !ct.is_bool && !ct.is_string {
+        fail(cond.loc, "switch discriminant must be Int, Bool, String or an enum, got ${ct.show}")
       }
     }
     covered = Hash(Int, Int).new
     seen = Hash(Int, Int).new
+    seen_str = Hash(String, Int).new
     for arm in expr.cases {
       if arm.labels.size == 0 {
         fail(arm.loc, "case needs a label")
       }
       for label in arm.labels {
         if !check_case_label(label, disc) {
+          continue
+        }
+        if label.kind == lb_string() {
+          if prev_s = seen_str.get(label.text) {
+            fail(label.loc, "duplicate case ${quote_label(label.text)}")
+          }
+          seen_str[label.text] = 1
           continue
         }
         lab = label.int_val
@@ -3960,11 +3968,34 @@ pub class Checker {
       label.int_val = disc.enum_vals[idx]
       return true
     }
+    if disc.is_string {
+      if label.kind != lb_string() {
+        fail(label.loc, "a case label of a switch over String is a string literal")
+        return false
+      }
+      return true
+    }
     if label.kind != lb_int() {
       fail(label.loc, "case label must be an integer literal")
       return false
     }
     true
+  }
+
+  // A String label as written in a message: quoted, its quote and
+  // backslash escaped.
+  pub fn quote_label(text: String): String {
+    buf = buf_new()
+    buf.push_str("\"")
+    for i in 0..text.size {
+      c = text[i]
+      if c == 34 || c == 92 {
+        buf.push_byte(92)
+      }
+      buf.push_byte(c)
+    }
+    buf.push_str("\"")
+    buf.to_s
   }
 
   // The countable cases of a discriminant type that the labels in
