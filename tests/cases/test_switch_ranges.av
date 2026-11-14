@@ -163,6 +163,18 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   pll = log_text("${dir}/sr-ll-nopoll.ll")
   c.expect(str_has(pll, "@memcmp("), "ll-nopoll: the String switch compares")
   c.expect(!str_has(pll, "avant_gc_poll"), "ll-nopoll: no poll in a program without a loop")
+  // O713's rule (mir/gc.av): a poll heads a real cycle only. `abs`
+  // lowers to a block numbered before the one that enters it, which the
+  // numbering rule took for a back edge: two polls in a program with no
+  // loop.
+  aw = "${dir}/sr-ll-abs.av"
+  _ = file_write(aw, "fn main {\n  h = spawn { 1 }\n  q = -3\n  puts(q.abs)\n  puts(h.join)\n}\n")
+  c.eq_int(emit_ll(compiler, aw, "${dir}/sr-ll-abs.ll", "${dir}/sr-ll-abs.log"), 0, "ll-abs: emits")
+  c.expect(!str_has(log_text("${dir}/sr-ll-abs.ll"), "avant_gc_poll"), "ll-abs: no poll in a program without a loop")
+  lw2 = "${dir}/sr-ll-loop.av"
+  _ = file_write(lw2, "fn main {\n  h = spawn { 1 }\n  xs: Array(String) = []\n  for i in 0..argv().size + 3 {\n    xs.push(\"\${i}\")\n  }\n  puts(xs.size)\n  puts(h.join)\n}\n")
+  c.eq_int(emit_ll(compiler, lw2, "${dir}/sr-ll-loop.ll", "${dir}/sr-ll-loop.log"), 0, "ll-loop: emits")
+  c.expect(str_has(log_text("${dir}/sr-ll-loop.ll"), "avant_gc_poll"), "ll-loop: a loop that holds a reference still polls")
   nw = "${dir}/sr-ll-narrow.av"
   _ = file_write(nw, "enum Sign { neg = -1, zero, pos }\nenum Wide { a = 0, b = 300, c = 65535 }\nenum Mid { lo = -300, hi = 300 }\nfn f(s: Sign, w: Wide, m: Mid): Int {\n  x = switch s {\n    case neg { 1 }\n    case zero { 2 }\n    case pos { 3 }\n  }\n  y = switch w {\n    case a { 1 }\n    case b { 2 }\n    case c { 3 }\n  }\n  z = switch m {\n    case lo { 1 }\n    case hi { 2 }\n  }\n  x + y + z\n}\nfn main {\n  puts(f(Sign.from_i(argv().size) ?? Sign.neg, Wide.c, Mid.hi))\n}\n")
   c.eq_int(emit_ll(compiler, nw, "${dir}/sr-ll-narrow.ll", "${dir}/sr-ll-narrow.log"), 0, "ll-narrow: emits")
