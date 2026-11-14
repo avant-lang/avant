@@ -142,6 +142,8 @@ static int bind_record_name(Bind *b, CXType t, char *out, size_t n);
 static int record_by_value(Emit *e, CXType t);
 
 static void emit_type(Emit *e, CXType t);
+static const char *bind_enum_name(Bind *b, CXType t);
+static const char *bind_enum_scalar(Bind *b, CXType t);
 
 static void emit_ptr(Emit *e, CXType pointee) {
   pointee = unwrap(pointee);
@@ -194,6 +196,21 @@ static void emit_type(Emit *e, CXType t) {
   case CXType_Pointer:
     emit_ptr(e, clang_getPointeeType(t));
     return;
+  case CXType_Enum: {
+    /* A C enum the header declares (Stage 29 W5a1, O393): its Avant enum
+     * when one was emitted, else its integer type, as before. */
+    const char *en = bind_enum_name(e->bind, t);
+    if (en) {
+      fputs(en, e->out);
+      return;
+    }
+    const char *name = bind_enum_scalar(e->bind, t);
+    if (!name) {
+      goto unsupported_ty;
+    }
+    fputs(name, e->out);
+    return;
+  }
   case CXType_Record: {
     char chosen[MAX_NAME];
     if (bind_record_name(e->bind, t, chosen, sizeof(chosen))) {
@@ -312,10 +329,30 @@ typedef struct {
   int align;
 } RecInfo;
 
+/* A C enum (Stage 29 W5a1, O393): emitted as an Avant enum with explicit
+ * values when it has a name, is 4 bytes, and its constants are distinct
+ * Avant members within Int32. */
+#define MAX_ENUMS 128
+
+typedef struct {
+  CXType canon;
+  CXCursor decl;
+  char tag[MAX_NAME];
+  char typedef_name[MAX_NAME];
+  char avant[MAX_NAME];
+  int typedefs;
+  int complete;
+  int accepted;
+  int wide; /* a constant outside Int32 */
+  char reason[400];
+} EnumInfo;
+
 struct Bind {
   Emit *e;
   RecInfo *recs;
   int nrecs;
+  EnumInfo *enums;
+  int nenums;
 };
 
 typedef struct {
@@ -438,6 +475,356 @@ static void note_typedef(Bind *b, CXCursor cursor) {
   clang_disposeString(spelling);
 }
 
+static EnumInfo *enum_of(Bind *b, CXType t) {
+  CXType canon;
+  int i;
+  t = unwrap(t);
+  if (t.kind != CXType_Enum) {
+    return NULL;
+  }
+  canon = clang_getCanonicalType(t);
+  for (i = 0; i < b->nenums; i++) {
+    if (clang_equalTypes(b->enums[i].canon, canon)) {
+      return &b->enums[i];
+    }
+  }
+  if (b->nenums >= MAX_ENUMS) {
+    fail(b->e, "too many C enums");
+    return NULL;
+  }
+  EnumInfo *en = &b->enums[b->nenums++];
+  memset(en, 0, sizeof(*en));
+  en->canon = canon;
+  return en;
+}
+
+static void note_enum(Bind *b, CXCursor cursor) {
+  EnumInfo *en = enum_of(b, clang_getCursorType(cursor));
+  CXString spelling;
+  const char *tag;
+  if (!en) {
+    return;
+  }
+  if (!clang_Cursor_isAnonymous(cursor)) {
+    spelling = clang_getCursorSpelling(cursor);
+    tag = clang_getCString(spelling);
+    if (tag && tag[0] && !en->tag[0]) {
+      copy_name(en->tag, sizeof(en->tag), tag);
+    }
+    clang_disposeString(spelling);
+  }
+  if (clang_isCursorDefinition(cursor)) {
+    en->decl = cursor;
+    en->complete = 1;
+  }
+}
+
+static void note_enum_typedef(Bind *b, CXCursor cursor) {
+  CXType under = unwrap(clang_getTypedefDeclUnderlyingType(cursor));
+  EnumInfo *en;
+  CXString spelling;
+  if (under.kind != CXType_Enum) {
+    return;
+  }
+  en = enum_of(b, under);
+  if (!en) {
+    return;
+  }
+  spelling = clang_getCursorSpelling(cursor);
+  en->typedefs++;
+  if (en->typedefs == 1) {
+    copy_name(en->typedef_name, sizeof(en->typedef_name), clang_getCString(spelling));
+  }
+  clang_disposeString(spelling);
+}
+
+/* The Avant type name of a C enum: CamelCase, a trailing _t dropped
+ * (`enum http_method` -> HttpMethod, `color_t` -> Color). */
+static void enum_camel(const char *src, char *out, size_t n) {
+  size_t len = strlen(src);
+  size_t i;
+  size_t k = 0;
+  int up = 1;
+  if (len > 2 && src[len - 2] == '_' && src[len - 1] == 't') {
+    len -= 2;
+  }
+  for (i = 0; i < len && k + 1 < n; i++) {
+    char c = src[i];
+    if (c == '_') {
+      up = 1;
+      continue;
+    }
+    if (up && c >= 'a' && c <= 'z') {
+      c = (char)(c - 32);
+    }
+    up = 0;
+    out[k++] = c;
+  }
+  out[k] = 0;
+}
+
+static int avant_word(const char *s) {
+  static const char *words[] = {"fn", "if", "else", "return", "struct", "class", "lib", "fun", "self", "while", "true", "false", "nil", "spawn", "break", "continue", "switch", "case", "import", "pub", "quote", "comptime", "interface", "for", "in", "pin", "release", "enum",
+                                /* what every enum has as a type-level name */
+                                "members", "from_i", "from_name", NULL};
+  int i;
+  for (i = 0; words[i]; i++) {
+    if (strcmp(s, words[i]) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+typedef struct {
+  EnumInfo *en;
+  FILE *out;
+  int count;
+  int ok;
+  int is_unsigned;
+  char names[256][MAX_NAME];
+  long long vals[256];
+  char reason[200];
+} EnumWalk;
+
+static void lower_name(const char *src, char *out, size_t n) {
+  size_t k = 0;
+  for (; *src && k + 1 < n; src++) {
+    char c = *src;
+    if (c >= 'A' && c <= 'Z') {
+      c = (char)(c + 32);
+    }
+    out[k++] = c;
+  }
+  out[k] = 0;
+}
+
+/* Each constant: lower-cased; an alias (a value seen before) is dropped
+ * and named; a value outside Int32, a name that is no Avant member, or a
+ * collision after lower-casing skips the enum. With out set, writes the
+ * members. */
+static enum CXChildVisitResult walk_enum_const(CXCursor cursor, CXCursor parent, CXClientData data) {
+  EnumWalk *w = (EnumWalk *)data;
+  CXString spelling;
+  const char *raw;
+  char low[MAX_NAME];
+  long long v;
+  int i;
+  (void)parent;
+  if (!w->ok) {
+    return CXChildVisit_Break;
+  }
+  if (clang_getCursorKind(cursor) != CXCursor_EnumConstantDecl) {
+    return CXChildVisit_Continue;
+  }
+  spelling = clang_getCursorSpelling(cursor);
+  raw = clang_getCString(spelling);
+  lower_name(raw ? raw : "", low, sizeof(low));
+  if (w->is_unsigned) {
+    unsigned long long u = clang_getEnumConstantDeclUnsignedValue(cursor);
+    v = u > 2147483647ULL ? 2147483648LL : (long long)u;
+  } else {
+    v = clang_getEnumConstantDeclValue(cursor);
+  }
+  if (v < -2147483648LL || v > 2147483647LL) {
+    snprintf(w->reason, sizeof(w->reason), "the value of %s does not fit in Int32; skipped", raw ? raw : "?");
+    w->ok = 0;
+    clang_disposeString(spelling);
+    return CXChildVisit_Break;
+  }
+  if (!valid_ident(low) || avant_word(low)) {
+    snprintf(w->reason, sizeof(w->reason), "%s is no Avant member name (%s); skipped", raw ? raw : "?", low);
+    w->ok = 0;
+    clang_disposeString(spelling);
+    return CXChildVisit_Break;
+  }
+  for (i = 0; i < w->count; i++) {
+    if (strcmp(w->names[i], low) == 0) {
+      snprintf(w->reason, sizeof(w->reason), "two constants are %s after lower-casing; skipped", low);
+      w->ok = 0;
+      clang_disposeString(spelling);
+      return CXChildVisit_Break;
+    }
+  }
+  for (i = 0; i < w->count; i++) {
+    if (w->vals[i] == v) {
+      if (w->out) {
+        fprintf(w->out, "    // %s is an alias of %s (%lld); dropped\n", raw ? raw : "?", w->names[i], v);
+      }
+      clang_disposeString(spelling);
+      return CXChildVisit_Continue;
+    }
+  }
+  if (w->count >= 256) {
+    snprintf(w->reason, sizeof(w->reason), "more than 256 constants; skipped");
+    w->ok = 0;
+    clang_disposeString(spelling);
+    return CXChildVisit_Break;
+  }
+  copy_name(w->names[w->count], MAX_NAME, low);
+  w->vals[w->count] = v;
+  w->count++;
+  if (w->out) {
+    fprintf(w->out, "    %s = %lld\n", low, v);
+  }
+  clang_disposeString(spelling);
+  return CXChildVisit_Continue;
+}
+
+static int enum_unsigned(EnumInfo *en) {
+  CXType it = unwrap(clang_getEnumDeclIntegerType(en->decl));
+  return it.kind == CXType_UInt || it.kind == CXType_UChar || it.kind == CXType_UShort || it.kind == CXType_ULong ||
+         it.kind == CXType_ULongLong || it.kind == CXType_Char_U;
+}
+
+static enum CXChildVisitResult see_wide_const(CXCursor cursor, CXCursor parent, CXClientData data) {
+  EnumInfo *en = (EnumInfo *)data;
+  (void)parent;
+  if (clang_getCursorKind(cursor) != CXCursor_EnumConstantDecl) {
+    return CXChildVisit_Continue;
+  }
+  if (enum_unsigned(en) ? clang_getEnumConstantDeclUnsignedValue(cursor) > 2147483647ULL
+                        : (clang_getEnumConstantDeclValue(cursor) < -2147483648LL || clang_getEnumConstantDeclValue(cursor) > 2147483647LL)) {
+    en->wide = 1;
+  }
+  return CXChildVisit_Continue;
+}
+
+static void skip_enum(EnumInfo *en, const char *label, const char *reason) {
+  en->accepted = 0;
+  /* Named by a comment in the output (emit_enums), not on stderr: the
+   * output stays a program that compiles. */
+  snprintf(en->reason, sizeof(en->reason), "%s: %s", label, reason);
+}
+
+static void decide_enum(Bind *b, EnumInfo *en) {
+  const char *s = NULL;
+  EnumWalk *w;
+  int i;
+  if (!en->complete) {
+    return;
+  }
+  clang_visitChildren(en->decl, see_wide_const, en);
+  if (en->typedefs == 1) {
+    s = en->typedef_name;
+  } else if (en->tag[0]) {
+    s = en->tag;
+  }
+  if (!s) {
+    skip_enum(en, "enum", en->typedefs > 1 ? "two typedefs; skipped" : "anonymous enum (its constants are C constants; Avant has no const yet); skipped");
+    return;
+  }
+  enum_camel(s, en->avant, sizeof(en->avant));
+  if (!valid_ident(en->avant) || !(en->avant[0] >= 'A' && en->avant[0] <= 'Z')) {
+    en->avant[0] = 0;
+    skip_enum(en, s, "enum name is not an Avant type name; skipped");
+    return;
+  }
+  for (i = 0; i < b->nrecs; i++) {
+    if (strcmp(b->recs[i].avant, en->avant) == 0) {
+      skip_enum(en, s, "enum name is a record's name; skipped");
+      en->avant[0] = 0;
+      return;
+    }
+  }
+  for (i = 0; i < b->nenums; i++) {
+    if (&b->enums[i] != en && b->enums[i].accepted && strcmp(b->enums[i].avant, en->avant) == 0) {
+      skip_enum(en, s, "enum name is another enum's name; skipped");
+      en->avant[0] = 0;
+      return;
+    }
+  }
+  if (clang_Type_getSizeOf(clang_getCursorType(en->decl)) != 4) {
+    skip_enum(en, s, "enum is not 4 bytes (C's int); skipped");
+    en->avant[0] = 0;
+    return;
+  }
+  w = calloc(1, sizeof(EnumWalk));
+  if (!w) {
+    fail(b->e, "out of memory");
+    return;
+  }
+  w->en = en;
+  w->ok = 1;
+  w->is_unsigned = enum_unsigned(en);
+  clang_visitChildren(en->decl, walk_enum_const, w);
+  if (w->ok && w->count == 0) {
+    snprintf(w->reason, sizeof(w->reason), "enum has no constant; skipped");
+    w->ok = 0;
+  }
+  if (!w->ok) {
+    skip_enum(en, s, w->reason);
+    en->avant[0] = 0;
+    free(w);
+    return;
+  }
+  free(w);
+  en->accepted = 1;
+}
+
+static void emit_enums(Bind *b) {
+  int i;
+  for (i = 0; i < b->nenums; i++) {
+    EnumInfo *en = &b->enums[i];
+    if (!en->complete) {
+      continue;
+    }
+    if (!en->accepted) {
+      fprintf(b->e->out, "  // %s\n", en->reason);
+      continue;
+    }
+    EnumWalk *w = calloc(1, sizeof(EnumWalk));
+    if (!w) {
+      fail(b->e, "out of memory");
+      return;
+    }
+    w->en = en;
+    w->ok = 1;
+    w->out = b->e->out;
+    w->is_unsigned = enum_unsigned(en);
+    fprintf(b->e->out, "  enum %s {\n", en->avant);
+    clang_visitChildren(en->decl, walk_enum_const, w);
+    fprintf(b->e->out, "  }\n");
+    free(w);
+  }
+}
+
+/* The Avant type of a C enum emitted as none: Int32 (C's int) when it is
+ * 4 bytes and its constants fit, else its integer type. */
+static const char *bind_enum_scalar(Bind *b, CXType t) {
+  int i;
+  CXType canon;
+  t = unwrap(t);
+  canon = clang_getCanonicalType(t);
+  if (clang_Type_getSizeOf(t) == 4 && b) {
+    for (i = 0; i < b->nenums; i++) {
+      if (clang_equalTypes(b->enums[i].canon, canon) && !b->enums[i].wide) {
+        return "Int32";
+      }
+    }
+  }
+  return scalar_name(clang_getEnumDeclIntegerType(clang_getTypeDeclaration(t)));
+}
+
+static const char *bind_enum_name(Bind *b, CXType t) {
+  int i;
+  CXType canon;
+  if (!b) {
+    return NULL;
+  }
+  t = unwrap(t);
+  if (t.kind != CXType_Enum) {
+    return NULL;
+  }
+  canon = clang_getCanonicalType(t);
+  for (i = 0; i < b->nenums; i++) {
+    if (b->enums[i].accepted && clang_equalTypes(b->enums[i].canon, canon)) {
+      return b->enums[i].avant;
+    }
+  }
+  return NULL;
+}
+
 static enum CXChildVisitResult collect_rec(CXCursor cursor, CXCursor parent, CXClientData data) {
   Bind *b = (Bind *)data;
   enum CXCursorKind kind;
@@ -453,8 +840,13 @@ static enum CXChildVisitResult collect_rec(CXCursor cursor, CXCursor parent, CXC
     note_struct(b, cursor);
     return CXChildVisit_Continue;
   }
+  if (kind == CXCursor_EnumDecl) {
+    note_enum(b, cursor);
+    return CXChildVisit_Continue;
+  }
   if (kind == CXCursor_TypedefDecl) {
     note_typedef(b, cursor);
+    note_enum_typedef(b, cursor);
     clang_visitChildren(cursor, collect_rec, data);
   }
   return CXChildVisit_Continue;
@@ -537,8 +929,20 @@ static int map_field_type(Bind *b, CXType t, char *avant, size_t avant_n, int *s
     return 1;
   }
   if (t.kind == CXType_Enum) {
-    snprintf(reason, reason_n, "enum field; skipped");
-    return 0;
+    /* Stage 29 W5a1 (O393): the Avant enum when one was emitted (C's
+     * int, 4 bytes), else the enum's integer type. */
+    const char *en = bind_enum_name(b, t);
+    const char *iname = en ? en : bind_enum_scalar(b, t);
+    long long sz = clang_Type_getSizeOf(t);
+    long long al = clang_Type_getAlignOf(t);
+    if (!iname || sz != al) {
+      snprintf(reason, reason_n, "enum field of no Avant type; skipped");
+      return 0;
+    }
+    copy_name(avant, avant_n, iname);
+    *size = (int)sz;
+    *align = (int)al;
+    return 1;
   }
   if (t.kind == CXType_Pointer) {
     CXType pointee = unwrap(clang_getPointeeType(t));
@@ -905,6 +1309,16 @@ int main(int argc, char **argv) {
     clang_disposeIndex(index);
     return 1;
   }
+  bind->enums = calloc(MAX_ENUMS, sizeof(EnumInfo));
+  if (!bind->enums) {
+    fprintf(stderr, "out of memory\n");
+    free(bind->recs);
+    free(bind->enums);
+    free(bind);
+    clang_disposeTranslationUnit(tu);
+    clang_disposeIndex(index);
+    return 1;
+  }
   bind->e = &e;
   e.bind = bind;
 
@@ -912,6 +1326,7 @@ int main(int argc, char **argv) {
   if (e.failed) {
     fprintf(stderr, "%s\n", e.err);
     free(bind->recs);
+    free(bind->enums);
     free(bind);
     clang_disposeTranslationUnit(tu);
     clang_disposeIndex(index);
@@ -920,12 +1335,16 @@ int main(int argc, char **argv) {
   for (i = 0; i < bind->nrecs; i++) {
     choose_name(&bind->recs[i]);
   }
+  for (i = 0; i < bind->nenums; i++) {
+    decide_enum(bind, &bind->enums[i]);
+  }
   for (i = 0; i < bind->nrecs; i++) {
     decide_rec(bind, &bind->recs[i]);
   }
   if (e.failed) {
     fprintf(stderr, "%s\n", e.err);
     free(bind->recs);
+    free(bind->enums);
     free(bind);
     clang_disposeTranslationUnit(tu);
     clang_disposeIndex(index);
@@ -934,10 +1353,12 @@ int main(int argc, char **argv) {
 
   printf("// generated by avant bind from %s\n", header);
   printf("lib %s {\n", lib);
+  emit_enums(bind);
   emit_layouts(bind);
   clang_visitChildren(clang_getTranslationUnitCursor(tu), visit, &e);
   printf("}\n");
   free(bind->recs);
+  free(bind->enums);
   free(bind);
 
   clang_disposeTranslationUnit(tu);

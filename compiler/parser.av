@@ -484,7 +484,11 @@ pub class Parser {
       } else if k == tk_class() {
         program.classes.push(parse_class(vis))
       } else if k == tk_lib() {
-        program.libs.push(parse_lib(vis))
+        ldef = parse_lib(vis)
+        program.libs.push(ldef)
+        for en in ldef.enums {
+          program.structs.push(en)
+        }
       } else if k == tk_fn() {
         program.functions.push(parse_fn("", vis))
       } else if k == tk_interface() {
@@ -1099,11 +1103,22 @@ pub class Parser {
           break
         }
         self.skip_newlines
+      } else if self.current.kind == tk_enum() {
+        // A C enum (Stage 29 W5a1, O393): C's int wherever it is stored.
+        en = parse_enum(vis)
+        if decl = en.enum_of {
+          decl.c_int = true
+        }
+        defn.enums.push(en)
+        if new_err_since(mark0) {
+          break
+        }
+        self.skip_newlines
       } else if self.current.kind == tk_fn() {
         fail(self.current.loc, "inside lib, write fun (the C ABI), not fn")
         break
       } else if self.current.kind != tk_fun() {
-        fail(self.current.loc, "inside lib, write fun or struct")
+        fail(self.current.loc, "inside lib, write fun, struct or enum")
         break
       } else {
         defn.funs.push(self.parse_fun_decl)

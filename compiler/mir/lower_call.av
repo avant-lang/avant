@@ -332,6 +332,15 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
       raw = lw.tmp(lw.c_scalar_mty(ck), lw.lw_b.rv_use(lw.lw_b.copy(p)))
       return lw.from_c_scalar(raw, ck)
     }
+    if et = lw.c_field_enum(e) {
+      p2 = lw.place_of(e)
+      if lw.failed {
+        return lw.lw_b.c_i32(0)
+      }
+      lw.at(e.loc)
+      raw2 = lw.tmp(mt_i32(), lw.lw_b.rv_use(lw.lw_b.copy(p2)))
+      return lw.enum_from_c(raw2, et, e.loc)
+    }
     return lw.lower_place_read(e)
   }
   lw.refuse(e.loc, "the field .${e.ident} (W6)")

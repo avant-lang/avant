@@ -461,6 +461,22 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
     lw.lower_c_field_assign(st, t, ck)
     return
   }
+  if et = lw.c_field_enum(t) {
+    // A C layout's enum field is C's int (Stage 29 W5a1, D358).
+    if v = st.value {
+      val = lw.lower_expr(v)
+      if lw.failed {
+        return
+      }
+      p0 = lw.place_of(t)
+      if lw.failed {
+        return
+      }
+      lw.at(st.loc)
+      lw.store_place(p0, mt_i32(), lw.enum_to_c(val, et))
+    }
+    return
+  }
   if tt = t.ty {
     ty = lw.field_mty(tt, t.loc)
     if lw.failed {
