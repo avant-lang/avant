@@ -553,3 +553,21 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
     w.pop
   }
 }
+
+// Channel.send (D35; Stage 29 W8Ca, O232): the value crosses to the
+// task that receives it, so it obeys spawn's rule for what crosses
+// (checker/spawn.av copyable_for_spawn): a class instance, a Hash, a
+// Buf, a fn or a struct holding one would be one mutable object in two
+// tasks with no lock, and is refused; an Array crosses as it does for
+// spawn.
+pub fn (checker_self: Checker) check_send(expr: Expr) {
+  if checker_self.has_err || expr.args.size != 1 {
+    return
+  }
+  arg = expr.args[0]
+  if t = arg.ty {
+    if !checker_self.copyable_for_spawn(t) {
+      checker_self.fail(arg.loc, "Channel.send: a ${t.show} cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex; send plain values, or a Mutex(${t.show}) shared by both tasks")
+    }
+  }
+}

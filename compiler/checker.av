@@ -3801,6 +3801,12 @@ pub class Checker {
       return dispatch_method(expr, object, expected)
     }
     if object.is_agg {
+      if expr.callee == "send" && is_sync_ty(object, "Channel") {
+        // What a send carries crosses a task (D35; checker/guard.av).
+        sent = dispatch_method(expr, object, expected)
+        check_send(expr)
+        return sent
+      }
       return dispatch_method(expr, object, expected)
     }
     if object.is_ptr {
@@ -4090,11 +4096,14 @@ pub class Checker {
     t_int()
   }
 
+  // std.sync's Mutex (Stage 29 W8Ca, O211): a class of another module
+  // with that name is an ordinary class, and `with` an ordinary method.
   pub fn is_mutex_ty(ty: Ty): Bool {
-    if ty.origin == "Mutex" {
-      return true
-    }
-    ty.name == "Mutex"
+    is_sync_ty(ty, "Mutex")
+  }
+
+  pub fn is_sync_ty(ty: Ty, name: String): Bool {
+    ty.is_class && ty.mod_name == "std.sync" && (ty.origin == name || ty.name == name)
   }
 
   pub fn check_mutex_with(expr: Expr, object: Ty): Ty {
@@ -4161,6 +4170,15 @@ pub class Checker {
   }
 
   pub fn check_gate_call(expr: Expr): Ty? {
+    if !is_gate_name(expr.callee) {
+      return nil
+    }
+    // The gates are std.sync's (O436, Stage 29 W8Ca): a name of `std`
+    // modules only, not of a program's.
+    if str_slice(self.current_module, 0, 4) != "std." {
+      fail(expr.loc, "${expr.callee} is internal to the standard library: use Channel(T) and Mutex(T) from std.sync (import std.sync)")
+      return t_void()
+    }
     if expr.callee == "avant_gate_new" {
       if expr.args.size == 0 {
         if b = expr.block {
@@ -4205,6 +4223,10 @@ pub class Checker {
       return t_void()
     }
     nil
+  }
+
+  pub fn is_gate_name(name: String): Bool {
+    name == "avant_gate_new" || name == "avant_gate_lock" || name == "avant_gate_unlock" || name == "avant_gate_wait" || name == "avant_gate_signal" || name == "avant_gate_broadcast"
   }
 
   pub fn check_join(expr: Expr, handle: Ty): Ty {
