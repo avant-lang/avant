@@ -272,6 +272,7 @@ pub fn (checker_self: Checker) check: Program {
   checker_self.clear_poison
   checker_self.note_consts
   checker_self.check_enum_consts
+  checker_self.check_type_names
   for lb in checker_self.program.libs {
     checker_self.clear_poison
     checker_self.register_lib(lb)
@@ -354,6 +355,41 @@ pub fn (checker_self: Checker) check: Program {
   checker_self.clear_poison
   checker_self.check_guarded_types
   checker_self.program
+}
+
+// A type's name starts with a capital letter,
+// so a capital always tells a type from a value, as snake_case does for
+// constants and enum members; the hint is its CamelCase
+// spelling. (An enum's name is refused by the parser already.)
+pub fn (checker_self: Checker) check_type_names {
+  for sdef in checker_self.program.structs {
+    if _ = sdef.enum_of {
+    } else {
+      checker_self.check_type_name(sdef.name, sdef.loc, "struct")
+    }
+  }
+  for cdef in checker_self.program.classes {
+    checker_self.check_type_name(cdef.name, cdef.loc, "class")
+  }
+  for idef in checker_self.program.interfaces {
+    checker_self.check_type_name(idef.name, idef.loc, "interface")
+  }
+  for lb in checker_self.program.libs {
+    for lay in lb.layouts {
+      checker_self.check_type_name(lay.name, lay.loc, "C layout")
+    }
+  }
+}
+
+pub fn (checker_self: Checker) check_type_name(name: String, loc: Location, what: String) {
+  // A generic type's instance carries a name the compiler made (its
+  // origin is the declaration, checked itself).
+  if t = checker_self.resolver.get_named(name), t.origin.size > 0 {
+    return
+  }
+  if name.size > 0 && !(name[0] >= 65 && name[0] <= 90) {
+    checker_self.fail(loc, "the name of ${what} ${name} is a type name, written with a capital first letter: write ${type_camel(name)}")
+  }
 }
 
 pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {

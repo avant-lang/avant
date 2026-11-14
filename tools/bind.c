@@ -866,7 +866,12 @@ static void choose_name(RecInfo *rec) {
   if (!s || !valid_ident(s)) {
     return;
   }
-  copy_name(rec->avant, sizeof(rec->avant), s);
+  /* A type name starts with a capital: the
+   * record's CamelCase spelling, as an enum's (`struct req` -> Req). */
+  enum_camel(s, rec->avant, sizeof(rec->avant));
+  if (!(rec->avant[0] >= 'A' && rec->avant[0] <= 'Z')) {
+    rec->avant[0] = 0;
+  }
 }
 
 static const char *rec_label(RecInfo *rec) {
