@@ -12,7 +12,7 @@ import typed_ir
 import checker.names
 
 pub class Scope {
-  names: Hash(String, Int)
+  pub names: Hash(String, Int)
 
   fn initialize {
     n = Hash(String, Int).new
@@ -89,6 +89,11 @@ pub class Checker {
   pub return_type: Ty
   pub loop_depth: Int = 0
   pub self_ty: Ty? = nil
+  // Set while the receiver of `x.f` or `x.f(...)` is checked, a bare name
+  // (Stage 29 W5c1, O166): an unknown name there that names a type leaves
+  // the type's name in recv_type for the caller's message.
+  pub recv_name: Bool = false
+  pub recv_type: String = ""
   pub self_name: String = ""
   pub pending: Array(Function)
   pub instances: Array(Function)
@@ -278,6 +283,18 @@ pub class Checker {
 
   pub fn fail(loc: Location, message: String) {
     e = CompileError.new(loc, diag_code(4, message), message)
+    if self.errors.count == 0 {
+      self.err = e
+    }
+    self.failed = true
+    self.poisoned = true
+    self.errors.push(e)
+  }
+
+  // An error with a hint after it (" (did you mean `x`?)", Stage 29
+  // W5c1): the code is the message's, whatever the hint says.
+  pub fn fail_hint(loc: Location, message: String, hint: String) {
+    e = CompileError.new(loc, diag_code(4, message), "${message}${hint}")
     if self.errors.count == 0 {
       self.err = e
     }
@@ -1705,7 +1722,7 @@ pub class Checker {
       expr.object = nil
       return builtin_method(expr, object)
     }
-    fail(expr.loc, "${object.show} has no field ${expr.ident}")
+    fail_hint(expr.loc, "${object.show} has no field ${expr.ident}", builtin_hint(object, expr.ident))
     t_int()
   }
 
@@ -1746,7 +1763,7 @@ pub class Checker {
         }
         if tc = type_call_target(obj, expr.ident) {
         } else {
-          fail(expr.loc, "${et.show} has no member ${expr.ident}")
+          fail_hint(expr.loc, "${et.show} has no member ${expr.ident}", member_hint(et, expr.ident, false))
           return et
         }
       }
@@ -1769,7 +1786,24 @@ pub class Checker {
           obj = call
         }
       }
+      // `T.name` on a type without that type-level function (O166).
+      tn = receiver_type_name(obj)
+      if tn.size > 0 {
+        fail_no_type_fn(expr.loc, obj, tn, expr.ident)
+        return t_int()
+      }
+      mark = err_count
+      self.recv_name = obj.kind == ex_name()
+      self.recv_type = ""
       object = check_expr(obj)
+      self.recv_name = false
+      if self.recv_type.size > 0 {
+        fail_no_type_fn(expr.loc, obj, self.recv_type, expr.ident)
+        return t_int()
+      }
+      if new_err_since(mark) && is_ident_chain(obj) {
+        return t_int()
+      }
       if object.is_enum {
         // `t.to_i`, `t.name` and the enum's methods, as calls.
         return paren_call_of(expr)
@@ -2002,7 +2036,7 @@ pub class Checker {
         if has_method {
           fail(expr.loc, "methods are not values")
         } else {
-          fail(expr.loc, "no field ${expr.ident} on ${object.name}")
+          fail_hint(expr.loc, "no field ${expr.ident} on ${object.name}", field_hint(object, expr.ident))
         }
         return t_int()
       }
@@ -2012,7 +2046,7 @@ pub class Checker {
       if object.is_clayout {
         return check_clayout_member(expr, object)
       }
-      fail(expr.loc, "cannot read field ${expr.ident} on ${object.show}")
+      fail_hint(expr.loc, "cannot read field ${expr.ident} on ${object.show}", open_hint(obj, object))
       return t_int()
     }
     t_int()
@@ -2412,7 +2446,7 @@ pub class Checker {
     if ty = lookup_named_type(expr.type_name, expr.loc, expr.mod_name) {
       return check_struct_fields(expr, ty, true)
     }
-    fail(expr.loc, "unknown type ${expr.type_name}")
+    // lookup_named_type said why (unknown, or ambiguous: O224).
     t_int()
   }
 
@@ -2642,6 +2676,8 @@ pub class Checker {
   }
 
   pub fn check_name(expr: Expr, has_want: Bool, want: Ty): Ty {
+    as_recv = self.recv_name
+    self.recv_name = false
     if expr.ident == "self" {
       if cf = self.current_fn, cf.type_method {
         fail(expr.loc, "self is not available in a type-level function")
@@ -2713,6 +2749,21 @@ pub class Checker {
     if got = check_fn_ref_bare(expr) {
       return got
     }
+    if as_recv {
+      // The receiver of `T.f` names a type, not a value (O166, O224):
+      // the caller reports the missing type-level function; a type two
+      // modules publish is ambiguous here.
+      clash = receiver_clash(expr)
+      if clash.size > 0 {
+        fail(expr.loc, clash)
+        return t_int()
+      }
+      tn = type_receiver(expr)
+      if tn.size > 0 {
+        self.recv_type = tn
+        return t_int()
+      }
+    }
     if is_generic_template(expr.ident) {
       fail(expr.loc, "${expr.ident} needs type arguments")
       return t_int()
@@ -2723,7 +2774,7 @@ pub class Checker {
         return t_int()
       }
     }
-    fail(expr.loc, "unknown name ${expr.ident}")
+    fail_hint(expr.loc, "unknown name ${expr.ident}", name_hint(expr.ident))
     t_int()
   }
 
@@ -3254,7 +3305,22 @@ pub class Checker {
       }
       return float_binary(op, expr.loc)
     }
-    fail(expr.loc, "binary operator expects numeric operands, got ${left.show} and ${right.show}")
+    if op == tk_eq_eq() || op == tk_not_eq() {
+      // `x == nil` (O257): an optional is opened or tested, not compared.
+      if right.is_nil && left.is_nilable {
+        fail(expr.loc, nil_compare_text(l, left))
+        return t_bool()
+      }
+      if left.is_nil && right.is_nilable {
+        fail(expr.loc, nil_compare_text(r, right))
+        return t_bool()
+      }
+    }
+    hint = open_hint(l, left)
+    if hint.size == 0 {
+      hint = open_hint(r, right)
+    }
+    fail_hint(expr.loc, "binary operator expects numeric operands, got ${left.show} and ${right.show}", hint)
     return t_int()
   }
 
@@ -3484,7 +3550,7 @@ pub class Checker {
 
   pub fn check_args(expr: Expr, params: Array(Ty), label: String) {
     if expr.args.size != params.size {
-      fail(expr.loc, "${label} takes ${params.size} arguments, got ${expr.args.size}")
+      fail(expr.loc, "${label} takes ${args_word(params.size)}, given ${expr.args.size}")
       return
     }
     i = 0
@@ -3820,6 +3886,13 @@ pub class Checker {
     false
   }
 
+  // A name or a chain of names (`a`, `m.T`): what an unknown name stands
+  // for, so a failure in it is not reported again by what reads it.
+  pub fn is_ident_chain(expr: Expr): Bool {
+    segs: Array(String) = []
+    ident_chain(expr, segs)
+  }
+
   pub fn join_segs(segs: Array(String), n: Int): String {
     buf = buf_new()
     for i in 0..n {
@@ -3903,8 +3976,14 @@ pub class Checker {
           } else {
             // `Channel(Int).new` with no such generic type (Stage 29
             // W1a): before, the call reading said "new is a type
-            // constructor".
-            fail(recv.loc, "unknown type ${recv.ident}")
+            // constructor". Two modules' generic types of that name are
+            // named both (O224).
+            clash = clash_message(recv.ident, self.current_module)
+            if clash.size > 0 {
+              fail(recv.loc, clash)
+            } else {
+              fail(recv.loc, "unknown type ${recv.ident}")
+            }
             return t_int()
           }
         }
@@ -3961,7 +4040,34 @@ pub class Checker {
         }
       }
     }
-    object = check_expr(recv)
+    // A type without that type-level function (Stage 29 W5c1, O166):
+    // before, its name was checked as a value ("unknown name T") and the
+    // call then read as a method of Int.
+    tn = receiver_type_name(recv)
+    mark = err_count
+    object = t_int()
+    if tn.size == 0 {
+      self.recv_name = recv.kind == ex_name()
+      self.recv_type = ""
+      object = check_expr(recv)
+      self.recv_name = false
+      tn = self.recv_type
+    }
+    if tn.size > 0 {
+      for a in expr.args {
+        check_expr(a)
+      }
+      fail_no_type_fn(expr.loc, recv, tn, expr.callee)
+      return t_int()
+    }
+    if new_err_since(mark) && is_ident_chain(recv) {
+      // An unknown name is reported once, not again as a method of the
+      // Int that stands for it.
+      for a in expr.args {
+        check_expr(a)
+      }
+      return t_int()
+    }
     if expr.callee == "or" {
       if b = expr.block {
         fail(expr.loc, "or does not take a block")
@@ -4028,7 +4134,8 @@ pub class Checker {
     if object.is_ptr {
       return dispatch_method(expr, object, expected)
     }
-    fail(expr.loc, "cannot call ${expr.callee} on ${object.show}")
+    // A method of the value inside an optional (O257): open it first.
+    fail_hint(expr.loc, "cannot call ${expr.callee} on ${object.show}", open_hint(recv, object))
     t_int()
   }
 
@@ -4239,7 +4346,7 @@ pub class Checker {
       }
       idx = disc.enum_index(label.text)
       if idx < 0 {
-        fail(label.loc, "${disc.show} has no member ${label.text}")
+        fail_hint(label.loc, "${disc.show} has no member ${label.text}", member_hint(disc, label.text, true))
         return false
       }
       label.int_val = disc.enum_vals[idx]
@@ -4932,7 +5039,7 @@ pub class Checker {
         fail(expr.loc, "join inside a pool worker")
       }
     } else {
-      fail(expr.loc, "no method ${expr.callee} on JoinHandle")
+      fail_hint(expr.loc, "no method ${expr.callee} on JoinHandle", builtin_hint(handle, expr.callee))
       if inner = handle.inner {
         return inner
       }

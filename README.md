@@ -2266,8 +2266,8 @@ fn main {
 A bare use that could mean either is refused, and nothing wins silently, not even the module's own name over an imported one:
 
 - **The same function in two modules.** A bare `value()` reports `ambiguous call to value: alpha.value and beta.value both match; write alpha.value() or beta.value()`.
-- **A function in one module, a type of the same name in another.** `ambiguous name value; qualify it`.
-- **The same type in two modules.** Write `beta.Token`. The message for the bare `Token` is still the unhelpful `unknown type Token`.
+- **A type in one module, a function of the same name in another.** A bare `Value` where a type is expected reports `Value is a type of alpha and a function of beta: write alpha.Value or beta.Value`.
+- **The same type in two modules.** A bare `Token` reports `Token is a type of both alpha and beta: write alpha.Token or beta.Token`. A module that sees only one of them (it imports one) names it bare.
 - **The same constant in two modules.** A bare `width` reports `width is a constant of both alpha and beta: write alpha.width or beta.width`.
 
 Three more rules:
@@ -3578,7 +3578,7 @@ fn main {
 
 <!-- check: stderr -->
 ```text
-error[E4001]: unknown name cuont
+error[E4001]: unknown name cuont (did you mean `count`?)
   --> main.av:3:8
 3 |   puts(cuont)
   |        ^
@@ -3586,6 +3586,9 @@ error[E4001]: unknown name cuont
 
 - The compiler recovers and keeps going, per statement: one run reports every independent mistake it can find, in every function and imported file, up to 20 errors. With several, the run ends with `error: aborting due to N previous errors`, and past the cap with `error: and M more errors (limit 20)`.
 - A syntax error names what the parser expected and what it found, in source terms: ``error[E2004]: expected `{`, found a string``.
+- A name the compiler cannot find gets at most one suggestion, and only one that is in scope there: a local, a field, a method, a constant, a function, a type, an enum member or a builtin method, the nearest by spelling (at most a third of the name's letters changed, two swapped letters counting as one change and a letter's case as half, and never the whole name; a tie goes to the name the compiler would find first, a local before a field, a method, a constant or a function, then to the first alphabetically). A wrong count of a call's arguments is not a misspelling: it is the next point.
+- A call whose arguments fit no function of that name says what it takes: `add takes 2 arguments, given 1: add(a: Int, b: Int): Int`; with several, each signature. Two that fit equally are named both: ``ambiguous call to f: f(a: Int, b: Int?): Int and f(a: Int?, b: Int): Int both match``.
+- A use of an optional as its value, and `x == nil`, say how to open it: ``cannot read field size on String?; open it with `if v = s`, `s ?? fallback` or `s?` ``.
 - The code's first digit names the phase: `E1xxx` lexer, `E2xxx` parser, `E3xxx` type resolution, `E4xxx` checker, `E5xxx` module loader, `E6xxx` macro expansion.
 
 Run-time failures are [traps](#traps).

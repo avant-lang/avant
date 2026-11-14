@@ -1,0 +1,370 @@
+import location
+import diagnostic
+import source
+import token
+import lexer
+import type
+import ast
+import resolve
+import suggest
+import typed_ir
+import checker
+
+// The checker's suggestions (Stage 29 W5c1, O257, O340): for each kind of
+// name it cannot find, the names in scope at that place, offered to the
+// one mechanism of compiler/suggest.av with their ranks (the order a
+// name is resolved in). Each returns " (did you mean `x`?)" or "".
+// Only an error that will be shown asks: past the 20 shown errors a
+// suggestion is never computed.
+
+pub fn (checker_self: Checker) hints_wanted: Bool {
+  checker_self.errors.count < 20
+}
+
+// Whether name is a name a programmer wrote (not a compiler temporary).
+pub fn hint_name_ok(name: String): Bool {
+  if name.size == 0 {
+    return false
+  }
+  c = name[0]
+  if c == 95 {
+    return name.size < 2 || name[1] != 95
+  }
+  (c >= 97 && c <= 122) || (c >= 65 && c <= 90)
+}
+
+// The locals and parameters in scope, innermost first.
+pub fn (checker_self: Checker) offer_locals(sg: Suggest, rank: Int) {
+  i = checker_self.scopes.size - 1
+  while i >= 0 {
+    for k in checker_self.scopes[i].names.keys {
+      if hint_name_ok(k) {
+        sg.offer(k, rank)
+      }
+    }
+    i -= 1
+  }
+}
+
+// The fields of ty the current module may read.
+pub fn (checker_self: Checker) offer_fields(sg: Suggest, ty: Ty, rank: Int) {
+  for f in ty.fields {
+    if !checker_self.field_hidden(ty, f.name) {
+      sg.offer(f.name, rank)
+    }
+  }
+}
+
+// The methods of the type named owner (an instance's generic methods
+// included) the current module may call; type-level ones when
+// type_level, else instance ones; only those taking no argument when
+// zero_only.
+pub fn (checker_self: Checker) offer_methods(sg: Suggest, ty: Ty, type_level: Bool, zero_only: Bool, rank: Int) {
+  for ms in checker_self.methods {
+    hit = ms.owner == ty.name
+    if !hit && ty.origin.size > 0 && ms.node.generic && ms.owner == ty.origin {
+      hit = true
+    }
+    if hit && ms.node.type_method == type_level && sg.could(ms.name) && (!zero_only || arity_ok(ms.node, 0)) {
+      if ty.mod_name.size == 0 || ms.node.owner_mod.size == 0 || ms.node.owner_mod == ty.mod_name {
+        if checker_self.method_is_visible(ms.node, checker_self.current_module) {
+          sg.offer(ms.name, rank)
+        }
+      }
+    }
+  }
+}
+
+// The functions the current module may call by their bare name.
+pub fn (checker_self: Checker) offer_functions(sg: Suggest, rank: Int) {
+  for i in 1..checker_self.functions.size {
+    sig = checker_self.functions[i]
+    if sg.could(sig.name) && checker_self.fn_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) {
+      sg.offer(sig.name, rank)
+    }
+  }
+}
+
+// The module constants the current module may name bare: its own, and
+// an import's pub ones.
+pub fn (checker_self: Checker) offer_consts(sg: Suggest, rank: Int) {
+  from = checker_self.current_module
+  for cv in checker_self.const_list {
+    if d = cv.def {
+      if d.mod_name == from || (d.vis && checker_self.imported_by(from, d.mod_name)) {
+        sg.offer(d.name, rank)
+      }
+    }
+  }
+}
+
+// The modules the current module may qualify a name with.
+pub fn (checker_self: Checker) offer_modules(sg: Suggest, rank: Int) {
+  for m in checker_self.known_mods.keys {
+    if checker_self.qualifier_ok(m, checker_self.current_module) {
+      sg.offer(m, rank)
+    }
+  }
+}
+
+// An unknown bare name: a local, a field or a method of the receiver, a
+// constant, a function, then (for a capitalized name) a type or (else) a
+// module.
+pub fn (checker_self: Checker) name_hint(name: String): String {
+  if !checker_self.hints_wanted {
+    return ""
+  }
+  sg = Suggest.new(name)
+  checker_self.offer_locals(sg, 0)
+  if st = checker_self.self_ty {
+    checker_self.offer_fields(sg, st, 1)
+    checker_self.offer_methods(sg, st, false, false, 2)
+  }
+  checker_self.offer_consts(sg, 3)
+  checker_self.offer_functions(sg, 4)
+  c = name[0]
+  if c >= 65 && c <= 90 {
+    checker_self.offer_types(sg, 5)
+  } else {
+    checker_self.offer_modules(sg, 5)
+  }
+  sg.hint
+}
+
+// The types the current module may name.
+pub fn (checker_self: Checker) offer_types(sg: Suggest, rank: Int) {
+  saved = checker_self.resolver.scope_mod
+  checker_self.resolver.scope_mod = checker_self.current_module
+  checker_self.resolver.offer_types(sg, rank)
+  checker_self.resolver.scope_mod = saved
+}
+
+// An unknown function: a function, a builtin, a local holding a function.
+pub fn (checker_self: Checker) fn_hint(name: String): String {
+  if !checker_self.hints_wanted {
+    return ""
+  }
+  sg = Suggest.new(name)
+  checker_self.offer_functions(sg, 0)
+  sg.offer_list(builtin_fn_names(), 1)
+  i = checker_self.scopes.size - 1
+  while i >= 0 {
+    sc = checker_self.scopes[i]
+    for k in sc.names.keys {
+      if id = sc.names.get(k) {
+        if hint_name_ok(k) && checker_self.resolver.ty_at(id).is_fn {
+          sg.offer(k, 2)
+        }
+      }
+    }
+    i -= 1
+  }
+  sg.hint
+}
+
+// The functions the checker itself provides (`puts`, `argv`, ...), which
+// no declaration lists.
+pub fn builtin_fn_names: String {
+  "puts argv buf_new chr env_get file_exists now_ms str_slice spawn"
+}
+
+// `x.name` on a struct or class without that field: its fields, then its
+// methods that take no argument (the field form calls them).
+pub fn (checker_self: Checker) field_hint(ty: Ty, name: String): String {
+  if !checker_self.hints_wanted {
+    return ""
+  }
+  sg = Suggest.new(name)
+  checker_self.offer_fields(sg, ty, 0)
+  checker_self.offer_methods(sg, ty, false, true, 1)
+  sg.hint
+}
+
+// `x.name(...)` on a struct, a class or an enum without that method: its
+// methods, then (no argument written) its fields.
+pub fn (checker_self: Checker) method_hint(ty: Ty, name: String, argc: Int): String {
+  if !checker_self.hints_wanted {
+    return ""
+  }
+  sg = Suggest.new(name)
+  checker_self.offer_methods(sg, ty, false, false, 0)
+  if argc == 0 {
+    checker_self.offer_fields(sg, ty, 1)
+  }
+  sg.hint
+}
+
+// `T.name` on a type without that type-level function: its type-level
+// functions, then an enum's members (the field form).
+pub fn (checker_self: Checker) type_fn_hint(ty: Ty, name: String): String {
+  if !checker_self.hints_wanted {
+    return ""
+  }
+  sg = Suggest.new(name)
+  checker_self.offer_methods(sg, ty, true, false, 0)
+  for m in ty.enum_names {
+    sg.offer(m, 1)
+  }
+  sg.hint
+}
+
+// `Tok.name` or `case name` naming no member of the enum: its members,
+// then (outside a label) its type-level functions.
+pub fn (checker_self: Checker) member_hint(ty: Ty, name: String, labels: Bool): String {
+  if !checker_self.hints_wanted {
+    return ""
+  }
+  sg = Suggest.new(name)
+  for m in ty.enum_names {
+    sg.offer(m, 0)
+  }
+  if !labels {
+    checker_self.offer_methods(sg, ty, true, false, 1)
+  }
+  sg.hint
+}
+
+// `x.name` or `x.name(...)` on a builtin receiver (O340): the builtin
+// methods and fields of its kind, then the methods the library adds to
+// it (`String.starts_with`, ...).
+pub fn (checker_self: Checker) builtin_hint(ty: Ty, name: String): String {
+  if !checker_self.hints_wanted {
+    return ""
+  }
+  sg = Suggest.new(name)
+  sg.offer_list(builtin_member_names(ty), 0)
+  owner = ty.show
+  if ty.is_array {
+    owner = "Array"
+  } else if ty.is_hash {
+    owner = "Hash"
+  }
+  for ms in checker_self.methods {
+    if (ms.owner == owner || ms.owner == ty.name) && !ms.node.type_method && sg.could(ms.name) && checker_self.method_is_visible(ms.node, checker_self.current_module) {
+      sg.offer(ms.name, 1)
+    }
+  }
+  sg.hint
+}
+
+// The methods and fields the checker itself gives a builtin receiver
+// (compiler/checker/builtins.av and check_field): kept in step with
+// those checks; tests/cases/test_names.av compiles each name on its type
+// and fails if one is not a method or field there.
+pub fn builtin_member_names(ty: Ty): String {
+  if ty.is_float {
+    return "abs exp floor sqrt to_i"
+  }
+  if ty.is_integer {
+    return "abs to_f to_i to_i32 to_u32 to_u64 wrap_i wrap_i32 wrap_u32 wrap_u64"
+  }
+  if ty.is_string {
+    return "size bytes chars fields get split strip strip_left strip_right to_f to_i to_u64"
+  }
+  if ty.is_bytes {
+    return "size chars get slice to_buf"
+  }
+  if ty.is_array {
+    return "size all any clear contains each fill get index_of max min parallel pop push reserve reverse sort sorted sum"
+  }
+  if ty.is_hash {
+    return "size clear delete each get has_key inc keys values"
+  }
+  if ty.is_buf {
+    return "size clear get push_byte push_bytes push_slice push_str starts_with to_bytes to_s"
+  }
+  if ty.is_join {
+    return "join"
+  }
+  ""
+}
+
+// `x.name(...)` where match_method found no method of that name on the
+// type named owner: the type's own suggestion, or a builtin's.
+pub fn (checker_self: Checker) method_hint_owner(owner: String, owner_mod: String, name: String, argc: Int): String {
+  if !checker_self.hints_wanted {
+    return ""
+  }
+  if owner == "String" {
+    return checker_self.builtin_hint(checker_self.t_string(), name)
+  }
+  if owner == "Bytes" {
+    return checker_self.builtin_hint(checker_self.t_bytes(), name)
+  }
+  if owner == "Buf" {
+    return checker_self.builtin_hint(checker_self.t_buf(), name)
+  }
+  if owner_mod.size > 0 {
+    if t = checker_self.resolver.get_named_in(owner_mod, owner) {
+      return checker_self.method_hint(t, name, argc)
+    }
+  }
+  if t2 = checker_self.resolver.get_named(owner) {
+    return checker_self.method_hint(t2, name, argc)
+  }
+  ""
+}
+
+// How a use of an optional is told to open it (Stage 29 W5c1, O257): the
+// forms of the README's "Opening an optional", with the name written
+// (`x` when the value is not a name).
+pub fn (checker_self: Checker) open_text(e: Expr): String {
+  n = "x"
+  if e.kind == ex_name() {
+    n = e.ident
+  }
+  "open it with `if v = ${n}`, `${n} ?? fallback` or `${n}?`"
+}
+
+// The hint for a use of a value of type ty as its value: "; open it ..."
+// when ty is an optional, else "".
+pub fn (checker_self: Checker) open_hint(e: Expr, ty: Ty): String {
+  if ty.is_nilable {
+    return "; ${checker_self.open_text(e)}"
+  }
+  ""
+}
+
+// `x == nil` or `x != nil` with x an optional: never compared, tested.
+pub fn (checker_self: Checker) nil_compare_text(e: Expr, ty: Ty): String {
+  n = "x"
+  if e.kind == ex_name() {
+    n = e.ident
+  }
+  "${n} is ${ty.show} and an optional is never compared with nil: test it with `if _ = ${n} { ... } else { ... }`, or ${checker_self.open_text(e)}"
+}
+
+// An optional argument where its value would fit: open it.
+pub fn (checker_self: Checker) arg_open_hint(arg: Expr, got: Ty, want: Ty): String {
+  if got.is_nilable && !want.is_nilable && ty_assignable(ty_without_nil(got), want) {
+    return checker_self.open_hint(arg, got)
+  }
+  ""
+}
+
+// An unknown type the checker reports itself (a struct literal, `T.new`):
+// the types the current module sees.
+pub fn (checker_self: Checker) type_hint_here(name: String): String {
+  if !checker_self.hints_wanted {
+    return ""
+  }
+  sg = Suggest.new(name)
+  checker_self.offer_types(sg, 0)
+  sg.hint
+}
+
+// "no arguments", "1 argument", "2 arguments" (O257).
+pub fn (checker_self: Checker) args_word(n: Int): String {
+  checker_self.count_word(n, "argument")
+}
+
+// "no parameters", "1 parameter", "3 parameters".
+pub fn (checker_self: Checker) count_word(n: Int, word: String): String {
+  if n == 0 {
+    return "no ${word}s"
+  }
+  if n == 1 {
+    return "1 ${word}"
+  }
+  "${n} ${word}s"
+}

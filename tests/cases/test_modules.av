@@ -47,7 +47,7 @@ fn test_fn_scopes(c: Checks, compiler: String, dir: String) {
   write_av(dir, "fown", "import fa\nfn helper: Int { 3 }\nfn main {\n  puts(helper())\n}\n")
   mod_fails(c, compiler, dir, "fown", "write fa.helper() or fown.helper()", "own and imported ambiguous, as for types")
   write_av(dir, "flam", "import fa\nimport fb\nfn main {\n  twice { |x| x + 1 }\n}\n")
-  mod_fails(c, compiler, dir, "flam", "twice: fa.twice and fb.twice both match; write fa.twice() or fb.twice()", "block argument ambiguous at the call")
+  mod_fails(c, compiler, dir, "flam", "ambiguous function value twice: fa.twice and fb.twice both match", "block argument ambiguous at the call")
   write_av(dir, "fpriv", "import fa\nfn main {\n  puts(fa.secret())\n}\n")
   mod_fails(c, compiler, dir, "fpriv", "function fa.secret is private to its module; mark it pub", "qualified call to a private function")
   write_av(dir, "fnone", "import fa\nfn main {\n  puts(fa.nothing())\n}\n")
@@ -131,7 +131,7 @@ fn test_modules(c: Checks) {
     c.expect(bare_code != 0, "bare Box exits non-zero")
     c.expect(!file_exists(bare_bin), "bare Box bin absent")
     if err = file_read(bare_log) {
-      c.expect(str_has(err, "ambiguous name Box"), "bare Box ambiguous")
+      c.expect(str_has(err, "Box is a type of both one and two: write one.Box or two.Box"), "bare Box ambiguous")
     } else {
       c.expect(false, "bare Box ambiguous")
     }
@@ -578,7 +578,7 @@ fn test_generic_modules(c: Checks, compiler: String, dir: String) {
   write_av(dir, "gown", "import gbx\nimport gsame1\n\nstruct Item {\n  w: Int\n}\n\nfn main {\n  a = Box(gown.Item).new(gown.Item { w: 5 })\n  b = Box(gsame1.Item).new(one())\n  puts(a.item.w + b.item.v)\n}\n")
   mod_runs(c, compiler, dir, "gown", "6\n", "the root's own type and an imported one of the same name")
   write_av(dir, "gamb", "import gbx\nimport gsame1\nimport gsame2\n\nfn main {\n  a = Box(Item).new(one())\n  puts(a.get.v)\n}\n")
-  mod_fails(c, compiler, dir, "gamb", "ambiguous name Item; qualify it", "an argument two imports declare is ambiguous")
+  mod_fails(c, compiler, dir, "gamb", "Item is a type of both gsame1 and gsame2: write gsame1.Item or gsame2.Item", "an argument two imports declare is ambiguous")
 }
 
 // O165's probe (Stage 29 W-FIX1b): two modules declare a class Item and

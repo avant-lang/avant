@@ -5,6 +5,7 @@ import token
 import lexer
 import type
 import ast
+import suggest
 
 pub class TypeResolver {
   pub named: Hash(String, Int)
@@ -31,8 +32,14 @@ pub class TypeResolver {
   // Set while a `fun` signature or a C layout's fields resolve: the only
   // places a C scalar type (Int8 ... Float32) may be named (Stage 29 W1b).
   pub c_scalar_ok: Bool = false
-  // Every declared type name, for "did you mean" (Stage 29 W3a).
+  // Every declared type name, for "did you mean" (Stage 29 W3a), with
+  // its module (Stage 29 W5c1).
   type_names: Array(String)
+  type_name_mods: Array(String)
+  // The module a type name is being resolved in, when the caller knows
+  // it (the checker's resolve_in_module, a type's fields): a suggestion
+  // names only a type that module sees (W5c1); "" offers every type.
+  pub scope_mod: String = ""
 
   fn initialize {
     n = Hash(String, Int).new
@@ -59,6 +66,8 @@ pub class TypeResolver {
     self.program = nil
     self.struct_inflight = []
     self.type_names = []
+    self.type_name_mods = []
+    self.scope_mod = ""
     self.inst_depth = 0
     self.failed = false
     self.err = nil
@@ -123,10 +132,6 @@ pub class TypeResolver {
 
   pub fn put_named(name: String, ty: Ty): Int {
     id = intern(ty)
-    if prev = self.named.get(name) {
-    } else {
-      self.type_names.push(name)
-    }
     self.named[name] = id
     id
   }
@@ -142,37 +147,136 @@ pub class TypeResolver {
       }
     } else {
       self.named[name] = id
-      self.type_names.push(name)
     }
+    self.type_names.push(name)
+    self.type_name_mods.push(mod_name)
     id
   }
 
   // The known type name nearest to name, as " (did you mean `String`?)",
   // or "" when none is close (Stage 29 W3a, D298: a name that is not a
   // single capital letter is no longer a type parameter).
+  // The suggestion is compiler/suggest.av's (Stage 29 W5c1): the builtin
+  // types first, then the declared ones.
   pub fn type_hint(name: String): String {
-    best = ""
-    best_d = name.size / 3
-    if best_d < 1 {
-      best_d = 1
-    }
-    best_d += 1
-    builtin = "Int Int32 UInt32 UInt64 Bool Float64 String Array Hash Buf Bytes Ptr Void Nil"
-    cands = builtin.split(" ")
-    for t in self.type_names {
-      cands.push(t)
-    }
-    for t in cands {
-      d = name_distance(name, t)
-      if d < best_d && t != name {
-        best = t
-        best_d = d
+    sg = Suggest.new(name)
+    offer_types(sg, 0)
+    sg.hint
+  }
+
+  // The builtin types (rank), then the declared ones scope_mod sees
+  // (rank + 1).
+  pub fn offer_types(sg: Suggest, rank: Int) {
+    sg.offer_list(builtin_type_names(), rank)
+    for i in 0..self.type_names.size {
+      t = self.type_names[i]
+      m = self.type_name_mods[i]
+      if sg.could(t) && (self.scope_mod.size == 0 || m.size == 0 || m == self.scope_mod || type_seen_from(m, t, self.scope_mod)) {
+        sg.offer(t, rank + 1)
       }
     }
-    if best.size == 0 {
-      return ""
+  }
+
+  // Whether module from sees module m's type name (an import's pub type).
+  pub fn type_seen_from(m: String, name: String, from: String): Bool {
+    if p = self.program {
+      for info in p.mods {
+        if info.name == from {
+          for imp in info.imports {
+            if imp == m {
+              return type_is_pub(p, m, name)
+            }
+          }
+        }
+      }
     }
-    " (did you mean `${best}`?)"
+    false
+  }
+
+  // A bare type name that types of two modules share (collide), written
+  // in module mod_name (a field's type: the checker's views do not reach
+  // it): the one such type mod_name sees, its own or an import's pub one,
+  // is pinned with its module; two are ambiguous, named both (Stage 29
+  // W5c1, O224: before, a field said "unknown type Token" even when the
+  // module saw only one Token).
+  pub fn qualify_seen(tn: TypeName, mod_name: String) {
+    for a in tn.args {
+      qualify_seen(a, mod_name)
+    }
+    for m in tn.members {
+      qualify_seen(m, mod_name)
+    }
+    if r = tn.ret {
+      qualify_seen(r, mod_name)
+    }
+    if tn.fn_type || tn.members.size > 0 || tn.mod_name.size > 0 || tn.pinned {
+      return
+    }
+    if flag = self.collide.get(tn.name) {
+      owners = seen_owners(tn.name, mod_name)
+      if owners.size > 1 {
+        what = buf_new()
+        spell = buf_new()
+        for i in 0..owners.size {
+          if i > 0 {
+            if i == owners.size - 1 {
+              what.push_str(" and ")
+              spell.push_str(" or ")
+            } else {
+              what.push_str(", ")
+              spell.push_str(", ")
+            }
+          }
+          what.push_str(owners[i])
+          spell.push_str("${owners[i]}.${tn.name}")
+        }
+        both = "both "
+        if owners.size > 2 {
+          both = ""
+        }
+        fail(tn.loc, "${tn.name} is a type of ${both}${what.to_s}: write ${spell.to_s}")
+      }
+      if owners.size == 0 {
+        // Declared only by modules this one does not see: reported once,
+        // the name then pinned to one of them so it is not reported again.
+        fail(tn.loc, "unknown type ${tn.name}")
+        if p = self.program {
+          for info in p.mods {
+            if owners.size == 0 {
+              if t = get_named_in(info.name, tn.name) {
+                owners.push(info.name)
+              }
+            }
+          }
+        }
+      }
+      if owners.size > 0 {
+        tn.mod_name = owners[0]
+      }
+    }
+  }
+
+  // The modules whose type name mod_name sees: its own, then each import
+  // that declares it pub, in import order.
+  pub fn seen_owners(name: String, mod_name: String): Array(String) {
+    out: Array(String) = []
+    if t = get_named_in(mod_name, name) {
+      out.push(mod_name)
+    }
+    if p = self.program {
+      for info in p.mods {
+        if info.name == mod_name {
+          for imp in info.imports {
+            if imp != mod_name && type_is_pub(p, imp, name) {
+              if t2 = get_named_in(imp, name) {
+                out.push(imp)
+              }
+            }
+          }
+        }
+      }
+    }
+    out
   }
 
   pub fn get_named(name: String): Ty? {
@@ -1076,6 +1180,36 @@ pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(
   ready[resolver.type_key(layout.mod_name, layout.name)] = 1
 }
 
+// Whether module m declares a pub type name (a struct, an enum, a
+// class, an interface or a C layout).
+pub fn type_is_pub(p: Program, m: String, name: String): Bool {
+  for sdef in p.structs {
+    if sdef.mod_name == m && sdef.name == name {
+      return sdef.vis
+    }
+  }
+  for cdef in p.classes {
+    if cdef.mod_name == m && cdef.name == name {
+      return cdef.vis
+    }
+  }
+  for idef in p.interfaces {
+    if idef.mod_name == m && idef.name == name {
+      return idef.vis
+    }
+  }
+  for lib_def in p.libs {
+    if lib_def.mod_name == m {
+      for lay in lib_def.layouts {
+        if lay.name == name {
+          return lib_def.vis
+        }
+      }
+    }
+  }
+  false
+}
+
 pub fn fill_type_fields(resolver: TypeResolver, mod_name: String, name: String, fields: Array(Field)) {
   resolved: Array(TyField) = []
   seen = Hash(String, Int).new
@@ -1085,7 +1219,10 @@ pub fn fill_type_fields(resolver: TypeResolver, mod_name: String, name: String, 
       return
     }
     seen[field.name] = 1
+    resolver.qualify_seen(field.type, mod_name)
+    resolver.scope_mod = mod_name
     tf = TyField.new(field.name, resolver.resolve_value(field.type))
+    resolver.scope_mod = ""
     tf.vis = field.vis
     resolved.push(tf)
   }
@@ -1226,35 +1363,3 @@ pub fn seal_one_emit(resolver: TypeResolver, mod_name: String, name: String) {
   }
 }
 
-// Edit distance between two names, a letter's case counting half a change
-// (so `string` is nearest `String`), in whole steps rounded up.
-pub fn name_distance(a: String, b: String): Int {
-  prev: Array(Int) = []
-  for j in 0..b.size + 1 {
-    prev.push(j * 2)
-  }
-  for i in 1..a.size + 1 {
-    cur: Array(Int) = []
-    cur.push(i * 2)
-    for j in 1..b.size + 1 {
-      x = a[i - 1]
-      y = b[j - 1]
-      cost = 2
-      if x == y {
-        cost = 0
-      } else if x == y + 32 || y == x + 32 {
-        cost = 1
-      }
-      best = prev[j - 1] + cost
-      if prev[j] + 2 < best {
-        best = prev[j] + 2
-      }
-      if cur[j - 1] + 2 < best {
-        best = cur[j - 1] + 2
-      }
-      cur.push(best)
-    }
-    prev = cur
-  }
-  (prev[b.size] + 1) / 2
-}

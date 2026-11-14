@@ -76,7 +76,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "unknown-generic-type", "fn main {\n  c = Channel(Int).new(1)\n}\n", "unknown type Channel")
     // Stage 29 W1a (D298): the bump constructor and nursery_reclaim are
     // gone; `T.bump(...)` is an ordinary (here undefined) type-level call.
-    expect_err(c, compiler, stamp, "bump-removed", "class Node {\n  item: Int = 0\n}\nfn main {\n  n = Node.bump(1)\n}\n", "no method bump")
+    expect_err(c, compiler, stamp, "bump-removed", "class Node {\n  item: Int = 0\n}\nfn main {\n  n = Node.bump(1)\n}\n", "Node has no type-level function bump")
     expect_err(c, compiler, stamp, "reclaim-removed", "fn main {\n  nursery_reclaim()\n}\n", "unknown function nursery_reclaim")
     // Stage 29 W1c2 (D305): std.gc's forms and their errors.
     expect_err(c, compiler, stamp, "gc-hold-import", "fn main {\n  gc.hold {\n    x = 1\n  }\n}\n", "gc.hold needs import std.gc")
@@ -190,15 +190,15 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "opaque-field", "lib sqlite3 {\n  fun open: Ptr(Sqlite3)\n}\nfn main {\n  db = sqlite3.open()\n  puts(db.x)\n}\n", "no field x on Ptr(Sqlite3)")
     expect_err(c, compiler, stamp, "clayout-dup", "lib a {\n  struct Point {\n    x: Int\n  }\n}\nlib b {\n  struct Point {\n    y: Int\n  }\n}\nfn main {\n  puts(1)\n}\n", "Point is already defined")
     expect_err(c, compiler, stamp, "clayout-both", "lib math {\n  struct Point {\n    x: Int\n  }\n}\nfn (p: Ptr(Point)) x: Int {\n  1\n}\nfn main {\n  puts(1)\n}\n", "Point.x is both a field and a method")
-    expect_err(c, compiler, stamp, "fn-ambig", "fn pick(n: Int): Int {\n  n\n}\nfn pick(s: String): Int {\n  s.size\n}\nfn main {\n  p = pick\n  puts(1)\n}\n", "ambiguous overload")
+    expect_err(c, compiler, stamp, "fn-ambig", "fn pick(n: Int): Int {\n  n\n}\nfn pick(s: String): Int {\n  s.size\n}\nfn main {\n  p = pick\n  puts(1)\n}\n", "ambiguous function value pick: pick(n: Int): Int and pick(s: String): Int both match")
     expect_err(c, compiler, stamp, "fn-method", "struct P19 {\n  x: Int\n  fn add(n: Int): Int {\n    x + n\n  }\n}\nfn main {\n  p = P19 { x: 1 }\n  f = p.add\n  puts(1)\n}\n", "methods are not values")
     expect_err(c, compiler, stamp, "fn-cfun", "lib math {\n  fun apply: fn(Int): Int\n}\nfn main {\n  puts(1)\n}\n", "C function pointers are not supported")
     expect_err(c, compiler, stamp, "fn-generic", "fn id(x: T): T {\n  x\n}\nfn main {\n  f = id\n  puts(1)\n}\n", "generic function is not a value")
     expect_err(c, compiler, stamp, "fn-lam", "fn main {\n  g = { |n| n + 1 }\n  puts(1)\n}\n", "lambda parameter needs a type")
     expect_err(c, compiler, stamp, "fn-eq", "fn main {\n  f: fn(Int): Int = { |n| n }\n  g: fn(Int): Int = { |n| n }\n  if f == g {\n    puts(1)\n  }\n}\n", "cannot compare fn values")
-    expect_err(c, compiler, stamp, "fn-lam-arity", "fn main {\n  f: fn(Int): Int = { |a, b| a }\n  puts(1)\n}\n", "lambda takes 1 arguments, got 2")
+    expect_err(c, compiler, stamp, "fn-lam-arity", "fn main {\n  f: fn(Int): Int = { |a, b| a }\n  puts(1)\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument")
     expect_err(c, compiler, stamp, "fn-lam-ty", "fn main {\n  f: fn(Int): Int = { |n: String| 1 }\n  puts(1)\n}\n", "lambda parameter is String, expected Int")
-    expect_err(c, compiler, stamp, "fn-call-arity", "fn main {\n  f: fn(Int): Int = { |n| n }\n  puts(f(1, 2))\n}\n", "takes 1 arguments, got 2")
+    expect_err(c, compiler, stamp, "fn-call-arity", "fn main {\n  f: fn(Int): Int = { |n| n }\n  puts(f(1, 2))\n}\n", "fn(Int): Int takes 1 argument, given 2")
     expect_err(c, compiler, stamp, "fn-call-ty", "fn main {\n  f: fn(Int): Int = { |n| n }\n  puts(f(\"ab\"))\n}\n", "expected Int, got String")
     expect_err(c, compiler, stamp, "fn-assign", "fn main {\n  g: fn(Int): Int = { |n| n }\n  f: fn(Int, String): Bool = g\n  puts(1)\n}\n", "expected fn(Int, String): Bool, got fn(Int): Int")
     expect_err(c, compiler, stamp, "fn-block", "fn main {\n  f: fn(Int): Int = { |n| n }\n  f(1) { |x| x }\n  puts(1)\n}\n", "function value does not take a block")
