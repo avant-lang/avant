@@ -531,6 +531,7 @@ uint64_t avant_checked_div_u64(uint64_t a, uint64_t b);
 uint64_t avant_checked_rem_u64(uint64_t a, uint64_t b);
 
 avant_int avant_chosen_threads(void);
+avant_int avant_usable_cpus(void);
 void avant_set_flag_threads(long n);
 void *avant_spawn(void *fn, void *arg);
 avant_int avant_join(void *handle);

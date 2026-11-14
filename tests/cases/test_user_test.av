@@ -565,6 +565,23 @@ fn test_user_test(c: Checks) {
     right_hi = re
     c.expect(ms >= left_hi && ms >= right_hi, "exclusive file does not overlap other files")
 
+    // O700 (Stage 29 W8Cc): --jobs defaults to the CPUs the process may
+    // use. Under `taskset -c 0` it is one, so the two files of a pair that
+    // wait up to a second for each other run one after the other: the first
+    // never sees the second start. (Before, it was the online processors,
+    // and the two ran at once.)
+    one = "${root}/onecpu"
+    mkdir_p("${one}/tests")
+    _ = file_write("${one}/avant.toml", "[package]\nname = \"onecpu\"\nversion = \"0.1.0\"\n")
+    pair = "import std.testing\nfn main: Int {\n  t = Test.new\n  listing = false\n  if v = env_get(\"AVANT_TEST_LIST\") {\n    listing = v == \"1\"\n  }\n  if !listing {\n    dummy = file_write(\"DIR/NAME.start\", \"1\")\n    args: Array(String) = []\n    args.push(\"0.05\")\n    i = 0\n    while i < 20 {\n      if file_exists(\"DIR/OTHER.start\") {\n        dummy2 = file_write(\"DIR/NAME.met\", \"met\")\n        i = 20\n      }\n      dummy3 = process_run(\"/bin/sleep\", args)\n      i = i + 1\n    }\n  }\n  t.finish\n}\n"
+    _ = file_write("${one}/tests/test_a.av", ut_sub(ut_fill_name(ut_fill(pair, one), "a"), "OTHER", "b"))
+    _ = file_write("${one}/tests/test_b.av", ut_sub(ut_fill_name(ut_fill(pair, one), "b"), "OTHER", "a"))
+    one_rc = "${root}/onecpu.rc"
+    one_sh = "#!/bin/sh\ncd ${ut_quote(one)} && /usr/bin/taskset -c 0 ${ut_quote(compiler)} test > ${ut_quote(root)}/onecpu.log 2>&1; echo $? > ${ut_quote(one_rc)}\n"
+    c.eq_int(ut_sh(one_sh, one_rc), 0, "the pair under taskset -c 0 exits 0")
+    c.expect(file_exists("${one}/a.start") && file_exists("${one}/b.start"), "both files of the pair ran")
+    c.expect(!(file_exists("${one}/a.met") && file_exists("${one}/b.met")), "under taskset -c 0 the default --jobs is 1: the pair ran one after the other")
+
     // [test] first (D136): with one job, the listed file compiles and runs
     // before the next file compiles (no phase barrier), so its ok line
     // comes before the broken file's FAIL line, though it sorts after it.
@@ -615,6 +632,18 @@ fn test_user_test(c: Checks) {
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
+}
+
+fn ut_sub(template: String, key: String, val: String): String {
+  parts = template.split(key)
+  b = buf_new()
+  for i in 0..parts.size {
+    if i > 0 {
+      b.push_str(val)
+    }
+    b.push_str(parts[i])
+  }
+  b.to_s
 }
 
 fn ut_fill_name(template: String, name: String): String {

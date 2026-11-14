@@ -2565,7 +2565,7 @@ A mutable object reaches another task only inside a `Mutex`, or as the results o
 
 ### The thread pool
 
-The pool runs at most one task per online processor at once, a number counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number; the runtime removes the flag before `argv()` sees it (it is to become `--avant-threads=N`, leaving `--threads` to programs: [Not built yet](#not-built-yet)). Tasks beyond it wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
+The pool runs at most one task per CPU the process may use at once (its affinity: all online processors, or those `taskset`, `numactl` or a container's cpuset leave it; a cgroup's CPU quota is not read), a number counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number; the runtime removes the flag before `argv()` sees it (it is to become `--avant-threads=N`, leaving `--threads` to programs: [Not built yet](#not-built-yet)). Tasks beyond it wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
 
 A task that waits (in a channel's `recv` or `send`, or for a `Mutex`) stops counting as running while it waits, so a queued task may start meanwhile: on a free pool thread, or on a new one when every thread holds a task, up to 1,024 threads (or `N`, if larger). So two consumers waiting in `recv` with `--threads 2` do not keep a producer spawned after them from starting. When the wait ends, the task goes on as soon as fewer than `N` tasks run. Past the thread limit, the runtime says so once on standard error (`avant runtime: tasks are queued while the pool's 1024 threads are all taken, …`) and the queued tasks wait for a thread to be free.
 
@@ -3317,7 +3317,7 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 
 | Flag | Meaning |
 | --- | --- |
-| `--jobs N` | how many test processes run at once (default: the online processors; `--jobs 1` runs one file at a time; `--jobs 0` is an error) |
+| `--jobs N` | how many test processes run at once (default: the CPUs the process may use, as the thread pool counts them; `--jobs 1` runs one file at a time; `--jobs 0` is an error) |
 | `--shard I/N` | run slice `I` of `N`, counted from 1; it does not launch the other slices. May be combined with `--jobs` |
 | `--junit PATH` | write a JUnit report: one case per check `std.testing` records, one per file that records none, and one for a failed file whose checks all passed |
 | `--name PATTERN` | run only the checks, `t.test` bodies and `t.parallel` bodies whose names contain `PATTERN` ([Choosing by name](#choosing-by-name)) |

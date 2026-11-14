@@ -1,8 +1,11 @@
+/* sched_getaffinity and CPU_COUNT (O700). */
+#define _GNU_SOURCE
 #include "avant_rt.h"
 #include "avant_gc.h"
 
 #include <limits.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,7 +15,7 @@
 /*
  * Bounded pool shared by spawn and .parallel (D35, Q38-A).
  * The bound is the program's chosen thread count (avant_chosen_threads:
- * --threads, else online processors): at most that many tasks run at
+ * --threads, else the CPUs the process may use): at most that many tasks run at
  * once. Workers never touch g_world. Join or .parallel from a worker
  * waits for a pool thread, so a full pool deadlocks; those calls die.
  *
@@ -200,7 +203,7 @@ static void pool_resume(void) {
 }
 
 /* The program's one chosen thread count: the --threads flag when the
- * generated startup recorded one, else the online processor count. The
+ * generated startup recorded one, else the CPUs the process may use. The
  * pool and the HTTP server's loop count both read this one value.
  * AVANT_THREADS, deprecated for one release by Q125-A, is not read. */
 static long g_flag_threads;
@@ -209,15 +212,57 @@ void avant_set_flag_threads(long n) {
   g_flag_threads = n;
 }
 
-avant_int avant_chosen_threads(void) {
-  if (g_flag_threads > 0) {
-    return (int32_t)g_flag_threads;
+/* The CPUs this process may run on (Stage 29 W8Cc, O700): its affinity
+ * mask (sched_getaffinity, CPU_COUNT), which `taskset`, a container's
+ * cpuset and numactl set; the online processor count only when the mask
+ * cannot be read. A mask past CPU_SETSIZE is read with a set sized to
+ * it. A cgroup's CPU quota (cpu.max) is not read (O700's record). The
+ * pool's bound and `avant test`'s default --jobs both read it, once. */
+avant_int avant_usable_cpus(void) {
+  cpu_set_t set;
+  CPU_ZERO(&set);
+  if (sched_getaffinity(0, sizeof(set), &set) == 0) {
+    int n = CPU_COUNT(&set);
+    if (n > 0) {
+      return n;
+    }
+  } else {
+    int max = CPU_SETSIZE * 2;
+    while (max <= 1 << 20) {
+      cpu_set_t *big = CPU_ALLOC((size_t)max);
+      size_t size = CPU_ALLOC_SIZE((size_t)max);
+      int n = 0;
+      int ok = 0;
+      if (!big) {
+        break;
+      }
+      CPU_ZERO_S(size, big);
+      if (sched_getaffinity(0, size, big) == 0) {
+        n = CPU_COUNT_S(size, big);
+        ok = 1;
+      }
+      CPU_FREE(big);
+      if (ok && n > 0) {
+        return n;
+      }
+      if (ok) {
+        break;
+      }
+      max *= 2;
+    }
   }
   long n = sysconf(_SC_NPROCESSORS_ONLN);
   if (n < 1) {
     n = 1;
   }
-  return (int32_t)n;
+  return (avant_int)n;
+}
+
+avant_int avant_chosen_threads(void) {
+  if (g_flag_threads > 0) {
+    return (int32_t)g_flag_threads;
+  }
+  return avant_usable_cpus();
 }
 
 static long pool_count(void) {
