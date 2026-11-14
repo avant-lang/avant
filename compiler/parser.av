@@ -1250,7 +1250,16 @@ pub class Parser {
         }
         self.skip_newlines
       } else if self.current.kind == tk_fn() {
-        fail(self.current.loc, "inside lib, write fun (the C ABI), not fn")
+        // D315: `fn` inside a `lib` block suggests `fun`, with the name
+        // when one follows (O366, Stage 29 W5c3).
+        shown = "fun"
+        if self.index + 1 < self.tokens.size {
+          after = self.tokens[self.index + 1]
+          if after.kind == tk_ident() {
+            shown = "fun ${after.value}"
+          }
+        }
+        fail(self.current.loc, "inside lib, write ${shown}, not fn: a lib block declares C functions, without a body; an Avant function goes outside the block")
         break
       } else if self.current.kind != tk_fun() {
         fail(self.current.loc, "inside lib, write fun, struct or enum")
