@@ -119,6 +119,8 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
   - [functions](#functions)
   - [built-in types](#built-in-types)
   - [operators](#operators)
+  - [equality and order](#equality-and-order)
+  - [printing](#printing)
   - [line breaks](#line-breaks)
   - [comments](#comments)
 - [Control flow](#control-flow):
@@ -442,7 +444,65 @@ From loosest to tightest binding; operators on one row associate left to right.
 
 As in C, `&`, `^` and `|` bind looser than comparisons: write `(x & 1) == 0`, since `x & 1 == 0` means `x & (1 == 0)` and does not compile. Assignment is a statement: `=`, `+=`, `-=`, `*=`, `/=`. There is no `++`, no ternary (`if` is an expression) and no `**`.
 
-`==` and `!=` compare numbers, `Bool`s, `String`s and `Bytes`. A struct or a class gets them from an [operator method](#operator-methods); arrays and hashes have none (compare in a loop); and an optional is never compared with `nil`: open it ([Opening an optional](#opening-an-optional)).
+### Equality and order
+
+`==` and `!=` compare two values of one type; values of different types do not compare (a compile error), except that an integer and a `Float64` compare as floats.
+
+- Numbers, `Bool`, `String`, `Bytes` and enums compare by value; a `Float64` by IEEE, so NaN equals nothing, itself included.
+- A struct compares its fields in order, each with its own `==`, unless it defines `fn ==`. A struct with a field that has no `==` (a `Hash`, a function) has none either: the error names the field.
+- A class compares by identity (the same object) unless it defines `fn ==`.
+- An array equals another when the sizes are equal and the elements are, in order.
+- An optional equals another when both are `nil` or both hold equal values. It is never compared with `nil` itself: open it ([Opening an optional](#opening-an-optional)).
+- A `Hash`, a function and a union of several types have no `==`; take a union apart with [`switch`](#unions).
+- `!=` is always `!(a == b)`.
+
+`<`, `<=`, `>` and `>=` order numbers and `String`s (byte by byte, a prefix first). A struct or a class that defines `fn <` gets `>`, `<=` and `>=` from it, and `sort`, `sorted`, `min` and `max` of its arrays use it.
+
+```avant
+struct Point {
+  x: Int
+  y: Int
+}
+
+struct Version {
+  major: Int
+  minor: Int
+
+  fn <(other: Version): Bool {
+    major < other.major || (major == other.major && minor < other.minor)
+  }
+}
+
+fn main {
+  p = Point { x: 1, y: 2 }
+  puts(p == Point { x: 1, y: 2 })        // => true
+  puts([p] != [Point { x: 2, y: 1 }])     // => true
+  puts("apple" < "banana")               // => true
+  vs = [Version { major: 1, minor: 4 }, Version { major: 1, minor: 2 }]
+  puts(vs[0] >= vs[1])                    // => true
+  if v = vs.min {
+    puts("${v.major}.${v.minor}")         // => 1.2
+  }
+}
+```
+
+### Printing
+
+Every scalar has one text, the same in `puts`, in interpolation and from `to_s`: integers in decimal, a `Float64` as the shortest text that reads back as the same number ([Floats](#floats)), `true` and `false`, a `String` as itself. `x.to_s` is exactly `"${x}"`. An enum prints its member's name, an error its text, and a union its member; an optional is opened first.
+
+```avant
+fn size_or_word(n: Int): Int | String {
+  if n < 10 {
+    return n
+  }
+  "many"
+}
+
+fn main {
+  puts(42.to_s + "/" + 2.5.to_s)                       // => 42/2.5
+  puts("${size_or_word(3)} ${size_or_word(30)}")      // => 3 many
+}
+```
 
 ### Line breaks
 
@@ -1008,7 +1068,7 @@ fn main {
 
 ### String literals
 
-- `"${expr}"` interpolates integers, floats, `Bool`s, strings and [errors](#declaring-an-error). A `$` that is not followed by `{` is a dollar sign: `"it costs $5"`.
+- `"${expr}"` interpolates integers, floats, `Bool`s, strings, enums, [errors](#declaring-an-error) and unions of them ([Printing](#printing)). A `$` that is not followed by `{` is a dollar sign: `"it costs $5"`.
 - Escapes: `\n`, `\t`, `\r`, `\\`, `\"`, `\$`, `\0`, `\xNN` (one byte, two hex digits, which may make a string that is not UTF-8, as bytes from a file can) and `\u{N}` (a Unicode code point, one to six hex digits, stored as its UTF-8 bytes: `"caf\u{e9}"`). Any other escape is a compile error (there is no `\e`: write `\x1b`).
 - A raw string `r"..."` has no escapes and no interpolation, for paths and patterns: in `r"C:\tmp"` the backslash is a character.
 - A literal is one line. There are no multi-line or backtick strings. A byte is a [character literal](#literals), `'A'`, or its number, `65`.

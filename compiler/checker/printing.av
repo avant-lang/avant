@@ -1,0 +1,86 @@
+// Printing: one text for every
+// scalar, the one interpolation and puts print.
+//
+//   - `x.to_s` of an integer, a Float64, a Bool or a String is the
+//     expression "${x}": the checker rewrites the call into that
+//     interpolation, so the two can never differ;
+//   - a union of printable members (integers, Float64, Bool, String, an
+//     enum, a type marked Error) prints its member: "${u}" becomes a
+//     switch over the members, each arm printing its own value, built
+//     and checked once here; a union that holds nil is an optional, and
+//     an optional is opened before it is printed (as == does).
+
+import location
+import type
+import ast
+import typed_ir
+import token
+import checker.names
+import checker
+
+// `recv.to_s` on a scalar: the interpolation "${recv}", checked already
+// (the receiver was), written into expr in place.
+pub fn (checker_self: Checker) scalar_to_s(expr: Expr, object: Ty): Ty {
+  if b = expr.block {
+    checker_self.fail(expr.loc, "${object.show}.to_s does not take a block")
+    return checker_self.t_string()
+  }
+  if expr.args.size != 0 {
+    checker_self.fail(expr.loc, "${object.show}.to_s takes no arguments")
+    return checker_self.t_string()
+  }
+  if recv = expr.receiver {
+    part = InterpPart.new
+    part.expr = recv
+    parts: Array(InterpPart) = []
+    parts.push(part)
+    expr.kind = ex_interp()
+    expr.parts = parts
+    expr.receiver = nil
+    expr.callee = ""
+    expr.method_call = false
+  }
+  checker_self.t_string()
+}
+
+// Whether a union's member prints by interpolation.
+pub fn text_member_ok(m: Ty): Bool {
+  m.is_integer || m.is_float || m.is_bool || m.is_string || m.is_enum || m.error_mark
+}
+
+// The text of a union value inner (checked, of type ty): the switch
+// `switch inner { case __avant_v: M { "${__avant_v}" } ... }`, checked
+// with ty as its discriminant (inner is not checked again); nil, with an
+// error given, when a member does not print.
+pub fn (checker_self: Checker) union_text(inner: Expr, ty: Ty): Expr? {
+  if ty.includes_nil {
+    checker_self.fail(inner.loc, "cannot interpolate ${ty.show}: it holds nil; ${checker_self.open_text(inner)}")
+    return nil
+  }
+  for m in ty.members {
+    if !text_member_ok(m) {
+      checker_self.fail(inner.loc, "cannot interpolate ${ty.show}: its member ${m.show} has no text")
+      return nil
+    }
+  }
+  sw = Expr.new(ex_switch(), inner.loc)
+  sw.cond = inner
+  for m2 in ty.members {
+    label = CaseLabel.new(lb_type(), inner.loc)
+    label.tname = ty_to_type_name(m2, inner.loc)
+    label.bind = "__avant_v"
+    arm = SwitchCase.new(inner.loc)
+    arm.labels.push(label)
+    v = Expr.new(ex_name(), inner.loc)
+    v.ident = "__avant_v"
+    part = InterpPart.new
+    part.expr = v
+    text = Expr.new(ex_interp(), inner.loc)
+    text.parts.push(part)
+    arm.body.push(stmt_expr(inner.loc, text))
+    sw.cases.push(arm)
+  }
+  checker_self.switch_pre = ty
+  checker_self.check_expr_as(sw, checker_self.t_string())
+  sw
+}

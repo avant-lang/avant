@@ -76,6 +76,12 @@ fn cases: Array(RCase) {
   // String order
   xs.push(accepted("string-order", "fn main {\n  puts(\"\${\"a\" < \"b\"} \${\"b\" < \"a\"} \${\"ab\" < \"abc\"} \${\"abc\" <= \"abc\"} \${\"B\" < \"a\"} \${\"z\" >= \"a\"} \${\"\" < \"a\"}\")\n}\n", "true false true true true true true\n"))
   xs.push(refused("string-minus", "fn main {\n  puts(\"a\" - \"b\")\n}\n", "unsupported operator on String (+ joins two Strings; ==, !=, <, <=, > and >= compare them)", "2:12"))
+  // Printing
+  xs.push(accepted("to-s", "fn main {\n  n: Int32 = -5\n  u: UInt64 = 18446744073709551615u64\n  puts(3.to_s + n.to_s + u.to_s() + 2.5.to_s + true.to_s + \"s\".to_s)\n}\n", "3-5184467440737095516152.5trues\n"))
+  xs.push(refused("to-s-args", "fn main {\n  puts(3.to_s(2))\n}\n", "Int.to_s takes no arguments", "2:9"))
+  xs.push(accepted("union-text", "class Oops: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn f(n: Int): Int | String | Oops {\n  if n == 0 {\n    return 5\n  }\n  if n == 1 {\n    return \"five\"\n  }\n  Oops.new(\"no\")\n}\nfn main {\n  puts(\"\${f(0)} \${f(1)} \${f(2)}\")\n}\n", "5 five no\n"))
+  xs.push(refused("union-text-struct", "${pt}fn f(n: Int): Int | P {\n  if n > 0 {\n    return n\n  }\n  P { x: 1, y: 2 }\n}\nfn main {\n  puts(\"\${f(1)}\")\n}\n", "cannot interpolate Int | P: its member P has no text", "12:11"))
+  xs.push(refused("optional-text", "fn main {\n  a: Int? = 1\n  puts(\"\${a}\")\n}\n", "cannot interpolate Int?: it holds nil; open it with `if v = a`", "3:11"))
   // Type names
   xs.push(refused("struct-lower", "struct value {\n  n: Int\n}\nfn main { }\n", "the name of struct value is a type name, written with a capital first letter: write Value", "1:1"))
   xs.push(refused("class-lower", "class http_req {\n  n: Int = 0\n}\nfn main { }\n", "the name of class http_req is a type name, written with a capital first letter: write HttpReq", "1:1"))
