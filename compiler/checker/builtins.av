@@ -678,6 +678,15 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
       return ty_array(checker_self.t_int())
     }
     if e = array.inner {
+      // Each body gets its element, so an element type that cannot cross
+      // to another task (a class, a Hash, a fn, an Array of those) would
+      // put one mutable object in two bodies when the array holds it
+      // twice, or two elements reach it: the
+      // receiver obeys spawn's and send's rule for what crosses.
+      if !checker_self.copyable_for_spawn(e) {
+        checker_self.fail(expr.loc, ".parallel cannot run over an ${array.show}: its elements (${e.show}) cannot cross to another task, and two bodies would share one object when the array holds it twice; a mutable object reaches another task only inside a Mutex")
+        return ty_array(checker_self.t_int())
+      }
       checker_self.push_scope
       checker_self.bind(b.params[0], e)
       checker_self.in_task += 1

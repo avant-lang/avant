@@ -182,6 +182,10 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "parallel-array-class", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  xs = [Box.new]\n  ys = [1, 2].parallel { |i|\n    b = xs[0]\n    b.n += i\n    i\n  }\n  puts(ys.size)\n}\n", "its elements (Box) cannot cross to another task")
     // A method that changes its receiver, called on
     // an element of a captured Array, writes the array's buffer.
+    // `.parallel` over an Array of a class gives two
+    // bodies one object when the array holds it twice.
+    expect_err(c, compiler, stamp, "parallel-receiver-class", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  b = Box.new\n  xs = [b, b]\n  rs = xs.parallel { |x|\n    x.n += 1\n    0\n  }\n  puts(rs.size)\n}\n", ".parallel cannot run over an Array(Box): its elements (Box) cannot cross to another task")
+    expect_err(c, compiler, stamp, "parallel-receiver-nested-class", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  xs = [[Box.new]]\n  rs = xs.parallel { |x| x.size }\n  puts(rs.size)\n}\n", "its elements (Array(Box)) cannot cross to another task")
     expect_err(c, compiler, stamp, "spawn-element-method-task", "struct P {\n  n: Int\n  fn bump {\n    self.n += 1\n  }\n}\n\nfn main {\n  xs = [P { n: 1 }]\n  h = spawn {\n    xs[0].bump\n    1\n  }\n  puts(h.join)\n}\n", "spawn cannot mutate captured Array xs: P.bump changes its receiver, an element of xs")
     expect_err(c, compiler, stamp, "spawn-element-method-sender", "struct P {\n  n: Int\n  fn bump {\n    self.n += 1\n  }\n}\n\nfn main {\n  xs = [P { n: 1 }]\n  h = spawn { xs[0].n }\n  xs[0].bump\n  puts(h.join)\n}\n", "cannot mutate xs while a spawn using it is running: P.bump changes its receiver")
     expect_err(c, compiler, stamp, "spawn-element-method-deep", "struct Pos {\n  x: Int\n  fn move(d: Int) {\n    self.x += d\n  }\n}\n\nstruct P {\n  pos: Pos\n  fn shift {\n    pos.move(1)\n  }\n}\n\nfn main {\n  xs = [P { pos: Pos { x: 0 } }]\n  h = spawn {\n    xs[0].shift\n    xs[0].pos.move(1)\n    1\n  }\n  puts(h.join)\n}\n", "P.shift changes its receiver, an element of xs")
