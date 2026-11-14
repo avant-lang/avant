@@ -266,12 +266,21 @@ pub class Expr {
   pub is_default: Bool = false
   pub mod_name: String = ""
   pub splice: Expr? = nil
+  // A comparison the checker resolved to a function: op_fn() when `resolved` is a function of both operands (an
+  // array's or an optional's ==) rather than the left's method; op_swap()
+  // when the method is the right operand's (`a > b` as `b < a`);
+  // op_not() when the result is negated (`!=` as `!(a == b)`).
+  pub op_form: Int = 0
 
   fn initialize(kind: Int, loc: Location) {
     self.kind = kind
     self.loc = loc
   }
 }
+
+pub fn op_fn: Int { 1 }
+pub fn op_swap: Int { 2 }
+pub fn op_not: Int { 4 }
 
 pub class Stmt {
   pub kind: Int = 0
@@ -942,6 +951,7 @@ pub fn clone_expr(e: Expr): Expr {
   out.fn_ref = e.fn_ref
   out.is_default = e.is_default
   out.resolved = e.resolved
+  out.op_form = e.op_form
   out.spawn_thunk = e.spawn_thunk
   if sp = e.splice {
     out.splice = clone_expr(sp)

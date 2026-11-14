@@ -311,6 +311,10 @@ pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
 }
 
 pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
+  // An element type with its own <.
+  if ordered = checker_self.user_order_call(expr, array) {
+    return ordered
+  }
   if expr.callee == "push" {
     if b = expr.block {
       checker_self.fail(expr.loc, "push does not take a block")

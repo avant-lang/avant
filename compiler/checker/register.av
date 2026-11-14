@@ -739,6 +739,13 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
     checker_self.current_module = saved_mod
     return
   }
+  if fnn.name == "!=" {
+    // != is always !(a == b), never its own method.
+    checker_self.fail(fnn.loc, "!= is always !(a == b): define == only")
+    checker_self.resolver.clear_tparams
+    checker_self.current_module = saved_mod
+    return
+  }
   if fnn.name == "new" {
     checker_self.fail(fnn.loc, "new is reserved; write initialize")
     checker_self.resolver.clear_tparams

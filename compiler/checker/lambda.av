@@ -10,6 +10,7 @@ import parser
 import loader
 import typed_ir
 import checker.names
+import checker.equality
 import checker
 
 pub fn (checker_self: Checker) fn_compatible(got: Ty, want: Ty): Bool {
@@ -1287,6 +1288,14 @@ pub fn (checker_self: Checker) count_witnesses(concrete: Ty, idef: InterfaceDef,
     if !checker_self.load_iface_method(idef, method, arg_tys) {
       checker_self.witness_note = "${concrete.show} does not implement ${label}"
       return 0
+    }
+    // A struct's derived == witnesses an
+    // interface's ==, as a written one would.
+    if method.name == "==" && concrete.is_struct && !checker_self.user_op(concrete, "==") {
+      seen: Array(String) = []
+      if checker_self.eq_missing(concrete, seen).size == 0 {
+        checker_self.derive_eq_method(concrete, idef.loc)
+      }
     }
     method_hits = 0
     method_note = ""

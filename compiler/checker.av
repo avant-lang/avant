@@ -1869,6 +1869,10 @@ pub class Checker {
           expr.method_call = true
           return t_void()
         }
+        if (expr.ident == "sort" || expr.ident == "sorted" || expr.ident == "min" || expr.ident == "max") && user_ordered(object) {
+          // By the element's own <: as calls.
+          return field_as_call(expr, object)
+        }
         if expr.ident == "sort" {
           expr.method_call = true
           if e = object.inner, !is_ordered_ty(e) {
@@ -3120,23 +3124,12 @@ pub class Checker {
         left = check_expr(l)
       }
       opname = binary_op_method_name(op)
+      expr.op_form = 0
       if opname.size > 0 && left.is_agg {
-        has_op = false
-        for ms in self.methods {
-          if ms.owner == left.name && ms.name == opname {
-            has_op = true
-          }
-        }
-        if has_op {
-          right = check_expr(r)
-          arg_tys: Array(Ty) = []
-          arg_tys.push(right)
-          none: Ty? = nil
-          if sig = match_method(left.name, opname, arg_tys, none, expr.loc, left.name, left.mod_name, no_int_literals()) {
-            expr.resolved = sig.node.emit_name
-            return sig.ret
-          }
-          return t_int()
+        // The type's operator method, or a derived comparison
+        // (checker/equality.av).
+        if t = check_agg_compare(expr, r, op, opname, left) {
+          return t
         }
       }
       right_has = false
@@ -3321,10 +3314,35 @@ pub class Checker {
         fail(expr.loc, nil_compare_text(r, right))
         return t_bool()
       }
+      // Two arrays, or two optionals, of one type (checker/equality.av).
+      if left.same_as(right) && (left.is_array || left.is_nilable) {
+        seen: Array(String) = []
+        missing = eq_missing(left, seen)
+        if missing.size > 0 {
+          fail(expr.loc, eq_refusal(left, missing))
+        } else {
+          eq_by_function(expr, left)
+        }
+        return t_bool()
+      }
     }
     hint = open_hint(l, left)
     if hint.size == 0 {
       hint = open_hint(r, right)
+    }
+    // A comparison of types that do not compare (the old text said
+    // "numeric operands" for every type).
+    if eq_is_compare(op) {
+      opname = fn_op_name(op)
+      if !left.same_as(right) {
+        fail_hint(expr.loc, "cannot compare ${left.show} with ${right.show}: ${opname} compares two values of one type", hint)
+      } else if op == tk_eq_eq() || op == tk_not_eq() {
+        seen2: Array(String) = []
+        fail_hint(expr.loc, eq_refusal(left, eq_missing(left, seen2)), hint)
+      } else {
+        fail_hint(expr.loc, "${left.show} has no order: <, <=, > and >= compare numbers and Strings", hint)
+      }
+      return t_bool()
     }
     fail_hint(expr.loc, "binary operator expects numeric operands, got ${left.show} and ${right.show}", hint)
     return t_int()

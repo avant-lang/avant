@@ -1,0 +1,164 @@
+// Equality and order beyond the scalars: a struct by its fields, a class by identity, an array by its
+// elements, an optional by nil or its value; != as !(==); >, <= and >=
+// from a user <; a derived == as an Eq(T) witness; min, max, sort and
+// sorted by a user <.
+
+struct Point {
+  x: Int
+  y: Int
+}
+
+struct Line {
+  a: Point
+  b: Point
+  tag: String
+}
+
+struct Sample {
+  v: Float64
+}
+
+struct Empty {
+}
+
+class Node {
+  n: Int
+
+  fn initialize(n: Int) {
+    self.n = n
+  }
+}
+
+class Named {
+  name: String
+
+  fn initialize(name: String) {
+    self.name = name
+  }
+
+  fn ==(other: Named): Bool {
+    name == other.name
+  }
+}
+
+struct Money {
+  c: Int
+
+  fn <(o: Money): Bool {
+    c < o.c
+  }
+}
+
+struct Tree {
+  label: String
+  kids: Array(Tree)
+}
+
+interface Eq(T) {
+  fn ==(other: T): Bool
+}
+
+struct Id: Eq(Id) {
+  n: Int
+}
+
+fn count_of(xs: Array(T), wanted: T: Eq(T)): Int {
+  total = 0
+  for x in xs {
+    if x == wanted {
+      total += 1
+    }
+  }
+  total
+}
+
+fn find(xs: Array(Point), p: Point): Int? {
+  for i in 0..xs.size {
+    if xs[i] == p {
+      return i
+    }
+  }
+  nil
+}
+
+fn main {
+  p = Point { x: 1, y: 2 }
+  q = Point { x: 1, y: 2 }
+  r = Point { x: 2, y: 1 }
+  puts(p == q)
+  puts(p != q)
+  puts(p == r)
+  puts(p != r)
+  l1 = Line { a: p, b: r, tag: "l" }
+  l2 = Line { a: q, b: r, tag: "l" }
+  l3 = Line { a: q, b: r, tag: "m" }
+  puts(l1 == l2)
+  puts(l1 == l3)
+  puts(Empty { } == Empty { })
+  nan = 0.0 / 0.0
+  s = Sample { v: nan }
+  puts(s == s)
+  puts(Sample { v: 0.0 } == Sample { v: -0.0 })
+  a = Node.new(1)
+  b = Node.new(1)
+  c = a
+  puts(a == b)
+  puts(a == c)
+  puts(a != b)
+  puts(Named.new("x") == Named.new("x"))
+  puts(Named.new("x") != Named.new("y"))
+  puts([1, 2, 3] == [1, 2, 3])
+  puts([1, 2, 3] == [1, 2])
+  puts([1, 2, 3] != [1, 2, 4])
+  puts(["a", "b"] == ["a", "b"])
+  puts([[1], [2, 3]] == [[1], [2, 3]])
+  puts([p, r] == [q, r])
+  puts([nan] == [nan])
+  e1: Array(Int) = []
+  e2: Array(Int) = []
+  puts(e1 == e2)
+  o1: Int? = 3
+  o2: Int? = 3
+  o3: Int? = nil
+  o4: Int? = nil
+  puts(o1 == o2)
+  puts(o1 == o3)
+  puts(o3 == o4)
+  puts(o3 != o1)
+  n1: Node? = a
+  n2: Node? = c
+  puts(n1 == n2)
+  t1 = Tree { label: "r", kids: [Tree { label: "k", kids: [] }] }
+  t2 = Tree { label: "r", kids: [Tree { label: "k", kids: [] }] }
+  t3 = Tree { label: "r", kids: [] }
+  puts(t1 == t2)
+  puts(t1 == t3)
+  ids = [Id { n: 1 }, Id { n: 2 }, Id { n: 1 }]
+  puts(count_of(ids, Id { n: 1 }))
+  puts(find([r, p], q) ?? -1)
+  m1 = Money { c: 5 }
+  m2 = Money { c: 7 }
+  puts(m1 < m2)
+  puts(m1 > m2)
+  puts(m1 <= m2)
+  puts(m1 >= m2)
+  puts(m1 <= Money { c: 5 })
+  puts(m1 >= Money { c: 5 })
+  ms = [Money { c: 3 }, Money { c: 1 }, Money { c: 2 }]
+  if lo = ms.min {
+    puts(lo.c)
+  }
+  if hi = ms.max() {
+    puts(hi.c)
+  }
+  none: Array(Money) = []
+  if _ = none.min {
+    puts("some")
+  } else {
+    puts("none")
+  }
+  sorted = ms.sorted
+  puts("${sorted[0].c} ${sorted[1].c} ${sorted[2].c}")
+  ms.sort
+  puts("${ms[0].c} ${ms[1].c} ${ms[2].c}")
+}

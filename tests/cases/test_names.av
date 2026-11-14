@@ -169,7 +169,7 @@ fn cases: Array(NCase) {
   xs.push(first("open-method", "fn main {\n  s: String? = \"a,b\"\n  puts(s.split(\",\").size)\n}\n", "cannot call split on String?; open it with `if v = s`, `s ?? fallback` or `s?`", "3:9"))
   xs.push(only("open-arith", "fn main {\n  x: Int? = 2\n  puts(x + 1)\n}\n", "binary operator expects numeric operands, got Int? and Int; open it with `if v = x`, `x ?? fallback` or `x?`", "3:10"))
   xs.push(only("open-arg", "fn twice(n: Int): Int {\n  n * 2\n}\nfn main {\n  h = Hash(String, Int).new\n  puts(twice(h[\"a\"]))\n}\n", "argument 1 of twice is Int?, expected Int; open it with `if v = x`, `x ?? fallback` or `x?`", "6:15"))
-  xs.push(without("open-not-optional", "fn main {\n  puts(5 == nil)\n}\n", "binary operator expects numeric operands, got Int and Nil", "2:10", "open it"))
+  xs.push(without("open-not-optional", "fn main {\n  puts(5 == nil)\n}\n", "cannot compare Int with Nil: == compares two values of one type", "2:10", "open it"))
   // O345: an ambiguous function value is not told to call.
   fva: Array(String) = ["ma", "pub fn helper(a: Int): Int {\n  a\n}\n", "mb", "pub fn helper(a: Int): Int {\n  a + 1\n}\n"]
   xs.push(with_mods(without("value-two-modules", "import ma\nimport mb\nfn main {\n  f = helper\n  puts(1)\n}\n", "ambiguous function value helper: ma.helper and mb.helper both match, and a function value cannot be qualified yet; write a lambda that calls the one you mean, as { |a: Int| ma.helper(a) }", "4:7", "helper()"), fva))

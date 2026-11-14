@@ -50,6 +50,29 @@ fn exits(tag: String, src: String, out: String, status: Int, err: String): RCase
 
 fn cases: Array(RCase) {
   xs: Array(RCase) = []
+  // == and the order
+  pt = "struct P {\n  x: Int\n  y: Int\n}\n"
+  xs.push(accepted("struct-eq", "${pt}fn main {\n  a = P { x: 1, y: 2 }\n  puts(a == P { x: 1, y: 2 })\n  puts(a != P { x: 1, y: 3 })\n}\n", "true\ntrue\n"))
+  xs.push(refused("struct-hash-field", "struct Bag {\n  n: Int\n  h: Hash(String, Int)\n}\nfn main {\n  a = Bag { n: 1, h: Hash(String, Int).new }\n  puts(a == a)\n}\n", "cannot compare Bag: Hash(String, Int) (the field Bag.h) has no ==; define fn == on Bag", "7:10"))
+  xs.push(refused("struct-fn-field", "struct Cb {\n  f: fn(Int): Int\n}\nfn same(n: Int): Int {\n  n\n}\nfn main {\n  c = Cb { f: same }\n  puts(c == c)\n}\n", "cannot compare Cb: fn(Int): Int (the field Cb.f) has no ==; define fn == on Cb", "9:10"))
+  xs.push(refused("struct-other-type", "${pt}fn main {\n  a = P { x: 1, y: 2 }\n  puts(a == 1)\n}\n", "cannot compare P with Int: == compares two values of one type", "7:10"))
+  xs.push(refused("struct-no-order", "${pt}fn main {\n  a = P { x: 1, y: 2 }\n  puts(a < a)\n}\n", "P has no order: define fn < on it (>, <= and >= derive from <)", "7:10"))
+  xs.push(refused("user-not-eq", "struct M {\n  c: Int\n  fn !=(o: M): Bool { c != o.c }\n}\nfn main { }\n", "!= is always !(a == b): define == only", "3:3"))
+  xs.push(accepted("derived-order", "struct M {\n  c: Int\n  fn <(o: M): Bool { c < o.c }\n}\nfn main {\n  a = M { c: 1 }\n  b = M { c: 2 }\n  puts(\"\${a < b} \${a > b} \${a <= b} \${a >= b} \${b <= b} \${b >= b}\")\n}\n", "true false true false true true\n"))
+  xs.push(accepted("class-identity", "class C {\n  n: Int = 0\n}\nfn main {\n  a = C.new\n  b = C.new\n  c = a\n  puts(\"\${a == b} \${a == c} \${a != b}\")\n}\n", "false true true\n"))
+  xs.push(accepted("array-eq", "fn main {\n  puts([1, 2] == [1, 2])\n  puts([1, 2] != [2, 1])\n  puts([\"a\"] == [\"b\"])\n  puts([[1], [2]] == [[1], [2]])\n  puts([0.0 / 0.0] == [0.0 / 0.0])\n}\n", "true\ntrue\nfalse\ntrue\nfalse\n"))
+  xs.push(refused("array-hash-elems", "fn main {\n  a = [Hash(String, Int).new]\n  puts(a == a)\n}\n", "cannot compare Array(Hash(String, Int)): Hash(String, Int) has no ==", "3:10"))
+  xs.push(refused("array-order", "fn main {\n  puts([1] < [2])\n}\n", "Array(Int) has no order: <, <=, > and >= compare numbers and Strings", "2:12"))
+  xs.push(accepted("optional-eq", "fn main {\n  a: Int? = 1\n  b: Int? = 1\n  n: Int? = nil\n  puts(\"\${a == b} \${a == n} \${n == n} \${n != a}\")\n}\n", "true false true true\n"))
+  xs.push(refused("optional-with-value", "fn main {\n  a: Int? = 1\n  puts(a == 1)\n}\n", "cannot compare Int? with Int: == compares two values of one type; open it with", "3:10"))
+  xs.push(refused("optional-with-nil", "fn main {\n  a: Int? = 1\n  puts(a == nil)\n}\n", "a is Int? and an optional is never compared with nil", "3:10"))
+  xs.push(refused("union-eq", "fn f(n: Int): Int | String {\n  if n > 0 {\n    return n\n  }\n  \"x\"\n}\nfn main {\n  puts(f(1) == f(2))\n}\n", "Int | String has no ==: take it apart with switch and compare its members", "8:13"))
+  xs.push(refused("hash-eq", "fn main {\n  h = Hash(String, Int).new\n  puts(h == h)\n}\n", "Hash(String, Int) has no ==", "3:10"))
+  xs.push(refused("string-int", "fn main {\n  puts(\"a\" == 1)\n}\n", "cannot compare String with Int: == compares two values of one type", "2:12"))
+  xs.push(refused("bool-int", "fn main {\n  puts(true == 1)\n}\n", "cannot compare Bool with Int: == compares two values of one type", "2:13"))
+  xs.push(accepted("eq-witness", "interface Eq(T) {\n  fn ==(other: T): Bool\n}\nstruct Id: Eq(Id) {\n  n: Int\n}\nfn same(a: T, b: T: Eq(T)): Bool {\n  a == b\n}\nfn main {\n  puts(same(Id { n: 1 }, Id { n: 1 }))\n  puts(same(Id { n: 1 }, Id { n: 2 }))\n}\n", "true\nfalse\n"))
+  xs.push(refused("eq-witness-missing", "interface Eq(T) {\n  fn ==(other: T): Bool\n}\nstruct Bag: Eq(Bag) {\n  h: Hash(String, Int)\n}\nfn main { }\n", "Bag does not implement Eq(Bag): missing ==", "4:1"))
+  xs.push(accepted("min-max-sort", "struct M {\n  c: Int\n  fn <(o: M): Bool { c < o.c }\n}\nfn main {\n  ms = [M { c: 3 }, M { c: 1 }, M { c: 2 }]\n  lo = ms.min ?? M { c: 0 }\n  hi = ms.max() ?? M { c: 0 }\n  s = ms.sorted\n  ms.sort()\n  puts(\"\${lo.c} \${hi.c} \${s[0].c}\${s[1].c}\${s[2].c} \${ms[0].c}\${ms[2].c}\")\n}\n", "1 3 123 13\n"))
   // Type names
   xs.push(refused("struct-lower", "struct value {\n  n: Int\n}\nfn main { }\n", "the name of struct value is a type name, written with a capital first letter: write Value", "1:1"))
   xs.push(refused("class-lower", "class http_req {\n  n: Int = 0\n}\nfn main { }\n", "the name of class http_req is a type name, written with a capital first letter: write HttpReq", "1:1"))
@@ -92,10 +115,32 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   }
 }
 
+// The generated code: nothing written for == unless asked; a derived ==
+// written once.
+fn check_ll(c: Checks, compiler: String, dir: String) {
+  plain = "${dir}/eq-ll-plain.av"
+  _ = file_write(plain, "fn main {\n  n = 3\n  puts(n == 3)\n  puts(n)\n  w: Int32 = 2\n  puts(w)\n  puts(\"a\" == \"b\")\n}\n")
+  c.eq_int(emit_ll(compiler, plain, "${dir}/eq-ll-plain.ll", "${dir}/eq-ll-plain.log"), 0, "ll-plain: emits")
+  ll = log_text("${dir}/eq-ll-plain.ll")
+  c.expect(!str_has(ll, "__avant_eq"), "ll-plain: no written ==")
+  twice = "${dir}/eq-ll-twice.av"
+  _ = file_write(twice, "struct P {\n  x: Int\n}\nfn main {\n  a = P { x: 1 }\n  puts(a == a)\n  puts(a != a)\n  puts([a] == [a])\n}\n")
+  c.eq_int(emit_ll(compiler, twice, "${dir}/eq-ll-twice.ll", "${dir}/eq-ll-twice.log"), 0, "ll-twice: emits")
+  ll2 = log_text("${dir}/eq-ll-twice.ll")
+  defs = 0
+  for line in ll2.split("\n") {
+    if str_has(line, "define ") && str_has(line, "P.==") {
+      defs += 1
+    }
+  }
+  c.eq_int(defs, 1, "ll-twice: one derived == for P")
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_equality.av")
   if compiler = env_get("AVANT_COMPILER") {
     run_cases(c, compiler, scratch_dir(), cases())
+    check_ll(c, compiler, scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

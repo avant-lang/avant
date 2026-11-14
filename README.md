@@ -1508,7 +1508,7 @@ fn main {
 
 ### Operator methods
 
-An operator is a method whose name is the operator, declared like any other. The operators that can be defined are `+`, `-`, `*`, `/`, `%`, `&+`, `&-`, `&*`, `==`, `!=`, `<`, `<=`, `>` and `>=`.
+An operator is a method whose name is the operator, declared like any other. The operators that can be defined are `+`, `-`, `*`, `/`, `%`, `&+`, `&-`, `&*`, `==`, `<`, `<=`, `>` and `>=`. `!=` is always `!(a == b)`, and a type that defines `<` gets `>`, `<=` and `>=` from it ([Equality and order](#equality-and-order)); a struct without `fn ==` compares its fields.
 
 ```avant
 struct Vec2 {
@@ -3665,7 +3665,7 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 | `print` (no newline), writing to stderr, `exit(status)` | decided | `puts`; `main`'s result |
 | Reading standard input | planned | `file_read("/dev/stdin")` |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
-| `==` for structs without writing it; `==` on arrays and hashes | planned | [operator methods](#operator-methods); a loop |
+| `==` on hashes | planned | a loop |
 | A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
 | A `spawn` result other than `Int`; `for v in ch` over a channel | decided | end the block with an `Int`; `while v = ch.recv { ... }` |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |
