@@ -151,9 +151,9 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   _ = file_write(rw, "fn f(c: Int): Int {\n  switch c {\n    case 'a'..='c' { 1 }\n    case 100..=100000 { 2 }\n    else { 0 }\n  }\n}\nfn main {\n  puts(f(argv().size))\n}\n")
   c.eq_int(emit_ll(compiler, rw, "${dir}/sr-ll-range.ll", "${dir}/sr-ll-range.log"), 0, "ll-range: emits")
   rll = log_text("${dir}/sr-ll-range.ll")
-  c.expect(str_has(rll, "i64 97, label") && str_has(rll, "i64 98, label") && str_has(rll, "i64 99, label"), "ll-range: a narrow range gives the switch a case per value")
-  c.expect(str_has(rll, "icmp sge i64 ") && str_has(rll, ", 100") && str_has(rll, "icmp sle i64 ") && str_has(rll, ", 100000"), "ll-range: a wide range is two compares")
-  c.expect(!str_has(rll, "i64 100, label"), "ll-range: a wide range gives no cases")
+  c.expect(str_has(rll, "icmp sge i64 ") && str_has(rll, ", 97") && str_has(rll, "icmp sle i64 ") && str_has(rll, ", 99"), "ll-range: a narrow range is two compares")
+  c.expect(str_has(rll, ", 100") && str_has(rll, ", 100000"), "ll-range: a wide range is two compares")
+  c.expect(!str_has(rll, "i64 97, label") && !str_has(rll, "i64 100, label"), "ll-range: a range gives the switch no cases")
   // O713: every block a dispatch adds is numbered before the arms it
   // enters, so no edge into an arm is taken for a back edge: a program
   // that spawns polls in its loops only (mir/gc.av), and these have none.

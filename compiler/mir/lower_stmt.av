@@ -406,18 +406,18 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     if et0 = enum_ty, !lw.lw_cov.on && e.cases.size > 1 && enum_labels_dense(e) {
       pre = lw.lw_b.block
     }
-    // A wide range label (Stage 29 W5a3: more values than
-    // range_cases_max) is tested before the switch, each test in a block
-    // numbered before the arms (no back edge, no poll); a narrower one
-    // gives the switch a case per value, which LLVM clusters into range
-    // tests and tables.
+    // A range label (Stage 29 W5a3, O493) is two compares before the
+    // switch, in a block numbered before the arms (no back edge, no
+    // poll): chosen by time (D370; the record's proving ground), where a
+    // case per value made LLVM build lookup and jump tables that ran 5%
+    // to 9% slower than the if chains, and the compares run level.
     wide_lo: Array(Int) = []
     wide_hi: Array(Int) = []
     wide_tg: Array(Int) = []
     wide_bl: Array(Int) = []
     for wc in e.cases {
       for wl in wc.labels {
-        if wl.kind == lb_range() && range_is_wide(wl) {
+        if wl.kind == lb_range() {
           wide_bl.push(lw.lw_b.block)
         }
       }
@@ -449,21 +449,9 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
             entry_arm.push(i)
             rt = ren
           }
-          if range_is_wide(rl) {
-            wide_lo.push(rl.int_val)
-            wide_hi.push(rl.hi_val)
-            wide_tg.push(rt)
-          } else {
-            rv = rl.int_val
-            while true {
-              values.push(rv)
-              targets.push(rt)
-              if rv == rl.hi_val {
-                break
-              }
-              rv = rv &+ 1
-            }
-          }
+          wide_lo.push(rl.int_val)
+          wide_hi.push(rl.hi_val)
+          wide_tg.push(rt)
           j += 1
           continue
         }
@@ -561,17 +549,6 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     }
   }
   lw.lw_b.c_i32(0)
-}
-
-// The most values a range label gives the switch as cases (Stage 29
-// W5a3); a wider range is two compares before it.
-pub fn range_cases_max: Int { 256 }
-
-// Whether range label l (its values int_val to hi_val) is tested before
-// the switch instead of giving it a case per value.
-pub fn range_is_wide(l: CaseLabel): Bool {
-  n = l.hi_val &- l.int_val
-  n < 0 || n >= range_cases_max()
 }
 
 // Whether an enum switch's labels are dense enough for a range test (the
