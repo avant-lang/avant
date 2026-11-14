@@ -1003,9 +1003,6 @@ pub class Checker {
   }
 
   pub fn check_assign_stmt(stmt: Stmt) {
-    if reject_place_assign(stmt) {
-      return
-    }
     if stmt.op != tk_eq() {
       check_compound_assign(stmt)
       return
@@ -3733,14 +3730,6 @@ pub class Checker {
     if expr.callee == "new" {
       return check_constructor(expr, recv, has_want, want)
     }
-    if expr.callee == "send" {
-      for arg in expr.args {
-        if expr_is_place(arg) {
-          fail(arg.loc, "mutex place cannot escape")
-          return t_void()
-        }
-      }
-    }
     if recv.kind == ex_name() {
       if recv.ident == "String" {
         if expr.callee == "from_utf8" {
@@ -4101,38 +4090,6 @@ pub class Checker {
     t_int()
   }
 
-  pub fn expr_is_place(expr: Expr): Bool {
-    if self.place_depth > 0 && expr.kind == ex_name() && expr.ident == self.place_name {
-      return true
-    }
-    false
-  }
-
-  pub fn reject_place_assign(stmt: Stmt): Bool {
-    if !(self.place_depth > 0) {
-      return false
-    }
-    if value = stmt.value {
-      if !expr_is_place(value) {
-        return false
-      }
-    } else {
-      return false
-    }
-    if target = stmt.target {
-      if target.kind == ex_name() && target.ident == self.place_name {
-        return false
-      }
-      if target.kind == ex_field() {
-        if obj = target.object, obj.kind == ex_name() && obj.ident == self.place_name {
-          return false
-        }
-      }
-    }
-    fail(stmt.loc, "mutex place cannot escape")
-    true
-  }
-
   pub fn is_mutex_ty(ty: Ty): Bool {
     if ty.origin == "Mutex" {
       return true
@@ -4194,6 +4151,9 @@ pub class Checker {
       if !self.has_err && !leaves_mutex_with(result) {
         fail(b.body[b.body.size - 1].loc, "Mutex.with's value cannot be ${result.show}: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)")
       }
+      // Nor may a statement hand the guarded value out (O541, D355;
+      // checker/guard.av).
+      guard_with_block(b.params[0], b, true)
       return result
     }
     fail(expr.loc, "Mutex.with needs a block")
