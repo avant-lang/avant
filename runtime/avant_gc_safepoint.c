@@ -243,6 +243,52 @@ int gc_stop_world(void) {
   return 1;
 }
 
+/* A stress collection's handshake without the world lock's round trip
+ * (the Valk stage, VALK-TM3, O121). The caller holds the world lock.
+ * When no other thread is running (each is native or stopped at a
+ * safepoint), there is nothing to wait for, so rule 1 (no runtime lock
+ * held while the collector waits) does not ask for the world lock to be
+ * released: the request is raised under hs_mu and the collection runs at
+ * once. Releasing it anyway, as gc_stop_world's caller must, handed it to
+ * a thread blocked on it in gc_lock (native while it waits): that thread
+ * turned running, met the request, gave the lock back and waited on
+ * hs_resume_cv until this collection's end, a condition-variable round
+ * trip and two lock hand-offs per collection (runtime_roots.av under the
+ * stress mode: 96% of its 966,833 collections found no thread running).
+ * Returns 1 with the request held (gc_resume_world ends it), as
+ * gc_stop_world does; 0 when another thread holds the request or one is
+ * running, with nothing changed (the request raised for the check is
+ * dropped and its waiters woken), and the caller takes the full
+ * handshake. The request is raised before the states are read, as in
+ * gc_stop_world (Dekker: a thread that turns running after the read sees
+ * it and waits at its safepoint; it holds no world lock, since this
+ * thread does). */
+int gc_stop_world_held(void) {
+  int others;
+  pthread_mutex_lock(&gc_heap.hs_mu);
+  if (atomic_load(&avant_gc_requested)) {
+    pthread_mutex_unlock(&gc_heap.hs_mu);
+    return 0;
+  }
+  atomic_store(&avant_gc_requested, 1);
+  if (others_running()) {
+    atomic_store(&avant_gc_requested, 0);
+    pthread_cond_broadcast(&gc_heap.hs_resume_cv);
+    pthread_mutex_unlock(&gc_heap.hs_mu);
+    return 0;
+  }
+  gc_thread.collector = 1;
+  others = gc_heap.threads && (gc_heap.threads != &gc_thread.reg || gc_heap.threads->next);
+  if (others) {
+    /* A handshake that waited for nothing, counted as gc_stop_world
+     * counts one (AVANT_GC_STATS' handshakes), and as held. */
+    gc_heap.ctr.pause.hs_n++;
+    gc_heap.ctr.pause.hs_held++;
+  }
+  pthread_mutex_unlock(&gc_heap.hs_mu);
+  return 1;
+}
+
 void gc_resume_world(void) {
   pthread_mutex_lock(&gc_heap.hs_mu);
   gc_thread.collector = 0;

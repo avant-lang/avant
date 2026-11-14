@@ -147,6 +147,11 @@ static void print_pause(StatsLine *l) {
    * thread, and the wait's total and longest time. */
   line_add(l, "handshakes=%llu pause_hs_ns=%llu pause_hs_max_ns=%llu ", u(c->hs_n), u(c->hs_ns),
            u(c->hs_max_ns));
+  /* Under AVANT_GC_STRESS=1 only (the statistics set runs without it):
+   * the stress collections that kept the world lock (O121). */
+  if (gc_heap.set.stress) {
+    line_add(l, "handshakes_held=%llu ", u(c->hs_held));
+  }
 }
 
 static void print_why(StatsLine *l) {

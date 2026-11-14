@@ -794,6 +794,9 @@ typedef struct GcPauseCounters {
   uint64_t hs_n;
   uint64_t hs_ns;
   uint64_t hs_max_ns;
+  /* Stress collections that kept the world lock, no other thread
+   * running (gc_stop_world_held, the Valk stage, VALK-TM3, O121). */
+  uint64_t hs_held;
 } GcPauseCounters;
 
 /* why: full collections by cause (GcWhy): mature space grew by the
@@ -1801,6 +1804,7 @@ extern atomic_int g_avant_shared;
  * (native while it waits, rule 2); gc_cond_wait waits natively. */
 extern atomic_int avant_gc_requested;
 int gc_stop_world(void);
+int gc_stop_world_held(void);
 void gc_resume_world(void);
 void gc_safepoint_slow(void);
 void gc_thread_registered(int foreign);
