@@ -360,7 +360,8 @@ void avant_parallel_for(avant_int n, void *fn, void *ctx) {
  * the runtime keeps state for a gate only while a thread uses it: an
  * entry of a table of GATE_BUCKETS buckets, made when a thread locks the
  * gate and put back on its bucket's spare list when the last thread
- * leaves it (unlocked, nobody waiting for the lock or in a wait). So a
+ * leaves it (unlocked, nobody waiting for the lock or in a wait; up to
+ * GATE_IDLE_MAX idle entries per bucket stay on its live list). So a
  * gate allocates nothing and nothing has to be freed when its object
  * dies: a program that makes a million channels holds flat memory
  * (before, every gate was a calloc'd mutex and condition that nothing
@@ -379,6 +380,10 @@ void avant_parallel_for(avant_int n, void *fn, void *ctx) {
  * cond_cv; like a condition variable it may return without a signal,
  * and every caller loops on its condition. */
 #define GATE_BUCKETS 1024
+/* Idle entries a bucket keeps on its live list, so a gate locked again
+ * soon (a Mutex in a loop) finds its entry instead of taking a spare;
+ * past this many they all go to the spare list. */
+#define GATE_IDLE_MAX 8
 
 typedef struct GateEnt {
   uint64_t id;
@@ -394,6 +399,7 @@ typedef struct {
   pthread_mutex_t mu;
   GateEnt *live;
   GateEnt *spare;
+  int idle;
 } __attribute__((aligned(64))) GateBucket;
 
 static GateBucket gate_buckets[GATE_BUCKETS];
@@ -427,6 +433,9 @@ static GateEnt *gate_find(GateBucket *b, uint64_t id) {
 static GateEnt *gate_take(GateBucket *b, uint64_t id) {
   GateEnt *e = gate_find(b, id);
   if (e) {
+    if (!e->locked && e->lock_waiters == 0 && e->cond_waiters == 0) {
+      b->idle--;
+    }
     return e;
   }
   e = b->spare;
@@ -450,20 +459,29 @@ static GateEnt *gate_take(GateBucket *b, uint64_t id) {
   return e;
 }
 
-/* Puts e back on the spare list when no thread uses its gate (b->mu
+/* Counts e idle when no thread uses its gate, and puts every idle entry
+ * of the bucket on the spare list once more than GATE_IDLE_MAX are (b->mu
  * held). */
 static void gate_put_if_idle(GateBucket *b, GateEnt *e) {
   GateEnt **p;
   if (e->locked || e->lock_waiters > 0 || e->cond_waiters > 0) {
     return;
   }
-  p = &b->live;
-  while (*p != e) {
-    p = &(*p)->next;
+  if (++b->idle <= GATE_IDLE_MAX) {
+    return;
   }
-  *p = e->next;
-  e->next = b->spare;
-  b->spare = e;
+  p = &b->live;
+  while (*p) {
+    GateEnt *x = *p;
+    if (!x->locked && x->lock_waiters == 0 && x->cond_waiters == 0) {
+      *p = x->next;
+      x->next = b->spare;
+      b->spare = x;
+    } else {
+      p = &x->next;
+    }
+  }
+  b->idle = 0;
 }
 
 /* Takes the gate's lock, waiting natively while another thread holds it
