@@ -56,6 +56,9 @@ fn cases: Array(RCase) {
   xs.push(accepted("tail-switch-literal", "fn small(n: Int): Int32 {\n  switch n {\n    case 1 { 7 }\n    else { 0 }\n  }\n}\nfn main {\n  puts(small(1))\n}\n", "7\n"))
   xs.push(refused("tail-switch-int-no-else", "fn code(n: Int): Int {\n  switch n {\n    case 1 { return 10 }\n  }\n}\nfn main {\n  puts(code(1))\n}\n", "last expression is Void, expected Int", "2:3"))
   xs.push(refused("tail-switch-wrong-member", "fn widen(x: Int | String): Int | Nil {\n  switch x {\n    case n: Int { n + 1 }\n    case String { \"s\" }\n  }\n}\nfn main {\n  puts(widen(1) ?? 0)\n}\n", "expected Int?, got String", "4:19"))
+  xs.push(accepted("init-exhaustive-enum", "enum Tok { a, b, c }\nclass Holder {\n  k: Array(Int)\n  fn initialize(t: Tok) {\n    switch t {\n      case a { self.k = [1] }\n      case b, c { self.k = [2, 3] }\n    }\n  }\n}\nfn main {\n  puts(Holder.new(Tok.c).k.size)\n  puts(Holder.new(Tok.a).k[0])\n}\n", "2\n1\n"))
+  xs.push(accepted("init-exhaustive-union", "class Holder {\n  k: Array(Int)\n  fn initialize(x: Int | String) {\n    switch x {\n      case n: Int { self.k = [n] }\n      case s: String { self.k = [s.size, 0] }\n    }\n  }\n}\nfn main {\n  puts(Holder.new(4).k[0])\n  puts(Holder.new(\"abc\").k[0])\n}\n", "4\n3\n"))
+  xs.push(refused("init-int-switch", "class Holder {\n  k: Array(Int)\n  fn initialize(n: Int) {\n    switch n {\n      case 1 { self.k = [1] }\n    }\n  }\n}\nfn main {\n  puts(Holder.new(1).k.size)\n}\n", "field k of Holder is not set on every path through initialize", "2:3"))
   xs
 }
 

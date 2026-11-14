@@ -333,7 +333,9 @@ pub fn (checker_self: Checker) init_parts(w: InitWalk, st: Stmt, set: Array(Stri
 }
 
 // A `switch` statement: with `else`, every arm; without, a miss runs
-// nothing, so the set before it is one of the ways out.
+// nothing, so the set before it is one of the ways out, unless the
+// switch is over an enum or a union, which the checker has made name
+// every member (Stage 29 W5b1, O718): then only its arms are.
 pub fn (checker_self: Checker) init_switch(w: InitWalk, e: Expr, set: Array(String)): Array(String)? {
   if c = e.cond {
     checker_self.init_expr(w, c, set, false)
@@ -362,7 +364,7 @@ pub fn (checker_self: Checker) init_switch(w: InitWalk, e: Expr, set: Array(Stri
       }
       any = true
     }
-  } else {
+  } else if !init_switch_exhaustive(e) {
     if o3 = out {
       out = init_meet(o3, set)
     } else {
@@ -374,6 +376,13 @@ pub fn (checker_self: Checker) init_switch(w: InitWalk, e: Expr, set: Array(Stri
     return nil
   }
   out
+}
+
+pub fn init_switch_exhaustive(e: Expr): Bool {
+  if c = e.cond, ct = c.ty {
+    return ct.is_enum || ct.is_union
+  }
+  false
 }
 
 // A read of field f: an error for a required one not yet set; a field
