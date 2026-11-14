@@ -32,6 +32,12 @@ pub fn mt_str: Int { 9 }
 pub fn mt_task: Int { 10 }
 pub fn mt_ptr: Int { 11 }
 pub fn mt_addr: Int { 12 }
+// The narrow integers an enum is stored in (Stage 29 W5a3, O685; D358),
+// fixed after the others so every earlier id is unchanged; a C scalar of
+// these widths (W1b) is the same type.
+pub fn mt_i8: Int { 13 }
+pub fn mt_i16: Int { 14 }
+pub fn mt_u16: Int { 15 }
 // The MIR type of the language's `Int` (Stage 29 W-INT1, D314: 64-bit).
 // Sizes and capacities in the Array, Buf and Hash headers stay i32 (the
 // runtime's ceiling, AVANT_SIZE_MAX), read with a sign extension.
@@ -149,11 +155,14 @@ pub class MTypes {
     prim(mk_task(), 64, false, "ref task")
     prim(mk_ptr(), 64, false, "ptr")
     prim(mk_addr(), 64, false, "addr")
+    prim(mk_int(), 8, true, "i8")
+    prim(mk_int(), 16, true, "i16")
+    prim(mk_int(), 16, false, "u16")
   }
 
-  // A C scalar's type (Stage 29 W1b): i8, i16, u16 and f32 are interned
-  // on first use (u8 and u32 are fixed ids); kind mk_int, or mk_f64 with
-  // 32 bits for f32.
+  // A C scalar's type (Stage 29 W1b): f32 is interned on first use (i8,
+  // i16, u16, u8 and u32 are fixed ids, found by their text); kind mk_int,
+  // or mk_f64 with 32 bits for f32.
   pub fn scalar(kind: Int, bits: Int, signed: Bool, text: String): Int {
     if i = self.index.get(text) {
       return i

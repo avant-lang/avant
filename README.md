@@ -760,7 +760,7 @@ fn main {
 }
 ```
 
-- An enum is stored in one byte when its values are within `0..255`, else in four. A program pays for the members' names only if it prints an enum, reads `name`, or calls `from_name`.
+- An enum is stored in one byte when its values are within `0..255` or `-128..127`, in two within `0..65535` or `-32768..32767`, else in four; an enum crossing to C is C's `int`. A program pays for the members' names only if it prints an enum, reads `name`, or calls `from_name`.
 - An enum marked `: Error` is a failure type ([An enum as an error](#an-enum-as-an-error)); one inside a `lib` block is a C enum ([avant bind](#avant-bind)). An enum has no payload: a member that carries data is a [union](#unions) member.
 
 ## Nil and unions
