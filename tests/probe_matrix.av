@@ -221,6 +221,12 @@ fn rules: Array(PRule) {
   xs.push(rule("print-no-text", "stmt", "", osite, "", "eputs([px ?? 0])", "eputs(\"\${[px ?? 0].size}\")", "eputs cannot print Array(Int)"))
   xs.push(rule("exit-status-type", "stmt", "", osite, "", "exit(\"1\")", "exit(px ?? 1)", "expected Int, got String"))
   xs.push(rule("guard-ends-with-exit", "stmt", "", main_site, "", "n = parse_age(\"1\") else e {\n  eputs(e.message)\n}\nputs(n)", "n = parse_age(\"1\") else e {\n  eputs(e.message)\n  exit(2)\n}\nputs(n)", "the block of else e must leave"))
+  // README "Errors": a failure-or-nothing result, `Void | E`, is an error
+  // a statement may not drop, and an else guard without a name is its
+  // guard only.
+  vsite = "class POops: Error {\n  pub message: String = \"oops\"\n}\n\nfn pvoid(n: Int): Void | POops {\n  if n > 1 {\n    return POops.new\n  }\n}\n\nfn main {\n@\n}\n"
+  xs.push(rule("void-result-dropped", "stmt", "", vsite, "", "pvoid(probe_k())", "_ = pvoid(probe_k())", "drops a value that can be an error (Void | POops)"))
+  xs.push(rule("void-guard-value", "stmt", "", vsite, "", "parse_age(\"1\") else e {\n  exit(1)\n}", "pvoid(probe_k()) else e {\n  exit(1)\n}", "an else guard without a name to assign"))
   xs
 }
 

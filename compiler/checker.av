@@ -597,6 +597,11 @@ pub class Checker {
     if fnn.entry_void && fallthrough(fnn.body) {
       fnn.body.push(stmt_expr(fnn.loc, entry_zero(fnn.loc)))
     }
+    // A `Void | E` result: the end of the body is the success, as a bare
+    // `return` is (check_stmt).
+    if !fnn.entry_void && ret.is_union && ret.includes_void && fallthrough(fnn.body) {
+      fnn.body.push(stmt_expr(fnn.loc, Expr.new(ex_void(), fnn.loc)))
+    }
     if !ret.is_void && fnn.body.size == 0 {
       fail(fnn.loc, "missing return value")
       self.current_module = saved_mod
@@ -786,6 +791,11 @@ pub class Checker {
         zero = entry_zero(stmt.loc)
         stmt.expr = zero
         check_expr_as(zero, expected)
+      } else if expected.is_union && expected.includes_void {
+        // A bare return of a `Void | E` result is the success.
+        none = Expr.new(ex_void(), stmt.loc)
+        stmt.expr = none
+        check_expr_as(none, expected)
       } else {
         if !expected.is_void {
           fail(stmt.loc, "return needs a value of type ${expected.show}")
@@ -1382,6 +1392,10 @@ pub class Checker {
   // are not failures (type.av ty_failures).
   pub fn if_assign_success(got: Ty, loc: Location): Ty {
     if success = failure_split(got, loc, "if-assign") {
+      if success.is_void {
+        fail(loc, "if-assign on ${got.show}: its success is nothing, so there is no value to bind; read the failure with `f() else e { ... }`, pass it up with `?`, or switch over the result")
+        return t_int()
+      }
       return success
     }
     t_int()
@@ -1779,6 +1793,9 @@ pub class Checker {
     }
     if k == ex_nil() {
       return t_nil()
+    }
+    if k == ex_void() {
+      return t_void()
     }
     if k == ex_name() {
       return check_name(expr, has_want, want)

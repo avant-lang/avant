@@ -395,7 +395,11 @@ pub class TypeResolver {
         parts.push(resolve(tn.members[i]))
         i += 1
       }
-      return ty_union_build(parts)
+      u = ty_union_build(parts)
+      if u.is_union && u.includes_void {
+        void_union_check(u, tn)
+      }
+      return u
     }
     if tn.name == "Int" {
       reject_args(tn)
@@ -541,6 +545,22 @@ pub class TypeResolver {
       saved.push(self.struct_inflight[i])
     }
     saved
+  }
+
+  // `Void | E`, a failure-or-nothing result: Void is its one success, so
+  // every other member is a failure marked Error; a Nil beside it would
+  // be a second way to say nothing.
+  pub fn void_union_check(u: Ty, tn: TypeName) {
+    for m in u.members {
+      if m.is_nil {
+        fail(tn.loc, "${u.show} holds both Void and Nil: a union holds Void beside failures marked Error only (Void | E), and Nil is not one here")
+        return
+      }
+      if !m.is_void && !m.error_mark {
+        fail(tn.loc, "${u.show}: a union holds Void beside failures marked Error only (Void | E, nothing or a failure); ${m.show} is not marked Error")
+        return
+      }
+    }
   }
 
   pub fn resolve_uninline(tn: TypeName): Ty {

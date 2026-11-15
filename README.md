@@ -168,6 +168,7 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
   - [no inheritance](#no-inheritance)
 - [Errors](#errors):
   - [propagate, replace, branch](#propagate-replace-branch)
+  - [nothing or a failure](#nothing-or-a-failure)
   - [declaring an error](#declaring-an-error)
   - [causes](#causes)
   - [an enum as an error](#an-enum-as-an-error)
@@ -1879,6 +1880,51 @@ fn parse_age(s: String): Int | ParseError {
 }
 -->
 
+### Nothing or a failure
+
+A function that gives nothing when it succeeds, and an error when it fails, returns `Void | E` (Rust's `Result<(), E>`). The end of its body and a bare `return` are the success; `return e` is the failure. `?` passes the failure up, and `f() else e { ... }` reads it: the guard of an assignment, written without the assignment because there is no value to name.
+
+<!-- check: run id=void_result -->
+```avant
+class SaveError: Error {
+  message: String
+
+  fn initialize(message: String) {
+    self.message = message
+  }
+}
+
+fn check_name(name: String): Void | SaveError {
+  if name.size == 0 {
+    return SaveError.new("an empty name")
+  }
+}
+
+fn save(name: String, body: String): Void | SaveError {
+  check_name(name)?            // a failure here returns from save
+  if body.size > 10 {
+    return SaveError.new("too long: ${body.size} bytes")
+  }
+  puts("saved ${name}")
+}
+
+fn main {
+  save("notes", "hello") else e {
+    puts(e.message)
+    return
+  }                              // => saved notes
+  save("", "hi") else e {
+    puts(e.message)              // => an empty name
+    return
+  }
+}
+```
+
+- The result is an error a statement may not drop: `save("a", "b")` alone is a compile error; write `?`, `else e { ... }`, `?? return`, or `_ =` to drop it on purpose.
+- There is no value to bind, so `if v = save(...)` and `v = save(...) else e` are refused; a `switch` reads the failure (`case e: SaveError { ... } else { ... }`).
+- `Void` stands only beside failures marked `Error` (`Void | IoError`, `Void | A | B`): `Void | Int` and `Void | E?` are refused. A `Void | E` whose `E` is a class is one pointer, `Void` its null, as an optional class is.
+- `dir_make` and `file_delete` return `Void | IoError`, and so does a [`Mutex.try_with`](#channel-and-mutex) whose block ends without a value.
+
 ### Declaring an error
 
 An error type is a class or a struct marked `: Error`. It must make a message readable, as a `String` field named `message` or a method `fn message: String`. `e.message` reads it, and interpolating the error prints it.
@@ -3252,11 +3298,11 @@ Every call returns its result or an error value that says what failed.
 | `file_write(path, body)` | `Int \| IoError`: the bytes written; the file is created or replaced |
 | `file_open(path)` | `FileReader \| IoError`: the file, to read line by line |
 | `file_size(path)` | `Int \| IoError`: its size in bytes |
-| `file_delete(path)` | `IoError?`: `nil` when the file is removed (a directory is an error) |
+| `file_delete(path)` | `Void \| IoError`: nothing when the file is removed (a directory is an error) |
 | `file_exists(path)` | `Bool`: a file or a directory is there |
 | `dir_list(path)` | `Array(String) \| IoError`: the names, sorted, without `.` and `..` |
 | `dir_walk(path)` | `Array(String) \| IoError`: every name below it, as a path relative to it |
-| `dir_make(path)` | `IoError?`: `nil` when the directory and its missing parents are made; one that is there already is fine |
+| `dir_make(path)` | `Void \| IoError`: nothing when the directory and its missing parents are made; one that is there already is fine |
 | `dir_exists(path)` | `Bool`: a directory is there |
 
 ```avant
@@ -3301,18 +3347,24 @@ fn main {
 The file system's basics make a tool's directory walk and its housekeeping:
 
 ```avant
+fn remove(path: String) {
+  file_delete(path) else e {
+    puts(e.message)
+    return
+  }
+  puts("removed ${path}")
+}
+
 fn main {
-  _ = dir_make("logs/old")
+  dir_make("logs/old") ?? return
   _ = file_write("logs/old/a.txt", "one\n")
   names = dir_walk("logs") ?? []
   puts(names.size)                                // => 2
   puts(names[1])                                  // => old/a.txt
   puts(dir_exists("logs/old"))                    // => true
   puts(file_size("logs/old/a.txt") ?? -1)         // => 4
-  if e = file_delete("logs") {
-    puts(e.message)                               // => cannot delete logs: Is a directory
-  }
-  _ = file_delete("logs/old/a.txt")
+  remove("logs")                                  // => cannot delete logs: Is a directory
+  remove("logs/old/a.txt")                        // => removed logs/old/a.txt
   puts(file_exists("logs/old/a.txt"))             // => false
 }
 ```

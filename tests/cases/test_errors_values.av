@@ -134,12 +134,24 @@ fn voidtail_cases: Array(FCase) {
 // A case's source may hold more modules: after a line `//== name.av`
 // the lines up to the next such line are the module name.av, written
 // beside the program (its own lines are the ones before the first).
-// A try_with whose block ends without a value gives Void | MutexError:
-// a statement reads it with `else e`, `?` passes the error up.
+// A failure-or-nothing result, `Void | E`: the end of the body and a bare
+// `return` give the success, `?` and the guards work as on any union
+// (`f() else e { ... }` as a statement is its guard); a union holds Void
+// only beside failures marked Error.
 fn void_result_cases: Array(FCase) {
   xs: Array(FCase) = []
   // try_with whose block ends without a value: Void | MutexError.
   xs.push(accepted("void-try-with", "import std.sync\n\nfn bump(m: Mutex(Int)): Int | MutexError {\n  m.try_with { |n| n += 1 }?\n  m.try_with { |n| n }?\n}\n\nfn main {\n  m = Mutex(Int).new(1)\n  m.try_with { |n| n += 2 } else e {\n    puts(\"never: \${e}\")\n    return\n  }\n  _ = m.try_with { |n| n += 3 }\n  puts(bump(m) ?? -1)\n}\n", "7\n"))
+  xs.push(accepted("void-result", "class Oops: Error {\n  pub n: Int = 0\n  fn initialize(n: Int) {\n    self.n = n\n  }\n  pub fn message: String { \"oops \${n}\" }\n}\n\nfn check(x: Int): Void | Oops {\n  if x > 2 {\n    return Oops.new(x)\n  }\n  if x == 2 {\n    return\n  }\n  puts(\"checked \${x}\")\n}\n\nfn twice(x: Int): Void | Oops {\n  check(x)?\n  check(x + 1)?\n}\n\nfn main {\n  twice(0) else e {\n    puts(\"never\")\n    return\n  }\n  for i in 0..1 {\n    twice(2) else e {\n      puts(\"failed: \${e}\")\n      break\n    }\n  }\n  r = check(5)\n  switch r {\n    case e: Oops {\n      puts(\"switch: \${e.n}\")\n    }\n    else {\n      puts(\"switch: ok\")\n    }\n  }\n  _ = check(1)\n  check(7) ?? puts(\"dropped\")\n  puts(\"end\")\n}\n", "checked 0\nchecked 1\nfailed: oops 3\nswitch: 5\nchecked 1\ndropped\nend\n"))
+  xs.push(accepted("void-widen", "import std.sync\n\nclass A: Error {\n  pub fn message: String { \"a\" }\n}\nclass B: Error {\n  pub fn message: String { \"b\" }\n}\n\nfn fa(x: Int): Void | A {\n  if x == 1 {\n    return A.new\n  }\n}\n\nfn fb(x: Int): Void | B {\n  if x == 2 {\n    return B.new\n  }\n}\n\n// Passes up either error: the union widens.\nfn both(x: Int): Void | A | B {\n  fa(x)?\n  fb(x)?\n}\n\nfn passed(x: Int): Void | A {\n  return fa(x)\n}\n\nfn inc(m: Mutex(Int)): Void | MutexError {\n  m.try_with { |n| n += 1 }?\n}\n\nfn main {\n  for x in 0..3 {\n    r = both(x)\n    switch r {\n      case e: A {\n        puts(\"\${x}: \${e}\")\n      }\n      case e: B {\n        puts(\"\${x}: \${e}\")\n      }\n      else {\n        puts(\"\${x}: ok\")\n      }\n    }\n  }\n  _ = passed(1)\n  m = Mutex(Int).new(1)\n  inc(m) else e {\n    puts(\"never\")\n    return\n  }\n  v = m.with { |n| n }\n  puts(\"m \${v}\")\n  rs: Array(Void | A) = []\n  rs.push(fa(0))\n  rs.push(fa(1))\n  bad = 0\n  for q in rs {\n    q else e {\n      bad += 1\n      continue\n    }\n  }\n  puts(\"bad \${bad}\")\n  f: fn(Int): Void | A = fa\n  f(1) else e {\n    puts(\"via fn: \${e}\")\n    return\n  }\n}\n", "0: ok\n1: a\n2: b\nm 2\nbad 1\nvia fn: a\n"))
+  xs.push(refused("void-dropped", "class Oops: Error {\n  pub fn message: String { \"oops\" }\n}\nfn check(x: Int): Void | Oops {\n  if x > 2 {\n    return Oops.new\n  }\n}\nfn main {\n  check(1)\n}\n", "this statement drops a value that can be an error (Void | Oops); read the error with `else e { ... }`"))
+  xs.push(refused("void-beside-success", "fn f: Void | Int {\n}\nfn main {\n  _ = f()\n}\n", "Void | Int: a union holds Void beside failures marked Error only"))
+  xs.push(refused("void-beside-nil", "class Oops: Error {\n  pub fn message: String { \"oops\" }\n}\nfn f(x: Int): Void | Oops | Nil {\n}\nfn main {\n  _ = f(1)\n}\n", "holds both Void and Nil"))
+  xs.push(refused("void-if-assign", "class Oops: Error {\n  pub fn message: String { \"oops\" }\n}\nfn check(x: Int): Void | Oops {\n}\nfn main {\n  if v = check(1) {\n    puts(\"x\")\n  }\n}\n", "if-assign on Void | Oops: its success is nothing, so there is no value to bind"))
+  xs.push(refused("void-guard-value", "class Oops: Error {\n  pub fn message: String { \"oops\" }\n}\nfn g(x: Int): Int | Oops {\n  x\n}\nfn main {\n  g(1) else e {\n    return\n  }\n}\n", "an else guard without a name to assign is for a result whose success is nothing (Void | E); this success is Int"))
+  xs.push(refused("void-guard-bind", "class Oops: Error {\n  pub fn message: String { \"oops\" }\n}\nfn f(x: Int): Void | Oops {\n}\nfn main {\n  v = f(1) else e {\n    return\n  }\n}\n", "cannot bind a Void value"))
+  xs.push(refused("void-interp", "class Oops: Error {\n  pub fn message: String { \"oops\" }\n}\nfn f(x: Int): Void | Oops {\n}\nfn main {\n  r = f(1)\n  puts(\"\${r}\")\n}\n", "cannot interpolate Void | Oops: its member Void has no text"))
+  xs.push(refused("void-return-value", "class Oops: Error {\n  pub fn message: String { \"oops\" }\n}\nfn f(x: Int): Void | Oops {\n  return 3\n}\nfn main {\n  _ = f(1)\n}\n", "return type is Int, expected Void | Oops"))
   xs
 }
 
