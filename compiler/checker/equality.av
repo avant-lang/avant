@@ -177,6 +177,12 @@ pub fn eq_template_source(name: String): String {
     }
     return "fn ${name}(xs: Array(T)): T? {\n  if xs.size == 0 {\n    return nil\n  }\n  m = xs[0]\n  i = 1\n  while i < xs.size {\n    if ${test} {\n      m = xs[i]\n    }\n    i += 1\n  }\n  m\n}\n"
   }
+  if name == "__avant_contains" {
+    return "fn __avant_contains(v: T, xs: Array(T)): Bool {\n  i = 0\n  while i < xs.size {\n    if xs[i] == v {\n      return true\n    }\n    i += 1\n  }\n  false\n}\n"
+  }
+  if name == "__avant_index_of" {
+    return "fn __avant_index_of(v: T, xs: Array(T)): Int? {\n  i = 0\n  while i < xs.size {\n    if xs[i] == v {\n      return i\n    }\n    i += 1\n  }\n  nil\n}\n"
+  }
   "fn __avant_eq_opt(a: T?, b: T?): Bool {\n  if x = a {\n    if y = b {\n      return x == y\n    }\n    return false\n  }\n  if _ = b {\n    return false\n  }\n  true\n}\n"
 }
 
@@ -376,6 +382,46 @@ pub fn (checker_self: Checker) user_order_call(expr: Expr, array: Ty): Ty? {
     return ty_nilable(e)
   }
   nil
+}
+
+// `xs.contains(v)` and `xs.index_of(v)` (expr, its argument checked)
+// with elements of type e: they compare by the element's ==, and refuse
+// what == refuses. An element the runtime searches as == compares it (an
+// integer, a Float64 by IEEE, a Bool, a String by bytes, a class without
+// fn == by identity) keeps the runtime's search; any other becomes the
+// call of a loop through ==, the value first as in the runtime's form
+// (__avant_contains, __avant_index_of).
+pub fn (checker_self: Checker) search_by_eq(expr: Expr, e: Ty) {
+  if e.is_integer || e.is_float || e.is_bool || e.is_string {
+    return
+  }
+  if e.is_class && !checker_self.user_op(e, "==") {
+    return
+  }
+  seen: Array(String) = []
+  missing = checker_self.eq_missing(e, seen)
+  if missing.size > 0 || (e.is_union && !e.is_nilable) {
+    checker_self.fail(expr.loc, "${expr.callee} compares the elements with ==: ${checker_self.eq_refusal(e, missing)}")
+    return
+  }
+  if e.is_struct {
+    checker_self.derive_eq_method(e, expr.loc)
+  }
+  name = "__avant_${expr.callee}"
+  if recv = expr.receiver, sig = checker_self.eq_template(name) {
+    subst: Array(Ty) = []
+    subst.push(e)
+    if inst = checker_self.instantiate_function(sig, subst, expr.loc) {
+      args: Array(Expr) = []
+      args.push(expr.args[0])
+      args.push(recv)
+      expr.args = args
+      expr.receiver = nil
+      expr.callee = name
+      expr.resolved = inst.node.emit_name
+      expr.method_call = false
+    }
+  }
 }
 
 // Whether the elements of an array of type array order by a user <.

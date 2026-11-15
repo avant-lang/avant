@@ -1348,7 +1348,7 @@ There are no negative indexes and no slices of arrays yet.
 | `xs.sort`, `xs.sort { \|a, b\| a < b }` | sort in place: by the element's order, or by a block that says whether `a` comes first |
 | `xs.sorted`, `xs.sorted { \|a, b\| ... }` | the same, as a new array |
 | `xs.reverse` | reverse in place |
-| `xs.contains(v)`, `xs.index_of(v)` | `Bool`; `Int?`, the first position |
+| `xs.contains(v)`, `xs.index_of(v)` | `Bool`; `Int?`, the first position; by the elements' `==` ([Equality and order](#equality-and-order)), so a struct compares its fields and an array its elements, and an element type without `==` is refused |
 | `xs.min`, `xs.max` | `T?`: `nil` for an empty array |
 | `xs.sum` | the total (numeric arrays); traps on overflow |
 | `xs.any { \|x\| ... }`, `xs.all { \|x\| ... }` | `Bool`, stopping at the first answer |

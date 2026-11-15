@@ -476,13 +476,12 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       return checker_self.t_bool()
     }
     if e = array.inner {
-      if !checker_self.is_eq_ty(e) {
-        checker_self.fail(expr.loc, "Array.contains needs an equality element type")
-      }
       got = checker_self.check_expr_as(expr.args[0], e)
       if !ty_assignable(got, e) {
         checker_self.fail(expr.args[0].loc, "contains expects ${e.show}")
+        return checker_self.t_bool()
       }
+      checker_self.search_by_eq(expr, e)
     }
     return checker_self.t_bool()
   }
@@ -523,13 +522,12 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       return ty_nilable(checker_self.t_int())
     }
     if e = array.inner {
-      if !checker_self.is_eq_ty(e) {
-        checker_self.fail(expr.loc, "Array.index_of needs an equality element type")
-      }
       got = checker_self.check_expr_as(expr.args[0], e)
       if !ty_assignable(got, e) {
         checker_self.fail(expr.args[0].loc, "index_of expects ${e.show}")
+        return ty_nilable(checker_self.t_int())
       }
+      checker_self.search_by_eq(expr, e)
     }
     return ty_nilable(checker_self.t_int())
   }

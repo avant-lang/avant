@@ -11,7 +11,9 @@ import backends
 //   - a program that compares and prints only scalars carries none of the
 //     functions the checker writes for ==, and its integer puts is the
 //     runtime's (avant_puts_i64), never printf;
-//   - a struct's derived == is written once however often it is used.
+//   - a struct's derived == is written once however often it is used;
+//   - contains and index_of of scalar elements call the runtime's search,
+//     with no loop written through ==.
 
 class RCase {
   pub tag: String = ""
@@ -81,6 +83,11 @@ fn cases: Array(RCase) {
   xs.push(accepted("eq-witness", "interface Eq(T) {\n  fn ==(other: T): Bool\n}\nstruct Id: Eq(Id) {\n  n: Int\n}\nfn same(a: T, b: T: Eq(T)): Bool {\n  a == b\n}\nfn main {\n  puts(same(Id { n: 1 }, Id { n: 1 }))\n  puts(same(Id { n: 1 }, Id { n: 2 }))\n}\n", "true\nfalse\n"))
   xs.push(refused("eq-witness-missing", "interface Eq(T) {\n  fn ==(other: T): Bool\n}\nstruct Bag: Eq(Bag) {\n  h: Hash(String, Int)\n}\nfn main { }\n", "Bag does not implement Eq(Bag): missing ==", "4:1"))
   xs.push(accepted("min-max-sort", "struct M {\n  c: Int\n  fn <(o: M): Bool { c < o.c }\n}\nfn main {\n  ms = [M { c: 3 }, M { c: 1 }, M { c: 2 }]\n  lo = ms.min ?? M { c: 0 }\n  hi = ms.max() ?? M { c: 0 }\n  s = ms.sorted\n  ms.sort()\n  puts(\"\${lo.c} \${hi.c} \${s[0].c}\${s[1].c}\${s[2].c} \${ms[0].c}\${ms[2].c}\")\n}\n", "1 3 123 13\n"))
+  // contains and index_of compare by the element's ==
+  xs.push(accepted("contains-by-eq", "struct P {\n  x: Int\n  y: Int\n}\n\nclass Name {\n  pub s: String\n\n  fn initialize(s: String) {\n    self.s = s\n  }\n\n  fn ==(o: Name): Bool {\n    s == o.s\n  }\n}\n\nenum Tok { a, b, c }\n\nfn main {\n  ps = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]\n  puts(\"\${ps.contains(P { x: 3, y: 4 })} \${ps.contains(P { x: 4, y: 3 })} \${ps.index_of(P { x: 3, y: 4 }) ?? -1}\")\n  ns = [Name.new(\"ada\"), Name.new(\"bo\")]\n  puts(\"\${ns.contains(Name.new(\"bo\"))} \${ns.index_of(Name.new(\"cy\")) ?? -1}\")\n  grid = [[1, 2], [3]]\n  puts(\"\${grid.contains([3])} \${grid.index_of([1, 2]) ?? -1}\")\n  opts: Array(Int?) = [nil, 5]\n  puts(\"\${opts.contains(5)} \${opts.index_of(nil) ?? -1}\")\n  ts = [Tok.c, Tok.a]\n  puts(\"\${ts.contains(Tok.a)} \${ts.contains(Tok.b)} \${ts.index_of(Tok.a) ?? -1}\")\n  bs = [\"ab\".bytes, \"cd\".bytes]\n  puts(\"\${bs.contains(\"cd\".bytes)} \${bs.index_of(\"ab\".bytes) ?? -1}\")\n  fs = [1.5, 0.0 / 0.0]\n  puts(\"\${fs.contains(1.5)} \${fs.contains(0.0 / 0.0)}\")\n}\n", "true false 1\ntrue -1\ntrue 0\ntrue 0\ntrue false 1\ntrue 0\ntrue false\n"))
+  xs.push(refused("contains-hash", "fn main {\n  hs = [Hash(String, Int).new]\n  puts(hs.contains(Hash(String, Int).new))\n}\n", "contains compares the elements with ==: Hash(String, Int) has no ==", "3:10"))
+  xs.push(refused("index-of-struct-hash-field", "struct Bag {\n  h: Hash(String, Int)\n}\nfn main {\n  bs = [Bag { h: Hash(String, Int).new }]\n  puts(bs.index_of(bs[0]) ?? -1)\n}\n", "index_of compares the elements with ==: cannot compare Bag: Hash(String, Int) (the field Bag.h) has no ==; define fn == on Bag", "6:10"))
+  xs.push(refused("contains-buf", "fn main {\n  bs = [Buf.new]\n  puts(bs.contains(bs[0]))\n}\n", "contains compares the elements with ==: Buf has no ==", "3:10"))
   // String order
   xs.push(accepted("string-order", "fn main {\n  puts(\"\${\"a\" < \"b\"} \${\"b\" < \"a\"} \${\"ab\" < \"abc\"} \${\"abc\" <= \"abc\"} \${\"B\" < \"a\"} \${\"z\" >= \"a\"} \${\"\" < \"a\"}\")\n}\n", "true false true true true true true\n"))
   xs.push(refused("string-minus", "fn main {\n  puts(\"a\" - \"b\")\n}\n", "unsupported operator on String (+ joins two Strings; ==, !=, <, <=, > and >= compare them)", "2:12"))
@@ -171,6 +178,12 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
     }
   }
   c.eq_int(defs, 1, "ll-twice: one derived == for P")
+  scal = "${dir}/eq-ll-search.av"
+  _ = file_write(scal, "fn main {\n  xs = [1, 2]\n  ss = [\"a\"]\n  puts(xs.contains(2))\n  puts(ss.index_of(\"a\") ?? -1)\n}\n")
+  c.eq_int(emit_ll(compiler, scal, "${dir}/eq-ll-search.ll", "${dir}/eq-ll-search.log"), 0, "ll-search: emits")
+  ll3 = log_text("${dir}/eq-ll-search.ll")
+  c.expect(str_has(ll3, "@avant_array_contains_i64(") && str_has(ll3, "@avant_array_index_str("), "ll-search: scalars keep the runtime's search")
+  c.expect(!str_has(ll3, "__avant_contains") && !str_has(ll3, "__avant_index_of"), "ll-search: no loop written for scalars")
 }
 
 fn test_main(c: Checks) {
