@@ -1,4 +1,4 @@
-/* pthread_condattr_setclock (O572), as the collector's units have it. */
+/* pthread_condattr_setclock, as the collector's units have it. */
 #define _GNU_SOURCE
 #define _DEFAULT_SOURCE
 #include "avant_rt.h"
@@ -247,7 +247,7 @@ typedef struct WsOut {
  * server's list so a WsSender (a bare id) can find it again from any
  * thread without holding a C pointer that could dangle.
  *
- * The record is type-stable (Stage 29 W-FIX1d, O515): it comes from
+ * The record is type-stable: it comes from
  * ws_record_take and goes back with ws_record_release to a free list,
  * never to malloc, so the address an Avant WsConn value carries beside
  * its id can always be read. id is the connection's number while the
@@ -260,7 +260,7 @@ typedef struct WsOut {
  * route is the index, in the server's WebSocket message routes, of the
  * first route on the connection's path (-1 when the path has none),
  * given by std.http at the upgrade and read for every message by
- * avant_ws_event_route (Stage 29 W-FIX1e, O564). Only the owner thread
+ * avant_ws_event_route. Only the owner thread
  * writes it and reads it, so the loop threads share no table of
  * connections. */
 typedef struct AvantWsConn {
@@ -291,7 +291,7 @@ typedef struct AvantWsConn {
   struct AvantWsConn *next_global;
 } AvantWsConn;
 
-/* out is the connection's output queue (Stage 29 W-FIX1a, P191): the
+/* out is the connection's output queue: the
  * bytes of an answer the socket did not take, in C memory, sent by
  * srv_on_writable. While it holds anything the connection takes no
  * further request and is not read (conn_send), so it never holds more
@@ -354,7 +354,7 @@ typedef struct ConnNode {
 
 /* An HTTP connection is closed when nothing has happened on it for this
  * long: no request bytes received and no queued answer bytes sent
- * (Stage 29 W-FIX1a, P192: it was armed once at accept, so a busy
+ * (it used to be armed once at accept, so a busy
  * keep-alive connection was closed about 30 s after it was accepted).
  * uSockets counts timeouts in 4-second ticks, rounding the seconds up
  * to whole ticks (30 s is 8 ticks): the close comes at the eighth sweep
@@ -378,9 +378,9 @@ static unsigned int http_idle_timeout(void) {
   return HTTP_IDLE_TIMEOUT_S;
 }
 
-/* A write hands the socket at most 1 GiB at a time (Stage 29 W-FIX1g,
- * O519, for the server's WebSocket messages; W-FIX1h, O662, for its HTTP
- * answers, the client's request and the WebSocket client's frames):
+/* A write hands the socket at most 1 GiB at a time (the server's
+ * WebSocket messages, its HTTP answers, the client's request and the
+ * WebSocket client's frames):
  * uSockets takes an int length. AVANT_HTTP_WS_WRITE_CHUNK is an internal
  * variable for the suite, not a user setting: a server created, or a
  * client call or connection begun, while it holds a number of bytes from
@@ -445,7 +445,7 @@ static size_t put_u32(char *dst, uint32_t v) {
   return n;
 }
 
-/* A length in decimal, all 64 bits of it (Stage 29 W-FIX1h, O662): the
+/* A length in decimal, all 64 bits of it: the
  * Content-Length was written through put_u32, so a body of 4 GiB or more
  * would have been announced as its length modulo 2^32; the String cap
  * (2^31 - 1 bytes) was all that kept it from happening. */
@@ -484,8 +484,8 @@ static void conn_poll(struct us_socket_t *s, int events) {
  * only a part: us_socket_write has then asked for the socket's writable
  * event, and the caller's on_writable handler calls this again with the
  * same offset. The server's output queue (conn_flush), an answer past
- * the piece (conn_send, O662), the client's request (fetch_send; Stage
- * 29 W-FIX1d, O513) and the WebSocket client's handshake (O571) are sent
+ * the piece (conn_send), the client's request (fetch_send) and the
+ * WebSocket client's handshake are sent
  * by it. */
 static int sock_write_rest(struct us_socket_t *s, const char *p, size_t len,
                            size_t *off, size_t piece) {
@@ -550,7 +550,7 @@ static void conn_send(Conn *conn, struct us_socket_t *s, const char *a,
       written = w > 0 ? (size_t)w : 0;
     } else {
       /* Past the piece (1 GiB) the two parts go one after the other, a
-       * piece at a time (Stage 29 W-FIX1h, O662): us_socket_write2 takes
+       * piece at a time: us_socket_write2 takes
        * int lengths and adds them in an int, so an answer of 2 GiB or
        * more overflowed inside the vendored code (undefined behaviour
        * that happened to work on this build). */
@@ -715,7 +715,7 @@ char *avant_http_req_headers(void *reqp) {
                               raw_len);
 }
 
-/* A response's status outside 100-599 (Stage 29 W-FIX1h, O661, D369):
+/* A response's status outside 100-599:
  * written as it came, 99999 or -1 gave a status line no client can read
  * (RFC 9110 15: a status code is three digits, its first 1 to 5). The
  * program's error, trapped in the runtime's form before any byte of the
@@ -736,8 +736,8 @@ void avant_http_req_respond(void *reqp, avant_int status, const char *head,
   /* The head and body pointers name Avant heap objects held only in
    * C registers here; nothing below is a safepoint (no allocation, no
    * native wait), so no collection runs on any thread while the response
-   * is written (Stage 28 W17a's handshake; until then a no-GC region kept
-   * another loop thread's collection off, D191, O111). */
+   * is written (the safepoint handshake; before it a no-GC region kept
+   * another loop thread's collection off). */
   if (!req->keep_alive) {
     conn_header = "close";
   } else if (req->minor_version == 0) {
@@ -796,14 +796,14 @@ static int parse_content_length(const char *p, size_t n, long *out) {
   return 1;
 }
 
-/* A received response's Content-Length (Stage 29 W-FIX1h, O664): 0
+/* A received response's Content-Length: 0
  * when it has none, 1 with its value in *out, -1 when its framing is
  * invalid: more than one Content-Length line (identical or not), a list
  * in one line, one continued on a folded line, or a value that is not a
  * number. The client read the first line only, so a response with two
  * values was read by one of them where a proxy may read the other (RFC
  * 9112 6.3: the user agent closes the connection and discards such a
- * response). The rule is the server's for requests (D364, O522). */
+ * response). The rule is the server's for requests. */
 static int resp_content_length(struct phr_header *headers, size_t count,
                                long *out) {
   size_t i;
@@ -1105,7 +1105,7 @@ static size_t ws_frame_header(char *dst, int opcode, size_t len) {
 
 /* Loop thread only. Writes as much of the queue as the kernel takes,
  * each piece at most the server's ws_write_chunk (a frame's rest may be
- * larger than an int since W-FIX1g). */
+ * larger than an int). */
 static void ws_flush(AvantWsConn *ws) {
   size_t chunk = ws->srv->ws_write_chunk;
   pthread_mutex_lock(&ws->qmu);
@@ -1146,7 +1146,7 @@ static void ws_flush(AvantWsConn *ws) {
 /* Enqueue one already-framed buffer (takes ownership). Caller holds no
  * locks; returns 0 when the byte bound would be exceeded. begun says
  * that the frame's first bytes are already on the wire and this is its
- * rest: it is queued whatever the bound (Stage 29 W-FIX1g). Refusing it
+ * rest: it is queued whatever the bound. Refusing it
  * left half a frame on the wire, whose stated length then swallowed the
  * next frames as payload; the bound only decides whether a new frame
  * starts, so the queue holds at most one frame's rest past it. */
@@ -1189,7 +1189,7 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
     queued = ws->out_head != NULL;
     pthread_mutex_unlock(&ws->qmu);
     if (!queued) {
-      /* Lengths stay size_t (Stage 29 W-FIX1g, O519): the total was an
+      /* Lengths stay size_t: the total was an
        * int, so a payload within 10 bytes of 2^31 made it negative, any
        * count the socket took passed for the whole frame, and send
        * returned true with only that part on the wire. The socket is
@@ -1250,7 +1250,7 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
   }
 }
 
-/* An id is an Avant Int: one no connection has finds none (Stage 29 W-INT1). */
+/* An id is an Avant Int: one no connection has finds none. */
 static AvantWsConn *ws_find_global(avant_int id) {
   AvantWsConn *ws;
   for (ws = g_ws_all; ws; ws = ws->next_global) {
@@ -1282,7 +1282,7 @@ typedef struct AvantWsEvent {
   size_t reason_len;
 } AvantWsEvent;
 
-/* Rule 3 of gc-design.md section 4.4 (Stage 28 W17a): a thread runs the
+/* Rule 3 of gc-design.md section 4.4: a thread runs the
  * uSockets loop native (epoll_wait and the C callbacks touch no heap
  * object), and each dispatch into Avant returns to running at its entry
  * (a safepoint while a collection is in progress) and to native when it
@@ -1344,7 +1344,7 @@ avant_int avant_ws_event_conn_id(void *evp) {
   return ((AvantWsEvent *)evp)->ws->id;
 }
 
-/* The connection's first message route, set at the upgrade (O564). */
+/* The connection's first message route, set at the upgrade. */
 avant_int avant_ws_event_route(void *evp) {
   return ((AvantWsEvent *)evp)->ws->route;
 }
@@ -1383,9 +1383,9 @@ static int32_t ws_send_common(void *srvp, avant_int id, int32_t is_text,
   /* The data pointer names an Avant heap object held only in a C
    * register; nothing here is a safepoint (no allocation, no native wait:
    * g_ws_mu is a brief plain lock whose holders never stop), so no
-   * collection runs on any thread meanwhile (Stage 28 W17a's handshake;
-   * until then this and the send and close entries below held a no-GC
-   * region, D191). */
+   * collection runs on any thread meanwhile (the safepoint handshake;
+   * before it this and the send and close entries below held a no-GC
+   * region). */
   len = avant_str_n(data);
   pthread_mutex_lock(&g_ws_mu);
   ws = srv ? ws_find(srv, id) : ws_find_global(id);
@@ -1458,7 +1458,7 @@ void *avant_ws_event_conn(void *evp) {
 /* Loop-thread send through the connection's record itself: no registry
  * lock, because the owner thread is the only socket writer and the
  * only thread that releases the record. The value carries the record's
- * address and the connection's id (Stage 29 W-FIX1d, O515: it carried
+ * address and the connection's id (it used to carry
  * the address alone, and a WsConn kept after `serve` returned read a
  * record the server's teardown had freed). The record is type-stable
  * and the id is checked first: a value of a connection that has closed
@@ -1802,7 +1802,7 @@ static int http_hex(unsigned char ch) {
 }
 
 /* Whether a Host value is uri-host [ ":" port ] (RFC 9112 3.2, RFC
- * 3986 3.2.2 and 3.2.3; Stage 29 W-FIX1h, O660): a reg-name (an IPv4
+ * 3986 3.2.2 and 3.2.3): a reg-name (an IPv4
  * address is one) of unreserved, sub-delims and pct-encoded bytes, or
  * an IP literal in brackets, then an optional ':' and digits. Empty is
  * valid (a target without an authority). The server checked only that
@@ -1825,7 +1825,7 @@ static int http_host_valid(const char *p, size_t n) {
     /* The table first: a name's byte costs one load and one test (on
      * the hello path's Host, "127.0.0.1:18301", about 20 instructions
      * fewer per request than testing ':' and '%' first; the check as a
-     * whole is about 120; records/2026-11-14-s29-wfix1h, cost). */
+     * whole is about 120). */
     while (i < n) {
       unsigned char ch = (unsigned char)p[i];
       if (http_host_byte[ch]) {
@@ -1864,7 +1864,7 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
   }
   for (;;) {
     /* An answer's tail is still queued: the next request waits in the
-     * buffer until srv_on_writable has sent it (P191). */
+     * buffer until srv_on_writable has sent it. */
     if (conn_out_pending(conn)) {
       return;
     }
@@ -1902,20 +1902,20 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
       send_error(conn, s, 411);
       return;
     }
-    /* Every Content-Length line is read, not the first only (Stage 29
-     * W-FIX1a, P193): lines that disagree, or one continued on a folded
+    /* Every Content-Length line is read, not the first only: lines that
+     * disagree, or one continued on a folded
      * line, give two readings of where the body ends, and a proxy in
      * front may take the other one (request smuggling). RFC 9112 6.3:
      * 400 and close. Every repeat is refused too, identical or not
-     * (Stage 29 W-FIX1g, O522, the owner's choice; nginx does the same):
+     * (the owner's choice; nginx does the same):
      * two lines "5" and one line "5, 5" are the same list (RFC 9110 5.3),
      * and a list in one line is not a number here, so both spellings
      * are 400, where two identical lines used to be one value.
-     * The same pass counts the Host lines (Stage 29 W-FIX1g, O472, H3):
+     * The same pass counts the Host lines:
      * RFC 9112 3.2 has a server answer 400 to an HTTP/1.1 request
      * without one and to any request with two (identical or not), and a
      * Host continued on a folded line is an invalid value, as is one
-     * that is not uri-host [ ":" port ] (Stage 29 W-FIX1h, O660); a request
+     * that is not uri-host [ ":" port ]; a request
      * that names two hosts is read one way here and maybe the other way
      * by a proxy or a virtual-host router in front. */
     {
@@ -1976,7 +1976,7 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
         keep_alive = 1;
       }
     }
-    /* WebSocket upgrade (Q135 A): a request carrying an Upgrade header
+    /* WebSocket upgrade: a request carrying an Upgrade header
      * must be a well-formed RFC 6455 handshake or it is answered 400
      * here; a well-formed one is flagged for the Avant dispatch, which
      * decides from its route table whether to upgrade. */
@@ -2083,7 +2083,7 @@ static void conn_flush(Conn *conn, struct us_socket_t *s) {
     int done = sock_write_rest(s, conn->out, conn->out_len, &conn->out_off,
                                conn->srv->ws_write_chunk);
     if (conn->out_off > before) {
-      /* The client took queued bytes: it is not stalled (P192). */
+      /* The client took queued bytes: it is not stalled. */
       us_socket_timeout(0, s, conn->srv->idle_timeout);
     }
     if (!done) {
@@ -2142,7 +2142,7 @@ static struct us_socket_t *srv_on_data(struct us_socket_t *s, char *data,
     return s;
   }
   if (!conn->ws) {
-    /* Request bytes arrived: the idle timeout starts again (P192). */
+    /* Request bytes arrived: the idle timeout starts again. */
     us_socket_timeout(0, s, conn->srv->idle_timeout);
   }
   if (conn->len + (size_t)length > conn->cap) {
@@ -2282,7 +2282,7 @@ static void srv_on_wakeup(struct us_loop_t *loop) {
      * queued ahead of the FIN; leave them to close from the peer side
      * so the last response is not discarded. Idle connections are
      * closed here so the loop can drain. Open WebSocket connections
-     * first get a 1001 close frame (Q133 A) and the same leave-to-peer
+     * first get a 1001 close frame (going away) and the same leave-to-peer
      * treatment. */
     ConnNode *node = hl->conns_head;
     while (node) {
@@ -2499,15 +2499,15 @@ static int32_t pick_ephemeral_port(const char *host) {
   return port;
 }
 
-/* `loops` <= 0 means the runtime's chosen thread count (Q124-A). */
+/* `loops` <= 0 means the runtime's chosen thread count. */
 void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
                         avant_int loops, avant_int max_message) {
   AvantHttpServer *srv;
   int n;
   int i;
   set_status(0);
-  /* A port is 0..65535 and the limits and loop count C ints (Stage 29
-   * W-INT1): anything else fails like a port that cannot be bound. */
+  /* A port is 0..65535 and the limits and loop count C ints: anything else
+   * fails like a port that cannot be bound. */
   if (port < 0 || port > 65535 || loops > 4096 || max_body > INT32_MAX || max_message > INT32_MAX) {
     set_status(1);
     return NULL;
@@ -2569,7 +2569,7 @@ avant_int avant_http_port(void *srvp) {
 
 /* Loop threads follow the pool's registration model: register with
  * the collector before the first dispatch, allocate young in their own
- * young blocks while serving (Stage 28 W17b; the mature space before),
+ * young blocks while serving (the mature space before),
  * unregister after the loop has drained (no Avant frame is active
  * then). */
 static void *loop_thread_main(void *arg) {
@@ -2597,7 +2597,7 @@ avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
   }
   /* srv (C memory) holds the state across every dispatch, which
    * collects; with one loop the program can stay unshared, where a young
-   * collection may move it (S+). Pinned for the serve (Stage 28 W16a). */
+   * collection may move it (S+). Pinned for the serve. */
   avant_pin(state);
   srv->state = state;
   srv->dispatch = (AvantHttpDispatch)cb;
@@ -2628,8 +2628,8 @@ avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
   return 0;
 }
 
-/* A route method of std.http called while its server serves (Stage 29
- * W-FIX1f, O594): the loop threads read the route tables with no lock,
+/* A route method of std.http called while its server serves: the loop threads
+ * read the route tables with no lock,
  * so the route is refused. The trap's form is the runtime's (trap_head
  * and trap_tail in avant_rt_traps.c, as avant_regex_closed has it): the
  * program's stdout flushed, one line on stderr, status 1. what names
@@ -2694,7 +2694,7 @@ static size_t http_value_end(const char *s, size_t n) {
   return i;
 }
 
-/* Response.header's check (Stage 29 W-FIX1g, O518). The name and the
+/* Response.header's check. The name and the
  * value were appended to the answer's head as they came, so a value
  * holding CR LF (a redirect target or a cookie built from request data)
  * added header lines or began the body, and a second answer could
@@ -2724,7 +2724,7 @@ void avant_http_header_check(const char *name, const char *value) {
   }
 }
 
-/* The client's request checks (Stage 29 W-FIX1h, O665), the same rules
+/* The client's request checks, the same rules
  * as Response.header's: the method, the request target and each header
  * were written into the request as given, so CR LF in any of them added
  * request lines or a second request (request splitting). Each returns
@@ -2816,7 +2816,7 @@ typedef struct WsClient {
   char *request; /* the handshake, malloc'd to its length */
   size_t request_len;
   size_t request_sent; /* how much of it the socket has taken */
-  size_t write_chunk; /* the most one write hands the socket (O662) */
+  size_t write_chunk; /* the most one write hands the socket */
   int want_close;
   WsClientMsg *in_head;
   WsClientMsg *in_tail;
@@ -2852,7 +2852,7 @@ static void ws_client_flush(WsClient *c) {
   while (c->out_head) {
     WsOut *node = c->out_head;
     int full = 0;
-    /* A piece at a time (Stage 29 W-FIX1h, O662): the frame's whole rest
+    /* A piece at a time: the frame's whole rest
      * was passed as (int)remaining, negative for a frame over INT_MAX,
      * which only Linux's send clamping made work. */
     while (node->off < node->len) {
@@ -3067,7 +3067,7 @@ static struct us_socket_t *ws_client_on_open(struct us_socket_t *s,
   c->sock = s;
   /* The handshake goes out only now: writing on a still-connecting
    * socket corrupts the semi-socket state machine (the fetch rule). */
-  /* All of it, under the call's deadline (Stage 29 W-FIX1g, O571): one
+  /* All of it, under the call's deadline: one
    * us_socket_write ignored its count, so a handshake the socket took in
    * part was cut and the server waited for the rest; the rest is now
    * sent each time the socket is writable (ws_client_on_writable), by
@@ -3196,7 +3196,7 @@ avant_int avant_ws_client_connect(const char *host, avant_int port,
   int request_len;
   struct timespec deadline;
   set_status(0);
-  /* A port outside 0..65535 cannot connect (Stage 29 W-INT1). */
+  /* A port outside 0..65535 cannot connect. */
   if (port < 0 || port > 65535) {
     set_status(1);
     return 0;
@@ -3209,8 +3209,8 @@ avant_int avant_ws_client_connect(const char *host, avant_int port,
   c->frag_opcode = -1;
   c->close_code = 1006;
   pthread_mutex_init(&c->mu, NULL);
-  /* The handshake's and recv's deadlines are kept on CLOCK_MONOTONIC
-   * (Stage 29 W-FIX1g, O572): read from the wall clock and waited for on
+  /* The handshake's and recv's deadlines are kept on CLOCK_MONOTONIC: read
+   * from the wall clock and waited for on
    * it, a step of the system clock during the wait shortened or
    * lengthened them (an hour back: the wait ended at once). The HTTP
    * client's deadline is a timer of its loop and was never affected. */
@@ -3236,7 +3236,7 @@ avant_int avant_ws_client_connect(const char *host, avant_int port,
   us_socket_context_on_timeout(0, c->ctx, ws_client_on_timeout);
   us_socket_context_on_end(0, c->ctx, ws_client_on_end);
   us_socket_context_on_connect_error(0, c->ctx, ws_client_on_connect_error);
-  /* The handshake is built to its own length (Stage 29 W-FIX1g): it was
+  /* The handshake is built to its own length: it was
    * formatted into 2048 bytes on the stack and then copied by the length
    * snprintf would have written, so a target or a host longer than about
    * 1,900 bytes overran both buffers (glibc's fortified memcpy stopped
@@ -3275,7 +3275,7 @@ avant_int avant_ws_client_connect(const char *host, avant_int port,
     deadline.tv_sec++;
     deadline.tv_nsec -= 1000000000L;
   }
-  /* The handshake wait is native (Stage 28 W17a, rule 2); host, target
+  /* The handshake wait is native (rule 2); host, target
    * and the key are not read after it. */
   avant_gc_lock(&c->mu);
   while (!c->handshake_done && !c->failed && !c->closed) {
@@ -3316,7 +3316,7 @@ avant_int avant_ws_client_connect(const char *host, avant_int port,
 
 static __thread int32_t g_ws_client_last_is_text;
 
-/* The open client connections, by id (Stage 29 W-FIX1d, O516). An
+/* The open client connections, by id. An
  * Avant WsConnection value is the id alone. The registry used to hold
  * addresses and the value was the address: after close freed a
  * WsClient, the next Ws.connect was given the same address, and a copy
@@ -3426,7 +3426,7 @@ char *avant_ws_client_recv(avant_int id, avant_int timeout_ms) {
     set_status(1);
     return avant_str_empty();
   }
-  /* The receive wait is native (Stage 28 W17a, rule 2): the message is
+  /* The receive wait is native (rule 2): the message is
    * C memory. */
   avant_gc_lock(&c->mu);
   if (timeout_ms < 0) {
@@ -3562,7 +3562,7 @@ typedef struct FetchState {
   const char *request;
   size_t request_len;
   size_t sent;
-  size_t write_chunk; /* the most one write hands the socket (O662) */
+  size_t write_chunk; /* the most one write hands the socket */
   struct us_socket_t *sock;
   /* Where the response ends (fetch_complete): 0 while its head has not
    * all arrived; then one of the FETCH_* framings, the head's length,
@@ -3589,7 +3589,7 @@ static FetchState *fetch_of_socket(struct us_socket_t *s) {
   return *(FetchState **)us_loop_ext(loop);
 }
 
-/* Sends what is left of the request (Stage 29 W-FIX1d, O513: the one
+/* Sends what is left of the request (before this, the one
  * write of fetch_on_open ignored its count and fetch_on_writable was
  * empty, so a request the socket took only in part was cut there and
  * the server waited for the rest). Nothing is copied: the request stays
@@ -3616,18 +3616,18 @@ static int parse_response_head(const char *raw, size_t n, int *status,
                                struct phr_header *headers,
                                size_t *num_headers, int *pret);
 
-/* Whether the response in st->buf is complete by its own framing
- * (Stage 29 W-FIX1g, O566). The exchange used to end only when the
+/* Whether the response in st->buf is complete by its own framing. The exchange
+ * used to end only when the
  * server closed the socket, and the length was looked at afterwards
  * (avant_http_resp_body): a server that keeps the connection open after
  * a complete answer (it ignores Connection: close, or a proxy keeps the
  * connection) held the call until its deadline, which then failed it
  * as a timeout. RFC 9112 6.3, in its order: interim 1xx answers are
- * skipped (O663) and a 101 ends at the close; a response to HEAD, a 204
+ * skipped and a 101 ends at the close; a response to HEAD, a 204
  * or a 304 ends with its head; a chunked body ends
  * after its last chunk and the trailer section; a Content-Length body
  * after that many bytes, and one with an invalid length (repeated, or
- * not a number) at once, to be refused (O664); a body with neither (or
+ * not a number) at once, to be refused; a body with neither (or
  * another Transfer-Encoding) when the server closes, as before. The
  * head is parsed again as bytes arrive until it
  * is whole, then never again; a chunked body is followed by the same
@@ -3651,8 +3651,8 @@ static int fetch_complete(FetchState *st) {
         return 0;
       }
       /* An interim answer (100 Continue, 102, 103 Early Hints) is a head
-       * with no body before the final answer (RFC 9110 15.2; Stage 29
-       * W-FIX1h, O663): the client returned it as the response, the final
+       * with no body before the final answer (RFC 9110 15.2): the client
+       * once returned it as the response, the final
        * answer's bytes as its body. It is skipped, and the response is
        * the answer after it (avant_http_fetch returns the bytes from
        * st->start). A 101 ends the exchange's HTTP: it stays the answer,
@@ -3680,7 +3680,7 @@ static int fetch_complete(FetchState *st) {
     } else {
       int cl = resp_content_length(headers, num_headers, &want);
       if (cl < 0) {
-        /* An invalid length (O664): the exchange ends now and
+        /* An invalid length: the exchange ends now and
          * avant_http_resp_body refuses the response. */
         st->framing = FETCH_NO_BODY;
       } else if (cl > 0) {
@@ -3741,7 +3741,7 @@ static struct us_socket_t *fetch_on_data(struct us_socket_t *s, char *data,
   st->len += (size_t)length;
   if (fetch_complete(st)) {
     /* The whole response is here: the exchange ends now, whether or not
-     * the server closes (O566). */
+     * the server closes. */
     return us_socket_close(0, s, 0, NULL);
   }
   return s;
@@ -3770,7 +3770,7 @@ static struct us_socket_t *fetch_on_timeout(struct us_socket_t *s) {
 }
 
 /* timeout_ms is a deadline for the whole exchange: the connect, the
- * request and the complete response (Stage 29 W-FIX1d, O514). It was
+ * request and the complete response. It was
  * armed as the socket's timeout before the connect and uSockets clears
  * a socket's timeout when the connection is established, so it covered
  * the connect only: a server that accepted and never answered held the
@@ -3967,8 +3967,8 @@ char *avant_http_resp_body(const char *raw) {
   }
   /* A 204 or a 304 has no body whatever its head says (RFC 9112 6.3):
    * a 304's Content-Length is the length the full answer would have, so
-   * reading it as this body's length made the response invalid (Stage 29
-   * W-FIX1g). A HEAD's answer is the caller's to know (http_fetch_once). */
+   * reading it as this body's length made the response invalid. A HEAD's
+   * answer is the caller's to know (http_fetch_once). */
   if (status == 204 || status == 304) {
     return make_bytes("", 0);
   }

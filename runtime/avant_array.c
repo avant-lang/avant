@@ -16,7 +16,7 @@ typedef struct {
   int32_t cap;
 } AvantArray;
 
-/* The freeze (Stage 29 W8Cc, O758; avant_rt.h, AVANT_ARRAY_FROZEN). The
+/* The freeze (avant_rt.h, AVANT_ARRAY_FROZEN). The
  * cap word is read with a relaxed atomic load, a plain load on x86, and
  * changed only by compare-and-swap while a task may hold the array, so
  * spawns that capture one array from several threads (a task that
@@ -90,7 +90,7 @@ static int32_t arr_thawed_cap(AvantArray *a, uint64_t elem_size) {
  * capacity. elem_size is the size of the innermost level's elements. A
  * thaw of an array that is not frozen is the compiler's error. The task's
  * end runs it (lower_task.av, thaw_captures); when a trap may end a task
- * without ending the program (O194, W8Cd), that end must run it too. */
+ * without ending the program, that end must run it too. */
 void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size) {
   AvantArray *a = (AvantArray *)arr;
   int32_t c;
@@ -120,7 +120,7 @@ void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size) {
 }
 
 /* min_cap is checked against the ceiling here, before anything is
- * allocated (Stage 29 W-INT1): every growth comes through this one. */
+ * allocated: every growth comes through this one. */
 static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint32_t buf_type_id) {
   avant_size_check((uint64_t)min_cap, AVANT_SIZE_ARRAY);
   int32_t ncap = a->cap ? a->cap : 4;
@@ -139,7 +139,8 @@ static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint3
   void *nbuf = avant_alloc(bytes, buf_type_id);
   if (a->buf && a->size > 0) {
     memcpy(nbuf, a->buf, (size_t)a->size * (size_t)elem_size);
-    /* A large pointer buffer may be mature (a mature-allocating thread; young otherwise since W15a1) and hold young elements (W13b). */
+    /* A large pointer buffer may be mature (a mature-allocating thread; young
+     * otherwise) and hold young elements. */
     if (buf_type_id != AVANT_TYPE_BYTES) {
       avant_barrier(nbuf);
     }
@@ -149,15 +150,15 @@ static void array_grow(AvantArray *a, int64_t min_cap, uint64_t elem_size, uint3
   a->cap = ncap;
 }
 
-/* The push and reserve entries (RC1, avant_gc.h; Stage 28 W16a, they
- * were W15a1's named safepoints): the fast path neither allocates nor
+/* The push and reserve entries (RC1, avant_gc.h; they
+ * were named safepoints once): the fast path neither allocates nor
  * collects; the growth path keeps the array (and push_ptr's element) in
  * handles across array_grow and forms the slot after it (RC2). */
 /* An element store barriers the buffer with its slot (avant_barrier_slot:
  * a large pointer buffer marks the slot's card) and not the array object,
- * whose size and capacity are not references (Stage 28 W16t: remembering
+ * whose size and capacity are not references (remembering
  * the array object at every push made the young collection scan the
- * buffer it names whole, R1'(c), and defeated the cards); array_grow
+ * buffer it names whole, and defeated the cards); array_grow
  * barriers the array object when it stores a new buffer. */
 void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
   AvantArray *a = (AvantArray *)arr;
@@ -207,8 +208,8 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
   }
   {
     /* No collecting call between the slot and the store (in a shared
-     * program too: other threads collect only at this one's safepoints,
-     * Stage 28 W17a). */
+     * program too: other threads collect only at this one's
+     * safepoints). */
     AVANT_GC_SCOPE(2);
     AVANT_GC_ROOT(0, &a);
     AVANT_GC_ROOT(1, &elem);
@@ -220,10 +221,10 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
 }
 
 /* set, get and pop of a pointer element never collect and are no
- * safepoint, so no thread collects while one runs (Stage 28 W17a's
- * handshake). Until W17a a shared program took the world lock around
+ * safepoint, so no thread collects while one runs (the safepoint
+ * handshake). Before the handshake a shared program took the world lock around
  * each, so that another thread's collection could not move the buffer
- * between the load and the store (D191). */
+ * between the load and the store. */
 void avant_array_set_ptr(void *arr, avant_int i, void *elem) {
   AvantArray *a = (AvantArray *)arr;
   if (a && a->buf) {
@@ -283,7 +284,7 @@ void avant_array_push_i32(void *arr, int32_t v) {
   }
 }
 
-/* The push of an Int (Stage 29 W-INT1), as avant_array_push_i32's of an
+/* The push of an Int, as avant_array_push_i32's of an
  * Int32. */
 void avant_array_push_i64(void *arr, int64_t v) {
   AvantArray *a = (AvantArray *)arr;
@@ -661,7 +662,7 @@ static int cmp_str(const void *a, const void *b) {
   return str_cmp_raw(*(const char *const *)a, *(const char *const *)b);
 }
 
-/* An Array(Int) (Stage 29 W-INT1: Int is 64-bit): when every element
+/* An Array(Int) (Int is 64-bit): when every element
  * fits 32 bits, which is the common case, the elements are narrowed in
  * place into the buffer's first half (element i's four bytes overlap only
  * elements at or before i, already read), sorted by sort_i32's radix and
@@ -835,7 +836,8 @@ void *avant_array_copy(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
     void *nbuf = avant_alloc((uint64_t)a->size * elem_size, buf_type_id);
     memcpy(nbuf, a->buf, (size_t)a->size * (size_t)elem_size);
     if (buf_type_id != AVANT_TYPE_BYTES) {
-      /* A large pointer buffer may be mature (a mature-allocating thread; young otherwise since W15a1): barrier it (D187, W13b). */
+      /* A large pointer buffer may be mature (a mature-allocating thread;
+       * young otherwise): barrier it. */
       avant_barrier(nbuf);
     }
     avant_barrier(r);
@@ -965,7 +967,7 @@ double avant_array_min_f64(void *arr, int32_t *found) {
   double best;
   if (found) { *found = 0; }
   if (!a || !a->buf || a->size <= 0) { return 0; }
-  /* sort's order (NaN after every number; Stage 29 W4b1, D295 R8): the
+  /* sort's order (NaN after every number): the
    * smallest number, NaN only when every element is NaN. */
   best = ((double *)a->buf)[0];
   for (i = 1; i < a->size; i++) { double v = ((double *)a->buf)[i]; if (v < best || best != best) { best = v; } }
@@ -1039,7 +1041,7 @@ double avant_array_max_f64(void *arr, int32_t *found) {
   double best;
   if (found) { *found = 0; }
   if (!a || !a->buf || a->size <= 0) { return 0; }
-  /* sort's order (NaN after every number; D295 R8): NaN when any element
+  /* sort's order (NaN after every number): NaN when any element
    * is NaN, else the largest number. */
   best = ((double *)a->buf)[0];
   for (i = 1; i < a->size; i++) { double v = ((double *)a->buf)[i]; if (v > best || v != v) { best = v; } }
@@ -1065,8 +1067,7 @@ int32_t avant_array_sum_i32(void *arr) {
   int64_t s = 0;
   if (!a || !a->buf) { return 0; }
   /* An Array(Int32): the int64_t total cannot overflow below 2^32
-   * elements; the sum is checked once against Int32 (D215, Stage 29 W4b1
-   * R2). */
+   * elements; the sum is checked once against Int32. */
   for (i = 0; i < a->size; i++) { s += ((int32_t *)a->buf)[i]; }
   if (s < INT32_MIN || s > INT32_MAX) { avant_trap_overflow(); }
   return (int32_t)s;
@@ -1202,8 +1203,8 @@ void avant_array_fill_i32(void *arr, int32_t v) {
 #endif
 }
 
-/* The BWT entries take the references' widths (Stage 29 W-INT2;
- * LangArena compress.c and compress.rs): the input, the transform and
+/* The BWT entries take the references' widths (LangArena compress.c and
+ * compress.rs): the input, the transform and
  * the inverse's result are bytes (Buf: uint8_t, :7, :22, :256); the
  * suffix array, its scratch copy and the inverse's next links are
  * Array(Int) (size_t, :38, :44, :245; usize in Rust); the ranks and the
@@ -1446,8 +1447,7 @@ void avant_bwt_inverse(void *bwt_arr, void *next_arr, void *out_arr, avant_int s
   bwt = bwt_bytes(bwt_arr, n);
   next = bwt_ix(next_arr, n);
   out = bwt_bytes(out_arr, n);
-  /* start names an element (Stage 29 W-INT1: out of range it read past
-   * next). */
+  /* start names an element (out of range it would read past next). */
   if (!bwt || !next || !out || n <= 0 || start < 0 || start >= n) {
     return;
   }

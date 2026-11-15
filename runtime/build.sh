@@ -12,12 +12,12 @@ mkdir -p "$root/build"
 if [ -z "${AVANT_RUNTIME_BUILD_LOCK:-}" ] && command -v flock > /dev/null 2>&1; then
   AVANT_RUNTIME_BUILD_LOCK=1 exec flock "$root/build/.build.lock" sh "$root/build.sh" "$@"
 fi
-# Code placement (Stage 29 WP, O186): every runtime function starts on a
+# Code placement: every runtime function starts on a
 # 64-byte boundary and loops on 32, as the compiler places a program's own
 # code (runtime/avant_llvm.c, place_functions). gcc's default is 16 for
 # both, so the runtime growing anywhere moved the hot functions linked
-# after it by 16-byte steps, and with them tasks' times (up to 14%, the
-# WP probe; tools/placement-probe.sh reruns it).
+# after it by 16-byte steps, and with them tasks' times (up to 14%;
+# tools/placement-probe.sh measures it).
 place="-falign-functions=64 -falign-loops=32"
 cflags="-O2 -std=c11 -pthread -fno-omit-frame-pointer $place -I$root -I$root/third_party/yyjson -I$root/third_party/base64/include -I$root/third_party/uSockets/src -I$root/third_party/picohttpparser -DLIBUS_NO_SSL"
 
@@ -25,12 +25,12 @@ compile() {
   "$cc" -c $cflags -o "$2" "$1"
 }
 
-# The young generation is S+ (Stage 28 W15c, D233; avant_gc_sticky.c).
+# The young generation is S+ (avant_gc_sticky.c).
 # Candidate E, the evacuating nursery, and the AVANT_GC_CANDIDATE knob
-# that chose between the candidates were deleted in Stage 28 W15d (D232):
+# that chose between the candidates were deleted:
 # E's mechanisms that S+ uses stay in S+. Candidate S alone (S+ with its
 # copy compiled out, the internal constant GC_STICKY_COPY 0) was deleted
-# as a build in the Valk stage's VALK-T2 (O632): nothing built or tested
+# as a build later: nothing built or tested
 # it; its in-place promotion is part of S+.
 gc_cflags=
 
@@ -43,8 +43,8 @@ core_units="avant_rt_traps avant_gc_heap avant_gc_alloc avant_gc_los avant_gc_re
 # The core units fold into avant_rt.o: the seed's link table names
 # avant_rt.o only, so a new core object could not be linked by the old
 # seed. The source split is organizational; the link surface is not:
-# after the merge only the symbols avant_rt.exports lists stay global
-# (Stage 28 W12), so a function or variable the units share with each
+# after the merge only the symbols avant_rt.exports lists stay global, so a
+# function or variable the units share with each
 # other never becomes part of the object's surface.
 build_core() {
   out=$1
@@ -57,7 +57,7 @@ build_core() {
   done
   ld -r -o "$out/avant_rt_merged.o" "$@"
   objcopy --keep-global-symbols="$root/avant_rt.exports" "$out/avant_rt_merged.o"
-  # The surface check (Stage 28 W14b2): the object's global symbols are
+  # The surface check: the object's global symbols are
   # exactly the exports file's names, the ABI section with default
   # visibility and the runtime-internal section hidden.
   want_abi=$(sed -n '/^# runtime-internal$/q; /^[^#]/p' "$root/avant_rt.exports" | LC_ALL=C sort)
@@ -74,8 +74,7 @@ build_core() {
   fi
   # The merged parts are removed, as the zlib and PCRE2 parts are:
   # nothing links them on their own, and tools/package.sh ships every
-  # object left here (W10b: they were 28 KB of dead weight in the
-  # release).
+  # object left here (they were 28 KB of dead weight in the release).
   rm -f "$@"
   mv "$out/avant_rt_merged.o" "$out/avant_rt.o"
   for name in avant_str avant_buf avant_hash avant_array avant_task avant_wide avant_codec avant_io avant_cov; do
@@ -85,14 +84,14 @@ build_core() {
 }
 
 build_core "$root/build"
-# The seed-ABI copy W-INT1 built (a 32-bit avant_int for the v0.40.0
-# seed's B) is gone since W-ADOPT; a checkout built before keeps none.
+# The seed-ABI copy an older build made (a 32-bit avant_int for the
+# v0.40.0 seed's B) is gone; a checkout built before keeps none.
 rm -rf "$root/build/seed-abi"
 for name in avant_json.c avant_http.c avant_base64.c avant_sys.c; do
   compile "$root/$name" "$root/build/${name%.c}.o"
 done
 
-# zlib (D146), vendored at the pin in third_party/zlib/PIN: the library
+# zlib, vendored at the pin in third_party/zlib/PIN: the library
 # files compress and uncompress need, built as zlib's own configure builds
 # them (-O3 -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN). It folds into
 # avant_zlib.o, the object the compiler's std.zlib row names, so a program
@@ -111,7 +110,7 @@ ld -r -o "$root/build/avant_zlib.o" "$root/build/avant_zlib_own.o" "$zl_out"/*.o
 objcopy -w --keep-global-symbol='avant_*' "$root/build/avant_zlib.o"
 rm -rf "$zl_out" "$root/build/avant_zlib_own.o"
 
-# PCRE2 (D146), vendored at the pin in third_party/pcre2/PIN: the 8-bit
+# PCRE2, vendored at the pin in third_party/pcre2/PIN: the 8-bit
 # library with JIT, configured as the system library std.regex linked
 # before (third_party/pcre2/src/config.h). It folds into avant_re.o, the one
 # object the compiler's std.regex row names, so a program needs no libpcre2.
@@ -169,14 +168,14 @@ compile "$us/socket.c" "$root/build/us_socket.o"
 compile "$us/udp.c" "$root/build/us_udp.o"
 compile "$us/eventing/epoll_kqueue.c" "$root/build/us_epoll_kqueue.o"
 
-# The bind helper (D135, D141): tools/bind.c against libclang, into
+# The bind helper: tools/bind.c against libclang, into
 # runtime/build/avant-bind. `avant bind` runs it and builds nothing itself;
 # the release ships it beside avant. Without llvm-config or libclang it is
 # skipped with a notice, and `avant bind` says how to build it.
 # BIND_LLVM_CONFIG names the llvm-config whose libclang it links (default:
 # LLVM_CONFIG, else llvm-config), so the helper can stay on a distribution
-# libclang while the compiler's in-process LLVM comes from elsewhere (W18L:
-# the libclang of LLVM's official binaries finds no resource headers when
+# libclang while the compiler's in-process LLVM comes from elsewhere (the
+# libclang of LLVM's official binaries finds no resource headers when
 # loaded by avant-bind, so `avant bind` of a header that includes
 # <stdbool.h> fails).
 llvm_config=${BIND_LLVM_CONFIG:-${LLVM_CONFIG:-llvm-config}}
@@ -197,7 +196,7 @@ else
   echo "runtime/build.sh: skipped avant-bind: $llvm_config not found (avant bind needs llvm-config and libclang)" >&2
 fi
 
-# The compiler's in-process LLVM (D172): tools/build-llvm.sh writes
+# The compiler's in-process LLVM: tools/build-llvm.sh writes
 # runtime/build/avant_llvm.o, which only the compiler links (tools/
 # letters.sh). It rebuilds only when LLVM or the glue changed, so a cached
 # run costs a few sha256 sums. Without llvm-config-20 it is skipped with a

@@ -6,11 +6,11 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-/* Language traps and checked arithmetic (Wave B safety floor).
- * Moved out of avant_rt.c in the collector stage, Wave 2: these are
+/* Language traps and checked arithmetic (the safety floor).
+ * Moved out of avant_rt.c with the collector's split: these are
  * self-contained (print and exit) and share no collector state. */
 
-/* Every trap (Stage 29 W4b2, D295 R16) flushes the program's stdout
+/* Every trap flushes the program's stdout
  * first, so the output a program printed before the trap comes before
  * its message, prints "avant runtime: WHAT", then " at FILE:LINE:COL"
  * when the site is known, and exits with status 1. Generated code calls
@@ -110,8 +110,8 @@ void avant_trap_text(const char *what) {
   trap_tail();
 }
 
-/* Integer overflow and division by zero raised by the generated code
- * (Stage 29 W4b2, D295 R16): fn names the function and where it starts
+/* Integer overflow and division by zero raised by the generated code: fn names
+ * the function and where it starts
  * ("Heap.pop (heap.av:12:3)"). Every check of a function shares one cold
  * block (identical bounds traps stay identical), so LLVM can merge and
  * fold them as before; the function is the site it can name without
@@ -134,7 +134,7 @@ void avant_trap_div_zero_in(int32_t fn) {
   trap_tail();
 }
 
-/* pop on an empty Array (Stage 29 W4b2: it said "index -1 out of bounds"). */
+/* pop on an empty Array (it used to say "index -1 out of bounds"). */
 void avant_trap_empty_at(int32_t what, int32_t site) {
   static const char *names[] = {"pop on an empty Array", "shift on an empty Array"};
   g_trap_loc = site_text(site);
@@ -143,8 +143,8 @@ void avant_trap_empty_at(int32_t what, int32_t site) {
   trap_tail();
 }
 
-/* A change to an Array a running task reads (Stage 29 W8Cc, O758, D389
- * (c); avant_rt.h, AVANT_ARRAY_FROZEN): op names the operation
+/* A change to an Array a running task reads (avant_rt.h,
+ * AVANT_ARRAY_FROZEN): op names the operation
  * (AVANT_FROZEN_*). The checks inside the runtime's own functions (push's
  * growth, pop, fill, sort, reverse, reserve) print no site; generated
  * code's (an element store, clear, a sort with a block) call the _at
@@ -196,9 +196,9 @@ void avant_trap_overflow(void) {
   trap_tail();
 }
 
-/* A shift amount outside 0..width - 1 (Stage 28 W11b, C1). kind: 16 +
- * 0 Int, 1 Int32, 2 UInt64, 3 UInt32, + 8 for an unsigned amount (Stage 29
- * W-INT1; the 16 kept the seed's old kinds apart until W-ADOPT). */
+/* A shift amount outside 0..width - 1. kind: 16 +
+ * 0 Int, 1 Int32, 2 UInt64, 3 UInt32, + 8 for an unsigned amount (the
+ * 16 kept an older seed's kinds apart). */
 static __attribute__((noreturn, cold)) void avant_trap_shift(int64_t amount, int32_t kind) {
   static const char *names[] = {"Int", "Int32", "UInt64", "UInt32"};
   int t = kind & 3;
@@ -212,12 +212,12 @@ static __attribute__((noreturn, cold)) void avant_trap_shift(int64_t amount, int
   trap_tail();
 }
 
-/* Float64.to_i of NaN, an infinity, or a value outside the Int range
- * (Stage 28 W11b, C2). NaN prints as nan whatever its sign bit (the
+/* Float64.to_i of NaN, an infinity, or a value outside the Int range.
+ * NaN prints as nan whatever its sign bit (the
  * float text prints it so). */
 static __attribute__((noreturn, cold)) void avant_trap_to_i(double x) {
   char text[64];
-  /* The value as Avant prints it (W4b1's shortest round-trip text). */
+  /* The value as Avant prints it (the shortest round-trip text). */
   avant_fmt_float_text(text, x);
   trap_head();
   trap_out("to_i of Float64 %s out of range for Int", text);
@@ -225,9 +225,9 @@ static __attribute__((noreturn, cold)) void avant_trap_to_i(double x) {
 }
 
 /* A conversion between integer types whose value the target cannot hold
- * (Stage 29 W4b1, D295 R1: the correct value or a trap). kind is
- * 16 + from * 4 + to, each 0 Int, 1 Int32, 2 UInt64, 3 UInt32 (Stage 29
- * W-INT1; the 16 kept the seed's old kinds apart until W-ADOPT). An
+ * (the correct value or a trap). kind is
+ * 16 + from * 4 + to, each 0 Int, 1 Int32, 2 UInt64, 3 UInt32 (the 16
+ * kept an older seed's kinds apart). An
  * unsigned value arrives as its bits and prints unsigned. */
 static __attribute__((noreturn, cold)) void avant_trap_convert(int64_t value, int32_t kind) {
   static const char *names[] = {"Int", "Int32", "UInt64", "UInt32"};
@@ -244,7 +244,7 @@ static __attribute__((noreturn, cold)) void avant_trap_convert(int64_t value, in
   trap_tail();
 }
 
-/* A byte stored outside 0..255 (Stage 29 W4b1, D295 R3): push_byte, a Buf
+/* A byte stored outside 0..255: push_byte, a Buf
  * element, chr, repeat_byte. */
 void avant_trap_byte(avant_int value) {
   trap_head();
@@ -252,15 +252,15 @@ void avant_trap_byte(avant_int value) {
   trap_tail();
 }
 
-/* A slice whose bounds are not 0 <= start <= stop <= size (Stage 29 W4b1,
- * D295 R4: slices trap like indexing). */
+/* A slice whose bounds are not 0 <= start <= stop <= size (slices trap
+ * like indexing). */
 void avant_trap_slice(avant_int start, avant_int stop, avant_int size) {
   trap_head();
   trap_out("slice %lld..%lld out of range (size %lld)", (long long)start, (long long)stop, (long long)size);
   trap_tail();
 }
 
-/* A fixed-point precision outside 0..64 (Stage 29 W4b1: fmt_float and
+/* A fixed-point precision outside 0..64 (fmt_float and
  * push_fmt_f used to clamp it to 0..16 silently). */
 void avant_trap_precision(avant_int prec) {
   trap_head();
@@ -268,9 +268,9 @@ void avant_trap_precision(avant_int prec) {
   trap_tail();
 }
 
-/* A negative count where a size is meant (Stage 29 W4b1). what names the
+/* A negative count where a size is meant. what names the
  * operation: 0 Array(T).new's size, 1 repeat_byte's count. */
-/* A size or capacity past its ceiling (Stage 29 W-INT1; avant_rt.h,
+/* A size or capacity past its ceiling (avant_rt.h,
  * AVANT_SIZE_MAX): kind is AVANT_SIZE_STRING, _BUF, _ARRAY or _HASH. */
 void avant_trap_size(int32_t kind) {
   static const char *what[] = {"String", "Buf", "Array", "Hash"};
@@ -284,7 +284,7 @@ void avant_trap_size(int32_t kind) {
   trap_tail();
 }
 
-/* Array(T).new(n) past the ceiling (Stage 29 W-INT1), with its site. */
+/* Array(T).new(n) past the ceiling, with its site. */
 void avant_trap_size_at(int32_t kind, int32_t site) {
   g_trap_loc = site_text(site);
   avant_trap_size(kind);
@@ -298,7 +298,7 @@ void avant_trap_negative(avant_int n, int32_t what) {
 }
 
 /* An Avant value passed to or stored as a C scalar type that cannot hold
- * it (Stage 29 W1b, D64 as amended; D215: the correct value or a trap).
+ * it (the correct value or a trap).
  * kind is type.av's cs_*: 1 Int8, 2 Int16, 3 UInt8, 4 UInt16, 5 UInt32. */
 void avant_trap_c_range(int64_t value, int32_t kind) {
   static const char *names[] = {"?", "Int8", "Int16", "UInt8", "UInt16", "UInt32", "Int32"};
@@ -391,7 +391,7 @@ uint64_t avant_checked_rem_u64(uint64_t a, uint64_t b) {
   return a % b;
 }
 
-/* The CPU check (Stage 28 W18S, O140). The compiler records in every
+/* The CPU check. The compiler records in every
  * program the x86-64 level its code needs (`__avant_cpu_level`: 1 x86-64,
  * 2-4 x86-64-v2 to v4; 0x100 set for --cpu=native, with the compiling
  * machine's level). Before main, a CPU without that level stops the
@@ -449,7 +449,7 @@ __attribute__((constructor)) static void avant_cpu_check(void) {
   exit(1);
 }
 
-/* main's (or run's) Int result outside 0..255 (Stage 29 W4b2, D295 R14):
+/* main's (or run's) Int result outside 0..255:
  * the OS keeps only its low byte, so 256 failures would read as success. */
 void avant_trap_exit_status_at(avant_int status, int32_t site) {
   g_trap_loc = site_text(site);
@@ -458,8 +458,8 @@ void avant_trap_exit_status_at(avant_int status, int32_t site) {
   trap_tail();
 }
 
-/* A C function declared `: String` that returned NULL (Stage 29 W4b2,
- * D295 R15); `String?` reads NULL as nil. */
+/* A C function declared `: String` that returned NULL; `String?` reads NULL as
+ * nil. */
 void avant_trap_c_null_at(const char *name, int32_t site) {
   g_trap_loc = site_text(site);
   trap_head();
@@ -467,7 +467,7 @@ void avant_trap_c_null_at(const char *name, int32_t site) {
   trap_tail();
 }
 
-/* An enum value that is no member (Stage 29 W5a1, D358): a value a C
+/* An enum value that is no member: a value a C
  * function gave for an enum, or one reaching a switch that names every
  * member. name is the enum's. */
 void avant_trap_enum_at(int64_t value, const char *name, int32_t site) {
@@ -485,8 +485,8 @@ void avant_trap_expect_at(const char *why, int32_t site) {
   trap_tail();
 }
 
-/* The sited forms of the traps above that the generated code raises
- * (Stage 29 W4b2): the site, then the trap. */
+/* The sited forms of the traps above that the generated code raises: the site,
+ * then the trap. */
 void avant_trap_bounds_at(avant_int index, avant_int size, int32_t site) {
   g_trap_loc = site_text(site);
   avant_trap_bounds(index, size);

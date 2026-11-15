@@ -410,7 +410,7 @@ int bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
 #if !defined(_WIN32)
 #include <sys/uio.h>
 
-/* Avant patch (Stage 29 W-FIX1a, O240; runtime/third_party/NOTICE.md):
+/* Avant patch (runtime/third_party/NOTICE.md):
  * sendmsg with MSG_NOSIGNAL in place of writev. writev cannot carry the
  * flag, so a peer that had reset the connection made this write raise
  * SIGPIPE and end the process; with the flag the call fails with EPIPE,
