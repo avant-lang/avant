@@ -846,6 +846,11 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     if r = want.inner {
       ret = r
     }
+    // A `Void | E` result: the end of the body is the success, as in a
+    // function (checker.av check_function).
+    if ret.is_union && ret.includes_void && checker_self.fallthrough(b.body) {
+      b.body.push(stmt_expr(b.loc, Expr.new(ex_void(), b.loc)))
+    }
     if !ret.is_void && !ret.is_var && b.body.size == 0 {
       checker_self.fail(expr.loc, "missing return value")
     }
