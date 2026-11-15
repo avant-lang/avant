@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Avant install (D147). Linux x86_64 with glibc: download the release
+# Avant install. Linux x86_64 with glibc: download the release
 # archive from GitHub, check its SHA-256, install it to ~/.avant, check the
-# glibc floor (D152), and compile and run a hello program as a self-test.
+# glibc floor, and compile and run a hello program as a self-test.
 #
 #   curl -fsSL https://github.com/avant-lang/avant/releases/latest/download/install.sh | bash
 #   bash install.sh [VERSION] [--no-modify-path]
@@ -196,7 +196,7 @@ tar -xzf "$tmp/$asset" -C "$tmp/x" || error 'Failed to extract Avant'
 new="$tmp/x/avant-linux-x86_64"
 [[ -f $new/avant ]] || error 'The archive did not contain avant-linux-x86_64/avant'
 
-# The glibc floor (D152): the release records the oldest glibc its binaries
+# The glibc floor: the release records the oldest glibc its binaries
 # and runtime objects work with.
 floor=$(awk -F': *' '$1 == "glibc-floor" { print $2 }' "$new/versions.txt" 2>/dev/null || true)
 if [[ -n $floor ]]; then
