@@ -338,7 +338,7 @@ do_build() {
 # ------------------------------------------------------------ one run
 
 # verify_output FILE NUMBERS...: every scenario asked for is present once,
-# with the verification value of gc.md section 6.2 (and OK for scenario 8).
+# with the verification value every language prints (the values below).
 verify_output() {
   local f=$1
   shift

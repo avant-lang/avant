@@ -43,7 +43,7 @@ It needs `go`, `rustc` and `cargo`, GNU `/usr/bin/time` (Valk's `run.sh`), `perf
 
 The arguments are those of Valk's `run.sh` (`benchmark_args`): `binary-tree 19`, `merkletrees 18`, `lru 1000 11000000`, `json 2000000`, `json-serde sample 50000`, `nsieve 13`, `spectral-norm 5500`. `fannkuch-redux` is in no runner of Valk's; it runs with 11, the default of Valk's program. The shipped rows are built into `$VALK_SRC/debug/benchmarks/`, the directory Valk's `run.sh` builds into, so both methods time the same binaries (`build/sha256.txt` is checked after Valk's `run.sh` has rebuilt them).
 
-Only the `shipped` set is a headline. The other sets are labelled variants: they answer what a difference costs (`research/valk/benchmarks.md` §6.1, questions 2, 3 and 4) and never replace a shipped row.
+Only the `shipped` set is a headline. The other sets are labelled variants: they answer what a difference costs (how much of the trees is Valk's regions, what each leveled variant costs, whether the target CPU level matters) and never replace a shipped row.
 
 ## The method
 
