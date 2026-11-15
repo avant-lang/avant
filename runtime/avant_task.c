@@ -161,7 +161,10 @@ static __thread uint64_t g_held[HELD_MAX];
 static __thread int g_held_n;
 
 /* A lock and an unlock pair up, so the count needs no test; a slot past
- * HELD_MAX wraps (the count says the numbers are not all kept). */
+ * HELD_MAX wraps (the count says the numbers are not all kept). Noting
+ * only inside a recovery point (a pool worker's block) was measured: it
+ * saves 3 instructions a lock on the main thread and costs 4 in a task
+ * (the recovery point's load and test each way), so every thread notes. */
 static inline void held_push(uint64_t id) {
   int n = g_held_n;
   g_held[n & (HELD_MAX - 1)] = id;
@@ -230,6 +233,14 @@ static char *dup_text(const char *s) {
 
 void avant_task_trapped(const char *what, const char *site) {
   AvantRecover *r = g_recover;
+  /* The trap is told when it happens, joined or not, in the form a trap
+   * that ends the program has (the program's output first). */
+  fflush(stdout);
+  if (site && *site) {
+    fprintf(stderr, "avant runtime: %s at %s\n", what, site);
+  } else {
+    fprintf(stderr, "avant runtime: %s\n", what);
+  }
   r->what = dup_text(what);
   r->site = dup_text(site ? site : "");
   /* The block's frames are left: the chain is the entry's again. */
@@ -997,6 +1008,31 @@ int32_t avant_gate_lock_with(void *obj, uint64_t off) {
     return 0;
   }
   return gate_lock_slow(w);
+}
+
+/* Whether the gate is poisoned (Mutex.poisoned): the word's bit, or the
+ * entry of a gate whose holder's task trapped and that no lock took yet. */
+int32_t avant_gate_poisoned(void *obj, uint64_t off) {
+  uint64_t *w = (uint64_t *)((char *)obj + off);
+  uint64_t v = __atomic_load_n(w, __ATOMIC_ACQUIRE);
+  uint64_t id = v & ~GATE_BITS;
+  GateBucket *b;
+  GateEnt *e;
+  int32_t r = 0;
+  if (v & GATE_POISON) {
+    return 1;
+  }
+  if (!(v & (GATE_LOCKED | GATE_QUEUED))) {
+    return 0;
+  }
+  b = gate_bucket(id);
+  pthread_mutex_lock(&b->mu);
+  e = gate_find(b, id);
+  if (e && e->poisoned) {
+    r = 1;
+  }
+  pthread_mutex_unlock(&b->mu);
+  return r;
 }
 
 /* The task that held the gate numbered id trapped (run_job): the gate is

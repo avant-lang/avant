@@ -4762,6 +4762,27 @@ pub class Checker {
         return check_mutex_with(expr, object)
       }
     }
+    if expr.callee == "try_with" {
+      if is_mutex_ty(object) {
+        // `with` that gives the block's value, or a MutexError when the
+        // mutex is poisoned (a task trapped holding it): T | MutexError.
+        got = check_mutex_with(expr, object)
+        if self.has_err {
+          return got
+        }
+        if got.is_void {
+          fail(expr.loc, "Mutex.try_with's block must end in a value (its result is the value or a MutexError); to test a mutex before a with that gives none, read m.poisoned")
+          return got
+        }
+        if me = self.resolver.get_named_in("std.sync", "MutexError") {
+          parts: Array(Ty) = []
+          parts.push(got)
+          parts.push(me)
+          return ty_union_build(parts)
+        }
+        return got
+      }
+    }
     if expr.callee == "size" && expr.args.size == 0 {
       if b = expr.block {
       } else if object.is_string || object.is_bytes || object.is_array || object.is_hash || object.is_buf {
@@ -5720,6 +5741,9 @@ pub class Checker {
     if expr.callee == "avant_gate_broadcast" {
       is_gate = true
     }
+    if expr.callee == "avant_gate_poisoned" {
+      is_gate = true
+    }
     if is_gate {
       if expr.args.size == 1 {
         if b = expr.block {
@@ -5741,13 +5765,16 @@ pub class Checker {
       if !(a.kind == ex_field() || (a.kind == ex_name() && a.implicit_field)) {
         fail(a.loc, "${expr.callee} takes the object's gate field (a UInt64 field holding avant_gate_new())")
       }
+      if expr.callee == "avant_gate_poisoned" {
+        return t_bool()
+      }
       return t_void()
     }
     nil
   }
 
   pub fn is_gate_name(name: String): Bool {
-    name == "avant_gate_new" || name == "avant_gate_lock" || name == "avant_gate_unlock" || name == "avant_gate_wait" || name == "avant_gate_signal" || name == "avant_gate_broadcast"
+    name == "avant_gate_new" || name == "avant_gate_lock" || name == "avant_gate_unlock" || name == "avant_gate_wait" || name == "avant_gate_signal" || name == "avant_gate_broadcast" || name == "avant_gate_poisoned"
   }
 
   pub fn check_join(expr: Expr, handle: Ty): Ty {

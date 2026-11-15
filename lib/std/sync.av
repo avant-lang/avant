@@ -137,4 +137,23 @@ pub class Mutex(T) {
     self.cell = value
     self.gate = avant_gate_new()
   }
+
+  // Whether a task trapped while it held this mutex in `with`: its value
+  // may be half-changed, so `with` on it traps and `try_with` gives a
+  // MutexError.
+  pub fn poisoned: Bool {
+    avant_gate_poisoned(gate)
+  }
+}
+
+// What `m.try_with { }` gives on a poisoned mutex.
+pub class MutexError: Error {
+  pub fn message: String {
+    "the mutex is poisoned: a task trapped while it held it, so its value may be half-changed"
+  }
+}
+
+// The value `try_with` gives on a poisoned mutex (the lowering calls it).
+pub fn __avant_mutex_poisoned: MutexError {
+  MutexError.new
 }

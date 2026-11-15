@@ -790,7 +790,38 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   lw.at(e.loc)
   h = b.temp(mty)
   b.assign(b.pl(h), b.rv_use(o))
-  if lw.lw_m.shared {
+  // `try_with` gives the block's value or, on a poisoned mutex, a
+  // MutexError without running the block: T | MutexError.
+  is_try = e.callee == "try_with"
+  out = -1
+  done = -1
+  if is_try && lw.lw_m.shared {
+    p0 = b.temp(mt_i32())
+    b.call(p0, "avant_gate_lock_with", lw.gate_args(h, gi))
+    bad0 = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(p0), b.c_i32(0)))
+    okb = b.block
+    badb = b.block
+    done = b.block
+    out = b.temp(lw.ety(e))
+    b.branch(bad0, badb, okb)
+    b.at(badb)
+    b.call(-1, "avant_gate_unlock", lw.gate_args(h, gi))
+    if et = e.ty, me = mir_mutex_error(et) {
+      sym = lw.mutex_error_sym
+      if sym.size == 0 {
+        lw.refuse(e.loc, "Mutex.try_with without std.sync's MutexError (internal)")
+        return zero
+      }
+      none0: Array(MOperand) = []
+      err = lw.call_to(lw.ty_at(me, e.loc, "a MutexError"), sym, none0)
+      b.assign(b.pl(out), b.rv_use(lw.coerce(err, me, et, e.loc)))
+    }
+    b.goto(done)
+    b.at(okb)
+    lw.at(e.loc)
+  } else if is_try {
+    b.call(-1, "avant_gate_lock", lw.gate_args(h, gi))
+  } else if lw.lw_m.shared {
     // A task that trapped while it held the mutex poisoned it:
     // the lock says so, and the block does not run on the value the
     // task may have left half-changed.
@@ -825,7 +856,14 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   lw.lw_task.pnames.pop
   lw.lw_task.pholders.pop
   lw.lw_task.pfields.pop
-  if lw.failed || !lw.open_now {
+  if lw.failed {
+    return zero
+  }
+  if !lw.open_now {
+    if out >= 0 {
+      b.at(done)
+      return b.copy_local(out)
+    }
     return zero
   }
   lw.at(e.loc)
@@ -834,7 +872,36 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
     r = lw.tmp(lw.ety(e), b.rv_use(v))
   }
   b.call(-1, "avant_gate_unlock", lw.gate_args(h, gi))
+  if out >= 0 {
+    b.assign(b.pl(out), b.rv_use(r))
+    b.goto(done)
+    b.at(done)
+    lw.at(e.loc)
+    return b.copy_local(out)
+  }
   r
+}
+
+// The MutexError member of try_with's union, or nil.
+pub fn mir_mutex_error(t: Ty): Ty? {
+  for m in t.members {
+    if m.is_class && m.mod_name == "std.sync" && m.name == "MutexError" {
+      return m
+    }
+  }
+  nil
+}
+
+// The symbol of std.sync's __avant_mutex_poisoned, "" without one.
+pub fn (lw: MirLower) mutex_error_sym: String {
+  for f in lw.lowered_functions {
+    if f.name == "__avant_mutex_poisoned" && f.mod_name == "std.sync" {
+      if s = lw.lw_fn_syms.get(f.emit_name) {
+        return s
+      }
+    }
+  }
+  ""
 }
 
 // ---- dispatch (lower_call.av): the calls this file lowers, or nil.
@@ -851,7 +918,7 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
         if rt.is_array && c == "parallel" {
           return lw.lower_parallel(e, recv)
         }
-        if rt.is_class && c == "with" && rt.mod_name == "std.sync" && (rt.origin == "Mutex" || rt.name == "Mutex") {
+        if rt.is_class && (c == "with" || c == "try_with") && rt.mod_name == "std.sync" && (rt.origin == "Mutex" || rt.name == "Mutex") {
           return lw.lower_mutex_with(e, recv, rt, bl)
         }
       }
@@ -868,6 +935,21 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
     lw.at(e.loc)
     none: Array(MOperand) = []
     return lw.call_to(mt_u64(), c, none)
+  }
+  if c == "avant_gate_poisoned" && e.args.size == 1 {
+    // Whether the gate is poisoned (Mutex.poisoned): a Bool.
+    p0 = lw.place_of(e.args[0])
+    if lw.failed {
+      return b.c_i32(0)
+    }
+    if p0.proj.size != 2 || p0.proj[0].kind != mpk_deref() || p0.proj[1].kind != mpk_field() {
+      lw.refuse(e.loc, "a gate that is not a field of its object")
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    r = b.temp(mt_i32())
+    b.call(r, c, lw.gate_args(p0.local, p0.proj[1].field))
+    return lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(r), b.c_i32(0)))
   }
   if mir_gate_builtin(c) && e.args.size == 1 {
     // The gate field's object and offset (O690; the checker allows only

@@ -129,7 +129,7 @@ fn main: Int {
       puts("closed")
     }
     _ = show(h)
-  } else if kind == "mutex" || kind == "mutex-main" {
+  } else if kind == "mutex" || kind == "mutex-main" || kind == "mutex-try" {
     m = Mutex(Acc).new(Acc { n: 0 })
     h = spawn {
       m.with { |acc|
@@ -145,6 +145,24 @@ fn main: Int {
         m.with { |acc| acc.n }
       }
       _ = show(h2)
+    } else if kind == "mutex-try" {
+      // The state reads, and try_with gives a MutexError for it; a
+      // mutex no task poisoned gives its value.
+      puts("poisoned: ${m.poisoned}")
+      res = m.try_with { |acc| acc.n }
+      if r = res {
+        puts("r: ${r}")
+      } else e {
+        puts("try_with: ${e}")
+      }
+      fresh = Mutex(Acc).new(Acc { n: 3 })
+      puts("fresh poisoned: ${fresh.poisoned}")
+      res2 = fresh.try_with { |acc| acc.n + 1 }
+      if v = res2 {
+        puts("fresh: ${v}")
+      } else e {
+        puts("fresh failed: ${e}")
+      }
     } else {
       // The main thread's lock ends the program.
       n = m.with { |acc| acc.n }

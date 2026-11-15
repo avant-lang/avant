@@ -2626,7 +2626,7 @@ fn main {
 
 ### When a task traps
 
-A trap inside a spawned block (an index out of bounds, an overflow, a division by zero, a `pop` on an empty array, a change to a frozen array, …) ends that task, not the program. The task's stack is dropped where it stands (no unwinding: nothing needs to run, the collector frees what the task left), and its `join` gives a `TaskError` whose `what` is the trap's text and `site` its `FILE:LINE:COL` (empty when the trap names its function instead); `"${e}"` prints both. The program and the pool go on.
+A trap inside a spawned block (an index out of bounds, an overflow, a division by zero, a `pop` on an empty array, a change to a frozen array, …) ends that task, not the program. The trap is printed to standard error when it happens, as a trap that ends the program is (`avant runtime: index 7 out of bounds …`), whether or not the task is ever joined. The task's stack is dropped where it stands (no unwinding: nothing needs to run, the collector frees what the task left), and its `join` gives a `TaskError` whose `what` is the trap's text and `site` its `FILE:LINE:COL` (empty when the trap names its function instead); `"${e}"` prints both. The program and the pool go on.
 
 ```avant
 fn main {
@@ -2644,11 +2644,11 @@ fn main {
 
 What the task shared is left safe:
 
-- A `Mutex` the task held in `with` when it trapped is **poisoned**: its value may be half-changed, so every later `with` on it stops with `Mutex.with on a poisoned mutex: …` (in a task, that ends the task in turn).
+- A `Mutex` the task held in `with` when it trapped is **poisoned**: its value may be half-changed, so every later `with` on it stops with `Mutex.with on a poisoned mutex: …` (in a task, that ends the task in turn; on the main thread, the program). `m.poisoned` tells, and `m.try_with { |x| … }` is the form for code that recovers: it gives the block's value, or a `MutexError` without running the block, so its type is `T | MutexError` (its block ends in a value).
 - Each `Channel` the block captured is closed, so a task waiting in `recv` or `send` on it is not left waiting for ever.
 - Each `Array` the block captured is thawed, as at the task's normal end.
 
-Some traps still end the program: one in a `.parallel` body (the caller waits for every body), one inside a C callback (the jump would skip C's frames), one on the main thread or an HTTP handler's thread, and the runtime's own stops (the heap limit, the collector's checks). A task whose handle is never joined ends silently when it traps. Tasks already share no mutable objects (only immutable `String`s, frozen arrays, `Channel`s and `Mutex`es cross), as Erlang's processes share nothing; a trap that ends only its task is the task-level half of "let it crash".
+Some traps still end the program: one in a `.parallel` body (the caller waits for every body), one inside a C callback (the jump would skip C's frames), one on the main thread or an HTTP handler's thread, and the runtime's own stops (the heap limit, the collector's checks). Tasks already share no mutable objects (only immutable `String`s, frozen arrays, `Channel`s and `Mutex`es cross), as Erlang's processes share nothing; a trap that ends only its task is the task-level half of "let it crash".
 
 ### Parallel
 
