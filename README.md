@@ -391,7 +391,7 @@ fn main {
 
 ### Functions
 
-`fn name(params): Result { body }`. An omitted result type means the function returns nothing (`Void`); result types are never inferred. A function without parameters may drop the parentheses in its declaration. It is still called with them (`answer()`): a bare `answer` is the function as a value. A *method* without arguments may be called with or without them (`q.sum`, `q.sum()`), the builtin ones included (`s.strip`, `xs.pop`).
+`fn name(params): Result { body }`. An omitted result type means the function returns nothing (`Void`); result types are never inferred. A function without parameters is declared without parentheses, in one spelling (`fn answer: Int`; `fn answer(): Int` is refused with that hint), and so is a C function in a `lib` block (`fun avant_gc_collect`). It is still called with them (`answer()`): a bare `answer` is the function as a value. A *method* without arguments may be called with or without them (`q.sum`, `q.sum()`), the builtin ones included (`s.strip`, `xs.pop`).
 
 ```avant
 fn area(w: Int, h: Int): Int {

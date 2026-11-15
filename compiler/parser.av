@@ -1182,7 +1182,9 @@ pub class Parser {
     if self.current.kind == tk_l_paren() {
       self.bump
       self.skip_newlines
-      if self.current.kind != tk_r_paren() {
+      if self.current.kind == tk_r_paren() {
+        refuse_empty_params("fn", name)
+      } else {
         while true {
           fnn.params.push(self.parse_param)
           self.skip_newlines
@@ -1416,7 +1418,9 @@ pub class Parser {
     if self.current.kind == tk_l_paren() {
       self.bump
       self.skip_newlines
-      if self.current.kind != tk_r_paren() {
+      if self.current.kind == tk_r_paren() {
+        refuse_empty_params("fun", name_tok.value)
+      } else {
         while true {
           decl.params.push(self.parse_param)
           self.skip_newlines
@@ -1543,7 +1547,9 @@ pub class Parser {
       if self.current.kind == tk_l_paren() {
         self.bump
         self.skip_newlines
-        if self.current.kind != tk_r_paren() {
+        if self.current.kind == tk_r_paren() {
+          refuse_empty_params("fn", "#(...)")
+        } else {
           while true {
             fnn_hold.params.push(self.parse_param)
             self.skip_newlines
@@ -1596,7 +1602,13 @@ pub class Parser {
     if self.current.kind == tk_l_paren() {
       self.bump
       self.skip_newlines
-      if self.current.kind != tk_r_paren() {
+      if self.current.kind == tk_r_paren() {
+        shown = name
+        if type_meth {
+          shown = "self.${name}"
+        }
+        refuse_empty_params("fn", shown)
+      } else {
         while true {
           fnn.params.push(self.parse_param)
           self.skip_newlines
@@ -1616,6 +1628,13 @@ pub class Parser {
     self.skip_newlines
     fnn.body = self.parse_block
     fnn
+  }
+
+  // One declaration for a function without parameters: `fn answer: Int`,
+  // with no empty parentheses (the call is still `answer()`; a bare
+  // `answer` is the function as a value).
+  pub fn refuse_empty_params(kw: String, name: String) {
+    fail(self.current.loc, "a ${kw} without parameters is declared without parentheses: write ${kw} ${name}, not ${kw} ${name}()")
   }
 
   pub fn parse_fn_name: String {
