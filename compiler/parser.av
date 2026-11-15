@@ -882,6 +882,9 @@ pub class Parser {
     params = parse_type_params(loc)
     opted = parse_opt_clause()
     body = parse_type_body(name)
+    for m in body.methods {
+      refuse_field_params(m.params)
+    }
     defn = StructDef.new(loc, name)
     defn.type_params = params
     defn.fields = body.fields
@@ -946,6 +949,7 @@ pub class Parser {
           }
         }
         fnn = parse_fn(name, mvis)
+        refuse_field_params(fnn.params)
         for b in builtin {
           if fnn.name == b {
             fail(fnn.loc, "every enum has ${b}; a method cannot take its name")
@@ -1091,6 +1095,7 @@ pub class Parser {
     params = parse_type_params(loc)
     opted = parse_opt_clause()
     body = parse_type_body(name)
+    field_params(name, body)
     defn = ClassDef.new(loc, name)
     defn.type_params = params
     defn.fields = body.fields
@@ -1103,6 +1108,50 @@ pub class Parser {
       defn.methods.push(error_text_method(loc, name, defn.fields))
     }
     defn
+  }
+
+  // Field parameters (`fn initialize(self.loc, self.name)`): each takes
+  // its field's type and is assigned to the field before the body, in
+  // parameter order: the short form of `loc: Location` with
+  // `self.loc = loc` first in the body, and the same code. Only a class's
+  // initialize has them (parse_fn refuses them elsewhere).
+  pub fn field_params(owner: String, body: TypeBody) {
+    for m in body.methods {
+      if m.name != "initialize" {
+        continue
+      }
+      sets: Array(Stmt) = []
+      for p in m.params {
+        if !p.field_param {
+          continue
+        }
+        found: Field? = nil
+        for f in body.fields {
+          if f.name == p.name {
+            found = f
+          }
+        }
+        if f2 = found {
+          p.type = clone_type_name(f2.type)
+          target = error_self_field(p.loc, p.name)
+          value = Expr.new(ex_name(), p.loc)
+          value.ident = p.name
+          st = Stmt.new(st_assign(), p.loc)
+          st.target = target
+          st.value = value
+          st.op = tk_eq()
+          sets.push(st)
+        } else {
+          fail(p.loc, "${owner} has no field ${p.name}: a field parameter (self.${p.name}) names a field of the class")
+        }
+      }
+      if sets.size > 0 {
+        for st2 in m.body {
+          sets.push(st2)
+        }
+        m.body = sets
+      }
+    }
   }
 
   pub fn parse_opt_clause: Array(TypeName) {
@@ -1201,6 +1250,7 @@ pub class Parser {
       fnn.return_type = self.parse_bounded_type
     }
     self.skip_newlines
+    refuse_field_params(fnn.params)
     if self.current.kind == tk_l_brace() {
       fail(self.current.loc, "interface methods have no body")
       fnn.body = self.parse_block
@@ -1441,6 +1491,7 @@ pub class Parser {
       fail(self.current.loc, "fun is a C declaration; it has no body")
       return decl
     }
+    refuse_field_params(decl.params)
     for p in decl.params {
       if d = p.default {
         fail(p.loc, "fun parameters cannot have defaults")
@@ -1624,9 +1675,21 @@ pub class Parser {
       self.skip_newlines
       fnn.return_type = self.parse_bounded_type
     }
+    if name != "initialize" || owner.size == 0 {
+      refuse_field_params(fnn.params)
+    }
     self.skip_newlines
     fnn.body = self.parse_block
     fnn
+  }
+
+  pub fn refuse_field_params(params: Array(Param)) {
+    for p in params {
+      if p.field_param {
+        fail(p.loc, "a field parameter (self.${p.name}) is a parameter of a class's initialize only")
+        return
+      }
+    }
   }
 
   // One declaration for a function without parameters: `fn answer: Int`,
@@ -1652,6 +1715,22 @@ pub class Parser {
   }
 
   pub fn parse_param: Param {
+    if self.current.kind == tk_self() {
+      // `self.loc`: a field parameter, its type the field's (field_params).
+      self.bump
+      expect(tk_dot())
+      fname = expect(tk_ident())
+      fp = Param.new(fname.loc, fname.value, dummy_type(fname.loc))
+      fp.field_param = true
+      if self.current.kind == tk_colon() {
+        fail(self.current.loc, "a field parameter takes its field's type: write self.${fname.value} without one")
+      }
+      if match_tok(tk_eq()) {
+        self.skip_newlines
+        fp.default = self.parse_expr
+      }
+      return fp
+    }
     name_tok = expect(tk_ident())
     expect(tk_colon())
     self.skip_newlines

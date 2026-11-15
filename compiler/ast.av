@@ -92,6 +92,10 @@ pub class Param {
   pub name: String = ""
   pub type: TypeName
   pub default: Expr? = nil
+  // A field parameter of initialize (`fn initialize(self.loc)`): the
+  // parser gives it its field's type and assigns it to the field first
+  // thing in the body (parser.av field_params).
+  pub field_param: Bool = false
 
   fn initialize(loc: Location, name: String, type: TypeName) {
     self.loc = loc
@@ -876,6 +880,7 @@ pub fn is_type_param_name(name: String): Bool {
 
 pub fn clone_param(p: Param): Param {
   out = Param.new(p.loc, p.name, clone_type_name(p.type))
+  out.field_param = p.field_param
   if d = p.default {
     out.default = clone_expr(d)
   }

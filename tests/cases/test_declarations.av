@@ -85,6 +85,15 @@ fn cases: Array(RCase) {
   xs.push(refused("struct-default-type", "struct O {\n  a: Int = \"x\"\n}\nfn main { }\n", "cannot assign String to Int", "2:12"))
   xs.push(refused("struct-default-no-zero", "struct O {\n  a: Int\n  b: Int = 2\n}\nclass C {\n  o: O\n}\nfn main {\n  puts(C.new.o.b)\n}\n", "field o of C has no zero value, no default, and C has no initialize to set it", "6:3"))
   xs.push(refused("struct-default-array-new", "struct O {\n  b: Int = 2\n}\nfn main {\n  xs = Array(O).new(3)\n  puts(xs.size)\n}\n", "Array(O).new(n) needs an element value: O has no zero value", "5:8"))
+  // Field parameters of initialize
+  xs.push(accepted("field-params", "class Span {\n  start: Int\n  stop: Int\n  name: String\n  fn initialize(self.start, self.stop, self.name = \"span\") {\n    puts(\"\${start}..\${stop}\")\n  }\n}\nclass Holder(T) {\n  v: T\n  fn initialize(self.v) {\n  }\n}\nfn main {\n  s = Span.new(1, 4)\n  t = Span.new(2, 3, name: \"t\")\n  puts(\"\${s.name} \${t.name} \${t.stop}\")\n  puts(Holder.new(\"h\").v)\n}\n", "1..4\n2..3\nspan t 3\nh\n"))
+  xs.push(accepted("field-params-required", "class Node {\n  left: Node?\n  kids: Array(Node)\n  fn initialize(self.kids) {\n  }\n}\nfn main {\n  none: Array(Node) = []\n  n = Node.new(none)\n  puts(n.kids.size)\n}\n", "0\n"))
+  xs.push(refused("field-param-no-field", "class C {\n  a: Int\n  fn initialize(self.b) {\n  }\n}\nfn main { }\n", "C has no field b: a field parameter (self.b) names a field of the class", "3:22"))
+  xs.push(refused("field-param-type", "class C {\n  a: Int\n  fn initialize(self.a: Int) {\n  }\n}\nfn main { }\n", "a field parameter takes its field's type: write self.a without one", "3:23"))
+  xs.push(refused("field-param-method", "class C {\n  a: Int\n  fn set(self.a) {\n  }\n}\nfn main { }\n", "a field parameter (self.a) is a parameter of a class's initialize only", "3:15"))
+  xs.push(refused("field-param-function", "fn f(self.a) {\n}\nfn main { }\n", "a field parameter (self.a) is a parameter of a class's initialize only", "1:11"))
+  xs.push(refused("field-param-struct", "struct S {\n  a: Int\n  fn initialize(self.a) {\n  }\n}\nfn main { }\n", "a field parameter (self.a) is a parameter of a class's initialize only", "3:22"))
+  xs.push(refused("field-param-wrong-arg", "class C {\n  a: Int\n  fn initialize(self.a) {\n  }\n}\nfn main {\n  puts(C.new(\"x\").a)\n}\n", "argument 1 of C.initialize is String, expected Int", "7:9"))
   xs
 }
 

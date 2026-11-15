@@ -1501,6 +1501,29 @@ fn main {
 }
 ```
 
+A parameter of `initialize` written `self.name` is a **field parameter**: it takes the field's type and is assigned to the field before the body runs, in parameter order, so `fn initialize(self.owner) { }` is `fn initialize(owner: String) { self.owner = owner }`. It may have a default like any parameter (`self.limit = 10`), and a body may follow for the rest. Only a class's `initialize` has field parameters.
+
+```avant
+class Span {
+  start: Int
+  stop: Int
+  label: String = ""
+
+  fn initialize(self.start, self.stop, self.label = "span") {
+  }
+
+  fn size: Int {
+    stop - start
+  }
+}
+
+fn main {
+  s = Span.new(2, 9)
+  t = Span.new(0, 1, label: "t")
+  puts("${s.label} ${s.size} ${t.label}")   // => span 7 t
+}
+```
+
 `Type { fields }` builds a struct only; a class is always built with `.new`.
 
 ### Field initialization
