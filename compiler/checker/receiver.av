@@ -29,12 +29,11 @@ pub fn prelude_call_name(name: String): Bool {
   false
 }
 
-// The receiver's type when the body is an inherent method's (self is
-// the receiver and its fields are in scope), else nil.
+// The receiver's type when the body is a method of a type the program
+// declares, inherent or external (its fields and methods are in scope
+// bare, the receiver named self or as the external method names it),
+// else nil.
 pub fn (checker_self: Checker) bare_receiver: Ty? {
-  if checker_self.self_name != "self" {
-    return nil
-  }
   checker_self.self_ty
 }
 
@@ -80,11 +79,11 @@ pub fn (checker_self: Checker) bare_method_call(expr: Expr, name: String, argc: 
       return nil
     }
     if checker_self.free_fn_fits(name, argc) {
-      checker_self.fail(expr.loc, "${name} is both a method of ${st.show} and a function; write self.${name}(...) for the method, or qualify the function (module.${name}(...))")
+      checker_self.fail(expr.loc, "${name} is both a method of ${st.show} and a function; write ${checker_self.self_name}.${name}(...) for the method, or qualify the function (module.${name}(...))")
       return nil
     }
     r = Expr.new(ex_name(), expr.loc)
-    r.ident = "self"
+    r.ident = checker_self.self_name
     return r
   }
   nil
@@ -97,7 +96,7 @@ pub fn (checker_self: Checker) refuse_bare_field_write(target: Expr, loc: Locati
   if st = checker_self.self_ty {
     owner = st.show
   }
-  checker_self.fail(target.loc, "${target.ident} is a field of ${owner}; write self.${target.ident} = ... to change the field, or choose another name for a local")
+  checker_self.fail(target.loc, "${target.ident} is a field of ${owner}; write ${checker_self.self_name}.${target.ident} = ... to change the field, or choose another name for a local")
 }
 
 // self inside a lambda of an inherent method (Stage 29 W3b, B7, S13):

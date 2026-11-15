@@ -25,6 +25,12 @@ import backends
 //     and parameters on it are refused where the second is declared,
 //     naming the first's module; two private ones, each seen only in its
 //     own module, are allowed (they were refused).
+//   - An external method of a type the program declares has the implicit
+//     receiver of an inherent method: a field is read bare, a method of
+//     the type (its own or another external one) is called bare, a field
+//     is written through the receiver's name, and a bare call that fits
+//     both a method and a function is refused naming both. Bare calls
+//     used to be unknown functions, and the messages named self.
 
 class MCase {
   pub tag: String = ""
@@ -83,6 +89,20 @@ fn twin_cases: Array(MCase) {
   xs
 }
 
+fn receiver_cases: Array(MCase) {
+  xs: Array(MCase) = []
+  xs.push(accepted("receiver-bare", ["main", "class Cell(T) {\n  item: T\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  fn get: T {\n    item\n  }\n}\n\nfn (c: Cell(T)) twice: Array(T) {\n  [get, item]\n}\n\nstruct V {\n  a: Int\n  b: Int\n\n  fn sum: Int {\n    a + b\n  }\n}\n\nfn (v: V) scaled(k: Int): Int {\n  m = 100\n  m * k + a + sum() + norm\n}\n\nfn (v: V) norm: Int {\n  if b > 0 { b } else { 0 - b }\n}\n\nfn main {\n  puts(Cell.new(3).twice.size)\n  puts(V { a: 1, b: -2 }.scaled(2))\n}\n"], "2\n202\n"))
+  pt = "class Point {\n  x: Int = 3\n  y: Int = 4\n\n  fn sum: Int {\n    x + y\n  }\n}\n\n"
+  xs.push(refused("receiver-bare-write", ["main", "${pt}fn (p: Point) move {\n  x = 5\n}\n\nfn main {\n  Point.new.move\n}\n"], "x is a field of Point; write p.x = ... to change the field, or choose another name for a local", "main.av:11:3"))
+  xs.push(accepted("receiver-write-named", ["main", "${pt}fn (p: Point) move {\n  p.x = 5\n  p.y += sum\n}\n\nfn main {\n  q = Point.new\n  q.move\n  puts(q.sum)\n}\n"], "18\n"))
+  xs.push(refused("receiver-method-and-function", ["main", "${pt}fn sum: Int {\n  1\n}\n\nfn (p: Point) twice: Int {\n  sum() * 2\n}\n\nfn main {\n  puts(Point.new.twice)\n}\n"], "sum is both a method of Point and a function; write p.sum(...) for the method, or qualify the function", "main.av:15:3"))
+  xs.push(accepted("receiver-qualified-function", ["main", "${pt}fn sum: Int {\n  1\n}\n\nfn (p: Point) both: Int {\n  p.sum * 10 + main.sum()\n}\n\nfn main {\n  puts(Point.new.both)\n}\n"], "71\n"))
+  xs.push(refused("receiver-lambda", ["main", "${pt}fn (p: Point) later: Int {\n  f = { |k: Int| k + x }\n  f(1)\n}\n\nfn main {\n  puts(Point.new.later)\n}\n"], "a lambda cannot capture the receiver p of an external method; copy it into a local first", "main.av:11:22"))
+  xs.push(refused("receiver-private-field", ["main", "import geo\n\nfn (p: Spot) peek: Int {\n  x + 1\n}\n\nfn main {\n  puts(make().peek)\n}\n", "geo", "pub struct Spot {\n  x: Int\n}\n\npub fn make: Spot {\n  Spot { x: 1 }\n}\n"], "private", "main.av:4:3"))
+  xs.push(accepted("receiver-other-module", ["main", "import geo\n\nfn (p: Spot) peek: Int {\n  x + far\n}\n\nfn main {\n  puts(make().peek)\n}\n", "geo", "pub struct Spot {\n  pub x: Int\n\n  pub fn far: Int {\n    x * 10\n  }\n}\n\npub fn make: Spot {\n  Spot { x: 1 }\n}\n"], "11\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(MCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -130,6 +150,9 @@ fn test_main(c: Checks) {
     all = builtin_cases()
     for t in twin_cases() {
       all.push(t)
+    }
+    for r in receiver_cases() {
+      all.push(r)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

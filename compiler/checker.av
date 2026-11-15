@@ -987,7 +987,7 @@ pub class Checker {
   // an error naming both ways out, and true.
   pub fn module_is_method(name: String, loc: Location): Bool {
     if st = self.bare_receiver, receiver_method_fits(st, name, 0) {
-      fail(loc, "${name} is both a module and a method of ${st.show}; write self.${name} for the method, or give the method another name to use the module")
+      fail(loc, "${name} is both a module and a method of ${st.show}; write ${self.self_name}.${name} for the method, or give the method another name to use the module")
       return true
     }
     false
@@ -2766,7 +2766,7 @@ pub class Checker {
         // Inside a lambda a bare field reads it through the captured
         // receiver: the name becomes self.name (W3b, B7).
         r0 = Expr.new(ex_name(), expr.loc)
-        r0.ident = "self"
+        r0.ident = self.self_name
         dummy0 = check_expr(r0)
         expr.kind = ex_field()
         expr.object = r0

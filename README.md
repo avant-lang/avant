@@ -1510,12 +1510,12 @@ A method is a `fn` inside the type's body. Inside it, `self` is the receiver.
 
 ### External methods
 
-A method can also be declared outside the type's body, as a function with a receiver parameter. Inside it nothing is implicit: fields are reached through the receiver's name.
+A method can also be declared outside the type's body, as a function with a receiver parameter. Inside it the receiver is implicit, as in a method of the type's body: a field is read bare and written through the receiver's name (`p.x = ...`), a method of the type is called bare, and a bare call that fits both a method and a function is an error asking for `p.name(...)` or the function's qualified name. A lambda inside an external method cannot capture its receiver (copy it into a local first). The receiver of a method of `String`, `Bytes` or `Buf` is always named.
 
 <!-- check: run pre=point_decl -->
 ```avant
 fn (p: Point) scaled(s: Int): Point {
-  Point { x: p.x * s, y: p.y * s }
+  Point { x: x * s, y: y * s }
 }
 
 fn main {
