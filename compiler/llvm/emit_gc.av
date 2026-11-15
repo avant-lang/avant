@@ -1,8 +1,7 @@
 // The GC contract as emitted: frame enter and leave, root registration,
 // the barrier (inline fast path, or the call form), and allocation (the
-// inline fast path of 5.5 with the null-bump test of 10.3, or the call
-// form). The runtime ABI is the frozen one; the sequences reproduce the
-// old back end's.
+// inline fast path, or the call form). The runtime ABI is the frozen
+// one; the sequences reproduce the old back end's.
 
 import source
 import mir.types
@@ -29,7 +28,7 @@ import llvm.emit_core
 // one store per word, and a call to avant_gc_leave.
 
 // The root words of bb0's gc.roots, or -1 when the function has no
-// gc.enter (a leaf, 5.7).
+// gc.enter (a leaf).
 pub fn ll_gc_frame_words(e: LlEmit, f: MFunc): Int {
   if f.blocks.size == 0 {
     return -1
@@ -190,7 +189,7 @@ pub fn ll_gc_frame_helpers(e: LlEmit) {
   e.out.push_str("}\n\n")
 }
 
-// barrier copy _h (5.6): the holder is read once (E1); null, or a heap
+// barrier copy _h: the holder is read once (E1); null, or a heap
 // object already young or remembered, skips the call. The header's flags
 // (runtime/avant_rt.h: HEAP 0x8000, YOUNG 0x20; REM 0x10) are tested with
 // one masked compare: flags & 0x8030 is above 0x8000 exactly when HEAP is
@@ -282,7 +281,7 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 }
 
 // _d = call avant_alloc(size, type): the inline
-// fast path of 5.5, then the slow call, joined by a phi; returns the
+// fast path, then the slow call, joined by a phi; returns the
 // pointer to store into _d. A constant size and type fold the size tests
 // (and choose the call form when the fast path can never be taken).
 //
@@ -302,22 +301,22 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 // four counters (22 of its 40 instructions in a loop that allocates one
 // small object).
 //
-// A shared module (5.5's condition 1 lifted): every thread has its own
-// young cursor, so the path runs on any thread. It reads its own limit,
-// avant_gc_limit_mt, which the runtime also publishes while a thread bumps
-// in a hole charged to it (hole accounting); the limit of an unshared
-// module, avant_gc_limit, is null in a program with threads. And its path
-// sets the object's start bit itself: the late start bits are the single
-// mutator's (another thread may look an object up while its allocator is
-// still bumping in the same hole). An empty payload is one word (as
-// avant_alloc): a 0-byte object at a block's end would have the next
-// block's first address as its payload. birth (the allocation is marked
-// `fresh`, mir/fresh.av): stores into the object follow with no barrier of
-// their own, so the slow path's result, which may be mature (born in
-// mature space by avant_alloc_in_mature or on an unregistered thread), is
-// barriered once: avant_barrier returns at once for a young object. The
-// inline path's result is always young: it bumps in the thread's young
-// hole.
+// A shared module (the fast path's single-threaded condition lifted):
+// every thread has its own young cursor, so the path runs on any thread.
+// It reads its own limit, avant_gc_limit_mt, which the runtime also
+// publishes while a thread bumps in a hole charged to it (hole
+// accounting); the limit of an unshared module, avant_gc_limit, is null
+// in a program with threads. And its path sets the object's start bit
+// itself: the late start bits are the single mutator's (another thread
+// may look an object up while its allocator is still bumping in the same
+// hole). An empty payload is one word (as avant_alloc): a 0-byte object
+// at a block's end would have the next block's first address as its
+// payload. birth (the allocation is marked `fresh`, mir/fresh.av): stores
+// into the object follow with no barrier of their own, so the slow path's
+// result, which may be mature (born in mature space by
+// avant_alloc_in_mature or on an unregistered thread), is barriered once:
+// avant_barrier returns at once for a young object. The inline path's
+// result is always young: it bumps in the thread's young hole.
 //
 // The slow call is the module's __avant_alloc_slow (ll_alloc_slow_helper
 // below: the runtime's avant_alloc_slow, and under the stress mode the
@@ -591,7 +590,7 @@ pub fn ll_gc_poll(e: LlEmit) {
   e.block(cont)
 }
 
-// The runtime globals the allocation fast path reads (5.5): the cursor
+// The runtime globals the allocation fast path reads: the cursor
 // and the module's limit, and for a shared module the block's base and
 // start bits (ll_alloc). They are thread-local and local-exec, as
 // avant_gc_top is: every program the compiler builds is an executable that

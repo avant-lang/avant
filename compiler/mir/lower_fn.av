@@ -1,8 +1,8 @@
 // The lowering of `fn` values, lambdas, and closures: an `fn` value is
-// the `fnval` pair `{ ref env, code }` by value (2.7, 4.3), its layout
+// the `fnval` pair `{ ref env, code }` by value, its layout
 // named by mty (`%fn(Int):Int`); a named function used as a value is its
 // trampoline `<sym>#fnval` with a null environment; a lambda is its
-// thunk `<enclosing>#lamN` (8.2) with a null environment when it
+// thunk `<enclosing>#lamN` with a null environment when it
 // captures nothing, else a fresh environment record `%env(<thunk>)`
 // holding one box per capture in capture order. Captures are by
 // reference: a captured variable lives in a heap box `%box(T)` allocated
@@ -32,7 +32,7 @@ import mir.lower_cov
 
 // ---- types
 
-// The fnval layout of an `fn` type (2.7): `{ ref env, code(ref, P...) ->
+// The fnval layout of an `fn` type: `{ ref env, code(ref, P...) ->
 // R }`, the parameters and the result as values (like a function's).
 pub fn (lw: MirLower) fn_layout(t: Ty, loc: Location): Int {
   name = mir_mty(t)
@@ -122,15 +122,15 @@ pub fn (lw: MirLower) env_layout(e: Expr, sym: String): Int {
 
 // ---- the prewalk (decl.av collect_arrays, collect_stmts, collect_expr):
 // every lambda gets its symbol (in source order within its enclosing
-// function or thunk, 8.2), and the box maps of its captures and its
+// function or thunk), and the box maps of its captures and its
 // environment map get their type ids, in the old back end's walk order.
 
 pub fn (lw: MirLower) prewalk_function(fnn: Function) {
   lw.prewalk_stmts(fnn.body, lw.lam_base(fnn))
 }
 
-// The symbol a function's lambdas are named after (8.2): its own, or
-// `av.<module>/main` for main (which keeps its C name, 8.1).
+// The symbol a function's lambdas are named after: its own, or
+// `av.<module>/main` for main (which keeps its C name).
 pub fn (lw: MirLower) lam_base(fnn: Function): String {
   sym = ""
   if got = lw.lw_fn_syms.get(fnn.emit_name) {

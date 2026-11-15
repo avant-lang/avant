@@ -1,7 +1,7 @@
 // MIR types and layouts. One MType per distinct type, interned by its
 // printed text; ids 0-12 are the fixed scalar and untyped kinds below.
 // Layouts compute their C-rule offsets, size, alignment, heap reference
-// words, and root words (2.10) when noted.
+// words, and root words when noted.
 
 import source
 
@@ -42,7 +42,7 @@ pub fn mt_u16: Int { 15 }
 // AVANT_SIZE_MAX), read with a sign extension.
 pub fn mt_int: Int { 5 }
 
-// Layout kinds (2.4).
+// Layout kinds.
 pub fn mlk_struct: Int { 1 }
 pub fn mlk_class: Int { 2 }
 pub fn mlk_union: Int { 3 }
@@ -297,7 +297,7 @@ pub class MTypes {
     -1
   }
 
-  // Notes a layout and computes its byte layout and word sets (2.4, 2.10).
+  // Notes a layout and computes its byte layout and word sets.
   // Idempotent by name: a second note returns the first index.
   pub fn note_layout(name: String, kind: Int, fields: Array(Int), names: Array(String)): Int {
     if i = self.layout_index.get(name) {
@@ -388,7 +388,7 @@ pub class MTypes {
   }
 
   // Appends the heap reference words and the root words of a value of type
-  // ty at byte offset base (2.10). Code words are neither.
+  // ty at byte offset base. Code words are neither.
   pub fn words(ty: Int, base: Int, refs: Array(Int), roots: Array(Int)) {
     k = kind(ty)
     if is_refkind(ty) {
@@ -460,7 +460,7 @@ pub class MTypes {
     self.all[ty].pointee
   }
 
-  // compat (2.11). at_call adds the call-result retyping: untyped `ref`
+  // compat. at_call adds the call-result retyping: untyped `ref`
   // to any reference, and untyped `addr` (the slot rows' result) to any
   // `addr T`.
   pub fn compat(src: Int, dst: Int, at_call: Bool): Bool {

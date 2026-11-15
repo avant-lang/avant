@@ -3,9 +3,9 @@
 // and stores with the barrier rule, struct literals, plain methods with
 // `self`, and calls on them. A class value is a `ref %C`; a struct value
 // is an aggregate `%S` held inline; a struct method receives the address
-// of its receiver's storage (`addr %S`, 2.5), so its `self` and its
+// of its receiver's storage (`addr %S`), so its `self` and its
 // implicit fields are reached through that address and stores through it
-// take `barrier_at`. A field of union type is a layout fact (2.4: tag,
+// take `barrier_at`. A field of union type is a layout fact (tag,
 // then the payloads, each at its own alignment); a union value is
 // lower_union.av's, except `nil` stored into a field that can hold it (a
 // field default, a struct literal, an assignment), which is the core
@@ -125,7 +125,7 @@ pub fn (lw: MirLower) value_agg_ty(t: Ty, loc: Location): Int {
 }
 
 // The MIR type of a field of type t: what a value of it is, or, for a
-// union, its layout (2.4); -1 after refusing.
+// union, its layout; -1 after refusing.
 pub fn (lw: MirLower) field_mty(t: Ty, loc: Location): Int {
   if r = mir_opt_word(t) {
     // An optional reference is one pointer slot; an optional
@@ -150,7 +150,7 @@ pub fn (lw: MirLower) field_mty(t: Ty, loc: Location): Int {
   m
 }
 
-// A struct's layout (2.4), noted on first use; a struct being noted is
+// A struct's layout, noted on first use; a struct being noted is
 // not complete, so meeting it again by value inside itself refuses. An
 // array of it inside itself (`struct Node { xs: Array(Node) }`, a
 // reference) is finite: container_ty notes the struct's layout ahead
@@ -217,7 +217,7 @@ pub fn (lw: MirLower) struct_ahead(name: String): Int {
   lw.lw_b.note_layout(name, mlk_struct(), f, n)
 }
 
-// A union's layout (2.4): `i32 tag`, then one payload per non-nil member
+// A union's layout: `i32 tag`, then one payload per non-nil member
 // in the checker's member order; the tag of member k is k.
 pub fn (lw: MirLower) union_layout(t: Ty, loc: Location): Int {
   name = mir_mty(t)
@@ -355,7 +355,7 @@ pub fn mir_field_in_element(t: Expr): Bool {
   false
 }
 
-// The place an lvalue-like expression names (4.1): a local; an implicit
+// The place an lvalue-like expression names: a local; an implicit
 // field or a struct receiver through _1; a field of a struct place; a
 // field of a class object, whose holder is a local (the object is loaded
 // into a temporary unless it is already a local), so the deref is the

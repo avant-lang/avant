@@ -1,7 +1,7 @@
 // The verifier's module-level rules: V10 on layouts and externals (no
 // field or external parameter is a derived address; only `slot` rows
 // return one) and V20 (unique, mangled symbols; only main has C linkage;
-// the type-map registry and the layouts' type ids, 3.3).
+// the type-map registry and the layouts' type ids).
 
 import source
 import mir.types
@@ -43,7 +43,7 @@ pub fn mir_verify_module(v: MVerifier) {
     if g.external != (g.symbol == "main") {
       v.merr(20, "${g.symbol}: only main has C linkage")
     } else if !g.external && !mir_mangled_ok(g.symbol) {
-      v.merr(20, "${g.symbol} is not a mangled Avant symbol (8.2)")
+      v.merr(20, "${g.symbol} is not a mangled Avant symbol")
     }
   }
   ids = Hash(String, Int).new()
@@ -68,7 +68,7 @@ pub fn mir_verify_module(v: MVerifier) {
   }
 }
 
-// V20 on one layout's type id (3.3).
+// V20 on one layout's type id.
 fn mir_layout_id_rule(v: MVerifier, k: Int, l: MLayout) {
   id = l.type_id
   if id == 0 {

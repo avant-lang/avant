@@ -7,7 +7,7 @@ import source
 import type
 import mir.types
 
-// The MIR type of t in the supported subset (2.9), or -1: Int i64, Int32
+// The MIR type of t in the supported subset, or -1: Int i64, Int32
 // i32, UInt32 u32, UInt64 u64, Bool bool, Float64 f64, Void void, String
 // and Bytes `ref str` (a literal's constant or a heap string).
 pub fn mir_scalar_ty(t: Ty): Int {
@@ -80,7 +80,7 @@ pub fn mir_enum_ty(t: Ty): Int {
 // An optional reference is its reference's one pointer, `nil` the null
 // pointer (type.av ty_opt_ref); so is `Void | R` with R one reference
 // (a class marked Error), `Void` the null pointer. Every other union
-// keeps the tag-and-payloads layout (2.4).
+// keeps the tag-and-payloads layout.
 pub fn mir_opt_ref(t: Ty): Ty? {
   if t.is_union() && t.members.size == 2 && t.includes_void() {
     for m in t.members {
@@ -152,7 +152,7 @@ pub fn mir_str_builtin_arity(c: String): Int {
   -1
 }
 
-// mty (8.2): scalars by name; a struct or class as `module.Name`; a
+// mty: scalars by name; a struct or class as `module.Name`; a
 // union as its members in the checker's order joined by `|` in
 // parentheses; any other type is refused before a symbol or a layout
 // needs it, so its shown name is enough here.
@@ -181,7 +181,7 @@ pub fn mir_mty(t: Ty): String {
   if t.is_nil() {
     return "Nil"
   }
-  // The containers (8.2: `Array(T)`, `Hash(K,V)`, `Buf`).
+  // The containers (`Array(T)`, `Hash(K,V)`, `Buf`).
   if t.is_array() {
     if e = t.inner {
       return "Array(${mir_mty(e)})"
@@ -195,14 +195,14 @@ pub fn mir_mty(t: Ty): String {
   if t.is_buf() {
     return "Buf"
   }
-  // `JoinHandle(T)` (8.2).
+  // `JoinHandle(T)`.
   if t.is_join() {
     if je = t.inner {
       return "JoinHandle(${mir_mty(je)})"
     }
     return "JoinHandle"
   }
-  // `Ptr(T)` (8.2); a C layout or an opaque C type as `module.Name` when
+  // `Ptr(T)`; a C layout or an opaque C type as `module.Name` when
   // the resolver gave it a module, else its bare name.
   if t.is_ptr() {
     if pe = t.inner {
@@ -230,7 +230,7 @@ pub fn mir_mty(t: Ty): String {
     buf.push_str(")")
     return buf.to_s()
   }
-  // `fn(A,B):R` (8.2), a missing result is Void.
+  // `fn(A,B):R`, a missing result is Void.
   if t.is_fn() {
     buf2 = buf_new()
     buf2.push_str("fn(")
@@ -293,7 +293,7 @@ fn mir_module_byte(c: Int): Bool {
   c == 95 || c == 46
 }
 
-// The module part of a symbol (8.2): ModInfo's dotted name, with every
+// The module part of a symbol: ModInfo's dotted name, with every
 // byte outside [A-Za-z0-9_.] replaced by `_` (a root file named
 // my-prog.av), so the symbol parses back (V20).
 pub fn mir_module_part(name: String): String {

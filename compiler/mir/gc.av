@@ -1,4 +1,4 @@
-// The GC passes before emission (5.9 steps 2 and 3): the leaf pass, then
+// The GC passes before emission: the leaf pass, then
 // the root-slot pass (the frame pass). They replace an earlier stand-in
 // (frames.av, every traced local a slot). Both run on stage-lowered MIR,
 // where every Avant callee is marked `collects` and every kind is unset,
@@ -6,16 +6,16 @@
 // rule below is V11 and V12's own liveness, so nothing the verifier asks
 // for can be missing.
 //
-// 1. Leaves (5.7; V15, V19): every function but `main` whose kind is
-//    still unset starts as a candidate; in a shared module (section 7) a function with a local
-//    that has root words is not one (V19: another thread can collect at
-//    any time). A candidate with a collecting call to an external, an
-//    indirect call, or a call to an Avant function outside the set leaves
-//    it, to a fixpoint (recursion stays in). Candidates become `leaf`,
-//    and every call to an Avant function is re-marked by its callee's
-//    kind (V18).
-// 2. Frames (5.1, 5.2; V11, V12, V16, V17): every other function becomes
-//    `frame`. A local is a slot when its type has root words (2.10) and
+// 1. Leaves (V15, V19): every function but `main` whose kind is still
+//    unset starts as a candidate; in a shared module a function with a
+//    local that has root words is not one (V19: another thread can
+//    collect at any time). A candidate with a collecting call to an
+//    external, an indirect call, or a call to an Avant function outside
+//    the set leaves it, to a fixpoint (recursion stays in). Candidates
+//    become `leaf`, and every call to an Avant function is re-marked by
+//    its callee's kind (V18).
+// 2. Frames (V11, V12, V16, V17): every other function becomes
+//    `frame`. A local is a slot when its type has root words and
 //    (a) it is live after a `collects` call that does not define it, or
 //    (b) its address is taken (an `addr` or `addr.raw` of a frame-local
 //    place based on it), or (c) it is passed as a bare `copy _k` argument
@@ -26,7 +26,7 @@
 //    back end spilled every such argument into a root), or to
 //    (once also of a row of the old quiet class, whose
 //    rows are now never or collects).
-//    Then the prologue of 5.1 (zero every non-parameter slot, gc.enter,
+//    Then the frame prologue (zero every non-parameter slot, gc.enter,
 //    gc.roots of every slot in local order) and a gc.leave before each
 //    return.
 //    A frame function with no slot links no frame record: no gc.enter,
@@ -131,7 +131,7 @@ fn mir_mark_calls(m: MModule, f: MFunc) {
   }
 }
 
-// The leaf pass (step 2 of 5.9).
+// The leaf pass (the first pass after the lowering).
 pub fn mir_leaf_pass(m: MModule) {
   cand = Hash(String, Int).new()
   for f in m.funcs {
@@ -377,7 +377,7 @@ fn mir_add_frame(m: MModule, f: MFunc) {
   }
 }
 
-// The root-slot pass (step 3 of 5.9): every function the leaf pass left
+// The root-slot pass (after the leaf pass): every function the leaf pass left
 // unset becomes a frame (a function whose kind was already set, as in the
 // selftest's hand-built helpers, is left alone).
 pub fn mir_frame_pass(m: MModule) {
@@ -388,7 +388,7 @@ pub fn mir_frame_pass(m: MModule) {
   }
 }
 
-// Both passes, in the order of 5.9.
+// Both passes, the leaf pass first.
 pub fn mir_gc_passes(m: MModule) {
   mir_leaf_pass(m)
   // Barriers on open holders go before the slot set is computed

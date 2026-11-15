@@ -7,9 +7,9 @@
 // types, and operator methods. The lowering never re-resolves a call: it
 // lowers what the checker chose (`Expr.resolved`, `Function.emit_name`).
 // Named interfaces are bounds on generics only: they are checked and
-// erased by the checker, so nothing of them reaches the MIR (2.9).
+// erased by the checker, so nothing of them reaches the MIR.
 //
-// A symbol is `av.<module>/<item>` (8.2): item = [owner "."] name, then
+// A symbol is `av.<module>/<item>`: item = [owner "."] name, then
 // `[targs]` for a generic instance (the checker's Function.inst_args),
 // or `(params)` when the name is overloaded in its scope.
 
@@ -62,10 +62,10 @@ fn mir_params_text(params: Array(Ty)): String {
   buf.to_s()
 }
 
-// 8.2 for a plain function: `av.<module>/<name>`, then `[targs]` for a
+// The symbol of a plain function: `av.<module>/<name>`, then `[targs]` for a
 // generic instance, or `(params)` when another plain function of the
 // module (not an instance) has the same name; `main` of the root module
-// keeps its C name (8.1).
+// keeps its C name.
 pub fn (lw: MirLower) symbol_of(fnn: Function): String {
   if fnn.name == "main" && fnn.mod_name == lw.lw_prog.root_module {
     return "main"
@@ -104,7 +104,7 @@ pub fn (lw: MirLower) method_owner(fnn: Function): Ty? {
   nil
 }
 
-// 8.2 for a method: `av.<module>/<Owner>.<name>` (the owner without its
+// The symbol of a method: `av.<module>/<Owner>.<name>` (the owner without its
 // module when it is the defining module's, else its mty: a method on
 // another module's type), then `[targs]` for a generic method instance,
 // or `(params)` when the owner has several non-instance methods of the

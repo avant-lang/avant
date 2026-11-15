@@ -4,12 +4,12 @@
 // and the same in every codegen mode (the mode selects only the glue's
 // pipeline).
 //
-// Module order (3.1, 10.3): header, layouts, string constants, the
+// Module order: header, layouts, string constants, the
 // allocation globals (when an inline allocation was emitted), the
 // declarations (externals and the runtime entry points the emitter calls,
 // sorted by name, then the intrinsics), the functions in module order,
 // __avant_type_maps, the attribute group. Every defined function carries
-// #0 (11.1); Avant functions are internal and mangled, `main` is
+// #0; Avant functions are internal and mangled, `main` is
 // external.
 //
 // The core (state, places, operands) is emit_core.av; the GC sequences
@@ -33,7 +33,7 @@ pub fn ll_triple: String {
 }
 
 // The .ll text of a module that verified at stage final. inline_fast
-// false emits the call forms of allocation and the barrier (5.5, 5.6).
+// false emits the call forms of allocation and the barrier.
 pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   e = LlEmit.new(m)
   e.inline_fast = inline_fast
@@ -143,7 +143,7 @@ fn ll_layouts(e: LlEmit, out: Buf) {
   }
 }
 
-// ---- declarations (3.5, 11.1)
+// ---- declarations
 
 fn ll_declarations(e: LlEmit, out: Buf) {
   names: Array(String) = []
@@ -194,8 +194,8 @@ fn ll_insert_sorted(xs: Array(String), s: String) {
   xs[j] = s
 }
 
-// `declare <ret> @name(<params>)`: `zeroext` on a C boolean (14, 8.5);
-// the traps are `noreturn nounwind cold` (11.1); a call-table row's
+// `declare <ret> @name(<params>)`: `zeroext` on a C boolean;
+// the traps are `noreturn nounwind cold`; a call-table row's
 // attributes follow (the pure readers, runtime.av mir_rt_attrs).
 fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool, attrs: String): String {
   s = ts.sigs[sig]
@@ -281,7 +281,7 @@ fn ll_type_maps(e: LlEmit) {
   e.out.push_str("}\n\n")
 }
 
-// ---- functions (3.4, E3)
+// ---- functions
 
 fn ll_function(e: LlEmit, f: MFunc) {
   e.f = f
@@ -295,8 +295,8 @@ fn ll_function(e: LlEmit, f: MFunc) {
   if f.external {
     linkage = ""
   }
-  // A C callback thunk (`#cb`, 8.2) has the C boundary's types
-  // (`zeroext` on Bool, section 14 8.5).
+  // A C callback thunk (`#cb`) has the C boundary's types (`zeroext`
+  // on Bool).
   c_abi = str_ends(f.symbol, "#cb")
   rtext = e.llt(s.ret)
   if c_abi {
@@ -353,7 +353,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
   ll_trap_stubs(e)
 }
 
-// ---- statements (4.4, 11.3)
+// ---- statements
 
 fn ll_stmt(e: LlEmit, st: MStmt) {
   e.site(st.loc)
@@ -413,8 +413,8 @@ fn ll_bounds(e: LlEmit, st: MStmt) {
   e.block(ok)
 }
 
-// A call (4.4): arguments left to right, the call, then the destination
-// (a local) stored at once (5.3). Allocation rows may expand inline (5.5).
+// A call: arguments left to right, the call, then the destination (a
+// local) stored at once. Allocation rows may expand inline.
 fn ll_call(e: LlEmit, st: MStmt) {
   result = ""
   ret = mt_void()
@@ -518,7 +518,7 @@ fn ll_emit_call(e: LlEmit, is_void: Bool, ret: String, callee: String, args: Str
 }
 
 // `(<params>[, ...])`: the function type a call through another
-// binding's signature, or a variadic call, spells out (3.5).
+// binding's signature, or a variadic call, spells out.
 fn ll_fn_type(e: LlEmit, s: MSig): String {
   buf = buf_new()
   buf.push_str("(")
@@ -565,7 +565,7 @@ fn ll_args(e: LlEmit, ops: Array(MOperand), params: Array(Int), c_boundary: Bool
   buf.to_s()
 }
 
-// call indirect copy P (4.4): the fnval's environment (word 0) is the
+// call indirect copy P: the fnval's environment (word 0) is the
 // first argument of its code (word 1). Sets ov_ty to the result type.
 fn ll_call_indirect(e: LlEmit, st: MStmt, fo: MOperand): String {
   fv = e.value(fo)
@@ -591,7 +591,7 @@ fn ll_call_indirect(e: LlEmit, st: MStmt, fo: MOperand): String {
   r
 }
 
-// ---- terminators (4.5)
+// ---- terminators
 
 // The loop metadata of a cold back edge (the checked copy that loop
 // versioning keeps): one distinct node per loop header of the function,
@@ -657,7 +657,7 @@ fn ll_term(e: LlEmit, t: MTerm) {
   }
 }
 
-// ---- rvalues (4.3, 11.3): the value to store into a place of type pt.
+// ---- rvalues: the value to store into a place of type pt.
 
 fn ll_rvalue(e: LlEmit, r: MRvalue, pt: Int): String {
   k = r.kind
@@ -816,7 +816,7 @@ fn ll_cmp(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
   t
 }
 
-// add.chk sub.chk mul.chk (11.3): the with.overflow intrinsic and a
+// add.chk sub.chk mul.chk: the with.overflow intrinsic and a
 // branch to the function's overflow trap.
 fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   lt = e.llt(ty)
@@ -962,7 +962,7 @@ fn ll_checked(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
   t
 }
 
-// cast (4.3, 11.3): integer width and signedness by the source type,
+// cast: integer width and signedness by the source type,
 // int <-> f64, bool -> int; reference and pointer casts emit nothing.
 fn ll_cast(e: LlEmit, x: String, src: Int, dst: Int): String {
   ts = e.ts

@@ -1,10 +1,10 @@
-// The lowering: AST + checker facts -> MIR (5.9 step 1). This file holds
+// The lowering: AST + checker facts -> MIR. This file holds
 // the lowering's state, the program and function level, locations, and
 // refusals; statements are in lower_stmt.av, expressions in
 // lower_expr.av, types and names in lower_ty.av; heap strings in
 // lower_str.av. The result is stage-lowered MIR (Avant calls `collects`,
 // no gc.*, kinds unset); mir_lower_program verifies it at stage lowered,
-// then runs the leaf and root-slot passes (gc.av, 5.9) so the module is
+// then runs the leaf and root-slot passes (gc.av) so the module is
 // ready for verify(final) and emission.
 //
 // The subset is the scalars, heap strings, structs and classes with
@@ -62,7 +62,7 @@ pub class MirLam {
 // end's first need, in lowering order); the type of each name a lambda
 // captures, by enclosing symbol (`sym|name`, from the prewalk); the
 // lambdas waiting for their thunks; the lambda counter per enclosing
-// symbol (8.2: `#lamN` in source order).
+// symbol (`#lamN` in source order).
 pub class MirClosures {
   pub caps: Array(String) = []
   pub base: String = ""
@@ -114,7 +114,7 @@ pub class MirFfi {
 }
 
 // A spawn or `.parallel` thunk waiting to be lowered (lower_task.av): the
-// call, its symbol (`<enclosing>#spawnN`, `#parN`, 8.2), and its place in
+// call, its symbol (`<enclosing>#spawnN`, `#parN`), and its place in
 // the pre-walk (the old back end's pending order).
 pub class MirTask {
   pub expr: Expr
@@ -327,7 +327,7 @@ pub class MirLower {
     if self.failed() {
       return
     }
-    // Symbols are collision-free by construction (8.2); a collision
+    // Symbols are collision-free by construction; a collision
     // would be a defect of the scheme, so it stops the lowering.
     taken = Hash(String, Int).new()
     i = 0
@@ -618,7 +618,7 @@ pub class MirLower {
     refuse(fnn.loc, "function ${fnn.name} (no checked signature)")
   }
 
-  // 3.6: the type maps, then argc and argv for the runtime.
+  // main's prologue: the type maps, then argc and argv for the runtime.
   pub fn main_prologue(loc: Location) {
     at(loc)
     none: Array(MOperand) = []
@@ -669,7 +669,7 @@ pub class MirLower {
     self.lw_b.unreachable()
   }
 
-  // A program with `fn run` and no `fn main` (3.6): main calls run and
+  // A program with `fn run` and no `fn main`: main calls run and
   // returns its Int result, else 0.
   pub fn lower_run_wrapper(r: Function) {
     begin_function(r)

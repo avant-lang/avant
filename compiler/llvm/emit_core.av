@@ -123,14 +123,14 @@ pub class LlEmit {
     self.label = name
   }
 
-  // A fresh temporary, %t<n> per function (E3).
+  // A fresh temporary, %t<n> per function.
   pub fn tmp: String {
     n = self.tn
     self.tn += 1
     "%t${n}"
   }
 
-  // The label of a block the current statement expands into (E3):
+  // The label of a block the current statement expands into:
   // bb<k>.s<i>.<part>, i the statement's index in its MIR block.
   pub fn part(name: String): String {
     "bb${self.bk}.s${self.si}.${name}"
@@ -156,7 +156,7 @@ pub class LlEmit {
 
   // ---- types and constants
 
-  // The LLVM type of a MIR type (2.1-2.7).
+  // The LLVM type of a MIR type.
   pub fn llt(ty: Int): String {
     ll_type_text(self.ts, ty)
   }
@@ -165,7 +165,7 @@ pub class LlEmit {
     self.ts.align_of(ty)
   }
 
-  // The zero of a type (4.3 zero).
+  // The zero of a type.
   pub fn zero_text(ty: Int): String {
     k = self.ts.kind(ty)
     if k == mk_bool() {
@@ -184,7 +184,7 @@ pub class LlEmit {
   }
 
   // An integer constant of type ty as LLVM reads it: two's complement
-  // signed decimal of the type's width (4.2).
+  // signed decimal of the type's width.
   pub fn int_text(ty: Int, x: Int): String {
     mt = self.ts.get(ty)
     width = mt.bits
@@ -208,7 +208,7 @@ pub class LlEmit {
 
   // ---- locals and places
 
-  // The alloca of local n: %_<n> or %_<n>.<source name> (E3).
+  // The alloca of local n: %_<n> or %_<n>.<source name>.
   pub fn local_name(n: Int): String {
     name = self.f.locals[n].name
     if name.size == 0 {
@@ -223,7 +223,8 @@ pub class LlEmit {
   // module as in a single-threaded one (the collector's safepoint
   // handshake); the slot's address escapes to the runtime at gc.roots, so
   // LLVM must assume every such call reads and writes the slot, and the
-  // reload rule (5.3) rereads it after the call anyway. (volatile only in
+  // reload rule (after a collecting call, each use of a slot loads it
+  // afresh) rereads it after the call anyway. (volatile only in
   // a shared module, where another thread's collection could touch the
   // slot at any instruction.)
   pub fn slot_vol(local: Int): Bool {
@@ -390,7 +391,7 @@ pub fn ll_plain(s: String): Bool {
   true
 }
 
-// A global symbol (8.3): mangled names are always quoted; C names bare
+// A global symbol: mangled names are always quoted; C names bare
 // when LLVM allows it.
 pub fn ll_sym(name: String): String {
   if str_starts(name, "av.") || !ll_plain(name) {
@@ -406,7 +407,7 @@ pub fn ll_local(name: String): String {
   "%\"${name}\""
 }
 
-// A layout's LLVM struct type: always quoted (2.8).
+// A layout's LLVM struct type: always quoted.
 pub fn ll_type_name(name: String): String {
   "%\"${name}\""
 }

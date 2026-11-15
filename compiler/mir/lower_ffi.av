@@ -1,7 +1,7 @@
 // The lowering of Avant's C interface: `Ptr(T)` values (`ptr %L` for a C
 // layout pointee, else the untyped `ptr`), C layouts (`clayout`, laid out
 // by the C rule, reached only through `ptr %L`), calls of `lib`/`fun`
-// bindings (an external with its C name, 8.1; arguments converted as the
+// bindings (an external with its C name; arguments converted as the
 // checker allows; every reference-carrying argument passed as a bare
 // local, so the root-slot pass roots it for the call, gc.av (c)), C
 // callbacks (`<target>#cb`, a thunk with the plain C signature of the
@@ -29,7 +29,7 @@ import re2c_pat
 
 // ---- types
 
-// Ptr(T) (2.3): `ptr %L` when T is a C layout (its fields are reached
+// Ptr(T): `ptr %L` when T is a C layout (its fields are reached
 // through it), else the untyped `ptr` (opaque, Void, and every other
 // pointee: the language reads nothing through them).
 pub fn (lw: MirLower) ptr_ty(t: Ty, loc: Location): Int {
@@ -43,7 +43,7 @@ pub fn (lw: MirLower) ptr_ty(t: Ty, loc: Location): Int {
   mt_ptr()
 }
 
-// A C layout (2.6): the C fields in declaration order by the C rule, as
+// A C layout: the C fields in declaration order by the C rule, as
 // the old back end's plain STRUCT; noted on first use, never given a type
 // id (it never lives on the GC heap).
 pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
@@ -85,8 +85,8 @@ pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
 // A `lib`/`fun` call (calls.av emit_lib_call, decl.av emit_lib_fun): the
 // binding's checked signature as the external's (an `fn` parameter is a
 // `ptr`, the address of a `#cb` thunk); the first binding of a C name
-// declares it, a call through another binding carries its own signature
-// (3.5). The class is the call table's for the C name, else `collects`;
+// declares it, a call through another binding carries its own signature.
+// The class is the call table's for the C name, else `collects`;
 // a function that takes a callback always collects.
 pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
   b = lw.lw_b
@@ -273,7 +273,7 @@ pub fn (lw: MirLower) cb_pointer(arg: Expr, fty: Ty): MOperand {
 
 // The callback thunks (calls.av emit_cb_thunk): the plain C signature of
 // the `fn` type (the emitter gives `#cb` functions the C boundary's
-// `zeroext` on Bool, 14 8.5), a call of the target with the parameters
+// `zeroext` on Bool), a call of the target with the parameters
 // (after a null environment for a lambda thunk), its result returned. The
 // leaf and frame passes decide its kind like any function's. A struct,
 // union, or fn value by value in a callback's C signature is refused (the

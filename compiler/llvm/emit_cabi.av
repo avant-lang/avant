@@ -1,16 +1,15 @@
-// The SysV x86-64 C ABI for values passed by value to and from C
-// (section 14 8.6): Avant passes structs, unions, and fn values between
-// its own functions as LLVM first-class aggregates, which is not the C
-// ABI. At a call of a C external whose signature holds an aggregate, the
-// emitter classifies each aggregate as the SysV psABI does (3.2.3) for
-// the layouts the language produces (C-rule offsets, alignment at most
-// 8, no long double, no vectors): larger than 16 bytes, or not fitting
-// the registers left, is MEMORY (`byval`, or `sret` for a result);
-// otherwise each eightbyte is SSE when every scalar in it is an f64,
-// else INTEGER, passed as one `double` or `iN` (N the eightbyte's bytes
-// within the value) argument each, which is clang's coercion. A
-// zero-size value is not passed. Calls without an aggregate are emitted
-// as before.
+// The SysV x86-64 C ABI for values passed by value to and from C: Avant
+// passes structs, unions, and fn values between its own functions as LLVM
+// first-class aggregates, which is not the C ABI. At a call of a C
+// external whose signature holds an aggregate, the emitter classifies
+// each aggregate as the SysV psABI does (3.2.3) for the layouts the
+// language produces (C-rule offsets, alignment at most 8, no long double,
+// no vectors): larger than 16 bytes, or not fitting the registers left,
+// is MEMORY (`byval`, or `sret` for a result); otherwise each eightbyte
+// is SSE when every scalar in it is an f64, else INTEGER, passed as one
+// `double` or `iN` (N the eightbyte's bytes within the value) argument
+// each, which is clang's coercion. A zero-size value is not passed. Calls
+// without an aggregate are emitted as before.
 //
 // The operand of an aggregate argument and the destination of an
 // aggregate result are locals (lower_ffi.av), so the parts are loaded
