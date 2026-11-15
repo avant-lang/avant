@@ -1084,14 +1084,12 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
 // `h.get(k)` (the key, then the hash), `h.delete(k)` (the same, removing
 // the key), `h.get_slice(s, a, b)` (b, a, s,
 // then the hash), `h.get_concat(a, b)` (b, a, then the hash); each runtime
-// read reports through a found flag.
+// read reports through a found flag. `get` and `delete` load the value
+// from the address the runtime returns (lower_hash.av).
 pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b
   if t = e.ty {
-    vt = ty_int()
-    if v = ht.val {
-      vt = v
-    }
+    vt = mir_hash_val(ht)
     vty = lw.ty_at(vt, e.loc, "a hash value")
     if lw.failed {
       return b.c_i32(0)
@@ -1099,11 +1097,8 @@ pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String,
     lw.at(e.loc)
     fl = lw.found_local
     f = ""
-    if name == "get" && args.size == 1 {
-      f = mir_hash_op(ht, "get")
-    } else if name == "delete" && args.size == 1 {
-      // Stage 29 W4b2: delete gives the value it removed, or nil.
-      f = mir_hash_op(ht, "take")
+    if (name == "get" || name == "delete") && args.size == 1 {
+      f = name
     } else if name == "get_slice" && args.size == 3 {
       f = "avant_hash_get_str_slice"
     } else if name == "get_concat" && args.size == 2 {
@@ -1118,6 +1113,14 @@ pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String,
       return b.c_i32(0)
     }
     lw.at(e.loc)
+    if f == "get" || f == "delete" {
+      op = "find"
+      if f == "delete" {
+        op = "take"
+      }
+      v = lw.hash_find_load(ht, op, ops[0], lw.hash_key_arg(ht, ops[1], e.loc), fl, vty)
+      return lw.opt_of(t, lw.found_is(fl), v, vt, e.loc)
+    }
     ops.push(lw.found_ptr(fl))
     v2 = lw.call_to(vty, f, ops)
     return lw.opt_of(t, lw.found_is(fl), v2, vt, e.loc)

@@ -438,7 +438,13 @@ pub class TypeResolver {
         fail(tn.loc, "Hash takes two type arguments")
         return self.t_int
       }
-      return ty_hash(resolve_value_uninline(tn.args[0]), resolve_value_uninline(tn.args[1]))
+      hk = resolve_value_uninline(tn.args[0])
+      hv = resolve_value_uninline(tn.args[1])
+      why = hash_type_problem(hk, hv)
+      if why.size > 0 {
+        fail(tn.loc, why)
+      }
+      return ty_hash(hk, hv)
     }
     if tn.name == "JoinHandle" {
       if tn.args.size != 1 {

@@ -1,21 +1,22 @@
-// Get-or-insert fused into one hash call (Stage 28 W18S, O49; a named
-// generated-code change).
+// Get-or-insert fused into one hash call.
 //
 // The counting idiom reads a key and then stores it:
 //
 //   if c = h.get(k) { h[k] = c + 1 } else { h[k] = 1 }
 //
 // two runtime calls and two probes for one entry (Distance::NGram's
-// `bump`). This pass replaces the get, `_c = avant_hash_get_X(_h, _k,
-// _fp)` (or `get_or`'s `(_h, _k, _v)`), by
+// `bump`). A get is `_p = avant_hash_find_X(_h, _k, _fp)` followed by a
+// load through `_p` (and `get_or` its test of the found flag); a set of a
+// scalar value is `_q = avant_hash_put_X(_h', _k')` followed by a store
+// through `_q` (compiler/mir/lower_hash.av). This pass makes the get
 //
-//   _p = avant_hash_upsert_X(_h, _k, init, _fp)    init 0, or get_or's _v
-//   _c = copy (*_p)
+//   _p = avant_hash_upsert_X(_h, _k, _fp)
 //
-// and every set of the same key it reaches, `avant_hash_set_X(_h', _k',
-// _v)`, by `(*_p) = _v`. The runtime inserts the key holding `init` when it
-// is absent (a get read 0, or `get_or` its fallback, so `_c` is what it
-// was) and returns the value's address (runtime/avant_hash.c).
+// and every set of the same key it reaches `_q = copy _p`. The runtime
+// inserts the key holding zero when it is absent (the get read zeros
+// then, and its found flag still says absent) and returns the value's
+// address (runtime/avant_hash.c), so the store at each set writes the
+// entry the get made.
 //
 // It is done where the insertion cannot be seen, which is where every path
 // from the get reaches such a set first:
@@ -32,9 +33,10 @@
 // - the region is entered only through the get: every block it reaches
 //   has all its predecessors in the region, so a fused set is never
 //   reached on a path that did not run the upsert.
-// Int values only (`_i32k_i32` and `_i32`): the stores need no barrier.
-// The upsert collects where the get did not (it may grow); the GC passes
-// that follow treat it as any collecting call.
+// Scalar values only (a reference value's set is `set_ref`, which this
+// pass never fuses): the stores need no barrier. The upsert collects
+// where the get did not (it may grow); the GC passes that follow treat it
+// as any collecting call.
 
 import source
 import mir.types
@@ -44,24 +46,20 @@ import mir.flow
 
 // The upsert for a get callee, or "".
 fn up_name(callee: String): String {
-  if callee == "avant_hash_get_i32k_i32" || callee == "avant_hash_get_or_i32k_i32" {
-    return "avant_hash_upsert_i32k"
+  if callee == "avant_hash_find_ik" {
+    return "avant_hash_upsert_ik"
   }
-  if callee == "avant_hash_get_i32" || callee == "avant_hash_get_or_i32" {
-    return "avant_hash_upsert_i32"
+  if callee == "avant_hash_find_sk" {
+    return "avant_hash_upsert_sk"
   }
   ""
 }
 
 fn up_set_name(callee: String): String {
-  if str_starts(callee, "avant_hash_get_or_i32k") || callee == "avant_hash_get_i32k_i32" {
-    return "avant_hash_set_i32k_i32"
+  if callee == "avant_hash_find_ik" {
+    return "avant_hash_put_ik"
   }
-  "avant_hash_set_i32"
-}
-
-fn up_is_or(callee: String): Bool {
-  str_starts(callee, "avant_hash_get_or_")
+  "avant_hash_put_sk"
 }
 
 fn up_direct(st: MStmt): Bool {
@@ -180,7 +178,7 @@ class UpWalk {
       }
       st = blk.stmts[i]
       if st.kind == msk_call() {
-        if up_direct(st) && st.callee == self.set_name && st.args.size == 3 {
+        if up_direct(st) && st.callee == self.set_name && st.args.size == 2 && st.dest >= 0 {
           hl = up_local(st.args[0])
           if hl >= 0 && s.h[hl] && same_key(st.args[1], s) {
             note_site(b, i)
@@ -209,6 +207,14 @@ class UpWalk {
                 y = up_local(a)
                 if y >= 0 {
                   nh = s.h[y]
+                  nk = s.k[y]
+                }
+              }
+              // A narrower integer key widened for the runtime: the same
+              // key as the get's, widened the same way.
+              if r = st.rv, r.kind == mrk_cast() && r.ty == mt_i64(), a = r.a {
+                y = up_local(a)
+                if y >= 0 {
                   nk = s.k[y]
                 }
               }
@@ -264,6 +270,43 @@ fn up_derefs(p: MPlace): Int {
   n
 }
 
+// The local k was widened from (`_k = cast copy _y to i64`, the last
+// assignment of _k before statement j of the block, with no assignment
+// of _y after it), or -1.
+fn up_widened_from(blk: MBlock, j: Int, k: Int): Int {
+  i = j - 1
+  while i >= 0 {
+    st = blk.stmts[i]
+    if st.kind == msk_assign() {
+      if p = st.place, p.local == k {
+        if p.proj.size > 0 {
+          return -1
+        }
+        if r = st.rv, r.kind == mrk_cast() && r.ty == mt_i64(), a = r.a {
+          y = up_local(a)
+          if y < 0 {
+            return -1
+          }
+          x = i + 1
+          while x < j {
+            if q = blk.stmts[x].place, q.local == y {
+              return -1
+            }
+            if blk.stmts[x].dest == y {
+              return -1
+            }
+            x += 1
+          }
+          return y
+        }
+        return -1
+      }
+    }
+    i -= 1
+  }
+  -1
+}
+
 // The locals whose address the function takes.
 fn up_addr_taken(f: MFunc): Array(Bool) {
   out = mir_bools(f.locals.size, false)
@@ -313,7 +356,7 @@ fn up_try(m: MModule, f: MFunc, b: Int, j: Int, preds: Array(Array(Int)), taken:
   if kl < 0 && key.kind != mok_int() && key.kind != mok_str() {
     return false
   }
-  if st.dest >= 0 && (st.dest == hl || st.dest == kl) {
+  if st.dest < 0 || st.dest == hl || st.dest == kl {
     return false
   }
   w = UpWalk.new(f, m.types, b, up_set_name(st.callee), key, taken)
@@ -323,11 +366,17 @@ fn up_try(m: MModule, f: MFunc, b: Int, j: Int, preds: Array(Array(Int)), taken:
   if kl >= 0 {
     ks[kl] = true
   }
-  s = UpState.new(hs, ks)
-  if st.dest >= 0 {
-    s.h[st.dest] = false
-    s.k[st.dest] = false
+  // A key widened for the runtime just before the get: the narrow local
+  // it came from is the key too, while it keeps its value.
+  if kl >= 0 {
+    src = up_widened_from(f.blocks[b], j, kl)
+    if src >= 0 && !taken[src] {
+      ks[src] = true
+    }
   }
+  s = UpState.new(hs, ks)
+  s.h[st.dest] = false
+  s.k[st.dest] = false
   if !w.walk(b, j + 1, s) || w.site_b.size == 0 {
     return false
   }
@@ -343,63 +392,19 @@ fn up_try(m: MModule, f: MFunc, b: Int, j: Int, preds: Array(Array(Int)), taken:
       }
     }
   }
-  // The rewrite.
-  pty = m.types.ptr_to(mt_int())
-  pl = f.locals.size
-  f.locals.push(MLocal.new(pty, ""))
-  init = MOperand.new(mok_int(), mt_int())
-  fp = MOperand.new(mok_null(), mt_ptr())
-  if up_is_or(st.callee) {
-    init = st.args[2]
-  } else {
-    fp = st.args[2]
-  }
-  args: Array(MOperand) = []
-  args.push(st.args[0])
-  args.push(st.args[1])
-  args.push(init)
-  args.push(fp)
-  dest = st.dest
+  // The rewrite: the get's call becomes the upsert, with the same
+  // arguments and destination; each set's call a copy of that address.
   st.callee = name
-  st.args = args
-  st.dest = pl
   st.collects = true
-  if dest >= 0 {
-    src = MPlace.new(pl)
-    src.proj.push(MProj.new(mpk_deref(), 0))
-    o = MOperand.new(mok_copy(), -1)
-    o.place = src
-    rv = MRvalue.new(mrk_use())
-    rv.a = o
-    ld = MStmt.new(msk_assign(), st.loc)
-    ld.place = MPlace.new(dest)
-    ld.rv = rv
-    // Inserted after the call; the sites are in other blocks or after it.
-    stmts = f.blocks[b].stmts
-    out: Array(MStmt) = []
-    k = 0
-    while k < stmts.size {
-      out.push(stmts[k])
-      if k == j {
-        out.push(ld)
-      }
-      k += 1
-    }
-    f.blocks[b].stmts = out
-    for k in 0..w.site_b.size {
-      if w.site_b[k] == b {
-        w.site_j[k] += 1
-      }
-    }
-  }
   for k in 0..w.site_b.size {
     sst = f.blocks[w.site_b[k]].stmts[w.site_j[k]]
-    dst = MPlace.new(pl)
-    dst.proj.push(MProj.new(mpk_deref(), 0))
     rv2 = MRvalue.new(mrk_use())
-    rv2.a = sst.args[2]
+    rv2.a = MOperand.new(mok_copy(), -1)
+    if a = rv2.a {
+      a.place = MPlace.new(st.dest)
+    }
     nst = MStmt.new(msk_assign(), sst.loc)
-    nst.place = dst
+    nst.place = MPlace.new(sst.dest)
     nst.rv = rv2
     f.blocks[w.site_b[k]].stmts[w.site_j[k]] = nst
   }

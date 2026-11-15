@@ -2486,16 +2486,9 @@ pub class Checker {
       val = resolve_value_in_module(vn)
       self.pull_resolve
     }
-    if !key.is_string && !key.is_int {
-      fail(expr.loc, "Hash keys must be String or Int")
-      return t_int()
-    }
-    if !val.is_int && !val.is_string {
-      fail(expr.loc, "Hash values must be Int or String")
-      return t_int()
-    }
-    if key.is_int && val.is_string {
-      fail(expr.loc, "Hash(Int, String) is not built yet: the pairs today are Hash(String, Int), Hash(String, String) and Hash(Int, Int); a Hash(Int, Int) from the key to an index into an Array(String) does the same")
+    why = hash_type_problem(key, val)
+    if why.size > 0 {
+      fail(expr.loc, why)
       return t_int()
     }
     ty_hash(key, val)

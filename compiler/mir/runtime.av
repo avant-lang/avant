@@ -259,24 +259,30 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_gc_root", "ptr", "void", n, "")
   t.row("avant_gc_reload", "ptr", "ptr", n, "")
   t.row("__avant_type_maps", "", "void", n, "")
-  // The old back end's quiet list, in its order. Its class is gone
-  // (Stage 28 W15a1, gc-design.md section 5.1): the 13 rows that neither
-  // allocate nor enter a defer region are never; the 9 that allocate or
-  // reach a named safepoint (runtime/avant_gc.h) collect, so their
-  // callers root and reload across them like any collecting call.
-  t.row("avant_hash_get_i32", "ref, ref str, ptr", "i64", n, "")
-  t.row("avant_hash_get_str", "ref, ref str, ptr", "ref str", n, "")
-  t.row("avant_hash_get_i32k_i32", "ref, i64, ptr", "i64", n, "")
-  t.row("avant_hash_set_i32", "ref, ref str, i64", "void", c, "")
-  t.row("avant_hash_set_str", "ref, ref str, ref str", "void", c, "")
-  t.row("avant_hash_set_i32k_i32", "ref, i64, i64", "void", c, "")
+  // What was the old back end's quiet list, the Hash(K, V) entries
+  // (runtime/avant_hash.c) first. Its class is gone (gc-design.md section
+  // 5.1): a row that neither allocates nor enters a defer region is never
+  // (a hash lookup or deletion only reads or moves entries); one that
+  // allocates or reaches a named safepoint (runtime/avant_gc.h) collects
+  // (a hash insertion may grow the table), so its callers root and reload
+  // across it like any collecting call.
+  t.row("avant_hash_find_ik", "ref, i64, ptr", "ptr", n, "")
+  t.row("avant_hash_find_sk", "ref, ref str, ptr", "ptr", n, "")
+  t.row("avant_hash_take_ik", "ref, i64, ptr", "ptr", n, "")
+  t.row("avant_hash_take_sk", "ref, ref str, ptr", "ptr", n, "")
+  t.row("avant_hash_create", "u32", "ref", c, "")
+  t.row("avant_hash_put_ik", "ref, i64", "ptr", c, "")
+  t.row("avant_hash_put_sk", "ref, ref str", "ptr", c, "")
+  t.row("avant_hash_upsert_ik", "ref, i64, ptr", "ptr", c, "")
+  t.row("avant_hash_upsert_sk", "ref, ref str, ptr", "ptr", c, "")
+  t.row("avant_hash_set_ref_ik", "ref, i64, ref", "void", c, "")
+  t.row("avant_hash_set_ref_sk", "ref, ref str, ref", "void", c, "")
+  t.row("avant_hash_keys", "ref", "ref", c, "")
+  t.row("avant_hash_values", "ref", "ref", c, "")
   t.row("avant_hash_clear", "ref", "void", n, "")
   t.row("avant_hash_size", "ref", "i64", n, "")
   t.row("avant_hash_del", "ref, ref str", "void", n, "")
   t.row("avant_hash_del_i32k", "ref, i64", "void", n, "")
-  t.row("avant_hash_take_i32", "ref, ref str, ptr", "i64", n, "")
-  t.row("avant_hash_take_str", "ref, ref str, ptr", "ref str", n, "")
-  t.row("avant_hash_take_i32k_i32", "ref, i64, ptr", "i64", n, "")
   t.row("avant_hash_get_str_slice", "ref, ref str, i64, i64, ptr", "ref str", n, "")
   t.row("avant_hash_inc_slice", "ref, ref str, i64, i64", "i64", c, "")
   t.row("avant_buf_clear", "ref", "void", n, "")
@@ -328,7 +334,6 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_buf_to_str", "ref", "ref str", c, "")
   // collects: the hand-off of a dead Buf (W18M, mir/take.av).
   t.row("avant_buf_take_str", "ref", "ref str", c, "")
-  t.row("avant_hash_new", "i32, i32", "ref", c, "")
   // collects: the array, hash, Buf, and string rows W6c first calls
   // (mir.md W6c.6; the old classification, audit 3.2).
   t.row("avant_array_push_i32", "ref, i32", "void", c, "")
@@ -355,19 +360,6 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_array_sum_i64", "ref", "i64", c, "")
   t.row("avant_array_sum_u64", "ref", "u64", c, "")
   t.row("avant_array_sum_f64", "ref", "f64", c, "")
-  t.row("avant_hash_has_str", "ref, ref str", "i32", c, "")
-  t.row("avant_hash_has_i32k", "ref, i64", "i32", c, "")
-  t.row("avant_hash_get_or_i32", "ref, ref str, i64", "i64", c, "")
-  t.row("avant_hash_get_or_str", "ref, ref str, ref str", "ref str", c, "")
-  t.row("avant_hash_get_or_i32k_i32", "ref, i64, i64", "i64", c, "")
-  t.row("avant_hash_inc_str", "ref, ref str, i64", "i64", c, "")
-  t.row("avant_hash_inc_i32k", "ref, i64, i64", "i64", c, "")
-  t.row("avant_hash_upsert_i32k", "ref, i64, i64, ptr", "ptr i64", c, "")
-  t.row("avant_hash_upsert_i32", "ref, ref str, i64, ptr", "ptr i64", c, "")
-  t.row("avant_hash_keys_str", "ref", "ref", c, "")
-  t.row("avant_hash_keys_i32", "ref", "ref", c, "")
-  t.row("avant_hash_vals_str", "ref", "ref", c, "")
-  t.row("avant_hash_vals_i32", "ref", "ref", c, "")
   t.row("avant_hash_last_key", "", "ref str", c, "")
   t.row("avant_str_split", "ref str, ref str", "ref", c, "")
   t.row("avant_str_fields", "ref str", "ref", c, "")

@@ -466,12 +466,8 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
     return zero
   }
   lw.at(e.loc)
-  kf = "avant_hash_keys_str"
-  if kt.is_int {
-    kf = "avant_hash_keys_i32"
-  }
   keys = b.temp(aty)
-  b.call(keys, kf, lw.one(b.copy_local(h)))
+  b.call(keys, "avant_hash_keys", lw.one(b.copy_local(h)))
   i = b.temp(mt_i32())
   b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
   head = b.block
@@ -487,11 +483,7 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   lw.bind_name(bl.params[0], kt, kty, b.copy_local(kl), bl.loc, true)
   lw.at(e.loc)
   fl = lw.found_local
-  ops: Array(MOperand) = []
-  ops.push(b.copy_local(h))
-  ops.push(b.copy_local(kl))
-  ops.push(lw.found_ptr(fl))
-  raw = lw.call_to(vty, mir_hash_op(ht, "get"), ops)
+  raw = lw.hash_find_load(ht, "find", b.copy_local(h), lw.hash_key_arg(ht, b.copy_local(kl), e.loc), fl, vty)
   // A key the body deleted earlier in the walk is skipped (Stage 29 W1a,
   // A4): before, it was visited with an invented value (the zero).
   hit = b.block

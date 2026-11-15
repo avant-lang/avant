@@ -792,12 +792,15 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       checker_self.fail(expr.loc, "inc takes key and optional amount")
       return checker_self.t_int()
     }
-    ok = false
-    if v = hash.val, v.is_int {
-      ok = true
+    // A counter of any integer type: the amount and the result are the
+    // value's type.
+    vt = checker_self.t_int()
+    if v = hash.val {
+      vt = v
     }
-    if !ok {
-      checker_self.fail(expr.loc, "inc is Hash(K, Int) only")
+    if !vt.is_integer {
+      checker_self.fail(expr.loc, "inc needs integer values; this hash's values are ${vt.show}")
+      return checker_self.t_int()
     }
     if k = hash.key {
       got = checker_self.check_expr_as(expr.args[0], k)
@@ -806,12 +809,12 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       }
     }
     if expr.args.size == 2 {
-      by = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
-      if !by.is_int {
-        checker_self.fail(expr.args[1].loc, "inc amount must be Int")
+      by = checker_self.check_expr_as(expr.args[1], vt)
+      if !ty_assignable(by, vt) {
+        checker_self.fail(expr.args[1].loc, "inc amount must be ${vt.show}, got ${by.show}")
       }
     }
-    return checker_self.t_int()
+    return vt
   }
   if expr.callee == "each" {
     if b = expr.block {

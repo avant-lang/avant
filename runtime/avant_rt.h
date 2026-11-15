@@ -349,6 +349,29 @@ int32_t avant_re_count(const char *pat, const char *s, int32_t caseless);
 avant_int avant_wide_op(avant_int op, avant_int a_lo, avant_int a_hi, avant_int b_lo, avant_int b_hi);
 avant_int avant_wide_hi(void);
 
+/* Hash(K, V) (avant_hash.c). The descriptor avant_hash_create takes: the
+ * key's width in bytes (AVANT_HASH_K_WIDTH: 1, 2, 4 or 8), whether an
+ * integer key is signed, whether the key is a String; the value's width
+ * (shifted by AVANT_HASH_V_SHIFT) and whether it is a reference. */
+#define AVANT_HASH_K_WIDTH 0xfu
+#define AVANT_HASH_K_SIGNED 0x10u
+#define AVANT_HASH_K_STR 0x20u
+#define AVANT_HASH_V_SHIFT 8
+#define AVANT_HASH_V_REF 0x1000u
+void *avant_hash_create(uint32_t desc);
+void *avant_hash_find_ik(void *h, avant_int key, int32_t *found);
+void *avant_hash_find_sk(void *h, const char *key, int32_t *found);
+void *avant_hash_put_ik(void *h, avant_int key);
+void *avant_hash_put_sk(void *h, const char *key);
+void *avant_hash_upsert_ik(void *h, avant_int key, int32_t *found);
+void *avant_hash_upsert_sk(void *h, const char *key, int32_t *found);
+void avant_hash_set_ref_ik(void *h, avant_int key, void *val);
+void avant_hash_set_ref_sk(void *h, const char *key, void *val);
+void *avant_hash_take_ik(void *h, avant_int key, int32_t *found);
+void *avant_hash_take_sk(void *h, const char *key, int32_t *found);
+void *avant_hash_keys(void *h);
+void *avant_hash_values(void *h);
+/* The previous compiler's entries (avant_hash.c, the last section). */
 void *avant_hash_new(int32_t key_kind, int32_t val_kind);
 avant_int avant_hash_size(void *h);
 void avant_hash_clear(void *h);
