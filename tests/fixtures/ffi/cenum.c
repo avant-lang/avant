@@ -1,4 +1,4 @@
-/* Stage 29 W5a1 (O393): the C side of cenum.h. A value given back as
+/* The C side of cenum.h. A value given back as
  * raw (method_of, color_of, req_fill, call_color) may be no member: the
  * Avant side traps when it reads one. */
 #include <stdlib.h>

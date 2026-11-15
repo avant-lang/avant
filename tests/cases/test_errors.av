@@ -15,7 +15,7 @@ fn expect_err(c: Checks, compiler: String, stamp: Int, tag: String, body: String
   }
 }
 
-// O162 (Stage 28 W18G): more than 20 errors (the shown limit), or an error
+// More than 20 errors (the shown limit), or an error
 // repeated at the same place, once left the parser blind to new errors,
 // and its top-level loop spun on one token for ever. The compile runs
 // under /usr/bin/timeout so a regression fails here instead of hanging.
@@ -48,37 +48,37 @@ fn test_errors(c: Checks) {
   c.suite("tests/cases/test_errors.av")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
-    expect_err_bounded(c, compiler, stamp, "o162-many-errors", "fn pair(a: String, b: String): Array(String) {\n  bb = b\n  [a, bb]\n}\n\nfn neg(x: Int): Int {\n  y = x * 2\n  -y\n}\n\nfn first(xs: Array(Int)): Int {\n  xs[0]\n}\n\nfn main {\n  a = \"x\"\n  bb = \"y\"\n  x = \"y\"[a bb].each { |s| puts(s) }\n  ps = pair(\"p\", \"q\")\n  puts(ps.size)\n  puts(ps[1])\n  puts(neg(4))\n  total = 1 +\n    2\n  puts(total)\n  diff = 10 -\n    3\n  puts(diff)\n  xs = [\n    1,\n    -2,\n    3\n  ]\n  puts(xs[1])\n  puts(first([\n    7,\n    8\n  ]))\n  grouped = (4 +\n    5) * 2\n}\n", "aborting due to 20 previous errors")
-    if o162 = file_read("${scratch()}/errors-${stamp}-o162-many-errors.log") {
-      c.expect(str_has(o162, "and 2 more errors (limit 20)"), "o162 counts the errors past the limit")
+    expect_err_bounded(c, compiler, stamp, "many-errors", "fn pair(a: String, b: String): Array(String) {\n  bb = b\n  [a, bb]\n}\n\nfn neg(x: Int): Int {\n  y = x * 2\n  -y\n}\n\nfn first(xs: Array(Int)): Int {\n  xs[0]\n}\n\nfn main {\n  a = \"x\"\n  bb = \"y\"\n  x = \"y\"[a bb].each { |s| puts(s) }\n  ps = pair(\"p\", \"q\")\n  puts(ps.size)\n  puts(ps[1])\n  puts(neg(4))\n  total = 1 +\n    2\n  puts(total)\n  diff = 10 -\n    3\n  puts(diff)\n  xs = [\n    1,\n    -2,\n    3\n  ]\n  puts(xs[1])\n  puts(first([\n    7,\n    8\n  ]))\n  grouped = (4 +\n    5) * 2\n}\n", "aborting due to 20 previous errors")
+    if many = file_read("${scratch()}/errors-${stamp}-many-errors.log") {
+      c.expect(str_has(many, "and 2 more errors (limit 20)"), "the checker counts the errors past the limit")
     } else {
-      c.expect(false, "o162 log")
+      c.expect(false, "many-errors log")
     }
-    // O163 (Stage 29 W1a): the resolver and the checker see every error,
-    // kept or not (O162 fixed the parser the same way). 25 resolver errors:
+    // The resolver and the checker see every error,
+    // kept or not (the parser was fixed the same way). 25 resolver errors:
     // 20 shown, and the 5 past the cap counted (before, the checker pulled
     // only the resolver's kept errors and the count said nothing).
-    expect_err_bounded(c, compiler, stamp, "o163-resolver-errors", "struct S0 {\n  x: Nosuch0\n}\nstruct S1 {\n  x: Nosuch1\n}\nstruct S2 {\n  x: Nosuch2\n}\nstruct S3 {\n  x: Nosuch3\n}\nstruct S4 {\n  x: Nosuch4\n}\nstruct S5 {\n  x: Nosuch5\n}\nstruct S6 {\n  x: Nosuch6\n}\nstruct S7 {\n  x: Nosuch7\n}\nstruct S8 {\n  x: Nosuch8\n}\nstruct S9 {\n  x: Nosuch9\n}\nstruct S10 {\n  x: Nosuch10\n}\nstruct S11 {\n  x: Nosuch11\n}\nstruct S12 {\n  x: Nosuch12\n}\nstruct S13 {\n  x: Nosuch13\n}\nstruct S14 {\n  x: Nosuch14\n}\nstruct S15 {\n  x: Nosuch15\n}\nstruct S16 {\n  x: Nosuch16\n}\nstruct S17 {\n  x: Nosuch17\n}\nstruct S18 {\n  x: Nosuch18\n}\nstruct S19 {\n  x: Nosuch19\n}\nstruct S20 {\n  x: Nosuch20\n}\nstruct S21 {\n  x: Nosuch21\n}\nstruct S22 {\n  x: Nosuch22\n}\nstruct S23 {\n  x: Nosuch23\n}\nstruct S24 {\n  x: Nosuch24\n}\nfn main {\n  puts(nosuch0)\n  puts(nosuch1)\n  puts(nosuch2)\n  puts(nosuch3)\n  puts(nosuch4)\n  puts(nosuch5)\n  puts(nosuch6)\n  puts(nosuch7)\n  puts(nosuch8)\n  puts(nosuch9)\n  puts(nosuch10)\n  puts(nosuch11)\n  puts(nosuch12)\n  puts(nosuch13)\n  puts(nosuch14)\n  puts(nosuch15)\n  puts(nosuch16)\n  puts(nosuch17)\n  puts(nosuch18)\n  puts(nosuch19)\n  puts(nosuch20)\n  puts(nosuch21)\n  puts(nosuch22)\n  puts(nosuch23)\n  puts(nosuch24)\n}\n", "aborting due to 20 previous errors")
-    if o163 = file_read("${scratch()}/errors-${stamp}-o163-resolver-errors.log") {
-      c.expect(str_has(o163, "and 5 more errors (limit 20)"), "o163 counts the resolver's errors past the limit")
+    expect_err_bounded(c, compiler, stamp, "resolver-errors", "struct S0 {\n  x: Nosuch0\n}\nstruct S1 {\n  x: Nosuch1\n}\nstruct S2 {\n  x: Nosuch2\n}\nstruct S3 {\n  x: Nosuch3\n}\nstruct S4 {\n  x: Nosuch4\n}\nstruct S5 {\n  x: Nosuch5\n}\nstruct S6 {\n  x: Nosuch6\n}\nstruct S7 {\n  x: Nosuch7\n}\nstruct S8 {\n  x: Nosuch8\n}\nstruct S9 {\n  x: Nosuch9\n}\nstruct S10 {\n  x: Nosuch10\n}\nstruct S11 {\n  x: Nosuch11\n}\nstruct S12 {\n  x: Nosuch12\n}\nstruct S13 {\n  x: Nosuch13\n}\nstruct S14 {\n  x: Nosuch14\n}\nstruct S15 {\n  x: Nosuch15\n}\nstruct S16 {\n  x: Nosuch16\n}\nstruct S17 {\n  x: Nosuch17\n}\nstruct S18 {\n  x: Nosuch18\n}\nstruct S19 {\n  x: Nosuch19\n}\nstruct S20 {\n  x: Nosuch20\n}\nstruct S21 {\n  x: Nosuch21\n}\nstruct S22 {\n  x: Nosuch22\n}\nstruct S23 {\n  x: Nosuch23\n}\nstruct S24 {\n  x: Nosuch24\n}\nfn main {\n  puts(nosuch0)\n  puts(nosuch1)\n  puts(nosuch2)\n  puts(nosuch3)\n  puts(nosuch4)\n  puts(nosuch5)\n  puts(nosuch6)\n  puts(nosuch7)\n  puts(nosuch8)\n  puts(nosuch9)\n  puts(nosuch10)\n  puts(nosuch11)\n  puts(nosuch12)\n  puts(nosuch13)\n  puts(nosuch14)\n  puts(nosuch15)\n  puts(nosuch16)\n  puts(nosuch17)\n  puts(nosuch18)\n  puts(nosuch19)\n  puts(nosuch20)\n  puts(nosuch21)\n  puts(nosuch22)\n  puts(nosuch23)\n  puts(nosuch24)\n}\n", "aborting due to 20 previous errors")
+    if resolver = file_read("${scratch()}/errors-${stamp}-resolver-errors.log") {
+      c.expect(str_has(resolver, "and 5 more errors (limit 20)"), "the checker counts the resolver's errors past the limit")
     } else {
-      c.expect(false, "o163 log")
+      c.expect(false, "resolver-errors log")
     }
     expect_err(c, compiler, stamp, "unknown-name", "fn main {\n  puts(x)\n}\n", "unknown name")
-    // Stage 29 W1a (A3): postfix ? is refused where the failure cannot be
+    // Postfix ? is refused where the failure cannot be
     // returned (before: an Int result silently returned 0; a String or void
     // result broke the MIR verifier; a lambda, spawn or Mutex.with body was
     // checked against the enclosing function's result).
-    // Stage 29 W1a (review 5, defect 4): a generic type that does not exist.
-    // O32 (Stage 29 W1b): the lowering's L0001 guard, reached only by a C
-    // callback that takes a struct by value (the SysV callback side of C3).
-    expect_err(c, compiler, stamp, "l0001-guard", "struct P2 {\n  a: Int\n  b: Int\n}\nlib c {\n  fun malloc(n: Int): Ptr(Void)\n  fun qsort(p: Ptr(Void), n: Int, s: Int, f: fn(P2): Int)\n}\nfn pick(p: P2): Int {\n  p.a\n}\nfn main {\n  c.qsort(c.malloc(8), 0, 8, pick)\n}\n", "error[L0001]: not yet supported by the llvm back end: a C callback with a value of type %")
+    // A generic type that does not exist.
+    // The lowering's L0001 guard, reached only by a C
+    // callback that takes a struct by value (the SysV callback side of structs by value).
+    expect_err(c, compiler, stamp, "l0001-guard", "struct Pair {\n  a: Int\n  b: Int\n}\nlib c {\n  fun malloc(n: Int): Ptr(Void)\n  fun qsort(p: Ptr(Void), n: Int, s: Int, f: fn(Pair): Int)\n}\nfn pick(p: Pair): Int {\n  p.a\n}\nfn main {\n  c.qsort(c.malloc(8), 0, 8, pick)\n}\n", "error[L0001]: not yet supported by the llvm back end: a C callback with a value of type %")
     expect_err(c, compiler, stamp, "unknown-generic-type", "fn main {\n  c = Channel(Int).new(1)\n}\n", "unknown type Channel")
-    // Stage 29 W1a (D298): the bump constructor and nursery_reclaim are
+    // The bump constructor and nursery_reclaim are
     // gone; `T.bump(...)` is an ordinary (here undefined) type-level call.
     expect_err(c, compiler, stamp, "bump-removed", "class Node {\n  item: Int = 0\n}\nfn main {\n  n = Node.bump(1)\n}\n", "Node has no type-level function bump")
     expect_err(c, compiler, stamp, "reclaim-removed", "fn main {\n  nursery_reclaim()\n}\n", "unknown function nursery_reclaim")
-    // Stage 29 W1c2 (D305): std.gc's forms and their errors.
+    // std.gc's forms and their errors.
     expect_err(c, compiler, stamp, "gc-hold-import", "fn main {\n  gc.hold {\n    x = 1\n  }\n}\n", "gc.hold needs import std.gc")
     expect_err(c, compiler, stamp, "gc-collect-import", "fn main {\n  gc.collect()\n}\n", "unknown name gc")
     expect_err(c, compiler, stamp, "gc-collect-args", "import std.gc\nfn main {\n  gc.collect(1)\n}\n", "gc.collect takes no arguments")
@@ -88,14 +88,14 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "gc-hold-local", "import std.gc\nfn main {\n  gc = 1\n  gc.hold {\n    x = gc\n  }\n}\n", "gc.hold: gc names a local or a field here, not std.gc")
     expect_err(c, compiler, stamp, "pin-tail", "fn f(s: String, k: Int): Int {\n  pin(s) {\n    if k > 1 {\n      return 1\n    }\n  }\n}\nfn main {\n  puts(f(\"a\", 2))\n}\n", "missing return value")
     expect_err(c, compiler, stamp, "gc-hold-tail", "import std.gc\nfn f(k: Int): Int {\n  gc.hold {\n    if k > 1 {\n      return 1\n    }\n  }\n}\nfn main {\n  puts(f(2))\n}\n", "missing return value")
-    // Stage 29 W1a (A6): parser messages name the tokens (they printed the
+    // Parser messages name the tokens (they printed the
     // kinds' numbers: "expected 28, found 5").
     expect_err(c, compiler, stamp, "tokens-brace", "fn main {\n  x = 1\n  switch x {\n    case 1 \"a\" {\n    }\n  }\n}\n", "expected `{`, found a string")
     expect_err(c, compiler, stamp, "tokens-in", "fn main {\n  for i, x in [1] {\n  }\n}\n", "expected `in`, found `,`")
     expect_err(c, compiler, stamp, "tokens-paren", "fn main {\n  puts((0..10).step(2))\n}\n", "expected `)`, found `..`")
     expect_err(c, compiler, stamp, "tokens-expr", "fn main {\n  x = 3\n  x += = 3\n}\n", "expected an expression, found `=`")
     expect_err(c, compiler, stamp, "tokens-top", "42\n", "expected struct, class, enum, const, lib, fn, interface, import, quote, or comptime, found an integer")
-    // Stage 29 W1a (A5): a builtin's unknown name in field form reads as a
+    // A builtin's unknown name in field form reads as a
     // method that does not exist (the field form is a call).
     expect_err(c, compiler, stamp, "parens-unknown", "fn main {\n  s = \"x\"\n  puts(s.nosuch)\n}\n", "no method nosuch on String")
     expect_err(c, compiler, stamp, "parens-args", "fn main {\n  s = \"x\"\n  puts(s.split)\n}\n", "split takes one String separator")
@@ -105,14 +105,14 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "try-union-int", "class E: Error {\n  message: String = \"e\"\n}\nfn p(x: Int): Int | E {\n  if x > 0 {\n    return x\n  }\n  E.new()\n}\nfn q(x: Int): Int {\n  n = p(x)?\n  n\n}\nfn main {\n  puts(q(1))\n}\n", "postfix ? on E | Int would return E, but the function returns Int; give it a result that includes E")
     expect_err(c, compiler, stamp, "try-lambda", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn main {\n  g: fn(String): Int = { |x| opt(x)? + 1 }\n  puts(g(\"a\"))\n}\n", "postfix ? would return nil, but the lambda returns Int")
     expect_err(c, compiler, stamp, "try-spawn", "fn opt(s: String): Int? {\n  if s.size > 0 {\n    return s.size\n  }\n  nil\n}\nfn w: Int? {\n  h = spawn { opt(\"a\")? }\n  puts(h.join() ?? -1)\n  nil\n}\nfn main {\n  w()\n}\n", "postfix ? inside a spawn block cannot return the failure")
-    expect_err(c, compiler, stamp, "d280-minus-unused", "fn main {\n  a = 1\n  b = 2\n  t = a\n  - b\n  puts(t)\n}\n", "begins a new statement whose value nobody uses")
-    expect_err(c, compiler, stamp, "d280-minus-tail", "fn f(a: Int, b: Int): Int {\n  a\n  - b\n}\nfn main {\n  puts(f(1, 2))\n}\n", "leaves the line before as a value nobody uses")
-    expect_err(c, compiler, stamp, "d280-plus", "fn main {\n  a = 1\n  t = a\n    + 2\n  puts(t)\n}\n", "a line cannot start with `+`")
-    expect_err(c, compiler, stamp, "d280-bracket", "fn main {\n  a = 1\n  bb = \"y\"\n  [a, 2]\n  puts(bb)\n}\n", "starts with `[`, so it begins a new statement")
-    expect_err(c, compiler, stamp, "d280-bracket-index", "fn main {\n  bb = \"y\"\n  [1, 2]\n}\n", "begins a new statement whose value nobody uses")
-    expect_err(c, compiler, stamp, "d280-void-tail", "fn main {\n  a = 1\n  t = a\n  - 2\n}\n", "begins a new statement whose value nobody uses")
-    expect_err(c, compiler, stamp, "d280-paren", "fn main {\n  x = (1\n    + 2)\n  puts(x)\n}\n", "never continues the line before")
-    expect_err(c, compiler, stamp, "d280-hint", "fn main {\n  a = 1\n  t = a\n  - 2\n  puts(t)\n}\n", "end it with the operator or an open bracket")
+    expect_err(c, compiler, stamp, "lead-minus-unused", "fn main {\n  a = 1\n  b = 2\n  t = a\n  - b\n  puts(t)\n}\n", "begins a new statement whose value nobody uses")
+    expect_err(c, compiler, stamp, "lead-minus-tail", "fn f(a: Int, b: Int): Int {\n  a\n  - b\n}\nfn main {\n  puts(f(1, 2))\n}\n", "leaves the line before as a value nobody uses")
+    expect_err(c, compiler, stamp, "lead-plus", "fn main {\n  a = 1\n  t = a\n    + 2\n  puts(t)\n}\n", "a line cannot start with `+`")
+    expect_err(c, compiler, stamp, "lead-bracket", "fn main {\n  a = 1\n  bb = \"y\"\n  [a, 2]\n  puts(bb)\n}\n", "starts with `[`, so it begins a new statement")
+    expect_err(c, compiler, stamp, "lead-bracket-index", "fn main {\n  bb = \"y\"\n  [1, 2]\n}\n", "begins a new statement whose value nobody uses")
+    expect_err(c, compiler, stamp, "lead-void-tail", "fn main {\n  a = 1\n  t = a\n  - 2\n}\n", "begins a new statement whose value nobody uses")
+    expect_err(c, compiler, stamp, "lead-paren", "fn main {\n  x = (1\n    + 2)\n  puts(x)\n}\n", "never continues the line before")
+    expect_err(c, compiler, stamp, "lead-hint", "fn main {\n  a = 1\n  t = a\n  - 2\n  puts(t)\n}\n", "end it with the operator or an open bracket")
     expect_err(c, compiler, stamp, "bool-less", "fn main {\n  puts(true < false)\n}\n", "unsupported operator on Bool")
     expect_err(c, compiler, stamp, "bool-plus", "fn main {\n  puts(true + false)\n}\n", "unsupported operator on Bool")
     expect_err(c, compiler, stamp, "bool-int-eq", "fn main {\n  puts(true == 1)\n}\n", "cannot compare Bool with Int")
@@ -120,7 +120,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "if-bool", "fn main {\n  if 1 { puts(\"x\") }\n}\n", "if condition must be Bool")
     expect_err(c, compiler, stamp, "missing-return", "fn f: Int {\n}\nfn main {\n  puts(f())\n}\n", "missing return value")
     expect_err(c, compiler, stamp, "block-scope", "fn main {\n  if true {\n    y = 3\n  }\n  puts(y)\n}\n", "unknown name y")
-    // Stage 29 W3a (D298; D30 amended): only a single capital letter is an
+    // Only a single capital letter is an
     // implicit type parameter; another unknown name is an unknown type,
     // with the nearest known name when one is close.
     expect_err(c, compiler, stamp, "tparam-typo", "fn f(x: Strng): Int {\n  x.size\n}\nfn main {\n  puts(f(\"abc\"))\n}\n", "unknown type Strng (did you mean `String`?)")
@@ -146,7 +146,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "spawn-array-push", "fn main {\n  xs = [1, 2, 3]\n  h = spawn {\n    xs.push(9)\n    1\n  }\n  puts(h.join() ?? -1)\n}\n", "read-only until join")
     expect_err(c, compiler, stamp, "sender-array-store", "fn main {\n  xs = [1, 2, 3]\n  h = spawn { xs[0] }\n  xs[1] = 9\n  puts(h.join() ?? -1)\n}\n", "join first")
     expect_err(c, compiler, stamp, "sender-array-push", "fn main {\n  xs = [1, 2, 3]\n  h = spawn { xs[0] }\n  xs.push(9)\n  puts(h.join() ?? -1)\n}\n", "join first")
-    // O748 (Stage 29 W-FIX1j): a spawn started in any block is running for
+    // A spawn started in any block is running for
     // the block's later statements: switch arms, value blocks, an if used
     // as a value, a spawn's own body; a mutation in a value's tail or in a
     // binding chain is seen.
@@ -162,7 +162,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "sender-spawn-body", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  g = spawn {\n    xs = [1, 2]\n    h = spawn { xs.size }\n    xs.push(3)\n    0\n  }\n  puts(g.join() ?? -1)\n}\n", "join first")
     expect_err(c, compiler, stamp, "sender-value-tail", "enum Tok { a, b }\n\nfn k: Int {\n  argv().size\n}\n\nfn maybe: Int? {\n  if k() > 0 {\n    return 1\n  }\n  nil\n}\n\nfn main {\n  xs = [1, 2]\n  v = switch k() {\n    case 1 {\n      h = spawn { xs.size }\n      xs.pop() + (h.join ?? -1)\n    }\n    else {\n      0\n    }\n  }\n  puts(v)\n}\n", "join first")
     expect_err(c, compiler, stamp, "sender-binding-chain", "fn main {\n  xs = [1, 2]\n  h = spawn { xs.size }\n  if v = \"\${xs.pop()}\".to_i, v > 0 {\n    puts(v)\n  }\n  puts(h.join() ?? -1)\n}\n", "join first")
-    // Stage 29 W-FIX1j (F1): a zero-argument mutator written without
+    // A zero-argument mutator written without
     // parentheses is a mutation on both sides of the spawn.
     expect_err(c, compiler, stamp, "sender-bare-pop", "fn main {\n  xs = [2, 1]\n  h = spawn { xs.size }\n  xs.pop\n  puts(h.join() ?? -1)\n}\n", "join first")
     expect_err(c, compiler, stamp, "spawn-bare-pop", "fn main {\n  xs = [2, 1]\n  h = spawn {\n    xs.pop()\n    xs.size\n  }\n  puts(h.join() ?? -1)\n}\n", "read-only until join")
@@ -173,7 +173,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "sender-bare-reverse", "fn main {\n  xs = [2, 1]\n  h = spawn { xs.size }\n  xs.reverse\n  puts(h.join() ?? -1)\n}\n", "join first")
     expect_err(c, compiler, stamp, "spawn-bare-reverse", "fn main {\n  xs = [2, 1]\n  h = spawn {\n    xs.reverse()\n    xs.size\n  }\n  puts(h.join() ?? -1)\n}\n", "read-only until join")
     expect_err(c, compiler, stamp, "sender-bare-nested", "fn main {\n  xs = [[2, 1]]\n  h = spawn { xs.size }\n  xs[0].clear\n  puts(h.join() ?? -1)\n}\n", "join first")
-    // O712 (Stage 29 W8Cc): a captured Array is shared with the task, so
+    // A captured Array is shared with the task, so
     // its elements must cross too; an Array of a class put one object in
     // two tasks with no lock (b = xs[0]; b.n += 1 on both sides).
     expect_err(c, compiler, stamp, "spawn-array-class-task", "class Box {\n  pub n: Int = 0\n}\n\nfn main {\n  xs = [Box.new()]\n  h = spawn {\n    b = xs[0]\n    b.n += 1\n    0\n  }\n  puts(h.join() ?? -1)\n}\n", "its elements (Box) cannot cross to another task")
@@ -219,7 +219,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "clayout-dup", "lib a {\n  struct Point {\n    x: Int\n  }\n}\nlib b {\n  struct Point {\n    y: Int\n  }\n}\nfn main {\n  puts(1)\n}\n", "Point is already defined")
     expect_err(c, compiler, stamp, "clayout-both", "lib math {\n  struct Point {\n    x: Int\n  }\n}\nfn (p: Ptr(Point)) x: Int {\n  1\n}\nfn main {\n  puts(1)\n}\n", "Point.x is both a field and a method")
     expect_err(c, compiler, stamp, "fn-ambig", "fn pick(n: Int): Int {\n  n\n}\nfn pick(s: String): Int {\n  s.size\n}\nfn main {\n  p = pick\n  puts(1)\n}\n", "ambiguous function value pick: pick(n: Int): Int and pick(s: String): Int both match")
-    expect_err(c, compiler, stamp, "fn-method", "struct P19 {\n  x: Int\n  fn add(n: Int): Int {\n    x + n\n  }\n}\nfn main {\n  p = P19 { x: 1 }\n  f = p.add\n  puts(1)\n}\n", "methods are not values")
+    expect_err(c, compiler, stamp, "fn-method", "struct Pt {\n  x: Int\n  fn add(n: Int): Int {\n    x + n\n  }\n}\nfn main {\n  p = Pt { x: 1 }\n  f = p.add\n  puts(1)\n}\n", "methods are not values")
     expect_err(c, compiler, stamp, "fn-cfun", "lib math {\n  fun apply: fn(Int): Int\n}\nfn main {\n  puts(1)\n}\n", "C function pointers are not supported")
     expect_err(c, compiler, stamp, "fn-generic", "fn id(x: T): T {\n  x\n}\nfn main {\n  f = id\n  puts(1)\n}\n", "generic function is not a value")
     expect_err(c, compiler, stamp, "fn-lam", "fn main {\n  g = { |n| n + 1 }\n  puts(1)\n}\n", "lambda parameter needs a type")
@@ -232,9 +232,9 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "fn-block", "fn main {\n  f: fn(Int): Int = { |n| n }\n  f(1) { |x| x }\n  puts(1)\n}\n", "function value does not take a block")
     expect_err(c, compiler, stamp, "fn-call-int", "fn main {\n  n = 1\n  puts((n)(2))\n}\n", "cannot call Int")
     expect_err(c, compiler, stamp, "fn-cret", "lib math {\n  fun make: fn(Int): Int\n}\nfn main {\n  puts(1)\n}\n", "C function pointers are not supported")
-    // A union in a `fun` signature that is not one pointer (O549, Stage 29
-    // W-FIX1d): it compiled, and C read a tag or a payload as the value.
-    // The optional references stay (tests/fixtures/ffi/opt_refs.av).
+    // A union in a `fun` signature that is not one pointer: it
+    // compiled, and C read a tag or a payload as the value. The
+    // optional references stay (tests/fixtures/ffi/opt_refs.av).
     expect_err(c, compiler, stamp, "fun-optptr-ret", "lib c {\n  struct Pair {\n    a: Int32\n    b: Int32\n  }\n  fun malloc(size: Int): Ptr(Pair)?\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Ptr(Pair)?: C has one pointer there, and Ptr(T)? is a tag and a pointer in Avant, not a nullable pointer (that is not decided yet); declare Ptr(Pair)")
     expect_err(c, compiler, stamp, "fun-optptr-param", "lib c {\n  fun free(p: Ptr(Void)?)\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Ptr(Void)?: C has one pointer there")
     expect_err(c, compiler, stamp, "fun-optint", "lib c {\n  fun labs(n: Int?): Int\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int?: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL")

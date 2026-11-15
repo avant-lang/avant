@@ -1,5 +1,5 @@
-/* The size ceiling's probes (Stage 29 W-INT1, review 6 section 1.6;
- * tests/cases/test_ceiling.av): each builds a Buf, an Array or a Hash in
+/* The size ceiling's probes
+ * (tests/cases/test_ceiling.av): each builds a Buf, an Array or a Hash in
  * C memory whose size and capacity sit at the ceiling, with tiny storage,
  * and asks the runtime to grow it; the runtime must trap before it
  * allocates or writes anything (a write would land gigabytes past the

@@ -1,4 +1,4 @@
-/* C helpers for the FFI fixtures (Stage 28 W8a, tests/fixtures/ffi/*.av,
+/* C helpers for the FFI fixtures (tests/fixtures/ffi/*.av,
  * tests/cases/test_ffi_llvm.av): every scalar conversion, strings and
  * bytes, opaque pointers, C layouts, callbacks, and structs by value
  * (byval.av, the SysV C ABI). Compiled with `--cc`. */
@@ -124,7 +124,7 @@ int64_t ffi_spill(int a, int b, int c, int d, int e, Q2 q, int f) {
   return a + b + c + d + e + q.x * 100 + q.y * 1000 + f * 10000;
 }
 
-/* tests/fixtures/ffi/foreign.av (Stage 28 W17b, O123): C threads, unknown
+/* tests/fixtures/ffi/foreign.av: C threads, unknown
  * to Avant, call an Avant callback that allocates; foreign_wait joins them
  * natively (avant_gc_native_begin/end, the ABI for user C that blocks
  * while Avant threads run). */
@@ -169,7 +169,7 @@ int32_t foreign_wait(void) {
   return bad;
 }
 
-/* tests/fixtures/ffi/foreign_exit.av (Stage 28 W17c, O126): C threads
+/* tests/fixtures/ffi/foreign_exit.av: C threads
  * that call an allocating Avant callback and then exit without telling
  * Avant, one wave after another. exit_start starts a wave of N threads and
  * returns (the main thread allocates and collects while they run and
@@ -219,7 +219,7 @@ int32_t exit_join(void) {
   return bad;
 }
 
-/* cscalars.av (Stage 29 W1b, D64 as amended): every C scalar type as a
+/* cscalars.av: every C scalar type as a
  * parameter, a result and a C layout's field. */
 int8_t cs_neg_i8(int8_t x) { return (int8_t)-x; }
 uint8_t cs_inc_u8(uint8_t x) { return (uint8_t)(x + 1u); }
@@ -269,7 +269,7 @@ double cs_pix_total(const CsPix *p) {
   return (double)p->r + (double)p->g + (double)p->w + (double)p->h + (double)p->tag + (double)p->id + (double)p->gain;
 }
 
-/* rereg.av (Stage 29 W1b, O70): a C thread calls the callback (it
+/* rereg.av: a C thread calls the callback (it
  * registers implicitly, and the callback leaves a heap key in the
  * runtime's thread-local hash_last_key slot), unregisters itself
  * (avant_gc_unregister_thread), waits while the main thread collects, and
@@ -319,9 +319,9 @@ int32_t rereg_finish(void) {
   return rereg_bad;
 }
 
-/* release.av (Stage 28 W16c, D266): a C struct whose String fields Avant
+/* release.av: a C struct whose String fields Avant
  * stores into and then releases; C keeps a pointer it read from a field
- * (rel_keep) and copies the struct (rel_copy), as Q9's fixture did. */
+ * (rel_keep) and copies the struct (rel_copy). */
 typedef struct RelPos {
   const char *tag;
   int32_t n;
@@ -354,7 +354,7 @@ void rel_set_c_name(RelHolder *h) { h->name = rel_c_text; }
 int32_t rel_name_is_c(const RelHolder *h) { return h->name == rel_c_text; }
 int32_t rel_name_len(const RelHolder *h) { return h->name ? (int32_t)strlen(h->name) : -1; }
 
-/* O138 (Stage 28 W18M): user C that registers root slots opens its own
+/* User C that registers root slots opens its own
  * frame first (rg_good); rg_bad registers one on whatever frame is
  * innermost (its Avant caller's stack record), which the runtime refuses
  * with a message instead of growing a stack array. */
@@ -375,7 +375,7 @@ int32_t rg_bad(const char *s) {
   return s != NULL;
 }
 
-/* ---- O145 (Stage 28 W18C, buf_stale.av): a pointer from avant_buf_bytes
+/* ---- buf_stale.av: a pointer from avant_buf_bytes
  * kept across a growth of its Buf names storage the growth replaced.
  * bs_keep keeps the pointer; bs_read_kept reads through it only under
  * AVANT_GC_VERIFY=1 (where the verifier promises to catch it: the old
@@ -402,7 +402,7 @@ int32_t bs_read_kept(void) {
   return 1;
 }
 
-/* ---- O134 (Stage 28 W18C, release_reuse.av): C frees a struct Avant
+/* ---- release_reuse.av: C frees a struct Avant
  * stored into without a `release`, and the next struct lands at the same
  * address. A one-slot allocator makes the reuse certain: rr_new always
  * returns the same zeroed memory; rr_free forgets it. rr_keep keeps the
@@ -418,7 +418,7 @@ void rr_keep(RelHolder *h) { rr_kept = h->name; }
 int32_t rr_kept_is(const char *want) { return rr_kept && strcmp(rr_kept, want) == 0; }
 void rr_set_c_name(RelHolder *h) { h->name = rel_c_text; }
 
-/* ---- O125 (Stage 28 W18C, stall.av): user C that blocks without
+/* ---- stall.av: user C that blocks without
  * avant_gc_native_begin/end. st_block marks that it has started, then
  * sleeps MS milliseconds in the running state, so a collection's
  * handshake waits for it the whole time; under AVANT_GC_VERIFY=1 the
@@ -438,11 +438,11 @@ int32_t st_block(int32_t ms) {
 }
 int32_t st_started_now(void) { return atomic_load(&st_started); }
 
-/* ---- O120 (Stage 28 W18C, held_caps.av): C keeps pointers into 400 large
+/* ---- held_caps.av: C keeps pointers into 400 large
  * Bufs' storage, and one collection frees them all. hc_read reads through
  * the pointers FROM to TO, only under AVANT_GC_VERIFY=1 (where every freed
  * run is held PROT_NONE until the next collection, so each read faults and
- * is reported; until W18C only the first 256 runs were held, and the rest
+ * is reported; once only the first 256 runs were held, and the rest
  * were reused unchecked); it returns how many it went over. */
 static volatile uint8_t *hc_p[400];
 int32_t hc_keep(void *buf, int32_t i) {
@@ -461,7 +461,7 @@ int32_t hc_read(int32_t from, int32_t to) {
   return n;
 }
 
-/* ---- O129 (Stage 28 W18C, exit_inside.av): C threads that exit inside an
+/* ---- exit_inside.av: C threads that exit inside an
  * Avant callback. Each thread calls the callback, which calls
  * ox_exit_here: it opens a frame of its own (avant_gc_enter) with a large
  * root array (avant_gc_root_begin, 1 MiB of slots, each filled with a
@@ -518,7 +518,7 @@ int32_t ox_run(foreign_cb_t f, int32_t n) {
   return (int32_t)(ox_rss_kb() - before);
 }
 
-/* ---- stack_guard.av (Stage 29 W-FIX1b, O439): a SIGSEGV handler on an
+/* ---- stack_guard.av: a SIGSEGV handler on an
  * alternate stack that says where the fault was against the faulting
  * thread's stack: in its guard page (the overflow was caught there), or
  * past it (a frame larger than the guard stepped over it). It ends the
@@ -561,7 +561,7 @@ void ffi_guard_install(void) {
   sigaction(SIGBUS, &sa, 0);
 }
 
-/* opt_refs.av (Stage 29 W-FIX1d, O549): an optional reference is one
+/* opt_refs.av: an optional reference is one
  * pointer at the C boundary, nil as NULL. One trio per kind, because a C
  * name is bound with one signature. */
 #define FFI_OPT_TRIO(k) \
@@ -576,7 +576,7 @@ FFI_OPT_TRIO(u)
 FFI_OPT_TRIO(k)
 FFI_OPT_TRIO(j)
 
-/* empty_end.av (Stage 29 W-FIX1c, O551): an object with no payload at
+/* empty_end.av: an object with no payload at
  * the last word of the heap's highest block. With avant_alloc's guard
  * (a 0-byte request takes one word) removed, the object's payload
  * address there is the first address past the committed heap; a young
@@ -722,7 +722,7 @@ int64_t ffi_empty_end(int64_t rounds) {
   return reached | (nonword << 16) | (atblock << 32) | (stale << 48);
 }
 
-/* field_rule.av (the Valk stage, VALK-T, O585; D342 Q6): the field rule's
+/* field_rule.av: the field rule's
  * check. A reference-typed field holds null, an exact start or a static
  * address, never an address inside an object (runtime/avant_gc_internal.h
  * states the rule and what relies on it). A rooted pointer buffer names a
@@ -764,7 +764,7 @@ int64_t ffi_field_rule(int64_t brk) {
   return h[0] != NULL && avant_is_heap(h[0]);
 }
 
-/* rem_invariant.av (the Valk stage, VALK-T2, O610): a store of V into the
+/* rem_invariant.av: a store of V into the
  * first reference word of HOLDER (a class instance whose first field is a
  * reference), behind avant_barrier when BARRIER is set and with no barrier
  * otherwise, which only C can do. A holder that is mature and not
@@ -782,7 +782,7 @@ int64_t ffi_rem_store(void *holder, void *v, int64_t barrier) {
   return 1;
 }
 
-/* late_starts.av (the Valk stage, VALK-A2, M7): the late start bits. An
+/* late_starts.av: the late start bits. An
  * object generated code's inline path allocated has no start bit until
  * something needs it (runtime/avant_gc_alloc.c, "Late start bits"), and
  * only C can hold what needs it across a collection on purpose: an

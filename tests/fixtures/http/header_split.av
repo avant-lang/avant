@@ -1,18 +1,18 @@
 import std.http
 
-// Response.header with a name that is not a token or a value holding a
-// control character (Stage 29 W-FIX1g, O518). Appended as it came, a
-// value with CR LF added header lines to the answer or began a second
-// answer (response splitting); now `header` traps: one line on stderr,
-// status 1, and nothing of the answer is written. The handler of GET /h
-// sets the header the first argument names; with a second argument
-// (a path) the program writes its port there and waits for a raw client
-// (tests/fixtures/http/raw_client.py, mode header_split, run by
-// tests/cases/test_std_http_safety.av, which reads the wire); without
-// one it asks itself with Http.get. Without arguments (the run goldens)
-// the kind is crlf. The kinds status-* answer with that status: one
-// outside 100-599 traps when the answer is written (Stage 29 W-FIX1h,
-// O661, D369).
+// Response.header with a name that is not a token or a value
+// holding a control character. Appended as it came, a value with
+// CR LF added header lines to the answer or began a second answer
+// (response splitting); now `header` traps: one line on stderr,
+// status 1, and nothing of the answer is written. The handler of
+// GET /h sets the header the first argument names; with a second
+// argument (a path) the program writes its port there and waits
+// for a raw client (tests/fixtures/http/raw_client.py, mode
+// header_split, run by tests/cases/test_std_http_safety.av, which
+// reads the wire); without one it asks itself with Http.get.
+// Without arguments (the run goldens) the kind is crlf. The kinds
+// status-* answer with that status: one outside 100-599 traps
+// when the answer is written.
 fn bad_header(kind: String): Response {
   r = Response.text("x")
   if kind == "crlf" {

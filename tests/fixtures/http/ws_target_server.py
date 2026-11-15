@@ -1,5 +1,5 @@
 # A WebSocket server for one connection, for
-# tests/cases/test_std_http_safety.av (Stage 29 W-FIX1g): it reads the
+# tests/cases/test_std_http_safety.av: it reads the
 # whole handshake, however long, with a 64 KiB receive buffer and 0.3 s
 # late (so a long handshake is more than the client's socket takes at
 # once), answers 101, reads one text frame and answers "target of N

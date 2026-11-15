@@ -88,7 +88,7 @@ pub class HJob {
   }
 }
 
-// Starts every job at once on the runtime job interface (D131, D138) and
+// Starts every job at once on the runtime job interface and
 // waits for all of them; each job's code is its exit status (127 when it
 // could not start, 128+n for a signal).
 pub fn run_jobs(jobs: Array(HJob)) {
@@ -116,7 +116,7 @@ pub fn run_jobs(jobs: Array(HJob)) {
   }
 }
 
-// The process's private scratch directory (D127): created on first use,
+// The process's private scratch directory: created on first use,
 // removed when this test binary exits, nested inside the runner's.
 pub fn scratch: String {
   harness_rt.avant_tmp_dir()
@@ -141,24 +141,24 @@ pub fn list_only: Bool {
   false
 }
 
-// The collector's environment variables (runtime/avant_gc.h lists them),
-// for the suite run under one GC environment (Stage 28
-// W12, O26: tools/gate.sh's GATE_GC_ENV runs one extra suite pass with it).
+// The collector's environment variables (runtime/avant_gc.h lists
+// them), for the suite run under one GC environment
+// (tools/gate.sh's GATE_GC_ENV runs one extra suite pass with it).
 pub fn gc_env_names: Array(String) {
   ["AVANT_YOUNG_MB", "AVANT_HEAP_MAX_MB", "AVANT_HEAP_RESERVE_GB", "AVANT_NURSERY", "AVANT_GC_DEFRAG", "AVANT_GC_VERIFY", "AVANT_GC_STATS", "AVANT_GC_STRESS"]
 }
 
-// AVANT_GC_STRESS is set (non-empty) in this test's own environment (the
-// gate's GATE_GC_ENV=AVANT_GC_STRESS=1 pass, Stage 28 W14b1): a young
-// collection runs at every runtime helper's entry and at every
-// allocation (generated code's too since Stage 29 W-FIX1c), so a
-// compiler-sized job (the compiler compiling or dumping
+// AVANT_GC_STRESS is set (non-empty) in this test's own
+// environment (the gate's GATE_GC_ENV=AVANT_GC_STRESS=1 pass): a
+// young collection runs at every runtime helper's entry and at
+// every allocation (generated code's too),
+// so a compiler-sized job (the compiler compiling or dumping
 // itself) or a verifier pass at every collection does not fit the
-// suite's time. Checks that run those skip themselves under it, or run
-// their verifier jobs without it where it was measured too long
-// (VALK-TM, O602: backends.av's run_job_env, test_gc_typemaps.av,
-// test_gc_behavior.av, test_gc_checks.av's limit_defer.av); the gate
-// builds and checks the compiler outside the GC environment.
+// suite's time. Checks that run those skip themselves under it,
+// or run their verifier jobs without it where it was measured too
+// long (backends.av's run_job_env, test_gc_typemaps.av,
+// test_gc_behavior.av, test_gc_checks.av's limit_defer.av); the
+// gate builds and checks the compiler outside the GC environment.
 pub fn gc_stress_outer: Bool {
   if v = env_get("AVANT_GC_STRESS") {
     return v.size > 0
@@ -189,7 +189,7 @@ pub fn gc_env_outer(stated: String): String {
 }
 
 // The length of the character XML 1.0 can carry that starts at byte i
-// of s, or 0 (Stage 29 W-FIX1f2, O620): tab, line feed, carriage return
+// of s, or 0: tab, line feed, carriage return
 // and UTF-8 characters from U+0020 on, except the surrogates, U+FFFE and
 // U+FFFF. Every other byte (a control character such as a terminal
 // colour's escape, a byte that is not UTF-8) is written as \xNN.
@@ -405,7 +405,7 @@ pub class Checks {
     self.lines.push("    ○ ${msg} (skipped: ${why})")
   }
 
-  // A file the test writes (Stage 29 W4b2): passes when file_write
+  // A file the test writes: passes when file_write
   // succeeded; a failure shows its IoError.
   pub fn wrote(r: Int | IoError, msg: String) {
     switch r {
@@ -476,8 +476,8 @@ pub fn empty_strs: Array(String) {
   a
 }
 
-// chmod +x, rm -f, rm -rf, mkdir -p, and pwd -P without starting a tool
-// (D140); runtime/avant_io.c.
+// chmod +x, rm -f, rm -rf, mkdir -p, and pwd -P
+// without starting a tool; runtime/avant_io.c.
 pub fn chmod_x(path: String) {
   harness_rt.avant_fs_chmod_x(path)
 }
@@ -535,8 +535,8 @@ pub fn compile_av_flags(compiler: String, src: String, bin: String, log: String,
   process_run_out(compiler, args, log) ?? -1
 }
 
-// `dump`: the MIR text (D171), which the callers inspect (the old back
-// end's IR until Stage 28 W11).
+// `dump`: the MIR text, which the callers inspect (the old back
+// end's IR until it retired).
 pub fn dump_av(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
   args.push("dump")
@@ -544,7 +544,7 @@ pub fn dump_av(compiler: String, src: String, log: String): Int {
   process_run_out(compiler, args, log) ?? -1
 }
 
-// `__emit-ll SRC OUT` (internal, Stage 28 W9): the pre-optimization .ll
+// `__emit-ll SRC OUT` (internal): the pre-optimization .ll
 // the back end hands to LLVM, which carries no source location; its
 // messages go to log.
 pub fn emit_ll(compiler: String, src: String, out: String, log: String): Int {
@@ -555,7 +555,7 @@ pub fn emit_ll(compiler: String, src: String, out: String, log: String): Int {
   process_run_out(compiler, args, log) ?? -1
 }
 
-// A hidden front-end dump (D137): flag is --tokens, --ast, or --check.
+// A hidden front-end dump: flag is --tokens, --ast, or --check.
 pub fn dump_layer(compiler: String, flag: String, src: String, log: String): Int {
   args: Array(String) = []
   args.push("dump")
@@ -644,7 +644,7 @@ pub struct Cell {
   pub n: Int
 }
 
-// A row of tests/goldens/list.txt (O355, Stage 29 W5d2): the one list of
+// A row of tests/goldens/list.txt: the one list of
 // dump goldens, which tests/bless_goldens.av writes and the test file a
 // row names checks.
 pub class GoldenRow {

@@ -1,12 +1,12 @@
 import harness
 import backends
 
-// Stage 29 W5c2: the messages for types, fields, numbers and cascades. A
+// The messages for types, fields, numbers and cascades. A
 // struct literal where a `{` opens a block, a function value of the wrong
-// fn type (O238); one rule against cascades: an expression whose type
-// already failed is not reported again (O277, O636, O760, O192); the
-// integer messages of constructors and unsigned literals (O364); the
-// messages W5c1 wrote without a program that reaches them (O764). Each
+// fn type; one rule against cascades: an expression whose type
+// already failed is not reported again; the
+// integer messages of constructors and unsigned literals; the
+// messages written earlier without a program that reaches them. Each
 // program is compiled in parallel; a refused one must leave no binary,
 // exit non-zero, say the expected words at the expected line and column,
 // and, when the case says so, say nothing else (one error, no cascade).
@@ -65,7 +65,7 @@ fn with_mods(f: TCase, mods: Array(String)): TCase {
 
 fn cases: Array(TCase) {
   xs: Array(TCase) = []
-  // O238: a struct literal where the `{` opens a block says to parenthesize it.
+  // A struct literal where the `{` opens a block says to parenthesize it.
   xs.push(only("lit-if", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  p = P { x: 1, y: 2 }\n  if p.x == P { x: 1, y: 2 }.x {\n    puts(1)\n  }\n}\n", "a struct literal in a condition needs parentheses around it: (P { ... })", "8:13"))
   xs.push(only("lit-if-one-field", "struct Q {\n  x: Int\n}\n\nfn main {\n  q = Q { x: 1 }\n  if q.x == Q { x: 1 }.x {\n    puts(1)\n  }\n}\n", "a struct literal in a condition needs parentheses around it: (Q { ... })", "7:13"))
   xs.push(only("lit-while", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  p = P { x: 1, y: 2 }\n  while p.y != P { x: 1, y: 2 }.y {\n    p = P { x: 1, y: 2 }\n  }\n  puts(p.x)\n}\n", "a struct literal in a condition needs parentheses around it: (P { ... })", "8:16"))
@@ -74,12 +74,12 @@ fn cases: Array(TCase) {
   xs.push(with_mods(only("lit-qualified", "import geo\nfn main {\n  p = geo.P { x: 1 }\n  if p.x == geo.P { x: 1 }.x {\n    puts(1)\n  }\n}\n", "a struct literal in a condition needs parentheses around it: (geo.P { ... })", "4:17"), ["geo", "pub struct P {\n  pub x: Int\n}\n"]))
   xs.push(accepted("lit-parenthesized", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  p = P { x: 1, y: 2 }\n  if p.x == (P { x: 1, y: 2 }).x {\n    puts(1)\n  }\n  for q in (P { x: 1, y: 2 }).x..3 {\n    puts(q)\n  }\n}\n", "1\n1\n2\n"))
   xs.push(accepted("lit-capital-local-block", "fn main {\n  X = 5\n  y = 5\n  if y == X {\n    z: Int = 1\n    puts(z)\n  }\n  if y == X {}\n  puts(2)\n}\n", "1\n2\n"))
-  // O238: a function value of another fn type says what it is, not `unknown function`.
+  // A function value of another fn type says what it is, not `unknown function`.
   xs.push(only("fn-value-type", "fn f(n: Int): Int? {\n  n\n}\n\nfn main {\n  g: fn(Int): Int = f\n  puts(g(1))\n}\n", "f is fn(Int): Int?, expected fn(Int): Int: a fn type matches only itself", "6:21"))
   xs.push(only("fn-value-arg", "fn f(n: Int): Int? {\n  n\n}\n\nfn apply(g: fn(Int): Int): Int {\n  g(1)\n}\n\nfn main {\n  puts(apply(f))\n}\n", "f is fn(Int): Int?, expected fn(Int): Int: a fn type matches only itself", "10:14"))
   xs.push(only("fn-value-overloads", "fn f(n: Int): Int? {\n  n\n}\n\nfn f(s: String): Int {\n  s.size\n}\n\nfn main {\n  g: fn(Int): Int = f\n  puts(g(1))\n}\n", "f is fn(Int): Int? or fn(String): Int, expected fn(Int): Int: a fn type matches only itself", "10:21"))
   xs.push(only("fn-value-unknown", "fn helper(n: Int): Int {\n  n\n}\n\nfn main {\n  g: fn(Int): Int = nothere\n  puts(g(1))\n}\n", "unknown function nothere", "6:21"))
-  // The cascade rule (O277, O636, O760, O192): an expression whose type already failed is not reported again.
+  // The cascade rule: an expression whose type already failed is not reported again.
   xs.push(only("casc-for-bytes", "fn main {\n  s = \"abc\"\n  for c in s.bytes {\n    puts(c)\n  }\n}\n", "for needs a range (a..b) or an Array, got Bytes", "3:3"))
   xs.push(only("casc-for-failed-array", "fn main {\n  xs = nosuch()\n  for x in xs {\n    puts(x.foo)\n  }\n  puts(xs.size + 1)\n}\n", "unknown function nosuch", "2:8"))
   xs.push(only("casc-number-mix", "fn main {\n  pa: Int32 = 1\n  pn = 2\n  px = pa + pn\n  puts(px)\n}\n", "binary operator expects matching types, got Int32 and Int", "4:11"))
@@ -97,7 +97,7 @@ fn cases: Array(TCase) {
   xs.push(only("casc-array-element", "fn main {\n  n = 5\n  xs: Array(Int32) = [1, n]\n  puts(xs.size)\n}\n", "array element is Int, expected Int32", "3:26"))
   xs.push(only("casc-method-arg", "class C {\n  fn go(n: Int): Int {\n    n\n  }\n}\n\nfn main {\n  c = C.new()\n  puts(c.go(nosuch))\n}\n", "unknown name nosuch", "9:13"))
   xs.push(only("casc-lambda-arg", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(1) { |a, b| a + b })\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument", "6:17"))
-  // O364: a constructor's integer argument names the call as written; a negative literal where an unsigned type is wanted does not fit.
+  // A constructor's integer argument names the call as written; a negative literal where an unsigned type is wanted does not fit.
   xs.push(only("ctor-int-mix", "class Nd {\n  a: Int32 = 0\n\n  fn initialize(a: Int32) {\n    self.a = a\n  }\n}\n\nfn main {\n  n = 5\n  d = Nd.new(n)\n  puts(d.a)\n}\n", "argument 1 of Nd.new is Int, expected Int32: Nd.new(a: Int32)", "11:9"))
   xs.push(only("ctor-count", "class Nd {\n  a: Int32 = 0\n\n  fn initialize(a: Int32) {\n    self.a = a\n  }\n}\n\nfn main {\n  d = Nd.new(1, 2)\n  puts(d.a)\n}\n", "Nd.new takes 1 argument, given 2: Nd.new(a: Int32)", "10:9"))
   xs.push(only("ctor-generic", "class Box(T) {\n  a: Int32 = 0\n\n  fn initialize(a: Int32, v: T) {\n    self.a = a\n  }\n}\n\nfn main {\n  n = 5\n  d = Box(Int).new(n, 1)\n  puts(d.a)\n}\n", "argument 1 of Box(Int).new is Int, expected Int32: Box(Int).new(a: Int32, v: Int)", "11:15"))
@@ -109,7 +109,7 @@ fn cases: Array(TCase) {
   xs.push(only("unsigned-negative-const", "const neg = -1\n\nfn main {\n  a: UInt32 = neg\n  puts(a)\n}\n", "the constant neg = -1 does not fit in UInt32", "4:15"))
   xs.push(only("unsigned-negative-suffix", "fn main {\n  a = -1u64\n  puts(a)\n}\n", "a negative literal does not fit in UInt64", "2:7"))
   xs.push(accepted("unsigned-negative-overload", "fn f(a: UInt32): Int {\n  1\n}\n\nfn f(a: Int): Int {\n  2\n}\n\nfn main {\n  puts(f(-1))\n  puts(f(1))\n}\n", "2\n2\n"))
-  // O764: the two messages W5c1 wrote without a program that reaches them.
+  // The two messages written earlier without a program that reaches them.
   xs.push(only("deferred-no-fit", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(\"x\") { |n| n + 1 })\n}\n", "argument 1 of apply is String, expected Int: apply(n: Int, f: fn(Int): Int): Int", "6:8"))
   xs.push(only("deferred-no-fit-name", "fn helper(n: Int): Int {\n  n\n}\n\nfn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(\"x\", helper))\n}\n", "argument 1 of apply is String, expected Int: apply(n: Int, f: fn(Int): Int): Int", "10:8"))
   xs.push(only("deferred-no-fit-overloads", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn apply(b: Bool, f: fn(Int): Int): Int {\n  f(1)\n}\n\nfn main {\n  puts(apply(\"x\") { |n| n + 1 })\n}\n", "no overload of apply takes (String, a lambda): apply(n: Int, f: fn(Int): Int): Int, apply(b: Bool, f: fn(Int): Int): Int", "10:8"))

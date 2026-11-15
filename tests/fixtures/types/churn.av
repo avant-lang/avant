@@ -1,18 +1,18 @@
-// Union churn on the new back end (Stage 28 W7a). Long-lived holders,
-// reached only through another object's array field (a holder named by a
-// root slot is scanned by every young collection anyway, so it would hide
-// a missing barrier), become mature and then gain young children through
+// Union churn on the new back end. Long-lived holders, reached only
+// through another object's array field (a holder named by a root slot
+// is scanned by every young collection anyway, so it would hide a
+// missing barrier), become mature and then gain young children through
 // union stores of every form: a class field `Leaf?` (barrier on the
 // holder), a field `Int | Leaf` alternating between its scalar and its
 // reference member (the payload word is a heap reference word whatever
 // the tag), a struct field holding a union inside the holder, a
-// `String?` field, union elements of an array (`Leaf?` elements: a stride
-// map, D186; index stores behind a barrier on the buffer, pushes through
-// push_slot), and struct elements holding unions. Values alternate
-// between nil and non-nil each round; union locals and results stay live
-// across collections. Garbage between the stores makes collections run;
-// every child is checked each round. Under AVANT_GC_VERIFY=1 and
-// AVANT_YOUNG_MB=1 it must print the same.
+// `String?` field, union elements of an array (`Leaf?` elements: a
+// stride map; index stores behind a barrier on the buffer, pushes
+// through push_slot), and struct elements holding unions. Values
+// alternate between nil and non-nil each round; union locals and
+// results stay live across collections. Garbage between the stores
+// makes collections run; every child is checked each round. Under
+// AVANT_GC_VERIFY=1 and AVANT_YOUNG_MB=1 it must print the same.
 
 class Leaf {
   v: Int

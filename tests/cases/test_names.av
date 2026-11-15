@@ -1,11 +1,11 @@
 import harness
 import backends
 
-// Stage 29 W5c1: the messages for names, calls and ambiguity. A type
-// without the type-level function a call names (O166), a type two
-// modules publish (O224), a call whose arguments fit no signature, "did
-// you mean" and opening an optional (O257, O340), an ambiguous function
-// value (O345) and an ambiguous call within one module (O346). Each
+// The messages for names, calls and ambiguity. A type
+// without the type-level function a call names, a type two
+// modules publish, a call whose arguments fit no signature, "did
+// you mean" and opening an optional, an ambiguous function
+// value and an ambiguous call within one module. Each
 // program is compiled in parallel; a refused one must leave no binary,
 // exit non-zero, say the expected words at the expected line and column,
 // and, when the case says so, say nothing else (one error, no cascade).
@@ -65,7 +65,7 @@ fn with_mods(f: NCase, mods: Array(String)): NCase {
 
 fn cases: Array(NCase) {
   xs: Array(NCase) = []
-  // O166: `T.foo` on a type without that type-level function.
+  // `T.foo` on a type without that type-level function.
   xs.push(only("type-fn-struct", "struct T {\n  x: Int\n}\nfn main {\n  puts(T.foo(1))\n}\n", "T has no type-level function foo", "5:9"))
   xs.push(only("type-fn-field-form", "class K {\n  fn self.make: K {\n    K.new()\n  }\n}\nfn main {\n  k = K.mak\n  puts(1)\n}\n", "K has no type-level function mak", "7:8"))
   xs.push(only("type-fn-enum", "enum Tok { eof, name }\nfn main {\n  puts(Tok.foo(1))\n}\n", "Tok has no type-level function foo", "3:11"))
@@ -76,7 +76,7 @@ fn cases: Array(NCase) {
   xs.push(without("type-fn-unknown-value-once", "fn main {\n  puts(nosuch.foo(1))\n}\n", "unknown name nosuch", "2:8", "on Int"))
   xs.push(only("type-fn-qualified", "fn main {\n  puts(m.T.foo(1))\n}\n", "unknown name m", "2:8"))
   xs.push(with_mods(only("type-fn-module", "import tmod\nfn main {\n  puts(tmod.T.foo(1))\n}\n", "tmod.T has no type-level function foo", "3:14"), ["tmod", "pub struct T {\n  x: Int\n}\n"]))
-  // O224: a type two modules publish, used bare, names both modules.
+  // A type two modules publish, used bare, names both modules.
   ta = "pub struct Token {\n  pub k: Int\n  pub fn self.make: Token {\n    Token { k: 1 }\n  }\n}\n"
   tb = "pub struct Token {\n  pub s: String\n}\n"
   two: Array(String) = ["lexa", ta, "lexb", tb]
@@ -108,7 +108,7 @@ fn cases: Array(NCase) {
   xs.push(with_mods(only("clash-three", "import lexa\nimport lexb\nimport lexc\nfn f(t: Token): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", "Token is a type of lexa, lexb and lexc: write lexa.Token, lexb.Token or lexc.Token", "4:9"), three))
   fnty: Array(String) = ["alpha", "pub struct Value {\n  pub v: Int\n}\n", "beta", "pub fn Value: Int {\n  1\n}\n"]
   xs.push(with_mods(only("clash-type-and-fn", "import alpha\nimport beta\nfn f(v: Value): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", "Value is a type of alpha and a function of beta: write alpha.Value or beta.Value", "3:9"), fnty))
-  // O257: a call whose arguments fit no signature says what it takes.
+  // A call whose arguments fit no signature says what it takes.
   add = "fn add(a: Int, b: Int): Int {\n  a + b\n}\n"
   xs.push(only("count-few", add + "fn main {\n  puts(add(1))\n}\n", "add takes 2 arguments, given 1: add(a: Int, b: Int): Int", "5:8"))
   xs.push(only("count-many", add + "fn main {\n  puts(add(1, 2, 3))\n}\n", "add takes 2 arguments, given 3: add(a: Int, b: Int): Int", "5:8"))
@@ -124,7 +124,7 @@ fn cases: Array(NCase) {
   xs.push(only("count-type-fn", cls + "fn main {\n  c = C.make()\n  puts(1)\n}\n", "C.make takes 1 argument, given 0: C.make(n: Int): C", "10:8"))
   xs.push(only("count-lambda", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\nfn main {\n  puts(apply(1) { |a, b| a + b })\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument", "5:17"))
   xs.push(only("count-fn-value", "fn main {\n  f: fn(Int): Int = { |n| n }\n  puts(f(1, 2))\n}\n", "fn(Int): Int takes 1 argument, given 2", "3:8"))
-  // O257, O340: "did you mean", one suggestion at most, only from what is
+  // "Did you mean", one suggestion at most, only from what is
   // in scope at the error.
   xs.push(only("mean-local", "fn main {\n  count = 3\n  puts(cuont)\n}\n", "unknown name cuont (did you mean `count`?)", "3:8"))
   xs.push(only("mean-param", "fn f(total: Int): Int {\n  totl + 1\n}\nfn main {\n  puts(f(1))\n}\n", "unknown name totl (did you mean `total`?)", "2:3"))
@@ -153,7 +153,7 @@ fn cases: Array(NCase) {
   xs.push(only("mean-member", tok + "fn main {\n  t = Tok.eoff\n  puts(t)\n}\n", "Tok has no member eoff (did you mean `eof`?)", "3:10"))
   xs.push(only("mean-member-type-fn", tok + "fn main {\n  t = Tok.from_nam(\"eof\")\n  puts(1)\n}\n", "Tok has no type-level function from_nam (did you mean `from_name`?)", "3:10"))
   xs.push(only("mean-label", tok + "fn f(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    case nmae { 2 }\n    case number { 3 }\n  }\n}\nfn main {\n  puts(f(Tok.eof))\n}\n", "Tok has no member nmae (did you mean `name`?)", "5:10"))
-  // O340: a builtin receiver's methods and fields.
+  // A builtin receiver's methods and fields.
   xs.push(only("mean-string-field", "fn main {\n  s = \"abc\"\n  puts(s.sizee)\n}\n", "no method sizee on String (did you mean `size`?)", "3:9"))
   xs.push(only("mean-string-ext", "fn (s: String) shout: String {\n  s\n}\nfn main {\n  s = \"abc\"\n  puts(s.shuot)\n}\n", "(did you mean `shout`?)", "6:9"))
   xs.push(only("mean-array", "fn main {\n  xs = [1, 2]\n  xs.pussh(3)\n  puts(xs.size)\n}\n", "no method pussh on Array (did you mean `push`?)", "3:5"))
@@ -162,7 +162,7 @@ fn cases: Array(NCase) {
   xs.push(only("mean-int", "fn main {\n  n = 3\n  puts(n.to_ff)\n}\n", "no method to_ff on Int (did you mean `to_f`?)", "3:9"))
   xs.push(only("mean-float", "fn main {\n  f = 2.0\n  puts(f.sqtr)\n}\n", "no method sqtr on Float64 (did you mean `sqrt`?)", "3:9"))
   xs.push(only("mean-buf", "fn main {\n  b = buf_new()\n  b.push_srt(\"a\")\n  puts(b.to_s())\n}\n", "no method push_srt on Buf (did you mean `push_str`?)", "3:4"))
-  // O257: a use of an optional says how to open it.
+  // A use of an optional says how to open it.
   xs.push(only("open-eq-nil", "fn main {\n  x: Int? = nil\n  puts(x == nil)\n}\n", "x is Int? and an optional is never compared with nil: test it with `if _ = x { ... } else { ... }`, or open it with `if v = x`, `x ?? fallback` or `x?`", "3:10"))
   xs.push(only("open-not-nil", "fn main {\n  x: Int? = 2\n  puts(nil != x)\n}\n", "x is Int? and an optional is never compared with nil", "3:12"))
   xs.push(only("open-field", "fn main {\n  s: String? = \"a\"\n  puts(s.size)\n}\n", "cannot read field size on String?; open it with `if v = s`, `s ?? fallback` or `s?`", "3:9"))
@@ -177,7 +177,7 @@ fn cases: Array(NCase) {
   xs.push(with_mods(only("value-two-modules-arg", "import ma\nimport mb\nfn apply(f: fn(Int): Int): Int {\n  f(1)\n}\nfn main {\n  puts(apply(helper))\n}\n", "ambiguous function value helper: ma.helper and mb.helper both match", "7:14"), fva))
   xs.push(only("value-overloads", "fn show(x: Int): String {\n  \"i\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  f = show\n  puts(1)\n}\n", "ambiguous function value show: show(x: Int): String and show(s: String): String both match; give the value its fn type to pick one (f: fn(Int): String = show)", "8:7"))
   xs.push(accepted("value-overloads-typed", "fn show(x: Int): String {\n  \"i\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  f: fn(Int): String = show\n  puts(f(1))\n}\n", "i\n"))
-  // O346: an ambiguous call within one module names each signature.
+  // An ambiguous call within one module names each signature.
   amb = "fn f(a: Int, b: Int?): Int {\n  1\n}\nfn f(a: Int?, b: Int): Int {\n  2\n}\n"
   xs.push(only("ambiguous-one-module", amb + "fn main {\n  puts(f(1, 2))\n}\n", "ambiguous call to f: f(a: Int, b: Int?): Int and f(a: Int?, b: Int): Int both match", "8:8"))
   xs.push(only("ambiguous-method", "class C {\n  fn m(a: Int, b: Int?): Int {\n    1\n  }\n  fn m(a: Int?, b: Int): Int {\n    2\n  }\n}\nfn main {\n  puts(C.new().m(1, 2))\n}\n", "ambiguous call to C.m: C.m(a: Int, b: Int?): Int and C.m(a: Int?, b: Int): Int both match", "10:15"))

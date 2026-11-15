@@ -1,15 +1,15 @@
 import harness
 
-// The parser's nesting bound (Stage 29 W5d1, O440; Valk's bound of
-// 1,000 levels): a program nested deeper is one compile error at the
-// place it passes the bound, not a stack overflow in the parser, the
+// The parser's nesting bound (Valk's bound of 1,000 levels): a
+// program nested deeper is one compile error at the place it
+// passes the bound, not a stack overflow in the parser, the
 // checker or the lowering (before, 2,000 nested blocks or 5,000
-// parentheses killed the compiler with SIGSEGV, where the crash cleanup
-// cannot run, O173). Blocks, expressions (a group, a call's argument, an
-// operand) and type names count one level each, and a chain built in a
-// loop counts its steps (`a + b + c`, `a.b().c`), as the tree the
-// checker walks is that deep. Programs just under the bound compile, in
-// every shape; the inputs are generated.
+// parentheses killed the compiler with SIGSEGV, where the crash
+// cleanup cannot run). Blocks, expressions (a group, a call's
+// argument, an operand) and type names count one level each, and a
+// chain built in a loop counts its steps (`a + b + c`, `a.b().c`),
+// as the tree the checker walks is that deep. Programs just under
+// the bound compile, in every shape; the inputs are generated.
 
 fn rep(s: String, n: Int): String {
   b = buf_new()
@@ -80,12 +80,12 @@ fn test_nesting(c: Checks) {
 }
 
 // Every compile of this file. Under an outer AVANT_GC_STRESS
-// (harness.gc_stress_outer) the compiler runs without it: a collection
-// at every allocation over a 990-level tree did not end one compile in
-// 11 minutes, and a refused 1,001-level one took over 30 s (Stage 29
-// W5d1; O602's line: a file under about 60 s alone); the stress mode is
-// about the collector, the bound about the compiler's stack, which the
-// other GC passes compile through as well.
+// (harness.gc_stress_outer) the compiler runs without it: a
+// collection at every allocation over a 990-level tree did not end
+// one compile in 11 minutes, and a refused 1,001-level one took over
+// 30 s (the suite's bound: a file under about 60 s alone); the stress mode
+// is about the collector, the bound about the compiler's stack,
+// which the other GC passes compile through as well.
 fn compile_nest(compiler: String, src: String, bin: String, log: String): Int {
   if !gc_stress_outer() {
     return compile_av(compiler, src, bin, log)

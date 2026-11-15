@@ -1,5 +1,5 @@
-/* An LD_PRELOAD shim for tests/cases/test_std_http_safety.av (Stage 29
- * W-FIX1g, O572): clock_gettime(CLOCK_REALTIME) answers an hour early,
+/* An LD_PRELOAD shim for tests/cases/test_std_http_safety.av:
+ * clock_gettime(CLOCK_REALTIME) answers an hour early,
  * as if the wall clock had been stepped back between the moment a
  * deadline is read and the moment it is waited for. A deadline read
  * from the wall clock and waited for on it then lies an hour in the

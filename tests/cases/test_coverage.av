@@ -27,10 +27,10 @@ fn test_coverage(c: Checks) {
     if ir_map = file_read(dump_log) {
       c.expect(str_has(ir_map, "/coverage.map"), "dump keeps its slot map in the scratch directory")
     }
-    // Into a missing directory (W10b): the slot map is written while the
+    // Into a missing directory: the slot map is written while the
     // program is lowered, so its directory is created before it (the map
     // beside the binary, and AVANT_COVERAGE_MAP; on both back ends until
-    // the old one retired at W11).
+    // the old one retired).
     backs = ["llvm"]
     bi = 0
     while bi < backs.size {
@@ -62,9 +62,9 @@ fn test_coverage(c: Checks) {
       ex_code = process_run_out("/usr/bin/env", ex_args, "${nd}-explicit.log") ?? -1
       c.eq_int(ex_code, 0, "${bk}: compile with AVANT_COVERAGE_MAP in a missing directory")
       c.expect(file_exists("${nd}/m/n/explicit.map"), "${bk}: AVANT_COVERAGE_MAP is written in the created directory")
-      // The slot map cannot be written (its path is a directory, which
-      // nobody can write as a file): the build fails and says which file
-      // and why (O416, Stage 29 W-FIX1d; the failure was dropped and a
+      // The slot map cannot be written (its path is a directory,
+      // which nobody can write as a file): the build fails and
+      // says which file and why (the failure was dropped and a
       // binary without its map was built with status 0).
       mkdir_p("${nd}/isdir")
       lm_args: Array(String) = []
@@ -111,8 +111,8 @@ fn test_coverage(c: Checks) {
       c.expect(false, "fixture lcov")
     }
 
-    // The relative-path fixture compiles from inside a scratch directory
-    // (D130), so the repository is never written.
+    // The relative-path fixture compiles from inside a
+    // scratch directory, so the repository is never written.
     rel_cwd = scratch_dir()
     rel_dir = "covrel-coverage-${stamp}"
     rel_src = "${rel_dir}/sample.av"
@@ -174,7 +174,7 @@ fn test_coverage(c: Checks) {
     if jout = file_read(jlog) {
       c.expect(str_has(jout, "PASS ok"), "mini suite prints PASS")
       // The runner names a file relative to its working directory when the
-      // file is inside it (O116, Stage 29 W1b: TMPDIR inside the checkout).
+      // file is inside it (TMPDIR inside the checkout).
       jname = jcase
       here = "${cwd_here()}/"
       if str_has(jcase, here) && str_slice(jcase, 0, here.size) == here {

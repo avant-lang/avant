@@ -275,7 +275,7 @@ fn test_std_http(c: Checks) {
     c.expect(false, "listen with body limit")
   }
 
-  // WebSockets (wave 5C): echo of both kinds, ping, fragmentation,
+  // WebSockets: echo of both kinds, ping, fragmentation,
   // close codes, the spawn-sender path, and protocol-error closes,
   // spoken by a raw-socket Python helper like the cases above.
   wscript = "${scratch()}/ws-raw-${stamp}.py"
@@ -386,9 +386,9 @@ fn test_std_http(c: Checks) {
     c.expect(false, "listen for ws test")
   }
 
-  // The helper binds an ephemeral port and writes it to a file (Stage 28
-  // W16t; it was the fixed 18347, which two suites running at once, as
-  // the gate's overlapping GC passes do, would both bind).
+  // The helper binds an ephemeral port and writes it to a file
+  // (it was the fixed 18347, which two suites running at once,
+  // as the gate's overlapping GC passes do, would both bind).
   script2 = "${scratch()}/http-chunked-${stamp}.py"
   portf2 = "${scratch()}/http-chunked-${stamp}.port"
   py2 = "import socket, sys, os\npath = sys.argv[1]\nsrv = socket.socket()\nsrv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\nsrv.bind((\"127.0.0.1\", 0))\nsrv.listen(1)\nwith open(path + \".tmp\", \"w\") as f:\n    f.write(str(srv.getsockname()[1]))\nos.rename(path + \".tmp\", path)\nconn, _ = srv.accept()\nconn.recv(4096)\nconn.sendall(b\"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\nTransfer-Encoding: chunked\\r\\nConnection: close\\r\\n\\r\\n5\\r\\nhello\\r\\n8\\r\\n chunked\\r\\n6\\r\\n world\\r\\n0\\r\\n\\r\\n\")\nconn.close()\nsrv.close()\n"
@@ -432,7 +432,7 @@ fn test_std_http(c: Checks) {
     c.expect(false, "listen for close test")
   }
 
-  // Multi-loop (Q124-A): explicit loop count, concurrent clients on
+  // Multi-loop: explicit loop count, concurrent clients on
   // several connections at once, clean stop through a handler.
   if opened = Http.listen(0, "127.0.0.1", 1048576, 4) {
     server = opened

@@ -1,17 +1,17 @@
 import harness
 
-// Stage 28 W5a: the LLVM emitter (compiler/llvm/emit*.av) and the driver
+// The LLVM emitter (compiler/llvm/emit*.av) and the driver
 // (compiler/llvm/driver.av) through the internal hook
 // `avant __mir-build NAME OUT [--debug|--release] [--emit-ll FILE]
 // [--object] [--call-forms]`, which builds a builder-made MIR module,
 // verifies it at stage final, emits the .ll, compiles it in process, and
 // links it with the runtime as the old driver links a program. Checked:
 // (a) the 10.2 example's .ll is byte-identical to
-// tests/fixtures/mir/example.ll (mir.md 10.3 up to temporary and
-// statement-part names, see the W5a record) and the same in every mode;
+// tests/fixtures/mir/example.ll (the specification's .ll up to temporary and
+// statement-part names) and the same in every mode;
 // (b) it runs in all three modes; (c) under AVANT_GC_VERIFY=1
-// AVANT_YOUNG_MB=1 it is silent and its GC statistics are 10.3's (W3);
-// the call forms run too; `constructs` (the rest of mir.md 4.3-4.5) and
+// AVANT_YOUNG_MB=1 it is silent and its GC statistics are the specification's;
+// the call forms run too; `constructs` (the rest of the specification's constructs) and
 // `traps` give their output and exit codes in every mode; (d) every
 // selftest module that verifies at final compiles to an object (the
 // glue's verifier passes); (e) a module the verifier rejects is never
@@ -139,16 +139,16 @@ fn gc_stats_10_3(c: Checks, text: String, what: String, calls: Bool) {
     return
   }
   c.expect(str_has(text, "collections=6 young=6 "), "${what}: collections=6 young=6")
-  // 272 bytes survive (Stage 28 W16a: the collections run at other
+  // 272 bytes survive (the collections run at other
   // points, since avant_str_from_int collects at its own allocation
-  // (RC1) and the loop's allocations stay inline; 96 before). Since W16b
+  // (RC1) and the loop's allocations stay inline; 96 before). Now
   // no C-stack scan keeps their blocks in place: 192 bytes are copied
   // out of the six evacuated young blocks and 80 promoted in place (272
   // in place before).
   c.expect(str_has(text, " copied=192 "), "${what}: copied=192")
   c.expect(str_has(text, " prom_inplace=80 "), "${what}: prom_inplace=80")
   // roots and enters count the frames that enter through a call
-  // (avant_gc_frame_enter, Stage 28 W18): every frame in the call forms;
+  // (avant_gc_frame_enter): every frame in the call forms;
   // in the inline forms only the thread's outermost one (main's frame,
   // its 3 root words), since every other frame links its stack record
   // itself.
@@ -165,7 +165,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
   ms = modes()
   none: Array(String) = []
 
-  // Wave 1: every build at once.
+  // The first wave: every build at once.
   builds: Array(HJob) = []
   i = 0
   while i < ms.size {
@@ -196,7 +196,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
     i += 1
   }
 
-  // (a) the .ll: the fixture, and the same text in every mode (D192).
+  // (a) the .ll: the fixture, and the same text in every mode.
   want = "(no fixture)"
   if t = file_read("${root}/tests/fixtures/mir/example.ll") {
     want = t
@@ -223,7 +223,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
   c.expect(!file_exists("${dir}/nb.ll"), "example_no_barrier: no .ll written")
   c.expect(!file_exists("${dir}/nb"), "example_no_barrier: no program linked")
 
-  // Wave 2: every run at once.
+  // The second wave: every run at once.
   gcv = "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1"
   runs: Array(HJob) = []
   i = 0
@@ -255,7 +255,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
     c.expect(str_has(gl, "199999\nsmall\n"), "example ${t} under the GC verifier: output")
     gc_stats_10_3(c, gl, "example ${t}", false)
     if gc_numbers_outer().size == 0 {
-      // Stage 28 W16a: avant_str_from_int no longer opens a defer region,
+      // avant_str_from_int no longer opens a defer region,
       // whose entry cleared the inline path's state (gc_fast_clear) at
       // every call, so the loop's allocations stay inline (10 before).
       c.expect(str_has(gl, " inline_allocs=199994 "), "example ${t}: inline_allocs=199994")

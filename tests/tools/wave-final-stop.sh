@@ -1,6 +1,6 @@
 #!/bin/sh
-# Stopping tools/wave-final.sh stops every process its steps started
-# (O669, VALK-TM2). Run by tests/cases/test_tools.av; by hand:
+# Stopping tools/wave-final.sh stops every process its steps started.
+# Run by tests/cases/test_tools.av; by hand:
 #
 #   sh tests/tools/wave-final-stop.sh WORK
 #

@@ -1,6 +1,6 @@
 import harness
 
-// The codegen mode each verb selects (Wave I; Stage 28 W11 moved this off
+// The codegen mode each verb selects (moved off
 // the old back end's argument log): `run` compiles --debug, a bare
 // `compile` uses the default mode, `--release` and its alias `--final`
 // the full optimization. The builds are deterministic, so the mode shows
@@ -36,9 +36,9 @@ fn tc_same(a: String, b: String): Bool {
   (process_run("/usr/bin/cmp", args) ?? -1) == 0
 }
 
-// The binary's symbol table has a function named name (nm; Stage 29
-// W4b2: a trap's text names its function, so the bytes of a binary
-// whose helper was inlined still hold the name).
+// The binary's symbol table has a function named name
+// (nm: a trap's text names its function, so the bytes of
+// a binary whose helper was inlined still hold the name).
 fn tc_fn(path: String, name: String): Bool {
   args: Array(String) = []
   args.push("-c")
@@ -99,7 +99,7 @@ fn test_toolchain(c: Checks) {
     c.expect(tc_fn(bare, "helper_twice"), "the default mode does not inline the helper")
     c.expect(!tc_fn(optimized, "helper_twice"), "--release inlines the helper")
 
-    // The CPU level (Stage 28 W18S, O140): an artifact defaults to v2
+    // The CPU level: an artifact defaults to v2
     // (--cpu=v2's bytes); every level is a program that records it; one
     // the machine lacks stops at startup with the flag to rebuild with;
     // the host's level is the highest that runs, and `run` uses it.
@@ -149,7 +149,7 @@ fn test_toolchain(c: Checks) {
     c.expect(tc_same("${kept}/run.bin", "${base}-cpu-${host}.bin"), "bare run uses --debug codegen at the machine's level")
     rm_rf(run_tmp)
 
-    // A tool the compiler runs gets /dev/null as stdin (Wave D): piped
+    // A tool the compiler runs gets /dev/null as stdin: piped
     // input reaches the program `avant run` starts, not a tool, and an
     // open pipe as stdin does not hold a compile. These go through sh
     // because they are about stdin plumbing.

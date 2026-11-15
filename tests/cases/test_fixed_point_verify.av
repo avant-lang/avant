@@ -1,21 +1,21 @@
 import harness
 
-// The compiler's own heap is fully traced (D188): dumping itself under
+// The compiler's own heap is fully traced: dumping itself under
 // the collector's verifier prints no untraced-reference report. Split
-// from tests/cases/test_fixed_point.av (Stage 28 W16t, O103): the same
+// from tests/cases/test_fixed_point.av: the same
 // job and the same two checks, in a file of its own so the suite runner
 // overlaps this dump, the suite's longest single job, with the fixed
 // point's compile and dumps instead of waiting for it inside the fixed
 // point's first wave. Listed in `[test] first` after the fixed point.
 // The v0.34.0 seed's type maps drop every reference word past payload
-// word 63 (audit 8.4, fixed by W1b in the tree only), so a seed-built B
+// word 63 (fixed in the tree only), so a seed-built B
 // is safe only while no compiler class has a reference field there.
-// This check can relax once the seed carries W1b (D178 re-seed).
+// This check can relax once the seed carries that fix.
 // AVANT_YOUNG_MB=1 is not set here: it makes this dump longer than the
 // fixed point's compile.
 fn test_fixed_point_verify(c: Checks) {
   c.suite("tests/cases/test_fixed_point_verify.av")
-  // Measured with the stress mode kept (VALK-TM, O602): the dump under
+  // Measured with the stress mode kept: the dump under
   // AVANT_GC_VERIFY=1 had not ended after 600 s.
   if gc_stress_outer() {
     c.skip("the compiler's dump under AVANT_GC_VERIFY=1", "outer AVANT_GC_STRESS: a compiler-sized job under a collection at every helper call; the gate checks it outside it")

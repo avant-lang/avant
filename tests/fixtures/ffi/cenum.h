@@ -1,4 +1,4 @@
-/* Stage 29 W5a1 (O393): C enums for avant bind (tests/cases/test_bind.av). */
+/* C enums for avant bind (tests/cases/test_bind.av). */
 typedef enum { RED, GREEN = 5, BLUE } color_t;
 enum http_method { HTTP_GET, HTTP_HEAD, HTTP_POST, HTTP_ALIAS = 1 };
 enum { FLAG_A = 1, FLAG_B = 2 };
