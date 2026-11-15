@@ -335,7 +335,7 @@ void gc_use_block(Block *b) {
   }
 }
 
-static int bump_fits(size_t need) {
+static inline __attribute__((always_inline)) int bump_fits(size_t need) {
   return gc_thread.cur && avant_gc_bump && avant_gc_bump + need <= gc_thread.limit;
 }
 
@@ -935,7 +935,7 @@ static int young_usable(Block *b) {
          b != gc_heap.space[SPACE_MATURE].cur && b != gc_thread.overflow;
 }
 
-static void young_take(Block *b) {
+static inline __attribute__((always_inline)) void young_take(Block *b) {
   young_note_hole(b);
   gc_thread.ycur = b;
   gc_thread.cur_whole = b->bump == b->base && b->limit == b->base + BLOCK_SIZE;
@@ -1329,8 +1329,13 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
 
 /* The young cursor is in a hole with room for TOTAL bytes (the current
  * hole, the next one that fits, a new block), or 0: place_bump's search
- * without its allocation. The single mutator's. */
-static int young_room(size_t total) {
+ * without its allocation. The single mutator's. Reached only under the
+ * stress mode, and so cold and never inlined; bump_fits and young_take,
+ * which it shares with avant_alloc's slow path, are always inlined, so
+ * that its calls do not make the C compiler keep them out of line there
+ * (a young collection on the collector benchmark's steady loop: 12
+ * instructions fewer; no LangArena task more). */
+static __attribute__((noinline, cold)) int young_room(size_t total) {
   Block *cur = gc_thread.ycur;
   Block *b;
   if (cur) {
