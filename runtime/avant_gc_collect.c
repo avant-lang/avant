@@ -411,15 +411,15 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     uint64_t surv;
     avant_g_stats.young_collections++;
     if (complete) {
-      /* The return clock ticks as at a full collection (below), so the
-       * memory an earlier collection freed goes back to the OS at this
-       * one as it did when this was a trace. And the full trigger starts
-       * again, as after a trace: nothing became old since the last one
-       * (the proof), so what it counted is not mature growth to trace
-       * for; left standing, a due collection that holds would fall due
-       * again at the next allocation. What this collection promotes
-       * counts from here. */
-      gc_heap.return_clock++;
+      /* The full trigger starts again, as after a trace: nothing became
+       * old since the last one (the proof), so what it counted is not
+       * mature growth to trace for; left standing, a due collection that
+       * holds would fall due again at the next allocation. What this
+       * collection promotes counts from here. (Memory goes back to the
+       * OS by the young collection's own rule, not a full collection's:
+       * a program that asks for a collection after each piece of work
+       * would otherwise return and fault in again the memory the next
+       * piece takes, at every one.) */
       gc_heap.mature_since_full = 0;
       gc_heap.promoted_since_full = 0;
     }
@@ -437,7 +437,6 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
        * them (the proof), and the young survivors. And the heap limit's
        * progress rule, as for the trace it stands for. */
       gc_heap.live += gc_heap.proof.old_live;
-      gc_heap_return(gc_heap.live);
       if (why == GC_WHY_LIMIT && gc_heap.set.heap_max) {
         limit_progress_check();
       }
