@@ -517,7 +517,7 @@ fn main {
 
 ### Printing
 
-Every scalar has one text, the same in `puts`, in interpolation and from `to_s`: integers in decimal, a `Float64` as the shortest text that reads back as the same number ([Floats](#floats)), `true` and `false`, a `String` as itself. An enum prints its member's name, an error its text (its message and its cause), and a union its member; an optional is opened first. A struct, class or enum that defines `fn to_s: String` prints that text in interpolation (a type marked `Error` cannot: its text is its message). For every type that prints, `x.to_s` is exactly `"${x}"`.
+Every scalar has one text, the same in `puts`, in interpolation and from `to_s`: integers in decimal, a `Float64` as the shortest text that reads back as the same number ([Floats](#floats)), `true` and `false`, a `String` as itself. An enum prints its member's name, an error its text (its message and its cause), and a union its member; an optional is opened first. A struct, class or enum that defines `fn to_s: String` prints that text in interpolation (a type marked `Error` cannot: its text is its message). For every type that prints, `x.to_s` is exactly `"${x}"`. `puts(x)` prints exactly what `"${x}"` prints.
 
 ```avant
 fn size_or_word(n: Int): Int | String {
@@ -3193,7 +3193,7 @@ Runnable programs that use them live in [examples/](examples): in the repository
 
 ### Output
 
-`puts(x)` writes one value and a newline to stdout. `x` is an integer, a float, a `Bool` or a `String` (every byte of it, a NUL included); anything else goes through interpolation first (`puts("${e}")`). `puts_u(n)` prints an integer as the unsigned number its bits spell.
+`puts(x)` writes one value and a newline to stdout. `x` is anything interpolation prints, and `puts` prints exactly what `"${x}"` prints ([Printing](#printing)): a number, a `Bool`, a `String` (every byte of it, a NUL included), a type with its own `to_s`, an enum, an error, a union of those. An optional is opened first: `puts(x)` of an `Int?` is a compile error that names the ways to open it. `puts_u(n)` prints an integer as the unsigned number its bits spell.
 
 `puts` takes exactly one argument: a blank line is `puts("")`. There is no `print` without a newline, no writer for stderr, no `exit(status)` and no reader for standard input yet ([Not built yet](#not-built-yet)); the exit status comes from `main`'s result, and `file_read("/dev/stdin")` reads the whole of standard input.
 

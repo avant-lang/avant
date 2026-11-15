@@ -90,3 +90,84 @@ pub fn (checker_self: Checker) union_text(inner: Expr, ty: Ty): Expr? {
   checker_self.check_expr_as(sw, checker_self.t_string())
   sw
 }
+
+// The text of an error value inner (checked, of type ty, marked Error):
+// the call of the method the parser added to the type
+// (parser.av error_text_method), checked; nil when it cannot be found.
+pub fn (checker_self: Checker) error_text_call(inner: Expr, ty: Ty): Expr? {
+  fa = Expr.new(ex_field(), inner.loc)
+  fa.object = inner
+  fa.ident = "__avant_error_text"
+  arg_tys: Array(Ty) = []
+  none: Ty? = nil
+  if sig = checker_self.match_method(ty.name, fa.ident, arg_tys, none, inner.loc, ty.name, ty.mod_name, checker_self.no_int_literals()) {
+    fa.method_call = true
+    fa.resolved = sig.node.emit_name
+    fa.ty = sig.ret
+    return fa
+  }
+  nil
+}
+
+// puts(x): x is anything interpolation prints, and puts prints exactly
+// what "${x}" prints: a scalar is written by puts itself; any other value is
+// first rewritten here into the String its interpolation gives (an
+// enum's name, an error's text, a union's member), checked once.
+pub fn (checker_self: Checker) check_output_call(expr: Expr): Ty {
+  name = expr.callee
+  if b = expr.block {
+    checker_self.fail(expr.loc, "${name} does not take a block")
+    return checker_self.t_void()
+  }
+  if expr.args.size != 1 {
+    checker_self.fail(expr.loc, "${name} takes one argument")
+    return checker_self.t_void()
+  }
+  arg = expr.args[0]
+  printed = checker_self.check_expr(arg)
+  if printed.is_integer || printed.is_string || printed.is_float || printed.is_bool {
+    return checker_self.t_void()
+  }
+  if checker_self.has_err {
+    return checker_self.t_void()
+  }
+  if (printed.is_agg || printed.is_enum) && !printed.error_mark && checker_self.user_op(printed, "to_s") {
+    // A type that defines `fn to_s: String` prints its text, as in
+    // interpolation.
+    if own = checker_self.own_text_call(arg, printed) {
+      expr.args[0] = own
+    }
+    return checker_self.t_void()
+  }
+  if printed.is_enum {
+    // An enum prints its member's name (an error enum: its message).
+    if call = checker_self.enum_text_call(arg, printed) {
+      expr.args[0] = call
+    }
+    return checker_self.t_void()
+  }
+  if printed.is_union {
+    if printed.includes_nil {
+      checker_self.fail(arg.loc, "${name} cannot print ${printed.show}: it holds nil; ${checker_self.open_text(arg)}")
+      return checker_self.t_void()
+    }
+    for m in printed.members {
+      if !text_member_ok(m) {
+        checker_self.fail(arg.loc, "${name} cannot print ${printed.show}: its member ${m.show} has no text")
+        return checker_self.t_void()
+      }
+    }
+    if sw = checker_self.union_text(arg, printed) {
+      expr.args[0] = sw
+    }
+    return checker_self.t_void()
+  }
+  if printed.error_mark {
+    if fa = checker_self.error_text_call(arg, printed) {
+      expr.args[0] = fa
+    }
+    return checker_self.t_void()
+  }
+  checker_self.fail(arg.loc, "${name} cannot print ${printed.show}")
+  checker_self.t_void()
+}

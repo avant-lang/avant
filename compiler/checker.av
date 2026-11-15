@@ -4232,40 +4232,7 @@ pub class Checker {
       return check_method_call(expr, r, has_want, want)
     }
     if expr.callee == "puts" {
-      if expr.args.size != 1 {
-        fail(expr.loc, "puts takes one argument")
-        return t_void()
-      }
-      if b = expr.block {
-        fail(expr.loc, "puts does not take a block")
-        return t_void()
-      }
-      printed = check_expr(expr.args[0])
-      if printed.is_enum {
-        // puts(t) prints what "${t}" prints (D358).
-        if call = enum_text_call(expr.args[0], printed) {
-          expr.args[0] = call
-        }
-        return t_void()
-      }
-      ok = false
-      if printed.is_integer {
-        ok = true
-      }
-      if printed.is_string {
-        ok = true
-      }
-      if printed.is_float {
-        ok = true
-      }
-      if printed.is_bool {
-        ok = true
-      }
-      if ok {
-        return t_void()
-      }
-      fail(expr.args[0].loc, "puts cannot print ${printed.show}")
-      return t_void()
+      return check_output_call(expr)
     }
     if expr.callee == "spawn" {
       return check_spawn(expr)

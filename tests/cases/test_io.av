@@ -1,0 +1,164 @@
+import harness
+import backends
+
+// Programs that print, exit, read their input and files, and run other
+// programs, each case a small program. They are compiled in parallel; a
+// refused one must leave no binary, say the expected words and point at
+// the expected line and column; an accepted one runs in its own
+// directory, with its standard input from a file when the case gives one,
+// and must exit with the expected status and print exactly the expected
+// stdout and stderr (a trap's stderr: its message and its site).
+
+class IoCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub err: String = ""
+  pub input: String = ""
+  pub has_input: Bool = false
+  pub stdin_dir: Bool = false
+  pub merged: Bool = false
+  pub status: Int = 0
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): IoCase {
+  f = IoCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): IoCase {
+  f = IoCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn with_err(f: IoCase, err: String): IoCase {
+  f.err = err
+  f
+}
+
+fn with_status(f: IoCase, status: Int): IoCase {
+  f.status = status
+  f
+}
+
+fn with_input(f: IoCase, input: String): IoCase {
+  f.input = input
+  f.has_input = true
+  f
+}
+
+fn merged(f: IoCase): IoCase {
+  f.merged = true
+  f
+}
+
+// puts prints every type interpolation prints, exactly as "${x}" does.
+fn puts_cases(xs: Array(IoCase)) {
+  pre = "class Bad: Error {\n  pub message: String = \"bad input\"\n}\nenum Tok { eof, name }\nfn size_or_word(n: Int): Int | String {\n  if n < 10 {\n    return n\n  }\n  \"many\"\n}\nfn parse(s: String): Int | Bad {\n  if n = s.to_i {\n    return n\n  }\n  Bad.new\n}\n"
+  xs.push(accepted("puts-union", pre + "fn main {\n  puts(size_or_word(3))\n  puts(size_or_word(30))\n  puts(parse(\"4\"))\n  puts(parse(\"x\"))\n  puts(Bad.new)\n  puts(Tok.name)\n}\n", "3\nmany\n4\nbad input\nbad input\nname\n"))
+  xs.push(accepted("puts-same-as-interpolation", pre + "fn main {\n  u = size_or_word(30)\n  e = parse(\"y\")\n  puts(u)\n  puts(\"\${u}\")\n  puts(e)\n  puts(\"\${e}\")\n}\n", "many\nmany\nbad input\nbad input\n"))
+  xs.push(accepted("puts-own-to-s", "struct Pt {\n  x: Int\n  y: Int\n\n  fn to_s: String {\n    \"(\${x}, \${y})\"\n  }\n}\nenum Dir {\n  up\n  down\n\n  fn to_s: String {\n    \"going \${name}\"\n  }\n}\nfn main {\n  p = Pt { x: 1, y: 2 }\n  puts(p)\n  puts(\"\${p}\")\n  puts(p.to_s)\n  puts(Dir.down)\n}\n", "(1, 2)\n(1, 2)\n(1, 2)\ngoing down\n"))
+  xs.push(refused("puts-optional", "fn main {\n  x = \"3\".to_i\n  puts(x)\n}\n", "puts cannot print Int?: it holds nil", "3:8"))
+  xs.push(refused("puts-array", "fn main {\n  puts([1, 2])\n}\n", "puts cannot print Array(Int)", "2:8"))
+  xs.push(refused("puts-union-member", "fn f(b: Bool): Int | Array(Int) {\n  if b {\n    return 1\n  }\n  [2]\n}\nfn main {\n  puts(f(true))\n}\n", "puts cannot print Array(Int) | Int: its member Array(Int) has no text", "8:8"))
+}
+
+fn cases: Array(IoCase) {
+  xs: Array(IoCase) = []
+  puts_cases(xs)
+  xs
+}
+
+// The run, in a directory of its own under dir: its stdin from the
+// case's input file, from the directory itself (a read error) or from
+// /dev/null; its stderr to a file of its own or into its stdout; its
+// exit status written to a file.
+fn io_run_job(dir: String, f: IoCase): HJob {
+  key = "io-${f.tag}"
+  input = "/dev/null"
+  if f.has_input {
+    input = "../${key}.in"
+  }
+  if f.stdin_dir {
+    input = "."
+  }
+  err = "2> ../${key}.run.err"
+  if f.merged {
+    err = "2>&1"
+  }
+  a: Array(String) = []
+  a.push("-c")
+  a.push("cd ${dir} && mkdir -p ${key}.d && cd ${key}.d && ../${key}.bin < ${input} > ../${key}.run.out ${err}; echo $? > ../${key}.status")
+  HJob.new("/bin/sh", a, "${dir}/${key}.sh.log")
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(IoCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/io-${f.tag}.av"
+    _ = file_write(src, f.src)
+    if f.has_input {
+      _ = file_write("${dir}/io-${f.tag}.in", f.input)
+    }
+    jobs.push(compile_job("", compiler, src, "${dir}/io-${f.tag}.bin", "${dir}/io-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(io_run_job(dir, f2))
+    }
+  }
+  run_waves(runs)
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/io-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      status = log_text("${dir}/io-${f3.tag}.status").strip.to_i ?? -1
+      c.eq_int(status, f3.status, "${f3.tag}: exit status")
+      c.eq_str(log_text("${dir}/io-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      if !f3.merged {
+        err = log_text("${dir}/io-${f3.tag}.run.err")
+        if f3.status == 1 && f3.err.size > 0 && !str_has(f3.err, "\n") {
+          c.expect(str_has(err, f3.err) && str_has(err, "io-${f3.tag}.av:"), "${f3.tag}: stderr says ${f3.err} at its site")
+        } else {
+          c.eq_str(err, f3.err, "${f3.tag}: stderr")
+        }
+      }
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/io-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "io-${f3.tag}.av:${f3.pos}"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_io.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}
