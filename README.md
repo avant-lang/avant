@@ -905,7 +905,7 @@ fn main {
 
 ### Unions
 
-Any other union is written with `|`: `Int | String`, `Item | BadLine`. `T?` is shorthand for `T | Nil`, and `nil` is the only value of `Nil`.
+Any other union is written with `|`: `Int | String`, `Item | BadLine`. `T?` is shorthand for `T | Nil`, and `nil` is the only value of `Nil`. Parentheses group a type: `(Int | String)?` is `Int | String | Nil`, and `(fn(Int): Int)?` an optional [function value](#function-values).
 
 ```avant
 class Config {

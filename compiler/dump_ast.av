@@ -44,6 +44,9 @@ pub fn dump_type(t: TypeName): String {
   }
   if t.fn_type {
     buf = buf_new()
+    if t.nilable {
+      buf.push_str("(")
+    }
     buf.push_str("fn(")
     for i in 0..t.args.size {
       if i > 0 {
@@ -57,12 +60,15 @@ pub fn dump_type(t: TypeName): String {
       buf.push_str(dump_type(r))
     }
     if t.nilable {
-      buf.push_str("?")
+      buf.push_str(")?")
     }
     return buf.to_s
   }
   buf = buf_new()
   if t.members.size > 0 {
+    if t.nilable {
+      buf.push_str("(")
+    }
     i = 0
     while i < t.members.size {
       if i > 0 {
@@ -70,6 +76,9 @@ pub fn dump_type(t: TypeName): String {
       }
       buf.push_str(dump_type(t.members[i]))
       i += 1
+    }
+    if t.nilable {
+      buf.push_str(")")
     }
   } else {
     buf.push_str(t.name)

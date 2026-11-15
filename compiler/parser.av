@@ -1813,6 +1813,16 @@ pub class Parser {
     if self.current.kind == tk_fn() {
       return self.parse_fn_type
     }
+    if self.current.kind == tk_l_paren() {
+      // Grouping parentheses: `(fn(Int): Int)?` is an optional function,
+      // where `fn(Int): Int?` returns an optional; `(A | B)?` is `A | B | Nil`.
+      self.bump
+      self.skip_newlines
+      grouped = self.parse_type_name
+      self.skip_newlines
+      expect(tk_r_paren())
+      return grouped
+    }
     tok = expect(tk_ident())
     parts: Array(String) = []
     parts.push(tok.value)
