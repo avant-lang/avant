@@ -145,11 +145,11 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
     if target = stmt.target {
       if target.kind == ex_name() {
         if ty = checker_self.lookup(target.ident) {
-          checker_self.fail(target.loc, "spawn cannot assign to ${target.ident}; copy at send is read-only (D35)")
+          checker_self.fail(target.loc, "spawn cannot assign to ${target.ident}; copy at send is read-only")
         }
       } else if checker_self.spawn_array_frozen(target) {
         root = checker_self.expr_root_name(target)
-        checker_self.fail(target.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
+        checker_self.fail(target.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join")
         checker_self.walk_spawn_expr(target, node, seen)
       } else {
         checker_self.walk_spawn_expr(target, node, seen)
@@ -195,7 +195,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     if recv = expr.receiver {
       if checker_self.array_mutator(expr.callee) && checker_self.spawn_array_frozen(recv) {
         root = checker_self.expr_root_name(recv)
-        checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
+        checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join")
       }
       if checker_self.spawn_array_frozen(recv) && rw_element_place(recv) {
         // A method on an element (`xs[0].bump`): refused once the
@@ -231,7 +231,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     if obj = expr.object {
       if checker_self.field_mutates_array(expr) && checker_self.spawn_array_frozen(obj) {
         root = checker_self.expr_root_name(obj)
-        checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
+        checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join")
       }
       if expr.method_call && checker_self.spawn_array_frozen(obj) && rw_element_place(obj) {
         checker_self.note_element_call(expr, obj, 1)
@@ -472,7 +472,7 @@ pub fn (checker_self: Checker) scan_pending_target(target: Expr) {
   }
   root = checker_self.expr_root_name(target)
   if root.size > 0 && checker_self.pending_has_array(root) {
-    checker_self.fail(target.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
+    checker_self.fail(target.loc, "cannot mutate ${root} while a spawn using it is running; join first")
   }
   checker_self.scan_pending_expr(target)
 }
@@ -483,7 +483,7 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
     if obj = expr.object {
       root = checker_self.expr_root_name(obj)
       if root.size > 0 && checker_self.pending_has_array(root) {
-        checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
+        checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first")
       }
     }
   }
@@ -512,7 +512,7 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
     if recv = expr.receiver, checker_self.array_mutator(expr.callee) {
       root = checker_self.expr_root_name(recv)
       if root.size > 0 && checker_self.pending_has_array(root) {
-        checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
+        checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first")
       }
     }
     if recv = expr.receiver, recv.kind == ex_index() || recv.kind == ex_field() {
@@ -641,11 +641,11 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
           break
         }
       }
-      checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: an ${ty.show()} is shared with the task, and its elements (${leaf.show()}) cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex")
+      checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: an ${ty.show()} is shared with the task, and its elements (${leaf.show()}) cannot cross to another task: a mutable object reaches another task only inside a Mutex")
       return
     }
     if !checker_self.copyable_for_spawn(ty) {
-      checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: ${ty.show()} is not copied at send (D35)")
+      checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: ${ty.show()} is not copied at send")
       return
     }
     if prev = seen.get(expr.ident) {

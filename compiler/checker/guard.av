@@ -975,11 +975,11 @@ pub fn (checker_self: Checker) check_send(expr: Expr) {
           break
         }
       }
-      checker_self.fail(arg.loc, "Channel.send: an ${t.show()} is copied at the send, but its elements (${leaf.show()}) cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex")
+      checker_self.fail(arg.loc, "Channel.send: an ${t.show()} is copied at the send, but its elements (${leaf.show()}) cannot cross to another task: a mutable object reaches another task only inside a Mutex")
       return
     }
     if !checker_self.send_crosses(t) {
-      checker_self.fail(arg.loc, "Channel.send: a ${t.show()} cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex; send plain values, or a Mutex(${t.show()}) shared by both tasks")
+      checker_self.fail(arg.loc, "Channel.send: a ${t.show()} cannot cross to another task: a mutable object reaches another task only inside a Mutex; send plain values, or a Mutex(${t.show()}) shared by both tasks")
     }
   }
 }
@@ -1456,7 +1456,7 @@ pub fn (checker_self: Checker) cw_alias_expr(w: ClassWalk, e: Expr) {
 // ---- the stores and the calls
 
 pub fn (checker_self: Checker) cw_fail(w: ClassWalk, loc: Location, what: String) {
-  checker_self.fail(loc, "${w.mutex} (at ${w.at}): ${w.owner}.${w.method} ${what}; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock (O709)")
+  checker_self.fail(loc, "${w.mutex} (at ${w.at}): ${w.owner}.${w.method} ${what}; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock")
 }
 
 // A store of value into a place whose holder is rooted at target_bits (a
