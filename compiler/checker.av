@@ -982,6 +982,26 @@ pub class Checker {
     nil
   }
 
+  // `m.f` read as a value, m a module this one may qualify with and not a
+  // local, a field or a parameter: m's function f (lambda.av), or nil.
+  pub fn check_module_fn_value(expr: Expr, has_want: Bool, want: Ty): Ty? {
+    if obj = expr.object, obj.kind == ex_name() && obj.type_args.size == 0 {
+      if v = lookup(obj.ident) {
+        return nil
+      }
+      if f = implicit_field(obj.ident) {
+        return nil
+      }
+      if k = self.known_mods.get(obj.ident), qualifier_ok(obj.ident, self.current_module) {
+        if module_is_method(obj.ident, obj.loc) {
+          return t_int()
+        }
+        return check_qualified_fn_value(expr, obj.ident, has_want, want)
+      }
+    }
+    nil
+  }
+
   // A module name used as a bare qualifier that is also a method of the
   // receiver (D310's ruling, Stage 29 W4a): nothing wins silently (D308);
   // an error naming both ways out, and true.
@@ -1364,6 +1384,9 @@ pub class Checker {
     if k == ex_field() {
       if inline_const(expr) {
         return check_expr_core(expr, has_want, want)
+      }
+      if got = check_module_fn_value(expr, has_want, want) {
+        return got
       }
       return check_field(expr)
     }

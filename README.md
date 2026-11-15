@@ -1962,7 +1962,7 @@ fn main {
 ```
 
 - `fn(): Int` takes nothing; `fn(Int, String): Bool` takes two arguments; `fn(Int)` returns nothing.
-- A bare function name in a value position is that function (`f: fn(Int): Int = double`).
+- A bare function name in a value position is that function (`f: fn(Int): Int = double`). A function of another module is named as at a call, qualified: `f = util.double`. When a name means several functions (overloads, or two imported modules' functions of one name), the expected `fn` type picks one, or the module's name does.
 - The type is invariant: `fn(Int): Int` is not `fn(Int): Int?`.
 - There is no `==` on function values, and methods are not values.
 

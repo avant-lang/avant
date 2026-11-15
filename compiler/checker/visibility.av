@@ -345,10 +345,9 @@ pub fn (checker_self: Checker) fail_ambiguous_method(loc: Location, shown: Strin
   checker_self.fail(loc, "ambiguous call to ${shown}: ${checker_self.sigs_text(shown, cands)} ${checker_self.both_word(cands.size)} match")
 }
 
-// A bare function name taken as a value that two or more functions match
-// (O345): from different modules, a function value cannot be qualified
-// yet (W6), so the hint is a lambda that calls the one meant, not a call;
-// within one module, the fn type that picks one.
+// A function name taken as a value that two or more functions match:
+// from different modules, the qualified values that pick one; within one
+// module, the fn type that picks one.
 pub fn (checker_self: Checker) fail_ambiguous_value(loc: Location, name: String, cands: Array(FuncSig)) {
   mods: Array(String) = []
   for sig in cands {
@@ -378,24 +377,18 @@ pub fn (checker_self: Checker) fail_ambiguous_value(loc: Location, name: String,
     }
     defs.push_str("${mods[k]}.${name}")
   }
-  first = cands[0]
-  lam = buf_new()
-  args = buf_new()
-  lam.push_str("{ |")
-  for i in 0..first.params.size {
-    pn = "a${i}"
-    if i < first.node.params.size {
-      pn = first.node.params[i].name
+  picks = buf_new()
+  for k2 in 0..mods.size {
+    if k2 > 0 {
+      if k2 == mods.size - 1 {
+        picks.push_str(" or ")
+      } else {
+        picks.push_str(", ")
+      }
     }
-    if i > 0 {
-      lam.push_str(", ")
-      args.push_str(", ")
-    }
-    lam.push_str("${pn}: ${first.params[i].show}")
-    args.push_str(pn)
+    picks.push_str("${mods[k2]}.${name}")
   }
-  lam.push_str("| ${first.node.mod_name}.${name}(${args.to_s}) }")
-  checker_self.fail(loc, "ambiguous function value ${name}: ${defs.to_s} ${checker_self.both_word(mods.size)} match, and a function value cannot be qualified yet; write a lambda that calls the one you mean, as ${lam.to_s}")
+  checker_self.fail(loc, "ambiguous function value ${name}: ${defs.to_s} ${checker_self.both_word(mods.size)} match; write ${picks.to_s}")
 }
 
 pub fn (checker_self: Checker) method_is_visible(fnn: Function, from_mod: String): Bool {

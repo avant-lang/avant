@@ -530,6 +530,57 @@ pub fn (checker_self: Checker) check_fn_ref_bare(expr: Expr): Ty? {
   nil
 }
 
+// `m.f` without a call, m a module the current one imports (or its own
+// name): m's function f as a value, picked as a bare name would be among
+// m's functions only (by the fn type the context expects, when it
+// expects one). The expression becomes that function's name. nil when m
+// has no function f, so the field reading reports what it finds.
+pub fn (checker_self: Checker) check_qualified_fn_value(expr: Expr, mod: String, has_want: Bool, want: Ty): Ty? {
+  shown = "${mod}.${expr.ident}"
+  cands: Array(FuncSig) = []
+  all = 0
+  saw_generic = false
+  for i in checker_self.fn_indices_named(expr.ident) {
+    sig = checker_self.functions[i]
+    if sig.name == expr.ident && checker_self.fn_candidate_q(sig.node, mod) && !checker_self.sig_is_instance(sig) {
+      all += 1
+      if sig.node.generic {
+        saw_generic = true
+      } else if !has_want || !want.is_fn || checker_self.fn_matches_want(sig, want) {
+        cands.push(sig)
+      }
+    }
+  }
+  if all == 0 {
+    if checker_self.has_private_fn(mod, expr.ident) {
+      checker_self.fail(expr.loc, "function ${shown} is private to its module; mark it pub")
+      return checker_self.t_int()
+    }
+    return nil
+  }
+  if cands.size == 1 {
+    chosen = cands[0]
+    expr.kind = ex_name()
+    expr.object = nil
+    expr.fn_ref = true
+    expr.resolved = chosen.node.emit_name
+    chosen.node.as_value = true
+    ty = checker_self.fn_sig_ty(chosen)
+    expr.ty = ty
+    return ty
+  }
+  if cands.size > 1 {
+    checker_self.fail_ambiguous_value(expr.loc, shown, cands)
+    return checker_self.t_int()
+  }
+  if saw_generic {
+    checker_self.fail(expr.loc, "generic function is not a value")
+    return checker_self.t_int()
+  }
+  checker_self.fail(expr.loc, "no function ${shown} has the type ${want.show}")
+  checker_self.t_int()
+}
+
 pub fn (checker_self: Checker) check_indirect_call(expr: Expr, callee: Ty): Ty {
   if !callee.is_fn {
     checker_self.fail(expr.loc, "cannot call ${callee.show}")

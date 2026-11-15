@@ -170,9 +170,10 @@ fn cases: Array(NCase) {
   xs.push(only("open-arith", "fn main {\n  x: Int? = 2\n  puts(x + 1)\n}\n", "binary operator expects numeric operands, got Int? and Int; open it with `if v = x`, `x ?? fallback` or `x?`", "3:10"))
   xs.push(only("open-arg", "fn twice(n: Int): Int {\n  n * 2\n}\nfn main {\n  h = Hash(String, Int).new\n  puts(twice(h[\"a\"]))\n}\n", "argument 1 of twice is Int?, expected Int; open it with `if v = x`, `x ?? fallback` or `x?`", "6:15"))
   xs.push(without("open-not-optional", "fn main {\n  puts(5 == nil)\n}\n", "cannot compare Int with Nil: == compares two values of one type", "2:10", "open it"))
-  // O345: an ambiguous function value is not told to call.
+  // An ambiguous function value is told the qualified values that pick
+  // one, never a call.
   fva: Array(String) = ["ma", "pub fn helper(a: Int): Int {\n  a\n}\n", "mb", "pub fn helper(a: Int): Int {\n  a + 1\n}\n"]
-  xs.push(with_mods(without("value-two-modules", "import ma\nimport mb\nfn main {\n  f = helper\n  puts(1)\n}\n", "ambiguous function value helper: ma.helper and mb.helper both match, and a function value cannot be qualified yet; write a lambda that calls the one you mean, as { |a: Int| ma.helper(a) }", "4:7", "helper()"), fva))
+  xs.push(with_mods(without("value-two-modules", "import ma\nimport mb\nfn main {\n  f = helper\n  puts(1)\n}\n", "ambiguous function value helper: ma.helper and mb.helper both match; write ma.helper or mb.helper", "4:7", "helper()"), fva))
   xs.push(with_mods(first("value-two-modules-arg", "import ma\nimport mb\nfn apply(f: fn(Int): Int): Int {\n  f(1)\n}\nfn main {\n  puts(apply(helper))\n}\n", "ambiguous function value helper: ma.helper and mb.helper both match", "7:14"), fva))
   xs.push(only("value-overloads", "fn show(x: Int): String {\n  \"i\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  f = show\n  puts(1)\n}\n", "ambiguous function value show: show(x: Int): String and show(s: String): String both match; give the value its fn type to pick one (f: fn(Int): String = show)", "8:7"))
   xs.push(accepted("value-overloads-typed", "fn show(x: Int): String {\n  \"i\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  f: fn(Int): String = show\n  puts(f(1))\n}\n", "i\n"))
