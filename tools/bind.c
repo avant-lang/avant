@@ -1,16 +1,16 @@
 /*
- * avant bind — C header → Avant lib/fun (D36) and C layouts (Stage 18).
+ * avant bind — C header → Avant lib/fun and C layouts.
  *
  * Uses libclang. Hand-written lib blocks stay the same grammar; this
  * writes an editable starting point, not a second FFI.
  *
- * A record is emitted only when every field is in the Stage 18 subset
+ * A record is emitted only when every field has a type map_field_type maps
  * and clang's size, align, and offsets equal the natural layout of those
  * Avant types (LP64). Anything else is skipped, named on stderr, and the
  * rest of the header is still emitted. A record passed or returned by
  * value fails the whole bind. An unsigned 32-bit type has no Avant type
- * at the same width and signedness, so it fails the whole bind too
- * (Wave G, Q87): it is never silently mapped to Int.
+ * at the same width and signedness, so it fails the whole bind too: it is
+ * never silently mapped to Int.
  *
  * Usage: avant-bind LIBNAME HEADER.h
  */
@@ -91,7 +91,7 @@ static int is_char_type(CXType t) {
   return t.kind == CXType_Char_S || t.kind == CXType_Char_U || t.kind == CXType_SChar;
 }
 
-/* The C scalar types (Stage 29 W1b, D64 as amended): the Avant name of a
+/* The C scalar types: the Avant name of a
  * C integer or float type by its exact width and signedness, or NULL when
  * Avant has none (long double, a 128-bit integer). */
 static const char *scalar_name(CXType t) {
@@ -127,8 +127,8 @@ static const char *scalar_name(CXType t) {
     return is_unsigned ? "UInt8" : "Int8";
   case 2:
     return is_unsigned ? "UInt16" : "Int16";
-  /* C's int is Int32 and a 64-bit integer is Int (Stage 29 W-INT1, D314:
-   * Int is 64-bit). */
+  /* C's int is Int32 and a 64-bit integer is Int (Avant's Int is
+   * 64-bit). */
   case 4:
     return is_unsigned ? "UInt32" : "Int32";
   case 8:
@@ -197,7 +197,7 @@ static void emit_type(Emit *e, CXType t) {
     emit_ptr(e, clang_getPointeeType(t));
     return;
   case CXType_Enum: {
-    /* A C enum the header declares (Stage 29 W5a1, O393): its Avant enum
+    /* A C enum the header declares: its Avant enum
      * when one was emitted, else its integer type, as before. */
     const char *en = bind_enum_name(e->bind, t);
     if (en) {
@@ -305,10 +305,10 @@ static void emit_fun(Emit *e, CXCursor cursor) {
     fputs(": ", e->out);
     emit_type(e, ret);
     /* A char * result may be NULL ("absent", "failed"): String? reads it
-     * as nil, where a String result traps on NULL (Stage 29 W4b2, D295
-     * R15). Parameters stay String. This is the only union a binding
+     * as nil, where a String result traps on NULL. Parameters stay String.
+     * This is the only union a binding
      * gets: the test is emit_type's own for String, and a `fun`
-     * signature refuses every union but an optional reference (O549). */
+     * signature refuses every union but an optional reference. */
     if (uret.kind == CXType_Pointer && is_char_type(unwrap(clang_getPointeeType(uret)))) {
       fputs("?", e->out);
     }
@@ -329,7 +329,7 @@ typedef struct {
   int align;
 } RecInfo;
 
-/* A C enum (Stage 29 W5a1, O393): emitted as an Avant enum with explicit
+/* A C enum: emitted as an Avant enum with explicit
  * values when it has a name, is 4 bytes, and its constants are distinct
  * Avant members within Int32. */
 #define MAX_ENUMS 128
@@ -934,7 +934,7 @@ static int map_field_type(Bind *b, CXType t, char *avant, size_t avant_n, int *s
     return 1;
   }
   if (t.kind == CXType_Enum) {
-    /* Stage 29 W5a1 (O393): the Avant enum when one was emitted (C's
+    /* The Avant enum when one was emitted (C's
      * int, 4 bytes), else the enum's integer type. */
     const char *en = bind_enum_name(b, t);
     const char *iname = en ? en : bind_enum_scalar(b, t);

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the re2c the release ships beside avant (D151): the pinned upstream
+# Build the re2c the release ships beside avant: the pinned upstream
 # release, checked by sha256, linked fully static (re2c is a standalone
 # generator: no NSS, no dlopen), so it loads nothing and adds no glibc
 # floor. The release workflow runs this; run it locally the same way.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Median-of-N rounds with rotation: the one timing loop (O221, O485, O372).
+"""Median-of-N rounds with rotation: the one timing loop.
 
 FOR MILESTONES AND PUBLICATION, NEVER PER GATE: a gate's LangArena evidence
 stays the single run of `measure.cr -- prod` and `tools/lr-table.sh avant`
@@ -17,8 +17,8 @@ Several sides (a base and a new tree) are measured in the same rounds, their
 order rotated by round. TASK names restrict the set (default: every task of
 RUN_JS with a binary in every side).
 
-The loop, lifted from bench/valk/measure.py's `time` (W-BENCH-SUITE) with
-its kept-but-bad settled (O387); bench/valk/measure.py now calls it:
+The loop, lifted from bench/valk/measure.py's `time` with
+its kept-but-bad settled; bench/valk/measure.py now calls it:
 
 - the governor must be `performance` on every CPU (else it stops, unless
   --allow-governor, which marks the session "DISTURBED, NOT EVIDENCE");
@@ -30,11 +30,11 @@ its kept-but-bad settled (O387); bench/valk/measure.py now calls it:
   session's start, its sha256 in session.txt) as its only child, nothing
   else between (no GNU time, no perf, no harness): the spawner reads the
   monotonic clock just before vfork and just after wait4, so no wrapper's
-  start-up is in the wall time (GNU time's was, O387), and peak RSS, user
+  start-up is in the wall time (GNU time's was), and peak RSS, user
   and system time are wait4's rusage of that one process, so the RSS is
   the program's own peak, never a wrapper's (the per-task rounds scripts'
   /usr/bin/time around perf read perf's 17 MB for every small task, and a
-  child of Python would read Python's 12 to 20 MB; O372);
+  child of Python would read Python's 12 to 20 MB);
 - stdin from /dev/null, the output to a file, capped, under a timeout;
   every run's output is checked (the first line against RUN_JS's checksum):
   a wrong output, a non-zero exit or a timeout stops the session, it is not
@@ -44,7 +44,7 @@ its kept-but-bad settled (O387); bench/valk/measure.py now calls it:
 - --pin CPU runs every single-threaded task on that CPU (the parent's
   affinity, which the child inherits; Matmul::T* are never pinned).
 
-Very short tasks (O372): a LangArena task cannot repeat its work inside one
+Very short tasks: a LangArena task cannot repeat its work inside one
 process (its sizes are compiled in and it prints only a checksum), so a task
 whose median is under --short seconds (default 0.2, as the LR table's
 "<0.2 s" column) is flagged in the table, beside the spawn floor: the same
@@ -99,10 +99,10 @@ def loadavg():
 # kernel measured for it. It exists because the measuring process cannot be
 # the parent: a child's peak RSS (ru_maxrss) starts from its parent's memory
 # at the fork, so a program started by Python reads Python's 12 to 20 MB,
-# and one started under perf or a harness reads theirs (O372). The spawner's
+# and one started under perf or a harness reads theirs. The spawner's
 # own memory is under any program's (it reads /bin/true's 1.4 MB as 1.4 MB),
 # and it reads the clock itself just before vfork and just after wait4, so
-# its own start-up is outside the interval, which GNU time's was not (O387).
+# its own start-up is outside the interval, which GNU time's was not.
 SPAWN_C = r"""
 #define _GNU_SOURCE
 #include <stdio.h>

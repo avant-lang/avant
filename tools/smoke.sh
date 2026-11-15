@@ -1,5 +1,5 @@
 #!/bin/sh
-# Out-of-checkout smoke test of a release tarball (Wave D, D147, D148).
+# Out-of-checkout smoke test of a release tarball.
 #
 #   sh tools/smoke.sh TARBALL | INSTALL_DIR
 #
@@ -12,8 +12,8 @@
 # that examples/, LICENSE and the third-party notices are there and that
 # `avant version` prints versions.txt's version and commit, and runs
 # `avant bind` when the bundled helper's libraries are present. It first
-# proves that the release carries no myc-llvm (Stage 28 W10; the
-# compiler's one back end is the in-process LLVM since W11): none in the
+# proves that the release carries no myc-llvm (the
+# compiler's one back end is the in-process LLVM): none in the
 # install, none on the PATH the cases use, none named by the environment
 # (which is empty); and AVANT_BACKEND=myc is refused, naming the variable.
 # Nothing
@@ -115,7 +115,7 @@ EOF
 # No myc-llvm reachable: not in the install, not on the cases' PATH (nor
 # the install directory, which path-hello adds), and the environment is
 # empty (no AVANT_MYC_LLVM). The old back end's name is refused (it
-# retired at Stage 28 W11): the compiler has no other back end.
+# is retired): the compiler has no other back end.
 mycs=$(find "$inst" -name 'myc-llvm*' 2>/dev/null)
 if [ -n "$mycs" ]; then
   fail no-myc-llvm "the install has $mycs"
@@ -143,7 +143,7 @@ else
   fail compile-hello "exit status $?"
 fi
 
-# The three codegen modes (D174), each compiled and run: hello, a tree
+# The three codegen modes, each compiled and run: hello, a tree
 # of class objects (allocation and collection), and arrays, hashes,
 # strings, and a block.
 src trees.av <<'EOF'
@@ -369,7 +369,7 @@ else
   fail avant-test "exit status $?"
 fi
 
-# What the archive carries for its user (O294, Stage 29 W-FIX1e): the
+# What the archive carries for its user: the
 # examples the README points to (examples/hello.av run from the
 # install), Avant's LICENSE, and the third-party notices with each
 # vendored library's license.
@@ -389,7 +389,7 @@ else
   fail licenses-shipped "missing or empty:$missing"
 fi
 
-# `avant version` and `--version` (O534) print the version and the
+# `avant version` and `--version` print the version and the
 # commit of the archive's versions.txt (its `version:` line, else a
 # release's `tag: vX`).
 want_v=$(sed -n 's/^version: //p' "$inst/versions.txt" | head -n 1)
