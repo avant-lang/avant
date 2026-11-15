@@ -13,10 +13,10 @@ import checker.names
 import checker
 import receiver_writes
 
-// std.sync's Channel and Mutex cross a task as shared handles (D35):
-// that is their purpose. A class of another module with one of those
-// names is an ordinary class (Stage 29 W8Ca: before, any class named
-// Channel or Mutex crossed).
+// std.sync's Channel and Mutex cross a task as shared handles: that
+// is their purpose. A class of another module with one of those
+// names is an ordinary class (before, any class named Channel or
+// Mutex crossed).
 pub fn (checker_self: Checker) is_share_ty(ty: Ty): Bool {
   checker_self.is_sync_ty(ty, "Channel") || checker_self.is_sync_ty(ty, "Mutex")
 }
@@ -26,9 +26,9 @@ pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
     return true
   }
   // A captured Array is shared with the task, frozen until the task
-  // ends (D35, Q74-A, O758), so its elements cross in turn: an Array of a
-  // class would put one mutable object in two tasks with no lock
-  // (O712, Stage 29 W8Cc; send's rule, checker/guard.av send_crosses).
+  // ends, so its elements cross in turn: an Array of a class would put
+  // one mutable object in two tasks with no lock (send's rule,
+  // checker/guard.av send_crosses).
   if ty.is_array() {
     if e = ty.inner {
       return checker_self.copyable_for_spawn(e)
@@ -42,7 +42,7 @@ pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
   if ty.is_integer() {
     return true
   }
-  // An enum is a number (Stage 29 W5a1).
+  // An enum is a number.
   if ty.is_enum() {
     return true
   }
@@ -69,14 +69,14 @@ pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
   false
 }
 
-// What may leave a `Mutex.with` block as its value (O231, Stage 29
-// W-FIX1b): spawn's rule for what crosses a task (a share type, or bits
-// that hold no reference to mutable state), without the frozen array
-// (that rule freezes a named array while a task is pending; a value has
-// no name to freeze) and with what holds no mutable state either:
-// `Bytes`, `nil`, and a union or a struct of such members. A class, an
-// array, a hash, a `Buf`, a `fn` or a pointer may be the guarded object
-// or a part of it: outside the block the lock no longer protects it.
+// What may leave a `Mutex.with` block as its value: spawn's rule for
+// what crosses a task (a share type, or bits that hold no reference to
+// mutable state), without the frozen array (that rule freezes a named
+// array while a task is pending; a value has no name to freeze) and
+// with what holds no mutable state either: `Bytes`, `nil`, and a union
+// or a struct of such members. A class, an array, a hash, a `Buf`, a
+// `fn` or a pointer may be the guarded object or a part of it: outside
+// the block the lock no longer protects it.
 pub fn (checker_self: Checker) leaves_mutex_with(ty: Ty): Bool {
   if checker_self.is_share_ty(ty) {
     return true
@@ -167,9 +167,9 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
     return
   }
   if k == st_pin() || k == st_release() || k == st_hold() {
-    // O131 (Stage 29 W1a): a `pin` block's value and body, and `release`'s
-    // place, are walked like any statement's (before, a name used only
-    // there was not captured, and the back end stopped with L0001).
+    // A `pin` block's value and body, and `release`'s place, are walked
+    // like any statement's (before, a name used only there was not
+    // captured, and the back end stopped with L0001).
     if e = stmt.expr {
       checker_self.walk_spawn_expr(e, node, seen)
     }
@@ -363,7 +363,7 @@ pub fn (checker_self: Checker) array_mutator(name: String): Bool {
 // indexing (`xs`, `xs[0]`), as the scope declares it; nil for any other
 // expression. A zero-argument mutator written without parentheses
 // (`xs.pop`, `xs.clear`, `xs.sort`, `xs.reverse`) is a field node, and
-// this tells it from a struct field of the same name (Stage 29 W-FIX1j, F1).
+// this tells it from a struct field of the same name.
 pub fn (checker_self: Checker) indexed_array_ty(expr: Expr): Ty? {
   if expr.kind == ex_name() {
     if checker_self.spawn_skip_has(expr.ident) {
@@ -572,12 +572,12 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
   }
 }
 
-// One statement of any block, with the sender's rule (Q74-A) around it:
-// the statement is scanned for a mutation of an Array a running spawn
+// One statement of any block, with the sender's rule around it: the
+// statement is scanned for a mutation of an Array a running spawn
 // captured, then checked, and a spawn it starts is running for the
 // block's later statements. Every walk over a block's statements calls
-// this, and scans a value's tail expression with scan_pending_expr
-// (O748: the arms of a switch, value blocks, an `if` used as a value and
+// this, and scans a value's tail expression with scan_pending_expr (the
+// arms of a switch, value blocks, an `if` used as a value and
 // `?? return` called check_stmt directly, so a spawn started there was
 // never recorded and a later `push` raced the task; the tails of those
 // blocks and of a `with` body, and a binding chain's elements, were not

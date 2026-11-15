@@ -156,8 +156,7 @@ pub class Expander {
   }
 
   // A walk over `T.fields` written in another module than T's sees only
-  // T's `pub` fields (Stage 29 W3a, D299): the code it writes could name
-  // no other.
+  // T's `pub` fields: the code it writes could name no other.
   pub fn find_fields(type_name: String, loc: Location, from_mod: String): Array(Field) {
     all = find_all_fields(type_name, loc)
     if self.fields_mod.size == 0 || from_mod.size == 0 || self.fields_mod == from_mod {
@@ -766,8 +765,8 @@ pub class Expander {
       } else if k == st_quote() {
         collect_introduced(s.body, into)
       } else if k == st_pin() || k == st_hold() {
-        // O131 (Stage 29 W1a): the names a `pin` block assigns are the
-        // quote's too (a `gc.hold` block's as well, W1c2).
+        // The names a `pin` block assigns are the quote's too (a
+        // `gc.hold` block's as well).
         if pe = s.expr {
           collect_introduced_expr(pe, into)
         }
@@ -985,8 +984,8 @@ pub class Expander {
       return out
     }
     if k == st_pin() || k == st_hold() {
-      // O131 (Stage 29 W1a): before, a `pin` block kept its names, so a
-      // quote's local inside it captured the paste site's.
+      // Before, a `pin` block kept its names, so a quote's local inside
+      // it captured the paste site's.
       out = Stmt.new(k, s.loc)
       if e = s.expr {
         out.expr = rename_expr(e, map)

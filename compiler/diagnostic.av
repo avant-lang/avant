@@ -132,13 +132,13 @@ pub class CompileError {
 pub class DiagBag {
   pub items: Array(CompileError) = []
   pub suppressed: Int = 0
-  // Every push counts, kept, repeated or past the cap of 20 (O162): a mark
-  // is this count, so an error since a mark is always seen. The shown
-  // items stop growing at 20 and skip repeats, so their count cannot be a
-  // mark: once it stopped, a parser loop that waits for an error to resync
-  // never saw one and spun on the same token. before_items and
-  // before_suppressed hold the state before each push, so truncate(mark)
-  // can undo a speculative parse exactly.
+  // Every push counts, kept, repeated or past the cap of 20: a mark is
+  // this count, so an error since a mark is always seen. The shown items
+  // stop growing at 20 and skip repeats, so their count cannot be a mark:
+  // once it stopped, a parser loop that waits for an error to resync never
+  // saw one and spun on the same token. before_items and before_suppressed
+  // hold the state before each push, so truncate(mark) can undo a
+  // speculative parse exactly.
   pub pushes: Int = 0
   before_items: Array(Int) = []
   before_suppressed: Array(Int) = []
@@ -168,10 +168,10 @@ pub class DiagBag {
     self.items.size + self.suppressed
   }
 
-  // n errors another bag counted but this one did not get as items (O163,
-  // Stage 29 W1a): each is a push, so a mark sees it, and with hidden each
-  // is also one of the errors past the cap ("and N more errors"); without,
-  // it is a repeat, which is never shown twice.
+  // n errors another bag counted but this one did not get as items: each
+  // is a push, so a mark sees it, and with hidden each is also one of the
+  // errors past the cap ("and N more errors"); without, it is a repeat,
+  // which is never shown twice.
   pub fn note(n: Int, hidden: Bool) {
     for k in 0..n {
       self.before_items.push(self.items.size)

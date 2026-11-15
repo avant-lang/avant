@@ -8,11 +8,11 @@ import ast
 import resolve
 import enums
 
-// A float literal's value (Stage 29 W4b1): String.to_f is a Float64? since
-// W4b1 and a Float64 in the seed v0.40.0, so the parser reads the lexer's
-// checked literal text with libc's atof, which both build the same
-// (correctly rounded, as the runtime's parser); the next release reads
-// it with `text.to_f ?? 0.0`.
+// A float literal's value: String.to_f is a Float64? in the tree and a
+// Float64 in the seed v0.40.0, so the parser reads the lexer's checked
+// literal text with libc's atof, which both build the same (correctly
+// rounded, as the runtime's parser); the next release reads it with
+// `text.to_f ?? 0.0`.
 lib parse_libc {
   fun atof(s: String): Float64
 }
@@ -31,8 +31,8 @@ pub fn hex_digit_val(c: Int): Int {
 }
 
 // The value of an integer literal's digits in radix 2, 8, 10 or 16 (the
-// lexer checked them), or nil when it does not fit in 64 bits (Stage 29
-// W5b2, O455: the parser said so, where it used to trap).
+// lexer checked them), or nil when it does not fit in 64 bits (the
+// parser said so, where it used to trap).
 pub fn parse_u64_digits(s: String, radix: Int): UInt64? {
   n = 0u64
   r = radix.to_u64()
@@ -82,7 +82,7 @@ pub class Parser {
   index: Int = 0
   allow_struct_lit: Bool = true
   // Where a struct literal is not allowed ("a condition", "a `for`"),
-  // for the message that says to parenthesize one (Stage 29 W5c2, O238).
+  // for the message that says to parenthesize one.
   lit_place: String = ""
   failed: Bool = false
   pub err: CompileError? = nil
@@ -92,16 +92,15 @@ pub class Parser {
   in_quote: Bool = false
   for_id: Int = 0
   // The end of the inclusive range whose body for_advance walks ("" for
-  // `..` and an array): its step stops after the last value (Stage 29
-  // W5a3).
+  // `..` and an array): its step stops after the last value.
   for_last: String = ""
-  // The nesting bound (Stage 29 W5d1, O440): depth counts the blocks,
-  // expressions and type names open on the parser's stack; peak is the
-  // deepest level the expression being parsed reaches, which a chain
-  // built in a loop pushes one level down at each operator or postfix
-  // step (`a + b + c` and `a.b().c` reach two levels below their own,
-  // as the tree the checker walks does). The first place past
-  // nest_limit is the one error the parse reports.
+  // The nesting bound: depth counts the blocks, expressions and type
+  // names open on the parser's stack; peak is the deepest level the
+  // expression being parsed reaches, which a chain built in a loop
+  // pushes one level down at each operator or postfix step
+  // (`a + b + c` and `a.b().c` reach two levels below their own, as
+  // the tree the checker walks does). The first place past nest_limit
+  // is the one error the parse reports.
   depth: Int = 0
   peak: Int = 0
   too_deep: CompileError? = nil
@@ -133,8 +132,8 @@ pub class Parser {
 
   // Valk's bound: a program nested deeper is a compile error, not a
   // stack overflow in the checker or the lowering, where the crash
-  // cleanup cannot run (O173). The deepest shape the compiler walks,
-  // a block in a block, overflows its 8 MiB stack at about 1,900 levels.
+  // cleanup cannot run. The deepest shape the compiler walks, a block in
+  // a block, overflows its 8 MiB stack at about 1,900 levels.
   pub fn nest_limit: Int {
     1000
   }
@@ -190,8 +189,7 @@ pub class Parser {
   }
 
   // A float literal's value; one too large for Float64 (it would read as
-  // an infinity) is an error, as an integer literal out of range is
-  // (Stage 29 W4b1, review 4 R7).
+  // an infinity) is an error, as an integer literal out of range is.
   pub fn float_lit(tok: Token): Float64 {
     v = parse_libc.atof(tok.value)
     if v * 0.0 != 0.0 {
@@ -418,10 +416,10 @@ pub class Parser {
     }
   }
 
-  // D280 (Stage 28 W18F): a line whose first token is `[`, `-` or `+`
-  // begins a new statement; it never continues the previous line. Any
-  // other infix operator, `.` or `?` that starts a line cannot start a
-  // statement, so it still continues the line before.
+  // A line whose first token is `[`, `-` or `+` begins a new
+  // statement; it never continues the previous line. Any other infix
+  // operator, `.` or `?` that starts a line cannot start a statement,
+  // so it still continues the line before.
   pub fn skip_newlines_if_continuing {
     if self.current().kind != tk_newline() {
       return
@@ -454,7 +452,7 @@ pub class Parser {
   }
 
   // One statement of a block, remembering a line-leading `-` or `[` for
-  // lead_check (D280).
+  // lead_check.
   pub fn parse_lead_stmt: Stmt {
     lead = 0
     k = self.current().kind
@@ -499,10 +497,11 @@ pub class Parser {
     "["
   }
 
-  // D280's dangling expressions: a statement that starts a line with `-`
-  // or `[` and whose value nobody uses (it is not the block's last
-  // statement), or that follows a value statement nobody uses (the old
-  // reading joined the two lines into one expression).
+  // Dangling expressions (a line that starts with `-` or `[` begins a
+  // new statement): a statement that starts a line with `-` or `[` and
+  // whose value nobody uses (it is not the block's last statement), or
+  // that follows a value statement nobody uses (the old reading joined
+  // the two lines into one expression).
   pub fn lead_check(stmts: Array(Stmt)) {
     i = 0
     while i < stmts.size {
@@ -538,8 +537,8 @@ pub class Parser {
       }
     } else if str_ends(raw, "i64") {
       if raw.size > 3 {
-        // One integer spelling (Stage 29 W-ADOPT, D300, D317): the lexer
-        // still reads the suffix so the error can say what to write.
+        // One integer spelling: the lexer still reads the suffix so the
+        // error can say what to write.
         raw = str_slice(raw, 0, raw.size - 3)
         fail(tok.loc, removed_int_message("the i64 suffix", raw))
       }
@@ -617,10 +616,10 @@ pub class Parser {
           program.aliases.push(al)
         }
       } else if k == tk_ident() && self.err_count() == 0 && module_state_ahead() {
-        // No module-level mutable state, on purpose (Stage 29 W5b2, D352,
-        // O298): a value that never changes is a constant. (After an
-        // earlier error, a statement here is more likely a function's
-        // that a missing brace left outside: the general message stays.)
+        // No module-level mutable state, on purpose: a value that never
+        // changes is a constant. (After an earlier error, a statement
+        // here is more likely a function's that a missing brace left
+        // outside: the general message stays.)
         name = self.current().value
         fail(self.current().loc, "a module has no variables, on purpose: a value that never changes is `const ${name} = ...`, and state lives in a function's locals or is passed in values")
         while self.current().kind != tk_newline() && self.current().kind != tk_eof() {
@@ -947,12 +946,12 @@ pub class Parser {
     defn
   }
 
-  // `enum Name [: Error] { member [= value], ... fn ... }` (Stage 29
-  // W5a1, D292, D320, D327, D358): members separated by commas or line
-  // breaks (a trailing comma allowed), lower-case snake_case, each with a
-  // value by C's rule (written, else the previous one plus one, the first
-  // 0), distinct and within Int32; then the enum's methods. The parser
-  // adds the functions every enum has (enums.av).
+  // `enum Name [: Error] { member [= value], ... fn ... }`: members
+  // separated by commas or line breaks (a trailing comma allowed),
+  // lower-case snake_case, each with a value by C's rule (written, else
+  // the previous one plus one, the first 0), distinct and within Int32;
+  // then the enum's methods. The parser adds the functions every enum has
+  // (enums.av).
   pub fn parse_enum(vis: Bool): StructDef {
     loc = expect(tk_enum()).loc
     name_tok = expect(tk_ident())
@@ -1043,8 +1042,8 @@ pub class Parser {
           self.bump()
         }
         if self.current().kind == tk_ident() && !neg {
-          // A module constant (Stage 29 W5a3, O726): the checker computes
-          // this value and the ones after it (check_enum_consts).
+          // A module constant: the checker computes this value and the
+          // ones after it (check_enum_consts).
           vkind = 2
           vname = self.bump().value
           if self.current().kind == tk_dot() {
@@ -1311,10 +1310,10 @@ pub class Parser {
     fnn
   }
 
-  // `const name = value` (Stage 29 W5b2, D314, D315): a snake_case name,
-  // no declared type (each use is the value written as a literal, which
-  // takes its type from where it stands), the value an expression the
-  // checker computes (checker/consts.av).
+  // `const name = value`: a snake_case name, no declared type (each use
+  // is the value written as a literal, which takes its type from where
+  // it stands), the value an expression the checker computes
+  // (checker/consts.av).
   pub fn parse_const(vis: Bool): ConstDef? {
     expect(tk_const())
     tok = self.current()
@@ -1418,7 +1417,7 @@ pub class Parser {
         }
         self.skip_newlines()
       } else if self.current().kind == tk_enum() {
-        // A C enum (Stage 29 W5a1, O393): C's int wherever it is stored.
+        // A C enum: C's int wherever it is stored.
         en = parse_enum(vis)
         if decl = en.enum_of {
           decl.c_int = true
@@ -1429,8 +1428,8 @@ pub class Parser {
         }
         self.skip_newlines()
       } else if self.current().kind == tk_fn() {
-        // D315: `fn` inside a `lib` block suggests `fun`, with the name
-        // when one follows (O366, Stage 29 W5c3).
+        // `fn` inside a `lib` block suggests `fun`, with the name when
+        // one follows.
         shown = "fun"
         if self.index + 1 < self.tokens.size {
           after = self.tokens[self.index + 1]
@@ -1970,8 +1969,8 @@ pub class Parser {
   pub fn parse_stmt: Stmt {
     k = self.current().kind
     if k == tk_const() {
-      // A constant belongs to the module (Stage 29 W5b2, D314): a local
-      // is a name assigned with `=`.
+      // A constant belongs to the module: a local is a name assigned
+      // with `=`.
       loc0 = self.current().loc
       fail(loc0, "const is declared at module level, outside every function; inside one, a local is `name = value`")
       while self.current().kind != tk_newline() && self.current().kind != tk_eof() && self.current().kind != tk_r_brace() {
@@ -2020,10 +2019,9 @@ pub class Parser {
     finish_stmt(expr)
   }
 
-  // `gc.hold { ... }` (std.gc, Stage 29 W1c2, D305): a statement, the
-  // shape of `pin(x) { }` without a value. The checker asks for
-  // `import std.gc`. Any other use of `gc.hold` is an ordinary call and
-  // the checker refuses it.
+  // `gc.hold { ... }` (std.gc): a statement, the shape of `pin(x) { }`
+  // without a value. The checker asks for `import std.gc`. Any other
+  // use of `gc.hold` is an ordinary call and the checker refuses it.
   pub fn gc_hold_ahead: Bool {
     if self.current().value != "gc" {
       return false
@@ -2118,10 +2116,10 @@ pub class Parser {
     stmt_expr(expr2.loc, expr2)
   }
 
-  // `n = f() else e { ...; continue }` (Stage 29 W5b1, D352): the else
-  // guard of a plain assignment. It is `f() ?? <the block>`, the block
-  // held by the switch node of `?? return` (op tk_return, ast.av) with
-  // the failure's name in ident and bool_val set: every walker already
+  // `n = f() else e { ...; continue }`: the else guard of a plain
+  // assignment. It is `f() ?? <the block>`, the block held by the
+  // switch node of `?? return` (op tk_return, ast.av) with the
+  // failure's name in ident and bool_val set: every walker already
   // visits that node. The checker binds the name to the failure, asks
   // the block to leave, and refuses a guard without a name.
   pub fn parse_else_guard(value: Expr): Expr {
@@ -2198,9 +2196,8 @@ pub class Parser {
     false
   }
 
-  // One element of an `if` or `while` condition (Stage 29 W4a, D292):
-  // a binding `name = expr` or a Bool condition, as an st_if without
-  // bodies.
+  // One element of an `if` or `while` condition: a binding
+  // `name = expr` or a Bool condition, as an st_if without bodies.
   pub fn parse_cond_element(loc: Location): Stmt {
     el = Stmt.new(st_if(), loc)
     if self.if_assign_ahead() {
@@ -2215,9 +2212,9 @@ pub class Parser {
   }
 
   // The condition of an `if` or a `while`: elements separated by commas
-  // (a binding chain, D292), evaluated left to right; each binding is in
-  // scope for the elements after it and the then-block. The last element
-  // is the statement's own cond and bind; the ones before it are `pre`.
+  // (a binding chain), evaluated left to right; each binding is in scope
+  // for the elements after it and the then-block. The last element is
+  // the statement's own cond and bind; the ones before it are `pre`.
   pub fn parse_cond_list(loc: Location): Stmt {
     s = parse_cond_element(loc)
     while self.current().kind == tk_comma() {
@@ -2255,7 +2252,7 @@ pub class Parser {
         else_body.push(self.parse_if())
       } else {
         if self.current().kind == tk_ident() {
-          // `else e { }` (Stage 29 W5b1, D352): the failure's name.
+          // `else e { }`: the failure's name.
           else_bind = self.bump().value
           self.skip_newlines()
         }
@@ -2288,8 +2285,8 @@ pub class Parser {
     s
   }
 
-  // `release(place)` (Stage 28 W16c, D266): a statement, the shape of
-  // `pin(x)` without a block.
+  // `release(place)`: a statement, the shape of `pin(x)` without a
+  // block.
   pub fn parse_release: Stmt {
     loc = expect(tk_release()).loc
     self.skip_newlines()
@@ -2303,10 +2300,10 @@ pub class Parser {
     s
   }
 
-  // `while v = x { }` and binding chains (Stage 29 W4a, D292) are
-  // `while true { if <condition> { body } else { break } }`: the
-  // condition is evaluated before each iteration (`continue` too), the
-  // names it binds live in the body only.
+  // `while v = x { }` and binding chains are `while true { if
+  // <condition> { body } else { break } }`: the condition is evaluated
+  // before each iteration (`continue` too), the names it binds live in
+  // the body only.
   pub fn parse_while: Stmt {
     loc = expect(tk_while()).loc
     self.skip_newlines()
@@ -2344,7 +2341,7 @@ pub class Parser {
   // loop's own stores: the counter, its end, the hidden array and index)
   // or 4 (the element copied into the loop's variable), which is how the
   // checker tells the loop's stores from the program's: the program may
-  // not assign a for variable (D329, Stage 29 W-FIX1b).
+  // not assign a for variable.
   pub fn for_assign(loc: Location, name: String, value: Expr): Stmt {
     s = Stmt.new(st_assign(), loc)
     s.target = for_name_expr(loc, name)
@@ -2367,9 +2364,9 @@ pub class Parser {
   }
 
   // The step of a `for` loop to its next value: the counter's increment;
-  // over an inclusive range (`a..=b`, Stage 29 W5a3), a break after the
-  // last value first, so a range that ends at the type's maximum never
-  // computes the value after it (the increment would overflow and trap).
+  // over an inclusive range (`a..=b`), a break after the last value
+  // first, so a range that ends at the type's maximum never computes the
+  // value after it (the increment would overflow and trap).
   pub fn for_step(loc: Location, counter: String, into: Array(Stmt)) {
     if self.for_last.size > 0 {
       stop = Stmt.new(st_if(), loc)
@@ -2411,7 +2408,7 @@ pub class Parser {
   }
 
   // The statements an expression holds (a switch's arms; `?? continue`
-  // and an `if` used as a value, Stage 29 W4a), outside lambdas.
+  // and an `if` used as a value), outside lambdas.
   pub fn for_advance_opt(e: Expr?, counter: String, loc: Location) {
     if x = e {
       for_advance_expr(x, counter, loc)
@@ -2444,8 +2441,8 @@ pub class Parser {
       for_advance_expr(f, counter, loc)
     }
     // A `Mutex.with` block runs in place, and its `continue` is the
-    // enclosing loop's (Stage 29 W8Ca, O263); a builtin's block (`each`)
-    // is a loop of its own, like a nested while.
+    // enclosing loop's; a builtin's block (`each`) is a loop of its own,
+    // like a nested while.
     if e.callee == "with" || e.callee == "try_with" {
       if b = e.block {
         b.body = for_advance(b.body, counter, loc)
@@ -2461,16 +2458,16 @@ pub class Parser {
     expect(tk_in())
     self.skip_newlines()
     // The array and the range's ends are read like a while or if
-    // condition, with no struct literal (O181, Stage 29 W3a): before,
-    // `for x in xs {` with a first body line `row: Array(Bool) = []` read
-    // `xs { row: ... }` as a literal.
+    // condition, with no struct literal: before, `for x in xs {` with a
+    // first body line `row: Array(Bool) = []` read `xs { row: ... }` as a
+    // literal.
     first = self.parse_for_operand()
     self.skip_newlines()
     id = self.for_id
     self.for_id += 1
     if self.current().kind == tk_dot_dot() || self.current().kind == tk_dot_dot_eq() {
-      // `a..b` excludes b; `a..=b` includes it (D314, D352): the loop
-      // runs while the counter is at most b and stops after b.
+      // `a..b` excludes b; `a..=b` includes it: the loop runs while
+      // the counter is at most b and stops after b.
       incl = self.current().kind == tk_dot_dot_eq()
       self.bump()
       self.skip_newlines()
@@ -2584,13 +2581,13 @@ pub class Parser {
     arm
   }
 
-  // A case label: an integer literal, or a name (an enum member, Stage
-  // 29 W5a1, D327: `case eof`; a qualified `case Tok.eof` is kept so the
-  // checker can say to write it bare). The checker reads a member label
-  // against the discriminant's type.
+  // A case label: an integer literal, or a name (an enum member,
+  // `case eof`; a qualified `case Tok.eof` is kept so the checker can
+  // say to write it bare). The checker reads a member label against the
+  // discriminant's type.
   pub fn parse_case_label: CaseLabel {
     if self.current().kind == tk_string() {
-      // A String switch's label (Stage 29 W5a1, D293, O392).
+      // A String switch's label.
       tok0 = self.bump()
       slabel = CaseLabel.new(lb_string(), tok0.loc)
       slabel.text = tok0.value
@@ -2603,7 +2600,7 @@ pub class Parser {
       return CaseLabel.new(lb_string(), iloc)
     }
     if self.current().kind == tk_true() || self.current().kind == tk_false() {
-      // A Bool switch's `case true` (Stage 29 W5a3, O236).
+      // A Bool switch's `case true`.
       btrue = self.current().kind == tk_true()
       bl = CaseLabel.new(lb_bool(), self.bump().loc)
       if btrue {
@@ -2612,11 +2609,11 @@ pub class Parser {
       return bl
     }
     if self.current().kind == tk_nil() {
-      // A union switch's `case nil` (Stage 29 W5a2, O391).
+      // A union switch's `case nil`.
       return CaseLabel.new(lb_nil(), self.bump().loc)
     }
     if self.current().kind == tk_ident() && self.index + 1 < self.tokens.size && self.tokens[self.index + 1].kind == tk_colon() {
-      // A union member with a binding (Stage 29 W5a2, D293): `case n: Int`.
+      // A union member with a binding: `case n: Int`.
       btok = self.bump()
       self.bump()
       self.skip_newlines()
@@ -2626,9 +2623,9 @@ pub class Parser {
       return blabel
     }
     if self.current().kind == tk_ident() && self.label_is_type() {
-      // A union member's type without a binding (Stage 29 W5a2, O391):
-      // a capital first letter means a type (D358), as in `case Json`;
-      // `case Tok.eof` stays a member label.
+      // A union member's type without a binding: a capital first
+      // letter means a type, as in `case Json`; `case Tok.eof` stays a
+      // member label.
       tloc = self.current().loc
       tlabel = CaseLabel.new(lb_type(), tloc)
       tlabel.tname = self.parse_type_name()
@@ -2638,8 +2635,8 @@ pub class Parser {
     if self.current().kind != tk_dot_dot() && self.current().kind != tk_dot_dot_eq() {
       return first
     }
-    // A range label (Stage 29 W5a3, O493): `lo..hi` excludes hi, `lo..=hi`
-    // includes it, as in `for`.
+    // A range label: `lo..hi` excludes hi, `lo..=hi` includes it, as in
+    // `for`.
     range = CaseLabel.new(lb_range(), first.loc)
     range.incl = self.current().kind == tk_dot_dot_eq()
     self.bump()
@@ -2693,8 +2690,8 @@ pub class Parser {
 
   // An integer label (a character literal is one): its magnitude and
   // sign, and int_val its 64 bits. The checker checks it against the
-  // discriminant's type (Stage 29 W5a3, O390), as a literal adopts its
-  // context's; a suffix is refused, since the label takes that type.
+  // discriminant's type, as a literal adopts its context's; a suffix
+  // is refused, since the label takes that type.
   pub fn parse_case_int(label: CaseLabel) {
     neg = false
     if self.current().kind == tk_minus() {
@@ -2750,10 +2747,10 @@ pub class Parser {
   }
 
   // A struct literal where the `{` opens a block (a condition, a `for`'s
-  // operand; Stage 29 W5c2, O238): a type's name, then `{ name: value`
-  // where the value cannot start a type (a declaration `{ x: Int`) or is
-  // followed by a comma. Reported with the parentheses that fix it, and
-  // parsed as the literal, so the block after it is read as written.
+  // operand): a type's name, then `{ name: value` where the value cannot
+  // start a type (a declaration `{ x: Int`) or is followed by a comma.
+  // Reported with the parentheses that fix it, and parsed as the
+  // literal, so the block after it is read as written.
   pub fn misplaced_literal_ahead(name: String): Bool {
     if self.allow_struct_lit || name.size == 0 || name[0] < 65 || name[0] > 90 || !self.struct_literal_ahead() {
       return false
@@ -2870,9 +2867,9 @@ pub class Parser {
       right = dummy_expr(op.loc)
       k2 = self.current().kind
       if op.kind == tk_question_question() && (k2 == tk_return() || k2 == tk_break() || k2 == tk_continue()) {
-        // `x ?? return v`, `?? break`, `?? continue` (Stage 29 W4a,
-        // D292): the right side is that statement, held by a switch node
-        // with op tk_return (ast.av), which every walker already visits.
+        // `x ?? return v`, `?? break`, `?? continue`: the right side is
+        // that statement, held by a switch node with op tk_return
+        // (ast.av), which every walker already visits.
         st = dummy_stmt(op.loc)
         if k2 == tk_break() {
           st = self.parse_break()
@@ -3069,8 +3066,8 @@ pub class Parser {
       return parse_spawn(tok)
     }
     if k == tk_if() {
-      // An `if` used as a value (Stage 29 W4a, D31): held by a switch
-      // node with op tk_if (ast.av); it needs an else.
+      // An `if` used as a value: held by a switch node with op tk_if
+      // (ast.av); it needs an else.
       st = self.parse_if()
       if st.else_body.size == 0 {
         fail(st.loc, "an if used as a value needs an else, so every case gives one")
@@ -3385,7 +3382,7 @@ pub class Parser {
     self.skip_newlines()
     e = Expr.new(ex_array(), loc)
     // Inside the brackets a struct literal is unambiguous, as inside
-    // parentheses, also in a condition or a for operand (Stage 29 W3a).
+    // parentheses, also in a condition or a for operand.
     old = self.allow_struct_lit
     self.allow_struct_lit = true
     if self.current().kind != tk_r_bracket() {
@@ -3619,11 +3616,10 @@ pub class Parser {
       return call
     }
     if left.kind == ex_array_new() {
-      // `Array(T).new(n) { |i| ... }` (D329, Stage 29 W-FIX1b): the block
-      // builds each element. A call named "Array.new" (no program can
-      // write that name) with the size as its argument, T as its
-      // elem_type and the block, so every walk that knows a call with a
-      // block knows this form.
+      // `Array(T).new(n) { |i| ... }`: the block builds each element. A
+      // call named "Array.new" (no program can write that name) with the
+      // size as its argument, T as its elem_type and the block, so every
+      // walk that knows a call with a block knows this form.
       if left.elems.size > 0 {
         fail(block.loc, "Array(T).new(n, value) takes no block; the block form builds each element: Array(T).new(n) { |i| ... }")
         return left
@@ -3648,7 +3644,7 @@ pub class Parser {
     names: Array(String) = []
     named = false
     // A struct literal is unambiguous inside the parentheses, also in a
-    // condition or a for operand (Stage 29 W3a).
+    // condition or a for operand.
     old = self.allow_struct_lit
     self.allow_struct_lit = true
     if self.current().kind != tk_r_paren() {
@@ -3694,12 +3690,12 @@ pub class Parser {
   }
 }
 
-// What the interpolation of an error prints (`"${e}"`, D292): a method
-// the parser adds to a type marked `Error`, reading its message (a field
-// or a method; the checker requires one, checker/lambda.av mark_error).
-// With a field `cause` (D300), its own text follows after ": " when it is
-// there: `"${message}: ${cause}"`, so a chain prints outermost first
-// (`cannot load config: bad json: unexpected end`).
+// What the interpolation of an error prints (`"${e}"`): a method the
+// parser adds to a type marked `Error`, reading its message (a field or a
+// method; the checker requires one, checker/lambda.av mark_error). With a
+// field `cause`, its own text follows after ": " when it is there:
+// `"${message}: ${cause}"`, so a chain prints outermost first (`cannot
+// load config: bad json: unexpected end`).
 pub fn error_text_method(loc: Location, owner: String, fields: Array(Field)): Function {
   fnn = Function.new(loc, "__avant_error_text")
   fnn.owner = owner

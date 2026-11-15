@@ -332,7 +332,7 @@ pub class Lexer {
   }
 
   // The digits of one run (an integer part, a fraction, an exponent),
-  // with `_` between two digits (D315); false after an error.
+  // with `_` between two digits; false after an error.
   pub fn scan_digits(base: Int): Bool {
     while true {
       c = self.peek()
@@ -367,9 +367,9 @@ pub class Lexer {
     b.to_s()
   }
 
-  // 0x, 0b and 0o (D315, D352): a prefix in lower case (0X too, as
-  // before), at least one digit after it, `_` only between digits; a
-  // decimal digit that is no digit of the base is an error.
+  // 0x, 0b and 0o: a prefix in lower case (0X too, as before), at
+  // least one digit after it, `_` only between digits; a decimal
+  // digit that is no digit of the base is an error.
   pub fn read_prefixed(loc: Location, start: Int, base: Int, name: String, p: String): Token {
     self.bump()
     self.bump()
@@ -466,11 +466,11 @@ pub class Lexer {
     Token.new(tk_integer(), loc, intern_str(text + suffix))
   }
 
-  // One escape after a backslash (D293, D352): \n \t \r \\ \0, \xNN (one
-  // byte, two hex digits) and \u{N} (a code point, one to six hex digits;
-  // the caller encodes it as UTF-8 and esc_code says so). In a String also
-  // \" and \$; in a character literal (qc 39) \' instead. No \e (a GNU
-  // extension of C).
+  // One escape after a backslash: \n \t \r \\ \0, \xNN (one byte, two hex
+  // digits) and \u{N} (a code point, one to six hex digits; the caller
+  // encodes it as UTF-8 and esc_code says so). In a String also \" and \$;
+  // in a character literal (qc 39) \' instead. No \e (a GNU extension of
+  // C).
   pub fn read_escape(qc: Int): Int {
     self.esc_code = false
     // The escape's backslash, which the caller consumed: errors point at it.
@@ -558,11 +558,11 @@ pub class Lexer {
     v
   }
 
-  // A character literal (D293): 'a' is the Int byte value 97, with the
-  // escapes of read_escape (\' for the quote); a character that is more
-  // than one byte in UTF-8 is an error, and there is no Char type. The
-  // token is an integer: its text the decimal value, or the source as
-  // written for the formatter.
+  // A character literal: 'a' is the Int byte value 97, with the escapes
+  // of read_escape (\' for the quote); a character that is more than
+  // one byte in UTF-8 is an error, and there is no Char type. The token
+  // is an integer: its text the decimal value, or the source as written
+  // for the formatter.
   pub fn read_char_token(loc: Location): Token {
     start = self.pos
     self.bump()

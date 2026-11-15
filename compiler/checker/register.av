@@ -87,8 +87,8 @@ pub fn (checker_self: Checker) count_named_methods(owner: String, name: String, 
   n
 }
 
-// A public function of another module with the same name and parameters
-// (D298): both take their module in their emit name, which stays unique.
+// A public function of another module with the same name and parameters:
+// both take their module in their emit name, which stays unique.
 pub fn (checker_self: Checker) pub_twin_elsewhere(sig: FuncSig): Bool {
   for i in 1..checker_self.functions.size {
     other = checker_self.functions[i]
@@ -357,11 +357,11 @@ pub fn (checker_self: Checker) check: Program {
   // before they existed), so no back end sees an untyped default.
   checker_self.clear_poison()
   checker_self.check_field_defaults()
-  // W3b (B5, D292): no field is read unset (checker/init.av).
+  // No field is read unset (checker/init.av).
   checker_self.clear_poison()
   checker_self.check_inits()
-  // O709 (D389): what a Mutex guards keeps nothing from outside and
-  // hands out nothing of its own (checker/guard.av).
+  // What a Mutex guards keeps nothing from outside and hands out
+  // nothing of its own (checker/guard.av).
   checker_self.clear_poison()
   checker_self.check_guarded_types()
   // A method that changes its receiver, called on an element of an
@@ -659,9 +659,9 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
       if fnn.mod_name.size == 0 {
         same_mod = true
       }
-      // Functions are scoped per module (Stage 29 W3a, D298): two modules
-      // may define the same name and signature; an unqualified call that
-      // sees both is ambiguous at that call (match_func).
+      // Functions are scoped per module: two modules may define the same
+      // name and signature; an unqualified call that sees both is
+      // ambiguous at that call (match_func).
       if same_mod {
         checker_self.fail(fnn.loc, "function ${fnn.name} is already defined")
         return
@@ -1116,9 +1116,9 @@ pub fn (checker_self: Checker) check_field_defaults {
       continue
     }
     checker_self.current_module = defn.mod_name
-    // By the class's own module (Stage 29 W1a): two modules may export
-    // the same class name (D76), and the bare name of a shared one finds
-    // no type, which left both classes' defaults untyped (L0001).
+    // By the class's own module: two modules may export the same class
+    // name, and the bare name of a shared one finds no type, which left
+    // both classes' defaults untyped (L0001).
     if ty = checker_self.resolver.get_named_for(defn.mod_name, defn.name) {
       checker_self.default_owner = ty
       j = 0
@@ -1178,10 +1178,10 @@ pub fn (checker_self: Checker) check_field_defaults {
   checker_self.try_in = saved_try
 }
 
-// The name index of the function or method just pushed (Stage 28 W18P):
-// a signature's name never changes after its push, and the lists stay
-// ascending, so a scan over a name's list visits exactly the signatures
-// of that name a scan over the whole array would, in the same order.
+// The name index of the function or method just pushed: a signature's
+// name never changes after its push, and the lists stay ascending, so a
+// scan over a name's list visits exactly the signatures of that name a
+// scan over the whole array would, in the same order.
 pub fn (checker_self: Checker) note_fn_named {
   i = checker_self.functions.size - 1
   name = checker_self.functions[i].name
@@ -1221,16 +1221,16 @@ pub fn (checker_self: Checker) method_indices_named(name: String): Array(Int) {
   checker_self.none_named
 }
 
-// A union in a `fun` signature (O549, Stage 29 W-FIX1d): C receives and
-// returns one word there, so only a union that is one word is what it
-// says: an optional reference, a pointer with `nil` as NULL (`String?`,
-// `Bytes?`, `Array(T)?`, `Hash(K, V)?`, `Buf?`, a class `C?`, a
-// `JoinHandle(T)?`; each checked both ways with a C function). Any other
-// union is a tag and a payload in Avant: declared in a `fun` it compiled,
-// and C read or wrote one of the two words as if it were the value
-// (`Int?` gave 72340172838076673 for twice 21, `Ptr(Pair)?` as malloc's
-// result a segmentation fault). It is refused until the nullable pointer
-// is decided (W9): the refusal holds whichever way that goes.
+// A union in a `fun` signature: C receives and returns one word there, so
+// only a union that is one word is what it says: an optional reference, a
+// pointer with `nil` as NULL (`String?`, `Bytes?`, `Array(T)?`,
+// `Hash(K, V)?`, `Buf?`, a class `C?`, a `JoinHandle(T)?`; each checked
+// both ways with a C function). Any other union is a tag and a payload in
+// Avant: declared in a `fun` it compiled, and C read or wrote one of the
+// two words as if it were the value (`Int?` gave 72340172838076673 for
+// twice 21, `Ptr(Pair)?` as malloc's result a segmentation fault). It is
+// refused until the nullable pointer is decided: the refusal holds
+// whichever way that goes.
 pub fn (checker_self: Checker) fun_union_ok(ty: Ty, loc: Location): Bool {
   if !ty.is_union() {
     return true

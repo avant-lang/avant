@@ -14,7 +14,7 @@ import checker.names
 pub class Scope {
   pub names: Hash(String, Int)
   // The names a failed statement bound to a failed value's Int (the
-  // cascade rule, Stage 29 W5c2): reading one reports nothing more.
+  // cascade rule): reading one reports nothing more.
   pub failed: Hash(String, Int)? = nil
 
   fn initialize {
@@ -26,10 +26,10 @@ pub class Scope {
 // The flow facts the checker proves inside one function body (bounds,
 // non-nil, capacity, positivity; checker/facts.av), reset per function.
 // Their own object, not Checker's payload: while the v0.34.0 seed builds B,
-// its type maps lose every reference word past payload word 63 (audit
-// 8.4, fixed by W1b in the tree only), so no compiler class may have a
-// reference field there (D188; test_fixed_point checks it). Relax after a
-// re-seed (D178).
+// its type maps lose every reference word past payload word 63 (a fault of
+// that seed, fixed in the tree since), so no compiler class may have a
+// reference field there (test_fixed_point checks it). Relax after a
+// re-seed.
 pub class FlowFacts {
   pub fact_var: Array(String) = []
   pub fact_cont: Array(String) = []
@@ -65,9 +65,9 @@ pub class Checker {
   pub fn_index: Hash(String, Int)
   pub methods: Array(FuncSig)
   pub method_index: Hash(String, Int)
-  // Every index of functions (from 1) and of methods by name, ascending
-  // (Stage 28 W18P): the scans that look for a name visit only these.
-  // (a name's list is lists[k], k its entry in the Hash).
+  // Every index of functions (from 1) and of methods by name,
+  // ascending: the scans that look for a name visit only these. (a
+  // name's list is lists[k], k its entry in the Hash).
   pub fns_named: Hash(String, Int)
   pub methods_named: Hash(String, Int)
   pub fn_lists: Array(Array(Int))
@@ -83,8 +83,8 @@ pub class Checker {
   pub err: CompileError? = nil
   pub errors: DiagBag
   resolver_pulled: Int = 0
-  // How much of the resolver's bag the checker has seen (O163): its pushes,
-  // its hidden errors, and its kept items as of the last pull.
+  // How much of the resolver's bag the checker has seen: its pushes, its
+  // hidden errors, and its kept items as of the last pull.
   resolver_pushes: Int = 0
   resolver_hidden: Int = 0
   resolver_kept: Int = 0
@@ -104,7 +104,7 @@ pub class Checker {
   // by Error (`E: Error`): in a union they take the members marked Error.
   pub infer_err_params: Array(String) = []
   // Set while a constructor's arguments are matched against initialize:
-  // its messages name the call as written, T.new (Stage 29 W5c2, O364).
+  // its messages name the call as written, T.new.
   pub in_new: Bool = false
   // `avant format --calls`: a method call written without parentheses is
   // noted (its file, the offset where `()` goes, its name) and accepted,
@@ -118,9 +118,9 @@ pub class Checker {
   pub return_type: Ty
   pub loop_depth: Int = 0
   pub self_ty: Ty? = nil
-  // Set while the receiver of `x.f` or `x.f(...)` is checked, a bare name
-  // (Stage 29 W5c1, O166): an unknown name there that names a type leaves
-  // the type's name in recv_type for the caller's message.
+  // Set while the receiver of `x.f` or `x.f(...)` is checked, a bare
+  // name: an unknown name there that names a type leaves the type's name
+  // in recv_type for the caller's message.
   pub recv_name: Bool = false
   pub recv_type: String = ""
   pub self_name: String = ""
@@ -137,17 +137,17 @@ pub class Checker {
   pub lib_mod: Hash(String, String)
   pub lib_vis: Hash(String, Int)
   pub known_mods: Hash(String, Int)
-  // The module constants (Stage 29 W5b2, checker/consts.av), and each
-  // one's index there by module and name (const_slot).
+  // The module constants (checker/consts.av), and each one's index
+  // there by module and name (const_slot).
   pub const_list: Array(ConstVal)
   pub const_vals: Hash(String, Int)
   pub current_fn: Function? = nil
   // The `Mutex(T).new(name)` calls of the function being checked, whose
-  // names they consume (O687; checker/guard.av check_consumes).
+  // names they consume (checker/guard.av check_consumes).
   pub consumes: Array(Expr) = []
   // The types `Mutex(T).new` guards and where, checked once the whole
-  // program is (O709; checker/guard.av check_guarded_types), and the
-  // types already found fit.
+  // program is (checker/guard.av check_guarded_types), and the types
+  // already found fit.
   pub guarded: Array(Ty) = []
   pub guarded_at: Array(Location) = []
   pub guarded_ok: Hash(String, Int) = Hash(String, Int).new()
@@ -173,29 +173,28 @@ pub class Checker {
   pub in_adopt: Bool = false
   pub in_task: Int = 0
   // Where a postfix `?` stands when it cannot return from the body around it
-  // ("a spawn block"); empty in a function or lambda body (Stage 29 W1a, A3).
+  // ("a spawn block"); empty in a function or lambda body.
   pub try_in: String = ""
-  // Stage 29 W3b: checking a field default (evaluated before initialize,
-  // with no receiver).
+  // Checking a field default (evaluated before initialize, with no
+  // receiver).
   pub in_default: Bool = false
   // The names of the named arguments of the call being matched
   // (check_call), for fail_no_fit's message.
   pub named_now: Array(String) = []
-  // The class whose field defaults are being checked (O187, Stage 29
-  // W4a): a bare name of one of its fields gets its own message.
+  // The class whose field defaults are being checked: a bare name of
+  // one of its fields gets its own message.
   pub default_owner: Ty? = nil
   // What a postfix `?` returns from, for its messages.
   pub try_body: String = "the function"
   // The position of a `with` call used as a statement (check_stmt): its
   // block's value is dropped, so the block ends however it likes.
   pub with_drop: String = ""
-  // Set by check_stmt for a switch used as a statement (Stage 29 W5a2,
-  // O634): its arms are statements, as an `if`'s; check_switch reads and
-  // clears it.
+  // Set by check_stmt for a switch used as a statement: its arms are
+  // statements, as an `if`'s; check_switch reads and clears it.
   pub switch_stmt: Bool = false
-  // A function's last switch, checked against the result type (Stage 29
-  // W5b1, O715): when every arm gives one type, that type is the
-  // switch's, converted once at the tail as before.
+  // A function's last switch, checked against the result type: when
+  // every arm gives one type, that type is the switch's, converted once
+  // at the tail as before.
   pub switch_tail: Bool = false
   // A switch's discriminant already typed (a union's text,
   // checker/printing.av union_text): check_switch takes it instead of
@@ -205,8 +204,8 @@ pub class Checker {
   // return returns 0; a lambda's body clears it.
   pub entry_void: Bool = false
   // Why the last inference failed, when a union's type parameters split
-  // the argument in more than one way (checker/match.av infer_subst,
-  // Stage 29 W5b1): added to "cannot infer type argument".
+  // the argument in more than one way (checker/match.av infer_subst):
+  // added to "cannot infer type argument".
   pub infer_note: String = ""
   // True while a call's bare integer literal argument is checked before
   // its parameter is known: a value above Int's range is then a UInt64,
@@ -222,10 +221,10 @@ pub class Checker {
   // The calls whose defaults name an earlier parameter, counted
   // (fill_defaults): each gets the next number as its argument frame.
   pub arg_frames: Int = 0
-  // The variables of the `for` loops being checked (D329, Stage 29
-  // W-FIX1b): each one's name, the scope that holds it, and 3 for a
-  // range's counter or 4 for an array's element (the parser's for_kind
-  // of the loop's own store). The program may not assign one.
+  // The variables of the `for` loops being checked: each one's name,
+  // the scope that holds it, and 3 for a range's counter or 4 for an
+  // array's element (the parser's for_kind of the loop's own store).
+  // The program may not assign one.
   pub for_names: Array(String) = []
   pub for_scopes: Array(Int) = []
   pub for_kinds: Array(Int) = []
@@ -329,7 +328,7 @@ pub class Checker {
     self.failed
   }
 
-  // Every error counts, kept or not (O163, Stage 29 W1a): see Resolver.
+  // Every error counts, kept or not: see Resolver.
   pub fn err_count: Int {
     self.errors.pushes
   }
@@ -343,20 +342,20 @@ pub class Checker {
     self.weak_at = 0
   }
 
-  // The cascade rule (Stage 29 W5c2, O277, O636, O760, O192): an
-  // expression whose type already failed is not reported again. Once a
-  // statement has an error (poisoned, cleared before each statement), what
-  // reads the failed part (an operator, a call, a condition, an
-  // assignment) adds no message of its own; a name the statement bound is
-  // failed too (bind), so a later statement that reads it reports nothing
-  // either (check_name). The silenced error still counts as a repeat, so
-  // every mark (new_err_since) sees it, and the compile still fails. One
-  // exception keeps the clearer message: when the statement's error is the
-  // generic `expected T, got U` of an operand (check_expr_flag), the
-  // reader's own message about it (`binary operator expects matching
-  // types`, `cannot assign`, `return type is`) takes its place. A name
-  // that does not exist (`unknown function f`) reads no type and is never
-  // a cascade: it is reported in a statement that already failed too.
+  // The cascade rule: an expression whose type already failed is not
+  // reported again. Once a statement has an error (poisoned, cleared
+  // before each statement), what reads the failed part (an operator, a
+  // call, a condition, an assignment) adds no message of its own; a name
+  // the statement bound is failed too (bind), so a later statement that
+  // reads it reports nothing either (check_name). The silenced error still
+  // counts as a repeat, so every mark (new_err_since) sees it, and the
+  // compile still fails. One exception keeps the clearer message: when the
+  // statement's error is the generic `expected T, got U` of an operand
+  // (check_expr_flag), the reader's own message about it (`binary operator
+  // expects matching types`, `cannot assign`, `return type is`) takes its
+  // place. A name that does not exist (`unknown function f`) reads no type
+  // and is never a cascade: it is reported in a statement that already
+  // failed too.
   pub fn cascaded(message: String): Bool {
     if !self.poisoned || names_missing(message) {
       return false
@@ -395,8 +394,8 @@ pub class Checker {
     self.errors.push(e)
   }
 
-  // An error with a hint after it (" (did you mean `x`?)", Stage 29
-  // W5c1): the code is the message's, whatever the hint says.
+  // An error with a hint after it (" (did you mean `x`?)"): the
+  // code is the message's, whatever the hint says.
   pub fn fail_hint(loc: Location, message: String, hint: String) {
     if cascaded(message) {
       return
@@ -422,9 +421,9 @@ pub class Checker {
       self.resolver_pulled += 1
     }
     if self.resolver_pushes < self.resolver.errors.pushes {
-      // The resolver's errors it did not keep (O163): repeats and those
-      // past its cap are errors here too, and the ones past the cap count
-      // in "and N more errors".
+      // The resolver's errors it did not keep: repeats and those past its
+      // cap are errors here too, and the ones past the cap count in "and
+      // N more errors".
       hidden = self.resolver.errors.suppressed - self.resolver_hidden
       kept = self.resolver_pulled - self.resolver_kept
       repeats = self.resolver.errors.pushes - self.resolver_pushes - hidden - kept
@@ -746,8 +745,8 @@ pub class Checker {
     }
     if last.kind == st_hold() || last.kind == st_pin() {
       // A `gc.hold` or `pin(x)` block ends its function when its own
-      // body does (Stage 29 W1c2; before, a `pin` block whose body
-      // returned was "missing return value" at a function's tail).
+      // body does (before, a `pin` block whose body returned was
+      // "missing return value" at a function's tail).
       return fallthrough(last.body)
     }
     if last.kind == st_if() {
@@ -772,10 +771,10 @@ pub class Checker {
     k = stmt.kind
     if k == st_return() {
       if self.try_in == "a spawn block" || self.try_in == "a parallel block" {
-        // D334: a spawn or `.parallel` block cannot return (O689, Stage 29
-        // W8Cb): its value is its last expression. Before, its statements
-        // were checked against Void, so `return 3` was a type mismatch and
-        // a bare `return` reached the MIR verifier.
+        // A spawn or `.parallel` block cannot return: its value is its
+        // last expression. Before, its statements were checked against
+        // Void, so `return 3` was a type mismatch and a bare `return`
+        // reached the MIR verifier.
         fail(stmt.loc, "return inside ${self.try_in}: ${self.try_in} cannot return; its value is its last expression")
         return
       }
@@ -828,7 +827,7 @@ pub class Checker {
       }
       if at_tail && stmt.else_body.size > 0 && !expected.is_void() && !self.lambda_infer && (fallthrough(stmt.then_body) || fallthrough(stmt.else_body)) {
         // A final if/else whose branches end in values is the function's
-        // value (Stage 29 W4a, D31; before, "missing return value").
+        // value (before, "missing return value").
         stmt.tail_value = true
         if t2 = check_if_value(stmt, true, expected) {
           return
@@ -1041,7 +1040,7 @@ pub class Checker {
         }
         got = t_int()
         if expr.kind == ex_call() && expr.callee == "with" && (!at_tail || expected.is_void()) {
-          // A `with` whose value nobody uses (O263): its block ends
+          // A `with` whose value nobody uses: its block ends
           // without a value (check_mutex_with).
           self.with_drop = expr.loc.show()
         }
@@ -1051,12 +1050,11 @@ pub class Checker {
         tail_switch = at_tail && !expected.is_void() && expr.kind == ex_switch() && expr.op != tk_return()
         if at_tail && !expected.is_void() && is_int_literal(expr) {
           // A literal tail adopts the result type, as `return 0` does
-          // (Stage 29 W-INT1: an Int32 function may end in `0`).
+          // (an Int32 function may end in `0`).
           got = check_expr_as(expr, expected)
         } else if tail_switch && !switch_arms_leave(expr) {
           // A last switch (or if used as a value) sees the result type,
-          // so its arms may give different members of a union result
-          // (Stage 29 W5b1, O715).
+          // so its arms may give different members of a union result.
           self.switch_tail = true
           got = check_expr_as(expr, expected)
           self.switch_tail = false
@@ -1075,16 +1073,17 @@ pub class Checker {
         }
         if at_tail {
           if expected.is_void() {
-            // The uniform void tail (D300, D18 amended; Stage 29 W4a): a
-            // value at the end of a function that returns nothing is a
-            // statement, as it is in the middle. A line starting with `-`
-            // or `[` there is D280's dangling line, as in the middle.
+            // The uniform void tail: a value at the end of a function
+            // that returns nothing is a statement, as it is in the
+            // middle. A line starting with `-` or `[` there is a
+            // dangling line (such a line always begins a new
+            // statement), as in the middle.
             if !got.is_void() && stmt.lead != 0 && (expr.kind == ex_unary() || expr.kind == ex_array()) {
               fail(stmt.loc, "this line starts with `${lead_spelling(stmt.lead)}`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)")
             }
           } else if got.is_void() && tail_switch && block_leaves([stmt]) {
-            // Every arm leaves (O715): the switch gives no value and
-            // needs none.
+            // Every arm leaves: the switch gives no value and needs
+            // none.
           } else if got.is_void() && ast_is_exit_call(expr) {
             // exit never returns: nothing follows it, so no value does.
           } else {
@@ -1132,10 +1131,10 @@ pub class Checker {
     }
   }
 
-  // `if v = f() { } else e { }` (Stage 29 W5b1, D352): the failure the
-  // else block reads, of the if-assign's one binding (checked first), or
-  // nil after an error: a condition list has several failures, and an if
-  // without a binding has none.
+  // `if v = f() { } else e { }`: the failure the else block reads, of
+  // the if-assign's one binding (checked first), or nil after an error:
+  // a condition list has several failures, and an if without a binding
+  // has none.
   pub fn check_else_bind(stmt: Stmt): Ty? {
     n = stmt.else_bind
     if stmt.pre.size > 0 {
@@ -1173,8 +1172,8 @@ pub class Checker {
   }
 
   // A module name used as a bare qualifier that is also a method of the
-  // receiver (D310's ruling, Stage 29 W4a): nothing wins silently (D308);
-  // an error naming both ways out, and true.
+  // receiver: nothing wins silently; an error naming both ways out, and
+  // true.
   pub fn module_is_method(name: String, loc: Location): Bool {
     if st = self.bare_receiver(), receiver_method_fits(st, name, 0) {
       fail(loc, "${name} is both a module and a method of ${st.show()}; write ${self.self_name}.${name} for the method, or give the method another name to use the module")
@@ -1187,8 +1186,8 @@ pub class Checker {
     false
   }
 
-  // `_ = expr` (Stage 29 W4a, D295): the value is computed and dropped on
-  // purpose, an error included; `_` binds nothing and cannot be read.
+  // `_ = expr`: the value is computed and dropped on purpose, an error
+  // included; `_` binds nothing and cannot be read.
   pub fn check_discard(stmt: Stmt) {
     if stmt.op != tk_eq() {
       fail(stmt.loc, "_ discards a value with _ = ...; it holds nothing to read or update")
@@ -1206,13 +1205,13 @@ pub class Checker {
     }
   }
 
-  // Discarding an error is a compile error (Stage 29 W4a, D295): a
-  // statement whose value can be an Error (a type marked Error, or a
-  // union holding one) is refused, naming the ways out.
-  // An expression whose value is all it does (checked first): a literal,
-  // a name, a field read, an operator over such operands, or a literal
-  // array, struct or lambda; nothing that calls (a method, a function, an
-  // operator method, a conversion) or leaves (`?`, `?? return`).
+  // Discarding an error is a compile error: a statement whose value can
+  // be an Error (a type marked Error, or a union holding one) is refused,
+  // naming the ways out. An expression whose value is all it does
+  // (checked first): a literal, a name, a field read, an operator over
+  // such operands, or a literal array, struct or lambda; nothing that
+  // calls (a method, a function, an operator method, a conversion) or
+  // leaves (`?`, `?? return`).
   pub fn no_effect(e: Expr): Bool {
     k = e.kind
     if k == ex_int() || k == ex_float() || k == ex_bool() || k == ex_nil() || k == ex_string() || k == ex_name() || k == ex_lambda() {
@@ -1362,8 +1361,8 @@ pub class Checker {
     }
   }
 
-  // One element of a condition list (Stage 29 W4a, D292): a binding
-  // (bound in the current scope to the success part) or a Bool test.
+  // One element of a condition list: a binding (bound in the current
+  // scope to the success part) or a Bool test.
   pub fn check_cond_element(el: Stmt) {
     if cond = el.cond {
       got = check_expr(cond)
@@ -1376,8 +1375,8 @@ pub class Checker {
     }
   }
 
-  // `if a = x, b = y, cond { } else { }` (D292): the elements left to
-  // right, each binding in scope for the elements after it and the
+  // `if a = x, b = y, cond { } else { }`: the elements left to right,
+  // each binding in scope for the elements after it and the
   // then-block; the else-block sees none of them.
   pub fn check_if_chain(stmt: Stmt, expected: Ty, at_tail: Bool) {
     self.push_scope()
@@ -1401,8 +1400,8 @@ pub class Checker {
     }
   }
 
-  // The success part an if-assign binds (D292): the members of got that
-  // are not failures (type.av ty_failures).
+  // The success part an if-assign binds: the members of got that are
+  // not failures (type.av ty_failures).
   pub fn if_assign_success(got: Ty, loc: Location): Ty {
     if success = failure_split(got, loc, "if-assign") {
       if success.is_void() {
@@ -1414,9 +1413,9 @@ pub class Checker {
     t_int()
   }
 
-  // The success part of got under the one failure rule (D292), or nil
-  // after an error that names what is missing; what is the operator's
-  // name for the message.
+  // The success part of got under the one failure rule, or nil after
+  // an error that names what is missing; what is the operator's name
+  // for the message.
   pub fn failure_split(got: Ty, loc: Location, what: String): Ty? {
     if !got.is_union() {
       fail(loc, "${what} needs a value that can fail (T? or T | E with E marked Error), got ${got.show()}")
@@ -1519,7 +1518,7 @@ pub class Checker {
           return
         }
         if field_ty = implicit_field(target.ident) {
-          // Stage 29 W3b (B6, D292): a field is written self.name = ...
+          // A field is written self.name = ...
           refuse_bare_field_write(target, stmt.loc)
           return
         }
@@ -1889,7 +1888,7 @@ pub class Checker {
   }
 
   // Whether `??` and `.or` take left: a union with a failure member and
-  // a success part (D292; the error otherwise is failure_split's).
+  // a success part (the error otherwise is failure_split's).
   pub fn can_coalesce(left: Ty): Bool {
     if left.is_union() && ty_failures(left).size > 0 {
       if s = ty_success_part(left) {
@@ -1899,10 +1898,10 @@ pub class Checker {
     false
   }
 
-  // The failure an `else e` reads (Stage 29 W5b1, D352): the one failure
-  // member of got, or the union of them, read with `switch`; nil after
-  // an error when got has no failure to read (none, or only `nil`).
-  // what names the form for the messages.
+  // The failure an `else e` reads: the one failure member of got, or the
+  // union of them, read with `switch`; nil after an error when got has
+  // no failure to read (none, or only `nil`). what names the form for
+  // the messages.
   pub fn else_failure(got: Ty, loc: Location, what: String): Ty? {
     if success = failure_split(got, loc, what) {
       fails = ty_failures(got)
@@ -1918,11 +1917,11 @@ pub class Checker {
     nil
   }
 
-  // `n = f() else e { ... }` (Stage 29 W5b1, D352; parser.av
-  // parse_else_guard): on a failure the block runs with e holding it and
-  // must leave (return, break, continue), so after the statement the
-  // value is the success part. The name is required: a guard that does
-  // not read the failure is `?? return`, `?? break` or `?? continue`.
+  // `n = f() else e { ... }` (parser.av parse_else_guard): on a failure
+  // the block runs with e holding it and must leave (return, break,
+  // continue), so after the statement the value is the success part. The
+  // name is required: a guard that does not read the failure is
+  // `?? return`, `?? break` or `?? continue`.
   pub fn check_else_guard(l: Expr, guard: Expr): Ty {
     left = check_expr(l)
     if self.has_err() {
@@ -2006,9 +2005,8 @@ pub class Checker {
   pub fn coalesce_result(left: Ty, right_expr: Expr, loc: Location, opname: String): Ty {
     fails = ty_failures(left)
     if right_expr.kind == ex_switch() && right_expr.op == tk_return() {
-      // `x ?? return v`, `?? break`, `?? continue` (Stage 29 W4a): the
-      // statement runs on any failure and leaves; the value is the
-      // success part.
+      // `x ?? return v`, `?? break`, `?? continue`: the statement runs
+      // on any failure and leaves; the value is the success part.
       payload = ty_without_nil(left)
       if s = ty_success_part(left) {
         payload = s
@@ -2020,8 +2018,8 @@ pub class Checker {
       return payload
     }
     if !(fails.size == 1 && fails[0].is_nil()) || !left.is_nilable() {
-      // A failure other than nil, or a success part of several members
-      // (D292): the fallback is a value of the success part.
+      // A failure other than nil, or a success part of several
+      // members: the fallback is a value of the success part.
       payload = left
       if s = ty_success_part(left) {
         payload = s
@@ -2057,13 +2055,13 @@ pub class Checker {
     payload
   }
 
-  // `x?` (Stage 29 W1a, A3; W4a, D292): the failures of x (nil and the
-  // members marked Error, type.av ty_failures) go up only where the
-  // body's result can hold each of them; the value is the success part
-  // (one type or a smaller union). Anything else is a compile error that
-  // names what would be returned and the ways out (before W1a, a `nil`
-  // silently became `0` in an `Int` function; before W4a, the failure
-  // was whichever member the result type happened to hold).
+  // `x?`: the failures of x (nil and the members marked Error, type.av
+  // ty_failures) go up only where the body's result can hold each of
+  // them; the value is the success part (one type or a smaller union).
+  // Anything else is a compile error that names what would be returned
+  // and the ways out (before, a `nil` silently became `0` in an `Int`
+  // function, and the failure was whichever member the result type
+  // happened to hold).
   pub fn split_try_success(got: Ty, loc: Location): Ty {
     if self.try_in.size > 0 {
       fail(loc, "postfix ? inside ${self.try_in} cannot return the failure; handle it with if-assign or ??")
@@ -2123,9 +2121,9 @@ pub class Checker {
           continue
         }
         if ty.error_mark && !self.has_err() {
-          // An error prints its message (D292, Stage 29 W4a): the part
-          // becomes the call of the method the parser added to the type
-          // (parser.av error_text_method); inner is checked once.
+          // An error prints its message: the part becomes the call of
+          // the method the parser added to the type (parser.av
+          // error_text_method); inner is checked once.
           fa = Expr.new(ex_field(), inner.loc)
           fa.object = inner
           fa.ident = "__avant_error_text"
@@ -2140,7 +2138,7 @@ pub class Checker {
           continue
         }
         if ty.is_enum() && !self.has_err() {
-          // An enum prints its member's name (D292, D358).
+          // An enum prints its member's name.
           if call = enum_text_call(inner, ty) {
             part.expr = call
           }
@@ -2207,9 +2205,9 @@ pub class Checker {
     nil
   }
 
-  // What printing a value of the enum ty prints (Stage 29 W5a1, D358):
-  // the call of its `name` (an enum marked Error: its error text, D327),
-  // checked; inner is checked already.
+  // What printing a value of the enum ty prints: the call of its `name`
+  // (an enum marked Error: its error text), checked; inner is checked
+  // already.
   pub fn enum_text_call(inner: Expr, ty: Ty): Expr? {
     fa = Expr.new(ex_field(), inner.loc)
     fa.object = inner
@@ -2276,11 +2274,11 @@ pub class Checker {
     field_as_call(expr, object)
   }
 
-  // One rule for empty parentheses (Stage 29 W1a, A5): a builtin method
-  // without arguments may be written without `()`. A field form the lists
-  // above do not name becomes the call `recv.name()` and is checked as one
-  // (its receiver is already checked), so `s.strip` is `s.strip()` and an
-  // unknown name reads "no method name on T".
+  // One rule for empty parentheses: a builtin method without arguments may
+  // be written without `()`. A field form the lists above do not name
+  // becomes the call `recv.name()` and is checked as one (its receiver is
+  // already checked), so `s.strip` is `s.strip()` and an unknown name
+  // reads "no method name on T".
   pub fn field_as_call(expr: Expr, object: Ty): Ty {
     if obj = expr.object {
       expr.kind = ex_call()
@@ -2375,8 +2373,8 @@ pub class Checker {
 
   pub fn check_field(expr: Expr): Ty {
     if obj = expr.object {
-      // An enum's member (`Tok.eof`, Stage 29 W5a1, D292): a value of
-      // the enum, marked type_call for the lowering.
+      // An enum's member (`Tok.eof`): a value of the enum, marked
+      // type_call for the lowering.
       if et = enum_type_named(obj) {
         if et.enum_index(expr.ident) >= 0 {
           expr.type_call = true
@@ -2407,7 +2405,7 @@ pub class Checker {
           obj = call
         }
       }
-      // `T.name` on a type without that type-level function (O166).
+      // `T.name` on a type without that type-level function.
       tn = receiver_type_name(obj)
       if tn.size > 0 {
         fail_no_type_fn(expr.loc, obj, tn, expr.ident)
@@ -2746,9 +2744,9 @@ pub class Checker {
     nil
   }
 
-  // `release(place)` (Stage 28 W16c, D266): a field of a C layout that
-  // holds a reference (a `String`, or a nested layout with one), or a
-  // `Ptr` to a C layout with such a field (the whole struct).
+  // `release(place)`: a field of a C layout that holds a reference (a
+  // `String`, or a nested layout with one), or a `Ptr` to a C layout
+  // with such a field (the whole struct).
   pub fn check_release(e: Expr, et: Ty) {
     in_c = false
     name = ""
@@ -2795,12 +2793,11 @@ pub class Checker {
     fail(e.loc, "release takes a C-layout field or a Ptr to a C layout, got ${et.show()}")
   }
 
-  // `c.recv` where every parameter of `recv` has a default (O223, Stage
-  // 29 W-FIX1b): the call `c.recv()`. The member node becomes that call,
-  // so its defaults are spliced and checked, and every later walk sees
-  // them, as for the form with parentheses (before, the member was
-  // lowered as a call without its arguments, and the MIR verifier
-  // stopped the build).
+  // `c.recv` where every parameter of `recv` has a default: the call
+  // `c.recv()`. The member node becomes that call, so its defaults are
+  // spliced and checked, and every later walk sees them, as for the form
+  // with parentheses (before, the member was lowered as a call without
+  // its arguments, and the MIR verifier stopped the build).
   pub fn paren_call_of(expr: Expr): Ty {
     if recv = expr.object {
       expr.kind = ex_call()
@@ -2956,8 +2953,8 @@ pub class Checker {
         fail(size.loc, "Array(T).new expects Int size")
       }
     }
-    // Every element starts at the element type's zero (D292) or at the
-    // given value (Stage 29 W4b1, D295 R5); no element is read unset.
+    // Every element starts at the element type's zero or at the given
+    // value; no element is read unset.
     if expr.elems.size == 1 {
       vt = check_expr_as(expr.elems[0], elem)
       if !ty_assignable(vt, elem) {
@@ -2965,14 +2962,13 @@ pub class Checker {
       }
       // One value for every element: when it is a reference to an
       // object that can change, the elements would share that object
-      // (D329; a grid built this way had one row, O246). `nil` shares
-      // nothing.
+      // (a grid built this way had one row). `nil` shares nothing.
       if !self.has_err() && expr.elems[0].kind != ex_nil() && type.ty_holds_mutable_ref(elem) {
         fail(expr.elems[0].loc, "Array(${elem.show()}).new(n, value) would put the same object in every element (${elem.show()} is, or holds, a reference: a change through one element would show in all); build one per element: Array(${elem.show()}).new(n) { |i| ... }")
       }
     } else if !ty_has_zero(elem) && !type.ty_has_var(elem) {
       // The way out it names must exist: a reference type's elements
-      // are built one by one (D329), any other type's take a value.
+      // are built one by one, any other type's take a value.
       if type.ty_holds_mutable_ref(elem) {
         fail(expr.loc, "Array(${elem.show()}).new(n) needs its elements built: ${elem.show()} has no zero value; write Array(${elem.show()}).new(n) { |i| ... }, or start from [] and push")
       } else {
@@ -2982,12 +2978,12 @@ pub class Checker {
     ty_array(elem)
   }
 
-  // `Array(T).new(n) { |i| ... }` (D329, Stage 29 W-FIX1b): the block is
-  // run once per index, 0 to n - 1 in order, and its value is that
-  // element. The parser hands it over as a call named "Array.new" with n
-  // as its argument and T as its elem_type. The block is inlined like
-  // those of `each` and `any` (a `return` leaves the function); `break`
-  // and `continue` would leave elements unbuilt and are refused.
+  // `Array(T).new(n) { |i| ... }`: the block is run once per index, 0 to
+  // n - 1 in order, and its value is that element. The parser hands it
+  // over as a call named "Array.new" with n as its argument and T as its
+  // elem_type. The block is inlined like those of `each` and `any` (a
+  // `return` leaves the function); `break` and `continue` would leave
+  // elements unbuilt and are refused.
   pub fn check_array_build(expr: Expr): Ty {
     elem = t_int()
     if tn = expr.elem_type {
@@ -3093,7 +3089,7 @@ pub class Checker {
     if ty = lookup_named_type(expr.type_name, expr.loc, expr.mod_name) {
       return check_struct_fields(expr, ty, true)
     }
-    // lookup_named_type said why (unknown, or ambiguous: O224).
+    // lookup_named_type said why (unknown, or ambiguous).
     t_int()
   }
 
@@ -3451,9 +3447,9 @@ pub class Checker {
       }
     }
     if self.lam_exprs.size > 0 && self.self_name.size > 0 && expr.ident == self.self_name {
-      // Stage 29 W3b (B7, S13): a lambda in a method captures self, by
-      // value (self is never reassigned): a class receiver's reference, a
-      // struct receiver's copy.
+      // A lambda in a method captures self, by value (self is never
+      // reassigned): a class receiver's reference, a struct receiver's
+      // copy.
       if st2 = capture_receiver(expr.loc) {
         return st2
       }
@@ -3478,7 +3474,7 @@ pub class Checker {
       }
       if self.lam_exprs.size > 0 {
         // Inside a lambda a bare field reads it through the captured
-        // receiver: the name becomes self.name (W3b, B7).
+        // receiver: the name becomes self.name.
         r0 = Expr.new(ex_name(), expr.loc)
         r0.ident = self.self_name
         dummy0 = check_expr(r0)
@@ -3495,7 +3491,7 @@ pub class Checker {
       }
       return ty_module(expr.ident)
     }
-    // Stage 29 W3b (B6): a bare method name is a call on the receiver.
+    // A bare method name is a call on the receiver.
     if r = bare_method_call(expr, expr.ident, 0) {
       expr.kind = ex_call()
       expr.callee = expr.ident
@@ -3505,7 +3501,7 @@ pub class Checker {
       }
       return check_method_call(expr, r, has_want, want)
     }
-    // A module constant (Stage 29 W5b2): its value, written as a literal.
+    // A module constant: its value, written as a literal.
     if inline_const(expr) {
       return check_expr_core(expr, has_want, want)
     }
@@ -3516,9 +3512,9 @@ pub class Checker {
       return got
     }
     if as_recv {
-      // The receiver of `T.f` names a type, not a value (O166, O224):
-      // the caller reports the missing type-level function; a type two
-      // modules publish is ambiguous here.
+      // The receiver of `T.f` names a type, not a value: the caller
+      // reports the missing type-level function; a type two modules
+      // publish is ambiguous here.
       clash = receiver_clash(expr)
       if clash.size > 0 {
         fail(expr.loc, clash)
@@ -3544,9 +3540,9 @@ pub class Checker {
     t_int()
   }
 
-  // An integer literal's type (Stage 29 W-INT1, D314): its suffix (u64),
-  // else the integer type the context wants (UInt64, Int32, UInt32), else
-  // Int, a 64-bit integer.
+  // An integer literal's type: its suffix (u64), else the integer type
+  // the context wants (UInt64, Int32, UInt32), else Int, a 64-bit
+  // integer.
   pub fn literal_int_ty(expr: Expr, has_want: Bool, want: Ty): Ty {
     if expr.int_suffix == "u64" {
       return t_uint64()
@@ -3602,10 +3598,9 @@ pub class Checker {
     ty
   }
 
-  // A negated integer literal (Stage 29 W-INT1): typed like the literal,
-  // and its magnitude may be the minimum's (-2147483648 as Int32,
-  // -9223372036854775808 as Int); an unsigned type has no negative
-  // literal.
+  // A negated integer literal: typed like the literal, and its magnitude
+  // may be the minimum's (-2147483648 as Int32, -9223372036854775808 as
+  // Int); an unsigned type has no negative literal.
   pub fn check_negated_literal(expr: Expr, lit: Expr, has_want: Bool, want: Ty): Ty {
     if has_want && want.is_float() {
       lit.ty = t_float()
@@ -3614,8 +3609,8 @@ pub class Checker {
     ty = literal_int_ty(lit, has_want, want)
     if ty.is_unsigned() {
       // An unsigned type has no negative value: the literal does not fit,
-      // whether the type is its suffix's or the context's (Stage 29 W5c2,
-      // O364; `a: UInt32 = -1` said `cannot assign Int to UInt32`).
+      // whether the type is its suffix's or the context's
+      // (`a: UInt32 = -1` said `cannot assign Int to UInt32`).
       if lit.value_str.size > 0 {
         fail(expr.loc, "${lit.value_str} does not fit in ${ty.show()}")
       } else {
@@ -3636,13 +3631,13 @@ pub class Checker {
   }
 
   // An integer literal, or a negated one: its type adopts the other
-  // operand's (D315).
+  // operand's.
   pub fn is_int_literal(e: Expr): Bool {
     if e.kind == ex_int() {
       return true
     }
-    // A constant is its value written as a literal (Stage 29 W5b2,
-    // checker/consts.av), so it adopts the other operand's type as one.
+    // A constant is its value written as a literal (checker/consts.av),
+    // so it adopts the other operand's type as one.
     if (e.kind == ex_name() || e.kind == ex_field()) && inline_const(e) {
       return is_int_literal(e)
     }
@@ -3842,8 +3837,8 @@ pub class Checker {
   }
 
   // A shift by a literal amount outside 0..width - 1 (a negated literal
-  // included) is a compile-time error (C1, W11b); any other amount is
-  // checked when the shift runs.
+  // included) is a compile-time error; any other amount is checked when
+  // the shift runs.
   pub fn check_shift_amount(r: Expr, left: Ty, loc: Location) {
     neg = false
     lit = r
@@ -3976,9 +3971,9 @@ pub class Checker {
         fail(expr.loc, "|| expects Bool operands")
         return t_bool()
       }
-      // D315 (Stage 29 W-INT1): an integer literal on the left adopts
-      // the right operand's integer type, as one on the right adopts
-      // the left's (`1 + x` types as `x + 1`).
+      // An integer literal on the left adopts the right operand's
+      // integer type, as one on the right adopts the left's (`1 + x`
+      // types as `x + 1`).
       left_lit = is_lit_expr(l) && !is_lit_expr(r)
       if left_lit {
         rfirst = check_expr(r)
@@ -4029,11 +4024,11 @@ pub class Checker {
   }
 
   // The typing of a binary operator once both operands are typed (the
-  // part of check_binary after the operands; Stage 29 W-INT1 split it so
-  // a literal on the left can adopt the right's type first).
+  // part of check_binary after the operands, split off so a literal on
+  // the left can adopt the right's type first).
   pub fn binary_typed(expr: Expr, l: Expr, r: Expr, op: Int, left: Ty, right: Ty): Ty {
-    // Two values of one enum compare with == and != (D292); an enum has
-    // no order and no arithmetic, and is never a number.
+    // Two values of one enum compare with == and !=; an enum has no
+    // order and no arithmetic, and is never a number.
     if left.is_enum() && right.is_enum() && left.same_as(right) {
       if op == tk_eq_eq() || op == tk_not_eq() {
         return t_bool()
@@ -4127,8 +4122,8 @@ pub class Checker {
         if left.is_integer() {
           check_shift_amount(r, left, expr.loc)
         }
-        // The amount may be an Int whatever the shifted type (Stage
-        // 29 W-INT1: UInt64, Int32 and UInt32 values shift by an Int).
+        // The amount may be an Int whatever the shifted type (UInt64,
+        // Int32 and UInt32 values shift by an Int).
         if left.is_integer() && right.is_int() {
           return left
         }
@@ -4187,7 +4182,7 @@ pub class Checker {
       return float_binary(op, expr.loc)
     }
     if op == tk_eq_eq() || op == tk_not_eq() {
-      // `x == nil` (O257): an optional is opened or tested, not compared.
+      // `x == nil`: an optional is opened or tested, not compared.
       if right.is_nil() && left.is_nilable() {
         fail(expr.loc, nil_compare_text(l, left))
         return t_bool()
@@ -4338,7 +4333,7 @@ pub class Checker {
       expr.indirect = true
       return check_indirect_call(expr, existing)
     }
-    // Stage 29 W3b (B6): a bare call of a method of the receiver.
+    // A bare call of a method of the receiver.
     argc = expr.args.size
     if b0 = expr.block {
       argc += 1
@@ -4503,8 +4498,8 @@ pub class Checker {
         return widened
       }
     }
-    // A negated literal adopts the parameter too (D315; Stage 29 W-INT2:
-    // `f(-5)` with an Int32 parameter was refused).
+    // A negated literal adopts the parameter too (`f(-5)` with an Int32
+    // parameter was refused).
     if is_int_literal(expr) && expr.kind == ex_unary() && want.is_integer() {
       if inner = expr.inner {
         widened = check_negated_literal(expr, inner, true, want)
@@ -4555,7 +4550,7 @@ pub class Checker {
     recv = flatten_type_chain(recv)
     if recv.kind == ex_name() && recv.ident == "Buf" && recv.type_args.size == 0 && recv.mod_name.size == 0 {
       // `Buf.new` and `Buf.new(cap)` are `buf_new()` and `buf_new(cap)`
-      // (Stage 29 W1a, A5; before, "unknown type Buf").
+      // (before, "unknown type Buf").
       expr.callee = "buf_new"
       expr.receiver = nil
       return check_call(expr, has_want, want)
@@ -4725,8 +4720,8 @@ pub class Checker {
       }
       expr.resolved = ty_owned_symbol(ty, "new")
       if is_mutex_ty(ty) {
-        // The value given to a Mutex is its own from now on (O687, D371;
-        // checker/guard.av).
+        // The value given to a Mutex is its own from now on
+        // (checker/guard.av).
         check_mutex_new(expr, ty)
       }
       return ty
@@ -4962,10 +4957,9 @@ pub class Checker {
           if f = find_fn(recv.ident) {
           } else if v = lookup(recv.ident) {
           } else {
-            // `Channel(Int).new` with no such generic type (Stage 29
-            // W1a): before, the call reading said "new is a type
-            // constructor". Two modules' generic types of that name are
-            // named both (O224).
+            // `Channel(Int).new` with no such generic type: before, the
+            // call reading said "new is a type constructor". Two
+            // modules' generic types of that name are named both.
             clash = clash_message(recv.ident, self.current_module)
             if clash.size > 0 {
               fail(recv.loc, clash)
@@ -5034,9 +5028,9 @@ pub class Checker {
         }
       }
     }
-    // A type without that type-level function (Stage 29 W5c1, O166):
-    // before, its name was checked as a value ("unknown name T") and the
-    // call then read as a method of Int.
+    // A type without that type-level function: before, its name was
+    // checked as a value ("unknown name T") and the call then read as a
+    // method of Int.
     tn = receiver_type_name(recv)
     mark = err_count()
     object = t_int()
@@ -5137,9 +5131,9 @@ pub class Checker {
       return dispatch_method(expr, object, expected)
     }
     if object.is_enum() {
-      // `t.to_i` (Stage 29 W5a1, D292): the member's value as an Int,
-      // extended by the lowering; every other name is a method (the
-      // ones every enum has, enums.av, and the enum's own).
+      // `t.to_i`: the member's value as an Int, extended by the
+      // lowering; every other name is a method (the ones every enum
+      // has, enums.av, and the enum's own).
       if expr.callee == "to_i" && expr.args.size == 0 {
         if b = expr.block {
         } else {
@@ -5151,7 +5145,7 @@ pub class Checker {
     }
     if object.is_agg() {
       if expr.callee == "send" && is_sync_ty(object, "Channel") {
-        // What a send carries crosses a task (D35; checker/guard.av).
+        // What a send carries crosses a task (checker/guard.av).
         sent = dispatch_method(expr, object, expected)
         check_send(expr)
         return sent
@@ -5161,7 +5155,7 @@ pub class Checker {
     if object.is_ptr() {
       return dispatch_method(expr, object, expected)
     }
-    // A method of the value inside an optional (O257): open it first.
+    // A method of the value inside an optional: open it first.
     fail_hint(expr.loc, "cannot call ${expr.callee} on ${object.show()}", open_hint(recv, object))
     t_int()
   }
@@ -5198,9 +5192,8 @@ pub class Checker {
     payload
   }
 
-  // An `each` block (Stage 29 W5b1, O544): its statements are checked as
-  // the code around it, so a `return` leaves the function with the
-  // function's result type.
+  // An `each` block: its statements are checked as the code around it,
+  // so a `return` leaves the function with the function's result type.
   pub fn check_block_void(block: Block, pname: String, pty: Ty) {
     self.push_scope()
     bind(pname, pty)
@@ -5220,10 +5213,9 @@ pub class Checker {
       fail(expr.loc, "an if used as a value leaves in every branch, so it has no value")
       return t_int()
     }
-    // The discriminant's countable cases (Stage 29 W5a1, D292, D293):
-    // an enum's members, a union's members (W5a2, D293), Bool's true and
-    // false (W5a3, O236). A switch over a countable type without else
-    // names every case.
+    // The discriminant's countable cases: an enum's members, a union's
+    // members, Bool's true and false. A switch over a countable type
+    // without else names every case.
     countable = false
     disc = t_int()
     if cond = expr.cond {
@@ -5310,11 +5302,11 @@ pub class Checker {
       }
     }
     // An arm that leaves (its last statement a return, break or
-    // continue; Stage 29 W4a) gives no value and joins nothing.
+    // continue) gives no value and joins nothing.
     if stmt_mode {
-      // A switch used as a statement (O634): every arm is a block of
+      // A switch used as a statement: every arm is a block of
       // statements, as an `if`'s branches; a value an arm ends with is
-      // dropped under the discard rule (D295).
+      // dropped under the discard rule.
       for sarm in expr.cases {
         check_switch_stmts(sarm.body, arm_binding(sarm), arm_binding_ty(sarm, disc))
       }
@@ -5392,10 +5384,10 @@ pub class Checker {
     result
   }
 
-  // A case label against the discriminant's type (Stage 29 W5a1): an
-  // enum's labels are its bare member names (D327), each getting its
-  // value in int_val; an integer discriminant's are integer literals.
-  // False when the label was refused.
+  // A case label against the discriminant's type: an enum's labels
+  // are its bare member names, each getting its value in int_val; an
+  // integer discriminant's are integer literals. False when the label
+  // was refused.
   pub fn check_case_label(label: CaseLabel, disc: Ty): Bool {
     if label.kind == lb_range() {
       return check_range_label(label, disc)
@@ -5425,7 +5417,7 @@ pub class Checker {
       return true
     }
     if disc.is_bool() {
-      // `case true` and `case false` (Stage 29 W5a3, O236).
+      // `case true` and `case false`.
       if label.kind == lb_bool() {
         return true
       }
@@ -5489,10 +5481,10 @@ pub class Checker {
     false
   }
 
-  // A range label (Stage 29 W5a3, O493): over an integer, its bounds
-  // labels of the value's type; `lo..hi` holds lo to hi - 1, `lo..=hi` lo
-  // to hi, and an empty range is an error. int_val becomes its first
-  // value and hi_val its last.
+  // A range label: over an integer, its bounds labels of the value's
+  // type; `lo..hi` holds lo to hi - 1, `lo..=hi` lo to hi, and an empty
+  // range is an error. int_val becomes its first value and hi_val its
+  // last.
   pub fn check_range_label(label: CaseLabel, disc: Ty): Bool {
     if !disc.is_integer() {
       fail(label.loc, "a range label needs a switch over an integer, got ${disc.show()}")
@@ -5562,9 +5554,9 @@ pub class Checker {
     int_label_text(label)
   }
 
-  // Two labels of an integer switch that share a value (Stage 29 W5a3):
-  // an error naming both, where one is a range (two equal values are
-  // the duplicate error).
+  // Two labels of an integer switch that share a value: an error naming
+  // both, where one is a range (two equal values are the duplicate
+  // error).
   pub fn check_label_overlaps(labels: Array(CaseLabel), disc: Ty) {
     for j in 0..labels.size {
       b = labels[j]
@@ -5605,9 +5597,8 @@ pub class Checker {
     "${label.bits}"
   }
 
-  // An integer label against an integer discriminant's type (Stage 29
-  // W5a3, O390): it adopts that type, as a literal does, and must fit in
-  // it.
+  // An integer label against an integer discriminant's type: it adopts
+  // that type, as a literal does, and must fit in it.
   pub fn check_int_label(label: CaseLabel, disc: Ty): Bool {
     if !disc.is_integer() {
       return true
@@ -5636,9 +5627,9 @@ pub class Checker {
     int_label_text(label)
   }
 
-  // A union switch's label (Stage 29 W5a2, D293, O391): a member type,
-  // with or without a binding, or `nil`; int_val becomes the member's
-  // index in the union (its tag).
+  // A union switch's label: a member type, with or without a binding,
+  // or `nil`; int_val becomes the member's index in the union (its
+  // tag).
   pub fn check_union_label(label: CaseLabel, disc: Ty): Bool {
     if label.kind == lb_nil() {
       if !disc.includes_nil() {
@@ -5718,8 +5709,8 @@ pub class Checker {
     t_void()
   }
 
-  // A statement switch's arm (O634): its statements, the binding in
-  // scope for them only.
+  // A statement switch's arm: its statements, the binding in scope
+  // for them only.
   pub fn check_switch_stmts(body: Array(Stmt), name: String, ty: Ty) {
     self.push_scope()
     if name.size > 0 {
@@ -5748,8 +5739,8 @@ pub class Checker {
   }
 
   // The countable cases of a discriminant type that the labels in
-  // covered (by value) leave out, in declaration order (Stage 29 W5a1:
-  // an enum's members; W5a2 union members, W5a3 Bool's true and false).
+  // covered (by value) leave out, in declaration order (an enum's
+  // members, a union's members, Bool's true and false).
   pub fn switch_missing_cases(disc: Ty, covered: Hash(Int, Int)): Array(String) {
     missing: Array(String) = []
     if disc.is_bool() {
@@ -5826,11 +5817,11 @@ pub class Checker {
 
   // The value of a block; with has_want its last expression is checked
   // against the wanted type, so a literal takes it (`[]`, `nil`, `0`).
-  // A last `if` with an else is the block's value (Stage 29 W5b1, O274):
-  // it becomes the node of an `if` used as a value (ast.av ex_switch, op
-  // tk_if), which every walker and the lowering already know. The other
-  // statements are checked as the code around them (O544): a `return`
-  // leaves the function, so it takes the function's result type.
+  // A last `if` with an else is the block's value: it becomes the node
+  // of an `if` used as a value (ast.av ex_switch, op tk_if), which every
+  // walker and the lowering already know. The other statements are
+  // checked as the code around them: a `return` leaves the function, so
+  // it takes the function's result type.
   pub fn check_block_value_as(block: Block, has_want: Bool, want: Ty): Ty {
     if block.body.size == 0 {
       fail(block.loc, "block needs a value")
@@ -5874,12 +5865,12 @@ pub class Checker {
     t_int()
   }
 
-  // std.sync's Mutex (Stage 29 W8Ca, O211): a class of another module
-  // with that name is an ordinary class, and `with` an ordinary method.
-  // A `with` block's statements, checked as the code around it would
-  // check them (return against the function's result, break and
-  // continue against its loops); the value is the last expression's when
-  // want_value, else Void.
+  // std.sync's Mutex: a class of another module with that name is an
+  // ordinary class, and `with` an ordinary method. A `with` block's
+  // statements, checked as the code around it would check them (return
+  // against the function's result, break and continue against its
+  // loops); the value is the last expression's when want_value, else
+  // Void.
   pub fn check_with_body(b: Block, want_value: Bool): Ty {
     n = b.body.size
     i = 0
@@ -6033,7 +6024,7 @@ pub class Checker {
       if self.try_in.size > 0 && self.try_in != "a lambda whose result type is inferred" {
         // `return` and `?` leave a `with` as they leave the code around
         // it, which here cannot return (a spawn or parallel block, a
-        // field default): refused there as before (O263).
+        // field default): refused there as before.
         if leaves_by_return(b.body) {
           fail(b.loc, "return or ? inside Mutex.with inside ${self.try_in}: ${self.try_in} cannot return")
           return t_void()
@@ -6043,19 +6034,19 @@ pub class Checker {
       bind(b.params[0], t)
       // `return`, `break`, `continue` and `?` leave the block as they
       // leave any block, and the lowering releases the lock on every way
-      // out (O263, O313; mir/lower_task.av lower_mutex_with), as a
-      // `gc.hold` ends. Used as a statement, the block ends without a
-      // value; used as a value, its last expression is the value.
+      // out (mir/lower_task.av lower_mutex_with), as a `gc.hold` ends.
+      // Used as a statement, the block ends without a value; used as a
+      // value, its last expression is the value.
       result = check_with_body(b, !dropped)
       self.pop_scope()
-      // The block's value leaves the lock (O231): it may not be, or hold,
-      // a reference to mutable state (two tasks raced on a class handed
-      // out this way and lost updates).
+      // The block's value leaves the lock: it may not be, or hold, a
+      // reference to mutable state (two tasks raced on a class handed out
+      // this way and lost updates).
       if !self.has_err() && !result.is_void() && !leaves_mutex_with(result) {
         fail(b.body[b.body.size - 1].loc, "Mutex.with's value cannot be ${result.show()}: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)")
       }
-      // Nor may a statement hand the guarded value out (O541, D355;
-      // checker/guard.av).
+      // Nor may a statement hand the guarded value out
+      // (checker/guard.av).
       guard_with_block(b.params[0], b, !dropped)
       return result
     }
@@ -6067,8 +6058,8 @@ pub class Checker {
     if !is_gate_name(expr.callee) {
       return nil
     }
-    // The gates are std.sync's (O436, Stage 29 W8Ca): a name of `std`
-    // modules only, not of a program's.
+    // The gates are std.sync's: a name of `std` modules only, not of
+    // a program's.
     if str_slice(self.current_module, 0, 4) != "std." {
       fail(expr.loc, "${expr.callee} is internal to the standard library: use Channel(T) and Mutex(T) from std.sync (import std.sync)")
       return t_void()
@@ -6122,7 +6113,7 @@ pub class Checker {
         return t_void()
       }
       // The gate is a word in its object: the call takes the field, whose
-      // address the lowering passes (O690, Stage 29 W8Cb).
+      // address the lowering passes.
       a = expr.args[0]
       if !(a.kind == ex_field() || (a.kind == ex_name() && a.implicit_field)) {
         fail(a.loc, "${expr.callee} takes the object's gate field (a UInt64 field holding avant_gate_new())")
@@ -6178,7 +6169,7 @@ pub class Checker {
   }
 
   // Where an arm's value is: its last statement (the branch a message
-  // about the value's type points at, Stage 29 W5c2), else at.
+  // about the value's type points at), else at.
   pub fn arm_value_loc(body: Array(Stmt), at: Location): Location {
     if body.size == 0 {
       return at
@@ -6194,8 +6185,8 @@ pub class Checker {
     check_switch_branch_bound(body, has_want, want, "", t_void())
   }
 
-  // A value switch's arm, with the name its label binds (Stage 29 W5a2)
-  // in scope for the arm only.
+  // A value switch's arm, with the name its label binds in scope for
+  // the arm only.
   pub fn check_switch_branch_bound(body: Array(Stmt), has_want: Bool, want: Ty, name: String, bty: Ty): Ty {
     self.push_scope()
     if name.size > 0 {
@@ -6234,10 +6225,10 @@ pub class Checker {
     t_void()
   }
 
-  // An `if` used as a value (Stage 29 W4a, D31): the condition (a list,
-  // bindings in scope for the then-block), then each branch's value; the
-  // branches' types join as a value switch's do. nil when every branch
-  // leaves (return, break, continue).
+  // An `if` used as a value: the condition (a list, bindings in scope
+  // for the then-block), then each branch's value; the branches' types
+  // join as a value switch's do. nil when every branch leaves (return,
+  // break, continue).
   pub fn check_if_value(stmt: Stmt, has_want: Bool, want: Ty): Ty? {
     void_ok = self.if_void_ok
     self.if_void_ok = false
@@ -6383,7 +6374,7 @@ pub class Checker {
 }
 
 // Whether a C layout has a field that holds a reference (a `String`,
-// directly or in a nested layout): what `release` gives back (D266).
+// directly or in a nested layout): what `release` gives back.
 pub fn clayout_holds_ref(t: Ty): Bool {
   for field in t.fields {
     ft = field.ty

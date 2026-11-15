@@ -400,9 +400,9 @@ pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qu
     } else {
       // The functions of that name with a fn parameter where the lambda
       // is: what makes them refuse the call is another argument (a
-      // non-generic fn parameter takes any lambda of its count; Stage 29
-      // W5c2, O764: it said "the block does not fit NAME"). One function:
-      // which argument and what it takes; several: each signature.
+      // non-generic fn parameter takes any lambda of its count; it said
+      // "the block does not fit NAME"). One function: which argument and
+      // what it takes; several: each signature.
       fits: Array(FuncSig) = []
       for i in 1..checker_self.functions.size {
         sig = checker_self.functions[i]
@@ -586,8 +586,8 @@ pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
     return checker_self.t_int()
   }
   if others.size > 0 {
-    // The function exists with another type (Stage 29 W5c2, O238): a fn
-    // type matches only itself, so say what it is, not that it is unknown.
+    // The function exists with another type: a fn type matches only
+    // itself, so say what it is, not that it is unknown.
     shown = buf_new()
     for o in others {
       if shown.size > 0 {
@@ -893,7 +893,7 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
       checker_self.fail(expr.loc, "missing return value")
     }
     result_ret = ret
-    // A postfix `?` in the body returns from the lambda (Stage 29 W1a, A3).
+    // A postfix `?` in the body returns from the lambda.
     saved_ret = checker_self.return_type
     saved_try = checker_self.try_in
     saved_entry = checker_self.entry_void
@@ -1112,9 +1112,9 @@ pub fn (checker_self: Checker) check_decl_opts(type_name: String, opt_ins: Array
     return
   }
   ty: Ty? = nil
-  // By module (Stage 29 W4a): two modules may declare the same type name,
-  // and get_named answers nil for such a name, which skipped the
-  // declaration's interface clause without a word.
+  // By module: two modules may declare the same type name, and get_named
+  // answers nil for such a name, which skipped the declaration's
+  // interface clause without a word.
   if found = checker_self.resolver.get_named_in(mod_name, type_name) {
     ty = found
   } else if found2 = checker_self.resolver.get_named(type_name) {
@@ -1147,16 +1147,15 @@ pub fn (checker_self: Checker) check_decl_opts(type_name: String, opt_ins: Array
   }
 }
 
-// The `Error` marker (D292, Stage 29 W4a): a class or struct declared
-// `class E: Error` is a failure in every union it is a member of
-// (type.av ty_failures; the resolver sets Ty.error_mark). Checked here:
-// it makes its message readable, a String field or a method without
-// parameters named `message` (what `e.message` and the interpolation
-// `"${e}"` read); and a field named `cause` (D300: the error that caused
-// it, kept for messages and logs) holds one Error type or an optional
-// one, which `"${e}"` prints after the message (parser.av
-// error_text_method). `Error` takes no type arguments and is not a bound
-// or a value type.
+// The `Error` marker: a class or struct declared `class E: Error` is a
+// failure in every union it is a member of (type.av ty_failures; the
+// resolver sets Ty.error_mark). Checked here: it makes its message
+// readable, a String field or a method without parameters named
+// `message` (what `e.message` and the interpolation `"${e}"` read); and
+// a field named `cause` (the error that caused it, kept for messages and
+// logs) holds one Error type or an optional one, which `"${e}"` prints
+// after the message (parser.av error_text_method). `Error` takes no type
+// arguments and is not a bound or a value type.
 pub fn (checker_self: Checker) mark_error(ty: Ty, tn: TypeName, type_name: String, mod_name: String) {
   if tn.args.size > 0 {
     checker_self.fail(tn.loc, "Error does not take type arguments")

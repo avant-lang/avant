@@ -566,8 +566,8 @@ pub fn names_operator_method(tokens: Array(Token), i: Int): Bool {
 // A `(` hugs what came before it only when that opens a call or a type
 // application (a value, `fn`, `pin`, `release`, or the operator name of
 // `fn +(`); after an operator, `=`, a compound assignment, `,` or a
-// keyword it is a grouping and keeps its space (Stage 28 W18F: `j =
-// (r % n)` had become `j =(r % n)`).
+// keyword it is a grouping and keeps its space (`j = (r % n)` had
+// become `j =(r % n)`).
 pub fn paren_hugs(tokens: Array(Token), i: Int, prev: Int): Bool {
   if value_end(prev) {
     return true
@@ -686,11 +686,10 @@ pub fn structural_kind(k: Int): Bool {
 }
 
 // Two tokens printed with nothing between them stay the same two tokens
-// (D49: the formatter deletes nothing a token needs): when their facing
+// (the formatter deletes nothing a token needs): when their facing
 // bytes could join, the pair is lexed as it would be printed, and a
 // space goes between them unless that gives the two tokens back. Before
-// (Stage 29 W5d1, O464) `. ..` was printed `...`, `? ?` was `??` and
-// `! ==` was `!==`.
+// `. ..` was printed `...`, `? ?` was `??` and `! ==` was `!==`.
 pub fn tokens_join(prev: Token, curr: Token): Bool {
   if structural_kind(prev.kind) || structural_kind(curr.kind) {
     return false
@@ -865,9 +864,9 @@ pub fn format_source(path: String, text: String): FormatResult {
   FormatResult.new(true, out, "")
 }
 
-// AVANT_FORMAT_FAULT (the suite's only, not a user knob; Stage 29
-// W5d1): `line` turns the canonical text's first line break into a
-// space and `space` drops its first space between two word bytes, so
+// AVANT_FORMAT_FAULT (the suite's only, not a user knob): `line`
+// turns the canonical text's first line break into a space and
+// `space` drops its first space between two word bytes, so
 // tests/cases/test_format.av can show the self-check refusing a text
 // that is not the same program.
 pub fn fault_for_test(out: String): String {
@@ -898,15 +897,15 @@ pub fn token_shown(t: Token): String {
   "`${text}`"
 }
 
-// The formatter's self-check (D49, D280; Stage 29 W5d1, O464): the
-// canonical text must be the same program. Both texts are lexed by the
-// compiler's own lexer, the one compile and run use (comments dropped,
-// blank lines folded into one line break), and the two token lists must
-// be equal: every token's kind and spelling, and every line break where
-// it was, since a line that starts with `[`, `-` or `+` begins a new
-// statement (D280). Before, format_source returned the reprint
-// unchecked. A difference is a formatter bug: the file is left as it is
-// and the error names the first token that would change.
+// The formatter's self-check: the canonical text must be the same
+// program. Both texts are lexed by the compiler's own lexer, the one
+// compile and run use (comments dropped, blank lines folded into one
+// line break), and the two token lists must be equal: every token's
+// kind and spelling, and every line break where it was, since a line
+// that starts with `[`, `-` or `+` begins a new statement. Before,
+// format_source returned the reprint unchecked. A difference is a
+// formatter bug: the file is left as it is and the error names the
+// first token that would change.
 pub fn self_check(path: String, before: String, after: String): String? {
   la = Lexer.new(Source.new(path, before))
   ta = la.tokenize()

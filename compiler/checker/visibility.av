@@ -47,9 +47,8 @@ pub fn (checker_self: Checker) note_modules {
   }
 }
 
-// Fields are private unless `pub` (Stage 29 W3a, D299; D42 rule 5
-// replaced): a field without `pub` is read, written and named in a literal
-// only inside its type's module.
+// Fields are private unless `pub`: a field without `pub` is read,
+// written and named in a literal only inside its type's module.
 pub fn (checker_self: Checker) field_hidden(owner: Ty, name: String): Bool {
   from = checker_self.current_module
   if owner.mod_name.size == 0 || from.size == 0 || owner.mod_name == from {
@@ -225,10 +224,10 @@ pub fn (checker_self: Checker) fn_is_visible(fnn: Function, from_mod: String): B
   false
 }
 
-// Functions are scoped per module (Stage 29 W3a, D298). A candidate at an
-// unqualified call is a function the current module sees (its own, and the
-// pub functions of the modules it imports); at a qualified call `m.f()`
-// (qual, or call_mod while match_func runs), only m's functions among them.
+// Functions are scoped per module. A candidate at an unqualified call is a
+// function the current module sees (its own, and the pub functions of the
+// modules it imports); at a qualified call `m.f()` (qual, or call_mod while
+// match_func runs), only m's functions among them.
 pub fn (checker_self: Checker) fn_candidate_q(fnn: Function, qual: String): Bool {
   if qual.size > 0 && fnn.mod_name != qual {
     return false
@@ -242,7 +241,7 @@ pub fn (checker_self: Checker) fn_candidate(fnn: Function): Bool {
 
 // Two or more functions match a call equally. When they come from
 // different modules, the message names each one's module and the
-// qualified calls that pick one (D298); as for types, a module's own
+// qualified calls that pick one; as for types, a module's own
 // function does not win over an imported one of the same signature.
 pub fn (checker_self: Checker) fail_ambiguous_call(loc: Location, name: String, cands: Array(FuncSig), plain: String) {
   mods: Array(String) = []
@@ -258,7 +257,7 @@ pub fn (checker_self: Checker) fail_ambiguous_call(loc: Location, name: String, 
     }
   }
   if mods.size < 2 {
-    // Overloads of one module (O346): each signature that matched.
+    // Overloads of one module: each signature that matched.
     checker_self.fail(loc, "${plain}: ${checker_self.sigs_text(name, cands)} ${checker_self.both_word(cands.size)} match")
     return
   }
@@ -287,7 +286,7 @@ pub fn (checker_self: Checker) fail_ambiguous_call(loc: Location, name: String, 
 }
 
 // "a(x: Int) and a(s: String)", "f(), g() and h()": the signatures of
-// a call's candidates, under the name the call wrote (O346).
+// a call's candidates, under the name the call wrote.
 pub fn (checker_self: Checker) sigs_text(shown: String, cands: Array(FuncSig)): String {
   b = buf_new()
   for k in 0..cands.size {
@@ -310,8 +309,8 @@ pub fn (checker_self: Checker) both_word(n: Int): String {
   "both"
 }
 
-// A method call two or more methods of one type match equally (O346):
-// each signature.
+// A method call two or more methods of one type match equally: each
+// signature.
 pub fn (checker_self: Checker) fail_ambiguous_method(loc: Location, shown: String, cands: Array(FuncSig)) {
   // Two modules' external methods of a builtin type, both seen here.
   mods: Array(String) = []
@@ -421,10 +420,9 @@ pub fn (checker_self: Checker) method_is_visible(fnn: Function, from_mod: String
 
 // The error for a bare name that names a type and something else of the
 // same name that from_mod sees: two modules' types, or a type and a C lib
-// or a function (D298), each named with its module and the qualified
-// spellings that pick one (Stage 29 W5c1, O224: two modules' types read
-// "unknown type Token" or "ambiguous name Token; qualify it"). "" when
-// the name is not ambiguous.
+// or a function, each named with its module and the qualified spellings
+// that pick one (two modules' types read "unknown type Token" or
+// "ambiguous name Token; qualify it"). "" when the name is not ambiguous.
 pub fn (checker_self: Checker) clash_message(name: String, from_mod: String): String {
   if !checker_self.clash_unqualified(name, from_mod) {
     return ""
@@ -572,10 +570,10 @@ pub fn (checker_self: Checker) lookup_named_type(name: String, loc: Location, qu
 
 // The parts of a type name (its arguments, a union's members, a function
 // type's result), each seen from the current module like the name's head
-// (O255, Stage 29 W-FIX1b: an instance now carries the types its
-// arguments named, so each must be one this module may name; before, only
-// the head was checked). A name two modules declare is given the module
-// this one sees. True when every part may be named here.
+// (an instance now carries the types its arguments named, so each must be
+// one this module may name; before, only the head was checked). A name
+// two modules declare is given the module this one sees. True when every
+// part may be named here.
 pub fn (checker_self: Checker) type_parts_seen(tn: TypeName): Bool {
   for a in tn.args {
     if !checker_self.type_part_seen(a) {
@@ -683,10 +681,9 @@ pub fn (checker_self: Checker) resolve_in_module_core(tn: TypeName): Ty {
 }
 
 // A value's type, seen from the current module: resolve_in_module's
-// rules, then the resolver's for a value. (Until Stage 29 W-FIX1b this
-// looked the name up bare: a parameter of a type whose name two modules
-// declare was `unknown type`, though the same name as a result type
-// resolved; O165's family.)
+// rules, then the resolver's for a value. (Before, this looked the name
+// up bare: a parameter of a type whose name two modules declare was
+// `unknown type`, though the same name as a result type resolved.)
 pub fn (checker_self: Checker) resolve_value_in_module(tn: TypeName): Ty {
   mark = checker_self.err_count()
   ty = checker_self.resolve_in_module(tn)
@@ -710,8 +707,8 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
       }
     }
     // An instance of a generic type is as visible as its template and
-    // its arguments (O255, Stage 29 W-FIX1b: before, an instance of an
-    // imported generic was looked up by its own name, never found, and
+    // its arguments (before, an instance of an imported generic was
+    // looked up by its own name, never found, and
     // `pub fn mk: Box(Int)` was refused as a private type).
     named = ty.name
     if ty.origin.size > 0 {
@@ -833,8 +830,8 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
     checker_self.fail(expr.loc, "new is a type constructor")
     return checker_self.t_int()
   }
-  // A block or lambda argument (Stage 29 W3a): `m.f { |x| ... }` picks m's
-  // f as `f { ... }` would, its body checked in the calling module.
+  // A block or lambda argument: `m.f { |x| ... }` picks m's f as
+  // `f { ... }` would, its body checked in the calling module.
   checker_self.absorb_fn_block_q(expr, mod)
   none: Ty? = nil
   if got = checker_self.dispatch_deferred_q(expr, none, mod) {
@@ -878,8 +875,8 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
   checker_self.t_int()
 }
 
-// std.gc's two forms (Stage 29 W1c2, D305). `gc` names the module in a
-// module that imports std.gc, unless a local or a field takes the name.
+// std.gc's two forms. `gc` names the module in a module that imports
+// std.gc, unless a local or a field takes the name.
 pub fn (checker_self: Checker) names_std_gc(name: String): Bool {
   if name != "gc" {
     return false

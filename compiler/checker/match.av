@@ -103,16 +103,16 @@ pub fn (checker_self: Checker) unify_ty(pattern: Ty, actual: Ty, keys: Array(Str
   actual.same_as(pattern)
 }
 
-// A union pattern against an argument's type (Stage 29 W5b1, O492):
-// the argument's members (or the argument itself) less those the
-// pattern names, concretely or through a type parameter already bound;
-// the one unbound parameter left takes the rest (`T | Bad` against
-// `Int | Bad` gives T = Int; against `Int` too, since an `Int` is
-// assignable to the union). 1 when it unifies, 0 when it cannot, 2 when
-// two or more unbound parameters remain (`T | E` against `Int | Bad`):
-// the split is ambiguous until another argument or the expected result
-// binds one of them. A pattern without parameters asks for an argument
-// assignable to it, as a call to a function that is not generic does.
+// A union pattern against an argument's type: the argument's members
+// (or the argument itself) less those the pattern names, concretely or
+// through a type parameter already bound; the one unbound parameter
+// left takes the rest (`T | Bad` against `Int | Bad` gives T = Int;
+// against `Int` too, since an `Int` is assignable to the union). 1 when
+// it unifies, 0 when it cannot, 2 when two or more unbound parameters
+// remain (`T | E` against `Int | Bad`): the split is ambiguous until
+// another argument or the expected result binds one of them. A pattern
+// without parameters asks for an argument assignable to it, as a call
+// to a function that is not generic does.
 pub fn (checker_self: Checker) unify_union(pattern: Ty, actual: Ty, keys: Array(String), vals: Array(Ty)): Int {
   if !type.ty_has_var(pattern) {
     if ty_assignable(actual, pattern) {
@@ -355,17 +355,17 @@ pub fn (checker_self: Checker) subst_for_method(sig: FuncSig, call_owner: String
 // the caller wrote.
 //
 // Where a default names an earlier parameter it reads that parameter's
-// value: the argument as the call passes it, evaluated once (O546, Stage
-// 29 W-FIX1d). The name becomes a hidden one, `$F.J`: argument J of the
-// call's argument frame F, a number this call keeps in its int_bits (a
-// call has no other use for the field; 0 when no default of the call
-// names an earlier parameter). check_default_arg declares the
-// hidden names with the parameters' types, and the back end binds each
-// to the operand it lowered for that argument (mir lower_args_to).
-// Before, a copy of the argument's expression stood in for the name, so
-// the argument was evaluated once for its parameter and once more for
-// each mention (and each time a lambda in the default ran), and the
-// default was typed by the argument's type instead of the parameter's.
+// value: the argument as the call passes it, evaluated once. The name
+// becomes a hidden one, `$F.J`: argument J of the call's argument frame
+// F, a number this call keeps in its int_bits (a call has no other use
+// for the field; 0 when no default of the call names an earlier
+// parameter). check_default_arg declares the hidden names with the
+// parameters' types, and the back end binds each to the operand it
+// lowered for that argument (mir lower_args_to). Before, a copy of the
+// argument's expression stood in for the name, so the argument was
+// evaluated once for its parameter and once more for each mention (and
+// each time a lambda in the default ran), and the default was typed by
+// the argument's type instead of the parameter's.
 pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
   given = checker_self.place_named_args(expr, fnn)
   while expr.args.size < fnn.params.size {
@@ -414,18 +414,18 @@ pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
 }
 
 // A default spliced into a call by fill_defaults, checked against its
-// parameter (O343, O17, Stage 29 W-FIX1b): a default belongs to its
-// declaration, so it is checked in the callee's module, with no local of
-// the caller in scope and no receiver, whatever the call's form (before,
-// an unqualified call, a constructor and a method call checked it in the
-// calling module: a private function of the callee's module was unknown
-// there, and a function of the same name in the calling module was
-// called instead). The one scope it is checked in holds the earlier
-// parameters under their hidden names (fill_defaults), each with its
-// declared type from params, the callee's parameter types as this call
-// sees them. The enclosing lambdas' floors are lowered to that scope for
-// the check, so a hidden name is a capture only of a lambda written
-// inside the default.
+// parameter: a default belongs to its declaration, so it is checked in
+// the callee's module, with no local of the caller in scope and no
+// receiver, whatever the call's form (before, an unqualified call, a
+// constructor and a method call checked it in the calling module: a
+// private function of the callee's module was unknown there, and a
+// function of the same name in the calling module was called instead).
+// The one scope it is checked in holds the earlier parameters under
+// their hidden names (fill_defaults), each with its declared type from
+// params, the callee's parameter types as this call sees them. The
+// enclosing lambdas' floors are lowered to that scope for the check, so
+// a hidden name is a capture only of a lambda written inside the
+// default.
 pub fn (checker_self: Checker) check_default_arg(expr: Expr, i: Int, params: Array(Ty), fnn: Function): Ty {
   if !expr.args[i].is_default {
     // A named argument (place_named_args): the caller's, checked where
@@ -899,11 +899,10 @@ pub fn (checker_self: Checker) has_private_fn(mod: String, name: String): Bool {
 // When no method fits exactly, one non-generic method whose every other
 // argument fits and whose literal arguments meet integer parameters is
 // the match, as a function's literal argument adopts its parameter's
-// type (D315; Stage 29 W-INT2: `P.new(5)` and `p.set(5)` with an Int32
-// parameter were "no method").
-// A method of that owner and name declared in another module and not
-// seen from the current one (private there), for the message that says
-// so; nil when there is none.
+// type (`P.new(5)` and `p.set(5)` with an Int32 parameter were "no
+// method"). A method of that owner and name declared in another module
+// and not seen from the current one (private there), for the message
+// that says so; nil when there is none.
 pub fn (checker_self: Checker) hidden_method(owner: String, owner_mod: String, name: String): FuncSig? {
   for i in checker_self.method_indices_named(name) {
     sig = checker_self.methods[i]
@@ -1095,8 +1094,8 @@ pub fn (checker_self: Checker) type_call_target(recv: Expr, callee: String): Ty?
 }
 
 // The type a bare name names here: when two modules declare it, the one
-// this module sees (O224: before, such a receiver read as an unknown
-// name, though only one of them was visible).
+// this module sees (before, such a receiver read as an unknown name,
+// though only one of them was visible).
 pub fn (checker_self: Checker) named_type_seen(name: String): Ty? {
   if flag = checker_self.resolver.collide.get(name) {
     owner = checker_self.visible_type_mod(name, checker_self.current_module, "")
@@ -1109,9 +1108,9 @@ pub fn (checker_self: Checker) named_type_seen(name: String): Ty? {
 }
 
 // The type a receiver names when it is a type and not a value (`T`,
-// `mod.T`, `String`), shown as written; "" otherwise (Stage 29 W5c1,
-// O166). A local, a field of the receiver or a module of that name wins,
-// as in the checking of a name.
+// `mod.T`, `String`), shown as written; "" otherwise. A local, a field
+// of the receiver or a module of that name wins, as in the checking of a
+// name.
 pub fn (checker_self: Checker) type_receiver(recv: Expr): String {
   if recv.type_args.size > 0 {
     return ""
@@ -1179,7 +1178,7 @@ pub fn (checker_self: Checker) type_receiver(recv: Expr): String {
   ""
 }
 
-// A receiver `mod.T` that names another module's type (O166); "" for
+// A receiver `mod.T` that names another module's type; "" for
 // anything else, cheaply (a bare name is found by check_name's hook).
 pub fn (checker_self: Checker) receiver_type_name(recv: Expr): String {
   if recv.kind != ex_field() {
@@ -1189,7 +1188,7 @@ pub fn (checker_self: Checker) receiver_type_name(recv: Expr): String {
 }
 
 // The ambiguity of a receiver that is a bare type name two modules (or a
-// module's type and another's function) publish (O224); "" otherwise.
+// module's type and another's function) publish; "" otherwise.
 pub fn (checker_self: Checker) receiver_clash(recv: Expr): String {
   if recv.kind != ex_name() || recv.mod_name.size > 0 {
     return ""
@@ -1211,7 +1210,7 @@ pub fn (checker_self: Checker) receiver_clash(recv: Expr): String {
 }
 
 // The error for `T.callee` when the type T (shown as tn) has no
-// type-level function of that name (O166).
+// type-level function of that name.
 pub fn (checker_self: Checker) fail_no_type_fn(loc: Location, recv: Expr, tn: String, callee: String) {
   segs: Array(String) = []
   ty_seen: Ty? = nil
@@ -1243,8 +1242,8 @@ pub fn is_builtin_type_name(name: String): Bool {
   name == "Int" || name == "Int32" || name == "UInt32" || name == "UInt64" || name == "Bool" || name == "Float64" || name == "String" || name == "Array" || name == "Hash" || name == "Buf" || name == "Bytes" || name == "Ptr"
 }
 
-// The enum a receiver names (`Tok`, `mod.Tok`; Stage 29 W5a1), when it
-// is a type name and not a value.
+// The enum a receiver names (`Tok`, `mod.Tok`), when it is a type name
+// and not a value.
 pub fn (checker_self: Checker) enum_type_named(recv: Expr): Ty? {
   none: Ty? = nil
   segs: Array(String) = []
@@ -1350,7 +1349,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
     }
   }
   checker_self.fill_defaults(expr, sig.node)
-  // The defaults it spliced are checked like any argument (O17: they
+  // The defaults it spliced are checked like any argument (they
   // reached the back end untyped).
   for di in given..expr.args.size {
     if di < sig.params.size {
@@ -1746,9 +1745,9 @@ pub fn (checker_self: Checker) no_int_literals: Array(Bool) {
   flags
 }
 
-// A function's signature as a call's error shows it (Stage 29 W5c1,
-// O257): `add(a: Int, b: Int = ...): Int`, shown under the name the call
-// wrote (`m.add`, `Point.make`, `p.scale`'s `Point.scale`).
+// A function's signature as a call's error shows it:
+// `add(a: Int, b: Int = ...): Int`, shown under the name the call wrote
+// (`m.add`, `Point.make`, `p.scale`'s `Point.scale`).
 pub fn (checker_self: Checker) sig_text(shown: String, sig: FuncSig): String {
   b = buf_new()
   b.push_str(shown)
@@ -1810,10 +1809,10 @@ pub fn arg_types_text(arg_tys: Array(Ty)): String {
 }
 
 // A call of shown whose arguments fit none of sigs, the functions (or
-// methods) of that name the call can see (O257: it said "unknown
-// function NAME" or "no method NAME on T", which sent the reader looking
-// for a missing import). One signature: its count, or its first argument
-// of the wrong type; several: each signature, none chosen.
+// methods) of that name the call can see (it said "unknown function
+// NAME" or "no method NAME on T", which sent the reader looking for a
+// missing import). One signature: its count, or its first argument of
+// the wrong type; several: each signature, none chosen.
 pub fn (checker_self: Checker) fail_no_fit(loc: Location, shown: String, sigs: Array(FuncSig), arg_tys: Array(Ty)) {
   argc = arg_tys.size
   if sigs.size == 1 {
