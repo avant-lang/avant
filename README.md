@@ -3612,14 +3612,14 @@ For each file the runner prints its output, in source order, then `ok tests/test
 | Method | Passes when |
 | --- | --- |
 | `check(cond, name)` | `cond` is true |
-| `check_eq(got, want, name)` | `got` equals `want`; for `Int`, `Bool` and `String`. On failure it prints both under the `FAIL` line |
+| `check_eq(got, want, name)` | `got == want`, for any type that has `==` and prints ([Equality and order](#equality-and-order), [Printing](#printing)); on failure it prints both under the `FAIL` line |
 | `golden(path, got)` | the bytes in the file `path` equal `got` ([Golden files](#golden-files)) |
 | `run_golden(program, want)` | the program compiles (with `--debug`), exits 0, and prints exactly the bytes in the file `want` |
 | `rejects(source, substring)` | compiling `source` fails, and the compiler's stderr contains `substring` |
 | `temp_dir` | (not a check) a new, empty directory for files the test writes |
 | `finish` | prints `N failed, M passed`; returns `0` when every check passed, `1` otherwise |
 
-`Float64` has no `check_eq`: compare floats in a `check`, once you have decided what equality means, NaN included.
+For a `Float64`, `check_eq` is IEEE's `==` (NaN equals nothing): compare with a tolerance in a `check` when that is what equality means.
 
 Several cases over one function read better as a table: inputs and expected values in two arrays, checked in one loop.
 
