@@ -410,6 +410,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     uint64_t used = avant_nursery_held;
     uint64_t copied0 = avant_g_stats.copied_bytes;
     uint64_t inplace0 = gc_heap.ctr.sticky.inplace;
+    uint64_t here0 = gc_heap.ctr.sticky.here_bytes;
     uint64_t prom0 = gc_heap.ctr.prom.copied;
     uint64_t surv;
     avant_g_stats.young_collections++;
@@ -427,7 +428,8 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       gc_heap.promoted_since_full = 0;
     }
     gc_sticky_collect(gc_heap.set.young_fixed ? 1 : 0, complete);
-    surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.sticky.inplace - inplace0);
+    surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.sticky.inplace - inplace0) +
+           (gc_heap.ctr.sticky.here_bytes - here0);
     /* An object this collection promoted, in place or by its copy, is old
      * from now on and no full collection marked it (a young large
      * object's promotion says so itself, promote_young_large). An aged

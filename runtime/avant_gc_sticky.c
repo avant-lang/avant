@@ -755,6 +755,9 @@ void gc_evac_map_ensure(void) {
  * (SPLUS_PART). */
 #define EVAC_MAP_EVAC 1
 #define EVAC_MAP_PART 2
+/* 3: its survivors age where they lie (SPLUS_AGE_HERE): nothing moves,
+ * but a holder that is not young and names one is remembered. */
+#define EVAC_MAP_AGE 3
 static inline int evac_at(uint64_t bi) {
   return bi < gc_heap.evac_map_n && gc_heap.evac_map[bi];
 }
@@ -962,6 +965,8 @@ static inline __attribute__((always_inline)) void fix_field(const FixCtx *c, voi
       if (avant_header(to)->flags & AVANT_FLAG_YOUNG) {
         *aged = 1;
       }
+    } else if (c->map[bi] == EVAC_MAP_AGE) {
+      *aged = 1;
     }
   }
 }
@@ -1122,9 +1127,30 @@ static int splus_age_holders(void) {
   return moved;
 }
 
+/* A pure young block whose survivors fill more than SPLUS_DENSE_NUM /
+ * SPLUS_DENSE_DEN of the lines it was allocated in (from the start of
+ * its young range to its allocation frontier): the cursor's last block,
+ * partly allocated, is judged by what it holds. */
+static inline int dense_block(const Block *b) {
+  uint64_t lines = (b->idle + LINE_SIZE - 1) / LINE_SIZE;
+  int hi = b->young_hi > LINES_PER_BLOCK ? LINES_PER_BLOCK : b->young_hi;
+  int fr = (int)(((size_t)(b->bump - b->base) + LINE_SIZE - 1) >> LINE_SHIFT);
+  if (fr > hi) {
+    fr = hi;
+  }
+  return fr > b->young_lo && lines * SPLUS_DENSE_DEN > (uint64_t)(fr - b->young_lo) * SPLUS_DENSE_NUM;
+}
+
 static void splus_evacuate(void) {
   uint32_t i;
   int any = 0;
+  /* A block aged where it lies: the fix-up must run for its holders. */
+  int here_any = 0;
+  /* A high-survival collection (SPLUS_DENSE_NUM's comment): DENSE, the
+   * second in a row, promotes dense pure blocks in place; HERE, the first,
+   * ages their survivors where they lie. */
+  int dense = 0;
+  int here = 0;
   /* O92 (Stage 28 W15d item 2): the blocks evacuated hold at most one
    * young budget of survivors (avant_young_bytes); the candidates past it
    * keep their survivors in place, promoted (S's rule). A collection whose
@@ -1146,6 +1172,16 @@ static void splus_evacuate(void) {
    * for a heap that grew). */
   if ((gc_heap.committed >> BLOCK_SHIFT) > gc_heap.evac_map_n) {
     gc_evac_map_ensure();
+  }
+  if (!gc_heap.set.stress && avant_nursery_held * 2 >= avant_young_bytes) {
+    uint64_t sum = 0;
+    for (i = 0; i < gc_heap.young_blocks_n; i++) {
+      sum += gc_heap.young_blocks[i]->idle;
+    }
+    if (sum * 2 > avant_nursery_held) {
+      dense = gc_heap.young_high_prev;
+      here = !gc_heap.young_high_prev && gc_heap.splus_age;
+    }
   }
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     Block *b = gc_heap.young_blocks[i];
@@ -1182,6 +1218,16 @@ static void splus_evacuate(void) {
         any = 1;
       } else {
         b->kept = 0;
+      }
+    } else if ((dense | here) && b->kept == SPLUS_PURE && dense_block(b)) {
+      if (dense) {
+        b->kept = 0;
+        gc_heap.ctr.sticky.dense_blocks++;
+      } else {
+        b->kept = SPLUS_AGE_HERE;
+        evac_map_set(b, EVAC_MAP_AGE);
+        gc_heap.ctr.sticky.here_blocks++;
+        any = 1;
       }
     } else if (b->kept == SPLUS_PURE_AGED &&
                (b->idle + LINE_SIZE - 1) / LINE_SIZE > SPLUS_AGED_SPARSE_LINES) {
@@ -1257,6 +1303,20 @@ static void splus_evacuate(void) {
     }
     gc_heap.noted_hi = hi;
     splus_copied(n_aged, n_prom);
+    /* The survivors of the blocks aged where they lie (a pass of its own,
+     * so that the copy's loop has no test for them): young again,
+     * survivors, each with its start bit (a lookup must find it after the
+     * collection, when the late runs are forgotten); gc_clear_noted
+     * clears MARKED. */
+    for (i = 0; here && i < noted_n; i++) {
+      uintptr_t e = (uintptr_t)noted[i];
+      if ((e & (NOTED_SURV | NOTED_MOVED)) == NOTED_SURV &&
+          map[(uint64_t)((e & ~NOTED_TAGS) - base8) >> BLOCK_SHIFT] == EVAC_MAP_AGE) {
+        AvantHeader *ah = avant_header((void *)(e & ~NOTED_TAGS));
+        ah->flags = (uint16_t)((ah->flags & ~AVANT_FLAG_PROMOTED_NOW) | AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
+        start_bit_set(ah, 1);
+      }
+    }
   }
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     Block *b = gc_heap.young_blocks[i];
@@ -1285,12 +1345,27 @@ static void splus_evacuate(void) {
       gc_heap.live -= b->idle;
       gc_heap.promoted_since_full -= lines;
       gc_heap.mature_since_full -= lines;
+    } else if (b->kept == SPLUS_AGE_HERE) {
+      /* Its survivors stay young: the lines and the bytes their
+       * promotion counted are taken back, and the bytes are the young
+       * budget's (as aged copies are), still live. */
+      uint64_t lines = (uint64_t)b->search * LINE_SIZE;
+      if (gc_heap.set.verify && b->search != (uint16_t)gc_block_live_lines(b)) {
+        gc_die("avant gc verify: a block aged in place: its count of the lines the collection made live differs from its line marks");
+      }
+      memset(b->line_mark, 0, LINES_PER_BLOCK);
+      gc_heap.ctr.sticky.inplace -= b->idle;
+      gc_heap.ctr.sticky.here_bytes += b->idle;
+      gc_heap.aged_now += b->idle;
+      gc_heap.promoted_since_full -= lines;
+      gc_heap.mature_since_full -= lines;
+      here_any = 1;
     }
   }
   if (gc_heap.splus_age && S_LARGE_AGE >= 2 && gc_heap.keep_n) {
     (void)splus_age_holders();
   }
-  if (avant_g_stats.copied_bytes != gc_heap.splus_copied0) {
+  if (avant_g_stats.copied_bytes != gc_heap.splus_copied0 || here_any) {
     splus_fix();
   }
 }
@@ -1310,6 +1385,10 @@ static void splus_finish(void) {
     Block *b = gc_heap.young_blocks[i];
     int w;
     int scan;
+    if (b->kept == SPLUS_AGE_HERE) {
+      evac_map_set(b, 0);
+      continue;
+    }
     if (b->kept != SPLUS_EVAC && b->kept != SPLUS_PART) {
       continue;
     }
@@ -1629,6 +1708,12 @@ void gc_sticky_collect(int tenure, int evac_mixed) {
     for (i = 0; i < gc_heap.young_blocks_n; i++) {
       int live;
       b = gc_heap.young_blocks[i];
+      if (b->kept == SPLUS_AGE_HERE) {
+        /* Aged where it lies: a young block until the next collection,
+         * as a survivor block is (below), not swept now. */
+        gc_sticky_push(&gc_heap.surv_blocks, &gc_heap.surv_blocks_n, &gc_heap.surv_blocks_cap, b);
+        continue;
+      }
       if (__builtin_expect(stress | verify, 0)) {
         /* Under the stress mode and the verifier: up to the block's
          * allocation frontier (young_sweep_checked). The lines between

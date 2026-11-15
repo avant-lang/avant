@@ -290,7 +290,8 @@ static const char *sticky_why(void *v) {
   if (h->flags & AVANT_FLAG_YOUNG) {
     /* S+'s aged survivors (YOUNG_AGE 2) stay young in survivor blocks,
      * with SURVIVED. */
-    return (h->flags & AVANT_FLAG_SURVIVED) && b->kept == SPLUS_SURV ? NULL : "young object not promoted";
+    return (h->flags & AVANT_FLAG_SURVIVED) && (b->kept == SPLUS_SURV || b->kept == SPLUS_AGE_HERE) ? NULL
+                                                                                                   : "young object not promoted";
   }
   if (b->young_hi) {
     size_t off = (size_t)((uint8_t *)h - b->base);

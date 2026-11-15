@@ -197,6 +197,12 @@ static void print_sticky(StatsLine *l) {
            u(c->inplace), u(c->blocks), u(c->holes), u(c->freed_lines), u(c->overflow),
            u(c->returned), u(c->evac_blocks), u(c->kept_blocks), u(c->copy_blocks), u(c->aged),
            u(c->surv_blocks), u(c->aged_holders), u(c->aged_inplace_blocks));
+  /* Only in a program that had a high-survival collection, so the line
+   * of any other program is what it was. */
+  if (c->dense_blocks || c->here_blocks) {
+    line_add(l, " young_dense_blocks=%llu young_here_blocks=%llu young_here=%llu", u(c->dense_blocks),
+             u(c->here_blocks), u(c->here_bytes));
+  }
 }
 
 /* The proof's segment, only in a program that forced a collection

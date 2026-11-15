@@ -883,7 +883,10 @@ typedef struct GcSizeCounters {
  * aged_holders the holders of young large objects aged out of blocks S+
  * does not evacuate (splus_age_holders); aged_inplace_blocks the survivor
  * blocks whose dense aged survivors were promoted in place at their next
- * collection (O97, Stage 28 W15e). */
+ * collection; dense_blocks the dense young blocks a
+ * high-survival collection promoted in place instead of copying,
+ * here_blocks the ones it aged where they lie and here_bytes their
+ * survivors' bytes (SPLUS_DENSE_NUM's comment). */
 typedef struct GcStickyCounters {
   uint64_t inplace;
   uint64_t blocks;
@@ -898,6 +901,9 @@ typedef struct GcStickyCounters {
   uint64_t surv_blocks;
   uint64_t aged_holders;
   uint64_t aged_inplace_blocks;
+  uint64_t dense_blocks;
+  uint64_t here_blocks;
+  uint64_t here_bytes;
 } GcStickyCounters;
 
 /* proof: the complete collection (GcProof below). asked: the full
@@ -1863,6 +1869,26 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
 #ifndef SPLUS_AGED_SPARSE_LINES
 #define SPLUS_AGED_SPARSE_LINES 64
 #endif
+/* A young collection where nearly everything survives (splus_evacuate):
+ * when more than half of the young bytes of a collection that saw at
+ * least half a budget survive, a pure young block whose survivors fill
+ * more than SPLUS_DENSE_NUM / SPLUS_DENSE_DEN of the lines it was
+ * allocated in is not copied. At the first such collection after one
+ * that was not, its survivors age where they lie (SPLUS_AGE_HERE: still
+ * young, the block a survivor block until the next collection); at the
+ * second in a row they are promoted where they lie. Measured on the
+ * collector benchmark's chain build (copied 54.5 MB to 16 bytes, the
+ * young collections' instructions 1,273 M to 582 M), the unhinted
+ * binary-trees program (10.4 s to 5.0 s, 166 to 139 MB) and LangArena
+ * at 1/2, 3/4 and 7/8: Etc::GameOfLife's cells are dense but not that
+ * dense, and promoted instead of compacted by the copy they cost it
+ * (its peak heap +7% at 1/2, its time +24% at 3/4); at 7/8 it copies as
+ * before. */
+#define SPLUS_DENSE_NUM 7
+#define SPLUS_DENSE_DEN 8
+/* A pure young block aged where it lies (above), during the collection
+ * that chose it. */
+#define SPLUS_AGE_HERE 11
 
 /* avant_gc_sticky.c: the young generation (S+) and the noted list, and
  * the young allocator's block lists in avant_gc_alloc.c. */
