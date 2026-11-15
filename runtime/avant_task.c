@@ -256,12 +256,15 @@ static void gate_dead(uint64_t id);
  * die_task stays for the pool's own failures. what is ".join" or
  * ".parallel". */
 __attribute__((noreturn, cold)) static void trap_on_worker(const char *what) {
-  fflush(stdout);
-  fprintf(stderr,
-          "avant runtime: %s called from a pool worker: .join and .parallel cannot be called inside a spawn block "
-          "or a .parallel body, directly or through a call\n",
-          what);
-  exit(1);
+  char msg[256];
+  /* A trap of the language : in a spawned block it ends the
+   * task, whose join reports it; in a .parallel body it ends the
+   * process. Nothing is held yet: the check comes first. */
+  snprintf(msg, sizeof msg,
+           "%s called from a pool worker: .join and .parallel cannot be called inside a spawn block or a .parallel "
+           "body, directly or through a call",
+           what);
+  avant_trap_text(msg);
 }
 
 static void *worker_main(void *p);
