@@ -115,14 +115,23 @@ pub fn (checker_self: Checker) error_text_call(inner: Expr, ty: Ty): Expr? {
 // prints: a scalar is written by the writer itself; any other value is
 // first rewritten here into the String its interpolation gives (an
 // enum's name, an error's text, a union's member), checked once.
+// `puts()` and `eputs()` write an empty line.
 pub fn (checker_self: Checker) check_output_call(expr: Expr): Ty {
   name = expr.callee
   if b = expr.block {
     checker_self.fail(expr.loc, "${name} does not take a block")
     return checker_self.t_void()
   }
+  line = name == "puts" || name == "eputs"
+  if expr.args.size == 0 && line {
+    return checker_self.t_void()
+  }
   if expr.args.size != 1 {
-    checker_self.fail(expr.loc, "${name} takes one argument")
+    if line {
+      checker_self.fail(expr.loc, "${name} takes one argument, or none for an empty line")
+    } else {
+      checker_self.fail(expr.loc, "${name} takes one argument")
+    }
     return checker_self.t_void()
   }
   arg = expr.args[0]

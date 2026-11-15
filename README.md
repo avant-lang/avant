@@ -3196,9 +3196,9 @@ Runnable programs that use them live in [examples/](examples): in the repository
 
 | Call | Writes |
 | --- | --- |
-| `puts(x)` | `x` and a newline to stdout |
+| `puts(x)` | `x` and a newline to stdout; `puts()` an empty line |
 | `print(x)` | `x` alone to stdout |
-| `eputs(x)` | `x` and a newline to stderr |
+| `eputs(x)` | `x` and a newline to stderr; `eputs()` an empty line |
 | `eprint(x)` | `x` alone to stderr |
 | `exit(status)` | nothing: it ends the program with that exit status |
 

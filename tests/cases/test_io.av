@@ -89,6 +89,14 @@ fn writer_cases(xs: Array(IoCase)) {
   xs.push(accepted("print-union", pre + "fn main {\n  print(size_or_word(1))\n  print(Tok.eof)\n  print(parse(\"z\"))\n  puts(\"\")\n}\n", "1eofbad input\n"))
 }
 
+// puts() and eputs() write an empty line.
+fn empty_line_cases(xs: Array(IoCase)) {
+  xs.push(accepted("puts-empty", "fn main {\n  puts(\"a\")\n  puts()\n  puts(\"b\")\n}\n", "a\n\nb\n"))
+  xs.push(with_err(accepted("eputs-empty", "fn main {\n  eputs(\"a\")\n  eputs()\n  eputs(\"b\")\n}\n", ""), "a\n\nb\n"))
+  xs.push(refused("puts-two", "fn main {\n  puts(1, 2)\n}\n", "puts takes one argument, or none for an empty line", "2:3"))
+  xs.push(refused("eputs-two", "fn main {\n  eputs(1, 2)\n}\n", "eputs takes one argument, or none for an empty line", "2:3"))
+}
+
 // exit(status): what it takes, the status, what it writes first.
 fn exit_cases(xs: Array(IoCase)) {
   xs.push(with_status(accepted("exit-status", "fn main {\n  puts(\"before\")\n  print(\"buffered\")\n  exit(3)\n  puts(\"never\")\n}\n", "before\nbuffered"), 3))
@@ -122,6 +130,7 @@ fn cases: Array(IoCase) {
   xs: Array(IoCase) = []
   puts_cases(xs)
   writer_cases(xs)
+  empty_line_cases(xs)
   exit_cases(xs)
   input_cases(xs)
   xs
