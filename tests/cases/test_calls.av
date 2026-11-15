@@ -1,0 +1,156 @@
+import harness
+import backends
+
+// The spelling of calls and the optionals' forms. Every method call
+// takes parentheses, a builtin's without arguments too; a name without
+// them is a field or a builtin read-only property (`size` of a String,
+// Bytes, Buf, Array or Hash; `bytes` of a String), which takes none.
+// `avant format --calls` writes the parentheses into a program that
+// lacks them. Each program is compiled in parallel; a refused one must
+// leave no binary, say the expected words and point at the expected line
+// and column; an accepted one must print what it should; a trapped one
+// must end with status 1 and print the expected words on stderr.
+
+class CCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  // 0 refused, 1 accepted, 2 trapped
+  pub kind: Int = 0
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): CCase {
+  f = CCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): CCase {
+  f = CCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.kind = 1
+  f
+}
+
+fn trapped(tag: String, src: String, err: String): CCase {
+  f = CCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = err
+  f.kind = 2
+  f
+}
+
+fn paren_cases(xs: Array(CCase)) {
+  box = "class Box {\n  pub n: Int = 2\n\n  fn twice: Int {\n    self.n * 2\n  }\n}\n"
+  xs.push(refused("paren-builtin-statement", "fn main {\n  xs = [3, 1, 2]\n  xs.sort\n  puts(xs[0])\n}\n", "a method call takes parentheses: write sort()", "3:6"))
+  xs.push(refused("paren-builtin-value", "fn main {\n  n = 4\n  puts(n.to_s)\n}\n", "a method call takes parentheses: write to_s()", "3:10"))
+  xs.push(refused("paren-float", "fn main {\n  f = 2.25\n  puts(f.sqrt)\n}\n", "a method call takes parentheses: write sqrt()", "3:10"))
+  xs.push(refused("paren-hash-keys", "fn main {\n  h = Hash(String, Int).new()\n  puts(h.keys.size)\n}\n", "a method call takes parentheses: write keys()", "3:10"))
+  xs.push(refused("paren-user-method", box + "fn main {\n  b = Box.new()\n  puts(b.twice)\n}\n", "a method call takes parentheses: write twice()", "10:10"))
+  xs.push(refused("paren-bare-method", "class Box {\n  pub n: Int = 2\n\n  fn twice: Int {\n    self.n * 2\n  }\n\n  fn more: Int {\n    twice + 1\n  }\n}\nfn main {\n  puts(Box.new().more())\n}\n", "a method call takes parentheses: write twice()", "9:5"))
+  xs.push(refused("paren-new", box + "fn main {\n  b = Box.new\n  puts(b.n)\n}\n", "a method call takes parentheses: write new()", "9:11"))
+  xs.push(refused("paren-hash-new", "fn main {\n  h = Hash(String, Int).new\n  puts(h.size)\n}\n", "a method call takes parentheses: write new()", "2:25"))
+  xs.push(refused("paren-type-function", "struct Money {\n  c: Int\n\n  fn self.zero: Money {\n    Money { c: 0 }\n  }\n}\nfn main {\n  puts(Money.zero.c)\n}\n", "a method call takes parentheses: write zero()", "9:14"))
+  xs.push(refused("paren-enum-members", "enum Tok { a, b }\nfn main {\n  puts(Tok.members.size)\n}\n", "a method call takes parentheses: write members()", "3:12"))
+  xs.push(refused("paren-enum-name", "enum Tok { a, b }\nfn main {\n  puts(Tok.a.name)\n}\n", "a method call takes parentheses: write name()", "3:14"))
+  xs.push(refused("paren-join", "fn main {\n  h = spawn { 1 }\n  puts(h.join ?? 0)\n}\n", "a method call takes parentheses: write join()", "3:10"))
+  xs.push(refused("paren-chain", "fn main {\n  s = \"a b\"\n  puts(s.strip().fields.size)\n}\n", "a method call takes parentheses: write fields()", "3:18"))
+  xs.push(refused("property-size-parens", "fn main {\n  s = \"abc\"\n  puts(s.size())\n}\n", "size is read without parentheses: write .size", "3:9"))
+  xs.push(refused("property-size-parens-array", "fn main {\n  xs = [1, 2]\n  puts(xs.size())\n}\n", "size is read without parentheses: write .size", "3:10"))
+  xs.push(refused("property-bytes-parens", "fn main {\n  s = \"abc\"\n  puts(s.bytes().size)\n}\n", "bytes is read without parentheses: write .bytes", "3:9"))
+  xs.push(refused("paren-assign-method", box + "fn main {\n  b = Box.new()\n  b.twice = 4\n}\n", "cannot assign to a method", "10:11"))
+  xs.push(accepted("paren-neighbours", box + "enum Tok { a, b }\nfn main {\n  b = Box.new()\n  puts(b.n + b.twice())\n  s = \"abc\"\n  xs = [3, 1, 2]\n  xs.sort()\n  h = Hash(String, Int).new()\n  h[\"k\"] = 1\n  by = s.bytes\n  bf = Buf.new()\n  bf.push_str(\"xy\")\n  puts(s.size + by.size + xs.size + h.size + bf.size + h.keys().size)\n  puts(Tok.members().size)\n  puts(Tok.b.name())\n  puts(2.25.sqrt())\n  puts(4.to_s())\n}\n", "6\n13\n2\nb\n1.5\n4\n"))
+}
+
+fn cases: Array(CCase) {
+  xs: Array(CCase) = []
+  paren_cases(xs)
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(CCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/calls-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/calls-${f.tag}.bin", "${dir}/calls-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.kind != 0 {
+      runs.push(run_job(dir, "calls-${f2.tag}.bin", "calls-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/calls-${f3.tag}.log")
+    if f3.kind == 1 {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/calls-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else if f3.kind == 2 {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 1, "${f3.tag}: exit 1")
+      c.eq_str(log_text("${dir}/calls-${f3.tag}.run.err"), f3.want, "${f3.tag}: stderr")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/calls-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "calls-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+// `avant format --calls`: the parentheses written into a program that
+// lacks them (a bare method, a builtin, a constructor, a type-level
+// function), the properties and fields kept, and a second run changing
+// nothing; the program then compiles.
+fn check_format_calls(c: Checks, compiler: String, dir: String) {
+  src = "${dir}/calls-format.av"
+  before = "class Box {\n  pub n: Int = 2\n\n  fn twice: Int {\n    self.n * 2\n  }\n\n  fn more: Int {\n    twice + 1\n  }\n}\nfn main {\n  b = Box.new\n  xs = [3, 1, 2]\n  xs.sort\n  s = \"a b\"\n  h = Hash(String, Int).new\n  puts(b.more + b.n + s.size + s.bytes.size + s.strip.size + xs.size + h.keys.size)\n}\n"
+  after = "class Box {\n  pub n: Int = 2\n\n  fn twice: Int {\n    self.n * 2\n  }\n\n  fn more: Int {\n    twice() + 1\n  }\n}\nfn main {\n  b = Box.new()\n  xs = [3, 1, 2]\n  xs.sort()\n  s = \"a b\"\n  h = Hash(String, Int).new()\n  puts(b.more() + b.n + s.size + s.bytes.size + s.strip().size + xs.size + h.keys().size)\n}\n"
+  _ = file_write(src, before)
+  args: Array(String) = []
+  args.push("format")
+  args.push("--calls")
+  args.push(src)
+  code = process_run_out(compiler, args, "${dir}/calls-format.log") ?? -1
+  c.eq_int(code, 0, "format --calls: exits 0")
+  c.eq_str(log_text(src), after, "format --calls: the parentheses written")
+  c.eq_str(log_text("${dir}/calls-format.log"), "${src}: 7\n", "format --calls: names the file and the count")
+  code2 = process_run_out(compiler, args, "${dir}/calls-format2.log") ?? -1
+  c.eq_int(code2, 0, "format --calls again: exits 0")
+  c.eq_str(log_text(src), after, "format --calls again: changes nothing")
+  c.eq_int(compile_av(compiler, src, "${dir}/calls-format.bin", "${dir}/calls-format.clog"), 0, "format --calls: the result compiles")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_calls.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+    check_format_calls(c, compiler, scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

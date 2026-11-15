@@ -2340,19 +2340,20 @@ pub class Checker {
     if !expr.method_call {
       return false
     }
-    if expr.ident == "bytes" {
-      if obj = expr.object, ot = obj.ty, ot.is_string() {
-        return false
-      }
+    if obj = expr.object, ot = obj.ty, is_builtin_property(ot, expr.ident) {
+      return false
     }
     true
   }
 
   // A method call written without parentheses (at is its name's place,
-  // name the name as written: the check may have renamed the call):
-  // noted under `avant format --calls`. Not in a statement that
-  // already has an error: a failed receiver reads as an Int, whose
-  // members are all methods.
+  // name the name as written: the check may have renamed the call) is
+  // refused: every method call takes them, and a name without them is a
+  // field or one of the builtin read-only properties (`size` of a String,
+  // Bytes, Buf, Array or Hash; `bytes` of a String). Under `avant format
+  // --calls` it is noted instead, for the formatter to write the
+  // parentheses. Not in a statement that already has an error: a failed
+  // receiver reads as an Int, whose members are all methods.
   pub fn bare_call(expr: Expr, at: Location, name: String) {
     if self.has_err() {
       return
@@ -2363,7 +2364,9 @@ pub class Checker {
     if self.calls_migrate {
       self.bare_locs.push(at)
       self.bare_names.push(name)
+      return
     }
+    fail(at, "a method call takes parentheses: write ${name}()")
   }
 
   pub fn check_field(expr: Expr): Ty {
@@ -5086,11 +5089,8 @@ pub class Checker {
     if expr.callee == "size" && expr.args.size == 0 {
       if b = expr.block {
       } else if object.is_string() || object.is_bytes() || object.is_array() || object.is_hash() || object.is_buf() {
-        // `xs.size()` is `xs.size` (A5: one rule for empty parentheses).
-        expr.kind = ex_field()
-        expr.ident = "size"
-        expr.object = recv
-        expr.receiver = nil
+        // A builtin read-only property is read without parentheses.
+        fail(expr.loc, "size is read without parentheses: write .size")
         return t_int()
       }
     }

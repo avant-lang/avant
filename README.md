@@ -395,7 +395,7 @@ fn main {
 
 ### Functions
 
-`fn name(params): Result { body }`. An omitted result type means the function returns nothing (`Void`); result types are never inferred. A function without parameters is declared without parentheses, in one spelling (`fn answer: Int`; `fn answer(): Int` is refused with that hint), and so is a C function in a `lib` block (`fun avant_gc_collect`). It is still called with them (`answer()`): a bare `answer` is the function as a value. A *method* without arguments may be called with or without them (`q.sum`, `q.sum()`), the builtin ones included (`s.strip`, `xs.pop`).
+`fn name(params): Result { body }`. An omitted result type means the function returns nothing (`Void`); result types are never inferred. A function without parameters is declared without parentheses, in one spelling (`fn answer: Int`; `fn answer(): Int` is refused with that hint), and so is a C function in a `lib` block (`fun avant_gc_collect`). It is still called with them (`answer()`): a bare `answer` is the function as a value. **Every method call takes parentheses too**, a method without arguments and a builtin one included (`q.sum()`, `s.strip()`, `xs.sort()`, `Point.new()`): a name without them after a dot is a field, or one of the two builtin read-only properties, `size` (of a `String`, `Bytes`, `Buf`, `Array` or `Hash`) and `bytes` (of a `String`, the same bytes seen as `Bytes`), which take none. `xs.sort` says `a method call takes parentheses: write sort()`, and `s.size()` says `size is read without parentheses: write .size`, so a mutation never hides behind what reads as a field. `avant format --calls FILE...` writes the parentheses into a program written without them ([Formatter](#formatter)).
 
 ```avant
 fn area(w: Int, h: Int): Int {
@@ -1622,11 +1622,11 @@ A class that breaks rule 3 is refused with an error that names the field and the
 A method is a `fn` inside the type's body. Inside it, `self` is the receiver.
 
 - A field is **read** bare (`x`) or as `self.x`, and **written** only as `self.x = ...`. A bare `x = ...` where `x` is a field is a compile error that names both ways out (write `self.x =`, or give the local another name), so a write to the receiver is always visible on its line.
-- A method of the same type is called bare (`sum`, `sum()`) or as `self.sum`.
+- A method of the same type is called bare (`sum()`) or as `self.sum()`.
 - A bare name means, in order: a local or parameter, a field of the receiver, a method of the receiver, then a function. Nothing is chosen silently when two of those fit:
   - a bare call that fits both a method and a function is an error that asks for `self.name(...)` or the function's qualified name;
   - a module name used as a qualifier (`util.twice(3)`) that is also a method of the receiver is an error that asks for `self.util` or another name for the method.
-- A method without arguments is called with or without parentheses: `q.sum` and `q.sum()` are the same call.
+- A method without arguments is called with parentheses, as every method: `q.sum()` (`q.sum` is refused; [Functions](#functions)).
 - Methods, like fields, are private to their module unless marked `pub` ([Visibility](#visibility)).
 - Methods are not values: `box.f()` is always a method call. To call a field that holds a function, parenthesize it: `(box.f)()`.
 
@@ -1719,7 +1719,7 @@ fn main {
 - **Named arguments:** a parameter with a default may be given by its name, after the positional arguments, in any order (`pad("ab", fill: "-")`). The positional arguments choose the overload, and the names fill its defaults; a name is given only to a parameter with a default (`pad(s: "ab")` is refused: `s` is passed by position), once, and not to one the positional arguments already reach. The arguments are evaluated as written, left to right, then the defaults of the parameters left out. A default's parameter name is part of the function's public surface. Builtins and function values take their arguments by position.
 - A default is evaluated at each call that leaves its argument out. It belongs to the function's own module: it may call that module's private functions, and a name in it never means something of the caller's (a function, a method or a local of the same name), however the call is written.
 - A default may name an earlier parameter (`fn span(a: Int, b: Int = a + 1)`). It reads that parameter's value, with its declared type: the argument is evaluated once, so `span(next())` calls `next` once.
-- A method whose parameters all have defaults may be called without parentheses, like a method without parameters: `conn.recv` is `conn.recv()`.
+- A method whose parameters all have defaults is called with empty parentheses, as every method: `conn.recv()`.
 
 ### Operator methods
 
@@ -3947,6 +3947,7 @@ avant format . --check          # CI: list files that would change, exit 1 if an
 - With one file and no flag, the text goes to stdout. `--check` writes nothing, prints `would change PATH` per file (`canonical` when none would), and exits 1 if any would.
 - The formatter works on tokens: it does not parse, typecheck or follow imports, so it formats a file that does not compile yet. It runs as its own command, never as part of a build, so a formatting bug cannot change what a program means.
 - A file that does not lex is reported and left alone (status 1); the others are still formatted. A usage error (no path, an unknown flag, `--check` with `--write`, several files without either) exits 1.
+- `avant format --calls FILE...` is the one mode that typechecks: each FILE is checked as a program's root, and every method call written without parentheses in it and in the files it imports (`x.sum`, a bare `sum` on the receiver, `Point.new`) gets its `()`, the fields and the read-only properties (`size`, `bytes`) left as they are. It prints each changed file with its count; a second run changes nothing. It rewrites only code the checker reaches: a generic function's body is checked for the instances the program makes. A program with errors is rewritten where it was checked, and the status is then 1.
 
 ## Command line
 

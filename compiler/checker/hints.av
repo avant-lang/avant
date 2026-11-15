@@ -279,6 +279,27 @@ pub fn builtin_member_names(ty: Ty): String {
   ""
 }
 
+// The builtin read-only properties: the members read without
+// parentheses that are not fields. Every other member without arguments
+// is a method, called with `()`. Each is a constant-time read with no
+// effect and no allocation: `size` of a String, Bytes, Buf, Array or
+// Hash (a count the value holds), `bytes` of a String (the same bytes
+// seen as Bytes, no copy).
+pub fn builtin_properties(ty: Ty): String {
+  if ty.is_string() {
+    return "size bytes"
+  }
+  if ty.is_bytes() || ty.is_buf() || ty.is_array() || ty.is_hash() {
+    return "size"
+  }
+  ""
+}
+
+// Whether name is a builtin read-only property of ty.
+pub fn (checker_self: Checker) is_builtin_property(ty: Ty, name: String): Bool {
+  name_in_list(name, builtin_properties(ty))
+}
+
 // Whether name is one of the space-separated words of names.
 pub fn name_in_list(name: String, names: String): Bool {
   start = 0

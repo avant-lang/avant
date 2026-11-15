@@ -160,7 +160,9 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
     return checker_self.expect_no_args(expr, checker_self.t_string(), "strip_right takes no arguments")
   }
   if expr.callee == "bytes" {
-    return checker_self.expect_no_args(expr, checker_self.t_bytes(), "bytes takes no arguments")
+    // A builtin read-only property is read without parentheses.
+    checker_self.fail(expr.loc, "bytes is read without parentheses: write .bytes")
+    return checker_self.t_bytes()
   }
   if expr.callee == "chars" {
     return checker_self.expect_no_args(expr, ty_array(checker_self.t_string()), "chars takes no arguments")
