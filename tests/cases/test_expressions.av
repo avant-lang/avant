@@ -3,7 +3,7 @@ import backends
 
 // Expressions: how tightly the operators bind (the bitwise operators
 // above the comparisons); the type an expression of literals takes from
-// its context. Each program is compiled in parallel; a refused
+// its context; a Bool as a number. Each program is compiled in parallel; a refused
 // one must leave no binary, say the expected words and point at the
 // expected line and column; an accepted one must print what it should.
 
@@ -65,6 +65,31 @@ fn adoption_cases: Array(ECase) {
   xs
 }
 
+// A Bool as a number: `to_i`, `to_i32`, `to_u32` and `to_u64` give 1 for
+// true and 0 for false, so a count needs no branch.
+fn bool_cases: Array(ECase) {
+  xs: Array(ECase) = []
+  xs.push(accepted("bool-count", "fn main {\n  alive = [true, false, true]\n  n = 0\n  m: Int32 = 0\n  for a in alive {\n    n += a.to_i\n    m += a.to_i32()\n  }\n  puts(n)\n  puts(m)\n  puts(true.to_u64)\n  puts(false.to_u32)\n  puts(\"\${(1 > 0).to_i}\")\n  u: UInt32 = (2 > 3).to_u32 + 7\n  puts(u)\n}\n", "2\n2\n1\n0\n1\n7\n"))
+  xs.push(refused("bool-no-float", "fn main {\n  b = true\n  puts(b.to_f)\n}\n", "cannot read field to_f on Bool", "3:9"))
+  xs.push(refused("bool-no-wrap", "fn main {\n  b = true\n  puts(b.wrap_i())\n}\n", "cannot call wrap_i on Bool", "3:9"))
+  xs
+}
+
+// `b.to_i` is the Bool zero-extended: no branch in the function.
+fn check_bool_ll(c: Checks, compiler: String, dir: String) {
+  src = "${dir}/ex-bool-ll.av"
+  _ = file_write(src, "fn count(a: Bool): Int {\n  a.to_i\n}\nfn main {\n  puts(count(argv().size > 0))\n}\n")
+  c.eq_int(emit_ll(compiler, src, "${dir}/ex-bool-ll.ll", "${dir}/ex-bool-ll.log"), 0, "bool ll: emits")
+  ll = log_text("${dir}/ex-bool-ll.ll")
+  body = ""
+  parts = ll.split("/count\"(i1")
+  if parts.size >= 2 {
+    body = parts[1].split("\n}\n")[0]
+  }
+  c.expect(str_has(body, " = zext i1 "), "bool ll: count zero-extends")
+  c.expect(!str_has(body, "br i1"), "bool ll: count has no branch")
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(ECase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -108,7 +133,11 @@ fn test_main(c: Checks) {
     for x in adoption_cases() {
       all.push(x)
     }
+    for x in bool_cases() {
+      all.push(x)
+    }
     run_cases(c, compiler, dir, all)
+    check_bool_ll(c, compiler, dir)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

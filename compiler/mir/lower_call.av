@@ -134,7 +134,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       if (mir_is_str_ty(rt) || rt.is_buf) && e.callee == "get" {
         return lw.lower_get(e, recv, rt, e.args)
       }
-      if (rt.is_integer || rt.is_float) && e.args.size == 0 {
+      if (rt.is_integer || rt.is_float || (rt.is_bool && mir_bool_conversion(e.callee))) && e.args.size == 0 {
         return lw.member(recv, rt, e.callee, e)
       }
       if mir_is_str_ty(rt) && e.resolved.size == 0 {
@@ -283,7 +283,7 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
         return lw.lower_method_call(e, obj, ot, sym1, none4)
       }
     }
-    if ot.is_integer || ot.is_float {
+    if ot.is_integer || ot.is_float || (ot.is_bool && mir_bool_conversion(e.ident)) {
       return lw.member(obj, ot, e.ident, e)
     }
     if mir_is_str_ty(ot) {
@@ -341,6 +341,11 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
   lw.lw_b.c_i32(0)
 }
 
+// A Bool's conversions to a number (the checker's bool_conversion_ty).
+pub fn mir_bool_conversion(name: String): Bool {
+  name == "to_i" || name == "to_u64" || name == "to_i32" || name == "to_u32"
+}
+
 // A scalar member (builtins.av:1687-1760) of the value of obj.
 pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand {
   b = lw.lw_b
@@ -351,7 +356,12 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
     return b.c_i32(0)
   }
   lw.at(e.loc)
-  if ot.is_float {
+  if ot.is_bool {
+    // `b.to_i` and the sized forms: the Bool zero-extended, no branch.
+    if mir_bool_conversion(name) {
+      return lw.tmp(ty, b.rv_cast(v, ty))
+    }
+  } else if ot.is_float {
     if name == "to_i" {
       return lw.f64_to_i32(v, e.loc)
     }

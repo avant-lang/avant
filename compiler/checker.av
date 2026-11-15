@@ -1794,6 +1794,16 @@ pub class Checker {
     t_int()
   }
 
+  // A Bool as a number (`alive.to_i32`): 1 for true, 0 for false, in the
+  // integer type the conversion names; nil for another name. It counts
+  // without a branch (the value is zero-extended).
+  pub fn bool_conversion_ty(name: String): Ty? {
+    if name == "to_i" || name == "to_i32" || name == "to_u32" || name == "to_u64" {
+      return int_conversion_ty(name)
+    }
+    nil
+  }
+
   // The method checkers of the builtin receiver types.
   pub fn builtin_method(expr: Expr, object: Ty): Ty {
     // One text for every scalar.
@@ -1888,6 +1898,12 @@ pub class Checker {
       }
       if object.is_bool && expr.ident == "to_s" {
         return field_as_call(expr, object)
+      }
+      if object.is_bool {
+        if bt = bool_conversion_ty(expr.ident) {
+          expr.method_call = true
+          return bt
+        }
       }
       if object.is_string {
         if expr.ident == "size" {
@@ -4433,6 +4449,11 @@ pub class Checker {
     }
     if object.is_bool && expr.callee == "to_s" {
       return scalar_to_s(expr, object)
+    }
+    if object.is_bool && expr.args.size == 0 {
+      if bt = bool_conversion_ty(expr.callee) {
+        return bt
+      }
     }
     expected: Ty? = nil
     if has_want {

@@ -433,7 +433,7 @@ fn main {
 | `Int` | 64-bit signed integer, the default for every count, size and index | [Numbers](#numbers) |
 | `Int32`, `UInt32`, `UInt64` | the other integer widths | [Integer types](#integer-types) |
 | `Float64` | 64-bit float | [Floats](#floats) |
-| `Bool` | `true` or `false`; `!`, `&&`, `\|\|`, `==`, `!=` | |
+| `Bool` | `true` or `false`; `!`, `&&`, `\|\|`, `==`, `!=`; `to_i` gives 1 or 0 | [Conversions](#conversions) |
 | `String` | immutable bytes, normally UTF-8 | [Strings](#strings) |
 | `Bytes`, `Buf` | immutable bytes; a growable byte buffer | [Bytes and Buf](#bytes-and-buf) |
 | `Array(T)` | growable array | [Arrays](#arrays) |
@@ -1018,6 +1018,8 @@ Values of different number types do not mix: `x + y` with an `Int32` and an `Int
 | `UInt32` | `to_u32` | `wrap_u32` |
 | `UInt64` | `to_u64` | `wrap_u64` |
 | `Float64` | `to_f` (rounds to the nearest float) | |
+
+A `Bool` is a number only when converted: `to_i`, `to_i32`, `to_u32` and `to_u64` give 1 for `true` and 0 for `false`, so `alive += cell.to_i` counts without a branch.
 
 Use `to_*` by default: the result is the same number, or the program stops and says why (`avant runtime: to_i32 of Int 5000000000 out of range for Int32 at main.av:3:11`). Use `wrap_*` when you mean the two's-complement bits, as in hashing or binary formats.
 
