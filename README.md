@@ -1533,6 +1533,9 @@ struct Point {
 
 This is how a module adds methods to a type it does not own, the builtin `String`, `Bytes` and `Buf` included (the standard library's `bytes.compress` is one).
 
+- A builtin type keeps its own methods and fields: `fn (s: String) to_s` or `fn (b: Bytes) size` is refused where it is declared, so a builtin is never replaced and a method is never silently left uncalled.
+- An external method of `String`, `Bytes` or `Buf` is seen like a function: in its own module and, when `pub`, in the modules that import it. A `pub` external method of a type declared in the program is part of that type, seen wherever the type is.
+
 ### Type-level functions
 
 `fn self.name(...)` in a type's body declares a function called on the type itself, the usual home of named constructors.

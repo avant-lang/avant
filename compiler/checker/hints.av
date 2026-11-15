@@ -253,13 +253,13 @@ pub fn (checker_self: Checker) builtin_hint(ty: Ty, name: String): String {
 // and fails if one is not a method or field there.
 pub fn builtin_member_names(ty: Ty): String {
   if ty.is_float {
-    return "abs exp floor sqrt to_i"
+    return "abs exp floor sqrt to_i to_s"
   }
   if ty.is_integer {
-    return "abs to_f to_i to_i32 to_u32 to_u64 wrap_i wrap_i32 wrap_u32 wrap_u64"
+    return "abs to_f to_i to_i32 to_s to_u32 to_u64 wrap_i wrap_i32 wrap_u32 wrap_u64"
   }
   if ty.is_string {
-    return "size bytes chars fields get split strip strip_left strip_right to_f to_i to_u64"
+    return "size bytes chars fields get split strip strip_left strip_right to_f to_i to_s to_u64"
   }
   if ty.is_bytes {
     return "size chars get slice to_buf"
@@ -277,6 +277,22 @@ pub fn builtin_member_names(ty: Ty): String {
     return "join"
   }
   ""
+}
+
+// Whether name is one of the space-separated words of names.
+pub fn name_in_list(name: String, names: String): Bool {
+  start = 0
+  i = 0
+  while i <= names.size {
+    if i == names.size || names[i] == 32 {
+      if i - start == name.size && str_slice(names, start, i) == name {
+        return true
+      }
+      start = i + 1
+    }
+    i += 1
+  }
+  false
 }
 
 // `x.name(...)` where match_method found no method of that name on the

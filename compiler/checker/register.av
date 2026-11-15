@@ -12,6 +12,7 @@ import typed_ir
 import checker.names
 import checker
 import checker.init
+import checker.hints
 
 pub fn (checker_self: Checker) find_fn(name: String): FuncSig? {
   if id = checker_self.fn_index.get(name) {
@@ -762,6 +763,14 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   }
   if field_ty = field_owner.field_named(fnn.name) {
     checker_self.fail(fnn.loc, "${field_owner.name}.${fnn.name} is both a field and a method")
+    checker_self.resolver.clear_tparams
+    checker_self.current_module = saved_mod
+    return
+  }
+  // A builtin type's own methods and fields keep their names: a method
+  // of that name would either replace the builtin or never be called.
+  if (owner_ty.is_string || owner_ty.is_bytes || owner_ty.is_buf) && name_in_list(fnn.name, builtin_member_names(owner_ty)) {
+    checker_self.fail(fnn.loc, "${fnn.name} is a builtin of ${owner_key}: a method cannot replace it; give the method another name")
     checker_self.resolver.clear_tparams
     checker_self.current_module = saved_mod
     return

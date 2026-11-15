@@ -370,11 +370,14 @@ pub fn (checker_self: Checker) fail_ambiguous_value(loc: Location, name: String,
 }
 
 pub fn (checker_self: Checker) method_is_visible(fnn: Function, from_mod: String): Bool {
+  // A builtin type has no module of its own to carry its methods: an
+  // external method of String, Bytes or Buf is seen as a function is, in
+  // its module and, when pub, in the modules that import it.
   if fnn.owner == "Bytes" || fnn.owner == "String" || fnn.owner == "Buf" {
     if fnn.mod_name == from_mod {
       return true
     }
-    return checker_self.imported_by(from_mod, fnn.mod_name)
+    return fnn.vis && checker_self.imported_by(from_mod, fnn.mod_name)
   }
   if fnn.vis {
     return true

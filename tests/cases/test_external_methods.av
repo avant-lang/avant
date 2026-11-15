@@ -1,0 +1,119 @@
+import harness
+import backends
+
+// External methods and names across modules. Each case is a program of
+// one or more modules, written into a directory of its own and compiled
+// in parallel with the others; an accepted one must print what it
+// should, a refused one must leave no binary, say the expected words and
+// point at the expected file, line and column.
+//
+// The rules tested here:
+//   - A builtin type's own methods and fields keep their names: a method
+//     of String, Bytes or Buf named like one of them (`to_s`, `chars`,
+//     `size`) is refused where it is declared; it used to replace the
+//     builtin or be silently ignored, depending on the name.
+//   - An external method of String, Bytes or Buf is seen as a function
+//     is: in its module and, when pub, in the modules that import it. A
+//     private one used to be seen by every importer.
+
+class MCase {
+  pub tag: String = ""
+  // Pairs of module name and source; the first module is the root.
+  pub mods: Array(String) = []
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn accepted(tag: String, mods: Array(String), out: String): MCase {
+  f = MCase.new
+  f.tag = tag
+  f.mods = mods
+  f.want = out
+  f.ok = true
+  f
+}
+
+// pos is `module.av:line:column`.
+fn refused(tag: String, mods: Array(String), needle: String, pos: String): MCase {
+  f = MCase.new
+  f.tag = tag
+  f.mods = mods
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn builtin_cases: Array(MCase) {
+  xs: Array(MCase) = []
+  xs.push(refused("builtin-to-s", ["main", "fn (s: String) to_s: String {\n  \"mine\"\n}\n\nfn main {\n  puts(\"abc\".to_s)\n}\n"], "to_s is a builtin of String: a method cannot replace it; give the method another name", "main.av:1:1"))
+  xs.push(refused("builtin-chars", ["main", "fn (s: String) chars: Int {\n  5\n}\n\nfn main {\n  puts(1)\n}\n"], "chars is a builtin of String: a method cannot replace it", "main.av:1:1"))
+  xs.push(refused("builtin-size", ["main", "fn main {\n  puts(1)\n}\n\nfn (b: Bytes) size: Int {\n  5\n}\n"], "size is a builtin of Bytes: a method cannot replace it", "main.av:5:1"))
+  xs.push(refused("builtin-buf", ["main", "import ext\n\nfn main {\n  puts(1)\n}\n", "ext", "pub fn (b: Buf) to_s: String {\n  \"buf\"\n}\n"], "to_s is a builtin of Buf: a method cannot replace it", "ext.av:1:5"))
+  xs.push(accepted("builtin-other-name", ["main", "fn (s: String) show: String {\n  \"<\${s.to_s}>\"\n}\n\nfn (b: Buf) text: String {\n  b.to_s\n}\n\nfn main {\n  puts(\"abc\".show)\n  b = buf_new()\n  b.push_str(\"xy\")\n  puts(b.text)\n  puts(\"abc\".chars.size)\n}\n"], "<abc>\nxy\n3\n"))
+  xs.push(refused("ext-private-imported", ["main", "import ext\n\nfn main {\n  puts(\"x\".quiet())\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n\npub fn (s: String) loud: String {\n  \"L\"\n}\n"], "method String.quiet of module ext is private to its module; mark it pub", "main.av:4:11"))
+  xs.push(refused("ext-private-field-form", ["main", "import ext\n\nfn main {\n  puts(\"x\".quiet)\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n"], "method String.quiet of module ext is private to its module; mark it pub", "main.av:4:11"))
+  xs.push(accepted("ext-pub-imported", ["main", "import ext\n\nfn main {\n  puts(\"x\".loud)\n  puts(ext.go())\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n\npub fn (s: String) loud: String {\n  \"L\${s.quiet}\"\n}\n\npub fn go: String {\n  \"y\".quiet\n}\n"], "Lq\nq\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(MCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    d = "${dir}/${f.tag}"
+    mkdir_p(d)
+    i = 0
+    while i + 1 < f.mods.size {
+      write_av(d, f.mods[i], f.mods[i + 1])
+      i += 2
+    }
+    jobs.push(compile_job("", compiler, "${d}/${f.mods[0]}.av", "${d}/prog.bin", "${d}/prog.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job("${dir}/${f2.tag}", "prog.bin", "prog.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i2 in 0..cases.size {
+    f3 = cases[i2]
+    d3 = "${dir}/${f3.tag}"
+    log = log_text("${d3}/prog.log")
+    if f3.ok {
+      c.eq_int(jobs[i2].code, 0, "${f3.tag}: compiles")
+      if jobs[i2].code != 0 {
+        puts(log)
+      }
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${d3}/prog.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i2].code != 0 && !file_exists("${d3}/prog.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "/${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_external_methods.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    all = builtin_cases()
+    run_cases(c, compiler, scratch_dir(), all)
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

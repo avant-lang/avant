@@ -661,6 +661,21 @@ pub fn (checker_self: Checker) has_private_fn(mod: String, name: String): Bool {
 // the match, as a function's literal argument adopts its parameter's
 // type (D315; Stage 29 W-INT2: `P.new(5)` and `p.set(5)` with an Int32
 // parameter were "no method").
+// A method of that owner and name declared in another module and not
+// seen from the current one (private there), for the message that says
+// so; nil when there is none.
+pub fn (checker_self: Checker) hidden_method(owner: String, owner_mod: String, name: String): FuncSig? {
+  for i in checker_self.method_indices_named(name) {
+    sig = checker_self.methods[i]
+    if !sig.node.type_method && sig.owner == owner && sig.name == name && !checker_self.sig_is_instance(sig) && !checker_self.method_is_visible(sig.node, checker_self.current_module) {
+      if owner_mod.size == 0 || sig.node.owner_mod.size == 0 || sig.node.owner_mod == owner_mod {
+        return sig
+      }
+    }
+  }
+  nil
+}
+
 pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location, shown: String, owner_mod: String, lits: Array(Bool)): FuncSig? {
   cands: Array(FuncSig) = []
   saw_generic = false
@@ -780,6 +795,8 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
       }
       if all.size > 0 {
         checker_self.fail_no_fit(loc, "${shown}.${name}", all, arg_tys)
+      } else if hidden = checker_self.hidden_method(owner, owner_mod, name) {
+        checker_self.fail(loc, "method ${shown}.${name} of module ${hidden.node.mod_name} is private to its module; mark it pub")
       } else {
         checker_self.fail_hint(loc, "no method ${name} on ${shown}", checker_self.method_hint_owner(owner, owner_mod, name, arg_tys.size))
       }
