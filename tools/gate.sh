@@ -1,9 +1,9 @@
 #!/bin/sh
-# The standard gate (Stage 28, from the Wave T gate.sh/snap.sh; D127, D138).
+# The standard gate.
 #
 #   sh tools/gate.sh        (any directory; stdin from /dev/null)
 #
-# One mode (Stage 28 W11: the compiler has one back end): rebuilds the
+# One mode (the compiler has one back end): rebuilds the
 # runtime, B (the seed builds it, on the seed's own back end), C' (B
 # compiles the compiler, bin/avant-c-llvm); runs the suite on B and on C'
 # with AVANT_BACKEND unset (so the suite proves what users get), with
@@ -13,9 +13,9 @@
 # compiler/main.av, `avant __emit-ll`, from C' and from D', byte for byte)
 # and C' = D' byte for byte. Between the default suites and the GC passes
 # it runs the README checks on C' (tools/readme-check.sh, every ```avant
-# block compiled and run, and tools/readme-links.sh; Stage 29 W-FIX1f2,
-# O218), and `avant format --check` over every tracked source
-# (tools/format-check.sh; Stage 29 W5d1, O170): a red one fails the
+# block compiled and run, and tools/readme-links.sh), and `avant format
+# --check` over every tracked source
+# (tools/format-check.sh): a red one fails the
 # gate. Prints one summary line per suite, one
 # for the README checks, the fixed point, and a final `GATE PASS` or
 # `GATE FAIL: ...` line; exits 0 only on PASS (1 on any failure, 2 on
@@ -28,7 +28,7 @@
 #                   keep it under results/ or outside the repository, since the
 #                   repository snapshot excludes only .git/ and results/
 #   GATE_REUSE_C    unset: B builds C'. "1": C' is the compiler the B suite's
-#                   test_fixed_point kept (AVANT_FIXED_POINT_KEEP, D138), else
+#                   test_fixed_point kept (AVANT_FIXED_POINT_KEEP), else
 #                   B builds it. "proof": keeps it, builds C' too, and records
 #                   whether the two are byte-identical (a difference fails).
 #   GATE_SUITE_ENV  extra VAR=value words passed to both suites only (e.g.
@@ -38,30 +38,30 @@
 #                   AVANT_NURSERY=0): one extra suite pass on C' under it,
 #                   after the two default passes, with its own logs
 #                   (L = c-llvm-gc) and the same litter checks; red fails
-#                   the gate (Stage 28 W12, O26). A list of environments
+#                   the gate. A list of environments
 #                   separated by `;` (e.g. 'AVANT_GC_VERIFY=1;
 #                   AVANT_YOUNG_MB=1;AVANT_NURSERY=0;AVANT_GC_STRESS=1')
 #                   builds the letters and runs the two default passes
 #                   once, then one pass on C' per environment, in order,
 #                   each with its own logs (L = c-llvm-gc-SLUG, SLUG the
 #                   environment in lower case with every other character
-#                   than a-z and 0-9 made `_`) and its own summary line
-#                   (Stage 28 W14b2, O68); empty entries are ignored, and
+#                   than a-z and 0-9 made `_`) and its own summary line; empty
+#                   entries are ignored, and
 #                   a list of one environment is the single form. Checks that assert the
 #                   default environment's GC numbers skip themselves
 #                   under it, and checks whose program needs the nursery
 #                   state AVANT_NURSERY=1 (tests/cases/harness.av,
 #                   gc_env_outer). AVANT_GC_STATS is not a suite
 #                   environment: it writes to every program's stderr.
-#   GATE_GC_OVERLAP how many GC passes run at once (default 2; Stage 28
-#                   W16t). The timed passes (the builds, the B and C'
+#   GATE_GC_OVERLAP how many GC passes run at once (default 2). The timed
+#                   passes (the builds, the B and C'
 #                   suites, D' and __emit-ll) always run alone; the GC
 #                   passes are proofs, not measurements, and with a list of
 #                   environments up to GATE_GC_OVERLAP of them run
 #                   concurrently, each with its own logs, counts and
 #                   verdict, reported in the list's order. 1 runs them one
-#                   after another, as before W16t. Measured at W16t on
-#                   D235's four passes (16 threads): 4 at once with
+#                   after another. Measured when the overlap was built, on
+#                   the four standard passes (16 threads): 4 at once with
 #                   --jobs 4 378 s, with --jobs 8 396 s, 2 with --jobs 8
 #                   379 s, one at a time 562 s (the gate's wall); 2 keeps
 #                   each pass nearer its time alone.
@@ -84,7 +84,7 @@
 #                   (unshare --user --mount; capabilities dropped after
 #                   the mount, TMPDIR unset), so the no-litter proof covers
 #                   everything the gate writes to /tmp and nothing another
-#                   lane does (the Valk stage, VALK-TM3, O693: with lanes
+#                   lane does (with lanes
 #                   in parallel under the shared lock, another lane's own
 #                   /tmp entry, gone during a GC pass, failed the gate).
 #                   The checkout, GATE_OUT and the seed, when under /tmp,
@@ -96,7 +96,7 @@
 #                   real /tmp is snapshotted, as before.
 #   GATE_EMIT_BOUND seconds (default 20): the summary reports the C' (c-llvm)
 #                   __emit-ll time of compiler/main.av within or OVER it;
-#                   report only, never a failure (W11d).
+#                   report only, never a failure.
 #
 # Every child runs under `timeout -k 10` (runtime 300 s, compiler build and
 # dump 900 s, suite 900 s) with stdin from /dev/null; a timeout is a failure.
@@ -121,13 +121,13 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 2
 [ -f compiler/main.av ] && [ -f runtime/build.sh ] || { echo "gate: $root is not an avant checkout" >&2; exit 2; }
 
-# The seed: GATE_SEED, else tools/letters.sh's default (computed only there, O31).
+# The seed: GATE_SEED, else tools/letters.sh's default (computed only there).
 seed=$(LETTERS_SEED=${GATE_SEED:-} sh tools/letters.sh --print-seed) || exit 2
 [ -x "$seed/avant" ] || { echo "gate: no avant in $seed" >&2; exit 2; }
 out=$(realpath -m "${GATE_OUT:-results/gate-$(date +%Y%m%d-%H%M%S)}")
 mkdir -p "$out" || exit 2
 
-# The private /tmp (GATE_PRIVATE_TMP, O693): the gate runs itself again
+# The private /tmp (GATE_PRIVATE_TMP): the gate runs itself again
 # inside the namespace. GATE_IN_PRIVATE_TMP marks that run and is
 # removed at once, so nothing the gate starts inherits it (a gate a test
 # runs makes its own).
@@ -135,7 +135,7 @@ case "${GATE_PRIVATE_TMP:-1}" in
   0) private_tmp="off (GATE_PRIVATE_TMP=0): the real /tmp is snapshotted" ;;
   1)
     if [ "${GATE_IN_PRIVATE_TMP:-}" = 1 ]; then
-      private_tmp="a tmpfs in a mount namespace of its own (O693)"
+      private_tmp="a tmpfs in a mount namespace of its own"
     else
       unshare --user --map-current-user --mount --keep-caps true < /dev/null > "$out/private-tmp.log" 2>&1 || {
         echo "gate: cannot make a private /tmp ($(tail -1 "$out/private-tmp.log")); GATE_PRIVATE_TMP=0 runs against the real /tmp" | tee "$out/summary.txt"
@@ -168,11 +168,11 @@ case "$REUSE" in ''|1|proof) ;; *) echo "gate: GATE_REUSE_C must be unset, 1, or
 SUITE_ENV=${GATE_SUITE_ENV:-}
 GC_ENV=${GATE_GC_ENV:-}
 # The bound the emit-ll report line compares the C' __emit-ll time of
-# compiler/main.av with (seconds; report only, W11d: 10.6 s measured).
+# compiler/main.av with (seconds; report only; 10.6 s when it was set).
 EMIT_BOUND=${GATE_EMIT_BOUND:-20}
 case "${GATE_BACKEND:-llvm}" in
   llvm) ;;
-  *) echo "gate: GATE_BACKEND=${GATE_BACKEND} is gone (Stage 28 W11: one back end, one gate)" >&2; exit 2 ;;
+  *) echo "gate: GATE_BACKEND=${GATE_BACKEND} is gone (one back end, one gate)" >&2; exit 2 ;;
 esac
 C=c-llvm
 
@@ -194,7 +194,7 @@ snap() {
 echo "gate: root=$root seed=$seed out=$out reuse=${REUSE:-no} suite-env=${SUITE_ENV:-none} gc-env=${GC_ENV:-none}" | tee "$out/summary.txt"
 echo "gate: private /tmp: $private_tmp" | tee -a "$out/summary.txt"
 
-# The runtime-C rooting lint (Stage 28 W16a, gc-design.md section 4.2
+# The runtime-C rooting lint (gc-design.md section 4.2
 # check 3; runtime/avant_gc.h's RC1-RC4).
 if sh tools/gc-lint.sh > "$out/gc-lint.txt" 2>&1 < /dev/null; then
   echo "gate: $(tail -1 "$out/gc-lint.txt")" | tee -a "$out/summary.txt"
@@ -259,7 +259,7 @@ for L in b $C; do
   suite_pass "$L" "$L" "$keep $SUITE_ENV"
 done
 
-# The README's programs and links (Stage 29 W-FIX1f2, O218), on C' and
+# The README's programs and links, on C' and
 # alone (a few seconds): every ```avant block compiled and run against
 # what the README says it prints (tools/readme-check.sh), and every
 # heading, anchor and relative link (tools/readme-links.sh). A red check
@@ -281,15 +281,15 @@ readme_checks() {
 }
 readme_checks
 
-# Every source canonical for `avant format` (Stage 29 W5d1, O170, O200),
+# Every source canonical for `avant format`,
 # on C' and alone (about 3 s): tools/format-check.sh runs `format
-# --check`, each file through the formatter's self-check (O464), over the
+# --check`, each file through the formatter's self-check, over the
 # tracked .av files but tests/fixtures/format/surface.av (messy on
 # purpose) and FORMAT_SKIP. FORMAT_SKIP is the dated list of sources left
-# non-canonical because another lane held them when W5d1 merged; the
+# non-canonical because another lane held them when the check landed; the
 # merge after each such lane formats its files and removes them from the
 # list. A stale entry (a path that is no longer tracked) fails the step.
-# 2026-11-14 (W5d1): empty, no running lane held a non-canonical source.
+# 2026-11-14: empty, no running lane held a non-canonical source.
 FORMAT_SKIP=""
 format_check() {
   env -u AVANT_BACKEND AVANT_COMPILER="$root/bin/avant-$C" /usr/bin/time -p -o "$out/time-format-check.txt" timeout -k 10 300 sh tools/format-check.sh $FORMAT_SKIP > "$out/format-check.log" 2>&1 < /dev/null
@@ -297,8 +297,8 @@ format_check() {
   [ $rc -eq 0 ] || fail "format check: $(tail -1 "$out/format-check.log") (rc=$rc, format-check.log)"
 }
 format_check
-# One extra pass on C' per GC environment (O26), when asked: GATE_GC_ENV
-# is one environment or a `;`-separated list of them (O68). GC_LIST is
+# One extra pass on C' per GC environment, when asked: GATE_GC_ENV
+# is one environment or a `;`-separated list of them. GC_LIST is
 # the list's non-empty entries, one per line; with one entry the pass is
 # logged as c-llvm-gc, as before the list form, else as c-llvm-gc-SLUG.
 SUITES="b $C"
@@ -317,7 +317,7 @@ gc_env_of() {
   done
 }
 # gc_pass L ENV JOBS: one GC environment's suite on C' while other GC
-# passes run (Stage 28 W16t): its own TMPDIR root, which must be empty
+# passes run: its own TMPDIR root, which must be empty
 # afterwards (new-L.tmp lists what is left), the repository snapshot
 # around it, and its failures written to fails-L.txt for the parent.
 gc_pass() {
@@ -395,7 +395,7 @@ if [ "$GC_N" -gt 0 ]; then
   fi
 fi
 
-# D' by C' (never C' by itself), then the .ll fixed point (D171) and
+# D' by C' (never C' by itself), then the .ll fixed point and
 # the executables' identity.
 letters d-llvm > "$out/build-d-llvm.log" 2>&1 || { fail "d-llvm build failed (rc=$?)"; finish; }
 for L in c-llvm d-llvm; do
@@ -426,7 +426,7 @@ ptimes() { [ -f "$1" ] && grep -E '^(real|user|sys) ' "$1" | tr '\n' ' '; }
   echo "build B: $(ptimes "$out/time-build-b.txt")"
   [ -f "$out/time-build-$C.txt" ] && echo "build $C: $(ptimes "$out/time-build-$C.txt")"
   [ -f "$out/time-build-d-llvm.txt" ] && echo "build d-llvm: $(ptimes "$out/time-build-d-llvm.txt")"
-  # Report only, never a failure (W11d): the compile time of the
+  # Report only, never a failure: the compile time of the
   # compiler's own source, against a stated bound.
   if [ -f "$out/time-emit-c-llvm.txt" ]; then
     er=$(awk '$1 == "real" { print $2 }' "$out/time-emit-c-llvm.txt")

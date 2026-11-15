@@ -3,14 +3,14 @@
 
   measure.py rounds ROUNDS ROWS_TSV HEAD_TXT OUT_DIR
 
-The loop of tools/rounds.py (the one copy, O221, O652): one unmeasured
+The loop of tools/rounds.py (the one copy): one unmeasured
 warm-up of every row, then ROUNDS fresh processes per row, the units'
 order rotating as rounds.py rotates it and the sides' order rotating
 inside each unit. Each run is started by rounds.py's spawner (a small C
 program compiled into the session's directory): the wall time is its
 monotonic clock just before vfork and just after wait4, so no wrapper's
-start-up is inside it (GNU time's was, O387), and peak RSS, user and
-system time are wait4's rusage of the program's own process (O372).
+start-up is inside it (GNU time's was), and peak RSS, user and
+system time are wait4's rusage of the program's own process.
 
 ROWS_TSV (written by run.sh): one row a line, tab-separated: side, set,
 row, unit (`all`, an iso entry with `+` for its blank, or `-` for a

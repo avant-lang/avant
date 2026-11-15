@@ -11,8 +11,8 @@
 #include <sys/mman.h>
 #include <time.h>
 
-/* The heap's shape (Stage 28 W12; the reservation, chunks and side
- * tables since W14a1): the reserved range and its block supply, the
+/* The heap's shape (the reservation, chunks and side
+ * tables): the reserved range and its block supply, the
  * spaces' block lists, object starts and line marks, object lookup (is
  * a word a heap payload, which object holds an address), the forwarding
  * table, the mark work list, and the type maps every tracer reads
@@ -31,8 +31,8 @@ __attribute__((constructor(101))) static void gc_heap_static_init(void) {
   {
     /* The handshake's stall report under AVANT_GC_VERIFY waits on this
      * variable with a deadline (hs_wait_verify): on CLOCK_MONOTONIC, so a
-     * step of the wall clock does not move the report (the Valk stage,
-     * VALK-TM3, O667; W-FIX1g's WsClient.cond). */
+     * step of the wall clock does not move the report (as std.http's
+     * WsClient.cond). */
     pthread_condattr_t ca;
     pthread_condattr_init(&ca);
     pthread_condattr_setclock(&ca, CLOCK_MONOTONIC);
@@ -64,8 +64,8 @@ int gc_type_word_is_ref(const AvantHeader *h, size_t w) {
   return (m->words[w / 64] >> (w % 64)) & 1u;
 }
 
-/* gc_heap.refs[ID] from the type's map (EACH_REF_SLOT, the Valk stage,
- * VALK-T, O578): the list of a small record's reference words, or
+/* gc_heap.refs[ID] from the type's map (EACH_REF_SLOT): the list of a
+ * small record's reference words, or
  * TYPE_REFS_WALK. Called whenever the map of ID changes, and once for
  * AVANT_TYPE_PTRS (gc_init_slow). */
 void gc_type_refs_update(uint32_t id) {
@@ -144,8 +144,8 @@ static void unreserve(void *p, uint64_t len) {
  * the data range, 4 MiB aligned (over-reserved by one chunk, the excess
  * returned), and the six side tables and the chunk map at their
  * ratios (records 1/512, start bits 1/64, mark bits 1/64, line marks
- * 1/256, the large-object page table 1/1024, the card table 1/CARD_SIZE
- * (Stage 28 W16t), the map one GcChunk per chunk). All or nothing. */
+ * 1/256, the large-object page table 1/1024, the card table 1/CARD_SIZE, the
+ * map one GcChunk per chunk). All or nothing. */
 static int reserve_all(uint64_t bytes) {
   uint64_t nblocks = bytes >> BLOCK_SHIFT;
   uint64_t nchunks = bytes >> CHUNK_SHIFT;
@@ -329,8 +329,8 @@ uint64_t gc_chunk_take(uint64_t n) {
   return c;
 }
 
-/* Chunk C's share of the two counts gc_heap_return starts from (the Valk
- * stage, VALK-T2, O630), added (SIGN 1) or taken back (SIGN -1):
+/* Chunk C's share of the two counts gc_heap_return starts from, added (SIGN 1)
+ * or taken back (SIGN -1):
  * gc_heap.free_resident_other holds its resident free bytes other than a
  * small chunk's free blocks, which are gc_heap.free_resident's (the dirty
  * free pages of a large-object chunk, a free chunk's whole data while it
@@ -426,8 +426,8 @@ static uint64_t make_small_chunk(void) {
 /* The chunk the next block is taken from when the last one's cannot be
  * used again (gc_heap.small_take's comment): the lowest small chunk with
  * a free block, or a new one. Here, once per chunk taken from and not
- * once per block (the Valk stage, VALK-A2, O651; until then
- * gc_block_take tested it at every clean block), a chunk that is empty
+ * once per block (gc_block_take used to test it at every clean block), a chunk
+ * that is empty
  * with nothing resident (a new one, or one whose free blocks were all
  * given back to the OS) leaves gc_heap.clean_empty_chunks: its first
  * block is about to be taken. */
@@ -535,9 +535,9 @@ static void decommit_chunk(uint64_t c) {
 
 /* The resident free bytes of chunk C: free blocks not madvised (counted
  * in GcChunk.nres as blocks join and leave the free list and are
- * madvised; until the Valk stage's VALK-T a walk of the free list at
- * every call, which a young collection that emptied a block makes: O577;
- * AVANT_GC_VERIFY still walks it and stops on a count that differs), the
+ * madvised; once a walk of the free list at every call, which a young
+ * collection that emptied a block makes; AVANT_GC_VERIFY still walks it
+ * and stops on a count that differs), the
  * dirty free pages of a large-object chunk, or a free chunk's whole data
  * while it is dirty. */
 static uint64_t chunk_resident_free(uint64_t c) {
@@ -568,8 +568,8 @@ static uint64_t chunk_resident_free(uint64_t c) {
   return n;
 }
 
-/* Returning memory after a full collection (gc-design.md §2.5, §5.5,
- * O53, Q12). Two rules keep a cycle from returning what the next one
+/* Returning memory after a full collection (gc-design.md §2.5, §5.5).
+ * Two rules keep a cycle from returning what the next one
  * takes back. Only idle memory goes back: memory freed before this full
  * collection began and not reused since (a block's, a chunk's idle
  * stamp below the current count of full collections), so a buffer freed
@@ -582,14 +582,14 @@ static uint64_t chunk_resident_free(uint64_t c) {
  * commit charge), then free blocks are madvised one by one, then the
  * dirty free pages of large-object chunks.
  *
- * Nothing to do is found at once (the Valk stage, VALK-T2, O630): the
+ * Nothing to do is found at once: the
  * resident free bytes are a total kept as they change (gc_heap.free_resident
  * and free_resident_other), and the chunks the first loop decommits
  * whatever the total is (empty, committed, nothing resident) are counted
  * (gc_heap.clean_empty_chunks, gc_chunk_account). With the total within
  * the target the first loop decommits only those chunks and the second
  * does nothing, so a call that finds the total within the target and no
- * such chunk returns without reading the chunk map. Until VALK-T2 every
+ * such chunk returns without reading the chunk map. It used to be that every
  * call summed every chunk's resident free bytes and looked at every chunk
  * (a young collection that empties a block calls this: 172 instructions
  * at four chunks, sixteen popcounts for each large-object chunk, growing
@@ -691,7 +691,7 @@ void gc_heap_return(uint64_t live) {
 }
 
 /* The mature space's blocks in order in its list alone (GcSpace's
- * comment; the Valk stage, VALK-T, O577): back is emptied into list and
+ * comment): back is emptied into list and
  * rev cleared, the order unchanged. For the code that walks the blocks in
  * order through Block.next: a full collection (its sweep, its
  * defragmentation, the young allocator's list rebuilt after it) and
@@ -728,15 +728,15 @@ void gc_mature_normalize(void) {
 }
 
 /* The live lines of B, eight line marks at a time against the epoch
- * (Stage 28 W15d, O94: the young sweep's word-wise reading, W15c's O87;
+ * (the young sweep's word-wise reading;
  * before, a byte loop over the 128 marks). */
 int gc_block_live_lines(Block *b) {
   uint64_t epoch8 = line_epoch8();
   uint64_t sum = 0;
   int k;
   /* Each word's live bytes as 0 or 1 per byte, added byte-wise (sixteen
-   * words: no byte passes 16), and the bytes summed once at the end (the
-   * Valk stage, VALK-T, O600: one multiply a block, not one a word). */
+   * words: no byte passes 16), and the bytes summed once at the end (one
+   * multiply a block, not one a word). */
   for (k = 0; k < LINE_WORDS; k++) {
     uint64_t m;
     memcpy(&m, b->line_mark + 8 * k, sizeof m);
@@ -746,7 +746,7 @@ int gc_block_live_lines(Block *b) {
 }
 
 /* Whether B has a live line (the young collection's first question of
- * every young block; the Valk stage, VALK-T, O600: it counted them). */
+ * every young block; it used to count them). */
 int gc_block_any_live(const Block *b) {
   uint64_t epoch8 = line_epoch8();
   int k;
@@ -760,8 +760,8 @@ int gc_block_any_live(const Block *b) {
   return 0;
 }
 
-/* The line sweep of block B over the lines LO..HI (Stage 28 W15c, O87;
- * moved here from avant_gc_sticky.c in W15d, O94, so the full sweep,
+/* The line sweep of block B over the lines LO..HI (moved here from
+ * avant_gc_sticky.c so the full sweep,
  * gc_keep_if_live, shares it with the young sweep): a line no survivor
  * marked at the current epoch is free, and its start bits are cleared.
  * Word-wise: the block's 128 line marks are read 8
@@ -773,7 +773,7 @@ int gc_block_any_live(const Block *b) {
  * line count and leaves the block's bump and limit on its first hole (as
  * gc_reset_block_bump does: search 0; a full block's cursor at its end).
  * *FREED counts the freed lines of the range. A block with no live line
- * is left as it is (the Valk stage, VALK-T, O600): its whole range is
+ * is left as it is: its whole range is
  * counted freed and 0 returned; the caller frees such a block (the young
  * sweep; the full sweep does not come here with one), and a block taken
  * again has its start bits, line marks and cursor set anew
@@ -866,19 +866,19 @@ size_t gc_obj_total(const AvantHeader *h) {
 
 /* H1 (gc-audit.md §2): p is a heap payload iff it is 8-aligned and its
  * header is the start of a live object: in the committed range (one
- * compare; static objects such as string literals fail it at once, O29),
+ * compare; static objects such as string literals fail it at once),
  * its granule's start bit set, and its chunk a small-object chunk whose
  * block is in use, or a large-object chunk (a large object's header has
  * its start bit too, gc-design.md §2.3; it is set exactly while the
  * object lives). OL receives a large object's header, OB a block
  * object's block. */
 /* No start bit at granule G (offset OFF): an object the inline path
- * allocated has none until something needs it (late start bits, the
- * Valk stage, VALK-A2, M7; avant_gc_alloc.c): its block's are set now,
+ * allocated has none until something needs it (late start bits,
+ * avant_gc_alloc.c): its block's are set now,
  * and the bit is read again. Out of line and cold: the lookup itself
  * stays as small as it was (with this code in its body every lookup
  * cost more: about 0.8 M instructions on scenario 8 of the collector
- * benchmark; the record of VALK-A2). */
+ * benchmark when it was measured). */
 static __attribute__((noinline, cold)) int late_start(uintptr_t off, uint64_t g) {
   if (gc_heap.chunks[off >> CHUNK_SHIFT].kind != CHUNK_SMALL || !gc_heap.blocks[off >> BLOCK_SHIFT].in_use) {
     return 0;
@@ -980,7 +980,7 @@ void *gc_object_payload(void *p, Block **ob, AvantHeader **ol) {
     if (!b->in_use) {
       return NULL;
     }
-    /* The block's late start bits (M7): an address inside an object the
+    /* The block's late start bits: an address inside an object the
      * inline path allocated is found by them like any other. */
     gc_lazy_touch(b);
     g = (size_t)((off & (BLOCK_SIZE - 1)) >> 3);
@@ -1028,8 +1028,8 @@ int avant_is_heap(void *payload) {
   return gc_is_heap_payload(payload, NULL, NULL);
 }
 
-/* The heap's reservation as generated code reads it (avant_rt.h; the
- * Valk stage, VALK-A2, O629): its first byte and its size, set once by
+/* The heap's reservation as generated code reads it (avant_rt.h): its
+ * first byte and its size, set once by
  * gc_heap_reserve and zero before it. */
 uint64_t avant_gc_heap_lo;
 uint64_t avant_gc_heap_len;
@@ -1048,12 +1048,12 @@ __attribute__((visibility("hidden"))) int avant_gc_interior(const void *p) {
 /* The contract (ABI name kept, gc-design.md §3.1): 1 when a young
  * collection can move this object, 0 when no collection before the next
  * full one moves it; .parallel keeps a raw address only on 0. Under S+
- * (Stage 28 W15c) a young block object may be copied, so it is 1 for one
+ *  a young block object may be copied, so it is 1 for one
  * that is not pinned; mature and large objects stay put, so a parallel
  * numeric loop can keep their address. (Under candidate S alone, a
- * build deleted in the Valk stage's VALK-T2, no young collection moved
- * anything and it was 0 for every object; under E, deleted in W15d, it
- * was 1 for every young block object.) */
+ * build since deleted, no young collection moved anything and it was 0
+ * for every object; under E, deleted too, it was 1 for every young block
+ * object.) */
 int32_t avant_is_young(void *payload) {
   AvantHeader *h;
   if (!payload || ((uintptr_t)payload & (ALIGN - 1)) != 0) {
@@ -1074,7 +1074,7 @@ int32_t avant_is_young(void *payload) {
 void gc_foreach_block_object(Block *b, void (*fn)(AvantHeader *, Block *)) {
   int w;
   /* Every object of the block: the ones the inline path allocated get
-   * their start bits first (M7). */
+   * their start bits first. */
   gc_lazy_touch(b);
   for (w = 0; w < START_WORDS; w++) {
     uint64_t bits = b->start[w];
@@ -1094,8 +1094,8 @@ void gc_zero_line_marks(Block *list) {
   }
 }
 
-/* The start of a full collection's line marking (gc-design.md §2.2,
- * Stage 28 W15b): the epoch advances, so every line mark of every block
+/* The start of a full collection's line marking (gc-design.md §2.2): the
+ * epoch advances, so every line mark of every block
  * is stale at once (no walk of the block lists zeroing them, as before).
  * Epochs run 1..255; past 255 every committed small chunk's line marks
  * are zeroed (one memset of 16 KiB per chunk) and the epoch restarts at
@@ -1153,7 +1153,7 @@ void avant_type_map(uint32_t type_id, uint64_t word_bits) {
   gc_type_refs_update(type_id);
 }
 
-/* Stage 28 W1b. Registers bits for payload words word_base ..
+/* Registers bits for payload words word_base ..
  * word_base + 63 of type_id (word_base a multiple of 64; later chunks
  * extend the bitmap, so a map may be any length) with an element stride
  * in words (0: one record; > 0: a buffer of repeated elements, every

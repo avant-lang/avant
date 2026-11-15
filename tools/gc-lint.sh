@@ -1,5 +1,5 @@
 #!/bin/sh
-# The runtime-C rooting lint (Stage 28 W16a, gc-design.md section 4.2
+# The runtime-C rooting lint (gc-design.md section 4.2
 # check 3; the contract RC1-RC4 is in runtime/avant_gc.h).
 #
 # Over the runtime units outside the collector (runtime/avant_*.c except
@@ -121,7 +121,7 @@ FNR == 1 { flush(); incom = 0; pending_ok = 0 }
 END {
   flush()
   alloc["avant_alloc"] = 1
-  # the inline string allocator of avant_rt.h (Stage 29 W-INT1) allocates
+  # the inline string allocator of avant_rt.h allocates
   alloc["avant_str_alloc"] = 1
   changed = 1
   while (changed) {

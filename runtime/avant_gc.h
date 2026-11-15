@@ -8,7 +8,7 @@
 #include <time.h>
 
 /*
- * The collector's interface to the rest of the runtime (Stage 28 W12).
+ * The collector's interface to the rest of the runtime.
  *
  * The collector lives in runtime/avant_gc_*.c (avant_gc_internal.h lists
  * the files and is private to them). A runtime unit outside the
@@ -21,39 +21,39 @@
  * compile error. g_avant_shared, the no-GC region (avant_gc_nogc_begin/end) and the
  * handle scopes (AvantGcFrame's fields, AVANT_GC_SCOPE) are the
  * names here avant_rt.h does not ship (it declares avant_gc_top and the
- * frame entries generated code uses, Stage 28 W18).
+ * frame entries generated code uses).
  *
  * What the collector does at these calls, as the callers rely on it
- * today (a description of the current behavior, not a new contract; W13
- * audits it):
- *   - avant_alloc may collect. A young collection (S+, Stage 28 W15c)
+ * today (a description of the current behavior, not a new contract):
+ *   - avant_alloc may collect. A young collection (S+)
  *     promotes young objects in place and copies the survivors of the
  *     young blocks it evacuates, rewriting root slots, runtime TLS slots
  *     and the fields of the objects it scanned; it never reads or
- *     rewrites a word of the C stack (the conservative scans retired in
- *     Stage 28 W16b, gc-design.md section 4.3: runtime C roots what it
+ *     rewrites a word of the C stack (the conservative scans are retired,
+ *     gc-design.md section 4.3: runtime C roots what it
  *     holds, RC1 below), and pinned objects never move. A full collection
  *     may evacuate sparse mature blocks holding no pinned object; it
  *     rewrites every precise reference. Every other registered thread is
- *     stopped at a safepoint or native meanwhile (Stage 28 W17a's
- *     handshake, avant_gc_safepoint.c; it closed D191's window).
+ *     stopped at a safepoint or native meanwhile (the safepoint
+ *     handshake, avant_gc_safepoint.c; before it, another thread's C
+ *     code could run while a collection moved what it held).
  *   - avant_gc_defer_enter/leave (avant_gc_nogc_begin/end) bracket a
  *     region in which no collection runs (regions nest); the entry
- *     collects nothing (RC4 below; Stage 28 W16a).
+ *     collects nothing (RC4 below).
  *   - A store of a reference into a heap object is preceded by
- *     avant_barrier on that object (D187), or by
- *     avant_barrier_slot(object, slot) when the slot is known (Stage 28
- *     W16t): a mature large pointer buffer (a carded object) is then
+ *     avant_barrier on that object, or by
+ *     avant_barrier_slot(object, slot) when the slot is known: a mature large
+ *     pointer buffer (a carded object) is then
  *     scanned at a young collection only in the 256-byte cards a store
  *     marked; avant_barrier on such a buffer counts every card.
  *   - avant_pin/avant_unpin keep an object at its address while C holds
  *     it (counted). avant_pin_field/avant_release_range are the pins of
  *     C-layout field stores, recorded by the field's address until a
- *     `release` (avant_rt.h; Stage 28 W16c, D266).
+ *     `release` (avant_rt.h).
  *     avant_alloc_in_mature(1) makes the calling thread
  *     allocate in the mature space, which a young collection never
- *     moves, until avant_alloc_in_mature(0) (no runtime unit uses it
- *     since Stage 28 W17b: the pool's workers, the HTTP loop threads and
+ *     moves, until avant_alloc_in_mature(0) (no runtime unit uses it:
+ *     the pool's workers, the HTTP loop threads and
  *     foreign threads allocate young in their own young blocks).
  *   - A thread that runs Avant code registers itself
  *     (avant_gc_register_thread) before its first allocation and
@@ -61,7 +61,7 @@
  *     Avant caller opens a base frame with avant_gc_enter/avant_gc_leave
  *     (the HTTP loop threads). A thread that exits still registered (a
  *     foreign C thread, registered by its first avant_gc_enter) is
- *     unregistered by its exit (a pthread key destructor, Stage 28 W17c).
+ *     unregistered by its exit (a pthread key destructor).
  *   - g_avant_shared is 0 until a second thread registers and 1 from
  *     then on: while it is 0, the one mutator may skip the world lock
  *     (avant_array.c, avant_str.c).
@@ -72,11 +72,11 @@
  *     variable registers that slot once per thread with
  *     avant_gc_add_root before it first holds one (avant_hash.c's last
  *     key); the collections on that thread read and rewrite it like a
- *     root slot (Stage 28 W14b2, gc-design.md section 1.4; it replaced a
+ *     root slot (gc-design.md section 1.4; it replaced a
  *     callback from the collector into avant_hash.c).
  *
  * The runtime-C contract, RC1-RC5 (gc-design.md section
- * 4.2; it replaces W14b1's defer discipline and W15a1's named
+ * 4.2; it replaces the earlier defer discipline and named
  * safepoints). A runtime C function is a mutator like generated code:
  * any call that may collect (an allocation, a helper that allocates, a
  * callback into Avant) may run a young collection that moves the young
@@ -102,11 +102,11 @@
  *   defragmenting full collection rewrites it. Slots are registered in order (0, 1, ...), before the
  *   first call that may collect; at most one scope per C block (open a
  *   nested block for a second). It is thread-local, takes no lock and
- *   allocates nothing. The same in a shared program since Stage 28
- *   W17a: other threads collect only while this one is stopped at a
+ *   allocates nothing. The same in a shared program: other threads
+ *   collect only while this one is stopped at a
  *   safepoint or native (gc-design.md section 4.4), so a scope no longer
- *   holds a no-GC region there (until W17a it did, D191, and took the
- *   world lock twice; O111).
+ *   holds a no-GC region there (before the safepoint handshake it did,
+ *   and took the world lock twice).
  *
  *   RC2. No raw derived pointer across a collecting call. An interior
  *   pointer (s + start) or a buffer's data pointer (h->keys, a->buf,
@@ -116,14 +116,14 @@
  *   objects the function allocated and has not published yet are
  *   handles too (hash grow's new buffers; split's array being filled).
  *
- *   RC3. Barriers (D187). Every store of a reference into a heap object
+ *   RC3. Barriers. Every store of a reference into a heap object
  *   has avant_barrier on that object (or avant_barrier_at on the
  *   stored-to address, or avant_barrier_slot with the slot) before the
  *   store (RC5; it used to be allowed after the store) and so before
- *   the next call that may collect (C34: avant_hash_inc_slice and
+ *   the next call that may collect (avant_hash_inc_slice and
  *   array_grow lost young keys and elements without one). A store into
  *   an element buffer that knows its slot uses avant_barrier_slot (card
- *   marking, Stage 28 W16t); a bulk copy or fill barriers the buffer
+ *   marking); a bulk copy or fill barriers the buffer
  *   with avant_barrier, which counts every card.
  *
  *   RC5. The barrier first. A store that
@@ -143,12 +143,12 @@
  *
  *   RC4. No-GC regions, only where C cannot root. Where references live
  *   inside a C library's own data structures while it calls back or
- *   allocates (none in the runtime since Stage 28 W17a, whose handshake
+ *   allocates (none in the runtime since the safepoint handshake
  *   retired the HTTP/WS sends' regions; see the checklist), the
  *   function brackets the region with avant_gc_nogc_begin/end (regions
  *   nest; one process-wide depth, under the world lock). Allocation
  *   inside is allowed and counted against the young budget and the heap
- *   limit (C32: past the limit the full collection runs after the
+ *   limit (past the limit the full collection runs after the
  *   region, unless the region alone exceeds it); the policy's
  *   collection request is not lost: the budget stays spent, so the
  *   first collection point after the region runs it. A collection
@@ -166,7 +166,7 @@
  *
  *   How it is checked (gc-design.md section 4.2): AVANT_GC_STRESS=1 runs
  *   a young collection before every allocation (avant_alloc; generated
- *   code's allocations too since Stage 29 W-FIX1c, the inline path being
+ *   code's allocations too, the inline path being
  *   off under it) that moves
  *   every young object S+ can move and fills freed memory with 0xdb
  *   (the stress mode, avant_gc_collect.c), so a function that breaks
@@ -175,25 +175,25 @@
  *   when an allocating call stands in a function with neither a scope,
  *   a region nor the comment.
  *
- *   The checklist (gc-audit.md section 13's table, moved here; Stage 28
- *   W16a converted every row; "C" converted to RC1-RC3, "N" nothing
- *   held, "R4" a no-GC region kept, with its reason):
+ *   The checklist (gc-audit.md section 13's table, moved here, every
+ *   row converted; "C" converted to RC1-RC3, "N" nothing
+ *   held, or a no-GC region kept, with its reason):
  *     row (unit)                                   verdict
  *     avant_str_concat, _cat_i32, _from_i32_bytes  C (operands, array)
  *     dup_bytes_at, slice, strip (avant_str.c)     C (text + offset, RC2)
- *     avant_str_split, _fields, chars_build (C35)  C (array filled in
+ *     avant_str_split, _fields, chars_build        C (array filled in
  *                                                  place, str_array_new)
  *     avant_str_repeat_byte, avant_hash_new        N (integer inputs)
  *     array push_slot/_ptr/_i32, reserve,
- *       array_grow (W16a item 2)                   C (scope on growth)
+ *       array_grow                                 C (scope on growth)
  *     avant_array_copy                             C
- *     buf_append_slow, buf_grow (item 2)           C
+ *     buf_append_slow, buf_grow                    C
  *     avant_buf_new, _to_str, _ensure,
  *       avant_bytes_to_buf                         C
- *     hash grow, setters, inc_slice (item 2)       C
+ *     hash grow, setters, inc_slice                C
  *     inc_str, inc_i32k                            C
  *     keys/vals (hash_collect; was items[])        C (array first, RC2)
- *     avant_json_parse (audit 12 shape 2)          C (yyjson allocates
+ *     avant_json_parse                             C (yyjson allocates
  *                                                  from its own pool)
  *     avant_json_f64s, copy_str                    C
  *     base64 encode/decode, zlib                   C
@@ -201,29 +201,28 @@
  *     avant_argv, avant_sys_list                   C (array filled in
  *                                                  place)
  *     io dup_bytes, avant_llvm.c avant_string      N (C memory)
- *     avant_spawn (avant_task.c; C28, R1)          C (the record is a
+ *     avant_spawn (avant_task.c)                   C (the record is a
  *                                                  task root, added
  *                                                  before the first
  *                                                  collecting call, read
- *                                                  from the root; W16b,
- *                                                  W17a)
- *     avant_join, fs_copy (W17a: a native wait)    C (scope)
+ *                                                  from the root)
+ *     avant_join, fs_copy (a native wait)          C (scope)
  *     HTTP make_string/_bytes, packed headers      C
  *     HTTP/WS send, close, respond                 N (no safepoint
  *                                                  inside: no thread
  *                                                  collects meanwhile;
  *                                                  their regions went
- *                                                  in W17a)
+ *                                                  with the handshake)
  *     HTTP client fetch                            the request pinned
  *                                                  for its native loop
  *     HTTP server state in srv (C memory) across
  *       dispatch                                   pinned for the serve
- *                                                  (W16a: with one loop
+ *                                                  (with one loop
  *                                                  the program may stay
  *                                                  unshared and S+
  *                                                  could move it)
  *     g_last_key (avant_hash.c), g_json_pool
- *       (avant_json.c, W16a)                       runtime roots
+ *       (avant_json.c)                             runtime roots
  *                                                  (avant_gc_add_root)
  *
  *   One young budget (gc-design.md section 5.1): avant_nursery_held
@@ -233,7 +232,7 @@
  *
  *
  *   The young collection's three-way rule, R1' (gc-design.md section
- *   1.3, D219 (2)). A young collection scans one level of every
+ *   1.3). A young collection scans one level of every
  *   non-young object that is named (a) by a root (a frame slot, a pin, a
  *   runtime root of avant_gc_add_root), (b) by a field of a young
  *   object, or (c) by a field of a remembered object; deeper non-young
@@ -243,8 +242,8 @@
  *   mir.md section 5.4), and so did the runtime builders that fill a
  *   born-mature large reference buffer (array_grow, str_array_build,
  *   hash_array_str, avant_array_copy, avant_argv: a young array header
- *   (b) or a root (a) names the buffer; audit N2b), which since W13b
- *   (D220) also barrier the buffer (since Stage 28 W15a1 every large
+ *   (b) or a root (a) names the buffer), which also barrier the
+ *   buffer (every large
  *   object is born young, except a mature-allocating thread's, and an
  *   edge to a young large object is remembered like any young edge).
  *   AVANT_GC_VERIFY checks the generational invariant in this wording
@@ -254,8 +253,8 @@
  */
 
 /*
- * The collector's settings (Stage 28 W14b2, gc-design.md section 1.7,
- * O40): the environment variables below, read once when the collector
+ * The collector's settings (gc-design.md section 1.7): the environment
+ * variables below, read once when the collector
  * starts (gc_init_slow, avant_gc_collect.c) into one settings struct.
  * One rule for all of them: unset or empty is the default; a switch is
  * on for exactly 1 and off for exactly 0; a number is decimal digits
@@ -270,7 +269,7 @@
  *                          MiB ("heap limit" past it); 0 is no limit
  *   AVANT_HEAP_RESERVE_GB  number, 1..2^20, default 64: the heap's
  *                          address reservation in GiB, halved on refusal
- *                          down to 1 (W14a1)
+ *                          down to 1
  *   AVANT_NURSERY          switch, default 1: the young generation; 0
  *                          is full, non-moving collections only
  *   AVANT_GC_DEFRAG        switch, default 1: mature evacuation in full
@@ -286,23 +285,24 @@
  *   AVANT_GC_STATS         switch, default 0: one statistics line on
  *                          stderr at exit
  *   AVANT_GC_STRESS        switch, default 0: the full stress mode
- *                          (testing; W14b1, full since Stage 28 W16a):
+ *                          (testing):
  *                          a young collection before every allocation
  *                          (outside no-GC regions): runtime C's, and
- *                          since Stage 29 W-FIX1c generated code's and
+ *                          generated code's and
  *                          user C's, the inline allocation path being
- *                          never published under it (O207); every
+ *                          never published under it; every
  *                          young collection evacuates
  *                          every young block nothing names imprecisely
  *                          (mixed blocks too), and freed memory (free
  *                          young lines, evacuated blocks, freed large
  *                          runs) is filled with 0xdb
  *
- * Retired (W14b2; setting one is reported and has no effect):
+ * Retired (setting one is reported and has no effect):
  * AVANT_NURSERY_DISCARD, AVANT_GC_REM_FRONTIER, AVANT_GC_YOUNG_SIZING,
- * AVANT_GC_COPY_RESERVE; and AVANT_GC_STACK_REWRITE (Stage 28 W16b, with
- * the conservative C-stack scans; it had no effect since W15d). Removed earlier: AVANT_NURSERY_STACK (W14a1),
- * AVANT_NURSERY_STACKMAP (W12r).
+ * AVANT_GC_COPY_RESERVE; and AVANT_GC_STACK_REWRITE (with
+ * the conservative C-stack scans; it had had no effect for some time). Removed
+ * earlier: AVANT_NURSERY_STACK,
+ * AVANT_NURSERY_STACKMAP.
  */
 
 void *avant_alloc(uint64_t nbytes, uint32_t type_id);
@@ -311,12 +311,12 @@ void avant_barrier(void *obj);
 void avant_barrier_slot(void *obj, void *slot);
 void avant_gc_defer_enter(void);
 void avant_gc_defer_leave(void);
-/* Runtime-internal (Stage 28 W14b2, O37): avant_gc_nogc_begin/end
+/* Runtime-internal: avant_gc_nogc_begin/end
  * (below) are entries of avant_rt.o that only the runtime's other
  * objects call. avant_rt.h does not
  * declare them, and their visibility is hidden: no linked image exports
  * them (the second section of avant_rt.exports). avant_gc_quiet_defer_enter
- * went in Stage 28 W16a with the regions it opened. */
+ * went with the regions it opened. */
 void avant_pin(void *payload);
 void avant_unpin(void *payload);
 int avant_is_heap(void *payload);
@@ -332,7 +332,7 @@ extern atomic_int avant_gc_requested;
 void avant_gc_poll(void);
 void avant_gc_native_begin(void);
 void avant_gc_native_end(void);
-/* Runtime-internal (Stage 28 W17a): a blocking lock or condition wait at
+/* Runtime-internal: a blocking lock or condition wait at
  * a collecting call (rule 2 of gc-design.md section 4.4): an uncontended
  * lock is taken at once; a contended one, and every wait, is native, so
  * a collection does not wait for this thread, and the thread returns to
@@ -350,19 +350,19 @@ __attribute__((visibility("hidden"))) int avant_gc_cond_timedwait(pthread_cond_t
 extern _Atomic uint32_t g_avant_str_gen;
 extern atomic_int g_avant_shared;
 
-/* RC4's no-GC regions (the contract above; Stage 28 W16a). Hidden: only
+/* RC4's no-GC regions (the contract above). Hidden: only
  * the runtime's other objects call them; user --cc C has the ABI names
  * avant_gc_defer_enter/leave, which open and close the same region. */
 __attribute__((visibility("hidden"))) void avant_gc_nogc_begin(void);
 __attribute__((visibility("hidden"))) void avant_gc_nogc_end(void);
 /* A helper about to replace a young large object it allocated before
  * (avant_json_parse's pool) runs the due young collection first when the
- * new one alone fills the young budget (avant_gc_alloc.c; Stage 28 W16a).
+ * new one alone fills the young budget (avant_gc_alloc.c).
  * It may collect. Hidden. */
 __attribute__((visibility("hidden"))) void avant_gc_young_before(uint64_t bytes);
 /* A heap object's payload made NBYTES long in place (never longer than it
  * is): the one way a block object's size may change after its allocation
- * (the Valk stage, VALK-A2: the collector walks the headers of a hole end
+ * (the collector walks the headers of a hole end
  * to end for the late start bits, avant_gc_alloc.c, and the bytes freed
  * are left as a filler header that the walk passes over). For a string
  * allocated with slack and shortened before anything else sees it
@@ -373,24 +373,24 @@ __attribute__((visibility("hidden"))) void avant_gc_shrink(void *payload, uint64
  * heap object (an address inside an object, or one where no object
  * lives); 0 for null, for an address outside the heap (C's own memory, a
  * static object) and for an object's start. The test of a C function's
- * `String` result (avant_c_str, avant_str.c; the Valk stage, VALK-A2,
- * O629): only such an address may not be stored in a reference-typed
+ * `String` result (avant_c_str, avant_str.c): only such an address may
+ * not be stored in a reference-typed
  * field (the field rule, avant_gc_internal.h). Never collects. */
 __attribute__((visibility("hidden"))) int avant_gc_interior(const void *p);
 /* A helper that owns a large Bytes object keeps only its first NEW_SIZE
- * bytes; the run's pages past them go back now (avant_gc_los.c; Stage 28
- * W18M, O52/O60). 1 when trimmed, 0 when PAYLOAD is not a large unpinned
+ * bytes; the run's pages past them go back now (avant_gc_los.c). 1 when
+ * trimmed, 0 when PAYLOAD is not a large unpinned
  * Bytes object, NEW_SIZE is larger than its size or under the size a
  * large Bytes object starts at (6 KiB). Not a collecting call.
  * Hidden. */
 __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uint64_t new_size);
 /* A growth replaced the large buffer PAYLOAD and no longer names it: it is
  * freed now unless a root of this thread names it, it is pinned, mature
- * with reference fields, or the program is shared (avant_gc_los.c; Stage
- * 28 W18M, O109). 1 when freed. Under AVANT_GC_VERIFY=1 the freed run
+ * with reference fields, or the program is shared (avant_gc_los.c). 1 when
+ * freed. Under AVANT_GC_VERIFY=1 the freed run
  * stays PROT_NONE until the next collection begins, and an access is
  * reported as DROP names it (1: a Buf's storage, whose C pointer came from
- * avant_buf_bytes; 2: another runtime buffer; Stage 28 W18C, O145). Not a
+ * avant_buf_bytes; 2: another runtime buffer). Not a
  * collecting call. Hidden. */
 __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int drop);
 
@@ -423,8 +423,8 @@ static inline void avant_gc_overwrite(void *obj) {
     avant_gc_overwrite_slow(obj);
   }
 }
-/* AVANT_GC_VERIFY=1's own pages for a Buf's storage (Stage 28 W18C,
- * O145; avant_gc_alloc.c): NBYTES of scalar storage on its own page run
+/* AVANT_GC_VERIFY=1's own pages for a Buf's storage (avant_gc_alloc.c):
+ * NBYTES of scalar storage on its own page run
  * (a large Bytes object at any size), so that a growth that replaces it
  * can protect it whole, or NULL. Only under the verifier in a program
  * that is not shared, and only for OLD (the Buf's storage now): with MOVE
@@ -435,14 +435,14 @@ static inline void avant_gc_overwrite(void *obj) {
  * allocation); NULL too when the heap limit would need one. Hidden. */
 __attribute__((visibility("hidden"))) void *avant_gc_verify_paged(void *old, uint64_t nbytes, int move);
 
-/* Task roots (Stage 28 W16b; C28, R1): a spawned task's capture record
+/* Task roots: a spawned task's capture record
  * is rooted by the task, from avant_spawn until the task's function has
  * returned, instead of pinned by the generated code until the join. A
  * root is a node in the task's own C memory (O(1) to add and drop, no
  * pin entry); every collection traces OBJ from it and rewrites the root
- * when the record moves (Stage 28 W17a; until then the record was held in
+ * when the record moves (before the safepoint handshake the record was held in
  * place while rooted, because the worker read it while other threads
- * collected, D191); the worker reads the record from the root. After the
+ * collected); the worker reads the record from the root. After the
  * drop the record is an ordinary object: a finished task's record dies
  * with its last reference, joined or not. Hidden; add and drop take the
  * world lock and never collect. */
@@ -454,14 +454,14 @@ typedef struct AvantGcTaskRoot {
 __attribute__((visibility("hidden"))) void avant_gc_task_root_add(AvantGcTaskRoot *r, void *obj);
 __attribute__((visibility("hidden"))) void avant_gc_task_root_drop(AvantGcTaskRoot *r);
 
-/* RC1's handle scopes (the contract above; Stage 28 W16a). A frame of the
+/* RC1's handle scopes (the contract above). A frame of the
  * thread's chain, the type every frame has (avant_gc_internal.h calls it
- * Frame): generated code's frames live in its own stack frames since
- * Stage 28 W18 (avant_gc_frame_enter), user C's come from avant_gc_enter's
+ * Frame): generated code's frames live in its own stack frames
+ * (avant_gc_frame_enter), user C's come from avant_gc_enter's
  * free list, a scope's lives in the C function's own stack frame. scope is 0 for a
  * generated-code frame, AVANT_GC_SCOPE_OPEN for an open scope (the
- * NOGC bit, a scope's no-GC region in a shared program, went in W17a).
- * avant_gc_top is the thread's innermost frame (ABI since Stage 28 W18:
+ * NOGC bit, a scope's no-GC region in a shared program, went with the
+ * safepoint handshake). avant_gc_top is the thread's innermost frame (ABI:
  * generated code links its stack frame records itself, avant_rt.h; user
  * C opens frames with avant_gc_enter and avant_gc_root_begin). */
 typedef struct AvantGcFrame {
@@ -473,8 +473,8 @@ typedef struct AvantGcFrame {
 } AvantGcFrame;
 #define AVANT_GC_SCOPE_OPEN 1u
 /* A frame avant_gc_enter opened (user C's, or a seed-built compiler's):
- * the only kind avant_gc_root and avant_gc_root_begin register slots in
- * (Stage 28 W18M, O138). Its slot array is the runtime's own; a
+ * the only kind avant_gc_root and avant_gc_root_begin register slots in. Its
+ * slot array is the runtime's own; a
  * generated frame's record and a scope's array live in a stack. */
 #define AVANT_GC_FRAME_C 2u
 extern __thread AvantGcFrame *avant_gc_top;
@@ -513,7 +513,7 @@ static inline void avant_gc_scope_close_(AvantGcFrame *f) {
 #define AVANT_GC_UNSCOPE() avant_gc_scope_close_(&gc_scope_)
 
 /* Runtime C allocates through avant_alloc itself, as generated code and
- * user C do (until Stage 29 W-FIX1c through a wrapper, avant_alloc_c,
+ * user C do (it once went through a wrapper, avant_alloc_c,
  * that carried the stress point of AVANT_GC_STRESS=1; the stress point is
  * avant_alloc's own now, so every allocation has it). */
 

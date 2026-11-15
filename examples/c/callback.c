@@ -1,4 +1,4 @@
-/* Buffer helper for the Wave G callback proof (tests/cases/ffi.av).
+/* Buffer helper for the callback proof (tests/cases/ffi.av).
  * The sort itself is libc qsort; Avant supplies the comparator. */
 #include <stdlib.h>
 

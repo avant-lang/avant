@@ -50,7 +50,7 @@ static pcre2_match_data *md_for(pcre2_code *code) {
   return md;
 }
 
-/* A PCRE2 failure that is not "no match" (Stage 29 W-FIX1a, P40): the
+/* A PCRE2 failure that is not "no match": the
  * match limit, the depth limit, the heap limit, no memory, an internal
  * error. It used to read as "no match": find gave nil, count stopped
  * early, replace left the rest of the text as it was. It is a trap now,
@@ -79,7 +79,7 @@ static void re_trap(const char *op, int rc) {
  * whose frames live on the heap. So the JIT's stack limit is never the
  * reason for an answer: what comes back is the match, "no match", or
  * one of the interpreter's own limits (re_trap). Measured on
- * ((a)|(b))*c over "ab" repeated (Stage 29 W-FIX1a): the JIT takes
+ * ((a)|(b))*c over "ab" repeated: the JIT takes
  * about 48 bytes of stack per repetition, the interpreter about 660
  * bytes of heap and thirty times the time, and the interpreter stops
  * at its match limit near 2.4 million repetitions; with 256 MiB the
@@ -177,7 +177,7 @@ static int32_t g_cache_n;
 static uint64_t g_cache_tick;
 static pthread_mutex_t g_cache_mu = PTHREAD_MUTEX_INITIALIZER;
 
-/* Why the last compile on this thread failed (Stage 29 W4b2, D295 R11):
+/* Why the last compile on this thread failed:
  * PCRE2's error code and the pattern offset it names. */
 static __thread int g_re_err;
 static __thread int32_t g_re_off;
@@ -365,8 +365,8 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from);
  * once, so no allocation happens on the find path. */
 static __thread int32_t g_last_spans[128];
 static __thread int32_t g_last_pairs;
-/* A pattern with more than 63 groups (Stage 29 W-FIX1a, P40: the pairs
- * were capped at 64, so groups past the 63rd read as "did not take
+/* A pattern with more than 63 groups (the pairs
+ * were once capped at 64, so groups past the 63rd read as "did not take
  * part"): its pairs go to a buffer of this thread sized from the
  * pattern, and g_last_spans stays the home of every other match. */
 static __thread int32_t *g_more_spans;
@@ -597,7 +597,7 @@ avant_int avant_regex_error_offset(void) {
   return g_re_off;
 }
 
-/* A Regex used after close (Stage 29 W4b2, D295 R11): a program error,
+/* A Regex used after close: a program error,
  * not an honest "no match". Printed as a trap (stdout first, status 1). */
 void avant_regex_closed(void) {
   fflush(stdout);

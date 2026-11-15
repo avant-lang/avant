@@ -22,7 +22,7 @@ avant_int avant_zlib_take_status(void) {
 /* The collector records the allocation size. The string length is that
  * size minus the trailing NUL, so a compressBound slack is dropped by
  * shortening the object in place before it is observed: through
- * avant_gc_shrink (avant_gc.h; the Valk stage, VALK-A2), which leaves the
+ * avant_gc_shrink (avant_gc.h), which leaves the
  * slack as a filler so that the collector can still walk the hole's
  * headers. */
 static void tag_len(char *out, size_t n) {
@@ -76,7 +76,7 @@ char *avant_zlib_uncompress(const char *s) {
   orig = read_len(p);
   dest_len = orig;
   /* A length past the String ceiling is data this runtime cannot
-   * return: an error, not a trap (Stage 29 W-INT1). */
+   * return: an error, not a trap. */
   if (orig > (uint32_t)AVANT_SIZE_MAX) {
     set_status(1);
     return avant_str_empty();
@@ -114,7 +114,7 @@ avant_int avant_zlib_compress_into(const char *s, void *buf) {
     return 2;
   }
   at = (int32_t)avant_buf_size(buf);
-  /* In 64 bits, against the Buf ceiling (Stage 29 W-INT1): the 32-bit
+  /* In 64 bits, against the Buf ceiling: the 32-bit
    * sum overflowed before its check. */
   if ((int64_t)at + 4 + (int64_t)bound > (int64_t)AVANT_SIZE_MAX) {
     set_status(2);

@@ -1,15 +1,15 @@
 #!/bin/sh
-# Build runtime/build/avant_llvm.o: the compiler's in-process LLVM (D162,
-# D172, D173). One relocatable object, merged with `ld -r`, so the v0.34.0
+# Build runtime/build/avant_llvm.o: the compiler's in-process LLVM. One
+# relocatable object, merged with `ld -r`, so the v0.34.0
 # seed (whose link arguments take .o, .c, and -l..., not -L or .a) can link
 # it into B unchanged:
 #
 #   runtime/avant_llvm.c (the glue over the LLVM C API)
 #   + the LLVM static members it needs (llvm-config --libfiles: LLVM 20 by
-#     default, D173; LLVM 23 when LLVM_CONFIG names its llvm-config, the
-#     Stage 28 W18L probe)
+#     default; LLVM 23 when LLVM_CONFIG names its llvm-config, a probe of
+#     the next LLVM)
 #   + libstdc++.a, libz.a, libzstd.a (so the compiler loads only glibc and
-#     libgcc_s, D146)
+#     libgcc_s)
 #
 # Every symbol except the avant_llvm_* entry points is made local, so the
 # object cannot clash with the runtime or a library. It is linked into the
@@ -23,7 +23,7 @@
 # runtime/avant_rt.h, and of this script) differs; a cached run is a few
 # sha256 sums. LLVM_CONFIG names llvm-config (default llvm-config-20;
 # llvm-config-23 builds the same object against LLVM 23, a probe only: the
-# default stays 20 until a decision amends D173 and D190).
+# default stays 20, the distribution's llvm-20-dev, here and on CI).
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cc=${CC:-cc}
@@ -40,7 +40,7 @@ command -v "$llvm_config" > /dev/null 2>&1 || {
 version=$("$llvm_config" --version)
 case "$version" in
   20.* | 23.*) ;;
-  *) echo "tools/build-llvm.sh: LLVM 20 (the default, D173) or 23 (the W18L probe) is required; $llvm_config is $version" >&2; exit 1 ;;
+  *) echo "tools/build-llvm.sh: LLVM 20 (the default) or 23 (the probe) is required; $llvm_config is $version" >&2; exit 1 ;;
 esac
 want="llvm $version
 glue $(sha256sum "$src" | cut -d' ' -f1)

@@ -16,7 +16,7 @@
 
 /* 0 ok, 1 invalid JSON / missing or wrong kind, 2 allocation failure. */
 static __thread int32_t g_json_status;
-/* Why the last parse on this thread failed (Stage 29 W4b2, D295 R11):
+/* Why the last parse on this thread failed:
  * yyjson's message (a static string) and the byte offset it names. */
 static __thread const char *g_json_err_msg;
 static __thread int64_t g_json_err_pos;
@@ -41,7 +41,7 @@ char *avant_json_take_pool(void) {
   return pool ? pool : avant_str_empty();
 }
 
-/* The document's allocator (Stage 28 W18M, O59/O60): a bump over the
+/* The document's allocator: a bump over the
  * pool. yyjson allocates the text's copy and then the values, which it
  * grows by realloc at the end, so a reallocation of the last block grows
  * it in place and a free of the last block takes the bump back. After
@@ -92,9 +92,9 @@ static void bump_free(void *ctx, void *ptr) {
   }
 }
 
-/* RC1: the text is a handle across the pool's allocation (before W16a
- * nothing protected it: a young copy relied on the C-stack rewrite, audit
- * 12 shape 2 of C31); yyjson reads it after the allocation and allocates
+/* RC1: the text is a handle across the pool's allocation (it once had
+ * no protection: a young copy relied on the C-stack rewrite);
+ * yyjson reads it after the allocation and allocates
  * only from its pool, never from the collector, so the parse itself
  * needs no no-GC region. */
 void *avant_json_parse(const char *s) {
@@ -104,9 +104,8 @@ void *avant_json_parse(const char *s) {
   AVANT_GC_ROOT(0, &s);
   set_status(0);
   /* The pool waits in g_json_pool until avant_json_take_pool hands it to
-   * the Json value: a runtime root of this thread meanwhile (Stage 28
-   * W16a; before, a full collection between the two calls could free
-   * it). */
+   * the Json value: a runtime root of this thread meanwhile (without
+   * it, a full collection between the two calls could free it). */
   if (!g_json_pool_rooted) {
     g_json_pool_rooted = 1;
     avant_gc_add_root((void **)&g_json_pool);
@@ -122,7 +121,7 @@ void *avant_json_parse(const char *s) {
     /* The pool (at least 8 KiB of Bytes) is a large object, which never
      * moves, so yyjson's interior pointers into it stay valid; it is born
      * young like every large object and dies young when its Json is
-     * dropped (Stage 28 W16a). Before, it was allocated mature
+     * dropped. Before, it was allocated mature
      * (avant_alloc_in_mature), so a dropped document waited for a full
      * collection, and with collections at the helpers' own allocations
      * (RC1) the full trigger fired inside avant_json_f64s while the new
@@ -314,7 +313,7 @@ static char *copy_str(const char *p, size_t n) {
 }
 
 /* A JSON integer (no fraction, no exponent: yyjson's int and uint kinds)
- * within [lo, hi], else status 1 (Stage 29 W4b1, D295 R10: Json.int is
+ * within [lo, hi], else status 1 (Json.int is
  * nil for a real, for a non-number and outside the type's range). */
 static int64_t node_int_in(yyjson_val *v, int64_t lo, int64_t hi) {
   if (v && yyjson_is_uint(v)) {
@@ -334,8 +333,8 @@ static int64_t node_int_in(yyjson_val *v, int64_t lo, int64_t hi) {
   return 0;
 }
 
-/* Json.int: an integer within Int (64-bit since Stage 29 W-INT1; Json.int64
- * went with it, one spelling). */
+/* Json.int: an integer within Int (64-bit; there is no separate
+ * Json.int64, one spelling). */
 static avant_int node_int(yyjson_val *v) {
   return (avant_int)node_int_in(v, AVANT_INT_MIN, AVANT_INT_MAX);
 }
@@ -455,7 +454,7 @@ int64_t avant_json_error_offset(void) {
   return g_json_err_pos;
 }
 
-/* A JsonBuilder used against its contract (Stage 29 W4b2, D295 R11):
+/* A JsonBuilder used against its contract:
  * what says how. Printed as a trap (stdout first, status 1). */
 void avant_json_misuse(const char *what) {
   fflush(stdout);

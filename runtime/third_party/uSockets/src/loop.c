@@ -360,7 +360,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     /* If we filled the entire recv buffer, we need to immediately read again since otherwise a
                      * pending hangup event in the same even loop iteration can close the socket before we get
                      * the chance to read again next iteration */
-                    /* Avant patch (Stage 29 W-FIX1a, P191; runtime/third_party/NOTICE.md):
+                    /* Avant patch (runtime/third_party/NOTICE.md):
                      * not when on_data stopped polling this socket for readable
                      * (std.http does while an answer's tail is queued): reading on
                      * would grow the input of a connection that is being held back. */

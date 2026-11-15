@@ -1,5 +1,5 @@
-/* The runtime's float writers (Stage 28 W18S, O48): `%.*f` (`%g` retired
- * with the shortest round-trip text, Stage 29 W4b1)
+/* The runtime's float writers: `%.*f` (`%g` retired
+ * with the shortest round-trip text)
  * without snprintf, byte for byte what glibc prints.
  *
  * A finite double is m * 2^e exactly (m < 2^53). `%.Pf` prints
@@ -12,7 +12,7 @@
  * (|v| below about 1.8e19 / 10^P); everything else (NaN, infinities, huge
  * values, `%g`'s exponent form) returns -1 and the caller uses snprintf,
  * so the output is always glibc's. Proven against snprintf on random and
- * edge values (records/2026-11-10-s28-w18s, fmt/).
+ * edge values.
  *
  * `%g` (precision 6) is `%.(5-X)f` with trailing zeros and a bare point
  * removed when its decimal exponent X (after rounding to six significant

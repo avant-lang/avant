@@ -1,10 +1,10 @@
 #!/bin/sh
-# The run goldens (Stage 28 W11): builds and runs a set of programs with one
+# The run goldens: builds and runs a set of programs with one
 # compiler and compares what each observably does (stdout, stderr, exit
 # status) with its golden in tests/goldens/runs/. It replaces the
-# differential oracle tools/backend-diff.sh (D176) when the old back end
+# differential oracle tools/backend-diff.sh when the old back end
 # retired: the oracle's every program was frozen as a golden from the old
-# back end (W11 item 1), so what the old back end checked as a second
+# back end, so what the old back end checked as a second
 # implementation is still checked.
 #
 #   sh tools/run-goldens.sh [--bless] [--set SETS] [PROGRAM...]
@@ -34,7 +34,7 @@
 #              compile/timeout flags, the program's stdout and stderr (the
 #              harness's wall/RSS/compile-time lines are not compared)
 #   scalars, strings, objects, heap, types, closures, ffi, threads
-#              the back-end subsets of Stage 28 (W5b to W8b; the lists
+#              the back-end subsets (the lists
 #              below): mostly fixtures and examples already above, plus the
 #              tests/fixtures/scalars/*.av programs with `fn run` only
 # PROGRAM arguments select a subset instead of the sets: a path to a .av
@@ -53,7 +53,7 @@
 # Where they came from: every program the oracle compared was blessed from
 # the old back end (AVANT_BACKEND=myc, --debug) on 2026-11-06 and equals the
 # new back end's output in --debug, bare and --release; the five expected
-# differences of D196 (the old back end could not compile or run them
+# differences (the old back end could not compile or run them
 # correctly: types/coerce.av, ffi/byval.av, ffi/fresh.av, closures/fresh.av,
 # threads/fresh.av) were blessed from the new back end, and the suite
 # checks their outputs by hand as before.
@@ -65,7 +65,7 @@
 # its prod runs, writes its stitched sources and binaries to langarena/tmp/
 # (one file set per task, named by the task).
 #
-# Parallel (Stage 28 W16t): GOLDEN_JOBS programs at once (default 16, chosen
+# Parallel: GOLDEN_JOBS programs at once (default 16, chosen
 # by measurement on the 16-thread, 27 GB machine: the full AVANT_GC_STRESS
 # mode's processes stay far inside memory; 1 is the sequential order). Each
 # program has its own work directory (GOLDEN_OUT/work/p/N: binary, run
@@ -162,12 +162,12 @@ skip_reason() { # PATH -> prints a reason when the program is excluded
     examples/http.av) echo "opens a loopback listener and connects to it (no network ports here)" ;;
     tests/fixtures/format/*) echo "formatter input, not a program" ;;
     tests/fixtures/ffi/ceiling.av) echo "size-ceiling probes, run per mode by tests/cases/test_ceiling.av (every mode traps)" ;;
-    tests/fixtures/ffi/full_poison.av) echo "a stale read whose output names the mode (O650), run per mode by tests/cases/test_gc_checks.av" ;;
+    tests/fixtures/ffi/full_poison.av) echo "a stale read whose output names the mode, run per mode by tests/cases/test_gc_checks.av" ;;
   esac
 }
 # A program that opens or connects to a network port (a listener, a
 # client, or a fixed port such as the bench's 18301 and 18311) never runs
-# beside another one (Stage 28 W16t). At W16t only examples/http.av
+# beside another one. When this was written only examples/http.av
 # matches, and it is skipped above.
 serial_reason() { # PATH -> prints a reason when the program runs under the port lock
   grep -qE 'Http\.(listen|get|post)|Ws\.connect|\b183[0-9][0-9]\b' "$root/$1" 2>/dev/null && echo "uses a network port"
@@ -293,7 +293,7 @@ prog_job() {
 
 # The harness (the first job when a task is queued): the checkout's cached
 # binary from tools/la-harness.sh, built only when langarena/harness/measure.cr
-# changed (O115); GOLDEN_HARNESS_FRESH=1 builds a fresh one into the work
+# changed; GOLDEN_HARNESS_FRESH=1 builds a fresh one into the work
 # directory instead, as every run did before.
 build_job() {
   if [ "${GOLDEN_HARNESS_FRESH:-0}" = 1 ]; then

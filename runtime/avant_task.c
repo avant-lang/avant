@@ -1,4 +1,4 @@
-/* sched_getaffinity and CPU_COUNT (O700). */
+/* sched_getaffinity and CPU_COUNT. */
 #define _GNU_SOURCE
 #include "avant_rt.h"
 #include "avant_gc.h"
@@ -15,14 +15,14 @@
 #include <unistd.h>
 
 /*
- * Bounded pool shared by spawn and .parallel (D35, Q38-A).
+ * Bounded pool shared by spawn and .parallel.
  * The bound is the program's chosen thread count (avant_chosen_threads:
  * --threads, else the CPUs the process may use): at most that many tasks run at
  * once. Workers never touch g_world. Join or .parallel from a worker
  * waits for a pool thread, so a full pool deadlocks; those calls die.
  *
- * A task waiting on a gate gives its run back (Stage 29 W8Cb, O567,
- * D355): a worker that waits in a Channel's send or recv or for a Mutex
+ * A task waiting on a gate gives its run back: a worker that waits in a
+ * Channel's send or recv or for a Mutex
  * (pool_block, from the gate functions below) stops counting as running,
  * so a queued task may start, on an idle worker or, when every worker
  * is waiting, on a new one, up to POOL_THREAD_LIMIT threads (or the
@@ -33,7 +33,7 @@
  * task from ever starting, and the program hung with no message.
  */
 
-/* A spawned block returns an Avant Int (Stage 29 W-INT1: avant_int). */
+/* A spawned block returns an Avant Int (avant_int). */
 typedef avant_int (*avant_task_fn)(void *);
 /* A .parallel thunk takes the element index as an Avant Int. */
 typedef void (*avant_par_fn)(avant_int, void *);
@@ -44,7 +44,7 @@ typedef struct {
   avant_int result;
   int done;
   pthread_cond_t done_cv;
-  /* R1: roots arg (avant_gc_task_root_add) until fn has returned. */
+  /* Roots arg (avant_gc_task_root_add) until fn has returned. */
   AvantGcTaskRoot root;
   /* the block's end on a trap (avant_spawn_f), and the trap that
    * ended the task (malloc'd, kept for the run: join hands them out as
@@ -55,7 +55,7 @@ typedef struct {
 } AvantTask;
 
 /* A .parallel call's completion count and condition, and its context's
- * task root (Stage 28 W17b, O122): the context is rooted, not pinned, for
+ * task root: the context is rooted, not pinned, for
  * the call's duration; a collection moves it like any rooted object and
  * rewrites the root, and each job reads the context from it. */
 typedef struct ParDone {
@@ -263,7 +263,7 @@ static void gate_dead(uint64_t id);
  * misuse, so it ends like the runtime's traps (trap_head and trap_tail
  * in avant_rt_traps.c, whose form avant_re.c's traps repeat): the
  * program's stdout flushed, one line naming what happened and the
- * rule, status 1 (Stage 29 W-FIX1f, O234: it aborted, status 134).
+ * rule, status 1 (it used to abort, status 134).
  * die_task stays for the pool's own failures. what is ".join" or
  * ".parallel". */
 __attribute__((noreturn, cold)) static void trap_on_worker(const char *what) {
@@ -367,18 +367,18 @@ static void pool_resume(void) {
 /* The program's one chosen thread count: the --threads flag when the
  * generated startup recorded one, else the CPUs the process may use. The
  * pool and the HTTP server's loop count both read this one value.
- * AVANT_THREADS, deprecated for one release by Q125-A, is not read. */
+ * AVANT_THREADS, deprecated for one release, is not read. */
 static long g_flag_threads;
 
 void avant_set_flag_threads(long n) {
   g_flag_threads = n;
 }
 
-/* The CPUs this process may run on (Stage 29 W8Cc, O700): its affinity
+/* The CPUs this process may run on: its affinity
  * mask (sched_getaffinity, CPU_COUNT), which `taskset`, a container's
  * cpuset and numactl set; the online processor count only when the mask
  * cannot be read. A mask past CPU_SETSIZE is read with a set sized to
- * it. A cgroup's CPU quota (cpu.max) is not read (O700's record). The
+ * it. A cgroup's CPU quota (cpu.max) is not read. The
  * pool's bound and `avant test`'s default --jobs both read it, once. */
 avant_int avant_usable_cpus(void) {
   cpu_set_t set;
@@ -449,7 +449,7 @@ static long pool_thread_limit(long n) {
 }
 
 /* Called at a collecting entry (spawn, .parallel): pool_mu through
- * avant_gc_lock (native while contended; Stage 28 W17a). */
+ * avant_gc_lock (native while contended). */
 static void ensure_pool(void) {
   long n;
   long i;
@@ -474,7 +474,7 @@ static void ensure_pool(void) {
   }
 }
 
-/* A worker is native between jobs (Stage 28 W17a, rule 2): it returns to
+/* A worker is native between jobs (rule 2): it returns to
  * running (a safepoint while a collection is in progress) before it reads
  * the job's heap argument and calls into Avant, and is native again once
  * the function has returned; the root drop and the pool lock that follow
@@ -485,7 +485,7 @@ static void run_job(Job *job) {
   if (job->kind == 1) {
     AvantTask *t = job->task;
     /* The record is read from its root, which a collection rewrites when
-     * the record moves (Stage 28 W17a; t->arg is its address at spawn). */
+     * the record moves (t->arg is its address at spawn). */
     AvantRecover rec;
     rec.top = avant_gc_top;
     rec.held = g_held_n;
@@ -525,14 +525,14 @@ static void run_job(Job *job) {
       }
     }
     avant_gc_native_begin();
-    /* R1: the record is the task's until its function returns; from
+    /* The record is the task's until its function returns; from
      * here it lives only as long as something else names it. */
     if (t->arg) {
       avant_gc_task_root_drop(&t->root);
     }
     pthread_mutex_lock(&pool_mu);
     t->done = 1;
-    /* Every waiting join wakes (C38: a handle may be joined twice). */
+    /* Every waiting join wakes (a handle may be joined twice). */
     pthread_cond_broadcast(&t->done_cv);
     pthread_mutex_unlock(&pool_mu);
   } else {
@@ -554,9 +554,9 @@ static void *worker_main(void *p) {
   (void)p;
   on_worker = 1;
   avant_gc_register_thread();
-  /* A worker allocates young in its own young blocks (Stage 28 W17b);
+  /* A worker allocates young in its own young blocks;
    * until then it allocated in the non-moving mature space, because
-   * the young cursor was one per process and, before W17a's handshake,
+   * the young cursor was one per process and, before the safepoint handshake,
    * a young collection on another thread could move a buffer this
    * worker was storing into. */
   /* Native while it waits for a job (rule 2): a collection never waits
@@ -591,17 +591,17 @@ static void *worker_main(void *p) {
   return NULL;
 }
 
-/* The task is C memory (C28, Stage 28 W14b1): it holds no reference the
+/* The task is C memory: it holds no reference the
  * collector must trace except arg, the capture record, which the task
- * roots (R1, Stage 28 W16b: avant_gc_task_root_add, a node in the task,
+ * roots (avant_gc_task_root_add, a node in the task,
  * held in place while rooted) from here until its function has returned
- * (run_job drops the root). The record is no longer pinned: before W16b
+ * (run_job drops the root). The record is not pinned: once
  * the generated code pinned it and the join unpinned it, so a spawn that
  * was never joined kept its record (and whatever it captured) and a pin
- * entry for the life of the process. The join frees the task. Before
- * W14b1 the task itself was a heap object pinned here and never unpinned.
+ * entry for the life of the process. The join frees the task. Earlier
+ * still the task itself was a heap object pinned here and never unpinned.
  *
- * The JoinHandle (C38, D225) is a small heap object with no references
+ * The JoinHandle is a small heap object with no references
  * (AVANT_TYPE_BYTES: the task pointer and the result), which the
  * generated code holds as a traced reference (compiler/mir/lower_agg.av,
  * value_agg_ty) and the collector reclaims like any object. The first
@@ -636,8 +636,8 @@ void *avant_spawn_f(void *fn, void *arg, void *fail) {
   AvantTask *t;
   Job *job;
   /* gc-lint: holds nothing (arg, the capture record, is a task root from
-   * before the first call that may collect, read from the root after it;
-   * C28, R1). The handle's allocation is the last call. */
+   * before the first call that may collect, read from the root after
+   * it). The handle's allocation is the last call. */
   t = (AvantTask *)calloc(1, sizeof(AvantTask));
   if (!t) {
     die_task("out of memory");
@@ -660,7 +660,7 @@ void *avant_spawn_f(void *fn, void *arg, void *fail) {
   }
   job->kind = 1;
   job->task = t;
-  /* The job is queued before the handle exists (Stage 28 W17a): the pool
+  /* The job is queued before the handle exists: the pool
    * lock may wait natively (a collection may run there), and the handle
    * is then allocated last, so this function holds no heap reference
    * across any collecting call (the record is the task's root). The
@@ -685,11 +685,11 @@ avant_int avant_join(void *handle) {
   if (on_worker) {
     trap_on_worker(".join");
   }
-  /* The wait is native (Stage 28 W17a, rule 2): other threads collect
+  /* The wait is native (rule 2): other threads collect
    * meanwhile and may move the handle, which this function holds in a
-   * handle scope (RC1) and reads only while running (it was pinned until
-   * W17a, because other threads collected without stopping this one,
-   * D191). */
+   * handle scope (RC1) and reads only while running (it was pinned before
+   * the safepoint handshake, because other threads collected without
+   * stopping this one). */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &hd);
   avant_gc_lock(&pool_mu);
@@ -744,7 +744,7 @@ void avant_parallel_for(avant_int n, void *fn, void *ctx) {
   }
   /* The context is rooted before the first call that may collect (RC1;
    * ensure_pool's lock may wait natively), and read from the root after
-   * it (Stage 28 W17b, O122: the generated code no longer pins it). */
+   * it (the generated code does not pin it). */
   avant_gc_task_root_add(&done.root, ctx);
   if (pthread_cond_init(&done.cv, NULL) != 0) {
     die_task("parallel cond");
@@ -773,8 +773,8 @@ void avant_parallel_for(avant_int n, void *fn, void *ctx) {
   avant_gc_task_root_drop(&done.root);
 }
 
-/* The gates under std.sync's Channel and Mutex (Stage 29 W8Ca, O532;
- * W8Cb, O690). A gate is a word in its object (the `gate` field), and
+/* The gates under std.sync's Channel and Mutex. A gate is a word in its object
+ * (the `gate` field), and
  * the gate functions take the object and the word's byte offset in it,
  * so the word's address w is computed in the call. The word is the
  * gate's number (avant_gate_new) shifted left by two, and two bits:
@@ -783,17 +783,17 @@ void avant_parallel_for(avant_int n, void *fn, void *ctx) {
  * a table of GATE_BUCKETS buckets keyed by the number.
  *
  * Uncontended, a lock and an unlock are one compare-and-swap each on the
- * word and nothing else: no table, no mutex (O690: W8Ca's table took a
+ * word and nothing else: no table, no mutex (an earlier table took a
  * bucket's mutex and searched it on every lock and unlock, 222
- * instructions per lock-unlock where the leaking pthread gate of the
- * base took 78). A thread that finds the gate locked, or that waits on
+ * instructions per lock-unlock where the leaking pthread gate before it
+ * took 78). A thread that finds the gate locked, or that waits on
  * it (avant_gate_wait), sets GATE_QUEUED under the bucket's mutex and
  * moves the gate's state into an entry (made then, from the bucket's
  * spare list); from then on every operation on the gate goes through
  * the entry, until an unlock that leaves no waiter clears the word back
  * to the plain number and gives the entry back. So a gate allocates
  * nothing and nothing has to be freed when its object dies: a program
- * that makes a million channels holds flat memory (before W8Ca every gate
+ * that makes a million channels holds flat memory (once every gate
  * was a calloc'd mutex and condition that nothing freed), and the spare
  * lists hold at most as many entries as gates were waited on at once.
  *
@@ -806,11 +806,11 @@ void avant_parallel_for(avant_int n, void *fn, void *ctx) {
  * throughout (an unlock never waits).
  *
  * A waiting thread waits natively on the entry's lock_cv or cond_cv
- * (Stage 28 W17a, D258's rule 2): the lock's holder runs Avant code (a
+ * (rule 2): the lock's holder runs Avant code (a
  * Mutex.with block, a channel operation) and may stop at a safepoint. A
  * bucket's mutex is held only inside these functions and never across a
- * safepoint, so it is a plain lock (D258's amendment: a short lock whose
- * holder never stops while holding it); a native wait releases it, and
+ * safepoint, so it is a plain lock (a short lock whose holder never stops
+ * while holding it may be); a native wait releases it, and
  * so does the return from native while a collection runs
  * (native_end_holding). avant_gate_wait gives up the gate's lock and
  * waits on cond_cv; like a condition variable it may return without a
@@ -1185,7 +1185,7 @@ void avant_gate_broadcast(void *obj, uint64_t off) {
   gate_wake(w, 1);
 }
 
-/* The 64-bit monotonic clock (Stage 29 W4b1, D295 R6): now_ms and now_us
+/* The 64-bit monotonic clock: now_ms and now_us
  * are Int readings that do not wrap. */
 int64_t avant_clock_ms(void) {
   struct timespec ts;

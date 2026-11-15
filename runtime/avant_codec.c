@@ -34,7 +34,7 @@ static void crc_init(void) {
   crc_ready = 1;
 }
 
-/* crc32_bytes(b: Bytes) (Stage 29 W-INT2: the bytes themselves, as the
+/* crc32_bytes(b: Bytes) (the bytes themselves, as the
  * references' uint8_t buffers; the Array(Int) form is gone). */
 int32_t avant_crc32_bytes(const char *s) {
   crc_init();
@@ -171,7 +171,7 @@ char *avant_sha256(const char *s) {
   return out;
 }
 
-/* sha256_word0(b: Bytes) (Stage 29 W-INT2: the bytes themselves). */
+/* sha256_word0(b: Bytes) (the bytes themselves). */
 int32_t avant_sha256_word0(const char *s) {
   uint32_t hashes[8] = {
       0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
@@ -187,8 +187,8 @@ int32_t avant_sha256_word0(const char *s) {
   /* Eight independent chains (index i & 7): eight steps at a time keep
    * the same per-element arithmetic and the same result. With SSE2 the
    * eight chains are two 4 x 32-bit vectors and the eight bytes are
-   * widened into them (Stage 29 W-INT2: with byte input GCC no longer
-   * vectorizes the chain loop, 3.7x the time of W-INT1's lanes). */
+   * widened into them (with byte input GCC no longer vectorizes the
+   * chain loop: 3.7x the time of the earlier 32-bit lanes). */
   i = 0;
 #if defined(__SSE2__)
   {

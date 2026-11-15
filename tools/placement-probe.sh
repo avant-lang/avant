@@ -1,5 +1,5 @@
 #!/bin/sh
-# Code placement probe (Stage 29 WP, O186): does a LangArena task's time
+# Code placement probe: does a LangArena task's time
 # depend on where its code lands? Run it alone, from the checkout root laid
 # out for the harness (langarena/ copied in, LangArena/ beside the checkout):
 #
@@ -38,8 +38,7 @@
 # /dev/null; nothing is written outside OUT except the harness's own
 # langarena/tmp (as every harness run).
 #
-# The WP record (results/2026-11-11-s29-wp, the ledgers' records) has the
-# numbers before and after the policy: spreads up to 14% before, within the
+# Measured when the policy was chosen, before and after it: spreads up to 14% before, within the
 # noise after, the 50 tasks over 8 pads and 5 rounds (about an hour; the
 # default set at 3 rounds takes about 15 minutes).
 set -u

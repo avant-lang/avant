@@ -9,7 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The full collection's marking and sweeping (Stage 28 W12, moved from
+/* The full collection's marking and sweeping (moved from
  * avant_rt.c): non-moving mark from the roots with line marks, and the
  * block sweep that frees or recycles blocks by their live lines. The
  * defragmentation a full collection may run between the two is
@@ -17,9 +17,9 @@
 
 /* The object at START (header H, in block B, or a large object when B is
  * NULL), whose side mark the caller has just set: its lines through the
- * block the lookup already gave (until Stage 29 W-FIX1c a second lookup
- * found it again, O203), its bytes, and the work list. A full collection
- * promotes every object it reaches (Stage 28 W15b), so no object is young
+ * block the lookup already gave (a second lookup used to find it again),
+ * its bytes, and the work list. A full collection
+ * promotes every object it reaches, so no object is young
  * after it (its remembered set and young budget are empty,
  * gc_sticky_full_end); the flags are written only when one is set, so a
  * collection of a heap that is already mature dirties no header. An
@@ -68,7 +68,7 @@ static void mark(void *p) {
   mark_object(start, h, b);
 }
 
-/* The mark loop's state in locals (the Valk stage, VALK-T, O578 and O585):
+/* The mark loop's state in locals:
  * what a field's mark reads of gc_heap, loaded once, so the loop below
  * keeps it in registers; nothing in a full mark changes the committed
  * size, the side tables or the epoch. base8 is gc_heap.base plus a
@@ -111,17 +111,16 @@ static __attribute__((noinline)) void mark_lines_rest(uint8_t *lines, size_t l, 
   memset(lines + l, epoch, e - l);
 }
 
-/* A traced object's field (Stage 29 W-FIX1c, O203; the Valk stage,
- * VALK-T, O585 and O578): 1 when its word V names an object this call
+/* A traced object's field: 1 when its word V names an object this call
  * marked that has references of its own to scan (the caller pushes it,
  * or scans it next), else 0. By the field rule (avant_gc_internal.h: a
  * field holds null, an exact start or a static address) V is classified
  * by one compare, the header's offset against the committed size, which
  * null and every static address fail; what passes is the start of a live
  * object, marked through the granule in hand, with no start-bit lookup,
- * no chunk kind and no block-in-use test (until VALK-T those were asked
- * of every field, and an address that failed one took mark(); before
- * W-FIX1c a field cost eight calls). Then what mark_object does: the
+ * no chunk kind and no block-in-use test (those used to be asked
+ * of every field, and an address that failed one took mark(); earlier
+ * still a field cost eight calls). Then what mark_object does: the
  * flags written only when one is set, the lines (through the heap's line
  * table at the header's offset: an object lies in one block; a large
  * object, which the LARGE flag tells, has no line marks) and the bytes.
@@ -130,7 +129,7 @@ static __attribute__((noinline)) void mark_lines_rest(uint8_t *lines, size_t l, 
  * runtime-held slots take mark(), which resolves an address inside an
  * object.
  *
- * In line in the two loops below, over MarkCtx's locals. W-FIX1c kept it
+ * In line in the two loops below, over MarkCtx's locals. It was once kept
  * out of line because, inlined into EACH_REF_SLOT's one loop nest, the
  * nest's registers were spilled around it (167 instructions per object of
  * a full collection against 149); the small record's loop is now its own
@@ -393,24 +392,24 @@ void gc_mark_roots(void) {
  * whose header lies in a freed line is no longer a heap payload. A dead
  * object whose header lies in a live line keeps its bit (start bits are
  * not a liveness test). The inline allocation path still runs only in
- * fresh blocks (holes are W15b's). */
+ * fresh blocks (holes are the line sweep's). */
 int gc_keep_if_live(Block *b) {
   uint64_t freed = 0;
   if (gc_block_live_lines(b) == 0) {
     /* AVANT_GC_STRESS=1: a block the full sweep releases is poisoned, as
-     * an evacuated block is (the Valk stage, VALK-TM3, O650; before it
+     * an evacuated block is (before it
      * the full sweep poisoned nothing, so a stale reference to a mature
      * object that died here read its old bytes). */
     gc_poison(b->base, BLOCK_SIZE);
     return 0;
   }
-  /* Word-wise (Stage 28 W15d, O94): the young sweep's pass over the whole
+  /* Word-wise: the young sweep's pass over the whole
    * block clears the free lines' start bits and leaves the cursor on the
    * first hole, as the byte loop and gc_reset_block_bump did. */
   (void)gc_sweep_block_lines(b, 0, LINES_PER_BLOCK, &freed);
   if (gc_heap.set.stress) {
     /* And every line a kept block frees is poisoned, as the young sweep
-     * poisons the young lines it frees (O650): the line marks are exact
+     * poisons the young lines it frees: the line marks are exact
      * (mark_lines marks every line an object touches), so a line no live
      * object marked holds nothing live. A line free before this
      * collection is poisoned again: it held nothing either. */

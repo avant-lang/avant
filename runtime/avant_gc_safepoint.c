@@ -9,8 +9,9 @@
 #include <string.h>
 #include <time.h>
 
-/* Threads stop at safepoints (Stage 28 W17a, gc-design.md section 4.4;
- * closes D191's window). Every registered thread is in one of three
+/* Threads stop at safepoints (gc-design.md section 4.4), so no thread's C
+ * code runs while a collection moves what it holds. Every registered
+ * thread is in one of three
  * states (ThreadReg.state):
  *
  *   running      it may read and write the heap; it stops only at a
@@ -38,8 +39,8 @@
  * The five no-deadlock rules (section 4.4) as kept here:
  *   1. The collector holds no runtime lock while it waits: gc_collect
  *      releases the world lock before gc_stop_world, and hs_mu is
- *      released by the condition wait (barriers take no lock since
- *      Stage 28 W17b: per-thread remembered buffers).
+ *      released by the condition wait (barriers take no lock:
+ *      per-thread remembered buffers).
  *   2. A thread blocked in a runtime wait is native (gc_lock,
  *      gc_cond_wait, avant_gc_native_begin/end around the pool's, the
  *      join's, .parallel's, the gates' and the I/O waits). A brief lock
@@ -55,7 +56,7 @@
  *      native between callbacks: its outermost avant_gc_leave begins a
  *      native region and its next avant_gc_enter ends it.
  *   5. Leaf functions do not poll (V15): the wait for a numeric leaf
- *      loop is measured (pause_hs_max_ns) and accepted (Q13).
+ *      loop is measured (pause_hs_max_ns) and accepted.
  *
  * The flag and the states use sequentially consistent atomics, so a
  * thread that turns running sees a request raised before the collector
@@ -106,7 +107,7 @@ void avant_gc_poll(void) {
 static int others_running(void);
 static uint64_t hs_stall_reports;
 
-/* AVANT_GC_VERIFY=1 (Stage 28 W18C, O125): the handshake has waited
+/* AVANT_GC_VERIFY=1: the handshake has waited
  * gc_heap.set.stall_ms for the threads still running. Each is reported
  * with its kernel thread id, its name, and its innermost Avant frame (the
  * innermost generated function's frame record on its chain, and what
@@ -174,8 +175,8 @@ static void hs_report_stalled(uint64_t waited_ns) {
 
 /* The handshake's wait under the verifier: the condition wait with a
  * deadline, a report at every stall_ms waited. The deadline is on
- * CLOCK_MONOTONIC, hs_stopped_cv's clock (gc_heap_static_init; the Valk
- * stage, VALK-TM3, O667): until then it was read from CLOCK_REALTIME,
+ * CLOCK_MONOTONIC, hs_stopped_cv's clock (gc_heap_static_init): it used
+ * to be read from CLOCK_REALTIME,
  * so a step of the wall clock during a stall moved the next report (a
  * step forward of an hour held it back by an hour). Under hs_mu. */
 static void hs_wait_verify(uint64_t t0) {
@@ -325,11 +326,11 @@ void gc_thread_registered(int foreign) {
    * inline path, avant_alloc's unlocked fast path), which read the shared
    * flag before it was set; after its safepoint it takes the locked path.
    * Without this a new thread's first allocation could race with it
-   * (found by W17a's rule 4 proof: "object too large" under
+   * (found by the handshake's proof of rule 4: "object too large" under
    * AVANT_GC_VERIFY=1, a corrupted header). While it is stopped its
    * single-mutator inline state (state 1, whose allocations are
    * counted from its cursor, without a lock) is cleared: from now on a thread bumps only in a hole
-   * the slow path charged to it (Stage 28 W17b). */
+   * the slow path charged to it. */
   if (became_shared && gc_stop_world()) {
     gc_alloc_shared_now();
     gc_resume_world();
@@ -360,7 +361,7 @@ void gc_thread_unregistering(void) {
 }
 
 /* A registered thread that is exiting (the thread-exit hook,
- * avant_gc_roots.c, Stage 28 W17c) leaves whatever state it exited in for
+ * avant_gc_roots.c) leaves whatever state it exited in for
  * running, so it can unregister as avant_gc_unregister_thread does: a
  * no-GC region and native regions are closed (a foreign thread is native
  * between callbacks, rule 4). Ending the native region waits while a

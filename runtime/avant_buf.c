@@ -12,7 +12,7 @@ typedef struct {
 } AvantBuf;
 
 /* need is checked against the ceiling here, before anything is
- * allocated (Stage 29 W-INT1): every growth comes through this one. */
+ * allocated: every growth comes through this one. */
 static void buf_grow(AvantBuf *b, int64_t need) {
   avant_size_check((uint64_t)need, AVANT_SIZE_BUF);
   int32_t ncap = b->cap ? b->cap : 16;
@@ -29,7 +29,7 @@ static void buf_grow(AvantBuf *b, int64_t need) {
   AVANT_GC_ROOT(0, &b);
   /* AVANT_GC_VERIFY=1: storage C has seen (avant_buf_bytes moved it to
    * its own pages) keeps its own pages, so the growth after this one can
-   * protect it too (Stage 28 W18C, O145). */
+   * protect it too. */
   uint8_t *ndata = (uint8_t *)avant_gc_verify_paged(b->data, (uint64_t)ncap, 0);
   if (!ndata) {
     ndata = (uint8_t *)avant_alloc((uint64_t)ncap, AVANT_TYPE_BYTES);
@@ -42,10 +42,10 @@ static void buf_grow(AvantBuf *b, int64_t need) {
   b->data = ndata;
   b->cap = ncap;
   /* The Buf no longer names its old storage: a large one goes back now
-   * unless a root still names it (Stage 28 W18M, O109); under
+   * unless a root still names it; under
    * AVANT_GC_VERIFY=1 it stays PROT_NONE until the next collection, so a
    * C pointer from avant_buf_bytes kept across this growth faults and is
-   * reported (Stage 28 W18C, O145). */
+   * reported. */
   if (odata) {
     (void)avant_gc_large_drop(odata, 1);
   }
@@ -75,7 +75,7 @@ void *avant_buf_new(avant_int cap) {
 }
 
 /* The slow path of the avant_buf_push_* rows and avant_buf_append (RC1,
- * avant_gc.h; Stage 28 W16a, it was a named safepoint). p may be derived
+ * avant_gc.h, it was a named safepoint). p may be derived
  * from a string (push_slice: s + i, an interior address, which its slot
  * relocates with its offset) or name a caller's stack buffer (push_byte,
  * push_fmt_*: no heap address, left alone); both b and p are handles
@@ -150,7 +150,7 @@ void avant_buf_push_slice(void *buf, const char *s, avant_int start, avant_int s
   int32_t end;
   int32_t len;
   n = s ? avant_str_n(s) : 0;
-  /* 0 <= start <= stop <= size, else a trap (Stage 29 W4b1, D295 R4). */
+  /* 0 <= start <= stop <= size, else a trap. */
   if (start < 0 || stop < start || (size_t)stop > n) {
     avant_trap_slice(start, stop, (avant_int)n);
   }
@@ -176,11 +176,11 @@ void avant_buf_push_slice(void *buf, const char *s, avant_int start, avant_int s
 void avant_buf_push_fmt_f(void *buf, double v, avant_int prec) {
   /* 400: the longest %.64f (a sign, 309 digits, the point, 64); 64 let
    * snprintf truncate a value of 1e47 or more and the append read past
-   * the buffer (W18S). */
+   * the buffer. */
   char tmp[400];
   int k;
   /* 0..64 (the longest text, a sign, 309 digits, the point and 64,
-   * fits); outside traps (Stage 29 W4b1; it was clamped to 0..16). */
+   * fits); outside traps (it was clamped to 0..16). */
   if (prec < 0 || prec > 64) {
     avant_trap_precision(prec);
   }
@@ -222,7 +222,7 @@ char *avant_buf_to_str(void *buf) {
   return p;
 }
 
-/* The string of a Buf that nothing uses again (Stage 28 W18M, O52): the
+/* The string of a Buf that nothing uses again: the
  * generated code calls this instead of avant_buf_to_str when the Buf was
  * made in the calling function, left it only as an argument to functions
  * that keep no reference to it, and is not used after the call
@@ -337,7 +337,7 @@ void avant_buf_set_ident(void *buf, avant_int n) {
   b->size = (int32_t)n;
 }
 
-/* The elements of an Array(Int) (avant_int, Stage 29 W-INT1), when it
+/* The elements of an Array(Int) (avant_int), when it
  * has at least n. */
 static avant_int *buf_i32s(void *arr, avant_int n) {
   typedef struct {
@@ -387,7 +387,7 @@ void avant_buf_fill_appends(void *buf, void *dst_offs, void *src_offs, void *len
     if (len < 0 || d < 0 || s < 0) {
       return;
     }
-    /* In 64 bits: d + len + 1 can pass the ceiling (Stage 29 W-INT1). */
+    /* In 64 bits: d + len + 1 can pass the ceiling. */
     need = d + len + 1;
     if (need > b->cap) {
       buf_ensure_to(buf, need);
@@ -459,7 +459,7 @@ void avant_buf_copy_ranges(void *dst_buf, void *src_buf, void *dst_offs, void *s
   }
 }
 
-/* AVANT_GC_VERIFY=1 (Stage 28 W18C, O145): storage in a block (a small
+/* AVANT_GC_VERIFY=1: storage in a block (a small
  * buffer) moves to its own pages before C sees it, so that a growth can
  * protect the storage it replaces whole and a C read through a pointer
  * kept across the growth faults and is reported. The move never collects

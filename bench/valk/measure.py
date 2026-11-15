@@ -21,7 +21,7 @@ exit or a timeout stops the session: such a run is not a result).
                that run, and "threaded" when the share is under 95% (a
                collector or worker threads, as in Go's allocating rows:
                such a row's count includes work its wall time overlaps).
-  time ROUNDS  the loop of tools/rounds.py (the one copy, O221): one
+  time ROUNDS  the loop of tools/rounds.py (the one copy): one
                unmeasured warm-up of every row, then ROUNDS fresh processes
                per row. The order rotates: round r starts (r - 1) *
                (rows // ROUNDS) rows further into the list, and every other
@@ -29,7 +29,7 @@ exit or a timeout stops the session: such a run is not a result).
                the spawner of tools/rounds.py (a small C program compiled
                into the session's directory): wall time is its monotonic
                clock just before vfork and just after wait4, so no wrapper's
-               start-up is inside (GNU time's was, O387); peak RSS, user
+               start-up is inside (GNU time's was); peak RSS, user
                and system time are wait4's rusage of the program's own
                process. One raw file per run:
                time/<session>/round-<r>/<id>.run.

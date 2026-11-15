@@ -1,9 +1,9 @@
 #!/bin/sh
-# Every Avant source of the repository is canonical for `avant format`
-# (Stage 29 W5d1, O170, O200): `format --check` over the tracked .av
+# Every Avant source of the repository is canonical for `avant format`:
+# `format --check` over the tracked .av
 # files (git ls-files; without git, every .av under compiler, lib,
 # examples, bench, tests and tools), each through the formatter's
-# self-check (O464).
+# self-check.
 #
 #   AVANT_COMPILER=bin/avant-c-llvm sh tools/format-check.sh [SKIP...]
 #

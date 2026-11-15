@@ -1,26 +1,26 @@
 #!/bin/sh
-# Build the linux-x86_64 release tarball (D148). One script serves the
+# Build the linux-x86_64 release tarball. One script serves the
 # release workflow and local proofs, so the shipped layout can be tested
 # before a tag.
 #
 #   sh tools/package.sh OUT_DIR COMPILER RE2C [VERSIONS_FILE]
 #
-# COMPILER is the avant binary to ship (Stage 28 W10: C', the compiler B
+# COMPILER is the avant binary to ship (C', the compiler B
 # builds on the new back end, built --release by the release job), RE2C
-# the static re2c to bundle (D151, tools/build-re2c.sh). There is no
+# the static re2c to bundle (tools/build-re2c.sh). There is no
 # myc-llvm in the release: the compiler's one back end is the in-process
-# LLVM linked into it (D172; the old back end retired at W11). The
+# LLVM linked into it (the old back end is retired). The
 # bind helper and the runtime objects come from runtime/build/ (run `sh
 # runtime/build.sh` first), except avant_llvm.o, which only the
-# compiler's own link uses (D190); runtime/avant_rt.h ships too, for the
+# compiler's own link uses; runtime/avant_rt.h ships too, for the
 # scanners re2c generates. The compiler finds this runtime beside its
-# executable (D149). examples/, LICENSE and third_party/ (the notices)
-# ship too (O294). VERSIONS_FILE, when given, becomes versions.txt;
+# executable. examples/, LICENSE and third_party/ (the notices)
+# ship too. VERSIONS_FILE, when given, becomes versions.txt;
 # otherwise a short local one is written.
 #
 # Writes OUT_DIR/avant-linux-x86_64/, OUT_DIR/avant-linux-x86_64.tar.gz,
 # and OUT_DIR/avant-linux-x86_64.tar.gz.sha256 (checkable from OUT_DIR).
-# The same files give the same archive, byte for byte (O676): its
+# The same files give the same archive, byte for byte: its
 # entries carry the commit's time (SOURCE_DATE_EPOCH overrides it), so a
 # rebuilt release can be checked against the published sha256.
 set -eu
@@ -52,7 +52,7 @@ fail() {
 [ -x "$root/runtime/build/avant-bind" ] || fail "runtime/build/avant-bind is missing (run sh runtime/build.sh with llvm-config and libclang)"
 [ -z "$versions" ] || [ -f "$versions" ] || fail "versions file is missing: $versions"
 
-# A reproducible archive (O676, VALK-TM2): the same files packaged twice
+# A reproducible archive: the same files packaged twice
 # give the same bytes. Entries in name order, owner and group 0, the mode
 # bits normalized (a directory's come from the umask otherwise), and every
 # entry's mtime fixed: SOURCE_DATE_EPOCH when set, else the time of this
@@ -80,16 +80,16 @@ for f in "$root"/lib/std/*.av; do
 done
 for f in "$root"/runtime/build/*.o; do
   case "$f" in
-    */avant_llvm.o) continue ;;  # the compiler's own link only (D190)
+    */avant_llvm.o) continue ;;  # the compiler's own link only
   esac
   install -m 644 "$f" "$dir/runtime/build/"
 done
 install -m 644 "$root/runtime/avant_rt.h" "$dir/runtime/avant_rt.h"
 
-# What the README points to that a user of the archive needs (O294,
-# Stage 29 W-FIX1e): examples/ ("Runnable programs ... live in
+# What the README points to that a user of the archive needs: examples/
+# ("Runnable programs ... live in
 # examples/"), with the C sources its interop examples link; Avant's
-# LICENSE; and the third-party notices D148 lists, which the vendored
+# LICENSE; and the third-party notices, which the vendored
 # libraries' terms require beside a binary that carries them (the
 # runtime objects carry all six): runtime/third_party/NOTICE.md and each
 # tree's license, the two that keep theirs in a source header (yyjson,
@@ -112,12 +112,12 @@ for h in yyjson/yyjson.h picohttpparser/picohttpparser.h; do
   chmod 644 "$lic"
 done
 
-# versions.txt is also what `avant version` reads (O534). Without
+# versions.txt is also what `avant version` reads. Without
 # VERSIONS_FILE: the compiler's own build record (COMPILER.versions.txt,
 # written by tools/letters.sh) when it has one, else avant.toml's version
 # and this checkout's commit; `dirty: yes` when compiler/, lib/ or
 # runtime/ differ from that commit. The record's `lib:` line (the
-# checkout's library, O617) is left out: an installed compiler reads the
+# checkout's library) is left out: an installed compiler reads the
 # lib/ beside it, and the archive's versions.txt is not EXE.versions.txt.
 if [ -n "$versions" ]; then
   install -m 644 "$versions" "$dir/versions.txt"
@@ -138,7 +138,7 @@ else
   } > "$dir/versions.txt"
 fi
 
-# The glibc floor (D152): the highest GLIBC_ symbol version the shipped
+# The glibc floor: the highest GLIBC_ symbol version the shipped
 # binaries need, and that a program linked from the shipped runtime needs
 # (an object records no symbol versions; its references bind where the
 # user links). The program uses every runtime object: the core and each
@@ -190,7 +190,7 @@ done | sed 's/^GLIBC_//' | sort -uV | tail -n 1)
 echo "glibc-floor: $floor" >> "$dir/versions.txt"
 echo "package: glibc floor $floor"
 
-# The archive (O676): see the epoch above.
+# The archive: see the epoch above.
 tar -C "$out" --sort=name --owner=0 --group=0 --numeric-owner --mode='u+rwX,go+rX,go-w' \
   --mtime="@$epoch" --format=gnu -cf "$out/$name.tar" "$name"
 gzip -n -f "$out/$name.tar"
