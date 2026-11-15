@@ -1486,6 +1486,9 @@ typedef struct GcHeap {
   /* AVANT_GC_STRESS=1 (Stage 28 W16a): the line marks every young block
    * had when the young collection began (LINES_PER_BLOCK bytes per entry
    * of young_blocks), for the mixed blocks the stress mode evacuates. */
+  /* This full collection's mark sets the late start bits in its loop
+   * (avant_gc_mark.c, gc_mark_roots); else gc_lazy_build_live does. */
+  uint8_t mark_bits;
   /* This young collection evacuates blocks with mature lines too: the
    * stress mode, and a complete collection (gc_sticky_collect). */
   uint8_t evac_mixed;
@@ -1748,6 +1751,7 @@ void gc_tl_settle(GcThread *t);
 void gc_alloc_sync_slow(void);
 void gc_lazy_build_block(Block *b);
 void gc_lazy_build_all(void);
+void gc_lazy_build_live(void);
 void gc_lazy_drop(void);
 /* Allocations generated code made without a call, counted when
  * AVANT_GC_STATS is set (inline_walk, avant_gc_alloc.c). */

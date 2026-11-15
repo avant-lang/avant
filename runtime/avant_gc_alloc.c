@@ -492,6 +492,32 @@ void gc_lazy_build_block(Block *b) {
   gc_heap.lazy_open--;
 }
 
+/* After a full collection's mark that set no start bit in its loop
+ * (gc_mark_roots): the start bits of every run that lies in a block with
+ * a live line. An object the mark promoted is in such a block (the mark made its lines
+ * live) and has its bit after this; a block with no live line holds only
+ * dead objects, is released by the sweep, and is not read. A run's dead
+ * objects get bits too, as when a lookup builds a block (the sweep clears
+ * the bits of the lines it frees; a dead object in a live line keeps its
+ * bit, as everywhere). */
+void gc_lazy_build_live(void) {
+  uint32_t i;
+  if (gc_heap.mark_bits) {
+    return;
+  }
+  for (i = 0; i < gc_heap.lazy_n && gc_heap.lazy_open; i++) {
+    const struct GcLazyRun *r = &gc_heap.lazy[i];
+    Block *b;
+    if (r->lo == r->hi) {
+      continue;
+    }
+    b = &gc_heap.blocks[(uint64_t)(r->hi - 1 - gc_heap.base) >> BLOCK_SHIFT];
+    if (gc_block_any_live(b)) {
+      gc_lazy_build_block(b);
+    }
+  }
+}
+
 /* Every run's bits are set (the program becoming shared). */
 void gc_lazy_build_all(void) {
   uint32_t i;

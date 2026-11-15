@@ -462,11 +462,12 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     /* The line marks: the epoch advances (no walk zeroing them). */
     gc_line_epoch_advance();
     gc_mark_roots();
-    /* Late start bits (the Valk stage, VALK-A2, M7): every object the
-     * mark reached has its bit now (mark_object), and the mark's lookups
-     * built the blocks they needed; the inline runs of the cycle are
-     * forgotten before anything is swept or moved. An object the mark
-     * did not reach never gets a bit. */
+    /* Late start bits: when the mark's loop set none (gc_mark_roots), the
+     * runs of every block it left a live line in are built now
+     * (gc_lazy_build_live); either way every object the mark reached has
+     * its bit, and the inline runs of the cycle are forgotten before
+     * anything is swept or moved. */
+    gc_lazy_build_live();
     if (gc_heap.set.verify) {
       gc_verify_starts_end();
     }

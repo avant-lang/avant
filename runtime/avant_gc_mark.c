@@ -23,18 +23,15 @@
  * after it (its remembered set and young budget are empty,
  * gc_sticky_full_end); the flags are written only when one is set, so a
  * collection of a heap that is already mature dirties no header. An
- * object promoted here gets its start bit too (the Valk stage, VALK-A2,
- * M7: one the inline path allocated may have none yet, avant_gc_alloc.c,
- * "Late start bits"; the sweep and the defragmenter find live objects by
- * the bits), in the branch that clears YOUNG, so a mature object pays
- * nothing; nor does an aged copy (SURVIVED: the young copy that made it
- * set its bit). */
+ * object the inline path allocated may have no start bit yet
+ * (avant_gc_alloc.c, "Late start bits"), and the sweep and the
+ * defragmenter find live objects by the bits. A root's object has its
+ * bit by the lookup that found it (gc_object_payload builds its block's),
+ * so none is set here; a field's object gets it in the mark's loop or
+ * after the mark (gc_mark_roots). */
 static inline void mark_object(void *start, AvantHeader *h, Block *b) {
   size_t total = align_up(sizeof(AvantHeader) + (size_t)h->size);
   if (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
-    if (!(h->flags & AVANT_FLAG_SURVIVED)) {
-      start_bit_set(h, 1);
-    }
     h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
   }
   if (b) {
@@ -133,7 +130,7 @@ static __attribute__((noinline)) void mark_lines_rest(uint8_t *lines, size_t l, 
  * nest's registers were spilled around it (167 instructions per object of
  * a full collection against 149); the small record's loop is now its own
  * (drain) and the bitmap walk is a function of its own (scan_walk). */
-static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v) {
+static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v, const int bits) {
   uintptr_t off = (uintptr_t)v - c->base8;
   uint64_t g;
   uint64_t w;
@@ -158,19 +155,10 @@ static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v)
   if (__builtin_expect((fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED | AVANT_FLAG_LARGE)) != 0, 0)) {
     if (fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
       h->flags = (uint16_t)(fl & ~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED));
-      /* Its late start bit (mark_object's comment). Inline, and it is
-       * not free where no bit is set: with it here the C compiler makes
-       * the heap's address again for every object marked, 50
-       * instructions a node where the loop had 49 (scenario 2 of the
-       * collector benchmark +1.98% in instructions, +1.0% in cycles).
-       * The forms that give the 49 back were measured and cost more
-       * (the record of VALK-A2, timed/s2): the bit set by a cold
-       * function called with the header, 49 instructions and 13% more
-       * cycles a node on the server's Zen 1; every run's bits built
-       * before the mark, the loop as it was and scenario 8 above its
-       * base. A call with the granule, or the start words' address in
-       * the mark's context, saves nothing. */
-      if (!(fl & AVANT_FLAG_SURVIVED)) {
+      /* Its late start bit, in the loop that sets them (BITS, a
+       * constant in each loop: gc_mark_roots' comment); the other loop
+       * leaves it to gc_lazy_build_live after the mark. */
+      if (bits && !(fl & AVANT_FLAG_SURVIVED)) {
         start_bit_set(h, 1);
       }
     }
@@ -206,12 +194,12 @@ static inline __attribute__((always_inline)) void mark_push(MarkCtx *c, void *v)
  * an element buffer, a record with more than seven reference words), by
  * its bitmap. A function of its own, with its own copy of the loop's
  * state, so that drain's loop keeps its registers. */
-static __attribute__((noinline)) void scan_walk(void *p) {
+static __attribute__((noinline)) void scan_walk(void *p, int bits) {
   MarkCtx c;
   mark_open(&c);
   EACH_REF_SLOT_WALK(p, slot, {
     void *v = *slot;
-    if (mark_field(&c, v)) {
+    if (mark_field(&c, v, bits)) {
       mark_push(&c, v);
     }
   });
@@ -226,7 +214,7 @@ static __attribute__((noinline)) void scan_walk(void *p) {
  * no pop); the others are pushed. The order of a full mark changes
  * nothing it leaves: marks, line marks and the live bytes are sets and a
  * sum. */
-static void drain(void) {
+static inline __attribute__((always_inline)) void drain(const int bits) {
   MarkCtx c;
   mark_open(&c);
   while (c.n) {
@@ -238,7 +226,7 @@ static void drain(void) {
       void *next = NULL;
       if (__builtin_expect(k > TYPE_REFS_MAX, 0)) {
         mark_close(&c);
-        scan_walk(p);
+        scan_walk(p, bits);
         mark_open(&c);
         break;
       }
@@ -248,7 +236,7 @@ static void drain(void) {
           d >>= 8;
           if ((size_t)(d & 0xffu) < nw) {
             void *v = p[d & 0xffu];
-            if (mark_field(&c, v)) {
+            if (mark_field(&c, v, bits)) {
               mark_push(&c, v);
             }
           }
@@ -256,7 +244,7 @@ static void drain(void) {
         d >>= 8;
         if ((size_t)(d & 0xffu) < nw) {
           void *v = p[d & 0xffu];
-          if (mark_field(&c, v)) {
+          if (mark_field(&c, v, bits)) {
             next = v;
           }
         }
@@ -268,6 +256,16 @@ static void drain(void) {
     }
   }
   mark_close(&c);
+}
+
+/* The loop twice, once for each way a young object the mark promotes
+ * gets its late start bit (gc_mark_roots chooses). */
+static __attribute__((noinline)) void drain_bits(void) {
+  drain(1);
+}
+
+static __attribute__((noinline)) void drain_plain(void) {
+  drain(0);
 }
 
 static void mark_tls_slot(void **slot) {
@@ -288,7 +286,23 @@ void gc_mark_roots(void) {
   }
   EACH_TASK_ROOT(slot, mark(*slot));
   gc_each_runtime_root(mark_tls_slot);
-  drain();
+  /* The late start bits of the young objects the mark promotes, one of
+   * two ways. Set in the loop (drain_bits), each costs the promoted
+   * object a few instructions and every object marked one (the heap's
+   * address is made again in the loop: 50 instructions a node for 49).
+   * Left to gc_lazy_build_live after the mark (drain_plain), the loop
+   * has its 49 and every object of an inline run in a block with a live
+   * line is walked, about 13 instructions each. So the walk is taken
+   * when the young generation is small beside what the last full
+   * collection found live (an eighth: mostly old objects will be marked),
+   * and the loop's own bit otherwise (a heap that is mostly young, a
+   * program's first full collection). */
+  gc_heap.mark_bits = (uint8_t)(avant_nursery_held * 8 > gc_heap.proof.old_live);
+  if (gc_heap.mark_bits) {
+    drain_bits();
+  } else {
+    drain_plain();
+  }
 }
 
 /* The sweep of one block after a full mark: a block with no live line
