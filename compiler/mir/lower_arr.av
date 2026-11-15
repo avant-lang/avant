@@ -196,11 +196,16 @@ pub fn (lw: MirLower) array_header_empty(aty: Int): MOperand {
 
 // `[e0, e1, ...]` (the old back end): the buffer first (n elements,
 // the element-buffer id), each element in order stored into it, then the
-// header. A reference-carrying element is a `fresh` store (V14): the
-// buffer is held in a slot while it fills (it is live across the
-// header's allocation), and one closing `barrier` remembers it if a
-// collection promoted it mid-fill (5.4; the old back end has no such
-// barrier, W6c.2).
+// header. A reference-carrying element is stored behind the buffer's
+// barrier like any store: the fresh pass removes the barrier while the
+// buffer is open, that is, until an element's evaluation makes a
+// collecting call (mir/fresh.av), and a store after one keeps its
+// barrier, the inline test with the slot. (Every such store used to go
+// without one, with a single closing barrier after the fill, V14's
+// closed fill: a collection inside the fill could promote the buffer,
+// and the stores after it left young references in a mature buffer that
+// was not remembered until the closing barrier, so the collector's
+// invariant could not be asked of buffers, avant_gc_verify.c.)
 pub fn (lw: MirLower) lower_array_lit(e: Expr): MOperand {
   b = lw.lw_b
   aty = lw.ety(e)
@@ -226,15 +231,11 @@ pub fn (lw: MirLower) lower_array_lit(e: Expr): MOperand {
     lw.at(e.elems[i].loc)
     p = b.index(b.deref(b.pl(d)), b.c_i64(i.to_i))
     if rc {
-      b.assign_fresh(p, b.rv_use(v))
-    } else {
-      b.assign(p, b.rv_use(v))
+      b.barrier(d)
     }
+    b.assign(p, b.rv_use(v))
   }
   lw.at(e.loc)
-  if rc && n > 0 {
-    b.barrier(d)
-  }
   lw.array_header(aty, d, b.c_i32(n))
 }
 
@@ -252,8 +253,8 @@ pub fn (lw: MirLower) elem_ty_of(e: Expr): Ty {
 // `Array(T).new(n)` and `Array(T).new(n, value)` (Stage 29 W4b1, D295
 // R5): n (a negative n traps: avant_trap_negative(n, 0)), a zeroed buffer
 // of n elements, then the value, when there is one, stored into every
-// element (a reference-carrying one as a `fresh` store, one closing
-// `barrier`, as an array literal), or else the zero's strings when the
+// element (a reference-carrying one behind the buffer's barrier, as an
+// array literal's), or else the zero's strings when the
 // element's zero is not all zero bytes (a String is "", W3b's
 // zero_strings); then the header with size = cap = n.
 pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
@@ -317,9 +318,6 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
     lw.fill_loop(d, k, et, want, -1)
   }
   lw.at(e.loc)
-  if rc {
-    b.barrier(d)
-  }
   lw.array_header(aty, d, lw.tmp(mt_i32(), b.rv_cast(b.copy_local(k), mt_i32())))
 }
 
@@ -340,10 +338,9 @@ pub fn (lw: MirLower) fill_loop(d: Int, n: Int, et: Int, want: Ty, v: Int) {
   p = b.index(b.deref(b.pl(d)), b.copy_local(i))
   if v >= 0 {
     if b.types.ref_carrying(et) {
-      b.assign_fresh(p, b.rv_use(b.copy_local(v)))
-    } else {
-      b.assign(p, b.rv_use(b.copy_local(v)))
+      b.barrier(d)
     }
+    b.assign(p, b.rv_use(b.copy_local(v)))
   } else {
     lw.fresh_zero_strings(p, want, et)
   }
@@ -353,11 +350,13 @@ pub fn (lw: MirLower) fill_loop(d: Int, n: Int, et: Int, want: Ty, v: Int) {
 }
 
 // zero_strings for a place inside a buffer being filled: "" into every
-// String of the place (fresh stores; the caller barriers the buffer).
+// String of the place, each store behind the buffer's barrier (the fresh
+// pass removes it while the buffer is open).
 pub fn (lw: MirLower) fresh_zero_strings(p: MPlace, t: Ty, mt: Int) {
   b = lw.lw_b
   if t.is_string {
-    b.assign_fresh(p, b.rv_use(b.str_const("")))
+    b.barrier(p.local)
+    b.assign(p, b.rv_use(b.str_const("")))
     return
   }
   if t.is_struct {

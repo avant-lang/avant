@@ -165,11 +165,10 @@ pub fn (lw: MirLower) block_value(bl: Block, cont: Int, exit: Int): MOperand {
 // its value stored into element i; then the header with size = cap = n,
 // as lower_array_new. The buffer is held in a slot while it fills (the
 // block may collect); elements not yet built are zero bytes, which the
-// collector reads as no reference. A reference-carrying element is a
-// `fresh` store with one closing `barrier`, as an array literal's (V14),
-// unless the block can return from the function (a `return` or a
-// postfix `?` lowered inside it: a fresh fill may not be left open):
-// then each store goes behind the buffer's barrier, as block_store's.
+// collector reads as no reference. A reference-carrying element is
+// stored behind the buffer's barrier, as an array literal's and as
+// block_store's (the fresh pass removes the barrier while the buffer is
+// still open).
 pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -209,7 +208,6 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
   b.branch(c, body, exit)
   b.at(body)
   lw.bind_name(bl.params[0], ty_int(), mt_int(), b.copy_local(i), bl.loc, true)
-  fresh_fill = false
   if bl.body.size == 0 {
     lw.refuse(bl.loc, "an empty value block")
     return zero
@@ -233,23 +231,13 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
       }
       lw.at(x.loc)
       p = b.index(b.deref(b.pl(d)), b.copy_local(i))
+      // Behind the buffer's barrier, like any store (lower_array_lit's
+      // comment): the fresh pass removes it where the buffer is still
+      // open.
       if rc {
-        leaves = false
-        for bi in body..b.func.blocks.size {
-          if t = b.func.blocks[bi].term, t.kind == mtk_return() {
-            leaves = true
-          }
-        }
-        if leaves {
-          b.barrier(d)
-          b.assign(p, b.rv_use(v))
-        } else {
-          b.assign_fresh(p, b.rv_use(v))
-          fresh_fill = true
-        }
-      } else {
-        b.assign(p, b.rv_use(v))
+        b.barrier(d)
       }
+      b.assign(p, b.rv_use(v))
     } else {
       lw.refuse(last.loc, "a block that does not end with a value")
       return zero
@@ -262,9 +250,6 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
   b.goto(head)
   b.at(exit)
   lw.at(e.loc)
-  if fresh_fill {
-    b.barrier(d)
-  }
   lw.array_header(aty, d, lw.tmp(mt_i32(), b.rv_cast(b.copy_local(k), mt_i32())))
 }
 

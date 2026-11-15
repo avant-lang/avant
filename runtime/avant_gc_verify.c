@@ -526,15 +526,6 @@ static void rem_root_slot(void **slot) {
   rem_named_found(st);
 }
 
-/* Is H an element buffer: a pointer buffer (AVANT_TYPE_PTRS) or a buffer
- * of by-value elements (a type map with a stride)? Every other object
- * with references is a record (a class instance, a box, a closure's
- * environment, a capture record, an array's or a hash's header). */
-static int verify_is_buffer(const AvantHeader *h) {
-  uint32_t id = h->type_id;
-  return id == AVANT_TYPE_PTRS || (id < MAX_TYPES && gc_heap.type_set[id] && gc_heap.types[id].stride != 0);
-}
-
 /* The check: a reached non-young holder that is not remembered must name
  * no young object. Two forms.
  *
@@ -555,18 +546,15 @@ static int verify_is_buffer(const AvantHeader *h) {
  * now at the first young collection after the store, with "not
  * remembered" in the line.
  *
- * R1' (gc-design.md section 1.3), for an element buffer: one that a root,
- * a young object's field or a remembered object's field names this cycle
- * may hold young references unremembered, as before. That is the window
- * the contract leaves open on purpose: the fill of a fresh buffer held in
- * a slot, closed by one barrier when the fill ends (V14's older form, the
- * only stores generated code makes with no barrier into a holder that is
- * not open: compiler/mir/lower_arr.av, lower_block.av; mir.md 5.4), in
- * which a buffer a collection promoted in the middle of its fill holds
- * young elements until the closing barrier; and the runtime's builders
- * of buffers a young header or a root names (gc-design.md 1.3). A
- * missed closing barrier on such a buffer therefore stays invisible here
- * while something names the buffer; V14 is its check.
+ * An element buffer is asked the same: the fill of a fresh buffer
+ * (an array literal, Array.new with a value or a block) stores each
+ * element behind the buffer's barrier once the buffer may have been
+ * promoted (compiler/mir/lower_arr.av, lower_block.av), and the runtime's
+ * builders barrier theirs before the next collecting call. (A fill used
+ * to store with no barrier and close with one, so a buffer a collection
+ * promoted in the middle of its fill held young elements unremembered
+ * until then, and a buffer that a root, a young object or a remembered
+ * one named was passed over here.)
  *
  * A carded holder remembered by its cards (REMC without CARD_ALL) must
  * name young objects only from slots of its marked cards (the card
@@ -589,9 +577,6 @@ static uint64_t yholders_check(int print) {
       continue;
     }
     named = vb_test(vb_named, v, AVANT_FLAG_MARKED);
-    if (named && verify_is_buffer(h)) {
-      continue;
-    }
     by_cards = (h->flags & AVANT_FLAG_REMC) != 0;
     if (by_cards && !rem_by_cards(h)) {
       continue;
@@ -1300,9 +1285,6 @@ static uint64_t yholders_check_hot(void) {
     AvantHeader *h = avant_header(v);
     int by_cards;
     if (verify_names_young(v, &st) || (h->flags & AVANT_FLAG_REM)) {
-      continue;
-    }
-    if (vb_test(vb_named, v, AVANT_FLAG_MARKED) && verify_is_buffer(h)) {
       continue;
     }
     by_cards = (h->flags & AVANT_FLAG_REMC) != 0;
