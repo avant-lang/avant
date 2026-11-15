@@ -110,6 +110,8 @@ pub class Parser {
   // ("" for a positional one), or empty when none is named: the call
   // that list belongs to takes them (take_arg_names).
   arg_names: Array(String) = []
+  // The bounds the last type parameter list wrote (`class Top(T: Ranked)`).
+  tparam_bounds: Array(TypeBound) = []
 
   fn initialize(source: Source, tokens: Array(Token)) {
     self.source = source
@@ -877,6 +879,7 @@ pub class Parser {
 
   pub fn parse_type_params(loc: Location): Array(String) {
     names: Array(String) = []
+    self.tparam_bounds = []
     if self.current.kind != tk_l_paren() {
       return names
     }
@@ -887,6 +890,7 @@ pub class Parser {
       self.bump
       return names
     }
+    self.tparam_bounds = []
     while true {
       tok = expect(tk_ident())
       i = 0
@@ -898,6 +902,16 @@ pub class Parser {
       }
       names.push(tok.value)
       self.skip_newlines
+      if self.current.kind == tk_colon() {
+        // A bound, the form a function's parameter takes: `class Top(T:
+        // Ranked)`, `struct Pair(K: Eq(K) + Show, V)`.
+        self.bump
+        self.skip_newlines
+        for app in self.parse_iface_apps {
+          self.tparam_bounds.push(TypeBound.new(tok.value, app))
+        }
+        self.skip_newlines
+      }
       if match_tok(tk_comma()) {
         self.skip_newlines
       } else {
@@ -912,6 +926,7 @@ pub class Parser {
     loc = expect(tk_struct()).loc
     name = expect(tk_ident()).value
     params = parse_type_params(loc)
+    pbounds = self.tparam_bounds
     opted = parse_opt_clause()
     body = parse_type_body(name)
     for m in body.methods {
@@ -919,6 +934,7 @@ pub class Parser {
     }
     defn = StructDef.new(loc, name)
     defn.type_params = params
+    defn.param_bounds = pbounds
     defn.fields = body.fields
     defn.methods = body.methods
     defn.quotes = body.quotes
@@ -1125,11 +1141,13 @@ pub class Parser {
     loc = expect(tk_class()).loc
     name = expect(tk_ident()).value
     params = parse_type_params(loc)
+    pbounds = self.tparam_bounds
     opted = parse_opt_clause()
     body = parse_type_body(name)
     field_params(name, body)
     defn = ClassDef.new(loc, name)
     defn.type_params = params
+    defn.param_bounds = pbounds
     defn.fields = body.fields
     defn.methods = body.methods
     defn.quotes = body.quotes
@@ -1226,6 +1244,9 @@ pub class Parser {
     loc = expect(tk_interface()).loc
     name = expect(tk_ident()).value
     params = parse_type_params(loc)
+    if self.tparam_bounds.size > 0 {
+      fail(loc, "an interface's type parameters take no bounds: bound the type parameters of the functions and types that use it")
+    }
     idef = InterfaceDef.new(loc, name)
     idef.type_params = params
     idef.vis = vis
@@ -1899,7 +1920,9 @@ pub class Parser {
       }
       if self.current.kind != tk_r_paren() {
         while true {
-          tn.args.push(self.parse_type_name)
+          // A type parameter may take its bound where it is written
+          // inside another type (`xs: Array(T: Ranked)`).
+          tn.args.push(self.parse_bounded_type)
           self.skip_newlines
           if match_tok(tk_comma()) {
             self.skip_newlines

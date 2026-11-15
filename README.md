@@ -517,7 +517,7 @@ fn main {
 
 ### Printing
 
-Every scalar has one text, the same in `puts`, in interpolation and from `to_s`: integers in decimal, a `Float64` as the shortest text that reads back as the same number ([Floats](#floats)), `true` and `false`, a `String` as itself. `x.to_s` is exactly `"${x}"`. An enum prints its member's name, an error its text, and a union its member; an optional is opened first.
+Every scalar has one text, the same in `puts`, in interpolation and from `to_s`: integers in decimal, a `Float64` as the shortest text that reads back as the same number ([Floats](#floats)), `true` and `false`, a `String` as itself. An enum prints its member's name, an error its text (its message and its cause), and a union its member; an optional is opened first. A struct, class or enum that defines `fn to_s: String` prints that text in interpolation (a type marked `Error` cannot: its text is its message). For every type that prints, `x.to_s` is exactly `"${x}"`.
 
 ```avant
 fn size_or_word(n: Int): Int | String {
@@ -527,9 +527,19 @@ fn size_or_word(n: Int): Int | String {
   "many"
 }
 
+struct Vec2 {
+  x: Int
+  y: Int
+
+  fn to_s: String {
+    "(${x}, ${y})"
+  }
+}
+
 fn main {
   puts(42.to_s + "/" + 2.5.to_s)                       // => 42/2.5
   puts("${size_or_word(3)} ${size_or_word(30)}")      // => 3 many
+  puts("at ${Vec2 { x: 1, y: 2 }}")                   // => at (1, 2)
 }
 ```
 
@@ -1081,7 +1091,7 @@ fn main {
 }
 ```
 
-`Float64.to_i` truncates toward zero, and traps on NaN, an infinity, or a value outside `Int` (`avant runtime: to_i of Float64 30000000000000000000.0 out of range for Int`). From text, `"42".to_i` returns an optional ([Parsing numbers](#parsing-numbers)). To text, interpolate (`"${n}"`), or use `fmt_float(x, digits)` for a fixed number of decimals: numbers have no `to_s`.
+`Float64.to_i` truncates toward zero, and traps on NaN, an infinity, or a value outside `Int` (`avant runtime: to_i of Float64 30000000000000000000.0 out of range for Int`). From text, `"42".to_i` returns an optional ([Parsing numbers](#parsing-numbers)). To text, interpolate (`"${n}"`) or call `to_s`, the same text ([Printing](#printing)), or use `fmt_float(x, digits)` for a fixed number of decimals.
 
 ### Arithmetic and overflow
 
@@ -2285,7 +2295,7 @@ fn main {
 
 Any other unknown name is an error, so a misspelt type is caught where it is written: `fn f(x: Strng)` reports ``unknown type Strng (did you mean `String`?)``.
 
-A type parameter may be a member of a union: `fn first_ok(xs: Array(T | ParseError)): T?` takes an `Array(Int | ParseError)` with `T` as `Int`, and `T?` takes an `Int?`. The one parameter left unbound takes the argument's other members. Two of them in one union (`r: T | E`) split `Int | ParseError` in two ways; another argument (`fn or_else(r: T | E, d: T): T`) or a declared result (`e: ParseError? = failure(r)`) fixes one, and otherwise the call says it cannot infer them.
+A type parameter may be a member of a union: `fn first_ok(xs: Array(T | ParseError)): T?` takes an `Array(Int | ParseError)` with `T` as `Int`, and `T?` takes an `Int?`. The one parameter left unbound takes the argument's other members. Two of them in one union (`r: T | E`) split `Int | ParseError` in two ways; a bound (`r: T | E: Error`: `E` takes the members marked `Error`, [Bounds](#bounds)), another argument (`fn or_else(r: T | E, d: T): T`) or a declared result (`e: ParseError? = failure(r)`) fixes one, and otherwise the call says it cannot infer them.
 
 ### Generic types
 
@@ -2324,6 +2334,7 @@ fn main {
 ```
 
 - A struct literal infers its arguments the same way: `Pair { first: 1, second: "x" }` is `Pair(Int, String)`.
+- A parameter may take a [bound](#bounds), as a function's does: `class Top(T: Ranked)` can only be used with a type that opted into `Ranked`, and `Top(Int)` is an error where it is written, not in a method far away.
 - A generic class may name itself (`next: Link(T)?`): a class is a pointer. A struct is copied inline, so a struct that contains itself, generic or not, is an error.
 - `Array`, `Hash`, `Ptr` and `JoinHandle` are built in; they are not generic types you could declare.
 - A generic type or function imported from another module takes the types of the module that uses it, `pub` or private: with `Box` imported, `Box(Point)` and `Box.new(Point { ... })` work for a `Point` declared here. A type argument is a name like any other where it is written: a private type of another module is unknown there, also as an element type (`Array(Hidden)`) or inside a union or a function type.
@@ -2376,6 +2387,9 @@ A struct, a class, or a `Ptr` to a C layout opts in by name; conformance is neve
 ### Bounds
 
 `T: Show` in a signature is a bound: the call compiles only for a type that opted in. The compiler copies the function for that concrete type and emits an ordinary method call. Two bounds are written `T: Show + Eq(T)`; an interface may take type parameters (`interface Eq(T)`).
+
+- The bound is written where the parameter is: after a parameter's type (`v: T: Show`), inside another type (`xs: Array(T: Ranked)`), or on a generic type's parameters (`class Top(T: Ranked)`). After a union it bounds the last member: `r: T | E: Error`.
+- `Error` is a bound too: `E: Error` takes a type marked `Error`. In a union it settles the split: `fn failure(r: T | E: Error): E?` called with an `Int | ParseError` takes `E` as `ParseError` and `T` as `Int`, with no declared result.
 
 <!-- check: run -->
 ```avant

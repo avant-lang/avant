@@ -176,6 +176,38 @@ pub fn (checker_self: Checker) unify_union(pattern: Ty, actual: Ty, keys: Array(
     }
     return 0
   }
+  if free.size > 1 && checker_self.infer_err_params.size > 0 {
+    // A parameter bounded by Error (`r: T | E: Error`) takes the members
+    // marked Error, and the one parameter left the rest: the split is no
+    // longer ambiguous.
+    left: Array(String) = []
+    for fname in free {
+      if checker_self.infer_err_params.contains(fname) {
+        errs: Array(Ty) = []
+        keep: Array(Ty) = []
+        for rm in rest {
+          if rm.error_mark {
+            errs.push(rm)
+          } else {
+            keep.push(rm)
+          }
+        }
+        if errs.size == 0 || !checker_self.subst_put(keys, vals, fname, ty_union_build(errs)) {
+          return 0
+        }
+        rest = keep
+      } else {
+        left.push(fname)
+      }
+    }
+    free = left
+    if free.size == 0 {
+      if rest.size == 0 {
+        return 1
+      }
+      return 0
+    }
+  }
   if free.size > 1 {
     return 2
   }
@@ -198,7 +230,14 @@ pub fn union_rest_without(rest: Array(Ty), m: Ty): Array(Ty) {
   out
 }
 
-pub fn (checker_self: Checker) infer_subst(tparams: Array(String), params: Array(Ty), arg_tys: Array(Ty), ret: Ty, expected: Ty?): Array(Ty)? {
+pub fn (checker_self: Checker) infer_subst(fnn: Function, params: Array(Ty), arg_tys: Array(Ty), ret: Ty, expected: Ty?): Array(Ty)? {
+  tparams = fnn.type_params
+  checker_self.infer_err_params = []
+  for b in fnn.bounds {
+    if b.iface.name == "Error" && b.iface.args.size == 0 {
+      checker_self.infer_err_params.push(b.param)
+    }
+  }
   keys: Array(String) = []
   vals: Array(Ty) = []
   later: Array(Int) = []
@@ -254,6 +293,7 @@ pub fn (checker_self: Checker) infer_subst(tparams: Array(String), params: Array
 }
 
 pub fn (checker_self: Checker) infer_subst_recv(tparams: Array(String), params: Array(Ty), arg_tys: Array(Ty), ret: Ty, expected: Ty?, pat: Ty, act: Ty): Array(Ty)? {
+  checker_self.infer_err_params = []
   keys: Array(String) = []
   vals: Array(Ty) = []
   if pat.origin == act.origin {
@@ -305,7 +345,7 @@ pub fn (checker_self: Checker) subst_for_method(sig: FuncSig, call_owner: String
     checker_self.resolver.clear_tparams
     return checker_self.infer_subst_recv(sig.node.type_params, sig.params, arg_tys, sig.ret, expected, pat, act)
   }
-  checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected)
+  checker_self.infer_subst(sig.node, sig.params, arg_tys, sig.ret, expected)
 }
 
 // The defaults of the parameters a call leaves out, spliced in as
@@ -770,7 +810,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
       if !is_inst && checker_self.fn_candidate(sig.node) && arity_ok(sig.node, arg_tys.size) {
         if sig.node.generic {
           saw_generic = true
-          if subst = checker_self.infer_subst(sig.node.type_params, sig.params, checker_self.lit_fit_tys(sig.params, arg_tys, lits), sig.ret, expected) {
+          if subst = checker_self.infer_subst(sig.node, sig.params, checker_self.lit_fit_tys(sig.params, arg_tys, lits), sig.ret, expected) {
             cands.push(sig)
           }
         } else {
@@ -834,7 +874,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
   }
   chosen = cands[0]
   if chosen.node.generic {
-    if subst = checker_self.infer_subst(chosen.node.type_params, chosen.params, checker_self.lit_fit_tys(chosen.params, arg_tys, lits), chosen.ret, expected) {
+    if subst = checker_self.infer_subst(chosen.node, chosen.params, checker_self.lit_fit_tys(chosen.params, arg_tys, lits), chosen.ret, expected) {
       return checker_self.instantiate_function(chosen, subst, loc)
     }
     checker_self.fail(loc, "cannot infer type argument")
@@ -903,7 +943,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
           if !is_inst && checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
             if sig.node.generic {
               saw_generic = true
-              if subst = checker_self.infer_subst(sig.node.type_params, sig.params, checker_self.lit_fit_tys(sig.params, arg_tys, lits), sig.ret, expected) {
+              if subst = checker_self.infer_subst(sig.node, sig.params, checker_self.lit_fit_tys(sig.params, arg_tys, lits), sig.ret, expected) {
                 cands.push(sig)
               }
             } else {

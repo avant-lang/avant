@@ -94,6 +94,15 @@ pub class Checker {
   // last error is another: the cascade rule lets the reader's own message
   // replace it.
   weak_at: Int = 0
+  // The bounds of generic types' instances (checker/lambda.av
+  // check_bound_uses): tested once the opt-ins are known, the resolver's
+  // list read up to bound_done.
+  pub bounds_ready: Bool = false
+  pub bound_done: Int = 0
+  pub in_bounds: Bool = false
+  // The type parameters of the function being inferred that are bounded
+  // by Error (`E: Error`): in a union they take the members marked Error.
+  pub infer_err_params: Array(String) = []
   // Set while a constructor's arguments are matched against initialize:
   // its messages name the call as written, T.new (Stage 29 W5c2, O364).
   pub in_new: Bool = false
@@ -418,6 +427,9 @@ pub class Checker {
       self.resolver_pushes = self.resolver.errors.pushes
     }
     self.resolver_kept = self.resolver_pulled
+    if self.bounds_ready && !self.in_bounds && self.bound_done < self.resolver.bound_uses.size {
+      check_bound_uses
+    }
     if self.ready_adopt && !self.in_adopt {
       saved: Array(String) = []
       for tparam_name in self.resolver.tparam_names {
@@ -2060,6 +2072,13 @@ pub class Checker {
     for part in expr.parts {
       if inner = part.expr {
         ty = check_expr(inner)
+        if (ty.is_agg || ty.is_enum) && !ty.error_mark && !self.has_err && user_op(ty, "to_s") {
+          // A type that defines `fn to_s: String` prints its text.
+          if call = own_text_call(inner, ty) {
+            part.expr = call
+          }
+          continue
+        }
         if ty.error_mark && !self.has_err {
           // An error prints its message (D292, Stage 29 W4a): the part
           // becomes the call of the method the parser added to the type
@@ -2110,6 +2129,39 @@ pub class Checker {
       }
     }
     t_string()
+  }
+
+  // Whether `x.to_s` of a value of ty is the text interpolation prints,
+  // "${x}": every type that prints and does not define to_s itself (a
+  // scalar's is the builtin_method's); an optional is opened first, as
+  // interpolation says.
+  pub fn text_to_s(ty: Ty): Bool {
+    if ty.is_enum || ty.error_mark {
+      return !user_op(ty, "to_s")
+    }
+    ty.is_union
+  }
+
+  // The call of ty's own `fn to_s: String` on inner (checked already),
+  // the text interpolation prints; nil, with the error given, when the
+  // method is not that signature.
+  pub fn own_text_call(inner: Expr, ty: Ty): Expr? {
+    fa = Expr.new(ex_field(), inner.loc)
+    fa.object = inner
+    fa.ident = "to_s"
+    arg_tys: Array(Ty) = []
+    none: Ty? = nil
+    if sig = match_method(ty.name, "to_s", arg_tys, none, inner.loc, ty.name, ty.mod_name, no_int_literals()) {
+      if !sig.ret.is_string {
+        fail(inner.loc, "cannot interpolate ${ty.show}: its to_s returns ${sig.ret.show}, and the text it prints is fn to_s: String")
+        return nil
+      }
+      fa.method_call = true
+      fa.resolved = sig.node.emit_name
+      fa.ty = sig.ret
+      return fa
+    }
+    nil
   }
 
   // What printing a value of the enum ty prints (Stage 29 W5a1, D358):
@@ -2481,6 +2533,9 @@ pub class Checker {
           return join_result(t_int())
         }
         return field_as_call(expr, object)
+      }
+      if expr.ident == "to_s" && text_to_s(object) {
+        return paren_call_of(expr)
       }
       if object.is_agg {
         if field_ty = object.field_named(expr.ident) {
@@ -4962,6 +5017,11 @@ pub class Checker {
         }
         return got
       }
+    }
+    if expr.callee == "to_s" && text_to_s(object) {
+      // The text interpolation prints: an enum's name, an error's text,
+      // a union's member, a type's own to_s.
+      return scalar_to_s(expr, object)
     }
     if expr.callee == "size" && expr.args.size == 0 {
       if b = expr.block {

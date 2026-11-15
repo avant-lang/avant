@@ -302,6 +302,10 @@ pub fn (checker_self: Checker) check: Program {
   checker_self.clear_poison
   checker_self.apply_late_opt_ins
   checker_self.clear_poison
+  checker_self.check_param_bound_decls
+  checker_self.bounds_ready = true
+  checker_self.check_bound_uses
+  checker_self.clear_poison
   checker_self.reserve_constructors
   checker_self.clear_poison
   checker_self.assign_emit_names
@@ -776,6 +780,20 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   if fnn.name == "!=" {
     // != is always !(a == b), never its own method.
     checker_self.fail(fnn.loc, "!= is always !(a == b): define == only")
+    checker_self.resolver.clear_tparams
+    checker_self.current_module = saved_mod
+    return
+  }
+  if fnn.name == "to_s" && owner_ty.error_mark {
+    // An error's text is its message and its cause (`"${e}"`, e.to_s).
+    checker_self.fail(fnn.loc, "${owner_ty.show} is marked Error: its text, in interpolation and from to_s, is its message and its cause; define message instead of to_s")
+    checker_self.resolver.clear_tparams
+    checker_self.current_module = saved_mod
+    return
+  }
+  arity = op_arity_text(fnn.name, fnn.params.size)
+  if arity.size > 0 {
+    checker_self.fail(fnn.loc, arity)
     checker_self.resolver.clear_tparams
     checker_self.current_module = saved_mod
     return

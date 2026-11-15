@@ -7,6 +7,23 @@ import type
 import ast
 import suggest
 
+// A generic type's instance whose template bounds its parameters
+// (`class Top(T: Ranked)`): the checker tests each bound on the arguments
+// once the interfaces' opt-ins are known (check_bound_uses).
+pub class BoundUse {
+  pub loc: Location
+  pub label: String = ""
+  pub params: Array(String) = []
+  pub bounds: Array(TypeBound) = []
+  pub args: Array(TypeName) = []
+  pub arg_tys: Array(Ty) = []
+  pub mod_name: String = ""
+
+  fn initialize(loc: Location) {
+    self.loc = loc
+  }
+}
+
 pub class TypeResolver {
   pub named: Hash(String, Int)
   pub collide: Hash(String, Int)
@@ -46,6 +63,7 @@ pub class TypeResolver {
   aliases: Array(AliasDef)
   alias_ix: Hash(String, Int)
   alias_inflight: Array(String)
+  pub bound_uses: Array(BoundUse)
 
   fn initialize {
     n = Hash(String, Int).new
@@ -78,6 +96,7 @@ pub class TypeResolver {
     ai = Hash(String, Int).new
     self.alias_ix = ai
     self.alias_inflight = []
+    self.bound_uses = []
     self.inst_depth = 0
     self.failed = false
     self.err = nil
@@ -1032,6 +1051,26 @@ pub class TypeResolver {
     }
     if existing = get_named(key) {
       return existing
+    }
+    pbounds: Array(TypeBound) = []
+    if sdef0 = find_struct_template(tn.name, tn.mod_name) {
+      pbounds = sdef0.param_bounds
+    } else if cdef0 = find_class_template(tn.name, tn.mod_name) {
+      pbounds = cdef0.param_bounds
+    }
+    if pbounds.size > 0 {
+      use = BoundUse.new(tn.loc)
+      use.label = label
+      use.params = params
+      use.bounds = pbounds
+      for a0 in tn.args {
+        pa0 = clone_type_name(a0)
+        pin_type_name(pa0)
+        use.args.push(pa0)
+      }
+      use.arg_tys = arg_tys
+      use.mod_name = self.scope_mod
+      self.bound_uses.push(use)
     }
     self.inst_depth += 1
     if self.inst_depth > 32 {

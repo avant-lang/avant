@@ -916,6 +916,17 @@ pub fn (checker_self: Checker) attach_bounds(fnn: Function) {
 }
 
 pub fn (checker_self: Checker) collect_bounds(fnn: Function, tn: TypeName) {
+  if tn.bounds.size > 0 && tn.members.size > 0 && !tn.fn_type {
+    // `r: T | E: Error`: the bound after a union bounds its last member,
+    // a type parameter.
+    last = tn.members[tn.members.size - 1]
+    if last.args.size == 0 && !last.nilable && !last.fn_type && last.members.size == 0 && fnn.type_params.contains(last.name) {
+      for b0 in tn.bounds {
+        last.bounds.push(b0)
+      }
+      tn.bounds = []
+    }
+  }
   if tn.bounds.size > 0 {
     ok = false
     if tn.fn_type {
@@ -1293,8 +1304,12 @@ pub fn (checker_self: Checker) record_impl(concrete: Ty, tn: TypeName, loc: Loca
 }
 
 pub fn (checker_self: Checker) use_impl(concrete: Ty, tn: TypeName, loc: Location): Bool {
-  if tn.name == "Error" {
-    checker_self.fail(loc, "Error marks a failure type (class E: Error); it is not a bound")
+  if tn.name == "Error" && tn.args.size == 0 {
+    // `E: Error`: a type marked Error (a class, a struct or an enum).
+    if concrete.error_mark {
+      return true
+    }
+    checker_self.fail(loc, "${concrete.show} is not marked Error, as the bound E: Error asks (class ${concrete.show}: Error)")
     return false
   }
   idef: InterfaceDef? = nil
@@ -1533,4 +1548,55 @@ pub fn (checker_self: Checker) witness_fits(sig: FuncSig, concrete: Ty): Bool {
     return true
   }
   false
+}
+
+// The bounds a generic struct or class puts on its type parameters
+// (`class Top(T: Ranked)`): each names an interface, or Error, and a
+// parameter of the type; checked where the type is declared.
+pub fn (checker_self: Checker) check_param_bound_decls {
+  for sdef in checker_self.program.structs {
+    checker_self.check_param_bounds_of(sdef.name, sdef.type_params, sdef.param_bounds, sdef.mod_name)
+  }
+  for cdef in checker_self.program.classes {
+    checker_self.check_param_bounds_of(cdef.name, cdef.type_params, cdef.param_bounds, cdef.mod_name)
+  }
+}
+
+pub fn (checker_self: Checker) check_param_bounds_of(name: String, params: Array(String), bounds: Array(TypeBound), mod_name: String) {
+  for b in bounds {
+    if b.iface.name == "Error" && b.iface.args.size == 0 {
+      continue
+    }
+    if idef = checker_self.resolver.find_interface(b.iface.name) {
+    } else {
+      checker_self.fail(b.iface.loc, "${b.iface.name} is not an interface: a bound names an interface or Error")
+    }
+  }
+}
+
+// Each generic type's instance made so far whose template bounds its
+// parameters: every bound holds for the arguments, or the use that made
+// the instance is an error naming the type and the interface.
+pub fn (checker_self: Checker) check_bound_uses {
+  if checker_self.in_bounds {
+    return
+  }
+  checker_self.in_bounds = true
+  saved = checker_self.current_module
+  while checker_self.bound_done < checker_self.resolver.bound_uses.size {
+    use = checker_self.resolver.bound_uses[checker_self.bound_done]
+    checker_self.bound_done += 1
+    if use.mod_name.size > 0 {
+      checker_self.current_module = use.mod_name
+    }
+    for b in use.bounds {
+      idx = use.params.index_of(b.param) ?? -1
+      if idx >= 0 && idx < use.arg_tys.size {
+        applied = subst_type_name(b.iface, use.params, use.args)
+        _ = checker_self.use_impl(use.arg_tys[idx], applied, use.loc)
+      }
+    }
+    checker_self.current_module = saved
+  }
+  checker_self.in_bounds = false
 }
