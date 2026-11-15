@@ -115,8 +115,15 @@ fn early_arg_cases(xs: Array(CCase)) {
   xs.push(refused("lambda-call-empty-array-generic", "fn first(xs: Array(T), f: fn(T): T): Int {\n  xs.size\n}\nfn main {\n  puts(first([]) { |x| x })\n}\n", "cannot infer type argument", "5:8"))
 }
 
+// initialize: what a value `if` sets in both branches is set after it.
+fn init_cases(xs: Array(CCase)) {
+  xs.push(accepted("init-value-if", "class C {\n  pub k: Array(Int)\n  pub n: Int = 0\n\n  fn initialize(flag: Bool) {\n    self.n = if flag {\n      self.k = [1]\n      1\n    } else {\n      self.k = [2, 3]\n      2\n    }\n  }\n}\nfn main {\n  c = C.new(false)\n  puts(c.n + c.k.size)\n  m = 0\n  d = C.new(true)\n  m = if d.n > 0 {\n    d.k[0]\n  } else {\n    0\n  }\n  puts(m)\n}\n", "4\n1\n"))
+  xs.push(refused("init-value-if-one-branch", "class C {\n  pub k: Array(Int)\n  pub n: Int = 0\n\n  fn initialize(flag: Bool) {\n    self.n = if flag {\n      self.k = [1]\n      1\n    } else {\n      2\n    }\n  }\n}\nfn main {\n  puts(C.new(true).n)\n}\n", "field k of C", "2:7"))
+}
+
 fn cases: Array(CCase) {
   xs: Array(CCase) = []
+  init_cases(xs)
   paren_cases(xs)
   expect_cases(xs)
   field_fn_cases(xs)

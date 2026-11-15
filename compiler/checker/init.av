@@ -231,10 +231,15 @@ pub fn (checker_self: Checker) init_stmt(w: InitWalk, st: Stmt, set: Array(Strin
           // A compound write reads the field first.
           checker_self.init_read(w, f, target.loc, set)
         }
+        base = set
         if v = st.value {
-          checker_self.init_expr(w, v, set, false)
+          if got = checker_self.init_value(w, v, set) {
+            base = got
+          } else {
+            return nil
+          }
         }
-        out = init_copy(set)
+        out = init_copy(base)
         if !init_has(out, f) {
           out.push(f)
         }
@@ -243,7 +248,7 @@ pub fn (checker_self: Checker) init_stmt(w: InitWalk, st: Stmt, set: Array(Strin
       checker_self.init_expr(w, target, set, false)
     }
     if v2 = st.value {
-      checker_self.init_expr(w, v2, set, false)
+      return checker_self.init_value(w, v2, set)
     }
     return set
   }
@@ -332,11 +337,26 @@ pub fn (checker_self: Checker) init_parts(w: InitWalk, st: Stmt, set: Array(Stri
   checker_self.init_stmts(w, st.else_body, set)
 }
 
+// An assigned value: what a value `if` or `switch` sets in its branches
+// counts after it, as for the statement forms; any other value is read.
+pub fn (checker_self: Checker) init_value(w: InitWalk, v: Expr, set: Array(String)): Array(String)? {
+  if v.kind == ex_switch() {
+    return checker_self.init_switch(w, v, set)
+  }
+  checker_self.init_expr(w, v, set, false)
+  set
+}
+
 // A `switch` statement: with `else`, every arm; without, a miss runs
 // nothing, so the set before it is one of the ways out, unless the
 // switch is over an enum or a union, which the checker has made name
 // every member (Stage 29 W5b1, O718): then only its arms are.
 pub fn (checker_self: Checker) init_switch(w: InitWalk, e: Expr, set: Array(String)): Array(String)? {
+  if e.op == tk_if() && e.else_body.size == 1 && e.cases.size == 0 {
+    // A value `if` (the checker's form: its one statement is the if,
+    // whose branches end in the values).
+    return checker_self.init_stmts(w, e.else_body, set)
+  }
   if c = e.cond {
     checker_self.init_expr(w, c, set, false)
   }
