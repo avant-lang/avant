@@ -10,8 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Statistics (Stage 28 W12, moved from avant_rt.c; per family since
- * W14b2): AvantGcStats (an ABI for generated code: field order fixed) and
+/* Statistics (moved from avant_rt.c; per family): AvantGcStats (an ABI for
+ * generated code: field order fixed) and
  * the AVANT_GC_STATS=1 report at exit. The other counters are
  * gc_heap.ctr, one struct per family (avant_gc_internal.h defines each);
  * they are written where the events happen and printed here, one routine
@@ -51,11 +51,11 @@ static unsigned long long u(uint64_t v) {
 
 /* The heap's own segment: AvantGcStats, the peaks, the root family, the
  * young threshold and the inline path's count. (The fields that printed
- * 0 since their mechanisms went left the line in Stage 28 W16b, O106,
- * O110: sm_walks, sm_hits, sm_sites, the stackmap walker's, W12r;
+ * 0 since their mechanisms went left the line: sm_walks, sm_hits,
+ * sm_sites, the stackmap walker's;
  * sm_left, E's C-stack pass; cpy_peak, pk_from, pk_to, srv_reserve and
- * the keep family, E's spaces and kept objects, W15d; prom_pinned;
- * sp_calls, sp_collections, the named safepoints, W16a.) */
+ * the keep family, E's spaces and kept objects; prom_pinned;
+ * sp_calls, sp_collections, the named safepoints.) */
 static void print_heap(StatsLine *l) {
   const GcCounters *c = &gc_heap.ctr;
   line_add(l,
@@ -134,7 +134,8 @@ static void print_los(StatsLine *l) {
            u(spare_bytes), u(c->trims), u(c->trim_bytes), u(c->drops), u(c->drop_bytes));
 }
 
-/* The W15a1 families (gc-design.md §3.4 M5, M6), appended after the los
+/* The pause, cause and fragmentation families (gc-design.md §3.4 M5,
+ * M6), appended after the los
  * family: pause times in ns, full collections by cause, M6's
  * fragmentation (frag_ppm is §3.4 rule 5's aggregate, the free-line
  * fraction weighted by heap bytes over the full collections), and bytes
@@ -143,12 +144,12 @@ static void print_pause(StatsLine *l) {
   const GcPauseCounters *c = &gc_heap.ctr.pause;
   line_add(l, "pause_young_ns=%llu pause_full_ns=%llu pause_max_ns=%llu ", u(c->young_ns),
            u(c->full_ns), u(c->max_ns));
-  /* The handshake (Stage 28 W17a): collections that waited for another
+  /* The handshake: collections that waited for another
    * thread, and the wait's total and longest time. */
   line_add(l, "handshakes=%llu pause_hs_ns=%llu pause_hs_max_ns=%llu ", u(c->hs_n), u(c->hs_ns),
            u(c->hs_max_ns));
   /* Under AVANT_GC_STRESS=1 only (the statistics set runs without it):
-   * the stress collections that kept the world lock (O121). */
+   * the stress collections that kept the world lock. */
   if (gc_heap.set.stress) {
     line_add(l, "handshakes_held=%llu ", u(c->hs_held));
   }
@@ -180,13 +181,12 @@ static void print_size(StatsLine *l) {
   line_add(l, "young_grows=%llu young_shrinks=%llu ", u(c->grows), u(c->shrinks));
 }
 
-/* The sticky family (Stage 28 W15b, candidate S), last in
+/* The sticky family (candidate S), last in
  * the line: bytes promoted in place by young collections, young blocks
  * swept, holes taken by the young allocator, lines the young sweeps
  * freed, medium objects placed in the overflow block, empty young blocks
  * given back to their chunks, and S+'s evacuated, kept-in-place and copy
- * blocks (Stage 28 W15c), the bytes it aged and their survivor blocks
- * (W15d). */
+ * blocks, the bytes it aged and their survivor blocks. */
 static void print_sticky(StatsLine *l) {
   const GcStickyCounters *c = &gc_heap.ctr.sticky;
   line_add(l,
@@ -231,14 +231,13 @@ static void print_proof(StatsLine *l) {
            u(c->log_peak / 2), u(c->roots));
 }
 
-/* The verifier's segment (Stage 28 W18M item 7), only under
+/* The verifier's segment, only under
  * AVANT_GC_VERIFY, after the sticky family: which verifier ran
  * (incremental: soft-dirty tracking works; whole: it does not, and every
  * check is whole as before), the whole and incremental verifications, and
  * the heap pages the incremental ones read and skipped as untouched; the
  * young collections whose reachability checks were incremental, and the
- * incremental checks that found a candidate and ran whole (Stage 28
- * W18V2). */
+ * incremental checks that found a candidate and ran whole. */
 static void print_verify(StatsLine *l) {
   if (!gc_heap.set.verify) {
     return;

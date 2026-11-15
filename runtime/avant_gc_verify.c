@@ -15,7 +15,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-/* AVANT_GC_VERIFY (Stage 28 W12, moved from avant_rt.c): independent
+/* AVANT_GC_VERIFY (moved from avant_rt.c): independent
  * checks after a young collection's trace and copy (gc_verify_sticky: no
  * reachable young object left unpromoted, no reachable line about to be
  * freed, no reference to a moved object's old copy), before every young
@@ -24,14 +24,14 @@
  * every collection's start (gc_verify_no_stale_marks) and after a
  * defragmenting full collection (no reference to a block being freed).
  * Diagnostics only: they print and never change the heap. Under
- * soft-dirty tracking (Stage 28 W18M, W18V2) a young collection's checks
+ * soft-dirty tracking a young collection's checks
  * examine only what the kernel reports written and what the verifier's
  * own record names, and fall back to the whole checks whenever they
  * cannot prove those silent (below). (E's checks
  * after its young copy, gc_verify_young_copy with its stale, lost and
- * untraced reports, went with E in Stage 28 W15d.) */
+ * untraced reports, went with E.) */
 
-/* The verifier's own marks (Stage 28 W18V2): "traced by this check"
+/* The verifier's own marks: "traced by this check"
  * (vb_seen, the header's VSEEN until then) and "named by R1' this cycle"
  * (vb_named, the header's MARKED until then), one bit per 8-byte granule
  * of the committed heap at the object's header, like the full
@@ -43,15 +43,15 @@
 static uint64_t *vb_seen;
 static uint64_t *vb_named;
 /* What the last whole T reached, and what incremental Ts visited since
- * (vr_valid; Stage 28 W18V2, the incremental checks below). */
+ * (vr_valid, the incremental checks below). */
 static uint64_t *vb_reach;
 static int vr_valid;
 static size_t vb_words;
 /* The side bits are used from the first soft-dirty clear on (vb_side);
  * until then no page record is read, and the header bits, which cost
  * nothing more than the header the check reads anyway, serve as before
- * (W18V2's tuning: the side bits cost the compiler's dump under VERIFY,
- * 55 whole verifications, 5% more time). Every bit is clear between
+ * (measured when they were tuned: the side bits cost the compiler's dump under
+ * VERIFY, 55 whole verifications, 5% more time). Every bit is clear between
  * checks, so the switch happens between two checks. */
 static int vb_side;
 
@@ -124,7 +124,7 @@ static inline __attribute__((always_inline)) void verify_visit(void *start) {
   gc_work_push(start);
 }
 
-/* The trace of one reference P (Stage 28 W18M, O113: one object lookup
+/* The trace of one reference P (one object lookup
  * per reference serves every check made on it; before, the lost, named,
  * stale and missing-barrier checks each looked the same field up again).
  * Returns the object P names (its start, before following a forward), or
@@ -207,8 +207,8 @@ static void verify_each_root(void (*fn)(void **), int rem) {
 
 /* Independent reachability, ignoring the collector's own tracing
  * gates: a holder counts as live when a root reaches it through any
- * field. This is what keeps the checker sensitive to the F1 class
- * (a live holder the young copy itself never traced) while staying
+ * field. This is what keeps the checker sensitive to a live holder the
+ * young copy itself never traced, while staying
  * silent about dead mature objects, whose fields legitimately name
  * copied objects. The visited bit is VSEEN (the verifier's own);
  * verify_clear_traced resets it before gc_verify_young_copy returns. */
@@ -228,7 +228,7 @@ static uint64_t verify_mark_reachable(int stale) {
         if (st) {
           bad += verify_stale_found(st, p);
           if (st && (avant_header(st)->flags & AVANT_FLAG_FORWARDED)) {
-            /* The holder's kind and the slot (Stage 29 W-INT1). */
+            /* The holder's kind and the slot. */
             fprintf(stderr, "avant gc verify:   holder type %u size %u flags %#x, slot at +%ld\n",
                     (unsigned)avant_header(p)->type_id, (unsigned)avant_header(p)->size,
                     (unsigned)avant_header(p)->flags, (long)((char *)(void *)slot - (char *)p));
@@ -243,7 +243,7 @@ static uint64_t verify_mark_reachable(int stale) {
 }
 
 /* AVANT_GC_VERIFY after an S young collection's trace, before its sweep
- * (Stage 28 W15b, gc-design.md §3.1): independent reachability from the
+ * (gc-design.md §3.1): independent reachability from the
  * roots and the remembered set (verify_mark_reachable, which ignores the
  * collector's own tracing rules), then for every object it reaches:
  * a block object must no longer be young (the collection promoted it in
@@ -323,7 +323,7 @@ static void verify_sticky_whole(void) {
       EACH_FRAME(gc_thread_frames(t), f, {
         EACH_SLOT_OF(f, slot, {
           bad += verify_stale(*slot, "root", (void *)slot);
-          /* A slot location inside a moved object (Stage 28 W15d). */
+          /* A slot location inside a moved object. */
           bad += verify_stale((void *)slot, "root location", (void *)f);
         });
       });
@@ -351,7 +351,7 @@ static void verify_sticky_whole(void) {
   verify_clear_traced();
 }
 
-/* The remembered-set check (Stage 28 W14b1, gc-design.md §4.2 item 2):
+/* The remembered-set check (gc-design.md §4.2 item 2):
  * before a young collection traces, every field of a non-young object
  * that names a young object must belong to a remembered holder or to an
  * object the three-way rule R1' (§1.3) names this cycle: a root (slot,
@@ -362,18 +362,18 @@ static void verify_sticky_whole(void) {
  * may name a nursery address a new young object reuses. Reported as
  * "missing barrier: holder ... field ... names young ...": the next
  * young collection would neither scan that field nor update it, so the
- * young object is lost or the field dangles after the copy (C34's
- * class, reported at the first collection after the bad store). The
+ * young object is lost or the field dangles after the copy (reported at
+ * the first collection after the bad store). The
  * five runtime builders that fill a born-mature buffer named by a young
- * array header (audit N2b) are not reported: R1'(b) names the buffer.
- * A record is asked more since the Valk stage's VALK-T2 (O610): it must
+ * array header are not reported: R1'(b) names the buffer.
+ * A record is asked more: it must
  * be remembered even when R1' names it (yholders_check).
  * Visited is VSEEN (verify_trace), named is MARKED; both are clear
  * when a collection starts (gc_verify_no_stale_marks) and cleared here.
  * The named objects are gc_heap.rnamed; the reports are counted in
  * gc_heap.missing_barriers. */
 
-/* The lost-reference check (Stage 28 W16b; R11, O107, gc-design.md
+/* The lost-reference check (gc-design.md
  * section 4.3): a reference the program can still use that names heap
  * memory where no object lives. It replaces the conservative C-stack
  * cross-check (the words of the collecting thread's stack naming a block
@@ -411,7 +411,7 @@ static uint64_t verify_lost_found(void *p, void *found, const char *where, void 
   return 1;
 }
 
-/* The field rule's check (the Valk stage, VALK-T, O585; D342 Q6; the
+/* The field rule's check (the
  * rule is stated at the top of avant_gc_internal.h): FOUND is
  * gc_object_payload(P) for the word P of HOLDER's field SLOT. A field
  * that names the inside of an object breaks what the traces rely on (they
@@ -489,10 +489,9 @@ static void rem_named_found(void *start) {
   gc_heap.rnamed[gc_heap.rnamed_n++] = start;
 }
 
-/* A remembered object's field (R1'(c)), in the whole check: the young
+/* A remembered object's field, in the whole check: the young
  * collection traces it whether or not the roots reach its holder, so the
- * field rule and the lost-reference check are asked of it here too (the
- * Valk stage, VALK-T, O585). */
+ * field rule and the lost-reference check are asked of it here too. */
 static void rem_named_field(void *holder, void **slot) {
   void *st = gc_object_payload(*slot, NULL, NULL);
   verify_lost_found(*slot, st, "field of remembered", holder);
@@ -530,19 +529,19 @@ static void rem_root_slot(void **slot) {
 /* The check: a reached non-young holder that is not remembered must name
  * no young object. Two forms.
  *
- * The invariant itself, for a record (the Valk stage, VALK-T2, O610): a
+ * The invariant itself, for a record: a
  * record that names a young object is remembered (REM), whatever names
  * the record. Generated code stores a reference into a record behind a
  * barrier or while the record is open (allocated, barriered or an
  * initialize's receiver since the last collecting call: young, or
- * remembered until the next collection; D347, compiler/mir/fresh.av), and
+ * remembered until the next collection, compiler/mir/fresh.av), and
  * runtime C barriers its stores into records, so at every young
  * collection the invariant holds of every record without the help of
- * R1'. Until VALK-T2 a record R1' names this cycle (a root, a young
+ * R1'. A record R1' names this cycle (a root, a young
  * object's field or a remembered object's field names it) was passed
- * over, because the trace scans it and so repairs the miss: a store that
- * lost its barrier (VALK-A1's planted defect: a fresh pass that ignores
- * collecting calls, V14 off) was reported only once nothing named the
+ * over once, because the trace scans it and so repairs the miss: a store
+ * that lost its barrier (a planted defect: a fresh-store pass that
+ * ignores collecting calls) was reported only once nothing named the
  * record any more, which no program of the suite reaches. It is reported
  * now at the first young collection after the store, with "not
  * remembered" in the line.
@@ -559,7 +558,7 @@ static void rem_root_slot(void **slot) {
  *
  * A carded holder remembered by its cards (REMC without CARD_ALL) must
  * name young objects only from slots of its marked cards (the card
- * invariant, Stage 28 W16t): a young object named from a clear card is
+ * invariant): a young object named from a clear card is
  * reported as a missing barrier too, since the young collection would not
  * scan that slot. Only holders the verifier's own trace reaches are
  * asked: a dead object's fields are never read by the program or the
@@ -635,7 +634,7 @@ static void verify_remembered_whole(void) {
     }
   }
   /* R1'(c): the fields of every remembered object; of a carded one
-   * (REMC, Stage 28 W16t), the slots of its marked cards, which are all
+   * (REMC), the slots of its marked cards, which are all
    * the young collection scans of it, unless every card counts
    * (CARD_ALL). */
   {
@@ -664,13 +663,13 @@ static void verify_remembered_whole(void) {
   verify_clear_traced();
 }
 
-/* C36's check (W14a2): when a collection starts, no live object's
+/* The stale-mark check: when a collection starts, no live object's
  * header carries MARKED, FORWARDED or VSEEN (no walk reaches a moved
  * object: their blocks are released, or keep only their survivors' start
  * bits). A young collection's marks end with it
  * (the noted list) and a full collection marks in the side bitmap, so a
  * header bit left over is a mark a later young collection would read as
- * "already scanned this cycle" and skip (R1'). Reports are counted in
+ * "already scanned this cycle" and skip. Reports are counted in
  * gc_heap.stale_seen. */
 
 static void verify_no_stale_one(AvantHeader *h, Block *b) {
@@ -695,7 +694,7 @@ void gc_verify_no_stale_marks(void) {
   }
 }
 
-/* The incremental verifier (Stage 28 W18M item 7, O119, the plan's W18V).
+/* The incremental verifier.
  * The kernel's soft-dirty bits (Documentation/admin-guide/mm/soft-dirty.rst)
  * say which pages of the process were written since they were last
  * cleared: writing "4" to /proc/self/clear_refs clears them all, and bit
@@ -706,7 +705,7 @@ void gc_verify_no_stale_marks(void) {
  * barriers, remembered set or cards, whose missing entry is what the
  * verifier exists to catch.
  *
- * What it makes incremental is C36's check (gc_verify_no_stale_marks:
+ * What it makes incremental is the stale-mark check (gc_verify_no_stale_marks:
  * no live header carries MARKED, FORWARDED, VSEEN, PROMOTED_NOW or
  * CARD_SCAN when a collection starts), which walked every object of every
  * mature block at every collection: 97% of closures_churn's time under
@@ -723,7 +722,7 @@ void gc_verify_no_stale_marks(void) {
  * collection, the first verification and the program's exit read the
  * whole heap. The checks that depend on reachability (gc_verify_remembered,
  * gc_verify_sticky) are made incremental by the same bits and a record of
- * their own (Stage 28 W18V2, below); gc_verify_lost (full collections)
+ * their own (below); gc_verify_lost (full collections)
  * stays whole.
  *
  * Where soft-dirty tracking is unavailable (a kernel without
@@ -743,8 +742,7 @@ static int sd_clear = -1;
 static pid_t sd_pid;
 /* The bits were cleared at an earlier verification and every
  * verification since read the pages they report (incremental may follow;
- * Stage 28 W18V2: the bits are kept across verifications, see
- * gc_verify_begin). */
+ * the bits are kept across verifications, see gc_verify_begin). */
 static int sd_based;
 /* The pages the last incremental read reported written, and the
  * verifications since the last clear. */
@@ -856,8 +854,8 @@ static void sd_walk_page(Block *b, int page) {
   }
 }
 
-/* C36's check over the pages written since the last verification; 0 when
- * the pagemap could not be read (the caller then walks the whole heap). */
+/* The stale-mark check over the pages written since the last verification;
+ * 0 when the pagemap could not be read (the caller then walks the whole heap). */
 static int verify_no_stale_marks_incr(void) {
   size_t pages = gc_heap.committed / PAGE_SIZE;
   size_t blocks = gc_heap.committed >> BLOCK_SHIFT;
@@ -917,25 +915,25 @@ static void sd_stamp(void) {
   });
 }
 
-/* The choice between the two forms (Stage 28 W18S, O150; W18M item 7
- * priced them). The first SD_WARM verifications are whole (a short
+/* The choice between the two forms. The first SD_WARM verifications are
+ * whole (a short
  * program never write-protects its pages); from then on, where soft-dirty
  * tracking works, every young collection's verification is incremental
  * for the rest of the run, unless a check reports (then every check is
  * whole, so the reports are the whole verifier's) or soft-dirty stops
  * (a fork, a refused read: sd_off). Full collections stay whole.
  *
- * W18M priced the two forms as the program ran and took the cheaper one,
+ * An earlier form priced the two as the program ran and took the cheaper one,
  * trying the other every 64 verifications. Each switch restarts the
  * record and the soft-dirty bits, so the first incremental checks after
  * one rebase and fall back to the whole check: the cheaper form per
- * measurement was the dearer one over a run (W18C, O148: the gate's
+ * measurement was the dearer one over a run (the gate's
  * verified compiler dump 52-104 s priced, 36.65 s and 0 fallbacks
- * incremental throughout). Measured at W18S on W18M's four VERIFY +
+ * incremental throughout). Measured on four VERIFY +
  * STRESS rows, the incremental form throughout was not slower than the
  * whole form nor than the priced choice on any of them except
- * inc_slice_mature, where it is within a few percent of both
- * (records/2026-11-10-s28-w18s, o150/). Both forms check the same, so
+ * inc_slice_mature, where it is within a few percent of both.
+ * Both forms check the same, so
  * the choice changes the time only, never the reports.
  *
  * Which pages are skipped is still decided by the kernel's record alone. */
@@ -944,7 +942,7 @@ static void sd_stamp(void) {
 #endif
 /* The bits are cleared again when the last read found more than a
  * SD_CLEAR_FRAC-th of the heap's pages written, or after SD_CLEAR_MAX
- * verifications (Stage 28 W18V2): a clear write-protects every page of the
+ * verifications: a clear write-protects every page of the
  * process, so each page's first write after it faults in the kernel (under
  * AVANT_GC_STRESS about 0.14 ms per collection on an 8 MB heap, the clear
  * alone 45 us); between clears the reads report every page written since
@@ -957,8 +955,8 @@ static void sd_stamp(void) {
 #define SD_CLEAR_MAX 64u
 #endif
 
-/* The incremental reachability checks (Stage 28 W18V2, O119's second
- * half). The checks that depend on reachability, gc_verify_remembered
+/* The incremental reachability checks. The checks that depend on reachability,
+ * gc_verify_remembered
  * before a young collection (M: lost references, missing barriers) and
  * gc_verify_sticky after its trace and copy (T: references to a moved
  * object's old copy, young objects not promoted, lines of reached objects
@@ -1001,11 +999,12 @@ static void sd_stamp(void) {
  * buffer, a trim), and a fallback; such a "rebasing" pass examines every
  * object, so objects the last whole trace did not reach are recorded too.
  * Full collections, the first SD_WARM verifications and the program's
- * exit stay whole; C36's check (gc_verify_begin) takes the same form. */
+ * exit stay whole; the stale-mark check (gc_verify_begin) takes the same
+ * form. */
 
-/* VI_FORCE, settable at build time for a proof (W18V2's side by side):
+/* VI_FORCE, settable at build time for a proof (a side-by-side run):
  * 1 makes every M and T whole, 2 makes every verification after the first
- * incremental (no warm-up when SD_WARM is set to 1 too; since W18S the
+ * incremental (no warm-up when SD_WARM is set to 1 too; the
  * normal build is incremental after the warm-up anyway). */
 #ifndef VI_FORCE
 #define VI_FORCE 0
@@ -1027,10 +1026,10 @@ static uint64_t v_report_count(void) {
 }
 
 /* A collection's first verification step (gc_collect, under
- * AVANT_GC_VERIFY, after the quarantine's release): C36's check, whole at
- * a full collection (FULL), during the warm-up and without soft-dirty
+ * AVANT_GC_VERIFY, after the quarantine's release): the stale-mark check,
+ * whole at a full collection (FULL), during the warm-up and without soft-dirty
  * tracking; else over the written pages. It also chooses the form of
- * this collection's M and T: incremental exactly when C36's check is
+ * this collection's M and T: incremental exactly when the stale-mark check is
  * (sd_map then holds the pages written since the last verification) and
  * no check has reported. After the warm-up the bits are kept cleared for
  * the next verification, so every later write, the collection's own
@@ -1265,8 +1264,8 @@ static inline int vi_all(void *p) {
   return (avant_header(p)->flags & AVANT_FLAG_YOUNG) || !heap_offset(p, &off);
 }
 
-/* yholders_check in an incremental check (the Valk stage, VALK-TM3,
- * O738): the same question of the same holders, asked of the slots
+/* yholders_check in an incremental check: the same question of the same
+ * holders, asked of the slots
  * VI_EACH_SLOT examines (every slot of a young holder, the slots on hot
  * pages of the others) instead of every slot. A slot on a page not
  * written since the last verification held, then, a reference that the
@@ -1274,11 +1273,11 @@ static inline int vi_all(void *p) {
  * collection promotes or frees every young object and fixes up every
  * slot naming a moved one, which writes its page), and it still holds
  * it: it cannot name a young object now, as vi_m_slot's skip of the same
- * slots says (M's incremental form). Until VALK-TM3 every slot of every
+ * slots says (M's incremental form). Once every slot of every
  * holder was walked and looked up at every incremental check: a buffer
  * of N references that names one young object costs N lookups a
- * collection, n^2/2 over a stress run that fills it (late_starts.av,
- * O738). A candidate sends the check to the whole form, which walks
+ * collection, n^2/2 over a stress run that fills it (late_starts.av).
+ * A candidate sends the check to the whole form, which walks
  * every slot and prints, as before. */
 static uint64_t yholders_check_hot(void) {
   size_t i;
@@ -1649,13 +1648,13 @@ void gc_verify_sticky(void) {
   }
 }
 
-/* AVANT_GC_VERIFY after defragmentation (C31): no reference the
+/* AVANT_GC_VERIFY after defragmentation: no reference the
  * program or the runtime can still use names a block about to be
  * freed: root slots, pins, the remembered set and the fields of marked
- * objects. (Until Stage 28 W16b it also read every word of the
+ * objects. (It once also read every word of the
  * collecting thread's stack, a conservative cross-check that reported
- * dead copies once C31's exclusion was off; a C local that is used
- * after the collection is now caught when it is used: the freed blocks
+ * dead copies once the stack-named blocks' exclusion was off; a C local that
+ * is used after the collection is now caught when it is used: the freed blocks
  * are quarantined, gc_quarantine_block.) */
 static void verify_defrag_word(void *w, const char *where, void *at) {
   Block *b = block_of(w);
@@ -1663,7 +1662,7 @@ static void verify_defrag_word(void *w, const char *where, void *at) {
   void *start = gc_object_payload(w, NULL, NULL);
   /* A word that names an object is judged by the object's block, the
    * block of its header: the payload of an empty object that ends a
-   * block is the next block's first byte, and since W14a1 that next
+   * block is the next block's first byte, and that next
    * block is a real neighbour in the reservation, not a stranger. A
    * word that names no object keeps the two-block test. */
   if (start) {
@@ -1735,7 +1734,7 @@ void gc_verify_defrag(void) {
   }
 }
 
-/* The on-use half of the lost-reference check (Stage 28 W16b; see
+/* The on-use half of the lost-reference check (see
  * verify_lost above). Under AVANT_GC_VERIFY a block a collection frees
  * (an evacuated young block, a young block the sweep left empty, a
  * block defragmentation evacuated or a full sweep freed) is out of use
@@ -1749,8 +1748,8 @@ void gc_verify_defrag(void) {
  * opens that block (QUARANTINE_OPENED) and returns, so the access is
  * retried and the program continues (the old bytes are still there, or
  * the stress mode's poison). A fault anywhere else goes to the action
- * that was installed before. Every freed block is held (Stage 28 W18C,
- * O120: until then at most 4,096 were, and past them a freed block was
+ * that was installed before. Every freed block is held (at most 4,096
+ * once were, and past them a freed block was
  * reused at once, unchecked); a refused mprotect (the mapping-count
  * limit) leaves a block held but open, and is counted
  * (verify_unprotected in the stats line), so a run never checks less
@@ -1896,7 +1895,7 @@ int gc_quarantine_block(Block *b) {
  * start bit is cleared (no lookup finds it) and its pages stay allocated,
  * protected whole at the collection's end (the large space's iterator
  * steps over a run without its start bit by the page table, never its
- * header: Stage 28 W18C; until then the first page stayed open), until
+ * header; the first page once stayed open), until
  * the next collection begins. 1: held. */
 int gc_quarantine_run(AvantHeader *h) {
   uint8_t *base;
@@ -1936,7 +1935,7 @@ int gc_quarantine_run(AvantHeader *h) {
 }
 
 /* A growth dropped the large buffer H outside a collection
- * (avant_gc_large_drop; Stage 28 W18C, O145) and gc_release_large held
+ * (avant_gc_large_drop) and gc_release_large held
  * it: it is protected now, not at the next collection's end, so a C
  * pointer into it (avant_buf_bytes' result kept across the growth, DROP
  * 1, or any runtime pointer into the old buffer, DROP 2) faults at its
@@ -2068,9 +2067,9 @@ void gc_quarantine_release(void) {
   }
 }
 
-/* The eager comparison of the late start bits (the Valk stage, VALK-A2,
- * M7; avant_gc_alloc.c, "Late start bits"). Until VALK-A2 every
- * allocation set its object's start bit; now an unshared module's inline
+/* The eager comparison of the late start bits (avant_gc_alloc.c, "Late
+ * start bits"). Every allocation used to set its object's start bit;
+ * now an unshared module's inline
  * path sets none, and the runtime sets a young object's bit when a
  * collection promotes it or a lookup needs its block's. A bit set where
  * no object starts makes a lookup trust a word that is not a header, and

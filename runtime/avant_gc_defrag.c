@@ -9,20 +9,19 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Mature defragmentation (Stage 28 W12, moved from avant_rt.c): during a
+/* Mature defragmentation (moved from avant_rt.c): during a
  * full collection, sparse mature blocks are evacuated into fresh ones and
  * every precise reference is rewritten. Also the sorted block set of the
  * blocks it frees. */
 
-/* Evacuation (step 2; gc_heap.set.defrag, AVANT_GC_DEFRAG=0 turns it
+/* Evacuation (gc_heap.set.defrag, AVANT_GC_DEFRAG=0 turns it
  * off, the histogram stays on). Candidates are mature blocks at or below
- * 64 of 128 live lines with no pinned object (until Stage 28 W16b also
- * none a word of the collecting thread's stack named, C31's exclusion,
- * D213: runtime C roots what it holds since W16a, RC1);
- * per full collection the live lines evacuated stay at or below 25% of
+ * 64 of 128 live lines with no pinned object (once also none a word of
+ * the collecting thread's stack named; runtime C roots what it holds,
+ * RC1); per full collection the live lines evacuated stay at or below 25% of
  * that mark's mature live lines, worst first.
  *
- * No evacuation without a gain (Stage 29 W-FIX1c, O202). Moving anything
+ * No evacuation without a gain. Moving anything
  * at all costs a pass over every live object to rewrite references
  * (gc_defrag_evacuate's fix-up), so the chosen blocks are evacuated only
  * when that frees blocks net, the blocks freed less the destination
@@ -40,7 +39,7 @@
  * Before, a heap that did not change had its one sparse block (the last
  * destination) evacuated into a fresh block at every full collection:
  * the same few hundred bytes moved, no block gained, and 41% of the
- * collection spent in the fix-up (500,000 objects, W-BENCH-GC F4).
+ * collection spent in the fix-up (500,000 objects).
  * Under AVANT_GC_STRESS=1 neither rule applies: the stress mode moves
  * what can move, as before. */
 
@@ -48,18 +47,17 @@
  * read a word (64 granules) at a time: an object's mark bit is at its
  * header's granule, as its start bit is, so the block's slice of
  * gc_heap.marks lines up with Block.start. A dead object (its start bit
- * stays while its line is live) costs nothing (the Valk stage, VALK-T2,
- * O603: until then every walk of a block here read every start bit's
- * object and asked its mark). */
+ * stays while its line is live) costs nothing (every walk of a block here
+ * used to read every start bit's object and ask its mark). */
 static inline const uint64_t *block_marks(const Block *b) {
   return &gc_heap.marks[((uint64_t)(b->base - gc_heap.base) >> BLOCK_SHIFT) * START_WORDS];
 }
 
 /* The bytes of block B's live objects in *BYTES; 0 when one of them is
- * pinned: a candidate holding a pinned object is not evacuated (D34). A
+ * pinned: a candidate holding a pinned object is not evacuated. A
  * pinned object is live (avant_pin flags an object it puts on the pin
  * list, a root; avant_unpin clears the flag), so asking the marked objects
- * alone is asking every object, as block_has_pinned did until VALK-T2. */
+ * alone is asking every object, as block_has_pinned once did. */
 static int block_live_bytes(const Block *b, uint64_t *bytes) {
   const uint64_t *marks = block_marks(b);
   uint64_t n = 0;
@@ -189,9 +187,9 @@ static void defrag_rewrite_tls(void **slot) {
   defrag_rewrite_slot(slot);
 }
 
-/* The fix-up of the heap's fields (the Valk stage, VALK-T2, O603), in the
- * shape VALK-T built for the young fix-up (fix_field, fix_holder,
- * avant_gc_sticky.c). Until VALK-T2 every reference of every live object
+/* The fix-up of the heap's fields, in the
+ * shape of the young fix-up (fix_field, fix_holder,
+ * avant_gc_sticky.c). Before it, every reference of every live object
  * was asked the object lookup (gc_object_payload_fast: the alignment, the
  * range, the start bit, the chunk's kind, the block in use) and then its
  * header's forward, through a call per object and a second mark test.
@@ -339,7 +337,7 @@ static void mature_unlink(Block *b) {
  * copied into fresh destination blocks, every root, heap field,
  * and remembered entry naming them is rewritten
  * through the forward in the moved object's header (gc_set_forward,
- * Stage 28 W15a2; before, a side table), and the emptied blocks are freed
+ * once a side table), and the emptied blocks are freed
  * whole. Destination blocks are allocated before anything moves; if
  * one cannot be allocated under the heap limit, nothing moves and the
  * ordinary non-moving collection completes (gc_heap.ctr.def.skipped counts it),
@@ -520,7 +518,7 @@ void gc_defrag_evacuate(uint64_t live_lines_this) {
     }
   }
   gc_each_runtime_root(defrag_rewrite_tls);
-  /* Task roots: their records may move since Stage 28 W17a. */
+  /* Task roots: their records may move. */
   EACH_TASK_ROOT(slot, defrag_rewrite_slot(slot));
   {
     uint32_t ri;
@@ -597,7 +595,7 @@ void gc_defrag_release(void) {
   size_t i;
   for (i = 0; i < gc_heap.def_release.n; i++) {
     mature_unlink(gc_heap.def_release.v[i]);
-    /* AVANT_GC_STRESS=1: an evacuated block is poisoned (Stage 28 W16a). */
+    /* AVANT_GC_STRESS=1: an evacuated block is poisoned. */
     gc_poison(gc_heap.def_release.v[i]->base, BLOCK_SIZE);
     gc_cache_or_free_block(gc_heap.def_release.v[i]);
     gc_heap.ctr.def.freed_blocks++;

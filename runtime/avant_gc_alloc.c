@@ -9,15 +9,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Allocation (Stage 28 W12, moved from avant_rt.c): block supply and
+/* Allocation (moved from avant_rt.c): block supply and
  * recycling, the per-space bump cursors, the inline nursery fast path the
  * generated code shares (avant_gc_bump and its mirrors), the slow path
  * (place), and the allocation entry points avant_alloc and
  * avant_alloc_in_mature. Collection decisions are avant_gc_collect.c's;
  * large objects are avant_gc_los.c's. */
 
-/* Inline nursery fast path (Collector II Wave 1; its bookkeeping moved
- * to the runtime in the Valk stage's VALK-A2, M6 and M7): generated code
+/* Inline nursery fast path (its bookkeeping is the runtime's): generated code
  * bumps avant_gc_bump directly while its end stays at or below the limit
  * the runtime publishes (avant_gc_limit for an unshared module,
  * avant_gc_limit_mt for a shared one: the hole's limit capped by the
@@ -34,14 +33,14 @@ __thread uint8_t *avant_gc_limit_mt;
 __thread uint8_t *avant_gc_base;
 __thread uint64_t *avant_gc_starts;
 
-/* The inline path's state as code generated before VALK-A2 reads it (a
- * seed compiler's output: the compiler B of tools/letters.sh, while its
- * seed is a release from before VALK-A2, as v0.42.0 is, tests
+/* The inline path's state as code generated before the path's rework
+ * reads it (a seed compiler's output: the compiler B of tools/letters.sh,
+ * while its seed is a release from before the rework, as v0.42.0 is, tests
  * avant_gc_fast_ok before it bumps, stores its cursor through
  * avant_gc_block and keeps the counters itself). Never set: such
  * code always calls avant_alloc, which is correct for it and slower; the
  * new path has its own limit and no flag. To delete, with their lines in
- * avant_rt.exports, when a release with VALK-A2 is the seed. */
+ * avant_rt.exports, when a release with the rework is the seed. */
 __thread uint32_t avant_gc_fast_ok;
 __thread void *avant_gc_block;
 
@@ -49,15 +48,15 @@ uint64_t avant_since_gc;
 
 /* Allocations generated code made without a call: counted only when
  * AVANT_GC_STATS (or a check mode) is set, by reading the headers of
- * each inline run when it is counted (inline_walk); 0 otherwise. Until
- * VALK-A2 the inline path incremented it at every allocation. */
+ * each inline run when it is counted (inline_walk); 0 otherwise. Before
+ * the path's rework it incremented it at every allocation. */
 uint64_t avant_inline_allocs;
 
 /* The first line of B at or after FROM that is live (LIVE 1) or free
  * (LIVE 0), or LINES_PER_BLOCK: the line marks read a word (eight lines)
- * at a time against the epoch, as gc_sweep_block_lines reads them (the
- * Valk stage, VALK-T, O600; until then find_hole compared them a byte at
- * a time, 43% of a small program's stress collection). */
+ * at a time against the epoch, as gc_sweep_block_lines reads them (find_hole
+ * used to compare them a byte at a time, 43% of a small program's stress
+ * collection). */
 static inline int next_line(const Block *b, int from, int live, uint64_t epoch8) {
   int k = from >> 3;
   int sh = 8 * (from & 7);
@@ -80,7 +79,7 @@ static inline int next_line(const Block *b, int from, int live, uint64_t epoch8)
 }
 
 /* AVANT_GC_VERIFY's check of find_hole: the search a line at a time, as
- * it was until the Valk stage's VALK-T; the program stops when the two
+ * it used to be; the program stops when the two
  * disagree on whether B has a hole of NEED bytes from its search cursor
  * or on where it is ([*LO, *HI) in lines). */
 static void find_hole_check(const Block *b, size_t need, int found, int lo, int hi) {
@@ -182,9 +181,9 @@ void gc_free_block_now(Block *b) {
   gc_heap.heap_bytes -= BLOCK_SIZE;
 }
 
-/* Wave 4 step 1: when the heap high-water mark moves, snapshot what
+/* When the heap high-water mark moves, snapshot what
  * the heap is made of, so a peak can be decomposed after the fact.
- * O(1) since W14a2: counters, not walks of the block lists. */
+ * O(1): counters, not walks of the block lists. */
 void gc_note_peak(void) {
   if (gc_heap.heap_bytes <= avant_g_stats.peak_heap) {
     return;
@@ -247,10 +246,10 @@ Block *gc_new_block(uint8_t space) {
 /* The inline fast path's limit: the current block's limit, capped where
  * the young budget runs out, so a collecting allocation reaches
  * avant_alloc (which collects) when the budget is spent. Once it is spent
- * the cap is the block's end (Stage 28 W15a1), so a collecting allocation
+ * the cap is the block's end, so a collecting allocation
  * overshoots the budget by at most the rest of one block before
  * avant_alloc collects. (The cap was chosen for the bump constructor's
- * leaves, which Stage 29 W1a removed, D298.) */
+ * leaves, which the language no longer has.) */
 static uint8_t *inline_cap(void) {
   uint64_t rem = avant_young_bytes > avant_nursery_held ? avant_young_bytes - avant_nursery_held : 0;
   uint8_t *cap = avant_gc_bump + rem;
@@ -260,13 +259,13 @@ static uint8_t *inline_cap(void) {
   return cap;
 }
 
-/* What generated code sees of the inline path (the Valk stage, VALK-A2,
- * M6: the guards folded into the limit): the thread's limit when the
+/* What generated code sees of the inline path (the guards folded into
+ * the limit): the thread's limit when the
  * path may run, else null, so the path's one compare of its cursor's new
  * end against the limit also answers "may it run" (a null limit fails
  * every compare, whatever the cursor holds). An unshared module's code
- * may run it only while the program has one thread (state 1: until
- * VALK-A2 it tested g_avant_shared and avant_gc_fast_ok == 1 inline); a
+ * may run it only while the program has one thread (state 1: before the
+ * rework it tested g_avant_shared and avant_gc_fast_ok == 1 inline); a
  * shared module's in states 1 and 2 (it tested avant_gc_fast_ok != 0).
  * In state 1 the cursor is noted (GcThread.mark): the path's allocations
  * from there on are counted by gc_alloc_sync. LIM is the hole's limit
@@ -375,8 +374,8 @@ static void *bump_take(size_t need) {
   return h;
 }
 
-/* The inline path is off: the limit generated code reads is null (M6's
- * "limit zero"). The inline allocations made so far are counted first. */
+/* The inline path is off: the limit generated code reads is null ("limit
+ * zero"). The inline allocations made so far are counted first. */
 void gc_fast_clear(void) {
   gc_alloc_sync();
   gc_thread.fast_ok = 0;
@@ -384,7 +383,7 @@ void gc_fast_clear(void) {
   gc_fast_publish(NULL);
 }
 
-/* Late start bits (the Valk stage, VALK-A2, M7). An unshared module's
+/* Late start bits. An unshared module's
  * inline path sets no start bit, so a young object it allocated has none
  * until one of these sets it: a young collection promotes the object and
  * leaves it in place (gc_clear_noted, avant_gc_sticky.c; one it copies
@@ -563,7 +562,7 @@ __attribute__((visibility("hidden"))) void avant_gc_shrink(void *payload, uint64
 
 /* The objects of an inline run [LO, HI) read one by one, when something
  * asks for it (gc_heap.set.walk): AVANT_GC_STATS counts them
- * (avant_inline_allocs, which the path itself counted until VALK-A2);
+ * (avant_inline_allocs, which the path itself counted before its rework);
  * AVANT_GC_VERIFY and AVANT_GC_STRESS check what the inline sequence
  * wrote, since nothing else looks at it before a collection does: each
  * header is a fresh young object's (HEAP | YOUNG and nothing else, a
@@ -635,10 +634,10 @@ static __attribute__((noinline)) void inline_walk(uint8_t *lo, uint8_t *hi) {
 
 /* Thread T (the single mutator: state 1) allocated [T->mark, CUR) by the
  * inline path since its last sync: the bytes are counted where the path
- * itself counted them until VALK-A2 (M6: allocated bytes, the bytes
+ * itself counted them before its rework (allocated bytes, the bytes
  * since the last collection, the young budget's held bytes), its
  * block's record is given the cursor, and the hole's run is made to end
- * at the cursor, or begun (M7). The path's limit was capped by the young
+ * at the cursor, or begun. The path's limit was capped by the young
  * budget when it was published (inline_cap), so the budget is passed
  * between two syncs by no more than it was when the path counted. */
 static void sync_thread(GcThread *t, uint8_t *cur) {
@@ -674,9 +673,9 @@ void gc_alloc_sync_slow(void) {
  * limit. Called at slow allocation entries; state
  * transitions clear eagerly below. Never under AVANT_GC_STRESS=1 (here
  * and in tl_grant): the path is not published here then, so every
- * allocation of generated code reaches its slow call and a stress point
- * (Stage 29 W-FIX1c, O207); avant_alloc_slow alone publishes it under
- * that mode, for the one object it was asked for (VALK-A2, O599). */
+ * allocation of generated code reaches its slow call and a stress point;
+ * avant_alloc_slow alone publishes it under
+ * that mode, for the one object it was asked for. */
 static void gc_fast_refresh(void) {
   Block *cur = gc_thread.ycur;
   int cur_ok = S_INLINE_HOLES || gc_thread.cur_whole;
@@ -701,7 +700,7 @@ static void gc_fast_refresh(void) {
   }
 }
 
-/* Hole accounting (Stage 28 W17b; GcThread's comment): T's charged rest
+/* Hole accounting (GcThread's comment): T's charged rest
  * of its young hole is settled, the bytes it used counted as allocated
  * and the rest given back to the young budget. The caller holds the world
  * lock, or T is stopped (a collection). */
@@ -709,7 +708,7 @@ void gc_tl_settle(GcThread *t) {
   Block *y = t->ycur;
   if (t->tl_end && y) {
     /* The thread's cursor (it is stopped, or it is this thread): its
-     * block's record is given it here (M6: the inline path no longer
+     * block's record is given it here (the inline path no longer
      * stores it there). */
     uint8_t *b = t->bump_p ? *t->bump_p : y->bump;
     y->bump = b;
@@ -814,7 +813,7 @@ void gc_alloc_stop_all(void) {
  * (state 1, whose allocations are counted from the cursor without a
  * lock). Its inline allocations so far are counted and its block's
  * record given its cursor; its cursors stay: nothing is charged in that
- * state. And every late start bit is set (M7): from now on any thread
+ * state. And every late start bit is set: from now on any thread
  * may look up an object the first one allocated, and no run is noted
  * again (an unshared module's path stays off, a shared module's sets
  * each bit itself). */
@@ -842,7 +841,7 @@ void gc_alloc_shared_now(void) {
 }
 
 /* A thread that registers notes the addresses of its inline state for
- * gc_alloc_stop_all (Stage 28 W17b). */
+ * gc_alloc_stop_all. */
 void gc_alloc_thread_init(void) {
   gc_thread.bump_p = &avant_gc_bump;
   gc_thread.limit_p = &avant_gc_limit;
@@ -879,10 +878,10 @@ void gc_clear_alloc_cur(uint8_t space) {
   gc_heap.space[space].fresh = 0;
 }
 
-/* The young allocator (candidate S's, Stage 28 W15b, gc-design.md §3.1).
+/* The young allocator (candidate S's, gc-design.md §3.1).
  * There is no nursery space: young objects are allocated, YOUNG flagged,
  * into free lines of mature-space blocks, and each thread's young
- * cursor (GcThread.ycur since Stage 28 W17b; one per process before, in
+ * cursor (GcThread.ycur; once one per process, in
  * gc_heap.space[SPACE_NURSERY]) names a mature-space block. The block it
  * bumps in is a young block (young_hi
  * set) until the next collection: every hole handed out widens the
@@ -895,7 +894,7 @@ void gc_clear_alloc_cur(uint8_t space) {
  * (hole accounting, GcThread). The order: the current
  * block's next hole; a hole of a block with free lines among live ones
  * (part_blocks); a new block from the chunks (where the sweeps return
- * the blocks they leave empty, Stage 28 W15c). A medium object (over a line) that the current
+ * the blocks they leave empty). A medium object (over a line) that the current
  * hole cannot hold goes to the overflow block (a hole of a free or
  * recycled block of its own), so it does not skip the current block's
  * small holes (Immix's overflow allocation). */
@@ -1077,7 +1076,7 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
   }
   Block *b = gc_new_block(bspace);
   if (!b && (gc_thread.nogc || gc_thread.hold) && !gc_thread.collecting) {
-    /* C32 (gc-design.md §5.4): never collect inside a no-GC (defer)
+    /* gc-design.md §5.4: never collect inside a no-GC (defer)
      * region, where a runtime helper holds fresh objects the collector
      * cannot see (avant_str_split's items[]). The allocation proceeds
      * past the limit and the full collection runs at the first
@@ -1176,7 +1175,7 @@ void avant_alloc_in_mature(int32_t on) {
   if (on) {
     gc_fast_clear();
     if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
-      /* The charged rest of its young hole goes back (Stage 28 W17b). */
+      /* The charged rest of its young hole goes back. */
       gc_init();
       gc_lock(&gc_heap.world);
       gc_tl_settle(&gc_thread);
@@ -1197,22 +1196,22 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   int shared;
   gc_init();
   /* The inline path's allocations since the last sync are counted before
-   * anything here reads the counters or moves the cursor (M6). */
+   * anything here reads the counters or moves the cursor. */
   gc_alloc_sync();
   /* AVANT_GC_STRESS=1: every allocation is a stress point, a young
    * collection before it (gc_stress_point: not inside a no-GC region or a
    * collection, and only with a young generation). Generated code's
    * allocations all come here under it, since the inline path is never
-   * published (gc_fast_refresh, tl_grant; Stage 29 W-FIX1c, O207), as do
+   * published (gc_fast_refresh, tl_grant), as do
    * runtime C's and user C's: a caller that holds a reference outside a
    * root slot across any allocation reads a moved or poisoned object at
    * once. (Before, only runtime C's allocations were stress points,
-   * through a wrapper of their own, avant_alloc_c, Stage 28 W14b1; a
+   * through a wrapper of their own, avant_alloc_c; a
    * program whose allocations were all generated code's ran under the
-   * stress mode as it ran without it.) Since the Valk stage's VALK-A2
-   * generated code's inline allocations call avant_alloc_slow, which
+   * stress mode as it ran without it.) Generated code's inline
+   * allocations call avant_alloc_slow, which
    * runs the same stress point and then lets the inline sequence itself
-   * allocate (O599). */
+   * allocate. */
   if (gc_heap.set.stress) {
     if (gc_thread.stress_done) {
       /* avant_alloc_slow ran this allocation's stress point already. */
@@ -1230,7 +1229,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   }
   if (nbytes > UINT32_MAX) {
     /* A size the program asked for, not a collector fault: status 1
-     * like a trap, no core dump (Stage 29 W4b2, D295 R16). */
+     * like a trap, no core dump. */
     fflush(stdout);
     fprintf(stderr, "avant runtime: object too large (%llu bytes)\n", (unsigned long long)nbytes);
     exit(1);
@@ -1238,7 +1237,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   if (type_id > UINT16_MAX) {
     gc_die("type id too large");
   }
-  /* No empty payload (Stage 29 W-INT1): a 0-byte object's payload
+  /* No empty payload: a 0-byte object's payload
    * address is the address just past its header, so at the end of a block
    * it is the next block's first address, and a reference to it was taken
    * for the object there (a young copy left the holder's field naming the
@@ -1265,7 +1264,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
       return payload_of(fast);
     }
   }
-  /* A shared program (Stage 28 W17b): a bump in the thread's own charged
+  /* A shared program: a bump in the thread's own charged
    * young hole, without the world lock (hole accounting counts it). */
   if (shared && !large && total <= LOS_LIMIT) {
     AvantHeader *fast = tl_bump(total);
@@ -1275,7 +1274,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
     }
   }
 
-  /* A safepoint (Stage 28 W17a): a collecting call, so the caller's
+  /* A safepoint: a collecting call, so the caller's
    * references are in root slots; another thread's collection runs while
    * this one waits here or for the world lock (gc_lock: native). */
   gc_safepoint();
@@ -1288,7 +1287,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   }
   gc_maybe_collect();
   if (large) {
-    /* One young budget (gc-design.md §5.1, Stage 28 W15a1): young large
+    /* One young budget (gc-design.md §5.1): young large
      * bytes count in avant_nursery_held, so gc_maybe_collect above
      * already ran the young collection they are due (the eager
      * collection for one replaced buffer and the separate large budget
@@ -1358,11 +1357,11 @@ static __attribute__((noinline, cold)) int young_room(size_t total) {
   return bump_fits(total);
 }
 
-/* The inline allocation path's slow call (avant_rt.h; the Valk stage,
- * VALK-A2, O599). Without AVANT_GC_STRESS=1 it is avant_alloc. Under it,
- * until VALK-A2, the inline sequence never ran: the path was never
+/* The inline allocation path's slow call (avant_rt.h). Without
+ * AVANT_GC_STRESS=1 it is avant_alloc. Under it, before the path's
+ * rework, the inline sequence never ran: the path was never
  * published, so that every allocation reached avant_alloc and its stress
- * point (W-FIX1c, O207), and a defect of the sequence that shows only
+ * point, and a defect of the sequence that shows only
  * when a collection follows it closely had no pass that forced one. Now
  * the stress point runs here, as in avant_alloc, and then, for an object
  * the inline path serves in a program with one thread, the young cursor
@@ -1423,8 +1422,8 @@ void *avant_alloc_slow(uint64_t nbytes, uint32_t type_id) {
   return NULL;
 }
 
-/* AVANT_GC_VERIFY=1's own pages for C-visible Buf storage (avant_gc.h;
- * Stage 28 W18C, O145). Not in a shared program: another thread may hold
+/* AVANT_GC_VERIFY=1's own pages for C-visible Buf storage (avant_gc.h).
+ * Not in a shared program: another thread may hold
  * the storage there, and a growth never drops it. */
 __attribute__((visibility("hidden"))) void *avant_gc_verify_paged(void *old, uint64_t nbytes, int move) {
   size_t total;
@@ -1453,8 +1452,8 @@ __attribute__((visibility("hidden"))) void *avant_gc_verify_paged(void *old, uin
 }
 
 /* A runtime helper about to allocate a young large object of BYTES that
- * replaces one it allocated before, which is usually dead by now (Stage 28
- * W16a: avant_json_parse's pool, the previous document dropped), asks for
+ * replaces one it allocated before, which is usually dead by now
+ * (avant_json_parse's pool, the previous document dropped), asks for
  * the due young collection first when BYTES alone fills the young budget
  * and anything young was allocated since the last collection: run then,
  * it frees the previous object before the new one exists instead of
