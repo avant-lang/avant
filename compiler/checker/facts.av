@@ -1075,15 +1075,33 @@ pub fn (checker_self: Checker) pop_guard_facts(sg: Int, sn: Int, sp: Int, se: In
   }
 }
 
+// The receiver of `recv.name` with no argument, written either way: the
+// member without parentheses or the call with none (`x.to_f`,
+// `x.to_f()`); nil for anything else.
+pub fn member_recv(e: Expr, name: String): Expr? {
+  if e.kind == ex_field() && e.ident == name {
+    return e.object
+  }
+  if e.kind == ex_call() && e.callee == name && e.args.size == 0 && !e.indirect {
+    if b = e.block {
+      return nil
+    }
+    return e.receiver
+  }
+  nil
+}
+
+// The source of `n.to_f.sqrt.to_i` (each member with or without its
+// parentheses); nil for anything else.
+pub fn sqrt_toi_src(e: Expr): Expr? {
+  if r1 = member_recv(e, "to_i"), r2 = member_recv(r1, "sqrt"), src = member_recv(r2, "to_f") {
+    return src
+  }
+  nil
+}
+
 pub fn (checker_self: Checker) is_sqrt_toi(e: Expr): Bool {
-  if e.kind != ex_field() {
-    return false
-  }
-  if e.ident == "to_i" {
-  } else {
-    return false
-  }
-  if obj = e.object, obj.kind == ex_field(), obj.ident == "sqrt", o2 = obj.object, o2.kind == ex_field(), o2.ident == "to_f", src = o2.object {
+  if src = sqrt_toi_src(e) {
     if t = src.ty {
       return t.is_int
     }
@@ -1098,7 +1116,7 @@ pub fn (checker_self: Checker) is_sqrt_toi(e: Expr): Bool {
 }
 
 pub fn (checker_self: Checker) sqrt_src_nonneg(e: Expr): Bool {
-  if obj = e.object, o2 = obj.object, src = o2.object {
+  if src = sqrt_toi_src(e) {
     return checker_self.expr_nonneg(src)
   }
   false
@@ -1111,14 +1129,11 @@ pub fn (checker_self: Checker) expr_nonneg(e: Expr): Bool {
   if e.kind == ex_name() {
     return checker_self.nn_proven(e.ident)
   }
+  if checker_self.is_sqrt_toi(e) {
+    return checker_self.sqrt_src_nonneg(e)
+  }
   if e.kind == ex_field() {
-    if e.ident == "size" {
-      return true
-    }
-    if checker_self.is_sqrt_toi(e) {
-      return checker_self.sqrt_src_nonneg(e)
-    }
-    return false
+    return e.ident == "size"
   }
   if e.kind == ex_binary() {
     if e.op == tk_star() || e.op == tk_plus() {
@@ -1147,13 +1162,13 @@ pub fn (checker_self: Checker) cap_of_expr(e: Expr): Int {
   if e.kind == ex_name() {
     return checker_self.cap_of(e.ident)
   }
+  if checker_self.is_sqrt_toi(e) && checker_self.sqrt_src_nonneg(e) {
+    // isqrt of a non-negative Int (64-bit).
+    return 3037000499
+  }
   if e.kind == ex_field() {
     if e.ident == "size" {
       return 2147483647
-    }
-    if checker_self.is_sqrt_toi(e) && checker_self.sqrt_src_nonneg(e) {
-      // isqrt of a non-negative Int (64-bit since Stage 29 W-INT1).
-      return 3037000499
     }
     return 0 - 1
   }
