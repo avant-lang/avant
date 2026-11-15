@@ -609,6 +609,11 @@ pub class Parser {
         program.functions.push(parse_fn("", vis))
       } else if k == tk_interface() {
         program.interfaces.push(parse_interface(vis))
+      } else if k == tk_ident() && self.current.value == "type" && self.index + 1 < self.tokens.size && self.tokens[self.index + 1].kind == tk_ident() {
+        // `type` is a keyword only where it starts a declaration.
+        if al = parse_alias(vis) {
+          program.aliases.push(al)
+        }
       } else if k == tk_ident() && self.err_count == 0 && module_state_ahead() {
         // No module-level mutable state, on purpose (Stage 29 W5b2, D352,
         // O298): a value that never changes is a constant. (After an
@@ -657,6 +662,26 @@ pub class Parser {
       self.failed = true
     }
     program
+  }
+
+  // `type Name = T`.
+  pub fn parse_alias(vis: Bool): AliasDef? {
+    self.bump
+    tok = expect(tk_ident())
+    if self.current.kind == tk_l_paren() {
+      fail(self.current.loc, "a type alias takes no type parameters: type ${tok.value} = T names one type")
+      return nil
+    }
+    if self.current.kind != tk_eq() {
+      fail(self.current.loc, "expected `=` and the type after type ${tok.value}")
+      return nil
+    }
+    self.bump
+    self.skip_newlines
+    target = parse_type_name
+    al = AliasDef.new(tok.loc, tok.value, target)
+    al.vis = vis
+    al
   }
 
   pub fn parse_import: ImportDecl {

@@ -1,0 +1,103 @@
+import harness
+import backends
+
+// Type aliases (`type Ty = A | B`, recursive through classes), bounds on a
+// generic type's parameters (`class Top(T: Ranked)`) and on a parameter
+// written inside another type (`Array(T: Ranked)`), `Error` as a bound
+// (a union `T | E: Error` splits by the members marked Error), `to_s` for
+// every type interpolation prints and a type's own `fn to_s: String` as
+// its text, and external methods on the integer types, `Float64`, `Bool`
+// and enums. Each program is compiled in parallel; a refused one must
+// leave no binary, say the expected words and point at the expected line
+// and column; an accepted one must print what it should.
+
+class RCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(accepted("alias-recursive-union", "type Ty = Scalar | TyArray | TyUnion\n\nclass Scalar {\n  pub name: String\n  fn initialize(name: String) {\n    self.name = name\n  }\n}\n\nclass TyArray {\n  pub elem: Ty\n  fn initialize(elem: Ty) {\n    self.elem = elem\n  }\n}\n\nclass TyUnion {\n  pub members: Array(Ty) = []\n}\n\nfn show(t: Ty): String {\n  switch t {\n    case s: Scalar { s.name }\n    case a: TyArray { \"Array(\${show(a.elem)})\" }\n    case u: TyUnion {\n      text = \"\"\n      for m in u.members {\n        if text.size > 0 {\n          text = text + \" | \"\n        }\n        text = text + show(m)\n      }\n      text\n    }\n  }\n}\nfn main {\n  i: Ty = Scalar.new(\"Int\")\n  u = TyUnion.new\n  u.members.push(i)\n  u.members.push(TyArray.new(Scalar.new(\"String\")))\n  t: Ty = TyArray.new(u)\n  puts(show(t))\n  ts: Array(Ty) = [i, t]\n  puts(ts.size)\n}\n", "Array(Int | Array(String))\n2\n"))
+  xs.push(accepted("alias-plain", "type Id = Int\ntype Names = Array(String)\ntype Pick = Int | String\n\nfn first(ns: Names): String {\n  ns[0]\n}\n\nfn pick(n: Id): Pick {\n  if n > 0 {\n    return n\n  }\n  \"none\"\n}\n\nfn main {\n  a: Id = 4\n  b: Int = a + 1\n  puts(first([\"x\", \"y\"]))\n  puts(\"\${pick(b)} \${pick(0)}\")\n  o: Id? = nil\n  puts(o ?? 7)\n}\n", "x\n5 none\n7\n"))
+  xs.push(refused("alias-self", "type Json = Int | Array(Json)\nfn main { }\n", "type Json names itself: a recursive type goes through a struct or class, whose field may hold a Json", "1:25"))
+  xs.push(refused("alias-unknown", "type T2 = Strng | Int\nfn main { }\n", "unknown type Strng", "1:11"))
+  xs.push(refused("alias-lower", "type id = Int\nfn main { }\n", "the name of type alias id is a type name, written with a capital first letter: write Id", "1:6"))
+  xs.push(refused("alias-duplicate", "struct P {\n  x: Int\n}\ntype P = Int\nfn main { }\n", "P is already defined", "4:6"))
+  xs.push(refused("alias-params", "type Pair(A) = Array(A)\nfn main { }\n", "a type alias takes no type parameters: type Pair = T names one type", "1:10"))
+  xs.push(refused("alias-args", "type Id = Int\nfn main {\n  a: Id(Int) = 1\n}\n", "Id does not take type arguments", "3:6"))
+  xs.push(accepted("alias-type-keyword-name", "fn main {\n  type = 3\n  puts(type)\n}\n", "3\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/ty-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/ty-${f.tag}.bin", "${dir}/ty-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "ty-${f2.tag}.bin", "ty-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/ty-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/ty-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/ty-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "ty-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_types_and_text.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

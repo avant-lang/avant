@@ -133,6 +133,7 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
 - [Nil and unions](#nil-and-unions):
   - [opening an optional](#opening-an-optional)
   - [unions](#unions)
+  - [type aliases](#type-aliases)
   - [what an optional costs](#what-an-optional-costs)
 - [Numbers](#numbers):
   - [integer types](#integer-types)
@@ -441,6 +442,7 @@ fn main {
 | `Hash(K, V)` | hash table | [Hashes](#hashes) |
 | `T?` | `T` or `nil` | [Nil and unions](#nil-and-unions) |
 | `A \| B` | one of several types; with an `Error` member, a result that can fail | [Unions](#unions), [Errors](#errors) |
+| `type Ty = A \| B` | a name for a type, a union above all | [Type aliases](#type-aliases) |
 | `enum E { a, b }` | one of a fixed list of named values | [Enums](#enums) |
 | `fn(T): U` | a function value | [Function values](#function-values) |
 | `JoinHandle(T)` | a running task | [Spawn](#spawn) |
@@ -938,6 +940,49 @@ fn main {
   puts(size_of([1, 2]))      // => 2
 }
 ```
+
+### Type aliases
+
+`type Name = T` gives a type a name: every use of the name is that type, the same type and the same code, not a new one. It names a union above all, written once instead of at every use; the classes of the union may hold the name in their fields, so a recursive type (a tree, a JSON value, a type checker's types) reads as declared.
+
+```avant
+type Expr = Num | Add
+
+class Num {
+  pub n: Int
+
+  fn initialize(n: Int) {
+    self.n = n
+  }
+}
+
+class Add {
+  pub left: Expr
+  pub right: Expr
+
+  fn initialize(left: Expr, right: Expr) {
+    self.left = left
+    self.right = right
+  }
+}
+
+fn eval(e: Expr): Int {
+  switch e {
+    case n: Num { n.n }
+    case a: Add { eval(a.left) + eval(a.right) }
+  }
+}
+
+fn main {
+  e: Expr = Add.new(Num.new(2), Add.new(Num.new(3), Num.new(4)))
+  puts(eval(e))   // => 9
+}
+```
+
+- An alias is private to its module unless `pub`, like a type, and its name starts with a capital letter. It takes no type parameters.
+- An alias may not reach itself except through a struct or class: `type Json = Int | Array(Json)` is refused; give the recursive part a class, as `Add` above.
+- An alias names a type where a type is written (a declaration, a field, a parameter, a type argument); a value is built with the type's own name (`Num.new(2)`, not `Expr.new`).
+- `type` is a keyword only at the start of a declaration; `type` stays usable as a name.
 
 ### What an optional costs
 

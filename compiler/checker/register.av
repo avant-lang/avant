@@ -276,6 +276,8 @@ pub fn (checker_self: Checker) check: Program {
   checker_self.check_enum_consts
   checker_self.check_type_names
   checker_self.clear_poison
+  checker_self.check_aliases
+  checker_self.clear_poison
   checker_self.prepare_entry
   for lb in checker_self.program.libs {
     checker_self.clear_poison
@@ -387,6 +389,24 @@ pub fn (checker_self: Checker) check_type_names {
       checker_self.check_type_name(lay.name, lay.loc, "C layout")
     }
   }
+}
+
+// Each type alias is seen as a type is (its module, and its importers
+// when pub), and the type it names is resolved once where it is declared,
+// so a wrong name in it is reported there and not at each use.
+pub fn (checker_self: Checker) check_aliases {
+  for al in checker_self.program.aliases {
+    checker_self.check_type_name(al.name, al.loc, "type alias")
+    checker_self.note_type_owner(al.name, al.mod_name, al.vis)
+  }
+  saved = checker_self.current_module
+  for al2 in checker_self.program.aliases {
+    checker_self.clear_poison
+    checker_self.current_module = al2.mod_name
+    _ = checker_self.resolve_in_module(clone_type_name(al2.target))
+    checker_self.pull_resolve
+  }
+  checker_self.current_module = saved
 }
 
 pub fn (checker_self: Checker) check_type_name(name: String, loc: Location, what: String) {

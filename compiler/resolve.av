@@ -40,6 +40,12 @@ pub class TypeResolver {
   // it (the checker's resolve_in_module, a type's fields): a suggestion
   // names only a type that module sees (W5c1); "" offers every type.
   pub scope_mod: String = ""
+  // The type aliases (`type Ty = A | B`): by type_key(module, name), and
+  // by the bare name when one module declares it (-1 when two do); the
+  // ones being resolved, so an alias that names itself is an error.
+  aliases: Array(AliasDef)
+  alias_ix: Hash(String, Int)
+  alias_inflight: Array(String)
 
   fn initialize {
     n = Hash(String, Int).new
@@ -68,6 +74,10 @@ pub class TypeResolver {
     self.type_names = []
     self.type_name_mods = []
     self.scope_mod = ""
+    self.aliases = []
+    ai = Hash(String, Int).new
+    self.alias_ix = ai
+    self.alias_inflight = []
     self.inst_depth = 0
     self.failed = false
     self.err = nil
@@ -496,6 +506,9 @@ pub class TypeResolver {
       }
       return found
     }
+    if al = find_alias(tn) {
+      return resolve_alias(al, tn)
+    }
     if opq = get_opaque(tn.name) {
       return opq
     }
@@ -809,6 +822,12 @@ pub class TypeResolver {
   // methods, which are checked in the generic's own module, read the
   // same types. Type parameters and built-in names are left as they are.
   pub fn pin_type_name(tn: TypeName) {
+    if !tn.fn_type && tn.members.size == 0 && !tn.pinned && tn.args.size == 0 {
+      if al = find_alias(tn) {
+        // An alias is the type it names, wherever the instance is read.
+        expand_alias_name(tn, al)
+      }
+    }
     for a in tn.args {
       pin_type_name(a)
     }
@@ -845,6 +864,96 @@ pub class TypeResolver {
         tn.mod_name = found.mod_name
         tn.pinned = true
       }
+    }
+  }
+
+  pub fn add_alias(al: AliasDef) {
+    key = type_key(al.mod_name, al.name)
+    if prev = self.alias_ix.get(key) {
+      fail(al.loc, "type ${al.name} is already defined")
+      return
+    }
+    self.aliases.push(al)
+    i = self.aliases.size - 1
+    self.alias_ix[key] = i
+    if other = self.alias_ix.get(al.name) {
+      self.alias_ix[al.name] = -1
+    } else {
+      self.alias_ix[al.name] = i
+    }
+  }
+
+  // The alias a written type name names: in the module it qualifies, else
+  // in the module it is resolved in, else the one module that declares it.
+  pub fn find_alias(tn: TypeName): AliasDef? {
+    if self.aliases.size == 0 || tn.fn_type || tn.members.size > 0 || tn.name.size == 0 {
+      return nil
+    }
+    if tn.mod_name.size > 0 {
+      if i = self.alias_ix.get(type_key(tn.mod_name, tn.name)) {
+        return self.aliases[i]
+      }
+      return nil
+    }
+    if self.scope_mod.size > 0 {
+      if i2 = self.alias_ix.get(type_key(self.scope_mod, tn.name)) {
+        return self.aliases[i2]
+      }
+    }
+    if i3 = self.alias_ix.get(tn.name), i3 >= 0 {
+      return self.aliases[i3]
+    }
+    nil
+  }
+
+  // The type an alias names, resolved in the alias's own module. An alias
+  // that reaches itself before a struct or class names it is refused: a
+  // recursive type goes through a class, whose fields may name the alias.
+  pub fn resolve_alias(al: AliasDef, tn: TypeName): Ty {
+    key = type_key(al.mod_name, al.name)
+    if self.alias_inflight.contains(key) {
+      fail(tn.loc, "type ${al.name} names itself: a recursive type goes through a struct or class, whose field may hold a ${al.name}")
+      return self.t_int
+    }
+    if tn.args.size > 0 {
+      fail(tn.loc, "${tn.name} does not take type arguments")
+      return self.t_int
+    }
+    self.alias_inflight.push(key)
+    saved = self.scope_mod
+    self.scope_mod = al.mod_name
+    t = clone_type_name(al.target)
+    qualify_seen(t, al.mod_name)
+    ty = resolve(t)
+    self.scope_mod = saved
+    self.alias_inflight.pop
+    ty
+  }
+
+  // tn, an alias's name, rewritten in place into the alias's type, its
+  // names qualified in the alias's module (nilable kept).
+  pub fn expand_alias_name(tn: TypeName, al: AliasDef) {
+    key = type_key(al.mod_name, al.name)
+    if self.alias_inflight.contains(key) {
+      return
+    }
+    t = clone_type_name(al.target)
+    qualify_seen(t, al.mod_name)
+    self.alias_inflight.push(key)
+    saved = self.scope_mod
+    self.scope_mod = al.mod_name
+    pin_type_name(t)
+    self.scope_mod = saved
+    self.alias_inflight.pop
+    tn.name = t.name
+    tn.args = t.args
+    tn.members = t.members
+    tn.mod_name = t.mod_name
+    tn.fn_type = t.fn_type
+    tn.ret = t.ret
+    tn.pinned = t.pinned
+    if t.nilable {
+      tn.nilable = true
     }
   }
 
@@ -1333,6 +1442,17 @@ pub fn load_types(program: Program): TypeResolver {
         resolver.fail(lib_def.loc, "lib ${lib_def.name} collides with a type")
       }
     }
+  }
+  for al in program.aliases {
+    if al.name == "Error" {
+      resolver.fail(al.loc, "Error is the built-in error marker (class E: Error); choose another name")
+      continue
+    }
+    if existing = resolver.get_named_in(al.mod_name, al.name) {
+      resolver.fail(al.loc, "${al.name} is already defined")
+      continue
+    }
+    resolver.add_alias(al)
   }
   collect_opaques(program, resolver)
   for sdef2 in program.structs {
