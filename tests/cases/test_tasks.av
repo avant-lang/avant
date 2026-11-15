@@ -326,6 +326,55 @@ fn task_trap_cases(c: Checks, compiler: String, stamp: Int) {
     }
     i += 1
   }
+  task_flood_cases(c, bin, stamp)
+}
+
+// Tasks that write and then trap, never joined, while main writes and
+// returns (task_trap.av flood): every line whole, main's lines once
+// each. Three runs: with the exit's flush of stdout made without its
+// lock, which a task's trap flushes at the same moment, the program
+// could write its output twice; with puts writing a line's text and its
+// newline as two locked writes, another thread's write fell between
+// them. Before both were fixed, nearly every run of this case failed.
+fn task_flood_cases(c: Checks, bin: String, stamp: Int) {
+  for round in 0..3 {
+    log = "${scratch()}/tasks-flood-${stamp}-${round}.log"
+    args: Array(String) = []
+    args.push("-c")
+    args.push("timeout -k 5 60 ${bin} flood")
+    status = process_run_out("/bin/sh", args, log) ?? -1
+    out = file_read(log) ?? ""
+    c.eq_int(status, 0, "task flood ${round}: status 0")
+    broken = ""
+    for line in out.split("\n") {
+      ws = line.split(" ")
+      whole = line.size == 0 || line == "before" || line == "after"
+      if ws.size == 3 && ws[0] == "main" && ws[1] == "line" {
+        whole = (ws[2].to_i() ?? -1) >= 0
+      } else if ws.size == 4 && ws[0] == "task" && ws[2] == "line" {
+        whole = (ws[1].to_i() ?? -1) >= 0 && (ws[3].to_i() ?? -1) >= 0
+      } else if str_has(line, "avant runtime") {
+        for t in 0..4 {
+          if line == "avant runtime: index ${10 + t} out of bounds (size 3) in at (task_trap.av:29:1)" {
+            whole = true
+          }
+        }
+      }
+      if !whole && broken.size == 0 {
+        broken = line
+      }
+    }
+    c.expect(broken.size == 0, "task flood ${round}: every line whole, not: ${broken}")
+    text = "\n${out}"
+    once = true
+    for k in 0..200 {
+      if text.split("\nmain line ${k}\n").size != 2 {
+        once = false
+      }
+    }
+    c.expect(once, "task flood ${round}: each of main's lines once")
+    c.expect(text.split("\nbefore\n").size == 2 && text.split("\nafter\n").size == 2, "task flood ${round}: before and after once")
+  }
 }
 
 fn main: Int {

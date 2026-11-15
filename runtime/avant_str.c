@@ -1,3 +1,6 @@
+/* fwrite_unlocked (puts: a line under one hold of the stream's lock). */
+#define _GNU_SOURCE
+
 #include "avant_rt.h"
 #include "avant_gc.h"
 #include "avant_fmt.h"
@@ -486,10 +489,15 @@ void avant_puts_f64(double v) {
  * (printf's %s stopped at it). */
 void avant_puts_str(const char *s) {
   size_t n = s ? avant_str_n(s) : 0;
+  /* The text and its newline under one hold of stdout's lock: another
+   * thread's flush between them (a task's trap flushes stdout) would
+   * write the line without its end, and the trap's line after it. */
+  flockfile(stdout);
   if (n) {
-    fwrite(s, 1, n, stdout);
+    fwrite_unlocked(s, 1, n, stdout);
   }
-  putc('\n', stdout);
+  putc_unlocked('\n', stdout);
+  funlockfile(stdout);
   avant_out_check();
 }
 

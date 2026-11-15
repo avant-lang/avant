@@ -222,6 +222,22 @@ fn main: Int {
   } else if kind == "worker-parallel" {
     h = spawn { doubled(xs) }
     _ = show(h)
+  } else if kind == "flood" {
+    // Tasks that write and then trap, never joined, while main writes
+    // and returns: the end of the program flushes stdout while the tasks
+    // write and their traps flush it. Every line is written whole and
+    // main's lines once each.
+    for t in 0..4 {
+      inner = spawn {
+        for k in 0..3000 {
+          puts("task ${t} line ${k}")
+        }
+        at(xs, 10 + t)
+      }
+    }
+    for k in 0..200 {
+      puts("main line ${k}")
+    }
   }
   puts("after")
   0

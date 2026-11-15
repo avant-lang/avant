@@ -1291,15 +1291,39 @@ __attribute__((noreturn)) static void out_fail(const char *stream, int e, int at
   exit(1);
 }
 
+/* stdout's lock for the exit's flush, waited for a second at most. Two
+ * flushes of one buffer at once write its bytes twice: a task that traps
+ * flushes stdout on its own thread (the trap is told at once, after the
+ * program's output) while main returns and the exit flushes it. So the
+ * exit takes the lock, flushes, and keeps it to the end of the process:
+ * no other thread writes or flushes stdout after the exit's flush. A
+ * thread that keeps the lock longer (a write blocked on a full pipe)
+ * gets the old behavior, an unlocked flush, so the exit cannot hang.
+ * The lock is recursive: this thread's later stdio (glibc's own exit
+ * flush, another exit handler) goes on. Returns whether it is held. */
+static int out_lock_at_exit(void) {
+  struct timespec pause = {0, 1000000};
+  int i;
+  for (i = 0; i < 1000; i++) {
+    if (ftrylockfile(stdout) == 0) {
+      return 1;
+    }
+    nanosleep(&pause, NULL);
+  }
+  return 0;
+}
+
 /* The stream's error flag set by this write or an earlier one (printf
  * included): flushing again what is buffered names the reason. At exit
- * the stream is flushed without its lock, as glibc's own exit flush
- * does, so a thread that exits while another holds stdout cannot hang. */
+ * the flush holds stdout's lock when it can (out_lock_at_exit). */
 static void out_check(int at_exit) {
   int e = 0;
   int bad;
   if (g_out_failed) {
     return;
+  }
+  if (at_exit) {
+    (void)out_lock_at_exit();
   }
   bad = at_exit ? fflush_unlocked(stdout) != 0 : fflush(stdout) != 0;
   if (bad) {
