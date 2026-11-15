@@ -1,0 +1,115 @@
+// switch over every integer width, over Bool with `case true`, range
+// labels with integer, character and constant bounds, and the inclusive
+// range `..=` in `for`.
+
+const tab = '\t'
+const first_digit = '0'
+const last_digit = '9'
+const big = 18446744073709551615u64
+
+enum Status { ok = http_ok, created, missing = 404 }
+
+const http_ok = 200
+
+// A tokenizer's first-byte dispatch, as range labels.
+fn class_of(c: Int): String {
+  switch c {
+    case 'a'..='z', 'A'..='Z', '_' { "name" }
+    case first_digit..=last_digit { "digit" }
+    case ' ', tab, '\n' { "space" }
+    case '+', '-', '*', '/' { "op" }
+    case 128..=255 { "high" }
+    else { "other" }
+  }
+}
+
+fn band(n: Int): Int {
+  switch n {
+    case -1000000..0 { -1 }
+    case 0..10 { 0 }
+    case 10..=99 { 1 }
+    case 100..=1000000 { 2 }
+    else { 3 }
+  }
+}
+
+fn wide(x: UInt64): Int {
+  switch x {
+    case big { 4 }
+    case 9223372036854775800..=9223372036854775810 { 3 }
+    case 0..=255 { 1 }
+    else { 2 }
+  }
+}
+
+fn small(x: Int32): Int {
+  switch x {
+    case -2147483648..-1 { 1 }
+    case 0 { 2 }
+    case 1..=2147483646 { 3 }
+    else { 4 }
+  }
+}
+
+fn small_u(x: UInt32): Int {
+  switch x {
+    case 4294967295 { 1 }
+    case 0..=65535 { 2 }
+    else { 3 }
+  }
+}
+
+fn word(b: Bool): String {
+  switch b {
+    case true { "yes" }
+    case false { "no" }
+  }
+}
+
+fn status_word(s: Status): String {
+  switch s {
+    case ok, created { "fine" }
+    case missing { "missing" }
+  }
+}
+
+fn main {
+  text = "Ab_9 +\t\n?"
+  for i in 0..text.size {
+    puts(class_of(text[i]))
+  }
+  puts(class_of(200))
+  for n in -2..=2 {
+    puts(band(n * 60))
+  }
+  puts(band(1000000))
+  puts(band(1000001))
+  puts(band(-1000001))
+  puts(wide(big))
+  puts(wide(9223372036854775808u64))
+  puts(wide(7u64))
+  puts(wide(256u64))
+  m: Int32 = -2147483648
+  puts(small(m))
+  puts(small(0))
+  puts(small(2147483647))
+  puts(small_u(4294967295))
+  puts(small_u(65535))
+  puts(small_u(65536))
+  puts(word(text.size > 3))
+  puts(word(text.size > 30))
+  puts(Status.created.to_i())
+  if s = Status.from_i(201) {
+    puts(status_word(s))
+  }
+  total = 0
+  for k in 1..=100 {
+    total += k
+  }
+  puts(total)
+  count = 0
+  for v in 9223372036854775800..=9223372036854775807 {
+    count += 1
+  }
+  puts(count)
+}

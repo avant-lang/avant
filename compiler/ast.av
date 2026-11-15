@@ -23,14 +23,25 @@ pub fn ex_nil: Int { 15 }
 pub fn ex_try: Int { 16 }
 pub fn ex_interp: Int { 17 }
 // A switch node (`switch c { case ... else ... }`) also holds the two
-// forms whose value comes from statements (Stage 29 W4a), so every walker
-// visits them as it visits a switch: op tk_return, the right side of
-// `x ?? return v` / `?? break` / `?? continue` (else_body is that one
-// statement; cond is nil, no cases); op tk_if, an `if` used as a value
-// (else_body is the if statement, which has an else).
+// forms whose value comes from statements, so every walker visits them as
+// it visits a switch: op tk_return, the right side of `x ?? return v` /
+// `?? break` / `?? continue` (else_body is that one statement; cond is
+// nil, no cases); op tk_if, an `if` used as a value (else_body is the if
+// statement, which has an else). The else guard of an assignment
+// (`n = f() else e { ... }`) is the right side of a `??` in the same
+// node: op tk_return, bool_val set, else_body its block and ident the
+// failure's name.
 pub fn ex_switch: Int { 18 }
+
+pub fn expr_is_else_guard(e: Expr): Bool {
+  e.kind == ex_switch() && e.op == tk_return() && e.bool_val
+}
 pub fn ex_splice: Int { 19 }
 pub fn ex_lambda: Int { 20 }
+// The success of a `Void | E` result where nothing is written: the
+// checker adds it at the end of such a function's body and to a bare
+// `return`; its type is Void, the union's Void member.
+pub fn ex_void: Int { 21 }
 
 pub fn st_expr: Int { 1 }
 pub fn st_return: Int { 2 }
@@ -42,7 +53,7 @@ pub fn st_assign: Int { 7 }
 pub fn st_quote: Int { 8 }
 pub fn st_pin: Int { 9 }
 pub fn st_release: Int { 10 }
-// `gc.hold { body }` (std.gc, Stage 29 W1c2, D305): body only.
+// `gc.hold { body }` (std.gc): body only.
 pub fn st_hold: Int { 11 }
 
 pub class TypeName {
@@ -51,11 +62,11 @@ pub class TypeName {
   pub args: Array(TypeName) = []
   pub nilable: Bool = false
   // The name was resolved where it was written and stands for that type
-  // wherever it is read again (O255, Stage 29 W-FIX1b): a generic type's
-  // or function's instance carries its type arguments this way, with the
-  // module of each in mod_name, so a type of the module that uses the
-  // generic is known inside the generic's own module. The checker skips
-  // its visibility rules for a pinned name. It shares `nilable`'s word.
+  // wherever it is read again: a generic type's or function's instance
+  // carries its type arguments this way, with the module of each in
+  // mod_name, so a type of the module that uses the generic is known
+  // inside the generic's own module. The checker skips its visibility
+  // rules for a pinned name. It shares `nilable`'s word.
   pub pinned: Bool = false
   pub members: Array(TypeName) = []
   pub mod_name: String = ""
@@ -85,6 +96,10 @@ pub class Param {
   pub name: String = ""
   pub type: TypeName
   pub default: Expr? = nil
+  // A field parameter of initialize (`fn initialize(self.loc)`): the
+  // parser gives it its field's type and assigns it to the field first
+  // thing in the body (parser.av field_params).
+  pub field_param: Bool = false
 
   fn initialize(loc: Location, name: String, type: TypeName) {
     self.loc = loc
@@ -101,14 +116,24 @@ pub class InterpPart {
   }
 }
 
-// A `case` label (Stage 29 W5a1): its kind says what was written; an
-// integer label's value is int_val. A member label (`case eof`, an enum
-// switch, D327) carries the member's name in text and gets its value in
-// int_val from the checker; a string label carries its bytes in text.
-// W5a2 adds member types and `nil`, W5a3 ranges.
+// A `case` label: its kind says what was written; an integer label's
+// value is int_val. A member label (`case eof`, an enum switch) carries
+// the member's name in text and gets its value in int_val from the
+// checker; a string label carries its bytes in text. A union switch's
+// label is a member type (lb_type: tname, with the binding's name in bind
+// when written `case n: Int`) or `nil` (lb_nil); the checker puts the
+// member's index in the union in int_val. A Bool switch's labels are
+// `true` and `false` (lb_bool, int_val 1 or 0). A range label (lb_range:
+// `case 0..10`, `case 'a'..='z'`) holds its bounds as two labels, lo and
+// hi (each an integer or a name), incl when written `..=`; the checker
+// puts its first value in int_val and its last in hi_val.
 pub fn lb_int: Int { 1 }
 pub fn lb_string: Int { 2 }
 pub fn lb_member: Int { 3 }
+pub fn lb_type: Int { 4 }
+pub fn lb_nil: Int { 5 }
+pub fn lb_bool: Int { 6 }
+pub fn lb_range: Int { 7 }
 
 pub class CaseLabel {
   pub kind: Int = 0
@@ -118,6 +143,24 @@ pub class CaseLabel {
   // A label written `Type.member` (refused in an enum switch with a hint):
   // the type's name; empty otherwise.
   pub qual: String = ""
+  // A member-type label's type, and the name it binds ("" for none).
+  pub tname: TypeName? = nil
+  pub bind: String = ""
+  // An integer label as written: its magnitude and sign, checked against
+  // the discriminant's type by the checker (int_val holds the value's 64
+  // bits, a UInt64 above Int's maximum included).
+  pub bits: UInt64 = 0u64
+  pub neg: Bool = false
+  pub lo: CaseLabel? = nil
+  pub hi: CaseLabel? = nil
+  pub incl: Bool = false
+  pub hi_val: Int = 0
+  // A member label of an integer switch that stands for the value of the
+  // enum member `text` of this enum: only the from_i
+  // every enum has (enums.av), resolved by the checker once the enum's
+  // values are known, so a value computed from a constant is the one
+  // checked whatever copy of the body is checked.
+  pub value_of: String = ""
 
   fn initialize(kind: Int, loc: Location) {
     self.kind = kind
@@ -130,6 +173,21 @@ pub fn clone_case_label(l: CaseLabel): CaseLabel {
   out.int_val = l.int_val
   out.text = l.text
   out.qual = l.qual
+  out.bind = l.bind
+  out.bits = l.bits
+  out.neg = l.neg
+  out.incl = l.incl
+  out.hi_val = l.hi_val
+  out.value_of = l.value_of
+  if a = l.lo {
+    out.lo = clone_case_label(a)
+  }
+  if z = l.hi {
+    out.hi = clone_case_label(z)
+  }
+  if tn = l.tname {
+    out.tname = clone_type_name(tn)
+  }
   out
 }
 
@@ -208,12 +266,31 @@ pub class Expr {
   pub is_default: Bool = false
   pub mod_name: String = ""
   pub splice: Expr? = nil
+  // A comparison the checker resolved to a function: op_fn() when `resolved` is a function of both operands (an
+  // array's or an optional's ==) rather than the left's method; op_swap()
+  // when the method is the right operand's (`a > b` as `b < a`);
+  // op_not() when the result is negated (`!=` as `!(a == b)`).
+  pub op_form: Int = 0
+  // A call with named arguments written out of their parameters' order
+  // (checker/match.av place_named_args): the indexes of its arguments in
+  // the order they are evaluated, the written ones left to right and
+  // then the defaults; nil when that is their own order.
+  pub arg_order: Array(Int)? = nil
+  // A member or a name written without parentheses (`x.name`, `name`,
+  // `T.new`): where the name is; nil for every other node, and for nodes
+  // the compiler builds itself. The checker reads it to tell a method
+  // call written without parentheses from a field read.
+  pub bare_name: Location? = nil
 
   fn initialize(kind: Int, loc: Location) {
     self.kind = kind
     self.loc = loc
   }
 }
+
+pub fn op_fn: Int { 1 }
+pub fn op_swap: Int { 2 }
+pub fn op_not: Int { 4 }
 
 pub class Stmt {
   pub kind: Int = 0
@@ -228,6 +305,9 @@ pub class Stmt {
   pub target: Expr? = nil
   pub cond: Expr? = nil
   pub bind: String = ""
+  // `if v = f() { } else e { }`: the name the else block binds to
+  // the failure of the if-assign's one binding.
+  pub else_bind: String = ""
   pub op: Int = 0
   pub then_body: Array(Stmt) = []
   pub else_body: Array(Stmt) = []
@@ -237,8 +317,8 @@ pub class Stmt {
   pub declared: TypeName? = nil
   pub lead: Int = 0
   // An `if` with an else at a function's tail whose branches end in
-  // values (Stage 29 W4a, D31): the checker sets it, and the function's
-  // value is the branch's (mir lower_body).
+  // values: the checker sets it, and the function's value is the
+  // branch's (mir lower_body).
   pub tail_value: Bool = false
 
   fn initialize(kind: Int, loc: Location) {
@@ -252,11 +332,10 @@ pub class Field {
   pub name: String = ""
   pub type: TypeName
   pub default: Expr? = nil
-  // `pub` (Stage 29 W3a, D299): visible outside the type's module.
+  // `pub`: visible outside the type's module.
   pub vis: Bool = false
-  // Stage 29 W3b (D292): initialize sets this field on every path before
-  // anything can read it (checker/init.av), so the constructor does not
-  // store its zero first.
+  // Initialize sets this field on every path before anything can read it
+  // (checker/init.av), so the constructor does not store its zero first.
   pub set_by_init: Bool = false
 
   fn initialize(loc: Location, name: String, type: TypeName) {
@@ -303,9 +382,14 @@ pub class Function {
   // instantiate_method), in type-parameter order; empty otherwise.
   pub inst_args: Array(Ty) = []
   // A function the compiler wrote (an enum's name, from_i, from_name,
-  // members, Stage 29 W5a1): lowered only when a call reaches it, so a
-  // program pays for an enum's name table only when it uses it (O394).
+  // members): lowered only when a call reaches it, so a program pays
+  // for an enum's name table only when it uses it.
   pub lazy: Bool = false
+  // The entry declared `fn main: Void | E`:
+  // checked as `Int | E`, a bare return and the end returning 0, and
+  // shown in messages as written (checker/entry.av).
+  pub entry_void: Bool = false
+  pub entry_shown: String = ""
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -341,13 +425,23 @@ pub class ComptimeWalk {
   }
 }
 
-// An enum's members as written (Stage 29 W5a1, D292, D358): names, their
-// values (C's rule applied by the parser) and where each is written.
+// An enum's members as written: names, their values (C's rule applied by
+// the parser) and where each is written.
 pub class EnumDecl {
   pub names: Array(String) = []
   pub vals: Array(Int) = []
   pub locs: Array(Location) = []
-  // Declared in a lib block: C's int everywhere (D358).
+  // A member's value may be a module constant (`ok = http_ok`): from the
+  // first such member on (first_named), the checker computes the values
+  // once the constants are known, each member's way kept in val_kinds (0
+  // the previous plus one, 1 a literal, 2 the constant
+  // val_quals[i].val_names[i]); the labels of from_i's switch are given
+  // them.
+  pub val_names: Array(String) = []
+  pub val_quals: Array(String) = []
+  pub val_kinds: Array(Int) = []
+  pub first_named: Int = -1
+  // Declared in a lib block: C's int everywhere.
   pub c_int: Bool = false
 
   fn initialize {
@@ -365,9 +459,12 @@ pub class StructDef {
   pub vis: Bool = false
   pub mod_name: String = ""
   pub opt_ins: Array(TypeName) = []
-  // `enum Name { ... }` (Stage 29 W5a1): an enum is declared as a
-  // StructDef without fields, so its methods, visibility and module take
-  // the struct's paths; its type is a tyk_enum (resolve.av load_types).
+  // The bounds of its type parameters (`struct Pair(K: Eq(K), V)`),
+  // checked at each instance.
+  pub param_bounds: Array(TypeBound) = []
+  // `enum Name { ... }`: an enum is declared as a StructDef without
+  // fields, so its methods, visibility and module take the struct's
+  // paths; its type is a tyk_enum (resolve.av load_types).
   pub enum_of: EnumDecl? = nil
 
   fn initialize(loc: Location, name: String) {
@@ -387,6 +484,7 @@ pub class ClassDef {
   pub vis: Bool = false
   pub mod_name: String = ""
   pub opt_ins: Array(TypeName) = []
+  pub param_bounds: Array(TypeBound) = []
 
   fn initialize(loc: Location, name: String) {
     self.loc = loc
@@ -439,8 +537,8 @@ pub class LibDef {
   pub name: String = ""
   pub funs: Array(FunDecl) = []
   pub layouts: Array(CLayout) = []
-  // C enums (Stage 29 W5a1, O393): an enum declared in a lib block, as
-  // avant bind writes one, keeps C's int (Int32) wherever it is stored.
+  // C enums: an enum declared in a lib block, as avant bind writes one,
+  // keeps C's int (Int32) wherever it is stored.
   pub enums: Array(StructDef) = []
   pub vis: Bool = false
   pub mod_name: String = ""
@@ -472,6 +570,56 @@ pub class ModInfo {
   }
 }
 
+// A module constant: `const name = value` at module level, `pub const`
+// exported; the value is a scalar computed when compiling
+// (checker/consts.av), and each use of the name is that value written
+// as a literal.
+pub class ConstDef {
+  pub loc: Location
+  pub name: String = ""
+  pub value: Expr
+  pub vis: Bool = false
+  pub mod_name: String = ""
+
+  fn initialize(loc: Location, name: String, value: Expr) {
+    self.loc = loc
+    self.name = name
+    self.value = value
+  }
+}
+
+// A constant's computed value (checker/consts.av): an Int (iv), a UInt64
+// (uv: a value written with the u64 suffix), a Float64 (fv) or a Bool
+// (bv), by kind (cv_* in checker/consts.av); state 0 not computed yet, 1
+// being computed (a reference back to it is a cycle), 2 computed, 3
+// refused.
+pub class ConstVal {
+  pub def: ConstDef? = nil
+  pub state: Int = 0
+  pub kind: Int = 0
+  pub iv: Int = 0
+  pub uv: UInt64 = 0u64
+  pub fv: Float64 = 0.0
+  pub bv: Bool = false
+}
+
+// `type Name = T`: a name for a type, a union above all (`type Ty = Scalar
+// | TyArray`). Every use of the name is the type it names; private to its
+// module unless pub.
+pub class AliasDef {
+  pub loc: Location
+  pub name: String = ""
+  pub target: TypeName
+  pub vis: Bool = false
+  pub mod_name: String = ""
+
+  fn initialize(loc: Location, name: String, target: TypeName) {
+    self.loc = loc
+    self.name = name
+    self.target = target
+  }
+}
+
 pub class Program {
   pub loc: Location
   pub structs: Array(StructDef) = []
@@ -487,13 +635,15 @@ pub class Program {
   pub mods: Array(ModInfo) = []
   pub interfaces: Array(InterfaceDef) = []
   pub opt_ins: Array(OptIn) = []
+  pub consts: Array(ConstDef) = []
+  pub aliases: Array(AliasDef) = []
   pub re2c_ids: Hash(String, Int)
   pub re2c_groups: Array(Int)
   pub re2c_obj: String = ""
 
   fn initialize(loc: Location) {
     self.loc = loc
-    ri = Hash(String, Int).new
+    ri = Hash(String, Int).new()
     self.re2c_ids = ri
     self.re2c_groups = []
     self.re2c_obj = ""
@@ -738,9 +888,9 @@ pub fn type_name_unbound_names(tn: TypeName, named: Hash(String, Int), into: Arr
   if tn.name.size == 0 {
     return
   }
-  // Only a single capital letter is an implicit type parameter (Stage 29
-  // W3a, D298; D30 amended): any other unknown name stays a type and is
-  // reported as unknown, with the nearest known name.
+  // Only a single capital letter is an implicit type parameter: any
+  // other unknown name stays a type and is reported as unknown, with the
+  // nearest known name.
   if !is_type_param_name(tn.name) {
     return
   }
@@ -758,6 +908,7 @@ pub fn is_type_param_name(name: String): Bool {
 
 pub fn clone_param(p: Param): Param {
   out = Param.new(p.loc, p.name, clone_type_name(p.type))
+  out.field_param = p.field_param
   if d = p.default {
     out.default = clone_expr(d)
   }
@@ -814,6 +965,29 @@ pub fn ast_is_ctor_call(e: Expr): Bool {
   e.callee == "new"
 }
 
+// Whether e is a call of the builtin exit(status), which never returns:
+// a block whose last statement it is leaves, as one ending in return.
+// A local function value named exit is called indirectly and is not it.
+pub fn ast_is_exit_call(e: Expr): Bool {
+  if e.kind != ex_call() || e.callee != "exit" || e.indirect || e.args.size != 1 {
+    return false
+  }
+  if r = e.receiver {
+    return false
+  }
+  true
+}
+
+// Whether the statement is an exit(status) call (ast_is_exit_call).
+pub fn ast_stmt_exits(st: Stmt): Bool {
+  if st.kind == st_expr() {
+    if e = st.expr {
+      return ast_is_exit_call(e)
+    }
+  }
+  false
+}
+
 pub fn clone_expr(e: Expr): Expr {
   out = Expr.new(e.kind, e.loc)
   out.ident = e.ident
@@ -826,6 +1000,7 @@ pub fn clone_expr(e: Expr): Expr {
   out.op = e.op
   out.implicit_field = e.implicit_field
   out.method_call = e.method_call
+  out.bare_name = e.bare_name
   out.proven = e.proven
   out.type_name = e.type_name
   out.lib_name = e.lib_name
@@ -837,7 +1012,15 @@ pub fn clone_expr(e: Expr): Expr {
   out.fn_ref = e.fn_ref
   out.is_default = e.is_default
   out.resolved = e.resolved
+  out.op_form = e.op_form
   out.spawn_thunk = e.spawn_thunk
+  if order = e.arg_order {
+    kept: Array(Int) = []
+    for x in order {
+      kept.push(x)
+    }
+    out.arg_order = kept
+  }
   if sp = e.splice {
     out.splice = clone_expr(sp)
   }
@@ -935,6 +1118,7 @@ pub fn clone_expr(e: Expr): Expr {
 pub fn clone_stmt(s: Stmt): Stmt {
   out = Stmt.new(s.kind, s.loc)
   out.bind = s.bind
+  out.else_bind = s.else_bind
   out.op = s.op
   if x = s.expr {
     out.expr = clone_expr(x)
@@ -963,9 +1147,9 @@ pub fn clone_stmt(s: Stmt): Stmt {
     out.body.push(clone_stmt(s.body[i]))
     i += 1
   }
-  // A `for` loop's set-up statements and kind (Stage 29 W1a): a generic
-  // function's instance lost them, so `for x in xs` there named an
-  // undeclared `__for0_i`.
+  // A `for` loop's set-up statements and kind: a generic function's
+  // instance lost them, so `for x in xs` there named an undeclared
+  // `__for0_i`.
   i = 0
   while i < s.pre.size {
     out.pre.push(clone_stmt(s.pre[i]))
@@ -1075,6 +1259,11 @@ pub fn subst_type_in_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
   }
   i = 0
   while i < e.cases.size {
+    for label in e.cases[i].labels {
+      if tn = label.tname {
+        label.tname = subst_type_name(tn, from, to)
+      }
+    }
     subst_type_in_stmts(e.cases[i].body, from, to)
     i += 1
   }
@@ -1303,8 +1492,7 @@ pub fn collect_fn_type_params(fnn: Function, named: Hash(String, Int)): Array(St
   into
 }
 
-// The `Error` marker (D292, Stage 29 W4a): whether a type's interface
-// clause names it.
+// The `Error` marker: whether a type's interface clause names it.
 pub fn error_opted(opted: Array(TypeName)): Bool {
   for tn in opted {
     if tn.name == "Error" && tn.mod_name.size == 0 {

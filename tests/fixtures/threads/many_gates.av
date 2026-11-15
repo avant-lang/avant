@@ -1,10 +1,10 @@
-// A Channel's or a Mutex's gate holds no memory outside its object
-// (Stage 29 W8Ca, O532): the runtime keeps state for a gate only while a
-// thread uses it. Before, every gate was a C mutex and condition that
-// nothing freed, about 94 bytes each: 300,000 channels and as many
-// mutexes grew the peak RSS by about 56 MB. The program makes them in a
-// loop, each dropped at once, and prints whether the peak RSS (VmHWM)
-// grew by less than 8 MB between the first 10,000 rounds and the end.
+// A Channel's or a Mutex's gate holds no memory outside its object:
+// the runtime keeps state for a gate only while a thread uses it.
+// Before, every gate was a C mutex and condition that nothing freed,
+// about 94 bytes each: 300,000 channels and as many mutexes grew the
+// peak RSS by about 56 MB. The program makes them in a loop, each
+// dropped at once, and prints whether the peak RSS (VmHWM) grew by
+// less than 8 MB between the first 10,000 rounds and the end.
 
 import std.sync
 
@@ -29,11 +29,10 @@ fn peak_kb: Int {
 fn round(i: Int): Int {
   ch = Channel(Int).new(1)
   ch.send(i)
-  got = ch.recv ?? 0
+  got = ch.recv() ?? 0
   m = Mutex(Int).new(got)
   m.with { |n|
     n += 1
-    0
   }
   m.with { |n| n }
 }

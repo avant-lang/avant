@@ -9,9 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The large-object space (Stage 28 W12; in the heap's chunks since W14a2,
- * gc-design.md §2.4, O8). An object too large for a block (or a medium
- * scalar buffer) takes an exact run of whole 4 KiB pages,
+/* The large-object space (in the heap's chunks). An object too large for a
+ * block (or a medium scalar buffer) takes an exact run of whole 4 KiB pages,
  * ceil((16 + size) / 4096), first fit from the free-page bitmap of a
  * large-object chunk (CHUNK_LARGE); an object larger than a chunk holds
  * takes a run of whole contiguous chunks (CHUNK_HUGE, then
@@ -21,8 +20,7 @@
  * (avant_gc_heap.c). Large objects never move. No list, hash or address
  * range: every walk goes over the chunks (gc_large_next), and the bytes
  * the large objects hold are a counter (gc_heap.large_bytes). Every large
- * object is born young and dies young (Stage 28 W15a1, gc-design.md
- * §5.3): gc_reclaim_young_large. */
+ * object is born young and dies young: gc_reclaim_young_large. */
 
 static uint64_t run_pages(size_t payload) {
   return ((uint64_t)payload + 16 + PAGE_SIZE - 1) >> PAGE_SHIFT;
@@ -113,8 +111,7 @@ static uint64_t make_large_chunk(void) {
   }
   gc_heap.lchunks[gc_heap.lchunks_n++] = (uint32_t)c;
   /* Its dirty pages are resident and free; a clean one is empty with
-   * nothing resident (gc_heap_return's counts; the Valk stage, VALK-T2,
-   * O630). */
+   * nothing resident (gc_heap_return's counts). */
   gc_chunk_account(c, 1);
   return c;
 }
@@ -146,7 +143,7 @@ static AvantHeader *take_run(size_t payload) {
     }
     ch = &gc_heap.chunks[c];
     run = chunk_base(c) + ((size_t)p << PAGE_SHIFT);
-    /* gc_heap_return's counts (the Valk stage, VALK-T2, O630): an empty
+    /* gc_heap_return's counts: an empty
      * chunk with nothing resident is no longer one, and the run's dirty
      * pages are no longer free. */
     if (ch->used == 0) {
@@ -205,12 +202,11 @@ void gc_large_chunk_gone(uint64_t c) {
 }
 
 /* Give back the run of the object (or spare) whose header is H: its
- * pages free in its chunk, or its huge run's chunks free. The memory
- * stays resident for reuse; a full collection's gc_heap_return gives
- * back what stays idle (gc-design.md §2.4 asked for an immediate madvise
- * of runs of 64 KiB or more: measured, it made every reuse fault its
- * pages in again, Json::ParseDom +53%, so returning waits for the
- * hysteresis, Q12). */
+ * pages free in its chunk, or its huge run's chunks free. The memory stays
+ * resident for reuse; a full collection's gc_heap_return gives back what stays
+ * idle (an immediate madvise of runs of 64 KiB or more was tried: measured, it
+ * made every reuse fault its pages in again, Json::ParseDom +53%, so returning
+ * waits for the hysteresis). */
 static void give_run(AvantHeader *h) {
   uint64_t c = chunk_index(h);
   GcChunk *ch = &gc_heap.chunks[c];
@@ -225,7 +221,7 @@ static void give_run(AvantHeader *h) {
       gc_heap.pages[c * PAGES_PER_CHUNK + p + k] = 0;
     }
     ch->idle = (uint32_t)gc_heap.return_clock;
-    /* gc_heap_return's count (O630): the run's pages are free and dirty
+    /* gc_heap_return's count: the run's pages are free and dirty
      * (take_run marks every page it hands out dirty). */
     gc_heap.free_resident_other += n << PAGE_SHIFT;
     return;
@@ -278,8 +274,8 @@ AvantHeader *gc_large_next(LargeIter *it) {
           return h;
         }
         /* A run without its start bit (the spare, or a run the verifier
-         * holds, whose header page may be PROT_NONE: Stage 28 W18C,
-         * O145): its length is the page table's, not its header's. */
+         * holds, whose header page may be PROT_NONE): its length is the
+         * page table's, not its header's. */
         {
           uint64_t base = it->c * PAGES_PER_CHUNK;
           uint32_t q = p + 1;
@@ -342,8 +338,8 @@ void gc_large_give_held(AvantHeader *h) {
 }
 
 void gc_release_large(AvantHeader *h) {
-  /* AVANT_GC_STRESS=1: the payload of a freed run is poisoned (Stage 28
-   * W16a); a reused run is zeroed again (take_run's dirty pages, the
+  /* AVANT_GC_STRESS=1: the payload of a freed run is poisoned; a reused run is
+   * zeroed again (take_run's dirty pages, the
    * spare's memset). */
   gc_poison(payload_of(h), (size_t)h->size);
   int cache = (h->flags & AVANT_FLAG_YOUNG) &&
@@ -369,7 +365,7 @@ static void note_live_sample(uint64_t live) {
   }
 }
 
-/* A young large object leaves the young generation (gc-design.md §5.3):
+/* A young large object leaves the young generation:
  * YOUNG and its age bit SURVIVED are cleared and its bytes become mature
  * growth. One with reference fields joins the kept list, so the
  * remembered set holds it while its fields name young objects (the
@@ -380,6 +376,8 @@ static void promote_young_large(AvantHeader *h) {
   gc_heap.ctr.los.promoted_bytes += (uint64_t)bytes;
   gc_heap.ctr.prom.large += (uint64_t)bytes;
   gc_heap.promoted_since_full += (uint64_t)bytes;
+  /* An object old from now on that no full collection marked. */
+  gc_proof_break(PROOF_PROMOTED);
   h->flags = (uint16_t)(h->flags & (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED));
   if (gc_heap.young_large >= bytes) {
     gc_heap.young_large -= bytes;
@@ -394,18 +392,18 @@ static void promote_young_large(AvantHeader *h) {
   }
 }
 
-/* After a young collection's trace (Stage 28 W15a1, gc-design.md §5.3:
- * young large objects die young). Every large object is born young. An
- * unreached young large object is freed at once (or kept as the spare);
+/* After a young collection's trace (young large objects die young). Every
+ * large object is born young. An unreached young large object is freed at once
+ * (or kept as the spare);
  * a reached one stays young at its first survival (SURVIVED marks it)
  * and is promoted at a later one once LARGE_AGE_BYTES of young
- * allocation passed since its birth (Stage 28 W15e, O98: the stamp in
+ * allocation passed since its birth (the stamp in
  * the run's padding, gc_heap.young_clock), or at once when the collection tenures
  * every survivor (a fixed AVANT_YOUNG_MB) or the object is pinned.
  * Before, LOS_KEEP promoted every young large object a heap field
  * reached at its first survival, and a stack-held working set as large
  * as the young budget was promoted too. With no young large object the
- * walk is skipped (O47, O65): the live sample is the bytes the trace
+ * walk is skipped: the live sample is the bytes the trace
  * marked (gc_heap.young_large_live). */
 void gc_reclaim_young_large(void) {
   LargeIter it;
@@ -465,8 +463,8 @@ void gc_sweep_large(void) {
 
 void *gc_los_alloc(size_t payload, uint32_t type_id) {
   size_t bytes = (size_t)(run_pages(payload) << PAGE_SHIFT);
-  /* Every large object is born young (gc-design.md §5.3, Stage 28
-   * W15a1; before, only scalar ones were), except a mature-allocating
+  /* Every large object is born young (once only
+   * scalar ones were), except a mature-allocating
    * thread's and with the nursery off. */
   int young = !gc_heap.set.nursery_off && !gc_thread.alloc_mature;
   AvantHeader *h;
@@ -475,9 +473,9 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   }
   if (gc_heap.set.heap_max && !gc_heap.los_spare && gc_heap.heap_bytes + bytes > gc_heap.set.heap_max) {
     if (gc_thread.nogc || gc_thread.hold) {
-      /* C32: inside a no-GC region the allocation proceeds past the
+      /* Inside a no-GC region the allocation proceeds past the
        * limit and the collection runs after the region, unless the
-       * region alone is over the limit (gc-design.md §5.4). */
+       * region alone is over the limit. */
       gc_region_limit_check(bytes);
       gc_limit_collect_pending();
     } else {
@@ -522,24 +520,26 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   h->flags = (uint16_t)(AVANT_FLAG_HEAP | AVANT_FLAG_LARGE);
   start_bit_set(h, 1);
   /* A carded object starts with clear cards (a freed run's may be left
-   * marked; Stage 28 W16t). */
+   * marked). */
   if (gc_carded(h) && payload) {
     gc_cards_clear(payload_of(h));
   }
   gc_heap.large_bytes += bytes;
   if (young) {
     h->flags |= AVANT_FLAG_YOUNG;
-    /* Its birth on the young-allocation clock (O98), in the run's
+    /* Its birth on the young-allocation clock, in the run's
      * padding before the header. */
     ((uint64_t *)h)[-1] = gc_heap.young_clock + (avant_nursery_held > gc_heap.young_carried
                                                      ? avant_nursery_held - gc_heap.young_carried
                                                      : 0);
     gc_heap.young_large += bytes;
     gc_heap.young_large_n++;
-    /* The one young budget (gc-design.md §5.1). */
+    /* The one young budget. */
     avant_nursery_held += bytes;
   } else {
     gc_heap.mature_since_full += bytes;
+    /* A large object born old. */
+    gc_proof_break(PROOF_MATURE);
   }
   gc_note_peak();
   return payload_of(h);
@@ -571,7 +571,7 @@ static void trim_run(AvantHeader *h, size_t new_size) {
       gc_heap.pages[c * PAGES_PER_CHUNK + p + k] = 0;
     }
     ch->idle = (uint32_t)gc_heap.return_clock;
-    /* gc_heap_return's count (O630): the pages given back are free and
+    /* gc_heap_return's count: the pages given back are free and
      * dirty. */
     gc_heap.free_resident_other += (uint64_t)n << PAGE_SHIFT;
   } else {
@@ -597,8 +597,8 @@ static void trim_run(AvantHeader *h, size_t new_size) {
 
 /* A runtime helper that owns the large Bytes object PAYLOAD (no other
  * reference to it is used again, and its bytes past NEW_SIZE are not
- * read) keeps only its first NEW_SIZE bytes (Stage 28 W18M, O52: a dead
- * Buf's storage becomes its string; O60: a parsed document's pool keeps
+ * read) keeps only its first NEW_SIZE bytes (a dead
+ * Buf's storage becomes its string; a parsed document's pool keeps
  * what the parse used). Returns 1 when PAYLOAD was trimmed, 0 when it is
  * not a large, unpinned Bytes object, or NEW_SIZE is larger than its size, or
  * NEW_SIZE is under SCALAR_LOS_MIN (an object that small is allocated in
@@ -607,6 +607,9 @@ static void trim_run(AvantHeader *h, size_t new_size) {
  * (a large object never moves, so PAYLOAD stays valid if the lock wait
  * lets another thread collect). Hidden. */
 __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uint64_t new_size) {
+  /* It lowers the young budget's held bytes: the inline path's are
+   * counted first (gc_alloc_sync). */
+  gc_alloc_sync();
   AvantHeader *h;
   int done = 0;
   if (!payload || new_size < SCALAR_LOS_MIN) {
@@ -655,10 +658,10 @@ int gc_rooted(void *payload) {
   return thread_roots_name((const uint8_t *)payload, (const uint8_t *)payload + h->size);
 }
 
-/* A growth (Stage 28 W18M, O109) replaced the large buffer PAYLOAD and no
+/* A growth replaced the large buffer PAYLOAD and no
  * longer names it: free it now instead of at the next collection, so a
  * doubling buffer's earlier copies neither hold memory nor fill the young
- * budget (whose collections age the live buffer into mature space, D239).
+ * budget (whose collections age the live buffer into mature space).
  * It stays for the collector when anything else might still name it: a
  * root of this thread (a generated-code slot holding its data pointer
  * across the call, as `b[i] += f()` does, or a runtime C handle), a pin,
@@ -666,11 +669,12 @@ int gc_rooted(void *payload) {
  * fields (the remembered set and the cards may hold it), the spare, or a
  * collection is running. Returns 1 when freed. Under AVANT_GC_VERIFY=1
  * the freed run is held and protected at once until the next collection
- * begins (Stage 28 W18C, O145): a pointer into it faults and is reported
+ * begins: a pointer into it faults and is reported
  * as DROP says (1: a Buf's storage, a pointer from avant_buf_bytes; 2:
  * another runtime buffer). Takes the world lock; not a collecting call.
  * Hidden. */
 __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int drop) {
+  gc_alloc_sync();
   AvantHeader *h;
   int done = 0;
   if (!payload || atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 || gc_thread.collecting) {
@@ -684,6 +688,12 @@ __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int
     uint64_t bytes = (uint64_t)gc_large_bytes(h);
     if (!(h->flags & AVANT_FLAG_YOUNG)) {
       gc_verify_rebase = 1;
+      /* An old object freed outside a collection: what the proof
+       * saved may name it. */
+      gc_proof_break(PROOF_FREED);
+      if (gc_heap.set.verify) {
+        gc_verify_proof_gone(h);
+      }
     }
     gc_release_large(h);
     if (gc_heap.set.verify) {

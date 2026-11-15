@@ -1,11 +1,11 @@
-// The receiver inside a method (Stage 29 W3b, B6, D292). A field is
-// written `self.name = ...`: a bare `name = ...` where `name` is a field
-// of the receiver (no local of that name) is refused, naming both ways
-// out. A bare name resolves, in order: a local or parameter; a field of
-// the receiver (read); a method of the receiver (call); a function of the
-// module or the prelude. A bare call that fits both a method of the
-// receiver and a function is refused, naming `self.name(...)` and the
-// function's qualified form: nothing wins silently (D308's rule).
+// The receiver inside a method. A field is written `self.name = ...`: a
+// bare `name = ...` where `name` is a field of the receiver (no local of
+// that name) is refused, naming both ways out. A bare name resolves, in
+// order: a local or parameter; a field of the receiver (read); a method
+// of the receiver (call); a function of the module or the prelude. A bare
+// call that fits both a method of the receiver and a function is refused,
+// naming `self.name(...)` and the function's qualified form: nothing wins
+// silently.
 
 import location
 import source
@@ -20,7 +20,7 @@ import checker
 // The prelude's free functions (checker.av check_call and the builtin
 // helpers it calls), which a method of the same name would shadow.
 pub fn prelude_call_name(name: String): Bool {
-  names = ["argv", "buf_new", "bytes_to_str", "checksum_f64", "checksum_str", "chr", "crc32_bytes", "env_get", "exp", "file_exists", "fmt_float", "hash_last_key", "join", "now_ms", "now_us", "puts", "puts_u", "repeat_byte", "sha256", "sha256_word0", "spawn", "sqrt", "str_slice", "str_to_f_slice", "wide_hi", "wide_op"]
+  names = ["argv", "buf_new", "bytes_to_str", "checksum_f64", "checksum_str", "chr", "crc32_bytes", "env_get", "eprint", "eputs", "exit", "exp", "file_exists", "fmt_float", "hash_last_key", "join", "now_ms", "now_us", "print", "puts", "puts_u", "repeat_byte", "sha256", "sha256_word0", "spawn", "sqrt", "str_slice", "str_to_f_slice", "wide_hi", "wide_op"]
   for n in names {
     if n == name {
       return true
@@ -29,12 +29,11 @@ pub fn prelude_call_name(name: String): Bool {
   false
 }
 
-// The receiver's type when the body is an inherent method's (self is
-// the receiver and its fields are in scope), else nil.
+// The receiver's type when the body is a method of a type the program
+// declares, inherent or external (its fields and methods are in scope
+// bare, the receiver named self or as the external method names it),
+// else nil.
 pub fn (checker_self: Checker) bare_receiver: Ty? {
-  if checker_self.self_name != "self" {
-    return nil
-  }
   checker_self.self_ty
 }
 
@@ -75,16 +74,16 @@ pub fn (checker_self: Checker) free_fn_fits(name: String, argc: Int): Bool {
 // an error when a function fits too; nil when no method fits (the call
 // is a function's).
 pub fn (checker_self: Checker) bare_method_call(expr: Expr, name: String, argc: Int): Expr? {
-  if st = checker_self.bare_receiver {
+  if st = checker_self.bare_receiver() {
     if !checker_self.receiver_method_fits(st, name, argc) {
       return nil
     }
     if checker_self.free_fn_fits(name, argc) {
-      checker_self.fail(expr.loc, "${name} is both a method of ${st.show} and a function; write self.${name}(...) for the method, or qualify the function (module.${name}(...))")
+      checker_self.fail(expr.loc, "${name} is both a method of ${st.show()} and a function; write ${checker_self.self_name}.${name}(...) for the method, or qualify the function (module.${name}(...))")
       return nil
     }
     r = Expr.new(ex_name(), expr.loc)
-    r.ident = "self"
+    r.ident = checker_self.self_name
     return r
   }
   nil
@@ -95,16 +94,16 @@ pub fn (checker_self: Checker) bare_method_call(expr: Expr, name: String, argc: 
 pub fn (checker_self: Checker) refuse_bare_field_write(target: Expr, loc: Location) {
   owner = "the receiver"
   if st = checker_self.self_ty {
-    owner = st.show
+    owner = st.show()
   }
-  checker_self.fail(target.loc, "${target.ident} is a field of ${owner}; write self.${target.ident} = ... to change the field, or choose another name for a local")
+  checker_self.fail(target.loc, "${target.ident} is a field of ${owner}; write ${checker_self.self_name}.${target.ident} = ... to change the field, or choose another name for a local")
 }
 
-// self inside a lambda of an inherent method (Stage 29 W3b, B7, S13):
-// every enclosing lambda captures it, by value, since self is never
-// reassigned (a class receiver's reference, a struct receiver's copy);
-// the receiver's type, or nil after refusing (an external method's
-// receiver may be reassigned, so it is not captured this way).
+// self inside a lambda of an inherent method: every enclosing lambda
+// captures it, by value, since self is never reassigned (a class
+// receiver's reference, a struct receiver's copy); the receiver's
+// type, or nil after refusing (an external method's receiver may be
+// reassigned, so it is not captured this way).
 pub fn (checker_self: Checker) capture_receiver(loc: Location): Ty? {
   if checker_self.self_name != "self" {
     checker_self.fail(loc, "a lambda cannot capture the receiver ${checker_self.self_name} of an external method; copy it into a local first")
@@ -142,7 +141,7 @@ pub fn (checker_self: Checker) refuse_copy_write(target: Expr, loc: Location) {
     return
   }
   if st = checker_self.self_ty {
-    if !st.is_struct {
+    if !st.is_struct() {
       return
     }
   } else {
@@ -168,13 +167,12 @@ pub fn (checker_self: Checker) refuse_copy_write(target: Expr, loc: Location) {
   }
 }
 
-// A `for` loop's variable (D329, Stage 29 W-FIX1b; O237, O434). The loop
-// is a `while` over a hidden counter: a range's variable is that counter,
-// an array's variable is a copy of the element, stored again at each
-// step. The parser marks the loop's own stores (for_kind 3 and 4);
-// note_for_var records each one's target with the scope that holds it,
-// so a name the body binds anew (an if-assign, a block parameter) is not
-// taken for the loop's.
+// A `for` loop's variable. The loop is a `while` over a hidden counter: a
+// range's variable is that counter, an array's variable is a copy of the
+// element, stored again at each step. The parser marks the loop's own
+// stores (for_kind 3 and 4); note_for_var records each one's target with
+// the scope that holds it, so a name the body binds anew (an if-assign, a
+// block parameter) is not taken for the loop's.
 pub fn (checker_self: Checker) note_for_var(name: String, kind: Int) {
   at = checker_self.lookup_index(name)
   for i in 0..checker_self.for_names.size {
@@ -254,7 +252,7 @@ pub fn (checker_self: Checker) refuse_for_field_write(target: Expr, loc: Locatio
   while cur.kind == ex_field() {
     if o = cur.object {
       if ot = o.ty {
-        if !ot.is_struct {
+        if !ot.is_struct() {
           return false
         }
       } else {

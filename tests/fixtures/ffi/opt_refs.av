@@ -1,4 +1,4 @@
-// Stage 29 W-FIX1d (O549): the unions a `fun` signature may use are the
+// The unions a `fun` signature may use are the
 // optional references, each one pointer with `nil` as NULL. Every kind
 // crosses here both ways: a NULL result reads nil, nil is passed as NULL,
 // a value is passed as its pointer and comes back the same value. Any
@@ -33,7 +33,7 @@ class K {
 }
 
 fn mk_hash: Hash(String, Int) {
-  h = Hash(String, Int).new
+  h = Hash(String, Int).new()
   h["a"] = 1
   h
 }
@@ -120,7 +120,7 @@ fn main {
   some_u: Buf? = mk_buf()
   line = "${line} a value passed is not NULL: ${probe.ffi_opt_is_null_u(some_u) == 0};"
   if v = probe.ffi_opt_same_u(some_u) {
-    line = "${line} handed back: ${v.to_s}"
+    line = "${line} handed back: ${v.to_s()}"
   } else {
     line = "${line} handed back as nil"
   }
@@ -133,7 +133,7 @@ fn main {
   }
   none_k: K? = nil
   line = "${line} nil passed is NULL: ${probe.ffi_opt_is_null_k(none_k) == 1};"
-  some_k: K? = K.new
+  some_k: K? = K.new()
   line = "${line} a value passed is not NULL: ${probe.ffi_opt_is_null_k(some_k) == 0};"
   if v = probe.ffi_opt_same_k(some_k) {
     line = "${line} handed back: ${v.v}"
@@ -152,7 +152,7 @@ fn main {
   some_j: JoinHandle(Int)? = spawn { 41 }
   line = "${line} a value passed is not NULL: ${probe.ffi_opt_is_null_j(some_j) == 0};"
   if v = probe.ffi_opt_same_j(some_j) {
-    line = "${line} handed back: ${v.join}"
+    line = "${line} handed back: ${v.join() ?? -1}"
   } else {
     line = "${line} handed back as nil"
   }

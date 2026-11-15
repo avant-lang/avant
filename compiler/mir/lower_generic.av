@@ -1,16 +1,15 @@
-// Symbols and receivers of functions and methods (Stage 28 W7a;
-// stages/stage28/mir.md 8.2, W7a): plain functions, overloads, generic
-// instances (monomorphic, D175: the checker clones each instance into the
-// program with its own emit name, checker/match.av instantiate_function
-// and instantiate_method; generic structs and classes arrive as their
-// instance definitions, resolve.av instantiate_template), methods on any
-// type including other modules' types, and operator methods. The
-// lowering never re-resolves a call: it lowers what the checker chose
-// (`Expr.resolved`, `Function.emit_name`). Named interfaces are bounds on
-// generics only: they are checked and erased by the checker, so nothing
-// of them reaches the MIR (2.9).
+// Symbols and receivers of functions and methods: plain functions,
+// overloads, generic instances (monomorphic, the checker clones each
+// instance into the program with its own emit name, checker/match.av
+// instantiate_function and instantiate_method; generic structs and
+// classes arrive as their instance definitions, resolve.av
+// instantiate_template), methods on any type including other modules'
+// types, and operator methods. The lowering never re-resolves a call: it
+// lowers what the checker chose (`Expr.resolved`, `Function.emit_name`).
+// Named interfaces are bounds on generics only: they are checked and
+// erased by the checker, so nothing of them reaches the MIR.
 //
-// A symbol is `av.<module>/<item>` (8.2): item = [owner "."] name, then
+// A symbol is `av.<module>/<item>`: item = [owner "."] name, then
 // `[targs]` for a generic instance (the checker's Function.inst_args),
 // or `(params)` when the name is overloaded in its scope.
 
@@ -45,7 +44,7 @@ pub fn (lw: MirLower) instance_suffix(fnn: Function): String {
     buf.push_str(mir_mty(fnn.inst_args[j]))
   }
   buf.push_str("]")
-  buf.to_s
+  buf.to_s()
 }
 
 fn mir_params_text(params: Array(Ty)): String {
@@ -60,13 +59,13 @@ fn mir_params_text(params: Array(Ty)): String {
     j += 1
   }
   buf.push_str(")")
-  buf.to_s
+  buf.to_s()
 }
 
-// 8.2 for a plain function: `av.<module>/<name>`, then `[targs]` for a
+// The symbol of a plain function: `av.<module>/<name>`, then `[targs]` for a
 // generic instance, or `(params)` when another plain function of the
 // module (not an instance) has the same name; `main` of the root module
-// keeps its C name (8.1).
+// keeps its C name.
 pub fn (lw: MirLower) symbol_of(fnn: Function): String {
   if fnn.name == "main" && fnn.mod_name == lw.lw_prog.root_module {
     return "main"
@@ -105,7 +104,7 @@ pub fn (lw: MirLower) method_owner(fnn: Function): Ty? {
   nil
 }
 
-// 8.2 for a method: `av.<module>/<Owner>.<name>` (the owner without its
+// The symbol of a method: `av.<module>/<Owner>.<name>` (the owner without its
 // module when it is the defining module's, else its mty: a method on
 // another module's type), then `[targs]` for a generic method instance,
 // or `(params)` when the owner has several non-instance methods of the
@@ -136,11 +135,11 @@ pub fn (lw: MirLower) method_symbol(fnn: Function): String {
 }
 
 // The receiver's MIR type: `ref %C` for a class, `addr %S` for a struct
-// (audit 2.4: the address of the receiver's storage), the value itself
-// for any other type (the old back end's emit_ptr_method_func).
+// (the address of the receiver's storage), the value itself for any
+// other type (the old back end's emit_ptr_method_func).
 pub fn (lw: MirLower) method_receiver(fnn: Function): Int {
   if ot = lw.method_owner(fnn) {
-    if ot.is_struct {
+    if ot.is_struct() {
       t = lw.value_agg_ty(ot, fnn.loc)
       if t < 0 {
         return -1
@@ -163,13 +162,13 @@ pub fn (lw: MirLower) callee_params(resolved: String, e: Expr): Array(Ty) {
   if ms = lw.lw_syms.find_method_emit(resolved) {
     return ms.params
   }
-  if t = e.ty, t.is_class || t.is_union {
+  if t = e.ty, t.is_class() || t.is_union() {
     for o in lw.lw_syms.methods {
       if o.name == "initialize" && !o.node.generic {
         onode2 = o.node
         if ot = lw.owner_ty(onode2) {
           want = t
-          if t.is_union {
+          if t.is_union() {
             want = ty_without_nil(t)
           }
           if ot.same_as(want) {
@@ -188,9 +187,45 @@ pub fn (lw: MirLower) callee_params(resolved: String, e: Expr): Array(Ty) {
 // left (the receiver), then the call of `Owner.op`.
 pub fn (lw: MirLower) lower_op_method(e: Expr): MOperand {
   if l = e.left, r = e.right, lt = l.ty, sym = lw.lw_fn_syms.get(e.resolved) {
-    args: Array(Expr) = []
-    args.push(r)
-    return lw.lower_method_call(e, l, lt, sym, args)
+    if e.op_form == 0 {
+      args: Array(Expr) = []
+      args.push(r)
+      return lw.lower_method_call(e, l, lt, sym, args)
+    }
+    // A comparison the checker derived: a
+    // function of both operands (an array's or an optional's ==), or the
+    // right operand's method (`a > b` as `b < a`); negated for `!=` and
+    // its kin. The operands are evaluated left to right either way.
+    v = lw.lw_b.c_i32(0)
+    if (e.op_form & op_fn()) != 0 {
+      both: Array(Expr) = []
+      both.push(l)
+      both.push(r)
+      ops = lw.lower_args_to(both, lw.callee_params(e.resolved, e), e.int_bits)
+      if lw.failed() {
+        return v
+      }
+      lw.at(e.loc)
+      v = lw.call_to(mt_bool(), sym, ops)
+    } else if (e.op_form & op_swap()) != 0 {
+      if rt = r.ty {
+        one: Array(Expr) = []
+        one.push(l)
+        v = lw.lower_method_call(e, r, rt, sym, one)
+      }
+    } else {
+      one2: Array(Expr) = []
+      one2.push(r)
+      v = lw.lower_method_call(e, l, lt, sym, one2)
+    }
+    if lw.failed() {
+      return v
+    }
+    if (e.op_form & op_not()) != 0 {
+      lw.at(e.loc)
+      return lw.tmp(mt_bool(), lw.lw_b.rv_un(mop_not(), v))
+    }
+    return v
   }
   lw.refuse(e.loc, "the operator method ${e.resolved}")
   lw.lw_b.c_i32(0)

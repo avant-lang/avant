@@ -1,0 +1,158 @@
+// An entry point that may fail: `fn main: Void
+// | E` or `fn main: Int | E` (and `fn run`), every member but the Void or
+// the Int marked Error. On a failure the program prints the
+// failure's text ("${e}") and a newline to stderr, after what it wrote
+// to stdout, and exits with status 1; on success it exits 0, or with the
+// Int, which must be in 0..255 as for `fn main: Int`.
+//
+// The checker builds it before anything is registered: the program's
+// entry is renamed __avant_main, and a `fn main: Int` is added that
+// calls it and takes its result apart with a switch, each failure's arm
+// calling the runtime's avant_main_fail (runtime/avant_io.c), which
+// writes the text and gives 1. `Void | E` is checked as `Int | E`: a bare
+// `return` returns 0 and so does the end of the body (check_function,
+// check_stmt), and messages show the result as written (entry_shown).
+
+import location
+import source
+import token
+import lexer
+import type
+import ast
+import parser
+import typed_ir
+import checker.names
+import checker
+
+// A type name as written: `Oops`, `mod.Oops`, `Box(Int)`, `A | B`, `T?`.
+pub fn type_name_text(tn: TypeName): String {
+  if tn.members.size > 0 {
+    b = buf_new()
+    for i in 0..tn.members.size {
+      if i > 0 {
+        b.push_str(" | ")
+      }
+      b.push_str(type_name_text(tn.members[i]))
+    }
+    return b.to_s()
+  }
+  out = tn.name
+  if tn.mod_name.size > 0 && !tn.pinned {
+    out = "${tn.mod_name}.${tn.name}"
+  }
+  if tn.args.size > 0 {
+    ab = buf_new()
+    for j in 0..tn.args.size {
+      if j > 0 {
+        ab.push_str(", ")
+      }
+      ab.push_str(type_name_text(tn.args[j]))
+    }
+    out = "${out}(${ab.to_s()})"
+  }
+  if tn.nilable {
+    out = "${out}?"
+  }
+  out
+}
+
+pub fn (checker_self: Checker) entry_rule_text(name: String, shown: String): String {
+  "fn ${name} returns ${shown}; an entry point returns nothing, an Int (the process status), or either with failures marked Error (Void | E, Int | E)"
+}
+
+// The program's entry (the root module's main, else its run), when its
+// result is written as a union: checked, renamed and wrapped (above).
+pub fn (checker_self: Checker) prepare_entry {
+  entry: Function? = nil
+  for fnn in checker_self.program.functions {
+    if fnn.name == "main" && fnn.mod_name == checker_self.root_module && !fn_is_method(fnn) {
+      entry = fnn
+    }
+  }
+  if _ = entry {
+  } else {
+    for fnn2 in checker_self.program.functions {
+      if fnn2.name == "run" && fnn2.mod_name == checker_self.root_module && !fn_is_method(fnn2) {
+        entry = fnn2
+      }
+    }
+  }
+  if fnn3 = entry, t = fnn3.return_type, t.members.size > 0 {
+    checker_self.wrap_entry(fnn3, t)
+  }
+}
+
+pub fn (checker_self: Checker) wrap_entry(fnn: Function, t: TypeName) {
+  shown = type_name_text(t)
+  void_at = -1
+  int_at = -1
+  for i in 0..t.members.size {
+    m = t.members[i]
+    if m.args.size == 0 && m.mod_name.size == 0 && !m.nilable {
+      if m.name == "Void" {
+        void_at = i
+      } else if m.name == "Int" {
+        int_at = i
+      }
+    }
+  }
+  if t.nilable || (void_at >= 0) == (int_at >= 0) {
+    checker_self.fail(t.loc, checker_self.entry_rule_text(fnn.name, shown))
+    return
+  }
+  saved = checker_self.current_module
+  checker_self.current_module = fnn.mod_name
+  fails: Array(String) = []
+  for j in 0..t.members.size {
+    if j != void_at && j != int_at {
+      mty = checker_self.resolve_in_module(t.members[j])
+      checker_self.pull_resolve()
+      if checker_self.has_err() {
+        checker_self.current_module = saved
+        return
+      }
+      if !mty.error_mark {
+        checker_self.fail(t.members[j].loc, "${checker_self.entry_rule_text(fnn.name, shown)}: ${mty.show()} is not marked Error")
+        checker_self.current_module = saved
+        return
+      }
+      fails.push(type_name_text(t.members[j]))
+    }
+  }
+  checker_self.current_module = saved
+  if void_at >= 0 {
+    t.members[void_at] = TypeName.new(t.members[void_at].loc, "Int")
+    fnn.entry_void = true
+    fnn.entry_shown = shown
+  }
+  fnn.name = "__avant_main"
+  fnn.emit_name = "__avant_main"
+  b = buf_new()
+  b.push_str("lib avant_entry {\n  fun avant_main_fail(text: String): Int\n}\n\n")
+  b.push_str("fn main: Int {\n  switch __avant_main() {\n    case __avant_s: Int {\n      __avant_s\n    }\n")
+  for f in fails {
+    b.push_str("    case __avant_e: ${f} {\n      avant_entry.avant_main_fail(\"\${__avant_e}\")\n    }\n")
+  }
+  b.push_str("  }\n}\n")
+  src = Source.new("<avant>", b.to_s())
+  lex = Lexer.new(src)
+  tokens = lex.tokenize()
+  ps = Parser.new(src, tokens)
+  p = ps.parse()
+  for lb in p.libs {
+    lb.mod_name = fnn.mod_name
+    checker_self.program.libs.push(lb)
+  }
+  for w in p.functions {
+    w.mod_name = fnn.mod_name
+    w.loc = fnn.loc
+    checker_self.program.functions.push(w)
+  }
+}
+
+// A zero, the Int a `fn main: Void | E` returns on success.
+pub fn (checker_self: Checker) entry_zero(loc: Location): Expr {
+  z = Expr.new(ex_int(), loc)
+  z.int_bits = 0u64
+  z
+}

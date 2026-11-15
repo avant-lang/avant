@@ -1,6 +1,6 @@
 # Coverage suite. The seed workflow runs the same suite without coverage.
-# Both use `avant test` and the default job count. Wave N measured that
-# default against smaller counts and kept it: on a 4-CPU pin, `--jobs 1`
+# Both use `avant test` and the default job count, measured against
+# smaller counts and kept: on a 4-CPU pin, `--jobs 1`
 # was 188s and `--jobs 2` was 177s, against 168s for four jobs. On 16
 # threads, `--jobs 1` was 194s and `--jobs 8` was 163s, against 153s for
 # the default. The suite mains return before the checks when the runner
@@ -20,7 +20,7 @@
 # The seed is the published asset avant-linux-x86_64.tar.gz (pinned by
 # its sha256). `avant` in that asset compiles compiler/main.av into B with
 # coverage on, on its one back end, the in-process LLVM linked into it
-# (D172; since v0.36.0 every seed is built that way, D178). B has the same
+# (since v0.36.0 every seed is built that way). B has the same
 # back end, so B is the compiler C' would be, instrumented.
 # This job does not install Crystal.
 # Runtime objects come from runtime/build.sh.
@@ -28,7 +28,7 @@
 # `re2c` is a build tool, like `cc`. A string literal at `re_compile` is
 # compiled with it and linked in. The job builds the pinned static re2c a
 # release ships (tools/build-re2c.sh) into bin/re2c, beside the compiler.
-# Computed patterns use PCRE2, vendored in runtime/third_party/pcre2 (D146).
+# Computed patterns use PCRE2, vendored in runtime/third_party/pcre2.
 #
 # Tag pushes are `release.yml` (the same seed builds B there, and B the
 # shipped compiler on the new back end).
@@ -47,8 +47,8 @@
 name: native
 
 env:
-  AVANT_SEED_VERSION: v0.42.0
-  AVANT_SEED_SHA256: c6f6bf7578a5b29817df6debe6b02dd1d7afb3d165756f1a8078cf8113f1bf75
+  AVANT_SEED_VERSION: v0.43.0
+  AVANT_SEED_SHA256: 57725e637efcaba9413375f609a47e84f831424881354510e308a7b945284516
 
 "on":
   push:
@@ -82,7 +82,7 @@ jobs:
       # llvm-20-dev (static LLVM archives) and libzstd-dev are for
       # tools/build-llvm.sh, which runtime/build.sh runs: it merges LLVM 20
       # with libstdc++, zlib, and zstd into runtime/build/avant_llvm.o, the
-      # in-process LLVM only the compiler links (D172, D173).
+      # in-process LLVM only the compiler links.
       - name: Install the C toolchain and libclang
         run: |
           sudo apt-get update
@@ -98,8 +98,8 @@ jobs:
         run: sh runtime/build.sh
 
       - name: Build the bundled re2c
-        # The static re2c a release ships (D151, tools/build-re2c.sh), beside
-        # bin/avant-b so the suite uses it (D150).
+        # The static re2c a release ships (tools/build-re2c.sh), beside
+        # bin/avant-b so the suite uses it.
         run: sh tools/build-re2c.sh bin/re2c
 
       - name: Download ${{ env.AVANT_SEED_VERSION }} compiler

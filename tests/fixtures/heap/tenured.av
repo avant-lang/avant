@@ -1,0 +1,134 @@
+// Tenured births (runtime/avant_gc_sticky.c, gc_sticky_retire): a build
+// where nearly everything survives puts the collector, after two young
+// collections in a row that keep more than half of what they saw, in a
+// phase where a full young budget is retired: every young object is
+// promoted where it lies, with no trace, and nothing is freed; a probe
+// (an ordinary young collection) at growing intervals ends the phase when
+// survival falls. This program builds a chain long enough for several
+// retirements, and on the way: stores a string made later into an older
+// node (a node a retirement made old, so the store must remember it),
+// drops some of what it allocates (promoted dead in the phase), grows an
+// array of nodes (its buffers: the old ones die), and keeps a young
+// object across a retirement in a frame slot only. Then it churns with
+// little surviving (a probe ends the phase), asks the runtime for young
+// collections and for the complete collection, and checks every value.
+// tests/cases/test_gc_tenured.av runs it plainly, under AVANT_GC_VERIFY=1
+// and with AVANT_GC_STATS=1 (the phase ran: retirements and a probe).
+import std.gc
+
+lib gcy {
+  fun avant_gc_collect_young
+}
+
+class Node {
+  next: Node?
+  label: String?
+  v: Int
+}
+
+fn label_of(i: Int): String {
+  "n-${i}"
+}
+
+// The chain of N nodes, last first; every 1000th node gets its label 500
+// nodes later, a string made then (a store into an older node); every 7th
+// iteration makes a string nothing keeps; every 4096th node is pushed on
+// PICKED.
+fn build(n: Int, picked: Array(Node)): Node {
+  head = Node.new()
+  head.v = 0
+  older: Node? = nil
+  i = 1
+  while i < n {
+    node = Node.new()
+    node.v = i
+    node.next = head
+    head = node
+    if i % 1000 == 0 {
+      older = node
+    }
+    if i % 1000 == 500 {
+      if o = older {
+        o.label = label_of(o.v)
+      }
+    }
+    if i % 7 == 0 {
+      dead = label_of(i)
+      if dead.size == 0 {
+        puts("never")
+      }
+    }
+    if i % 4096 == 0 {
+      picked.push(node)
+    }
+    i += 1
+  }
+  head
+}
+
+fn check(head: Node, n: Int): Int {
+  bad = 0
+  cur: Node? = head
+  want = n - 1
+  while c = cur {
+    if c.v != want {
+      bad += 1
+    }
+    if want % 1000 == 0 && want > 0 && want + 500 < n {
+      if l = c.label {
+        if l != label_of(want) {
+          bad += 1
+        }
+      } else {
+        bad += 1
+      }
+    }
+    want -= 1
+    cur = c.next
+  }
+  if want != -1 {
+    bad += 1
+  }
+  bad
+}
+
+fn churn(rounds: Int): Int {
+  sum = 0
+  i = 0
+  while i < rounds {
+    s = label_of(i)
+    sum += s.size
+    i += 1
+  }
+  sum
+}
+
+fn main {
+  n = 1500000
+  picked: Array(Node) = []
+  head = build(n, picked)
+  // A young object kept only by this frame across the rest.
+  keep = Node.new()
+  keep.v = 42
+  keep.label = label_of(42)
+  bad = check(head, n)
+  p = 0
+  while p < picked.size {
+    if picked[p].v != (p + 1) * 4096 {
+      bad += 1
+    }
+    p += 1
+  }
+  churned = churn(2000000)
+  gcy.avant_gc_collect_young()
+  bad += check(head, n)
+  gc.collect()
+  bad += check(head, n)
+  if keep.v != 42 || (keep.label ?? "") != label_of(42) {
+    bad += 1
+  }
+  puts("nodes: ${n}")
+  puts("picked: ${picked.size}")
+  puts("churned: ${churned}")
+  puts("bad: ${bad}")
+}

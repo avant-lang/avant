@@ -36,13 +36,13 @@ ROW_NAME = {
     "hyper-nodate": "Rust hyper, variant: no `Date`",
     "fasthttp-nodate": "Go fasthttp, variant: no `Date`, no `Server`",
 }
-METHOD_ORDER = ["A", "A8", "B", "C", "Q9"]
+METHOD_ORDER = ["A", "A8", "B", "C", "B1"]
 METHOD_TITLE = {
     "A": "Method A: 64 connections, no pipelining, 4 load threads",
     "A8": "Method A8: 256 connections, no pipelining, 8 load threads",
     "B": "Method B: 900 connections, 16 pipelined requests, 8 load threads",
     "C": "Method C: B with the server limited to 4 pinned threads",
-    "Q9": "Method Q9: 900 connections, no pipelining, 8 load threads",
+    "B1": "Method B1: 900 connections, no pipelining, 8 load threads",
 }
 UNIT_US = {"us": 1.0, "ms": 1e3, "s": 1e6, "m": 6e7, "h": 3.6e9}
 

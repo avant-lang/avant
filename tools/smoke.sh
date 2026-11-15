@@ -1,5 +1,5 @@
 #!/bin/sh
-# Out-of-checkout smoke test of a release tarball (Wave D, D147, D148).
+# Out-of-checkout smoke test of a release tarball.
 #
 #   sh tools/smoke.sh TARBALL | INSTALL_DIR
 #
@@ -12,8 +12,8 @@
 # that examples/, LICENSE and the third-party notices are there and that
 # `avant version` prints versions.txt's version and commit, and runs
 # `avant bind` when the bundled helper's libraries are present. It first
-# proves that the release carries no myc-llvm (Stage 28 W10; the
-# compiler's one back end is the in-process LLVM since W11): none in the
+# proves that the release carries no myc-llvm (the
+# compiler's one back end is the in-process LLVM): none in the
 # install, none on the PATH the cases use, none named by the environment
 # (which is empty); and AVANT_BACKEND=myc is refused, naming the variable.
 # Nothing
@@ -115,7 +115,7 @@ EOF
 # No myc-llvm reachable: not in the install, not on the cases' PATH (nor
 # the install directory, which path-hello adds), and the environment is
 # empty (no AVANT_MYC_LLVM). The old back end's name is refused (it
-# retired at Stage 28 W11): the compiler has no other back end.
+# is retired): the compiler has no other back end.
 mycs=$(find "$inst" -name 'myc-llvm*' 2>/dev/null)
 if [ -n "$mycs" ]; then
   fail no-myc-llvm "the install has $mycs"
@@ -143,7 +143,7 @@ else
   fail compile-hello "exit status $?"
 fi
 
-# The three codegen modes (D174), each compiled and run: hello, a tree
+# The three codegen modes, each compiled and run: hello, a tree
 # of class objects (allocation and collection), and arrays, hashes,
 # strings, and a block.
 src trees.av <<'EOF'
@@ -193,7 +193,7 @@ fn main {
   puts(sum)
   puts(xs.size)
 
-  h = Hash(String, Int).new
+  h = Hash(String, Int).new()
   h["a"] = 10
   h["b"] = 20
   if v = h.get("a") {
@@ -230,7 +230,7 @@ fn main {
   h = spawn {
     21 * 2
   }
-  puts(h.join)
+  puts(h.join() ?? -1)
 }
 EOF
 expect std-threads "42" "$avant" run threads.av
@@ -263,7 +263,7 @@ fn main {
       puts(m.start)
       puts(m.end)
     }
-    re.close
+    re.close()
   }
 }
 EOF
@@ -290,7 +290,7 @@ fn main {
       puts(m.start)
       puts(m.end)
     }
-    re.close
+    re.close()
   }
 }
 EOF
@@ -301,7 +301,7 @@ src zlib.av <<'EOF'
 import std.zlib
 
 fn main {
-  if back = "hello zlib".bytes.compress.uncompress {
+  if back = "hello zlib".bytes.compress().uncompress() {
     puts(String.from_utf8(back) ?? "")
   }
 }
@@ -312,7 +312,7 @@ src base64.av <<'EOF'
 import std.base64
 
 fn main {
-  puts("aaa".bytes.to_base64)
+  puts("aaa".bytes.to_base64())
 }
 EOF
 expect std-base64 "YWFh" "$avant" run base64.av
@@ -323,18 +323,18 @@ import std.http
 fn main {
   if server = Http.listen(0) {
     server.get("/") { |req|
-      server.close
+      server.close()
       Response.text("Hello Avant")
     }
-    port = server.port
+    port = server.port()
     handle = spawn {
       if resp = Http.get("http://127.0.0.1:${port}/") {
         puts(String.from_utf8(resp.body) ?? "")
       }
       0
     }
-    server.serve
-    _ = handle.join
+    server.serve()
+    _ = handle.join()
   }
 }
 EOF
@@ -354,9 +354,9 @@ src tests/test_ok.av <<'EOF'
 import std.testing
 
 fn main: Int {
-  t = Test.new
+  t = Test.new()
   t.check(1 + 1 == 2, "arithmetic")
-  t.finish
+  t.finish()
 }
 EOF
 if run avant-test "$avant" test; then
@@ -369,7 +369,7 @@ else
   fail avant-test "exit status $?"
 fi
 
-# What the archive carries for its user (O294, Stage 29 W-FIX1e): the
+# What the archive carries for its user: the
 # examples the README points to (examples/hello.av run from the
 # install), Avant's LICENSE, and the third-party notices with each
 # vendored library's license.
@@ -389,7 +389,7 @@ else
   fail licenses-shipped "missing or empty:$missing"
 fi
 
-# `avant version` and `--version` (O534) print the version and the
+# `avant version` and `--version` print the version and the
 # commit of the archive's versions.txt (its `version:` line, else a
 # release's `tag: vX`).
 want_v=$(sed -n 's/^version: //p' "$inst/versions.txt" | head -n 1)

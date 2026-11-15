@@ -1,28 +1,28 @@
 import harness
 import backends
 
-// Stage 28 W14a2: the heap foundation's behavior (gc-design.md §2).
+// The heap foundation's behavior.
 //
-// heap/fill_full_young.av (C36, D204): an array literal whose fill runs
+// heap/fill_full_young.av: an array literal whose fill runs
 // a full and then a young collection after young strings were stored.
 // The full collection's MARKED bits used to survive into the young
-// collection, which then skipped the buffer a root slot names (R1'), so
+// collection, which then skipped the buffer a root slot names, so
 // the young strings were not copied (default environment: wrong
-// elements; AVANT_GC_VERIFY=1 reported lost field references). Since
-// W14a2 full collections mark in a side bitmap and every mark a young
+// elements; AVANT_GC_VERIFY=1 reported lost field references). Now
+// full collections mark in a side bitmap and every mark a young
 // collection sets is cleared when it ends.
 //
-// heap/full_default.av (O27): reaches the full-collection trigger in the
-// default environment (no suite program did before), with Json.parse on
-// tenured texts between full collections (C31's default-mode exposure).
-// A run with AVANT_GC_STATS=1 checks that full collections ran; one under
-// AVANT_NURSERY=0 that the remembered set stays empty (O9). Under an outer
-// AVANT_GC_STRESS (the gate's stress pass) the program keeps the stress
-// mode in every run that does not ask for the verifier (O173's test half,
-// Stage 29 W-FIX1c: it ran without it from W14b1, when it took more than
-// 900 s under it, until card marking, W16t; 18 s now, 21 s with
-// AVANT_YOUNG_MB=1), and the statistics run checks that it did: at least
-// one collection for each of its 300,000 rounds.
+// heap/full_default.av: reaches the full-collection trigger in the
+// default environment (no suite program did before), with Json.parse
+// on tenured texts between full collections (a json defect's default-mode
+// exposure). A run with AVANT_GC_STATS=1 checks that full collections
+// ran; one under AVANT_NURSERY=0 that the remembered set stays empty.
+// Under an outer AVANT_GC_STRESS (the gate's stress pass) the program
+// keeps the stress mode in every run that does not ask for the
+// verifier (it ran without it once the minimal stress mode came, when it
+// took more than 900 s under it, until card marking; 18 s now, 21 s
+// with AVANT_YOUNG_MB=1), and the statistics run checks that it did:
+// at least one collection for each of its 300,000 rounds.
 //
 // Each program runs plain and under each GC environment below: the known
 // stdout, no stderr (no verifier report), exit 0.
@@ -36,7 +36,7 @@ fn stat_int(text: String, key: String): Int {
   parts = text.split(" ")
   for p in parts {
     if p.size > key.size + 1 && str_slice(p, 0, key.size + 1) == "${key}=" {
-      return str_slice(p, key.size + 1, p.size).strip.to_i ?? -1
+      return str_slice(p, key.size + 1, p.size).strip().to_i() ?? -1
     }
   }
   -1
@@ -94,9 +94,9 @@ fn test_gc_foundation(c: Checks, compiler: String, root: String, dir: String) {
   if outer == "AVANT_GC_STRESS" {
     c.expect(stat_int(stats, "collections") >= 300000, "full_default.av under the outer AVANT_GC_STRESS: it keeps the stress mode (at least a collection per round, 300,000)")
   }
-  // O9 (Stage 29 W1b, checked against today's collector): with no young
+  // Checked against today's collector: with no young
   // generation nothing is remembered, so the remembered set stays empty
-  // across full collections (it grew to 1.6 M entries before W14b1).
+  // across full collections (it once grew to 1.6 M entries).
   n0 = log_text("${dir}/full_default.nursery0.err")
   c.expect(str_has(n0, " rem_peak=0 ") && str_has(n0, " rem_adds=0 ") && !str_has(n0, " full=0 "), "full_default.av under AVANT_NURSERY=0: full collections and an empty remembered set")
 }
@@ -117,5 +117,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

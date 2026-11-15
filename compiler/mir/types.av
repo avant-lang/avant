@@ -1,8 +1,7 @@
-// MIR types and layouts (Stage 28 W4; stages/stage28/mir.md section 2).
-// One MType per distinct type, interned by its printed text; ids 0-12 are
-// the fixed scalar and untyped kinds below. Layouts compute their C-rule
-// offsets, size, alignment, heap reference words, and root words (2.10)
-// when noted.
+// MIR types and layouts. One MType per distinct type, interned by its
+// printed text; ids 0-12 are the fixed scalar and untyped kinds below.
+// Layouts compute their C-rule offsets, size, alignment, heap reference
+// words, and root words when noted.
 
 import source
 
@@ -32,12 +31,18 @@ pub fn mt_str: Int { 9 }
 pub fn mt_task: Int { 10 }
 pub fn mt_ptr: Int { 11 }
 pub fn mt_addr: Int { 12 }
-// The MIR type of the language's `Int` (Stage 29 W-INT1, D314: 64-bit).
-// Sizes and capacities in the Array, Buf and Hash headers stay i32 (the
-// runtime's ceiling, AVANT_SIZE_MAX), read with a sign extension.
+// The narrow integers an enum is stored in, fixed after the others so
+// every earlier id is unchanged; a C scalar of these widths is the same
+// type.
+pub fn mt_i8: Int { 13 }
+pub fn mt_i16: Int { 14 }
+pub fn mt_u16: Int { 15 }
+// The MIR type of the language's `Int` (64-bit). Sizes and capacities
+// in the Array, Buf and Hash headers stay i32 (the runtime's ceiling,
+// AVANT_SIZE_MAX), read with a sign extension.
 pub fn mt_int: Int { 5 }
 
-// Layout kinds (2.4).
+// Layout kinds.
 pub fn mlk_struct: Int { 1 }
 pub fn mlk_class: Int { 2 }
 pub fn mlk_union: Int { 3 }
@@ -129,11 +134,11 @@ pub fn mir_align_up(n: Int, a: Int): Int {
 
 pub class MTypes {
   all: Array(MType) = []
-  index: Hash(String, Int) = Hash(String, Int).new
+  index: Hash(String, Int) = Hash(String, Int).new()
   pub layouts: Array(MLayout) = []
-  layout_index: Hash(String, Int) = Hash(String, Int).new
+  layout_index: Hash(String, Int) = Hash(String, Int).new()
   pub sigs: Array(MSig) = []
-  sig_index: Hash(String, Int) = Hash(String, Int).new
+  sig_index: Hash(String, Int) = Hash(String, Int).new()
 
   fn initialize {
     prim(mk_void(), 0, false, "void")
@@ -149,10 +154,13 @@ pub class MTypes {
     prim(mk_task(), 64, false, "ref task")
     prim(mk_ptr(), 64, false, "ptr")
     prim(mk_addr(), 64, false, "addr")
+    prim(mk_int(), 8, true, "i8")
+    prim(mk_int(), 16, true, "i16")
+    prim(mk_int(), 16, false, "u16")
   }
 
-  // A C scalar's type (Stage 29 W1b): i8, i16, u16 and f32 are interned
-  // on first use (u8 and u32 are fixed ids); kind mk_int, or mk_f64 with
+  // A C scalar's type: f32 is interned on first use (i8, i16, u16, u8 and
+  // u32 are fixed ids, found by their text); kind mk_int, or mk_f64 with
   // 32 bits for f32.
   pub fn scalar(kind: Int, bits: Int, signed: Bool, text: String): Int {
     if i = self.index.get(text) {
@@ -251,7 +259,7 @@ pub class MTypes {
       buf.push_str("...")
     }
     buf.push_str(") -> ${text(ret)}")
-    key = buf.to_s
+    key = buf.to_s()
     if got = self.sig_index.get(key) {
       return got
     }
@@ -289,7 +297,7 @@ pub class MTypes {
     -1
   }
 
-  // Notes a layout and computes its byte layout and word sets (2.4, 2.10).
+  // Notes a layout and computes its byte layout and word sets.
   // Idempotent by name: a second note returns the first index.
   pub fn note_layout(name: String, kind: Int, fields: Array(Int), names: Array(String)): Int {
     if i = self.layout_index.get(name) {
@@ -311,9 +319,9 @@ pub class MTypes {
   }
 
   // (Re)computes layout id's fields, offsets, size, alignment, and word
-  // sets (W6b): a class is noted empty first, so that a field of type
-  // `ref %C` can name it (recursive and mutually referring classes), and
-  // filled once every layout its fields hold by value exists.
+  // sets: a class is noted empty first, so that a field of type `ref %C`
+  // can name it (recursive and mutually referring classes), and filled
+  // once every layout its fields hold by value exists.
   pub fn set_fields(id: Int, fields: Array(Int), names: Array(String)) {
     l = self.layouts[id]
     f: Array(Int) = []
@@ -380,7 +388,7 @@ pub class MTypes {
   }
 
   // Appends the heap reference words and the root words of a value of type
-  // ty at byte offset base (2.10). Code words are neither.
+  // ty at byte offset base. Code words are neither.
   pub fn words(ty: Int, base: Int, refs: Array(Int), roots: Array(Int)) {
     k = kind(ty)
     if is_refkind(ty) {
@@ -452,7 +460,7 @@ pub class MTypes {
     self.all[ty].pointee
   }
 
-  // compat (2.11). at_call adds the call-result retyping: untyped `ref`
+  // compat. at_call adds the call-result retyping: untyped `ref`
   // to any reference, and untyped `addr` (the slot rows' result) to any
   // `addr T`.
   pub fn compat(src: Int, dst: Int, at_call: Bool): Bool {

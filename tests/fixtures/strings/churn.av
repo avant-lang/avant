@@ -1,4 +1,4 @@
-// String churn on the new back end (Stage 28 W6a): many short-lived heap
+// String churn on the new back end: many short-lived heap
 // strings per iteration, some held across collecting calls (locals across
 // the next allocation, a parameter across a loop of allocations, a
 // rolling string kept for the whole run), checked by checksums. The
@@ -11,7 +11,7 @@ fn opaque(n: Int): Int {
   a = now_us()
   b = now_us()
   if b - a > 1000000000 {
-    return n &+ b.wrap_i
+    return n &+ b.wrap_i()
   }
   n
 }
@@ -21,13 +21,13 @@ fn mk(i: Int): String {
 }
 
 // s is held across k allocations.
-// The checksums are Int32, wrapping at 32 bits (Stage 29 W-INT1).
+// The checksums are Int32, wrapping at 32 bits.
 fn hold(s: String, k: Int): Int32 {
   sum: Int32 = 0
   j = 0
   while j < k {
     t = "${j}:${s.size}" + repeat_byte(35, j % 5)
-    sum = sum &+ t.size.to_i32
+    sum = sum &+ t.size.to_i32()
     j = j + 1
   }
   sum &+ checksum_str(s)

@@ -10,20 +10,21 @@ import parser
 import loader
 import typed_ir
 import checker.names
+import checker.equality
 import checker
 
 pub fn (checker_self: Checker) fn_compatible(got: Ty, want: Ty): Bool {
-  if want.is_fn && got.is_fn {
+  if want.is_fn() && got.is_fn() {
     if want.members.size != got.members.size {
       return false
     }
     for i in 0..want.members.size {
-      if !want.members[i].is_var && !want.members[i].same_as(got.members[i]) {
+      if !want.members[i].is_var() && !want.members[i].same_as(got.members[i]) {
         return false
       }
     }
     if wr = want.inner {
-      if wr.is_var {
+      if wr.is_var() {
         return true
       }
       if gr = got.inner {
@@ -67,7 +68,7 @@ pub fn (checker_self: Checker) ann_present(ann: TypeName): Bool {
 }
 
 pub fn (checker_self: Checker) ty_has_var(ty: Ty): Bool {
-  if ty.is_var {
+  if ty.is_var() {
     return true
   }
   for ty_arg in ty.ty_args {
@@ -75,17 +76,17 @@ pub fn (checker_self: Checker) ty_has_var(ty: Ty): Bool {
       return true
     }
   }
-  if ty.is_array {
+  if ty.is_array() {
     if e = ty.inner {
       return checker_self.ty_has_var(e)
     }
   }
-  if ty.is_ptr {
+  if ty.is_ptr() {
     if e = ty.inner {
       return checker_self.ty_has_var(e)
     }
   }
-  if ty.is_hash {
+  if ty.is_hash() {
     if k = ty.key, checker_self.ty_has_var(k) {
       return true
     }
@@ -93,7 +94,7 @@ pub fn (checker_self: Checker) ty_has_var(ty: Ty): Bool {
       return checker_self.ty_has_var(v)
     }
   }
-  if ty.is_fn {
+  if ty.is_fn() {
     for mem in ty.members {
       if checker_self.ty_has_var(mem) {
         return true
@@ -107,7 +108,7 @@ pub fn (checker_self: Checker) ty_has_var(ty: Ty): Bool {
 }
 
 pub fn (checker_self: Checker) fn_param_needs_type(ty: Ty): Bool {
-  if ty.is_fn {
+  if ty.is_fn() {
     for mem in ty.members {
       if checker_self.ty_has_var(mem) {
         return true
@@ -119,33 +120,33 @@ pub fn (checker_self: Checker) fn_param_needs_type(ty: Ty): Bool {
 }
 
 pub fn (checker_self: Checker) subst_ty(ty: Ty, keys: Array(String), vals: Array(Ty)): Ty {
-  if ty.is_var {
+  if ty.is_var() {
     if g = checker_self.subst_get(keys, vals, ty.name) {
       return g
     }
     return ty
   }
-  if ty.is_array {
+  if ty.is_array() {
     if e = ty.inner {
       return ty_array(checker_self.subst_ty(e, keys, vals))
     }
   }
-  if ty.is_ptr {
+  if ty.is_ptr() {
     if e = ty.inner {
       return ty_ptr(checker_self.subst_ty(e, keys, vals))
     }
   }
-  if ty.is_hash {
+  if ty.is_hash() {
     if k = ty.key, v = ty.val {
       return ty_hash(checker_self.subst_ty(k, keys, vals), checker_self.subst_ty(v, keys, vals))
     }
   }
-  if ty.is_join {
+  if ty.is_join() {
     if e = ty.inner {
       return ty_join(checker_self.subst_ty(e, keys, vals))
     }
   }
-  if ty.is_fn {
+  if ty.is_fn() {
     ps: Array(Ty) = []
     i = 0
     while i < ty.members.size {
@@ -179,14 +180,14 @@ pub fn (checker_self: Checker) fn_sig_ty(sig: FuncSig): Ty {
 }
 
 pub fn (checker_self: Checker) fn_matches_want(sig: FuncSig, want: Ty): Bool {
-  if !want.is_fn {
+  if !want.is_fn() {
     return false
   }
   if want.members.size != sig.params.size {
     return false
   }
   for i in 0..want.members.size {
-    if want.members[i].is_var {
+    if want.members[i].is_var() {
       return false
     }
     if !want.members[i].same_as(sig.params[i]) {
@@ -194,12 +195,12 @@ pub fn (checker_self: Checker) fn_matches_want(sig: FuncSig, want: Ty): Bool {
     }
   }
   if wr = want.inner {
-    if wr.is_var {
+    if wr.is_var() {
       return true
     }
     return wr.same_as(sig.ret)
   }
-  sig.ret.is_void
+  sig.ret.is_void()
 }
 
 pub fn (checker_self: Checker) arg_is_deferred(arg: Expr): Bool {
@@ -225,7 +226,7 @@ pub fn (checker_self: Checker) deferred_slots_are_fn(sig: FuncSig, deferred: Arr
   for i in 0..deferred.size {
     if deferred[i] == 1 {
       if i < sig.params.size {
-        if !sig.params[i].is_fn {
+        if !sig.params[i].is_fn() {
           return false
         }
       } else {
@@ -236,13 +237,13 @@ pub fn (checker_self: Checker) deferred_slots_are_fn(sig: FuncSig, deferred: Arr
   true
 }
 
-pub fn (checker_self: Checker) deferred_unifies(sig: FuncSig, deferred: Array(Int), ctypes: Array(Ty)): Bool {
+pub fn (checker_self: Checker) deferred_unifies(sig: FuncSig, deferred: Array(Int), ctypes: Array(Ty), args: Array(Expr)): Bool {
   keys: Array(String) = []
   vals: Array(Ty) = []
   if sig.node.generic {
     i = 0
     while i < deferred.size {
-      if deferred[i] == 0 && i < sig.params.size && !checker_self.unify_ty(sig.params[i], ctypes[i], keys, vals) {
+      if deferred[i] == 0 && i < sig.params.size && !checker_self.early_arg_unifies(args[i], ctypes[i], sig.params[i], keys, vals) {
         return false
       }
       i += 1
@@ -251,7 +252,7 @@ pub fn (checker_self: Checker) deferred_unifies(sig: FuncSig, deferred: Array(In
     while i < deferred.size {
       if deferred[i] == 1 && i < sig.params.size {
         pty = checker_self.subst_ty(sig.params[i], keys, vals)
-        if pty.is_fn {
+        if pty.is_fn() {
           if checker_self.fn_param_needs_type(pty) {
             return false
           }
@@ -265,12 +266,12 @@ pub fn (checker_self: Checker) deferred_unifies(sig: FuncSig, deferred: Array(In
   }
   for i in 0..deferred.size {
     if deferred[i] == 0 {
-      if i < sig.params.size && !ty_assignable(ctypes[i], sig.params[i]) {
+      if i < sig.params.size && !checker_self.early_arg_fits(args[i], ctypes[i], sig.params[i]) {
         return false
       }
     } else {
       if i < sig.params.size {
-        if sig.params[i].is_fn {
+        if sig.params[i].is_fn() {
           if checker_self.fn_param_needs_type(sig.params[i]) {
             return false
           }
@@ -298,7 +299,7 @@ pub fn (checker_self: Checker) absorb_fn_block_q(expr: Expr, qual: String) {
     sig = checker_self.functions[i]
     if sig.name == expr.callee && checker_self.fn_candidate_q(sig.node, qual) && !checker_self.sig_is_instance(sig) && sig.params.size == want_n {
       last = sig.params[want_n - 1]
-      if last.is_fn {
+      if last.is_fn() {
         take = true
       }
     }
@@ -311,6 +312,31 @@ pub fn (checker_self: Checker) absorb_fn_block_q(expr: Expr, qual: String) {
       expr.block = nil
     }
   }
+}
+
+// Whether an argument checked before the call picks its function (got,
+// from check_call_arg) fits the parameter pty: as its type does, or as
+// `[]` takes a concrete array parameter's type and an integer literal an
+// integer parameter's (fit_call_arg types it once the function is
+// chosen).
+pub fn (checker_self: Checker) early_arg_fits(arg: Expr, got: Ty, pty: Ty): Bool {
+  if ty_assignable(got, pty) {
+    return true
+  }
+  if checker_self.is_empty_array_ty(got) {
+    return pty.is_array() && !type.ty_has_var(pty)
+  }
+  arg.kind == ex_int() && pty.is_integer()
+}
+
+// The same for a generic parameter: unified, unless the argument is `[]`
+// (it says nothing of the element) or a literal meeting a concrete
+// integer parameter.
+pub fn (checker_self: Checker) early_arg_unifies(arg: Expr, got: Ty, pty: Ty, keys: Array(String), vals: Array(Ty)): Bool {
+  if checker_self.is_empty_array_ty(got) || (arg.kind == ex_int() && pty.is_integer()) {
+    return checker_self.early_arg_fits(arg, got, pty)
+  }
+  checker_self.unify_ty(pty, got, keys, vals) || ty_assignable(got, pty)
 }
 
 pub fn (checker_self: Checker) dispatch_deferred(expr: Expr, expected: Ty?): Ty? {
@@ -347,11 +373,11 @@ pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qu
     if deferred[i] == 1 {
       ctypes.push(checker_self.t_int())
     } else {
-      ctypes.push(checker_self.check_expr(expr.args[i]))
+      ctypes.push(checker_self.check_call_arg(expr.args[i]))
     }
     i += 1
   }
-  if checker_self.has_err {
+  if checker_self.has_err() {
     return checker_self.t_int()
   }
   cands: Array(FuncSig) = []
@@ -359,7 +385,7 @@ pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qu
   for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
     if sig.name == expr.callee && checker_self.fn_candidate_q(sig.node, qual) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
-      if checker_self.deferred_unifies(sig, deferred, ctypes) {
+      if checker_self.deferred_unifies(sig, deferred, ctypes, expr.args) {
         cands.push(sig)
       } else {
         if sig.node.generic {
@@ -372,7 +398,55 @@ pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qu
     if saw_generic {
       checker_self.fail(expr.loc, "cannot infer type argument")
     } else {
-      checker_self.fail(expr.loc, "unknown function ${expr.callee}")
+      // The functions of that name with a fn parameter where the lambda
+      // is: what makes them refuse the call is another argument (a
+      // non-generic fn parameter takes any lambda of its count; it said
+      // "the block does not fit NAME"). One function: which argument and
+      // what it takes; several: each signature.
+      fits: Array(FuncSig) = []
+      for i in 1..checker_self.functions.size {
+        sig = checker_self.functions[i]
+        if sig.name == expr.callee && checker_self.fn_candidate_q(sig.node, qual) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
+          fits.push(sig)
+        }
+      }
+      shown = expr.callee
+      if qual.size > 0 {
+        shown = "${qual}.${expr.callee}"
+      }
+      if fits.size == 1 {
+        tys: Array(Ty) = []
+        for k in 0..expr.args.size {
+          if deferred[k] == 1 && k < fits[0].params.size {
+            tys.push(fits[0].params[k])
+          } else {
+            tys.push(ctypes[k])
+          }
+        }
+        checker_self.fail_no_fit(expr.loc, shown, fits, tys)
+      } else {
+        list = buf_new()
+        for f in fits {
+          if list.size > 0 {
+            list.push_str(", ")
+          }
+          list.push_str(checker_self.sig_text(shown, f))
+        }
+        given = buf_new()
+        for k in 0..expr.args.size {
+          if k > 0 {
+            given.push_str(", ")
+          }
+          if deferred[k] == 1 && expr.args[k].kind == ex_name() {
+            given.push_str(expr.args[k].ident)
+          } else if deferred[k] == 1 {
+            given.push_str("a lambda")
+          } else {
+            given.push_str(ctypes[k].show())
+          }
+        }
+        checker_self.fail(expr.loc, "no overload of ${shown} takes (${given.to_s()}): ${list.to_s()}")
+      }
     }
     return checker_self.t_int()
   }
@@ -390,12 +464,25 @@ pub fn (checker_self: Checker) finish_deferred(expr: Expr, chosen: FuncSig, defe
   if sig.node.generic {
     i = 0
     while i < deferred.size {
-      if deferred[i] == 0 && i < sig.params.size && !checker_self.unify_ty(sig.params[i], ctypes[i], keys, vals) {
+      if deferred[i] == 0 && i < sig.params.size && !checker_self.early_arg_unifies(expr.args[i], ctypes[i], sig.params[i], keys, vals) {
         checker_self.fail(expr.loc, "cannot infer type argument")
         return checker_self.t_int()
       }
       i += 1
     }
+  }
+  // `[]` and the literals take their parameters' types now that the
+  // function is chosen.
+  i = 0
+  while i < deferred.size {
+    if deferred[i] == 0 && i < sig.params.size {
+      fpty = sig.params[i]
+      if sig.node.generic {
+        fpty = checker_self.subst_ty(sig.params[i], keys, vals)
+      }
+      ctypes[i] = checker_self.fit_call_arg(expr.args[i], ctypes[i], fpty)
+    }
+    i += 1
   }
   i = 0
   while i < expr.args.size {
@@ -407,12 +494,12 @@ pub fn (checker_self: Checker) finish_deferred(expr: Expr, chosen: FuncSig, defe
       got = checker_self.check_fn_arg(expr.args[i], pty)
       if !checker_self.unify_ty(pty, got, keys, vals) && !ty_assignable(got, pty) && !checker_self.fn_compatible(got, pty) {
         n = i + 1
-        checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${pty.show}")
+        checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show()}, expected ${pty.show()}")
       }
     }
     i += 1
   }
-  if checker_self.has_err {
+  if checker_self.has_err() {
     return checker_self.t_int()
   }
   if sig.node.generic {
@@ -434,6 +521,21 @@ pub fn (checker_self: Checker) finish_deferred(expr: Expr, chosen: FuncSig, defe
       return checker_self.t_int()
     }
   }
+  // The parameters the call leaves out take their defaults, and the named
+  // arguments their places, as in every other call (before, a call whose
+  // lambda was checked here reached the back end without its defaults).
+  given = expr.args.size
+  checker_self.fill_defaults(expr, sig.node)
+  for di in given..expr.args.size {
+    if di < sig.params.size {
+      dgot = checker_self.check_default_arg(expr, di, sig.params, sig.node)
+      dgot = checker_self.fit_call_arg(expr.args[di], dgot, sig.params[di])
+      if !ty_assignable(dgot, sig.params[di]) {
+        dn = di + 1
+        checker_self.fail(expr.args[di].loc, "argument ${dn} of ${expr.callee} is ${dgot.show()}, expected ${sig.params[di].show()}")
+      }
+    }
+  }
   expr.resolved = sig.node.emit_name
   sig.ret
 }
@@ -450,6 +552,7 @@ pub fn (checker_self: Checker) check_fn_arg(arg: Expr, want: Ty): Ty {
 
 pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
   cands: Array(FuncSig) = []
+  others: Array(FuncSig) = []
   saw_generic = false
   for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
@@ -459,6 +562,8 @@ pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
       } else {
         if checker_self.fn_matches_want(sig, want) {
           cands.push(sig)
+        } else {
+          others.push(sig)
         }
       }
     }
@@ -473,14 +578,27 @@ pub fn (checker_self: Checker) check_fn_ref(expr: Expr, want: Ty): Ty {
     return ty
   }
   if cands.size > 1 {
-    checker_self.fail_ambiguous_call(expr.loc, expr.ident, cands, "ambiguous overload of ${expr.ident}")
+    checker_self.fail_ambiguous_value(expr.loc, expr.ident, cands)
     return checker_self.t_int()
   }
   if saw_generic {
     checker_self.fail(expr.loc, "generic function is not a value")
     return checker_self.t_int()
   }
-  checker_self.fail(expr.loc, "unknown function ${expr.ident}")
+  if others.size > 0 {
+    // The function exists with another type: a fn type matches only
+    // itself, so say what it is, not that it is unknown.
+    shown = buf_new()
+    for o in others {
+      if shown.size > 0 {
+        shown.push_str(" or ")
+      }
+      shown.push_str(checker_self.fn_sig_ty(o).show())
+    }
+    checker_self.fail(expr.loc, "${expr.ident} is ${shown.to_s()}, expected ${want.show()}: a fn type matches only itself")
+    return checker_self.t_int()
+  }
+  checker_self.fail_hint(expr.loc, "unknown function ${expr.ident}", checker_self.fn_hint(expr.ident))
   checker_self.t_int()
 }
 
@@ -507,7 +625,7 @@ pub fn (checker_self: Checker) check_fn_ref_bare(expr: Expr): Ty? {
     return ty
   }
   if cands.size > 1 {
-    checker_self.fail_ambiguous_call(expr.loc, expr.ident, cands, "ambiguous overload of ${expr.ident}")
+    checker_self.fail_ambiguous_value(expr.loc, expr.ident, cands)
     return checker_self.t_int()
   }
   if saw_generic {
@@ -517,9 +635,60 @@ pub fn (checker_self: Checker) check_fn_ref_bare(expr: Expr): Ty? {
   nil
 }
 
+// `m.f` without a call, m a module the current one imports (or its own
+// name): m's function f as a value, picked as a bare name would be among
+// m's functions only (by the fn type the context expects, when it
+// expects one). The expression becomes that function's name. nil when m
+// has no function f, so the field reading reports what it finds.
+pub fn (checker_self: Checker) check_qualified_fn_value(expr: Expr, mod: String, has_want: Bool, want: Ty): Ty? {
+  shown = "${mod}.${expr.ident}"
+  cands: Array(FuncSig) = []
+  all = 0
+  saw_generic = false
+  for i in checker_self.fn_indices_named(expr.ident) {
+    sig = checker_self.functions[i]
+    if sig.name == expr.ident && checker_self.fn_candidate_q(sig.node, mod) && !checker_self.sig_is_instance(sig) {
+      all += 1
+      if sig.node.generic {
+        saw_generic = true
+      } else if !has_want || !want.is_fn() || checker_self.fn_matches_want(sig, want) {
+        cands.push(sig)
+      }
+    }
+  }
+  if all == 0 {
+    if checker_self.has_private_fn(mod, expr.ident) {
+      checker_self.fail(expr.loc, "function ${shown} is private to its module; mark it pub")
+      return checker_self.t_int()
+    }
+    return nil
+  }
+  if cands.size == 1 {
+    chosen = cands[0]
+    expr.kind = ex_name()
+    expr.object = nil
+    expr.fn_ref = true
+    expr.resolved = chosen.node.emit_name
+    chosen.node.as_value = true
+    ty = checker_self.fn_sig_ty(chosen)
+    expr.ty = ty
+    return ty
+  }
+  if cands.size > 1 {
+    checker_self.fail_ambiguous_value(expr.loc, shown, cands)
+    return checker_self.t_int()
+  }
+  if saw_generic {
+    checker_self.fail(expr.loc, "generic function is not a value")
+    return checker_self.t_int()
+  }
+  checker_self.fail(expr.loc, "no function ${shown} has the type ${want.show()}")
+  checker_self.t_int()
+}
+
 pub fn (checker_self: Checker) check_indirect_call(expr: Expr, callee: Ty): Ty {
-  if !callee.is_fn {
-    checker_self.fail(expr.loc, "cannot call ${callee.show}")
+  if !callee.is_fn() {
+    checker_self.fail(expr.loc, "cannot call ${callee.show()}")
     return checker_self.t_int()
   }
   expr.resolved = mangle_ty(callee)
@@ -537,7 +706,7 @@ pub fn (checker_self: Checker) check_indirect_call(expr: Expr, callee: Ty): Ty {
     return ret
   }
   if expr.args.size != callee.members.size {
-    checker_self.fail(expr.loc, "takes ${callee.members.size} arguments, got ${expr.args.size}")
+    checker_self.fail(expr.loc, "${callee.show()} takes ${checker_self.args_word(callee.members.size)}, given ${expr.args.size}")
     return ret
   }
   i = 0
@@ -545,7 +714,7 @@ pub fn (checker_self: Checker) check_indirect_call(expr: Expr, callee: Ty): Ty {
     got = checker_self.check_expr_as(expr.args[i], callee.members[i])
     if !ty_assignable(got, callee.members[i]) && !checker_self.fn_compatible(got, callee.members[i]) {
       n = i + 1
-      checker_self.fail(expr.args[i].loc, "argument ${n} is ${got.show}, expected ${callee.members[i].show}")
+      checker_self.fail(expr.args[i].loc, "argument ${n} is ${got.show()}, expected ${callee.members[i].show()}")
     }
     i += 1
   }
@@ -554,10 +723,27 @@ pub fn (checker_self: Checker) check_indirect_call(expr: Expr, callee: Ty): Ty {
 
 pub fn (checker_self: Checker) check_lambda(expr: Expr, has_want: Bool, want: Ty): Ty {
   if has_want {
-    if want.is_fn {
+    if want.is_fn() {
       return checker_self.check_lambda_against(expr, want)
     }
-    checker_self.fail(expr.loc, "expected ${want.show}, got a lambda")
+    if want.is_union() {
+      // An optional function value (`(fn(Int): Int)?`), or any union with
+      // one function member: the lambda is that member.
+      one: Ty? = nil
+      count = 0
+      for m in want.members {
+        if m.is_fn() {
+          one = m
+          count += 1
+        }
+      }
+      if f = one {
+        if count == 1 {
+          return checker_self.check_lambda_against(expr, f)
+        }
+      }
+    }
+    checker_self.fail(expr.loc, "expected ${want.show()}, got a lambda")
     return checker_self.t_int()
   }
   checker_self.check_lambda_free(expr)
@@ -572,7 +758,7 @@ pub fn (checker_self: Checker) check_lambda_free(expr: Expr): Ty {
         ann = b.param_types[i]
         if checker_self.ann_present(ann) {
           pty = checker_self.resolve_in_module(ann)
-          checker_self.pull_resolve
+          checker_self.pull_resolve()
           params.push(pty)
         } else {
           checker_self.fail(expr.loc, "lambda parameter needs a type")
@@ -593,15 +779,15 @@ pub fn (checker_self: Checker) check_lambda_free(expr: Expr): Ty {
 }
 
 pub fn (checker_self: Checker) push_lambda(expr: Expr) {
-  checker_self.push_scope
+  checker_self.push_scope()
   checker_self.lam_exprs.push(expr)
   checker_self.lam_scopes.push(checker_self.scopes.size - 1)
 }
 
 pub fn (checker_self: Checker) pop_lambda {
-  checker_self.pop_scope
-  checker_self.lam_exprs.pop
-  checker_self.lam_scopes.pop
+  checker_self.pop_scope()
+  checker_self.lam_exprs.pop()
+  checker_self.lam_scopes.pop()
 }
 
 pub fn (checker_self: Checker) note_capture(name: String, ty: Ty) {
@@ -656,7 +842,8 @@ pub fn (checker_self: Checker) mark_box(name: String, idx: Int) {
 pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
   if b = expr.block {
     if b.params.size != want.members.size {
-      checker_self.fail(expr.loc, "lambda takes ${want.members.size} arguments, got ${b.params.size}")
+      has = checker_self.count_word(b.params.size, "parameter")
+      checker_self.fail(expr.loc, "the lambda has ${has} where ${want.show()} takes ${checker_self.args_word(want.members.size)}")
       return checker_self.t_int()
     }
     for mem in want.members {
@@ -683,9 +870,9 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
         ann = b.param_types[i]
         if checker_self.ann_present(ann) {
           got = checker_self.resolve_in_module(ann)
-          checker_self.pull_resolve
+          checker_self.pull_resolve()
           if !got.same_as(pty) {
-            checker_self.fail(b.loc, "lambda parameter is ${got.show}, expected ${pty.show}")
+            checker_self.fail(b.loc, "lambda parameter is ${got.show()}, expected ${pty.show()}")
           }
           pty = got
         }
@@ -697,21 +884,28 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     if r = want.inner {
       ret = r
     }
-    if !ret.is_void && !ret.is_var && b.body.size == 0 {
+    // A `Void | E` result: the end of the body is the success, as in a
+    // function (checker.av check_function).
+    if ret.is_union() && ret.includes_void() && checker_self.fallthrough(b.body) {
+      b.body.push(stmt_expr(b.loc, Expr.new(ex_void(), b.loc)))
+    }
+    if !ret.is_void() && !ret.is_var() && b.body.size == 0 {
       checker_self.fail(expr.loc, "missing return value")
     }
     result_ret = ret
-    // A postfix `?` in the body returns from the lambda (Stage 29 W1a, A3).
+    // A postfix `?` in the body returns from the lambda.
     saved_ret = checker_self.return_type
     saved_try = checker_self.try_in
+    saved_entry = checker_self.entry_void
+    checker_self.entry_void = false
     checker_self.return_type = ret
     saved_body = checker_self.try_body
     checker_self.try_in = ""
     checker_self.try_body = "the lambda"
-    if ret.is_var {
+    if ret.is_var() {
       checker_self.try_in = "a lambda whose result type is inferred"
     }
-    if ret.is_var {
+    if ret.is_var() {
       saved_infer = checker_self.lambda_infer
       saved_ty = checker_self.inferred_ret
       checker_self.lambda_infer = true
@@ -724,12 +918,13 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
       checker_self.check_body(b.body, ret, true)
     }
     checker_self.return_type = saved_ret
+    checker_self.entry_void = saved_entry
     checker_self.try_in = saved_try
     checker_self.try_body = saved_body
     checker_self.loop_depth = saved_loops
     checker_self.in_build = saved_build
-    checker_self.pop_lambda
-    if !result_ret.is_void && result_ret.is_var {
+    checker_self.pop_lambda()
+    if !result_ret.is_void() && result_ret.is_var() {
       checker_self.fail(expr.loc, "cannot infer type argument")
       result_ret = checker_self.t_void()
     }
@@ -748,13 +943,13 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
 pub fn (checker_self: Checker) attach_bounds(fnn: Function) {
   for param in fnn.params {
     checker_self.collect_bounds(fnn, param.type)
-    if checker_self.has_err {
+    if checker_self.has_err() {
       return
     }
   }
   if r = fnn.receiver {
     checker_self.collect_bounds(fnn, r.type)
-    if checker_self.has_err {
+    if checker_self.has_err() {
       return
     }
   }
@@ -764,6 +959,17 @@ pub fn (checker_self: Checker) attach_bounds(fnn: Function) {
 }
 
 pub fn (checker_self: Checker) collect_bounds(fnn: Function, tn: TypeName) {
+  if tn.bounds.size > 0 && tn.members.size > 0 && !tn.fn_type {
+    // `r: T | E: Error`: the bound after a union bounds its last member,
+    // a type parameter.
+    last = tn.members[tn.members.size - 1]
+    if last.args.size == 0 && !last.nilable && !last.fn_type && last.members.size == 0 && fnn.type_params.contains(last.name) {
+      for b0 in tn.bounds {
+        last.bounds.push(b0)
+      }
+      tn.bounds = []
+    }
+  }
   if tn.bounds.size > 0 {
     ok = false
     if tn.fn_type {
@@ -788,7 +994,7 @@ pub fn (checker_self: Checker) collect_bounds(fnn: Function, tn: TypeName) {
   if tn.fn_type {
     for arg in tn.args {
       checker_self.collect_bounds(fnn, arg)
-      if checker_self.has_err {
+      if checker_self.has_err() {
         return
       }
     }
@@ -800,7 +1006,7 @@ pub fn (checker_self: Checker) collect_bounds(fnn: Function, tn: TypeName) {
   if tn.members.size > 0 {
     for mem in tn.members {
       checker_self.collect_bounds(fnn, mem)
-      if checker_self.has_err {
+      if checker_self.has_err() {
         return
       }
     }
@@ -808,7 +1014,7 @@ pub fn (checker_self: Checker) collect_bounds(fnn: Function, tn: TypeName) {
   }
   for arg in tn.args {
     checker_self.collect_bounds(fnn, arg)
-    if checker_self.has_err {
+    if checker_self.has_err() {
       return
     }
   }
@@ -877,9 +1083,9 @@ pub fn (checker_self: Checker) check_interface_sigs {
       p = 0
       while p < method.params.size {
         checker_self.resolve_value_in_module(method.params[p].type)
-        checker_self.pull_resolve
-        if checker_self.has_err {
-          checker_self.resolver.clear_tparams
+        checker_self.pull_resolve()
+        if checker_self.has_err() {
+          checker_self.resolver.clear_tparams()
           checker_self.current_module = saved
           return
         }
@@ -887,14 +1093,14 @@ pub fn (checker_self: Checker) check_interface_sigs {
       }
       if t = method.return_type {
         checker_self.resolve_in_module(t)
-        checker_self.pull_resolve
-        if checker_self.has_err {
-          checker_self.resolver.clear_tparams
+        checker_self.pull_resolve()
+        if checker_self.has_err() {
+          checker_self.resolver.clear_tparams()
           checker_self.current_module = saved
           return
         }
       }
-      checker_self.resolver.clear_tparams
+      checker_self.resolver.clear_tparams()
       j += 1
     }
     checker_self.current_module = saved
@@ -906,9 +1112,9 @@ pub fn (checker_self: Checker) check_decl_opts(type_name: String, opt_ins: Array
     return
   }
   ty: Ty? = nil
-  // By module (Stage 29 W4a): two modules may declare the same type name,
-  // and get_named answers nil for such a name, which skipped the
-  // declaration's interface clause without a word.
+  // By module: two modules may declare the same type name, and get_named
+  // answers nil for such a name, which skipped the declaration's
+  // interface clause without a word.
   if found = checker_self.resolver.get_named_in(mod_name, type_name) {
     ty = found
   } else if found2 = checker_self.resolver.get_named(type_name) {
@@ -923,7 +1129,7 @@ pub fn (checker_self: Checker) check_decl_opts(type_name: String, opt_ins: Array
     while i < opt_ins.size {
       if opt_ins[i].name == "Error" {
         checker_self.mark_error(concrete, opt_ins[i], type_name, mod_name)
-        if checker_self.has_err {
+        if checker_self.has_err() {
           checker_self.current_module = saved
           return
         }
@@ -931,7 +1137,7 @@ pub fn (checker_self: Checker) check_decl_opts(type_name: String, opt_ins: Array
         continue
       }
       checker_self.record_impl(concrete, opt_ins[i], loc, mod_name, true)
-      if checker_self.has_err {
+      if checker_self.has_err() {
         checker_self.current_module = saved
         return
       }
@@ -941,41 +1147,40 @@ pub fn (checker_self: Checker) check_decl_opts(type_name: String, opt_ins: Array
   }
 }
 
-// The `Error` marker (D292, Stage 29 W4a): a class or struct declared
-// `class E: Error` is a failure in every union it is a member of
-// (type.av ty_failures; the resolver sets Ty.error_mark). Checked here:
-// it makes its message readable, a String field or a method without
-// parameters named `message` (what `e.message` and the interpolation
-// `"${e}"` read); and a field named `cause` (D300: the error that caused
-// it, kept for messages and logs) holds one Error type or an optional
-// one, which `"${e}"` prints after the message (parser.av
-// error_text_method). `Error` takes no type arguments and is not a bound
-// or a value type.
+// The `Error` marker: a class or struct declared `class E: Error` is a
+// failure in every union it is a member of (type.av ty_failures; the
+// resolver sets Ty.error_mark). Checked here: it makes its message
+// readable, a String field or a method without parameters named
+// `message` (what `e.message` and the interpolation `"${e}"` read); and
+// a field named `cause` (the error that caused it, kept for messages and
+// logs) holds one Error type or an optional one, which `"${e}"` prints
+// after the message (parser.av error_text_method). `Error` takes no type
+// arguments and is not a bound or a value type.
 pub fn (checker_self: Checker) mark_error(ty: Ty, tn: TypeName, type_name: String, mod_name: String) {
   if tn.args.size > 0 {
     checker_self.fail(tn.loc, "Error does not take type arguments")
     return
   }
-  if !(ty.is_class || ty.is_struct || ty.is_enum) {
-    checker_self.fail(tn.loc, "${ty.show} cannot be marked Error; only a class, a struct or an enum can")
+  if !(ty.is_class() || ty.is_struct() || ty.is_enum()) {
+    checker_self.fail(tn.loc, "${ty.show()} cannot be marked Error; only a class, a struct or an enum can")
     return
   }
   found = false
   for f in ty.fields {
     if f.name == "message" {
-      if !f.ty.is_string {
-        checker_self.fail(tn.loc, "${ty.show} is marked Error, so its field message must be a String, got ${f.ty.show}")
+      if !f.ty.is_string() {
+        checker_self.fail(tn.loc, "${ty.show()} is marked Error, so its field message must be a String, got ${f.ty.show()}")
         return
       }
       found = true
     }
     if f.name == "cause" {
       ct = f.ty
-      if ct.is_union && ct.members.size == 2 && ct.includes_nil {
+      if ct.is_union() && ct.members.size == 2 && ct.includes_nil() {
         ct = ty_without_nil(ct)
       }
       if !ct.error_mark {
-        checker_self.fail(tn.loc, "${ty.show} is marked Error, so its field cause must be an Error type or an optional one (cause: E?), got ${f.ty.show}")
+        checker_self.fail(tn.loc, "${ty.show()} is marked Error, so its field cause must be an Error type or an optional one (cause: E?), got ${f.ty.show()}")
         return
       }
     }
@@ -988,7 +1193,7 @@ pub fn (checker_self: Checker) mark_error(ty: Ty, tn: TypeName, type_name: Strin
     }
   }
   if !found {
-    checker_self.fail(tn.loc, "${ty.show} is marked Error but has no message; give it a field message: String or a method fn message: String")
+    checker_self.fail(tn.loc, "${ty.show()} is marked Error but has no message; give it a field message: String or a method fn message: String")
     return
   }
 }
@@ -1015,8 +1220,8 @@ pub fn (checker_self: Checker) apply_late_opt_ins {
     saved = checker_self.current_module
     checker_self.current_module = opt.mod_name
     ty = checker_self.resolve_in_module(opt.target)
-    checker_self.pull_resolve
-    if checker_self.has_err {
+    checker_self.pull_resolve()
+    if checker_self.has_err() {
       checker_self.current_module = saved
       return
     }
@@ -1028,13 +1233,13 @@ pub fn (checker_self: Checker) apply_late_opt_ins {
           return
         }
         checker_self.record_impl(ty, iface, opt.loc, opt.mod_name, opt.vis)
-        if checker_self.has_err {
+        if checker_self.has_err() {
           checker_self.current_module = saved
           return
         }
       }
     } else {
-      checker_self.fail(opt.loc, "${ty.show} cannot opt into an interface")
+      checker_self.fail(opt.loc, "${ty.show()} cannot opt into an interface")
       checker_self.current_module = saved
       return
     }
@@ -1047,10 +1252,10 @@ pub fn (checker_self: Checker) opt_target_ok(ty: Ty): Bool {
   if ty.template {
     return false
   }
-  if ty.is_struct {
+  if ty.is_struct() {
     return true
   }
-  if ty.is_class {
+  if ty.is_class() {
     return true
   }
   checker_self.ptr_method_ok(ty)
@@ -1082,11 +1287,11 @@ pub fn (checker_self: Checker) iface_args_of(idef: InterfaceDef, tn: TypeName): 
   i = 0
   while i < tn.args.size {
     args.push(checker_self.resolve_value_in_module(tn.args[i]))
-    checker_self.pull_resolve
-    if checker_self.has_err {
+    checker_self.pull_resolve()
+    if checker_self.has_err() {
       return nil
     }
-    if ty_has_var(args[args.size - 1]) {
+    if type.ty_has_var(args[args.size - 1]) {
       checker_self.fail(tn.loc, "${idef.name} needs type arguments")
       return nil
     }
@@ -1116,13 +1321,13 @@ pub fn (checker_self: Checker) record_impl(concrete: Ty, tn: TypeName, loc: Loca
         label = checker_self.resolver.format_app(defn.name, args)
       }
       if !checker_self.opt_target_ok(concrete) {
-        checker_self.fail(loc, "${concrete.show} cannot opt into an interface")
+        checker_self.fail(loc, "${concrete.show()} cannot opt into an interface")
         return
       }
       key = iface_key_of(defn.name, args)
       tkey = impl_type_key(concrete)
       if prev = checker_self.find_impl(tkey, key) {
-        checker_self.fail(loc, "${concrete.show} already implements ${label}")
+        checker_self.fail(loc, "${concrete.show()} already implements ${label}")
         return
       }
       n = checker_self.count_witnesses(concrete, defn, args, checker_self.current_module, label)
@@ -1141,8 +1346,12 @@ pub fn (checker_self: Checker) record_impl(concrete: Ty, tn: TypeName, loc: Loca
 }
 
 pub fn (checker_self: Checker) use_impl(concrete: Ty, tn: TypeName, loc: Location): Bool {
-  if tn.name == "Error" {
-    checker_self.fail(loc, "Error marks a failure type (class E: Error); it is not a bound")
+  if tn.name == "Error" && tn.args.size == 0 {
+    // `E: Error`: a type marked Error (a class, a struct or an enum).
+    if concrete.error_mark {
+      return true
+    }
+    checker_self.fail(loc, "${concrete.show()} is not marked Error, as the bound E: Error asks (class ${concrete.show()}: Error)")
     return false
   }
   idef: InterfaceDef? = nil
@@ -1168,18 +1377,18 @@ pub fn (checker_self: Checker) use_impl(concrete: Ty, tn: TypeName, loc: Locatio
       tkey = impl_type_key(concrete)
       if fact = checker_self.find_impl(tkey, key) {
         if !checker_self.fact_visible(fact) {
-          checker_self.fail(loc, "${concrete.show} does not implement ${label}")
+          checker_self.fail(loc, "${concrete.show()} does not implement ${label}")
           return false
         }
       } else {
-        checker_self.fail(loc, "${concrete.show} does not implement ${label}")
+        checker_self.fail(loc, "${concrete.show()} does not implement ${label}")
         return false
       }
       n = checker_self.count_witnesses(concrete, defn, args, checker_self.current_module, label)
       if n == 1 {
         return true
       }
-      checker_self.fail(loc, "${concrete.show} does not implement ${label}")
+      checker_self.fail(loc, "${concrete.show()} does not implement ${label}")
       return false
     }
   }
@@ -1240,9 +1449,9 @@ pub fn (checker_self: Checker) load_iface_method(idef: InterfaceDef, method: Fun
   i = 0
   while i < cloned.params.size {
     params.push(checker_self.resolver.resolve_value(cloned.params[i].type))
-    checker_self.pull_resolve
-    if checker_self.has_err {
-      checker_self.resolver.clear_tparams
+    checker_self.pull_resolve()
+    if checker_self.has_err() {
+      checker_self.resolver.clear_tparams()
       return false
     }
     i += 1
@@ -1250,13 +1459,13 @@ pub fn (checker_self: Checker) load_iface_method(idef: InterfaceDef, method: Fun
   ret = checker_self.t_void()
   if t = cloned.return_type {
     ret = checker_self.resolver.resolve(t)
-    checker_self.pull_resolve
-    if checker_self.has_err {
-      checker_self.resolver.clear_tparams
+    checker_self.pull_resolve()
+    if checker_self.has_err() {
+      checker_self.resolver.clear_tparams()
       return false
     }
   }
-  checker_self.resolver.clear_tparams
+  checker_self.resolver.clear_tparams()
   checker_self.sig_params = params
   checker_self.sig_ret = ret
   checker_self.sig_vars = vars
@@ -1272,8 +1481,16 @@ pub fn (checker_self: Checker) count_witnesses(concrete: Ty, idef: InterfaceDef,
   while mi < idef.methods.size {
     method = idef.methods[mi]
     if !checker_self.load_iface_method(idef, method, arg_tys) {
-      checker_self.witness_note = "${concrete.show} does not implement ${label}"
+      checker_self.witness_note = "${concrete.show()} does not implement ${label}"
       return 0
+    }
+    // A struct's derived == witnesses an
+    // interface's ==, as a written one would.
+    if method.name == "==" && concrete.is_struct() && !checker_self.user_op(concrete, "==") {
+      seen: Array(String) = []
+      if checker_self.eq_missing(concrete, seen).size == 0 {
+        checker_self.derive_eq_method(concrete, idef.loc)
+      }
     }
     method_hits = 0
     method_note = ""
@@ -1295,12 +1512,12 @@ pub fn (checker_self: Checker) count_witnesses(concrete: Ty, idef: InterfaceDef,
       if method_note.size > 0 {
         checker_self.witness_note = method_note
       } else {
-        checker_self.witness_note = "${concrete.show} does not implement ${label}: missing ${method.name}"
+        checker_self.witness_note = "${concrete.show()} does not implement ${label}: missing ${method.name}"
       }
       return 0
     }
     if method_hits > 1 {
-      checker_self.witness_note = "ambiguous call to ${concrete.show}.${method.name}"
+      checker_self.witness_note = "ambiguous call to ${concrete.show()}.${method.name}"
       return 2
     }
     mi += 1
@@ -1322,10 +1539,10 @@ pub fn (checker_self: Checker) diff_note(concrete: Ty, label: String, name: Stri
   for i in 0..checker_self.sig_params.size {
     if i < checker_self.wit_params.size && !ty_eq_sig(checker_self.sig_params[i], checker_self.wit_params[i], checker_self.sig_vars, checker_self.wit_vars) {
       n = i + 1
-      return "${concrete.show} does not implement ${label}: ${name} parameter ${n} is ${checker_self.wit_params[i].show}, expected ${checker_self.sig_params[i].show}"
+      return "${concrete.show()} does not implement ${label}: ${name} parameter ${n} is ${checker_self.wit_params[i].show()}, expected ${checker_self.sig_params[i].show()}"
     }
   }
-  "${concrete.show} does not implement ${label}: ${name} returns ${checker_self.wit_ret.show}, expected ${checker_self.sig_ret.show}"
+  "${concrete.show()} does not implement ${label}: ${name} returns ${checker_self.wit_ret.show()}, expected ${checker_self.sig_ret.show()}"
 }
 
 pub fn (checker_self: Checker) witness_fits(sig: FuncSig, concrete: Ty): Bool {
@@ -1334,9 +1551,9 @@ pub fn (checker_self: Checker) witness_fits(sig: FuncSig, concrete: Ty): Bool {
     if recv = sig.node.receiver {
       checker_self.resolver.set_tparams(sig.node.type_params)
       pat = checker_self.resolver.resolve(recv.type)
-      checker_self.pull_resolve
-      checker_self.resolver.clear_tparams
-      if checker_self.has_err {
+      checker_self.pull_resolve()
+      checker_self.resolver.clear_tparams()
+      if checker_self.has_err() {
         return false
       }
       if pat.origin == concrete.origin && pat.ty_args.size == concrete.ty_args.size {
@@ -1373,4 +1590,55 @@ pub fn (checker_self: Checker) witness_fits(sig: FuncSig, concrete: Ty): Bool {
     return true
   }
   false
+}
+
+// The bounds a generic struct or class puts on its type parameters
+// (`class Top(T: Ranked)`): each names an interface, or Error, and a
+// parameter of the type; checked where the type is declared.
+pub fn (checker_self: Checker) check_param_bound_decls {
+  for sdef in checker_self.program.structs {
+    checker_self.check_param_bounds_of(sdef.name, sdef.type_params, sdef.param_bounds, sdef.mod_name)
+  }
+  for cdef in checker_self.program.classes {
+    checker_self.check_param_bounds_of(cdef.name, cdef.type_params, cdef.param_bounds, cdef.mod_name)
+  }
+}
+
+pub fn (checker_self: Checker) check_param_bounds_of(name: String, params: Array(String), bounds: Array(TypeBound), mod_name: String) {
+  for b in bounds {
+    if b.iface.name == "Error" && b.iface.args.size == 0 {
+      continue
+    }
+    if idef = checker_self.resolver.find_interface(b.iface.name) {
+    } else {
+      checker_self.fail(b.iface.loc, "${b.iface.name} is not an interface: a bound names an interface or Error")
+    }
+  }
+}
+
+// Each generic type's instance made so far whose template bounds its
+// parameters: every bound holds for the arguments, or the use that made
+// the instance is an error naming the type and the interface.
+pub fn (checker_self: Checker) check_bound_uses {
+  if checker_self.in_bounds {
+    return
+  }
+  checker_self.in_bounds = true
+  saved = checker_self.current_module
+  while checker_self.bound_done < checker_self.resolver.bound_uses.size {
+    use = checker_self.resolver.bound_uses[checker_self.bound_done]
+    checker_self.bound_done += 1
+    if use.mod_name.size > 0 {
+      checker_self.current_module = use.mod_name
+    }
+    for b in use.bounds {
+      idx = use.params.index_of(b.param) ?? -1
+      if idx >= 0 && idx < use.arg_tys.size {
+        applied = subst_type_name(b.iface, use.params, use.args)
+        _ = checker_self.use_impl(use.arg_tys[idx], applied, use.loc)
+      }
+    }
+    checker_self.current_module = saved
+  }
+  checker_self.in_bounds = false
 }

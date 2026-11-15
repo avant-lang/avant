@@ -1,9 +1,8 @@
-// pop on an empty array (Stage 28 W10b, C9): pop reads the element at
-// size - 1, so an empty array traps as indexing it there does, with the
-// index trap's message ("index -1 out of bounds (size 0)") and exit
-// status 1, on both back ends. Until W10b an array of non-references
-// segfaulted (the runtime's pop slot was null) and an array of
-// references yielded a null reference.
+// pop gives the last element as an optional, nil on an empty array; the
+// trapping form is xs.pop().expect("why"), which stops the program with
+// its message and position, exit status 1. (An array of non-references
+// once segfaulted on an empty pop, and an array of references yielded a
+// null reference.)
 
 struct Pair {
   a: Int
@@ -12,13 +11,14 @@ struct Pair {
 
 fn main {
   ns = [1, 2]
-  puts(ns.pop + ns.pop)
+  puts(ns.pop().expect("ns has two") + ns.pop().expect("ns has one"))
   ps: Array(Pair) = [Pair { a: 3, b: "p" }]
-  q = ps.pop()
+  q = ps.pop().expect("ps has one")
   puts("${q.a} ${q.b}")
   ss = ["s"]
-  puts(ss.pop)
+  puts(ss.pop() ?? "none")
+  puts(ss.pop() ?? "none")
   puts(ns.size + ps.size + ss.size)
-  puts(ns.pop)
+  puts(ns.pop().expect("ns is not empty"))
   puts("not reached")
 }

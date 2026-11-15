@@ -1,0 +1,67 @@
+// The gate word lives in its object, and a thread
+// that waits works on the runtime's entry, never on the word's address,
+// since a collection may move the object while it waits. Sixteen tasks
+// take one Mutex at once while each allocates (so the collector runs and
+// moves the mutex, its cell and the channels while threads wait on
+// them), and pairs of tasks ping-pong over rendezvous channels made in
+// the same young space. No update may be lost and every value must
+// arrive once.
+import std.sync
+
+class Tally {
+  pub n: Int = 0
+  pub log: Array(String) = []
+}
+
+fn main {
+  m = Mutex(Tally).new(Tally.new())
+  workers: Array(JoinHandle(Int)) = []
+  for t in 0..16 {
+    workers.push(spawn {
+      for i in 0..2000 {
+        noise = "w${t}-${i}"
+        m.with { |x|
+          x.n += 1
+          if i % 500 == 0 {
+            x.log.push("${noise}!")
+          }
+        }
+      }
+      0
+    })
+  }
+  pings: Array(JoinHandle(Int)) = []
+  for p in 0..4 {
+    ping = Channel(String).new()
+    pong = Channel(Int).new()
+    pings.push(spawn {
+      got = 0
+      while s = ping.recv() {
+        _ = pong.send(s.size)
+        got += 1
+      }
+      got
+    })
+    pings.push(spawn {
+      sum = 0
+      for i in 0..1000 {
+        _ = ping.send("p${p}-${i}")
+        sum += pong.recv() ?? 0
+      }
+      ping.close()
+      sum
+    })
+  }
+  for w in workers {
+    _ = w.join()
+  }
+  total = 0
+  for h in pings {
+    total += h.join() ?? -1
+  }
+  n = m.with { |x| x.n }
+  logged = m.with { |x| x.log.size }
+  puts(n)
+  puts(logged)
+  puts(total)
+}

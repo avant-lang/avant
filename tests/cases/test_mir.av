@@ -1,9 +1,9 @@
 import harness
 
-// Stage 28 W4: the MIR core (compiler/mir/) through the internal hook
+// The MIR core (compiler/mir/) through the internal hook
 // `avant __mir-selftest`, which builds MIR modules with the builder and
 // prints them and the verifier's answers. Checked here: the complete
-// example of stages/stage28/mir.md 10.2, built with the builder, prints
+// example of the MIR's specification, built with the builder, prints
 // byte-identically to tests/fixtures/mir/example.mir (the spec's text) and
 // verifies clean at both stages; every verifier rule V1-V21 rejects its
 // case, and only its own rule does; the accepting cases near each boundary
@@ -18,7 +18,7 @@ fn section(log: String, start: String): String {
   while i < lines.size {
     if inside {
       if lines[i] == "== end" {
-        return buf.to_s
+        return buf.to_s()
       }
       buf.push_str("${lines[i]}\n")
     } else if lines[i] == start {
@@ -112,7 +112,7 @@ fn expectations: Want {
   w.add("ok_addr_in_slot", "lowered", "ok")
   w.add("ok_addr_in_slot", "final", "ok")
   w.add("ok_barrier_forms", "lowered", "ok")
-  // The GC passes' results verify at final (W6a).
+  // The GC passes' results verify at final.
   w.add("pass_live", "final", "ok")
   w.add("pass_args", "final", "ok")
   w.add("pass_addr", "final", "ok")
@@ -120,7 +120,7 @@ fn expectations: Want {
   w.add("pass_leaves_shared", "final", "ok")
   // Many locals (more than one word of a liveness set), the passes over
   // them and over a shared module's loops, and functions changed after
-  // the passes (Stage 28 W18P).
+  // the passes.
   w.add("v9_wide", "lowered", "V9")
   w.add("v11_wide", "final", "V11")
   w.add("v12_wide", "final", "V12")
@@ -136,7 +136,7 @@ fn expectations: Want {
   w
 }
 
-// What the leaf and root-slot passes decide (gc.av, Stage 28 W6a): one
+// What the leaf and root-slot passes decide (gc.av): one
 // `pass CASE SYMBOL KIND slots LIST` line per function of the case.
 fn pass_lines: Array(String) {
   xs: Array(String) = []
@@ -175,7 +175,7 @@ fn test_mir(c: Checks) {
     if t = file_read("${root}/tests/fixtures/mir/example.mir") {
       want = t
     }
-    c.eq_str(section(text, "== example print"), want, "the 10.2 example prints as mir.md gives it")
+    c.eq_str(section(text, "== example print"), want, "the example prints as tests/fixtures/mir/example.mir gives it")
     lines = text.split("\n")
     w = expectations()
     i = 0
@@ -198,7 +198,7 @@ fn test_mir(c: Checks) {
       i += 1
     }
     // The same run under the GC verifier with a 1 MB nursery: the MIR's
-    // data structures are traced correctly (D188, D192) and the answers
+    // data structures are traced correctly and the answers
     // do not depend on collections.
     log2 = "${dir}/selftest-gc.log"
     args2: Array(String) = []
@@ -216,7 +216,7 @@ fn test_mir(c: Checks) {
     c.expect(str_has(r, "error[V13]: av.t/f: bb0[0]: reference store through (*_1).0 without its barrier"), "a verifier error names its rule, function, block, and statement")
     c.expect(str_has(r, "--> t.av:3:5"), "a verifier error carries the MIR's source location")
     // Every error of the cases past one word, and of the functions changed
-    // after the passes (W18P), as text.
+    // after the passes, as text.
     c.expect(str_has(text, "  V9: av.t/f: bb3[0]: _71 is read before it is written on some path\n"), "V9 past the first word")
     c.expect(str_has(text, "case v11_wide final V11\n  V11: av.t/f: bb0[5]: _3 (ref str) is live across the collecting call to av.t/use and is not a slot\n  V11: av.t/f: bb0[4]: _3 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb0[4]: _70 (ref str) is live across the collecting call to av.t/churn and is not a slot\n  V11: av.t/f: bb0[3]: _3 (ref str) is live across the collecting call to av.t/mk and is not a slot\n"), "V11 in both words, in local order")
     c.expect(str_has(text, "  V12: av.t/f: bb0[3]: _69 (addr ref str) is live across the collecting call to av.t/churn and is not a slot\n"), "V12 past the first word")
@@ -239,5 +239,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_mir(c)
-  c.finish
+  c.finish()
 }

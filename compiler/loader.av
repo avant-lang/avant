@@ -21,7 +21,7 @@ pub fn self_exe_path: String {
   for nfill in 0..4096 {
     raw_buf.push_byte(0)
   }
-  raw = raw_buf.to_s
+  raw = raw_buf.to_s()
   n = oslink.readlink("/proc/self/exe", raw, 4095)
   if n > 0 && n < 4096 {
     return str_slice(raw, 0, n)
@@ -119,7 +119,7 @@ pub fn import_rel(name: String): String {
     i += 1
   }
   buf.push_str(".av")
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn rel_module_name(dir: String, path: String): String {
@@ -146,7 +146,7 @@ pub fn rel_module_name(dir: String, path: String): String {
     }
     i += 1
   }
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn find_manifest(start: String): String {
@@ -209,6 +209,12 @@ pub fn tag_module(program: Program, name: String, path: String) {
   }
   for i in 0..program.opt_ins.size {
     program.opt_ins[i].mod_name = name
+  }
+  for cdef in program.consts {
+    cdef.mod_name = name
+  }
+  for al in program.aliases {
+    al.mod_name = name
   }
   for lib_def in program.libs {
     lib_def.mod_name = name
@@ -286,11 +292,13 @@ pub class Loader {
   mod_paths: Hash(String, String)
   std_names: Hash(String, String)
   wants_prelude: Bool = false
+  wants_task: Bool = false
+  wants_prelude_more: Bool = false
   lib_read: Bool = false
   lib_rec: String = ""
 
   fn initialize {
-    h = Hash(String, Int).new
+    h = Hash(String, Int).new()
     self.loaded = h
     self.programs = []
     self.stack = []
@@ -298,13 +306,13 @@ pub class Loader {
     self.mods = []
     self.failed = false
     self.err = nil
-    self.errors = DiagBag.new
+    self.errors = DiagBag.new()
     self.dep_dirs = []
     self.project_dir = ""
     self.manifest_dir = ""
-    mp = Hash(String, String).new
+    mp = Hash(String, String).new()
     self.mod_paths = mp
-    sn = Hash(String, String).new
+    sn = Hash(String, String).new()
     self.std_names = sn
   }
 
@@ -427,9 +435,9 @@ pub class Loader {
     }
     exe = exe_path()
     // The build's record beside the compiler (EXE.versions.txt,
-    // tools/letters.sh) names the library it was built from (O617,
-    // VALK-TM): a kept or copied compiler reads that one, never the
-    // nearest lib/ its path climbs to, and says why when it is gone.
+    // tools/letters.sh) names the library it was built from: a kept
+    // or copied compiler reads that one, never the nearest lib/ its
+    // path climbs to, and says why when it is gone.
     if libdir = record_lib(exe) {
       if !file_exists(libdir) {
         fail(loc, "cannot find ${name}: ${exe}.versions.txt names the library ${libdir}, which does not exist; set AVANT_ROOT to the checkout whose lib/ this compiler should read")
@@ -507,7 +515,7 @@ pub class Loader {
       for hit in hits {
         buf.push_str(" ${hit}")
       }
-      fail(loc, buf.to_s)
+      fail(loc, buf.to_s())
       return ""
     }
     hits[0]
@@ -544,7 +552,7 @@ pub class Loader {
 
   pub fn fail(loc: Location, message: String) {
     e = CompileError.new(loc, diag_code(5, message), message)
-    if self.errors.count == 0 {
+    if self.errors.count() == 0 {
       self.err = e
     }
     self.failed = true
@@ -553,7 +561,7 @@ pub class Loader {
 
   pub fn absorb(bag: DiagBag) {
     for e in bag.items {
-      if self.errors.count == 0 {
+      if self.errors.count() == 0 {
         self.err = e
       }
       self.failed = true
@@ -578,7 +586,10 @@ pub class Loader {
     }
     if merged = merge(path) {
       if self.wants_prelude {
-        add_prelude(merged)
+        add_prelude(merged, self.wants_prelude_more)
+      }
+      if self.wants_task {
+        add_task_prelude(merged)
       }
       return merged
     }
@@ -597,7 +608,7 @@ pub class Loader {
       }
       buf.push_str(" -> ")
       buf.push_str(module_label(path))
-      fail(Location.new(path, 1, 1, 0), buf.to_s)
+      fail(Location.new(path, 1, 1, 0), buf.to_s())
       return nil
     }
     if id = self.loaded.get(path) {
@@ -606,19 +617,25 @@ pub class Loader {
     self.stack.push(path)
     if file = source_read(path) {
       lex = Lexer.new(file)
-      tokens = lex.tokenize
+      tokens = lex.tokenize()
       if e = lex.err {
-        self.stack.pop
+        self.stack.pop()
         absorb(lex.errors)
         return nil
       }
       if !self.wants_prelude && prelude_wanted(tokens) {
         self.wants_prelude = true
       }
+      if !self.wants_task && task_prelude_wanted(tokens) {
+        self.wants_task = true
+      }
+      if !self.wants_prelude_more && prelude_more_wanted(tokens) {
+        self.wants_prelude_more = true
+      }
       parser = Parser.new(file, tokens)
-      program = parser.parse
+      program = parser.parse()
       if e2 = parser.err {
-        self.stack.pop
+        self.stack.pop()
         absorb(parser.errors)
         return nil
       }
@@ -627,8 +644,8 @@ pub class Loader {
       tag_module(program, name, path)
       self.programs.push(program)
       self.loaded[path] = self.programs.size - 1
-      seen = Hash(String, Int).new
-      seen_path = Hash(String, String).new
+      seen = Hash(String, Int).new()
+      seen_path = Hash(String, String).new()
       imports: Array(String) = []
       i = 0
       while i < program.imports.size {
@@ -658,10 +675,10 @@ pub class Loader {
       info.imports = imports
       self.mods.push(info)
       self.order.push(path)
-      self.stack.pop
+      self.stack.pop()
       return program
     }
-    self.stack.pop
+    self.stack.pop()
     fail(Location.new(path, 1, 1, 0), "cannot read ${path}")
     nil
   }
@@ -730,23 +747,49 @@ pub fn merge_decls(merged: Program, p: Program) {
     merged.comptimes.push(p.comptimes[j])
     j += 1
   }
+  for cdef in p.consts {
+    merged.consts.push(cdef)
+  }
+  for al in p.aliases {
+    merged.aliases.push(al)
+  }
 }
 
 // Adds the prelude module (prelude_src.av) to a merged program: its
 // declarations after every other module's, so the program's own types
-// keep their order, and an import of it in every module.
-pub fn add_prelude(merged: Program) {
-  src = Source.new(prelude_path(), prelude_source())
+// keep their order, and an import of it in every module. more adds the
+// module's second part (prelude_more_source) after the first.
+pub fn add_prelude(merged: Program, more: Bool) {
+  text = prelude_source()
+  if more {
+    text = text + prelude_more_source()
+  }
+  src = Source.new(prelude_path(), text)
   lex = Lexer.new(src)
-  tokens = lex.tokenize
+  tokens = lex.tokenize()
   parser = Parser.new(src, tokens)
-  p = parser.parse
+  p = parser.parse()
   tag_module(p, "prelude", prelude_path())
   merge_decls(merged, p)
   for info in merged.mods {
     info.imports.push("prelude")
   }
   merged.mods.push(ModInfo.new("prelude", prelude_path()))
+}
+
+// The task module: as the prelude, named `task`.
+pub fn add_task_prelude(merged: Program) {
+  src = Source.new(task_prelude_path(), task_prelude_source())
+  lex = Lexer.new(src)
+  tokens = lex.tokenize()
+  parser = Parser.new(src, tokens)
+  p = parser.parse()
+  tag_module(p, "task", task_prelude_path())
+  merge_decls(merged, p)
+  for info in merged.mods {
+    info.imports.push("task")
+  }
+  merged.mods.push(ModInfo.new("task", task_prelude_path()))
 }
 
 pub fn load_program(path: String): Loader {

@@ -16,6 +16,9 @@ lib httpc {
   fun avant_http_close(srv: Ptr(Void)): Int
   fun avant_http_route_while_serving(what: String)
   fun avant_http_header_check(name: String, value: String)
+  fun avant_http_token_bad(s: String): Int
+  fun avant_http_value_bad(s: String): Int
+  fun avant_http_url_bad(s: String): Int
   fun avant_http_req_is_ws(req: Ptr(Void)): Int
   fun avant_http_req_ws_upgrade(req: Ptr(Void), route: Int): Int
   fun avant_http_req_ws_id(req: Ptr(Void)): Int
@@ -140,11 +143,16 @@ pub struct Request {
 // a response built in code); headers set with `header` are kept
 // separately until the response is written. Content-Length and
 // Connection are managed by the server and the client; setting them
-// with `header` has no effect.
+// with `header` has no effect. The header lines set are kept in `head`,
+// which is private: a response is built by `text` or `bytes` and
+// `header`, so every line went through `header`'s check, and a
+// `Response { ... }` literal outside this module does not
+// compile. A status outside 100-599 traps when the answer is
+// written.
 pub struct Response {
   pub status: Int
   pub headers: Headers
-  pub head: String
+  head: String
   pub body: Bytes
 
   pub fn self.text(body: String, status: Int = 200): Response {
@@ -156,9 +164,9 @@ pub struct Response {
   }
 
   // A name that is not a token, or a value with a control character
-  // other than tab (CR and LF among them), traps (Stage 29 W-FIX1g,
-  // O518): appended as it came, such a value added header lines or a
-  // second answer to the response (response splitting).
+  // other than tab (CR and LF among them), traps: appended as it
+  // came, such a value added header lines or a second answer to the
+  // response (response splitting).
   pub fn header(name: String, value: String): Response {
     httpc.avant_http_header_check(name, value)
     if is_managed_header(name) {
@@ -215,7 +223,7 @@ pub struct WsMessage {
 }
 
 // The crossable half of a WsConn: a bare connection id, the one field
-// that may cross a `spawn` boundary (D35 copies scalars, not the
+// that may cross a `spawn` boundary (a spawn copies scalars, not the
 // pointer a WsConn also holds). Hand work to a task as a sender:
 //
 //   sender = conn.sender
@@ -329,11 +337,11 @@ class HttpState {
 
   // The route tables are read by every loop thread while `serve` runs,
   // with no lock, so a route added then is pushed onto an array the
-  // loops are reading (Stage 29 W-FIX1f, O594: routes answered by
-  // another route's handler, and crashes). Every route method checks
-  // here, on the registering thread, and traps while serving: the
-  // README's rule, register every route before `serve`. Nothing is
-  // added to the request or message path.
+  // loops are reading (routes answered by another route's handler, and
+  // crashes). Every route method checks here, on the registering
+  // thread, and traps while serving: the README's rule, register every
+  // route before `serve`. Nothing is added to the request or message
+  // path.
   fn add(method: String, path: String, handler: fn(Request): Response) {
     if self.serving {
       httpc.avant_http_route_while_serving("route ${method} ${path}")
@@ -451,8 +459,8 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
   // A well-formed WebSocket handshake (validated in C) upgrades here
   // when a websocket route owns the path; without one it falls through
   // to ordinary routing and its 404. The connection's C record keeps
-  // its path's first message route (O564: the loop threads share no
-  // table of connections; the route tables are only read while serving).
+  // its path's first message route (the loop threads share no table of
+  // connections; the route tables are only read while serving).
   if httpc.avant_http_req_is_ws(raw) != 0 && state.has_ws_route(path) {
     if httpc.avant_http_req_ws_upgrade(raw, state.first_ws_route(path)) != 0 {
       wid = httpc.avant_http_req_ws_id(raw)
@@ -477,9 +485,9 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
   resp = state.dispatch(req)
   // The response head and body travel into C as raw heap pointers; the
   // respond entry is no safepoint, so no thread collects while it writes
-  // (Stage 28 W17a: until the handshake a defer region here and a second
-  // one in the entry kept other loop threads' collections off, O111).
-  httpc.avant_http_req_respond(raw, resp.status, resp.head_block, resp.body)
+  // (until the handshake a defer region here and a second one in the
+  // entry kept other loop threads' collections off).
+  httpc.avant_http_req_respond(raw, resp.status, resp.head_block(), resp.body)
 }
 
 // The C loop calls this named function once per WebSocket message and
@@ -495,8 +503,8 @@ fn ws_dispatch(state: HttpState, raw: Ptr(Void)) {
     // The route walk is inlined here rather than called as an
     // HttpState method: each Avant call is a collector frame entry, and
     // this path runs once per message. The first route comes from the
-    // connection's own C record (set at the upgrade, O564), the rest by
-    // each route's next: no path is compared.
+    // connection's own C record (set at the upgrade), the rest by each
+    // route's next: no path is compared.
     i = httpc.avant_ws_event_route(raw)
     if i >= 0 {
       is_text = httpc.avant_ws_event_is_text(raw) != 0
@@ -763,7 +771,7 @@ fn remove_dot_segments(path: String): String {
     if seg == "." {
     } else if seg == ".." {
       if kept.size > 1 {
-        kept.pop
+        kept.pop()
       }
     } else {
       kept.push(seg)
@@ -776,7 +784,7 @@ fn remove_dot_segments(path: String): String {
     }
     buf.push_str(kept[i])
   }
-  out = buf.to_s
+  out = buf.to_s()
   if out.size == 0 {
     return "/"
   }
@@ -831,11 +839,63 @@ fn resolve_url(base: String, loc: String): String? {
   nil
 }
 
+// "byte B at I" for the byte of `s` a check stopped at, "empty" past its end.
+fn bad_byte(s: String, i: Int): String {
+  if i >= s.size {
+    return "empty"
+  }
+  "byte ${s[i]} at ${i}"
+}
+
+// The client's request checks: the method, the URL's target and each
+// header were written into the request as given, so CR LF in any of
+// them added request lines or a second request (request splitting). The
+// rules are Response.header's: a method and a header name are tokens, a
+// header value holds no control character but tab; and a URL holds no
+// control character and no space. A request that breaks one is not
+// sent: the call returns an HttpError naming the part and the byte, as
+// for the client's other refusals.
+fn request_refusal(method: String, url: String, headers: Array(Header)): HttpError? {
+  token_rule = "letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)"
+  m = httpc.avant_http_token_bad(method)
+  if m >= 0 {
+    return HttpError.new("invalid request method (${bad_byte(method, m)}): a method is a token: ${token_rule}")
+  }
+  if refused = url_refusal(url) {
+    return refused
+  }
+  i = 0
+  while i < headers.size {
+    h = headers[i]
+    n = httpc.avant_http_token_bad(h.name)
+    if n >= 0 {
+      return HttpError.new("invalid request header name (header ${i}, ${bad_byte(h.name, n)}): a header name is ${token_rule}")
+    }
+    v = httpc.avant_http_value_bad(h.value)
+    if v >= 0 {
+      return HttpError.new("invalid request header value of ${h.name} (${bad_byte(h.value, v)}): a header value holds no CR, LF or other control character but tab (RFC 9110)")
+    }
+    i += 1
+  }
+  nil
+}
+
+fn url_refusal(url: String): HttpError? {
+  u = httpc.avant_http_url_bad(url)
+  if u >= 0 {
+    return HttpError.new("invalid URL (${bad_byte(url, u)}): a URL holds no space or control character (RFC 3986)")
+  }
+  nil
+}
+
 // One exchange, no redirects. `deadline` is a reading of `now_ms()`:
 // the exchange gets what is left until then when it starts.
 fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Header), deadline: Int): Response | HttpError {
+  if refused = request_refusal(method, url, headers) {
+    return refused
+  }
   if starts_with(url, "https://") {
-    return HttpError.new("https is not supported until the TLS wave")
+    return HttpError.new("https is not supported yet: std.http speaks plain http:// only")
   }
   if !starts_with(url, "http://") {
     return HttpError.new("only http:// URLs are supported")
@@ -850,24 +910,30 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     buf.push_str(p.authority)
     buf.push_str("\r\n")
     i = 0
+    // Content-Length and Connection are the client's (the request's
+    // length is its body's, and it closes after one exchange): a second
+    // Content-Length line from the caller was a second reading of where
+    // the body ends, as Response.header skips them.
     while i < headers.size {
-      buf.push_str(headers[i].name)
-      buf.push_str(": ")
-      buf.push_str(headers[i].value)
-      buf.push_str("\r\n")
+      if !is_managed_header(headers[i].name) {
+        buf.push_str(headers[i].name)
+        buf.push_str(": ")
+        buf.push_str(headers[i].value)
+        buf.push_str("\r\n")
+      }
       i += 1
     }
     buf.push_str("Content-Length: ${body.size}\r\nConnection: close\r\n\r\n")
-    // The body's bytes as they are (Stage 29 W-FIX1g): it went through
-    // String.from_utf8, so a body that is not valid UTF-8 was sent as
-    // nothing after a Content-Length of its size, and the server waited
-    // for it until the call's deadline.
+    // The body's bytes as they are: it went through String.from_utf8,
+    // so a body that is not valid UTF-8 was sent as nothing after a
+    // Content-Length of its size, and the server waited for it until
+    // the call's deadline.
     buf.push_bytes(body)
     left = deadline - now_ms()
     if left <= 0 {
       return HttpError.new("request to ${p.authority} timed out")
     }
-    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s, left)
+    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s(), left)
     code = httpc.avant_http_take_status()
     if code == 1 {
       return HttpError.new("could not connect to ${p.authority}")
@@ -884,7 +950,7 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     }
     // The answer to HEAD has no body: its Content-Length is the length
     // a GET's would have (RFC 9112 6.3), and reading it as this body's
-    // made every such answer invalid (Stage 29 W-FIX1g).
+    // made every such answer invalid.
     resp_body = "".bytes
     if method != "HEAD" {
       resp_body = httpc.avant_http_resp_body(raw)
@@ -927,7 +993,7 @@ pub class Http {
     if httpc.avant_http_take_status() != 0 {
       return HttpError.new("could not listen on ${host}:${port}")
     }
-    state = HttpState.new
+    state = HttpState.new()
     state.bound_port = httpc.avant_http_port(handle)
     Server { handle: handle, state: state }
   }
@@ -979,7 +1045,7 @@ pub class Http {
   }
 }
 
-// A WebSocket client connection (the client half of wave 5C, Q134 B).
+// A WebSocket client connection, the client's counterpart of WsConn.
 // `recv` blocks the calling thread until a message arrives, so do not
 // call it from a server handler. There is no TLS: a `wss://` URL is an
 // HttpError, never a silent downgrade. A connection that is never
@@ -1030,10 +1096,14 @@ pub class Ws {
 
   pub fn self.connect(url: String, timeout_ms: Int = 10000): WsConnection | HttpError {
     if starts_with(url, "wss://") {
-      return HttpError.new("wss is not supported until the TLS wave")
+      return HttpError.new("wss is not supported yet: std.http speaks plain ws:// only")
     }
     if !starts_with(url, "ws://") {
       return HttpError.new("only ws:// URLs are supported")
+    }
+    // The handshake's request line and Host are the URL's.
+    if refused = url_refusal(url) {
+      return refused
     }
     parsed = http_parse_url("http://${str_slice(url, 5, url.size)}")
     if p = parsed {

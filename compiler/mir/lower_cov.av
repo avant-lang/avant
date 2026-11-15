@@ -1,18 +1,16 @@
-// Coverage hooks on the new back end (Stage 28 W8b; stages/stage28/
-// mir.md W8b, audit 5): a build with AVANT_COVERAGE set counts every
-// statement, function entry, and branch arm, and the first touch of each
+// Coverage hooks on the new back end: a build with AVANT_COVERAGE set counts
+// every statement, function entry, and branch arm, and the first touch of each
 // source line, through `avant_cov_hit(slot)` (class never); `main` calls
-// `avant_cov_init(map)` after `avant_io_init_argv` (3.6). The compiler
-// writes the slot map (`avant-cov 1`, then `KIND\tPATH\tLINE\tNAME` per
-// slot: S statement, B branch, F function, L line); the runtime counts by
-// slot. The points are the old back end's (its cov_stmt, cov_func,
-// cov_branch, cov_touch_line and their call sites). The slots are
-// numbered as the old back end numbers them: every point is recorded
-// with the rank of the function it is lowered in (program functions in
-// program order, then the spawn and .parallel thunks, then the lambda
-// thunks, each in the pre-walk's order: the old back end's emit), and cov_finish
-// renumbers the hits by that order once the program is lowered, so the
-// map and the counts read the same under both back ends.
+// `avant_cov_init(map)` after `avant_io_init_argv`. The compiler writes
+// the slot map (`avant-cov 1`, then `KIND\tPATH\tLINE\tNAME` per slot: S
+// statement, B branch, F function, L line); the runtime counts by slot. The
+// points are the old back end's (its cov_stmt, cov_func, cov_branch,
+// cov_touch_line and their call sites). The slots are numbered as the old back
+// end numbers them: every point is recorded with the rank of the function it is
+// lowered in (program functions in program order, then the spawn and .parallel
+// thunks, then the lambda thunks, each in the pre-walk's order: the old back
+// end's emit), and cov_finish renumbers the hits by that order once the program
+// is lowered, so the map and the counts read the same under both back ends.
 
 import location
 import source
@@ -48,17 +46,17 @@ pub fn (lw: MirLower) cov_point(kind: Int, path: String, line: Int, name: String
 // A counted point and the touch of its line (the old back end's cov_register,
 // emit_cov_hit, cov_touch_line).
 pub fn (lw: MirLower) cov_at(kind: Int, loc: Location, name: String) {
-  if !lw.lw_cov.on || lw.failed || !lw.open_now {
+  if !lw.lw_cov.on || lw.failed() || !lw.open_now() {
     return
   }
-  // The prelude module (prelude_src.av) is the language's, not the
-  // program's source: it counts nothing.
-  if loc.path == prelude_path() {
+  // The prelude and task modules (prelude_src.av) are the language's,
+  // not the program's source: they count nothing.
+  if loc.path == prelude_path() || loc.path == task_prelude_path() {
     return
   }
   lw.at(loc)
-  lw.cov_point(kind, loc.path, loc.line, name)
-  lw.cov_point(4, loc.path, loc.line, "")
+  lw.cov_point(kind, loc.path, loc.line(), name)
+  lw.cov_point(4, loc.path, loc.line(), "")
 }
 
 pub fn (lw: MirLower) cov_stmt(st: Stmt) {
@@ -78,7 +76,7 @@ pub fn (lw: MirLower) cov_func(fnn: Function) {
   lw.cov_at(3, fnn.loc, name)
 }
 
-// `avant_cov_init(map)` in main, after the runtime's argv (3.6).
+// `avant_cov_init(map)` in main, after the runtime's argv.
 pub fn (lw: MirLower) cov_init {
   if !lw.lw_cov.on {
     return
@@ -94,7 +92,7 @@ pub fn (lw: MirLower) cov_init {
 // rewritten to its slot, and the map written (the old back end's write_cov_map).
 pub fn (lw: MirLower) cov_finish {
   c = lw.lw_cov
-  if !c.on || lw.failed {
+  if !c.on || lw.failed() {
     return
   }
   // Runs of points with one rank, then the runs in rank order (a stable
@@ -121,7 +119,7 @@ pub fn (lw: MirLower) cov_finish {
   }
   buf = buf_new()
   buf.push_str("avant-cov 1\n")
-  line_slot = Hash(String, Int).new
+  line_slot = Hash(String, Int).new()
   n = 0
   for r in 0..order.size {
     s0 = starts[order[r]]
@@ -149,7 +147,7 @@ pub fn (lw: MirLower) cov_finish {
     for blk in fn_.blocks {
       for st in blk.stmts {
         if st.kind == msk_call() && st.callee == "avant_cov_hit" && st.args.size == 1 {
-          ev = st.args[0].ival.to_i
+          ev = st.args[0].ival.to_i()
           if ev >= 0 && ev < slot_of.size {
             st.args[0] = b.c_i32(slot_of[ev])
           }
@@ -158,10 +156,10 @@ pub fn (lw: MirLower) cov_finish {
     }
   }
   // A coverage build without its slot map cannot be reported on (the
-  // counters would have no lines): the build fails and says why (O416,
-  // Stage 29 W-FIX1d; the failure was dropped and the binary built).
-  if e = mir_cov_write_failure(file_write(c.map_path, buf.to_s)) {
-    lw.fail_build("error: the coverage map was not written: ${e.message}")
+  // counters would have no lines): the build fails and says why (the
+  // failure was dropped and the binary built).
+  if e = mir_cov_write_failure(file_write(c.map_path, buf.to_s())) {
+    lw.fail_build("error: the coverage map was not written: ${e.message()}")
   }
 }
 

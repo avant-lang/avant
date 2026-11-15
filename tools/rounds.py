@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Median-of-N rounds with rotation: the one timing loop (O221, O485, O372).
+"""Median-of-N rounds with rotation: the one timing loop.
 
 FOR MILESTONES AND PUBLICATION, NEVER PER GATE: a gate's LangArena evidence
-stays the single run of `measure.cr -- prod` and `tools/lr-table.sh avant`
-(operating.md, "Measuring"); this mode costs N + 1 runs of every task.
+stays the single run of `measure.cr -- prod` and `tools/lr-table.sh avant`;
+this mode costs N + 1 runs of every task.
 
   python3 tools/rounds.py langarena --rounds N --run-js RUN_JS --out DIR
           [--side NAME=BIN_DIR]... [--pin CPU] [--short SECONDS]
@@ -17,8 +17,8 @@ Several sides (a base and a new tree) are measured in the same rounds, their
 order rotated by round. TASK names restrict the set (default: every task of
 RUN_JS with a binary in every side).
 
-The loop, lifted from bench/valk/measure.py's `time` (W-BENCH-SUITE) with
-its kept-but-bad settled (O387); bench/valk/measure.py now calls it:
+The loop, lifted from bench/valk/measure.py's `time` with
+its kept-but-bad settled; bench/valk/measure.py now calls it:
 
 - the governor must be `performance` on every CPU (else it stops, unless
   --allow-governor, which marks the session "DISTURBED, NOT EVIDENCE");
@@ -30,11 +30,11 @@ its kept-but-bad settled (O387); bench/valk/measure.py now calls it:
   session's start, its sha256 in session.txt) as its only child, nothing
   else between (no GNU time, no perf, no harness): the spawner reads the
   monotonic clock just before vfork and just after wait4, so no wrapper's
-  start-up is in the wall time (GNU time's was, O387), and peak RSS, user
+  start-up is in the wall time (GNU time's was), and peak RSS, user
   and system time are wait4's rusage of that one process, so the RSS is
   the program's own peak, never a wrapper's (the per-task rounds scripts'
   /usr/bin/time around perf read perf's 17 MB for every small task, and a
-  child of Python would read Python's 12 to 20 MB; O372);
+  child of Python would read Python's 12 to 20 MB);
 - stdin from /dev/null, the output to a file, capped, under a timeout;
   every run's output is checked (the first line against RUN_JS's checksum):
   a wrong output, a non-zero exit or a timeout stops the session, it is not
@@ -44,7 +44,7 @@ its kept-but-bad settled (O387); bench/valk/measure.py now calls it:
 - --pin CPU runs every single-threaded task on that CPU (the parent's
   affinity, which the child inherits; Matmul::T* are never pinned).
 
-Very short tasks (O372): a LangArena task cannot repeat its work inside one
+Very short tasks: a LangArena task cannot repeat its work inside one
 process (its sizes are compiled in and it prints only a checksum), so a task
 whose median is under --short seconds (default 0.2, as the LR table's
 "<0.2 s" column) is flagged in the table, beside the spawn floor: the same
@@ -99,10 +99,10 @@ def loadavg():
 # kernel measured for it. It exists because the measuring process cannot be
 # the parent: a child's peak RSS (ru_maxrss) starts from its parent's memory
 # at the fork, so a program started by Python reads Python's 12 to 20 MB,
-# and one started under perf or a harness reads theirs (O372). The spawner's
+# and one started under perf or a harness reads theirs. The spawner's
 # own memory is under any program's (it reads /bin/true's 1.4 MB as 1.4 MB),
 # and it reads the clock itself just before vfork and just after wait4, so
-# its own start-up is outside the interval, which GNU time's was not (O387).
+# its own start-up is outside the interval, which GNU time's was not.
 SPAWN_C = r"""
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -144,10 +144,11 @@ def build_spawn(d):
     return exe, "spawner: %s (%s -O2; %s), sha256 %s" % (exe, cc, ver, hashlib.sha256(open(exe, "rb").read()).hexdigest())
 
 
-def run_once(spawn, argv, cwd, out_path, err_path, limit, pin=None):
+def run_once(spawn, argv, cwd, out_path, err_path, limit, pin=None, env=None):
     """Runs argv (argv[0] a path, relative to cwd or absolute) under the
-    spawner. Returns a dict: wall_ns, exit (128 + n for a signal), rss_kb,
-    user_s, sys_s, timed_out."""
+    spawner, with env (a complete environment; None: this process's).
+    Returns a dict: wall_ns, exit (128 + n for a signal), rss_kb, user_s,
+    sys_s, timed_out."""
     res_path = out_path + ".res"
     old = None
     if pin is not None:
@@ -156,7 +157,7 @@ def run_once(spawn, argv, cwd, out_path, err_path, limit, pin=None):
     try:
         with open(out_path, "wb") as fo, open(err_path, "wb") as fe:
             proc = subprocess.Popen([spawn, res_path] + argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=fo, stderr=fe,
-                                    start_new_session=True)
+                                    start_new_session=True, env=env)
             try:
                 rc = proc.wait(timeout=limit)
                 timed_out = False
@@ -223,19 +224,21 @@ def session_close(note, meta):
     meta.close()
 
 
-def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None, raw="raw"):
+def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None, raw="raw", keep=False):
     """The loop. rows: dicts with id, argv, cwd, pin (bool: may be pinned),
-    fields (written into the raw file). check(row, result, out, err) returns
-    None when the run is a result, else the reason (the session stops).
-    order_of(r) gives round r's order (default: rotate). One unmeasured
-    warm-up of every row first; one raw file per run,
-    d/RAW/round-R/FILE.run (FILE: the row's "file", else its id)."""
+    env (optional: the run's complete environment), fields (written into
+    the raw file). check(row, result, out, err) returns None when the run
+    is a result, else the reason (the session stops). order_of(r) gives
+    round r's order (default: rotate). One unmeasured warm-up of every row
+    first; one raw file per run, d/RAW/round-R/FILE.run (FILE: the row's
+    "file", else its id), and with keep the run's standard output beside
+    it as FILE.out (bench/valk-gc reads its programs' own timings there)."""
     scratch = os.path.join(d, "scratch")
     os.makedirs(scratch, exist_ok=True)
     fo, fe = os.path.join(scratch, "out"), os.path.join(scratch, "err")
 
     def one(row, where):
-        res = run_once(spawn, row["argv"], row["cwd"], fo, fe, limit, pin if row.get("pin", True) else None)
+        res = run_once(spawn, row["argv"], row["cwd"], fo, fe, limit, pin if row.get("pin", True) else None, row.get("env"))
         if os.path.getsize(fo) > CAP or os.path.getsize(fe) > CAP:
             die("output over the cap: %s in %s" % (row["id"], where))
         out, err = open(fo, "rb").read(), open(fe, "rb").read()
@@ -266,6 +269,9 @@ def measure(spawn, rows, rounds, d, limit, check, note, pin=None, order_of=None,
                 for k, v in row.get("fields", {}).items():
                     f.write("%s\t%s\n" % (k, v))
                 f.write("first_line\t%s\n" % out.split(b"\n", 1)[0].decode("utf-8", "replace").strip())
+            if keep:
+                with open(os.path.join(rd, row.get("file", row["id"]) + ".out"), "wb") as f:
+                    f.write(out)
         note("round %d: first %s, %s; loadavg %s" % (r, order[0]["id"], "backwards" if r % 2 == 0 else "forwards",
                                                      loadavg().split()[0]))
     for p in (fo, fe):

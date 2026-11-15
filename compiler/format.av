@@ -126,6 +126,10 @@ pub fn token_text(t: Token): String {
   if k == tk_slash_eq() {
     return "/="
   }
+  ct = compound_text(k)
+  if ct.size > 0 {
+    return ct
+  }
   if k == tk_l_brace() {
     return "{"
   }
@@ -201,6 +205,9 @@ pub fn token_text(t: Token): String {
   if k == tk_dot_dot() {
     return ".."
   }
+  if k == tk_dot_dot_eq() {
+    return "..="
+  }
   if k == tk_for() {
     return "for"
   }
@@ -215,6 +222,9 @@ pub fn token_text(t: Token): String {
   }
   if k == tk_enum() {
     return "enum"
+  }
+  if k == tk_const() {
+    return "const"
   }
   if k == tk_pipe() {
     return "|"
@@ -266,7 +276,7 @@ pub fn push_token(buf: Buf, t: Token) {
 }
 
 pub fn tight_before(k: Int): Bool {
-  if k == tk_dot_dot() {
+  if k == tk_dot_dot() || k == tk_dot_dot_eq() {
     return true
   }
   if k == tk_colon() {
@@ -297,7 +307,7 @@ pub fn tight_before(k: Int): Bool {
 }
 
 pub fn tight_after_kind(k: Int): Bool {
-  if k == tk_dot_dot() {
+  if k == tk_dot_dot() || k == tk_dot_dot_eq() {
     return true
   }
   if k == tk_l_paren() {
@@ -556,8 +566,8 @@ pub fn names_operator_method(tokens: Array(Token), i: Int): Bool {
 // A `(` hugs what came before it only when that opens a call or a type
 // application (a value, `fn`, `pin`, `release`, or the operator name of
 // `fn +(`); after an operator, `=`, a compound assignment, `,` or a
-// keyword it is a grouping and keeps its space (Stage 28 W18F: `j =
-// (r % n)` had become `j =(r % n)`).
+// keyword it is a grouping and keeps its space (`j = (r % n)` had
+// become `j =(r % n)`).
 pub fn paren_hugs(tokens: Array(Token), i: Int, prev: Int): Bool {
   if value_end(prev) {
     return true
@@ -565,7 +575,28 @@ pub fn paren_hugs(tokens: Array(Token), i: Int, prev: Int): Bool {
   if prev == tk_fn() || prev == tk_pin() || prev == tk_release() {
     return true
   }
+  if prev == tk_eq() && index_op_name_at(tokens, prev_significant(tokens, i)) {
+    return true
+  }
   names_operator_method(tokens, i)
+}
+
+// Whether the token at i ends `fn [ ]` or `fn [ ] =`, the name of an
+// indexing operator method (`fn [](i: Int)`, `fn []=(i: Int, v: T)`).
+pub fn index_op_name_at(tokens: Array(Token), i: Int): Bool {
+  j = i
+  if j >= 0 && tokens[j].kind == tk_eq() {
+    j = prev_significant(tokens, j)
+  }
+  if j < 0 || tokens[j].kind != tk_r_bracket() {
+    return false
+  }
+  j = prev_significant(tokens, j)
+  if j < 0 || tokens[j].kind != tk_l_bracket() {
+    return false
+  }
+  j = prev_significant(tokens, j)
+  j >= 0 && tokens[j].kind == tk_fn()
 }
 
 pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight: Bool, lambda_state: Int, separate: Bool): Bool {
@@ -584,6 +615,9 @@ pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight:
   if after_tight {
     return true
   }
+  if curr == tk_eq() && prev == tk_r_bracket() && index_op_name_at(tokens, prev_significant(tokens, i)) {
+    return true
+  }
   if curr == tk_pipe() && lambda_state == 2 {
     return true
   }
@@ -597,6 +631,86 @@ pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight:
     return true
   }
   false
+}
+
+// Bytes that can end one token and begin the next as one longer token:
+// a punctuation byte beside another (`.` `..` become `...`, `?` `?`
+// become `??`, `!` `==` become `!=` `=`), a word byte (a letter, a
+// digit, `_`) beside a word byte or a quote (`r` `"x"` become a raw
+// string), and a digit beside a `.` (`5.` `..` become `5` `...`).
+pub fn punct_byte(c: Int): Bool {
+  if c == 33 || c == 35 || c == 37 || c == 38 || c == 42 || c == 43 || c == 45 || c == 46 || c == 47 {
+    return true
+  }
+  if c == 58 || c == 60 || c == 61 || c == 62 || c == 63 || c == 64 || c == 94 || c == 124 || c == 126 {
+    return true
+  }
+  false
+}
+
+pub fn word_byte(c: Int): Bool {
+  if c >= 48 && c <= 57 {
+    return true
+  }
+  if c >= 65 && c <= 90 {
+    return true
+  }
+  if c >= 97 && c <= 122 {
+    return true
+  }
+  c == 95
+}
+
+pub fn digit_byte(c: Int): Bool {
+  c >= 48 && c <= 57
+}
+
+pub fn may_join(a: Int, b: Int): Bool {
+  if punct_byte(a) && punct_byte(b) {
+    return true
+  }
+  if word_byte(a) && (word_byte(b) || b == 34 || b == 39) {
+    return true
+  }
+  if digit_byte(a) && b == 46 {
+    return true
+  }
+  a == 46 && digit_byte(b)
+}
+
+pub fn structural_kind(k: Int): Bool {
+  if k == tk_interp_open() || k == tk_interp_mid() || k == tk_interp_close() {
+    return true
+  }
+  k == tk_comment() || k == tk_file_line() || k == tk_newline() || k == tk_eof()
+}
+
+// Two tokens printed with nothing between them stay the same two tokens
+// (the formatter deletes nothing a token needs): when their facing
+// bytes could join, the pair is lexed as it would be printed, and a
+// space goes between them unless that gives the two tokens back. Before
+// `. ..` was printed `...`, `? ?` was `??` and `! ==` was `!==`.
+pub fn tokens_join(prev: Token, curr: Token): Bool {
+  if structural_kind(prev.kind) || structural_kind(curr.kind) {
+    return false
+  }
+  a = token_text(prev)
+  b = token_text(curr)
+  if a.size == 0 || b.size == 0 {
+    return false
+  }
+  if !may_join(a[a.size - 1], b[0]) {
+    return false
+  }
+  lex = Lexer.new(Source.new("", a + b))
+  got = lex.tokenize()
+  if lex.has_err() || got.size != 3 {
+    return true
+  }
+  if got[0].kind != prev.kind || got[0].value != prev.value {
+    return true
+  }
+  got[1].kind != curr.kind || got[1].value != curr.value
 }
 
 pub fn collapse_newlines(n: Int): Int {
@@ -625,6 +739,7 @@ pub fn reprint(tokens: Array(Token)): String {
   at_start = true
   prev = -1
   prev2 = -1
+  prev_i = -1
   after_tight = false
   lambda_state = 0
   pending = 0
@@ -668,7 +783,11 @@ pub fn reprint(tokens: Array(Token)): String {
     } else {
       nextk = next_significant(tokens, i)
       separate = must_separate(prev, prev2, k, nextk)
-      if no_space(tokens, i, prev, k, after_tight, lambda_state, separate) {
+      tight = no_space(tokens, i, prev, k, after_tight, lambda_state, separate)
+      if tight && prev_i >= 0 && tokens_join(tokens[prev_i], t) {
+        tight = false
+      }
+      if tight {
         push_token(buf, t)
       } else {
         buf.push_byte(32)
@@ -722,22 +841,95 @@ pub fn reprint(tokens: Array(Token)): String {
     }
     prev2 = prev
     prev = k
+    prev_i = i
     i += 1
   }
   if pending > 0 {
     push_newlines(buf, collapse_newlines(pending))
   }
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn format_source(path: String, text: String): FormatResult {
   src = Source.new(path, text)
   lex = Lexer.new(src)
-  tokens = lex.tokenize_format
+  tokens = lex.tokenize_format()
   if e = lex.err {
-    return FormatResult.new(false, "", e.show)
+    return FormatResult.new(false, "", e.show())
   }
-  FormatResult.new(true, reprint(tokens), "")
+  out = fault_for_test(reprint(tokens))
+  if e = self_check(path, text, out) {
+    return FormatResult.new(false, "", e)
+  }
+  FormatResult.new(true, out, "")
+}
+
+// AVANT_FORMAT_FAULT (the suite's only, not a user knob): `line`
+// turns the canonical text's first line break into a space and
+// `space` drops its first space between two word bytes, so
+// tests/cases/test_format.av can show the self-check refusing a text
+// that is not the same program.
+pub fn fault_for_test(out: String): String {
+  if v = env_get("AVANT_FORMAT_FAULT") {
+    for i in 1..out.size - 1 {
+      if v == "line" && out[i] == 10 {
+        return str_slice(out, 0, i) + " " + str_slice(out, i + 1, out.size)
+      }
+      if v == "space" && out[i] == 32 && word_byte(out[i - 1]) && word_byte(out[i + 1]) {
+        return str_slice(out, 0, i) + str_slice(out, i + 1, out.size)
+      }
+    }
+  }
+  out
+}
+
+pub fn token_shown(t: Token): String {
+  if t.kind == tk_newline() {
+    return "a line break"
+  }
+  if t.kind == tk_eof() {
+    return "the end of the file"
+  }
+  text = token_text(t)
+  if text.size == 0 {
+    return token_name(t.kind)
+  }
+  "`${text}`"
+}
+
+// The formatter's self-check: the canonical text must be the same
+// program. Both texts are lexed by the compiler's own lexer, the one
+// compile and run use (comments dropped, blank lines folded into one
+// line break), and the two token lists must be equal: every token's
+// kind and spelling, and every line break where it was, since a line
+// that starts with `[`, `-` or `+` begins a new statement. Before,
+// format_source returned the reprint unchecked. A difference is a
+// formatter bug: the file is left as it is and the error names the
+// first token that would change.
+pub fn self_check(path: String, before: String, after: String): String? {
+  la = Lexer.new(Source.new(path, before))
+  ta = la.tokenize()
+  lb = Lexer.new(Source.new(path, after))
+  tb = lb.tokenize()
+  n = ta.size
+  if tb.size < n {
+    n = tb.size
+  }
+  for i in 0..n {
+    a = ta[i]
+    b = tb[i]
+    if a.kind != b.kind || a.value != b.value {
+      return "${a.loc.show()}: format would change this program: ${token_shown(a)} would become ${token_shown(b)}; the file is left as it is (a formatter bug)"
+    }
+  }
+  if ta.size != tb.size {
+    at = ta[n - 1]
+    return "${at.loc.show()}: format would change this program: the canonical text has ${tb.size} tokens, the source ${ta.size}; the file is left as it is (a formatter bug)"
+  }
+  if la.has_err() != lb.has_err() {
+    return "${path}: format would change this program: the canonical text does not lex as the source does; the file is left as it is (a formatter bug)"
+  }
+  nil
 }
 
 pub fn print_format(text: String) {

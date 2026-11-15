@@ -1,18 +1,18 @@
-// Conversions to unions the old back end does not compile (Stage 28
-// W7a, D196; the corrections list, C5 and C11): the new back end converts
+// Conversions to unions the old back end does not compile (expected
+// differences): the new back end converts
 // a value wherever the checker allows it (ty_assignable). Not in the
 // differential: tools/backend-diff.sh lists it as an expected difference.
-//   - a bare T and nil into a T? field of a struct literal (C5; the old
+//   - a bare T and nil into a T? field of a struct literal (the old
 //     emit_struct_literal does not convert, myc-llvm rejects the store);
 //   - a bare T and nil passed to a T? parameter of a plain function or a
 //     method (the old back end converts only type-level calls' arguments);
 //   - a union into a union of more members (`Int?` into
 //     `Int | Oops | Nil`): the old emit_coerce wraps members only;
 //   - postfix `?` with two failure members (nil and an Error) into a
-//     smaller union (Stage 29 W4a; before: a success part that is itself
+//     smaller union (before: a success part that is itself
 //     a union, which the old emit_unwrap read at payload index -1).
 // It also keeps a `nil` field default in a generic class, which the old
-// back end compiles since W10b (C14: the checker types the instance's
+// back end compiles too (the checker types the instance's
 // default; types/generic_defaults.av proves it on both).
 
 class Node {
@@ -78,7 +78,7 @@ fn kind(n: Int): Int | Oops | Nil {
   Oops.new("neg")
 }
 
-// Oops is marked Error (D292, Stage 29 W4a): if-assign reads the Int;
+// Oops is marked Error: if-assign reads the Int;
 // oops_of passes the two failures up with `?` (a union of several
 // failures into a smaller one) and returns nil after an Int.
 fn desc(u: Int | Oops | Nil): String? {
@@ -111,7 +111,7 @@ fn main {
   puts(opt(nil))
   puts(name("s"))
   puts(name(nil))
-  tk = Taker.new
+  tk = Taker.new()
   puts(tk.take(7))
   puts(tk.take(nil))
   puts(desc(widen(4)) ?? "nil")
@@ -119,7 +119,7 @@ fn main {
   puts(desc(kind(3)) ?? "nil")
   puts(desc(kind(0)) ?? "nil")
   puts(desc(kind(-1)) ?? "nil")
-  b = Box(Int).new
+  b = Box(Int).new()
   puts(b.last ?? 0)
   b.put(9)
   puts(b.last ?? 0)

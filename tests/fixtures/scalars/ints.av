@@ -1,8 +1,9 @@
-// Int and UInt64 arithmetic on the new back end (Stage 28 W5b):
-// checked + - * / %, the wrapping &+ &- &*, bitwise operators, compares,
-// unary minus, !, ~, and compound assignment. MIN % -1 is 0 for Int
-// (C4, W11b). Opaque values come from opaque() so no mode can
-// fold them.
+// Int32, Int and UInt64 arithmetic on the new back end: checked
+// + - * / %, the wrapping &+ &- &*, bitwise operators, compares,
+// unary minus, !, ~, and compound assignment. MIN % -1 is 0 for
+// Int32 and Int alike. Opaque values come from opaque() so no
+// mode can fold them. The first part is Int32, at its 32-bit
+// edges (it was the 32-bit Int before Int became 64-bit), the second Int.
 
 // n, unknown to every optimizer: the other branch (two clock reads a
 // thousand seconds apart) never runs.
@@ -10,14 +11,18 @@ fn opaque(n: Int): Int {
   a = now_us()
   b = now_us()
   if b &- a > 1000000000 {
-    return n &+ b.wrap_i
+    return n &+ b.wrap_i()
   }
   n
 }
 
+fn opaque32(n: Int32): Int32 {
+  opaque(n.to_i()).to_i32()
+}
+
 fn main {
-  a = opaque(17)
-  b = opaque(-5)
+  a = opaque32(17)
+  b = opaque32(-5)
   puts(a + b)
   puts(a - b)
   puts(a * b)
@@ -26,9 +31,10 @@ fn main {
   puts(b / 2)
   puts(b % 2)
   puts(-a)
-  puts(2147483647 &+ opaque(1))
-  puts((-2147483647 - 1) &- opaque(1))
-  puts(65536 &* opaque(65536))
+  puts(2147483647 &+ opaque32(1))
+  min32: Int32 = -2147483647 - 1
+  puts(min32 &- opaque32(1))
+  puts(65536 &* opaque32(65536))
   puts(a & 12)
   puts(a | 12)
   puts(a ^ 12)
@@ -40,29 +46,28 @@ fn main {
   puts(b > a)
   puts(a >= 18)
   puts(!(a < b))
-  x = opaque(10)
+  x = opaque32(10)
   x += 5
   x -= 3
   x *= 4
   x /= 6
   puts(x)
-  big = opaque(3).to_i * 1000000000000
+  big = opaque(3) * 1000000000000
   puts(big)
   puts(big / 7)
   puts(big % 7)
   puts(-big)
   puts(big &* 10000000)
   puts((-9223372036854775807 - 1) % -1)
-  puts((-2147483647 - opaque(1)) % opaque(-1))
-  puts((-9223372036854775807 - opaque(1).to_i) % opaque(-1).to_i)
+  puts((-2147483647 - opaque32(1)) % opaque32(-1))
+  puts((-9223372036854775807 - opaque(1)) % opaque(-1))
   puts(opaque(-7) % opaque(-1))
-  u = opaque(7).to_u64
+  u = opaque(7).to_u64()
   puts(u * 2000000000000000000u64)
   puts(u - 2u64)
   puts(u / 2u64)
   puts(u % 4u64)
   puts(0u64 &- u)
-  puts(-u)
   puts(u > 6u64)
   puts(big < 0)
 }

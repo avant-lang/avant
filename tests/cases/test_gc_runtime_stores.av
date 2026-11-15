@@ -1,10 +1,10 @@
 import harness
 import backends
 
-// Stage 28 W13b (C34, C35, D204): the runtime's own C stores follow the
+// The runtime's own C stores follow the
 // collector's contract. Three fixtures, each wrong before its fix:
 //
-// heap/inc_slice_mature.av (C34): avant_hash_inc_slice stored a fresh
+// heap/inc_slice_mature.av: avant_hash_inc_slice stored a fresh
 // young key into a mature key buffer without a barrier, so a tenured
 // hash lost the keys inserted after its keys tenured (default
 // environment: no new key found; AVANT_GC_VERIFY=1 reported lost field
@@ -14,19 +14,19 @@ import backends
 // buffer (mature from birth) without a barrier on it, so a tenured
 // array's young elements were lost at the next young collection.
 //
-// heap/split_held.av (C35): split, fields and chars kept their fresh
+// heap/split_held.av: split, fields and chars kept their fresh
 // strings only in a malloc'ed array across separate outermost defer
 // entries, so under AVANT_NURSERY=0 a full collection swept them.
 //
-// The same wave barriers the large pointer buffer of every runtime
+// The same fix barriers the large pointer buffer of every runtime
 // builder that fills a fresh array (split/fields/chars, Hash keys and
 // values, argv, dir_list, Array copy); without it split_held.av under
 // AVANT_GC_VERIFY=1 reported unkept references in about half the runs.
-// heap/buf_grow_held.av (Stage 28 W18M, O109): a growth frees its old
+// heap/buf_grow_held.av: a growth frees its old
 // storage at once only when no root names it; a data pointer held in a
 // root slot across the growing call keeps it.
 //
-// heap/buf_take.av (Stage 28 W18M, O52): the Buf hand-off. The dump has
+// heap/buf_take.av: the Buf hand-off. The dump has
 // avant_buf_take_str exactly where the Buf is dead after its to_s (4
 // calls) and avant_buf_to_str everywhere else (6), and the program prints
 // what the copies printed before the hand-off.
@@ -100,5 +100,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

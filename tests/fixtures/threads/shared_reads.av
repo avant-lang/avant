@@ -1,9 +1,9 @@
-// D191's probe (Stage 28 W8b, records/2026-11-06-s28-w8b/d191-probe.av)
+// A probe of reads shared between threads during collections,
 // with a fiftieth of the main thread's rounds and a twentieth of the
-// tasks', a suite fixture since Stage 28 W17a: eight tasks allocate and
+// tasks' of the full probe: eight tasks allocate and
 // read a shared array of strings built by the main thread while the main
 // thread keeps allocating young strings and objects and reading its own;
-// every value is checked. Before W17a's handshake the full probe failed
+// every value is checked. Before the collection's handshake the full probe failed
 // under AVANT_GC_VERIFY=1, AVANT_YOUNG_MB=1, AVANT_NURSERY=0 and
 // AVANT_GC_STRESS=1 (other threads collected without stopping this one);
 // now every environment prints 0 wrong reads.
@@ -42,7 +42,7 @@ fn work(shared: Array(String), id: Int, rounds: Int): Int {
       if keep[0].size < 4 {
         bad += 1
       }
-      keep.clear
+      keep.clear()
     }
   }
   bad
@@ -79,7 +79,7 @@ fn main {
     }
   }
   wbad = 0
-  hs.each { |h| wbad = wbad + h.join }
+  hs.each { |h| wbad = wbad + (h.join() ?? -1) }
   puts("worker bad reads: ${wbad}")
   puts("main bad reads: ${mbad}")
   puts("shared[199]: ${shared[199]}")

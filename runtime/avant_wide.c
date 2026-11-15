@@ -65,7 +65,7 @@ static int64_t simple_mod(int64_t a, int64_t b) {
 }
 
 /* The halves are the low 32 bits of each Int, as they were when Int was
- * 32 bits (Stage 29 W-INT1); a shift amount is the Int itself. */
+ * 32 bits; a shift amount is the Int itself. */
 avant_int avant_wide_op(avant_int op, avant_int a_lo, avant_int a_hi, avant_int b_lo, avant_int b_hi) {
   uint64_t ua = pack_u((int32_t)a_lo, (int32_t)a_hi);
   uint64_t ub = pack_u((int32_t)b_lo, (int32_t)b_hi);

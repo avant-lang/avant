@@ -1,0 +1,256 @@
+import harness
+import backends
+
+// Programs that print, exit, read their input and files, and run other
+// programs, each case a small program. They are compiled in parallel; a
+// refused one must leave no binary, say the expected words and point at
+// the expected line and column; an accepted one runs in its own
+// directory, with its standard input from a file when the case gives one,
+// and must exit with the expected status and print exactly the expected
+// stdout and stderr (a trap's stderr: its message and its site).
+
+class IoCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub err: String = ""
+  pub input: String = ""
+  pub has_input: Bool = false
+  pub stdin_dir: Bool = false
+  pub merged: Bool = false
+  pub status: Int = 0
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): IoCase {
+  f = IoCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): IoCase {
+  f = IoCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn with_err(f: IoCase, err: String): IoCase {
+  f.err = err
+  f
+}
+
+fn with_status(f: IoCase, status: Int): IoCase {
+  f.status = status
+  f
+}
+
+fn with_input(f: IoCase, input: String): IoCase {
+  f.input = input
+  f.has_input = true
+  f
+}
+
+fn merged(f: IoCase): IoCase {
+  f.merged = true
+  f
+}
+
+// puts prints every type interpolation prints, exactly as "${x}" does.
+fn puts_cases(xs: Array(IoCase)) {
+  pre = "class Bad: Error {\n  pub message: String = \"bad input\"\n}\nenum Tok { eof, name }\nfn size_or_word(n: Int): Int | String {\n  if n < 10 {\n    return n\n  }\n  \"many\"\n}\nfn parse(s: String): Int | Bad {\n  if n = s.to_i() {\n    return n\n  }\n  Bad.new()\n}\n"
+  xs.push(accepted("puts-union", pre + "fn main {\n  puts(size_or_word(3))\n  puts(size_or_word(30))\n  puts(parse(\"4\"))\n  puts(parse(\"x\"))\n  puts(Bad.new())\n  puts(Tok.name)\n}\n", "3\nmany\n4\nbad input\nbad input\nname\n"))
+  xs.push(accepted("puts-same-as-interpolation", pre + "fn main {\n  u = size_or_word(30)\n  e = parse(\"y\")\n  puts(u)\n  puts(\"\${u}\")\n  puts(e)\n  puts(\"\${e}\")\n}\n", "many\nmany\nbad input\nbad input\n"))
+  xs.push(accepted("puts-own-to-s", "struct Pt {\n  x: Int\n  y: Int\n\n  fn to_s: String {\n    \"(\${x}, \${y})\"\n  }\n}\nenum Dir {\n  up\n  down\n\n  fn to_s: String {\n    \"going \${name()}\"\n  }\n}\nfn main {\n  p = Pt { x: 1, y: 2 }\n  puts(p)\n  puts(\"\${p}\")\n  puts(p.to_s())\n  puts(Dir.down)\n}\n", "(1, 2)\n(1, 2)\n(1, 2)\ngoing down\n"))
+  xs.push(refused("puts-optional", "fn main {\n  x = \"3\".to_i()\n  puts(x)\n}\n", "puts cannot print Int?: it holds nil", "3:8"))
+  xs.push(refused("puts-array", "fn main {\n  puts([1, 2])\n}\n", "puts cannot print Array(Int)", "2:8"))
+  xs.push(refused("puts-union-member", "fn f(b: Bool): Int | Array(Int) {\n  if b {\n    return 1\n  }\n  [2]\n}\nfn main {\n  puts(f(true))\n}\n", "puts cannot print Array(Int) | Int: its member Array(Int) has no text", "8:8"))
+}
+
+// print, eputs and eprint: the same values, without a newline or to
+// stderr; a write to stderr keeps its order with stdout's.
+fn writer_cases(xs: Array(IoCase)) {
+  pre = "class Bad: Error {\n  pub message: String = \"bad input\"\n}\nenum Tok { eof, name }\nfn size_or_word(n: Int): Int | String {\n  if n < 10 {\n    return n\n  }\n  \"many\"\n}\nfn parse(s: String): Int | Bad {\n  if n = s.to_i() {\n    return n\n  }\n  Bad.new()\n}\n"
+  xs.push(refused("print-empty", "fn main {\n  print()\n}\n", "print takes one argument", "2:3"))
+  xs.push(refused("eprint-empty", "fn main {\n  eprint()\n}\n", "eprint takes one argument", "2:3"))
+  xs.push(refused("print-block", "fn main {\n  print(1) { |x| x }\n}\n", "print does not take a block", "2:3"))
+  xs.push(accepted("print-scalars", "fn main {\n  print(\"a\")\n  print(1)\n  print(-2)\n  print(2.5)\n  print(true)\n  n: Int32 = 7\n  print(n)\n  print(18446744073709551615u64)\n  puts(\"|\")\n}\n", "a1-22.5true718446744073709551615|\n"))
+  xs.push(with_err(accepted("eputs-eprint", "fn main {\n  puts(\"out\")\n  eputs(\"e1\")\n  eprint(\"e\")\n  eprint(2)\n  eputs(1.5)\n  eputs(false)\n}\n", "out\n"), "e1\ne21.5\nfalse\n"))
+  xs.push(merged(accepted("eputs-order", "fn main {\n  puts(\"a\")\n  eputs(\"b\")\n  print(\"c\")\n  eprint(\"d\")\n  puts(\"e\")\n}\n", "a\nb\ncde\n")))
+  xs.push(with_err(accepted("eputs-union", pre + "fn main {\n  eputs(parse(\"x\"))\n  eprint(size_or_word(12))\n  eputs(Tok.eof)\n}\n", ""), "bad input\nmanyeof\n"))
+  xs.push(refused("print-optional", "fn main {\n  x = \"3\".to_i()\n  print(x)\n}\n", "print cannot print Int?: it holds nil", "3:9"))
+  xs.push(refused("eputs-class", "class P {\n  x: Int = 1\n}\nfn main {\n  eputs(P.new())\n}\n", "eputs cannot print P", "5:10"))
+  xs.push(accepted("print-union", pre + "fn main {\n  print(size_or_word(1))\n  print(Tok.eof)\n  print(parse(\"z\"))\n  puts(\"\")\n}\n", "1eofbad input\n"))
+}
+
+// puts() and eputs() write an empty line.
+fn empty_line_cases(xs: Array(IoCase)) {
+  xs.push(accepted("puts-empty", "fn main {\n  puts(\"a\")\n  puts()\n  puts(\"b\")\n}\n", "a\n\nb\n"))
+  xs.push(with_err(accepted("eputs-empty", "fn main {\n  eputs(\"a\")\n  eputs()\n  eputs(\"b\")\n}\n", ""), "a\n\nb\n"))
+  xs.push(refused("puts-two", "fn main {\n  puts(1, 2)\n}\n", "puts takes one argument, or none for an empty line", "2:3"))
+  xs.push(refused("eputs-two", "fn main {\n  eputs(1, 2)\n}\n", "eputs takes one argument, or none for an empty line", "2:3"))
+}
+
+// exit(status): what it takes, the status, what it writes first.
+fn exit_cases(xs: Array(IoCase)) {
+  xs.push(with_status(accepted("exit-status", "fn main {\n  puts(\"before\")\n  print(\"buffered\")\n  exit(3)\n  puts(\"never\")\n}\n", "before\nbuffered"), 3))
+  xs.push(with_status(accepted("exit-zero", "fn main: Int {\n  puts(\"x\")\n  exit(0)\n  5\n}\n", "x\n"), 0))
+  xs.push(with_status(with_err(accepted("exit-range", "fn main {\n  puts(\"x\")\n  code = 255 + 1\n  exit(code)\n}\n", "x\n"), "exit status 256 out of range (0..255)"), 1))
+  xs.push(with_status(with_err(accepted("exit-negative", "fn main {\n  exit(0 - 1)\n}\n", ""), "exit status -1 out of range (0..255)"), 1))
+  xs.push(refused("exit-string", "fn main {\n  exit(\"no\")\n}\n", "expected Int, got String", "2:8"))
+  xs.push(refused("exit-int32", "fn main {\n  n: Int32 = 3\n  exit(n)\n}\n", "expected Int, got Int32", "3:8"))
+  xs.push(refused("exit-none", "fn main {\n  exit()\n}\n", "exit takes one Int, the exit status", "2:3"))
+  xs.push(refused("exit-value", "fn main {\n  x = exit(1)\n}\n", "cannot bind a Void value", "2:5"))
+  xs.push(with_status(accepted("exit-in-callee", "fn work(n: Int): Int {\n  if n == 3 {\n    exit(9)\n  }\n  n\n}\nfn main {\n  for i in 0..5 {\n    puts(work(i))\n  }\n}\n", "0\n1\n2\n"), 9))
+}
+
+// A block that ends with exit leaves: an else guard, a function's end,
+// an if/else at a function's end, a switch arm.
+fn leave_cases(xs: Array(IoCase)) {
+  bad = "class Bad: Error {\n  pub message: String = \"bad\"\n}\nfn f(s: String): Int | Bad {\n  if n = s.to_i() {\n    return n\n  }\n  Bad.new()\n}\n"
+  xs.push(with_status(with_err(accepted("exit-guard", bad + "fn main {\n  for s in [\"4\", \"x\", \"5\"] {\n    n = f(s) else e {\n      eputs(\"stop: \${e.message}\")\n      exit(2)\n    }\n    puts(n)\n  }\n}\n", "4\n"), "stop: bad\n"), 2))
+  xs.push(with_status(with_err(accepted("exit-fn-end", "fn die(why: String): Int {\n  eputs(why)\n  exit(4)\n}\nfn main {\n  puts(1)\n  puts(die(\"gone\"))\n}\n", "1\n"), "gone\n"), 4))
+  xs.push(with_status(accepted("exit-if-end", "fn pick(n: Int): Int {\n  if n > 0 {\n    return n\n  } else {\n    exit(6)\n  }\n}\nfn main {\n  puts(pick(2))\n  puts(pick(0))\n}\n", "2\n"), 6))
+  xs.push(with_status(accepted("exit-switch-arm", "enum Tok { a, b }\nfn code(t: Tok): Int {\n  switch t {\n    case a { 10 }\n    case b { exit(7) }\n  }\n}\nfn main {\n  puts(code(Tok.a))\n  puts(code(Tok.b))\n}\n", "10\n"), 7))
+  xs.push(refused("exit-guard-other-call", bad + "fn main {\n  n = f(\"x\") else e {\n    puts(e.message)\n  }\n  puts(n)\n}\n", "the block of else e must leave", "11:14"))
+  xs.push(refused("exit-local-fn-value", bad + "fn main {\n  exit = { |c: Int| puts(c) }\n  n = f(\"x\") else e {\n    exit(1)\n  }\n  puts(n)\n}\n", "the block of else e must leave", "12:14"))
+}
+
+fn input_cases(xs: Array(IoCase)) {
+  loop = "fn main {\n  while true {\n    line = read_line() else e {\n      if err = e {\n        eputs(err.message())\n        exit(1)\n      }\n      break\n    }\n    puts(\"[\${line}]\")\n  }\n  puts(\"end\")\n}\n"
+  xs.push(with_input(accepted("read-while", "fn main {\n  n = 0\n  while line = read_line() {\n    n += 1\n    print(line)\n  }\n  puts(n)\n}\n", "abc3\n"), "a\nb\nc\n"))
+  xs.push(with_input(accepted("read-lines", loop, "[one]\n[two]\n[]\n[three]\nend\n"), "one\ntwo\r\n\nthree"))
+  xs.push(with_input(accepted("read-empty", loop, "end\n"), ""))
+  xs.push(accepted("read-devnull", "fn main {\n  if line = read_line() {\n    puts(\"got\")\n  } else {\n    puts(\"none\")\n  }\n}\n", "none\n"))
+  xs.push(with_input(accepted("read-default", "fn main {\n  name = read_line() ?? \"nobody\"\n  puts(\"hello \${name}\")\n  rest = read_line() ?? \"-\"\n  puts(rest)\n}\n", "hello ada\n-\n"), "ada\n"))
+  dir = with_status(with_err(accepted("read-error", loop, ""), "cannot read standard input: Is a directory\n"), 1)
+  dir.stdin_dir = true
+  xs.push(dir)
+  // A file read line by line: it closes itself at its end; close stops it.
+  xs.push(accepted("file-lines", "fn count(path: String): Int | IoError {\n  r = file_open(path)?\n  n = 0\n  while true {\n    line = r.read_line() else e {\n      if err = e {\n        return err\n      }\n      break\n    }\n    n += line.size\n  }\n  n\n}\nfn main {\n  _ = file_write(\"fl.txt\", \"ab\\ncde\\r\\n\\nf\")\n  puts(count(\"fl.txt\") ?? -1)\n  r = file_open(\"fl.txt\") ?? return\n  puts(r.read_line() ?? \"?\")\n  r.close()\n  puts(r.read_line() ?? \"closed\")\n  r.close()\n  puts(r.path)\n  w = file_open(\"fl.txt\") ?? return\n  k = 0\n  while line = w.read_line() {\n    k += 1\n  }\n  puts(k)\n  puts(w.read_line() ?? \"done\")\n}\n", "6\nab\nclosed\nfl.txt\n4\ndone\n"))
+  xs.push(accepted("file-open-errors", "fn main {\n  if r = file_open(\"no-such.txt\") {\n    puts(\"opened\")\n  } else e {\n    puts(\"\${e}\")\n  }\n  if r = file_open(\".\") {\n    puts(\"opened\")\n  } else e {\n    puts(e.message())\n    puts(e.op)\n  }\n}\n", "cannot open no-such.txt: No such file or directory\ncannot open .: Is a directory\nopen\n"))
+  xs.push(refused("read-line-dropped", "fn main {\n  read_line()\n}\n", "this statement drops a value that can be an error (Nil | IoError | String)", "2:3"))
+}
+
+fn fs_cases(xs: Array(IoCase)) {
+  walk = "fn main {\n  _ = dir_make(\"wk/b/deep\")\n  _ = dir_make(\"wk/a\")\n  _ = file_write(\"wk/a/x.txt\", \"12345\")\n  _ = file_write(\"wk/top.txt\", \"\")\n  _ = file_write(\"wk/b/deep/y\", \"yy\")\n  names = dir_walk(\"wk\") ?? []\n  for n in names {\n    puts(n)\n  }\n  puts(dir_exists(\"wk/b/deep\"))\n  puts(dir_exists(\"wk/top.txt\"))\n  puts(dir_exists(\"wk/none\"))\n  puts(file_size(\"wk/a/x.txt\") ?? -1)\n  puts(file_size(\"wk/none\") ?? -1)\n}\n"
+  xs.push(accepted("fs-walk", walk, "a\na/x.txt\nb\nb/deep\nb/deep/y\ntop.txt\ntrue\nfalse\nfalse\n5\n-1\n"))
+  xs.push(accepted("fs-make-delete", "fn report(r: Void | IoError) {\n  r else e {\n    puts(\"\${e}\")\n    return\n  }\n  puts(\"ok\")\n}\nfn main {\n  report(dir_make(\"md/one/two\"))\n  report(dir_make(\"md/one/two\"))\n  _ = file_write(\"md/f\", \"x\")\n  report(dir_make(\"md/f\"))\n  report(dir_make(\"md/f/sub\"))\n  report(file_delete(\"md/f\"))\n  puts(file_exists(\"md/f\"))\n  report(file_delete(\"md/f\"))\n  report(file_delete(\"md/one\"))\n  if s = file_size(\"md/gone\") {\n    puts(s)\n  } else e {\n    puts(e.message())\n  }\n  if w = dir_walk(\"md/none\") {\n    puts(w.size)\n  } else e2 {\n    puts(e2.message())\n  }\n}\n", "ok\nok\ncannot make md/f: File exists\ncannot make md/f/sub: Not a directory\nok\nfalse\ncannot delete md/f: No such file or directory\ncannot delete md/one: Is a directory\ncannot stat md/gone: No such file or directory\ncannot list md/none: No such file or directory\n"))
+  xs.push(accepted("fs-walk-link", "lib c {\n  fun symlink(target: String, path: String): Int32\n}\nfn main {\n  _ = dir_make(\"lk/d\")\n  _ = file_write(\"lk/d/f\", \"1\")\n  _ = c.symlink(\"..\", \"lk/d/up\")\n  for n in dir_walk(\"lk\") ?? [] {\n    puts(n)\n  }\n}\n", "d\nd/f\nd/up\n"))
+  xs.push(refused("fs-make-dropped", "fn main {\n  dir_make(\"x\")\n}\n", "this statement drops a value that can be an error (Void | IoError); read the error with `else e { ... }`", "2:3"))
+  // dir_make and file_delete give Void | IoError: `?` passes the error up.
+  xs.push(accepted("fs-make-try", "fn setup(p: String): Void | IoError {\n  dir_make(\"\${p}/a/b\")?\n  file_delete(\"\${p}/none\")?\n  puts(\"unreached\")\n}\n\nfn main {\n  setup(\"st\") else e {\n    puts(\"\${e}\")\n    puts(dir_exists(\"st/a/b\"))\n    return\n  }\n}\n", "cannot delete st/none: No such file or directory\ntrue\n"))
+  xs.push(refused("fs-exists-type", "fn main {\n  puts(dir_exists(1))\n}\n", "argument 1 of dir_exists is Int, expected String", "2:19"))
+}
+
+fn process_cases(xs: Array(IoCase)) {
+  xs.push(accepted("output-captured", "fn main {\n  if r = process_output(\"sh\", [\"-c\", \"echo out; echo err >&2; exit 3\"]) {\n    puts(r.status)\n    print(r.stdout)\n    print(r.stderr)\n  } else e {\n    puts(\"\${e}\")\n  }\n}\n", "3\nout\nerr\n"))
+  xs.push(accepted("output-input", "fn main {\n  r = process_output(\"tr\", [\"a-z\", \"A-Z\"], \"hello\\nworld\") ?? return\n  puts(r.stdout)\n  puts(r.stderr.size)\n  e = process_output(\"cat\", []) ?? return\n  puts(e.stdout.size)\n}\n", "HELLO\nWORLD\n0\n0\n"))
+  xs.push(accepted("output-large", "fn main {\n  r = process_output(\"sh\", [\"-c\", \"head -c 3000000 /dev/zero; head -c 2000000 /dev/zero >&2; cat > /dev/null\"], \"x\") ?? return\n  puts(r.stdout.size)\n  puts(r.stderr.size)\n  b = buf_new()\n  for i in 0..200000 {\n    b.push_str(\"line \${i}\\n\")\n  }\n  w = process_output(\"wc\", [\"-l\"], b.to_s()) ?? return\n  puts(w.stdout)\n}\n", "3000000\n2000000\n200000\n\n"))
+  xs.push(accepted("output-input-unread", "fn main {\n  b = buf_new()\n  for i in 0..100000 {\n    b.push_str(\"0123456789\")\n  }\n  r = process_output(\"sh\", [\"-c\", \"exit 5\"], b.to_s()) ?? return\n  puts(r.status)\n  puts(\"alive\")\n}\n", "5\nalive\n"))
+  xs.push(accepted("output-errors", "fn main {\n  if r = process_output(\"no-such-program-xyz\", []) {\n    puts(\"ran\")\n  } else e {\n    puts(\"\${e}\")\n    puts(e.errno > 0)\n  }\n  if r = process_output(\"sh\", [\"-c\", \"kill -9 $$\"]) {\n    puts(\"ran\")\n  } else e {\n    puts(\"\${e}\")\n    puts(e.signal)\n  }\n  st = process_output(\"sh\", [\"-c\", \"exit 127\"]) ?? return\n  puts(st.status)\n}\n", "cannot run no-such-program-xyz: No such file or directory\ntrue\nsh killed by signal 9 (Killed)\n9\n127\n"))
+  xs.push(refused("output-dropped", "fn main {\n  process_output(\"true\", [])\n}\n", "this statement drops a value that can be an error (ProcessError | ProcessOutput)", "2:3"))
+}
+
+fn cases: Array(IoCase) {
+  xs: Array(IoCase) = []
+  puts_cases(xs)
+  writer_cases(xs)
+  empty_line_cases(xs)
+  exit_cases(xs)
+  leave_cases(xs)
+  input_cases(xs)
+  fs_cases(xs)
+  process_cases(xs)
+  xs
+}
+
+// The run, in a directory of its own under dir: its stdin from the
+// case's input file, from the directory itself (a read error) or from
+// /dev/null; its stderr to a file of its own or into its stdout; its
+// exit status written to a file.
+fn io_run_job(dir: String, f: IoCase): HJob {
+  key = "io-${f.tag}"
+  input = "/dev/null"
+  if f.has_input {
+    input = "../${key}.in"
+  }
+  if f.stdin_dir {
+    input = "."
+  }
+  err = "2> ../${key}.run.err"
+  if f.merged {
+    err = "2>&1"
+  }
+  a: Array(String) = []
+  a.push("-c")
+  a.push("cd ${dir} && mkdir -p ${key}.d && cd ${key}.d && ../${key}.bin < ${input} > ../${key}.run.out ${err}; echo $? > ../${key}.status")
+  HJob.new("/bin/sh", a, "${dir}/${key}.sh.log")
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(IoCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/io-${f.tag}.av"
+    _ = file_write(src, f.src)
+    if f.has_input {
+      _ = file_write("${dir}/io-${f.tag}.in", f.input)
+    }
+    jobs.push(compile_job("", compiler, src, "${dir}/io-${f.tag}.bin", "${dir}/io-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(io_run_job(dir, f2))
+    }
+  }
+  run_waves(runs)
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/io-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      status = log_text("${dir}/io-${f3.tag}.status").strip().to_i() ?? -1
+      c.eq_int(status, f3.status, "${f3.tag}: exit status")
+      c.eq_str(log_text("${dir}/io-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      if !f3.merged {
+        err = log_text("${dir}/io-${f3.tag}.run.err")
+        if f3.status == 1 && f3.err.size > 0 && !str_has(f3.err, "\n") {
+          c.expect(str_has(err, f3.err) && str_has(err, "io-${f3.tag}.av:"), "${f3.tag}: stderr says ${f3.err} at its site")
+        } else {
+          c.eq_str(err, f3.err, "${f3.tag}: stderr")
+        }
+      }
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/io-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "io-${f3.tag}.av:${f3.pos}"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_io.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

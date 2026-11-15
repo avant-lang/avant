@@ -39,7 +39,7 @@ static char *dup_bytes(const char *s, size_t n) {
   return p;
 }
 
-/* An array of N strings filled in place (RC1; Stage 28 W16a): the array
+/* An array of N strings filled in place (RC1): the array
  * is a handle of the caller's scope, its buffer is published before the
  * first string is allocated, and each string is stored with a barrier
  * (RC3) before the next allocation. */
@@ -53,8 +53,9 @@ static void io_array_buf(AvantArray **ap, int32_t n) {
 
 static void io_array_put(AvantArray *a, char *p) {
   char **slot = &((char **)a->buf)[a->size++];
+  /* The barrier before the store (RC5). */
+  avant_barrier_slot_young(a->buf, slot);
   *slot = p;
-  avant_barrier_slot(a->buf, slot);
 }
 
 static char *cstr_dup(const char *s) {
@@ -67,7 +68,7 @@ static char *cstr_dup(const char *s) {
   return p;
 }
 
-/* The program flag --threads (Q125-A): the generated startup calls
+/* The program flag --threads: the generated startup calls
  * this before anything can start the pool or the HTTP server, so
  * scanning here records the override in time, and removing the flag
  * from the array means the program's own argv() never sees it. Both
@@ -152,7 +153,7 @@ void *avant_argv(void) {
 }
 
 /* The error of the last failed prelude file or process call on this
- * thread (Stage 29 W4b2, D295 R12): errno, the stage a process failed in
+ * thread: errno, the stage a process failed in
  * (1 its output file, 2 its program), and the signal that killed one. */
 static _Thread_local int32_t g_sys_errno;
 static _Thread_local int32_t g_sys_stage;
@@ -162,7 +163,7 @@ static _Thread_local int32_t g_sys_signal;
  * 0 and sysfs attributes report 4096 whatever they hold, so the read runs
  * to end of file. Trusting the size made /proc read empty and made the
  * test runner's processor count fall back to 1 on kernels whose sysfs
- * reports 4096 (Wave T close). stdio only (Q160). read_all returns the
+ * reports 4096. stdio only. read_all returns the
  * bytes in C memory (*n of them, NUL-terminated), or NULL with errno set;
  * open_read makes a directory EISDIR. */
 static FILE *open_read(const char *path) {
@@ -185,7 +186,7 @@ static char *read_all(FILE *f, size_t *np) {
   if (fseek(f, 0, SEEK_END) == 0) {
     long sz = ftell(f);
     /* A file past the String ceiling is an IoError (EFBIG) before
-     * anything is read (Stage 29 W-INT1). */
+     * anything is read. */
     if (sz > (long)AVANT_SIZE_MAX) {
       fclose(f);
       errno = EFBIG;
@@ -251,7 +252,7 @@ static char *read_all(FILE *f, size_t *np) {
   return raw;
 }
 
-/* The prelude's file_read (Stage 29 W4b2, D295 R12): the text, or NULL
+/* The prelude's file_read: the text, or NULL
  * with avant_sys_errno() telling why. */
 /* gc-lint: holds nothing (the text read is C memory; the path is not read after dup_bytes). */
 char *avant_sys_read(const char *path) {
@@ -284,7 +285,7 @@ avant_int avant_sys_write(const char *path, const char *body) {
   }
   n = avant_str_n(body);
   /* The count is an Avant Int: a body past the ceiling (a C string) is
-   * EFBIG, never a wrapped count (Stage 29 W-INT1). */
+   * EFBIG, never a wrapped count. */
   if (n > (size_t)AVANT_SIZE_MAX) {
     g_sys_errno = EFBIG;
     return -1;
@@ -305,6 +306,94 @@ avant_int avant_sys_write(const char *path, const char *body) {
   }
   g_sys_errno = 0;
   return (int32_t)n;
+}
+
+/* An entry point's failure: `fn main: Void |
+ * E` or `Int | E` returned a failure, whose text ("${e}") goes to stderr
+ * with a newline, after what the program wrote to stdout; the result, 1,
+ * is the exit status the generated main returns. */
+avant_int avant_main_fail(const char *text) {
+  size_t n = text ? avant_str_n(text) : 0;
+  fflush(stdout);
+  if (n) {
+    fwrite(text, 1, n, stderr);
+  }
+  fputc('\n', stderr);
+  fflush(stderr);
+  return 1;
+}
+
+/* print, eputs and eprint (puts keeps its own writers in avant_str.c):
+ * one value's text, a newline when HOW has bit 1, to stderr when it has
+ * bit 2. A write to stderr first flushes what stdout holds, so the two
+ * streams keep their order when they go to one place (a terminal, `2>&1`);
+ * stdout stays buffered otherwise. Every write is checked as puts's is
+ * (out_check below). */
+static void out_check(int at_exit);
+
+static void out_bytes(const char *p, size_t n, int32_t how) {
+  FILE *f = (how & 2) ? stderr : stdout;
+  if (how & 2) {
+    fflush(stdout);
+  }
+  if (n) {
+    fwrite(p, 1, n, f);
+  }
+  if (how & 1) {
+    putc('\n', f);
+  }
+  if (ferror_unlocked(stdout) || ferror_unlocked(stderr)) {
+    out_check(0);
+  }
+}
+
+void avant_out_str(const char *s, int32_t how) {
+  out_bytes(s ? s : "", s ? avant_str_n(s) : 0, how);
+}
+
+void avant_out_i64(int64_t v, int32_t how) {
+  char buf[24];
+  char *o = buf + sizeof(buf);
+  uint64_t u = v < 0 ? 0u - (uint64_t)v : (uint64_t)v;
+  do {
+    *--o = (char)('0' + (int)(u % 10u));
+    u /= 10u;
+  } while (u);
+  if (v < 0) {
+    *--o = '-';
+  }
+  out_bytes(o, (size_t)(buf + sizeof(buf) - o), how);
+}
+
+void avant_out_u64(uint64_t v, int32_t how) {
+  char buf[24];
+  char *o = buf + sizeof(buf);
+  do {
+    *--o = (char)('0' + (int)(v % 10u));
+    v /= 10u;
+  } while (v);
+  out_bytes(o, (size_t)(buf + sizeof(buf) - o), how);
+}
+
+void avant_out_f64(double v, int32_t how) {
+  char buf[48];
+  int k = avant_fmt_float_text(buf, v);
+  out_bytes(buf, (size_t)k, how);
+}
+
+void avant_out_bool(int32_t v, int32_t how) {
+  out_bytes(v ? "true" : "false", v ? 4 : 5, how);
+}
+
+/* exit(status): the generated code has checked 0..255 (a status outside
+ * traps at its site); exit runs the atexit work: stdout flushed and
+ * checked, the private temporary directory removed. One exit ends the
+ * process (avant_exit_claim): a task's exit while another thread traps or
+ * exits, or while main returns, waits for good. The end of main in a
+ * program with tasks comes here too. */
+void avant_exit(int32_t status) {
+  avant_exit_claim();
+  exit((int)status);
 }
 
 avant_int avant_sys_errno(void) {
@@ -379,7 +468,7 @@ static char **build_argv(const char *path, void *args) {
 }
 
 /* In the forked child: report why it could not start on errfd (when
- * there is one: a stage and errno, Stage 29 W4b2) and leave with 127. */
+ * there is one: a stage and errno) and leave with 127. */
 static void child_fail(int errfd, int32_t stage) {
   if (errfd >= 0) {
     int32_t msg[2];
@@ -409,7 +498,7 @@ static void child_redirect(const char *file, int fd_a, int fd_b, int errfd) {
 }
 
 /* In the forked child: optional stdout file, and stderr to err_path when
- * given, else to the stdout file; a job (D131) also gets its own process
+ * given, else to the stdout file; a job also gets its own process
  * group, /dev/null stdin, and default signal dispositions, so the runner
  * can stop the whole job and a job never reads the terminal. */
 static void child_stdin_null(void) {
@@ -422,8 +511,8 @@ static void child_stdin_null(void) {
   }
 }
 
-/* job: a runner job (D131). no_stdin: stdin from /dev/null, for a tool the
- * compiler runs (Wave D): myc-llvm reads all of a non-terminal stdin before
+/* job: a runner job. no_stdin: stdin from /dev/null, for a tool the
+ * compiler runs: myc-llvm reads all of a non-terminal stdin before
  * its arguments, so an inherited pipe or socket made it hang or take the
  * input as a source file. */
 static void child_exec(const char *path, char **argv, const char *out_path, const char *err_path, int job, int no_stdin, int errfd) {
@@ -444,8 +533,8 @@ static void child_exec(const char *path, char **argv, const char *out_path, cons
   } else if (out_path && out_path[0]) {
     child_redirect(out_path, STDOUT_FILENO, STDERR_FILENO, errfd);
   }
-  /* The prelude's process_run looks a name without '/' up on PATH
-   * (D295 R12); the runtime's internal runs name their programs. */
+  /* The prelude's process_run looks a name without '/' up on PATH; the
+   * runtime's internal runs name their programs. */
   if (errfd >= 0) {
     execvp(path, argv);
   } else {
@@ -466,7 +555,7 @@ static int32_t exit_code_of(int st) {
 
 /* The child a blocking process_run waits on, and the live jobs (each the
  * leader of its own process group). The scratch signal handler reads
- * these to stop children before it removes the directory (D131). */
+ * these to stop children before it removes the directory. */
 #define JOB_MAX 1024
 static volatile pid_t g_wait_child;
 static volatile pid_t g_jobs[JOB_MAX];
@@ -497,7 +586,7 @@ static int32_t run_child(const char *path, void *args, const char *out_path, con
   }
   free_argv(argv);
   g_wait_child = pid;
-  /* The process wait is native (Stage 28 W17a, rule 2). */
+  /* The process wait is native (rule 2). */
   avant_gc_native_begin();
   while (waitpid(pid, &st, 0) < 0) {
     if (errno != EINTR) {
@@ -511,8 +600,8 @@ static int32_t run_child(const char *path, void *args, const char *out_path, con
   return exit_code_of(st);
 }
 
-/* The prelude's process_run and process_run_out (Stage 29 W4b2, D295
- * R12): a program name without '/' is looked up on PATH; stdout and
+/* The prelude's process_run and process_run_out: a program name without '/' is
+ * looked up on PATH; stdout and
  * stderr go to out_path when it is not empty. The exit status of a
  * process that exited (0..255); -1 when it could not start
  * (avant_sys_stage(): 1 its output file, 2 its program; avant_sys_errno()
@@ -559,8 +648,8 @@ avant_int avant_sys_run(const char *path, void *args, const char *out_path) {
   close(fds[1]);
   free_argv(argv);
   g_wait_child = pid;
-  /* The pipe read and the process wait are native (Stage 28 W17a,
-   * rule 2): C memory only. */
+  /* The pipe read and the process wait are native (a native wait
+   * touches C memory only). */
   avant_gc_native_begin();
   for (;;) {
     got = read(fds[0], msg, sizeof msg);
@@ -592,7 +681,7 @@ avant_int avant_sys_run(const char *path, void *args, const char *out_path) {
   return WIFEXITED(st) ? WEXITSTATUS(st) : 1;
 }
 
-/* `avant run` starts the program with this (W4b2, kept at W-ADOPT): the
+/* `avant run` starts the program with this: the
  * exit status, 128 + n for signal n, 127 when it could not start, which
  * the command passes on as its own. */
 avant_int avant_fs_run(const char *path, void *args) {
@@ -601,7 +690,7 @@ avant_int avant_fs_run(const char *path, void *args) {
 
 /* Starts a job without waiting: path with args, stdout and stderr to
  * out_path, stdin /dev/null, its own process group. Returns its pid, or
- * -1 when it cannot start. Internal to the test runner (D131). */
+ * -1 when it cannot start. Internal to the test runner. */
 avant_int avant_job_start(const char *path, void *args, const char *out_path) {
   char **argv;
   pid_t pid;
@@ -632,7 +721,7 @@ avant_int avant_job_start(const char *path, void *args, const char *out_path) {
 /* Waits for any started job to finish. Returns its pid, or -1 when no job
  * is running; avant_job_status then gives its exit code (128+n for a
  * signal) and avant_job_signal the signal that ended it (0 when it
- * exited), so the runner can tell `exit 141` from SIGPIPE (O520). */
+ * exited), so the runner can tell `exit 141` from SIGPIPE. */
 avant_int avant_job_wait(void) {
   for (;;) {
     int st = 0;
@@ -641,7 +730,7 @@ avant_int avant_job_wait(void) {
     if (g_njobs == 0) {
       return -1;
     }
-    /* The process wait is native (Stage 28 W17a, rule 2). */
+    /* The process wait is native (rule 2). */
     avant_gc_native_begin();
     pid = waitpid(-1, &st, 0);
     avant_gc_native_end();
@@ -674,20 +763,20 @@ avant_int avant_job_signal(void) {
 /* A blocking run of a tool the compiler starts (myc-llvm, cc, re2c, the
  * bind helper, git): like process_run, with stdout (and stderr, unless
  * err_path names its own file) to out_path when given, and stdin from
- * /dev/null. Internal (no prelude name, D132). */
+ * /dev/null. Internal (no prelude name). */
 avant_int avant_tool_run(const char *path, void *args, const char *out_path, const char *err_path) {
   return run_child(path, args, out_path, err_path, 1);
 }
 
-/* A blocking run with stdout and stderr in separate files (D140): what
+/* A blocking run with stdout and stderr in separate files: what
  * std.testing's run_golden and rejects and bind's output split asked of
  * sh. Like process_run, it forwards a signal to its child. Internal. */
 avant_int avant_process_run_split(const char *path, void *args, const char *out_path, const char *err_path) {
   return run_child(path, args, out_path, err_path, 0);
 }
 
-/* Internal file helpers (D140), bound with lib/fun, no prelude name
- * (D132): the runner, the harness, std.testing, and the compiler use them
+/* Internal file helpers, bound with lib/fun, no prelude name: the runner, the
+ * harness, std.testing, and the compiler use them
  * instead of starting /bin/rm, chmod, mkdir, or sh -c pwd. Each returns 0
  * on success, 1 otherwise. */
 
@@ -751,7 +840,7 @@ avant_int avant_fs_mkdir_p(const char *path) {
 
 /* cp: copies src to dst byte for byte, with src's permission bits, through
  * a temporary beside dst renamed into place, so dst is never half
- * written (D138: a gate keeps the fixed point's next compiler). It uses
+ * written (a gate keeps the fixed point's next compiler this way). It uses
  * stdio, not read()/write(): an Avant program's own fn read or fn write is
  * a global symbol of the same name and would replace libc's for every
  * caller in the process. */
@@ -778,7 +867,7 @@ avant_int avant_fs_copy(const char *src, const char *dst) {
     fclose(in);
     return 1;
   }
-  /* The copy is native (Stage 28 W17a, rule 2): C buffers only; dst is
+  /* The copy is native (rule 2): C buffers only; dst is
    * read again after it, from a handle (a collection may move it). */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &dst);
@@ -804,7 +893,7 @@ avant_int avant_fs_copy(const char *src, const char *dst) {
   return 0;
 }
 
-/* The identity of a file for the safepoint probe cache (D139): device,
+/* The identity of a file for the safepoint probe cache: device,
  * inode, size, and change time to the nanosecond, or "" when it cannot be
  * read. Replacing or rewriting the file changes it. */
 char *avant_file_identity(const char *path) {
@@ -822,7 +911,7 @@ char *avant_file_identity(const char *path) {
 }
 
 /* Sets an environment variable for this process and the children it
- * starts. Internal plumbing (the probe cache, D139), no prelude name. */
+ * starts. Internal plumbing (the probe cache), no prelude name. */
 void avant_env_set(const char *name, const char *value) {
   if (name && name[0] && value) {
     setenv(name, value, 1);
@@ -878,6 +967,7 @@ static int cmp_names(const void *a, const void *b) {
 /* The names in directory path, except . and .., sorted, in C memory:
  * 0 and *out/*np, or the errno that stopped the listing (a name that
  * cannot be stored is ENOMEM, never a shorter list). */
+/* gc-lint: no reference word (names is malloc'ed C memory). */
 static int list_names(const char *path, char ***out, int32_t *np) {
   char **names = NULL;
   int32_t n = 0;
@@ -902,7 +992,7 @@ static int list_names(const char *path, char ***out, int32_t *np) {
       continue;
     }
     if (n >= cap) {
-      /* An Array of names stays within the ceiling (Stage 29 W-INT1). */
+      /* An Array of names stays within the ceiling. */
       if (cap > AVANT_SIZE_MAX / 2) {
         err = EOVERFLOW;
         break;
@@ -963,7 +1053,7 @@ static void *names_array(char **names, int32_t n) {
   return a;
 }
 
-/* The prelude's dir_list (Stage 29 W4b2, D295 R12): the sorted names, or
+/* The prelude's dir_list: the sorted names, or
  * NULL with avant_sys_errno() telling why (not found, not a directory,
  * permission denied, out of memory). */
 /* gc-lint: holds nothing (the path is read before names_array allocates). */
@@ -978,7 +1068,7 @@ void *avant_sys_list(const char *path) {
   return names_array(names, n);
 }
 
-/* ---- Scratch directory (D127) ------------------------------------------
+/* ---- Scratch directory ------------------------------------------
  *
  * One private directory per process, created on first use with mkdtemp
  * under $TMPDIR (else /tmp) and named avant-XXXXXX. Every temporary path
@@ -1063,7 +1153,7 @@ static void tmp_empty_dir(int fd, int depth) {
   }
 }
 
-/* rm -rf (D140): a file or a symbolic link is unlinked; a directory is
+/* rm -rf: a file or a symbolic link is unlinked; a directory is
  * emptied depth-first without following links, then removed. 0 when the
  * path is gone. */
 avant_int avant_fs_remove_tree(const char *path) {
@@ -1137,7 +1227,7 @@ static void tmp_finish(void) {
   tmp_remove();
 }
 
-/* Stops what this process started before the directory goes (D131):
+/* Stops what this process started before the directory goes:
  * SIGTERM to every job's group and to the child a blocking process_run
  * waits on, then reap them for up to about two seconds, then SIGKILL
  * whatever is left and reap briefly. Async-signal-safe calls only. */
@@ -1185,7 +1275,7 @@ static void tmp_stop_children(void) {
   }
 }
 
-/* Standard output and standard error (Stage 29 W-FIX1i). A write that
+/* Standard output and standard error. A write that
  * fails is never silent: puts checks the stream after every write
  * (avant_out_check), and at exit a failed flush, or an error a write
  * left on the stream, stops the program with a message naming the
@@ -1201,15 +1291,39 @@ __attribute__((noreturn)) static void out_fail(const char *stream, int e, int at
   exit(1);
 }
 
+/* stdout's lock for the exit's flush, waited for a second at most. Two
+ * flushes of one buffer at once write its bytes twice: a task that traps
+ * flushes stdout on its own thread (the trap is told at once, after the
+ * program's output) while main returns and the exit flushes it. So the
+ * exit takes the lock, flushes, and keeps it to the end of the process:
+ * no other thread writes or flushes stdout after the exit's flush. A
+ * thread that keeps the lock longer (a write blocked on a full pipe)
+ * gets the old behavior, an unlocked flush, so the exit cannot hang.
+ * The lock is recursive: this thread's later stdio (glibc's own exit
+ * flush, another exit handler) goes on. Returns whether it is held. */
+static int out_lock_at_exit(void) {
+  struct timespec pause = {0, 1000000};
+  int i;
+  for (i = 0; i < 1000; i++) {
+    if (ftrylockfile(stdout) == 0) {
+      return 1;
+    }
+    nanosleep(&pause, NULL);
+  }
+  return 0;
+}
+
 /* The stream's error flag set by this write or an earlier one (printf
  * included): flushing again what is buffered names the reason. At exit
- * the stream is flushed without its lock, as glibc's own exit flush
- * does, so a thread that exits while another holds stdout cannot hang. */
+ * the flush holds stdout's lock when it can (out_lock_at_exit). */
 static void out_check(int at_exit) {
   int e = 0;
   int bad;
   if (g_out_failed) {
     return;
+  }
+  if (at_exit) {
+    (void)out_lock_at_exit();
   }
   bad = at_exit ? fflush_unlocked(stdout) != 0 : fflush(stdout) != 0;
   if (bad) {
@@ -1236,7 +1350,7 @@ static void out_check_at_exit(void) {
 }
 
 /* An Avant program's SIGPIPE has the default action whatever its parent
- * left (D330 made whole, Stage 29 W-FIX1i): an inherited SIG_IGN (a CI
+ * left: an inherited SIG_IGN (a CI
  * runner, a shell's trap '' PIPE) or a blocked SIGPIPE is reset
  * before main, so `prog | head` ends the program the same way under any
  * parent, status 141, and tmp_catch below then removes the private
@@ -1329,12 +1443,12 @@ static void tmp_create(void) {
   tmp_catch(SIGTERM);
   tmp_catch(SIGHUP);
   /* A closed pipe on standard output (`prog | head`) is an ordinary way
-   * for a command-line program to end (O521, Stage 29 W-FIX1e): the
+   * for a command-line program to end: the
    * directory goes and the program still dies by SIGPIPE, status 141
-   * (D330 keeps SIGPIPE's default action; avant_io_start resets an
+   * (SIGPIPE keeps its default action; avant_io_start resets an
    * inherited SIG_IGN). std.http's sockets never raise it (MSG_NOSIGNAL). */
   tmp_catch(SIGPIPE);
-  /* A crash removes the directory too (O35, Stage 29 W1b): the handler
+  /* A crash removes the directory too: the handler
    * cleans up and re-raises the signal with its default action, so the
    * process still dies by it (a core dump included). A crash with no
    * stack left (a stack overflow) cannot run the handler. */
@@ -1362,7 +1476,7 @@ char *avant_tmp_dir(void) {
 }
 
 /* A fresh, created directory inside the scratch directory (std.testing's
- * temp_dir, D128). */
+ * temp_dir). */
 char *avant_tmp_new_dir(void) {
   char path[TMP_PATH_MAX + 32];
   pthread_mutex_lock(&g_tmp_lock);
@@ -1391,7 +1505,7 @@ void avant_tmp_keep(void) {
   pthread_mutex_unlock(&g_tmp_lock);
 }
 
-/* D84 (Stage 29 W1b): a failed check fails the process. std.testing's
+/* A failed check fails the process. std.testing's
  * Test and the suite's harness call avant_test_fail at every failed check;
  * a program that then ends with status 0 (a void main, a main that
  * returns 0, a main that never calls finish) exits 1 instead. The handler
@@ -1405,6 +1519,28 @@ void avant_test_fail(void) {
   __atomic_store_n(&g_test_failed, 1, __ATOMIC_RELAXED);
 }
 
+/* std.testing's report lines (testing_write): every byte of S written to
+ * standard output (a short write goes
+ * on, an interrupted one is retried); a write that fails stops the
+ * process as puts does (out_fail: "avant runtime: cannot write to
+ * standard output: REASON", status 1). Before this, testing_write
+ * called write(2) itself and ignored its result, so a test process whose
+ * standard output failed lost its report lines and still exited 0 when
+ * every check passed. */
+void avant_test_write(const char *s, avant_int n) {
+  size_t off = 0;
+  while (n > 0 && off < (size_t)n) {
+    ssize_t k = write(1, s + off, (size_t)n - off);
+    if (k < 0 && errno == EINTR) {
+      continue;
+    }
+    if (k <= 0) {
+      out_fail("standard output", k < 0 ? errno : EIO, 0);
+    }
+    off += (size_t)k;
+  }
+}
+
 static void test_status_at_exit(int status, void *arg) {
   (void)arg;
   if (status == 0 && __atomic_load_n(&g_test_failed, __ATOMIC_RELAXED)) {
@@ -1415,4 +1551,44 @@ static void test_status_at_exit(int status, void *arg) {
 
 __attribute__((constructor)) static void test_status_init(void) {
   on_exit(test_status_at_exit, NULL);
+}
+
+/* ---- Shared with avant_sys.c ----------------------------------------
+ *
+ * avant_sys.c (the prelude's second part, linked only by a program that
+ * calls one of its functions) uses these helpers of this file. */
+
+char *avant_io_dup(const char *s, size_t n) {
+  return dup_bytes(s, n);
+}
+
+FILE *avant_io_open_read(const char *path) {
+  return open_read(path);
+}
+
+int avant_io_list_names(const char *path, char ***out, int32_t *np) {
+  return list_names(path, out, np);
+}
+
+void *avant_io_names_array(char **names, int32_t n) {
+  return names_array(names, n);
+}
+
+char **avant_io_build_argv(const char *path, void *args) {
+  return build_argv(path, args);
+}
+
+void avant_io_free_argv(char **argv) {
+  free_argv(argv);
+}
+
+__attribute__((noreturn)) void avant_io_child_fail(int errfd, int32_t stage) {
+  child_fail(errfd, stage);
+  _exit(127);
+}
+
+/* The child a blocking run waits on, which the scratch directory's
+ * signal handler stops before it removes the directory. */
+void avant_io_wait_child(int32_t pid) {
+  g_wait_child = (pid_t)pid;
 }

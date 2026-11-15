@@ -1,5 +1,5 @@
 #!/bin/sh
-# The README's links and anchors, checked (Stage 29, the README rewrite).
+# The README's links and anchors, checked.
 #
 #   sh tools/readme-links.sh [FILE.md]        (default: README.md)
 #

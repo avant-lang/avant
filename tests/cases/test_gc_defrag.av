@@ -1,7 +1,7 @@
 import harness
 import backends
 
-// Stage 28 W11c (C31, D204): a full collection's defragmentation does not
+// A full collection's defragmentation does not
 // move a mature object that a word of the collecting thread's stack names.
 // Before the fix it moved such an object, rewrote only the precise
 // references to it, and freed its block while a runtime C helper still
@@ -15,8 +15,8 @@ import backends
 // every stack word, root, or field that still names a block being freed,
 // at every such collection. So one run per environment is the regression
 // test: with the old candidate rule the verified runs under
-// AVANT_NURSERY=0 and AVANT_YOUNG_MB=1 report in 10 of 10 runs (W11c
-// record). The program runs plain, under AVANT_GC_VERIFY=1, both
+// AVANT_NURSERY=0 and AVANT_YOUNG_MB=1 report in 10 of 10 runs (measured
+// when the rule changed). The program runs plain, under AVANT_GC_VERIFY=1, both
 // verified environments, and AVANT_NURSERY=0: the known stdout, no
 // stderr (no verifier report), exit 0. test_closures runs churn.av under
 // AVANT_GC_VERIFY=1 AVANT_NURSERY=0 for the same reason.
@@ -59,18 +59,18 @@ fn stat_int(text: String, key: String): Int {
   parts = text.split(" ")
   for p in parts {
     if p.size > key.size + 1 && str_slice(p, 0, key.size + 1) == "${key}=" {
-      return str_slice(p, key.size + 1, p.size).strip.to_i ?? -1
+      return str_slice(p, key.size + 1, p.size).strip().to_i() ?? -1
     }
   }
   -1
 }
 
-// O202 (Stage 29 W-FIX1c): no evacuation without a gain.
+// No evacuation without a gain.
 // heap/defrag_gain.av (its comment has the three cases) prints the known
 // stdout plainly and under each environment above. Then each case alone,
 // with AVANT_GC_STATS=1 and every collector variable unset: 50 forced
 // full collections of a heap that does not change evacuate fewer than 5
-// blocks in all (0 today; 50 before W-FIX1c, one per collection); a
+// blocks in all (0 today; 50 before the gain rule, one per collection); a
 // heap of 4.6 MiB with two sparse blocks is not walked to gain one
 // block (0 blocks evacuated; 2 with the one-block rule alone); and a
 // fragmented heap is still evacuated (at least 60 blocks; 98 today, 100
@@ -81,7 +81,11 @@ fn test_defrag_gain(c: Checks, compiler: String, root: String, dir: String) {
   run_waves(jobs)
   c.eq_int(jobs[0].code, 0, "defrag_gain.av: compiles")
   envs = gc_envs()
-  clean = "-u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_HEAP_RESERVE_GB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS AVANT_GC_STATS=1"
+  // The three counted cases are about what a full collection does to the
+  // mature space, so every collection they force must be one:
+  // AVANT_GC_PROOF=0 (with it on, a forced collection of a heap in which
+  // no old object can have died is a young one, and moves nothing old).
+  clean = "-u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_HEAP_RESERVE_GB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS AVANT_GC_PROOF=0 AVANT_GC_STATS=1"
   runs: Array(HJob) = []
   for e in 0..envs.size {
     runs.push(run_job_env(dir, "defrag_gain", "defrag_gain.g${e}", envs[e]))
@@ -131,5 +135,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

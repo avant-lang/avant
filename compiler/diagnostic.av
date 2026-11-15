@@ -100,45 +100,45 @@ pub class CompileError {
   }
 
   pub fn show: String {
-    "${self.loc.show}: ${self.message}"
+    "${self.loc.show()}: ${self.message}"
   }
 
   pub fn render: String {
     buf = buf_new()
     buf.push_str("error[${self.code}]: ${self.message}\n")
-    buf.push_str("  --> ${self.loc.show}\n")
+    buf.push_str("  --> ${self.loc.show()}\n")
     if self.loc.path.size > 0 {
       if text = file_read(self.loc.path) {
-        line_text = diag_line_text(text, self.loc.line)
+        line_text = diag_line_text(text, self.loc.line())
         if line_text.size > 0 {
-          num = "${self.loc.line}"
+          num = "${self.loc.line()}"
           buf.push_str("${num} | ${line_text}\n")
           pad = buf_new()
           for j in 0..num.size {
             pad.push_str(" ")
           }
-          buf.push_str("${pad.to_s} | ")
-          for k in 1..self.loc.column {
+          buf.push_str("${pad.to_s()} | ")
+          for k in 1..self.loc.column() {
             buf.push_str(" ")
           }
           buf.push_str("^\n")
         }
       }
     }
-    buf.to_s
+    buf.to_s()
   }
 }
 
 pub class DiagBag {
   pub items: Array(CompileError) = []
   pub suppressed: Int = 0
-  // Every push counts, kept, repeated or past the cap of 20 (O162): a mark
-  // is this count, so an error since a mark is always seen. The shown
-  // items stop growing at 20 and skip repeats, so their count cannot be a
-  // mark: once it stopped, a parser loop that waits for an error to resync
-  // never saw one and spun on the same token. before_items and
-  // before_suppressed hold the state before each push, so truncate(mark)
-  // can undo a speculative parse exactly.
+  // Every push counts, kept, repeated or past the cap of 20: a mark is
+  // this count, so an error since a mark is always seen. The shown items
+  // stop growing at 20 and skip repeats, so their count cannot be a mark:
+  // once it stopped, a parser loop that waits for an error to resync never
+  // saw one and spun on the same token. before_items and before_suppressed
+  // hold the state before each push, so truncate(mark) can undo a
+  // speculative parse exactly.
   pub pushes: Int = 0
   before_items: Array(Int) = []
   before_suppressed: Array(Int) = []
@@ -154,12 +154,12 @@ pub class DiagBag {
     }
     keep = self.before_items[mark]
     while self.items.size > keep {
-      self.items.pop
+      self.items.pop()
     }
     self.suppressed = self.before_suppressed[mark]
     while self.before_items.size > mark {
-      self.before_items.pop
-      self.before_suppressed.pop
+      self.before_items.pop()
+      self.before_suppressed.pop()
     }
     self.pushes = mark
   }
@@ -168,10 +168,10 @@ pub class DiagBag {
     self.items.size + self.suppressed
   }
 
-  // n errors another bag counted but this one did not get as items (O163,
-  // Stage 29 W1a): each is a push, so a mark sees it, and with hidden each
-  // is also one of the errors past the cap ("and N more errors"); without,
-  // it is a repeat, which is never shown twice.
+  // n errors another bag counted but this one did not get as items: each
+  // is a push, so a mark sees it, and with hidden each is also one of the
+  // errors past the cap ("and N more errors"); without, it is a repeat,
+  // which is never shown twice.
   pub fn note(n: Int, hidden: Bool) {
     for k in 0..n {
       self.before_items.push(self.items.size)
@@ -192,7 +192,7 @@ pub class DiagBag {
     self.before_suppressed.push(self.suppressed)
     self.pushes += 1
     for old in self.items {
-      if old.loc.line == e.loc.line && old.loc.column == e.loc.column && diag_eq(old.loc.path, e.loc.path) && diag_eq(old.code, e.code) && diag_eq(old.message, e.message) {
+      if old.loc.line() == e.loc.line() && old.loc.column() == e.loc.column() && diag_eq(old.loc.path, e.loc.path) && diag_eq(old.code, e.code) && diag_eq(old.message, e.message) {
         return
       }
     }
@@ -216,7 +216,7 @@ pub class DiagBag {
     buf = buf_new()
     i = 0
     while i < self.items.size {
-      buf.push_str(self.items[i].render)
+      buf.push_str(self.items[i].render())
       buf.push_str("\n")
       i += 1
     }
@@ -226,6 +226,6 @@ pub class DiagBag {
     if self.suppressed > 0 {
       buf.push_str("error: and ${self.suppressed} more errors (limit 20)\n")
     }
-    buf.to_s
+    buf.to_s()
   }
 }

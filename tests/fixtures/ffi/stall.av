@@ -1,4 +1,4 @@
-// O125 (Stage 28 W18C): user C that blocks without avant_gc_native_begin
+// User C that blocks without avant_gc_native_begin
 // holds every collection: a spawned task calls st_block, which sleeps 1.5 s
 // in the running state, while the main thread asks for a collection. The
 // collection waits until the task returns to Avant (the program is correct,
@@ -14,9 +14,9 @@ lib st {
 }
 
 fn main {
-  h = spawn { st.st_block(1500).to_i }
+  h = spawn { st.st_block(1500).to_i() }
   while st.st_started_now() == 0 {
   }
   st.avant_gc_collect()
-  puts("collected; the task blocked ${h.join} ms")
+  puts("collected; the task blocked ${h.join() ?? -1} ms")
 }

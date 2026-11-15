@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The floor (D296), re-derived from a wave's LR table.
+"""The floor, re-derived from a wave's LR table: the tasks where Avant is
+behind Crystal or Go.
 
   python3 tools/floor.py TABLE.md [--runtime RUNTIME.tsv]
                          [--base BASE_TABLE.md] [--base-label LABEL]
@@ -16,8 +17,8 @@ memory multipliers against the best language measured.
 ("not on the floor" when it was not there), and the line "N tasks. Left the
 list: ... Joined it: ...". The column is headed by --base-label, else by a
 label taken from the base's path: the part after `records/` or `results/`
-without the trailing `la/table.md` (`.../records/2026-11-13-valk-t/final/
-la/table.md` gives `2026-11-13-valk-t/final`), else `base`.
+without the trailing `la/table.md` (`.../results/RUN/final/la/table.md`
+gives `RUN/final`), else `base`.
 
 --runtime RUNTIME.tsv (the harness's `la/runtime.tsv`) adds the LangArena
 totals: the task count, whether every checksum is ok, the wall sum and the
@@ -27,10 +28,9 @@ A task whose Crystal or Go column is not a number (a failed run, `—`) is not
 judged; it is listed after the table as "Not judged". Exit 0, or 1 when an
 input has no combined table, 2 on a usage error.
 
-Replaces the `floor.py` that each record copied from the one before (O353):
-it reproduces VALK-T's `floor-final.txt` and `floor-base.txt` and W-FIX1f2's
-`floor-table.txt` byte for byte, and the table of W-FIX1f's `floor.md` (with
---base-label W-FIX1c).
+Replaces the `floor.py` that each measurement used to copy from the one
+before, and reproduces their `floor-final.txt`, `floor-base.txt`,
+`floor-table.txt` and floor tables byte for byte.
 """
 import csv
 import os

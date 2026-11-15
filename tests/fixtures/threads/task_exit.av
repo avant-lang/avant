@@ -1,0 +1,94 @@
+// `exit(status)` called from a spawned block while other tasks run and
+// allocate: the program ends with that status, what it printed before is
+// written, and the exit's work (stdout's check, the collector's checks
+// at exit under AVANT_GC_VERIFY=1, the private directory's removal) does
+// not meet a second exit nor hang. The argument names the case. Run by
+// tests/cases/test_tasks.av under every collector mode.
+
+import std.sync
+
+// Allocates until the program ends: strings and arrays, kept and dropped.
+fn churn(seed: Int): Int {
+  keep: Array(String) = []
+  i = 0
+  while true {
+    s = "item ${seed} ${i}"
+    keep.push(s)
+    if keep.size > 64 {
+      keep = []
+    }
+    i += 1
+  }
+  i
+}
+
+fn main: Int {
+  a = argv()
+  kind = "one"
+  if a.size > 1 {
+    kind = a[a.size - 1]
+  }
+  puts("before")
+  hs: Array(JoinHandle(Int)) = []
+  for i in 0..6 {
+    hs.push(spawn { churn(i) })
+  }
+  if kind == "one" {
+    // One task exits while six others allocate.
+    hs.push(spawn {
+      xs: Array(Int) = []
+      for k in 0..20000 {
+        xs.push(k)
+      }
+      exit(3)
+      0
+    })
+  } else if kind == "two" {
+    // Two tasks exit at once (each with its own status: either ends it).
+    hs.push(spawn {
+      exit(4)
+      0
+    })
+    hs.push(spawn {
+      exit(4)
+      0
+    })
+  } else if kind == "trap" {
+    // A task exits while a .parallel body traps on another thread.
+    hs.push(spawn {
+      exit(5)
+      0
+    })
+    xs = [1, 2, 3, 4, 5, 6, 7, 8]
+    ys = xs.parallel { |x| 10 / (x - x) }
+    puts(ys.size)
+  } else if kind == "main" {
+    // A task exits while the main thread returns from main.
+    hs.push(spawn {
+      exit(6)
+      0
+    })
+    return 6
+  } else if kind == "mutex" {
+    // A task exits while holding a mutex another task waits for.
+    m = Mutex(Int).new(0)
+    hs.push(spawn {
+      for k in 0..1000000 {
+        m.with { |n| n += 1 }
+      }
+      0
+    })
+    hs.push(spawn {
+      m.with { |n|
+        n += 1
+        exit(7)
+      }
+      0
+    })
+  }
+  for h in hs {
+    _ = h.join()
+  }
+  puts("after")
+  0
+}

@@ -1,16 +1,15 @@
-// The lowering of unions and `T?` (Stage 28 W7a; stages/stage28/mir.md
-// W7a): a union value is its layout by value (2.4: `i32 tag`, then one
-// payload per non-nil member in the checker's member order; the tag of
-// member k is k). Construction is the `union` rvalue (other payloads
-// zero); a value meets a union type only where the checker allows it
-// (`ty_assignable`) and is converted there (`coerce`): a member is
-// wrapped with its tag, `nil` with the nil tag, and a union of fewer
-// members is re-tagged member by member (`retag`, which also narrows:
-// the success side of `if x = ...`, `?`, and `??` when it is a union).
-// Reads test the tag and copy the payload. The builtins whose result is
-// `T?` are here too: `get` on String, Bytes, Array, Buf, and Hash, hash
-// index reads, `get_slice`, `get_concat`, `index_of`, `min`, `max`,
-// `env_get`, and `file_read`.
+// The lowering of unions and `T?`: a union value is its layout by value
+// (`i32 tag`, then one payload per non-nil member in the checker's
+// member order; the tag of member k is k). Construction is the `union`
+// rvalue (other payloads zero); a value meets a union type only where
+// the checker allows it (`ty_assignable`) and is converted there
+// (`coerce`): a member is wrapped with its tag, `nil` with the nil tag,
+// and a union of fewer members is re-tagged member by member (`retag`,
+// which also narrows: the success side of `if x = ...`, `?`, and `??`
+// when it is a union). Reads test the tag and copy the payload. The
+// builtins whose result is `T?` are here too: `get` on String, Bytes,
+// Array, Buf, and Hash, hash index reads, `get_slice`, `get_concat`,
+// `index_of`, `min`, `max`, `env_get`, and `file_read`.
 
 import location
 import source
@@ -33,12 +32,12 @@ import mir.lower_hash
 // The payload field of member index i of u (type.av payload_index: 1 +
 // the non-nil members before it), or -1 for nil.
 pub fn mir_payload_field(u: Ty, i: Int): Int {
-  if u.members[i].is_nil {
+  if u.members[i].no_payload() {
     return -1
   }
   n = 1
   for j in 0..i {
-    if !u.members[j].is_nil {
+    if !u.members[j].no_payload() {
       n += 1
     }
   }
@@ -51,42 +50,44 @@ pub fn mir_payload_field(u: Ty, i: Int): Int {
 // emit_wrap_union): unchanged unless want is a union that got is not; a
 // member is wrapped with its tag; a union is re-tagged.
 pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOperand {
-  if want.is_ptr && got.is_ptr && !lw.failed {
-    // W8a: Ptr(A) as Ptr(B) (the checker unifies pointees): a pointer
-    // cast when the MIR types differ (`ptr %L` and `ptr`).
+  if want.is_ptr() && got.is_ptr() && !lw.failed() {
+    // Ptr(A) as Ptr(B) (the checker unifies pointees): a pointer cast
+    // when the MIR types differ (`ptr %L` and `ptr`).
     pw = lw.ty_at(want, loc, "a pointer")
     pg = lw.ty_at(got, loc, "a pointer")
-    if lw.failed || pw == pg {
+    if lw.failed() || pw == pg {
       return o
     }
     lw.at(loc)
     return lw.tmp(pw, lw.lw_b.rv_cast(o, pw))
   }
-  if !want.is_union || got.same_as(want) || lw.failed {
+  if !want.is_union() || got.same_as(want) || lw.failed() {
     return o
   }
   b = lw.lw_b
   wty = lw.ty_at(want, loc, "a value")
-  if lw.failed {
+  if lw.failed() {
     return o
   }
-  if got.is_union {
+  if got.is_union() {
     return lw.retag(o, got, want, loc)
   }
   if !want.includes_member(got) {
-    lw.refuse(loc, "a value of type ${got.show} as ${want.show}")
+    lw.refuse(loc, "a value of type ${got.show()} as ${want.show()}")
     return o
   }
-  if r = mir_opt_ref(want) {
-    // An optional reference (W3b, B13): the reference itself, or null.
-    if got.is_nil {
-      return b.c_null(wty)
+  if r = mir_opt_word(want) {
+    // An optional reference: the reference itself, or null;
+    // an optional function value (mir_opt_fn) the same. `Void | E` is
+    // one reference the same way, Void its null.
+    if got.no_payload() {
+      return lw.opt_nil(wty)
     }
     return o
   }
   l = b.types.layout_of(wty)
   lw.at(loc)
-  if got.is_nil {
+  if got.no_payload() {
     return lw.tmp(wty, b.rv_union_nil(l, want.tag_of(got)))
   }
   lw.tmp(wty, b.rv_union(l, want.tag_of(got), o))
@@ -94,18 +95,18 @@ pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOp
 
 // v lowered and converted to want (the MIR type ty of a place).
 pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
-  if v.kind == ex_nil() && want.is_union && want.includes_nil {
+  if v.kind == ex_nil() && want.is_union() && want.includes_nil() {
     // `nil` into a union place: the nil tag directly.
     lw.at(v.loc)
     b = lw.lw_b
-    if r = mir_opt_ref(want) {
-      return b.c_null(ty)
+    if r = mir_opt_word(want) {
+      return lw.opt_nil(ty)
     }
     return lw.tmp(ty, b.rv_union_nil(b.types.layout_of(ty), want.tag_of(ty_nil())))
   }
   // Every value here is checked: the field defaults of generic class
-  // instances too, since the checker types them by their fields (C14,
-  // W10b; until then this typed untyped literal defaults itself).
+  // instances too, since the checker types them by their fields
+  // (until then this typed untyped literal defaults itself).
   o = lw.lower_expr(v)
   if t = v.ty {
     return lw.coerce(o, t, want, v.loc)
@@ -116,16 +117,30 @@ pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
 // The arguments of a call, left to right, each converted to its
 // parameter's type (the old back end converts only the arguments of
 // type-level calls, calls.av:1384-1427; a `nil` or a bare T passed to a
-// `T?` parameter of a plain function or method does not compile there:
-// D196).
+// `T?` parameter of a plain function or method does not compile there;
+// the bug is not reproduced).
 //
 // frame is the call's argument frame (Expr.int_bits of a call whose
 // defaults may name an earlier parameter, else 0; checker/match.av
 // fill_defaults): each argument's operand, as the call passes it, is
 // kept under its hidden name while the later arguments are lowered, so
 // a default that names the parameter reads that operand (lower_name) and
-// the argument is evaluated once (O546).
+// the argument is evaluated once.
 pub fn (lw: MirLower) lower_args_to(args: Array(Expr), params: Array(Ty), frame: UInt64): Array(MOperand) {
+  lw.lower_args_in(args, params, frame, nil)
+}
+
+// The arguments of a call as lower_args_to lowers them, evaluated in
+// order when it is given (Expr.arg_order: named arguments written out of
+// their parameters' order, checker/match.av place_named_args): each
+// argument is lowered at its turn and kept at its own index, so the call
+// passes them in parameter order.
+pub fn (lw: MirLower) lower_args_in(args: Array(Expr), params: Array(Ty), frame: UInt64, order: Array(Int)?): Array(MOperand) {
+  if ord = order {
+    if ord.size == args.size {
+      return lw.lower_args_ordered(args, params, frame, ord)
+    }
+  }
   out: Array(MOperand) = []
   mark = lw.lw_arg_names.size
   i = 0
@@ -149,8 +164,38 @@ pub fn (lw: MirLower) lower_args_to(args: Array(Expr), params: Array(Ty), frame:
     i += 1
   }
   while lw.lw_arg_names.size > mark {
-    lw.lw_arg_names.pop
-    lw.lw_arg_ops.pop
+    lw.lw_arg_names.pop()
+    lw.lw_arg_ops.pop()
+  }
+  out
+}
+
+pub fn (lw: MirLower) lower_args_ordered(args: Array(Expr), params: Array(Ty), frame: UInt64, ord: Array(Int)): Array(MOperand) {
+  out: Array(MOperand) = []
+  for a in args {
+    out.push(lw.lw_b.c_i32(0))
+  }
+  mark = lw.lw_arg_names.size
+  for k in 0..ord.size {
+    i = ord[k]
+    o = lw.lower_expr(args[i])
+    if i < params.size {
+      if t = args[i].ty {
+        o = lw.coerce(o, t, params[i], args[i].loc)
+      }
+    }
+    for k2 in k + 1..ord.size {
+      o = lw.snap(o, args[ord[k2]])
+    }
+    out[i] = o
+    if frame != 0u64 {
+      lw.lw_arg_names.push(arg_frame_name(frame, i))
+      lw.lw_arg_ops.push(o)
+    }
+  }
+  while lw.lw_arg_names.size > mark {
+    lw.lw_arg_names.pop()
+    lw.lw_arg_ops.pop()
   }
   out
 }
@@ -180,12 +225,12 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   b = lw.lw_b
   fty = lw.ty_at(from, loc, "a value")
   tty = lw.ty_at(to, loc, "a value")
-  if lw.failed {
+  if lw.failed() {
     return o
   }
   lw.at(loc)
-  fr = mir_is_opt_ref(from)
-  tr = mir_is_opt_ref(to)
+  fr = mir_is_opt_word(from)
+  tr = mir_is_opt_word(to)
   if fr && tr {
     return o
   }
@@ -195,7 +240,7 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   }
   tl = b.types.layout_of(tty)
   d = b.temp(tty)
-  b.assign(b.pl(d), b.rv_zero)
+  b.assign(b.pl(d), b.rv_zero())
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
   values: Array(Int) = []
   targets: Array(Int) = []
@@ -203,20 +248,20 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   members: Array(Int) = []
   for i in 0..from.members.size {
     if to.includes_member(from.members[i]) {
-      arm = b.block
-      values.push(i.to_i)
+      arm = b.block()
+      values.push(i.to_i())
       targets.push(arm)
       arms.push(arm)
       members.push(i)
     }
   }
-  join = b.block
+  join = b.block()
   b.switch_on(tag, values, targets, join)
   for i in 0..arms.size {
     b.at(arms[i])
     m = from.members[members[i]]
     k = to.tag_of(m)
-    if m.is_nil {
+    if m.no_payload() {
       b.assign(b.pl(d), b.rv_union_nil(tl, k))
     } else {
       p = lw.tmp(lw.ty_at(m, loc, "a member"), b.rv_use(b.copy(b.field(b.pl(src), mir_payload_field(from, members[i])))))
@@ -228,23 +273,23 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   b.copy_local(d)
 }
 
-// retag where one side is an optional reference (W3b, B13): from one,
-// its null pointer as to's nil and its reference as to's member; into
-// one, the payload of its reference member, null for every other member
-// (nil, or the failure side the caller's test already excluded).
+// retag where one side is an optional reference: from one, its null
+// pointer as to's nil and its reference as to's member; into one, the
+// payload of its reference member, null for every other member (nil, or
+// the failure side the caller's test already excluded).
 fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location): MOperand {
   b = lw.lw_b
   d = b.temp(tty)
-  join = b.block
-  if fm = mir_opt_ref(from) {
+  join = b.block()
+  if fm = mir_opt_word(from) {
     tl = b.types.layout_of(tty)
-    b.assign(b.pl(d), b.rv_zero)
-    bnil = b.block
-    bval = b.block
+    b.assign(b.pl(d), b.rv_zero())
+    bnil = b.block()
+    bval = b.block()
     b.branch(lw.ref_is_null(src, true), bnil, bval)
     b.at(bnil)
-    if to.includes_nil {
-      b.assign(b.pl(d), b.rv_union_nil(tl, to.tag_of(ty_nil())))
+    if em = from.empty_member(), to.includes_member(em) {
+      b.assign(b.pl(d), b.rv_union_nil(tl, to.tag_of(em)))
     }
     b.goto(join)
     b.at(bval)
@@ -255,13 +300,13 @@ fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location)
     b.at(join)
     return b.copy_local(d)
   }
-  if tm = mir_opt_ref(to) {
-    b.assign(b.pl(d), b.rv_use(b.c_null(tty)))
+  if tm = mir_opt_word(to) {
+    b.assign(b.pl(d), b.rv_use(lw.opt_nil(tty)))
     k = from.tag_of(tm)
     if k >= 0 {
       tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
-      arm = b.block
-      values: Array(Int) = [k.to_i]
+      arm = b.block()
+      values: Array(Int) = [k.to_i()]
       targets: Array(Int) = [arm]
       b.switch_on(tag, values, targets, join)
       b.at(arm)
@@ -275,7 +320,8 @@ fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location)
   b.copy_local(d)
 }
 
-// Whether the optional reference in src is null (eq) or not.
+// Whether the optional reference in src is null (eq) or not; for an
+// optional function value (mir_opt_fn), whether its code word is.
 fn (lw: MirLower) ref_is_null(src: Int, eq: Bool): MOperand {
   b = lw.lw_b
   ty = b.func.locals[src].ty
@@ -283,7 +329,23 @@ fn (lw: MirLower) ref_is_null(src: Int, eq: Bool): MOperand {
   if !eq {
     op = mop_ne()
   }
+  if b.types.kind(ty) == mk_agg() {
+    // The code word as an untyped pointer (a code value fits a `ptr`
+    // place), compared with null.
+    code = lw.tmp(mt_ptr(), b.rv_use(b.copy(b.field(b.pl(src), 1))))
+    return lw.tmp(mt_bool(), b.rv_cmp(op, code, b.c_null(mt_ptr())))
+  }
   lw.tmp(mt_bool(), b.rv_cmp(op, b.copy_local(src), b.c_null(ty)))
+}
+
+// The nil of an optional without a tag of MIR type ty (mir_opt_word): the
+// null pointer, or a function value's pair of zeros.
+pub fn (lw: MirLower) opt_nil(ty: Int): MOperand {
+  b = lw.lw_b
+  if b.types.kind(ty) == mk_agg() {
+    return lw.tmp(ty, b.rv_zero())
+  }
+  b.c_null(ty)
 }
 
 // The value of type success held by the union in src (of type uty):
@@ -291,14 +353,14 @@ fn (lw: MirLower) ref_is_null(src: Int, eq: Bool): MOperand {
 // when success is a union of several members, nothing for Nil.
 pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOperand {
   b = lw.lw_b
-  if success.is_nil {
+  if success.no_payload() {
     return b.c_i32(0)
   }
-  if r = mir_opt_ref(uty) {
-    // The reference itself (W3b, B13).
+  if r = mir_opt_word(uty) {
+    // The reference itself, or the function value.
     return b.copy_local(src)
   }
-  if success.is_union {
+  if success.is_union() {
     return lw.retag(b.copy_local(src), uty, success, loc)
   }
   st = lw.ty_at(success, loc, "a value")
@@ -306,11 +368,11 @@ pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOp
 }
 
 // `tag == k` (or `!=`) of the union in src, of type uty; for an
-// optional reference, a null test (W3b, B13).
+// optional reference, a null test.
 pub fn (lw: MirLower) tag_is(src: Int, uty: Ty, k: Int, eq: Bool): MOperand {
   b = lw.lw_b
-  if r = mir_opt_ref(uty) {
-    return lw.ref_is_null(src, eq == uty.members[k].is_nil)
+  if r = mir_opt_word(uty) {
+    return lw.ref_is_null(src, eq == uty.members[k].no_payload())
   }
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
   op = mop_eq()
@@ -318,6 +380,146 @@ pub fn (lw: MirLower) tag_is(src: Int, uty: Ty, k: Int, eq: Bool): MOperand {
     op = mop_ne()
   }
   lw.tmp(mt_bool(), b.rv_cmp(op, tag, b.c_i32(k)))
+}
+
+// ---- `switch` over a union
+
+// One tag load and one switch on it (for an optional reference, one
+// null test); each arm that binds its member copies the payload as
+// if-assign does (unwrap), the name in scope for the arm. A switch
+// without else names every member (the checker's coverage), and a tag
+// is always one of the union's members (a union is only built by
+// coerce, retag and the zero value, whose tag 0 is its first member),
+// so the last arm is the switch's default: no impossible path exists.
+pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: Int): MOperand {
+  b = lw.lw_b
+  uty_m = lw.ty_at(uty, e.loc, "a union")
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  src = lw.hold(cv, uty_m)
+  dest = -1
+  if rty != mt_void() {
+    dest = b.temp(rty)
+    b.assign(b.pl(dest), b.rv_zero())
+  }
+  // The block each member enters by (its arm's, or under coverage a
+  // block of its own that counts the label), -1 for an unnamed member.
+  // The coverage entries are numbered before the arms, so the edge from
+  // one to its arm is not a back edge (which would poll, mir/gc.av).
+  entry_arm: Array(Int) = []
+  for m in uty.members {
+    entry_arm.push(-1)
+  }
+  cov_entries: Array(Int) = []
+  cov_arms: Array(Int) = []
+  cov_locs: Array(Location) = []
+  entry: Array(Int) = []
+  for m2 in uty.members {
+    entry.push(-1)
+  }
+  for i2 in 0..e.cases.size {
+    for label in e.cases[i2].labels {
+      k = label.int_val
+      if k < 0 || k >= entry_arm.size || entry_arm[k] >= 0 {
+        continue
+      }
+      entry_arm[k] = i2
+      if lw.lw_cov.on {
+        en = b.block()
+        cov_entries.push(en)
+        cov_arms.push(i2)
+        cov_locs.push(label.loc)
+        entry[k] = en
+      }
+    }
+  }
+  arms: Array(Int) = []
+  for i in 0..e.cases.size {
+    arms.push(b.block())
+  }
+  for k4 in 0..entry.size {
+    if entry_arm[k4] >= 0 && entry[k4] < 0 {
+      entry[k4] = arms[entry_arm[k4]]
+    }
+  }
+  other = -1
+  if e.has_else || lw.lw_cov.on {
+    other = b.block()
+  }
+  join = b.block()
+  // The default: the else, or (without one) the last arm's member.
+  dflt = other
+  dmember = -1
+  if !e.has_else && !lw.lw_cov.on {
+    last = e.cases[e.cases.size - 1].labels
+    if last.size > 0 {
+      dmember = last[last.size - 1].int_val
+      dflt = entry[dmember]
+    }
+  }
+  if dflt < 0 {
+    dflt = join
+  }
+  lw.at(e.loc)
+  if r = mir_opt_word(uty) {
+    kn = 0
+    if em = uty.empty_member() {
+      kn = uty.tag_of(em)
+    }
+    kr = uty.tag_of(r)
+    tn = entry[kn]
+    tr = entry[kr]
+    if tn < 0 || kn == dmember {
+      tn = dflt
+    }
+    if tr < 0 || kr == dmember {
+      tr = dflt
+    }
+    b.branch(lw.ref_is_null(src, true), tn, tr)
+  } else {
+    tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
+    values: Array(Int) = []
+    targets: Array(Int) = []
+    for k2 in 0..entry.size {
+      if entry[k2] >= 0 && k2 != dmember && entry[k2] != dflt {
+        values.push(k2)
+        targets.push(entry[k2])
+      }
+    }
+    b.switch_on(tag, values, targets, dflt)
+  }
+  for q in 0..cov_entries.size {
+    b.at(cov_entries[q])
+    lw.cov_branch(cov_locs[q])
+    lw.at(e.loc)
+    b.goto(arms[cov_arms[q]])
+  }
+  for i3 in 0..e.cases.size {
+    arm = e.cases[i3]
+    b.at(arms[i3])
+    if arm.labels.size == 1 && arm.labels[0].kind == lb_type() && arm.labels[0].bind.size > 0 {
+      k3 = arm.labels[0].int_val
+      mt = uty.members[k3]
+      lw.at(arm.labels[0].loc)
+      v = lw.unwrap(src, uty, mt, arm.loc)
+      lw.bind_name(arm.labels[0].bind, mt, lw.ty_at(mt, arm.loc, "a binding"), v, arm.loc, false)
+    }
+    lw.lower_arm(arm.body, dest, e)
+    lw.goto_if_open(join, arm.loc)
+  }
+  if e.has_else || lw.lw_cov.on {
+    b.at(other)
+    lw.cov_branch(e.loc)
+    lw.lower_arm(e.else_body, dest, e)
+    lw.goto_if_open(join, e.loc)
+  }
+  b.at(join)
+  if dest >= 0 {
+    return b.copy_local(dest)
+  }
+  b.c_i32(0)
 }
 
 // ---- `??`, `.or`, postfix `?`, `if x = ...`
@@ -331,16 +533,21 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
     rty = lw.ty_at(result, loc, "a value")
     lty = lw.ety(l)
     u = lw.lower_expr(l)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(loc)
     src = lw.hold(u, lty)
-    d = b.temp(rty)
+    // A `Void | E` on the left: the success is nothing, so no value.
+    void = result.is_void()
+    d = -1
+    if !void {
+      d = b.temp(rty)
+    }
     fails = ty_failures(uty)
-    bnil = b.block
-    bval = b.block
-    join = b.block
+    bnil = b.block()
+    bval = b.block()
+    join = b.block()
     if fails.size == 1 {
       c = lw.tag_is(src, uty, uty.tag_of(fails[0]), true)
       b.branch(c, bnil, bval)
@@ -349,23 +556,38 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
     }
     b.at(bnil)
     if r.kind == ex_switch() && r.op == tk_return() {
-      // `?? return v`, `?? break`, `?? continue` (Stage 29 W4a): the
-      // statement leaves; nothing reaches the join from here.
+      // `?? return v`, `?? break`, `?? continue`: the statement
+      // leaves; nothing reaches the join from here. An else guard
+      // (`n = f() else e { ... }`) binds its name to the failure
+      // first, and its block leaves too (the checker's rule).
+      if expr_is_else_guard(r) && r.ident.size > 0 {
+        lw.bind_failure(r.ident, src, uty, fails, loc)
+        if lw.failed() {
+          return b.c_i32(0)
+        }
+      }
       lw.lower_stmts(r.else_body)
-      if lw.failed {
+      if lw.failed() {
         return b.c_i32(0)
       }
       lw.goto_if_open(join, loc)
     } else {
       v = lw.lower_coerced(r, rty, result)
-      if lw.failed {
+      if lw.failed() {
         return b.c_i32(0)
       }
       lw.at(loc)
-      b.assign(b.pl(d), b.rv_use(v))
+      if !void {
+        b.assign(b.pl(d), b.rv_use(v))
+      }
       b.goto(join)
     }
     b.at(bval)
+    if void {
+      b.goto(join)
+      b.at(join)
+      return b.c_i32(0)
+    }
     if result.same_as(uty) {
       b.assign(b.pl(d), b.rv_use(b.copy_local(src)))
     } else {
@@ -383,32 +605,86 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
   b.c_i32(0)
 }
 
+// `x.expect(why)` on an optional: x once; when it holds nil, why
+// (evaluated only then) and a trap that prints it with the call's site;
+// otherwise the value.
+pub fn (lw: MirLower) lower_expect(l: Expr, why: Expr, result: Ty, loc: Location): MOperand {
+  b = lw.lw_b
+  if uty = l.ty {
+    rty = lw.ty_at(result, loc, "a value")
+    lty = lw.ety(l)
+    u = lw.lower_expr(l)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(loc)
+    src = lw.hold(u, lty)
+    d = b.temp(rty)
+    fails = ty_failures(uty)
+    bnil = b.block()
+    bval = b.block()
+    c = lw.tag_is(src, uty, uty.tag_of(fails[0]), true)
+    b.branch(c, bnil, bval)
+    b.at(bnil)
+    w = lw.lower_expr(why)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(loc)
+    b.call(-1, "avant_trap_expect", lw.one(w))
+    b.unreachable()
+    b.at(bval)
+    success = ty_without_nil(uty)
+    if sp = ty_success_part(uty) {
+      success = sp
+    }
+    b.assign(b.pl(d), b.rv_use(lw.coerce(lw.unwrap(src, uty, success, loc), success, result, loc)))
+    return b.copy_local(d)
+  }
+  lw.refuse(loc, "an untyped expect")
+  b.c_i32(0)
+}
+
+// `else e`, on the failure path: e holds the union in src (of type uty)
+// as its one failure member, or as the union of fails (checker.av
+// else_failure).
+pub fn (lw: MirLower) bind_failure(name: String, src: Int, uty: Ty, fails: Array(Ty), loc: Location) {
+  b = lw.lw_b
+  if fails.size == 1 {
+    fty = fails[0]
+    v = lw.unwrap(src, uty, fty, loc)
+    lw.bind_name(name, fty, lw.ty_at(fty, loc, "a binding"), v, loc, false)
+    return
+  }
+  fty2 = ty_union_build(fails)
+  v2 = lw.retag(b.copy_local(src), uty, fty2, loc)
+  lw.bind_name(name, fty2, lw.ty_at(fty2, loc, "a binding"), v2, loc, false)
+}
+
 // A branch to bfail when the union in src (of type uty) holds one of
-// fails (D292: several failure members), else to bok: one switch on the
-// tag.
+// fails (several failure members), else to bok: one switch on the tag.
 pub fn (lw: MirLower) branch_failure(src: Int, uty: Ty, fails: Array(Ty), bfail: Int, bok: Int) {
   b = lw.lw_b
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
   values: Array(Int) = []
   targets: Array(Int) = []
   for f in fails {
-    values.push(uty.tag_of(f).to_i)
+    values.push(uty.tag_of(f).to_i())
     targets.push(bfail)
   }
   b.switch_on(tag, values, targets, bok)
 }
 
 // `e?` (the old back end's emit_try, emit_failure_return): the union once; on a
-// failure tag (D292: nil and the members marked Error) the function
-// returns the failure (the union itself when the result type is the
-// same, else the failure as the result type); otherwise the value is the
-// success part.
+// failure tag (nil and the members marked Error) the function returns the
+// failure (the union itself when the result type is the same, else the failure
+// as the result type); otherwise the value is the success part.
 pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
   b = lw.lw_b
   if inner = e.inner, uty = inner.ty, ret = lw.lw_ret_ty {
     ity = lw.ety(inner)
     u = lw.lower_expr(inner)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -418,8 +694,8 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
     if sp = ty_success_part(uty) {
       success = sp
     }
-    bf = b.block
-    bok = b.block
+    bf = b.block()
+    bok = b.block()
     if fails.size == 1 {
       c = lw.tag_is(src, uty, uty.tag_of(fails[0]), true)
       b.branch(c, bf, bok)
@@ -435,8 +711,8 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
     } else {
       b.assign(b.pl(0), b.rv_use(lw.retag(b.copy_local(src), uty, ret, e.loc)))
     }
-    lw.unpin_all
-    b.ret
+    lw.unpin_all()
+    b.ret()
     b.at(bok)
     return lw.unwrap(src, uty, success, e.loc)
   }
@@ -459,16 +735,16 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
     cty = lw.ety(c)
     sty = lw.ty_at(success, st.loc, "a binding")
     u = lw.lower_expr(c)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     lw.at(st.loc)
     src = lw.hold(u, cty)
-    bt = b.block
-    bf = b.block
+    bt = b.block()
+    bf = b.block()
     join = bf
     if st.else_body.size > 0 || lw.lw_cov.on {
-      join = b.block
+      join = b.block()
     }
     if fails.size == 1 {
       ok = lw.tag_is(src, uty, uty.tag_of(fails[0]), false)
@@ -485,6 +761,13 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
     if st.else_body.size > 0 || lw.lw_cov.on {
       b.at(bf)
       lw.cov_branch(st.loc)
+      if st.else_bind.size > 0 && st.else_body.size > 0 {
+        // `else e`: e holds the failure.
+        lw.bind_failure(st.else_bind, src, uty, fails, st.loc)
+        if lw.failed() {
+          return
+        }
+      }
       lw.lower_stmts(st.else_body)
       lw.goto_if_open(join, st.loc)
     }
@@ -494,10 +777,10 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
   lw.refuse(st.loc, "this if binding")
 }
 
-// One binding of an if-assign or a chain element (Stage 29 W4a): the
-// union once; on a failure tag to bfail, else on to a fresh block where
-// the name holds the success part (the builder is left there).
-pub fn (lw: MirLower) lower_cond_bind(el: Stmt, bfail: Int) {
+// One binding of an if-assign or a chain element: the union once; on a
+// failure tag to bfail, else on to a fresh block where the name holds
+// the success part (the builder is left there).
+pub fn (lw: MirLower) lower_cond_bind(el: Stmt, bfail: Int): Int {
   b = lw.lw_b
   if c = el.cond, uty = c.ty {
     success = ty_without_nil(uty)
@@ -508,12 +791,12 @@ pub fn (lw: MirLower) lower_cond_bind(el: Stmt, bfail: Int) {
     cty = lw.ety(c)
     sty = lw.ty_at(success, el.loc, "a binding")
     u = lw.lower_expr(c)
-    if lw.failed {
-      return
+    if lw.failed() {
+      return -1
     }
     lw.at(el.loc)
     src = lw.hold(u, cty)
-    bok = b.block
+    bok = b.block()
     if fails.size == 1 {
       ok = lw.tag_is(src, uty, uty.tag_of(fails[0]), false)
       b.branch(ok, bok, bfail)
@@ -523,51 +806,52 @@ pub fn (lw: MirLower) lower_cond_bind(el: Stmt, bfail: Int) {
     b.at(bok)
     v = lw.unwrap(src, uty, success, el.loc)
     lw.bind_name(el.bind, success, sty, v, el.loc, false)
-    return
+    return src
   }
   lw.refuse(el.loc, "this if binding")
+  -1
 }
 
 // One element of a condition: a binding, or a Bool test whose false goes
 // to bfail; the builder is left where it holds.
-pub fn (lw: MirLower) lower_cond_element(el: Stmt, bfail: Int) {
+pub fn (lw: MirLower) lower_cond_element(el: Stmt, bfail: Int): Int {
   if el.bind.size > 0 {
-    lw.lower_cond_bind(el, bfail)
-    return
+    return lw.lower_cond_bind(el, bfail)
   }
   if c = el.cond {
     cv = lw.lower_expr(c)
-    if lw.failed {
-      return
+    if lw.failed() {
+      return -1
     }
-    bok = lw.lw_b.block
+    bok = lw.lw_b.block()
     lw.at(el.loc)
     lw.lw_b.branch(cv, bok, bfail)
     lw.lw_b.at(bok)
   }
+  -1
 }
 
-// An `if` with a condition list, or one whose branches give a value
-// (Stage 29 W4a): the elements in order, each failure to the one else
-// block (never duplicated); mode 0 is a statement, 1 writes each
-// branch's value into dest (converted to want), 2 returns it from the
-// function (its tail).
+// An `if` with a condition list, or one whose branches give a value:
+// the elements in order, each failure to the one else block (never
+// duplicated); mode 0 is a statement, 1 writes each branch's value
+// into dest (converted to want), 2 returns it from the function (its
+// tail).
 pub fn (lw: MirLower) lower_if_general(st: Stmt, mode: Int, dest: Int, want: Ty?) {
   b = lw.lw_b
-  belse = b.block
+  belse = b.block()
   join = belse
   has_else = st.else_body.size > 0 || lw.lw_cov.on
   if has_else {
-    join = b.block
+    join = b.block()
   }
   for el in st.pre {
-    lw.lower_cond_element(el, belse)
-    if lw.failed {
+    _ = lw.lower_cond_element(el, belse)
+    if lw.failed() {
       return
     }
   }
-  lw.lower_cond_element(st, belse)
-  if lw.failed {
+  src = lw.lower_cond_element(st, belse)
+  if lw.failed() {
     return
   }
   lw.cov_branch(st.loc)
@@ -576,6 +860,16 @@ pub fn (lw: MirLower) lower_if_general(st: Stmt, mode: Int, dest: Int, want: Ty?
   if has_else {
     b.at(belse)
     lw.cov_branch(st.loc)
+    if st.else_bind.size > 0 && st.else_body.size > 0 && src >= 0 {
+      // `else e`: only the binding's failure reaches belse (the
+      // checker refuses it beside a condition list).
+      if c = st.cond, uty = c.ty {
+        lw.bind_failure(st.else_bind, src, uty, ty_failures(uty), st.loc)
+        if lw.failed() {
+          return
+        }
+      }
+    }
     lw.lower_branch(st.else_body, mode, dest, want)
     lw.goto_if_open(join, st.loc)
   }
@@ -592,7 +886,7 @@ pub fn (lw: MirLower) lower_branch(body: Array(Stmt), mode: Int, dest: Int, want
   b = lw.lw_b
   i = 0
   while i < body.size {
-    if lw.failed || !lw.open_now {
+    if lw.failed() || !lw.open_now() {
       return
     }
     st = body[i]
@@ -602,24 +896,24 @@ pub fn (lw: MirLower) lower_branch(body: Array(Stmt), mode: Int, dest: Int, want
         lw.lower_if_general(st, mode, dest, want)
         return
       }
-      if st.kind == st_expr() {
+      if st.kind == st_expr() && !ast_stmt_exits(st) {
         if e = st.expr {
           lw.cov_stmt(st)
           if mode == 2 {
             v = lw.lower_ret_value(e)
-            if lw.failed {
+            if lw.failed() {
               return
             }
             lw.at(st.loc)
             b.assign(b.pl(0), b.rv_use(v))
-            b.ret
+            lw.ret_fn()
             return
           }
           v2 = lw.lower_expr(e)
           if t = e.ty, w = want {
             v2 = lw.coerce(v2, t, w, e.loc)
           }
-          if lw.failed {
+          if lw.failed() {
             return
           }
           lw.at(st.loc)
@@ -641,21 +935,21 @@ pub fn (lw: MirLower) lower_branch(body: Array(Stmt), mode: Int, dest: Int, want
 pub fn (lw: MirLower) opt_of(want: Ty, found: MOperand, v: MOperand, vt: Ty, loc: Location): MOperand {
   b = lw.lw_b
   wty = lw.ty_at(want, loc, "a value")
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   d = b.temp(wty)
-  bt = b.block
-  bf = b.block
-  join = b.block
+  bt = b.block()
+  bf = b.block()
+  join = b.block()
   b.branch(found, bt, bf)
   b.at(bt)
-  if r = mir_opt_ref(want) {
-    // An optional reference (W3b, B13): the reference, or null.
+  if r = mir_opt_word(want) {
+    // An optional reference: the reference, or null.
     b.assign(b.pl(d), b.rv_use(v))
     b.goto(join)
     b.at(bf)
-    b.assign(b.pl(d), b.rv_use(b.c_null(wty)))
+    b.assign(b.pl(d), b.rv_use(lw.opt_nil(wty)))
     b.goto(join)
     b.at(join)
     return b.copy_local(d)
@@ -699,7 +993,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     wty = lw.ety(e)
     aty = lw.ety(recv)
     r = lw.lower_expr(recv)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     if args.size > 0 {
@@ -711,38 +1005,38 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     if args.size > 0 {
       iv = lw.lower_expr(args[0])
     }
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
     ix = lw.hold(iv, mt_int())
     n = b.c_i64(0)
-    if rt.is_array || rt.is_buf {
+    if rt.is_array() || rt.is_buf() {
       n = lw.seq_size(h)
     } else {
       n = lw.call_to(mt_int(), "avant_str_size", lw.one(b.copy_local(h)))
     }
-    oref = mir_is_opt_ref(t)
+    oref = mir_is_opt_word(t)
     l = -1
     if !oref {
       l = b.types.layout_of(wty)
     }
     d = b.temp(wty)
     if oref {
-      b.assign(b.pl(d), b.rv_use(b.c_null(wty)))
+      b.assign(b.pl(d), b.rv_use(lw.opt_nil(wty)))
     } else {
       b.assign(b.pl(d), b.rv_union_nil(l, t.tag_of(ty_nil())))
     }
     c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(ix), b.c_i64(0)))
     c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ix), n))
     c = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
-    bt = b.block
-    join = b.block
+    bt = b.block()
+    join = b.block()
     b.branch(c, bt, join)
     b.at(bt)
     elt = ty_int()
     v = b.c_i32(0)
-    if rt.is_array {
+    if rt.is_array() {
       if inner = rt.inner {
         elt = inner
       }
@@ -754,7 +1048,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
         b.assign(b.pl(dd), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
         v = lw.tmp(et, b.rv_use(b.copy(b.index(b.deref(b.pl(dd)), b.copy_local(ix)))))
       }
-    } else if rt.is_buf {
+    } else if rt.is_buf() {
       dd2 = b.temp(b.types.ref_to(lw.elems_of(aty)))
       b.assign(b.pl(dd2), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
       byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(dd2)), b.copy_local(ix)))))
@@ -768,7 +1062,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     }
     if oref || t.same_as(elt) {
       // An optional reference, or an element that is already the result
-      // (`get` on an `Array(T?)`, W3b: the verifier refused the old
+      // (`get` on an `Array(T?)`, the verifier refused the old
       // re-wrapping of the element as its own member).
       b.assign(b.pl(d), b.rv_use(v))
     } else {
@@ -790,7 +1084,7 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
   b = lw.lw_b
   if t = e.ty {
     aty = lw.ety(recv)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     et = lw.elem_of(aty)
@@ -803,12 +1097,12 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
       }
       f = lw.kind_fn("avant_array_index", cet, true)
       if f.size == 0 {
-        lw.refuse(e.loc, "Array.index_of on ${want.show}")
+        lw.refuse(e.loc, "Array.index_of on ${want.show()}")
         return b.c_i32(0)
       }
       v = lw.snap(lw.lower_coerced(args[0], et, want), recv)
       a = lw.lower_expr(recv)
-      if lw.failed {
+      if lw.failed() {
         return b.c_i32(0)
       }
       lw.at(e.loc)
@@ -822,13 +1116,13 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
     }
     mf = lw.kind_fn("avant_array_${name}", et, false)
     if args.size > 0 || mf.size == 0 || et == mt_bool() {
-      lw.refuse(e.loc, "Array.${name} on ${want.show}")
+      lw.refuse(e.loc, "Array.${name} on ${want.show()}")
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    fl = lw.found_local
+    fl = lw.found_local()
     a2 = lw.lower_expr(recv)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -843,26 +1137,21 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
 // `h.get(k)` (the key, then the hash), `h.delete(k)` (the same, removing
 // the key), `h.get_slice(s, a, b)` (b, a, s,
 // then the hash), `h.get_concat(a, b)` (b, a, then the hash); each runtime
-// read reports through a found flag.
+// read reports through a found flag. `get` and `delete` load the value
+// from the address the runtime returns (lower_hash.av).
 pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b
   if t = e.ty {
-    vt = ty_int()
-    if v = ht.val {
-      vt = v
-    }
+    vt = mir_hash_val(ht)
     vty = lw.ty_at(vt, e.loc, "a hash value")
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    fl = lw.found_local
+    fl = lw.found_local()
     f = ""
-    if name == "get" && args.size == 1 {
-      f = mir_hash_op(ht, "get")
-    } else if name == "delete" && args.size == 1 {
-      // Stage 29 W4b2: delete gives the value it removed, or nil.
-      f = mir_hash_op(ht, "take")
+    if (name == "get" || name == "delete") && args.size == 1 {
+      f = name
     } else if name == "get_slice" && args.size == 3 {
       f = "avant_hash_get_str_slice"
     } else if name == "get_concat" && args.size == 2 {
@@ -873,10 +1162,18 @@ pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String,
       return b.c_i32(0)
     }
     ops = lw.args_then_recv(args, recv)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
+    if f == "get" || f == "delete" {
+      op = "find"
+      if f == "delete" {
+        op = "take"
+      }
+      v = lw.hash_find_load(ht, op, ops[0], lw.hash_key_arg(ht, ops[1], e.loc), fl, vty)
+      return lw.opt_of(t, lw.found_is(fl), v, vt, e.loc)
+    }
     ops.push(lw.found_ptr(fl))
     v2 = lw.call_to(vty, f, ops)
     return lw.opt_of(t, lw.found_is(fl), v2, vt, e.loc)
@@ -891,9 +1188,9 @@ pub fn (lw: MirLower) lower_opt_cstr(e: Expr, f: String): MOperand {
   b = lw.lw_b
   if t = e.ty {
     lw.at(e.loc)
-    fl = lw.found_local
+    fl = lw.found_local()
     ops = lw.lower_args(e.args)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -918,7 +1215,7 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   if c == "wide_op" && e.args.size == 5 {
     // calls.av:291-309: the arguments last to first, then the call.
     wops = lw.lower_args_rev(e.args)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -936,8 +1233,9 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   } else if c == "sha256_word0" && e.args.size == 1 {
     f = "avant_sha256_word0"
   } else if c == "#gc.collect" && e.args.size == 0 {
-    // std.gc's `gc.collect()` (checker/visibility.av check_gc_call).
-    f = "avant_gc_collect_young"
+    // std.gc's `gc.collect()` (checker/visibility.av check_gc_call): the
+    // runtime's complete collection.
+    f = "avant_gc_collect"
   } else if c == "argv" && e.args.size == 0 {
     f = "avant_argv"
   } else if c == "file_exists" && e.args.size == 1 {
@@ -948,7 +1246,7 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   }
   ty = lw.ety(e)
   ops = lw.lower_args(e.args)
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   lw.at(e.loc)

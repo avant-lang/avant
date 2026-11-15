@@ -12,11 +12,10 @@ pub class Source {
 }
 
 // `avant run` starts the program through this runtime entry, not the
-// prelude's process_run (Stage 29 W4b2's shim; file_write and dir_list
-// are the prelude's since W-ADOPT): the command's exit status is the
-// program's, 128 + n when signal n killed it and 127 when it could not
-// start, and a ProcessError's fields cannot be told apart yet without a
-// type switch (W5).
+// prelude's process_run (a shim; file_write and dir_list are the
+// prelude's): the command's exit status is the program's, 128 + n when
+// signal n killed it and 127 when it could not start, and a
+// ProcessError's fields cannot be told apart yet without a type switch.
 lib sys_shim {
   fun avant_fs_run(path: String, args: Array(String)): Int
 }
@@ -26,7 +25,7 @@ pub fn shim_process_run(path: String, args: Array(String)): Int {
   sys_shim.avant_fs_run(path, args)
 }
 
-// A write's failure, or nil (O569, Stage 29 W-FIX1e): its message is
+// A write's failure, or nil: its message is
 // `cannot write PATH: REASON`, which the compiler prints or returns
 // where it used to drop the reason with `?? -1`.
 pub fn write_failure(r: Int | IoError): IoError? {

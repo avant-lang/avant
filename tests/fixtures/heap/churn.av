@@ -1,4 +1,4 @@
-// Array and hash churn on the new back end (Stage 28 W6c). Long-lived
+// Array and hash churn on the new back end. Long-lived
 // holders, reached only through another object's array field (a holder
 // named by a root slot is scanned by every young collection anyway, so it
 // would hide a missing barrier), become mature and then gain young
@@ -49,8 +49,8 @@ class Holder {
     self.slots = []
     self.names = []
     self.rows = []
-    self.h = Hash(String, String).new
-    self.counts = Hash(String, Int).new
+    self.h = Hash(String, String).new()
+    self.counts = Hash(String, Int).new()
   }
 }
 
@@ -115,7 +115,7 @@ fn check(h: Holder): Int {
     }
     i = i + 1
   }
-  ks = h.h.keys
+  ks = h.h.keys()
   i = 0
   while i < ks.size {
     v = h.h.get_or(ks[i], "?")
@@ -157,14 +157,14 @@ fn round(root: Root, r: Int): Int {
     root.holders[i].counts["c${r % 5}"] = k
     n = n + junk(k + 9).size
     if h.slots.size > 12 {
-      dummy = h.slots.pop
-      h.leaves.clear
+      dummy = h.slots.pop()
+      h.leaves.clear()
     }
     if h.rows.size > 8 {
       h.rows = [[k, k + 1, k + 2]]
     }
     if h.h.size > 20 {
-      h.h.clear
+      h.h.clear()
     }
     i = i + 1
   }
@@ -172,7 +172,7 @@ fn round(root: Root, r: Int): Int {
 }
 
 fn main {
-  root = Root.new
+  root = Root.new()
   i = 0
   while i < 6 {
     root.holders.push(Holder.new(i))

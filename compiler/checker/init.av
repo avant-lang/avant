@@ -1,19 +1,19 @@
-// Field initialization (Stage 29 W3b, B5, D292): no field is ever read
-// unset. A field whose type has a natural zero (`0`, `0.0`, `false`, `""`,
-// `nil` for any `T?`, a null `Ptr`, a struct of such fields) starts at it;
-// a field with a written default starts at that value (evaluated in
-// declaration order before `initialize`). Every other field (a class,
-// `Array`, `Hash`, `Buf`, `Bytes`, a `fn`, a union without `nil`, a struct
-// holding one) is required: `initialize` sets it on every path before any
-// read of it and before `self` escapes (a method call on `self`, `self` as
-// a value, a lambda that uses the receiver); otherwise the class is
-// refused with an error that names the field and the ways out. Checked
-// after the bodies, on every class and every generic class instance (a
-// field of type `T` is required when `T` has no zero). The same walk finds
-// the fields whose zero needs a store (a String's "") that initialize sets
-// on every path before any read and before self escapes: their zero
-// store is left out (Field.set_by_init), so a class whose initialize sets
-// its strings builds exactly as before.
+// Field initialization: no field is ever read unset. A field whose type
+// has a natural zero (`0`, `0.0`, `false`, `""`, `nil` for any `T?`, a
+// null `Ptr`, a struct of such fields) starts at it; a field with a
+// written default starts at that value (evaluated in declaration order
+// before `initialize`). Every other field (a class, `Array`, `Hash`,
+// `Buf`, `Bytes`, a `fn`, a union without `nil`, a struct holding one) is
+// required: `initialize` sets it on every path before any read of it and
+// before `self` escapes (a method call on `self`, `self` as a value, a
+// lambda that uses the receiver); otherwise the class is refused with an
+// error that names the field and the ways out. Checked after the bodies,
+// on every class and every generic class instance (a field of type `T` is
+// required when `T` has no zero). The same walk finds the fields whose
+// zero needs a store (a String's "") that initialize sets on every path
+// before any read and before self escapes: their zero store is left out
+// (Field.set_by_init), so a class whose initialize sets its strings builds
+// exactly as before.
 
 import location
 import source
@@ -85,17 +85,17 @@ fn (w: InitWalk) ways(field: String, lead: String): String {
 }
 
 // ", give it a default (f: T = ...), or make it optional (f: T?)"; a
-// union becomes optional with `| Nil`; a `fn` type has no optional form
-// to suggest (grouping parentheses in types come later).
+// union becomes optional with `| Nil`, a `fn` type in grouping
+// parentheses (`(fn(Int): Int)?`: `fn(Int): Int?` returns an optional).
 fn (w: InitWalk) or_else(field: String): String {
   if ft = w.ty.field_named(field) {
-    t = ft.show
-    if ft.is_fn {
-      return " or give it a default (${field}: ${t} = ...)"
-    }
+    t = ft.show()
     opt = "${t}?"
-    if ft.is_union {
+    if ft.is_union() {
       opt = "${t} | Nil"
+    }
+    if ft.is_fn() {
+      opt = "(${t})?"
     }
     return ", give it a default (${field}: ${t} = ...), or make it optional (${field}: ${opt})"
   }
@@ -118,7 +118,7 @@ pub fn (checker_self: Checker) check_inits {
 }
 
 pub fn (checker_self: Checker) check_class_init(cdef: ClassDef, ty: Ty) {
-  w = InitWalk.new(ty.show, ty)
+  w = InitWalk.new(ty.show(), ty)
   first_loc = cdef.loc
   for field in cdef.fields {
     field.set_by_init = false
@@ -231,10 +231,15 @@ pub fn (checker_self: Checker) init_stmt(w: InitWalk, st: Stmt, set: Array(Strin
           // A compound write reads the field first.
           checker_self.init_read(w, f, target.loc, set)
         }
+        base = set
         if v = st.value {
-          checker_self.init_expr(w, v, set, false)
+          if got = checker_self.init_value(w, v, set) {
+            base = got
+          } else {
+            return nil
+          }
         }
-        out = init_copy(set)
+        out = init_copy(base)
         if !init_has(out, f) {
           out.push(f)
         }
@@ -243,7 +248,7 @@ pub fn (checker_self: Checker) init_stmt(w: InitWalk, st: Stmt, set: Array(Strin
       checker_self.init_expr(w, target, set, false)
     }
     if v2 = st.value {
-      checker_self.init_expr(w, v2, set, false)
+      return checker_self.init_value(w, v2, set)
     }
     return set
   }
@@ -332,9 +337,26 @@ pub fn (checker_self: Checker) init_parts(w: InitWalk, st: Stmt, set: Array(Stri
   checker_self.init_stmts(w, st.else_body, set)
 }
 
+// An assigned value: what a value `if` or `switch` sets in its branches
+// counts after it, as for the statement forms; any other value is read.
+pub fn (checker_self: Checker) init_value(w: InitWalk, v: Expr, set: Array(String)): Array(String)? {
+  if v.kind == ex_switch() {
+    return checker_self.init_switch(w, v, set)
+  }
+  checker_self.init_expr(w, v, set, false)
+  set
+}
+
 // A `switch` statement: with `else`, every arm; without, a miss runs
-// nothing, so the set before it is one of the ways out.
+// nothing, so the set before it is one of the ways out, unless the
+// switch is over an enum or a union, which the checker has made name
+// every member: then only its arms are.
 pub fn (checker_self: Checker) init_switch(w: InitWalk, e: Expr, set: Array(String)): Array(String)? {
+  if e.op == tk_if() && e.else_body.size == 1 && e.cases.size == 0 {
+    // A value `if` (the checker's form: its one statement is the if,
+    // whose branches end in the values).
+    return checker_self.init_stmts(w, e.else_body, set)
+  }
   if c = e.cond {
     checker_self.init_expr(w, c, set, false)
   }
@@ -362,7 +384,7 @@ pub fn (checker_self: Checker) init_switch(w: InitWalk, e: Expr, set: Array(Stri
       }
       any = true
     }
-  } else {
+  } else if !init_switch_exhaustive(e) {
     if o3 = out {
       out = init_meet(o3, set)
     } else {
@@ -374,6 +396,13 @@ pub fn (checker_self: Checker) init_switch(w: InitWalk, e: Expr, set: Array(Stri
     return nil
   }
   out
+}
+
+pub fn init_switch_exhaustive(e: Expr): Bool {
+  if c = e.cond, ct = c.ty {
+    return ct.is_enum() || ct.is_union() || ct.is_bool()
+  }
+  false
 }
 
 // A read of field f: an error for a required one not yet set; a field

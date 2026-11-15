@@ -9,38 +9,38 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The young generation: S+ (Stage 28 W15c, D233), candidate S with the
+/* The young generation: S+, candidate S with the
  * opportunistic young copy. Candidate E, the evacuating nursery, was
- * deleted as a separate young generation in Stage 28 W15d (D232); the
+ * deleted as a separate young generation; the
  * mechanisms of E this file uses stay: header forwarding (gc_set_forward,
  * avant_gc_internal.h), the copy (splus_copy) and the noted list (below, moved
  * from avant_gc_young.c, which held E's young copy).
  *
- * Candidate S, the in-place young generation (Stage 28 W15b,
- * gc-design.md §3.1, StickyImmix), is what this file does with every
- * survivor it does not copy (until the Valk stage's VALK-T2, O632, it
- * could also be built alone, with GC_STICKY_COPY 0: avant_gc_internal.h).
+ * Candidate S, the in-place young generation (StickyImmix),
+ * is what this file does with every
+ * survivor it does not copy (it could once also be built alone, with
+ * GC_STICKY_COPY 0: avant_gc_internal.h).
  * A young collection under S moves nothing. It traces from the roots
  * (frame slots, pins, runtime-held slots) and the remembered set, and
  * promotes each young object it reaches where it lies: YOUNG cleared,
  * its lines marked live at the current line epoch. A young object it
  * does not reach is garbage, reclaimed by the line sweep of the blocks
  * young allocation used, never visited. Mature objects are scanned one
- * level where R1' says (gc-design.md §1.3): when a root, a young
+ * level where R1' says (avant_gc.h): when a root, a young
  * object's field or a remembered object's field names them; deeper ones
  * only when remembered. After the collection no object is young, so the
- * remembered set is emptied (§3.1.1 point 1).
+ * remembered set is emptied.
  *
  * Nothing moves, so nothing is rewritten and nothing needs pinning: no
  * frame slot, C stack word or register is changed, and a young object a
  * C local names stays where it is. Liveness still needs every reference
  * to be found: generated code keeps its references in slots across
- * collecting calls (D165), and runtime C keeps what it holds across a
- * collecting call in handle scopes (RC1, avant_gc.h; Stage 28 W16a). */
+ * collecting calls, and runtime C keeps what it holds across a
+ * collecting call in handle scopes (RC1, avant_gc.h). */
 /* The noted list: every header MARKED a young collection sets, cleared
- * when it ends (C36, gc-design.md §2.6), in the order the trace reached
+ * when it ends, in the order the trace reached
  * them. An entry is the object's payload address with tag bits in its
- * three low bits (the Valk stage, VALK-T, O579; avant_gc_internal.h,
+ * three low bits (avant_gc_internal.h,
  * NOTED_*), so that the passes after the trace read the list and skip
  * what they have nothing to do for without reading its header:
  *   NOTED_SURV   a young block object this collection promoted
@@ -63,7 +63,7 @@ static inline uint32_t note_marked(void *payload, uintptr_t tag) {
 /* A large pointer buffer the trace marked (young or not) is also on the
  * carded list, in the order it was marked: gc_cards_settle makes the
  * cards of each exact after the collection, and reads this list instead
- * of every noted entry (the Valk stage, VALK-T, O579). */
+ * of every noted entry. */
 static inline void note_carded(void *payload, const AvantHeader *h) {
   if (gc_carded(h)) {
     if (gc_heap.carded_n == gc_heap.carded_cap) {
@@ -97,10 +97,21 @@ static void fix_extra_add(void *payload) {
  * flags, and its old header is never read again: its start bit goes,
  * splus_finish). Also the end of SURVIVED on every object this
  * collection promoted: promote_young leaves it so that S+'s copy can
- * tell a first survivor from an aged one (Stage 28 W15d); an object
+ * tell a first survivor from an aged one; an object
  * still young keeps it (a young large object at its first survival).
  * An entry whose object holder aging moved (splus_age_holders: the keep
- * list does not know the entry) is told by its header's forward. */
+ * list does not know the entry) is told by its header's forward.
+ * And the late start bit: a young block
+ * object this collection promoted and left in place (PROMOTED_NOW, not
+ * moved) gets its start bit here, where its header is read anyway. One
+ * the copy moved needs none for its old copy (its copy's was set,
+ * splus_copy), so a survivor of an evacuated block, the usual survivor,
+ * costs nothing here, and neither does an aged copy promoted in place at
+ * its second survival (SURVIVED: the copy that made it set its bit); an
+ * object that had its bit already for another reason (a C path's, a
+ * shared module's, a block a lookup built) has it set again. After this
+ * every block object that is not young has its start bit, as before the
+ * late start bits. */
 void gc_clear_noted(void) {
   void **const noted = gc_heap.noted;
   /* The entries past the last one the copy did not move are all moved:
@@ -118,6 +129,11 @@ void gc_clear_noted(void) {
     f = h->flags;
     if (f & AVANT_FLAG_FORWARDED) {
       continue;
+    }
+    /* Promoted by this collection and not an aged copy (whose bit the
+     * copy set): the late start bit. */
+    if ((f & (AVANT_FLAG_PROMOTED_NOW | AVANT_FLAG_SURVIVED)) == AVANT_FLAG_PROMOTED_NOW) {
+      start_bit_set(h, 1);
     }
     f = (uint16_t)(f & ~(AVANT_FLAG_MARKED | AVANT_FLAG_PROMOTED_NOW | AVANT_FLAG_CARD_SCAN));
     if (!(f & AVANT_FLAG_YOUNG)) {
@@ -150,7 +166,7 @@ static int trace_object(void **slot, void *start, Block *b, AvantHeader *ol, int
 #define TRACE_REM_DEPTH 64
 static uint32_t trace_rem_depth;
 
-/* The trace's state in locals (the Valk stage, VALK-T, O579), as the full
+/* The trace's state in locals, as the full
  * mark's MarkCtx: what a field's trace reads of gc_heap, loaded once by
  * the loop that scans (y_open), so the loop keeps it in registers. The
  * committed size, the side tables and the epoch do not change during a
@@ -233,14 +249,19 @@ static __attribute__((noinline)) void y_work_grow(void) {
  * young_size reads (sticky.inplace) and the collection's live bytes:
  * summed per block in Block.idle (S+'s survivor bytes) and added once
  * after the trace (gc_sticky_collect), not per object. The mature growth
- * it causes for the full-collection trigger (gc-design.md §5.4: in-place
+ * it causes for the full-collection trigger (in-place
  * promotions count) is the lines it newly makes live, whole: what the
  * heap loses to it until a full collection, since nothing compacts it (a
  * survivor alone in a line costs the line; counted by its bytes, a heap
  * of scattered survivors grew without a full collection: heap/churn.av
  * 9 MB under E, 53 MB). SURVIVED (an aged object's) ends with the
  * collection (gc_clear_noted): S+'s copy reads it to decide where the
- * copy goes. */
+ * copy goes. An object the inline path allocated may have no start bit
+ * yet (avant_gc_alloc.c, "Late start bits"):
+ * one promoted here that stays where it is gets its bit when the
+ * collection ends (gc_clear_noted), one the copy moves gets its copy's
+ * (splus_copy), and until then a lookup that needs it builds its block's
+ * (gc_lazy_touch). */
 static inline __attribute__((always_inline)) void promote_young(YCtx *c, void *start, AvantHeader *h, uint16_t fl,
                                                                 uintptr_t off) {
   size_t total = align_up(sizeof(AvantHeader) + (size_t)h->size);
@@ -272,7 +293,7 @@ static inline __attribute__((always_inline)) void promote_young(YCtx *c, void *s
   }
 }
 
-/* Variant S+ (Stage 28 W15c, gc-design.md §3.1, §3.3): the opportunistic
+/* Variant S+: the opportunistic
  * young copy. A young collection traces and promotes in place as S does,
  * and sums each young block's survivor bytes. After the trace a young
  * block that held no mature line when the collection began and whose
@@ -288,14 +309,15 @@ static inline __attribute__((always_inline)) void promote_young(YCtx *c, void *s
  * survivors are promoted in
  * place, as under S. A block stays in place when any of its young
  * objects is named imprecisely: a pin or PINNED, or a registered slot
- * location inside it. (Until Stage 28 W16b also a word of the collecting
- * thread's C stack at a collection runtime C entered, W15a2's pin scan;
- * runtime C roots what it holds since W16a, RC1, and gc-design.md
- * section 4.3's proof retired the scan.) Nothing moves with the nursery
+ * location inside it. (Once also a word of the collecting
+ * thread's C stack at a collection runtime C entered, the pin scan;
+ * runtime C roots what it holds, RC1, and the scan was retired once
+ * every runtime C site was converted and the suite passed without it
+ * under the stress mode and the verifier.) Nothing moves with the nursery
  * off (no young collection); in a shared program the copy runs as in an
- * unshared one since Stage 28 W17a (the handshake stops the other
- * threads; before, nothing moved there, D191). Copying is optional: a block refused at the
- * heap limit leaves the remaining survivors in place. */
+ * unshared one (the safepoint handshake stops the other
+ * threads; before it, nothing moved there). Copying is optional: a block
+ * refused at the heap limit leaves the remaining survivors in place. */
 
 /* One reference to the object at START (in block B, or the large object
  * OL), named by SLOT's word (NULL: named by a pin, a task root or a slot's
@@ -305,8 +327,8 @@ static inline __attribute__((always_inline)) void promote_young(YCtx *c, void *s
  * and noted, so the flag ends with the collection (gc_clear_noted). A
  * young object is promoted at once and its fields are traced from the
  * work list; a young large object is marked and decided after the trace
- * (gc_reclaim_young_large: at its first survival it stays young, Stage 28
- * W15c). Returns TR_YLARGE or TR_MOVABLE (above), or 0. The general
+ * (gc_reclaim_young_large: at its first survival it stays young).
+ * Returns TR_YLARGE or TR_MOVABLE (above), or 0. The general
  * form: roots come here through trace_ref, and a field's reference that
  * is not one of trace_field's in-line cases. */
 static int trace_object(void **slot, void *start, Block *b, AvantHeader *ol, int from_mature) {
@@ -322,8 +344,8 @@ static int trace_object(void **slot, void *start, Block *b, AvantHeader *ol, int
   }
   if (fl & AVANT_FLAG_MARKED) {
     /* A carded object scanned so far only by its marked cards, now named
-     * by a root or a young object's field (R1'(a), (b)): scanned whole,
-     * as R1' says (Stage 28 W16t). */
+     * by a root or a young object's field ((b)): scanned whole,
+     * as R1' says. */
     if (!from_mature && (fl & AVANT_FLAG_CARD_SCAN)) {
       h->flags &= (uint16_t)~AVANT_FLAG_CARD_SCAN;
       if (scan_fields(start, 1) & TR_MOVABLE) {
@@ -361,10 +383,10 @@ static int trace_object(void **slot, void *start, Block *b, AvantHeader *ol, int
    * and its fields name the next remembered object: on a chain of them
    * (a list of old nodes, each written since the last collection) this
    * function called itself once per node, and a chain of 100,000 ended
-   * the program with a stack overflow (found in the Valk stage's VALK-T;
-   * tests/fixtures/heap/rem_chain.av). Past TRACE_REM_DEPTH nested
+   * the program with a stack overflow
+   * (tests/fixtures/heap/rem_chain.av). Past TRACE_REM_DEPTH nested
    * objects the object is left to the remembered set's own scan
-   * (trace_all, R1'(c)), which reaches every remembered object not yet
+   * (trace_all), which reaches every remembered object not yet
    * traced: such an object is met here only before or during that scan,
    * never after it. Below the depth the order of the trace is the one it
    * always had. */
@@ -381,7 +403,7 @@ static int trace_object(void **slot, void *start, Block *b, AvantHeader *ol, int
     trace_rem_depth++;
   }
   /* Followed only because it is remembered: a carded object's marked
-   * cards are what the barrier recorded (Stage 28 W16t). */
+   * cards are what the barrier recorded. */
   if (from_mature && (fl & AVANT_FLAG_REMC) && !(fl & AVANT_FLAG_CARD_ALL)) {
     h->flags |= AVANT_FLAG_CARD_SCAN;
     r = 0;
@@ -410,10 +432,10 @@ static int trace_ref(void **slot, void *p, int from_mature) {
 
 /* A field's reference (SLOT is a word a type map names, or a carded
  * buffer's slot): null, an exact start or a static address by the field
- * rule (avant_gc_internal.h), so the range test alone classifies it (the
- * Valk stage, VALK-T, O585; until then the start-bit lookup of
- * gc_object_payload_fast), and the header right before it is read once:
- * the one lookup of a traced field (O579). The common answers are given
+ * rule (avant_gc_internal.h), so the range test alone classifies it (once
+ * the start-bit lookup of gc_object_payload_fast), and the header right
+ * before it is read once:
+ * the one lookup of a traced field. The common answers are given
  * here, in line in the scan's loop over YCtx's locals: no heap object; a
  * block object already traced this cycle; a young block object, promoted
  * (trace_object's young arm: the block stays in place when the object is
@@ -454,7 +476,7 @@ static inline __attribute__((always_inline)) int trace_field(YCtx *c, void **slo
   return r;
 }
 
-/* The slots of carded P's marked cards (Stage 28 W16t), traced as
+/* The slots of carded P's marked cards, traced as
  * scan_fields traces fields; returns their count (rem_fields counts the
  * remembered set's scans, as field_count does for whole objects) and
  * or-s what they named into *R. A young large object they name needs no
@@ -478,7 +500,7 @@ static uint64_t scan_cards(void *p, int from_mature, int *r) {
  * traced whenever it is reached): after the trace, every such holder
  * that is not young and still names a young object is remembered
  * (rem_rebuild), because the young large object may stay young across
- * this collection (Stage 28 W15c, O88). R is what the fields of P named. */
+ * this collection. R is what the fields of P named. */
 static inline void keep_holder(void *p, int r) {
   if ((r & TR_YLARGE) &&
       (avant_header(p)->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE)) != (AVANT_FLAG_YOUNG | AVANT_FLAG_LARGE)) {
@@ -505,7 +527,7 @@ static __attribute__((noinline)) int scan_fields(void *p, int from_mature) {
 
 /* The work list: each entry is the noted index of a young object the
  * trace promoted (or a young large object it marked); its fields are
- * traced (R1'(b)), and when one names a movable object its noted entry
+ * traced, and when one names a movable object its noted entry
  * is tagged NOTED_FIX. A small record's reference words are read from
  * its type's list (gc_heap.refs) and traced in line over the loop's
  * locals; any other object goes through scan_fields. */
@@ -547,7 +569,7 @@ static void trace_root_slot(void **slot) {
 }
 
 /* Field slots scan_fields visits for one object (the rem_fields
- * counter, Q5). */
+ * counter). */
 static uint64_t field_count(void *p) {
   AvantHeader *h = avant_header(p);
   uint32_t id = h->type_id;
@@ -570,7 +592,7 @@ static uint64_t field_count(void *p) {
 /* The trace: frame slots (the value, and the location when it lies in a
  * young object, which keeps that object), the remembered set (each entry
  * marked and its fields traced as R1'(c) says), pins, the runtime-held
- * slots, then the work list (the young objects' fields, R1'(b)): each
+ * slots, then the work list (the young objects' fields): each
  * entry is a noted index, and the object whose scan met a movable object
  * has its noted entry tagged NOTED_FIX. */
 static void trace_all(void) {
@@ -589,8 +611,8 @@ static void trace_all(void) {
       /* A slot location inside an object an earlier slot already
        * reached (promoted, so no longer YOUNG): its block must stay in
        * place all the same, since splus_fix rewrites what a slot holds,
-       * never where the frame keeps it (Stage 28 W15d: before, such an
-       * object moved and the frame's location named its old copy). A
+       * never where the frame keeps it (such an object used to move, and
+       * the frame's location named its old copy). A
        * candidate block holds only objects young when the collection
        * began. */
       else if (ls && gc_heap.splus_on && lb && !ll && lb->young_hi && lb->kept != SPLUS_KEPT) {
@@ -630,7 +652,7 @@ static void trace_all(void) {
           }
         }
         /* A carded entry: the slots of its marked cards (R1'(c) for a
-         * carded object, Stage 28 W16t); every other entry: every field. */
+         * carded object); every other entry: every field. */
         if (carded) {
           gc_heap.ctr.rem.fields += scan_cards(obj, 0, &r);
         } else {
@@ -655,13 +677,13 @@ static void trace_all(void) {
   trace_drain();
 }
 
-/* Every remembered entry leaves the set, REM cleared (gc-design.md
- * §3.1.1 point 1): after an S young collection no block object is young.
+/* Every remembered entry leaves the set, REM cleared: after an S young
+ * collection no block object is young.
  * Run before any line is freed, while every entry's header is intact (no
  * allocation happens during the collection, and the set holds only
  * objects remembered since the last collection). rem_rebuild then
  * remembers again the holders that name a young large object staying
- * young (§3.1.1 point 1 as amended by Stage 28 W15c: the one case where
+ * young (the one case where
  * an object is still young after an S young collection). */
 static void rem_empty(void) {
   uint32_t i;
@@ -679,7 +701,7 @@ static void rem_empty(void) {
  * list, scan_fields): each one that is not young and still names a young
  * object after gc_reclaim_young_large is remembered, so the next young
  * collection traces the young large object through it. A holder this
- * collection reached only through a root (R1'(a)) is remembered too: the
+ * collection reached only through a root is remembered too: the
  * root may be gone by the next collection. */
 static void rem_rebuild(void) {
   gc_rem_keep_young_holders();
@@ -688,14 +710,14 @@ static void rem_rebuild(void) {
 
 /* The young lines LO..HI of block B after the trace: a line no survivor
  * marked at the current epoch is free, and its start bits are cleared
- * (32 granules, half a start word; gc-design.md §2.3, §3.1.1 point 2), so
+ * (32 granules, half a start word), so
  * its dead objects are no longer heap payloads and a later hole there
  * has clear start bits for the inline allocation path. A dead object
  * whose header lies in a live line keeps its start bit: nothing infers
  * liveness from start bits. */
 /* The line sweep itself is gc_sweep_block_lines (avant_gc_heap.c, word
- * by word since Stage 28 W15c, O87; shared with the full sweep since
- * W15d, O94); here it is counted in the sticky family. */
+ * by word; shared with the full sweep); here it is counted in the sticky
+ * family. */
 static int sweep_lines(Block *b, int lo, int hi) {
   uint64_t freed = 0;
   int live = gc_sweep_block_lines(b, lo, hi, &freed);
@@ -706,8 +728,8 @@ static int sweep_lines(Block *b, int lo, int hi) {
 
 /* The block map (gc_heap.evac_map) grown to the committed heap, its new
  * entries clear. The young copy's map (S+), and the defragmenter's for
- * the blocks a full collection evacuates (avant_gc_defrag.c; the Valk
- * stage, VALK-T2, O603): each sets its blocks' entries when it has chosen
+ * the blocks a full collection evacuates (avant_gc_defrag.c): each sets
+ * its blocks' entries when it has chosen
  * them and clears them before it ends, so the map is clear between
  * collections. */
 void gc_evac_map_ensure(void) {
@@ -734,6 +756,9 @@ void gc_evac_map_ensure(void) {
  * (SPLUS_PART). */
 #define EVAC_MAP_EVAC 1
 #define EVAC_MAP_PART 2
+/* 3: its survivors age where they lie (SPLUS_AGE_HERE): nothing moves,
+ * but a holder that is not young and names one is remembered. */
+#define EVAC_MAP_AGE 3
 static inline int evac_at(uint64_t bi) {
   return bi < gc_heap.evac_map_n && gc_heap.evac_map[bi];
 }
@@ -758,14 +783,14 @@ static void *splus_new_addr(void *p, int *aged) {
   AvantHeader *ol = NULL;
   void *start;
   void *to;
-  /* The evacuated-block map (O93): P's block, or, for a payload that
+  /* The evacuated-block map: P's block, or, for a payload that
    * starts a block, its header's (the block before). The first address
-   * past the committed heap is inside the range on purpose (O601, the
-   * Valk stage, VALK-T): it is the payload address of an object with no
+   * past the committed heap is inside the range on purpose: it is the payload
+   * address of an object with no
    * payload whose header is the heap's last word, and then the block
-   * before it is the one asked (until VALK-T `off >= committed` left such
+   * before it is the one asked (once `off >= committed` left such
    * a reference naming the old copy; avant_alloc gives every object one
-   * word since W-INT1, so no object has that address today:
+   * word, so no object has that address today:
    * ffi/empty_end.av reaches the layout with that guard removed). */
   if (off > gc_heap.committed) {
     return p;
@@ -845,8 +870,8 @@ static __attribute__((noinline)) Block *splus_copy_room(int aged) {
  * still young (YOUNG | SURVIVED), its start bit set and its lines left
  * unmarked like any young object's; it is not mature growth. Returns the
  * copy's payload address, or NULL when no block can be had (the heap
- * limit): H stays in place. In line in the copy's loop (the Valk stage,
- * VALK-T, O579): the three smallest sizes (a header and one to three
+ * limit): H stays in place. In line in the copy's loop: the three smallest
+ * sizes (a header and one to three
  * words) are copied by fixed-size moves, with no call. The bytes moved
  * are added to *N_AGED or *N_PROM, which the caller gives to
  * splus_copied when its run of copies ends. */
@@ -888,8 +913,8 @@ static inline __attribute__((always_inline)) void *splus_copy(AvantHeader *h, in
   return payload_of(nh);
 }
 
-/* The bytes a run of copies moved, added to the counters once (the Valk
- * stage, VALK-T, O600; splus_copy added them at every object): N_AGED
+/* The bytes a run of copies moved, added to the counters once
+ * (splus_copy used to add them at every object): N_AGED
  * into survivor blocks, still young (sticky.aged, the collection's
  * aged_now), N_PROM into mature space (prom.copied, and mature growth
  * for the full-collection trigger); both are copied bytes and live
@@ -909,7 +934,7 @@ static void splus_fix_slot(void **slot) {
   *slot = splus_new_addr(*slot, &aged);
 }
 
-/* A field's word after the copy (the Valk stage, VALK-T, O579 and O585):
+/* A field's word after the copy:
  * by the field rule it is null, a static address or an exact start, so
  * its header's block is the one the map is asked about and, in a block
  * objects were moved out of, the header right before it says whether
@@ -941,6 +966,8 @@ static inline __attribute__((always_inline)) void fix_field(const FixCtx *c, voi
       if (avant_header(to)->flags & AVANT_FLAG_YOUNG) {
         *aged = 1;
       }
+    } else if (c->map[bi] == EVAC_MAP_AGE) {
+      *aged = 1;
     }
   }
 }
@@ -976,9 +1003,9 @@ static void fix_holder(void *p) {
  * the task roots (each may name the inside of an object: splus_new_addr),
  * the fields of every object whose scan met a movable object (the noted
  * list's NOTED_FIX entries, in the list's order; a moved object's fields
- * are its copy's), and the keep list's holders. Until VALK-T it rewrote
+ * are its copy's), and the keep list's holders. It used to rewrite
  * every field of every object the trace scanned whenever anything at all
- * was copied (O579): an object none of whose fields named a block object
+ * was copied: an object none of whose fields named a block object
  * young at the collection's start names nothing that moved, and is not
  * read again. */
 static void splus_fix(void) {
@@ -992,10 +1019,15 @@ static void splus_fix(void) {
     EACH_FRAME_SLOT(gc_thread_frames(t), slot, { splus_fix_slot(slot); });
   }
   gc_each_runtime_root(splus_fix_slot);
-  /* Task roots move with their records since Stage 28 W17a. */
+  /* Task roots move with their records. */
   EACH_TASK_ROOT(slot, splus_fix_slot(slot));
   noted = gc_heap.noted;
   noted_n = gc_heap.noted_n;
+  /* Nothing was copied (the collection aged blocks where they lie): no
+   * field names a moved object, and only a holder that is not young can
+   * have to be remembered (it names an object aged where it lies), so a
+   * young holder is passed over on its header. */
+  const int none_moved = avant_g_stats.copied_bytes == gc_heap.splus_copied0;
   for (i = 0; i < noted_n; i++) {
     uintptr_t e = (uintptr_t)noted[i];
     void **p;
@@ -1003,6 +1035,9 @@ static void splus_fix(void) {
     uint64_t d;
     unsigned k;
     if (!(e & NOTED_FIX)) {
+      continue;
+    }
+    if (none_moved && (avant_header((void *)(e & ~NOTED_TAGS))->flags & AVANT_FLAG_YOUNG)) {
       continue;
     }
     p = (void **)(e & ~NOTED_TAGS);
@@ -1059,12 +1094,12 @@ static void splus_fix(void) {
  * copies the heap limit refused (SPLUS_PART) keeps its lines live and its
  * remaining survivors in place. Then every reference to a moved object is
  * rewritten (splus_fix). Before the verifier and the sweep. */
-/* Holder aging (Stage 28 W15d, with YOUNG_AGE 2 and S_LARGE_AGE 2): a
+/* Holder aging (with YOUNG_AGE 2 and S_LARGE_AGE 2): a
  * small first survivor that names a young large object (keep_holder put
  * it on the keep list) and lies in a young block S+ does not evacuate
  * (one with mature lines: young allocation took a hole of a recycled
  * block) would be promoted in place and, remembered, keep its buffer
- * alive into the buffer's second survival (the W15c finding, O88): it is
+ * alive into the buffer's second survival (measured on Sort::Quick): it is
  * copied into a survivor block like an evacuated block's survivor, so it
  * dies young with its buffer. Its old copy stays in its line, which this
  * collection's promotion made live, until a full collection; the block
@@ -1101,10 +1136,36 @@ static int splus_age_holders(void) {
   return moved;
 }
 
+/* A pure young block whose survivors fill more than SPLUS_DENSE_NUM /
+ * SPLUS_DENSE_DEN of the lines it was allocated in (from the start of
+ * its young range to its allocation frontier): the cursor's last block,
+ * partly allocated, is judged by what it holds. */
+static inline int dense_block(const Block *b) {
+  uint64_t lines = (b->idle + LINE_SIZE - 1) / LINE_SIZE;
+  int hi = b->young_hi > LINES_PER_BLOCK ? LINES_PER_BLOCK : b->young_hi;
+  int fr = (int)(((size_t)(b->bump - b->base) + LINE_SIZE - 1) >> LINE_SHIFT);
+  if (fr > hi) {
+    fr = hi;
+  }
+  return fr > b->young_lo && lines * SPLUS_DENSE_DEN > (uint64_t)(fr - b->young_lo) * SPLUS_DENSE_NUM;
+}
+
 static void splus_evacuate(void) {
   uint32_t i;
   int any = 0;
-  /* O92 (Stage 28 W15d item 2): the blocks evacuated hold at most one
+  /* A block aged where it lies: the fix-up must run for its holders. */
+  int here_any = 0;
+  /* A dense pure block (SPLUS_DENSE_NUM's comment): DENSE, in the second
+   * high-survival collection in a row, promotes its survivors in place;
+   * HERE, in any other collection that ages, ages them where they lie
+   * instead of copying them (a dense block's copy compacts nothing, and
+   * a survivor that dies before the next collection, as a structure
+   * under construction at a collection does, was copied for nothing).
+   * HERE_N counts the blocks it took. */
+  int dense = 0;
+  int here = 0;
+  uint32_t here_n = 0;
+  /* The one-budget cap: the blocks evacuated hold at most one
    * young budget of survivors (avant_young_bytes); the candidates past it
    * keep their survivors in place, promoted (S's rule). A collection whose
    * survivors outgrow the budget ran late, after a burst allocated where
@@ -1117,8 +1178,8 @@ static void splus_evacuate(void) {
   uint64_t sel = 0;
   /* The bytes promoted in place (the survival young_size reads, and the
    * live bytes): each young block's survivor bytes, which the trace
-   * summed in Block.idle, added once here instead of at every object
-   * (the Valk stage, VALK-T, O579); an evacuated block's are taken back
+   * summed in Block.idle, added once here instead of at every object; an
+   * evacuated block's are taken back
    * below. */
   uint64_t surv = 0;
   /* The map covers the committed heap (the test in line: the call is
@@ -1126,15 +1187,25 @@ static void splus_evacuate(void) {
   if ((gc_heap.committed >> BLOCK_SHIFT) > gc_heap.evac_map_n) {
     gc_evac_map_ensure();
   }
+  if (!gc_heap.set.stress && avant_nursery_held * 2 >= avant_young_bytes) {
+    uint64_t sum = 0;
+    for (i = 0; i < gc_heap.young_blocks_n; i++) {
+      sum += gc_heap.young_blocks[i]->idle;
+    }
+    if (sum * 2 > avant_nursery_held) {
+      dense = gc_heap.young_high_prev;
+    }
+  }
+  here = !dense && gc_heap.splus_age;
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     Block *b = gc_heap.young_blocks[i];
     surv += b->idle;
     if (b->kept == SPLUS_KEPT) {
       gc_heap.ctr.sticky.kept_blocks++;
     } else if (gc_heap.set.stress) {
-      /* The full stress mode (AVANT_GC_STRESS=1, Stage 28 W16a): every
+      /* The full stress mode (AVANT_GC_STRESS=1): every
        * young block nothing names imprecisely is evacuated, pure or
-       * mixed, dense or sparse, past the O92 cap, so every young object
+       * mixed, dense or sparse, past the one-budget cap, so every young object
        * S+ can move is moved at every young collection; a function that
        * kept a reference outside a handle (RC1, RC2) then holds an old
        * copy, which the sweep fills with poison. */
@@ -1146,9 +1217,36 @@ static void splus_evacuate(void) {
       } else {
         b->kept = 0;
       }
+    } else if (b->kept == SPLUS_MIXED) {
+      /* A complete collection (gc_sticky_collect's EVAC_MIXED): a block
+       * with mature lines whose young survivors are sparse gives them
+       * up like a pure one, so a first survivor ages (a copy in a
+       * survivor block, still young) wherever it was allocated; a dense
+       * one keeps them in place, promoted. */
+      if (b->idle > 0 && (b->idle + LINE_SIZE - 1) / LINE_SIZE <= SPLUS_SPARSE_LINES &&
+          sel + b->idle <= avant_young_bytes) {
+        sel += b->idle;
+        b->kept = SPLUS_EVAC;
+        evac_map_set(b, EVAC_MAP_EVAC);
+        gc_heap.ctr.sticky.evac_blocks++;
+        any = 1;
+      } else {
+        b->kept = 0;
+      }
+    } else if ((dense | here) && b->kept == SPLUS_PURE && dense_block(b)) {
+      if (dense) {
+        b->kept = 0;
+        gc_heap.ctr.sticky.dense_blocks++;
+      } else {
+        b->kept = SPLUS_AGE_HERE;
+        evac_map_set(b, EVAC_MAP_AGE);
+        gc_heap.ctr.sticky.here_blocks++;
+        here_n++;
+        any = 1;
+      }
     } else if (b->kept == SPLUS_PURE_AGED &&
                (b->idle + LINE_SIZE - 1) / LINE_SIZE > SPLUS_AGED_SPARSE_LINES) {
-      /* O97 (Stage 28 W15e): a survivor block whose aged survivors are
+      /* A survivor block whose aged survivors are
        * dense keeps them in place, promoted (no second copy). */
       b->kept = 0;
       gc_heap.ctr.sticky.aged_inplace_blocks++;
@@ -1220,12 +1318,31 @@ static void splus_evacuate(void) {
     }
     gc_heap.noted_hi = hi;
     splus_copied(n_aged, n_prom);
+    /* The survivors of the blocks aged where they lie (a pass of its own,
+     * so that the copy's loop has no test for them): young again,
+     * survivors, each with its start bit (a lookup must find it after the
+     * collection, when the late runs are forgotten), and the flags the
+     * collection set cleared here, gc_clear_noted's work for them: their
+     * entries are tagged NOTED_MOVED, which it passes over (nothing reads
+     * them after the fix-up, which needs no forward for them). */
+    for (i = 0; here_n && i < noted_n; i++) {
+      uintptr_t e = (uintptr_t)noted[i];
+      if ((e & (NOTED_SURV | NOTED_MOVED)) == NOTED_SURV &&
+          map[(uint64_t)((e & ~NOTED_TAGS) - base8) >> BLOCK_SHIFT] == EVAC_MAP_AGE) {
+        AvantHeader *ah = avant_header((void *)(e & ~NOTED_TAGS));
+        ah->flags = (uint16_t)((ah->flags & ~(AVANT_FLAG_PROMOTED_NOW | AVANT_FLAG_MARKED | AVANT_FLAG_CARD_SCAN)) |
+                               AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
+        start_bit_set(ah, 1);
+        noted[i] = (void *)(e | NOTED_MOVED);
+      }
+    }
   }
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     Block *b = gc_heap.young_blocks[i];
-    if (b->kept == SPLUS_EVAC && gc_heap.set.stress && gc_heap.stress_mixed[i]) {
-      /* A mixed block (stress): its mature lines stay live, the lines
-       * this collection's promotions marked are free again. */
+    if (b->kept == SPLUS_EVAC && gc_heap.evac_mixed && gc_heap.stress_mixed[i]) {
+      /* A mixed block (the stress mode, a complete collection): its
+       * mature lines stay live, the lines this collection's promotions
+       * marked are free again. */
       uint64_t lines = (uint64_t)gc_block_live_lines(b);
       memcpy(b->line_mark, gc_heap.stress_lines + (size_t)i * LINES_PER_BLOCK, LINES_PER_BLOCK);
       lines = (lines - (uint64_t)gc_block_live_lines(b)) * LINE_SIZE;
@@ -1236,8 +1353,8 @@ static void splus_evacuate(void) {
     } else if (b->kept == SPLUS_EVAC) {
       /* It held no live line when the collection began: its live lines
        * are the ones this collection made live, counted as they were
-       * (Block.search, y_line_live; the Valk stage, VALK-T, O600: until
-       * then its line marks were counted here). */
+       * (Block.search, y_line_live; its line marks used to be counted
+       * here). */
       uint64_t lines = (uint64_t)b->search * LINE_SIZE;
       if (gc_heap.set.verify && b->search != (uint16_t)gc_block_live_lines(b)) {
         gc_die("avant gc verify: an evacuated block's count of the lines the collection made live differs from its line marks");
@@ -1247,12 +1364,27 @@ static void splus_evacuate(void) {
       gc_heap.live -= b->idle;
       gc_heap.promoted_since_full -= lines;
       gc_heap.mature_since_full -= lines;
+    } else if (b->kept == SPLUS_AGE_HERE) {
+      /* Its survivors stay young: the lines and the bytes their
+       * promotion counted are taken back, and the bytes are the young
+       * budget's (as aged copies are), still live. */
+      uint64_t lines = (uint64_t)b->search * LINE_SIZE;
+      if (gc_heap.set.verify && b->search != (uint16_t)gc_block_live_lines(b)) {
+        gc_die("avant gc verify: a block aged in place: its count of the lines the collection made live differs from its line marks");
+      }
+      memset(b->line_mark, 0, LINES_PER_BLOCK);
+      gc_heap.ctr.sticky.inplace -= b->idle;
+      gc_heap.ctr.sticky.here_bytes += b->idle;
+      gc_heap.aged_now += b->idle;
+      gc_heap.promoted_since_full -= lines;
+      gc_heap.mature_since_full -= lines;
+      here_any = 1;
     }
   }
   if (gc_heap.splus_age && S_LARGE_AGE >= 2 && gc_heap.keep_n) {
     (void)splus_age_holders();
   }
-  if (avant_g_stats.copied_bytes != gc_heap.splus_copied0) {
+  if (avant_g_stats.copied_bytes != gc_heap.splus_copied0 || here_any) {
     splus_fix();
   }
 }
@@ -1272,6 +1404,10 @@ static void splus_finish(void) {
     Block *b = gc_heap.young_blocks[i];
     int w;
     int scan;
+    if (b->kept == SPLUS_AGE_HERE) {
+      evac_map_set(b, 0);
+      continue;
+    }
     if (b->kept != SPLUS_EVAC && b->kept != SPLUS_PART) {
       continue;
     }
@@ -1279,10 +1415,10 @@ static void splus_finish(void) {
      * sweep (its line marks are clear), and a block taken again has its
      * start bits cleared: only a block that stays (one whose evacuation
      * stopped, one holder aging took an object from, a mixed block of the
-     * stress mode) needs its moved objects' start bits cleared here (the
-     * Valk stage, VALK-T, O600: until then every evacuated block's 64
-     * start words were read, and every survivor's old header). */
-    scan = copied && (b->kept == SPLUS_PART || (gc_heap.set.stress && gc_heap.stress_mixed[i]));
+     * stress mode) needs its moved objects' start bits cleared here
+     * (every evacuated block's 64 start words used to be read, and every
+     * survivor's old header). */
+    scan = copied && (b->kept == SPLUS_PART || (gc_heap.evac_mixed && gc_heap.stress_mixed[i]));
     /* A moved object was young: its header lies in the block's young
      * line range, so only that range's start words are read (two lines a
      * word; under the stress mode, which evacuates a mixed block at every
@@ -1303,7 +1439,7 @@ static void splus_finish(void) {
     evac_map_set(b, 0);
   }
   gc_heap.evac_any = 0;
-  /* The full stress mode (Stage 28 W16a) collects before every runtime C
+  /* The full stress mode collects before every runtime C
    * allocation and copies a few objects each time: the copy block stays
    * the copy block across young collections until it is full (or a full
    * collection drops it, gc_sticky_full_begin), or every collection left a
@@ -1328,8 +1464,8 @@ static void splus_finish(void) {
 
 /* The EMPTY young blocks the sweep left without a live line (kept ==
  * YOUNG_EMPTY) leave the mature space, and its order is reversed: what
- * gc_filter_blocks(keep_unless_empty) did until the Valk stage's VALK-T
- * by walking every block of the heap (O577: 4,242 of a "nothing changed"
+ * gc_filter_blocks(keep_unless_empty) used to do
+ * by walking every block of the heap (4,242 of a "nothing changed"
  * young collection's 13,576 instructions at 250 blocks, growing with the
  * heap). Without the walk: the space's blocks are two stacks (GcSpace's
  * comment) and a block the young sweep can empty held no mature line when
@@ -1405,18 +1541,21 @@ static void mature_drop_empty(uint32_t empty) {
 }
 
 /* The young sweep of block B (entry I of the young blocks) under the
- * stress mode and under the verifier (the Valk stage, VALK-T2, O628): up
+ * stress mode and under the verifier: up
  * to B's allocation frontier. B's young range [young_lo, young_hi) is the
  * hull of the holes young allocation took in it since the last collection
  * (young_note_hole), and the frontier is the line after the last byte
- * allocated in the last of them: Block.bump, which every allocation path
- * keeps (bump_take, tl_bump, young_overflow, the inline sequence's store).
+ * allocated in the last of them: Block.bump, which every C allocation
+ * path keeps (bump_take, tl_bump, young_overflow) and which is given the
+ * inline path's cursor before a collection reads it (gc_alloc_sync,
+ * gc_tl_settle; the inline sequence used to store it at every
+ * allocation).
  * The cursor takes a block's holes in rising order, so every young object
  * of this cycle lies below the frontier, and the lines from it to young_hi
  * are the rest of the last hole: free when it was handed out (their start
  * bits clear, as every hole's are) and never allocated since. So only the
  * lines below the frontier are swept and, under the stress mode, poisoned
- * (until VALK-T2 a stress collection poisoned the 128 lines of a block of
+ * (a stress collection used to poison the 128 lines of a block of
  * which one had been allocated since the last collection: 4,400 of its
  * 12,233 instructions and 32 KB written); the lines past it are counted
  * free, as the sweep of the whole range counted them. Every line a young
@@ -1449,7 +1588,8 @@ static __attribute__((noinline)) int young_sweep_checked(Block *b, uint32_t i, i
   }
   /* The block known to have no live line (gc_sticky_collect's comment):
    * its count alone. */
-  if ((b->kept == SPLUS_EVAC && !(stress && gc_heap.stress_mixed[i])) || (b->kept == SPLUS_PURE && b->idle == 0)) {
+  if ((b->kept == SPLUS_EVAC && !(gc_heap.evac_mixed && gc_heap.stress_mixed[i])) ||
+      (b->kept == SPLUS_PURE && b->idle == 0)) {
     if (verify && gc_block_any_live(b)) {
       gc_die("avant gc verify: a young block taken for empty has a live line");
     }
@@ -1463,18 +1603,35 @@ static __attribute__((noinline)) int young_sweep_checked(Block *b, uint32_t i, i
     live = sweep_lines(b, lo, fr);
     gc_heap.ctr.sticky.freed_lines += (uint64_t)(hi - fr);
   }
-  if (stress) {
-    /* Freed young lines are poisoned (Stage 28 W16a). */
+  if (stress | verify) {
+    /* Freed young lines are poisoned under the stress mode; under the verifier
+     * too, and a block it holds back must still hold the poison in them
+     * when it is released (gc_verify_held_lines): a write through a
+     * reference to an object that died here shows then. */
     for (l = lo; l < fr; l++) {
       if (!line_live(b, l)) {
-        gc_poison(b->base + (size_t)l * LINE_SIZE, LINE_SIZE);
+        memset(b->base + (size_t)l * LINE_SIZE, GC_POISON, LINE_SIZE);
       }
     }
   }
+  gc_heap.swept_lo = (uint8_t)lo;
+  gc_heap.swept_hi = (uint8_t)fr;
   return live;
 }
 
-void gc_sticky_collect(int tenure) {
+/* TENURE: every survivor is promoted (a fixed AVANT_YOUNG_MB). EVAC_MIXED:
+ * a complete collection that runs as this young one (gc_collect): a
+ * young block with mature lines is a
+ * candidate for evacuation like a pure one (its line marks are saved and
+ * restored, as the stress mode does), so the sparse first survivors of a
+ * hole in a recycled block age instead of being promoted in place. A
+ * program that asks for a collection at each point where its work is
+ * dead leaves at each a survivor or two that die before the next (the
+ * object just made, what a frame still names): promoted, each would be
+ * an old object dying, and the next complete collection would have to
+ * trace to find it; aged, it dies young and the next one is a young
+ * collection again. */
+void gc_sticky_collect(int tenure, int evac_mixed) {
   Block *b;
   uint32_t empty = 0;
   int ticked = 0;
@@ -1482,17 +1639,19 @@ void gc_sticky_collect(int tenure) {
   gc_heap.keep_n = 0;
   gc_heap.work_n = 0;
   gc_heap.noted_hi = UINT32_MAX;
-  /* In shared programs too since Stage 28 W17a: every other thread is
+  /* In shared programs too: every other thread is
    * stopped at a safepoint (its references in root slots) or native (it
    * touches no unpinned heap object), so the copy may move what any
-   * thread's roots name (until W17a nothing moved there, D191). */
+   * thread's roots name (before the safepoint handshake nothing moved
+   * there). */
   gc_heap.splus_on = 1;
   gc_heap.splus_copied0 = avant_g_stats.copied_bytes;
   gc_heap.splus_age = YOUNG_AGE >= 2 && !tenure;
+  gc_heap.evac_mixed = (uint8_t)(gc_heap.set.stress || (evac_mixed && gc_heap.splus_age));
   gc_heap.aged_now = 0;
   if (gc_heap.splus_on) {
     uint32_t i;
-    if (gc_heap.set.stress && gc_heap.young_blocks_n > gc_heap.stress_lines_cap) {
+    if (gc_heap.evac_mixed && gc_heap.young_blocks_n > gc_heap.stress_lines_cap) {
       gc_heap.stress_lines_cap = gc_heap.young_blocks_n * 2;
       gc_heap.stress_lines = gc_xrealloc(gc_heap.stress_lines, (size_t)gc_heap.stress_lines_cap * LINES_PER_BLOCK);
       gc_heap.stress_mixed = gc_xrealloc(gc_heap.stress_mixed, (size_t)gc_heap.stress_lines_cap);
@@ -1501,7 +1660,7 @@ void gc_sticky_collect(int tenure) {
       Block *yb = gc_heap.young_blocks[i];
       /* A block taken whole since the last collection and a survivor
        * block have no live line (SPLUS_FRESH's comment): only a recycled
-       * block's marks are read (the Valk stage, VALK-T, O600).
+       * block's marks are read.
        * AVANT_GC_VERIFY reads them all and stops on a live one. */
       int known_pure = yb->kept == SPLUS_FRESH || yb->kept == SPLUS_WAS_SURV;
       int mature_lines = known_pure ? 0 : gc_block_any_live(yb);
@@ -1509,14 +1668,15 @@ void gc_sticky_collect(int tenure) {
         gc_die("avant gc verify: a fresh young block or a survivor block has a live line when a young collection begins");
       }
       yb->search = 0;
-      if (gc_heap.set.stress) {
-        /* The full stress mode (Stage 28 W16a): a block with mature
-         * lines is evacuated too (splus_evacuate), its marks restored
-         * from this copy afterwards. */
+      if (gc_heap.evac_mixed) {
+        /* The full stress mode and a complete collection
+         * (EVAC_MIXED's comment below): a block with mature lines is
+         * evacuated too (splus_evacuate), its marks restored from this
+         * copy afterwards. */
         memcpy(gc_heap.stress_lines + (size_t)i * LINES_PER_BLOCK, yb->line_mark, LINES_PER_BLOCK);
         gc_heap.stress_mixed[i] = (uint8_t)mature_lines;
       }
-      yb->kept = mature_lines ? (gc_heap.set.stress ? SPLUS_MIXED : 0)
+      yb->kept = mature_lines ? (gc_heap.evac_mixed ? SPLUS_MIXED : 0)
                               : yb->kept == SPLUS_WAS_SURV ? SPLUS_PURE_AGED : SPLUS_PURE;
       yb->idle = 0;
     }
@@ -1526,23 +1686,28 @@ void gc_sticky_collect(int tenure) {
     splus_evacuate();
   }
   if (gc_heap.set.verify) {
+    /* With the eager start bits in place of the real ones
+     * (gc_verify_starts_eager): its lookups must not build what the
+     * collection is to set. */
+    gc_verify_starts_eager(1);
     gc_verify_sticky();
+    gc_verify_starts_eager(0);
   }
   if (gc_heap.splus_on) {
     splus_finish();
   }
   /* The young large objects: an unreached one is freed; a reached one is
    * stays young at its first survival (SURVIVED, S_LARGE_AGE 2, the
-   * default by measurement since Stage 28 W15d) and is promoted at its
-   * second (O88, O76, O85), its holders that are not young remembered by
+   * default by measurement) and is promoted at its
+   * second, its holders that are not young remembered by
    * rem_rebuild; with S_LARGE_AGE 1, or a fixed AVANT_YOUNG_MB (TENURE),
    * it is promoted at once. */
   gc_heap.force_tenure = tenure || S_LARGE_AGE <= 1;
-  /* The return clock ticks before the young large objects are freed
-   * (Stage 28 W15e): a run freed now must carry the new stamp, or the
+  /* The return clock ticks before the young large objects are freed: a run
+   * freed now must carry the new stamp, or the
    * return below gives it back at once and its next use faults every
    * page in again (Binarytrees::Arena's 25 MB arena freed young: 13 k ->
-   * 101 k page faults, +0.12 s; W15e record, item 2). */
+   * 101 k page faults, +0.12 s). */
   if (gc_heap.young_large_n) {
     gc_heap.return_clock++;
     ticked = 1;
@@ -1553,7 +1718,7 @@ void gc_sticky_collect(int tenure) {
   rem_rebuild();
   /* The young blocks (the young-blocks list, gc_heap.young_blocks): only
    * the line range young allocation used in each is swept. A block left
-   * wholly free leaves mature space below (O89); one with free lines goes
+   * wholly free leaves mature space below; one with free lines goes
    * to part_blocks, the young allocator's next holes. */
   {
     uint32_t i;
@@ -1563,6 +1728,12 @@ void gc_sticky_collect(int tenure) {
     for (i = 0; i < gc_heap.young_blocks_n; i++) {
       int live;
       b = gc_heap.young_blocks[i];
+      if (b->kept == SPLUS_AGE_HERE) {
+        /* Aged where it lies: a young block until the next collection,
+         * as a survivor block is (below), not swept now. */
+        gc_sticky_push(&gc_heap.surv_blocks, &gc_heap.surv_blocks_n, &gc_heap.surv_blocks_cap, b);
+        continue;
+      }
       if (__builtin_expect(stress | verify, 0)) {
         /* Under the stress mode and the verifier: up to the block's
          * allocation frontier (young_sweep_checked). The lines between
@@ -1573,12 +1744,13 @@ void gc_sticky_collect(int tenure) {
       } else
       /* A block evacuated whole (its line marks were cleared) and a block
        * that held no live line and had no survivor have no live line: the
-       * sweep of such a block is its count alone (the Valk stage, VALK-T,
-       * O600: until then its marks were read to find that out, and its
+       * sweep of such a block is its count alone (its marks used to be
+       * read to find that out, and its
        * start bits cleared, which a block taken again has cleared anyway).
        * AVANT_GC_VERIFY reads the marks and stops on a live one
        * (young_sweep_checked). */
-      if (b->kept == SPLUS_EVAC || (b->kept == SPLUS_PURE && b->idle == 0)) {
+      if ((b->kept == SPLUS_EVAC && !(gc_heap.evac_mixed && gc_heap.stress_mixed[i])) ||
+          (b->kept == SPLUS_PURE && b->idle == 0)) {
         int hi = b->young_hi > LINES_PER_BLOCK ? LINES_PER_BLOCK : b->young_hi;
         live = 0;
         if (hi > b->young_lo) {
@@ -1603,6 +1775,14 @@ void gc_sticky_collect(int tenure) {
          * here still names freed memory there, where the lost-reference
          * check (avant_gc_verify.c) sees it. */
         if (verify) {
+          if (gc_heap.verify_holes_n == gc_heap.verify_holes_range_cap) {
+            gc_heap.verify_holes_range_cap = gc_heap.verify_holes_range_cap ? gc_heap.verify_holes_range_cap * 2 : 64;
+            gc_heap.verify_holes_range =
+                gc_xrealloc(gc_heap.verify_holes_range, (size_t)gc_heap.verify_holes_range_cap * 2);
+          }
+          gc_heap.verify_holes_range[gc_heap.verify_holes_n][0] = gc_heap.swept_lo;
+          gc_heap.verify_holes_range[gc_heap.verify_holes_n][1] = gc_heap.swept_hi;
+          b->kept = VERIFY_HELD;
           gc_sticky_push(&gc_heap.verify_holes, &gc_heap.verify_holes_n, &gc_heap.verify_holes_cap, b);
         } else {
           gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
@@ -1611,6 +1791,10 @@ void gc_sticky_collect(int tenure) {
     }
     gc_heap.young_blocks_n = 0;
   }
+  /* The inline runs whose start bits nothing needed are forgotten (late
+   * start bits: their survivors were promoted, with their bits; the rest is
+   * dead). */
+  gc_lazy_drop();
   /* The survivor blocks (YOUNG_AGE 2) are young blocks until the next
    * collection: their used lines are its young range, and neither young
    * nor mature allocation takes a block with one (young_hi set). */
@@ -1632,7 +1816,7 @@ void gc_sticky_collect(int tenure) {
   }
   /* (Every thread's young cursor and overflow block were dropped when the
    * collection began, gc_alloc_stop_all.) */
-  /* The empty young blocks go back to their chunks' free lists (O89):
+  /* The empty young blocks go back to their chunks' free lists:
    * before, they stayed in mature space until a full collection, so a
    * program that never runs one never returned them. They are unlinked
    * from the mature space's lists (mature_drop_empty: no walk of the
@@ -1652,15 +1836,145 @@ void gc_sticky_collect(int tenure) {
     gc_heap_return(gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes);
   }
   gc_clear_noted();
+  if (gc_heap.set.verify) {
+    /* The late start bits' eager comparison (avant_gc_verify.c): every object
+     * of the
+     * cycle that survived in place has its start bit, and no bit was set
+     * where the eager path would have set none. */
+    gc_verify_starts_end();
+  }
   /* The one young budget: the aged survivors that stay young (as E
    * counted its to-space); the young large objects that stay young only
-   * under W15d's age rule (LARGE_AGE_BYTES 0): an age in allocated bytes
-   * needs the budget to measure new allocation (O98). */
+   * under the age rule of LARGE_AGE_BYTES 0: an age in allocated bytes
+   * needs the budget to measure new allocation. */
 #if LARGE_AGE_BYTES
   avant_nursery_held = gc_heap.aged_now;
 #else
   avant_nursery_held = gc_heap.young_large + gc_heap.aged_now;
 #endif
+}
+
+/* Tenured births (the single mutator's high-survival phase). After two
+ * young collections in a row where more than half of the young bytes
+ * survived, the next budget's young objects are not traced: when the
+ * budget fills, every young object is promoted where it lies by one
+ * linear pass over the young blocks' start bits (gc_sticky_retire),
+ * and nothing is freed. It is a young collection that keeps every young
+ * object, so whatever is correct under a collection that promotes every
+ * survivor in place (a fixed AVANT_YOUNG_MB) is correct under it: after
+ * it no object is young, so the remembered set is emptied and no old
+ * object can name a young one. The young objects that die in the phase
+ * are promoted dead and reclaimed by the full collections the promotion
+ * triggers (each newly live line is charged to the trigger, as an
+ * in-place promotion's). A probe, an ordinary young collection, runs
+ * after one retirement, then after two, four, up to TENURE_GAP_MAX: its
+ * survival decides whether the phase goes on (young_size), and a
+ * collection the program asks for ends it. Only for one thread, not
+ * under the stress mode, a fixed budget or with the nursery off, and
+ * never with a young large object: that budget is collected, as a
+ * probe. Measured on the collector benchmark's chain build (its young
+ * collections 567 M to 293 M instructions) and the unhinted binary-trees
+ * program (22.5 G to 15.4 G instructions, peak heap 124 MB to 100 MB). */
+int gc_sticky_tenure_ok(void) {
+  return atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 && !gc_heap.set.stress &&
+         !gc_heap.set.young_fixed && !gc_heap.set.nursery_off;
+}
+
+int gc_sticky_retire_ok(void) {
+  return gc_sticky_tenure_ok() && gc_heap.young_large_n == 0 && !gc_thread.collecting && !gc_thread.nogc;
+}
+
+/* Block B's young objects promoted in place (BYTES their sum), its young
+ * range swept, the block a mature one. A young object lies in a line
+ * that was free when the cycle began (a hole the cursor took, or a
+ * survivor block's line); a start bit in a line that was live then is a
+ * mature object's or a dead one's that a live line keeps. */
+static void retire_block(Block *b, uint8_t epoch, uint64_t *bytes) {
+  uint8_t *lines = b->line_mark;
+  uint64_t live0[2] = {0, 0};
+  int lo = b->young_lo;
+  int hi = b->young_hi > LINES_PER_BLOCK ? LINES_PER_BLOCK : b->young_hi;
+  int l;
+  int w;
+  int live;
+  for (l = lo; l < hi; l++) {
+    if (lines[l] == epoch) {
+      live0[l >> 6] |= 1ULL << (l & 63);
+    }
+  }
+  for (w = lo >> 1; w < ((hi + 1) >> 1); w++) {
+    int l0 = 2 * w;
+    uint64_t mask = 0;
+    uint64_t bits;
+    if (l0 >= lo && l0 < hi && !((live0[l0 >> 6] >> (l0 & 63)) & 1)) {
+      mask |= 0xffffffffULL;
+    }
+    if (l0 + 1 >= lo && l0 + 1 < hi && !((live0[(l0 + 1) >> 6] >> ((l0 + 1) & 63)) & 1)) {
+      mask |= 0xffffffff00000000ULL;
+    }
+    bits = b->start[w] & mask;
+    while (bits) {
+      int bit = __builtin_ctzll(bits);
+      size_t off = ((size_t)w * 64 + (size_t)bit) * 8;
+      AvantHeader *h = (AvantHeader *)(b->base + off);
+      uint16_t fl = h->flags;
+      bits &= bits - 1;
+      if ((fl & (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG)) == (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG)) {
+        size_t total = align_up(sizeof(AvantHeader) + (size_t)h->size);
+        size_t a = off >> LINE_SHIFT;
+        size_t e = (off + total - 1) >> LINE_SHIFT;
+        h->flags = (uint16_t)(fl & ~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED));
+        for (; a <= e; a++) {
+          if (lines[a] != epoch) {
+            lines[a] = epoch;
+            gc_heap.promoted_since_full += LINE_SIZE;
+            gc_heap.mature_since_full += LINE_SIZE;
+          }
+        }
+        *bytes += total;
+      } else if (gc_heap.set.verify) {
+        gc_die("avant gc verify: a start bit in a young line that is not a young object's");
+      }
+    }
+  }
+  live = sweep_lines(b, b->young_lo, b->young_hi);
+  b->young_lo = 0;
+  b->young_hi = 0;
+  b->kept = 0;
+  b->idle = 0;
+  if (live < LINES_PER_BLOCK) {
+    gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
+  }
+}
+
+/* The retirement: every young object promoted where it lies (above).
+ * The caller holds the world lock (gc_maybe_collect); one thread. */
+void gc_sticky_retire(void) {
+  uint64_t bytes = 0;
+  uint32_t i;
+  const uint8_t epoch = gc_heap.line_epoch;
+  /* The cursors go (the blocks stop being young), the inline
+   * allocations counted, every late start bit set. */
+  gc_alloc_stop_all();
+  gc_lazy_build_all();
+  gc_rem_merge_all();
+  rem_empty();
+  gc_heap.keep_n = 0;
+  for (i = 0; i < gc_heap.young_blocks_n; i++) {
+    retire_block(gc_heap.young_blocks[i], epoch, &bytes);
+  }
+  gc_heap.young_blocks_n = 0;
+  gc_lazy_drop();
+  gc_heap.ctr.sticky.retires++;
+  gc_heap.ctr.sticky.retired += bytes;
+  gc_heap.ctr.sticky.inplace += bytes;
+  avant_nursery_held = 0;
+  avant_since_gc = 0;
+  gc_heap.young_carried = 0;
+  gc_heap.aged_now = 0;
+  if (bytes) {
+    gc_proof_break(PROOF_PROMOTED);
+  }
 }
 
 /* A full collection under S promotes every object it marks (the full
@@ -1670,30 +1984,57 @@ void gc_sticky_collect(int tenure) {
  * allocator's lists are dropped; after its sweep, which released every
  * empty block, part_blocks is rebuilt from the blocks with free lines and
  * the young budget is empty. */
-void gc_sticky_full_begin(void) {
+/* The young blocks become ordinary mature blocks: a full collection
+ * promotes every object it marks, so none of them holds a young object
+ * after it. */
+void gc_sticky_keep_drop(void) {
   uint32_t i;
-  /* A copy block the stress mode kept (splus_finish) becomes an ordinary
-   * mature block: its free rest is free lines for the full sweep. */
-  if (gc_heap.splus_dst) {
-    gc_reset_block_bump(gc_heap.splus_dst);
-    gc_heap.splus_dst = NULL;
-  }
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     gc_heap.young_blocks[i]->young_lo = 0;
     gc_heap.young_blocks[i]->young_hi = 0;
     gc_heap.young_blocks[i]->kept = 0;
   }
   gc_heap.young_blocks_n = 0;
+}
+
+void gc_sticky_full_begin(void) {
+  /* A copy block the stress mode kept (splus_finish) becomes an ordinary
+   * mature block: its free rest is free lines for the full sweep. */
+  if (gc_heap.splus_dst) {
+    gc_reset_block_bump(gc_heap.splus_dst);
+    gc_heap.splus_dst = NULL;
+  }
+  /* A trace that leaves the young generation young keeps the young
+   * blocks (after its young collection, every one a survivor block,
+   * SPLUS_WAS_SURV): its mark marks no line of theirs, and the sweep
+   * passes over them (gc_keep_young_or_live). */
+  if (!gc_heap.keep_young) {
+    gc_sticky_keep_drop();
+  }
   gc_heap.part_blocks_n = 0;
-  gc_heap.verify_holes_n = 0;
+  /* The blocks the verifier held back become ordinary mature blocks,
+   * their poisoned lines checked first. */
+  gc_verify_held_lines();
+}
+
+/* The full sweep's test: a young block that a trace leaving the young
+ * generation young kept is kept as it is (its objects are the next young
+ * collection's to free); any other block by its live lines. */
+int gc_keep_young_or_live(Block *b) {
+  if (b->kept == SPLUS_WAS_SURV) {
+    return 1;
+  }
+  return gc_keep_if_live(b);
 }
 
 void gc_sticky_full_end(void) {
   Block *b;
   for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
-    if (gc_block_live_lines(b) < LINES_PER_BLOCK) {
+    if (b->kept != SPLUS_WAS_SURV && gc_block_live_lines(b) < LINES_PER_BLOCK) {
       gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
     }
   }
+  /* (A trace that leaves the young generation young puts back the
+   * budget its young collection left, gc_collect.) */
   avant_nursery_held = 0;
 }

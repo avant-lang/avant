@@ -1,9 +1,8 @@
-// The lowering of statements and control flow (Stage 28 W5b;
-// stages/stage28/mir.md W5.3): bodies with their tail value, `=` and the
-// compound assignments to locals, `return`, `if`, `while` (with the
-// `pre` statements `for` arrives with), `break`, `next`, and `switch` as
-// a statement or a value. Statements after a terminator in the same list
-// are dead and are not lowered.
+// The lowering of statements and control flow: bodies with their tail
+// value, `=` and the compound assignments to locals, `return`, `if`,
+// `while` (with the `pre` statements `for` arrives with), `break`,
+// `next`, and `switch` as a statement or a value. Statements after a
+// terminator in the same list are dead and are not lowered.
 
 import location
 import source
@@ -21,7 +20,7 @@ import mir.lower
 pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
   i = 0
   while i < body.size {
-    if lw.failed || !lw.open_now {
+    if lw.failed() || !lw.open_now() {
       return
     }
     st = body[i]
@@ -31,15 +30,26 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
       return
     }
     if i == body.size - 1 && st.kind == st_expr() && lw.lw_ret != mt_void() {
+      if e = st.expr, et = e.ty, et.is_void() && e.kind == ex_switch() {
+        // A last switch whose every arm leaves: a statement; nothing
+        // follows it.
+        lw.lower_stmt(st)
+        return
+      }
+      if e = st.expr, ast_is_exit_call(e) {
+        // exit ends the program: a statement, and nothing is returned.
+        lw.lower_stmt(st)
+        return
+      }
       if e = st.expr {
         lw.cov_stmt(st)
         v = lw.lower_ret_value(e)
-        if lw.failed {
+        if lw.failed() {
           return
         }
         lw.at(st.loc)
         lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(v))
-        lw.lw_b.ret
+        lw.ret_fn()
         return
       }
     }
@@ -51,7 +61,7 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
 pub fn (lw: MirLower) lower_stmts(body: Array(Stmt)) {
   i = 0
   while i < body.size {
-    if lw.failed || !lw.open_now {
+    if lw.failed() || !lw.open_now() {
       return
     }
     lw.lower_stmt(body[i])
@@ -93,7 +103,7 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
       return
     }
     lw.at(st.loc)
-    lw.unpin_loop
+    lw.unpin_loop()
     if k == st_break() {
       lw.lw_b.goto(lw.lw_exits[lw.lw_exits.size - 1])
     } else {
@@ -118,7 +128,7 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
 
 pub fn (lw: MirLower) lower_assign(st: Stmt) {
   if t0 = st.target, t0.kind == ex_name() && t0.ident == "_" {
-    // `_ = expr` (Stage 29 W4a, D295): computed and dropped.
+    // `_ = expr`: computed and dropped.
     if v0 = st.value {
       lw.lower_expr(v0)
     }
@@ -143,7 +153,7 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
     }
     if tt = t.ty {
       ty = lw.ty_at(tt, t.loc, "a local")
-      if lw.failed {
+      if lw.failed() {
         return
       }
       if lw.name_in_box(t.ident) {
@@ -153,7 +163,7 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
       if v = st.value {
         if st.op == tk_eq() {
           val = lw.lower_coerced(v, ty, tt)
-          if lw.failed {
+          if lw.failed() {
             return
           }
           k = lw.var_get(t.ident, ty)
@@ -161,7 +171,7 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
           lw.lw_b.assign(lw.lw_b.pl(k), lw.lw_b.rv_use(val))
           return
         }
-        // x op= v: the old value, then v, then the checked op (W5.2).
+        // x op= v: the old value, then v, then the checked op.
         k2 = lw.var_find(t.ident, ty)
         if k2 < 0 {
           lw.refuse(t.loc, "compound assignment to an unknown local")
@@ -169,10 +179,10 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
         }
         cur = lw.snap(lw.lw_b.copy_local(k2), v)
         rhs = lw.lower_expr(v)
-        if lw.failed {
+        if lw.failed() {
           return
         }
-        r = lw.arith(compound_op_of(st.op), ty, cur, rhs, st.proven, st.loc)
+        r = lw.compound_arith(st, ty, cur, rhs, v)
         lw.at(st.loc)
         lw.lw_b.assign(lw.lw_b.pl(k2), lw.lw_b.rv_use(r))
       }
@@ -182,21 +192,27 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
   }
 }
 
-// `+= -= *= /=` to their binary operator token (the old compound_to_binop).
+// A compound assignment's operator token to its binary operator (`%=` to
+// `%`); any other token is returned as it is.
 pub fn compound_op_of(op: Int): Int {
-  if op == tk_plus_eq() {
-    return tk_plus()
+  b = compound_binop(op)
+  if b == 0 {
+    return op
   }
-  if op == tk_minus_eq() {
-    return tk_minus()
+  b
+}
+
+// `x op= v`: the binary operator on the place's old value and v's, checked
+// as the operator is (a shift by its amount's own type), a trap located at
+// the assignment.
+pub fn (lw: MirLower) compound_arith(st: Stmt, ty: Int, cur: MOperand, rhs: MOperand, v: Expr): MOperand {
+  // A trap in the operator names the assignment's own position.
+  lw.at(st.loc)
+  op = compound_op_of(st.op)
+  if op == tk_less_less() || op == tk_greater_greater() {
+    return lw.shift(op, ty, lw.ety(v), cur, rhs, st.loc)
   }
-  if op == tk_star_eq() {
-    return tk_star()
-  }
-  if op == tk_slash_eq() {
-    return tk_slash()
-  }
-  op
+  lw.arith(op, ty, cur, rhs, st.proven, st.loc)
 }
 
 // A returned value, converted to the function's result type (the old
@@ -206,16 +222,16 @@ pub fn (lw: MirLower) lower_ret_value(e: Expr): MOperand {
   if rt = lw.lw_ret_ty, t = e.ty {
     v = lw.coerce(v, t, rt, e.loc)
   }
-  if lw.lw_main && lw.lw_ret == mt_int() && !lw.failed {
+  if lw.lw_main && lw.lw_ret == mt_int() && !lw.failed() {
     return lw.exit_status(v, e.loc)
   }
   v
 }
 
-// main's Int result is the process's exit status (Stage 29 W4b2, D295
-// R14): outside 0..255 it traps (avant_trap_exit_status, from a cold
-// block) rather than reach the OS modulo 256, where 256 failures read as
-// success. One unsigned compare per return of main; then C's int.
+// main's Int result is the process's exit status: outside 0..255 it
+// traps (avant_trap_exit_status, from a cold block) rather than reach
+// the OS modulo 256, where 256 failures read as success. One unsigned
+// compare per return of main; then C's int.
 pub fn (lw: MirLower) exit_status(v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
   lw.at(loc)
@@ -231,7 +247,7 @@ pub fn (lw: MirLower) exit_status(v: MOperand, loc: Location): MOperand {
 pub fn (lw: MirLower) lower_return(st: Stmt) {
   if e = st.expr {
     v = lw.lower_ret_value(e)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     lw.at(st.loc)
@@ -240,16 +256,16 @@ pub fn (lw: MirLower) lower_return(st: Stmt) {
     } else if lw.lw_main {
       lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
     }
-    lw.unpin_all
-    lw.lw_b.ret
+    lw.unpin_all()
+    lw.ret_fn()
     return
   }
   lw.at(st.loc)
   if lw.lw_main {
     lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
   }
-  lw.unpin_all
-  lw.lw_b.ret
+  lw.unpin_all()
+  lw.ret_fn()
 }
 
 pub fn (lw: MirLower) lower_if(st: Stmt) {
@@ -263,14 +279,14 @@ pub fn (lw: MirLower) lower_if(st: Stmt) {
   }
   if c = st.cond {
     cv = lw.lower_expr(c)
-    if lw.failed {
+    if lw.failed() {
       return
     }
-    bt = lw.lw_b.block
-    bf = lw.lw_b.block
+    bt = lw.lw_b.block()
+    bf = lw.lw_b.block()
     join = bf
     if st.else_body.size > 0 || lw.lw_cov.on {
-      join = lw.lw_b.block
+      join = lw.lw_b.block()
     }
     lw.at(st.loc)
     lw.lw_b.branch(cv, bt, bf)
@@ -289,7 +305,7 @@ pub fn (lw: MirLower) lower_if(st: Stmt) {
 }
 
 pub fn (lw: MirLower) goto_if_open(bb: Int, loc: Location) {
-  if lw.failed || !lw.open_now {
+  if lw.failed() || !lw.open_now() {
     return
   }
   lw.at(loc)
@@ -298,18 +314,18 @@ pub fn (lw: MirLower) goto_if_open(bb: Int, loc: Location) {
 
 pub fn (lw: MirLower) lower_while(st: Stmt) {
   lw.lower_stmts(st.pre)
-  if lw.failed || !lw.open_now {
+  if lw.failed() || !lw.open_now() {
     return
   }
-  head = lw.lw_b.block
+  head = lw.lw_b.block()
   lw.at(st.loc)
   lw.lw_b.goto(head)
   lw.lw_b.at(head)
-  body = lw.lw_b.block
-  exit = lw.lw_b.block
+  body = lw.lw_b.block()
+  exit = lw.lw_b.block()
   if c = st.cond {
     cv = lw.lower_expr(c)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     lw.at(st.loc)
@@ -323,78 +339,132 @@ pub fn (lw: MirLower) lower_while(st: Stmt) {
   lw.cov_branch(st.loc)
   lw.lower_stmts(st.body)
   lw.goto_if_open(head, st.loc)
-  lw.lw_heads.pop
-  lw.lw_exits.pop
+  lw.lw_heads.pop()
+  lw.lw_exits.pop()
   lw.lw_b.at(exit)
 }
 
-// `switch` (W5.3): the value (a Bool as i32), one MIR switch, each arm a
-// block; a value switch writes each arm's last expression into its
-// result temporary, zeroed first (an arm without a value, or no match
-// without else, leaves the zero).
+// `switch`: the value, one MIR switch (a Bool's: one branch), each arm a
+// block; a value switch writes each arm's last expression into its result
+// temporary, zeroed first (an arm without a value, or no match without
+// else, leaves the zero).
 pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
   rty = mt_void()
   if t = e.ty {
     rty = lw.ty_at(t, e.loc, "a switch value")
   }
-  if lw.failed {
+  if lw.failed() {
     return lw.lw_b.c_i32(0)
   }
   if e.op == tk_if() && e.else_body.size == 1 && rty != mt_void() {
-    // An `if` used as a value (Stage 29 W4a): each branch writes the
-    // result temporary.
+    // An `if` used as a value: each branch writes the result
+    // temporary.
     dest = lw.lw_b.temp(rty)
     lw.lower_if_general(e.else_body[0], 1, dest, e.ty)
     return lw.lw_b.copy_local(dest)
   }
   if c = e.cond {
     cv = lw.lower_expr(c)
-    if lw.failed {
+    if lw.failed() {
       return lw.lw_b.c_i32(0)
     }
-    if ct0 = c.ty, ct0.is_string {
+    if ct0 = c.ty, ct0.is_string() {
       return lw.lower_str_switch(e, cv, rty)
+    }
+    if ct1 = c.ty, ct1.is_union() {
+      return lw.lower_union_switch(e, cv, ct1, rty)
     }
     cty = mt_i32()
     // A switch over an enum without else names every member (the
-    // checker's coverage, Stage 29 W5a1): no match is a value that is no
-    // member, which a cold trap names (never LLVM's unreachable, D358).
+    // checker's coverage): no match is a value that is no member, which
+    // a cold trap names (never LLVM's unreachable).
     enum_ty: Ty? = nil
     if ct = c.ty {
       cty = mir_scalar_ty(ct)
-      if ct.is_enum && !e.has_else {
+      if ct.is_enum() && !e.has_else {
         enum_ty = ct
       }
     }
     lw.at(e.loc)
-    if cty == mt_bool() {
-      tb = lw.lw_b.temp(mt_i32())
-      lw.lw_b.assign(lw.lw_b.pl(tb), lw.lw_b.rv_cast(cv, mt_i32()))
-      cv = lw.lw_b.copy_local(tb)
+    // A Bool switch is one branch on the value.
+    on_bool = cty == mt_bool()
+    if on_bool {
       cty = mt_i32()
     }
-    if cty != mt_i32() && cty != mt_i64() && cty != mt_u64() && cty != mt_u32() && cty != mt_u8() {
+    if cty != mt_i32() && cty != mt_i64() && cty != mt_u64() && cty != mt_u32() && cty != mt_u8() && cty != mt_i8() && cty != mt_i16() && cty != mt_u16() {
       lw.refuse(c.loc, "switch on this type")
       return lw.lw_b.c_i32(0)
     }
     dest = -1
     if rty != mt_void() {
       dest = lw.lw_b.temp(rty)
-      lw.lw_b.assign(lw.lw_b.pl(dest), lw.lw_b.rv_zero)
+      lw.lw_b.assign(lw.lw_b.pl(dest), lw.lw_b.rv_zero())
     }
     values: Array(Int) = []
     targets: Array(Int) = []
     arms: Array(Int) = []
-    // Under coverage (W8b) every label enters through its own block,
-    // which counts the branch (the old back end emits the arm once per
-    // label, the old back end's emit_switch: one branch slot per label).
+    // Under coverage every label enters through its own block, which
+    // counts the branch (the old back end emits the arm once per label,
+    // the old back end's emit_switch: one branch slot per label).
     entries: Array(Int) = []
     entry_arm: Array(Int) = []
+    // The block of an exhaustive enum switch's range test
+    // (enum_switch_on), numbered before the arms: an edge to a block
+    // numbered lower than its source is a back edge, and a back edge
+    // polls (mir/gc.av).
+    pre = -1
+    if et0 = enum_ty, !lw.lw_cov.on && e.cases.size > 1 && enum_labels_dense(e) {
+      pre = lw.lw_b.block()
+    }
+    // A range label is two compares before the switch, in a block
+    // numbered before the arms (no back edge, no poll): chosen by time,
+    // where a case per value made LLVM build lookup and jump tables
+    // that ran 5% to 9% slower than the if chains, and the compares run
+    // level.
+    wide_lo: Array(Int) = []
+    wide_hi: Array(Int) = []
+    wide_tg: Array(Int) = []
+    wide_bl: Array(Int) = []
+    for wc in e.cases {
+      for wl in wc.labels {
+        if wl.kind == lb_range() {
+          wide_bl.push(lw.lw_b.block())
+        }
+      }
+    }
+    // A coverage build's label entries, numbered before the arms too, so
+    // the edge from an entry into its arm is no back edge (the checker
+    // refused duplicate labels, so each label has one).
+    pre_en: Array(Int) = []
+    if lw.lw_cov.on {
+      for pc in e.cases {
+        for pl in pc.labels {
+          pre_en.push(lw.lw_b.block())
+        }
+      }
+    }
+    next_en = 0
     for i in 0..e.cases.size {
-      arm = lw.lw_b.block
+      arm = lw.lw_b.block()
       arms.push(arm)
       j = 0
       while j < e.cases[i].labels.size {
+        rl = e.cases[i].labels[j]
+        if rl.kind == lb_range() {
+          rt = arm
+          if lw.lw_cov.on {
+            ren = pre_en[next_en]
+            next_en += 1
+            entries.push(ren)
+            entry_arm.push(i)
+            rt = ren
+          }
+          wide_lo.push(rl.int_val)
+          wide_hi.push(rl.hi_val)
+          wide_tg.push(rt)
+          j += 1
+          continue
+        }
         v = e.cases[i].labels[j].int_val
         seen = false
         for val in values {
@@ -405,7 +475,8 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
         if !seen {
           values.push(v)
           if lw.lw_cov.on {
-            en = lw.lw_b.block
+            en = pre_en[next_en]
+            next_en += 1
             entries.push(en)
             entry_arm.push(i)
             targets.push(en)
@@ -418,19 +489,39 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     }
     other = -1
     if e.has_else || lw.lw_cov.on {
-      other = lw.lw_b.block
+      other = lw.lw_b.block()
     }
     trap = -1
     if et = enum_ty {
-      trap = lw.lw_b.block
+      trap = lw.lw_b.block()
     }
-    join = lw.lw_b.block
+    join = lw.lw_b.block()
     if other < 0 {
       other = join
     }
     lw.at(e.loc)
+    for wk in 0..wide_lo.size {
+      wb = lw.lw_b
+      w1 = lw.tmp(mt_bool(), wb.rv_cmp(mop_ge(), cv, wb.c_int(cty, wide_lo[wk])))
+      w2 = lw.tmp(mt_bool(), wb.rv_cmp(mop_le(), cv, wb.c_int(cty, wide_hi[wk])))
+      win = lw.tmp(mt_bool(), wb.rv_bin(mop_and(), w1, w2))
+      wb.branch(win, wide_tg[wk], wide_bl[wk])
+      wb.at(wide_bl[wk])
+      lw.at(e.loc)
+    }
     if trap >= 0 {
-      lw.lw_b.switch_on(cv, values, targets, trap)
+      lw.enum_switch_on(cv, enum_ty, e, values, targets, arms, trap, pre)
+    } else if on_bool {
+      t_true = other
+      t_false = other
+      for bi in 0..values.size {
+        if values[bi] != 0 {
+          t_true = targets[bi]
+        } else {
+          t_false = targets[bi]
+        }
+      }
+      lw.lw_b.branch(cv, t_true, t_false)
     } else {
       lw.lw_b.switch_on(cv, values, targets, other)
     }
@@ -470,6 +561,94 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
   lw.lw_b.c_i32(0)
 }
 
+// Whether an enum switch's labels are dense enough for a range test (the
+// gaps inside it are cases of the switch): the range spans fewer values
+// than four per label plus 16. Sparse values (a C enum's flags) are not.
+pub fn enum_labels_dense(e: Expr): Bool {
+  n = 0
+  lo = 0
+  hi = 0
+  for arm in e.cases {
+    for l in arm.labels {
+      if n == 0 || l.int_val < lo {
+        lo = l.int_val
+      }
+      if n == 0 || l.int_val > hi {
+        hi = l.int_val
+      }
+      n += 1
+    }
+  }
+  n > 0 && hi - lo < n * 4 + 16
+}
+
+// The dispatch of a switch over an enum that names every member (chosen
+// by time). The last arm is the switch's default, so the switch has one
+// case fewer (LLVM keeps three or fewer cases as compares, where a
+// four-entry jump table cost Calculator::Interpreter 31%); the default
+// is pre, a block numbered before the arms, which tests that the value
+// lies within the members' range before it runs the last arm, and a
+// value inside the range that is no member (a gap) is a case of its own
+// that goes to the trap. So the trap stays reachable by a value that is
+// no member, and only by one: the checked C boundary keeps it
+// unreachable from Avant code, and the members other than the last pay
+// nothing for it. Without pre (coverage, a one-arm switch, sparse
+// values), the plain form: every member a case, the trap the default.
+pub fn (lw: MirLower) enum_switch_on(cv: MOperand, et: Ty?, e: Expr, values: Array(Int), targets: Array(Int), arms: Array(Int), trap: Int, pre: Int) {
+  b = lw.lw_b
+  t = et ?? return
+  if pre < 0 {
+    b.switch_on(cv, values, targets, trap)
+    return
+  }
+  last = e.cases.size - 1
+  vals2: Array(Int) = []
+  tg2: Array(Int) = []
+  for i in 0..values.size {
+    inlast = false
+    for l in e.cases[last].labels {
+      if l.int_val == values[i] {
+        inlast = true
+      }
+    }
+    if !inlast {
+      vals2.push(values[i])
+      tg2.push(targets[i])
+    }
+  }
+  lo = values[0]
+  hi = values[0]
+  for w in values {
+    if w < lo {
+      lo = w
+    }
+    if w > hi {
+      hi = w
+    }
+  }
+  v = lo
+  while v <= hi {
+    found = false
+    for w2 in values {
+      if w2 == v {
+        found = true
+      }
+    }
+    if !found {
+      vals2.push(v)
+      tg2.push(trap)
+    }
+    v += 1
+  }
+  cty = mir_scalar_ty(t)
+  b.switch_on(cv, vals2, tg2, pre)
+  b.at(pre)
+  c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), cv, b.c_int(cty, lo)))
+  c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_le(), cv, b.c_int(cty, hi)))
+  inside = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
+  b.branch(inside, arms[last], trap)
+}
+
 // An arm's statements; in a value switch its last expression, converted
 // to the switch's type (the old back end's emit_switch_arm: emit_coerce), is the
 // result.
@@ -480,17 +659,17 @@ pub fn (lw: MirLower) lower_arm(body: Array(Stmt), dest: Int, sw: Expr) {
   }
   i = 0
   while i < body.size {
-    if lw.failed || !lw.open_now {
+    if lw.failed() || !lw.open_now() {
       return
     }
     st = body[i]
-    if i == body.size - 1 && st.kind == st_expr() {
+    if i == body.size - 1 && st.kind == st_expr() && !ast_stmt_exits(st) {
       if e = st.expr {
         v = lw.lower_expr(e)
         if t = e.ty, want = sw.ty {
           v = lw.coerce(v, t, want, e.loc)
         }
-        if lw.failed {
+        if lw.failed() {
           return
         }
         lw.at(st.loc)
@@ -503,24 +682,23 @@ pub fn (lw: MirLower) lower_arm(body: Array(Stmt), dest: Int, sw: Expr) {
   }
 }
 
-// The trap of an enum value that is no member (Stage 29 W5a1, D358): v
-// (of the enum's width) and the enum's name; the call never returns.
+// The trap of an enum value that is no member: v (of the enum's width)
+// and the enum's name; the call never returns.
 pub fn (lw: MirLower) enum_trap(v: MOperand, t: Ty, loc: Location) {
   b = lw.lw_b
   lw.at(loc)
   args: Array(MOperand) = []
   args.push(lw.tmp(mt_int(), b.rv_cast(v, mt_int())))
-  args.push(b.str_const(t.show))
+  args.push(b.str_const(t.show()))
   b.call(-1, "avant_trap_enum", args)
-  b.unreachable
+  b.unreachable()
 }
 
-// A switch over a String (Stage 29 W5a1, D293, O392; the lowering chosen
-// by measurement, the record's cost table): the discriminant's size, one
-// switch on it, and within one size each label's bytes compared with
-// memcmp at that constant size (LLVM expands it into word compares); a
-// label of size 0 matches on the size alone. No match is the else, or
-// nothing.
+// A switch over a String (the lowering chosen by measurement, the
+// record's cost table): the discriminant's size, one switch on it, and
+// within one size each label's bytes compared with memcmp at that
+// constant size (LLVM expands it into word compares); a label of size 0
+// matches on the size alone. No match is the else, or nothing.
 pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperand {
   b = lw.lw_b
   s = b.temp(mt_str())
@@ -528,21 +706,13 @@ pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperan
   dest = -1
   if rty != mt_void() {
     dest = b.temp(rty)
-    b.assign(b.pl(dest), b.rv_zero)
+    b.assign(b.pl(dest), b.rv_zero())
   }
-  arms: Array(Int) = []
-  for i in 0..e.cases.size {
-    arms.push(b.block)
-  }
-  other = -1
-  if e.has_else || lw.lw_cov.on {
-    other = b.block
-  }
-  join = b.block
-  if other < 0 {
-    other = join
-  }
-  // The labels by size, in order of appearance.
+  // The dispatch's blocks are numbered before the arms: an edge into a
+  // block numbered lower than its source is a back edge, and a back edge
+  // polls in a program that spawns (mir/gc.av). The labels by size, in
+  // order of appearance: each size's block, and for each label its
+  // compare's next block and, under coverage, its entry.
   sizes: Array(Int) = []
   size_blocks: Array(Int) = []
   for i2 in 0..e.cases.size {
@@ -555,60 +725,97 @@ pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperan
       }
       if !seen {
         sizes.push(label.text.size)
-        size_blocks.push(b.block)
+        size_blocks.push(b.block())
       }
     }
+  }
+  lab_arm: Array(Int) = []
+  lab_next: Array(Int) = []
+  lab_entry: Array(Int) = []
+  lab_size: Array(Int) = []
+  lab_text: Array(String) = []
+  lab_loc: Array(Location) = []
+  for k0 in 0..sizes.size {
+    for i5 in 0..e.cases.size {
+      for label3 in e.cases[i5].labels {
+        if label3.text.size != sizes[k0] {
+          continue
+        }
+        lab_arm.push(i5)
+        lab_size.push(k0)
+        lab_text.push(label3.text)
+        lab_loc.push(label3.loc)
+        nx = -1
+        if sizes[k0] != 0 {
+          nx = b.block()
+        }
+        lab_next.push(nx)
+        en = -1
+        if lw.lw_cov.on {
+          en = b.block()
+        }
+        lab_entry.push(en)
+      }
+    }
+  }
+  arms: Array(Int) = []
+  for i in 0..e.cases.size {
+    arms.push(b.block())
+  }
+  other = -1
+  if e.has_else || lw.lw_cov.on {
+    other = b.block()
+  }
+  join = b.block()
+  if other < 0 {
+    other = join
   }
   lw.at(e.loc)
   args0: Array(MOperand) = []
   args0.push(b.copy_local(s))
   n = lw.call_to(mt_i64(), "avant_str_size", args0)
   b.switch_on(n, sizes, size_blocks, other)
-  cov_entries: Array(Int) = []
-  cov_arms: Array(Int) = []
-  cov_locs: Array(Location) = []
   for k in 0..sizes.size {
     b.at(size_blocks[k])
     open = true
-    for i3 in 0..e.cases.size {
-      for label2 in e.cases[i3].labels {
-        if label2.text.size != sizes[k] {
-          continue
-        }
-        target = arms[i3]
-        if lw.lw_cov.on {
-          // Each label enters through its own block, which counts it.
-          target = b.block
-          cov_entries.push(target)
-          cov_arms.push(arms[i3])
-          cov_locs.push(label2.loc)
-        }
-        if sizes[k] == 0 {
-          b.goto(target)
-          open = false
-        } else {
-          margs: Array(MOperand) = []
-          margs.push(b.copy_local(s))
-          margs.push(b.str_const(label2.text))
-          margs.push(b.c_i64(sizes[k]))
-          q = lw.call_to(mt_i32(), "memcmp", margs)
-          eq = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), q, b.c_i32(0)))
-          next = b.block
-          b.branch(eq, target, next)
-          b.at(next)
-          lw.at(e.loc)
-        }
+    for q in 0..lab_arm.size {
+      if lab_size[q] != k {
+        continue
+      }
+      target = arms[lab_arm[q]]
+      if lab_entry[q] >= 0 {
+        // Each label enters through its own block, which counts it.
+        target = lab_entry[q]
+      }
+      if sizes[k] == 0 {
+        b.goto(target)
+        open = false
+      } else {
+        margs: Array(MOperand) = []
+        margs.push(b.copy_local(s))
+        margs.push(b.str_const(lab_text[q]))
+        margs.push(b.c_i64(sizes[k]))
+        qv = lw.call_to(mt_i32(), "memcmp", margs)
+        eq = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), qv, b.c_i32(0)))
+        b.branch(eq, target, lab_next[q])
+        b.at(lab_next[q])
+        lw.at(e.loc)
+      }
+      if !open {
+        break
       }
     }
     if open {
       b.goto(other)
     }
   }
-  for q2 in 0..cov_entries.size {
-    b.at(cov_entries[q2])
-    lw.cov_branch(cov_locs[q2])
-    lw.at(e.loc)
-    b.goto(cov_arms[q2])
+  for q2 in 0..lab_arm.size {
+    if lab_entry[q2] >= 0 {
+      b.at(lab_entry[q2])
+      lw.cov_branch(lab_loc[q2])
+      lw.at(e.loc)
+      b.goto(arms[lab_arm[q2]])
+    }
   }
   for i4 in 0..e.cases.size {
     b.at(arms[i4])

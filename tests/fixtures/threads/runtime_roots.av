@@ -1,4 +1,4 @@
-// O70 (Stage 29 W1b): the runtime's thread-local references are roots of
+// The runtime's thread-local references are roots of
 // every thread's collections, not only of the collecting thread's. Each
 // of six tasks puts a fresh key into a hash it then drops (`inc_slice`
 // copies the slice into a new heap string), so `hash_last_key()`'s
@@ -10,7 +10,7 @@
 // between the parse and the Json value) and reads a field and a string
 // back. Every value is checked, and the program prints 0 wrong reads in
 // every environment. With gc_each_runtime_root walking only the
-// collecting thread's slots (the code before Stage 28 W17a), the key reads
+// collecting thread's slots (the code before threads stopped for a collection), the key reads
 // back wrong or the verifier reports the slot.
 
 import std.json
@@ -34,7 +34,7 @@ fn churn(id: Int, r: Int, n: Int): Int {
       if keep[0].s.size < 5 {
         bad += 1
       }
-      keep.clear
+      keep.clear()
     }
   }
   bad
@@ -45,11 +45,11 @@ fn work(id: Int, rounds: Int): Int {
   for r in 0..rounds {
     text = "pre-w${id}-r${r}-post"
     want = "w${id}-r${r}"
-    h = Hash(String, Int).new
+    h = Hash(String, Int).new()
     if h.inc_slice(text, 4, text.size - 5) != 1 {
       bad += 1
     }
-    h = Hash(String, Int).new
+    h = Hash(String, Int).new()
     text = ""
     bad += churn(id, r, 300)
     if hash_last_key() != want {
@@ -89,7 +89,7 @@ fn main {
     mbad += churn(99, r, 200)
   }
   wbad = 0
-  hs.each { |h| wbad = wbad + h.join }
+  hs.each { |h| wbad = wbad + (h.join() ?? -1) }
   puts("task bad reads: ${wbad}")
   puts("main bad reads: ${mbad}")
 }

@@ -1,0 +1,116 @@
+import harness
+import backends
+
+// Value blocks and tails. A
+// builtin's value block (`any`, `all`, `sort`, `Array(T).new(n) { }`) may
+// end with an if/else, and a `return` inside it leaves the function with
+// the function's result type; a function's last switch sees the result
+// type and may leave in every arm. Each program is compiled in parallel;
+// a refused one must leave no binary, say the expected words and point at
+// the expected line and column; an accepted one must print what it
+// should.
+
+class RCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): RCase {
+  f = RCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): RCase {
+  f = RCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn cases: Array(RCase) {
+  xs: Array(RCase) = []
+  pre = "class Bad: Error {\n  pub message: String = \"bad\"\n}\nclass Worse: Error {\n  pub message: String = \"worse\"\n}\nfn f(s: String): Int | Bad {\n  n = s.to_i() ?? return Bad.new()\n  n\n}\nfn g(s: String): Int | Bad | Worse | Nil {\n  if s == \"w\" {\n    return Worse.new()\n  }\n  if s == \"\" {\n    return nil\n  }\n  f(s)\n}\n"
+  xs.push(accepted("if-tail-any", "fn main {\n  xs = [1, 5, 9]\n  puts(xs.any { |x|\n    if x > 8 {\n      true\n    } else {\n      false\n    }\n  })\n  puts(xs.all { |x| if x > 0 { x < 10 } else { false } })\n}\n", "true\ntrue\n"))
+  xs.push(accepted("if-tail-sort", "fn main {\n  xs = [3, 1, 2, 1]\n  xs.sort { |a, b|\n    if a == b {\n      false\n    } else {\n      a > b\n    }\n  }\n  for x in xs {\n    puts(x)\n  }\n}\n", "3\n2\n1\n1\n"))
+  xs.push(accepted("if-tail-build", "fn main {\n  ys = Array(String).new(3) { |i|\n    if i == 0 {\n      \"zero\"\n    } else if i == 1 {\n      \"one\"\n    } else {\n      \"many\"\n    }\n  }\n  for y in ys {\n    puts(y)\n  }\n}\n", "zero\none\nmany\n"))
+  xs.push(accepted("if-tail-assign", "fn parse(s: String): Int | String {\n  if n = s.to_i() {\n    return n\n  }\n  s\n}\nfn main {\n  zs = Array(Int).new(2) { |i|\n    if n = [\"4\", \"x\"][i].to_i() {\n      n\n    } else {\n      -1\n    }\n  }\n  puts(zs[0])\n  puts(zs[1])\n}\n", "4\n-1\n"))
+  xs.push(refused("if-tail-no-else", "fn main {\n  puts([1].any { |x|\n    if x > 0 {\n      true\n    }\n  })\n}\n", "block must end with a value", "3:5"))
+  xs.push(refused("if-tail-wrong-type", "fn main {\n  xs = [2, 1]\n  xs.sort { |a, b|\n    if a == b {\n      1\n    } else {\n      a < b\n    }\n  }\n}\n", "if branches have different types Int and Bool", "4:5"))
+  xs.push(refused("if-tail-pred-type", "fn main {\n  puts([1].any { |x|\n    if x > 0 {\n      1\n    } else {\n      2\n    }\n  })\n}\n", "any predicate must return Bool", "2:16"))
+  xs.push(accepted("return-in-any", "fn find3(xs: Array(Int)): Int {\n  if xs.any { |x|\n    if x == 3 {\n      return 99\n    }\n    x > 10\n  } {\n    return 1\n  }\n  0\n}\nfn main {\n  puts(find3([1, 3]))\n  puts(find3([1, 30]))\n  puts(find3([1, 2]))\n}\n", "99\n1\n0\n"))
+  xs.push(accepted("return-in-build", "fn squares(n: Int): Array(Int) | String {\n  Array(Int).new(n) { |i|\n    if i > 2 {\n      return \"too many\"\n    }\n    i * i\n  }\n}\nfn main {\n  switch squares(3) {\n    case xs: Array(Int) { puts(xs[2]) }\n    case s: String { puts(s) }\n  }\n  switch squares(5) {\n    case xs: Array(Int) { puts(xs.size) }\n    case s: String { puts(s) }\n  }\n}\n", "4\ntoo many\n"))
+  xs.push(accepted("return-in-lambda-block", "fn main {\n  f = { |xs: Array(Int)|\n    if xs.all { |x|\n      if x < 0 {\n        return \"negative\"\n      }\n      x < 5\n    } {\n      return \"small\"\n    }\n    \"big\"\n  }\n  puts(f([1, 2]))\n  puts(f([1, -2]))\n  puts(f([9]))\n}\n", "small\nnegative\nbig\n"))
+  xs.push(refused("return-in-any-wrong-type", "fn find3(xs: Array(Int)): Int {\n  if xs.any { |x|\n    if x == 3 {\n      return \"three\"\n    }\n    x > 10\n  } {\n    return 1\n  }\n  0\n}\nfn main {\n  puts(find3([1]))\n}\n", "return type is String, expected Int", "4:7"))
+  xs.push(refused("return-in-parallel", "fn main {\n  xs = [1, 2]\n  ys = xs.parallel { |x|\n    if x > 1 {\n      return\n    }\n    x\n  }\n  puts(ys.size)\n}\n", "return inside a parallel block", "5:7"))
+  xs.push(accepted("return-in-each", "fn first_big(xs: Array(Int)): Int {\n  xs.each { |x|\n    if x > 10 {\n      return x\n    }\n  }\n  -1\n}\nfn key_of(h: Hash(String, Int), want: Int): String {\n  h.each { |k, v|\n    if v == want {\n      return k\n    }\n  }\n  \"none\"\n}\nfn main {\n  puts(first_big([3, 12, 40]))\n  puts(first_big([1]))\n  h = Hash(String, Int).new()\n  h[\"a\"] = 1\n  h[\"b\"] = 2\n  puts(key_of(h, 2))\n  puts(key_of(h, 5))\n}\n", "12\n-1\nb\nnone\n"))
+  xs.push(refused("return-in-each-wrong-type", "fn first_big(xs: Array(Int)): Int {\n  xs.each { |x|\n    if x > 10 {\n      return \"big\"\n    }\n  }\n  -1\n}\nfn main {\n  puts(first_big([3]))\n}\n", "return type is String, expected Int", "4:7"))
+  xs.push(accepted("tail-switch-union", "fn widen(x: Int | String): Int | String | Nil {\n  switch x {\n    case n: Int { n + 1 }\n    case String { nil }\n  }\n}\nfn main {\n  switch widen(1) {\n    case n: Int { puts(n) }\n    case String { puts(\"s\") }\n    case nil { puts(\"nil\") }\n  }\n  switch widen(\"a\") {\n    case n: Int { puts(n) }\n    case String { puts(\"s\") }\n    case nil { puts(\"nil\") }\n  }\n}\n", "2\nnil\n"))
+  xs.push(accepted("tail-switch-leaves", "enum Tok { a, b, c }\nfn name(t: Tok): String {\n  switch t {\n    case a { return \"A\" }\n    case b { return \"B\" }\n    case c { return \"C\" }\n  }\n}\nfn code(n: Int): Int {\n  switch n {\n    case 1 { return 10 }\n    else { return 0 }\n  }\n}\nfn main {\n  puts(name(Tok.b))\n  puts(code(1))\n  puts(code(5))\n}\n", "B\n10\n0\n"))
+  xs.push(accepted("tail-switch-literal", "fn small(n: Int): Int32 {\n  switch n {\n    case 1 { 7 }\n    else { 0 }\n  }\n}\nfn main {\n  puts(small(1))\n}\n", "7\n"))
+  xs.push(refused("tail-switch-int-no-else", "fn code(n: Int): Int {\n  switch n {\n    case 1 { return 10 }\n  }\n}\nfn main {\n  puts(code(1))\n}\n", "last expression is Void, expected Int", "2:3"))
+  xs.push(refused("tail-switch-wrong-member", "fn widen(x: Int | String): Int | Nil {\n  switch x {\n    case n: Int { n + 1 }\n    case String { \"s\" }\n  }\n}\nfn main {\n  puts(widen(1) ?? 0)\n}\n", "switch branch is String, expected Int?", "4:19"))
+  xs.push(accepted("init-exhaustive-enum", "enum Tok { a, b, c }\nclass Holder {\n  k: Array(Int)\n  fn initialize(t: Tok) {\n    switch t {\n      case a { self.k = [1] }\n      case b, c { self.k = [2, 3] }\n    }\n  }\n}\nfn main {\n  puts(Holder.new(Tok.c).k.size)\n  puts(Holder.new(Tok.a).k[0])\n}\n", "2\n1\n"))
+  xs.push(accepted("init-exhaustive-union", "class Holder {\n  k: Array(Int)\n  fn initialize(x: Int | String) {\n    switch x {\n      case n: Int { self.k = [n] }\n      case s: String { self.k = [s.size, 0] }\n    }\n  }\n}\nfn main {\n  puts(Holder.new(4).k[0])\n  puts(Holder.new(\"abc\").k[0])\n}\n", "4\n3\n"))
+  xs.push(refused("init-int-switch", "class Holder {\n  k: Array(Int)\n  fn initialize(n: Int) {\n    switch n {\n      case 1 { self.k = [1] }\n    }\n  }\n}\nfn main {\n  puts(Holder.new(1).k.size)\n}\n", "field k of Holder is not set on every path through initialize", "2:3"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/vb-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/vb-${f.tag}.bin", "${dir}/vb-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "vb-${f2.tag}.bin", "vb-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/vb-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/vb-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/vb-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "vb-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_value_blocks.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

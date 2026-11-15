@@ -10,8 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Statistics (Stage 28 W12, moved from avant_rt.c; per family since
- * W14b2): AvantGcStats (an ABI for generated code: field order fixed) and
+/* Statistics (moved from avant_rt.c; per family): AvantGcStats (an ABI for
+ * generated code: field order fixed) and
  * the AVANT_GC_STATS=1 report at exit. The other counters are
  * gc_heap.ctr, one struct per family (avant_gc_internal.h defines each);
  * they are written where the events happen and printed here, one routine
@@ -51,11 +51,11 @@ static unsigned long long u(uint64_t v) {
 
 /* The heap's own segment: AvantGcStats, the peaks, the root family, the
  * young threshold and the inline path's count. (The fields that printed
- * 0 since their mechanisms went left the line in Stage 28 W16b, O106,
- * O110: sm_walks, sm_hits, sm_sites, the stackmap walker's, W12r;
+ * 0 since their mechanisms went left the line: sm_walks, sm_hits,
+ * sm_sites, the stackmap walker's;
  * sm_left, E's C-stack pass; cpy_peak, pk_from, pk_to, srv_reserve and
- * the keep family, E's spaces and kept objects, W15d; prom_pinned;
- * sp_calls, sp_collections, the named safepoints, W16a.) */
+ * the keep family, E's spaces and kept objects; prom_pinned;
+ * sp_calls, sp_collections, the named safepoints.) */
 static void print_heap(StatsLine *l) {
   const GcCounters *c = &gc_heap.ctr;
   line_add(l,
@@ -134,19 +134,24 @@ static void print_los(StatsLine *l) {
            u(spare_bytes), u(c->trims), u(c->trim_bytes), u(c->drops), u(c->drop_bytes));
 }
 
-/* The W15a1 families (gc-design.md §3.4 M5, M6), appended after the los
- * family: pause times in ns, full collections by cause, M6's
- * fragmentation (frag_ppm is §3.4 rule 5's aggregate, the free-line
+/* The pause, cause and fragmentation families, appended after the los
+ * family: pause times in ns, full collections by cause, the
+ * fragmentation (frag_ppm is the program's aggregate, the free-line
  * fraction weighted by heap bytes over the full collections), and bytes
  * promoted by young collections. */
 static void print_pause(StatsLine *l) {
   const GcPauseCounters *c = &gc_heap.ctr.pause;
   line_add(l, "pause_young_ns=%llu pause_full_ns=%llu pause_max_ns=%llu ", u(c->young_ns),
            u(c->full_ns), u(c->max_ns));
-  /* The handshake (Stage 28 W17a): collections that waited for another
+  /* The handshake: collections that waited for another
    * thread, and the wait's total and longest time. */
   line_add(l, "handshakes=%llu pause_hs_ns=%llu pause_hs_max_ns=%llu ", u(c->hs_n), u(c->hs_ns),
            u(c->hs_max_ns));
+  /* Under AVANT_GC_STRESS=1 only (the statistics set runs without it):
+   * the stress collections that kept the world lock. */
+  if (gc_heap.set.stress) {
+    line_add(l, "handshakes_held=%llu ", u(c->hs_held));
+  }
 }
 
 static void print_why(StatsLine *l) {
@@ -175,13 +180,12 @@ static void print_size(StatsLine *l) {
   line_add(l, "young_grows=%llu young_shrinks=%llu ", u(c->grows), u(c->shrinks));
 }
 
-/* The sticky family (Stage 28 W15b, candidate S), last in
+/* The sticky family (candidate S), last in
  * the line: bytes promoted in place by young collections, young blocks
  * swept, holes taken by the young allocator, lines the young sweeps
  * freed, medium objects placed in the overflow block, empty young blocks
  * given back to their chunks, and S+'s evacuated, kept-in-place and copy
- * blocks (Stage 28 W15c), the bytes it aged and their survivor blocks
- * (W15d). */
+ * blocks, the bytes it aged and their survivor blocks. */
 static void print_sticky(StatsLine *l) {
   const GcStickyCounters *c = &gc_heap.ctr.sticky;
   line_add(l,
@@ -192,16 +196,57 @@ static void print_sticky(StatsLine *l) {
            u(c->inplace), u(c->blocks), u(c->holes), u(c->freed_lines), u(c->overflow),
            u(c->returned), u(c->evac_blocks), u(c->kept_blocks), u(c->copy_blocks), u(c->aged),
            u(c->surv_blocks), u(c->aged_holders), u(c->aged_inplace_blocks));
+  /* Only in a program that had a high-survival collection, so the line
+   * of any other program is what it was. */
+  if (c->dense_blocks || c->here_blocks) {
+    line_add(l, " young_dense_blocks=%llu young_here_blocks=%llu young_here=%llu", u(c->dense_blocks),
+             u(c->here_blocks), u(c->here_bytes));
+  }
+  if (c->retires) {
+    line_add(l, " young_retires=%llu young_retired=%llu young_probes=%llu", u(c->retires), u(c->retired),
+             u(c->probes));
+  }
+  /* Only in a program that had a trace that left the young generation
+   * young (or tried to). */
+  if (c->keeps || c->keep_fell) {
+    line_add(l, " full_kept_young=%llu full_kept_young_bytes=%llu full_kept_young_fell=%llu", u(c->keeps),
+             u(c->keep_bytes), u(c->keep_fell));
+  }
 }
 
-/* The verifier's segment (Stage 28 W18M item 7), only under
+/* The proof's segment, only in a program that forced a collection
+ * (avant_gc_collect, std.gc's gc.collect()), whether it then ran as a
+ * young collection or traced, so the line of a program that never asks
+ * is what it was: the full collections that asked the proof, the ones it
+ * held for, the ones that traced with the first reason each met
+ * (GcProofWhy's names), and the log's size. */
+static void print_proof(StatsLine *l) {
+  const GcProofCounters *c = &gc_heap.ctr.proof;
+  int w;
+  if (!c->forced) {
+    return;
+  }
+  line_add(l, " proof_asked=%llu proof_held=%llu", u(c->asked), u(c->held));
+  /* Only in a program that had one (the line of any other is as it was). */
+  if (c->idle) {
+    line_add(l, " proof_idle=%llu", u(c->idle));
+  }
+  for (w = 1; w < PROOF_WHYS - 1; w++) {
+    if (c->fell[w]) {
+      line_add(l, " proof_fell_%s=%llu", gc_proof_why_name((GcProofWhy)w), u(c->fell[w]));
+    }
+  }
+  line_add(l, " proof_logged=%llu proof_refs=%llu proof_log_peak=%llu proof_roots=%llu", u(c->logged), u(c->refs),
+           u(c->log_peak / 2), u(c->roots));
+}
+
+/* The verifier's segment, only under
  * AVANT_GC_VERIFY, after the sticky family: which verifier ran
  * (incremental: soft-dirty tracking works; whole: it does not, and every
  * check is whole as before), the whole and incremental verifications, and
  * the heap pages the incremental ones read and skipped as untouched; the
  * young collections whose reachability checks were incremental, and the
- * incremental checks that found a candidate and ran whole (Stage 28
- * W18V2). */
+ * incremental checks that found a candidate and ran whole. */
 static void print_verify(StatsLine *l) {
   if (!gc_heap.set.verify) {
     return;
@@ -217,6 +262,7 @@ static void print_verify(StatsLine *l) {
 void gc_print_stats(void) {
   StatsLine l;
   l.n = 0;
+  gc_alloc_sync();
   print_heap(&l);
   print_rem(&l);
   print_def(&l);
@@ -230,12 +276,14 @@ void gc_print_stats(void) {
   print_prom(&l);
   print_size(&l);
   print_sticky(&l);
+  print_proof(&l);
   print_verify(&l);
   line_add(&l, "\n");
   fwrite(l.buf, 1, l.n, stderr);
 }
 
 void avant_gc_stats(AvantGcStats *out) {
+  gc_alloc_sync();
   if (out) {
     *out = avant_g_stats;
   }

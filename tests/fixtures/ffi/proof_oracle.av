@@ -1,0 +1,51 @@
+// The oracle of the proof that the old
+// heap is unchanged. A complete collection may run as a young collection
+// when no reference to an old object was removed since the last full
+// collection, and it knows that from a log the store barrier's slow call
+// keeps: at an old object's first store since the last full collection,
+// before the store, the references it holds. A store that comes before
+// its barrier, or has none, removes a reference the log never saw. Under
+// AVANT_GC_VERIFY=1 the verifier keeps a copy of every old object as the
+// last full collection left it and compares.
+//
+// Generated code and the runtime always make the barrier call first, so
+// the C half (ffi_proof_store in tests/fixtures/ffi/ffi.c, built with
+// `--cc`) makes the store: a Cell and the string it names are made old by
+// a full collection, then the Cell is given another string. With
+// PROOF_ORACLE_MODE unset the barrier comes first: every environment
+// prints the two lines below with no stderr. PROOF_ORACLE_MODE=1 stores
+// first and calls the barrier after: the verifier stops the program at
+// that barrier ("a store came before its barrier"). PROOF_ORACLE_MODE=2
+// calls no barrier: the verifier stops it at the next full collection ("a
+// reference was overwritten with no barrier before the store"). Without
+// the verifier the three print the same (tests/cases/test_gc_complete.av).
+
+class Cell {
+  v: String
+
+  fn initialize(v: String) {
+    self.v = v
+  }
+}
+
+lib po {
+  fun ffi_proof_store(holder: Cell, v: String, mode: Int): Int
+  fun avant_gc_collect
+}
+
+fn text(k: Int): String {
+  "text-${k}"
+}
+
+fn main {
+  mode = 0
+  if v = env_get("PROOF_ORACLE_MODE") {
+    mode = v.to_i() ?? 0
+  }
+  cell = Cell.new(text(1))
+  po.avant_gc_collect()
+  po.ffi_proof_store(cell, text(2), mode)
+  puts("proof_oracle: ${cell.v}")
+  po.avant_gc_collect()
+  puts("proof_oracle: ${cell.v} after the collection")
+}

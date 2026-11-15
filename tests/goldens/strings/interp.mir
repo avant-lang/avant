@@ -19,7 +19,6 @@ const str.14 = "b"
 const str.15 = "c"
 const str.16 = "d"
 const str.17 = "e"
-const str.18 = "%lld\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -28,6 +27,7 @@ typemap 1023 %Hash stride 0 bits [0x7]
 extern __avant_type_maps() -> void never
 extern avant_clock_us() -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_i32(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
@@ -36,7 +36,6 @@ extern avant_str_from_float(f64) -> ref str collects
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_from_u64(u64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
-extern printf(ref str, ...) -> i32 never
 
 fn av.interp/opaque(_1: i64) -> i64 leaf @interp.av:5:1 {
   let _0: i64
@@ -253,7 +252,7 @@ bb0:
   call avant_puts_str(copy _31) nocollect   @31:3
   _32 = call av.interp/opaque(const i64 3) nocollect   @32:7
   _33 = cast copy _32 to f64   @32:16
-  _34 = div copy _33, const f64 0x4010000000000000 /* 4.0 */   @32:22
+  _34 = div copy _33, const f64 0x4010000000000000 /* 4.0 */   @32:24
   _35 = copy _34   @32:5
   _36 = call avant_str_from_float(copy _35) collects   @33:13
   _37 = mul copy _35, const f64 0x412E848000000000 /* 1000000.0 */   @33:20
@@ -312,7 +311,7 @@ bb0:
   _84 = copy _83   @41:5
   call avant_puts_str(copy _84) nocollect   @42:3
   _85 = call avant_str_size(copy _84) nocollect   @43:9
-  call printf(const str.18, copy _85) nocollect   @43:3
+  call avant_puts_i64(copy _85) nocollect   @43:3
   _0 = const i32 0   @18:1
   gc.leave   @18:1
   return   @18:1

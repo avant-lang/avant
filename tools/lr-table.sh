@@ -1,5 +1,5 @@
 #!/bin/sh
-# lr-table.sh — LangArena per-task multiplier table (Stage 28 step LR).
+# lr-table.sh — LangArena per-task multiplier table.
 #
 # One measurement method for every language: each task is its own process,
 # timed as process wall clock (date +%s%N around the process) with peak RSS
@@ -39,12 +39,12 @@
 #   AVANT_COMPILER=./bin/avant-c-llvm AVANT_CODEGEN=release \
 #     AVANT_RESULTS_DIR=$R crystal run langarena/harness/measure.cr -- prod
 #   tools/lr-table.sh avant langarena/tmp ../LangArena/run.js $R/lr-avant.tsv
-#   tools/lr-table.sh table results/2026-11-07-s28-lr/reference $R > table.md
+#   tools/lr-table.sh table REFERENCE_DIR $R > table.md
 #
 # TSV columns: task status wall_s rss_kb inprog_s exit  (status ok|err|fail)
 # Each tsv starts with "# key: value" lines (label, governor, date).
 #
-# Every input is checked before anything is written (O71, Stage 28 W15a2):
+# Every input is checked before anything is written:
 # a RUN_JS that does not exist or lists no task, a BIN_DIR or DIR that is
 # not a directory, a REF_DIR without a reference tsv, an AVANT that is
 # neither a tsv nor a results directory holding lr-avant.tsv or
@@ -203,7 +203,7 @@ table)
       if (ast[t] != "ok") miss[t] = miss[t] " Avant: " ast[t] ";"
       if (t in note) miss[t] = miss[t] " " note[t]
     }
-    printf "Avant source: %s. Multiplier = Avant / best measured here; best excludes failed runs. Crystal and Go columns are Avant/Crystal and Avant/Go as time / memory.\n\n", (avsrc == "lr" ? "lr-avant.tsv (one wrapper for all)" : "harness runtime.tsv (its own wrapper; peak RSS by ps sampling before W9Fb1, GNU time since; not the same method as the references)")
+    printf "Avant source: %s. Multiplier = Avant / best measured here; best excludes failed runs. Crystal and Go columns are Avant/Crystal and Avant/Go as time / memory.\n\n", (avsrc == "lr" ? "lr-avant.tsv (one wrapper for all)" : "harness runtime.tsv (its own wrapper; peak RSS by GNU time; not the same method as the references)")
     sec("Combined (worse of the two multipliers)", "both")
     sec("By time multiplier", "time")
     sec("By memory multiplier", "mem")

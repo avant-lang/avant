@@ -14,11 +14,11 @@ fn dump_args(src: String): Array(String) {
   a
 }
 
-// The compiler's fixed point (Stage 28 W9, D171): the next compiler is
+// The compiler's fixed point: the next compiler is
 // built by this one (C' from B, D' from C'), the hello golden is its MIR
 // (examples/hello.mir), and the fixed point is the pre-optimization .ll
 // of compiler/main.av (`avant __emit-ll`) from both, by digest. (The old
-// back end's IR dumps were the fixed point until it retired at W11.)
+// back end's IR dumps were the fixed point until it retired.)
 fn fp_main_job(compiler: String, main_av: String, out: String): HJob {
   a: Array(String) = []
   a.push("__emit-ll")
@@ -29,7 +29,7 @@ fn fp_main_job(compiler: String, main_av: String, out: String): HJob {
 
 fn test_fixed_point(c: Checks) {
   c.suite("tests/cases/test_fixed_point.av")
-  // Measured with the stress mode kept (VALK-TM, O602): `__emit-ll
+  // Measured with the stress mode kept: `__emit-ll
   // compiler/main.av` alone takes 504 s, and this file runs that twice
   // and builds the next compiler.
   if gc_stress_outer() {
@@ -52,16 +52,16 @@ fn test_fixed_point(c: Checks) {
     clog = "${scratch()}/fixed_point-${stamp}-c.log"
     hlog = "${scratch()}/fixed_point-${stamp}-hello.log"
 
-    // Two waves of concurrent work (D138). Wave 1, all with this
+    // Two waves of concurrent work. The first, all with this
     // compiler: compile the next compiler, dump hello, dump the compiler.
     // (The compiler's dump under AVANT_GC_VERIFY=1 was a fourth job of
-    // wave 1 until Stage 28 W16t: it is test_fixed_point_verify.av, O103.)
-    // Wave 2, with the next compiler: dump hello, dump the compiler, run
+    // the first wave once: it is test_fixed_point_verify.av now.)
+    // The second, with the next compiler: dump hello, dump the compiler, run
     // hello. Checks are recorded afterwards in the order they always had.
     // One self-host link. Nursery is forced on so the long compile is the
     // collector proof, and --debug is the daily backend. The log is also
     // the compiler-sized DT_TEXTREL check. The compiler links the
-    // in-process LLVM object (D172), as tools/letters.sh passes it.
+    // in-process LLVM object, as tools/letters.sh passes it.
     cenv: Array(String) = []
     cenv.push("AVANT_NURSERY=1")
     cenv.push(compiler)
@@ -69,8 +69,8 @@ fn test_fixed_point(c: Checks) {
     cenv.push(main_av)
     cenv.push(bin_c)
     cenv.push("--debug")
-    // The compiler stays on plain x86-64, as tools/letters.sh builds it
-    // (O140), so the kept C equals the gate's C'.
+    // The compiler stays on plain x86-64, as tools/letters.sh
+    // builds it, so the kept C equals the gate's C'.
     cenv.push("--cpu=baseline")
     cenv.push("${root}/runtime/build/avant_llvm.o")
     wave1: Array(HJob) = []
@@ -146,7 +146,7 @@ fn test_fixed_point(c: Checks) {
         c.expect(false, "read next hello stdout")
       }
 
-      // Opt-in for gates (D138): keep this C, built by this compiler from
+      // Opt-in for gates: keep this C, built by this compiler from
       // compiler/main.av, at AVANT_FIXED_POINT_KEEP, only when every check
       // passed. Internal; not a check.
       if keep = env_get("AVANT_FIXED_POINT_KEEP"), keep.size > 0 && c.failed == 0 && copy_file(bin_c, keep) != 0 {
@@ -167,5 +167,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_fixed_point(c)
-  c.finish
+  c.finish()
 }

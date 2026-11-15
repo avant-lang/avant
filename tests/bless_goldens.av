@@ -1,11 +1,13 @@
-// Regenerate tests/goldens from compiler B (D48).
-//   AVANT_COMPILER=./bin/avant-av-b ./bin/avant-av-b run tests/bless_goldens.av
+// Regenerate the dump goldens of tests/goldens that tests/goldens/list.txt
+// lists (one list with the test files):
+//   AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm run tests/bless_goldens.av
+// The run goldens (tests/goldens/runs/) are tools/run-goldens.sh --bless.
 
 lib bless_rt {
   fun avant_tmp_dir: String
 }
 
-// The private scratch directory (D127), removed when this tool exits.
+// The private scratch directory, removed when this tool exits.
 fn scratch: String {
   bless_rt.avant_tmp_dir()
 }
@@ -24,8 +26,8 @@ fn mkdir_p(path: String) {
   _ = process_run("/bin/mkdir", args)
 }
 
-// The back end's IR, the MIR `avant dump` prints (D171; the goldens
-// of the old back end retired with it, Stage 28 W11).
+// The back end's IR, the MIR `avant dump` prints
+// (the goldens of the old back end retired with it).
 fn dump_av(compiler: String, src: String, log: String): Int {
   args: Array(String) = []
   args.push("-u")
@@ -36,7 +38,7 @@ fn dump_av(compiler: String, src: String, log: String): Int {
   process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
-// A hidden front-end dump of the compiler under test (D137): flag is
+// A hidden front-end dump of the compiler under test: flag is
 // --tokens, --ast, or --check.
 fn dump_layer(compiler: String, flag: String, src: String, log: String): Int {
   args: Array(String) = []
@@ -83,148 +85,102 @@ fn bless_dump(compiler: String, src: String, dest: String, tag: String): Bool {
   false
 }
 
-// The MIR (Stage 28 W5b, D171): `avant dump` into
-// tests/goldens/<stem>.mir.
-fn bless_mir(compiler: String, root: String, src_rel: String, stem: String): Bool {
-  args: Array(String) = []
-  args.push("-u")
-  args.push("AVANT_BACKEND")
-  args.push(compiler)
-  args.push("dump")
-  args.push("${root}/${src_rel}")
-  dest = "${root}/tests/goldens/${stem}.mir"
-  code = process_run_out("/usr/bin/env", args, dest) ?? -1
-  if code != 0 {
-    bless_fail("dump ${stem}.mir exited ${code}")
-    if err = file_read(dest) {
-      puts(err)
+// The library directory a compiler built by tools/letters.sh reads
+// (the `lib: PATH` line of COMPILER.versions.txt), "" without one.
+fn lib_dir_of(compiler: String): String {
+  if t = file_read("${compiler}.versions.txt") {
+    for line in t.split("\n") {
+      if line.size > 5 && str_slice(line, 0, 5) == "lib: " {
+        return str_slice(line, 5, line.size)
+      }
     }
+  }
+  ""
+}
+
+// text with every "LIB/" written "lib/", as tests/cases/test_threads_llvm.av
+// compares a MIR dump that names a std file.
+fn lib_relative(text: String, libdir: String): String {
+  if libdir.size == 0 {
+    return text
+  }
+  prefix = "${libdir}/"
+  out = buf_new()
+  i = 0
+  while i < text.size {
+    if i + prefix.size <= text.size && str_slice(text, i, i + prefix.size) == prefix {
+      out.push_str("lib/")
+      i += prefix.size
+    } else {
+      out.push_byte(text[i])
+      i += 1
+    }
+  }
+  out.to_s()
+}
+
+// The MIR: `avant dump` into tests/goldens/STEM.mir, a std file
+// named relative to the checkout.
+fn bless_mir(compiler: String, src: String, dest: String, tag: String): Bool {
+  if bless_dump(compiler, src, dest, tag) {
+  } else {
     return false
+  }
+  libdir = lib_dir_of(compiler)
+  if libdir.size > 0 {
+    if text = file_read(dest) {
+      rel = lib_relative(text, libdir)
+      if rel != text {
+        if (file_write(dest, rel) ?? -1) != rel.size {
+          bless_fail("cannot write ${dest}")
+          return false
+        }
+      }
+    }
   }
   true
 }
 
-// The .mir goldens of the scalar subset (tests/cases/test_scalars.av) and
-// of the string subset (tests/cases/test_strings.av, Stage 28 W6a), and
-// of the object subset (tests/cases/test_objects.av, Stage 28 W6b), of
-// the types subset (tests/cases/test_types.av, Stage 28 W7a), of the
-// closures subset (tests/cases/test_closures.av, Stage 28 W7b), of the
-// ffi subset (tests/cases/test_ffi_llvm.av, Stage 28 W8a), of the
-// threads subset (tests/cases/test_threads_llvm.av, Stage 28 W8b), and
-// of the heap subset (tests/cases/test_heap.av, Stage 28 W6c).
-fn bless_mir_all(compiler: String, root: String): Bool {
-  mkdir_p("${root}/tests/goldens/scalars")
-  names = ["calls", "control", "conv", "floats", "ints", "loop_sum", "run_status", "shifts", "status", "switches", "trap_add", "trap_div", "trap_neg", "trap_rem", "trap_shl", "trap_shl_i32", "trap_shr_neg", "trap_shr_u64", "trap_to_i_high", "trap_to_i_inf", "trap_to_i_low", "trap_to_i_nan", "trap_to_i_neg_inf", "trap_u64"]
-  i = 0
-  while i < names.size {
-    if bless_mir(compiler, root, "tests/fixtures/scalars/${names[i]}.av", "scalars/${names[i]}") {
+// One row of tests/goldens/list.txt: TEST STEM
+// SOURCE LAYERS, every layer it names. The list is the test files' too
+// (tests/cases/harness.av golden_rows), so what is checked is what is
+// blessed.
+fn bless_row(compiler: String, root: String, stem: String, src_rel: String, layers: Array(String)): Bool {
+  src = "${root}/${src_rel}"
+  base = "${root}/tests/goldens/${stem}"
+  mkdir_p(path_dirname(base))
+  for layer in layers {
+    ok = true
+    if layer == "tok" {
+      ok = bless_layer(compiler, "--tokens", src, "${base}.tok", "${stem}.tok")
+    } else if layer == "ast" {
+      ok = bless_layer(compiler, "--ast", src, "${base}.ast", "${stem}.ast")
+    } else if layer == "check" {
+      ok = bless_layer(compiler, "--check", src, "${base}.check", "${stem}.check")
+    } else if layer == "mir" {
+      ok = bless_mir(compiler, src, "${base}.mir", "${stem}.mir")
     } else {
+      bless_fail("tests/goldens/list.txt: ${stem}: unknown layer ${layer}")
+      ok = false
+    }
+    if !ok {
       return false
     }
-    i += 1
-  }
-  mkdir_p("${root}/tests/goldens/strings")
-  sn = ["churn", "concat", "interp", "members", "trap_index"]
-  i = 0
-  while i < sn.size {
-    if bless_mir(compiler, root, "tests/fixtures/strings/${sn[i]}.av", "strings/${sn[i]}") {
-    } else {
-      return false
-    }
-    i += 1
-  }
-  mkdir_p("${root}/tests/goldens/objects")
-  on = ["churn", "classes", "layouts", "structs"]
-  i = 0
-  while i < on.size {
-    if bless_mir(compiler, root, "tests/fixtures/objects/${on[i]}.av", "objects/${on[i]}") {
-    } else {
-      return false
-    }
-    i += 1
-  }
-  mkdir_p("${root}/tests/goldens/heap")
-  hn = ["arrays", "churn", "elems", "hashes", "loops", "refs"]
-  i = 0
-  while i < hn.size {
-    if bless_mir(compiler, root, "tests/fixtures/heap/${hn[i]}.av", "heap/${hn[i]}") {
-    } else {
-      return false
-    }
-    i += 1
-  }
-  mkdir_p("${root}/tests/goldens/types")
-  tn = ["churn", "coerce", "generics", "generic_targs", "methods", "results", "unions", "opt_ref"]
-  i = 0
-  while i < tn.size {
-    if bless_mir(compiler, root, "tests/fixtures/types/${tn[i]}.av", "types/${tn[i]}") {
-    } else {
-      return false
-    }
-    i += 1
-  }
-  mkdir_p("${root}/tests/goldens/closures")
-  cn = ["blocks", "churn", "fresh", "lambdas", "values"]
-  i = 0
-  while i < cn.size {
-    if bless_mir(compiler, root, "tests/fixtures/closures/${cn[i]}.av", "closures/${cn[i]}") {
-    } else {
-      return false
-    }
-    i += 1
-  }
-  mkdir_p("${root}/tests/goldens/ffi")
-  fn2 = ["byval", "callbacks", "calls", "fresh", "layout", "pins"]
-  i = 0
-  while i < fn2.size {
-    if bless_mir(compiler, root, "tests/fixtures/ffi/${fn2[i]}.av", "ffi/${fn2[i]}") {
-    } else {
-      return false
-    }
-    i += 1
-  }
-  mkdir_p("${root}/tests/goldens/threads")
-  th = ["channels", "fresh", "mutex", "parallel", "spawn"]
-  i = 0
-  while i < th.size {
-    if bless_mir(compiler, root, "tests/fixtures/threads/${th[i]}.av", "threads/${th[i]}") {
-    } else {
-      return false
-    }
-    i += 1
   }
   true
 }
 
-// A program that imports std has no --check golden (D142) and no MIR
-// golden: its MIR names the std files by the absolute path the compiler
-// found them at (Stage 28 W11).
-fn bless_imports(compiler: String, root: String, src_rel: String, stem: String): Bool {
-  src = "${root}/${src_rel}"
-  base = "${root}/tests/goldens/${stem}"
-  if bless_layer(compiler, "--tokens", src, "${base}.tok", "${stem}.tok") {
-  } else {
-    return false
+fn path_dirname(p: String): String {
+  at = -1
+  for i in 0..p.size {
+    if p[i] == 47 {
+      at = i
+    }
   }
-  bless_layer(compiler, "--ast", src, "${base}.ast", "${stem}.ast")
-}
-
-fn bless_all(compiler: String, root: String, src_rel: String, stem: String): Bool {
-  src = "${root}/${src_rel}"
-  base = "${root}/tests/goldens/${stem}"
-  if bless_layer(compiler, "--tokens", src, "${base}.tok", "${stem}.tok") {
-  } else {
-    return false
+  if at <= 0 {
+    return "."
   }
-  if bless_layer(compiler, "--ast", src, "${base}.ast", "${stem}.ast") {
-  } else {
-    return false
-  }
-  if bless_layer(compiler, "--check", src, "${base}.check", "${stem}.check") {
-  } else {
-    return false
-  }
-  bless_dump(compiler, src, "${base}.mir", "${stem}.mir")
+  str_slice(p, 0, at)
 }
 
 fn main {
@@ -234,182 +190,32 @@ fn main {
       return
     }
     root = avant_test_root()
-    mkdir_p("${root}/tests/goldens/examples")
-    mkdir_p("${root}/tests/goldens/part3")
-    mkdir_p("${root}/tests/goldens/overloading")
-    mkdir_p("${root}/tests/goldens/modules")
-    mkdir_p("${root}/tests/goldens/macros")
-    ok = true
-    if bless_all(compiler, root, "examples/hello.av", "examples/hello") {
-    } else { ok = false }
-    if ok {
-      if bless_all(compiler, root, "examples/fact.av", "examples/fact") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/vec2.av", "examples/vec2") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/sieve.av", "examples/sieve") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/methods.av", "examples/methods") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/trees.av", "examples/trees") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/binarytrees.av", "examples/binarytrees") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/switch.av", "examples/switch") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/defaults.av", "examples/defaults") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/sqrt.av", "examples/sqrt") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/zlib.av", "examples/zlib") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/add.av", "examples/add") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/errors.av", "examples/errors") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/collect.av", "examples/collect") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_imports(compiler, root, "examples/json.av", "examples/json") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_imports(compiler, root, "examples/http.av", "examples/http") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/spawn.av", "examples/spawn") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "examples/matmul.av", "examples/matmul") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/part3/chr.av", "part3/chr") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/part3/slice.av", "part3/slice") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/part3/index.av", "part3/index") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/part3/buf.av", "part3/buf") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/part3/conv.av", "part3/conv") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/part3/exists.av", "part3/exists") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/part3/argv.av", "part3/argv") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/part3/env.av", "part3/env") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/part3/interp.av", "part3/interp") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/part3/pop.av", "part3/pop") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/part3/run.av", "part3/run") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/overloading/defaults.av", "overloading/defaults") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/overloading/overload.av", "overloading/overload") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/overloading/operator.av", "overloading/operator") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/overloading/generic.av", "overloading/generic") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/macros/quote_fn.av", "macros/quote_fn") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/macros/splice_name.av", "macros/splice_name") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/macros/hygiene.av", "macros/hygiene") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/macros/fields.av", "macros/fields") {
-      } else { ok = false }
-    }
-    if ok {
-      if bless_all(compiler, root, "tests/fixtures/macros/method.av", "macros/method") {
-      } else { ok = false }
-    }
-    if ok {
-      modules_src = "${root}/tests/fixtures/modules/main.av"
-      modules_golden = "${root}/tests/goldens/modules/main"
-      if bless_layer(compiler, "--tokens", modules_src, "${modules_golden}.tok", "modules/main.tok") {
-      } else { ok = false }
-      if ok {
-        if bless_layer(compiler, "--ast", modules_src, "${modules_golden}.ast", "modules/main.ast") {
-        } else { ok = false }
+    list = "${root}/tests/goldens/list.txt"
+    if text = file_read(list) {
+      n = 0
+      for line in text.split("\n") {
+        if line.size == 0 || line[0] == 35 {
+          continue
+        }
+        words: Array(String) = []
+        for w in line.split(" ") {
+          if w.size > 0 {
+            words.push(w)
+          }
+        }
+        if words.size != 4 {
+          bless_fail("${list}: a row is TEST STEM SOURCE LAYERS: ${line}")
+          return
+        }
+        if bless_row(compiler, root, words[1], words[2], words[3].split(",")) {
+        } else {
+          return
+        }
+        n += 1
       }
-      if ok {
-        if bless_dump(compiler, modules_src, "${modules_golden}.mir", "modules/main.mir") {
-        } else { ok = false }
-      }
-    }
-    if ok {
-      if bless_mir_all(compiler, root) {
-      } else { ok = false }
-    }
-    if ok {
-      puts("PASS  tests/bless_goldens.av")
+      puts("PASS  tests/bless_goldens.av (${n} rows of ${list})")
+    } else {
+      bless_fail("cannot read ${list}")
     }
   } else {
     bless_fail("AVANT_COMPILER is not set")

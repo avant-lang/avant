@@ -3,7 +3,7 @@
 // this one. N connections ping-pong text "hi" for D seconds; prints
 // the total round-trips. Usage: ws_load PORT CONNS SECONDS, where
 // SECONDS may have a fraction (0.3). An argument that does not parse is
-// refused with a message and status 2 (Stage 29 W-FIX1f, O593: SECONDS
+// refused with a message and status 2 (SECONDS
 // was read as a whole number with its error ignored, so 0.3 was 0 and
 // such a load sent no message).
 package main

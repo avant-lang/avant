@@ -1,9 +1,9 @@
-// The fresh pass (Stage 29 VALK-A1, M5, O204, O337): barriers on an object
-// that is still young or already remembered are removed, and so are the
-// store barriers of a constructor's `initialize` on its new object. It runs
-// between the leaf pass and the frame pass (gc.av), when every call's
-// `collects` is final and before the slot set is computed (a removed
-// barrier is a read the liveness no longer sees).
+// The fresh pass: barriers on an object that is still young or already
+// remembered are removed, and so are the store barriers of a constructor's
+// `initialize` on its new object. It runs between the leaf pass and the
+// frame pass (gc.av), when every call's `collects` is final and before the
+// slot set is computed (a removed barrier is a read the liveness no longer
+// sees).
 //
 // The rule. A holder _h is *open* at a point when, on every path to it,
 // since the last collecting call and the last redefinition of _h, one of
@@ -22,8 +22,9 @@
 // until the next collection, and a thread is collected only at a
 // collecting call of its own (a safepoint: an allocation, a poll, a native
 // transition, any call that collects, an indirect call). In a shared
-// module the frame pass then adds a poll at loop heads, so here every
-// block a back edge enters closes every holder. A barrier on an open
+// module the frame pass then adds a poll at loop heads (the targets of a
+// depth-first walk's back edges, mir_loop_heads), so here every such block
+// closes every holder. A barrier on an open
 // holder is removed, and the store it preceded (if it is one through _h)
 // is marked `fresh`; every allocation whose result is the holder of a
 // removed barrier that served a store (or an initialize's receiver) is
@@ -110,7 +111,7 @@ fn mir_fresh_block(m: MModule, f: MFunc, b: Int, open: Array(UInt64), edit: Bool
         served = false
         if j + 1 < blk.stmts.size {
           nx = blk.stmts[j + 1]
-          if p = nx.place, nx.kind == msk_assign() && p.local == h && !p.frame_local {
+          if p = nx.place, nx.kind == msk_assign() && p.local == h && !p.frame_local() {
             served = true
             if edit {
               nx.fresh = true
@@ -132,9 +133,9 @@ fn mir_fresh_block(m: MModule, f: MFunc, b: Int, open: Array(UInt64), edit: Bool
         mir_bit_on(open, 0, h)
       }
     } else {
-      // A fill's store already marked fresh (an array literal's element,
-      // W1b) through an open holder relies on the openness from here on:
-      // its closing barrier goes, so the allocation is barriered at birth.
+      // A fill's store already marked fresh (an array literal's element)
+      // through an open holder relies on the openness from here on: its
+      // closing barrier goes, so the allocation is barriered at birth.
       if st.fresh && st.kind == msk_assign() {
         if p = st.place, p.local >= 0 && p.local < n && mir_bit(open, 0, p.local) {
           mir_bit_on(removed, 0, p.local)
@@ -235,16 +236,11 @@ fn mir_fresh_func(m: MModule, f: MFunc, edit: Bool): Array(UInt64) {
   nw = mir_nwords(n)
   preds = mir_preds(f)
   // Loop heads close every holder in a shared module (their poll).
+  // The same heads as the poll pass's (mir/flow.av mir_loop_heads).
   head = mir_bools(nb, false)
   if m.shared {
-    for b in 0..nb {
-      succ = mir_succ(f.blocks[b])
-      for s in succ {
-        if s >= 0 && s <= b && s < nb {
-          head[s] = true
-        }
-      }
-    }
+    hlast: Array(Int) = []
+    head = mir_loop_heads(f, hlast)
   }
   entry = mir_zero_words(nw)
   if f.fresh_self && n > 1 {

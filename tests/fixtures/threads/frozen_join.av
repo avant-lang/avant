@@ -1,0 +1,109 @@
+// The freeze ends with the task: after the join
+// the array can change again through any path, and it keeps its
+// capacity. Two tasks
+// that capture one array, a task that spawns another over the same
+// array, an array of arrays, .parallel's input and captures, and many
+// spawn and join rounds of a growing array are counted exactly.
+
+import std.sync
+
+struct P {
+  n: Int
+}
+
+class Holder {
+  pub xs: Array(Int) = []
+}
+
+fn grow(a: Array(Int)) {
+  a.push(9)
+}
+
+fn bump(ps: Array(P)) {
+  ps[0].n += 10
+}
+
+fn total(xs: Array(Int)): Int {
+  s = 0
+  for x in xs {
+    s += x
+  }
+  s
+}
+
+fn main {
+  xs = [3, 1, 2]
+  h = spawn { total(xs) }
+  puts(h.join() ?? -1)
+  // The three other paths (an alias, a call, a field), after the join.
+  ys = xs
+  ys.push(4)
+  grow(xs)
+  ho = Holder.new()
+  ho.xs = xs
+  ho.xs.push(5)
+  xs.sort()
+  xs.reverse()
+  xs[0] += 100
+  puts("${xs.size} ${xs[0]} ${total(xs)}")
+
+  // Two tasks over one array, and a task that spawns another over it
+  // (that one is not joined, so a2 is not changed after).
+  a = [1, 2, 3, 4]
+  a2 = [5, 6]
+  t1 = spawn { total(a) + total(a2) }
+  t2 = spawn {
+    t3 = spawn { a2.size }
+    total(a)
+  }
+  puts((t1.join() ?? -1) + (t2.join() ?? -1))
+  a.push(5)
+  a.clear()
+  puts(a.size)
+
+  // A dropped handle: the task's own end thaws b, with no join.
+  done = Channel(Int).new(1)
+  b = [7, 8]
+  _ = spawn {
+    done.send(b.size)
+    0
+  }
+  puts(done.recv() ?? 0)
+
+  // An array of arrays: every level frozen and thawed.
+  m = [[1, 2], [3, 4, 5]]
+  t5 = spawn { m[0].size + m[1].size }
+  puts(t5.join() ?? -1)
+  row = m[1]
+  row.push(6)
+  m[0].push(0)
+  m.push([9])
+  puts("${m.size} ${m[0].size} ${m[1].size} ${total(m[1])}")
+
+  // Elements that are structs.
+  ps = [P { n: 1 }, P { n: 2 }]
+  t6 = spawn { ps[0].n + ps[1].n }
+  puts(t6.join() ?? -1)
+  bump(ps)
+  ps[1].n = 20
+  puts(ps[0].n + ps[1].n)
+
+  // .parallel's input and captures.
+  ws = [1, 2, 3]
+  k = [10]
+  rs = ws.parallel { |w| w * k[0] }
+  ws.push(4)
+  k.push(1)
+  puts("${total(rs)} ${ws.size} ${k.size}")
+
+  // Many rounds: the array grows between the tasks, and each thaw gives
+  // back the capacity its buffer has.
+  g: Array(Int) = []
+  sum = 0
+  for i in 0..2000 {
+    g.push(i)
+    tg = spawn { g.size }
+    sum += tg.join() ?? -1
+  }
+  puts(sum)
+}

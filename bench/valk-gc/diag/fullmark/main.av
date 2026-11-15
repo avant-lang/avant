@@ -1,0 +1,63 @@
+// A diagnostic program, not a benchmark row: the cost of a full
+// collection's mark on a heap that does not change. It builds a list of N
+// nodes (first argument, default 3000), then calls the runtime's complete
+// collection K times (second argument, default 10) with nothing allocated
+// and nothing stored in between. Such a collection runs as a young one
+// when the collector can prove that no old object died, so the mark is
+// measured with the proof switched off:
+//
+//   avant compile bench/valk-gc/diag/fullmark/main.av fullmark --release
+//   AVANT_GC_PROOF=0 AVANT_GC_STATS=1 ./fullmark 3000 10
+//
+// Read in the statistics line: full (the collections), def_evac_blocks
+// and def_evac_bytes (blocks and bytes the defragmenter moved), and
+// def_freed_blocks. On an unchanged heap the second and later collections
+// have nothing to gain from moving anything; the difference of two runs
+// with different K gives the instructions of one collection.
+
+lib gcrt {
+  fun avant_gc_collect
+}
+
+class Node {
+  next: Node?
+}
+
+fn chain(n: Int): Node {
+  first = Node.new()
+  prev = first
+  i = 1
+  while i < n {
+    node = Node.new()
+    prev.next = node
+    prev = node
+    i = i + 1
+  }
+  first
+}
+
+fn main: Int {
+  args = argv()
+  live = 3000
+  collects = 10
+  if args.size > 1 {
+    live = args[1].to_i() ?? live
+  }
+  if args.size > 2 {
+    collects = args[2].to_i() ?? collects
+  }
+  list = chain(live)
+  c = 0
+  while c < collects {
+    gcrt.avant_gc_collect()
+    c = c + 1
+  }
+  n = 0
+  cur: Node? = list
+  while node = cur {
+    cur = node.next
+    n = n + 1
+  }
+  puts(n)
+  0
+}

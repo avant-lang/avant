@@ -1,0 +1,126 @@
+import harness
+
+// The parser's nesting bound (Valk's bound of 1,000 levels): a
+// program nested deeper is one compile error at the place it
+// passes the bound, not a stack overflow in the parser, the
+// checker or the lowering (before, 2,000 nested blocks or 5,000
+// parentheses killed the compiler with SIGSEGV, where the crash
+// cleanup cannot run). Blocks, expressions (a group, a call's
+// argument, an operand) and type names count one level each, and a
+// chain built in a loop counts its steps (`a + b + c`, `a.b().c`),
+// as the tree the checker walks is that deep. Programs just under
+// the bound compile, in every shape; the inputs are generated.
+
+fn rep(s: String, n: Int): String {
+  b = buf_new()
+  for i in 0..n {
+    b.push_str(s)
+  }
+  b.to_s()
+}
+
+// The shapes, n levels deep each.
+fn shape(kind: String, n: Int): String {
+  if kind == "block" {
+    return "fn main {\n${rep("if true {\n", n)}puts(1)\n${rep("}\n", n)}}\n"
+  }
+  if kind == "paren" {
+    return "fn main {\n  x = ${rep("(", n)}1${rep(")", n)}\n  puts(x)\n}\n"
+  }
+  if kind == "chain" {
+    return "fn main {\n  x = 1${rep(" + 1", n)}\n  puts(x)\n}\n"
+  }
+  if kind == "index" {
+    return "fn main {\n  a = [0]\n  puts(${rep("a[", n)}0${rep("]", n)})\n}\n"
+  }
+  if kind == "type" {
+    return "fn f(a: ${rep("Array(", n)}Int${rep(")", n)}) {\n}\n\nfn main {\n  puts(1)\n}\n"
+  }
+  "fn main {\n  x = ${rep("-", n)}1\n  puts(x)\n}\n"
+}
+
+fn test_nesting(c: Checks) {
+  c.suite("tests/cases/test_nesting.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    kinds = ["block", "paren", "chain", "index", "type", "unary"]
+    for kind in kinds {
+      ok_src = "${scratch()}/nesting-${stamp}-${kind}-ok.av"
+      ok_bin = "${scratch()}/nesting-${stamp}-${kind}-ok.bin"
+      ok_log = "${scratch()}/nesting-${stamp}-${kind}-ok.log"
+      c.wrote(file_write(ok_src, shape(kind, 990)), "write ${kind} 990")
+      ok_code = compile_nest(compiler, ok_src, ok_bin, ok_log)
+      c.eq_int(ok_code, 0, "${kind}: 990 levels compile")
+      c.expect(file_exists(ok_bin), "${kind}: 990 levels: the program is written")
+      for n in [1001, 100000] {
+        src = "${scratch()}/nesting-${stamp}-${kind}-${n}.av"
+        bin = "${scratch()}/nesting-${stamp}-${kind}-${n}.bin"
+        log = "${scratch()}/nesting-${stamp}-${kind}-${n}.log"
+        c.wrote(file_write(src, shape(kind, n)), "write ${kind} ${n}")
+        code = compile_nest(compiler, src, bin, log)
+        c.eq_int(code, 1, "${kind}: ${n} levels: a compile error (status 1), not a crash")
+        c.expect(!file_exists(bin), "${kind}: ${n} levels: no program")
+        err = read_text(log)
+        c.expect(str_has(err, "error[E2000]: this program nests deeper than 1000 levels"), "${kind}: ${n} levels: the error states the bound")
+        c.eq_int(count_of(err, "error["), 1, "${kind}: ${n} levels: one error")
+      }
+    }
+    // The place: the first token of the 1,001st level. `main`'s block is
+    // the first level and the assignment's value the second, so the
+    // 999th `(` opens the 1,001st, which starts at the 1,000th `(`
+    // (column 6 + 1,000).
+    at_src = "${scratch()}/nesting-${stamp}-at.av"
+    at_log = "${scratch()}/nesting-${stamp}-at.log"
+    c.wrote(file_write(at_src, shape("paren", 1200)), "write paren 1200")
+    _ = compile_nest(compiler, at_src, "${scratch()}/nesting-${stamp}-at.bin", at_log)
+    c.expect(str_has(read_text(at_log), "--> ${at_src}:2:1006"), "the error is at the level past the bound")
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+// Every compile of this file. Under an outer AVANT_GC_STRESS
+// (harness.gc_stress_outer) the compiler runs without it: a
+// collection at every allocation over a 990-level tree did not end
+// one compile in 11 minutes, and a refused 1,001-level one took over
+// 30 s (the suite's bound: a file under about 60 s alone); the stress mode
+// is about the collector, the bound about the compiler's stack,
+// which the other GC passes compile through as well.
+fn compile_nest(compiler: String, src: String, bin: String, log: String): Int {
+  if !gc_stress_outer() {
+    return compile_av(compiler, src, bin, log)
+  }
+  args = ["-u", "AVANT_GC_STRESS", compiler, "compile", src, bin, "--debug"]
+  process_run_out("/usr/bin/env", args, log) ?? -1
+}
+
+fn count_of(hay: String, needle: String): Int {
+  n = 0
+  i = 0
+  while i + needle.size <= hay.size {
+    if str_slice(hay, i, i + needle.size) == needle {
+      n += 1
+      i += needle.size
+    } else {
+      i += 1
+    }
+  }
+  n
+}
+
+fn read_text(path: String): String {
+  if t = file_read(path) {
+    return t
+  }
+  ""
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_nesting(c)
+  c.finish()
+}

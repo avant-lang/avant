@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 /*
- * Avant runtime — Immix-family collector (D34).
+ * Avant runtime — Immix-family collector.
  *
  * Heap objects are [AvantHeader][payload], 8-aligned. The pointer Avant
  * sees is the payload; the header sits immediately before it so field
@@ -21,7 +21,7 @@
  * in runtime/avant_gc.h.
  */
 
-/* An Avant `Int` at the runtime's C boundary (Stage 29 W-INT1, D314):
+/* An Avant `Int` at the runtime's C boundary:
  * every parameter, result or stored value the generated code or a `fun`
  * declaration treats as an Avant `Int` (64-bit) is declared avant_int, so
  * the width is said in one place. Values that are C's own (flags, kinds,
@@ -59,7 +59,7 @@ typedef struct AvantHeader {
 } AvantHeader;
 
 void *avant_alloc(uint64_t nbytes, uint32_t type_id);
-/* `gc.hold { }` (std.gc, Stage 29 W1c2, D305): no collection this thread
+/* `gc.hold { }` (std.gc): no collection this thread
  * would start runs between the two (nested pairs are one); the outermost
  * end runs what fell due inside. Other threads still collect. */
 void avant_gc_hold_begin(void);
@@ -68,7 +68,7 @@ void avant_pin(void *payload);
 void avant_unpin(void *payload);
 /* Number of distinct pinned payloads (refcounted pins share one entry). */
 avant_int avant_pin_count(void);
-/* C-layout field pins (Stage 28 W16c, D266). A store of a reference into
+/* C-layout field pins. A store of a reference into
  * a C-layout field (`h.name = s`) calls avant_pin_field(&h->name, s): s is
  * pinned (counted, as avant_pin) and the pin is recorded under the field's
  * address, beside every earlier value Avant stored there. Overwriting the
@@ -112,17 +112,16 @@ void avant_gc_leave(void);
 void avant_gc_quiet_enter(void);
 void avant_gc_quiet_leave(void);
 void avant_gc_root(void *slot);
-/* Batched root registration (Collector II Wave 0): generated code calls
+/* Batched root registration: generated code calls
  * this once at frame entry with the frame's root count, stores each
  * slot address into the returned array at its fixed index, and the
  * collector scans the first count entries. avant_gc_root (one slot per
  * call) and avant_gc_reload (a slot read after a collecting call) are
  * the old myc back end's ABI: the current compiler emits neither, and
- * they stay as deprecated entries until a release note retires them
- * (gc-design.md section 1.4, Q10). */
+ * they stay as deprecated entries until a release note retires them. */
 void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
-/* Frames in the caller's stack (Stage 28 W18): generated code keeps
+/* Frames in the caller's stack: generated code keeps
  * each frame's record in its own stack frame, laid out as
  * { prev: pointer, slots: pointer, n: u32, cap: u32, scope: u32 } (32
  * bytes with padding; the slot array follows it), with slots, n = cap
@@ -141,40 +140,46 @@ void avant_gc_frame_leave(struct AvantGcFrame *frame);
 /* A C variable that lives as long as its thread (a __thread variable)
  * and holds a heap reference is registered once, by that thread, before
  * it first holds one: from then on the collections on that thread mark
- * what it names and rewrite it when the object moves (Stage 28 W14b2).
+ * what it names and rewrite it when the object moves.
  * At most 8 per thread. */
 void avant_gc_add_root(void **slot);
 
-/* Inline nursery fast path (Collector II Wave 1). Generated code may
- * allocate without a call only while avant_gc_fast_ok is set: it bumps
- * avant_gc_bump by the aligned total, writes the header (HEAP|YOUNG),
- * zeroes the payload, sets the block start bit through
- * avant_gc_starts/avant_gc_base, and, when avant_gc_fast_ok is 1, adds
- * the total to avant_g_stats.allocated_bytes, avant_since_gc, and
- * avant_nursery_held. avant_gc_limit is the block limit capped by the
- * young threshold, and the runtime alone publishes or clears this
- * state. avant_gc_fast_ok is 1 while the program has one thread (the
- * path counts; code of an unshared module also requires g_avant_shared
- * to be 0) and 2 in a program with threads (Stage 28 W17b): the thread
- * bumps in a hole of its own young block that the runtime has charged
- * to the young budget, and the path counts nothing. AvantGcStats field
- * order is part of this ABI (allocated_bytes at offset 24). */
+/* Inline nursery fast path. Generated code allocates without a call when the
+ * new end of its cursor (avant_gc_bump plus the aligned total) is at or
+ * below the limit the runtime publishes: avant_gc_limit for an unshared
+ * module, avant_gc_limit_mt for a shared one. It stores the new cursor,
+ * writes the header (HEAP|YOUNG) and zeroes the payload; a shared
+ * module's code also sets the block start bit through
+ * avant_gc_starts/avant_gc_base. Nothing else: the limit is null
+ * whenever the path may not run (no young hole, a program with threads
+ * for an unshared module, a no-GC region, a collection pending; under
+ * the stress mode it is null or spent whenever a site reads it,
+ * avant_alloc_slow below), the runtime counts the bytes from the cursor
+ * at its next entry, and an unshared module's objects get their start
+ * bits from the runtime (when a collection promotes them or a lookup
+ * needs them). The
+ * limit is the hole's limit capped by the young budget, and the runtime
+ * alone publishes or clears it. An older form of the path also tested
+ * g_avant_shared, avant_gc_fast_ok and a null cursor, stored the cursor
+ * in the block's record (avant_gc_block), set the start bit in every
+ * module and kept four counters. */
+/* The inline path's slow call: avant_alloc, except that it may return
+ * null after making room in the thread's hole for exactly the object
+ * asked for and publishing the limit for it; the caller then takes the
+ * inline path without testing the limit again (only under
+ * AVANT_GC_STRESS=1). Generated code
+ * alone calls it. */
+void *avant_alloc_slow(uint64_t nbytes, uint32_t type_id);
 extern __thread uint8_t *avant_gc_bump;
 extern __thread uint8_t *avant_gc_limit;
+extern __thread uint8_t *avant_gc_limit_mt;
 extern __thread uint8_t *avant_gc_base;
 extern __thread uint64_t *avant_gc_starts;
-/* The current nursery block's record in the collector's side table;
- * generated code also stores the new cursor into its bump field at
- * offset 32 (the record's layout is the runtime's, not shipped), so the
- * C cursor and the block never disagree. */
-extern __thread void *avant_gc_block;
-extern __thread uint32_t avant_gc_fast_ok;
 extern uint64_t avant_nursery_held;
 extern uint64_t avant_young_bytes;
 extern uint64_t avant_since_gc;
-extern uint64_t avant_inline_allocs;
 void avant_type_map(uint32_t type_id, uint64_t word_bits);
-/* Stage 28 W1b: one 64-word chunk (word_base a multiple of 64) of a
+/* One 64-word chunk (word_base a multiple of 64) of a
  * type map of any length, with an element stride in words (0: one
  * record; > 0: a buffer of repeated elements), the collector's TypeMap
  * (a runtime-private layout, not shipped). */
@@ -183,7 +188,7 @@ void avant_type_map_at(uint32_t type_id, uint32_t stride_words, uint32_t word_ba
 void avant_barrier(void *obj);
 /* Barrier for a store through an address that may lie inside a heap object. */
 void avant_barrier_at(void *addr);
-/* The barrier with the slot stored into (Stage 28 W16t, card marking):
+/* The barrier with the slot stored into (card marking):
  * a large pointer buffer marks the slot's card; any other object is
  * avant_barrier(obj). Never collects. */
 void avant_barrier_slot(void *obj, void *slot);
@@ -204,22 +209,21 @@ void avant_gc_collect(void);
 /* A young collection on request: std.gc's `gc.collect()` (deferred to the
  * end of an enclosing hold), and the collector's own tests (declared with
  * `lib` as avant_gc_collect is). It was avant_nursery_reclaim, the
- * language's `nursery_reclaim()`, until Stage 29 removed that form (D298,
- * D305). */
+ * language's `nursery_reclaim()`, until the language removed that form. */
 void avant_gc_collect_young(void);
 /* A thread that runs Avant code is registered (explicitly, or by its first
  * call into Avant); one that exits still registered is unregistered by its
- * exit (Stage 28 W17c), so a C thread that calls Avant callbacks needs no
+ * exit, so a C thread that calls Avant callbacks needs no
  * unregistration of its own. A thread that exits inside a callback
  * (pthread_exit from C that Avant called) is unregistered and its frames
- * are freed too (Stage 28 W18C). A thread may unregister between
+ * are freed too. A thread may unregister between
  * callbacks and be registered again by its next one; unregistering drops
- * every reference the runtime held for it (Stage 29 W1b, O70). */
+ * every reference the runtime held for it. */
 void avant_gc_register_thread(void);
 void avant_gc_unregister_thread(void);
-/* Threads and the stop-the-world handshake (Stage 28 W17a, gc-design.md
- * section 4.4). A collection stops every other registered thread at a
- * safepoint (a collecting call, or avant_gc_poll) or finds it native.
+/* Threads and the stop-the-world handshake. A collection stops every other
+ * registered thread at a safepoint (a collecting call, or avant_gc_poll) or
+ * finds it native.
  * avant_gc_requested is nonzero while a collection is requested or
  * running; generated code in a program that spawns or uses .parallel
  * tests it at every loop back-edge of a frame function and calls
@@ -233,7 +237,7 @@ void avant_gc_unregister_thread(void);
  * returns (and deadlocks if it waits for another Avant thread); under
  * AVANT_GC_VERIFY=1 a collection that has waited AVANT_GC_VERIFY_STALL_MS
  * (10000 by default) reports the thread and its innermost Avant frame,
- * and keeps waiting (Stage 28 W18C). */
+ * and keeps waiting. */
 extern atomic_int avant_gc_requested;
 void avant_gc_poll(void);
 void avant_gc_native_begin(void);
@@ -242,6 +246,16 @@ void avant_gc_native_end(void);
 size_t avant_str_n(const char *s);
 char *avant_str_empty(void);
 char *avant_str_concat(const char *a, const char *b);
+/* A C function's `String` result, made safe to store in a field: an
+ * address inside a heap object comes back as a fresh copy of the string
+ * there; anything else unchanged. */
+char *avant_c_str(char *s);
+/* The collected heap's reserved range, its first byte and its size (zero
+ * until the heap is reserved): generated code tests a C function's
+ * `String` result against it and calls avant_c_str only for an address
+ * inside (compiler/llvm/emit_gc.av, ll_c_str). */
+extern uint64_t avant_gc_heap_lo;
+extern uint64_t avant_gc_heap_len;
 char *avant_str_cat_i32(const char *prefix, avant_int n);
 char *avant_str_from_i32_bytes(void *arr);
 char *avant_str_repeat_byte(avant_int b, avant_int n);
@@ -255,7 +269,20 @@ char *avant_str_fmt_float(double v, avant_int prec);
 int avant_fmt_float_text(char *out, double v);
 void avant_puts_f64(double v);
 void avant_puts_bool(int32_t v);
+void avant_puts_i64(int64_t v);
+void avant_puts_u64(uint64_t v);
 void avant_puts_str(const char *s);
+/* print, eputs, eprint (avant_io.c): HOW bit 1 a newline, bit 2 stderr. */
+void avant_out_str(const char *s, int32_t how);
+void avant_out_i64(int64_t v, int32_t how);
+void avant_out_u64(uint64_t v, int32_t how);
+void avant_out_f64(double v, int32_t how);
+void avant_out_bool(int32_t v, int32_t how);
+/* exit(status), its 0..255 checked by the generated code. */
+__attribute__((noreturn)) void avant_exit(int32_t status);
+/* The one exit of the process (avant_rt_traps.c): returns to the first
+ * caller; any later one waits for good, native. */
+__attribute__((visibility("hidden"))) void avant_exit_claim(void);
 void avant_out_check(void);
 int32_t avant_str_parse_i32(const char *s, avant_int base, int32_t *ok);
 int64_t avant_str_parse_i64(const char *s, avant_int base, int32_t *ok);
@@ -263,6 +290,7 @@ uint64_t avant_str_parse_u64(const char *s, avant_int base, int32_t *ok);
 double avant_str_parse_f64(const char *s);
 double avant_str_parse_f64_slice(const char *s, avant_int start, avant_int stop);
 int32_t avant_str_eq(const char *a, const char *b);
+int32_t avant_str_cmp(const char *a, const char *b);
 avant_int avant_str_size(const char *s);
 avant_int avant_str_byte(const char *s, avant_int i);
 int32_t avant_checksum_str(const char *s);
@@ -299,8 +327,7 @@ void avant_buf_copy_ranges(void *dst, void *src, void *dst_offs, void *src_offs,
  * the bytes and frees the old storage, so call avant_buf_bytes again after
  * anything that may grow the Buf. Under AVANT_GC_VERIFY=1 the storage a
  * growth replaced stays PROT_NONE until the next collection, so a use of
- * a pointer kept across the growth faults and is reported (Stage 28
- * W18C). */
+ * a pointer kept across the growth faults and is reported. */
 uint8_t *avant_buf_bytes(void *buf);
 int32_t avant_buf_starts(void *buf, const char *s);
 
@@ -329,6 +356,29 @@ int32_t avant_re_count(const char *pat, const char *s, int32_t caseless);
 avant_int avant_wide_op(avant_int op, avant_int a_lo, avant_int a_hi, avant_int b_lo, avant_int b_hi);
 avant_int avant_wide_hi(void);
 
+/* Hash(K, V) (avant_hash.c). The descriptor avant_hash_create takes: the
+ * key's width in bytes (AVANT_HASH_K_WIDTH: 1, 2, 4 or 8), whether an
+ * integer key is signed, whether the key is a String; the value's width
+ * (shifted by AVANT_HASH_V_SHIFT) and whether it is a reference. */
+#define AVANT_HASH_K_WIDTH 0xfu
+#define AVANT_HASH_K_SIGNED 0x10u
+#define AVANT_HASH_K_STR 0x20u
+#define AVANT_HASH_V_SHIFT 8
+#define AVANT_HASH_V_REF 0x1000u
+void *avant_hash_create(uint32_t desc);
+void *avant_hash_find_ik(void *h, avant_int key, int32_t *found);
+void *avant_hash_find_sk(void *h, const char *key, int32_t *found);
+void *avant_hash_put_ik(void *h, avant_int key);
+void *avant_hash_put_sk(void *h, const char *key);
+void *avant_hash_upsert_ik(void *h, avant_int key, int32_t *found);
+void *avant_hash_upsert_sk(void *h, const char *key, int32_t *found);
+void avant_hash_set_ref_ik(void *h, avant_int key, void *val);
+void avant_hash_set_ref_sk(void *h, const char *key, void *val);
+void *avant_hash_take_ik(void *h, avant_int key, int32_t *found);
+void *avant_hash_take_sk(void *h, const char *key, int32_t *found);
+void *avant_hash_keys(void *h);
+void *avant_hash_values(void *h);
+/* The previous compiler's entries (avant_hash.c, the last section). */
 void *avant_hash_new(int32_t key_kind, int32_t val_kind);
 avant_int avant_hash_size(void *h);
 void avant_hash_clear(void *h);
@@ -369,8 +419,31 @@ void *avant_array_pop_ptr(void *arr);
 void avant_array_push_i32(void *arr, int32_t v);
 void avant_array_push_i64(void *arr, int64_t v);
 void avant_array_clear(void *arr);
+void avant_array_zero_range(void *arr, avant_int lo, avant_int hi, uint64_t elem_size);
 void avant_array_reserve(void *arr, avant_int n, uint64_t elem_size, uint32_t buf_type_id);
 void *avant_array_pop_slot(void *arr, uint64_t elem_size);
+/* The freeze: an Array a running task
+ * captured cannot change until every such task has ended. A spawn and a
+ * .parallel freeze each captured Array (and, depth levels down, the
+ * arrays an array of arrays holds) before the task starts and thaw it
+ * when the task ends. The count lives in the array's cap word, whose
+ * sign bit is free (a capacity is at most AVANT_SIZE_MAX): while frozen
+ * the word is AVANT_ARRAY_FROZEN | count, and every operation that can
+ * change the array's length, buffer or elements tests the sign first
+ * and traps (avant_trap_frozen). The last thaw writes back the
+ * capacity, read from the buffer's header. */
+#define AVANT_ARRAY_FROZEN ((int32_t)0x80000000)
+void avant_array_freeze(void *arr, int32_t depth);
+void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size);
+/* What a frozen array refuses: the operation avant_trap_frozen names. */
+#define AVANT_FROZEN_PUSH 0
+#define AVANT_FROZEN_POP 1
+#define AVANT_FROZEN_CLEAR 2
+#define AVANT_FROZEN_FILL 3
+#define AVANT_FROZEN_SORT 4
+#define AVANT_FROZEN_REVERSE 5
+#define AVANT_FROZEN_RESERVE 6
+#define AVANT_FROZEN_STORE 7
 void avant_array_sort_i32(void *arr);
 void avant_array_sort_u32(void *arr);
 void avant_array_sort_i64(void *arr);
@@ -421,12 +494,17 @@ avant_int avant_bwt_transform(void *input, void *sa, void *rank, void *tmp, void
 /* Inverse. `next` is scratch of size >= n. `out` receives n bytes. */
 void avant_bwt_inverse(void *bwt, void *next, void *out, avant_int start);
 
-/* Wave B safety floor (Q67-A/Q68-A): language traps. Each prints one
+/* The safety floor: language traps. Each prints one
  * diagnostic to stderr and exits 1. They never return. */
 __attribute__((noreturn, cold)) void avant_trap_overflow_in(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_div_zero_in(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_bounds_in(avant_int index, avant_int size, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_empty_at(int32_t what, int32_t site);
+__attribute__((noreturn, cold)) void avant_trap_frozen(int32_t op);
+__attribute__((noreturn, cold)) void avant_trap_frozen_at(int32_t op, int32_t site);
+/* `with` on a poisoned mutex. */
+__attribute__((noreturn, cold)) void avant_trap_poisoned(void);
+__attribute__((noreturn, cold)) void avant_trap_poisoned_at(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_bounds_at(avant_int index, avant_int size, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_div_zero_at(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_overflow_at(int32_t site);
@@ -445,8 +523,9 @@ __attribute__((noreturn, cold)) void avant_trap_negative(avant_int n, int32_t wh
 __attribute__((noreturn, cold)) void avant_trap_exit_status_at(avant_int status, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_c_null_at(const char *name, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_enum_at(int64_t value, const char *name, int32_t site);
+__attribute__((noreturn, cold)) void avant_trap_expect_at(const char *why, int32_t site);
 
-/* The size ceiling (Stage 29 W-INT1, review 6 section 1.6): a String,
+/* The size ceiling: a String,
  * Bytes or Buf holds at most AVANT_SIZE_MAX bytes and an Array at most
  * AVANT_SIZE_MAX elements, because their headers keep 32-bit sizes; a
  * Hash at most AVANT_HASH_SLOTS_MAX slots (a power of two). Every size or
@@ -465,8 +544,8 @@ __attribute__((noreturn, cold)) void avant_trap_enum_at(int64_t value, const cha
 __attribute__((noreturn, cold)) void avant_trap_size(int32_t kind);
 __attribute__((noreturn, cold)) void avant_trap_size_at(int32_t kind, int32_t site);
 /* An Avant Int the runtime passes on to a C int (an HTTP status, an errno,
- * a signal number): the value, or a trap naming the C type (Stage 29
- * W-INT1; D215, the correct value or a trap). */
+ * a signal number): the value, or a trap naming the C type (the correct
+ * value or a trap). */
 static inline int32_t avant_c_int(avant_int v) {
   if (__builtin_expect(v < INT32_MIN || v > INT32_MAX, 0)) {
     avant_trap_c_range((int64_t)v, 6);
@@ -490,16 +569,49 @@ uint64_t avant_checked_div_u64(uint64_t a, uint64_t b);
 uint64_t avant_checked_rem_u64(uint64_t a, uint64_t b);
 
 avant_int avant_chosen_threads(void);
+avant_int avant_usable_cpus(void);
 void avant_set_flag_threads(long n);
 void *avant_spawn(void *fn, void *arg);
+/* A spawn whose block may trap without ending the program: fail, when not null, is the block's end on a trap (the
+ * captures' thaw and the captured channels' close), called with the
+ * record on the worker after the trap returned to the task's entry. */
+void *avant_spawn_f(void *fn, void *arg, void *fail);
 avant_int avant_join(void *handle);
+/* After avant_join: the trap that ended the task (its text, without the
+ * site), or null when the block returned; and the trap's site, "" when
+ * none. Static C strings, valid for the run (an Avant String). */
+char *avant_join_what(void *handle);
+char *avant_join_site(void *handle);
+/* A C callback's thunk in a program that spawns brackets its call:
+ * a trap inside a callback stays a process trap. */
+void avant_task_cb_enter(void);
+void avant_task_cb_leave(void);
+/* A `pin` block's pin and a `gc.hold` in a program that spawns: the
+ * collector's avant_pin, avant_unpin, avant_gc_hold_begin and _end,
+ * noted on the thread so that a trap ending a task gives them back. */
+void avant_task_pin(void *payload);
+void avant_task_unpin(void *payload);
+void avant_task_hold_begin(void);
+void avant_task_hold_end(void);
+/* `m.with { }`'s lock: 1 when a task trapped while holding the
+ * mutex (it is poisoned), else 0; the lock is held either way. */
+int32_t avant_gate_lock_with(void *obj, uint64_t off);
+void avant_gate_clear_poison(void *obj, uint64_t off);
+/* Mutex.poisoned: 1 when a task trapped while holding the gate. */
+int32_t avant_gate_poisoned(void *obj, uint64_t off);
+/* The recovery point's two entries for avant_rt_traps.c (hidden). */
+__attribute__((visibility("hidden"))) int avant_task_can_recover(void);
+__attribute__((visibility("hidden"), noreturn)) void avant_task_trapped(const char *what, const char *site);
+__attribute__((visibility("hidden"), noreturn)) void avant_trap_text(const char *what);
 void avant_parallel_for(avant_int n, void *fn, void *ctx);
 uint64_t avant_gate_new(void);
-void avant_gate_lock(uint64_t gate);
-void avant_gate_unlock(uint64_t gate);
-void avant_gate_wait(uint64_t gate);
-void avant_gate_signal(uint64_t gate);
-void avant_gate_broadcast(uint64_t gate);
+/* The gate functions take the object holding the gate word and the word's
+ * byte offset in it (avant_task.c). */
+void avant_gate_lock(void *obj, uint64_t off);
+void avant_gate_unlock(void *obj, uint64_t off);
+void avant_gate_wait(void *obj, uint64_t off);
+void avant_gate_signal(void *obj, uint64_t off);
+void avant_gate_broadcast(void *obj, uint64_t off);
 int64_t avant_clock_ms(void);
 int64_t avant_clock_us(void);
 
@@ -510,6 +622,7 @@ avant_int avant_sys_write(const char *path, const char *body);
 void *avant_sys_list(const char *path);
 avant_int avant_sys_run(const char *path, void *args, const char *out_path);
 avant_int avant_sys_errno(void);
+avant_int avant_main_fail(const char *text);
 avant_int avant_sys_stage(void);
 avant_int avant_sys_signal(void);
 char *avant_sys_strerror(avant_int code);
@@ -529,8 +642,10 @@ char *avant_env_get(const char *name, int32_t *ok);
 int32_t avant_file_exists(const char *path);
 char *avant_tmp_dir(void);
 char *avant_tmp_new_dir(void);
-/* A failed check (std.testing, D84): the process exits 1 if it would exit 0. */
+/* A failed check (std.testing): the process exits 1 if it would exit 0. */
 void avant_test_fail(void);
+/* std.testing's report line: all of it to standard output, or the process stops. */
+void avant_test_write(const char *s, avant_int n);
 void avant_tmp_keep(void);
 avant_int avant_job_start(const char *path, void *args, const char *out_path);
 avant_int avant_job_wait(void);

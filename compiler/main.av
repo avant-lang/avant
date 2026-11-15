@@ -2,14 +2,19 @@ import ast
 import bindgen
 import checker
 import checker.builtins
+import checker.equality
+import checker.printing
+import checker.entry
 import checker.facts
 import checker.guard
+import checker.hints
 import checker.lambda
 import checker.match
 import checker.register
 import checker.receiver
 import checker.spawn
 import checker.visibility
+import checker.consts
 import diagnostic
 import dump_ast
 import dump_check
@@ -70,12 +75,12 @@ pub fn show_usage {
   puts("Run options may sit before or after FILE.av. Arguments after -- belong to the program.")
   puts("format: PATH is a .av file or a directory of them; --check exits 1 if a file would change.")
   puts("test walks tests/ for test_*.av. Flags: --jobs N, --shard I/N, --junit PATH, --skip-exclusive, --coverage.")
-  puts("--jobs defaults to the online processor count. --jobs 1 runs one file at a time. Alias: t.")
+  puts("--jobs defaults to the CPUs the process may use (its affinity). --jobs 1 runs one file at a time. Alias: t.")
   puts("--keep-tmp keeps the private temporary directory of compile, run, test, fetch, or bind and prints its path.")
 }
 
-// --keep-tmp (D127) may sit anywhere before a literal --. It is taken out
-// here, so no command's own parser sees it.
+// --keep-tmp may sit anywhere before a literal --. It is taken out here,
+// so no command's own parser sees it.
 fn take_keep_tmp(args: Array(String)): Array(String) {
   rest: Array(String) = []
   program = false
@@ -94,8 +99,8 @@ fn take_keep_tmp(args: Array(String)): Array(String) {
   rest
 }
 
-// The commands that spawn children create the scratch directory first
-// (Q138), so TMPDIR is exported before any child runs.
+// The commands that spawn children create the scratch directory
+// first, so TMPDIR is exported before any child runs.
 fn spawns_children(command: String): Bool {
   if command == "run" || command == "r" || command == "test" || command == "t" {
     return true
@@ -106,9 +111,9 @@ fn spawns_children(command: String): Bool {
   str_ends(command, ".av")
 }
 
-// The .av files under dir (format's directory argument, D49 as amended in
-// Stage 29 W1b), walked like `avant test` walks tests/: a name that starts
-// with `.` and a directory named `deps` are skipped.
+// The .av files under dir (format's directory argument), walked like
+// `avant test` walks tests/: a name that starts with `.` and a directory
+// named `deps` are skipped.
 fn format_walk(dir: String, into: Array(String)) {
   names = dir_list(dir) ?? []
   i = 0
@@ -148,14 +153,18 @@ fn format_usage_error(message: String) {
   diag_exit(1)
 }
 
-// avant format PATH... [--check | --write] (D49, amended in Stage 29 W1b):
-// each PATH is a .av file or a directory walked for .av files. With one
-// file and no flag the canonical text goes to stdout. --check prints
-// `would change PATH` for each file that is not canonical (`canonical`
-// when none is) and exits 1 if any would change; --write rewrites the
-// files that change. A file that cannot be read or formatted is reported
-// and the status is 1; the other files are still done. Usage errors exit 1.
+// avant format PATH... [--check | --write]: each PATH is a .av file or a
+// directory walked for .av files. With one file and no flag the canonical
+// text goes to stdout. --check prints `would change PATH` for each file
+// that is not canonical (`canonical` when none is) and exits 1 if any would
+// change; --write rewrites the files that change. A file that cannot be
+// read or formatted is reported and the status is 1; the other files are
+// still done. Usage errors exit 1.
 pub fn driver_format(args: Array(String)) {
+  if args.size > 0 && args[0] == "--calls" {
+    driver_format_calls(argv_drop_first(args))
+    return
+  }
   check = false
   write = false
   inputs: Array(String) = []
@@ -226,7 +235,7 @@ pub fn driver_format(args: Array(String)) {
       } else if write {
         if !same {
           if e = write_failure(file_write(path, got.text)) {
-            diag_puts(e.message)
+            diag_puts(e.message())
             failed = true
           }
         }
@@ -246,11 +255,106 @@ pub fn driver_format(args: Array(String)) {
   }
 }
 
-// The hidden front-end dumps of one file (D137): tokens, AST, or the
-// checked tree, read without the loader, for the goldens. Not in the usage
-// text. The dumps are the bytes compiler/lex_dump.av printed; a front-end
-// error goes to stderr with status 1, as in dump (D142), so a golden can
-// never record one. A program that imports has no --check golden.
+// avant format --calls FILE...: each FILE is checked as a program's root,
+// and every method call the checker meets written without parentheses
+// (`x.name`, a bare `name` on the receiver, `T.new`) gets its `()` in the
+// source file that holds it: the root, a module it imports, the standard
+// library. A builtin read-only property (`size`, `bytes`) and a field
+// read keep their spelling. Only code the checker reaches is rewritten:
+// a generic function is checked for the instances the program makes. A
+// program with errors is still rewritten where it was checked, and the
+// status is then 1. Prints each changed file with its count.
+pub fn driver_format_calls(args: Array(String)) {
+  if args.size == 0 {
+    format_usage_error("format --calls needs a .av file")
+  }
+  paths: Array(String) = []
+  places: Array(Array(Location)) = []
+  names: Array(Array(String)) = []
+  index: Hash(String, Int) = Hash(String, Int).new()
+  failed = false
+  for root in args {
+    loader = Loader.new()
+    if merged = loader.load_root(root) {
+      if e = loader.err {
+        diag_bag(loader.errors)
+        failed = true
+        continue
+      }
+      src = Source.new(root, file_read(root) ?? "")
+      expander = Expander.new(src, merged)
+      expander.expand()
+      if e = expander.err {
+        diag_bag(expander.errors)
+        failed = true
+        continue
+      }
+      checker = Checker.new(src, merged)
+      checker.calls_migrate = true
+      checker.check()
+      if e = checker.err {
+        diag_bag(checker.errors)
+        diag_puts("${root}: the program has errors; the calls in the code checked are rewritten")
+        failed = true
+      }
+      i = 0
+      while i < checker.bare_locs.size {
+        at = checker.bare_locs[i]
+        p = at.path
+        k = index.get(p) ?? -1
+        if k < 0 {
+          k = paths.size
+          index[p] = k
+          paths.push(p)
+          none: Array(Location) = []
+          places.push(none)
+          no_names: Array(String) = []
+          names.push(no_names)
+        }
+        places[k].push(at)
+        names[k].push(checker.bare_names[i])
+        i += 1
+      }
+    } else {
+      diag_bag(loader.errors)
+      failed = true
+    }
+  }
+  k = 0
+  while k < paths.size {
+    p = paths[k]
+    if text = file_read(p) {
+      got = insert_call_parens(text, places[k], names[k])
+      if got.count > 0 {
+        if e = write_failure(file_write(p, got.text)) {
+          diag_puts(e.message())
+          failed = true
+        } else {
+          puts("${p}: ${got.count}")
+        }
+      }
+      if got.missed > 0 {
+        diag_puts("${p}: ${got.missed} calls noted where the text is not their name; left")
+        failed = true
+      }
+    } else {
+      diag_puts("${p}: not a file; ${places[k].size} calls there need their parentheses written by hand")
+      failed = true
+    }
+    k += 1
+  }
+  if failed {
+    diag_exit(1)
+  }
+}
+
+// The hidden front-end dumps of one file: tokens, AST, or the checked
+// tree, for the goldens. Not in the usage text. The dumps are the bytes
+// compiler/lex_dump.av printed; a front-end error goes to stderr with
+// status 1, as in dump, so a golden can never record one. Tokens and the
+// AST read the one file; the checked tree loads the program through the
+// loader, as compile and dump do, and prints the root file's declarations
+// only, so a program that imports has a --check golden of its own code.
 fn dump_layer_mode(arg: String): Bool {
   if arg == "--tokens" {
     return true
@@ -262,11 +366,15 @@ fn dump_layer_mode(arg: String): Bool {
 }
 
 fn driver_dump_layer(mode: String, path: String) {
+  if mode == "--check" {
+    driver_dump_checked(path)
+    return
+  }
   if src = source_read(path) {
     lex = Lexer.new(src)
-    tokens = lex.tokenize
+    tokens = lex.tokenize()
     if e = lex.err {
-      diag_puts(e.show)
+      diag_puts(e.show())
       diag_exit(1)
     }
     if mode == "--tokens" {
@@ -274,31 +382,44 @@ fn driver_dump_layer(mode: String, path: String) {
       return
     }
     parser = Parser.new(src, tokens)
-    program = parser.parse
+    program = parser.parse()
     if e = parser.err {
-      diag_puts(e.show)
+      diag_puts(e.show())
       diag_exit(1)
     }
-    if mode == "--ast" {
-      puts(dump_program(program))
-      return
-    }
-    expander = Expander.new(src, program)
-    expander.expand
-    if e = expander.err {
-      diag_puts(e.show)
-      diag_exit(1)
-    }
-    checker = Checker.new(src, program)
-    checker.check
-    if e = checker.err {
-      diag_puts(e.show)
-      diag_exit(1)
-    }
-    puts(dump_typed_program(program))
+    puts(dump_program(program))
     return
   }
   diag_puts("cannot read ${path}")
+  diag_exit(1)
+}
+
+// dump --check: the program as compile loads and checks it (the loader,
+// the expander, the checker), and the root file's checked tree.
+fn driver_dump_checked(path: String) {
+  loader = Loader.new()
+  if merged = loader.load_root(path) {
+    if e = loader.err {
+      diag_bag(loader.errors)
+      diag_exit(1)
+    }
+    src = Source.new(path, file_read(path) ?? "")
+    expander = Expander.new(src, merged)
+    expander.expand()
+    if e = expander.err {
+      diag_bag(expander.errors)
+      diag_exit(1)
+    }
+    checker = Checker.new(src, merged)
+    checker.check()
+    if e = checker.err {
+      diag_bag(checker.errors)
+      diag_exit(1)
+    }
+    puts(dump_typed_program(merged, merged.root_module))
+    return
+  }
+  diag_bag(loader.errors)
   diag_exit(1)
 }
 
@@ -330,7 +451,7 @@ pub fn driver_dump(args: Array(String)) {
   box = compile_av_paths(split.paths)
   if box.ok {
     if m = box.mir {
-      // The final-stage MIR (D171); a module the verifier rejects is
+      // The final-stage MIR; a module the verifier rejects is
       // printed, then its errors, exit 1.
       print_ir(mir_print(m, true))
       bad = llvm_verify(m)
@@ -344,11 +465,10 @@ pub fn driver_dump(args: Array(String)) {
   diag_exit(1)
 }
 
-// Stage 28 W6c: the inline allocation and barrier fast paths (mir.md
-// 5.5, 5.6) are on in every mode. AVANT_LLVM_CALL_FORMS=1 (internal,
-// like AVANT_BACKEND, D176) emits their call forms instead, so the
-// suite can prove both forms (the program-level twin of __mir-build
-// --call-forms).
+// The inline allocation and barrier fast paths are on in every mode.
+// AVANT_LLVM_CALL_FORMS=1 (internal, like AVANT_BACKEND) emits their
+// call forms instead, so the suite can prove both forms (the
+// program-level twin of __mir-build --call-forms).
 fn llvm_inline_fast: Bool {
   if v = env_get("AVANT_LLVM_CALL_FORMS"), v == "1" {
     return false
@@ -388,7 +508,7 @@ pub fn driver_run(args: Array(String)) {
     diag_exit(1)
   }
   job.codegen = verb_codegen(job.codegen, "run")
-  // A local run takes the machine's highest x86-64 level (O140).
+  // A local run takes the machine's highest x86-64 level.
   if job.cpu.size == 0 {
     job.cpu = llvm_cpu_name(llvm_host_level())
   }
@@ -400,7 +520,7 @@ pub fn driver_run(args: Array(String)) {
       job.objects.push(box.re2c_obj)
     }
     attach_std_link(box, job)
-    // Compile, then run the program here with the user's stdin (Wave D:
+    // Compile, then run the program here with the user's stdin (only
     // the tools the compiler starts get /dev/null, tool_run).
     out = tmp_path("run.bin")
     if m = box.mir {
@@ -449,7 +569,7 @@ pub fn driver_compile(args: Array(String)) {
     }
     attach_std_link(box, job)
     if m = box.mir {
-      // The driver leaves this line to its caller (D194).
+      // The driver leaves this line to its caller.
       err = llvm_build(m, llvm_job_of(job), out_path)
       if err.size > 0 {
         diag_puts(err)
@@ -552,8 +672,8 @@ pub fn driver_fetch(args: Array(String)) {
   diag_exit(1)
 }
 
-// Internal (Stage 28 W2), not in the usage text: compiles a textual LLVM
-// IR file to an object with the in-process LLVM (compiler/llvm/glue.av).
+// Internal, not in the usage text: compiles a textual LLVM IR file to an
+// object with the in-process LLVM (compiler/llvm/glue.av).
 //   avant __llvm-obj IN.ll OUT.o [--debug|--release]
 // No flag is compile's bare mode. Exit 0, or 1 with the message on stderr.
 fn driver_llvm_obj(args: Array(String)) {
@@ -582,10 +702,10 @@ fn driver_llvm_obj(args: Array(String)) {
   }
 }
 
-// Internal (Stage 28 W5a), not in the usage text: builds one of the
-// builder-made MIR modules by name (llvm/emit_cases.av), verifies it at
-// stage final, emits the .ll, compiles it with the in-process LLVM, and
-// links it like a program (llvm/driver.av).
+// Internal, not in the usage text: builds one of the builder-made MIR
+// modules by name (llvm/emit_cases.av), verifies it at stage final,
+// emits the .ll, compiles it with the in-process LLVM, and links it
+// like a program (llvm/driver.av).
 //   avant __mir-build NAME OUT [--debug|--release] [--emit-ll FILE]
 //                    [--object] [--call-forms] [--time]
 //   avant __mir-build --list
@@ -658,23 +778,23 @@ fn driver_mir_build(args: Array(String)) {
   diag_exit(1)
 }
 
-// Internal (Stage 28 W9), not in the usage text: writes the
-// pre-optimization .ll that `compile` hands to
-// the in-process LLVM (the same lowering, verifier, emitter, and
-// fast-path setting; the text does not depend on the mode, mir.md 11).
-// The self-hosting fixed point compares it between two compilers (D171).
+// Internal, not in the usage text: writes the pre-optimization .ll that
+// `compile` hands to the in-process LLVM (the same lowering, verifier,
+// emitter, and fast-path setting; the text does not depend on the
+// mode). The self-hosting fixed point compares it between two
+// compilers.
 //   avant __emit-ll SRC.av OUT.ll
 // Exit 0, or 1 with the message on stderr.
-// `avant version` and `avant --version` (O534, Stage 29 W-FIX1e): the
-// version and the commit this binary was built from. The compiler does
-// not carry them (an identical compiler stays byte-identical across
-// commits); they come from the build's record beside the executable:
-// EXE.versions.txt, which tools/letters.sh writes beside each compiler
-// it builds, else versions.txt in the same directory (a release
-// archive, D148, and tools/package.sh). `version:` is avant.toml's
-// version (a release's `tag: vX` is read when there is none), `avant:`
-// the commit, and `dirty: yes` says that compiler/, lib/ or runtime/
-// had changes the commit does not hold.
+// `avant version` and `avant --version`: the version and the commit
+// this binary was built from. The compiler does not carry them (an
+// identical compiler stays byte-identical across commits); they come
+// from the build's record beside the executable: EXE.versions.txt,
+// which tools/letters.sh writes beside each compiler it builds, else
+// versions.txt in the same directory (a release archive, and
+// tools/package.sh). `version:` is avant.toml's version (a release's
+// `tag: vX` is read when there is none), `avant:` the commit, and
+// `dirty: yes` says that compiler/, lib/ or runtime/ had changes the
+// commit does not hold.
 fn driver_version(args: Array(String)) {
   if args.size > 0 {
     diag_puts("avant version takes no arguments")

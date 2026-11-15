@@ -11,7 +11,7 @@
 #include <time.h>
 #include <dlfcn.h>
 
-/* The collection driver and its policy (Stage 28 W12, moved from
+/* The collection driver and its policy (moved from
  * avant_rt.c): initialization from the environment (the settings,
  * gc_settings_read; the knobs are listed in avant_gc.h), collect (young
  * or full) and gc_maybe_collect (when),
@@ -27,37 +27,37 @@ uint64_t avant_young_bytes;
 
 uint64_t avant_nursery_held;
 
-/* Young sizing (Stage 28 W15a1, gc-design.md §5.2; O28 done in W14b1).
- * The young budget starts at YOUNG_BYTES_DEFAULT (4 MiB since Stage 28
- * W15d, Q3; 8 MiB before) and adapts within [floor, YOUNG_BYTES_CAP]
+/* Young sizing.
+ * The young budget starts at YOUNG_BYTES_DEFAULT (4 MiB; 8 MiB once) and
+ * adapts within [floor, YOUNG_BYTES_CAP]
  * after every young collection the policy runs (young_size, below: the
- * floor follows the heap since Stage 28 W15e).
+ * floor follows the heap).
  * AVANT_YOUNG_MB fixes it (tests). Retired with this rule: the survival
  * probe (a second trace of the live young graph before each copy), the
  * sticky pause that raised the budget instead of copying, the dead-based
  * resize and the 192 MiB cap. (E's copy reserve, the last young
  * collection's survival times 1.5 charged as spent by heap-limit
- * decisions, went with E in Stage 28 W15d: S+'s copy needs no room.) */
-/* The cap (Stage 28 W15e): 32 MiB, was 64. S+ evacuates up to one budget
- * of survivors per collection (O92), so a budget of B can hold about 2 B
+ * decisions, went with E: S+'s copy needs no room.) */
+/* The cap: 32 MiB, was 64. S+ evacuates up to one budget
+ * of survivors per collection, so a budget of B can hold about 2 B
  * above the live data at a collection; at 64 MiB the compiler's
  * __emit-ll peak_heap rose to 311 MB once the budget grew without delay
- * (242 MB at 32 MiB; W15e record, vsuite/c2h16, c2h16c32). */
+ * (242 MB at 32 MiB). */
 #ifndef YOUNG_BYTES_CAP
 #define YOUNG_BYTES_CAP (32ull * 1024ull * 1024ull)
 #endif
-/* The floor's divisor (Stage 28 W15e): the budget never shrinks below
+/* The floor's divisor: the budget never shrinks below
  * the heap in use / YOUNG_HEAP_DIV (nor below YOUNG_BYTES_DEFAULT), so a
  * program with a large heap is not collected every 4 MiB when a young
  * collection's fixed cost grows with the heap (the verifier's trace of
  * the whole heap at every young collection under AVANT_GC_VERIFY=1: the
  * compiler's dump of itself in test_fixed_point.av, 21 s at 4 MiB, 15 s
- * at 12; W15e record, vsuite/). It costs at most 1/12 of the heap. */
+ * at 12). It costs at most 1/12 of the heap. */
 #ifndef YOUNG_HEAP_DIV
 #define YOUNG_HEAP_DIV 12
 #endif
 
-/* The settings' one parsing rule (Stage 28 W14b2, O40; the knobs are
+/* The settings' one parsing rule (the knobs are
  * listed in avant_gc.h). A knob that is unset or empty takes its
  * default. A boolean knob is on for exactly "1" and off for exactly "0";
  * a number is decimal digits only, within the knob's range. Anything
@@ -105,9 +105,8 @@ static uint64_t env_u64(const char *name, uint64_t fallback, uint64_t lo, uint64
   return n;
 }
 
-/* Knobs retired by Stage 28 W14b2 (gc-design.md §1.7), and
- * AVANT_GC_STACK_REWRITE by W16b (§4.3): setting one is reported, and it
- * has no effect. */
+/* Retired knobs, and AVANT_GC_STACK_REWRITE with the conservative C-stack
+ * scans: setting one is reported, and it has no effect. */
 static const char *const retired_knobs[] = {
     "AVANT_NURSERY_DISCARD", "AVANT_GC_REM_FRONTIER", "AVANT_GC_YOUNG_SIZING",
     "AVANT_GC_COPY_RESERVE", "AVANT_GC_STACK_REWRITE"};
@@ -122,9 +121,11 @@ static void gc_settings_read(GcSettings *s) {
                           1ull << 20);
   s->nursery_off = !env_bool("AVANT_NURSERY", 1);
   s->defrag = env_bool("AVANT_GC_DEFRAG", 1);
+  s->proof = env_bool("AVANT_GC_PROOF", 1);
   s->verify = env_bool("AVANT_GC_VERIFY", 0);
   s->stats = env_bool("AVANT_GC_STATS", 0);
   s->stress = env_bool("AVANT_GC_STRESS", 0);
+  s->walk = s->stats | s->verify | s->stress;
   s->stall_ms = env_u64("AVANT_GC_VERIFY_STALL_MS", 10000, 0, 1ull << 40);
   for (i = 0; i < sizeof retired_knobs / sizeof retired_knobs[0]; i++) {
     const char *v = getenv(retired_knobs[i]);
@@ -137,21 +138,21 @@ static void gc_settings_read(GcSettings *s) {
 
 _Atomic uint32_t g_avant_str_gen;
 
-/* §5.2's rule, after a young collection that saw USED young bytes and
- * SURV surviving ones (Stage 28 W15e, O96). The budget doubles, up to
+/* The young sizing rule, after a young collection that saw USED young
+ * bytes and SURV surviving ones. The budget doubles, up to
  * YOUNG_BYTES_CAP, at the second consecutive young collection where more
  * than half the young bytes survived, and halves back toward its floor
  * when less than a tenth survived. The floor is the larger of
  * YOUNG_BYTES_DEFAULT and the heap in use (mature blocks and large
  * objects) / YOUNG_HEAP_DIV; the budget is raised to it at once.
- * Before W15e the doubling waited for a high-survival collection whose
+ * The doubling used to wait for a high-survival collection whose
  * pause per surviving byte rose against the previous one: a wall-clock
  * reading, so the budget's path, and with it every collection count,
  * changed from run to run. Growing at the first high-survival collection
- * (O96 as filed) was measured and rejected: it does not help the suite
+ * was measured and rejected: it does not help the suite
  * (44.6 s against 42.3) and raises the compiler's peak_heap (245 ->
- * 318 MB; W15e record, vsuite/g50s2). */
-static void young_size(uint64_t used, uint64_t surv) {
+ * 318 MB). */
+static void young_size(uint64_t used, uint64_t surv, int budget) {
   uint64_t floor = YOUNG_BYTES_DEFAULT;
   uint64_t h = (gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes) / YOUNG_HEAP_DIV;
   int high;
@@ -175,7 +176,39 @@ static void young_size(uint64_t used, uint64_t surv) {
   if (avant_young_bytes < floor) {
     avant_young_bytes = floor;
   }
-  gc_heap.young_high_prev = (uint8_t)high;
+  /* The tenured phase (gc_sticky_retire, avant_gc_sticky.c), decided by
+   * the collections the budget asks for only (the program's end it,
+   * gc_collect). In the phase a young collection is a probe: the phase
+   * goes on, its interval doubled up to TENURE_GAP_MAX budgets, while
+   * nearly everything still survives. Out of it, the second such
+   * collection in a row starts it. */
+  if (budget && (gc_heap.tenure_on || (high && gc_heap.young_high_prev))) {
+    int nearly = surv * TENURE_SURV_DEN > used * TENURE_SURV_NUM;
+    if (gc_heap.tenure_on) {
+      gc_heap.ctr.sticky.probes++;
+      if (nearly) {
+        gc_heap.tenure_gap = gc_heap.tenure_gap * 2 > TENURE_GAP_MAX ? TENURE_GAP_MAX : gc_heap.tenure_gap * 2;
+        gc_heap.tenure_left = gc_heap.tenure_gap;
+      } else {
+        gc_heap.tenure_on = 0;
+      }
+    } else if (nearly && gc_sticky_tenure_ok()) {
+      gc_heap.tenure_on = 1;
+      gc_heap.tenure_gap = 1;
+      gc_heap.tenure_left = 1;
+    }
+  }
+  /* The streak of high-survival collections is the budget's: a collection
+   * the program asks for (BUDGET 0) neither makes nor breaks it. Its
+   * survival says what the program kept at that point, not what a budget
+   * keeps (the collector benchmark's stable heap: 499 forced collections
+   * of one new object each, each one surviving, left the streak set for
+   * the chain build that follows, which then made one more young
+   * collection, aged 8 MB in place and copied 5.6 KB more: about 100 M
+   * instructions). */
+  if (budget) {
+    gc_heap.young_high_prev = (uint8_t)high;
+  }
 }
 
 static uint64_t now_ns(void) {
@@ -210,7 +243,7 @@ static void count_full_why(GcWhy why) {
   }
 }
 
-/* M6 (gc-design.md §3.4): after a full collection's mark, the free
+/* The fragmentation statistic: after a full collection's mark, the free
  * lines of every partly used block of LIST, and all its lines. */
 static void frag_scan(Block *list, uint64_t *free_lines, uint64_t *lines) {
   Block *b;
@@ -242,7 +275,7 @@ static void frag_note(void) {
   }
 }
 
-/* C39 (Stage 28 W15a2): under AVANT_HEAP_MAX_MB a live set the heap
+/* Under AVANT_HEAP_MAX_MB a live set the heap
  * cannot hold with its copy room made every allocation run a heap-limit
  * full collection (limit_defer.av at 8 to 16 MB under E: a young
  * collection did not fit its copy room, and a full collection moves no
@@ -272,8 +305,14 @@ static int region_refuses(void);
 
 void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
+  /* A full collection that runs as a young one: the proof holds. */
+  int complete = 0;
   int resume = 0;
   uint64_t t0;
+  GcProofWhy proof = PROOF_INTACT;
+  /* The inline path's allocations are counted before the policy's
+   * counters are read (gc_alloc_sync). */
+  gc_alloc_sync();
   if (gc_thread.collecting) {
     gc_die("GC reentered");
   }
@@ -286,14 +325,24 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   if (!full && !allow_move) {
     gc_die("a young collection always moves");
   }
-  /* The handshake (Stage 28 W17a, gc-design.md section 4.4): the world
+  /* The handshake (avant_gc_safepoint.c): the world
    * lock is released (rule 1) while this thread raises the request and
    * waits for every other registered thread to stop at a safepoint or be
    * native, then taken again. When another thread held the request, this
    * one stopped until that collection was done; a collection the policy
    * asked for (the budget, the trigger, a stress point) is then
    * reconsidered, an explicit or heap-limit one runs. */
-  if (!gc_thread.collector) {
+  if (!gc_thread.collector &&
+      (why == GC_WHY_STRESS || atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0) &&
+      gc_stop_world_held()) {
+    /* A stress collection with no other thread running, and any
+     * collection of a program with one thread, keeps the world lock
+     * (gc_stop_world_held): there is no thread to wait for, so the lock's
+     * round trip buys nothing (about 70 instructions a young collection
+     * on a heap that does not change). A threaded program's collections
+     * outside the stress mode take the full handshake, as before. */
+    resume = 1;
+  } else if (!gc_thread.collector) {
     for (;;) {
       int mine;
       pthread_mutex_unlock(&gc_heap.world);
@@ -310,32 +359,120 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     }
     resume = 1;
   }
+  /* A collection the program asks for, or the heap limit's, ends the
+   * tenured phase, whether it then traces or not: the program says its
+   * work so far is dead (the collector benchmark's churn beside a live
+   * set: the phase of the set's build retired the churn's first budget,
+   * and two more full collections followed). */
+  if (gc_heap.tenure_on && (why == GC_WHY_EXPLICIT || why == GC_WHY_LIMIT)) {
+    gc_heap.tenure_on = 0;
+  }
   t0 = now_ns();
   gc_thread.collecting = 1;
   atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
   avant_g_stats.collections++;
-  /* Every thread's remembered-set buffer joins the set (Stage 28 W17b)
+  /* Every thread's remembered-set buffer joins the set
    * before anything reads it. */
   gc_rem_merge_all();
+  if (full && allow_move) {
+    /* The complete collection (avant_gc_proof.c): a full collection, forced or due, first asks
+     * whether any old object can have died since the last one. When none
+     * can (no reference to an old object left an old object or the roots,
+     * nothing became old), what is unreachable is young, a young
+     * collection frees exactly that, and this collection is one: it is
+     * complete all the same. Otherwise it traces, as before. (A due
+     * collection seldom holds: the trigger counts what was promoted or
+     * born old, which breaks the proof; the heap limit's can.) */
+    proof = gc_proof_check();
+    gc_heap.ctr.proof.asked++;
+    if (why == GC_WHY_EXPLICIT) {
+      gc_heap.ctr.proof.forced++;
+    }
+    if (proof != PROOF_INTACT) {
+      gc_heap.ctr.proof.fell[proof]++;
+      /* A trace the program asked for, when what broke the proof is
+       * undone by a full collection's end (not threads, no young
+       * generation or the proof off) and the young generation is small
+       * beside the old live bytes, leaves the young generation young:
+       * a young collection first (its survivors age into survivor
+       * blocks), then a mark through young objects that promotes none of
+       * them (avant_gc_mark.c, gc_mark_roots). So the next forced
+       * collection can hold again: the collector benchmark's stable heap
+       * stores a fresh object before each forced collection, and a trace
+       * that promoted it made the next store remove the last reference to
+       * an old object, every time. */
+      gc_heap.keep_young = (uint8_t)(why == GC_WHY_EXPLICIT && proof != PROOF_THREADS && proof != PROOF_NURSERY &&
+                                     proof != PROOF_OFF && !gc_heap.set.young_fixed &&
+                                     avant_nursery_held && avant_nursery_held * KEEP_YOUNG_DIV <= gc_heap.proof.old_live);
+    } else if (avant_nursery_held > PROOF_YOUNG_PER_OLD * gc_heap.proof.old_live) {
+      /* It holds, and the trace is the cheaper complete collection
+       * (PROOF_YOUNG_PER_OLD's comment). */
+      gc_heap.ctr.proof.fell[PROOF_YOUNG_HEAVY]++;
+    } else {
+      gc_heap.ctr.proof.held++;
+      full = 0;
+      complete = 1;
+      if (!avant_nursery_held && !gc_heap.young_blocks_n && !gc_heap.young_large_n && !gc_heap.set.verify &&
+          !gc_heap.set.stress) {
+        /* It holds and nothing is young (no young block, no young large
+         * object, nothing allocated since the last collection): there is
+         * nothing to free, and a young collection would only walk the
+         * roots (Binarytrees::Obj asks for one right after the collection
+         * its hold's end made: 72 collections for 36). What a complete
+         * collection restarts it restarts; the rest is left as it is.
+         * The check modes run it all the same. */
+        gc_heap.ctr.proof.idle++;
+        gc_heap.mature_since_full = 0;
+        gc_heap.promoted_since_full = 0;
+        avant_g_stats.collections--;
+        gc_thread.collecting = 0;
+        if (resume) {
+          gc_resume_world();
+        }
+        return;
+      }
+    }
+  }
   if (full) {
     count_full_why(why);
   }
   if (gc_heap.set.verify) {
     gc_quarantine_release();
+    /* The eager comparison of the late start bits, and the eager
+     * bits in place of the real ones while the checks below run: they
+     * read every object as they did when each allocation set its bit,
+     * and set none of the bits the collection itself must set. */
+    gc_alloc_sync();
+    gc_verify_starts_begin();
     gc_verify_begin(full);
     if (!full) {
       gc_verify_remembered();
     } else {
       gc_verify_lost();
     }
+    /* The proof's oracle (avant_gc_verify.c): the verdict is taken
+     * at every collection, the ordinary young ones too, and its
+     * conclusion checked wherever it holds: before a complete collection
+     * runs as a young one, the trace from the roots alone must reach
+     * every old object. */
+    if (!complete && !full) {
+      proof = gc_proof_check();
+    }
+    gc_verify_proof(full || complete, proof == PROOF_INTACT);
+    gc_verify_starts_resume();
+  }
+  if (full) {
+    /* The log is emptied: this collection's end is what the next proof
+     * starts from. */
+    gc_proof_full_begin();
   }
   gc_heap.young_clock += avant_nursery_held > gc_heap.young_carried
                               ? avant_nursery_held - gc_heap.young_carried
                               : 0;
   gc_heap.live = 0;
   gc_heap.work_n = 0;
-  /* Every thread's allocation cursors and inline state (Stage 28 W17b:
-   * per thread; the young cursor was cleared when the collection ended
+  /* Every thread's allocation cursors and inline state (per thread; the
+   * young cursor was cleared when the collection ended
    * before, which no allocation in between could tell apart). */
   gc_alloc_stop_all();
 
@@ -351,14 +488,64 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     uint64_t used = avant_nursery_held;
     uint64_t copied0 = avant_g_stats.copied_bytes;
     uint64_t inplace0 = gc_heap.ctr.sticky.inplace;
+    uint64_t here0 = gc_heap.ctr.sticky.here_bytes;
+    uint64_t prom0 = gc_heap.ctr.prom.copied;
     uint64_t surv;
     avant_g_stats.young_collections++;
-    gc_sticky_collect(gc_heap.set.young_fixed ? 1 : 0);
-    surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.sticky.inplace - inplace0);
+    if (complete) {
+      /* The full trigger starts again, as after a trace: nothing became
+       * old since the last one (the proof), so what it counted is not
+       * mature growth to trace for; left standing, a due collection that
+       * holds would fall due again at the next allocation. What this
+       * collection promotes counts from here. (Memory goes back to the
+       * OS by the young collection's own rule, not a full collection's:
+       * a program that asks for a collection after each piece of work
+       * would otherwise return and fault in again the memory the next
+       * piece takes, at every one.) */
+      gc_heap.mature_since_full = 0;
+      gc_heap.promoted_since_full = 0;
+    }
+    gc_sticky_collect(gc_heap.set.young_fixed ? 1 : 0, complete);
+    surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.sticky.inplace - inplace0) +
+           (gc_heap.ctr.sticky.here_bytes - here0);
+    /* An object this collection promoted, in place or by its copy, is old
+     * from now on and no full collection marked it (a young large
+     * object's promotion says so itself, promote_young_large). An aged
+     * copy stays young. */
+    if (gc_heap.ctr.sticky.inplace != inplace0 || gc_heap.ctr.prom.copied != prom0) {
+      gc_proof_break(PROOF_PROMOTED);
+    }
+    if (complete) {
+      /* What a complete collection found live: the old objects, all of
+       * them (the proof), and the young survivors. And the heap limit's
+       * progress rule, as for the trace it stands for. */
+      gc_heap.live += gc_heap.proof.old_live;
+      if (why == GC_WHY_LIMIT && gc_heap.set.heap_max) {
+        limit_progress_check();
+      }
+    }
     if (!gc_heap.set.young_fixed && !gc_heap.stress_now) {
-      young_size(used, surv);
+      young_size(used, surv, why == GC_WHY_BUDGET);
     }
   } else {
+    uint64_t keep_held = 0;
+    if (gc_heap.keep_young) {
+      /* The young collection of a trace that leaves the young generation
+       * young: as a complete collection runs it (a sparse first survivor
+       * ages, also from a hole of a recycled block), so that every young
+       * object it leaves lies in a survivor block or is a young large
+       * object. It makes no sizing decision. */
+      avant_g_stats.young_collections++;
+      gc_sticky_collect(0, 1);
+      keep_held = avant_nursery_held;
+      gc_heap.live = 0;
+      gc_heap.work_n = 0;
+      gc_heap.keep_young_live = 0;
+      gc_heap.keep_yold = 0;
+      if (!keep_held) {
+        gc_heap.keep_young = 0;
+      }
+    }
     avant_g_stats.full_collections++;
     gc_heap.return_clock++;
     /* A full collection walks the mature blocks in order (its sweep, its
@@ -370,11 +557,21 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_clear_alloc_cur(SPACE_MATURE);
     gc_sticky_full_begin();
     /* The marks: one memset per chunk of the side bitmap; no header is
-     * touched (no young mark outlives its collection, C36). */
+     * touched (no young mark outlives its collection). */
     gc_clear_side_marks();
     /* The line marks: the epoch advances (no walk zeroing them). */
     gc_line_epoch_advance();
     gc_mark_roots();
+    /* Late start bits: when the mark's loop set none (gc_mark_roots), the
+     * runs of every block it left a live line in are built now
+     * (gc_lazy_build_live); either way every object the mark reached has
+     * its bit, and the inline runs of the cycle are forgotten before
+     * anything is swept or moved. */
+    gc_lazy_build_live();
+    if (gc_heap.set.verify) {
+      gc_verify_starts_end();
+    }
+    gc_lazy_drop();
     frag_note();
     {
       Block *db;
@@ -398,15 +595,20 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       }
       gc_defrag_release();
     }
-    /* Dead and clean remembered entries leave the set (C33, O9). */
+    /* Dead and clean remembered entries leave the set. */
     gc_rem_full_scrub();
     gc_sweep_large();
-    gc_filter_blocks(&gc_heap.space[SPACE_MATURE].list, gc_keep_if_live);
+    gc_filter_blocks(&gc_heap.space[SPACE_MATURE].list, gc_heap.keep_young ? gc_keep_young_or_live : gc_keep_if_live);
     /* A full collection promotes every object it marks (the mark clears
      * YOUNG), so no object is young after it: gc_sticky_full_end empties
-     * the young budget (avant_nursery_held). (Before Stage 28 W15d E's
-     * nursery survivors were summed here, O28.) */
+     * the young budget (avant_nursery_held). (E's nursery survivors used
+     * to be summed here.) */
     gc_sticky_full_end();
+    if (gc_heap.keep_young) {
+      avant_nursery_held = keep_held;
+      gc_heap.ctr.sticky.keeps++;
+      gc_heap.ctr.sticky.keep_bytes += gc_heap.keep_young_live;
+    }
     gc_heap.mature_since_full = 0;
     gc_heap.promoted_since_full = 0;
     gc_heap.last_full_at = avant_g_stats.allocated_bytes;
@@ -415,10 +617,15 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     if (why == GC_WHY_LIMIT && gc_heap.set.heap_max) {
       limit_progress_check();
     }
+    /* What the next proof starts from: the roots as they are now,
+     * an empty log. After everything this collection moves or frees. */
+    gc_proof_full_end();
+    gc_heap.keep_young = 0;
+    gc_heap.keep_young_live = 0;
   }
 
   if (full) {
-    /* gc-design.md §5.4: max(4 MiB, (F - 1) * live), F = 2, uncapped. */
+    /* The full trigger: max(4 MiB, (F - 1) * live), F = 2, uncapped. */
     uint64_t next = (uint64_t)(HEAP_FACTOR - 1) * gc_heap.live;
     gc_heap.full_trigger = next < FULL_TRIGGER_MIN ? FULL_TRIGGER_MIN : next;
   }
@@ -472,9 +679,9 @@ void gc_maybe_collect(void) {
     return;
   }
   /* Only a no-GC region (RC4, avant_gc.h) or a running collection holds
-   * a request off (above); since Stage 28 W16a runtime helpers root what
+   * a request off (above); runtime helpers root what
    * they hold (RC1) and allocate outside regions, so their allocations
-   * are collection points like generated code's (O20, O46). */
+   * are collection points like generated code's. */
   if (gc_heap.set.nursery_off) {
     if (avant_since_gc >= gc_heap.full_trigger) {
       gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
@@ -488,6 +695,18 @@ void gc_maybe_collect(void) {
   if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
     gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
   } else if (avant_nursery_held >= avant_young_bytes) {
+    /* The tenured phase (gc_sticky_retire): the budget is retired
+     * instead of collected, until a probe is due; a young large object
+     * makes this one a probe. */
+    if (gc_heap.tenure_on && gc_heap.tenure_left) {
+      if (!gc_sticky_tenure_ok()) {
+        gc_heap.tenure_on = 0;
+      } else if (gc_sticky_retire_ok()) {
+        gc_heap.tenure_left--;
+        gc_sticky_retire();
+        return;
+      }
+    }
     /* (Under E a young copy not expected to fit under AVANT_HEAP_MAX_MB,
      * young_copy_fits, ran as a full collection; S+'s copy needs no room:
      * it stops at the limit and promotes the rest in place.) */
@@ -498,8 +717,8 @@ void gc_maybe_collect(void) {
 /* A stress point (AVANT_GC_STRESS=1). The caller holds gc_heap.world. Only
  * where a collection may run: not inside a defer region, not during a
  * collection, and only with a young generation to collect. Shared
- * programs too since Stage 28 W17a (the handshake stops the other
- * threads; before, D191 kept the stress mode to one thread). */
+ * programs too (the safepoint handshake stops the other threads; before
+ * it, the stress mode ran in one-thread programs only). */
 void gc_stress_point(void) {
   if (!gc_heap.set.stress || gc_thread.collecting || gc_thread.nogc || gc_heap.set.nursery_off) {
     return;
@@ -511,7 +730,7 @@ void gc_stress_point(void) {
    * stress point at a defer entry is often the only collection point a
    * helper-bound loop reaches (its allocations run inside the region,
    * where gc_maybe_collect returns), so the full collection they trigger
-   * runs here. (Stage 28 W15a2.) */
+   * runs here. */
   if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
     gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
   }
@@ -531,7 +750,7 @@ void gc_init_slow(void) {
   } else {
     avant_young_bytes = YOUNG_BYTES_DEFAULT;
   }
-  /* The heap's address range (W14a1): reserved once, here, so a refusal
+  /* The heap's address range: reserved once, here, so a refusal
    * is met at start-up (halving down to 1 GiB) and not at a block. */
   gc_heap_reserve();
   if (gc_heap.set.stats) {
@@ -542,9 +761,19 @@ void gc_init_slow(void) {
   if (gc_heap.set.verify) {
     gc_verify_init();
   }
+  /* The proof holds from the program's start (no object is old, so the
+   * barrier's slow call has nothing to log until the first full
+   * collection ends); with no young generation no complete collection is
+   * a young one. */
+  if (gc_heap.set.nursery_off) {
+    gc_proof_break(PROOF_NURSERY);
+  }
+  if (!gc_heap.set.proof) {
+    gc_proof_break(PROOF_OFF);
+  }
 }
 
-/* AVANT_GC_VERIFY at the program's exit (Stage 28 W18M item 7): the whole
+/* AVANT_GC_VERIFY at the program's exit: the whole
  * heap is verified once more, as at the start of a collection, after the
  * same handshake (every other thread stopped at a safepoint or native).
  * Not inside a collection or a no-GC region, where the heap is not in a
@@ -554,6 +783,7 @@ void gc_verify_exit_run(void (*check)(void)) {
   if (gc_thread.collecting || gc_thread.nogc) {
     return;
   }
+  gc_alloc_sync();
   gc_lock(&gc_heap.world);
   if (!gc_thread.collector) {
     for (;;) {
@@ -577,9 +807,9 @@ void gc_verify_exit_run(void (*check)(void)) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
-/* Q128's heap-goal collection at the HTTP boundary (the request path's
- * allocations all pass through C helpers under defer). Since Stage 28
- * W15a1 (gc-design.md §5.4) it is an ordinary collection request: the
+/* The heap-goal collection at the HTTP boundary (the request path's
+ * allocations all pass through C helpers under defer). It is an ordinary
+ * collection request: the
  * policy runs what is due (gc_maybe_collect: the young budget, which
  * counts the helpers' allocations, the full trigger, a pending
  * heap-limit collection), as at any allocation's slow path. Before, it
@@ -589,6 +819,7 @@ void gc_verify_exit_run(void (*check)(void)) {
  * before it materializes the request). */
 void avant_gc_heap_goal_collect(void) {
   gc_init();
+  gc_alloc_sync();
   gc_safepoint();
   gc_lock(&gc_heap.world);
   gc_maybe_collect();
@@ -618,15 +849,15 @@ static __attribute__((noreturn)) void region_die(const char *what) {
   region_die_at(what, gc_thread.region_site);
 }
 
-/* gc-design.md §5.4: an allocation inside a no-GC region proceeds past
- * AVANT_HEAP_MAX_MB (C32: the full collection runs after the region),
+/* An allocation inside a no-GC region proceeds past
+ * AVANT_HEAP_MAX_MB (the full collection runs after the region),
  * unless the region alone has allocated more than the limit: no
  * collection after it could bring the heap back under the limit. */
 void gc_region_limit_check(uint64_t bytes) {
   if (gc_heap.set.heap_max && gc_thread.nogc && gc_thread.region_bytes + bytes > gc_heap.set.heap_max) {
     region_die("heap limit in a no-GC region");
   }
-  /* A hold (std.gc, Stage 29 W1c2): the same rule over the hold's own
+  /* A hold (std.gc): the same rule over the hold's own
    * allocations (its inline ones included: the count since its entry). */
   if (gc_heap.set.heap_max && gc_thread.hold &&
       avant_g_stats.allocated_bytes - gc_thread.hold_base + bytes > gc_heap.set.heap_max) {
@@ -634,7 +865,7 @@ void gc_region_limit_check(uint64_t bytes) {
   }
 }
 
-/* RC4 (avant_gc.h, Stage 28 W16a): a collection attempted inside a no-GC
+/* RC4 (avant_gc.h): a collection attempted inside a no-GC
  * region. Under AVANT_GC_VERIFY=1 it dies naming the region's function;
  * otherwise an explicit request is deferred to the first collection
  * point after the region (returns 1: the caller does not collect). */
@@ -650,6 +881,7 @@ static int region_refuses(void) {
 
 void avant_gc_collect_young(void) {
   gc_init();
+  gc_alloc_sync();
   /* `gc.collect()` inside a hold (std.gc): deferred to the hold's end. */
   if (gc_thread.hold) {
     gc_thread.hold_young = 1;
@@ -671,6 +903,7 @@ void avant_gc_collect_young(void) {
 
 void avant_gc_collect(void) {
   gc_init();
+  gc_alloc_sync();
   gc_safepoint();
   gc_lock(&gc_heap.world);
   if (gc_thread.hold && !gc_thread.nogc) {
@@ -690,7 +923,7 @@ void avant_gc_collect(void) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
-/* `gc.hold { }` (std.gc, Stage 29 W1c2, D305): GcThread.hold's comment.
+/* `gc.hold { }` (std.gc): GcThread.hold's comment.
  * The compiler brackets the block with these two and ends the hold on
  * every way out of it (the end of the block, return, break, continue,
  * a `?` that returns). Under AVANT_GC_STRESS=1 a hold is inactive, so a
@@ -702,6 +935,7 @@ void avant_gc_hold_begin(void) {
     return;
   }
   if (gc_thread.hold++ == 0) {
+    gc_alloc_sync();
     gc_thread.hold_base = avant_g_stats.allocated_bytes;
     gc_thread.hold_site = __builtin_return_address(0);
     gc_thread.hold_young = 0;
@@ -723,6 +957,7 @@ void avant_gc_hold_end(void) {
   }
   young = gc_thread.hold_young;
   gc_thread.hold_young = 0;
+  gc_alloc_sync();
   gc_safepoint();
   gc_lock(&gc_heap.world);
   shared = atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0;

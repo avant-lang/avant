@@ -45,7 +45,7 @@ fn test_safepoints(c: Checks) {
         c.expect(str_has(stats, "young="), "gc stats printed")
         c.expect(!str_has(stats, "young=0 full"), "copying nursery ran")
         // Candidate E copies survivors, candidate S promotes them in
-        // place (Stage 28 W15b): either way the young collections kept some.
+        // place: either way the young collections kept some.
         c.expect(!str_has(stats, "copied=0 live") || !str_has(stats, "prom_inplace=0 "), "young survivors copied or promoted in place")
       } else {
         c.expect(false, "read gc stats")
@@ -96,12 +96,12 @@ fn test_safepoints(c: Checks) {
       bdump = "${scratch()}/safepoints-${stamp}-bump.mir"
       bbody2 = "class Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\nfn make_tree(item: Int, depth: Int): Node? {\n  n = Node.new(item)\n  if depth > 0 {\n    shift = 1 << (depth - 1)\n    if l = make_tree(item - shift, depth - 1) {\n      if r = make_tree(item + shift, depth - 1) {\n        n.left = l\n        n.right = r\n        return n\n      }\n    }\n    return nil\n  }\n  n\n}\nfn tree_sum(n: Node): Int {\n  total = n.item + 1\n  if l = n.left {\n    total = total + tree_sum(l)\n  }\n  if r = n.right {\n    total = total + tree_sum(r)\n  }\n  total\n}\nfn once: Int {\n  if t = make_tree(0, 6) {\n    return tree_sum(t)\n  }\n  0\n}\nfn main {\n  acc = 0\n  i = 0\n  while i < 20 {\n    acc = acc + once()\n    i = i + 1\n  }\n  puts(acc)\n}\n"
       c.wrote(file_write(bsrc2, bbody2), "write bump tree")
-      // The MIR (D171; the old back end's IR until W11).
+      // The MIR (the old back end's IR until it retired).
       dcode2 = dump_av(compiler, bsrc2, bdump)
       c.eq_int(dcode2, 0, "dump bump tree")
       if ir2 = file_read(bdump) {
         // The tree that used the bump constructor and nursery_reclaim,
-        // with ordinary allocation (Stage 29 W1a, D298: both removed).
+        // with ordinary allocation (both removed).
         c.expect(!str_has(ir2, "#bump") && !str_has(ir2, "avant_bump_alloc") && !str_has(ir2, "nursery_reclaim"), "no bump constructor or nursery reclaim")
         c.expect(str_has(ir2, "call av.bump/Node.new("), "the tree allocates with Node.new")
       } else {
@@ -142,5 +142,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_safepoints(c)
-  c.finish
+  c.finish()
 }

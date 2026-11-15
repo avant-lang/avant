@@ -1,14 +1,15 @@
-// The modules `avant __mir-build NAME` builds (Stage 28 W5a), each with the
-// builder in its final form (the leaf and frame passes are W6's; here by
-// hand): the 10.2 example; the selftest's accepting cases that verify at
-// final (mir_selftest_finals; libraries without `main`, so they compile to
-// an object only); `constructs`, a program that exercises the rest of 4.3
-// to 4.5 (checked arithmetic, casts, f64, struct, union with a heap
-// payload in an aggregate slot across a collection, fnval and an indirect
-// call, switch, addr and barrier_at, an element buffer with an inline
-// allocation of dynamic size and bounds checks, addr.raw); `traps`, whose
-// argument count selects a trap; and `example_no_barrier`, the example
-// with tag's barrier removed, which the verifier rejects (V13).
+// The modules `avant __mir-build NAME` builds, each with the builder in its
+// final form (the leaf and frame passes applied here by hand): the complete
+// example (tests/fixtures/mir/example.mir); the selftest's accepting cases
+// that verify at final (mir_selftest_finals; libraries without `main`, so
+// they compile to an object only); `constructs`, a program that exercises
+// the rest of the rvalues, statements and terminators (checked arithmetic,
+// casts, f64, struct, union with a heap payload in an aggregate slot across
+// a collection, fnval and an indirect call, switch, addr and barrier_at, an
+// element buffer with an inline allocation of dynamic size and bounds
+// checks, addr.raw); `traps`, whose argument count selects a trap; and
+// `example_no_barrier`, the example with tag's barrier removed, which the
+// verifier rejects (V13).
 
 import source
 import mir.types
@@ -115,12 +116,12 @@ fn ec_names(a: String, b: String): Array(String) {
 
 // main(argc, argv) -> i32, frame, external; its slots are argv and the
 // listed locals (in local order), zeroed, entered, registered; then the
-// type maps and avant_io_init_argv (3.6).
+// type maps and avant_io_init_argv.
 fn ec_main_begin(b: MirBuilder) {
   ps = ec_tys(mt_i32(), mt_ptr())
   b.begin_fn("main", b.sig(ps, mt_i32(), false), b.here(1, 1), "main")
   b.set_kind(mfk_frame())
-  b.set_external
+  b.set_external()
   b.name_param(1, "argc")
   b.name_param(2, "argv")
   b.set_slot(2)
@@ -133,12 +134,12 @@ fn ec_prologue(b: MirBuilder) {
     if b.func.locals[i].slot {
       slots.push(i)
       if !b.func.is_param(i) {
-        b.assign(b.pl(i), b.rv_zero)
+        b.assign(b.pl(i), b.rv_zero())
       }
     }
     i += 1
   }
-  b.gc_enter
+  b.gc_enter()
   b.gc_roots(slots)
   b.call(-1, "__avant_type_maps", ec0())
   b.call(-1, "avant_io_init_argv", ec2(b.copy_local(1), b.copy_local(2)))
@@ -146,9 +147,9 @@ fn ec_prologue(b: MirBuilder) {
 
 fn ec_main_end(b: MirBuilder) {
   b.assign(b.pl(0), b.rv_use(b.c_i32(0)))
-  b.gc_leave
-  b.ret
-  b.end_fn
+  b.gc_leave()
+  b.ret()
+  b.end_fn()
 }
 
 fn ec_print(b: MirBuilder, fmt: String, args: Array(MOperand)) {
@@ -181,8 +182,8 @@ fn ec_constructs: MModule {
   b.set_kind(mfk_leaf())
   b.name_param(2, "n")
   b.assign(b.pl(0), b.rv_chk(mop_mul(), b.copy_local(2), b.c_i32(2)))
-  b.ret
-  b.end_fn
+  b.ret()
+  b.end_fn()
 
   // Rec.set(self: addr %Rec, s): the unknown-holder barrier (V13 form 2).
   b.begin_fn("av.main/Rec.set", b.sig(ec_tys(b.addr_of(b.agg(rec)), mt_str()), mt_void(), false), b.here(3, 1), "set")
@@ -191,30 +192,30 @@ fn ec_constructs: MModule {
   b.name_param(2, "s")
   b.barrier_at(1)
   b.assign(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
-  b.ret
-  b.end_fn
+  b.ret()
+  b.end_fn()
 
   // classify(n): switch n [0: 10, 1: 20] else 30.
   b.begin_fn("av.main/classify", b.sig(ec_tys(mt_i32(), -1), mt_i32(), false), b.here(4, 1), "classify")
   b.set_kind(mfk_leaf())
   b.name_param(1, "n")
-  c1 = b.block
-  c2 = b.block
-  c3 = b.block
+  c1 = b.block()
+  c2 = b.block()
+  c3 = b.block()
   vals: Array(Int) = []
   vals.push(0)
   vals.push(1)
   b.switch_on(b.copy_local(1), vals, ec_tys(c1, c2), c3)
   b.at(c1)
   b.assign(b.pl(0), b.rv_use(b.c_i32(10)))
-  b.ret
+  b.ret()
   b.at(c2)
   b.assign(b.pl(0), b.rv_use(b.c_i32(20)))
-  b.ret
+  b.ret()
   b.at(c3)
   b.assign(b.pl(0), b.rv_use(b.c_i32(30)))
-  b.ret
-  b.end_fn
+  b.ret()
+  b.end_fn()
 
   ec_main_begin(b)
   x = b.local(mt_i32(), "x")
@@ -291,7 +292,7 @@ fn ec_constructs: MModule {
   // string across a collection.
   b.call(s, "avant_str_from_int", ec1(b.c_i64(12345)))
   b.assign(b.pl(u), b.rv_union(un, 1, b.copy_local(s)))
-  b.assign(b.pl(s), b.rv_zero)
+  b.assign(b.pl(s), b.rv_zero())
   b.call(-1, "avant_gc_collect", ec0())
   b.assign(b.pl(t), b.rv_use(b.copy(b.field(b.pl(u), 0))))
   b.assign(b.pl(s), b.rv_use(b.copy(b.field(b.pl(u), 2))))
@@ -310,7 +311,7 @@ fn ec_constructs: MModule {
   b.assign(b.pl(a), b.rv_addr(b.pl(r)))
   b.call(s, "avant_str_from_int", ec1(b.c_i64(777)))
   b.call(-1, "av.main/Rec.set", ec2(b.copy_local(a), b.copy_local(s)))
-  b.assign(b.pl(s), b.rv_zero)
+  b.assign(b.pl(s), b.rv_zero())
   b.call(-1, "avant_gc_collect", ec0())
   b.assign(b.pl(s), b.rv_use(b.copy(b.field(b.pl(r), 0))))
   ec_print(b, "%s\n", ec1(b.copy_local(s)))
@@ -344,11 +345,11 @@ fn ec_traps: MModule {
   x = b.local(mt_i32(), "x")
   d = b.local(mt_i32(), "d")
   ec_prologue(b)
-  t1 = b.block
-  t2 = b.block
-  t3 = b.block
-  t4 = b.block
-  done = b.block
+  t1 = b.block()
+  t2 = b.block()
+  t3 = b.block()
+  t4 = b.block()
+  done = b.block()
   vals: Array(Int) = []
   vals.push(2)
   vals.push(3)

@@ -9,8 +9,9 @@
 #include <string.h>
 #include <time.h>
 
-/* Threads stop at safepoints (Stage 28 W17a, gc-design.md section 4.4;
- * closes D191's window). Every registered thread is in one of three
+/* Threads stop at safepoints, so no thread's C
+ * code runs while a collection moves what it holds. Every registered
+ * thread is in one of three
  * states (ThreadReg.state):
  *
  *   running      it may read and write the heap; it stops only at a
@@ -35,11 +36,11 @@
  * collection), so a thread that registers during a collection waits for
  * its end.
  *
- * The five no-deadlock rules (section 4.4) as kept here:
+ * The five no-deadlock rules, as kept here:
  *   1. The collector holds no runtime lock while it waits: gc_collect
  *      releases the world lock before gc_stop_world, and hs_mu is
- *      released by the condition wait (barriers take no lock since
- *      Stage 28 W17b: per-thread remembered buffers).
+ *      released by the condition wait (barriers take no lock:
+ *      per-thread remembered buffers).
  *   2. A thread blocked in a runtime wait is native (gc_lock,
  *      gc_cond_wait, avant_gc_native_begin/end around the pool's, the
  *      join's, .parallel's, the gates' and the I/O waits). A brief lock
@@ -55,7 +56,7 @@
  *      native between callbacks: its outermost avant_gc_leave begins a
  *      native region and its next avant_gc_enter ends it.
  *   5. Leaf functions do not poll (V15): the wait for a numeric leaf
- *      loop is measured (pause_hs_max_ns) and accepted (Q13).
+ *      loop is measured (pause_hs_max_ns) and accepted.
  *
  * The flag and the states use sequentially consistent atomics, so a
  * thread that turns running sees a request raised before the collector
@@ -106,7 +107,7 @@ void avant_gc_poll(void) {
 static int others_running(void);
 static uint64_t hs_stall_reports;
 
-/* AVANT_GC_VERIFY=1 (Stage 28 W18C, O125): the handshake has waited
+/* AVANT_GC_VERIFY=1: the handshake has waited
  * gc_heap.set.stall_ms for the threads still running. Each is reported
  * with its kernel thread id, its name, and its innermost Avant frame (the
  * innermost generated function's frame record on its chain, and what
@@ -173,7 +174,11 @@ static void hs_report_stalled(uint64_t waited_ns) {
 }
 
 /* The handshake's wait under the verifier: the condition wait with a
- * deadline, a report at every stall_ms waited. Under hs_mu. */
+ * deadline, a report at every stall_ms waited. The deadline is on
+ * CLOCK_MONOTONIC, hs_stopped_cv's clock (gc_heap_static_init): it used
+ * to be read from CLOCK_REALTIME,
+ * so a step of the wall clock during a stall moved the next report (a
+ * step forward of an hour held it back by an hour). Under hs_mu. */
 static void hs_wait_verify(uint64_t t0) {
   uint64_t step = gc_heap.set.stall_ms * 1000000ull;
   uint64_t next = t0 + step;
@@ -184,13 +189,8 @@ static void hs_wait_verify(uint64_t t0) {
       hs_report_stalled(now - t0);
       next = now + step;
     }
-    clock_gettime(CLOCK_REALTIME, &ts);
-    {
-      uint64_t left = next - now;
-      uint64_t ns = (uint64_t)ts.tv_nsec + left % 1000000000ull;
-      ts.tv_sec += (time_t)(left / 1000000000ull + ns / 1000000000ull);
-      ts.tv_nsec = (long)(ns % 1000000000ull);
-    }
+    ts.tv_sec = (time_t)(next / 1000000000ull);
+    ts.tv_nsec = (long)(next % 1000000000ull);
     pthread_cond_timedwait(&gc_heap.hs_stopped_cv, &gc_heap.hs_mu, &ts);
   }
 }
@@ -243,6 +243,53 @@ int gc_stop_world(void) {
   return 1;
 }
 
+/* A collection's handshake without the world lock's round trip: a
+ * stress collection's, and every collection of a program with one thread
+ * (gc_collect). The caller holds the world lock. When no other thread
+ * is running (each is native or stopped at a safepoint), there is
+ * nothing to wait for, so rule 1 (no runtime lock
+ * held while the collector waits) does not ask for the world lock to be
+ * released: the request is raised under hs_mu and the collection runs at
+ * once. Releasing it anyway, as gc_stop_world's caller must, handed it to
+ * a thread blocked on it in gc_lock (native while it waits): that thread
+ * turned running, met the request, gave the lock back and waited on
+ * hs_resume_cv until this collection's end, a condition-variable round
+ * trip and two lock hand-offs per collection (runtime_roots.av under the
+ * stress mode: 96% of its 966,833 collections found no thread running).
+ * Returns 1 with the request held (gc_resume_world ends it), as
+ * gc_stop_world does; 0 when another thread holds the request or one is
+ * running, with nothing changed (the request raised for the check is
+ * dropped and its waiters woken), and the caller takes the full
+ * handshake. The request is raised before the states are read, as in
+ * gc_stop_world (Dekker: a thread that turns running after the read sees
+ * it and waits at its safepoint; it holds no world lock, since this
+ * thread does). */
+int gc_stop_world_held(void) {
+  int others;
+  pthread_mutex_lock(&gc_heap.hs_mu);
+  if (atomic_load(&avant_gc_requested)) {
+    pthread_mutex_unlock(&gc_heap.hs_mu);
+    return 0;
+  }
+  atomic_store(&avant_gc_requested, 1);
+  if (others_running()) {
+    atomic_store(&avant_gc_requested, 0);
+    pthread_cond_broadcast(&gc_heap.hs_resume_cv);
+    pthread_mutex_unlock(&gc_heap.hs_mu);
+    return 0;
+  }
+  gc_thread.collector = 1;
+  others = gc_heap.threads && (gc_heap.threads != &gc_thread.reg || gc_heap.threads->next);
+  if (others) {
+    /* A handshake that waited for nothing, counted as gc_stop_world
+     * counts one (AVANT_GC_STATS' handshakes), and as held. */
+    gc_heap.ctr.pause.hs_n++;
+    gc_heap.ctr.pause.hs_held++;
+  }
+  pthread_mutex_unlock(&gc_heap.hs_mu);
+  return 1;
+}
+
 void gc_resume_world(void) {
   pthread_mutex_lock(&gc_heap.hs_mu);
   gc_thread.collector = 0;
@@ -279,11 +326,11 @@ void gc_thread_registered(int foreign) {
    * inline path, avant_alloc's unlocked fast path), which read the shared
    * flag before it was set; after its safepoint it takes the locked path.
    * Without this a new thread's first allocation could race with it
-   * (found by W17a's rule 4 proof: "object too large" under
+   * (found by the handshake's proof of rule 4: "object too large" under
    * AVANT_GC_VERIFY=1, a corrupted header). While it is stopped its
-   * single-mutator inline state (avant_gc_fast_ok 1, whose path counts
-   * without a lock) is cleared: from now on a thread bumps only in a hole
-   * the slow path charged to it (Stage 28 W17b). */
+   * single-mutator inline state (state 1, whose allocations are
+   * counted from its cursor, without a lock) is cleared: from now on a thread bumps only in a hole
+   * the slow path charged to it. */
   if (became_shared && gc_stop_world()) {
     gc_alloc_shared_now();
     gc_resume_world();
@@ -314,7 +361,7 @@ void gc_thread_unregistering(void) {
 }
 
 /* A registered thread that is exiting (the thread-exit hook,
- * avant_gc_roots.c, Stage 28 W17c) leaves whatever state it exited in for
+ * avant_gc_roots.c) leaves whatever state it exited in for
  * running, so it can unregister as avant_gc_unregister_thread does: a
  * no-GC region and native regions are closed (a foreign thread is native
  * between callbacks, rule 4). Ending the native region waits while a

@@ -5,7 +5,7 @@ fn tree_fixture: String {
 }
 
 fn churn_fixture: String {
-  "lib gc {\n  fun avant_gc_collect()\n}\n\nclass Link {\n  v: Int\n  next: Link?\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn main: Int {\n  first = Link.new(0)\n  prev = first\n  i = 1\n  while i < 5000 {\n    n = Link.new(i)\n    prev.next = n\n    prev = n\n    i = i + 1\n  }\n  prev.next = first\n  gc.avant_gc_collect()\n  sum = 0\n  cur = first\n  i = 0\n  while i < 5000 {\n    sum = sum &+ cur.v\n    if nxt = cur.next {\n      cur = nxt\n    }\n    i = i + 1\n  }\n  puts(sum)\n  a: Array(Int) = []\n  i = 0\n  while i < 100000 {\n    a.push(i)\n    i = i + 1\n  }\n  gc.avant_gc_collect()\n  s2 = 0\n  i = 0\n  while i < a.size {\n    s2 = s2 &+ a[i]\n    i = i + 1\n  }\n  puts(s2)\n  s = \"\"\n  i = 0\n  while i < 2000 {\n    s = s + \"x\"\n    i = i + 1\n  }\n  puts(s.size)\n  0\n}\n"
+  "lib gc {\n  fun avant_gc_collect\n}\n\nclass Link {\n  v: Int\n  next: Link?\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn main: Int {\n  first = Link.new(0)\n  prev = first\n  i = 1\n  while i < 5000 {\n    n = Link.new(i)\n    prev.next = n\n    prev = n\n    i = i + 1\n  }\n  prev.next = first\n  gc.avant_gc_collect()\n  sum = 0\n  cur = first\n  i = 0\n  while i < 5000 {\n    sum = sum &+ cur.v\n    if nxt = cur.next {\n      cur = nxt\n    }\n    i = i + 1\n  }\n  puts(sum)\n  a: Array(Int) = []\n  i = 0\n  while i < 100000 {\n    a.push(i)\n    i = i + 1\n  }\n  gc.avant_gc_collect()\n  s2 = 0\n  i = 0\n  while i < a.size {\n    s2 = s2 &+ a[i]\n    i = i + 1\n  }\n  puts(s2)\n  s = \"\"\n  i = 0\n  while i < 2000 {\n    s = s + \"x\"\n    i = i + 1\n  }\n  puts(s.size)\n  0\n}\n"
 }
 
 fn roots_fixture: String {
@@ -17,7 +17,7 @@ fn roots_line_fixture: String {
 }
 
 fn alloc_fixture: String {
-  "lib gc {\n  fun avant_gc_collect_young()\n}\n\nclass Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  a = 0\n  if l = n.left {\n    a = check(l, depth - 1)\n  }\n  b = 0\n  if r = n.right {\n    b = check(r, depth - 1)\n  }\n  a &+ b &+ n.item\n}\n\nfn bump_sum(depth: Int): Int {\n  check(make(0, depth), depth)\n}\n\nfn main: Int {\n  root = make(0, 12)\n  sum = 0\n  i = 0\n  while i < 40 {\n    fresh = make(i, 10)\n    root.left = fresh\n    root.right = make(i + 1, 10)\n    sum = sum &+ check(fresh, 10)\n    sum = sum &+ bump_sum(12)\n    xs: Array(Int) = []\n    j = 0\n    while j < 2000 {\n      xs.push(j * i)\n      j = j + 1\n    }\n    sum = sum &+ xs[1999]\n    gc.avant_gc_collect_young()\n    i = i + 1\n  }\n  sum = sum &+ check(root, 12)\n  puts(sum)\n  0\n}\n"
+  "lib gc {\n  fun avant_gc_collect_young\n}\n\nclass Node {\n  item: Int\n  left: Node?\n  right: Node?\n  fn initialize(item: Int) {\n    self.item = item\n  }\n}\n\nfn make(item: Int, depth: Int): Node {\n  n = Node.new(item)\n  if depth > 0 {\n    n.left = make(item &* 2, depth - 1)\n    n.right = make(item &* 2 &+ 1, depth - 1)\n  }\n  n\n}\n\nfn check(n: Node, depth: Int): Int {\n  if depth == 0 {\n    return n.item\n  }\n  a = 0\n  if l = n.left {\n    a = check(l, depth - 1)\n  }\n  b = 0\n  if r = n.right {\n    b = check(r, depth - 1)\n  }\n  a &+ b &+ n.item\n}\n\nfn bump_sum(depth: Int): Int {\n  check(make(0, depth), depth)\n}\n\nfn main: Int {\n  root = make(0, 12)\n  sum = 0\n  i = 0\n  while i < 40 {\n    fresh = make(i, 10)\n    root.left = fresh\n    root.right = make(i + 1, 10)\n    sum = sum &+ check(fresh, 10)\n    sum = sum &+ bump_sum(12)\n    xs: Array(Int) = []\n    j = 0\n    while j < 2000 {\n      xs.push(j * i)\n      j = j + 1\n    }\n    sum = sum &+ xs[1999]\n    gc.avant_gc_collect_young()\n    i = i + 1\n  }\n  sum = sum &+ check(root, 12)\n  puts(sum)\n  0\n}\n"
 }
 
 fn frontier_fixture: String {
@@ -25,7 +25,7 @@ fn frontier_fixture: String {
 }
 
 fn defrag_fixture: String {
-  "lib gc {\n  fun avant_gc_collect()\n}\nclass Chunk {\n  v: Int\n  f1: Int\n  f2: Int\n  f3: Int\n  f4: Int\n  f5: Int\n  f6: Int\n  f7: Int\n  f8: Int\n  f9: Int\n  f10: Int\n  f11: Int\n  f12: Int\n  f13: Int\n  f14: Int\n  f15: Int\n  f16: Int\n  f17: Int\n  f18: Int\n  f19: Int\n  f20: Int\n  f21: Int\n  f22: Int\n  f23: Int\n  f24: Int\n  f25: Int\n  f26: Int\n  f27: Int\n  f28: Int\n  f29: Int\n  f30: Int\n  fn initialize(v: Int) {\n    self.v = v\n    self.f30 = v\n  }\n}\nclass Spur {\n  v: Int\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\nfn churn(rounds: Int, seed: Int): Int {\n  sum = 0\n  r = 0\n  while r < rounds {\n    i = 0\n    while i < 5000 {\n      t = Spur.new(seed &+ r &* 5000 &+ i)\n      sum = sum &+ t.v\n      i = i + 1\n    }\n    r = r + 1\n  }\n  sum\n}\nfn build_pruned(warm: Int): Array(Chunk) {\n  flat: Array(Chunk) = []\n  i = 0\n  while i < 8192 {\n    flat.push(Chunk.new(i &+ 1))\n    i = i + 1\n  }\n  warm2 = warm &+ churn(12, 7)\n  keep: Array(Chunk) = []\n  j = 0\n  while j < flat.size {\n    if j % 8 == 0 {\n      keep.push(flat[j])\n    }\n    j = j + 1\n  }\n  if warm2 == 424242 {\n    puts(flat.size)\n  }\n  keep\n}\nfn main: Int {\n  flat = build_pruned(0)\n  gc.avant_gc_collect()\n  gc.avant_gc_collect()\n  warm = churn(2, 13)\n  gc.avant_gc_collect()\n  total = warm &+ flat.size\n  k = 0\n  while k < flat.size {\n    total = total &+ flat[k].v &+ flat[k].f30\n    k = k + 1\n  }\n  puts(total)\n  0\n}\n"
+  "lib gc {\n  fun avant_gc_collect\n}\nclass Chunk {\n  v: Int\n  f1: Int\n  f2: Int\n  f3: Int\n  f4: Int\n  f5: Int\n  f6: Int\n  f7: Int\n  f8: Int\n  f9: Int\n  f10: Int\n  f11: Int\n  f12: Int\n  f13: Int\n  f14: Int\n  f15: Int\n  f16: Int\n  f17: Int\n  f18: Int\n  f19: Int\n  f20: Int\n  f21: Int\n  f22: Int\n  f23: Int\n  f24: Int\n  f25: Int\n  f26: Int\n  f27: Int\n  f28: Int\n  f29: Int\n  f30: Int\n  fn initialize(v: Int) {\n    self.v = v\n    self.f30 = v\n  }\n}\nclass Spur {\n  v: Int\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\nfn churn(rounds: Int, seed: Int): Int {\n  sum = 0\n  r = 0\n  while r < rounds {\n    i = 0\n    while i < 5000 {\n      t = Spur.new(seed &+ r &* 5000 &+ i)\n      sum = sum &+ t.v\n      i = i + 1\n    }\n    r = r + 1\n  }\n  sum\n}\nfn build_pruned(warm: Int): Array(Chunk) {\n  flat: Array(Chunk) = []\n  i = 0\n  while i < 8192 {\n    flat.push(Chunk.new(i &+ 1))\n    i = i + 1\n  }\n  warm2 = warm &+ churn(12, 7)\n  keep: Array(Chunk) = []\n  j = 0\n  while j < flat.size {\n    if j % 8 == 0 {\n      keep.push(flat[j])\n    }\n    j = j + 1\n  }\n  if warm2 == 424242 {\n    puts(flat.size)\n  }\n  keep\n}\nfn main: Int {\n  flat = build_pruned(0)\n  gc.avant_gc_collect()\n  gc.avant_gc_collect()\n  warm = churn(2, 13)\n  gc.avant_gc_collect()\n  total = warm &+ flat.size\n  k = 0\n  while k < flat.size {\n    total = total &+ flat[k].v &+ flat[k].f30\n    k = k + 1\n  }\n  puts(total)\n  0\n}\n"
 }
 
 fn sizing_fixture: String {
@@ -33,7 +33,7 @@ fn sizing_fixture: String {
 }
 
 fn leaf_method_fixture: String {
-  "struct Pair {\n  a: Int\n  b: Int\n  fn sum: Int {\n    self.a + self.b\n  }\n  fn scaled(k: Int): Int {\n    (self.a + self.b) * k\n  }\n}\n\nstruct Named {\n  s: String\n  n: Int\n  fn total: Int {\n    self.n + self.s.size\n  }\n}\n\nclass Box {\n  v: Int\n  fn initialize(v: Int) {\n    self.v = v\n  }\n  fn get: Int {\n    self.v\n  }\n}\n\nfn main: Int {\n  p = Pair { a: 3, b: 4 }\n  named = Named { s: \"abcd\", n: 5 }\n  box = Box.new(42)\n  junk: Array(String) = []\n  acc = 0\n  i = 0\n  while i < 20000 {\n    acc = acc + p.sum + p.scaled(2) + named.total + box.get\n    junk.push(\"abcdefghij\")\n    if junk.size > 4000 {\n      junk.clear\n    }\n    i = i + 1\n  }\n  puts(acc)\n  puts(named.s)\n  0\n}\n"
+  "struct Pair {\n  a: Int\n  b: Int\n  fn sum: Int {\n    self.a + self.b\n  }\n  fn scaled(k: Int): Int {\n    (self.a + self.b) * k\n  }\n}\n\nstruct Named {\n  s: String\n  n: Int\n  fn total: Int {\n    self.n + self.s.size\n  }\n}\n\nclass Box {\n  v: Int\n  fn initialize(v: Int) {\n    self.v = v\n  }\n  fn get: Int {\n    self.v\n  }\n}\n\nfn main: Int {\n  p = Pair { a: 3, b: 4 }\n  named = Named { s: \"abcd\", n: 5 }\n  box = Box.new(42)\n  junk: Array(String) = []\n  acc = 0\n  i = 0\n  while i < 20000 {\n    acc = acc + p.sum() + p.scaled(2) + named.total() + box.get()\n    junk.push(\"abcdefghij\")\n    if junk.size > 4000 {\n      junk.clear()\n    }\n    i = i + 1\n  }\n  puts(acc)\n  puts(named.s)\n  0\n}\n"
 }
 
 fn literal_fixture: String {
@@ -49,9 +49,9 @@ fn run_with_env(bin: String, name: String, value: String, log: String): Int {
 
 fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log: String): Int {
   args: Array(String) = []
-  // Under an outer AVANT_GC_STRESS a verifier run leaves the stress mode
-  // out (a whole-heap check at a collection per allocation; W14b1;
-  // VALK-TM, O602, measured with it kept: this file 72 s, 16 s without).
+  // Under an outer AVANT_GC_STRESS a verifier run leaves the stress
+  // mode out (a whole-heap check at a collection per allocation,
+  // measured with it kept: this file 72 s, 16 s without).
   if gc_stress_outer() && (n1 == "AVANT_GC_VERIFY" || n2 == "AVANT_GC_VERIFY") {
     args.push("-u")
     args.push("AVANT_GC_STRESS")
@@ -62,7 +62,7 @@ fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, lo
   process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
-// The fixtures' checksums wrap with &+ and &*: since Stage 29 W-INT1 they
+// The fixtures' checksums wrap with &+ and &*: since Int became 64-bit they
 // wrap at Int's 64 bits, so each is the exact sum (its low 32 bits are the
 // 32-bit value it was before).
 fn test_gc_behavior(c: Checks) {
@@ -86,8 +86,8 @@ fn test_gc_behavior(c: Checks) {
     // A 1 MB young space forces hundreds of young collections through
     // the build. A mature tree interior that tenured together with its
     // children used to become invisible to later young collections, and
-    // its fields kept pointing at from-space addresses (F1 in
-    // avant-ledgers/archive/experiments/gc-baseline-2026-11-03.md): this run segfaulted.
+    // its fields kept pointing at from-space addresses (found by an early
+    // collector baseline): this run segfaulted.
     log2 = "${scratch()}/gcb-${stamp}.run2"
     rc2 = run_with_env(bin, "AVANT_YOUNG_MB", "1", log2)
     c.eq_int(rc2, 0, "trees survive at 1 MB young size")
@@ -127,7 +127,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read churn small-young run")
     }
-    // Rooting survives cheap registration (Collector II Wave 0): many
+    // Rooting survives cheap registration: many
     // pointer locals and one optional local stay live across collecting
     // calls in a loop while fresh trees churn through the nursery. If a
     // live local stops being registered as a root, the small-young run
@@ -157,8 +157,8 @@ fn test_gc_behavior(c: Checks) {
     // Registration lands at frame entry, before any collecting call in
     // the entry block: pick is one straight-line block, so a batch
     // planted at the end of that block would run after its frame left
-    // and publish its slots into the caller's frame (Collector II
-    // Wave 0 regression shape, first seen on Graph::BFS).
+    // and publish its slots into the caller's frame (an early
+    // regression's shape, first seen on Graph::BFS).
     src4 = "${scratch()}/gcb-${stamp}-rootsline.av"
     bin4 = "${scratch()}/gcb-${stamp}-rootsline.bin"
     c.wrote(file_write(src4, roots_line_fixture()), "write roots-line fixture")
@@ -181,7 +181,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read roots-line small-young run")
     }
-    // Allocation and barrier fast paths (Collector II Wave 1): young
+    // Allocation and barrier fast paths: young
     // trees are stored into a mature root (the barrier frontier), bump
     // arena trees are reclaimed in a loop, and arrays grow through the
     // nursery. A fast path that skips the barrier, the payload zeroing,
@@ -192,10 +192,10 @@ fn test_gc_behavior(c: Checks) {
     code5 = compile_av(compiler, src5, bin5, "${scratch()}/gcb-${stamp}-alloc.clog")
     c.eq_int(code5, 0, "compile alloc fixture")
     want5 = "1679073713\n"
-    // The fixture's trees were bump arena trees until Stage 29 W1a
-    // removed the form (D298; they needed AVANT_NURSERY=1, since a bump
-    // gave nil without the nursery); they are built with Node.new now, so
-    // an outer GC environment applies to these runs too.
+    // The fixture's trees were bump arena trees until the language
+    // removed the form (they needed AVANT_NURSERY=1, since a bump
+    // gave nil without the nursery); they are built with Node.new
+    // now, so an outer GC environment applies to these runs too.
     log10 = "${scratch()}/gcb-${stamp}.run10"
     rc10 = run_av_bin(bin5, log10)
     c.eq_int(rc10, 0, "alloc and barrier paths survive at default young size")
@@ -212,11 +212,11 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read alloc small-young run")
     }
-    // Remembered set as a dirty frontier (Collector II Wave 2): a
+    // Remembered set as a dirty frontier: a
     // tenured graph is dirtied whole, then only a strided subset is
     // re-dirtied while nursery churn forces young collections. An
     // eviction that loses a young edge leaves a mature field pointing
-    // at from-space (the F1 shape), which breaks this checksum or
+    // at from-space (the shape above), which breaks this checksum or
     // segfaults at the small young size; the checksum is identical
     // with the frontier disabled and under every frontier policy.
     src6 = "${scratch()}/gcb-${stamp}-frontier.av"
@@ -241,7 +241,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read frontier small-young run")
     }
-    // Mature defragmentation (Collector II Wave 3): a tenured set of
+    // Mature defragmentation: a tenured set of
     // one-line objects is pruned to every 8th survivor inside a helper
     // whose frame is gone before explicit full collections, so the
     // mature blocks sit at 33-64 of 128 live lines. A defragmenting
@@ -279,7 +279,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read defrag nursery-off run")
     }
-    // Survival-capped growth (Collector II Wave 4): retained trees grow
+    // Survival-capped growth: retained trees grow
     // in steps while fresh trees churn and die around them. Whatever
     // the young threshold does, retained trees must stay reachable and
     // read back with the same values; a sizing or reserve bug that
@@ -361,8 +361,8 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read literal small-young run")
     }
-    // Q123-A: no reference may be lost by a young copy. The verifier
-    // prints any report on stderr (since Stage 28 W16b its
+    // No reference may be lost by a young copy. The verifier
+    // prints any report on stderr (with its
     // lost-reference check: a root or field naming freed memory, or an
     // access to a block a collection freed), which the run log captures,
     // so an exact-output match is the zero-report assertion.
@@ -386,5 +386,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_gc_behavior(c)
-  c.finish
+  c.finish()
 }

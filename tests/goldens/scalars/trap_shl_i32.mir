@@ -1,8 +1,7 @@
 module trap_shl_i32
 file 0 "trap_shl_i32.av"
 
-const str.0 = "%d\0A"
-const str.1 = "not reached"
+const str.0 = "not reached"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -11,9 +10,9 @@ typemap 1023 %Hash stride 0 bits [0x7]
 extern __avant_type_maps() -> void never
 extern avant_clock_us() -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_trap_shift(i64, i32) -> void never noreturn
-extern printf(ref str, ...) -> i32 never
 
 fn av.trap_shl_i32/opaque(_1: i64) -> i64 leaf @trap_shl_i32.av:5:1 {
   let _0: i64
@@ -58,10 +57,12 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @trap_shl_i32.av:14:1 {
   let _9: i32
   let _10: i32
   let _11: i64
-  let _12: u64
-  let _13: bool
-  let _14: i32
+  let _12: i64
+  let _13: u64
+  let _14: bool
   let _15: i32
+  let _16: i32
+  let _17: i64
 
 bb0:
   gc.enter   @14:1
@@ -83,21 +84,23 @@ bb1:
 bb2:
   _9 = cast copy _6 to i32   @17:12
   _10 = shl copy _5, copy _9   @17:12
-  call printf(const str.0, copy _10) nocollect   @17:3
-  _11 = add.chk const i64 32, copy _4   @18:19
-  _12 = cast copy _11 to u64   @18:12
-  _13 = gt copy _12, const u64 31   @18:12
-  branch copy _13, bb3, bb4   @18:12
+  _11 = cast copy _10 to i64   @17:3
+  call avant_puts_i64(copy _11) nocollect   @17:3
+  _12 = add.chk const i64 32, copy _4   @18:19
+  _13 = cast copy _12 to u64   @18:12
+  _14 = gt copy _13, const u64 31   @18:12
+  branch copy _14, bb3, bb4   @18:12
 
 bb3:
-  call avant_trap_shift(copy _11, const i32 17) nocollect   @18:12
+  call avant_trap_shift(copy _12, const i32 17) nocollect   @18:12
   unreachable   @18:12
 
 bb4:
-  _14 = cast copy _11 to i32   @18:12
-  _15 = shl copy _5, copy _14   @18:12
-  call printf(const str.0, copy _15) nocollect   @18:3
-  call avant_puts_str(const str.1) nocollect   @19:3
+  _15 = cast copy _12 to i32   @18:12
+  _16 = shl copy _5, copy _15   @18:12
+  _17 = cast copy _16 to i64   @18:3
+  call avant_puts_i64(copy _17) nocollect   @18:3
+  call avant_puts_str(const str.0) nocollect   @19:3
   _0 = const i32 0   @14:1
   gc.leave   @14:1
   return   @14:1

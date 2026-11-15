@@ -1,0 +1,201 @@
+// Printing: one text for every
+// scalar, the one interpolation and puts print.
+//
+//   - `x.to_s` of an integer, a Float64, a Bool or a String is the
+//     expression "${x}": the checker rewrites the call into that
+//     interpolation, so the two can never differ;
+//   - a union of printable members (integers, Float64, Bool, String, an
+//     enum, a type marked Error) prints its member: "${u}" becomes a
+//     switch over the members, each arm printing its own value, built
+//     and checked once here; a union that holds nil is an optional, and
+//     an optional is opened before it is printed (as == does).
+
+import location
+import type
+import ast
+import typed_ir
+import token
+import checker.names
+import checker
+
+// `recv.to_s` on a value that prints: the interpolation "${recv}",
+// written into expr in place (a scalar's receiver is checked already; any
+// other is checked as an interpolation part).
+pub fn (checker_self: Checker) scalar_to_s(expr: Expr, object: Ty): Ty {
+  if b = expr.block {
+    checker_self.fail(expr.loc, "${object.show()}.to_s does not take a block")
+    return checker_self.t_string()
+  }
+  if expr.args.size != 0 {
+    checker_self.fail(expr.loc, "${object.show()}.to_s takes no arguments")
+    return checker_self.t_string()
+  }
+  if recv = expr.receiver {
+    part = InterpPart.new()
+    part.expr = recv
+    parts: Array(InterpPart) = []
+    parts.push(part)
+    expr.kind = ex_interp()
+    expr.parts = parts
+    expr.receiver = nil
+    expr.callee = ""
+    expr.method_call = false
+    if !(object.is_integer() || object.is_float() || object.is_bool() || object.is_string()) {
+      // An enum's name, an error's text, a union's member: what
+      // interpolation makes of the value.
+      return checker_self.check_interp(expr)
+    }
+  }
+  checker_self.t_string()
+}
+
+// Whether a union's member prints by interpolation.
+pub fn text_member_ok(m: Ty): Bool {
+  m.is_integer() || m.is_float() || m.is_bool() || m.is_string() || m.is_enum() || m.error_mark
+}
+
+// The text of a union value inner (checked, of type ty): the switch
+// `switch inner { case __avant_v: M { "${__avant_v}" } ... }`, checked
+// with ty as its discriminant (inner is not checked again); nil, with an
+// error given, when a member does not print.
+pub fn (checker_self: Checker) union_text(inner: Expr, ty: Ty): Expr? {
+  if ty.includes_nil() {
+    checker_self.fail(inner.loc, "cannot interpolate ${ty.show()}: it holds nil; ${checker_self.open_text(inner)}")
+    return nil
+  }
+  for m in ty.members {
+    if !text_member_ok(m) {
+      checker_self.fail(inner.loc, "cannot interpolate ${ty.show()}: its member ${m.show()} has no text")
+      return nil
+    }
+  }
+  sw = Expr.new(ex_switch(), inner.loc)
+  sw.cond = inner
+  for m2 in ty.members {
+    label = CaseLabel.new(lb_type(), inner.loc)
+    label.tname = ty_to_type_name(m2, inner.loc)
+    label.bind = "__avant_v"
+    arm = SwitchCase.new(inner.loc)
+    arm.labels.push(label)
+    v = Expr.new(ex_name(), inner.loc)
+    v.ident = "__avant_v"
+    part = InterpPart.new()
+    part.expr = v
+    text = Expr.new(ex_interp(), inner.loc)
+    text.parts.push(part)
+    arm.body.push(stmt_expr(inner.loc, text))
+    sw.cases.push(arm)
+  }
+  checker_self.switch_pre = ty
+  checker_self.check_expr_as(sw, checker_self.t_string())
+  sw
+}
+
+// The text of an error value inner (checked, of type ty, marked Error):
+// the call of the method the parser added to the type
+// (parser.av error_text_method), checked; nil when it cannot be found.
+pub fn (checker_self: Checker) error_text_call(inner: Expr, ty: Ty): Expr? {
+  fa = Expr.new(ex_field(), inner.loc)
+  fa.object = inner
+  fa.ident = "__avant_error_text"
+  arg_tys: Array(Ty) = []
+  none: Ty? = nil
+  if sig = checker_self.match_method(ty.name, fa.ident, arg_tys, none, inner.loc, ty.name, ty.mod_name, checker_self.no_int_literals()) {
+    fa.method_call = true
+    fa.resolved = sig.node.emit_name
+    fa.ty = sig.ret
+    return fa
+  }
+  nil
+}
+
+// The four writers: puts and print to stdout, eputs and eprint to
+// stderr, the two ending in `puts` with a newline. x is anything
+// interpolation prints, and the writer prints exactly what "${x}"
+// prints: a scalar is written by the writer itself; any other value is
+// first rewritten here into the String its interpolation gives (an
+// enum's name, an error's text, a union's member), checked once.
+// `puts()` and `eputs()` write an empty line.
+pub fn (checker_self: Checker) check_output_call(expr: Expr): Ty {
+  name = expr.callee
+  if b = expr.block {
+    checker_self.fail(expr.loc, "${name} does not take a block")
+    return checker_self.t_void()
+  }
+  line = name == "puts" || name == "eputs"
+  if expr.args.size == 0 && line {
+    return checker_self.t_void()
+  }
+  if expr.args.size != 1 {
+    if line {
+      checker_self.fail(expr.loc, "${name} takes one argument, or none for an empty line")
+    } else {
+      checker_self.fail(expr.loc, "${name} takes one argument")
+    }
+    return checker_self.t_void()
+  }
+  arg = expr.args[0]
+  printed = checker_self.check_expr(arg)
+  if printed.is_integer() || printed.is_string() || printed.is_float() || printed.is_bool() {
+    return checker_self.t_void()
+  }
+  if checker_self.has_err() {
+    return checker_self.t_void()
+  }
+  if (printed.is_agg() || printed.is_enum()) && !printed.error_mark && checker_self.user_op(printed, "to_s") {
+    // A type that defines `fn to_s: String` prints its text, as in
+    // interpolation.
+    if own = checker_self.own_text_call(arg, printed) {
+      expr.args[0] = own
+    }
+    return checker_self.t_void()
+  }
+  if printed.is_enum() {
+    // An enum prints its member's name (an error enum: its message).
+    if call = checker_self.enum_text_call(arg, printed) {
+      expr.args[0] = call
+    }
+    return checker_self.t_void()
+  }
+  if printed.is_union() {
+    if printed.includes_nil() {
+      checker_self.fail(arg.loc, "${name} cannot print ${printed.show()}: it holds nil; ${checker_self.open_text(arg)}")
+      return checker_self.t_void()
+    }
+    for m in printed.members {
+      if !text_member_ok(m) {
+        checker_self.fail(arg.loc, "${name} cannot print ${printed.show()}: its member ${m.show()} has no text")
+        return checker_self.t_void()
+      }
+    }
+    if sw = checker_self.union_text(arg, printed) {
+      expr.args[0] = sw
+    }
+    return checker_self.t_void()
+  }
+  if printed.error_mark {
+    if fa = checker_self.error_text_call(arg, printed) {
+      expr.args[0] = fa
+    }
+    return checker_self.t_void()
+  }
+  checker_self.fail(arg.loc, "${name} cannot print ${printed.show()}")
+  checker_self.t_void()
+}
+
+// exit(status): one Int, the process's exit status (0..255, checked when
+// it runs). It never returns, so a block that ends with it leaves
+// (ast_is_exit_call).
+pub fn (checker_self: Checker) check_exit_call(expr: Expr): Ty {
+  if b = expr.block {
+    checker_self.fail(expr.loc, "exit does not take a block")
+    return checker_self.t_void()
+  }
+  if expr.args.size != 1 {
+    checker_self.fail(expr.loc, "exit takes one Int, the exit status")
+    return checker_self.t_void()
+  }
+  // A status of another type is the mismatch check_expr_as reports.
+  checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+  checker_self.t_void()
+}

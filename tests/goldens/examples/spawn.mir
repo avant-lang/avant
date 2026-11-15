@@ -1,17 +1,30 @@
 module spawn shared
 file 0 "spawn.av"
+file 1 "<task>"
 
-const str.0 = "%lld\0A"
+layout %task.TaskError = class { 0 what: ref str, 1 site: ref str }  size 16 align 8 id 1
+layout %(Int|task.TaskError) = union { 0 tag: i32, 1 m0: i64, 2 m1: ref %task.TaskError }  size 24 align 8
+
+const str.0 = "the task trapped: "
+const str.1 = " at "
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1 %task.TaskError stride 0 bits [0x3]
 
 extern __avant_type_maps() -> void never
+extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_exit(i32) -> void never noreturn
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_join(ref) -> i64 collects
+extern avant_join_site(ref) -> ref str never
+extern avant_join_what(ref) -> ref str never
+extern avant_puts_i64(i64) -> void never
+extern avant_puts_str(ref str) -> void never
 extern avant_spawn(ptr, ref) -> ref collects
-extern printf(ref str, ...) -> i32 never
+extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_size(ref str) -> i64 never
 
 fn av.spawn/six_times_seven() -> i64 leaf @spawn.av:1:1 {
   let _0: i64
@@ -28,22 +41,195 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @spawn.av:5:1 {
   let _1 (argc): i32
   let _2 (argv): ptr slot
   let _3: ref
-  let _4 (h): ref slot
-  let _5: i64
+  let _4 (h): ref
+  let _5: ref slot
+  let _6: i64
+  let _7: i64
+  let _8: ref str
+  let _9: %(Int|task.TaskError)
+  let _10: bool
+  let _11: %(Int|task.TaskError)
+  let _12: ref str
+  let _13: %(Int|task.TaskError)
+  let _14: i64
+  let _15: i32
+  let _16: bool
+  let _17: ref %task.TaskError
+  let _18 (e): ref %task.TaskError
+  let _19: ref str
+  let _20: i64
+  let _21 (v): i64
 
 bb0:
-  _4 = zero   @5:1
+  _5 = zero   @5:1
   gc.enter   @5:1
-  gc.roots _2, _4   @5:1
+  gc.roots _2, _5   @5:1
   call __avant_type_maps() nocollect   @5:1
   call avant_io_init_argv(copy _1, copy _2) collects   @5:1
   _3 = call avant_spawn(const fn av.spawn/main#spawn1, const ref null) collects   @6:7
   _4 = copy _3   @6:5
-  _5 = call avant_join(copy _4) collects   @7:9
-  call printf(const str.0, copy _5) nocollect   @7:3
+  _5 = copy _4   @9:8
+  _6 = call avant_join(copy _5) collects   @9:8
+  _7 = copy _6   @9:8
+  _8 = call avant_join_what(copy _5) nocollect   @9:8
+  _10 = eq copy _8, const ref str null   @9:8
+  branch copy _10, bb1, bb2   @9:8
+
+bb1:
+  _11 = union %(Int|task.TaskError) tag 0 (copy _7)   @9:8
+  _9 = copy _11   @9:8
+  goto bb3   @9:8
+
+bb2:
+  _12 = call avant_join_site(copy _5) nocollect   @9:8
+  _13 = call av.task/__avant_join_result(copy _7, copy _8, copy _12) collects   @9:8
+  _9 = copy _13   @9:8
+  goto bb3   @9:8
+
+bb3:
+  _15 = copy _9.0   @9:16
+  _16 = eq copy _15, const i32 1   @9:16
+  branch copy _16, bb4, bb5   @9:16
+
+bb4:
+  _17 = copy _9.2   @9:16
+  _18 = copy _17   @9:16
+  _19 = call av.task/TaskError.__avant_error_text(copy _18) collects   @10:13
+  call avant_puts_str(copy _19) nocollect   @10:5
+  _0 = const i32 0   @11:5
+  call avant_exit(copy _0) nocollect   @11:5
+  unreachable   @11:5
+
+bb5:
+  _20 = copy _9.1   @11:5
+  _14 = copy _20   @11:5
+  goto bb6   @11:5
+
+bb6:
+  _21 = copy _14   @9:5
+  call avant_puts_i64(copy _21) nocollect   @13:3
   _0 = const i32 0   @5:1
-  gc.leave   @5:1
-  return   @5:1
+  call avant_exit(copy _0) nocollect   @5:1
+  unreachable   @5:1
+}
+
+fn av.task/__avant_join_result(_1: i64, _2: ref str, _3: ref str) -> %(Int|task.TaskError) frame @<task>:22:5 {
+  let _0: %(Int|task.TaskError)
+  let _1 (value): i64
+  let _2 (what): ref str
+  let _3 (site): ref str slot
+  let _4: bool
+  let _5 (w): ref str slot
+  let _6: ref %task.TaskError slot
+  let _7: %(Int|task.TaskError)
+  let _8: %(Int|task.TaskError)
+
+bb0:
+  _5 = zero   @22:5
+  _6 = zero   @22:5
+  gc.enter   @22:5
+  gc.roots _3, _5, _6   @22:5
+  _4 = ne copy _2, const ref str null   @23:3
+  branch copy _4, bb1, bb2   @23:3
+
+bb1:
+  _5 = copy _2   @23:3
+  _6 = call avant_alloc(const u64 16, const u32 1) collects fresh   @24:21
+  call av.task/TaskError.initialize(copy _6, copy _5, copy _3) collects   @24:21
+  _7 = union %(Int|task.TaskError) tag 1 (copy _6)   @24:21
+  _0 = copy _7   @24:5
+  gc.leave   @24:5
+  return   @24:5
+
+bb2:
+  _8 = union %(Int|task.TaskError) tag 0 (copy _1)   @26:3
+  _0 = copy _8   @26:3
+  gc.leave   @26:3
+  return   @26:3
+}
+
+fn av.task/TaskError.initialize(_1: ref %task.TaskError, _2: ref str, _3: ref str) -> void frame @<task>:7:3 {
+  let _1 (self): ref %task.TaskError
+  let _2 (what): ref str
+  let _3 (site): ref str
+
+bb0:
+  (*_1).0 = copy _2 fresh   @8:15
+  (*_1).1 = copy _3 fresh   @9:15
+  return   @7:3
+}
+
+fn av.task/TaskError.message(_1: ref %task.TaskError) -> ref str frame @<task>:12:7 {
+  let _0: ref str
+  let _1 (self): ref %task.TaskError
+  let _2: ref str
+  let _3: i64
+  let _4: bool
+  let _5: ref str slot
+  let _6: ref str slot
+  let _7: ref str slot
+  let _8: ref str slot
+  let _9: ref str
+  let _10: ref str slot
+  let _11: ref str
+
+bb0:
+  _5 = zero   @12:7
+  _6 = zero   @12:7
+  _7 = zero   @12:7
+  _8 = zero   @12:7
+  _10 = zero   @12:7
+  gc.enter   @12:7
+  gc.roots _5, _6, _7, _8, _10   @12:7
+  _2 = copy (*_1).1   @13:8
+  _3 = call avant_str_size(copy _2) nocollect   @13:12
+  _4 = gt copy _3, const i64 0   @13:18
+  branch copy _4, bb1, bb2   @13:5
+
+bb1:
+  _5 = copy (*_1).0   @14:35
+  _6 = copy (*_1).1   @14:46
+  _7 = call avant_str_concat(const str.0, copy _5) collects   @14:14
+  _8 = call avant_str_concat(copy _7, const str.1) collects   @14:14
+  _9 = call avant_str_concat(copy _8, copy _6) collects   @14:14
+  _0 = copy _9   @14:7
+  gc.leave   @14:7
+  return   @14:7
+
+bb2:
+  _10 = copy (*_1).0   @16:26
+  _11 = call avant_str_concat(const str.0, copy _10) collects   @16:5
+  _0 = copy _11   @16:5
+  gc.leave   @16:5
+  return   @16:5
+}
+
+fn av.task/TaskError.__avant_error_text(_1: ref %task.TaskError) -> ref str frame @<task>:3:5 {
+  let _0: ref str
+  let _1 (self): ref %task.TaskError
+  let _2: ref str
+
+bb0:
+  _2 = call av.task/TaskError.message(copy _1) collects   @3:5
+  _0 = copy _2   @3:5
+  return   @3:5
+}
+
+fn av.task/TaskError.new(_1: ref str, _2: ref str) -> ref %task.TaskError frame @<task>:3:5 {
+  let _0: ref %task.TaskError
+  let _1 (what): ref str slot
+  let _2 (site): ref str slot
+  let _3: ref %task.TaskError slot
+
+bb0:
+  _3 = zero   @3:5
+  gc.enter   @3:5
+  gc.roots _1, _2, _3   @3:5
+  _3 = call avant_alloc(const u64 16, const u32 1) collects fresh   @3:5
+  call av.task/TaskError.initialize(copy _3, copy _1, copy _2) collects   @3:5
+  _0 = copy _3   @3:5
+  gc.leave   @3:5
+  return   @3:5
 }
 
 fn av.spawn/main#spawn1(_1: ref) -> i64 frame @spawn.av:6:7 {

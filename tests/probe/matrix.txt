@@ -6,8 +6,10 @@ discard-error if unsafe refused ok | error[E4000]: this statement drops a value 
 discard-error if safe accepted ok | 
 discard-error else unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 discard-error else safe accepted ok | 
-discard-error switch-arm unsafe refused other | error[E4000]: switch cases must all produce a value, or none
+discard-error switch-arm unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 discard-error switch-arm safe accepted ok | 
+discard-error union-arm unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
+discard-error union-arm safe accepted ok | 
 discard-error while unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 discard-error while safe accepted ok | 
 discard-error for unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | ParseError); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
@@ -24,6 +26,8 @@ question-unreturnable if-expr unsafe refused ok | error[E4000]: postfix ? on Int
 question-unreturnable if-expr safe accepted ok | 
 question-unreturnable switch-expr unsafe refused ok | error[E4000]: postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError, or handle the failure with if-assign or ??
 question-unreturnable switch-expr safe accepted ok | 
+question-unreturnable union-switch-expr unsafe refused ok | error[E4000]: postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError, or handle the failure with if-assign or ??
+question-unreturnable union-switch-expr safe accepted ok | 
 question-unreturnable lambda unsafe refused other | error[E4000]: postfix ? inside a lambda whose result type is inferred cannot return the failure; handle it with if-assign or ??
 question-unreturnable lambda safe refused refused | error[E4000]: postfix ? inside a lambda whose result type is inferred cannot return the failure; handle it with if-assign or ??
 question-unreturnable binding-chain unsafe refused ok | error[E4000]: postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError, or handle the failure with if-assign or ??
@@ -44,6 +48,8 @@ field-read-before-set if-expr unsafe refused ok | error[E4000]: field xs of Prob
 field-read-before-set if-expr safe accepted ok | 
 field-read-before-set switch-expr unsafe refused ok | error[E4000]: field xs of Probe is read in initialize before it is set; set it before this read (self.xs = ...), give it a default (xs: Array(Int) = ...), or make it optional (xs: Array(Int)?)
 field-read-before-set switch-expr safe accepted ok | 
+field-read-before-set union-switch-expr unsafe refused ok | error[E4000]: field xs of Probe is read in initialize before it is set; set it before this read (self.xs = ...), give it a default (xs: Array(Int) = ...), or make it optional (xs: Array(Int)?)
+field-read-before-set union-switch-expr safe accepted ok | 
 field-read-before-set lambda unsafe refused ok | error[E4000]: a lambda uses the receiver in initialize before field xs of Probe is set; set it before this (self.xs = ...), give it a default (xs: Array(Int) = ...), or make it optional (xs: Array(Int)?)
 field-read-before-set lambda safe accepted ok | 
 field-read-before-set binding-chain unsafe refused ok | error[E4000]: field xs of Probe is read in initialize before it is set; set it before this read (self.xs = ...), give it a default (xs: Array(Int) = ...), or make it optional (xs: Array(Int)?)
@@ -66,6 +72,8 @@ bare-field-write else unsafe refused ok | error[E4000]: x is a field of Probe; w
 bare-field-write else safe accepted ok | 
 bare-field-write switch-arm unsafe refused ok | error[E4000]: x is a field of Probe; write self.x = ... to change the field, or choose another name for a local
 bare-field-write switch-arm safe accepted ok | 
+bare-field-write union-arm unsafe refused ok | error[E4000]: x is a field of Probe; write self.x = ... to change the field, or choose another name for a local
+bare-field-write union-arm safe accepted ok | 
 bare-field-write while unsafe refused ok | error[E4000]: x is a field of Probe; write self.x = ... to change the field, or choose another name for a local
 bare-field-write while safe accepted ok | 
 bare-field-write for unsafe refused ok | error[E4000]: x is a field of Probe; write self.x = ... to change the field, or choose another name for a local
@@ -84,6 +92,8 @@ for-variable-assign else unsafe refused ok | error[E4000]: cannot assign to i: a
 for-variable-assign else safe accepted ok | 
 for-variable-assign switch-arm unsafe refused ok | error[E4000]: cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own
 for-variable-assign switch-arm safe accepted ok | 
+for-variable-assign union-arm unsafe refused ok | error[E4000]: cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own
+for-variable-assign union-arm safe accepted ok | 
 for-variable-assign while unsafe refused ok | error[E4000]: cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own
 for-variable-assign while safe accepted ok | 
 for-variable-assign for unsafe refused ok | error[E4000]: cannot assign to i: a for variable is a copy of the range's counter, set again at each step; to skip or repeat steps, use a while loop with a counter of its own
@@ -100,6 +110,8 @@ private-field if-expr unsafe refused ok | error[E4000]: field secret of PBox is 
 private-field if-expr safe accepted ok | 
 private-field switch-expr unsafe refused ok | error[E4000]: field secret of PBox is private to module probe_mod; mark it pub
 private-field switch-expr safe accepted ok | 
+private-field union-switch-expr unsafe refused ok | error[E4000]: field secret of PBox is private to module probe_mod; mark it pub
+private-field union-switch-expr safe accepted ok | 
 private-field lambda unsafe refused ok | error[E4000]: field secret of PBox is private to module probe_mod; mark it pub
 private-field lambda safe accepted ok | 
 private-field binding-chain unsafe refused ok | error[E4000]: field secret of PBox is private to module probe_mod; mark it pub
@@ -122,6 +134,8 @@ mutex-guard-escape else unsafe refused ok | error[E4003]: Mutex.with: this argum
 mutex-guard-escape else safe accepted ok | 
 mutex-guard-escape switch-arm unsafe refused ok | error[E4003]: Mutex.with: this argument is the guarded value or a reference reached from it (PBox); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends
 mutex-guard-escape switch-arm safe accepted ok | 
+mutex-guard-escape union-arm unsafe refused ok | error[E4003]: Mutex.with: this argument is the guarded value or a reference reached from it (PBox); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends
+mutex-guard-escape union-arm safe accepted ok | 
 mutex-guard-escape while unsafe refused ok | error[E4003]: Mutex.with: this argument is the guarded value or a reference reached from it (PBox); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends
 mutex-guard-escape while safe accepted ok | 
 mutex-guard-escape for unsafe refused ok | error[E4003]: Mutex.with: this argument is the guarded value or a reference reached from it (PBox); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends
@@ -132,25 +146,327 @@ mutex-guard-escape builtin-block unsafe refused ok | error[E4003]: Mutex.with: t
 mutex-guard-escape builtin-block safe accepted ok | 
 mutex-guard-escape binding-chain unsafe refused ok | error[E4003]: Mutex.with: this argument is the guarded value or a reference reached from it (PBox); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends
 mutex-guard-escape binding-chain safe accepted ok | 
-number-mix plain unsafe refused ok | error[E4004]: expected Int32, got Int
+mutex-new-consumed plain unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).new at 38:18: the mutex holds its value now, so reach it only through with
+mutex-new-consumed plain safe accepted ok | 
+mutex-new-consumed if unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).new at 38:18: the mutex holds its value now, so reach it only through with
+mutex-new-consumed if safe accepted ok | 
+mutex-new-consumed else unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).new at 38:18: the mutex holds its value now, so reach it only through with
+mutex-new-consumed else safe accepted ok | 
+mutex-new-consumed switch-arm unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).new at 38:18: the mutex holds its value now, so reach it only through with
+mutex-new-consumed switch-arm safe accepted ok | 
+mutex-new-consumed union-arm unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).new at 38:18: the mutex holds its value now, so reach it only through with
+mutex-new-consumed union-arm safe accepted ok | 
+mutex-new-consumed while unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).new at 38:18: the mutex holds its value now, so reach it only through with
+mutex-new-consumed while safe accepted ok | 
+mutex-new-consumed for unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).new at 38:18: the mutex holds its value now, so reach it only through with
+mutex-new-consumed for safe accepted ok | 
+mutex-new-consumed lambda unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).new at 38:18: the mutex holds its value now, so reach it only through with
+mutex-new-consumed lambda safe accepted ok | 
+mutex-new-consumed builtin-block unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).new at 38:18: the mutex holds its value now, so reach it only through with
+mutex-new-consumed builtin-block safe accepted ok | 
+mutex-new-consumed binding-chain unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).new at 38:18: the mutex holds its value now, so reach it only through with
+mutex-new-consumed binding-chain safe accepted ok | 
+mutex-with-inward plain unsafe refused ok | error[E4000]: Mutex.with: this value stored into the guarded value (PBox) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock
+mutex-with-inward plain safe accepted ok | 
+mutex-with-inward if unsafe refused ok | error[E4000]: Mutex.with: this value stored into the guarded value (PBox) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock
+mutex-with-inward if safe accepted ok | 
+mutex-with-inward else unsafe refused ok | error[E4000]: Mutex.with: this value stored into the guarded value (PBox) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock
+mutex-with-inward else safe accepted ok | 
+mutex-with-inward switch-arm unsafe refused ok | error[E4000]: Mutex.with: this value stored into the guarded value (PBox) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock
+mutex-with-inward switch-arm safe accepted ok | 
+mutex-with-inward union-arm unsafe refused ok | error[E4000]: Mutex.with: this value stored into the guarded value (PBox) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock
+mutex-with-inward union-arm safe accepted ok | 
+mutex-with-inward while unsafe refused ok | error[E4000]: Mutex.with: this value stored into the guarded value (PBox) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock
+mutex-with-inward while safe accepted ok | 
+mutex-with-inward for unsafe refused ok | error[E4000]: Mutex.with: this value stored into the guarded value (PBox) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock
+mutex-with-inward for safe accepted ok | 
+mutex-with-inward lambda unsafe refused ok | error[E4000]: Mutex.with: this value stored into the guarded value (PBox) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock
+mutex-with-inward lambda safe accepted ok | 
+mutex-with-inward builtin-block unsafe refused ok | error[E4000]: Mutex.with: this value stored into the guarded value (PBox) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock
+mutex-with-inward builtin-block safe accepted ok | 
+mutex-with-inward binding-chain unsafe refused ok | error[E4000]: Mutex.with: this value stored into the guarded value (PBox) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock
+mutex-with-inward binding-chain safe accepted ok | 
+mutex-guarded-method plain unsafe refused ok | error[E4000]: Mutex(PBad) (at p187.av:49:19): PBad.adopt stores a parameter's reference (or a value reached from one) into a field or an element; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock
+mutex-guarded-method plain safe accepted ok | 
+mutex-guarded-method if unsafe refused ok | error[E4000]: Mutex(PBad) (at p189.av:50:21): PBad.adopt stores a parameter's reference (or a value reached from one) into a field or an element; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock
+mutex-guarded-method if safe accepted ok | 
+mutex-guarded-method else unsafe refused ok | error[E4000]: Mutex(PBad) (at p191.av:52:21): PBad.adopt stores a parameter's reference (or a value reached from one) into a field or an element; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock
+mutex-guarded-method else safe accepted ok | 
+mutex-guarded-method switch-arm unsafe refused ok | error[E4000]: Mutex(PBad) (at p193.av:51:23): PBad.adopt stores a parameter's reference (or a value reached from one) into a field or an element; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock
+mutex-guarded-method switch-arm safe accepted ok | 
+mutex-guarded-method union-arm unsafe refused ok | error[E4000]: Mutex(PBad) (at p195.av:51:23): PBad.adopt stores a parameter's reference (or a value reached from one) into a field or an element; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock
+mutex-guarded-method union-arm safe accepted ok | 
+mutex-guarded-method while unsafe refused ok | error[E4000]: Mutex(PBad) (at p197.av:50:21): PBad.adopt stores a parameter's reference (or a value reached from one) into a field or an element; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock
+mutex-guarded-method while safe accepted ok | 
+mutex-guarded-method for unsafe refused ok | error[E4000]: Mutex(PBad) (at p199.av:50:21): PBad.adopt stores a parameter's reference (or a value reached from one) into a field or an element; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock
+mutex-guarded-method for safe accepted ok | 
+mutex-guarded-method lambda unsafe refused ok | error[E4000]: Mutex(PBad) (at p201.av:50:21): PBad.adopt stores a parameter's reference (or a value reached from one) into a field or an element; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock
+mutex-guarded-method lambda safe accepted ok | 
+mutex-guarded-method builtin-block unsafe refused ok | error[E4000]: Mutex(PBad) (at p203.av:50:21): PBad.adopt stores a parameter's reference (or a value reached from one) into a field or an element; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock
+mutex-guarded-method builtin-block safe accepted ok | 
+mutex-guarded-method binding-chain unsafe refused ok | error[E4000]: Mutex(PBad) (at p205.av:50:21): PBad.adopt stores a parameter's reference (or a value reached from one) into a field or an element; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock
+mutex-guarded-method binding-chain safe accepted ok | 
+spawn-capture-class plain unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+spawn-capture-class plain safe accepted ok | 
+spawn-capture-class if unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+spawn-capture-class if safe accepted ok | 
+spawn-capture-class else unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+spawn-capture-class else safe accepted ok | 
+spawn-capture-class switch-arm unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+spawn-capture-class switch-arm safe accepted ok | 
+spawn-capture-class union-arm unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+spawn-capture-class union-arm safe accepted ok | 
+spawn-capture-class while unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+spawn-capture-class while safe accepted ok | 
+spawn-capture-class for unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+spawn-capture-class for safe accepted ok | 
+spawn-capture-class lambda unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+spawn-capture-class lambda safe accepted ok | 
+spawn-capture-class builtin-block unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+spawn-capture-class builtin-block safe accepted ok | 
+spawn-capture-class binding-chain unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+spawn-capture-class binding-chain safe accepted ok | 
+spawn-assign-capture plain unsafe refused ok | error[E4000]: spawn cannot assign to pk; copy at send is read-only
+spawn-assign-capture plain safe accepted ok | 
+spawn-assign-capture if unsafe refused ok | error[E4000]: spawn cannot assign to pk; copy at send is read-only
+spawn-assign-capture if safe accepted ok | 
+spawn-assign-capture else unsafe refused ok | error[E4000]: spawn cannot assign to pk; copy at send is read-only
+spawn-assign-capture else safe accepted ok | 
+spawn-assign-capture switch-arm unsafe refused ok | error[E4000]: spawn cannot assign to pk; copy at send is read-only
+spawn-assign-capture switch-arm safe accepted ok | 
+spawn-assign-capture union-arm unsafe refused ok | error[E4000]: spawn cannot assign to pk; copy at send is read-only
+spawn-assign-capture union-arm safe accepted ok | 
+spawn-assign-capture while unsafe refused ok | error[E4000]: spawn cannot assign to pk; copy at send is read-only
+spawn-assign-capture while safe accepted ok | 
+spawn-assign-capture for unsafe refused ok | error[E4000]: spawn cannot assign to pk; copy at send is read-only
+spawn-assign-capture for safe accepted ok | 
+spawn-assign-capture lambda unsafe refused ok | error[E4000]: spawn cannot assign to pk; copy at send is read-only
+spawn-assign-capture lambda safe accepted ok | 
+spawn-assign-capture builtin-block unsafe refused ok | error[E4000]: spawn cannot assign to pk; copy at send is read-only
+spawn-assign-capture builtin-block safe accepted ok | 
+spawn-assign-capture binding-chain unsafe refused ok | error[E4000]: spawn cannot assign to pk; copy at send is read-only
+spawn-assign-capture binding-chain safe accepted ok | 
+spawn-array-mutate plain unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate plain safe accepted ok | 
+spawn-array-mutate if unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate if safe accepted ok | 
+spawn-array-mutate else unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate else safe accepted ok | 
+spawn-array-mutate switch-arm unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate switch-arm safe accepted ok | 
+spawn-array-mutate union-arm unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate union-arm safe accepted ok | 
+spawn-array-mutate while unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate while safe accepted ok | 
+spawn-array-mutate for unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate for safe accepted ok | 
+spawn-array-mutate lambda unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate lambda safe accepted ok | 
+spawn-array-mutate builtin-block unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate builtin-block safe accepted ok | 
+spawn-array-mutate binding-chain unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate binding-chain safe accepted ok | 
+spawn-sender-mutate plain unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate plain safe accepted ok | 
+spawn-sender-mutate if unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate if safe accepted ok | 
+spawn-sender-mutate else unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate else safe accepted ok | 
+spawn-sender-mutate switch-arm unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate switch-arm safe accepted ok | 
+spawn-sender-mutate union-arm unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate union-arm safe accepted ok | 
+spawn-sender-mutate while unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate while safe accepted ok | 
+spawn-sender-mutate for unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate for safe accepted ok | 
+spawn-sender-mutate lambda unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate lambda safe accepted ok | 
+spawn-sender-mutate builtin-block unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate builtin-block safe accepted ok | 
+spawn-sender-mutate binding-chain unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate binding-chain safe accepted ok | 
+spawn-sender-mutate-bare plain unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate-bare plain safe accepted ok | 
+spawn-sender-mutate-bare if unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate-bare if safe accepted ok | 
+spawn-sender-mutate-bare else unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate-bare else safe accepted ok | 
+spawn-sender-mutate-bare switch-arm unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate-bare switch-arm safe accepted ok | 
+spawn-sender-mutate-bare union-arm unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate-bare union-arm safe accepted ok | 
+spawn-sender-mutate-bare while unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate-bare while safe accepted ok | 
+spawn-sender-mutate-bare for unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate-bare for safe accepted ok | 
+spawn-sender-mutate-bare lambda unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate-bare lambda safe accepted ok | 
+spawn-sender-mutate-bare builtin-block unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate-bare builtin-block safe accepted ok | 
+spawn-sender-mutate-bare binding-chain unsafe refused ok | error[E4000]: cannot mutate pxs while a spawn using it is running; join first
+spawn-sender-mutate-bare binding-chain safe accepted ok | 
+spawn-array-mutate-bare plain unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate-bare plain safe accepted ok | 
+spawn-array-mutate-bare if unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate-bare if safe accepted ok | 
+spawn-array-mutate-bare else unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate-bare else safe accepted ok | 
+spawn-array-mutate-bare switch-arm unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate-bare switch-arm safe accepted ok | 
+spawn-array-mutate-bare union-arm unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate-bare union-arm safe accepted ok | 
+spawn-array-mutate-bare while unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate-bare while safe accepted ok | 
+spawn-array-mutate-bare for unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate-bare for safe accepted ok | 
+spawn-array-mutate-bare lambda unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate-bare lambda safe accepted ok | 
+spawn-array-mutate-bare builtin-block unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate-bare builtin-block safe accepted ok | 
+spawn-array-mutate-bare binding-chain unsafe refused ok | error[E4000]: spawn cannot mutate captured Array pxs; it is read-only until join
+spawn-array-mutate-bare binding-chain safe accepted ok | 
+spawn-capture-array-class plain unsafe refused ok | error[E4000]: spawn cannot capture pxs: an Array(PBox) is shared with the task, and its elements (PBox) cannot cross to another task: a mutable object reaches another task only inside a Mutex
+spawn-capture-array-class plain safe accepted ok | 
+spawn-capture-array-class if unsafe refused ok | error[E4000]: spawn cannot capture pxs: an Array(PBox) is shared with the task, and its elements (PBox) cannot cross to another task: a mutable object reaches another task only inside a Mutex
+spawn-capture-array-class if safe accepted ok | 
+spawn-capture-array-class else unsafe refused ok | error[E4000]: spawn cannot capture pxs: an Array(PBox) is shared with the task, and its elements (PBox) cannot cross to another task: a mutable object reaches another task only inside a Mutex
+spawn-capture-array-class else safe accepted ok | 
+spawn-capture-array-class switch-arm unsafe refused ok | error[E4000]: spawn cannot capture pxs: an Array(PBox) is shared with the task, and its elements (PBox) cannot cross to another task: a mutable object reaches another task only inside a Mutex
+spawn-capture-array-class switch-arm safe accepted ok | 
+spawn-capture-array-class union-arm unsafe refused ok | error[E4000]: spawn cannot capture pxs: an Array(PBox) is shared with the task, and its elements (PBox) cannot cross to another task: a mutable object reaches another task only inside a Mutex
+spawn-capture-array-class union-arm safe accepted ok | 
+spawn-capture-array-class while unsafe refused ok | error[E4000]: spawn cannot capture pxs: an Array(PBox) is shared with the task, and its elements (PBox) cannot cross to another task: a mutable object reaches another task only inside a Mutex
+spawn-capture-array-class while safe accepted ok | 
+spawn-capture-array-class for unsafe refused ok | error[E4000]: spawn cannot capture pxs: an Array(PBox) is shared with the task, and its elements (PBox) cannot cross to another task: a mutable object reaches another task only inside a Mutex
+spawn-capture-array-class for safe accepted ok | 
+spawn-capture-array-class lambda unsafe refused ok | error[E4000]: spawn cannot capture pxs: an Array(PBox) is shared with the task, and its elements (PBox) cannot cross to another task: a mutable object reaches another task only inside a Mutex
+spawn-capture-array-class lambda safe accepted ok | 
+spawn-capture-array-class builtin-block unsafe refused ok | error[E4000]: spawn cannot capture pxs: an Array(PBox) is shared with the task, and its elements (PBox) cannot cross to another task: a mutable object reaches another task only inside a Mutex
+spawn-capture-array-class builtin-block safe accepted ok | 
+spawn-capture-array-class binding-chain unsafe refused ok | error[E4000]: spawn cannot capture pxs: an Array(PBox) is shared with the task, and its elements (PBox) cannot cross to another task: a mutable object reaches another task only inside a Mutex
+spawn-capture-array-class binding-chain safe accepted ok | 
+parallel-capture-class plain unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+parallel-capture-class plain safe accepted ok | 
+parallel-capture-class if unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+parallel-capture-class if safe accepted ok | 
+parallel-capture-class else unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+parallel-capture-class else safe accepted ok | 
+parallel-capture-class switch-arm unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+parallel-capture-class switch-arm safe accepted ok | 
+parallel-capture-class union-arm unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+parallel-capture-class union-arm safe accepted ok | 
+parallel-capture-class while unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+parallel-capture-class while safe accepted ok | 
+parallel-capture-class for unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+parallel-capture-class for safe accepted ok | 
+parallel-capture-class lambda unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+parallel-capture-class lambda safe accepted ok | 
+parallel-capture-class builtin-block unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+parallel-capture-class builtin-block safe accepted ok | 
+parallel-capture-class binding-chain unsafe refused ok | error[E4000]: spawn cannot capture pb: PBox is not copied at send
+parallel-capture-class binding-chain safe accepted ok | 
+mutex-with-value plain unsafe refused ok | error[E4000]: Mutex.with's value cannot be PBox: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)
+mutex-with-value plain safe accepted ok | 
+mutex-with-value if unsafe refused ok | error[E4000]: Mutex.with's value cannot be PBox: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)
+mutex-with-value if safe accepted ok | 
+mutex-with-value else unsafe refused ok | error[E4000]: Mutex.with's value cannot be PBox: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)
+mutex-with-value else safe accepted ok | 
+mutex-with-value switch-arm unsafe refused ok | error[E4000]: Mutex.with's value cannot be PBox: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)
+mutex-with-value switch-arm safe accepted ok | 
+mutex-with-value union-arm unsafe refused ok | error[E4000]: Mutex.with's value cannot be PBox: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)
+mutex-with-value union-arm safe accepted ok | 
+mutex-with-value while unsafe refused ok | error[E4000]: Mutex.with's value cannot be PBox: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)
+mutex-with-value while safe accepted ok | 
+mutex-with-value for unsafe refused ok | error[E4000]: Mutex.with's value cannot be PBox: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)
+mutex-with-value for safe accepted ok | 
+mutex-with-value lambda unsafe refused ok | error[E4000]: Mutex.with's value cannot be PBox: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)
+mutex-with-value lambda safe accepted ok | 
+mutex-with-value builtin-block unsafe refused ok | error[E4000]: Mutex.with's value cannot be PBox: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)
+mutex-with-value builtin-block safe accepted ok | 
+mutex-with-value binding-chain unsafe refused ok | error[E4000]: Mutex.with's value cannot be PBox: it may be the guarded value or a part of it, which the lock no longer protects outside the block; end the block with a plain value (a number, a Bool, a String, Bytes, a struct or an optional of those, a Channel or a Mutex)
+mutex-with-value binding-chain safe accepted ok | 
+if-non-bool plain unsafe refused ok | error[E4000]: if condition must be Bool, got Int
+if-non-bool plain safe accepted ok | 
+if-non-bool if unsafe refused ok | error[E4000]: if condition must be Bool, got Int
+if-non-bool if safe accepted ok | 
+if-non-bool else unsafe refused ok | error[E4000]: if condition must be Bool, got Int
+if-non-bool else safe accepted ok | 
+if-non-bool switch-arm unsafe refused ok | error[E4000]: if condition must be Bool, got Int
+if-non-bool switch-arm safe accepted ok | 
+if-non-bool union-arm unsafe refused ok | error[E4000]: if condition must be Bool, got Int
+if-non-bool union-arm safe accepted ok | 
+if-non-bool while unsafe refused ok | error[E4000]: if condition must be Bool, got Int
+if-non-bool while safe accepted ok | 
+if-non-bool for unsafe refused ok | error[E4000]: if condition must be Bool, got Int
+if-non-bool for safe accepted ok | 
+if-non-bool lambda unsafe refused ok | error[E4000]: if condition must be Bool, got Int
+if-non-bool lambda safe accepted ok | 
+if-non-bool builtin-block unsafe refused ok | error[E4000]: if condition must be Bool, got Int
+if-non-bool builtin-block safe accepted ok | 
+if-non-bool binding-chain unsafe refused ok | error[E4000]: if condition must be Bool, got Int
+if-non-bool binding-chain safe accepted ok | 
+dangling-minus plain unsafe refused ok | error[E2000]: this line starts with `-`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-minus plain safe accepted ok | 
+dangling-minus if unsafe refused ok | error[E2000]: this line starts with `-`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-minus if safe accepted ok | 
+dangling-minus else unsafe refused ok | error[E2000]: this line starts with `-`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-minus else safe accepted ok | 
+dangling-minus switch-arm unsafe refused ok | error[E2000]: this line starts with `-`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-minus switch-arm safe accepted ok | 
+dangling-minus union-arm unsafe refused ok | error[E2000]: this line starts with `-`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-minus union-arm safe accepted ok | 
+dangling-minus while unsafe refused ok | error[E2000]: this line starts with `-`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-minus while safe accepted ok | 
+dangling-minus for unsafe refused ok | error[E2000]: this line starts with `-`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-minus for safe accepted ok | 
+dangling-minus lambda unsafe refused ok | error[E2000]: this line starts with `-`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-minus lambda safe accepted ok | 
+dangling-minus builtin-block unsafe refused ok | error[E2000]: this line starts with `-`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-minus builtin-block safe accepted ok | 
+dangling-minus binding-chain unsafe refused ok | error[E2000]: this line starts with `-`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-minus binding-chain safe accepted ok | 
+dangling-bracket plain unsafe refused ok | error[E2000]: this line starts with `[`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-bracket plain safe accepted ok | 
+dangling-bracket if unsafe refused ok | error[E2000]: this line starts with `[`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-bracket if safe accepted ok | 
+dangling-bracket else unsafe refused ok | error[E2000]: this line starts with `[`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-bracket else safe accepted ok | 
+dangling-bracket switch-arm unsafe refused ok | error[E2000]: this line starts with `[`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-bracket switch-arm safe accepted ok | 
+dangling-bracket union-arm unsafe refused ok | error[E2000]: this line starts with `[`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-bracket union-arm safe accepted ok | 
+dangling-bracket while unsafe refused ok | error[E2000]: this line starts with `[`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-bracket while safe accepted ok | 
+dangling-bracket for unsafe refused ok | error[E2000]: this line starts with `[`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-bracket for safe accepted ok | 
+dangling-bracket lambda unsafe refused ok | error[E2000]: this line starts with `[`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-bracket lambda safe accepted ok | 
+dangling-bracket builtin-block unsafe refused ok | error[E2000]: this line starts with `[`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-bracket builtin-block safe accepted ok | 
+dangling-bracket binding-chain unsafe refused ok | error[E2000]: this line starts with `[`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)
+dangling-bracket binding-chain safe accepted ok | 
+number-mix plain unsafe refused ok | error[E4000]: binary operator expects matching types, got Int32 and Int
 number-mix plain safe accepted ok | 
-number-mix if-expr unsafe refused ok | error[E4004]: expected Int32, got Int
+number-mix if-expr unsafe refused ok | error[E4000]: binary operator expects matching types, got Int32 and Int
 number-mix if-expr safe accepted ok | 
-number-mix switch-expr unsafe refused ok | error[E4004]: expected Int32, got Int
+number-mix switch-expr unsafe refused ok | error[E4000]: binary operator expects matching types, got Int32 and Int
 number-mix switch-expr safe accepted ok | 
-number-mix lambda unsafe refused ok | error[E4004]: expected Int32, got Int
+number-mix union-switch-expr unsafe refused ok | error[E4000]: binary operator expects matching types, got Int32 and Int
+number-mix union-switch-expr safe accepted ok | 
+number-mix lambda unsafe refused ok | error[E4000]: binary operator expects matching types, got Int32 and Int
 number-mix lambda safe accepted ok | 
-number-mix binding-chain unsafe refused ok | error[E4004]: expected Int32, got Int
+number-mix binding-chain unsafe refused ok | error[E4000]: binary operator expects matching types, got Int32 and Int
 number-mix binding-chain safe accepted ok | 
-number-mix call-arg unsafe refused ok | error[E4004]: expected Int32, got Int
+number-mix call-arg unsafe refused ok | error[E4000]: binary operator expects matching types, got Int32 and Int
 number-mix call-arg safe accepted ok | 
-number-mix interpolation unsafe refused ok | error[E4004]: expected Int32, got Int
+number-mix interpolation unsafe refused ok | error[E4000]: binary operator expects matching types, got Int32 and Int
 number-mix interpolation safe accepted ok | 
-number-mix for unsafe refused ok | error[E4004]: expected Int32, got Int
+number-mix for unsafe refused ok | error[E4000]: binary operator expects matching types, got Int32 and Int
 number-mix for safe accepted ok | 
-number-mix builtin-block unsafe refused ok | error[E4004]: expected Int32, got Int
+number-mix builtin-block unsafe refused ok | error[E4000]: binary operator expects matching types, got Int32 and Int
 number-mix builtin-block safe accepted ok | 
-number-mix qq-fallback unsafe refused ok | error[E4004]: expected Int32, got Int
+number-mix qq-fallback unsafe refused ok | error[E4000]: binary operator expects matching types, got Int32 and Int
 number-mix qq-fallback safe accepted ok | 
 enum-switch-missing plain unsafe refused ok | error[E4000]: switch over Tok does not cover b: name them or add else
 enum-switch-missing plain safe accepted ok | 
@@ -160,6 +476,8 @@ enum-switch-missing else unsafe refused ok | error[E4000]: switch over Tok does 
 enum-switch-missing else safe accepted ok | 
 enum-switch-missing switch-arm unsafe refused ok | error[E4000]: switch over Tok does not cover b: name them or add else
 enum-switch-missing switch-arm safe accepted ok | 
+enum-switch-missing union-arm unsafe refused ok | error[E4000]: switch over Tok does not cover b: name them or add else
+enum-switch-missing union-arm safe accepted ok | 
 enum-switch-missing while unsafe refused ok | error[E4000]: switch over Tok does not cover b: name them or add else
 enum-switch-missing while safe accepted ok | 
 enum-switch-missing for unsafe refused ok | error[E4000]: switch over Tok does not cover b: name them or add else
@@ -170,23 +488,25 @@ enum-switch-missing builtin-block unsafe refused ok | error[E4000]: switch over 
 enum-switch-missing builtin-block safe accepted ok | 
 enum-switch-missing binding-chain unsafe refused ok | error[E4000]: switch over Tok does not cover b: name them or add else
 enum-switch-missing binding-chain safe accepted ok | 
-enum-from-int plain unsafe refused ok | error[E4004]: expected Tok, got Int
+enum-from-int plain unsafe refused ok | error[E4000]: cannot assign Int to Tok
 enum-from-int plain safe accepted ok | 
-enum-from-int if unsafe refused ok | error[E4004]: expected Tok, got Int
+enum-from-int if unsafe refused ok | error[E4000]: cannot assign Int to Tok
 enum-from-int if safe accepted ok | 
-enum-from-int else unsafe refused ok | error[E4004]: expected Tok, got Int
+enum-from-int else unsafe refused ok | error[E4000]: cannot assign Int to Tok
 enum-from-int else safe accepted ok | 
-enum-from-int switch-arm unsafe refused ok | error[E4004]: expected Tok, got Int
+enum-from-int switch-arm unsafe refused ok | error[E4000]: cannot assign Int to Tok
 enum-from-int switch-arm safe accepted ok | 
-enum-from-int while unsafe refused ok | error[E4004]: expected Tok, got Int
+enum-from-int union-arm unsafe refused ok | error[E4000]: cannot assign Int to Tok
+enum-from-int union-arm safe accepted ok | 
+enum-from-int while unsafe refused ok | error[E4000]: cannot assign Int to Tok
 enum-from-int while safe accepted ok | 
-enum-from-int for unsafe refused ok | error[E4004]: expected Tok, got Int
+enum-from-int for unsafe refused ok | error[E4000]: cannot assign Int to Tok
 enum-from-int for safe accepted ok | 
-enum-from-int lambda unsafe refused ok | error[E4004]: expected Tok, got Int
+enum-from-int lambda unsafe refused ok | error[E4000]: cannot assign Int to Tok
 enum-from-int lambda safe accepted ok | 
-enum-from-int builtin-block unsafe refused ok | error[E4004]: expected Tok, got Int
+enum-from-int builtin-block unsafe refused ok | error[E4000]: cannot assign Int to Tok
 enum-from-int builtin-block safe accepted ok | 
-enum-from-int binding-chain unsafe refused ok | error[E4004]: expected Tok, got Int
+enum-from-int binding-chain unsafe refused ok | error[E4000]: cannot assign Int to Tok
 enum-from-int binding-chain safe accepted ok | 
 enum-qualified-label plain unsafe refused ok | error[E4000]: write the member without its type in a case label: `case a`
 enum-qualified-label plain safe accepted ok | 
@@ -196,6 +516,8 @@ enum-qualified-label else unsafe refused ok | error[E4000]: write the member wit
 enum-qualified-label else safe accepted ok | 
 enum-qualified-label switch-arm unsafe refused ok | error[E4000]: write the member without its type in a case label: `case a`
 enum-qualified-label switch-arm safe accepted ok | 
+enum-qualified-label union-arm unsafe refused ok | error[E4000]: write the member without its type in a case label: `case a`
+enum-qualified-label union-arm safe accepted ok | 
 enum-qualified-label while unsafe refused ok | error[E4000]: write the member without its type in a case label: `case a`
 enum-qualified-label while safe accepted ok | 
 enum-qualified-label for unsafe refused ok | error[E4000]: write the member without its type in a case label: `case a`
@@ -214,6 +536,8 @@ enum-else-beside-full else unsafe refused ok | error[E4000]: every member of Tok
 enum-else-beside-full else safe accepted ok | 
 enum-else-beside-full switch-arm unsafe refused ok | error[E4000]: every member of Tok is named; remove the else
 enum-else-beside-full switch-arm safe accepted ok | 
+enum-else-beside-full union-arm unsafe refused ok | error[E4000]: every member of Tok is named; remove the else
+enum-else-beside-full union-arm safe accepted ok | 
 enum-else-beside-full while unsafe refused ok | error[E4000]: every member of Tok is named; remove the else
 enum-else-beside-full while safe accepted ok | 
 enum-else-beside-full for unsafe refused ok | error[E4000]: every member of Tok is named; remove the else
@@ -230,8 +554,10 @@ enum-error-dropped if unsafe refused ok | error[E4000]: this statement drops a v
 enum-error-dropped if safe accepted ok | 
 enum-error-dropped else unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | PE); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 enum-error-dropped else safe accepted ok | 
-enum-error-dropped switch-arm unsafe refused other | error[E4000]: switch cases must all produce a value, or none
+enum-error-dropped switch-arm unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | PE); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 enum-error-dropped switch-arm safe accepted ok | 
+enum-error-dropped union-arm unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | PE); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
+enum-error-dropped union-arm safe accepted ok | 
 enum-error-dropped while unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | PE); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 enum-error-dropped while safe accepted ok | 
 enum-error-dropped for unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | PE); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
@@ -242,3 +568,927 @@ enum-error-dropped builtin-block unsafe refused ok | error[E4000]: this statemen
 enum-error-dropped builtin-block safe accepted ok | 
 enum-error-dropped binding-chain unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Int | PE); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...
 enum-error-dropped binding-chain safe accepted ok | 
+union-switch-missing plain unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing plain safe accepted ok | 
+union-switch-missing if unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing if safe accepted ok | 
+union-switch-missing else unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing else safe accepted ok | 
+union-switch-missing switch-arm unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing switch-arm safe accepted ok | 
+union-switch-missing union-arm unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing union-arm safe accepted ok | 
+union-switch-missing while unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing while safe accepted ok | 
+union-switch-missing for unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing for safe accepted ok | 
+union-switch-missing lambda unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing lambda safe accepted ok | 
+union-switch-missing builtin-block unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing builtin-block safe accepted ok | 
+union-switch-missing binding-chain unsafe refused ok | error[E4000]: switch over Nil | Int | Oops does not cover Oops: name them or add else
+union-switch-missing binding-chain safe accepted ok | 
+union-binding-outside-arm plain unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm plain safe accepted ok | 
+union-binding-outside-arm if unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm if safe accepted ok | 
+union-binding-outside-arm else unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm else safe accepted ok | 
+union-binding-outside-arm switch-arm unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm switch-arm safe accepted ok | 
+union-binding-outside-arm union-arm unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm union-arm safe accepted ok | 
+union-binding-outside-arm while unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm while safe accepted ok | 
+union-binding-outside-arm for unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm for safe accepted ok | 
+union-binding-outside-arm lambda unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm lambda safe accepted ok | 
+union-binding-outside-arm builtin-block unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm builtin-block safe accepted ok | 
+union-binding-outside-arm binding-chain unsafe refused ok | error[E4001]: unknown name n
+union-binding-outside-arm binding-chain safe accepted ok | 
+union-case-nil-without-nil plain unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil plain safe accepted ok | 
+union-case-nil-without-nil if unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil if safe accepted ok | 
+union-case-nil-without-nil else unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil else safe accepted ok | 
+union-case-nil-without-nil switch-arm unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil switch-arm safe accepted ok | 
+union-case-nil-without-nil union-arm unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil union-arm safe accepted ok | 
+union-case-nil-without-nil while unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil while safe accepted ok | 
+union-case-nil-without-nil for unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil for safe accepted ok | 
+union-case-nil-without-nil lambda unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil lambda safe accepted ok | 
+union-case-nil-without-nil builtin-block unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil builtin-block safe accepted ok | 
+union-case-nil-without-nil binding-chain unsafe refused ok | error[E4000]: case nil: Int | String has no nil member
+union-case-nil-without-nil binding-chain safe accepted ok | 
+union-label-not-member plain unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member plain safe accepted ok | 
+union-label-not-member if unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member if safe accepted ok | 
+union-label-not-member else unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member else safe accepted ok | 
+union-label-not-member switch-arm unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member switch-arm safe accepted ok | 
+union-label-not-member union-arm unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member union-arm safe accepted ok | 
+union-label-not-member while unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member while safe accepted ok | 
+union-label-not-member for unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member for safe accepted ok | 
+union-label-not-member lambda unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member lambda safe accepted ok | 
+union-label-not-member builtin-block unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member builtin-block safe accepted ok | 
+union-label-not-member binding-chain unsafe refused ok | error[E4000]: Float64 is not a member of Nil | Int | Oops
+union-label-not-member binding-chain safe accepted ok | 
+guard-must-leave plain unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-must-leave plain safe accepted ok | 
+guard-must-leave if unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-must-leave if safe accepted ok | 
+guard-must-leave else unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-must-leave else safe accepted ok | 
+guard-must-leave switch-arm unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-must-leave switch-arm safe accepted ok | 
+guard-must-leave union-arm unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-must-leave union-arm safe accepted ok | 
+guard-must-leave while unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-must-leave while safe accepted ok | 
+guard-must-leave for unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-must-leave for safe accepted ok | 
+guard-must-leave lambda unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-must-leave lambda safe refused refused | 
+guard-must-leave builtin-block unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-must-leave builtin-block safe accepted ok | 
+guard-must-leave binding-chain unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-must-leave binding-chain safe accepted ok | 
+guard-no-failure plain unsafe refused ok | error[E4000]: else e needs a value that can fail (T? or T | E with E marked Error), got Int
+guard-no-failure plain safe accepted ok | 
+guard-no-failure if unsafe refused ok | error[E4000]: else e needs a value that can fail (T? or T | E with E marked Error), got Int
+guard-no-failure if safe accepted ok | 
+guard-no-failure else unsafe refused ok | error[E4000]: else e needs a value that can fail (T? or T | E with E marked Error), got Int
+guard-no-failure else safe accepted ok | 
+guard-no-failure switch-arm unsafe refused ok | error[E4000]: else e needs a value that can fail (T? or T | E with E marked Error), got Int
+guard-no-failure switch-arm safe accepted ok | 
+guard-no-failure union-arm unsafe refused ok | error[E4000]: else e needs a value that can fail (T? or T | E with E marked Error), got Int
+guard-no-failure union-arm safe accepted ok | 
+guard-no-failure while unsafe refused ok | error[E4000]: else e needs a value that can fail (T? or T | E with E marked Error), got Int
+guard-no-failure while safe accepted ok | 
+guard-no-failure for unsafe refused ok | error[E4000]: else e needs a value that can fail (T? or T | E with E marked Error), got Int
+guard-no-failure for safe accepted ok | 
+guard-no-failure lambda unsafe refused ok | error[E4000]: else e needs a value that can fail (T? or T | E with E marked Error), got Int
+guard-no-failure lambda safe refused refused | 
+guard-no-failure builtin-block unsafe refused ok | error[E4000]: else e needs a value that can fail (T? or T | E with E marked Error), got Int
+guard-no-failure builtin-block safe accepted ok | 
+guard-no-failure binding-chain unsafe refused ok | error[E4000]: else e needs a value that can fail (T? or T | E with E marked Error), got Int
+guard-no-failure binding-chain safe accepted ok | 
+guard-reads-own-name plain unsafe refused ok | error[E4001]: unknown name n
+guard-reads-own-name plain safe accepted ok | 
+guard-reads-own-name if unsafe refused ok | error[E4001]: unknown name n
+guard-reads-own-name if safe accepted ok | 
+guard-reads-own-name else unsafe refused ok | error[E4001]: unknown name n
+guard-reads-own-name else safe accepted ok | 
+guard-reads-own-name switch-arm unsafe refused ok | error[E4001]: unknown name n
+guard-reads-own-name switch-arm safe accepted ok | 
+guard-reads-own-name union-arm unsafe refused ok | error[E4001]: unknown name n
+guard-reads-own-name union-arm safe accepted ok | 
+guard-reads-own-name while unsafe refused ok | error[E4001]: unknown name n
+guard-reads-own-name while safe accepted ok | 
+guard-reads-own-name for unsafe refused ok | error[E4001]: unknown name n
+guard-reads-own-name for safe accepted ok | 
+guard-reads-own-name lambda unsafe refused ok | error[E4001]: unknown name n
+guard-reads-own-name lambda safe refused refused | 
+guard-reads-own-name builtin-block unsafe refused ok | error[E4001]: unknown name n
+guard-reads-own-name builtin-block safe accepted ok | 
+guard-reads-own-name binding-chain unsafe refused ok | error[E4001]: unknown name n
+guard-reads-own-name binding-chain safe accepted ok | 
+value-block-return-type plain unsafe refused ok | error[E4004]: return type is String, expected Int
+value-block-return-type plain safe accepted ok | 
+value-block-return-type if unsafe refused ok | error[E4004]: return type is String, expected Int
+value-block-return-type if safe accepted ok | 
+value-block-return-type else unsafe refused ok | error[E4004]: return type is String, expected Int
+value-block-return-type else safe accepted ok | 
+value-block-return-type switch-arm unsafe refused ok | error[E4004]: return type is String, expected Int
+value-block-return-type switch-arm safe accepted ok | 
+value-block-return-type union-arm unsafe refused ok | error[E4004]: return type is String, expected Int
+value-block-return-type union-arm safe accepted ok | 
+value-block-return-type while unsafe refused ok | error[E4004]: return type is String, expected Int
+value-block-return-type while safe accepted ok | 
+value-block-return-type for unsafe refused ok | error[E4004]: return type is String, expected Int
+value-block-return-type for safe accepted ok | 
+value-block-return-type lambda unsafe refused other | 
+value-block-return-type lambda safe accepted ok | 
+value-block-return-type builtin-block unsafe refused ok | error[E4004]: return type is String, expected Int
+value-block-return-type builtin-block safe accepted ok | 
+value-block-return-type binding-chain unsafe refused ok | error[E4004]: return type is String, expected Int
+value-block-return-type binding-chain safe accepted ok | 
+const-assigned plain unsafe refused ok | error[E4000]: limit is a constant and cannot be assigned; a local needs another name
+const-assigned plain safe accepted ok | 
+const-assigned if unsafe refused ok | error[E4000]: limit is a constant and cannot be assigned; a local needs another name
+const-assigned if safe accepted ok | 
+const-assigned else unsafe refused ok | error[E4000]: limit is a constant and cannot be assigned; a local needs another name
+const-assigned else safe accepted ok | 
+const-assigned switch-arm unsafe refused ok | error[E4000]: limit is a constant and cannot be assigned; a local needs another name
+const-assigned switch-arm safe accepted ok | 
+const-assigned union-arm unsafe refused ok | error[E4000]: limit is a constant and cannot be assigned; a local needs another name
+const-assigned union-arm safe accepted ok | 
+const-assigned while unsafe refused ok | error[E4000]: limit is a constant and cannot be assigned; a local needs another name
+const-assigned while safe accepted ok | 
+const-assigned for unsafe refused ok | error[E4000]: limit is a constant and cannot be assigned; a local needs another name
+const-assigned for safe accepted ok | 
+const-assigned lambda unsafe refused ok | error[E4000]: limit is a constant and cannot be assigned; a local needs another name
+const-assigned lambda safe accepted ok | 
+const-assigned builtin-block unsafe refused ok | error[E4000]: limit is a constant and cannot be assigned; a local needs another name
+const-assigned builtin-block safe accepted ok | 
+const-assigned binding-chain unsafe refused ok | error[E4000]: limit is a constant and cannot be assigned; a local needs another name
+const-assigned binding-chain safe accepted ok | 
+const-non-scalar plain unsafe refused ok | error[E4000]: a constant holds a scalar (an integer, a Float64, a Bool or a character literal): a String is not one yet: a function can return it instead (fn greeting: String { "hello" })
+const-non-scalar plain safe accepted ok | 
+const-non-scalar if unsafe refused ok | error[E4000]: a constant holds a scalar (an integer, a Float64, a Bool or a character literal): a String is not one yet: a function can return it instead (fn greeting: String { "hello" })
+const-non-scalar if safe accepted ok | 
+const-non-scalar else unsafe refused ok | error[E4000]: a constant holds a scalar (an integer, a Float64, a Bool or a character literal): a String is not one yet: a function can return it instead (fn greeting: String { "hello" })
+const-non-scalar else safe accepted ok | 
+const-non-scalar switch-arm unsafe refused ok | error[E4000]: a constant holds a scalar (an integer, a Float64, a Bool or a character literal): a String is not one yet: a function can return it instead (fn greeting: String { "hello" })
+const-non-scalar switch-arm safe accepted ok | 
+const-non-scalar union-arm unsafe refused ok | error[E4000]: a constant holds a scalar (an integer, a Float64, a Bool or a character literal): a String is not one yet: a function can return it instead (fn greeting: String { "hello" })
+const-non-scalar union-arm safe accepted ok | 
+const-non-scalar while unsafe refused ok | error[E4000]: a constant holds a scalar (an integer, a Float64, a Bool or a character literal): a String is not one yet: a function can return it instead (fn greeting: String { "hello" })
+const-non-scalar while safe accepted ok | 
+const-non-scalar for unsafe refused ok | error[E4000]: a constant holds a scalar (an integer, a Float64, a Bool or a character literal): a String is not one yet: a function can return it instead (fn greeting: String { "hello" })
+const-non-scalar for safe accepted ok | 
+const-non-scalar lambda unsafe refused ok | error[E4000]: a constant holds a scalar (an integer, a Float64, a Bool or a character literal): a String is not one yet: a function can return it instead (fn greeting: String { "hello" })
+const-non-scalar lambda safe accepted ok | 
+const-non-scalar builtin-block unsafe refused ok | error[E4000]: a constant holds a scalar (an integer, a Float64, a Bool or a character literal): a String is not one yet: a function can return it instead (fn greeting: String { "hello" })
+const-non-scalar builtin-block safe accepted ok | 
+const-non-scalar binding-chain unsafe refused ok | error[E4000]: a constant holds a scalar (an integer, a Float64, a Bool or a character literal): a String is not one yet: a function can return it instead (fn greeting: String { "hello" })
+const-non-scalar binding-chain safe accepted ok | 
+module-state plain unsafe refused ok | error[E2000]: a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values
+module-state plain safe accepted ok | 
+module-state if unsafe refused ok | error[E2000]: a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values
+module-state if safe accepted ok | 
+module-state else unsafe refused ok | error[E2000]: a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values
+module-state else safe accepted ok | 
+module-state switch-arm unsafe refused ok | error[E2000]: a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values
+module-state switch-arm safe accepted ok | 
+module-state union-arm unsafe refused ok | error[E2000]: a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values
+module-state union-arm safe accepted ok | 
+module-state while unsafe refused ok | error[E2000]: a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values
+module-state while safe accepted ok | 
+module-state for unsafe refused ok | error[E2000]: a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values
+module-state for safe accepted ok | 
+module-state lambda unsafe refused ok | error[E2000]: a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values
+module-state lambda safe accepted ok | 
+module-state builtin-block unsafe refused ok | error[E2000]: a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values
+module-state builtin-block safe accepted ok | 
+module-state binding-chain unsafe refused ok | error[E2000]: a module has no variables, on purpose: a value that never changes is `const count = ...`, and state lives in a function's locals or is passed in values
+module-state binding-chain safe accepted ok | 
+const-does-not-fit plain unsafe refused ok | error[E4000]: the constant big = 3000000000 does not fit in Int32
+const-does-not-fit plain safe accepted ok | 
+const-does-not-fit if unsafe refused ok | error[E4000]: the constant big = 3000000000 does not fit in Int32
+const-does-not-fit if safe accepted ok | 
+const-does-not-fit else unsafe refused ok | error[E4000]: the constant big = 3000000000 does not fit in Int32
+const-does-not-fit else safe accepted ok | 
+const-does-not-fit switch-arm unsafe refused ok | error[E4000]: the constant big = 3000000000 does not fit in Int32
+const-does-not-fit switch-arm safe accepted ok | 
+const-does-not-fit union-arm unsafe refused ok | error[E4000]: the constant big = 3000000000 does not fit in Int32
+const-does-not-fit union-arm safe accepted ok | 
+const-does-not-fit while unsafe refused ok | error[E4000]: the constant big = 3000000000 does not fit in Int32
+const-does-not-fit while safe accepted ok | 
+const-does-not-fit for unsafe refused ok | error[E4000]: the constant big = 3000000000 does not fit in Int32
+const-does-not-fit for safe accepted ok | 
+const-does-not-fit lambda unsafe refused ok | error[E4000]: the constant big = 3000000000 does not fit in Int32
+const-does-not-fit lambda safe accepted ok | 
+const-does-not-fit builtin-block unsafe refused ok | error[E4000]: the constant big = 3000000000 does not fit in Int32
+const-does-not-fit builtin-block safe accepted ok | 
+const-does-not-fit binding-chain unsafe refused ok | error[E4000]: the constant big = 3000000000 does not fit in Int32
+const-does-not-fit binding-chain safe accepted ok | 
+literal-fit-int32 plain unsafe refused ok | error[E4000]: integer literal does not fit in Int32
+literal-fit-int32 plain safe accepted ok | 
+literal-fit-int32 if unsafe refused ok | error[E4000]: integer literal does not fit in Int32
+literal-fit-int32 if safe accepted ok | 
+literal-fit-int32 else unsafe refused ok | error[E4000]: integer literal does not fit in Int32
+literal-fit-int32 else safe accepted ok | 
+literal-fit-int32 switch-arm unsafe refused ok | error[E4000]: integer literal does not fit in Int32
+literal-fit-int32 switch-arm safe accepted ok | 
+literal-fit-int32 union-arm unsafe refused ok | error[E4000]: integer literal does not fit in Int32
+literal-fit-int32 union-arm safe accepted ok | 
+literal-fit-int32 while unsafe refused ok | error[E4000]: integer literal does not fit in Int32
+literal-fit-int32 while safe accepted ok | 
+literal-fit-int32 for unsafe refused ok | error[E4000]: integer literal does not fit in Int32
+literal-fit-int32 for safe accepted ok | 
+literal-fit-int32 lambda unsafe refused ok | error[E4000]: integer literal does not fit in Int32
+literal-fit-int32 lambda safe accepted ok | 
+literal-fit-int32 builtin-block unsafe refused ok | error[E4000]: integer literal does not fit in Int32
+literal-fit-int32 builtin-block safe accepted ok | 
+literal-fit-int32 binding-chain unsafe refused ok | error[E4000]: integer literal does not fit in Int32
+literal-fit-int32 binding-chain safe accepted ok | 
+literal-fit-uint32 plain unsafe refused ok | error[E4000]: integer literal does not fit in UInt32
+literal-fit-uint32 plain safe accepted ok | 
+literal-fit-uint32 if unsafe refused ok | error[E4000]: integer literal does not fit in UInt32
+literal-fit-uint32 if safe accepted ok | 
+literal-fit-uint32 else unsafe refused ok | error[E4000]: integer literal does not fit in UInt32
+literal-fit-uint32 else safe accepted ok | 
+literal-fit-uint32 switch-arm unsafe refused ok | error[E4000]: integer literal does not fit in UInt32
+literal-fit-uint32 switch-arm safe accepted ok | 
+literal-fit-uint32 union-arm unsafe refused ok | error[E4000]: integer literal does not fit in UInt32
+literal-fit-uint32 union-arm safe accepted ok | 
+literal-fit-uint32 while unsafe refused ok | error[E4000]: integer literal does not fit in UInt32
+literal-fit-uint32 while safe accepted ok | 
+literal-fit-uint32 for unsafe refused ok | error[E4000]: integer literal does not fit in UInt32
+literal-fit-uint32 for safe accepted ok | 
+literal-fit-uint32 lambda unsafe refused ok | error[E4000]: integer literal does not fit in UInt32
+literal-fit-uint32 lambda safe accepted ok | 
+literal-fit-uint32 builtin-block unsafe refused ok | error[E4000]: integer literal does not fit in UInt32
+literal-fit-uint32 builtin-block safe accepted ok | 
+literal-fit-uint32 binding-chain unsafe refused ok | error[E4000]: integer literal does not fit in UInt32
+literal-fit-uint32 binding-chain safe accepted ok | 
+literal-fit-int plain unsafe refused ok | error[E4000]: integer literal does not fit in Int; use 9223372036854775808u64
+literal-fit-int plain safe accepted ok | 
+literal-fit-int if unsafe refused ok | error[E4000]: integer literal does not fit in Int; use 9223372036854775808u64
+literal-fit-int if safe accepted ok | 
+literal-fit-int else unsafe refused ok | error[E4000]: integer literal does not fit in Int; use 9223372036854775808u64
+literal-fit-int else safe accepted ok | 
+literal-fit-int switch-arm unsafe refused ok | error[E4000]: integer literal does not fit in Int; use 9223372036854775808u64
+literal-fit-int switch-arm safe accepted ok | 
+literal-fit-int union-arm unsafe refused ok | error[E4000]: integer literal does not fit in Int; use 9223372036854775808u64
+literal-fit-int union-arm safe accepted ok | 
+literal-fit-int while unsafe refused ok | error[E4000]: integer literal does not fit in Int; use 9223372036854775808u64
+literal-fit-int while safe accepted ok | 
+literal-fit-int for unsafe refused ok | error[E4000]: integer literal does not fit in Int; use 9223372036854775808u64
+literal-fit-int for safe accepted ok | 
+literal-fit-int lambda unsafe refused ok | error[E4000]: integer literal does not fit in Int; use 9223372036854775808u64
+literal-fit-int lambda safe accepted ok | 
+literal-fit-int builtin-block unsafe refused ok | error[E4000]: integer literal does not fit in Int; use 9223372036854775808u64
+literal-fit-int builtin-block safe accepted ok | 
+literal-fit-int binding-chain unsafe refused ok | error[E4000]: integer literal does not fit in Int; use 9223372036854775808u64
+literal-fit-int binding-chain safe accepted ok | 
+literal-fit-uint64 plain unsafe refused ok | error[E2000]: integer literal does not fit in UInt64, the widest integer type
+literal-fit-uint64 plain safe accepted ok | 
+literal-fit-uint64 if unsafe refused ok | error[E2000]: integer literal does not fit in UInt64, the widest integer type
+literal-fit-uint64 if safe accepted ok | 
+literal-fit-uint64 else unsafe refused ok | error[E2000]: integer literal does not fit in UInt64, the widest integer type
+literal-fit-uint64 else safe accepted ok | 
+literal-fit-uint64 switch-arm unsafe refused ok | error[E2000]: integer literal does not fit in UInt64, the widest integer type
+literal-fit-uint64 switch-arm safe accepted ok | 
+literal-fit-uint64 union-arm unsafe refused ok | error[E2000]: integer literal does not fit in UInt64, the widest integer type
+literal-fit-uint64 union-arm safe accepted ok | 
+literal-fit-uint64 while unsafe refused ok | error[E2000]: integer literal does not fit in UInt64, the widest integer type
+literal-fit-uint64 while safe accepted ok | 
+literal-fit-uint64 for unsafe refused ok | error[E2000]: integer literal does not fit in UInt64, the widest integer type
+literal-fit-uint64 for safe accepted ok | 
+literal-fit-uint64 lambda unsafe refused ok | error[E2000]: integer literal does not fit in UInt64, the widest integer type
+literal-fit-uint64 lambda safe accepted ok | 
+literal-fit-uint64 builtin-block unsafe refused ok | error[E2000]: integer literal does not fit in UInt64, the widest integer type
+literal-fit-uint64 builtin-block safe accepted ok | 
+literal-fit-uint64 binding-chain unsafe refused ok | error[E2000]: integer literal does not fit in UInt64, the widest integer type
+literal-fit-uint64 binding-chain safe accepted ok | 
+no-effect plain unsafe refused ok | error[E4000]: this line computes a value and drops it; use it, or remove the line
+no-effect plain safe accepted ok | 
+no-effect if unsafe refused ok | error[E4000]: this line computes a value and drops it; use it, or remove the line
+no-effect if safe accepted ok | 
+no-effect else unsafe refused ok | error[E4000]: this line computes a value and drops it; use it, or remove the line
+no-effect else safe accepted ok | 
+no-effect switch-arm unsafe refused ok | error[E4000]: this line computes a value and drops it; use it, or remove the line
+no-effect switch-arm safe accepted ok | 
+no-effect union-arm unsafe refused ok | error[E4000]: this line computes a value and drops it; use it, or remove the line
+no-effect union-arm safe accepted ok | 
+no-effect while unsafe refused ok | error[E4000]: this line computes a value and drops it; use it, or remove the line
+no-effect while safe accepted ok | 
+no-effect for unsafe refused ok | error[E4000]: this line computes a value and drops it; use it, or remove the line
+no-effect for safe accepted ok | 
+no-effect lambda unsafe refused ok | error[E4000]: this line computes a value and drops it; use it, or remove the line
+no-effect lambda safe accepted ok | 
+no-effect builtin-block unsafe refused ok | error[E4000]: this line computes a value and drops it; use it, or remove the line
+no-effect builtin-block safe accepted ok | 
+no-effect binding-chain unsafe refused ok | error[E4000]: this line computes a value and drops it; use it, or remove the line
+no-effect binding-chain safe accepted ok | 
+range-overlap plain unsafe refused ok | error[E4000]: case 5 overlaps case 0..=9
+range-overlap plain safe accepted ok | 
+range-overlap if unsafe refused ok | error[E4000]: case 5 overlaps case 0..=9
+range-overlap if safe accepted ok | 
+range-overlap else unsafe refused ok | error[E4000]: case 5 overlaps case 0..=9
+range-overlap else safe accepted ok | 
+range-overlap switch-arm unsafe refused ok | error[E4000]: case 5 overlaps case 0..=9
+range-overlap switch-arm safe accepted ok | 
+range-overlap union-arm unsafe refused ok | error[E4000]: case 5 overlaps case 0..=9
+range-overlap union-arm safe accepted ok | 
+range-overlap while unsafe refused ok | error[E4000]: case 5 overlaps case 0..=9
+range-overlap while safe accepted ok | 
+range-overlap for unsafe refused ok | error[E4000]: case 5 overlaps case 0..=9
+range-overlap for safe accepted ok | 
+range-overlap lambda unsafe refused ok | error[E4000]: case 5 overlaps case 0..=9
+range-overlap lambda safe accepted ok | 
+range-overlap builtin-block unsafe refused ok | error[E4000]: case 5 overlaps case 0..=9
+range-overlap builtin-block safe accepted ok | 
+range-overlap binding-chain unsafe refused ok | error[E4000]: case 5 overlaps case 0..=9
+range-overlap binding-chain safe accepted ok | 
+range-const-overlap plain unsafe refused ok | error[E4000]: case 2 overlaps case lo..=4
+range-const-overlap plain safe accepted ok | 
+range-const-overlap if unsafe refused ok | error[E4000]: case 2 overlaps case lo..=4
+range-const-overlap if safe accepted ok | 
+range-const-overlap else unsafe refused ok | error[E4000]: case 2 overlaps case lo..=4
+range-const-overlap else safe accepted ok | 
+range-const-overlap switch-arm unsafe refused ok | error[E4000]: case 2 overlaps case lo..=4
+range-const-overlap switch-arm safe accepted ok | 
+range-const-overlap union-arm unsafe refused ok | error[E4000]: case 2 overlaps case lo..=4
+range-const-overlap union-arm safe accepted ok | 
+range-const-overlap while unsafe refused ok | error[E4000]: case 2 overlaps case lo..=4
+range-const-overlap while safe accepted ok | 
+range-const-overlap for unsafe refused ok | error[E4000]: case 2 overlaps case lo..=4
+range-const-overlap for safe accepted ok | 
+range-const-overlap lambda unsafe refused ok | error[E4000]: case 2 overlaps case lo..=4
+range-const-overlap lambda safe accepted ok | 
+range-const-overlap builtin-block unsafe refused ok | error[E4000]: case 2 overlaps case lo..=4
+range-const-overlap builtin-block safe accepted ok | 
+range-const-overlap binding-chain unsafe refused ok | error[E4000]: case 2 overlaps case lo..=4
+range-const-overlap binding-chain safe accepted ok | 
+label-outside-type plain unsafe refused ok | error[E4000]: case label 3000000000 does not fit in Int32
+label-outside-type plain safe accepted ok | 
+label-outside-type if unsafe refused ok | error[E4000]: case label 3000000000 does not fit in Int32
+label-outside-type if safe accepted ok | 
+label-outside-type else unsafe refused ok | error[E4000]: case label 3000000000 does not fit in Int32
+label-outside-type else safe accepted ok | 
+label-outside-type switch-arm unsafe refused ok | error[E4000]: case label 3000000000 does not fit in Int32
+label-outside-type switch-arm safe accepted ok | 
+label-outside-type union-arm unsafe refused ok | error[E4000]: case label 3000000000 does not fit in Int32
+label-outside-type union-arm safe accepted ok | 
+label-outside-type while unsafe refused ok | error[E4000]: case label 3000000000 does not fit in Int32
+label-outside-type while safe accepted ok | 
+label-outside-type for unsafe refused ok | error[E4000]: case label 3000000000 does not fit in Int32
+label-outside-type for safe accepted ok | 
+label-outside-type lambda unsafe refused ok | error[E4000]: case label 3000000000 does not fit in Int32
+label-outside-type lambda safe accepted ok | 
+label-outside-type builtin-block unsafe refused ok | error[E4000]: case label 3000000000 does not fit in Int32
+label-outside-type builtin-block safe accepted ok | 
+label-outside-type binding-chain unsafe refused ok | error[E4000]: case label 3000000000 does not fit in Int32
+label-outside-type binding-chain safe accepted ok | 
+bool-switch-missing plain unsafe refused ok | error[E4000]: switch over Bool does not cover false: name them or add else
+bool-switch-missing plain safe accepted ok | 
+bool-switch-missing if unsafe refused ok | error[E4000]: switch over Bool does not cover false: name them or add else
+bool-switch-missing if safe accepted ok | 
+bool-switch-missing else unsafe refused ok | error[E4000]: switch over Bool does not cover false: name them or add else
+bool-switch-missing else safe accepted ok | 
+bool-switch-missing switch-arm unsafe refused ok | error[E4000]: switch over Bool does not cover false: name them or add else
+bool-switch-missing switch-arm safe accepted ok | 
+bool-switch-missing union-arm unsafe refused ok | error[E4000]: switch over Bool does not cover false: name them or add else
+bool-switch-missing union-arm safe accepted ok | 
+bool-switch-missing while unsafe refused ok | error[E4000]: switch over Bool does not cover false: name them or add else
+bool-switch-missing while safe accepted ok | 
+bool-switch-missing for unsafe refused ok | error[E4000]: switch over Bool does not cover false: name them or add else
+bool-switch-missing for safe accepted ok | 
+bool-switch-missing lambda unsafe refused ok | error[E4000]: switch over Bool does not cover false: name them or add else
+bool-switch-missing lambda safe accepted ok | 
+bool-switch-missing builtin-block unsafe refused ok | error[E4000]: switch over Bool does not cover false: name them or add else
+bool-switch-missing builtin-block safe accepted ok | 
+bool-switch-missing binding-chain unsafe refused ok | error[E4000]: switch over Bool does not cover false: name them or add else
+bool-switch-missing binding-chain safe accepted ok | 
+bool-int-label plain unsafe refused ok | error[E4000]: a case label of a switch over Bool is true or false: write `case true`
+bool-int-label plain safe accepted ok | 
+bool-int-label if unsafe refused ok | error[E4000]: a case label of a switch over Bool is true or false: write `case true`
+bool-int-label if safe accepted ok | 
+bool-int-label else unsafe refused ok | error[E4000]: a case label of a switch over Bool is true or false: write `case true`
+bool-int-label else safe accepted ok | 
+bool-int-label switch-arm unsafe refused ok | error[E4000]: a case label of a switch over Bool is true or false: write `case true`
+bool-int-label switch-arm safe accepted ok | 
+bool-int-label union-arm unsafe refused ok | error[E4000]: a case label of a switch over Bool is true or false: write `case true`
+bool-int-label union-arm safe accepted ok | 
+bool-int-label while unsafe refused ok | error[E4000]: a case label of a switch over Bool is true or false: write `case true`
+bool-int-label while safe accepted ok | 
+bool-int-label for unsafe refused ok | error[E4000]: a case label of a switch over Bool is true or false: write `case true`
+bool-int-label for safe accepted ok | 
+bool-int-label lambda unsafe refused ok | error[E4000]: a case label of a switch over Bool is true or false: write `case true`
+bool-int-label lambda safe accepted ok | 
+bool-int-label builtin-block unsafe refused ok | error[E4000]: a case label of a switch over Bool is true or false: write `case true`
+bool-int-label builtin-block safe accepted ok | 
+bool-int-label binding-chain unsafe refused ok | error[E4000]: a case label of a switch over Bool is true or false: write `case true`
+bool-int-label binding-chain safe accepted ok | 
+nil-compare plain unsafe refused ok | error[E4000]: px is Int? and an optional is never compared with nil: test it with `if _ = px { ... } else { ... }`, or open it with `if v = px`, `px ?? fallback` or `px?`
+nil-compare plain safe accepted ok | 
+nil-compare if unsafe refused ok | error[E4000]: px is Int? and an optional is never compared with nil: test it with `if _ = px { ... } else { ... }`, or open it with `if v = px`, `px ?? fallback` or `px?`
+nil-compare if safe accepted ok | 
+nil-compare else unsafe refused ok | error[E4000]: px is Int? and an optional is never compared with nil: test it with `if _ = px { ... } else { ... }`, or open it with `if v = px`, `px ?? fallback` or `px?`
+nil-compare else safe accepted ok | 
+nil-compare switch-arm unsafe refused ok | error[E4000]: px is Int? and an optional is never compared with nil: test it with `if _ = px { ... } else { ... }`, or open it with `if v = px`, `px ?? fallback` or `px?`
+nil-compare switch-arm safe accepted ok | 
+nil-compare union-arm unsafe refused ok | error[E4000]: px is Int? and an optional is never compared with nil: test it with `if _ = px { ... } else { ... }`, or open it with `if v = px`, `px ?? fallback` or `px?`
+nil-compare union-arm safe accepted ok | 
+nil-compare while unsafe refused ok | error[E4000]: px is Int? and an optional is never compared with nil: test it with `if _ = px { ... } else { ... }`, or open it with `if v = px`, `px ?? fallback` or `px?`
+nil-compare while safe accepted ok | 
+nil-compare for unsafe refused ok | error[E4000]: px is Int? and an optional is never compared with nil: test it with `if _ = px { ... } else { ... }`, or open it with `if v = px`, `px ?? fallback` or `px?`
+nil-compare for safe accepted ok | 
+nil-compare lambda unsafe refused ok | error[E4000]: px is Int? and an optional is never compared with nil: test it with `if _ = px { ... } else { ... }`, or open it with `if v = px`, `px ?? fallback` or `px?`
+nil-compare lambda safe accepted ok | 
+nil-compare builtin-block unsafe refused ok | error[E4000]: px is Int? and an optional is never compared with nil: test it with `if _ = px { ... } else { ... }`, or open it with `if v = px`, `px ?? fallback` or `px?`
+nil-compare builtin-block safe accepted ok | 
+nil-compare binding-chain unsafe refused ok | error[E4000]: px is Int? and an optional is never compared with nil: test it with `if _ = px { ... } else { ... }`, or open it with `if v = px`, `px ?? fallback` or `px?`
+nil-compare binding-chain safe accepted ok | 
+optional-as-value plain unsafe refused ok | error[E4000]: binary operator expects numeric operands, got Int? and Int; open it with `if v = px`, `px ?? fallback` or `px?`
+optional-as-value plain safe accepted ok | 
+optional-as-value if unsafe refused ok | error[E4000]: binary operator expects numeric operands, got Int? and Int; open it with `if v = px`, `px ?? fallback` or `px?`
+optional-as-value if safe accepted ok | 
+optional-as-value else unsafe refused ok | error[E4000]: binary operator expects numeric operands, got Int? and Int; open it with `if v = px`, `px ?? fallback` or `px?`
+optional-as-value else safe accepted ok | 
+optional-as-value switch-arm unsafe refused ok | error[E4000]: binary operator expects numeric operands, got Int? and Int; open it with `if v = px`, `px ?? fallback` or `px?`
+optional-as-value switch-arm safe accepted ok | 
+optional-as-value union-arm unsafe refused ok | error[E4000]: binary operator expects numeric operands, got Int? and Int; open it with `if v = px`, `px ?? fallback` or `px?`
+optional-as-value union-arm safe accepted ok | 
+optional-as-value while unsafe refused ok | error[E4000]: binary operator expects numeric operands, got Int? and Int; open it with `if v = px`, `px ?? fallback` or `px?`
+optional-as-value while safe accepted ok | 
+optional-as-value for unsafe refused ok | error[E4000]: binary operator expects numeric operands, got Int? and Int; open it with `if v = px`, `px ?? fallback` or `px?`
+optional-as-value for safe accepted ok | 
+optional-as-value lambda unsafe refused ok | error[E4000]: binary operator expects numeric operands, got Int? and Int; open it with `if v = px`, `px ?? fallback` or `px?`
+optional-as-value lambda safe accepted ok | 
+optional-as-value builtin-block unsafe refused ok | error[E4000]: binary operator expects numeric operands, got Int? and Int; open it with `if v = px`, `px ?? fallback` or `px?`
+optional-as-value builtin-block safe accepted ok | 
+optional-as-value binding-chain unsafe refused ok | error[E4000]: binary operator expects numeric operands, got Int? and Int; open it with `if v = px`, `px ?? fallback` or `px?`
+optional-as-value binding-chain safe accepted ok | 
+arg-count plain unsafe refused ok | error[E4003]: ptwo takes 2 arguments, given 1: ptwo(a: Int, b: Int): Int
+arg-count plain safe accepted ok | 
+arg-count if unsafe refused ok | error[E4003]: ptwo takes 2 arguments, given 1: ptwo(a: Int, b: Int): Int
+arg-count if safe accepted ok | 
+arg-count else unsafe refused ok | error[E4003]: ptwo takes 2 arguments, given 1: ptwo(a: Int, b: Int): Int
+arg-count else safe accepted ok | 
+arg-count switch-arm unsafe refused ok | error[E4003]: ptwo takes 2 arguments, given 1: ptwo(a: Int, b: Int): Int
+arg-count switch-arm safe accepted ok | 
+arg-count union-arm unsafe refused ok | error[E4003]: ptwo takes 2 arguments, given 1: ptwo(a: Int, b: Int): Int
+arg-count union-arm safe accepted ok | 
+arg-count while unsafe refused ok | error[E4003]: ptwo takes 2 arguments, given 1: ptwo(a: Int, b: Int): Int
+arg-count while safe accepted ok | 
+arg-count for unsafe refused ok | error[E4003]: ptwo takes 2 arguments, given 1: ptwo(a: Int, b: Int): Int
+arg-count for safe accepted ok | 
+arg-count lambda unsafe refused ok | error[E4003]: ptwo takes 2 arguments, given 1: ptwo(a: Int, b: Int): Int
+arg-count lambda safe accepted ok | 
+arg-count builtin-block unsafe refused ok | error[E4003]: ptwo takes 2 arguments, given 1: ptwo(a: Int, b: Int): Int
+arg-count builtin-block safe accepted ok | 
+arg-count binding-chain unsafe refused ok | error[E4003]: ptwo takes 2 arguments, given 1: ptwo(a: Int, b: Int): Int
+arg-count binding-chain safe accepted ok | 
+named-without-default plain unsafe refused ok | error[E4000]: s of pwide has no default, so it is passed by position: a name is given only to a parameter with a default: pwide(s: String, width: Int = ...): Int
+named-without-default plain safe accepted ok | 
+named-without-default if unsafe refused ok | error[E4000]: s of pwide has no default, so it is passed by position: a name is given only to a parameter with a default: pwide(s: String, width: Int = ...): Int
+named-without-default if safe accepted ok | 
+named-without-default else unsafe refused ok | error[E4000]: s of pwide has no default, so it is passed by position: a name is given only to a parameter with a default: pwide(s: String, width: Int = ...): Int
+named-without-default else safe accepted ok | 
+named-without-default switch-arm unsafe refused ok | error[E4000]: s of pwide has no default, so it is passed by position: a name is given only to a parameter with a default: pwide(s: String, width: Int = ...): Int
+named-without-default switch-arm safe accepted ok | 
+named-without-default union-arm unsafe refused ok | error[E4000]: s of pwide has no default, so it is passed by position: a name is given only to a parameter with a default: pwide(s: String, width: Int = ...): Int
+named-without-default union-arm safe accepted ok | 
+named-without-default while unsafe refused ok | error[E4000]: s of pwide has no default, so it is passed by position: a name is given only to a parameter with a default: pwide(s: String, width: Int = ...): Int
+named-without-default while safe accepted ok | 
+named-without-default for unsafe refused ok | error[E4000]: s of pwide has no default, so it is passed by position: a name is given only to a parameter with a default: pwide(s: String, width: Int = ...): Int
+named-without-default for safe accepted ok | 
+named-without-default lambda unsafe refused ok | error[E4000]: s of pwide has no default, so it is passed by position: a name is given only to a parameter with a default: pwide(s: String, width: Int = ...): Int
+named-without-default lambda safe accepted ok | 
+named-without-default builtin-block unsafe refused ok | error[E4000]: s of pwide has no default, so it is passed by position: a name is given only to a parameter with a default: pwide(s: String, width: Int = ...): Int
+named-without-default builtin-block safe accepted ok | 
+named-without-default binding-chain unsafe refused ok | error[E4000]: s of pwide has no default, so it is passed by position: a name is given only to a parameter with a default: pwide(s: String, width: Int = ...): Int
+named-without-default binding-chain safe accepted ok | 
+literal-missing-field plain unsafe refused ok | error[E4000]: missing field a (a literal leaves out only a field that declares a default)
+literal-missing-field plain safe accepted ok | 
+literal-missing-field if unsafe refused ok | error[E4000]: missing field a (a literal leaves out only a field that declares a default)
+literal-missing-field if safe accepted ok | 
+literal-missing-field else unsafe refused ok | error[E4000]: missing field a (a literal leaves out only a field that declares a default)
+literal-missing-field else safe accepted ok | 
+literal-missing-field switch-arm unsafe refused ok | error[E4000]: missing field a (a literal leaves out only a field that declares a default)
+literal-missing-field switch-arm safe accepted ok | 
+literal-missing-field union-arm unsafe refused ok | error[E4000]: missing field a (a literal leaves out only a field that declares a default)
+literal-missing-field union-arm safe accepted ok | 
+literal-missing-field while unsafe refused ok | error[E4000]: missing field a (a literal leaves out only a field that declares a default)
+literal-missing-field while safe accepted ok | 
+literal-missing-field for unsafe refused ok | error[E4000]: missing field a (a literal leaves out only a field that declares a default)
+literal-missing-field for safe accepted ok | 
+literal-missing-field lambda unsafe refused ok | error[E4000]: missing field a (a literal leaves out only a field that declares a default)
+literal-missing-field lambda safe accepted ok | 
+literal-missing-field builtin-block unsafe refused ok | error[E4000]: missing field a (a literal leaves out only a field that declares a default)
+literal-missing-field builtin-block safe accepted ok | 
+literal-missing-field binding-chain unsafe refused ok | error[E4000]: missing field a (a literal leaves out only a field that declares a default)
+literal-missing-field binding-chain safe accepted ok | 
+int-float-mix plain unsafe refused ok | error[E4000]: binary operator expects matching types, got Float64 and Int: an integer and a Float64 do not mix; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-mix plain safe accepted ok | 
+int-float-mix if unsafe refused ok | error[E4000]: binary operator expects matching types, got Float64 and Int: an integer and a Float64 do not mix; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-mix if safe accepted ok | 
+int-float-mix else unsafe refused ok | error[E4000]: binary operator expects matching types, got Float64 and Int: an integer and a Float64 do not mix; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-mix else safe accepted ok | 
+int-float-mix switch-arm unsafe refused ok | error[E4000]: binary operator expects matching types, got Float64 and Int: an integer and a Float64 do not mix; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-mix switch-arm safe accepted ok | 
+int-float-mix union-arm unsafe refused ok | error[E4000]: binary operator expects matching types, got Float64 and Int: an integer and a Float64 do not mix; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-mix union-arm safe accepted ok | 
+int-float-mix while unsafe refused ok | error[E4000]: binary operator expects matching types, got Float64 and Int: an integer and a Float64 do not mix; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-mix while safe accepted ok | 
+int-float-mix for unsafe refused ok | error[E4000]: binary operator expects matching types, got Float64 and Int: an integer and a Float64 do not mix; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-mix for safe accepted ok | 
+int-float-mix lambda unsafe refused ok | error[E4000]: binary operator expects matching types, got Float64 and Int: an integer and a Float64 do not mix; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-mix lambda safe accepted ok | 
+int-float-mix builtin-block unsafe refused ok | error[E4000]: binary operator expects matching types, got Float64 and Int: an integer and a Float64 do not mix; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-mix builtin-block safe accepted ok | 
+int-float-mix binding-chain unsafe refused ok | error[E4000]: binary operator expects matching types, got Float64 and Int: an integer and a Float64 do not mix; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-mix binding-chain safe accepted ok | 
+int-float-compare plain unsafe refused ok | error[E4000]: cannot compare Int with Float64: == compares two values of one type; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-compare plain safe accepted ok | 
+int-float-compare if unsafe refused ok | error[E4000]: cannot compare Int with Float64: == compares two values of one type; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-compare if safe accepted ok | 
+int-float-compare else unsafe refused ok | error[E4000]: cannot compare Int with Float64: == compares two values of one type; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-compare else safe accepted ok | 
+int-float-compare switch-arm unsafe refused ok | error[E4000]: cannot compare Int with Float64: == compares two values of one type; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-compare switch-arm safe accepted ok | 
+int-float-compare union-arm unsafe refused ok | error[E4000]: cannot compare Int with Float64: == compares two values of one type; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-compare union-arm safe accepted ok | 
+int-float-compare while unsafe refused ok | error[E4000]: cannot compare Int with Float64: == compares two values of one type; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-compare while safe accepted ok | 
+int-float-compare for unsafe refused ok | error[E4000]: cannot compare Int with Float64: == compares two values of one type; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-compare for safe accepted ok | 
+int-float-compare lambda unsafe refused ok | error[E4000]: cannot compare Int with Float64: == compares two values of one type; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-compare lambda safe accepted ok | 
+int-float-compare builtin-block unsafe refused ok | error[E4000]: cannot compare Int with Float64: == compares two values of one type; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-compare builtin-block safe accepted ok | 
+int-float-compare binding-chain unsafe refused ok | error[E4000]: cannot compare Int with Float64: == compares two values of one type; convert one side: ni.to_f, or nf.to_i (which truncates)
+int-float-compare binding-chain safe accepted ok | 
+compound-method-place plain unsafe refused ok | error[E4000]: compound assignment through PV.+ needs a place read without side effects (a name, a field, an element at a name); write the assignment out: x = x + v
+compound-method-place plain safe accepted ok | 
+compound-method-place if unsafe refused ok | error[E4000]: compound assignment through PV.+ needs a place read without side effects (a name, a field, an element at a name); write the assignment out: x = x + v
+compound-method-place if safe accepted ok | 
+compound-method-place else unsafe refused ok | error[E4000]: compound assignment through PV.+ needs a place read without side effects (a name, a field, an element at a name); write the assignment out: x = x + v
+compound-method-place else safe accepted ok | 
+compound-method-place switch-arm unsafe refused ok | error[E4000]: compound assignment through PV.+ needs a place read without side effects (a name, a field, an element at a name); write the assignment out: x = x + v
+compound-method-place switch-arm safe accepted ok | 
+compound-method-place union-arm unsafe refused ok | error[E4000]: compound assignment through PV.+ needs a place read without side effects (a name, a field, an element at a name); write the assignment out: x = x + v
+compound-method-place union-arm safe accepted ok | 
+compound-method-place while unsafe refused ok | error[E4000]: compound assignment through PV.+ needs a place read without side effects (a name, a field, an element at a name); write the assignment out: x = x + v
+compound-method-place while safe accepted ok | 
+compound-method-place for unsafe refused ok | error[E4000]: compound assignment through PV.+ needs a place read without side effects (a name, a field, an element at a name); write the assignment out: x = x + v
+compound-method-place for safe accepted ok | 
+compound-method-place lambda unsafe refused ok | error[E4000]: compound assignment through PV.+ needs a place read without side effects (a name, a field, an element at a name); write the assignment out: x = x + v
+compound-method-place lambda safe accepted ok | 
+compound-method-place builtin-block unsafe refused ok | error[E4000]: compound assignment through PV.+ needs a place read without side effects (a name, a field, an element at a name); write the assignment out: x = x + v
+compound-method-place builtin-block safe accepted ok | 
+compound-method-place binding-chain unsafe refused ok | error[E4000]: compound assignment through PV.+ needs a place read without side effects (a name, a field, an element at a name); write the assignment out: x = x + v
+compound-method-place binding-chain safe accepted ok | 
+contains-without-eq plain unsafe refused ok | error[E4000]: contains compares the elements with ==: Hash(String, Int) has no ==
+contains-without-eq plain safe accepted ok | 
+contains-without-eq if unsafe refused ok | error[E4000]: contains compares the elements with ==: Hash(String, Int) has no ==
+contains-without-eq if safe accepted ok | 
+contains-without-eq else unsafe refused ok | error[E4000]: contains compares the elements with ==: Hash(String, Int) has no ==
+contains-without-eq else safe accepted ok | 
+contains-without-eq switch-arm unsafe refused ok | error[E4000]: contains compares the elements with ==: Hash(String, Int) has no ==
+contains-without-eq switch-arm safe accepted ok | 
+contains-without-eq union-arm unsafe refused ok | error[E4000]: contains compares the elements with ==: Hash(String, Int) has no ==
+contains-without-eq union-arm safe accepted ok | 
+contains-without-eq while unsafe refused ok | error[E4000]: contains compares the elements with ==: Hash(String, Int) has no ==
+contains-without-eq while safe accepted ok | 
+contains-without-eq for unsafe refused ok | error[E4000]: contains compares the elements with ==: Hash(String, Int) has no ==
+contains-without-eq for safe accepted ok | 
+contains-without-eq lambda unsafe refused ok | error[E4000]: contains compares the elements with ==: Hash(String, Int) has no ==
+contains-without-eq lambda safe accepted ok | 
+contains-without-eq builtin-block unsafe refused ok | error[E4000]: contains compares the elements with ==: Hash(String, Int) has no ==
+contains-without-eq builtin-block safe accepted ok | 
+contains-without-eq binding-chain unsafe refused ok | error[E4000]: contains compares the elements with ==: Hash(String, Int) has no ==
+contains-without-eq binding-chain safe accepted ok | 
+type-bound plain unsafe refused ok | error[E4000]: Int does not implement PRanked
+type-bound plain safe accepted ok | 
+type-bound if unsafe refused ok | error[E4000]: Int does not implement PRanked
+type-bound if safe accepted ok | 
+type-bound else unsafe refused ok | error[E4000]: Int does not implement PRanked
+type-bound else safe accepted ok | 
+type-bound switch-arm unsafe refused ok | error[E4000]: Int does not implement PRanked
+type-bound switch-arm safe accepted ok | 
+type-bound union-arm unsafe refused ok | error[E4000]: Int does not implement PRanked
+type-bound union-arm safe accepted ok | 
+type-bound while unsafe refused ok | error[E4000]: Int does not implement PRanked
+type-bound while safe accepted ok | 
+type-bound for unsafe refused ok | error[E4000]: Int does not implement PRanked
+type-bound for safe accepted ok | 
+type-bound lambda unsafe refused ok | error[E4000]: Int does not implement PRanked
+type-bound lambda safe accepted ok | 
+type-bound builtin-block unsafe refused ok | error[E4000]: Int does not implement PRanked
+type-bound builtin-block safe accepted ok | 
+type-bound binding-chain unsafe refused ok | error[E4000]: Int does not implement PRanked
+type-bound binding-chain safe accepted ok | 
+print-optional plain unsafe refused ok | error[E4000]: puts cannot print Int?: it holds nil; open it with `if v = px`, `px ?? fallback` or `px?`
+print-optional plain safe accepted ok | 
+print-optional if unsafe refused ok | error[E4000]: puts cannot print Int?: it holds nil; open it with `if v = px`, `px ?? fallback` or `px?`
+print-optional if safe accepted ok | 
+print-optional else unsafe refused ok | error[E4000]: puts cannot print Int?: it holds nil; open it with `if v = px`, `px ?? fallback` or `px?`
+print-optional else safe accepted ok | 
+print-optional switch-arm unsafe refused ok | error[E4000]: puts cannot print Int?: it holds nil; open it with `if v = px`, `px ?? fallback` or `px?`
+print-optional switch-arm safe accepted ok | 
+print-optional union-arm unsafe refused ok | error[E4000]: puts cannot print Int?: it holds nil; open it with `if v = px`, `px ?? fallback` or `px?`
+print-optional union-arm safe accepted ok | 
+print-optional while unsafe refused ok | error[E4000]: puts cannot print Int?: it holds nil; open it with `if v = px`, `px ?? fallback` or `px?`
+print-optional while safe accepted ok | 
+print-optional for unsafe refused ok | error[E4000]: puts cannot print Int?: it holds nil; open it with `if v = px`, `px ?? fallback` or `px?`
+print-optional for safe accepted ok | 
+print-optional lambda unsafe refused ok | error[E4000]: puts cannot print Int?: it holds nil; open it with `if v = px`, `px ?? fallback` or `px?`
+print-optional lambda safe accepted ok | 
+print-optional builtin-block unsafe refused ok | error[E4000]: puts cannot print Int?: it holds nil; open it with `if v = px`, `px ?? fallback` or `px?`
+print-optional builtin-block safe accepted ok | 
+print-optional binding-chain unsafe refused ok | error[E4000]: puts cannot print Int?: it holds nil; open it with `if v = px`, `px ?? fallback` or `px?`
+print-optional binding-chain safe accepted ok | 
+print-no-text plain unsafe refused ok | error[E4000]: eputs cannot print Array(Int)
+print-no-text plain safe accepted ok | 
+print-no-text if unsafe refused ok | error[E4000]: eputs cannot print Array(Int)
+print-no-text if safe accepted ok | 
+print-no-text else unsafe refused ok | error[E4000]: eputs cannot print Array(Int)
+print-no-text else safe accepted ok | 
+print-no-text switch-arm unsafe refused ok | error[E4000]: eputs cannot print Array(Int)
+print-no-text switch-arm safe accepted ok | 
+print-no-text union-arm unsafe refused ok | error[E4000]: eputs cannot print Array(Int)
+print-no-text union-arm safe accepted ok | 
+print-no-text while unsafe refused ok | error[E4000]: eputs cannot print Array(Int)
+print-no-text while safe accepted ok | 
+print-no-text for unsafe refused ok | error[E4000]: eputs cannot print Array(Int)
+print-no-text for safe accepted ok | 
+print-no-text lambda unsafe refused ok | error[E4000]: eputs cannot print Array(Int)
+print-no-text lambda safe accepted ok | 
+print-no-text builtin-block unsafe refused ok | error[E4000]: eputs cannot print Array(Int)
+print-no-text builtin-block safe accepted ok | 
+print-no-text binding-chain unsafe refused ok | error[E4000]: eputs cannot print Array(Int)
+print-no-text binding-chain safe accepted ok | 
+exit-status-type plain unsafe refused ok | error[E4004]: expected Int, got String
+exit-status-type plain safe accepted ok | 
+exit-status-type if unsafe refused ok | error[E4004]: expected Int, got String
+exit-status-type if safe accepted ok | 
+exit-status-type else unsafe refused ok | error[E4004]: expected Int, got String
+exit-status-type else safe accepted ok | 
+exit-status-type switch-arm unsafe refused ok | error[E4004]: expected Int, got String
+exit-status-type switch-arm safe accepted ok | 
+exit-status-type union-arm unsafe refused ok | error[E4004]: expected Int, got String
+exit-status-type union-arm safe accepted ok | 
+exit-status-type while unsafe refused ok | error[E4004]: expected Int, got String
+exit-status-type while safe accepted ok | 
+exit-status-type for unsafe refused ok | error[E4004]: expected Int, got String
+exit-status-type for safe accepted ok | 
+exit-status-type lambda unsafe refused ok | error[E4004]: expected Int, got String
+exit-status-type lambda safe accepted ok | 
+exit-status-type builtin-block unsafe refused ok | error[E4004]: expected Int, got String
+exit-status-type builtin-block safe accepted ok | 
+exit-status-type binding-chain unsafe refused ok | error[E4004]: expected Int, got String
+exit-status-type binding-chain safe accepted ok | 
+guard-ends-with-exit plain unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-ends-with-exit plain safe accepted ok | 
+guard-ends-with-exit if unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-ends-with-exit if safe accepted ok | 
+guard-ends-with-exit else unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-ends-with-exit else safe accepted ok | 
+guard-ends-with-exit switch-arm unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-ends-with-exit switch-arm safe accepted ok | 
+guard-ends-with-exit union-arm unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-ends-with-exit union-arm safe accepted ok | 
+guard-ends-with-exit while unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-ends-with-exit while safe accepted ok | 
+guard-ends-with-exit for unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-ends-with-exit for safe accepted ok | 
+guard-ends-with-exit lambda unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-ends-with-exit lambda safe accepted ok | 
+guard-ends-with-exit builtin-block unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-ends-with-exit builtin-block safe accepted ok | 
+guard-ends-with-exit binding-chain unsafe refused ok | error[E4000]: the block of else e must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on
+guard-ends-with-exit binding-chain safe accepted ok | 
+void-result-dropped plain unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Void | POops); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...
+void-result-dropped plain safe accepted ok | 
+void-result-dropped if unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Void | POops); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...
+void-result-dropped if safe accepted ok | 
+void-result-dropped else unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Void | POops); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...
+void-result-dropped else safe accepted ok | 
+void-result-dropped switch-arm unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Void | POops); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...
+void-result-dropped switch-arm safe accepted ok | 
+void-result-dropped union-arm unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Void | POops); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...
+void-result-dropped union-arm safe accepted ok | 
+void-result-dropped while unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Void | POops); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...
+void-result-dropped while safe accepted ok | 
+void-result-dropped for unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Void | POops); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...
+void-result-dropped for safe accepted ok | 
+void-result-dropped lambda unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Void | POops); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...
+void-result-dropped lambda safe accepted ok | 
+void-result-dropped builtin-block unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Void | POops); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...
+void-result-dropped builtin-block safe accepted ok | 
+void-result-dropped binding-chain unsafe refused ok | error[E4000]: this statement drops a value that can be an error (Void | POops); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...
+void-result-dropped binding-chain safe accepted ok | 
+void-guard-value plain unsafe refused ok | error[E4000]: an else guard without a name to assign is for a result whose success is nothing (Void | E); this success is Int: write `v = ... else e { ... }`, or `_ = ... else e { ... }` to drop it
+void-guard-value plain safe accepted ok | 
+void-guard-value if unsafe refused ok | error[E4000]: an else guard without a name to assign is for a result whose success is nothing (Void | E); this success is Int: write `v = ... else e { ... }`, or `_ = ... else e { ... }` to drop it
+void-guard-value if safe accepted ok | 
+void-guard-value else unsafe refused ok | error[E4000]: an else guard without a name to assign is for a result whose success is nothing (Void | E); this success is Int: write `v = ... else e { ... }`, or `_ = ... else e { ... }` to drop it
+void-guard-value else safe accepted ok | 
+void-guard-value switch-arm unsafe refused ok | error[E4000]: an else guard without a name to assign is for a result whose success is nothing (Void | E); this success is Int: write `v = ... else e { ... }`, or `_ = ... else e { ... }` to drop it
+void-guard-value switch-arm safe accepted ok | 
+void-guard-value union-arm unsafe refused ok | error[E4000]: an else guard without a name to assign is for a result whose success is nothing (Void | E); this success is Int: write `v = ... else e { ... }`, or `_ = ... else e { ... }` to drop it
+void-guard-value union-arm safe accepted ok | 
+void-guard-value while unsafe refused ok | error[E4000]: an else guard without a name to assign is for a result whose success is nothing (Void | E); this success is Int: write `v = ... else e { ... }`, or `_ = ... else e { ... }` to drop it
+void-guard-value while safe accepted ok | 
+void-guard-value for unsafe refused ok | error[E4000]: an else guard without a name to assign is for a result whose success is nothing (Void | E); this success is Int: write `v = ... else e { ... }`, or `_ = ... else e { ... }` to drop it
+void-guard-value for safe accepted ok | 
+void-guard-value lambda unsafe refused ok | error[E4000]: an else guard without a name to assign is for a result whose success is nothing (Void | E); this success is Int: write `v = ... else e { ... }`, or `_ = ... else e { ... }` to drop it
+void-guard-value lambda safe accepted ok | 
+void-guard-value builtin-block unsafe refused ok | error[E4000]: an else guard without a name to assign is for a result whose success is nothing (Void | E); this success is Int: write `v = ... else e { ... }`, or `_ = ... else e { ... }` to drop it
+void-guard-value builtin-block safe accepted ok | 
+void-guard-value binding-chain unsafe refused ok | error[E4000]: an else guard without a name to assign is for a result whose success is nothing (Void | E); this success is Int: write `v = ... else e { ... }`, or `_ = ... else e { ... }` to drop it
+void-guard-value binding-chain safe accepted ok | 
+mutex-recover-capture plain unsafe refused ok | error[E4000]: Mutex(Int).new's recover function cannot capture k: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function
+mutex-recover-capture plain safe accepted ok | 
+mutex-recover-capture if unsafe refused ok | error[E4000]: Mutex(Int).new's recover function cannot capture k: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function
+mutex-recover-capture if safe accepted ok | 
+mutex-recover-capture else unsafe refused ok | error[E4000]: Mutex(Int).new's recover function cannot capture k: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function
+mutex-recover-capture else safe accepted ok | 
+mutex-recover-capture switch-arm unsafe refused ok | error[E4000]: Mutex(Int).new's recover function cannot capture k: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function
+mutex-recover-capture switch-arm safe accepted ok | 
+mutex-recover-capture union-arm unsafe refused ok | error[E4000]: Mutex(Int).new's recover function cannot capture k: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function
+mutex-recover-capture union-arm safe accepted ok | 
+mutex-recover-capture while unsafe refused ok | error[E4000]: Mutex(Int).new's recover function cannot capture k: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function
+mutex-recover-capture while safe accepted ok | 
+mutex-recover-capture for unsafe refused ok | error[E4000]: Mutex(Int).new's recover function cannot capture k: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function
+mutex-recover-capture for safe accepted ok | 
+mutex-recover-capture lambda unsafe refused ok | error[E4000]: Mutex(Int).new's recover function cannot capture k: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function
+mutex-recover-capture lambda safe accepted ok | 
+mutex-recover-capture builtin-block unsafe refused ok | error[E4000]: Mutex(Int).new's recover function cannot capture k: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function
+mutex-recover-capture builtin-block safe accepted ok | 
+mutex-recover-capture binding-chain unsafe refused ok | error[E4000]: Mutex(Int).new's recover function cannot capture k: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function
+mutex-recover-capture binding-chain safe accepted ok | 
+mutex-recover-consumed plain unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).recover at 39:4: the mutex holds its value now, so reach it only through with
+mutex-recover-consumed plain safe accepted ok | 
+mutex-recover-consumed if unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).recover at 39:4: the mutex holds its value now, so reach it only through with
+mutex-recover-consumed if safe accepted ok | 
+mutex-recover-consumed else unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).recover at 39:4: the mutex holds its value now, so reach it only through with
+mutex-recover-consumed else safe accepted ok | 
+mutex-recover-consumed switch-arm unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).recover at 39:4: the mutex holds its value now, so reach it only through with
+mutex-recover-consumed switch-arm safe accepted ok | 
+mutex-recover-consumed union-arm unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).recover at 39:4: the mutex holds its value now, so reach it only through with
+mutex-recover-consumed union-arm safe accepted ok | 
+mutex-recover-consumed while unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).recover at 39:4: the mutex holds its value now, so reach it only through with
+mutex-recover-consumed while safe accepted ok | 
+mutex-recover-consumed for unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).recover at 39:4: the mutex holds its value now, so reach it only through with
+mutex-recover-consumed for safe accepted ok | 
+mutex-recover-consumed lambda unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).recover at 39:4: the mutex holds its value now, so reach it only through with
+mutex-recover-consumed lambda safe accepted ok | 
+mutex-recover-consumed builtin-block unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).recover at 39:4: the mutex holds its value now, so reach it only through with
+mutex-recover-consumed builtin-block safe accepted ok | 
+mutex-recover-consumed binding-chain unsafe refused ok | error[E4000]: b was consumed by Mutex(PBox).recover at 39:4: the mutex holds its value now, so reach it only through with
+mutex-recover-consumed binding-chain safe accepted ok | 
+method-call-parens plain unsafe refused ok | error[E4000]: a method call takes parentheses: write sort()
+method-call-parens plain safe accepted ok | 
+method-call-parens if unsafe refused ok | error[E4000]: a method call takes parentheses: write sort()
+method-call-parens if safe accepted ok | 
+method-call-parens else unsafe refused ok | error[E4000]: a method call takes parentheses: write sort()
+method-call-parens else safe accepted ok | 
+method-call-parens switch-arm unsafe refused ok | error[E4000]: a method call takes parentheses: write sort()
+method-call-parens switch-arm safe accepted ok | 
+method-call-parens union-arm unsafe refused ok | error[E4000]: a method call takes parentheses: write sort()
+method-call-parens union-arm safe accepted ok | 
+method-call-parens while unsafe refused ok | error[E4000]: a method call takes parentheses: write sort()
+method-call-parens while safe accepted ok | 
+method-call-parens for unsafe refused ok | error[E4000]: a method call takes parentheses: write sort()
+method-call-parens for safe accepted ok | 
+method-call-parens lambda unsafe refused ok | error[E4000]: a method call takes parentheses: write sort()
+method-call-parens lambda safe accepted ok | 
+method-call-parens builtin-block unsafe refused ok | error[E4000]: a method call takes parentheses: write sort()
+method-call-parens builtin-block safe accepted ok | 
+method-call-parens binding-chain unsafe refused ok | error[E4000]: a method call takes parentheses: write sort()
+method-call-parens binding-chain safe accepted ok | 
+method-value-parens plain unsafe refused ok | error[E4000]: a method call takes parentheses: write sum()
+method-value-parens plain safe accepted ok | 
+method-value-parens if-expr unsafe refused ok | error[E4000]: a method call takes parentheses: write sum()
+method-value-parens if-expr safe accepted ok | 
+method-value-parens switch-expr unsafe refused ok | error[E4000]: a method call takes parentheses: write sum()
+method-value-parens switch-expr safe accepted ok | 
+method-value-parens union-switch-expr unsafe refused ok | error[E4000]: a method call takes parentheses: write sum()
+method-value-parens union-switch-expr safe accepted ok | 
+method-value-parens lambda unsafe refused ok | error[E4000]: a method call takes parentheses: write sum()
+method-value-parens lambda safe accepted ok | 
+method-value-parens binding-chain unsafe refused ok | error[E4000]: a method call takes parentheses: write sum()
+method-value-parens binding-chain safe accepted ok | 
+method-value-parens call-arg unsafe refused ok | error[E4000]: a method call takes parentheses: write sum()
+method-value-parens call-arg safe accepted ok | 
+method-value-parens interpolation unsafe refused ok | error[E4000]: a method call takes parentheses: write sum()
+method-value-parens interpolation safe accepted ok | 
+method-value-parens for unsafe refused ok | error[E4000]: a method call takes parentheses: write sum()
+method-value-parens for safe accepted ok | 
+method-value-parens builtin-block unsafe refused ok | error[E4000]: a method call takes parentheses: write sum()
+method-value-parens builtin-block safe accepted ok | 
+method-value-parens qq-fallback unsafe refused ok | error[E4000]: a method call takes parentheses: write sum()
+method-value-parens qq-fallback safe accepted ok | 
+expect-optional-only plain unsafe refused ok | error[E4000]: expect opens an optional (T?), and Int | ParseError can fail with an error: read it with ?, if-assign, ?? or switch
+expect-optional-only plain safe accepted ok | 
+expect-optional-only if unsafe refused ok | error[E4000]: expect opens an optional (T?), and Int | ParseError can fail with an error: read it with ?, if-assign, ?? or switch
+expect-optional-only if safe accepted ok | 
+expect-optional-only else unsafe refused ok | error[E4000]: expect opens an optional (T?), and Int | ParseError can fail with an error: read it with ?, if-assign, ?? or switch
+expect-optional-only else safe accepted ok | 
+expect-optional-only switch-arm unsafe refused ok | error[E4000]: expect opens an optional (T?), and Int | ParseError can fail with an error: read it with ?, if-assign, ?? or switch
+expect-optional-only switch-arm safe accepted ok | 
+expect-optional-only union-arm unsafe refused ok | error[E4000]: expect opens an optional (T?), and Int | ParseError can fail with an error: read it with ?, if-assign, ?? or switch
+expect-optional-only union-arm safe accepted ok | 
+expect-optional-only while unsafe refused ok | error[E4000]: expect opens an optional (T?), and Int | ParseError can fail with an error: read it with ?, if-assign, ?? or switch
+expect-optional-only while safe accepted ok | 
+expect-optional-only for unsafe refused ok | error[E4000]: expect opens an optional (T?), and Int | ParseError can fail with an error: read it with ?, if-assign, ?? or switch
+expect-optional-only for safe accepted ok | 
+expect-optional-only lambda unsafe refused ok | error[E4000]: expect opens an optional (T?), and Int | ParseError can fail with an error: read it with ?, if-assign, ?? or switch
+expect-optional-only lambda safe accepted ok | 
+expect-optional-only builtin-block unsafe refused ok | error[E4000]: expect opens an optional (T?), and Int | ParseError can fail with an error: read it with ?, if-assign, ?? or switch
+expect-optional-only builtin-block safe accepted ok | 
+expect-optional-only binding-chain unsafe refused ok | error[E4000]: expect opens an optional (T?), and Int | ParseError can fail with an error: read it with ?, if-assign, ?? or switch
+expect-optional-only binding-chain safe accepted ok | 
+pop-is-optional plain unsafe refused ok | error[E4000]: cannot assign Int? to Int
+pop-is-optional plain safe accepted ok | 
+pop-is-optional if unsafe refused ok | error[E4000]: cannot assign Int? to Int
+pop-is-optional if safe accepted ok | 
+pop-is-optional else unsafe refused ok | error[E4000]: cannot assign Int? to Int
+pop-is-optional else safe accepted ok | 
+pop-is-optional switch-arm unsafe refused ok | error[E4000]: cannot assign Int? to Int
+pop-is-optional switch-arm safe accepted ok | 
+pop-is-optional union-arm unsafe refused ok | error[E4000]: cannot assign Int? to Int
+pop-is-optional union-arm safe accepted ok | 
+pop-is-optional while unsafe refused ok | error[E4000]: cannot assign Int? to Int
+pop-is-optional while safe accepted ok | 
+pop-is-optional for unsafe refused ok | error[E4000]: cannot assign Int? to Int
+pop-is-optional for safe accepted ok | 
+pop-is-optional lambda unsafe refused ok | error[E4000]: cannot assign Int? to Int
+pop-is-optional lambda safe accepted ok | 
+pop-is-optional builtin-block unsafe refused ok | error[E4000]: cannot assign Int? to Int
+pop-is-optional builtin-block safe accepted ok | 
+pop-is-optional binding-chain unsafe refused ok | error[E4000]: cannot assign Int? to Int
+pop-is-optional binding-chain safe accepted ok | 
+negate-unsigned plain unsafe refused ok | error[E4000]: unary minus of an unsigned value: UInt64 has no negative values (to wrap, write 0 &- x)
+negate-unsigned plain safe accepted ok | 
+negate-unsigned if unsafe refused ok | error[E4000]: unary minus of an unsigned value: UInt64 has no negative values (to wrap, write 0 &- x)
+negate-unsigned if safe accepted ok | 
+negate-unsigned else unsafe refused ok | error[E4000]: unary minus of an unsigned value: UInt64 has no negative values (to wrap, write 0 &- x)
+negate-unsigned else safe accepted ok | 
+negate-unsigned switch-arm unsafe refused ok | error[E4000]: unary minus of an unsigned value: UInt64 has no negative values (to wrap, write 0 &- x)
+negate-unsigned switch-arm safe accepted ok | 
+negate-unsigned union-arm unsafe refused ok | error[E4000]: unary minus of an unsigned value: UInt64 has no negative values (to wrap, write 0 &- x)
+negate-unsigned union-arm safe accepted ok | 
+negate-unsigned while unsafe refused ok | error[E4000]: unary minus of an unsigned value: UInt64 has no negative values (to wrap, write 0 &- x)
+negate-unsigned while safe accepted ok | 
+negate-unsigned for unsafe refused ok | error[E4000]: unary minus of an unsigned value: UInt64 has no negative values (to wrap, write 0 &- x)
+negate-unsigned for safe accepted ok | 
+negate-unsigned lambda unsafe refused ok | error[E4000]: unary minus of an unsigned value: UInt64 has no negative values (to wrap, write 0 &- x)
+negate-unsigned lambda safe accepted ok | 
+negate-unsigned builtin-block unsafe refused ok | error[E4000]: unary minus of an unsigned value: UInt64 has no negative values (to wrap, write 0 &- x)
+negate-unsigned builtin-block safe accepted ok | 
+negate-unsigned binding-chain unsafe refused ok | error[E4000]: unary minus of an unsigned value: UInt64 has no negative values (to wrap, write 0 &- x)
+negate-unsigned binding-chain safe accepted ok | 
+property-no-parens plain unsafe refused ok | error[E4000]: size is read without parentheses: write .size
+property-no-parens plain safe accepted ok | 
+property-no-parens if-expr unsafe refused ok | error[E4000]: size is read without parentheses: write .size
+property-no-parens if-expr safe accepted ok | 
+property-no-parens switch-expr unsafe refused ok | error[E4000]: size is read without parentheses: write .size
+property-no-parens switch-expr safe accepted ok | 
+property-no-parens union-switch-expr unsafe refused ok | error[E4000]: size is read without parentheses: write .size
+property-no-parens union-switch-expr safe accepted ok | 
+property-no-parens lambda unsafe refused ok | error[E4000]: size is read without parentheses: write .size
+property-no-parens lambda safe accepted ok | 
+property-no-parens binding-chain unsafe refused ok | error[E4000]: size is read without parentheses: write .size
+property-no-parens binding-chain safe accepted ok | 
+property-no-parens call-arg unsafe refused ok | error[E4000]: size is read without parentheses: write .size
+property-no-parens call-arg safe accepted ok | 
+property-no-parens interpolation unsafe refused ok | error[E4000]: size is read without parentheses: write .size
+property-no-parens interpolation safe accepted ok | 
+property-no-parens for unsafe refused ok | error[E4000]: size is read without parentheses: write .size
+property-no-parens for safe accepted ok | 
+property-no-parens builtin-block unsafe refused ok | error[E4000]: size is read without parentheses: write .size
+property-no-parens builtin-block safe accepted ok | 
+property-no-parens qq-fallback unsafe refused ok | error[E4000]: size is read without parentheses: write .size
+property-no-parens qq-fallback safe accepted ok | 

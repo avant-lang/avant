@@ -49,7 +49,7 @@ struct Node(T) {
 struct Tag(T) {
 }
 
-// Stage 29 W3a (D298; D30 amended): a generic type's declared parameters
+// A generic type's declared parameters
 // may be any names; a function's implicit ones are single capital letters.
 class Entry(Key, Val) {
   key: Key
@@ -80,7 +80,7 @@ fn bump(p: Pair(Int, Int)): Pair(Int, Int) {
 fn test_generics(c: Checks) {
   c.suite("tests/cases/test_generics.av")
   p = Pair { a: 1, b: "x" }
-  c.eq_int(p.first, 1, "inferred pair")
+  c.eq_int(p.first(), 1, "inferred pair")
   c.eq_str(p.b, "x", "pair string")
   q = Pair(Int, String) { a: 2, b: "y" }
   c.eq_int(q.a, 2, "explicit pair")
@@ -90,15 +90,15 @@ fn test_generics(c: Checks) {
   c.eq_str(nested.b.b, "z", "nested string")
   c.eq_int(take(Pair { a: 5, b: "q" }), 5, "expected type fills args")
   b = Box.new(7)
-  c.eq_int(b.get, 7, "box get")
-  c.eq_int(b.len, 1, "external method")
+  c.eq_int(b.get(), 7, "box get")
+  c.eq_int(b.len(), 1, "external method")
   mapped = b.map { |n| n + 10 }
-  c.eq_int(mapped.get, 17, "map block")
+  c.eq_int(mapped.get(), 17, "map block")
   named: fn(Int): Int = { |n| n + 1 }
   mapped2 = b.map(named)
-  c.eq_int(mapped2.get, 8, "map fn value")
+  c.eq_int(mapped2.get(), 8, "map fn value")
   s = Box.new("hi")
-  c.eq_str(s.get, "hi", "box string")
+  c.eq_str(s.get(), "hi", "box string")
   link = Link.new(3)
   c.eq_int(link.value, 3, "recursive class")
   h = Hold { xs: [8, 9] }
@@ -112,7 +112,7 @@ fn test_generics(c: Checks) {
   right = bump(left)
   c.eq_int(left.a, 1, "struct original")
   c.eq_int(right.a, 2, "struct copy")
-  e = Entry.new("k", 7).swapped
+  e = Entry.new("k", 7).swapped()
   c.eq_int(e.key, 7, "named type parameters of a class")
   c.eq_str(pick_second(1, "two"), "two", "single-letter implicit type parameters")
 }
@@ -124,5 +124,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_generics(c)
-  c.finish
+  c.finish()
 }

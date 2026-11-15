@@ -1,9 +1,9 @@
-/* The compiler's in-process LLVM (Stage 28, D162, D172): textual LLVM IR
+/* The compiler's in-process LLVM: textual LLVM IR
  * in, an object file out, through the stable LLVM C API only.
  *
  * Linked into the compiler only, never into a user program:
  * tools/build-llvm.sh compiles this file against llvm-config-20 (or, with
- * LLVM_CONFIG=llvm-config-23, against LLVM 23: the W18L probe) and merges
+ * LLVM_CONFIG=llvm-config-23, against LLVM 23, a probe) and merges
  * it with the LLVM members it needs (and libstdc++, zlib, zstd) into one
  * relocatable object, runtime/build/avant_llvm.o, whose only global
  * definitions are the avant_llvm_* functions below. The compiler binds
@@ -102,7 +102,7 @@ int64_t avant_llvm_init(void) {
     LLVMInitializeX86TargetMC();
     LLVMInitializeX86AsmPrinter();
     LLVMInitializeX86AsmParser();
-    /* Code placement (Stage 29 WP, O186): innermost loop headers aligned
+    /* Code placement: innermost loop headers aligned
      * to 32 bytes (LLVM's x86 default is 16). With every function aligned
      * to 64 (place_functions below), a loop's offset within its 64-byte
      * line no longer depends on the code before it, and a short loop
@@ -129,7 +129,7 @@ static LLVMCodeGenOptLevel codegen_level(int32_t level) {
   }
 }
 
-/* The CPU level of the code generated (Stage 28 W18S, O140): set by
+/* The CPU level of the code generated: set by
  * avant_llvm_set_cpu before a compile, read by finish_module. Only LLVM's
  * target machine sees it (its optimization and code generation): the
  * module text the emitter writes, which the fixed point compares, never
@@ -179,7 +179,7 @@ static void record_level(LLVMModuleRef mod) {
   LLVMSetLinkage(g, LLVMExternalLinkage);
 }
 
-/* Code placement (Stage 29 WP, O186): every function the module defines,
+/* Code placement: every function the module defines,
  * except the cold ones (they go to .text.unlikely), starts on a 64-byte
  * boundary. The program's code is linked after the PLT, the runtime's
  * cold and start-up code and the C start files, and after the standard
@@ -361,7 +361,7 @@ char *avant_llvm_version(void) {
   return avant_string(buf);
 }
 
-/* The text of a double constant in LLVM IR (Stage 28 W18S, O141): the
+/* The text of a double constant in LLVM IR: the
  * shortest decimal `d.ddd…e±XX` that reads back as exactly the same bits
  * (at most 17 significant digits always do), a form every LLVM from 20 on
  * parses (LLVM 23 deprecates, and 24 removes, the `0x` + 16 hex digits form

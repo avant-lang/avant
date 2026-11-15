@@ -29,7 +29,7 @@ fn test_std_json(c: Checks) {
       c.expect(false, "str by key")
     }
     if pi = doc.f64("pi") {
-      c.eq_int((pi * 10.0).to_i, 35, "f64 by key")
+      c.eq_int((pi * 10.0).to_i(), 35, "f64 by key")
     } else {
       c.expect(false, "f64 by key")
     }
@@ -49,9 +49,9 @@ fn test_std_json(c: Checks) {
       c.expect(true, "wrong kind is nil")
     }
     if tags = doc.get("tags") {
-      c.eq_int(tags.len, 2, "array len")
+      c.eq_int(tags.len(), 2, "array len")
       if first = tags.at(0) {
-        if s = first.str {
+        if s = first.str() {
           c.eq_str(s, "x", "str by node")
         } else {
           c.expect(false, "str by node")
@@ -73,7 +73,7 @@ fn test_std_json(c: Checks) {
       } else {
         c.expect(false, "nested int")
       }
-      c.eq_int(point.len, 2, "object len")
+      c.eq_int(point.len(), 2, "object len")
       if k0 = point.key_at(0) {
         c.eq_str(k0, "x", "key_at 0")
       } else {
@@ -83,12 +83,12 @@ fn test_std_json(c: Checks) {
       c.expect(false, "get point")
     }
     if nothing = doc.get("nothing") {
-      c.expect(nothing.is_null, "null kind")
+      c.expect(nothing.is_null(), "null kind")
     } else {
       c.expect(false, "get null")
     }
-    value = doc.to_value
-    c.eq_int(value.kind, 7, "to_value object kind")
+    value = doc.to_value()
+    c.expect(value.kind == JsonKind.obj, "to_value object kind")
     if nv = value.get("n") {
       c.expect(nv.int_val == 7, "to_value int")
     } else {
@@ -116,20 +116,20 @@ fn test_std_json(c: Checks) {
   built = Json.obj()
   built.set("n", 7)
   built.set("name", "a\"b\\c\nd")
-  built.key("tags").arr.add("x").add("y").end
-  built.key("point").obj.set("x", 1).set("y", 2).end
+  built.key("tags").arr().add("x").add("y").end()
+  built.key("point").obj().set("x", 1).set("y", 2).end()
   built.set("ok", true)
   built.set("pi", 3.5)
   built.set_null("nothing")
-  built.end
-  if doc2 = Json.parse(built.to_s) {
+  built.end()
+  if doc2 = Json.parse(built.to_s()) {
     if name2 = doc2.str("name") {
       c.eq_str(name2, "a\"b\\c\nd", "builder escapes strings")
     } else {
       c.expect(false, "builder escapes strings")
     }
     if tags2 = doc2.get("tags") {
-      c.eq_int(tags2.len, 2, "builder array")
+      c.eq_int(tags2.len(), 2, "builder array")
     } else {
       c.expect(false, "builder array")
     }
@@ -142,8 +142,8 @@ fn test_std_json(c: Checks) {
     c.expect(false, "parse built")
   }
   if arr = Json.parse("[10, 20, 30]") {
-    if head = arr.first {
-      if hv = head.int {
+    if head = arr.first() {
+      if hv = head.int() {
         c.eq_int(hv, 10, "first element")
       } else {
         c.expect(false, "first element")
@@ -151,13 +151,13 @@ fn test_std_json(c: Checks) {
     } else {
       c.expect(false, "first element")
     }
-    it = arr.iter
+    it = arr.iter()
     total = 0
     count = 0
     walking = true
     while walking {
-      if cell = it.next {
-        total = total + (cell.int ?? 0)
+      if cell = it.next() {
+        total = total + (cell.int() ?? 0)
         count += 1
       } else {
         walking = false
@@ -165,7 +165,7 @@ fn test_std_json(c: Checks) {
     }
     c.eq_int(total, 60, "iterator sum")
     c.eq_int(count, 3, "iterator count")
-    if extra = it.next {
+    if extra = it.next() {
       c.expect(false, "iterator stays done")
     } else {
       c.expect(true, "iterator stays done")
@@ -181,8 +181,8 @@ fn test_std_json(c: Checks) {
   if objs = Json.parse("[{\"x\": 1.5}, {\"x\": 2.5}, {\"x\": 3.0}]") {
     if xs = objs.f64s("x") {
       c.eq_int(xs.size, 3, "f64s size")
-      c.eq_int((xs[0] * 10.0).to_i, 15, "f64s first")
-      c.eq_int((xs[2] * 10.0).to_i, 30, "f64s last")
+      c.eq_int((xs[0] * 10.0).to_i(), 15, "f64s first")
+      c.eq_int((xs[2] * 10.0).to_i(), 30, "f64s last")
     } else {
       c.expect(false, "f64s")
     }
@@ -191,7 +191,7 @@ fn test_std_json(c: Checks) {
     } else {
       c.expect(true, "f64s missing key is nil")
     }
-    if notarr = objs.int {
+    if notarr = objs.int() {
       c.expect(false, "int on array is nil")
     } else {
       c.expect(true, "int on array is nil")
@@ -202,8 +202,43 @@ fn test_std_json(c: Checks) {
   dst = buf_new()
   dst.push_str("prefix:")
   into = JsonBuilder.into(dst)
-  into.obj.set("a", 1).end
-  c.eq_str(dst.to_s, "prefix:{\"a\":1}", "builder writes into caller Buf")
+  into.obj().set("a", 1).end()
+  c.eq_str(dst.to_s(), "prefix:{\"a\":1}", "builder writes into caller Buf")
+}
+
+// What a value is, as an enum: Json.kind and
+// JsonValue.kind are a JsonKind, printed by name and read by switch.
+fn kind_word(k: JsonKind): String {
+  switch k {
+    case null { "nothing" }
+    case bool, int, float { "scalar" }
+    case str { "text" }
+    case arr, obj { "nested" }
+  }
+}
+
+fn test_json_kinds(c: Checks) {
+  if doc = Json.parse("{\"a\": null, \"b\": true, \"c\": 1, \"d\": 1.5, \"e\": \"s\", \"f\": [1], \"g\": {}, \"h\": 18446744073709551615}") {
+    names = ""
+    words = ""
+    values = ""
+    for key in ["a", "b", "c", "d", "e", "f", "g", "h"] {
+      if v = doc.get(key) {
+        names = names + " ${v.kind()}"
+        words = words + " " + kind_word(v.kind())
+        values = values + " ${v.to_value().kind}"
+      }
+    }
+    c.eq_str(names, " null bool int float str arr obj int", "Json.kind by name")
+    c.eq_str(words, " nothing scalar scalar scalar text nested nested scalar", "Json.kind by switch")
+    c.eq_str(values, " null bool int float str arr obj float", "JsonValue.kind: an integer beyond Int is a float")
+    c.expect(doc.kind() == JsonKind.obj, "the document is an obj")
+    c.eq_int(JsonKind.obj.to_i(), 7, "the runtime's codes")
+    c.eq_int(JsonKind.members().size, 7, "seven kinds")
+    c.expect(JsonValue.new().kind == JsonKind.null, "a new JsonValue is null")
+  } else {
+    c.expect(false, "parse kinds")
+  }
 }
 
 fn main: Int {
@@ -213,5 +248,6 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_std_json(c)
-  c.finish
+  test_json_kinds(c)
+  c.finish()
 }

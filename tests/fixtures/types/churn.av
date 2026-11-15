@@ -1,33 +1,26 @@
-// Union churn on the new back end (Stage 28 W7a). Long-lived holders,
-// reached only through another object's array field (a holder named by a
-// root slot is scanned by every young collection anyway, so it would hide
-// a missing barrier), become mature and then gain young children through
+// Union churn on the new back end. Long-lived holders, reached only
+// through another object's array field (a holder named by a root slot
+// is scanned by every young collection anyway, so it would hide a
+// missing barrier), become mature and then gain young children through
 // union stores of every form: a class field `Leaf?` (barrier on the
 // holder), a field `Int | Leaf` alternating between its scalar and its
 // reference member (the payload word is a heap reference word whatever
 // the tag), a struct field holding a union inside the holder, a
-// `String?` field, union elements of an array (`Leaf?` elements: a stride
-// map, D186; index stores behind a barrier on the buffer, pushes through
-// push_slot), and struct elements holding unions. Values alternate
-// between nil and non-nil each round; union locals and results stay live
-// across collections. Garbage between the stores makes collections run;
-// every child is checked each round. Under AVANT_GC_VERIFY=1 and
-// AVANT_YOUNG_MB=1 it must print the same.
+// `String?` field, union elements of an array (`Leaf?` elements: a
+// stride map; index stores behind a barrier on the buffer, pushes
+// through push_slot), and struct elements holding unions. Values
+// alternate between nil and non-nil each round; union locals and
+// results stay live across collections. Garbage between the stores
+// makes collections run; every child is checked each round. Under
+// AVANT_GC_VERIFY=1 and AVANT_YOUNG_MB=1 it must print the same.
 
-// Leaf is marked Error (D292, Stage 29 W4a) so the two members of the
-// `Int | Leaf` field can be told apart before `switch` (W5): if-assign
-// reads the Int, and `?` passes the Leaf up (leaf_of below).
-class Leaf: Error {
+class Leaf {
   v: Int
   s: String
 
   fn initialize(v: Int) {
     self.v = v
     self.s = "leaf-${v}"
-  }
-
-  fn message: String {
-    s
   }
 }
 
@@ -111,21 +104,15 @@ class Oops: Error {
 
 // The scalar member of m comes back as the result; the Leaf is checked.
 fn mix_check(m: Int | Leaf, v: Int): Int | Oops {
-  if i = m {
-    return i
-  }
-  if l = leaf_of(m) {
-    if l.v != v || !(l.s == "leaf-${v}") {
-      return 1
+  switch m {
+    case i: Int { i }
+    case l: Leaf {
+      if l.v != v || !(l.s == "leaf-${v}") {
+        return 1
+      }
+      0
     }
-    return 0
   }
-  1
-}
-
-fn leaf_of(m: Int | Leaf): Leaf? {
-  i = m?
-  nil
 }
 
 fn bad_mix(m: Int | Leaf, v: Int, on: Bool): Int {
@@ -200,7 +187,7 @@ fn round(root: Root, r: Int): Int {
 }
 
 fn main {
-  root = Root.new
+  root = Root.new()
   i = 0
   while i < 6 {
     root.holders.push(Holder.new(i))

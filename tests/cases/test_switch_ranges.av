@@ -1,0 +1,205 @@
+import harness
+import backends
+
+// Switch over every integer width, over Bool with `case
+// true` and coverage, the inclusive range `..=`, range
+// labels and constants as labels. Each program is compiled
+// in parallel; a refused one must leave no binary, say the
+// expected words and point at the expected line and
+// column; an accepted one must print what it should. The
+// run fixture tests/fixtures/scalars/ranges.av is checked
+// by the run goldens in every collector mode.
+
+class RCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): RCase {
+  f = RCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): RCase {
+  f = RCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn cases: Array(RCase) {
+  xs: Array(RCase) = []
+  // Every integer width; each label takes the value's type.
+  xs.push(accepted("width-all", "fn f32(x: Int32): Int {\n  switch x {\n    case -2147483648 { 1 }\n    case 2147483647 { 2 }\n    case 0, -1 { 3 }\n    else { 0 }\n  }\n}\nfn fu32(x: UInt32): Int {\n  switch x {\n    case 4294967295 { 1 }\n    case 0 { 2 }\n    else { 0 }\n  }\n}\nfn fu64(x: UInt64): Int {\n  switch x {\n    case 18446744073709551615 { 1 }\n    case 9223372036854775808 { 2 }\n    case 'a' { 3 }\n    else { 0 }\n  }\n}\nfn fi(x: Int): Int {\n  switch x {\n    case -9223372036854775808 { 1 }\n    case 9223372036854775807 { 2 }\n    else { 0 }\n  }\n}\nfn main {\n  a: Int32 = -2147483648\n  puts(f32(a))\n  puts(f32(2147483647))\n  puts(f32(-1))\n  puts(f32(5))\n  puts(fu32(4294967295))\n  puts(fu32(0))\n  puts(fu32(3))\n  puts(fu64(18446744073709551615u64))\n  puts(fu64(9223372036854775808u64))\n  puts(fu64(97u64))\n  puts(fu64(8u64))\n  m = -9223372036854775807 - 1\n  puts(fi(m))\n  puts(fi(9223372036854775807))\n  puts(fi(0))\n  v = switch a + 1 {\n    case -2147483647 { \"next\" }\n    else { \"other\" }\n  }\n  puts(v)\n}\n", "1\n2\n3\n0\n1\n2\n0\n1\n2\n3\n0\n1\n2\n0\nnext\n"))
+  xs.push(refused("width-int32-too-big", "fn main {\n  x: Int32 = 1\n  switch x {\n    case 3000000000 { puts(1) }\n    else { }\n  }\n}\n", "case label 3000000000 does not fit in Int32", "4:10"))
+  xs.push(refused("width-int32-too-small", "fn main {\n  x: Int32 = 1\n  switch x {\n    case -2147483649 { puts(1) }\n    else { }\n  }\n}\n", "case label -2147483649 does not fit in Int32", "4:10"))
+  xs.push(refused("width-uint32-negative", "fn main {\n  x: UInt32 = 1\n  switch x {\n    case -1 { puts(1) }\n    else { }\n  }\n}\n", "case label -1 does not fit in UInt32", "4:10"))
+  xs.push(refused("width-uint32-too-big", "fn main {\n  x: UInt32 = 1\n  switch x {\n    case 4294967296 { puts(1) }\n    else { }\n  }\n}\n", "case label 4294967296 does not fit in UInt32", "4:10"))
+  xs.push(refused("width-uint64-negative", "fn main {\n  x: UInt64 = 1u64\n  switch x {\n    case -3 { puts(1) }\n    else { }\n  }\n}\n", "case label -3 does not fit in UInt64", "4:10"))
+  xs.push(refused("width-int-too-big", "fn main {\n  x = 1\n  switch x {\n    case 9223372036854775808 { puts(1) }\n    else { }\n  }\n}\n", "case label 9223372036854775808 does not fit in Int", "4:10"))
+  xs.push(refused("width-suffix", "fn main {\n  x: UInt64 = 1u64\n  switch x {\n    case 5u64 { puts(1) }\n    else { }\n  }\n}\n", "a case label takes the type of the switch's value: write it without the suffix", "4:10"))
+  xs.push(refused("width-float", "fn main {\n  switch 1.5 {\n    case 0 { puts(1) }\n    else { }\n  }\n}\n", "switch discriminant must be an integer (Int, Int32, UInt32, UInt64), Bool, String, an enum or a union, got Float64", "2:10"))
+  xs.push(refused("width-duplicate-wrapped", "fn main {\n  x: UInt32 = 1\n  switch x {\n    case 4294967295 { puts(1) }\n    case 4294967295 { puts(2) }\n    else { }\n  }\n}\n", "duplicate case 4294967295", "5:5"))
+  // `case true` and `case false`; a Bool switch without else names both.
+  xs.push(accepted("bool-forms", "class C {\n  pub a: Array(Int)\n  fn initialize(on: Bool) {\n    switch on {\n      case true { self.a = [1] }\n      case false { self.a = [1, 2] }\n    }\n  }\n}\nfn word(b: Bool): String {\n  switch b {\n    case true { \"yes\" }\n    case false { \"no\" }\n  }\n}\nfn sign(b: Bool): Int {\n  switch b {\n    case false { return -1 }\n    case true { return 1 }\n  }\n}\nfn main {\n  puts(word(argv().size > 0))\n  puts(word(argv().size > 9))\n  puts(sign(false))\n  puts(C.new(false).a.size)\n  switch argv().size == 1 {\n    case true { puts(\"one\") }\n    else { puts(\"not one\") }\n  }\n  x = switch 1 > 2 {\n    case false, true { 7 }\n  }\n  puts(x)\n}\n", "yes\nno\n-1\n2\none\n7\n"))
+  xs.push(refused("bool-one", "fn main {\n  switch argv().size > 0 {\n    case 1 { puts(1) }\n    else { }\n  }\n}\n", "a case label of a switch over Bool is true or false: write `case true`", "3:10"))
+  xs.push(refused("bool-zero", "fn main {\n  switch argv().size > 0 {\n    case 0 { puts(1) }\n    else { }\n  }\n}\n", "a case label of a switch over Bool is true or false: write `case false`", "3:10"))
+  xs.push(refused("bool-other-int", "fn main {\n  switch argv().size > 0 {\n    case 2 { puts(1) }\n    else { }\n  }\n}\n", "a case label of a switch over Bool is true or false", "3:10"))
+  xs.push(refused("bool-missing", "fn main {\n  switch argv().size > 0 {\n    case true { puts(1) }\n  }\n}\n", "switch over Bool does not cover false: name them or add else", "2:3"))
+  xs.push(refused("bool-missing-value", "fn f(b: Bool): Int {\n  switch b {\n    case false { 0 }\n  }\n}\nfn main { puts(f(true)) }\n", "switch over Bool does not cover true: name them or add else", "2:3"))
+  xs.push(refused("bool-else-beside-both", "fn main {\n  switch argv().size > 0 {\n    case true { puts(1) }\n    case false { puts(2) }\n    else { puts(3) }\n  }\n}\n", "both true and false are named; remove the else", "2:3"))
+  xs.push(refused("bool-label-on-int", "fn main {\n  switch argv().size {\n    case true { puts(1) }\n    else { }\n  }\n}\n", "true and false label a switch over Bool, not Int", "3:10"))
+  xs.push(refused("bool-duplicate", "fn main {\n  switch argv().size > 0 {\n    case true { puts(1) }\n    case true, false { puts(2) }\n  }\n}\n", "duplicate case true", "4:10"))
+  // `a..=b`, the inclusive range of `for`.
+  xs.push(accepted("for-inclusive", "fn main {\n  for i in 1..=3 {\n    puts(i)\n  }\n  for j in 5..=4 {\n    puts(j)\n  }\n  for k in 9223372036854775805..=9223372036854775807 {\n    puts(k)\n  }\n  m = -9223372036854775807 - 1\n  for n in m..=m {\n    puts(n)\n  }\n  for a in 0..=6 {\n    if a % 2 == 1 {\n      continue\n    }\n    for b in a..=a + 1 {\n      puts(a * 10 + b)\n    }\n  }\n  hit = 0\n  for z in 0..=9 {\n    if z == 4 {\n      hit = z\n      break\n    }\n  }\n  puts(hit)\n  for c in 0..2 {\n    puts(c)\n  }\n}\n", "1\n2\n3\n9223372036854775805\n9223372036854775806\n9223372036854775807\n-9223372036854775808\n0\n1\n22\n23\n44\n45\n66\n67\n4\n0\n1\n"))
+  xs.push(refused("for-inclusive-float", "fn main {\n  for i in 0..=1.5 {\n    puts(i)\n  }\n}\n", "for range bounds must be Int, got Float64", "2:3"))
+  xs.push(refused("for-inclusive-assign", "fn main {\n  for i in 0..=3 {\n    i = 5\n  }\n}\n", "cannot assign to i", "3:7"))
+  // Range labels over an integer, integer and character bounds.
+  xs.push(accepted("range-forms", "fn class_of(c: Int): String {\n  switch c {\n    case 'a'..='z', 'A'..='Z', '_' { \"name\" }\n    case '0'..='9' { \"digit\" }\n    case ' ', '\\t' { \"space\" }\n    else { \"other\" }\n  }\n}\nfn band(n: Int): Int {\n  switch n {\n    case -5..=-1 { -1 }\n    case 0..10 { 0 }\n    case 10, 11 { 1 }\n    case 1000..=1000000 { 2 }\n    case 1000001..9223372036854775807 { 3 }\n    else { 9 }\n  }\n}\nfn top(u: UInt64): Int {\n  switch u {\n    case 18446744073709551600..=18446744073709551615 { 1 }\n    case 9223372036854775800..=9223372036854775810 { 2 }\n    case 0..=9 { 3 }\n    else { 0 }\n  }\n}\nfn small(x: Int32): Int {\n  switch x {\n    case -2147483648..=-1 { 1 }\n    case 1..=2147483647 { 2 }\n    else { 0 }\n  }\n}\nfn main {\n  s = \"aZ_9 +\"\n  for i in 0..s.size {\n    puts(class_of(s[i]))\n  }\n  puts(band(-5))\n  puts(band(-1))\n  puts(band(0))\n  puts(band(9))\n  puts(band(10))\n  puts(band(12))\n  puts(band(999))\n  puts(band(1000))\n  puts(band(1000000))\n  puts(band(1000001))\n  puts(band(9223372036854775806))\n  puts(band(9223372036854775807))\n  puts(band(-6))\n  puts(top(18446744073709551615u64))\n  puts(top(18446744073709551600u64))\n  puts(top(18446744073709551599u64))\n  puts(top(9223372036854775807u64))\n  puts(top(9223372036854775808u64))\n  puts(top(9223372036854775810u64))\n  puts(top(9223372036854775811u64))\n  puts(top(9u64))\n  m: Int32 = -2147483648\n  puts(small(m))\n  puts(small(0))\n  puts(small(2147483647))\n  count = 0\n  for v in 0..=300 {\n    switch v {\n      case 0..=255 { count += 1 }\n      case 256..=300 { count += 100 }\n    }\n  }\n  puts(count)\n}\n", "name\nname\nname\ndigit\nspace\nother\n-1\n-1\n0\n0\n1\n9\n9\n2\n2\n3\n3\n9\n9\n1\n1\n0\n2\n2\n2\n0\n3\n1\n0\n2\n4756\n"))
+  xs.push(refused("range-overlap-single", "fn main {\n  switch argv().size {\n    case 0..=9 { puts(1) }\n    case 5 { puts(2) }\n    else { }\n  }\n}\n", "case 5 overlaps case 0..=9", "4:10"))
+  xs.push(refused("range-overlap-range", "fn main {\n  switch argv().size {\n    case 'a'..='z' { puts(1) }\n    case 'A'..'b' { puts(2) }\n    else { }\n  }\n}\n", "case 65..98 overlaps case 97..=122", "4:10"))
+  xs.push(refused("range-overlap-same-arm", "fn main {\n  switch argv().size {\n    case 3, 1..4 { puts(1) }\n    else { }\n  }\n}\n", "case 1..4 overlaps case 3", "3:13"))
+  xs.push(refused("range-overlap-wide-u64", "fn main {\n  u: UInt64 = 1u64\n  switch u {\n    case 9223372036854775807..=18446744073709551615 { puts(1) }\n    case 0..9223372036854775808 { puts(2) }\n  }\n}\n", "case 0..9223372036854775808 overlaps case 9223372036854775807..=18446744073709551615", "5:10"))
+  xs.push(refused("range-empty", "fn main {\n  switch argv().size {\n    case 5..5 { puts(1) }\n    else { }\n  }\n}\n", "the range 5..5 is empty", "3:10"))
+  xs.push(refused("range-empty-incl", "fn main {\n  switch argv().size {\n    case 9..=0 { puts(1) }\n    else { }\n  }\n}\n", "the range 9..=0 is empty", "3:10"))
+  xs.push(refused("range-empty-u64", "fn main {\n  u: UInt64 = 1u64\n  switch u {\n    case 18446744073709551615..=0 { puts(1) }\n    else { }\n  }\n}\n", "the range 18446744073709551615..=0 is empty", "4:10"))
+  xs.push(refused("range-on-enum", "enum Tok { a, b, c }\nfn main {\n  switch Tok.a {\n    case a..c { puts(1) }\n    else { }\n  }\n}\n", "a range label needs a switch over an integer, got Tok", "4:10"))
+  xs.push(refused("range-on-bool", "fn main {\n  switch argv().size > 0 {\n    case 0..=1 { puts(1) }\n  }\n}\n", "a range label needs a switch over an integer, got Bool", "3:10"))
+  xs.push(refused("range-on-string", "fn main {\n  switch \"a\" {\n    case 0..=1 { puts(1) }\n    else { }\n  }\n}\n", "a range label needs a switch over an integer, got String", "3:10"))
+  xs.push(refused("range-bound-too-big", "fn main {\n  x: Int32 = 1\n  switch x {\n    case 0..=3000000000 { puts(1) }\n    else { }\n  }\n}\n", "case label 3000000000 does not fit in Int32", "4:14"))
+  xs.push(refused("range-bound-not-int", "fn main {\n  switch argv().size {\n    case 0..=\"z\" { puts(1) }\n    else { }\n  }\n}\n", "case label must be an integer literal", "3:14"))
+  // Constants as labels and as range bounds.
+  xs.push(accepted("const-labels", "const tab = 9\nconst lower_a = 'a'\nconst lower_z = 'z'\nconst big = 18446744073709551615u64\nconst neg = -2\nconst on = true\nfn kind(c: Int): String {\n  switch c {\n    case tab, ' ' { \"space\" }\n    case lower_a..=lower_z { \"lower\" }\n    case neg..0 { \"negative\" }\n    else { \"other\" }\n  }\n}\nfn top(u: UInt64): Int {\n  switch u {\n    case big { 1 }\n    else { 0 }\n  }\n}\nfn w(x: Int32): Int {\n  switch x {\n    case tab { 1 }\n    else { 0 }\n  }\n}\nfn main {\n  puts(kind(9))\n  puts(kind('q'))\n  puts(kind(-1))\n  puts(kind(0))\n  puts(top(18446744073709551615u64))\n  puts(w(9))\n  switch argv().size > 0 {\n    case on { puts(\"on\") }\n    case false { puts(\"off\") }\n  }\n}\n", "space\nlower\nnegative\nother\n1\n1\non\n"))
+  xs.push(refused("const-not-found", "fn main {\n  switch argv().size {\n    case nope { puts(1) }\n    else { }\n  }\n}\n", "nope is not a constant: a case label of a switch over Int is an integer literal or an integer constant", "3:10"))
+  xs.push(refused("const-does-not-fit", "const big = 3000000000\nfn main {\n  x: Int32 = 1\n  switch x {\n    case big { puts(1) }\n    else { }\n  }\n}\n", "case label big = 3000000000 does not fit in Int32", "5:10"))
+  xs.push(refused("const-negative-unsigned", "const neg = -1\nfn main {\n  x: UInt32 = 1\n  switch x {\n    case neg { puts(1) }\n    else { }\n  }\n}\n", "case label neg = -1 does not fit in UInt32", "5:10"))
+  xs.push(refused("const-float", "const half = 0.5\nfn main {\n  switch argv().size {\n    case half { puts(1) }\n    else { }\n  }\n}\n", "the constant half = 0.5 is not an integer", "4:10"))
+  xs.push(refused("const-bool-on-int", "const on = true\nfn main {\n  switch argv().size {\n    case on { puts(1) }\n    else { }\n  }\n}\n", "the constant on = true is not an integer", "4:10"))
+  xs.push(refused("const-int-on-bool", "const one = 1\nfn main {\n  switch argv().size > 0 {\n    case one { puts(1) }\n    else { }\n  }\n}\n", "the constant one = 1 is not a Bool: a case label of a switch over Bool is true, false or a Bool constant", "4:10"))
+  xs.push(refused("const-duplicate", "const tab = 9\nfn main {\n  switch argv().size {\n    case 9 { puts(1) }\n    case tab { puts(2) }\n    else { }\n  }\n}\n", "duplicate case tab", "5:10"))
+  xs.push(refused("const-overlap", "const lo = 1\nconst hi = 5\nfn main {\n  switch argv().size {\n    case lo..=hi { puts(1) }\n    case 3 { puts(2) }\n    else { }\n  }\n}\n", "case 3 overlaps case lo..=hi", "6:10"))
+  xs.push(refused("const-local-shadow", "const tab = 9\nfn main {\n  tab2 = 9\n  switch argv().size {\n    case tab2 { puts(1) }\n    else { }\n  }\n}\n", "tab2 is not a constant", "5:10"))
+  // An enum member's value may be a constant.
+  xs.push(accepted("enum-const-values", "const http_ok = 200\nconst base = 7\nenum Status { ok = http_ok, created, not_found = 404, later = base }\nenum Small { a = base, b }\nfn word(s: Status): String {\n  switch s {\n    case ok, created { \"fine\" }\n    case not_found { \"missing\" }\n    case later { \"later\" }\n  }\n}\nfn main {\n  puts(Status.created.to_i())\n  puts(Status.later.to_i())\n  if s = Status.from_i(201) {\n    puts(s)\n  }\n  if t = Status.from_i(7) {\n    puts(word(t))\n  }\n  puts(Status.from_i(8) ?? Status.ok)\n  puts(word(Status.ok))\n  puts(Small.b.to_i())\n  puts(\"\${Small.a}\")\n}\n", "201\n7\ncreated\nlater\nok\nfine\n8\na\n"))
+  xs.push(refused("enum-const-unknown", "enum Status { ok = nope }\nfn main {\n  puts(Status.ok.to_i)\n}\n", "nope is not a constant: an enum member's value is an integer literal or a constant", "1:15"))
+  xs.push(refused("enum-const-same-value", "const one = 1\nenum S { a = 1, b = one }\nfn main {\n  puts(S.a.to_i)\n}\n", "members a and b of S have the same value 1", "2:17"))
+  xs.push(refused("enum-const-next-same-value", "const one = 1\nenum S { a = one, b, c = 2 }\nfn main {\n  puts(S.a.to_i)\n}\n", "members b and c of S have the same value 2", "2:22"))
+  xs.push(refused("enum-const-too-big", "const big = 3000000000\nenum S { a = big }\nfn main {\n  puts(S.a.to_i)\n}\n", "the value of a, the constant big = 3000000000, does not fit in Int32", "2:10"))
+  xs.push(refused("enum-const-float", "const half = 0.5\nenum S { a = half }\nfn main {\n  puts(S.a.to_i)\n}\n", "the constant half = 0.5 is not an integer", "2:10"))
+  xs.push(refused("enum-value-string", "enum S { a = \"x\" }\nfn main {\n  puts(S.a.to_i)\n}\n", "an enum member's value is an integer literal or a constant", "1:14"))
+  // An enum is stored in one byte (u8, i8), two (u16, i16) or four.
+  xs.push(accepted("enum-narrow", "enum Sign { neg = -1, zero, pos }\nenum Wide { a = 0, b = 300, c = 65535 }\nenum Mid { lo = -300, hi = 300 }\nclass Box {\n  pub s: Sign = Sign.neg\n  pub w: Wide = Wide.c\n  pub m: Mid = Mid.lo\n}\nstruct P {\n  s: Sign\n  w: Wide\n}\nfn sw(s: Sign): Int {\n  switch s {\n    case neg { -10 }\n    case zero { 0 }\n    case pos { 10 }\n  }\n}\nfn ww(w: Wide): String {\n  switch w {\n    case a { \"a\" }\n    case b { \"b\" }\n    case c { \"c\" }\n  }\n}\nfn main {\n  xs = Array(Sign).new(5, Sign.pos)\n  xs[1] = Sign.neg\n  ws: Array(Wide) = [Wide.c, Wide.b, Wide.a]\n  ms = Mid.members()\n  for x in xs {\n    puts(sw(x))\n  }\n  for w in ws {\n    puts(\"\${w} \${w.to_i()} \${ww(w)}\")\n  }\n  for m in ms {\n    puts(\"\${m} \${m.to_i()}\")\n  }\n  bx = Box.new()\n  puts(\"\${bx.s} \${bx.w} \${bx.m}\")\n  p = P { s: Sign.zero, w: Wide.b }\n  puts(\"\${p.s} \${p.w.to_i()}\")\n  o: Wide? = Wide.from_i(65535)\n  if v = o {\n    puts(v)\n  }\n  q: Sign? = Sign.from_i(-1)\n  puts(q ?? Sign.pos)\n  puts(Sign.from_i(5) ?? Sign.zero)\n  puts(Mid.from_name(\"hi\") ?? Mid.lo)\n  u: Int | Sign = Sign.neg\n  switch u {\n    case n: Int { puts(n) }\n    case s: Sign { puts(s.to_i()) }\n  }\n  puts(Sign.neg == xs[1])\n  puts(Wide.c != ws[1])\n}\n", "10\n-10\n10\n10\n10\nc 65535 c\nb 300 b\na 0 a\nlo -300\nhi 300\nneg c lo\nzero 300\nc\nneg\nzero\nhi\n-1\ntrue\ntrue\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/sr-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/sr-${f.tag}.bin", "${dir}/sr-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "sr-${f2.tag}.bin", "sr-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/sr-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/sr-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/sr-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "sr-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+// The generated code of these forms.
+fn check_ll(c: Checks, compiler: String, dir: String) {
+  w = "${dir}/sr-ll-width.av"
+  _ = file_write(w, "fn f(x: UInt32): Int {\n  switch x {\n    case 4294967295 { 1 }\n    case 7 { 2 }\n    else { 0 }\n  }\n}\nfn main {\n  puts(f(7))\n}\n")
+  c.eq_int(emit_ll(compiler, w, "${dir}/sr-ll-width.ll", "${dir}/sr-ll-width.log"), 0, "ll-width: emits")
+  ll = log_text("${dir}/sr-ll-width.ll")
+  c.expect(str_has(ll, "switch i32 "), "ll-width: one switch at the value's width")
+  c.expect(str_has(ll, "i32 -1, label"), "ll-width: 4294967295 is the i32 -1")
+  bw = "${dir}/sr-ll-bool.av"
+  _ = file_write(bw, "fn f(b: Bool): Int {\n  switch b {\n    case true { 3 }\n    case false { 4 }\n  }\n}\nfn main {\n  puts(f(argv().size > 0))\n}\n")
+  c.eq_int(emit_ll(compiler, bw, "${dir}/sr-ll-bool.ll", "${dir}/sr-ll-bool.log"), 0, "ll-bool: emits")
+  bll = log_text("${dir}/sr-ll-bool.ll")
+  c.expect(!str_has(bll, "switch "), "ll-bool: no switch")
+  c.expect(str_has(bll, "br i1 "), "ll-bool: one branch on the value")
+  rw = "${dir}/sr-ll-range.av"
+  _ = file_write(rw, "fn f(c: Int): Int {\n  switch c {\n    case 'a'..='c' { 1 }\n    case 100..=100000 { 2 }\n    else { 0 }\n  }\n}\nfn main {\n  puts(f(argv().size))\n}\n")
+  c.eq_int(emit_ll(compiler, rw, "${dir}/sr-ll-range.ll", "${dir}/sr-ll-range.log"), 0, "ll-range: emits")
+  rll = log_text("${dir}/sr-ll-range.ll")
+  c.expect(str_has(rll, "icmp sge i64 ") && str_has(rll, ", 97") && str_has(rll, "icmp sle i64 ") && str_has(rll, ", 99"), "ll-range: a narrow range is two compares")
+  c.expect(str_has(rll, ", 100") && str_has(rll, ", 100000"), "ll-range: a wide range is two compares")
+  c.expect(!str_has(rll, "i64 97, label") && !str_has(rll, "i64 100, label"), "ll-range: a range gives the switch no cases")
+  // Every block a dispatch adds is numbered before the arms it
+  // enters, so no edge into an arm is taken for a back edge: a program
+  // that spawns polls in its loops only (mir/gc.av), and these have none.
+  pw = "${dir}/sr-ll-nopoll.av"
+  _ = file_write(pw, "fn s(m: String): Int {\n  switch m {\n    case \"GET\", \"HEAD\" { 1 }\n    case \"POST\" { 2 }\n    case \"\" { 3 }\n    else { 0 }\n  }\n}\nfn r(c: Int): Int {\n  switch c {\n    case 'a'..='z' { 1 }\n    case 1000..=100000 { 2 }\n    case 200000..=300000 { 3 }\n    else { 0 }\n  }\n}\nfn main {\n  h = spawn { 1 }\n  puts(s(\"HEAD\") + r(argv().size))\n  puts(h.join() ?? -1)\n}\n")
+  c.eq_int(emit_ll(compiler, pw, "${dir}/sr-ll-nopoll.ll", "${dir}/sr-ll-nopoll.log"), 0, "ll-nopoll: emits")
+  pll = log_text("${dir}/sr-ll-nopoll.ll")
+  c.expect(str_has(pll, "@memcmp("), "ll-nopoll: the String switch compares")
+  c.expect(!str_has(pll, "avant_gc_poll"), "ll-nopoll: no poll in a program without a loop")
+  // The poll rule (mir/gc.av): a poll heads a real cycle only. `abs`
+  // lowers to a block numbered before the one that enters it, which the
+  // numbering rule took for a back edge: two polls in a program with no
+  // loop.
+  aw = "${dir}/sr-ll-abs.av"
+  _ = file_write(aw, "fn main {\n  h = spawn { 1 }\n  q = -3\n  puts(q.abs())\n  puts(h.join() ?? -1)\n}\n")
+  c.eq_int(emit_ll(compiler, aw, "${dir}/sr-ll-abs.ll", "${dir}/sr-ll-abs.log"), 0, "ll-abs: emits")
+  c.expect(!str_has(log_text("${dir}/sr-ll-abs.ll"), "avant_gc_poll"), "ll-abs: no poll in a program without a loop")
+  lw2 = "${dir}/sr-ll-loop.av"
+  _ = file_write(lw2, "fn main {\n  h = spawn { 1 }\n  xs: Array(String) = []\n  for i in 0..argv().size + 3 {\n    xs.push(\"\${i}\")\n  }\n  puts(xs.size)\n  puts(h.join() ?? -1)\n}\n")
+  c.eq_int(emit_ll(compiler, lw2, "${dir}/sr-ll-loop.ll", "${dir}/sr-ll-loop.log"), 0, "ll-loop: emits")
+  c.expect(str_has(log_text("${dir}/sr-ll-loop.ll"), "avant_gc_poll"), "ll-loop: a loop that holds a reference still polls")
+  nw = "${dir}/sr-ll-narrow.av"
+  _ = file_write(nw, "enum Sign { neg = -1, zero, pos }\nenum Wide { a = 0, b = 300, c = 65535 }\nenum Mid { lo = -300, hi = 300 }\nfn f(s: Sign, w: Wide, m: Mid): Int {\n  x = switch s {\n    case neg { 1 }\n    case zero { 2 }\n    case pos { 3 }\n  }\n  y = switch w {\n    case a { 1 }\n    case b { 2 }\n    case c { 3 }\n  }\n  z = switch m {\n    case lo { 1 }\n    case hi { 2 }\n  }\n  x + y + z\n}\nfn main {\n  puts(f(Sign.from_i(argv().size) ?? Sign.neg, Wide.c, Mid.hi))\n}\n")
+  c.eq_int(emit_ll(compiler, nw, "${dir}/sr-ll-narrow.ll", "${dir}/sr-ll-narrow.log"), 0, "ll-narrow: emits")
+  nll = log_text("${dir}/sr-ll-narrow.ll")
+  c.expect(str_has(nll, "switch i8 "), "ll-narrow: -1..1 is one signed byte")
+  c.expect(str_has(nll, "switch i16 "), "ll-narrow: 0..65535 and -300..300 are two bytes")
+  c.expect(str_has(nll, "i16 -1, label"), "ll-narrow: 65535 is the i16 -1")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_switch_ranges.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+    check_ll(c, compiler, scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

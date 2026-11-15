@@ -1,0 +1,356 @@
+import harness
+import backends
+
+// The messages for names, calls and ambiguity. A type
+// without the type-level function a call names, a type two
+// modules publish, a call whose arguments fit no signature, "did
+// you mean" and opening an optional, an ambiguous function
+// value and an ambiguous call within one module. Each
+// program is compiled in parallel; a refused one must leave no binary,
+// exit non-zero, say the expected words at the expected line and column,
+// and, when the case says so, say nothing else (one error, no cascade).
+
+class NCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub single: Bool = false
+  pub absent: String = ""
+  pub ok: Bool = false
+  // Other modules beside main.av: name, body, name, body, ...
+  pub mods: Array(String) = []
+}
+
+// The one error the program has: the words at pos, and no other error.
+fn only(tag: String, src: String, needle: String, pos: String): NCase {
+  f = NCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f.single = true
+  f
+}
+
+// The words at pos; other errors may follow.
+fn first(tag: String, src: String, needle: String, pos: String): NCase {
+  f = only(tag, src, needle, pos)
+  f.single = false
+  f
+}
+
+// The program's one error, without the words absent (a hint that must
+// not be offered).
+fn without(tag: String, src: String, needle: String, pos: String, absent: String): NCase {
+  f = only(tag, src, needle, pos)
+  f.absent = absent
+  f
+}
+
+// A program that compiles and prints out.
+fn accepted(tag: String, src: String, out: String): NCase {
+  f = NCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn with_mods(f: NCase, mods: Array(String)): NCase {
+  f.mods = mods
+  f
+}
+
+fn cases: Array(NCase) {
+  xs: Array(NCase) = []
+  // `T.foo` on a type without that type-level function.
+  xs.push(only("type-fn-struct", "struct T {\n  x: Int\n}\nfn main {\n  puts(T.foo(1))\n}\n", "T has no type-level function foo", "5:9"))
+  xs.push(only("type-fn-field-form", "class K {\n  fn self.make: K {\n    K.new()\n  }\n}\nfn main {\n  k = K.mak\n  puts(1)\n}\n", "K has no type-level function mak", "7:8"))
+  xs.push(only("type-fn-enum", "enum Tok { eof, name }\nfn main {\n  puts(Tok.foo(1))\n}\n", "Tok has no type-level function foo", "3:11"))
+  xs.push(only("type-fn-builtin", "fn main {\n  puts(String.foo(1))\n}\n", "String has no type-level function foo", "2:14"))
+  xs.push(only("type-fn-instance", "class K {\n  fn inst(a: Int): Int {\n    a\n  }\n}\nfn main {\n  puts(K.inst(1))\n}\n", "K.inst is an instance method; call it on a value", "7:9"))
+  xs.push(only("type-fn-unknown-receiver", "fn main {\n  puts(Nope.foo(1))\n}\n", "unknown name Nope", "2:8"))
+  xs.push(first("type-fn-unknown-value", "fn main {\n  puts(nosuch.foo(1))\n  puts(nosuch2.bar)\n}\n", "unknown name nosuch", "2:8"))
+  xs.push(without("type-fn-unknown-value-once", "fn main {\n  puts(nosuch.foo(1))\n}\n", "unknown name nosuch", "2:8", "on Int"))
+  xs.push(only("type-fn-qualified", "fn main {\n  puts(m.T.foo(1))\n}\n", "unknown name m", "2:8"))
+  xs.push(with_mods(only("type-fn-module", "import tmod\nfn main {\n  puts(tmod.T.foo(1))\n}\n", "tmod.T has no type-level function foo", "3:14"), ["tmod", "pub struct T {\n  x: Int\n}\n"]))
+  // A type two modules publish, used bare, names both modules.
+  ta = "pub struct Token {\n  pub k: Int\n  pub fn self.make: Token {\n    Token { k: 1 }\n  }\n}\n"
+  tb = "pub struct Token {\n  pub s: String\n}\n"
+  two: Array(String) = ["lexa", ta, "lexb", tb]
+  clash = "Token is a type of both lexa and lexb: write lexa.Token or lexb.Token"
+  xs.push(with_mods(only("clash-param", "import lexa\nimport lexb\nfn f(t: Token): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", clash, "3:9"), two))
+  xs.push(with_mods(only("clash-literal", "import lexa\nimport lexb\nfn main {\n  t = Token { k: 1 }\n  puts(2)\n}\n", clash, "4:7"), two))
+  xs.push(with_mods(only("clash-local", "import lexa\nimport lexb\nfn main {\n  t: Token? = nil\n  puts(2)\n}\n", clash, "4:6"), two))
+  xs.push(with_mods(only("clash-arg", "import lexa\nimport lexb\nfn main {\n  ts: Array(Token) = []\n  puts(ts.size)\n}\n", clash, "4:13"), two))
+  xs.push(with_mods(only("clash-type-call", "import lexa\nimport lexb\nfn main {\n  t = Token.make()\n  puts(2)\n}\n", clash, "4:7"), two))
+  xs.push(with_mods(only("clash-type-call-parens", "import lexa\nimport lexb\nfn main {\n  t = Token.make()\n  puts(2)\n}\n", clash, "4:7"), two))
+  xs.push(with_mods(only("clash-field-type", "import lexa\nimport lexb\nclass Box {\n  t: Token? = nil\n}\nfn main {\n  puts(Box.new().t == nil)\n}\n", clash, "4:6"), two))
+  // A field's type is resolved where the class is written: the one Token
+  // this module sees, though another module's Token exists (it said
+  // "unknown type Token").
+  seen: Array(String) = ["lexa", ta, "lexb", tb, "mid", "import lexb\npub fn mid: Int {\n  t = Token { s: \"x\" }\n  t.s.size\n}\n"]
+  xs.push(with_mods(accepted("clash-field-seen-one", "import lexa\nimport mid\nclass Box {\n  pub t: Token? = nil\n  pub ts: Array(Token) = []\n}\nstruct Pair {\n  a: Token\n  b: Int\n}\nfn main {\n  b = Box.new()\n  b.t = Token { k: 4 }\n  if t = b.t {\n    puts(t.k)\n  }\n  b.ts.push(Token.make())\n  p = Pair { a: Token { k: 5 }, b: 6 }\n  puts(p.a.k + p.b + b.ts[0].k)\n  puts(mid())\n}\n", "4\n12\n1\n"), seen))
+  priv: Array(String) = ["lexa", "pub struct Token {\n  pub k: Int\n  fn self.make: Token {\n    Token { k: 1 }\n  }\n}\n"]
+  xs.push(with_mods(only("type-fn-private", "import lexa\nfn main {\n  t = Token.make()\n  puts(1)\n}\n", "Token.make is private to module lexa; mark it pub", "3:12"), priv))
+  gen = "pub class Box(T) {\n  pub v: T\n  fn initialize(v: T) {\n    self.v = v\n  }\n}\n"
+  gens: Array(String) = ["ga", gen, "gb", gen]
+  gclash = "Box is a type of both ga and gb: write ga.Box or gb.Box"
+  xs.push(with_mods(only("clash-generic-new", "import ga\nimport gb\nfn main {\n  b = Box(Int).new(1)\n  puts(b.v)\n}\n", gclash, "4:7"), gens))
+  xs.push(with_mods(only("clash-generic-param", "import ga\nimport gb\nfn f(b: Box(Int)): Int {\n  b.v\n}\nfn main {\n  puts(1)\n}\n", gclash, "3:9"), gens))
+  xs.push(with_mods(only("clash-generic-field", "import ga\nimport gb\nclass K {\n  b: Box(Int)? = nil\n}\nfn main {\n  puts(1)\n}\n", gclash, "4:6"), gens))
+  hidden: Array(String) = ["ga", gen, "gb", gen, "hmid", "import ga\nimport gb\npub fn hmid: Int {\n  1\n}\n", "lexa", ta, "lexb", tb, "tmid", "import lexa\nimport lexb\npub fn tmid: Int {\n  2\n}\n"]
+  xs.push(with_mods(only("clash-field-unseen", "import hmid\nclass K {\n  b: Box(Int)? = nil\n}\nfn main {\n  puts(hmid())\n}\n", "unknown type Box", "3:6"), hidden))
+  xs.push(with_mods(only("clash-field-unseen-plain", "import tmid\nclass K {\n  t: Token? = nil\n}\nfn main {\n  puts(tmid())\n}\n", "unknown type Token", "3:6"), hidden))
+  three: Array(String) = ["lexa", ta, "lexb", tb, "lexc", "pub class Token {\n}\n"]
+  xs.push(with_mods(only("clash-three", "import lexa\nimport lexb\nimport lexc\nfn f(t: Token): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", "Token is a type of lexa, lexb and lexc: write lexa.Token, lexb.Token or lexc.Token", "4:9"), three))
+  fnty: Array(String) = ["alpha", "pub struct Value {\n  pub v: Int\n}\n", "beta", "pub fn Value: Int {\n  1\n}\n"]
+  xs.push(with_mods(only("clash-type-and-fn", "import alpha\nimport beta\nfn f(v: Value): Int {\n  1\n}\nfn main {\n  puts(2)\n}\n", "Value is a type of alpha and a function of beta: write alpha.Value or beta.Value", "3:9"), fnty))
+  // A call whose arguments fit no signature says what it takes.
+  add = "fn add(a: Int, b: Int): Int {\n  a + b\n}\n"
+  xs.push(only("count-few", add + "fn main {\n  puts(add(1))\n}\n", "add takes 2 arguments, given 1: add(a: Int, b: Int): Int", "5:8"))
+  xs.push(only("count-many", add + "fn main {\n  puts(add(1, 2, 3))\n}\n", "add takes 2 arguments, given 3: add(a: Int, b: Int): Int", "5:8"))
+  xs.push(only("count-none", "fn hi {\n  puts(1)\n}\nfn main {\n  hi(1)\n}\n", "hi takes no arguments, given 1: hi()", "5:3"))
+  xs.push(only("count-default", "fn pad(s: String, n: Int = 2): String {\n  s\n}\nfn main {\n  puts(pad())\n}\n", "pad takes 1 or 2 arguments, given 0: pad(s: String, n: Int = ...): String", "5:8"))
+  xs.push(only("count-defaults", "fn pad(s: String, n: Int = 2, c: String = \" \"): String {\n  s\n}\nfn main {\n  puts(pad(\"a\", 1, \"b\", 4))\n}\n", "pad takes 1 to 3 arguments, given 4", "5:8"))
+  xs.push(only("count-overloads", "fn show(x: Int): String {\n  \"i\"\n}\nfn show(s: String, n: Int): String {\n  s\n}\nfn main {\n  puts(show(1, 2, 3))\n}\n", "no overload of show takes 3 arguments: show(x: Int): String, show(s: String, n: Int): String", "8:8"))
+  xs.push(only("types-overloads", "fn show(x: Int): String {\n  \"i\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  puts(show(true))\n}\n", "no overload of show takes (Bool): show(x: Int): String, show(s: String): String", "8:8"))
+  xs.push(with_mods(only("count-qualified", "import cm\nfn main {\n  puts(cm.twice(1, 2))\n}\n", "cm.twice takes 1 argument, given 2: cm.twice(n: Int): Int", "3:10"), ["cm", "pub fn twice(n: Int): Int {\n  n * 2\n}\n"]))
+  cls = "class C {\n  fn twice(a: Int): Int {\n    a * 2\n  }\n  fn self.make(n: Int): C {\n    C.new()\n  }\n}\n"
+  xs.push(only("count-method", cls + "fn main {\n  c = C.new()\n  puts(c.twice(1, 2))\n}\n", "C.twice takes 1 argument, given 2: C.twice(a: Int): Int", "11:9"))
+  xs.push(only("types-method", cls + "fn main {\n  c = C.new()\n  puts(c.twice(\"a\"))\n}\n", "argument 1 of C.twice is String, expected Int: C.twice(a: Int): Int", "11:9"))
+  xs.push(only("count-type-fn", cls + "fn main {\n  c = C.make()\n  puts(1)\n}\n", "C.make takes 1 argument, given 0: C.make(n: Int): C", "10:8"))
+  xs.push(only("count-lambda", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\nfn main {\n  puts(apply(1) { |a, b| a + b })\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument", "5:17"))
+  xs.push(only("count-fn-value", "fn main {\n  f: fn(Int): Int = { |n| n }\n  puts(f(1, 2))\n}\n", "fn(Int): Int takes 1 argument, given 2", "3:8"))
+  // "Did you mean", one suggestion at most, only from what is
+  // in scope at the error.
+  xs.push(only("mean-local", "fn main {\n  count = 3\n  puts(cuont)\n}\n", "unknown name cuont (did you mean `count`?)", "3:8"))
+  xs.push(only("mean-param", "fn f(total: Int): Int {\n  totl + 1\n}\nfn main {\n  puts(f(1))\n}\n", "unknown name totl (did you mean `total`?)", "2:3"))
+  xs.push(only("mean-field", "class Box {\n  width: Int = 2\n  fn area: Int {\n    widht * 2\n  }\n}\nfn main {\n  puts(Box.new().area())\n}\n", "unknown name widht (did you mean `width`?)", "4:5"))
+  xs.push(only("mean-const", "const max_depth = 64\nfn main {\n  puts(max_dept)\n}\n", "unknown name max_dept (did you mean `max_depth`?)", "3:8"))
+  xs.push(only("mean-fn-value", "fn helper(n: Int): Int {\n  n\n}\nfn main {\n  f: fn(Int): Int = helpr\n  puts(f(1))\n}\n", "unknown function helpr (did you mean `helper`?)", "5:21"))
+  xs.push(only("mean-call", add + "fn main {\n  puts(ad(1, 2))\n}\n", "unknown function ad (did you mean `add`?)", "5:8"))
+  xs.push(only("mean-builtin-fn", "fn main {\n  put(1)\n}\n", "unknown function put (did you mean `puts`?)", "2:3"))
+  xs.push(with_mods(only("mean-qualified", "import qm\nfn main {\n  puts(qm.doubel(2))\n}\n", "unknown function qm.doubel (did you mean `double`?)", "3:10"), ["qm", "pub fn double(n: Int): Int {\n  n * 2\n}\nfn doubles(n: Int): Int {\n  n\n}\n"]))
+  xs.push(only("mean-type-capital", "struct Point {\n  x: Int\n}\nfn main {\n  p = Pont { x: 1 }\n  puts(1)\n}\n", "unknown type Pont (did you mean `Point`?)", "5:7"))
+  xs.push(without("mean-none", "fn main {\n  count = 3\n  puts(zzzz)\n}\n", "unknown name zzzz", "3:8", "did you mean"))
+  xs.push(without("mean-other-fn-local", "fn a {\n  counter = 1\n  puts(counter)\n}\nfn main {\n  a()\n  puts(countr)\n}\n", "unknown name countr", "7:8", "did you mean"))
+  xs.push(with_mods(without("mean-private-fn", "import pm\nfn main {\n  puts(secrt(1))\n}\n", "unknown function secrt", "3:8", "did you mean"), ["pm", "fn secret(n: Int): Int {\n  n\n}\npub fn open(n: Int): Int {\n  secret(n)\n}\n"]))
+  xs.push(with_mods(without("mean-private-field", "import fm\nfn main {\n  b = make()\n  puts(b.hiden)\n}\n", "no field hiden on Bag", "4:9", "did you mean"), ["fm", "pub class Bag {\n  hidden: Int = 1\n}\npub fn make: Bag {\n  Bag.new()\n}\n"]))
+  xs.push(without("mean-one-letter", "fn main {\n  e = 1\n  puts(n + e)\n}\n", "unknown name n", "3:8", "did you mean"))
+  xs.push(only("mean-one-letter-case", "fn main {\n  n = 1\n  puts(N + n)\n}\n", "unknown name N (did you mean `n`?)", "3:8"))
+  xs.push(only("mean-tie-name", "fn main {\n  cut = 1\n  cat = 2\n  puts(cxt)\n}\n", "unknown name cxt (did you mean `cat`?)", "4:8"))
+  xs.push(only("mean-tie-rank", "fn mate: Int {\n  1\n}\nfn main {\n  mute = 2\n  puts(mote + mate)\n}\n", "unknown name mote (did you mean `mute`?)", "6:8"))
+  xs.push(only("mean-case", "fn main {\n  mount = 1\n  count = 2\n  puts(Count)\n}\n", "unknown name Count (did you mean `count`?)", "4:8"))
+  pt = "struct P {\n  name: String\n  fn shout: String {\n    name\n  }\n}\n"
+  xs.push(only("mean-struct-field", pt + "fn main {\n  p = P { name: \"a\" }\n  puts(p.nmae)\n}\n", "no field nmae on P (did you mean `name`?)", "9:9"))
+  xs.push(only("mean-struct-zero-method", pt + "fn main {\n  p = P { name: \"a\" }\n  puts(p.shuot)\n}\n", "no field shuot on P (did you mean `shout`?)", "9:9"))
+  xs.push(only("mean-method", cls + "fn main {\n  c = C.new()\n  puts(c.twise(1))\n}\n", "no method twise on C (did you mean `twice`?)", "11:9"))
+  xs.push(only("mean-type-fn", cls + "fn main {\n  c = C.mak(1)\n  puts(1)\n}\n", "C has no type-level function mak (did you mean `make`?)", "10:8"))
+  tok = "enum Tok { eof, name, number }\n"
+  xs.push(only("mean-member", tok + "fn main {\n  t = Tok.eoff\n  puts(t)\n}\n", "Tok has no member eoff (did you mean `eof`?)", "3:10"))
+  xs.push(only("mean-member-type-fn", tok + "fn main {\n  t = Tok.from_nam(\"eof\")\n  puts(1)\n}\n", "Tok has no type-level function from_nam (did you mean `from_name`?)", "3:10"))
+  xs.push(only("mean-label", tok + "fn f(t: Tok): Int {\n  switch t {\n    case eof { 1 }\n    case nmae { 2 }\n    case number { 3 }\n  }\n}\nfn main {\n  puts(f(Tok.eof))\n}\n", "Tok has no member nmae (did you mean `name`?)", "5:10"))
+  // A builtin receiver's methods and fields.
+  xs.push(only("mean-string-field", "fn main {\n  s = \"abc\"\n  puts(s.sizee)\n}\n", "no method sizee on String (did you mean `size`?)", "3:9"))
+  xs.push(only("mean-string-ext", "fn (s: String) shout: String {\n  s\n}\nfn main {\n  s = \"abc\"\n  puts(s.shuot)\n}\n", "(did you mean `shout`?)", "6:9"))
+  xs.push(only("mean-array", "fn main {\n  xs = [1, 2]\n  xs.pussh(3)\n  puts(xs.size)\n}\n", "no method pussh on Array (did you mean `push`?)", "3:5"))
+  xs.push(only("mean-array-field", "fn main {\n  xs = [2, 1]\n  ys = xs.srted\n  puts(ys.size)\n}\n", "no method srted on Array (did you mean `sorted`?)", "3:10"))
+  xs.push(only("mean-hash", "fn main {\n  h = Hash(String, Int).new()\n  puts(h.kyes.size)\n}\n", "no method kyes on Hash (did you mean `keys`?)", "3:9"))
+  xs.push(only("mean-int", "fn main {\n  n = 3\n  puts(n.to_ff)\n}\n", "no method to_ff on Int (did you mean `to_f`?)", "3:9"))
+  xs.push(only("mean-float", "fn main {\n  f = 2.0\n  puts(f.sqtr)\n}\n", "no method sqtr on Float64 (did you mean `sqrt`?)", "3:9"))
+  xs.push(only("mean-buf", "fn main {\n  b = buf_new()\n  b.push_srt(\"a\")\n  puts(b.to_s())\n}\n", "no method push_srt on Buf (did you mean `push_str`?)", "3:4"))
+  // A use of an optional says how to open it.
+  xs.push(only("open-eq-nil", "fn main {\n  x: Int? = nil\n  puts(x == nil)\n}\n", "x is Int? and an optional is never compared with nil: test it with `if _ = x { ... } else { ... }`, or open it with `if v = x`, `x ?? fallback` or `x?`", "3:10"))
+  xs.push(only("open-not-nil", "fn main {\n  x: Int? = 2\n  puts(nil != x)\n}\n", "x is Int? and an optional is never compared with nil", "3:12"))
+  xs.push(only("open-field", "fn main {\n  s: String? = \"a\"\n  puts(s.size)\n}\n", "cannot read field size on String?; open it with `if v = s`, `s ?? fallback` or `s?`", "3:9"))
+  xs.push(only("open-method", "fn main {\n  s: String? = \"a,b\"\n  puts(s.split(\",\").size)\n}\n", "cannot call split on String?; open it with `if v = s`, `s ?? fallback` or `s?`", "3:9"))
+  xs.push(only("open-arith", "fn main {\n  x: Int? = 2\n  puts(x + 1)\n}\n", "binary operator expects numeric operands, got Int? and Int; open it with `if v = x`, `x ?? fallback` or `x?`", "3:10"))
+  xs.push(only("open-arg", "fn twice(n: Int): Int {\n  n * 2\n}\nfn main {\n  h = Hash(String, Int).new()\n  puts(twice(h[\"a\"]))\n}\n", "argument 1 of twice is Int?, expected Int; open it with `if v = x`, `x ?? fallback` or `x?`", "6:15"))
+  xs.push(without("open-not-optional", "fn main {\n  puts(5 == nil)\n}\n", "cannot compare Int with Nil: == compares two values of one type", "2:10", "open it"))
+  // An ambiguous function value is told the qualified values that pick
+  // one, never a call.
+  fva: Array(String) = ["ma", "pub fn helper(a: Int): Int {\n  a\n}\n", "mb", "pub fn helper(a: Int): Int {\n  a + 1\n}\n"]
+  xs.push(with_mods(without("value-two-modules", "import ma\nimport mb\nfn main {\n  f = helper\n  puts(1)\n}\n", "ambiguous function value helper: ma.helper and mb.helper both match; write ma.helper or mb.helper", "4:7", "helper()"), fva))
+  xs.push(with_mods(only("value-two-modules-arg", "import ma\nimport mb\nfn apply(f: fn(Int): Int): Int {\n  f(1)\n}\nfn main {\n  puts(apply(helper))\n}\n", "ambiguous function value helper: ma.helper and mb.helper both match", "7:14"), fva))
+  xs.push(only("value-overloads", "fn show(x: Int): String {\n  \"i\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  f = show\n  puts(1)\n}\n", "ambiguous function value show: show(x: Int): String and show(s: String): String both match; give the value its fn type to pick one (f: fn(Int): String = show)", "8:7"))
+  xs.push(accepted("value-overloads-typed", "fn show(x: Int): String {\n  \"i\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  f: fn(Int): String = show\n  puts(f(1))\n}\n", "i\n"))
+  // An ambiguous call within one module names each signature.
+  amb = "fn f(a: Int, b: Int?): Int {\n  1\n}\nfn f(a: Int?, b: Int): Int {\n  2\n}\n"
+  xs.push(only("ambiguous-one-module", amb + "fn main {\n  puts(f(1, 2))\n}\n", "ambiguous call to f: f(a: Int, b: Int?): Int and f(a: Int?, b: Int): Int both match", "8:8"))
+  xs.push(only("ambiguous-method", "class C {\n  fn m(a: Int, b: Int?): Int {\n    1\n  }\n  fn m(a: Int?, b: Int): Int {\n    2\n  }\n}\nfn main {\n  puts(C.new().m(1, 2))\n}\n", "ambiguous call to C.m: C.m(a: Int, b: Int?): Int and C.m(a: Int?, b: Int): Int both match", "10:15"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(NCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/nm-${f.tag}.av"
+    if f.mods.size > 0 {
+      d = "${dir}/nm-${f.tag}"
+      mkdir_p(d)
+      k = 0
+      while k + 1 < f.mods.size {
+        write_av(d, f.mods[k], f.mods[k + 1])
+        k += 2
+      }
+      src = "${d}/main.av"
+    }
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/nm-${f.tag}.bin", "${dir}/nm-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f1 in cases {
+    if f1.ok {
+      runs.push(run_job(dir, "nm-${f1.tag}.bin", "nm-${f1.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f2 = cases[i]
+    log = log_text("${dir}/nm-${f2.tag}.log")
+    if f2.ok {
+      c.eq_int(jobs[i].code, 0, "${f2.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f2.tag}: exit 0")
+      c.eq_str(log_text("${dir}/nm-${f2.tag}.run.out"), f2.want, "${f2.tag}: stdout")
+      k += 1
+      continue
+    }
+    file = "nm-${f2.tag}.av"
+    if f2.mods.size > 0 {
+      file = "main.av"
+    }
+    c.expect(jobs[i].code != 0 && !file_exists("${dir}/nm-${f2.tag}.bin"), "${f2.tag}: refused")
+    c.expect(str_has(log, f2.want), "${f2.tag}: says ${f2.want}")
+    c.expect(str_has(log, "${file}:${f2.pos}\n"), "${f2.tag}: at ${f2.pos}")
+    if f2.single {
+      c.expect(!str_has(log, "aborting due to"), "${f2.tag}: one error")
+    }
+    if f2.absent.size > 0 {
+      c.expect(!str_has(log, f2.absent), "${f2.tag}: does not say ${f2.absent}")
+    }
+  }
+}
+
+// The builtin names the suggestions offer (builtin_member_names in
+// compiler/checker/hints.av, read from the source so a name added there
+// is checked here): each is a method or field of its type, so the
+// compiler never suggests one that is not.
+fn builtin_value(kind: String): String {
+  if kind == "is_float" {
+    return "1.5"
+  }
+  if kind == "is_integer" {
+    return "3"
+  }
+  if kind == "is_string" {
+    return "\"a\""
+  }
+  if kind == "is_bytes" {
+    return "\"a\".bytes"
+  }
+  if kind == "is_array" {
+    return "[1, 2]"
+  }
+  if kind == "is_hash" {
+    return "Hash(String, Int).new"
+  }
+  if kind == "is_buf" {
+    return "buf_new()"
+  }
+  if kind == "is_join" {
+    return "spawn { 1 }"
+  }
+  ""
+}
+
+fn check_builtin_names(c: Checks, compiler: String, dir: String) {
+  src = log_text("${avant_test_root()}/compiler/checker/hints.av")
+  start = 0
+  i = 0
+  in_fn = false
+  kind = ""
+  pairs: Array(String) = []
+  while i <= src.size {
+    if i == src.size || src[i] == 10 {
+      raw = str_slice(src, start, i)
+      line = raw.strip()
+      if str_has(line, "pub fn builtin_member_names(") {
+        in_fn = true
+      } else if in_fn && raw == "}" {
+        in_fn = false
+      } else if in_fn && line.size > 9 && str_slice(line, 0, 9) == "if ty.is_" {
+        kind = str_slice(line, 6, line.size - 2)
+      } else if in_fn && kind.size > 0 && line.size > 8 && str_slice(line, 0, 8) == "return \"" {
+        for n in str_slice(line, 8, line.size - 1).split(" ") {
+          pairs.push(kind)
+          pairs.push(n)
+        }
+        kind = ""
+      }
+      start = i + 1
+    }
+    i += 1
+  }
+  c.expect(pairs.size > 80, "builtin names: read from hints.av")
+  jobs: Array(HJob) = []
+  tags: Array(String) = []
+  names: Array(String) = []
+  k = 0
+  prog = 0
+  while k < pairs.size {
+    body = buf_new()
+    body.push_str("fn main {\n  v = ${builtin_value(pairs[k])}\n")
+    lot: Array(String) = []
+    while k < pairs.size && lot.size < 12 && (lot.size == 0 || pairs[k] == pairs[k - 2]) {
+      body.push_str("  puts(v.${pairs[k + 1]})\n")
+      lot.push(pairs[k + 1])
+      k += 2
+    }
+    body.push_str("}\n")
+    f = "${dir}/nm-builtin-${prog}.av"
+    _ = file_write(f, body.to_s())
+    jobs.push(compile_job("", compiler, f, "${dir}/nm-builtin-${prog}.bin", "${dir}/nm-builtin-${prog}.log"))
+    tags.push("${prog}")
+    joined = buf_new()
+    for x in lot {
+      if joined.size > 0 {
+        joined.push_str(" ")
+      }
+      joined.push_str(x)
+    }
+    names.push(joined.to_s())
+    prog += 1
+  }
+  run_waves(jobs)
+  for j in 0..jobs.size {
+    log = log_text("${dir}/nm-builtin-${tags[j]}.log")
+    for n in names[j].split(" ") {
+      c.expect(!str_has(log, "no method ${n} on") && !str_has(log, "no field ${n}"), "builtin name ${n} is real")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_names.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+    check_builtin_names(c, compiler, scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

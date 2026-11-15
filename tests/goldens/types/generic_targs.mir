@@ -8,7 +8,6 @@ layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: 
 
 const str.0 = "x"
 const str.1 = "y"
-const str.2 = "%lld\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -19,8 +18,8 @@ extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_array_push_i64(ref, i64) -> void collects
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
-extern printf(ref str, ...) -> i32 never
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @generic_targs.av:12:1 {
   let _0: i32
@@ -55,10 +54,10 @@ bb0:
   call avant_array_push_ptr(copy _6, const str.1, const u32 65535) collects   @17:4
   _7 = copy (*_4).1   @18:9
   _8 = cast copy _7 to i64   @18:9
-  call printf(const str.2, copy _8) nocollect   @18:3
+  call avant_puts_i64(copy _8) nocollect   @18:3
   _9 = copy (*_6).1   @19:9
   _10 = cast copy _9 to i64   @19:9
-  call printf(const str.2, copy _10) nocollect   @19:3
+  call avant_puts_i64(copy _10) nocollect   @19:3
   _11 = copy (*_6).1   @20:9
   _12 = cast copy _11 to i64   @20:9
   check.bounds const i64 1, copy _12   @20:9
@@ -72,42 +71,24 @@ bb0:
 
 fn av.generic_targs/fresh[Int]() -> ref %Array(Int) frame @generic_targs.av:7:1 {
   let _0: ref %Array(Int)
-  let _1: ref %elems(Int) slot
-  let _2: ref %Array(Int)
-  let _3 (xs): ref %Array(Int)
+  let _1: ref %Array(Int)
+  let _2 (xs): ref %Array(Int)
 
 bb0:
-  _1 = zero   @7:1
-  gc.enter   @7:1
-  gc.roots _1   @7:1
-  _1 = call avant_alloc(const u64 0, const u32 0) collects   @8:18
-  _2 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @8:18
-  (*_2).0 = copy _1 fresh   @8:18
-  (*_2).1 = const i32 0   @8:18
-  (*_2).2 = const i32 0   @8:18
-  _3 = copy _2   @8:3
-  _0 = copy _3   @9:3
-  gc.leave   @9:3
+  _1 = call avant_alloc(const u64 16, const u32 1022) collects   @8:18
+  _2 = copy _1   @8:3
+  _0 = copy _2   @9:3
   return   @9:3
 }
 
 fn av.generic_targs/fresh[String]() -> ref %Array(String) frame @generic_targs.av:7:1 {
   let _0: ref %Array(String)
-  let _1: ref %elems(String) slot
-  let _2: ref %Array(String)
-  let _3 (xs): ref %Array(String)
+  let _1: ref %Array(String)
+  let _2 (xs): ref %Array(String)
 
 bb0:
-  _1 = zero   @7:1
-  gc.enter   @7:1
-  gc.roots _1   @7:1
-  _1 = call avant_alloc(const u64 0, const u32 65535) collects   @8:18
-  _2 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @8:18
-  (*_2).0 = copy _1 fresh   @8:18
-  (*_2).1 = const i32 0   @8:18
-  (*_2).2 = const i32 0   @8:18
-  _3 = copy _2   @8:3
-  _0 = copy _3   @9:3
-  gc.leave   @9:3
+  _1 = call avant_alloc(const u64 16, const u32 1022) collects   @8:18
+  _2 = copy _1   @8:3
+  _0 = copy _2   @9:3
   return   @9:3
 }

@@ -1,7 +1,7 @@
-// The MIR printer (Stage 28 W4; stages/stage28/mir.md 10.1): the text
-// `avant dump` will print and `.mir` goldens compare (D171). Deterministic:
-// only the MIR's own numbers, in module order (3.1), locals and blocks by
-// number. with_locs false omits every location (verifier messages, tests).
+// The MIR printer: the text `avant dump` will print and `.mir` goldens
+// compare. Deterministic: only the MIR's own numbers, in module order,
+// locals and blocks by number. with_locs false omits every location
+// (verifier messages, tests).
 
 import source
 import mir.types
@@ -16,7 +16,7 @@ pub fn mir_hex(v: UInt64, upper: Bool, width: Int): String {
   out: Array(String) = []
   x = v
   while x != 0u64 || out.size < width || out.size == 0 {
-    d = (x & 15u64).to_i
+    d = (x & 15u64).to_i()
     out.push(str_slice(digits, d, d + 1))
     x = x >> 4u64
   }
@@ -26,7 +26,7 @@ pub fn mir_hex(v: UInt64, upper: Bool, width: Int): String {
     buf.push_str(out[i])
     i -= 1
   }
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn mir_escape(s: String): String {
@@ -36,18 +36,18 @@ pub fn mir_escape(s: String): String {
     c = s[i]
     if c < 32 || c > 126 || c == 34 || c == 92 {
       buf.push_str("\\")
-      buf.push_str(mir_hex(c.to_u64, true, 2))
+      buf.push_str(mir_hex(c.to_u64(), true, 2))
     } else {
       buf.push_str(str_slice(s, i, i + 1))
     }
     i += 1
   }
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn mir_int_text(ty: Int, v: Int): String {
   if ty == mt_u64() {
-    return "${v.wrap_u64}"
+    return "${v.wrap_u64()}"
   }
   "${v}"
 }
@@ -83,7 +83,7 @@ pub fn mir_operand_text(ts: MTypes, o: MOperand): String {
     return "const bool false"
   }
   if o.kind == mok_f64() {
-    s = "const f64 0x${mir_hex(o.ival.wrap_u64, true, 16)}"
+    s = "const f64 0x${mir_hex(o.ival.wrap_u64(), true, 16)}"
     if o.text.size > 0 {
       s = "${s} /* ${o.text} */"
     }
@@ -106,7 +106,7 @@ fn mir_ops_text(ts: MTypes, ops: Array(MOperand)): String {
     buf.push_str(mir_operand_text(ts, ops[i]))
     i += 1
   }
-  buf.to_s
+  buf.to_s()
 }
 
 fn mir_opt_text(ts: MTypes, o: MOperand?): String {
@@ -192,7 +192,7 @@ pub fn mir_stmt_text(m: MModule, st: MStmt): String {
     if st.collects {
       mark = "collects"
     }
-    // An allocation barriered at birth (fresh.av, VALK-A1).
+    // An allocation barriered at birth (fresh.av).
     if st.fresh {
       mark = "${mark} fresh"
     }
@@ -224,7 +224,7 @@ pub fn mir_stmt_text(m: MModule, st: MStmt): String {
       }
       buf.push_str("_${st.locals[i]}")
     }
-    return buf.to_s
+    return buf.to_s()
   }
   "?"
 }
@@ -255,7 +255,7 @@ pub fn mir_term_text(ts: MTypes, t: MTerm): String {
       buf.push_str("${mir_int_text(ty, t.values[i])}: bb${t.targets[i]}")
     }
     buf.push_str("] else bb${t.targets[t.targets.size - 1]}")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == mtk_return() {
     return "return"
@@ -264,10 +264,10 @@ pub fn mir_term_text(ts: MTypes, t: MTerm): String {
 }
 
 fn mir_loc_text(m: MModule, f: MFunc, loc: MLoc): String {
-  if loc.file == f.loc.file {
-    return "@${loc.line}:${loc.col}"
+  if loc.file() == f.loc.file() {
+    return "@${loc.line()}:${loc.col()}"
   }
-  "@${mir_file_name(m, loc.file)}:${loc.line}:${loc.col}"
+  "@${mir_file_name(m, loc.file())}:${loc.line()}:${loc.col()}"
 }
 
 pub fn mir_file_name(m: MModule, file: Int): String {
@@ -294,10 +294,10 @@ pub fn mir_layout_text(ts: MTypes, l: MLayout): String {
   if l.type_id != 0 {
     buf.push_str(" id ${l.type_id}")
   }
-  buf.to_s
+  buf.to_s()
 }
 
-// The bitmap chunks of a registered map (3.3): over one record's words
+// The bitmap chunks of a registered map: over one record's words
 // (stride 0), or one element's (an element buffer, stride size / 8).
 pub fn mir_map_chunks(ts: MTypes, tm: MTypeMap): Array(UInt64) {
   out: Array(UInt64) = []
@@ -307,8 +307,8 @@ pub fn mir_map_chunks(ts: MTypes, tm: MTypeMap): Array(UInt64) {
   }
   // The chunk count is the old back end's (its emit_one_type_map):
   // one past the chunk of the highest reference word, at least one; not
-  // the layout's size (W6b: a record whose words past 63 are scalars is
-  // one avant_type_map call in both back ends).
+  // the layout's size (a record whose words past 63 are scalars is one
+  // avant_type_map call in both back ends).
   l = ts.layouts[tm.layout]
   n = 1
   for ref_word in l.ref_words {
@@ -320,7 +320,7 @@ pub fn mir_map_chunks(ts: MTypes, tm: MTypeMap): Array(UInt64) {
     out.push(0u64)
   }
   for w in l.ref_words {
-    out[w / 64] = out[w / 64] | (1u64 << (w % 64).to_u64)
+    out[w / 64] = out[w / 64] | (1u64 << (w % 64).to_u64())
   }
   out
 }
@@ -346,7 +346,7 @@ pub fn mir_extern_text(m: MModule, e: MExtern): String {
   if e.noreturn {
     buf.push_str(" noreturn")
   }
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn mir_sorted_externs(m: MModule): Array(MExtern) {
@@ -384,10 +384,10 @@ pub fn mir_func_header(m: MModule, f: MFunc, with_locs: Bool): String {
     buf.push_str(" extern")
   }
   if with_locs {
-    buf.push_str(" @${mir_file_name(m, f.loc.file)}:${f.loc.line}:${f.loc.col}")
+    buf.push_str(" @${mir_file_name(m, f.loc.file())}:${f.loc.line()}:${f.loc.col()}")
   }
   buf.push_str(" {")
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn mir_print_func(m: MModule, f: MFunc, with_locs: Bool, buf: Buf) {
@@ -495,5 +495,5 @@ pub fn mir_print(m: MModule, with_locs: Bool): String {
     buf.push_str("\n")
     mir_print_func(m, fdef, with_locs, buf)
   }
-  buf.to_s
+  buf.to_s()
 }

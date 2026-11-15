@@ -1,16 +1,15 @@
-// The SysV x86-64 C ABI for values passed by value to and from C (Stage
-// 28 W8a; stages/stage28/mir.md W8a, C3, section 14 8.6): Avant passes
-// structs, unions, and fn values between its own functions as LLVM
-// first-class aggregates (audit 2.3), which is not the C ABI. At a call
-// of a C external whose signature holds an aggregate, the emitter
-// classifies each aggregate as the SysV psABI does (3.2.3) for the
-// layouts the language produces (C-rule offsets, alignment at most 8, no
-// long double, no vectors): larger than 16 bytes, or not fitting the
-// registers left, is MEMORY (`byval`, or `sret` for a result); otherwise
-// each eightbyte is SSE when every scalar in it is an f64, else INTEGER,
-// passed as one `double` or `iN` (N the eightbyte's bytes within the
-// value) argument each, which is clang's coercion. A zero-size value is
-// not passed. Calls without an aggregate are emitted as before.
+// The SysV x86-64 C ABI for values passed by value to and from C: Avant
+// passes structs, unions, and fn values between its own functions as LLVM
+// first-class aggregates, which is not the C ABI. At a call of a C
+// external whose signature holds an aggregate, the emitter classifies
+// each aggregate as the SysV psABI does (3.2.3) for the layouts the
+// language produces (C-rule offsets, alignment at most 8, no long double,
+// no vectors): larger than 16 bytes, or not fitting the registers left,
+// is MEMORY (`byval`, or `sret` for a result); otherwise each eightbyte
+// is SSE when every scalar in it is an f64, else INTEGER, passed as one
+// `double` or `iN` (N the eightbyte's bytes within the value) argument
+// each, which is clang's coercion. A zero-size value is not passed. Calls
+// without an aggregate are emitted as before.
 //
 // The operand of an aggregate argument and the destination of an
 // aggregate result are locals (lower_ffi.av), so the parts are loaded
@@ -233,7 +232,7 @@ fn ll_cabi_join(xs: Array(String)): String {
     }
     buf.push_str(xs[i])
   }
-  buf.to_s
+  buf.to_s()
 }
 
 // `declare` of a C external whose signature holds an aggregate.
@@ -280,9 +279,9 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
       a2 = ll_cabi_addr(e, st.args[i])
       vol = e.pa_vol
       for j in 0..v.parts.size {
-        g = e.tmp
+        g = e.tmp()
         e.line("${g} = getelementptr inbounds i8, ptr ${a2}, i64 ${v.offs[j]}")
-        x2 = e.tmp
+        x2 = e.tmp()
         e.line("${x2} = load${e.vol(vol)} ${v.parts[j]}, ptr ${g}, align ${e.align(v.ty)}")
         args.push("${v.parts[j]} ${x2}")
       }
@@ -309,7 +308,7 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
     e.line(call)
     return
   }
-  r = e.tmp
+  r = e.tmp()
   e.line("${r} = ${call}")
   if st.dest < 0 {
     return
@@ -323,10 +322,10 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
   for j in 0..rv.parts.size {
     x = r
     if rv.parts.size > 1 {
-      x = e.tmp
+      x = e.tmp()
       e.line("${x} = extractvalue ${rtext} ${r}, ${j}")
     }
-    g = e.tmp
+    g = e.tmp()
     e.line("${g} = getelementptr inbounds i8, ptr ${e.local_name(d)}, i64 ${rv.offs[j]}")
     e.line("store${e.vol(slot)} ${rv.parts[j]} ${x}, ptr ${g}, align ${e.align(rv.ty)}")
   }

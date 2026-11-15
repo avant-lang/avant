@@ -11,10 +11,11 @@
 #include <string.h>
 #include <fcntl.h>
 #include <time.h>
+#include <execinfo.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
-/* AVANT_GC_VERIFY (Stage 28 W12, moved from avant_rt.c): independent
+/* AVANT_GC_VERIFY (moved from avant_rt.c): independent
  * checks after a young collection's trace and copy (gc_verify_sticky: no
  * reachable young object left unpromoted, no reachable line about to be
  * freed, no reference to a moved object's old copy), before every young
@@ -23,14 +24,14 @@
  * every collection's start (gc_verify_no_stale_marks) and after a
  * defragmenting full collection (no reference to a block being freed).
  * Diagnostics only: they print and never change the heap. Under
- * soft-dirty tracking (Stage 28 W18M, W18V2) a young collection's checks
+ * soft-dirty tracking a young collection's checks
  * examine only what the kernel reports written and what the verifier's
  * own record names, and fall back to the whole checks whenever they
  * cannot prove those silent (below). (E's checks
  * after its young copy, gc_verify_young_copy with its stale, lost and
- * untraced reports, went with E in Stage 28 W15d.) */
+ * untraced reports, went with E.) */
 
-/* The verifier's own marks (Stage 28 W18V2): "traced by this check"
+/* The verifier's own marks: "traced by this check"
  * (vb_seen, the header's VSEEN until then) and "named by R1' this cycle"
  * (vb_named, the header's MARKED until then), one bit per 8-byte granule
  * of the committed heap at the object's header, like the full
@@ -42,15 +43,15 @@
 static uint64_t *vb_seen;
 static uint64_t *vb_named;
 /* What the last whole T reached, and what incremental Ts visited since
- * (vr_valid; Stage 28 W18V2, the incremental checks below). */
+ * (vr_valid, the incremental checks below). */
 static uint64_t *vb_reach;
 static int vr_valid;
 static size_t vb_words;
 /* The side bits are used from the first soft-dirty clear on (vb_side);
  * until then no page record is read, and the header bits, which cost
  * nothing more than the header the check reads anyway, serve as before
- * (W18V2's tuning: the side bits cost the compiler's dump under VERIFY,
- * 55 whole verifications, 5% more time). Every bit is clear between
+ * (measured when they were tuned: the side bits cost the compiler's dump under
+ * VERIFY, 55 whole verifications, 5% more time). Every bit is clear between
  * checks, so the switch happens between two checks. */
 static int vb_side;
 
@@ -123,7 +124,7 @@ static inline __attribute__((always_inline)) void verify_visit(void *start) {
   gc_work_push(start);
 }
 
-/* The trace of one reference P (Stage 28 W18M, O113: one object lookup
+/* The trace of one reference P (one object lookup
  * per reference serves every check made on it; before, the lost, named,
  * stale and missing-barrier checks each looked the same field up again).
  * Returns the object P names (its start, before following a forward), or
@@ -136,7 +137,7 @@ static inline __attribute__((always_inline)) void *verify_trace_r(void *p) {
   }
   AvantHeader *h = avant_header(start);
   /* A moved object is reached through its copy: its own header holds the
-   * forward, not a size or a type (gc-design.md §3.2). */
+   * forward, not a size or a type. */
   if (h->flags & AVANT_FLAG_FORWARDED) {
     start = gc_forward_of(h);
   }
@@ -206,8 +207,8 @@ static void verify_each_root(void (*fn)(void **), int rem) {
 
 /* Independent reachability, ignoring the collector's own tracing
  * gates: a holder counts as live when a root reaches it through any
- * field. This is what keeps the checker sensitive to the F1 class
- * (a live holder the young copy itself never traced) while staying
+ * field. This is what keeps the checker sensitive to a live holder the
+ * young copy itself never traced, while staying
  * silent about dead mature objects, whose fields legitimately name
  * copied objects. The visited bit is VSEEN (the verifier's own);
  * verify_clear_traced resets it before gc_verify_young_copy returns. */
@@ -227,7 +228,7 @@ static uint64_t verify_mark_reachable(int stale) {
         if (st) {
           bad += verify_stale_found(st, p);
           if (st && (avant_header(st)->flags & AVANT_FLAG_FORWARDED)) {
-            /* The holder's kind and the slot (Stage 29 W-INT1). */
+            /* The holder's kind and the slot. */
             fprintf(stderr, "avant gc verify:   holder type %u size %u flags %#x, slot at +%ld\n",
                     (unsigned)avant_header(p)->type_id, (unsigned)avant_header(p)->size,
                     (unsigned)avant_header(p)->flags, (long)((char *)(void *)slot - (char *)p));
@@ -241,8 +242,8 @@ static uint64_t verify_mark_reachable(int stale) {
   return bad;
 }
 
-/* AVANT_GC_VERIFY after an S young collection's trace, before its sweep
- * (Stage 28 W15b, gc-design.md §3.1): independent reachability from the
+/* AVANT_GC_VERIFY after an S young collection's trace, before its
+ * sweep: independent reachability from the
  * roots and the remembered set (verify_mark_reachable, which ignores the
  * collector's own tracing rules), then for every object it reaches:
  * a block object must no longer be young (the collection promoted it in
@@ -289,7 +290,8 @@ static const char *sticky_why(void *v) {
   if (h->flags & AVANT_FLAG_YOUNG) {
     /* S+'s aged survivors (YOUNG_AGE 2) stay young in survivor blocks,
      * with SURVIVED. */
-    return (h->flags & AVANT_FLAG_SURVIVED) && b->kept == SPLUS_SURV ? NULL : "young object not promoted";
+    return (h->flags & AVANT_FLAG_SURVIVED) && (b->kept == SPLUS_SURV || b->kept == SPLUS_AGE_HERE) ? NULL
+                                                                                                   : "young object not promoted";
   }
   if (b->young_hi) {
     size_t off = (size_t)((uint8_t *)h - b->base);
@@ -321,7 +323,7 @@ static void verify_sticky_whole(void) {
       EACH_FRAME(gc_thread_frames(t), f, {
         EACH_SLOT_OF(f, slot, {
           bad += verify_stale(*slot, "root", (void *)slot);
-          /* A slot location inside a moved object (Stage 28 W15d). */
+          /* A slot location inside a moved object. */
           bad += verify_stale((void *)slot, "root location", (void *)f);
         });
       });
@@ -349,10 +351,10 @@ static void verify_sticky_whole(void) {
   verify_clear_traced();
 }
 
-/* The remembered-set check (Stage 28 W14b1, gc-design.md §4.2 item 2):
+/* The remembered-set check:
  * before a young collection traces, every field of a non-young object
  * that names a young object must belong to a remembered holder or to an
- * object the three-way rule R1' (§1.3) names this cycle: a root (slot,
+ * object the three-way rule R1' (avant_gc.h) names this cycle: a root (slot,
  * pin, runtime TLS slot), a field of a young object, or a field of a
  * remembered object. Those three are computed by a first pass over the
  * roots, the young objects and the remembered set. Only holders the
@@ -360,20 +362,19 @@ static void verify_sticky_whole(void) {
  * may name a nursery address a new young object reuses. Reported as
  * "missing barrier: holder ... field ... names young ...": the next
  * young collection would neither scan that field nor update it, so the
- * young object is lost or the field dangles after the copy (C34's
- * class, reported at the first collection after the bad store). The
+ * young object is lost or the field dangles after the copy (reported at
+ * the first collection after the bad store). The
  * five runtime builders that fill a born-mature buffer named by a young
- * array header (audit N2b) are not reported: R1'(b) names the buffer.
- * A record is asked more since the Valk stage's VALK-T2 (O610): it must
+ * array header are not reported: R1'(b) names the buffer.
+ * A record is asked more: it must
  * be remembered even when R1' names it (yholders_check).
  * Visited is VSEEN (verify_trace), named is MARKED; both are clear
  * when a collection starts (gc_verify_no_stale_marks) and cleared here.
  * The named objects are gc_heap.rnamed; the reports are counted in
  * gc_heap.missing_barriers. */
 
-/* The lost-reference check (Stage 28 W16b; R11, O107, gc-design.md
- * section 4.3): a reference the program can still use that names heap
- * memory where no object lives. It replaces the conservative C-stack
+/* The lost-reference check: a reference the program can still use that names
+ * heap memory where no object lives. It replaces the conservative C-stack
  * cross-check (the words of the collecting thread's stack naming a block
  * defragmentation frees), which could not tell a live reference from a
  * dead copy and reported dead spills by the ten thousand once both
@@ -409,7 +410,7 @@ static uint64_t verify_lost_found(void *p, void *found, const char *where, void 
   return 1;
 }
 
-/* The field rule's check (the Valk stage, VALK-T, O585; D342 Q6; the
+/* The field rule's check (the
  * rule is stated at the top of avant_gc_internal.h): FOUND is
  * gc_object_payload(P) for the word P of HOLDER's field SLOT. A field
  * that names the inside of an object breaks what the traces rely on (they
@@ -487,10 +488,9 @@ static void rem_named_found(void *start) {
   gc_heap.rnamed[gc_heap.rnamed_n++] = start;
 }
 
-/* A remembered object's field (R1'(c)), in the whole check: the young
+/* A remembered object's field, in the whole check: the young
  * collection traces it whether or not the roots reach its holder, so the
- * field rule and the lost-reference check are asked of it here too (the
- * Valk stage, VALK-T, O585). */
+ * field rule and the lost-reference check are asked of it here too. */
 static void rem_named_field(void *holder, void **slot) {
   void *st = gc_object_payload(*slot, NULL, NULL);
   verify_lost_found(*slot, st, "field of remembered", holder);
@@ -525,51 +525,39 @@ static void rem_root_slot(void **slot) {
   rem_named_found(st);
 }
 
-/* Is H an element buffer: a pointer buffer (AVANT_TYPE_PTRS) or a buffer
- * of by-value elements (a type map with a stride)? Every other object
- * with references is a record (a class instance, a box, a closure's
- * environment, a capture record, an array's or a hash's header). */
-static int verify_is_buffer(const AvantHeader *h) {
-  uint32_t id = h->type_id;
-  return id == AVANT_TYPE_PTRS || (id < MAX_TYPES && gc_heap.type_set[id] && gc_heap.types[id].stride != 0);
-}
-
 /* The check: a reached non-young holder that is not remembered must name
  * no young object. Two forms.
  *
- * The invariant itself, for a record (the Valk stage, VALK-T2, O610): a
+ * The invariant itself, for a record: a
  * record that names a young object is remembered (REM), whatever names
  * the record. Generated code stores a reference into a record behind a
  * barrier or while the record is open (allocated, barriered or an
  * initialize's receiver since the last collecting call: young, or
- * remembered until the next collection; D347, compiler/mir/fresh.av), and
+ * remembered until the next collection, compiler/mir/fresh.av), and
  * runtime C barriers its stores into records, so at every young
  * collection the invariant holds of every record without the help of
- * R1'. Until VALK-T2 a record R1' names this cycle (a root, a young
+ * R1'. A record R1' names this cycle (a root, a young
  * object's field or a remembered object's field names it) was passed
- * over, because the trace scans it and so repairs the miss: a store that
- * lost its barrier (VALK-A1's planted defect: a fresh pass that ignores
- * collecting calls, V14 off) was reported only once nothing named the
+ * over once, because the trace scans it and so repairs the miss: a store
+ * that lost its barrier (a planted defect: a fresh-store pass that
+ * ignores collecting calls) was reported only once nothing named the
  * record any more, which no program of the suite reaches. It is reported
  * now at the first young collection after the store, with "not
  * remembered" in the line.
  *
- * R1' (gc-design.md section 1.3), for an element buffer: one that a root,
- * a young object's field or a remembered object's field names this cycle
- * may hold young references unremembered, as before. That is the window
- * the contract leaves open on purpose: the fill of a fresh buffer held in
- * a slot, closed by one barrier when the fill ends (V14's older form, the
- * only stores generated code makes with no barrier into a holder that is
- * not open: compiler/mir/lower_arr.av, lower_block.av; mir.md 5.4), in
- * which a buffer a collection promoted in the middle of its fill holds
- * young elements until the closing barrier; and the runtime's builders
- * of buffers a young header or a root names (gc-design.md 1.3). A
- * missed closing barrier on such a buffer therefore stays invisible here
- * while something names the buffer; V14 is its check.
+ * An element buffer is asked the same: the fill of a fresh buffer
+ * (an array literal, Array.new with a value or a block) stores each
+ * element behind the buffer's barrier once the buffer may have been
+ * promoted (compiler/mir/lower_arr.av, lower_block.av), and the runtime's
+ * builders barrier theirs before the next collecting call. (A fill used
+ * to store with no barrier and close with one, so a buffer a collection
+ * promoted in the middle of its fill held young elements unremembered
+ * until then, and a buffer that a root, a young object or a remembered
+ * one named was passed over here.)
  *
  * A carded holder remembered by its cards (REMC without CARD_ALL) must
  * name young objects only from slots of its marked cards (the card
- * invariant, Stage 28 W16t): a young object named from a clear card is
+ * invariant): a young object named from a clear card is
  * reported as a missing barrier too, since the young collection would not
  * scan that slot. Only holders the verifier's own trace reaches are
  * asked: a dead object's fields are never read by the program or the
@@ -588,9 +576,6 @@ static uint64_t yholders_check(int print) {
       continue;
     }
     named = vb_test(vb_named, v, AVANT_FLAG_MARKED);
-    if (named && verify_is_buffer(h)) {
-      continue;
-    }
     by_cards = (h->flags & AVANT_FLAG_REMC) != 0;
     if (by_cards && !rem_by_cards(h)) {
       continue;
@@ -648,7 +633,7 @@ static void verify_remembered_whole(void) {
     }
   }
   /* R1'(c): the fields of every remembered object; of a carded one
-   * (REMC, Stage 28 W16t), the slots of its marked cards, which are all
+   * (REMC), the slots of its marked cards, which are all
    * the young collection scans of it, unless every card counts
    * (CARD_ALL). */
   {
@@ -677,13 +662,13 @@ static void verify_remembered_whole(void) {
   verify_clear_traced();
 }
 
-/* C36's check (W14a2): when a collection starts, no live object's
+/* The stale-mark check: when a collection starts, no live object's
  * header carries MARKED, FORWARDED or VSEEN (no walk reaches a moved
  * object: their blocks are released, or keep only their survivors' start
  * bits). A young collection's marks end with it
  * (the noted list) and a full collection marks in the side bitmap, so a
  * header bit left over is a mark a later young collection would read as
- * "already scanned this cycle" and skip (R1'). Reports are counted in
+ * "already scanned this cycle" and skip. Reports are counted in
  * gc_heap.stale_seen. */
 
 static void verify_no_stale_one(AvantHeader *h, Block *b) {
@@ -708,7 +693,7 @@ void gc_verify_no_stale_marks(void) {
   }
 }
 
-/* The incremental verifier (Stage 28 W18M item 7, O119, the plan's W18V).
+/* The incremental verifier.
  * The kernel's soft-dirty bits (Documentation/admin-guide/mm/soft-dirty.rst)
  * say which pages of the process were written since they were last
  * cleared: writing "4" to /proc/self/clear_refs clears them all, and bit
@@ -719,7 +704,7 @@ void gc_verify_no_stale_marks(void) {
  * barriers, remembered set or cards, whose missing entry is what the
  * verifier exists to catch.
  *
- * What it makes incremental is C36's check (gc_verify_no_stale_marks:
+ * What it makes incremental is the stale-mark check (gc_verify_no_stale_marks:
  * no live header carries MARKED, FORWARDED, VSEEN, PROMOTED_NOW or
  * CARD_SCAN when a collection starts), which walked every object of every
  * mature block at every collection: 97% of closures_churn's time under
@@ -736,7 +721,7 @@ void gc_verify_no_stale_marks(void) {
  * collection, the first verification and the program's exit read the
  * whole heap. The checks that depend on reachability (gc_verify_remembered,
  * gc_verify_sticky) are made incremental by the same bits and a record of
- * their own (Stage 28 W18V2, below); gc_verify_lost (full collections)
+ * their own (below); gc_verify_lost (full collections)
  * stays whole.
  *
  * Where soft-dirty tracking is unavailable (a kernel without
@@ -756,8 +741,7 @@ static int sd_clear = -1;
 static pid_t sd_pid;
 /* The bits were cleared at an earlier verification and every
  * verification since read the pages they report (incremental may follow;
- * Stage 28 W18V2: the bits are kept across verifications, see
- * gc_verify_begin). */
+ * the bits are kept across verifications, see gc_verify_begin). */
 static int sd_based;
 /* The pages the last incremental read reported written, and the
  * verifications since the last clear. */
@@ -819,9 +803,15 @@ static int sd_probe(void) {
   return ok;
 }
 
+static void gc_verify_held_check(void);
+
 static void verify_at_exit_check(void) {
+  gc_verify_held_check();
   gc_verify_begin(1);
   gc_verify_remembered();
+  /* The proof's oracle once more: the log, every old object that
+   * is not logged, and the conclusion when the proof holds here. */
+  gc_verify_proof(1, gc_proof_check() == PROOF_INTACT);
 }
 
 static void verify_at_exit(void) {
@@ -863,8 +853,8 @@ static void sd_walk_page(Block *b, int page) {
   }
 }
 
-/* C36's check over the pages written since the last verification; 0 when
- * the pagemap could not be read (the caller then walks the whole heap). */
+/* The stale-mark check over the pages written since the last verification;
+ * 0 when the pagemap could not be read (the caller then walks the whole heap). */
 static int verify_no_stale_marks_incr(void) {
   size_t pages = gc_heap.committed / PAGE_SIZE;
   size_t blocks = gc_heap.committed >> BLOCK_SHIFT;
@@ -924,25 +914,25 @@ static void sd_stamp(void) {
   });
 }
 
-/* The choice between the two forms (Stage 28 W18S, O150; W18M item 7
- * priced them). The first SD_WARM verifications are whole (a short
+/* The choice between the two forms. The first SD_WARM verifications are
+ * whole (a short
  * program never write-protects its pages); from then on, where soft-dirty
  * tracking works, every young collection's verification is incremental
  * for the rest of the run, unless a check reports (then every check is
  * whole, so the reports are the whole verifier's) or soft-dirty stops
  * (a fork, a refused read: sd_off). Full collections stay whole.
  *
- * W18M priced the two forms as the program ran and took the cheaper one,
+ * An earlier form priced the two as the program ran and took the cheaper one,
  * trying the other every 64 verifications. Each switch restarts the
  * record and the soft-dirty bits, so the first incremental checks after
  * one rebase and fall back to the whole check: the cheaper form per
- * measurement was the dearer one over a run (W18C, O148: the gate's
+ * measurement was the dearer one over a run (the gate's
  * verified compiler dump 52-104 s priced, 36.65 s and 0 fallbacks
- * incremental throughout). Measured at W18S on W18M's four VERIFY +
+ * incremental throughout). Measured on four VERIFY +
  * STRESS rows, the incremental form throughout was not slower than the
  * whole form nor than the priced choice on any of them except
- * inc_slice_mature, where it is within a few percent of both
- * (records/2026-11-10-s28-w18s, o150/). Both forms check the same, so
+ * inc_slice_mature, where it is within a few percent of both.
+ * Both forms check the same, so
  * the choice changes the time only, never the reports.
  *
  * Which pages are skipped is still decided by the kernel's record alone. */
@@ -951,7 +941,7 @@ static void sd_stamp(void) {
 #endif
 /* The bits are cleared again when the last read found more than a
  * SD_CLEAR_FRAC-th of the heap's pages written, or after SD_CLEAR_MAX
- * verifications (Stage 28 W18V2): a clear write-protects every page of the
+ * verifications: a clear write-protects every page of the
  * process, so each page's first write after it faults in the kernel (under
  * AVANT_GC_STRESS about 0.14 ms per collection on an 8 MB heap, the clear
  * alone 45 us); between clears the reads report every page written since
@@ -964,8 +954,8 @@ static void sd_stamp(void) {
 #define SD_CLEAR_MAX 64u
 #endif
 
-/* The incremental reachability checks (Stage 28 W18V2, O119's second
- * half). The checks that depend on reachability, gc_verify_remembered
+/* The incremental reachability checks. The checks that depend on reachability,
+ * gc_verify_remembered
  * before a young collection (M: lost references, missing barriers) and
  * gc_verify_sticky after its trace and copy (T: references to a moved
  * object's old copy, young objects not promoted, lines of reached objects
@@ -1008,11 +998,12 @@ static void sd_stamp(void) {
  * buffer, a trim), and a fallback; such a "rebasing" pass examines every
  * object, so objects the last whole trace did not reach are recorded too.
  * Full collections, the first SD_WARM verifications and the program's
- * exit stay whole; C36's check (gc_verify_begin) takes the same form. */
+ * exit stay whole; the stale-mark check (gc_verify_begin) takes the same
+ * form. */
 
-/* VI_FORCE, settable at build time for a proof (W18V2's side by side):
+/* VI_FORCE, settable at build time for a proof (a side-by-side run):
  * 1 makes every M and T whole, 2 makes every verification after the first
- * incremental (no warm-up when SD_WARM is set to 1 too; since W18S the
+ * incremental (no warm-up when SD_WARM is set to 1 too; the
  * normal build is incremental after the warm-up anyway). */
 #ifndef VI_FORCE
 #define VI_FORCE 0
@@ -1034,10 +1025,10 @@ static uint64_t v_report_count(void) {
 }
 
 /* A collection's first verification step (gc_collect, under
- * AVANT_GC_VERIFY, after the quarantine's release): C36's check, whole at
- * a full collection (FULL), during the warm-up and without soft-dirty
+ * AVANT_GC_VERIFY, after the quarantine's release): the stale-mark check,
+ * whole at a full collection (FULL), during the warm-up and without soft-dirty
  * tracking; else over the written pages. It also chooses the form of
- * this collection's M and T: incremental exactly when C36's check is
+ * this collection's M and T: incremental exactly when the stale-mark check is
  * (sd_map then holds the pages written since the last verification) and
  * no check has reported. After the warm-up the bits are kept cleared for
  * the next verification, so every later write, the collection's own
@@ -1272,6 +1263,46 @@ static inline int vi_all(void *p) {
   return (avant_header(p)->flags & AVANT_FLAG_YOUNG) || !heap_offset(p, &off);
 }
 
+/* yholders_check in an incremental check: the same question of the same
+ * holders, asked of the slots
+ * VI_EACH_SLOT examines (every slot of a young holder, the slots on hot
+ * pages of the others) instead of every slot. A slot on a page not
+ * written since the last verification held, then, a reference that the
+ * collection after it left naming a mature object or nothing (a young
+ * collection promotes or frees every young object and fixes up every
+ * slot naming a moved one, which writes its page), and it still holds
+ * it: it cannot name a young object now, as vi_m_slot's skip of the same
+ * slots says (M's incremental form). Once every slot of every
+ * holder was walked and looked up at every incremental check: a buffer
+ * of N references that names one young object costs N lookups a
+ * collection, n^2/2 over a stress run that fills it (late_starts.av).
+ * A candidate sends the check to the whole form, which walks
+ * every slot and prints, as before. */
+static uint64_t yholders_check_hot(void) {
+  size_t i;
+  uint64_t found = 0;
+  for (i = 0; i < g_yholders_n; i++) {
+    void *v = g_yholders[i];
+    void *st;
+    AvantHeader *h = avant_header(v);
+    int by_cards;
+    if (verify_names_young(v, &st) || (h->flags & AVANT_FLAG_REM)) {
+      continue;
+    }
+    by_cards = (h->flags & AVANT_FLAG_REMC) != 0;
+    if (by_cards && !rem_by_cards(h)) {
+      continue;
+    }
+    VI_EACH_SLOT(v, vi_all(v), slot, {
+      void *y;
+      if ((!by_cards || !gc_heap.cards[gc_card_index(slot)]) && verify_names_young(*slot, &y)) {
+        found++;
+      }
+    });
+  }
+  return found;
+}
+
 /* Was START, a block object that is not young, unreached by the last
  * whole T (and not visited since)? The last whole trace proved it
  * unreached; nothing has named it since, or M would have found the slot
@@ -1447,7 +1478,7 @@ static int vi_remembered(void) {
       }
     }
   }
-  vi_cand += yholders_check(0);
+  vi_cand += yholders_check_hot();
   vi_m_end();
   if (vi_cand) {
     return 0;
@@ -1616,13 +1647,13 @@ void gc_verify_sticky(void) {
   }
 }
 
-/* AVANT_GC_VERIFY after defragmentation (C31): no reference the
+/* AVANT_GC_VERIFY after defragmentation: no reference the
  * program or the runtime can still use names a block about to be
  * freed: root slots, pins, the remembered set and the fields of marked
- * objects. (Until Stage 28 W16b it also read every word of the
+ * objects. (It once also read every word of the
  * collecting thread's stack, a conservative cross-check that reported
- * dead copies once C31's exclusion was off; a C local that is used
- * after the collection is now caught when it is used: the freed blocks
+ * dead copies once the stack-named blocks' exclusion was off; a C local that
+ * is used after the collection is now caught when it is used: the freed blocks
  * are quarantined, gc_quarantine_block.) */
 static void verify_defrag_word(void *w, const char *where, void *at) {
   Block *b = block_of(w);
@@ -1630,7 +1661,7 @@ static void verify_defrag_word(void *w, const char *where, void *at) {
   void *start = gc_object_payload(w, NULL, NULL);
   /* A word that names an object is judged by the object's block, the
    * block of its header: the payload of an empty object that ends a
-   * block is the next block's first byte, and since W14a1 that next
+   * block is the next block's first byte, and that next
    * block is a real neighbour in the reservation, not a stranger. A
    * word that names no object keeps the two-block test. */
   if (start) {
@@ -1702,7 +1733,7 @@ void gc_verify_defrag(void) {
   }
 }
 
-/* The on-use half of the lost-reference check (Stage 28 W16b; see
+/* The on-use half of the lost-reference check (see
  * verify_lost above). Under AVANT_GC_VERIFY a block a collection frees
  * (an evacuated young block, a young block the sweep left empty, a
  * block defragmentation evacuated or a full sweep freed) is out of use
@@ -1716,8 +1747,8 @@ void gc_verify_defrag(void) {
  * opens that block (QUARANTINE_OPENED) and returns, so the access is
  * retried and the program continues (the old bytes are still there, or
  * the stress mode's poison). A fault anywhere else goes to the action
- * that was installed before. Every freed block is held (Stage 28 W18C,
- * O120: until then at most 4,096 were, and past them a freed block was
+ * that was installed before. Every freed block is held (at most 4,096
+ * once were, and past them a freed block was
  * reused at once, unchecked); a refused mprotect (the mapping-count
  * limit) leaves a block held but open, and is counted
  * (verify_unprotected in the stats line), so a run never checks less
@@ -1863,7 +1894,7 @@ int gc_quarantine_block(Block *b) {
  * start bit is cleared (no lookup finds it) and its pages stay allocated,
  * protected whole at the collection's end (the large space's iterator
  * steps over a run without its start bit by the page table, never its
- * header: Stage 28 W18C; until then the first page stayed open), until
+ * header; the first page once stayed open), until
  * the next collection begins. 1: held. */
 int gc_quarantine_run(AvantHeader *h) {
   uint8_t *base;
@@ -1903,7 +1934,7 @@ int gc_quarantine_run(AvantHeader *h) {
 }
 
 /* A growth dropped the large buffer H outside a collection
- * (avant_gc_large_drop; Stage 28 W18C, O145) and gc_release_large held
+ * (avant_gc_large_drop) and gc_release_large held
  * it: it is protected now, not at the next collection's end, so a C
  * pointer into it (avant_buf_bytes' result kept across the growth, DROP
  * 1, or any runtime pointer into the old buffer, DROP 2) faults at its
@@ -1954,6 +1985,53 @@ void gc_quarantine_seal(void) {
   }
 }
 
+/* The lines the last young sweep freed in the blocks it held back
+ * (gc_heap.verify_holes, AVANT_GC_VERIFY=1): each was filled with
+ * GC_POISON by the sweep and nothing may take it before the next
+ * collection begins, so a byte that is not the poison is a write to an
+ * object that died at that collection, through a reference kept where
+ * no collection saw it (a C local, a register, a frame slot left out of
+ * its record). A freed block is held PROT_NONE and faults at such a
+ * write; a freed line in a block with live lines cannot be, so it is
+ * read here. Stops the program at the first such line. */
+static void gc_verify_held_check(void) {
+  uint32_t i;
+  for (i = 0; i < gc_heap.verify_holes_n; i++) {
+    const Block *b = gc_heap.verify_holes[i];
+    int l;
+    for (l = gc_heap.verify_holes_range[i][0]; l < gc_heap.verify_holes_range[i][1]; l++) {
+      const uint64_t *w = (const uint64_t *)(b->base + (size_t)l * LINE_SIZE);
+      size_t k;
+      if (line_live(b, l)) {
+        continue;
+      }
+      for (k = 0; k < LINE_SIZE / sizeof(uint64_t); k++) {
+        if (w[k] != GC_POISON_WORD) {
+          fprintf(stderr,
+                  "avant gc verify: lost reference: a write at %p to a line freed at coll=%llu "
+                  "(a reference kept outside the roots across a collection)\n",
+                  (const void *)(w + k), (unsigned long long)avant_g_stats.collections);
+          gc_die("avant gc verify: a freed young line was written after the collection that freed it");
+        }
+      }
+    }
+  }
+}
+
+/* The held blocks checked (gc_verify_held_check) and let go: each is an
+ * ordinary block again, the young allocator's hole source from the next
+ * gc_quarantine_release on, or a full collection's to sweep. */
+void gc_verify_held_lines(void) {
+  uint32_t i;
+  gc_verify_held_check();
+  for (i = 0; i < gc_heap.verify_holes_n; i++) {
+    if (gc_heap.verify_holes[i]->kept == VERIFY_HELD) {
+      gc_heap.verify_holes[i]->kept = 0;
+    }
+  }
+  gc_heap.verify_holes_n = 0;
+}
+
 /* At the start of a collection: every held block is opened and freed,
  * and the blocks with lines the last young sweep freed become the young
  * allocator's holes (avant_gc_sticky.c holds them back under
@@ -1961,11 +2039,12 @@ void gc_quarantine_seal(void) {
 void gc_quarantine_release(void) {
   Block *b = gc_heap.quarantine;
   uint32_t i;
-  for (i = 0; i < gc_heap.verify_holes_n; i++) {
+  uint32_t n = gc_heap.verify_holes_n;
+  gc_verify_held_lines();
+  for (i = 0; i < n; i++) {
     gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap,
                    gc_heap.verify_holes[i]);
   }
-  gc_heap.verify_holes_n = 0;
   for (i = 0; i < gc_heap.held_runs_n; i++) {
     struct GcHeldRun *r = &gc_heap.held_runs[i];
     if (r->state == QUARANTINED) {
@@ -1984,5 +2063,529 @@ void gc_quarantine_release(void) {
     b->clean = 0;
     gc_free_block_now(b);
     b = next;
+  }
+}
+
+/* The eager comparison of the late start bits (avant_gc_alloc.c, "Late
+ * start bits"). Every allocation used to set its object's start bit;
+ * now an unshared module's inline
+ * path sets none, and the runtime sets a young object's bit when a
+ * collection promotes it or a lookup needs its block's. A bit set where
+ * no object starts makes a lookup trust a word that is not a header, and
+ * a live object left without one is invisible to every lookup, walk and
+ * sweep that reads the bits: so under AVANT_GC_VERIFY=1 the bits the
+ * eager path would have set are kept beside the real ones
+ * (gc_heap.veager, one bit per granule as gc_heap.starts: written by
+ * gc_verify_starts_note for every object of the inline path when its
+ * run is counted, inline_walk, which reads only the bytes the path
+ * bumped since the last sync; a C allocation sets its real bit itself)
+ * and compared with what the late path does, at every collection:
+ *
+ *   gc_verify_starts_begin    before the collection: every object of
+ *       every noted run (its headers walked end to end, a filler passed
+ *       over) is one the eager path marked, and every eager bit that
+ *       has no real one lies in a run (so a lookup's build would set
+ *       it). A block object whose size was changed in place other than
+ *       by avant_gc_shrink stops the program here. Then the young
+ *       blocks' real start words are saved and the eager ones put in
+ *       their place while the verifier's own checks run
+ *       (gc_verify_begin, gc_verify_remembered, gc_verify_lost: they
+ *       read every object, as they did when every allocation set its
+ *       bit), and
+ *   gc_verify_starts_resume   puts the real ones back, so the collection
+ *       starts from the bits the program left, not from ones a check
+ *       built for it (gc_verify_starts_eager does both, and does the
+ *       same around gc_verify_sticky, whose lookups after a young
+ *       collection's trace would otherwise build every block that holds
+ *       a survivor);
+ *   gc_verify_starts_end      when a young collection has ended (after
+ *       gc_clear_noted) and when a full collection has marked: every bit
+ *       the collection set since it began is an eager one, and every
+ *       object of the cycle that survived where it lies (no longer
+ *       young, not moved, in a live line) has its bit. Then the eager
+ *       bits of those blocks are cleared: they describe one cycle's
+ *       allocations.
+ * The program stops at the first difference. */
+static inline uint64_t veager_word(uint64_t w) {
+  return w < gc_heap.veager_n ? gc_heap.veager[w] : 0;
+}
+
+void gc_verify_starts_note(const uint8_t *header) {
+  uint64_t g = granule_of(header);
+  uint64_t w = g >> 6;
+  if (w >= gc_heap.veager_n) {
+    uint64_t need = gc_heap.committed >> 9;
+    gc_heap.veager = gc_xrealloc(gc_heap.veager, (size_t)need * sizeof(uint64_t));
+    memset(gc_heap.veager + gc_heap.veager_n, 0, (size_t)(need - gc_heap.veager_n) * sizeof(uint64_t));
+    gc_heap.veager_n = need;
+  }
+  gc_heap.veager[w] |= 1ULL << (g & 63);
+}
+
+/* Block B's first start word, as an index of gc_heap.starts (and of the
+ * eager bits). */
+static inline uint64_t block_start_word(const Block *b) {
+  return (uint64_t)(b->base - gc_heap.base) >> 9;
+}
+
+void gc_verify_starts_begin(void) {
+  uint32_t n = gc_heap.young_blocks_n;
+  uint64_t in_runs = 0;
+  uint64_t missing = 0;
+  uint32_t i;
+  int w;
+  for (i = 0; i < gc_heap.lazy_n; i++) {
+    const uint8_t *p = gc_heap.lazy[i].lo;
+    const uint8_t *hi = gc_heap.lazy[i].hi;
+    while (p < hi) {
+      const AvantHeader *h = (const AvantHeader *)p;
+      uint64_t g = granule_of(p);
+      /* A filler (avant_gc_shrink: no HEAP flag) is passed over. */
+      if (h->flags & AVANT_FLAG_HEAP) {
+        /* An object C allocated in the hole has its own bit; one the
+         * inline path allocated is an eager one. */
+        if (!start_bit_at(p)) {
+          if (!((veager_word(g >> 6) >> (g & 63)) & 1ULL)) {
+            gc_die("avant gc verify: start bits: a late run names an address where no object was allocated");
+          }
+          in_runs++;
+        }
+      }
+      p += gc_obj_total(h);
+    }
+    if (p != hi) {
+      gc_die("avant gc verify: start bits: a late run does not end at an object's end");
+    }
+  }
+  for (i = 0; i < n; i++) {
+    const Block *b = gc_heap.young_blocks[i];
+    uint64_t w0 = block_start_word(b);
+    for (w = 0; w < START_WORDS; w++) {
+      missing += (uint64_t)__builtin_popcountll(veager_word(w0 + (uint64_t)w) & ~b->start[w]);
+    }
+  }
+  if (missing != in_runs) {
+    gc_die("avant gc verify: start bits: a young object has no start bit and lies in no late run");
+  }
+  if ((uint64_t)n * START_WORDS > gc_heap.vsaved_n) {
+    gc_heap.vsaved_n = (uint64_t)n * START_WORDS * 2;
+    gc_heap.vsaved = gc_xrealloc(gc_heap.vsaved, (size_t)gc_heap.vsaved_n * sizeof(uint64_t));
+    gc_heap.vtmp = gc_xrealloc(gc_heap.vtmp, (size_t)gc_heap.vsaved_n * sizeof(uint64_t));
+  }
+  if (n > gc_heap.vblocks_cap) {
+    gc_heap.vblocks_cap = n * 2;
+    gc_heap.vblocks = gc_xrealloc(gc_heap.vblocks, (size_t)gc_heap.vblocks_cap * sizeof(Block *));
+  }
+  if (n) {
+    memcpy(gc_heap.vblocks, gc_heap.young_blocks, (size_t)n * sizeof(Block *));
+  }
+  gc_heap.vblocks_n = n;
+  /* The bits as the collection finds them: gc_verify_starts_end compares
+   * with them. */
+  for (i = 0; i < n; i++) {
+    memcpy(gc_heap.vsaved + (size_t)i * START_WORDS, gc_heap.vblocks[i]->start, START_WORDS * sizeof(uint64_t));
+  }
+  gc_verify_starts_eager(1);
+}
+
+void gc_verify_starts_resume(void) {
+  gc_verify_starts_eager(0);
+}
+
+/* ON: the young blocks' real start words are put aside and the eager
+ * ones or-ed into their place, and the late runs are hidden, for a pass
+ * of the verifier's own (the checks before a collection; gc_verify_sticky
+ * after a young collection's trace and copy): it reads every object of
+ * the cycle as it did when every allocation set its bit, and its lookups
+ * build no block. Off: the real words and the runs are back as they
+ * were, so that what the collection itself set, and failed to set, is
+ * what gc_verify_starts_end reads. */
+void gc_verify_starts_eager(int on) {
+  uint32_t i;
+  int w;
+  if (on) {
+    if (gc_heap.vswapped) {
+      return;
+    }
+    for (i = 0; i < gc_heap.vblocks_n; i++) {
+      Block *b = gc_heap.vblocks[i];
+      uint64_t w0 = block_start_word(b);
+      memcpy(gc_heap.vtmp + (size_t)i * START_WORDS, b->start, START_WORDS * sizeof(uint64_t));
+      for (w = 0; w < START_WORDS; w++) {
+        b->start[w] |= veager_word(w0 + (uint64_t)w);
+      }
+    }
+    gc_heap.vlazy_open = gc_heap.lazy_open;
+    gc_heap.lazy_open = 0;
+    gc_heap.vswapped = 1;
+    return;
+  }
+  if (!gc_heap.vswapped) {
+    return;
+  }
+  for (i = 0; i < gc_heap.vblocks_n; i++) {
+    memcpy(gc_heap.vblocks[i]->start, gc_heap.vtmp + (size_t)i * START_WORDS, START_WORDS * sizeof(uint64_t));
+  }
+  gc_heap.lazy_open = gc_heap.vlazy_open;
+  gc_heap.vswapped = 0;
+}
+
+void gc_verify_starts_end(void) {
+  uint32_t i;
+  int w;
+  for (i = 0; i < gc_heap.vblocks_n; i++) {
+    const Block *b = gc_heap.vblocks[i];
+    uint64_t w0 = block_start_word(b);
+    /* A block the collection freed has nothing to compare (it is not
+     * taken again before the collection ends). */
+    for (w = 0; b->in_use && w < START_WORDS; w++) {
+      uint64_t e = veager_word(w0 + (uint64_t)w);
+      uint64_t now = b->start[w];
+      uint64_t was = gc_heap.vsaved[(size_t)i * START_WORDS + (size_t)w];
+      if ((now & ~was) & ~e) {
+        gc_die("avant gc verify: start bits: a collection set a start bit where no object was allocated");
+      }
+      while (e) {
+        int bit = __builtin_ctzll(e);
+        size_t off = ((size_t)w * 64 + (size_t)bit) * 8;
+        const AvantHeader *h = (const AvantHeader *)(b->base + off);
+        e &= e - 1;
+        if (line_live(b, (int)(off >> LINE_SHIFT)) && !(h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_FORWARDED)) &&
+            !((now >> bit) & 1ULL)) {
+          gc_die("avant gc verify: start bits: an object that survived a collection in place has no start bit");
+        }
+      }
+    }
+    if (w0 < gc_heap.veager_n) {
+      memset(gc_heap.veager + w0, 0, START_WORDS * sizeof(uint64_t));
+    }
+  }
+  gc_heap.vblocks_n = 0;
+}
+
+/* The proof's oracle (the proof is
+ * avant_gc_proof.c's). Under AVANT_GC_VERIFY=1 the verifier keeps, from
+ * the end of each full collection, what the proof only argues about: the
+ * old objects (vp_old: every object the collection marked, one bit a
+ * granule at its header), every object that was not young then (vp_all:
+ * also the dead ones a live line kept), and a copy of every old object's
+ * payload at its own offset (vp_shadow). Against them it checks
+ *
+ *   the log, at every collection's start: a holder logged since the last
+ *   check must have been logged before its first store into a word that
+ *   held a reference, that is, the log has every reference the copy has
+ *   in the holder (vp_holder: "logged after its store" names the holder,
+ *   the word and the reference the copy holds there; the barrier's slow
+ *   call makes the same test as it logs, gc_verify_proof_logging, where
+ *   the late barrier's caller is still on the stack);
+ *
+ *   the stores, at every full collection's start, at the program's exit
+ *   and wherever the proof holds: an old object that is not logged holds
+ *   every reference the copy holds (vp_unlogged: "a reference was
+ *   overwritten with no barrier before the store" names the holder, the
+ *   word and the lost referent). This is the check that finds a store
+ *   path the barrier's slow call does not see, in generated code or in
+ *   runtime C, whether or not a complete collection follows it;
+ *
+ *   the conclusion, at every collection's start where the proof holds
+ *   (young or full, asked for or not: gc_proof_check is evaluated at
+ *   each): the trace from the roots alone, with no remembered set, must
+ *   reach every old object (vp_reach: "an old object is unreachable"
+ *   names it and the holders that named it at the last full collection),
+ *   and no object that is not young may exist that was not there at the
+ *   last full collection (an object promoted or born old that the proof
+ *   did not notice).
+ *
+ * Each report stops the program (gc_die). Nothing is checked in a
+ * program with threads or without a young generation (the proof never
+ * holds there and nothing is logged). Before the first full collection
+ * the three sets are empty: no object is old. */
+static uint64_t *vp_old;
+static uint64_t *vp_all;
+static size_t vp_words;
+static uint8_t *vp_shadow;
+static size_t vp_shadow_len;
+/* The holders and the log words the log check has read. */
+static uint32_t vp_holders_seen;
+static uint32_t vp_log_seen;
+
+static inline int vp_bit(const uint64_t *bits, const AvantHeader *h) {
+  uint64_t g = granule_of(h);
+  return (size_t)(g >> 6) < vp_words && ((bits[g >> 6] >> (g & 63)) & 1ULL);
+}
+
+static inline void vp_bit_set(uint64_t *bits, const AvantHeader *h) {
+  uint64_t g = granule_of(h);
+  bits[g >> 6] |= 1ULL << (g & 63);
+}
+
+static inline void *vp_shadow_word(void **slot) {
+  size_t off = (size_t)((uint8_t *)slot - (uint8_t *)gc_heap.base);
+  void *v;
+  memcpy(&v, vp_shadow + off, sizeof v);
+  return v;
+}
+
+/* Does the copy's word V name an old object (it did at the last full
+ * collection: a field's word is null, a static address or a start)? A
+ * reference to an object that was young then is not the proof's: the log
+ * holds only references to objects that are not young, and after a trace
+ * that left the young generation young a remembered holder's copy names
+ * young objects. */
+static inline int vp_heap_ref(void *v) {
+  uintptr_t off = (uintptr_t)v - (uintptr_t)gc_heap.base - sizeof(AvantHeader);
+  return off < vp_shadow_len && vp_bit(vp_old, (const AvantHeader *)((uint8_t *)v - sizeof(AvantHeader)));
+}
+
+static void vp_describe(const char *what, void *p) {
+  const AvantHeader *h = avant_header(p);
+  fprintf(stderr, "avant gc verify: proof:   %s %p type %u size %u flags %#x\n", what, p, (unsigned)h->type_id,
+          (unsigned)h->size, (unsigned)h->flags);
+}
+
+static void vp_rebase_one(AvantHeader *h, Block *b) {
+  (void)b;
+  if (!(h->flags & AVANT_FLAG_HEAP) || (h->flags & AVANT_FLAG_YOUNG)) {
+    return;
+  }
+  vp_bit_set(vp_all, h);
+  if (!full_marked(h)) {
+    return;
+  }
+  vp_bit_set(vp_old, h);
+  if (h->type_id != AVANT_TYPE_BYTES) {
+    size_t off = (size_t)((uint8_t *)payload_of(h) - (uint8_t *)gc_heap.base);
+    memcpy(vp_shadow + off, payload_of(h), (size_t)h->size);
+  }
+}
+
+/* A full collection ended (gc_proof_full_end): the three sets are taken
+ * again. */
+void gc_verify_proof_rebase(void) {
+  size_t words = (size_t)(((gc_heap.committed >> 3) + 63) / 64);
+  LargeIter it;
+  AvantHeader *lh;
+  vp_holders_seen = 0;
+  vp_log_seen = 0;
+  if (vp_shadow) {
+    munmap(vp_shadow, vp_shadow_len);
+    vp_shadow = NULL;
+    vp_shadow_len = 0;
+  }
+  if (gc_heap.proof.broken >= PROOF_THREADS) {
+    vp_words = 0;
+    return;
+  }
+  vp_old = gc_xrealloc(vp_old, words * sizeof(uint64_t));
+  vp_all = gc_xrealloc(vp_all, words * sizeof(uint64_t));
+  memset(vp_old, 0, words * sizeof(uint64_t));
+  memset(vp_all, 0, words * sizeof(uint64_t));
+  vp_words = words;
+  vp_shadow_len = (size_t)gc_heap.committed;
+  vp_shadow = mmap(NULL, vp_shadow_len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  if (vp_shadow == MAP_FAILED) {
+    gc_die("avant gc verify: proof: no memory for the copy of the old objects");
+  }
+  EACH_MATURE_BLOCK(mb, { gc_foreach_block_object(mb, vp_rebase_one); });
+  gc_large_iter_init(&it);
+  while ((lh = gc_large_next(&it))) {
+    vp_rebase_one(lh, NULL);
+  }
+}
+
+/* An old large object is freed outside a collection (avant_gc_large_drop):
+ * it leaves the sets, so an object at its address later is not taken for
+ * it. */
+void gc_verify_proof_gone(AvantHeader *h) {
+  uint64_t g = granule_of(h);
+  if ((size_t)(g >> 6) < vp_words) {
+    vp_old[g >> 6] &= ~(1ULL << (g & 63));
+    vp_all[g >> 6] &= ~(1ULL << (g & 63));
+  }
+}
+
+/* The log check of one holder H whose entries are the log's words
+ * [*J, ...), in the order the log walked H's reference words: a word
+ * that held a reference at the last full collection (the copy) must have
+ * an entry with that reference, or the holder was logged after a store
+ * into the word. A word the copy has empty may have an entry (a
+ * reference stored into an empty word before the holder was logged, as a
+ * fill in progress does, removes nothing; the check then asks that it
+ * stay, which is on the safe side). A holder that was not old at the last
+ * full collection (promoted since) has no copy: its entries are passed
+ * over. */
+static void vp_holder(void *hp, uint32_t *j) {
+  const GcProof *p = &gc_heap.proof;
+  const AvantHeader *h = avant_header(hp);
+  const uint8_t *lo = (const uint8_t *)hp;
+  const uint8_t *hi = lo + h->size;
+  uint32_t k = *j;
+  if (vp_bit(vp_old, h)) {
+    EACH_REF_SLOT(hp, slot, {
+      void *sv = vp_shadow_word(slot);
+      int has = k + 1 < p->log_n && p->log[k] == (void *)slot;
+      if (vp_heap_ref(sv) && (!has || p->log[k + 1] != sv)) {
+        fprintf(stderr,
+                "avant gc verify: proof: a holder was logged after its store: word +%ld held %p at the last full "
+                "collection, the log has %p there, before coll=%llu\n",
+                (long)((const uint8_t *)slot - lo), sv, has ? p->log[k + 1] : NULL,
+                (unsigned long long)avant_g_stats.collections);
+        vp_describe("holder", hp);
+        vp_describe("referent", sv);
+        gc_die("avant gc verify: proof: the log does not hold a holder's references as they were");
+      }
+      if (has) {
+        k += 2;
+      }
+    });
+  }
+  while (k + 1 < p->log_n && (const uint8_t *)p->log[k] >= lo && (const uint8_t *)p->log[k] < hi) {
+    k += 2;
+  }
+  *j = k;
+}
+
+/* An old object that is not logged holds what the copy holds. */
+static void vp_unlogged(AvantHeader *h, Block *b) {
+  void *hp = payload_of(h);
+  (void)b;
+  if (!vp_bit(vp_old, h) || (h->flags & AVANT_FLAG_LOGGED) || h->type_id == AVANT_TYPE_BYTES) {
+    return;
+  }
+  EACH_REF_SLOT(hp, slot, {
+    void *sv = vp_shadow_word(slot);
+    if (vp_heap_ref(sv) && *slot != sv) {
+      fprintf(stderr,
+              "avant gc verify: proof: a reference was overwritten with no barrier before the store: word +%ld held "
+              "%p at the last full collection and holds %p, before coll=%llu\n",
+              (long)((uint8_t *)slot - (uint8_t *)hp), sv, *slot, (unsigned long long)avant_g_stats.collections);
+      vp_describe("holder", hp);
+      vp_describe("referent", sv);
+      gc_die("avant gc verify: proof: an old object changed without its log");
+    }
+  });
+}
+
+/* The holders that named the unreachable old object X at the last full
+ * collection, by the copy (at most eight). */
+static void *vp_lost;
+static int vp_lost_n;
+
+static void vp_holder_of_lost(AvantHeader *h, Block *b) {
+  void *hp = payload_of(h);
+  (void)b;
+  if (!vp_bit(vp_old, h) || h->type_id == AVANT_TYPE_BYTES || vp_lost_n >= 8) {
+    return;
+  }
+  EACH_REF_SLOT(hp, slot, {
+    if (vp_shadow_word(slot) == vp_lost && vp_lost_n < 8) {
+      vp_lost_n++;
+      fprintf(stderr, "avant gc verify: proof:   held then by word +%ld (now %p) of a holder that is %s, %s\n",
+              (long)((uint8_t *)slot - (uint8_t *)hp), *slot,
+              (h->flags & AVANT_FLAG_LOGGED) ? "logged" : "not logged",
+              vb_test(vb_seen, hp, AVANT_FLAG_VSEEN) ? "reachable" : "unreachable");
+      vp_describe("holder", hp);
+    }
+  });
+}
+
+static void vp_reach(AvantHeader *h, Block *b) {
+  void *p = payload_of(h);
+  (void)b;
+  if (!(h->flags & AVANT_FLAG_HEAP) || (h->flags & AVANT_FLAG_YOUNG)) {
+    return;
+  }
+  if (!vp_bit(vp_all, h)) {
+    fprintf(stderr, "avant gc verify: proof: the proof holds and an object that is not young was not in the heap at "
+                    "the last full collection, before coll=%llu\n",
+            (unsigned long long)avant_g_stats.collections);
+    vp_describe("object", p);
+    gc_die("avant gc verify: proof: an object became old unnoticed");
+  }
+  if (vp_bit(vp_old, h) && !vb_test(vb_seen, p, AVANT_FLAG_VSEEN)) {
+    LargeIter it;
+    AvantHeader *lh;
+    fprintf(stderr, "avant gc verify: proof: the proof holds and an old object is unreachable, before coll=%llu\n",
+            (unsigned long long)avant_g_stats.collections);
+    vp_describe("referent", p);
+    vp_lost = p;
+    vp_lost_n = 0;
+    EACH_MATURE_BLOCK(mb, { gc_foreach_block_object(mb, vp_holder_of_lost); });
+    gc_large_iter_init(&it);
+    while ((lh = gc_large_next(&it))) {
+      vp_holder_of_lost(lh, NULL);
+    }
+    if (!vp_lost_n) {
+      fprintf(stderr, "avant gc verify: proof:   no old object held it then: a root did\n");
+    }
+    gc_die("avant gc verify: proof: the old heap changed and the proof held");
+  }
+}
+
+static void vp_each_object(void (*fn)(AvantHeader *, Block *)) {
+  LargeIter it;
+  AvantHeader *lh;
+  EACH_MATURE_BLOCK(mb, { gc_foreach_block_object(mb, fn); });
+  gc_large_iter_init(&it);
+  while ((lh = gc_large_next(&it))) {
+    fn(lh, NULL);
+  }
+}
+
+/* The barrier's slow call is logging the holder HP (gc_proof_log, before
+ * it reads a word): an old holder must still hold every reference the
+ * copy holds, or a store came before this barrier. Checked here, where
+ * the late barrier's caller is on the stack: the report gives the return
+ * addresses (addr2line on the program resolves them), which the checks at
+ * the next collection cannot. */
+void gc_verify_proof_logging(void *hp) {
+  const AvantHeader *h = avant_header(hp);
+  if (!vp_words || !vp_bit(vp_old, h) || h->type_id == AVANT_TYPE_BYTES) {
+    return;
+  }
+  EACH_REF_SLOT(hp, slot, {
+    void *sv = vp_shadow_word(slot);
+    if (vp_heap_ref(sv) && *slot != sv) {
+      void *bt[24];
+      int n;
+      fprintf(stderr,
+              "avant gc verify: proof: a store came before its barrier: word +%ld held %p at the last full "
+              "collection and holds %p when the holder is logged, after coll=%llu\n",
+              (long)((uint8_t *)slot - (uint8_t *)hp), sv, *slot, (unsigned long long)avant_g_stats.collections);
+      vp_describe("holder", hp);
+      vp_describe("referent", sv);
+      n = backtrace(bt, 24);
+      backtrace_symbols_fd(bt, n, 2);
+      gc_die("avant gc verify: proof: a reference was overwritten before the barrier that logs its holder");
+    }
+  });
+}
+
+/* At a collection's start (FULL: a full one, or the program's exit),
+ * with HOLDS the proof's verdict there (gc_proof_check). */
+void gc_verify_proof(int full, int holds) {
+  const GcProof *p = &gc_heap.proof;
+  if (p->broken >= PROOF_THREADS) {
+    return;
+  }
+  if (vp_words) {
+    uint32_t j = vp_log_seen;
+    while (vp_holders_seen < p->holders_n) {
+      vp_holder(p->holders[vp_holders_seen++], &j);
+    }
+    vp_log_seen = j;
+    if (full || holds) {
+      vp_each_object(vp_unlogged);
+    }
+  }
+  if (holds) {
+    vb_ensure();
+    verify_each_root(verify_tls_slot, 0);
+    while (gc_heap.work_n) {
+      void *o = verify_pop();
+      EACH_REF_SLOT_WALK(o, slot, { verify_trace(*slot); });
+    }
+    vp_each_object(vp_reach);
+    verify_clear_traced();
   }
 }

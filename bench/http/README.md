@@ -21,7 +21,7 @@ One hello-world server per row, with identical behavior: HTTP answers `GET /` wi
 
 ## The methods (`METHOD`)
 
-`METHOD=A|A8|B|C|Q9 sh bench/http/run.sh [row ...|all]` measures HTTP only (`all` is the eight rows above). Every row gets, in each of three rounds (`HTTP_BENCH_RUNS`), a fresh server process, one checked request (status 200, body `hello`), a 2-second warm-up with the method's own `wrk` line (`HTTP_BENCH_WARMUP`) and one measured load; the row order rotates by one each round.
+`METHOD=A|A8|B|C|B1 sh bench/http/run.sh [row ...|all]` measures HTTP only (`all` is the eight rows above). Every row gets, in each of three rounds (`HTTP_BENCH_RUNS`), a fresh server process, one checked request (status 200, body `hello`), a 2-second warm-up with the method's own `wrk` line (`HTTP_BENCH_WARMUP`) and one measured load; the row order rotates by one each round.
 
 | Method | What it is | Load | Server |
 | --- | --- | --- | --- |
@@ -29,7 +29,7 @@ One hello-world server per row, with identical behavior: HTTP answers `GET /` wi
 | A8 | 256 connections, no pipelining, 8 load threads | `wrk -t8 -c256 -d10s --latency URL` | as A |
 | B | 900 connections, 16 pipelined requests per write, 8 load threads | `wrk --latency -d 5 -c 900 -t 8 --timeout 8 URL -s pipe.lua -- 16` | default thread counts, nothing pinned: the server and `wrk` compete for the same cores |
 | C | B with the server limited to 4 pinned threads | the same line under `taskset -c 4-7,12-15` | 4 threads, under `taskset -c 0-3`: four physical cores for the server, the other four (both siblings) for `wrk`, the server cores' siblings idle; the `rust` row has no thread control and is bounded by the pinning alone |
-| Q9 | 900 connections, no pipelining, 8 load threads | `wrk --latency -d 5 -c 900 -t 8 --timeout 8 URL` | as B |
+| B1 | 900 connections, no pipelining, 8 load threads | `wrk --latency -d 5 -c 900 -t 8 --timeout 8 URL` | as B |
 
 `HTTP_BENCH_DURATION` overrides the seconds of the measured load, `HTTP_BENCH_THREADS` forces a server thread count under any method, and `HTTP_BENCH_SERVER_CPUS` and `HTTP_BENCH_WRK_CPUS` replace method C's CPU lists (the defaults are for a machine with 8 cores whose sibling threads are `k` and `k+8`).
 

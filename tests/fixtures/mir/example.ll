@@ -7,21 +7,13 @@ target triple = "x86_64-pc-linux-gnu"
 @str.0 = private constant [6 x i8] c"small\00", align 1
 @str.1 = private constant [4 x i8] c"%s\0A\00", align 1
 
-@g_avant_shared = external global i32
-@avant_gc_fast_ok = external thread_local(localexec) global i32
 @avant_gc_bump = external thread_local(localexec) global ptr
 @avant_gc_limit = external thread_local(localexec) global ptr
-@avant_gc_block = external thread_local(localexec) global ptr
-@avant_gc_base = external thread_local(localexec) global ptr
-@avant_gc_starts = external thread_local(localexec) global ptr
-@avant_g_stats = external global i64
-@avant_since_gc = external global i64
-@avant_nursery_held = external global i64
-@avant_inline_allocs = external global i64
 
 @avant_gc_top = external thread_local(localexec) global ptr
 
 declare ptr @avant_alloc(i64, i32)
+declare ptr @avant_alloc_slow(i64, i32)
 declare void @avant_barrier(ptr)
 declare void @avant_gc_frame_enter(ptr)
 declare void @avant_gc_frame_leave(ptr)
@@ -87,72 +79,35 @@ bb0:
   %t5 = getelementptr inbounds i8, ptr %gcf, i64 40
   store ptr %_1.name, ptr %t5, align 8
   call void @__avant_frame_push(ptr %gcf)
-  %t6 = load i32, ptr @g_avant_shared, align 4
-  %t7 = icmp eq i32 %t6, 0
-  %t8 = load i32, ptr @avant_gc_fast_ok, align 4
-  %t9 = icmp eq i32 %t8, 1
-  %t10 = load ptr, ptr @avant_gc_bump, align 8
-  %t11 = load ptr, ptr @avant_gc_limit, align 8
-  %t12 = ptrtoint ptr %t10 to i64
-  %t13 = icmp ne i64 %t12, 0
-  %t14 = add i64 %t12, 16
-  %t15 = ptrtoint ptr %t11 to i64
-  %t16 = icmp ule i64 %t14, %t15
-  %t17 = and i1 %t7, %t9
-  %t18 = and i1 %t13, %t16
-  %t19 = and i1 %t17, %t18
-  br i1 %t19, label %bb0.s3.fast, label %bb0.s3.slow
+  %t6 = load ptr, ptr @avant_gc_bump, align 8
+  %t7 = load ptr, ptr @avant_gc_limit, align 8
+  %t8 = ptrtoint ptr %t6 to i64
+  %t9 = add i64 %t8, 16
+  %t10 = ptrtoint ptr %t7 to i64
+  %t11 = icmp ule i64 %t9, %t10
+  br i1 %t11, label %bb0.s3.fast, label %bb0.s3.slow
 
 bb0.s3.fast:
-  %t20 = getelementptr inbounds i8, ptr %t10, i64 16
-  store ptr %t20, ptr @avant_gc_bump, align 8
-  %t21 = load ptr, ptr @avant_gc_block, align 8
-  %t22 = getelementptr inbounds i8, ptr %t21, i64 32
-  store ptr %t20, ptr %t22, align 8
-  store i64 -9214364833305067512, ptr %t10, align 8
-  %t23 = getelementptr inbounds i8, ptr %t10, i64 8
-  call void @llvm.memset.p0.i64(ptr %t23, i8 0, i64 8, i1 false)
-  %t24 = load ptr, ptr @avant_gc_base, align 8
-  %t25 = ptrtoint ptr %t10 to i64
-  %t26 = ptrtoint ptr %t24 to i64
-  %t27 = sub i64 %t25, %t26
-  %t28 = load ptr, ptr @avant_gc_starts, align 8
-  %t29 = lshr i64 %t27, 9
-  %t30 = lshr i64 %t27, 3
-  %t31 = and i64 %t30, 63
-  %t32 = shl i64 1, %t31
-  %t33 = getelementptr inbounds i64, ptr %t28, i64 %t29
-  %t34 = load i64, ptr %t33, align 8
-  %t35 = or i64 %t34, %t32
-  store i64 %t35, ptr %t33, align 8
-  %t36 = getelementptr inbounds i8, ptr @avant_g_stats, i64 24
-  %t37 = load i64, ptr %t36, align 8
-  %t38 = add i64 %t37, 16
-  store i64 %t38, ptr %t36, align 8
-  %t39 = load i64, ptr @avant_since_gc, align 8
-  %t40 = add i64 %t39, 16
-  store i64 %t40, ptr @avant_since_gc, align 8
-  %t41 = load i64, ptr @avant_nursery_held, align 8
-  %t42 = add i64 %t41, 16
-  store i64 %t42, ptr @avant_nursery_held, align 8
-  %t43 = load i64, ptr @avant_inline_allocs, align 8
-  %t44 = add i64 %t43, 1
-  store i64 %t44, ptr @avant_inline_allocs, align 8
+  %t12 = getelementptr inbounds i8, ptr %t6, i64 16
+  store ptr %t12, ptr @avant_gc_bump, align 8
+  store i64 -9214364833305067512, ptr %t6, align 8
+  %t13 = getelementptr inbounds i8, ptr %t6, i64 8
+  call void @llvm.memset.p0.i64(ptr %t13, i8 0, i64 8, i1 false)
   br label %bb0.s3.cont
 
 bb0.s3.slow:
-  %t45 = call ptr @avant_alloc(i64 8, i32 1)
+  %t14 = call ptr @__avant_alloc_slow(i64 8, i32 1)
   br label %bb0.s3.cont
 
 bb0.s3.cont:
-  %t46 = phi ptr [ %t23, %bb0.s3.fast ], [ %t45, %bb0.s3.slow ]
-  store ptr %t46, ptr %_0, align 8
-  %t47 = load ptr, ptr %_0, align 8
-  %t48 = load ptr, ptr %_1.name, align 8
-  call void @"av.main/Box.initialize"(ptr %t47, ptr %t48)
+  %t15 = phi ptr [ %t13, %bb0.s3.fast ], [ %t14, %bb0.s3.slow ]
+  store ptr %t15, ptr %_0, align 8
+  %t16 = load ptr, ptr %_0, align 8
+  %t17 = load ptr, ptr %_1.name, align 8
+  call void @"av.main/Box.initialize"(ptr %t16, ptr %t17)
   call void @__avant_frame_pop(ptr %gcf)
-  %t49 = load ptr, ptr %_0, align 8
-  ret ptr %t49
+  %t18 = load ptr, ptr %_0, align 8
+  ret ptr %t18
 }
 
 define internal ptr @"av.main/tag"(i64 %a1) #0 {
@@ -342,6 +297,31 @@ unlink:
 leave:
   call void @avant_gc_frame_leave(ptr %f)
   ret void
+}
+
+define internal ptr @__avant_alloc_slow(i64 %size, i32 %ty) noinline #0 {
+entry:
+  %s = call ptr @avant_alloc_slow(i64 %size, i32 %ty)
+  %again = icmp eq ptr %s, null
+  br i1 %again, label %redo, label %got
+
+got:
+  ret ptr %s
+
+redo:
+  %bump = load ptr, ptr @avant_gc_bump, align 8
+  %up = add i64 %size, 15
+  %total = and i64 %up, -8
+  %t23 = getelementptr inbounds i8, ptr %bump, i64 %total
+  store ptr %t23, ptr @avant_gc_bump, align 8
+  %t24 = zext i32 %ty to i64
+  %t25 = shl i64 %t24, 32
+  %t26 = or i64 %size, %t25
+  %t27 = or i64 %t26, -9214364837600034816
+  store i64 %t27, ptr %bump, align 8
+  %t28 = getelementptr inbounds i8, ptr %bump, i64 8
+  call void @llvm.memset.p0.i64(ptr %t28, i8 0, i64 %size, i1 false)
+  ret ptr %t28
 }
 
 attributes #0 = { nounwind "frame-pointer"="all" "probe-stack"="inline-asm" }

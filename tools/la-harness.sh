@@ -1,5 +1,5 @@
 #!/bin/sh
-# The LangArena harness built once per checkout (O115, Stage 29 W9Fb1).
+# The LangArena harness built once per checkout.
 #
 #   sh tools/la-harness.sh          prints the path of the harness binary,
 #                                   building it first when needed

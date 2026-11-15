@@ -1,5 +1,5 @@
 #!/bin/sh
-# A wave's final evidence in one run (Stage 28; owner, 2026-11-09: fewer
+# A wave's final evidence in one run (owner, 2026-11-09: fewer
 # hand-written end-of-wave scripts, the same checks). Run it last, on the
 # final committed head with a clean tree, in the background:
 #
@@ -11,8 +11,8 @@
 #
 #   1. head.txt (HEAD and `git status --short`, which must be empty),
 #      governor.txt, tmp-before.txt
-#   2. the gate (tools/gate.sh) with the standard GC list (D235, overlapping
-#      as D248): OUT/gate, gate.out, gate-wall.txt
+#   2. the gate (tools/gate.sh) with the standard GC list (overlapping
+#      two at a time, the gate's default): OUT/gate, gate.out, gate-wall.txt
 #   3. letters.txt: sha256 of B, C', D' and avant_rt.o; nm.txt: the global
 #      symbols of avant_rt.o against runtime/avant_rt.exports
 #   4. the run goldens with C' in --debug, bare and --release, and once
@@ -30,9 +30,9 @@
 #      of tools/la-harness.sh, built once per checkout), then the LR table
 #      (tools/lr-table.sh), OUT/la; needs WAVE_LA_SIDE (a directory holding
 #      this checkout's copy as avant/ and LangArena/ side by side, the layout
-#      W12r used) and WAVE_LR_REFERENCE (the reference results directory of
-#      records/2026-11-07-s28-lr)
-#      and the floor (tools/floor.py, D296): floor.md beside SUMMARY.txt,
+#      the harness expects) and WAVE_LR_REFERENCE (the reference results
+#      directory the other languages were measured into)
+#      and the floor (tools/floor.py): floor.md beside SUMMARY.txt,
 #      with the base's floor beside it when WAVE_FLOOR_BASE names a base
 #      la/table.md, else the la/table.md beside BASE_STATS when there is one
 #      (its column headed by WAVE_FLOOR_BASE_LABEL, else by its path)
@@ -42,7 +42,7 @@
 # governor is `performance` (governor.txt records it; the script does not
 # stop on it). Every child runs under timeout with stdin from /dev/null.
 #
-# Stopping it (O669, VALK-TM2): a TERM, INT or HUP (the outer
+# Stopping it: a TERM, INT or HUP (the outer
 # `timeout -k 10 N` firing, or a signal by hand) stops the running step and
 # every process under it, its children's children included, before the
 # script exits (status 128 + the signal's number), so that `ledger run`
@@ -70,7 +70,7 @@ step() { echo "$1" >> "$out/SUMMARY.txt"; case "$1" in *": red"*) red="$red ${1%
 now() { date +%s.%N; }
 wall() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.1f", b-a}'; }
 
-# The running step (O669): run CMD... starts it in the background, records
+# The running step: run CMD... starts it in the background, records
 # its PID in $cur and waits for it; its status is the command's.
 cur=""; curname=""
 # A command a non-interactive shell starts in the background ignores SIGINT
@@ -211,7 +211,7 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
   else
     la="$out/la"; mkdir -p "$la"
     t0=$(now); curname=langarena
-    # The harness binary of that checkout, built once (tools/la-harness.sh, O115).
+    # The harness binary of that checkout, built once (tools/la-harness.sh).
     # shellcheck disable=SC2016
     run sh -c 'cd "$1" && h=$(sh tools/la-harness.sh 2> "$2/harness-build.log" < /dev/null) && echo "harness: $h" > "$2/la-prod.log" \
       && AVANT_COMPILER="$3/bin/avant-c-llvm" AVANT_CODEGEN=release AVANT_RESULTS_DIR="$2" \
@@ -222,7 +222,7 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
       && sh tools/lr-table.sh table "$3" "$2" "$5/LangArena/results/2026-10-21-kostya-ms7c37.js" < /dev/null > "$2/table.md" 2> "$2/table.log"' lr-table "$side/avant" "$la" "$ref" "$root" "$side"
     lrc=$?; curname=floor
     if [ $rc -eq 0 ] && [ $lrc -eq 0 ]; then step "langarena: prod rc=0 wall=$(wall "$t0" "$t1") s; LR table la/table.md"; else step "langarena: red (prod rc=$rc, LR table rc=$lrc)"; fi
-    # The floor (D296, O353): tools/floor.py on la/table.md, beside the base's.
+    # The floor: tools/floor.py on la/table.md, beside the base's.
     fbase=${WAVE_FLOOR_BASE:-}
     [ -z "$fbase" ] && [ -n "$base" ] && [ -f "$(dirname "$base")/la/table.md" ] && fbase=$(dirname "$base")/la/table.md
     if [ $lrc -eq 0 ]; then

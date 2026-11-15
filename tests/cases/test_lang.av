@@ -4,8 +4,8 @@ fn add(a: Int, b: Int): Int {
   a + b
 }
 
-fn take_i64(v: Int): Int {
-  v.to_i
+fn take_i32(v: Int32): Int {
+  v.to_i()
 }
 
 class LangCounter {
@@ -37,7 +37,7 @@ fn test_lang(c: Checks) {
     c.expect(true, "string get at end is nil")
   }
   lc = LangCounter.start(41)
-  c.eq_int(lc.bump, 42, "type-level call")
+  c.eq_int(lc.bump(), 42, "type-level call")
   c.eq_str("item_${7}", "item_7", "prefix int interp")
   c.eq_str("n_${0 - 3}", "n_-3", "prefix negative interp")
 
@@ -54,7 +54,7 @@ fn test_lang(c: Checks) {
   x = 3
   y = 4
   h = spawn { add(x, y) }
-  c.eq_int(h.join, 7, "spawn Int capture")
+  c.eq_int(h.join() ?? -1, 7, "spawn Int capture")
 
   inner = 0
   while inner < 5 {
@@ -67,14 +67,14 @@ fn test_lang(c: Checks) {
   }
   c.eq_int(inner, 5, "inner break")
 
-  c.eq_int("42".to_i ?? 0, 42, "to_i")
+  c.eq_int("42".to_i() ?? 0, 42, "to_i")
 
   p = 1
   q = p
   c.eq_int(q, 1, "int copy")
 
   xs: Array(Int) = [3, 1, 2]
-  xs.sort
+  xs.sort()
   c.eq_int(xs[0], 1, "sort lo")
   c.eq_int(xs[2], 3, "sort hi")
 
@@ -89,7 +89,7 @@ fn test_lang(c: Checks) {
   wide[0] = -2000000000
   wide[1] = 2000000000
   wide_sum = wide_sum - (80 - 0) - (80 - 13) + wide[0] + wide[1]
-  wide.sort
+  wide.sort()
   wide_got = 0
   wide_ok = 1
   for i in 0..200 {
@@ -107,7 +107,7 @@ fn test_lang(c: Checks) {
   for i in 0..200 {
     narrow[i] = (i * 3) % 7 - 3
   }
-  narrow.sort
+  narrow.sort()
   narrow_ok = 1
   for i in 1..200 {
     if narrow[i] < narrow[i - 1] {
@@ -122,18 +122,18 @@ fn test_lang(c: Checks) {
   for i in 0..600 {
     rev[i] = 600 - i
   }
-  rev.sort
+  rev.sort()
   c.eq_int(rev[0], 1, "sort reverse lo")
   c.eq_int(rev[599], 600, "sort reverse hi")
 
-  hmap = Hash(Int, Int).new
+  hmap = Hash(Int, Int).new()
   hmap[10] = 1
   if v = hmap.get(10) {
     hmap[10] = v + 1
   }
   hmap[20] = 3
   c.eq_int(hmap.size, 2, "Hash(Int, Int) size")
-  hmap.clear
+  hmap.clear()
   c.eq_int(hmap.size, 0, "hash clear")
   hmap[10] = 4
   c.eq_int(hmap.size, 1, "hash after clear")
@@ -143,10 +143,12 @@ fn test_lang(c: Checks) {
     c.expect(false, "hash value after clear")
   }
   popped: Array(Int) = [1, 2]
-  c.eq_int(popped.pop, 2, "Array.pop")
+  c.eq_int(popped.pop() ?? 0, 2, "Array.pop")
+  c.eq_int(popped.pop() ?? 0, 1, "Array.pop again")
+  c.eq_int(popped.pop() ?? -1, -1, "Array.pop on an empty array is nil")
 
   cleared: Array(Int) = [1, 2, 3]
-  cleared.clear
+  cleared.clear()
   cleared.reserve(8)
   cleared.push(7)
   cleared.push(9)
@@ -154,10 +156,10 @@ fn test_lang(c: Checks) {
   c.eq_int(cleared[0], 7, "clear+reserve 0")
   c.eq_int(cleared[1], 9, "clear+reserve 1")
 
-  a64: Int = 1
-  b64 = 2
-  c.eq_int((a64 + b64).to_i, 3, "Int add")
-  c.eq_int(take_i64(7), 7, "Int literal adopts Int")
+  a32: Int32 = 1
+  b32 = a32 + 2
+  c.eq_int((a32 + b32).to_i(), 4, "Int32 add")
+  c.eq_int(take_i32(7), 7, "Int literal adopts Int32")
   filled = Array(Int).new(4)
   filled.fill(7)
   c.eq_int(filled[3], 7, "Array.fill")
@@ -183,7 +185,7 @@ fn test_lang(c: Checks) {
   b.push_byte(97)
   b.push_str("b")
   b.push_fmt_i(12)
-  c.eq_str(b.to_s, "ab12", "Buf")
+  c.eq_str(b.to_s(), "ab12", "Buf")
   bi = buf_new()
   bi.push_byte(65)
   bi.push_byte(66)
@@ -192,7 +194,7 @@ fn test_lang(c: Checks) {
   c.eq_int(bi[1] + bi[2], 133, "Buf index sum")
   bf = buf_new(8)
   bf.push_fmt_f(3.14159, 2)
-  c.eq_str(bf.to_s, "3.14", "Buf push_fmt_f")
+  c.eq_str(bf.to_s(), "3.14", "Buf push_fmt_f")
 
   c.eq_str(chr(97) + chr(98), "ab", "chr")
   c.eq_str(repeat_byte(97, 3), "aaa", "repeat_byte")
@@ -200,7 +202,7 @@ fn test_lang(c: Checks) {
   c.eq_str(bytes_to_str(bytes), "abc", "bytes_to_str")
   c.eq_str(str_slice("abcd", 1, 3), "bc", "str_slice")
   c.eq_str(fmt_float(1.0, 7), "1.0000000", "fmt_float")
-  c.eq_int(exp(0.0).to_i, 1, "exp")
+  c.eq_int(exp(0.0).to_i(), 1, "exp")
   bt = true
   bf2 = false
   c.expect(bt == true, "Bool == true")
@@ -211,17 +213,17 @@ fn test_lang(c: Checks) {
   c.expect((1 < 2) == (3 > 2), "== of two comparisons")
   c.expect((1 < 2) != (3 < 2), "!= of two comparisons")
   ex = 1.0
-  c.eq_int(ex.exp.to_i, 2, "Float64.exp in field form")
-  c.eq_int(ex.exp().to_i, 2, "Float64.exp()")
-  c.eq_int((0.0 - ex).exp.to_i, 0, "exp of a negative")
-  c.expect((0.0 - ex).exp > 0.36 && (0.0 - ex).exp < 0.37, "exp(-1)")
-  c.expect((ex * 1000.0).exp > 1.0e308, "exp overflows to infinity")
-  c.expect((ex * -1000.0).exp == 0.0, "exp underflows to zero")
+  c.eq_int(ex.exp().to_i(), 2, "Float64.exp in field form")
+  c.eq_int(ex.exp().to_i(), 2, "Float64.exp()")
+  c.eq_int((0.0 - ex).exp().to_i(), 0, "exp of a negative")
+  c.expect((0.0 - ex).exp() > 0.36 && (0.0 - ex).exp() < 0.37, "exp(-1)")
+  c.expect((ex * 1000.0).exp() > 1.0e308, "exp overflows to infinity")
+  c.expect((ex * -1000.0).exp() == 0.0, "exp underflows to zero")
   ez = ex - 1.0
-  enan = (ez / ez).exp
+  enan = (ez / ez).exp()
   c.expect(enan != enan, "exp of NaN is NaN")
-  c.expect(ez.exp == 1.0, "exp(0) is exactly 1")
-  c.eq_int((1.5e-01 * 20.0).to_i, 3, "float exponent")
+  c.expect(ez.exp() == 1.0, "exp(0) is exactly 1")
+  c.eq_int((1.5e-01 * 20.0).to_i(), 3, "float exponent")
 
   i = 0
   while i < 2 {
@@ -232,9 +234,8 @@ fn test_lang(c: Checks) {
   c.eq_int(i, 2, "while typed bind")
 
   s = switch true {
-    case 0 { "no" }
-    case 1 { "yes" }
-    else { "other" }
+    case false { "no" }
+    case true { "yes" }
   }
   c.eq_str(s, "yes", "Bool switch")
 
@@ -252,7 +253,7 @@ struct Cell2 {
   v: Int
 }
 
-// O181 (Stage 29 W3a): `for` reads its array and its range ends like a
+// `for` reads its array and its range ends like a
 // while condition, so a body whose first line is a typed declaration is
 // not read as a struct literal; a literal in parentheses still is one.
 fn test_for_typed_first(c: Checks) {
@@ -306,5 +307,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_lang(c)
-  c.finish
+  c.finish()
 }

@@ -1,14 +1,14 @@
-// Avant structs passed to and returned from C by value (Stage 28 W8a,
-// C3, section 14 8.6): the new back end follows the SysV x86-64 C ABI
+// Avant structs passed to and returned from C by value: the new
+// back end follows the SysV x86-64 C ABI
 // (compiler/llvm/emit_cabi.av): 8 and 16 bytes of INTEGER and SSE
-// eightbytes in registers (one `iN` or `double` per eightbyte), 12 bytes
-// with a partial eightbyte, 24 bytes in memory (`byval`, and `sret` for a
-// result), a String inside the struct (a reference passed while the
-// struct's local is rooted), two Bools packed in one eightbyte, and a
-// pair that no longer fits the registers left after five Int32s (memory;
-// C's int is Int32, Stage 29 W-INT1).
-// The old back end passes LLVM aggregates, which is not the C ABI: its
-// answers are wrong (an expected difference, D196; checked by
+// eightbytes in registers (one `iN` or `double` per eightbyte),
+// 12 bytes with a partial eightbyte, 24 bytes in memory (`byval`,
+// and `sret` for a result), a String inside the struct (a
+// reference passed while the struct's local is rooted), two Bools
+// packed in one eightbyte, and a pair that no longer fits the
+// registers left after five Int32s (memory; C's int is Int32).
+// The old back end passes LLVM aggregates, which is not the C
+// ABI: its answers are wrong (an expected difference; checked by
 // tests/cases/test_ffi_llvm.av, skipped by the differential).
 // Built with `--cc tests/fixtures/ffi/ffi.c`.
 
@@ -112,7 +112,7 @@ fn main {
   i = 0
   acc = 0
   while i < 2000 {
-    acc = acc + bv.ffi_named(Named { n: (i % 7).to_i32, s: "s${i}" + "-x" }).to_i
+    acc = acc + bv.ffi_named(Named { n: (i % 7).to_i32(), s: "s${i}" + "-x" }).to_i()
     i = i + 1
   }
   puts(acc)

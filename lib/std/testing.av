@@ -1,28 +1,32 @@
+// The report's lines (runtime/avant_io.c, avant_test_write): all of a
+// line to standard output, or the process stops with the stream and the
+// reason, status 1, as `puts` does (before, a raw write(2) whose
+// result was ignored).
 lib avant_testing_io {
-  fun write(fd: Int32, buf: String, count: Int): Int
+  fun avant_test_write(buf: String, count: Int)
 }
 
 lib avant_testing_tmp {
   fun avant_tmp_new_dir: String
 }
 
-// A failed check fails the process (D84, runtime/avant_io.c): if the
+// A failed check fails the process (runtime/avant_io.c): if the
 // program would exit 0, it exits 1.
 lib avant_testing_status {
   fun avant_test_fail
 }
 
-// File and process helpers in runtime/avant_io.c (D140). Internal.
+// File and process helpers in runtime/avant_io.c. Internal.
 lib avant_testing_fs {
   fun avant_fs_chmod_x(path: String): Int
   fun avant_process_run_split(path: String, args: Array(String), out: String, err: String): Int
 }
 
 // The length of the character XML 1.0 can carry that starts at byte i
-// of s, or 0 (Stage 29 W-FIX1f2, O620): tab, line feed, carriage return
-// and UTF-8 characters from U+0020 on, except the surrogates, U+FFFE and
-// U+FFFF. Every other byte (a control character such as a terminal
-// colour's escape, a byte that is not UTF-8) is written as \xNN.
+// of s, or 0: tab, line feed, carriage return and UTF-8 characters from
+// U+0020 on, except the surrogates, U+FFFE and U+FFFF. Every other byte
+// (a control character such as a terminal colour's escape, a byte that
+// is not UTF-8) is written as \xNN.
 fn testing_xml_char_len(s: String, i: Int): Int {
   c = s[i]
   if c < 128 {
@@ -70,13 +74,13 @@ fn testing_xml_char_len(s: String, i: Int): Int {
 
 fn testing_write(s: String) {
   line = "${s}\n"
-  avant_testing_io.write(1, line, line.size)
+  avant_testing_io.avant_test_write(line, line.size)
 }
 
 fn testing_slice(s: String, start: Int, stop: Int): String {
   b = buf_new()
   b.push_slice(s, start, stop)
-  b.to_s
+  b.to_s()
 }
 
 fn testing_has(hay: String, needle: String): Bool {
@@ -97,12 +101,6 @@ fn testing_has(hay: String, needle: String): Bool {
   false
 }
 
-// A write's failure, or nil.
-fn testing_write_failure(r: Int | IoError): IoError? {
-  _ = r?
-  nil
-}
-
 fn testing_read(path: String): String {
   if text = file_read(path) {
     return text
@@ -111,8 +109,8 @@ fn testing_read(path: String): String {
 }
 
 // Runs bin with args, stdout and stderr to their own files, and returns
-// its status (D140): no sh script. /usr/bin/env -u keeps the runner's
-// listing and selection variables away from the program it starts.
+// its status: no sh script. /usr/bin/env -u keeps the runner's listing
+// and selection variables away from the program it starts.
 fn testing_run(bin: String, args: Array(String), out_path: String, err_path: String): Int {
   wrapped: Array(String) = []
   wrapped.push("-u")
@@ -182,10 +180,10 @@ pub class Test {
       if v = env_get("AVANT_TEST_NAMES"), v.size > 0 {
         self.names_path = v
       }
-      // `avant test --name PATTERN` (O330, VALK-TM2): only the checks,
-      // `test` bodies and `parallel` bodies whose names contain PATTERN
-      // run; a selected body runs whole. The runner reads the file
-      // AVANT_TEST_MATCHES names to tell a file where nothing matched.
+      // `avant test --name PATTERN`: only the checks, `test` bodies and
+      // `parallel` bodies whose names contain PATTERN run; a selected
+      // body runs whole. The runner reads the file AVANT_TEST_MATCHES
+      // names to tell a file where nothing matched.
       if v = env_get("AVANT_TEST_FILTER"), v.size > 0 {
         self.filter = v
       }
@@ -223,7 +221,7 @@ pub class Test {
     now = now_ms()
     dur = 0
     if self.rec_at > 0 {
-      dur = (now - self.rec_at).to_i
+      dur = (now - self.rec_at).to_i()
     }
     self.rec_at = now
     self.rec_name.push(name)
@@ -263,7 +261,7 @@ pub class Test {
       }
       i += 1
     }
-    b.to_s
+    b.to_s()
   }
 
   fn junit_secs(ms: Int): String {
@@ -312,10 +310,11 @@ pub class Test {
     b.push_str("</testsuite>\n")
     // The runner builds its report from these fragments: one that is
     // not written is a report without this process's checks, so the
-    // run fails and says why (O416, Stage 29 W-FIX1d; the failure was
+    // run fails and says why (the failure was
     // dropped).
-    if e = testing_write_failure(file_write(frag, b.to_s)) {
-      report_lost("the JUnit fragment was not written: ${e.message}")
+    _ = file_write(frag, b.to_s()) else e {
+      report_lost("the JUnit fragment was not written: ${e.message()}")
+      return
     }
   }
 
@@ -355,15 +354,15 @@ pub class Test {
     false
   }
 
-  // A new, empty directory for the test's files (D128, Go's t.TempDir).
-  // Each call makes another. They live in the program's private scratch
+  // A new, empty directory for the test's files (Go's t.TempDir). Each
+  // call makes another. They live in the program's private scratch
   // directory and are removed when the program exits.
   pub fn temp_dir: String {
     avant_testing_tmp.avant_tmp_new_dir()
   }
 
   pub fn check(cond: Bool, name: String): Nil {
-    if self.quiet || !picked(name) {
+    if self.quiet() || !picked(name) {
       return nil
     }
     if cond {
@@ -374,36 +373,10 @@ pub class Test {
     nil
   }
 
-  pub fn check_eq(got: Int, want: Int, name: String): Nil {
-    if self.quiet || !picked(name) {
-      return nil
-    }
-    if got == want {
-      pass_line(name)
-    } else {
-      fail_line(name)
-      testing_write("  got: ${got}")
-      testing_write("  want: ${want}")
-    }
-    nil
-  }
-
-  pub fn check_eq(got: Bool, want: Bool, name: String): Nil {
-    if self.quiet || !picked(name) {
-      return nil
-    }
-    if got == want {
-      pass_line(name)
-    } else {
-      fail_line(name)
-      testing_write("  got: ${got}")
-      testing_write("  want: ${want}")
-    }
-    nil
-  }
-
-  pub fn check_eq(got: String, want: String, name: String): Nil {
-    if self.quiet || !picked(name) {
+  // got == want by the type's own ==; on failure both are printed as
+  // interpolation prints them, so T is any type that has == and a text.
+  pub fn check_eq(got: T, want: T, name: String): Nil {
+    if self.quiet() || !picked(name) {
       return nil
     }
     if got == want {
@@ -443,7 +416,7 @@ pub class Test {
     true
   }
 
-  fn write_parallel_names() {
+  fn write_parallel_names {
     if self.names_path.size == 0 {
       return
     }
@@ -455,10 +428,11 @@ pub class Test {
       i += 1
     }
     // The runner starts the parallel bodies from this file: if it is
-    // not written they never run, so the run fails and says why (O416;
-    // the failure was dropped).
-    if e = testing_write_failure(file_write(self.names_path, b.to_s)) {
-      report_lost("the parallel names were not written, so the parallel tests cannot run: ${e.message}")
+    // not written they never run, so the run fails and says why (the
+    // failure was dropped).
+    _ = file_write(self.names_path, b.to_s()) else e {
+      report_lost("the parallel names were not written, so the parallel tests cannot run: ${e.message()}")
+      return
     }
   }
 
@@ -487,11 +461,11 @@ pub class Test {
       return nil
     }
     // No runner is listening (`avant run`, or the compiled binary run
-    // directly; O320, Stage 29 W-FIX1d): nothing would start this body
-    // in a process of its own, so it runs here, in source order. Before,
-    // it was skipped without a word and `finish` reported the serial
-    // checks alone with status 0. The names are checked as the runner
-    // checks them.
+    // directly): nothing would start this body in a process of its
+    // own, so it runs here, in source order. Before, it was skipped
+    // without a word and `finish` reported the serial checks alone
+    // with status 0. The names are checked as the runner checks
+    // them.
     if remember_parallel(name) {
       self.depth += 1
       body()
@@ -502,7 +476,7 @@ pub class Test {
 
   pub fn golden(path: String, got: String): Nil {
     label = "golden ${path}"
-    if self.quiet || !picked(label) {
+    if self.quiet() || !picked(label) {
       return nil
     }
     if text = file_read(path) {
@@ -522,7 +496,7 @@ pub class Test {
 
   pub fn run_golden(program: String, want: String): Nil {
     label = "run_golden ${program}"
-    if self.quiet || !picked(label) {
+    if self.quiet() || !picked(label) {
       return nil
     }
     compiler = ""
@@ -534,7 +508,7 @@ pub class Test {
       testing_write("  AVANT_COMPILER is not set")
       return nil
     }
-    base = "${self.temp_dir}/case"
+    base = "${self.temp_dir()}/case"
     out = "${base}.bin"
     compile_log = "${base}.compile"
     args: Array(String) = []
@@ -578,7 +552,7 @@ pub class Test {
 
   pub fn rejects(source: String, substring: String): Nil {
     label = "rejects ${source}"
-    if self.quiet || !picked(label) {
+    if self.quiet() || !picked(label) {
       return nil
     }
     compiler = ""
@@ -590,7 +564,7 @@ pub class Test {
       testing_write("  AVANT_COMPILER is not set")
       return nil
     }
-    base = "${self.temp_dir}/case"
+    base = "${self.temp_dir()}/case"
     out = "${base}.bin"
     stdout_path = "${base}.out"
     stderr_path = "${base}.err"
@@ -619,8 +593,9 @@ pub class Test {
   pub fn finish: Int {
     write_junit()
     if self.matches_path.size > 0 && self.matched > 0 {
-      if e = testing_write_failure(file_write(self.matches_path, "${self.matched}\n")) {
-        report_lost("the --name matches were not written: ${e.message}")
+      switch file_write(self.matches_path, "${self.matched}\n") {
+        case Int { }
+        case e: IoError { report_lost("the --name matches were not written: ${e.message()}") }
       }
     }
     if self.mode == 1 {

@@ -15,10 +15,10 @@ lib rec {
   fun avant_regex_failed(op: Int)
 }
 
-// A pattern that does not compile: the message is PCRE2's, with the
-// pattern offset it points at ("invalid regular expression at offset 3:
-// missing closing parenthesis"); offset is -1 when there is none (Stage
-// 29 W4b2, D295 R11).
+// A pattern that does not compile: the message is PCRE2's, with
+// the pattern offset it points at ("invalid regular expression at
+// offset 3: missing closing parenthesis"); offset is -1 when there
+// is none.
 pub class RegexError: Error {
   pub message: String
   pub offset: Int = -1
@@ -37,8 +37,8 @@ fn regex_error(status: Int): RegexError {
   RegexError.new("regular expression compile ran out of memory")
 }
 
-// Every operation on a closed Regex traps (Stage 29 W4b2, D295 R11): a
-// use after close is a program error, not an honest "no match".
+// Every operation on a closed Regex traps: a use after close is a
+// program error, not an honest "no match".
 fn regex_closed {
   rec.avant_regex_closed()
 }
@@ -48,12 +48,12 @@ pub struct Span {
   pub hi: Int
 }
 
-// Whether one compiled Regex is still open, in one shared place (Stage 29
-// W-FIX1a): a Regex is a struct, so each copy of it would carry a flag of
-// its own, and a copy of a closed Regex went on to read the handle that
-// close had released. Every copy of the value, and every Match it
-// produced, points at this one object, the way a Server's copies share
-// their HttpState.
+// Whether one compiled Regex is still open, in one shared place: a
+// Regex is a struct, so each copy of it would carry a flag of its own,
+// and a copy of a closed Regex went on to read the handle that close
+// had released. Every copy of the value, and every Match it produced,
+// points at this one object, the way a Server's copies share their
+// HttpState.
 //
 // `op` is the operation in progress, for the trap of a PCRE2 failure: 0
 // find, 1 replace, 2 split, 3 matches. replace, split and matches run on
@@ -153,7 +153,7 @@ pub struct Match {
 }
 
 fn pair_lo(v: Int): Int {
-  (v >> 32).to_i
+  (v >> 32).to_i()
 }
 
 fn pair_hi(v: Int): Int {
@@ -161,7 +161,7 @@ fn pair_hi(v: Int): Int {
   if h >= 2147483648 {
     h -= 4294967296
   }
-  h.to_i
+  h.to_i()
 }
 
 fn push_replacement(dst: Buf, repl: String, m: Match) {
@@ -181,7 +181,7 @@ fn push_replacement(dst: Buf, repl: String, m: Match) {
         if j < repl.size && j > i + 2 {
           name = str_slice(repl, i + 2, j)
           if is_digits(name) {
-            if k = name.to_i, g = m.group(k) {
+            if k = name.to_i(), g = m.group(k) {
               dst.push_str(g)
             }
           } else {
@@ -277,7 +277,7 @@ pub struct Regex {
   // Runs the block with this Regex and closes it on exit.
   pub fn scoped(body: fn(Regex)) {
     body(self)
-    self.close
+    self.close()
   }
 
   // A PCRE2 failure that is not "no match" (its match, depth or heap
@@ -342,7 +342,7 @@ pub struct Regex {
   pub fn replace(text: String, repl: String): String {
     buf = buf_new()
     replace_into(buf, text, repl)
-    buf.to_s
+    buf.to_s()
   }
 
   pub fn replace_into(dst: Buf, text: String, repl: String) {

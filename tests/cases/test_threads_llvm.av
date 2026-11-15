@@ -1,31 +1,33 @@
 import harness
 import backends
 
-// Stage 28 W8b: spawn, JoinHandle, the task pool, channels, `.parallel`,
-// `Mutex.with`, and coverage on the new back end (AVANT_BACKEND=llvm,
-// D176; stages/stage28/mir.md W8b). (a) Every program of the threads
-// subset compiles (--debug) and its stdout, stderr, and exit status are
-// its run golden (tests/goldens/runs, frozen from the old back end at
-// W11; until then the two back ends were compared, D184); (b) the
-// program prints the same under AVANT_GC_VERIFY=1, under
-// AVANT_YOUNG_MB=1, under both, and under AVANT_NURSERY=0, and the
-// verifier reports nothing; (c) `avant dump` under AVANT_BACKEND=llvm
-// prints exactly tests/goldens/threads/<name>.mir (D171); (d) the
-// program the old back end cannot compile (fresh.av, expected
-// differences, D196), D191's probe (d191_probe.av, Stage 28 W17a) and
-// every thread's runtime roots (runtime_roots.av, O70, Stage 29 W1b)
-// print their known output on the new back end, plain and under the four
-// GC environments; (e) a coverage build
-// (AVANT_COVERAGE=1) of tests/fixtures/coverage/points.av writes the slot
-// map and the counts (lcov) the old back end wrote (goldens frozen at
-// W11). The outputs
-// are deterministic: every task is joined, in order, before its result
-// is printed. (test_std_http.av built by the new back end runs in
-// test_std_http_llvm.av, which is exclusive: it uses the http test's
-// ports.)
+// Spawn, JoinHandle, the task pool, channels, `.parallel`,
+// `Mutex.with`, and coverage on the new back end
+// (AVANT_BACKEND=llvm). (a) Every program of the threads
+// subset compiles (--debug) and its stdout, stderr, and exit
+// status are its run golden (tests/goldens/runs, frozen from
+// the old back end when it retired; until then the two back ends were
+// compared); (b) the program prints the same under
+// AVANT_GC_VERIFY=1, under AVANT_YOUNG_MB=1, under both, and
+// under AVANT_NURSERY=0, and the verifier reports nothing;
+// (c) `avant dump` under AVANT_BACKEND=llvm prints exactly
+// tests/goldens/threads/<name>.mir; (d) the program the old
+// back end cannot compile (fresh.av, expected differences),
+// the shared reads' probe (shared_reads.av) and every
+// thread's runtime roots (runtime_roots.av) print their known
+// output on the new back end, plain and under the four GC
+// environments; (e) a coverage build (AVANT_COVERAGE=1) of
+// tests/fixtures/coverage/points.av writes the slot map and
+// the counts (lcov) the old back end wrote (goldens frozen when it
+// retired). The outputs are deterministic: every task is joined,
+// in order, before its result is printed. (test_std_http.av
+// built by the new back end runs in test_std_http_llvm.av,
+// which is exclusive: it uses the http test's ports.)
 
-fn golden_names: Array(String) {
-  ["channels", "fresh", "mutex", "parallel", "spawn"]
+// The fixtures with a MIR golden: tests/goldens/list.txt's rows for
+// this file.
+fn golden_names(c: Checks): Array(String) {
+  golden_names_of(c, "test_threads_llvm")
 }
 
 // The programs with a run golden from the old back end.
@@ -35,7 +37,7 @@ fn both_progs: Array(String) {
 
 // The programs only the new back end compiles, with their output.
 fn new_progs: Array(String) {
-  ["tests/fixtures/threads/fresh.av", "tests/fixtures/threads/d191_probe.av", "tests/fixtures/threads/runtime_roots.av"]
+  ["tests/fixtures/threads/fresh.av", "tests/fixtures/threads/shared_reads.av", "tests/fixtures/threads/runtime_roots.av"]
 }
 
 fn new_wants: Array(String) {
@@ -46,7 +48,7 @@ fn gc_envs: Array(String) {
   ["AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0"]
 }
 
-// The .ll without its frame chain's two stores (Stage 28 W18): linking
+// The .ll without its frame chain's two stores: linking
 // and unlinking a frame record are volatile stores into avant_gc_top,
 // the only volatile stores the emitter writes.
 fn without_frame_links(ll: String): String {
@@ -58,16 +60,16 @@ fn without_frame_links(ll: String): String {
       out.push_str("\n")
     }
   }
-  out.to_s
+  out.to_s()
 }
 
 fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   progs = both_progs()
   np = new_progs()
-  gn = golden_names()
+  gn = golden_names(c)
   cov_src = "${root}/tests/fixtures/coverage/points.av"
 
-  // Wave 1: the compiles, the dumps,
+  // The first wave: the compiles, the dumps,
   // and the coverage builds (each with its own slot map).
   jobs: Array(HJob) = []
   i = 0
@@ -91,7 +93,7 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
     i += 1
   }
   jobs.push(compile_job("AVANT_COVERAGE=1 AVANT_COVERAGE_MAP=${dir}/cov-new.map AVANT_BACKEND=llvm", compiler, cov_src, "${dir}/cov.new", "${dir}/cov.new.log"))
-  // Stage 28 W17b (D207 relaxed): no slot access is volatile, in a shared
+  // No slot access is volatile, in a shared
   // module either; its only volatile access is the poll's flag load.
   vol_srcs = ["tests/fixtures/threads/spawn.av", "tests/fixtures/heap/loops.av"]
   i = 0
@@ -142,7 +144,7 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   c.expect(!str_has(vol_shared, "load volatile ptr") && !str_has(vol_shared, "store volatile") && str_has(vol_shared, "load volatile i32, ptr @avant_gc_requested"), "threads/spawn.av (shared): slot accesses are plain; the poll's flag load is volatile (the frame links aside)")
   c.expect(!str_has(vol_single, " volatile "), "heap/loops.av (single-threaded): no volatile access but the frame links")
 
-  // Wave 2: every program, then the new ones under each GC environment,
+  // The second wave: every program, then the new ones under each GC environment,
   // then the coverage builds (each writes its own lcov).
   envs = gc_envs()
   per = 1 + envs.size
@@ -211,7 +213,7 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
     i += 1
   }
   c.eq_int(runs[cbase].code, 0, "coverage/points.av under llvm: exit 0")
-  // The slot map and the counts the old back end wrote, frozen at W11
+  // The slot map and the counts the old back end wrote, frozen when it retired
   // (paths under the checkout written ROOT/ in the golden).
   gmap = str_replace_all(log_text("${root}/tests/goldens/runs/fixtures/coverage/points.map"), "ROOT/", "${root}/")
   c.expect(str_has(gmap, "avant-cov 1\n"), "coverage/points.av: the golden slot map is a slot map")
@@ -221,10 +223,10 @@ fn test_threads_llvm(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_str(log_text("${dir}/cov-new.lcov"), glcov, "coverage/points.av: the golden counts (lcov)")
 }
 
-// The fixtures import std.sync (Stage 29 W8Ca): a compiler names the
-// library's files under the lib directory its versions file records
-// (O617), an absolute path that differs between checkouts; the goldens
-// name them lib/... .
+// The fixtures import std.sync: a compiler names the
+// library's files under the lib directory its versions
+// file records, an absolute path that differs between
+// checkouts; the goldens name them lib/... .
 fn lib_relative(text: String, compiler: String): String {
   if t = file_read("${compiler}.versions.txt") {
     for line in t.split("\n") {
@@ -252,5 +254,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

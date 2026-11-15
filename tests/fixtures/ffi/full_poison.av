@@ -1,0 +1,79 @@
+// Under AVANT_GC_STRESS=1 a full
+// collection poisons what it frees, as the young sweep does: the lines a
+// kept block frees and a block it releases whole. C (full_poison.c)
+// keeps the address of a mature string's bytes, the string dies, a full
+// collection runs and C reads a byte through the kept address.
+//
+// Round 1: 400 strings of 600 bytes made mature by a full collection;
+// all die at the next one: the kept one (the 201st) lies among dead
+// strings only, so its block is released whole. Round 2: 400 more made
+// mature; every second one dies: the kept one (the 202nd) lies between
+// two live ones, so its block is kept and only its lines are freed (the
+// byte read, 300 bytes into a 600-byte string, lies in a line no other
+// object touches). Run with AVANT_GC_DEFRAG=0, so no block is evacuated
+// (an evacuated block was poisoned before). Prints, for each round, the
+// byte read through the kept address: 219 (GC_POISON) under the stress
+// mode, the string's own letter (83, `S`; 84, `T`) before this poisoning, and
+// -1 where the read is not made; then the live strings' check.
+//
+// Built with `--cc tests/fixtures/ffi/full_poison.c`.
+
+lib fp {
+  fun fp_keep(i: Int32, s: String): Int32
+  fun fp_byte(i: Int32, off: Int32): Int32
+  fun avant_gc_collect
+}
+
+fn strings(n: Int): Array(String) {
+  out: Array(String) = []
+  for i in 0..n {
+    out.push(repeat_byte(65 + i % 26, 600))
+  }
+  out
+}
+
+// Each round's strings are made, made mature and kept by C in a
+// function of its own, so that no frame slot of the function that
+// collects next still names them.
+fn keep1 {
+  many = strings(400)
+  fp.avant_gc_collect()
+  _ = fp.fp_keep(0, many[200])
+}
+
+fn keep2(live: Array(String)) {
+  many = strings(400)
+  fp.avant_gc_collect()
+  _ = fp.fp_keep(1, many[201])
+  for i in 0..many.size {
+    if i % 2 == 0 {
+      live.push(many[i])
+    }
+  }
+}
+
+fn round1: Int32 {
+  keep1()
+  fp.avant_gc_collect()
+  fp.fp_byte(0, 300)
+}
+
+fn round2(live: Array(String)): Int32 {
+  keep2(live)
+  fp.avant_gc_collect()
+  fp.fp_byte(1, 300)
+}
+
+fn main {
+  live: Array(String) = []
+  a = round1()
+  b = round2(live)
+  bad = 0
+  for i in 0..live.size {
+    s = live[i]
+    if s.size != 600 || s[300] != 65 + (2 * i) % 26 {
+      bad += 1
+    }
+  }
+  puts("full_poison: released ${a} kept ${b} live ${live.size} bad ${bad}")
+}

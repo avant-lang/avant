@@ -1,5 +1,4 @@
-// Loop versioning (Stage 28 W9b; stages/stage28/mir.md W9b, D207 pass 1;
-// the old back end's loop trick, D182, now a MIR pass).
+// Loop versioning (the old back end's loop trick, now a MIR pass).
 //
 // For a loop whose header tests `_i < X` or `_i <= X` (an induction
 // variable _i that the loop only increases by positive constants, and a
@@ -15,11 +14,11 @@
 // before the leaf and root-slot passes, which see the copy like any code.
 //
 // The variable, the bound and the invariant locals are i32 or i64 (an Int
-// is i64 since Stage 29 W-INT1); an i64 one is tested to lie within the
-// i32 range in the guard before any arithmetic, so the guard's sums
-// cannot overflow, and the header's size of an Array or Buf is its i32
-// field read and sign-extended (seen through the cast).
-// An index is known in range when, at the check, it is (all in i64):
+// is i64); an i64 one is tested to lie within the i32 range in the guard
+// before any arithmetic, so the guard's sums cannot overflow, and the
+// header's size of an Array or Buf is its i32 field read and
+// sign-extended (seen through the cast). An index is known in range when,
+// at the check, it is (all in i64):
 // - the induction variable plus a constant c, the variable unchanged
 //   since the header test passed: from entry_i + c >= 0 (the variable
 //   only grows) and X - 1 + c < size (X + c for `<=`);
@@ -74,7 +73,7 @@ fn lv_opt_local(o: MOperand?): Int {
 // A small integer constant (|v| <= 1000000), or false.
 fn lv_small_const(o: MOperand?, out: Array(Int)): Bool {
   if x = o, x.kind == mok_int() && x.ival <= 1000000 && x.ival >= -1000000 {
-    out[0] = x.ival.to_i
+    out[0] = x.ival.to_i()
     return true
   }
   false
@@ -88,7 +87,7 @@ fn lv_copy_local(local: Int): MOperand {
 
 fn lv_c_i64(v: Int): MOperand {
   o = MOperand.new(mok_int(), mt_i64())
-  o.ival = v.to_i
+  o.ival = v.to_i()
   o
 }
 
@@ -213,15 +212,15 @@ fn lv_place_writes_size(ts: MTypes, f: MFunc, p: MPlace): Bool {
 // Whether statement j of blk keeps every size; keep[] is the
 // per-function summary (by index into m.funcs) as known so far. A size
 // store into an object allocated earlier in the same block (an array
-// header being filled, W6c.3) changes no object that existed before.
+// header being filled) changes no object that existed before.
 fn lv_stmt_keeps(m: MModule, f: MFunc, blk: MBlock, j: Int, keep: Array(Bool)): Bool {
   st = blk.stmts[j]
   if st.kind == msk_assign() {
-    if p = st.place, p.last_deref >= 0 {
+    if p = st.place, p.last_deref() >= 0 {
       if !lv_place_writes_size(m.types, f, p) {
         return true
       }
-      return p.last_deref == 0 && lv_fresh_here(blk, j, p.local)
+      return p.last_deref() == 0 && lv_fresh_here(blk, j, p.local)
     }
     return true
   }
@@ -296,8 +295,8 @@ fn lv_rpo(f: MFunc): Array(Int) {
       }
     } else {
       post.push(b)
-      stack.pop
-      next.pop
+      stack.pop()
+      next.pop()
     }
   }
   rpo: Array(Int) = []
@@ -385,7 +384,7 @@ pub fn mir_lv_loops(f: MFunc): LvLoops {
       }
     }
   }
-  lp = LvLoops.new
+  lp = LvLoops.new()
   for h in rpo {
     body = mir_bools(n, false)
     found = false
@@ -401,7 +400,10 @@ pub fn mir_lv_loops(f: MFunc): LvLoops {
           work.push(p)
         }
         while work.size > 0 {
-          x = work.pop
+          // The last element, then its removal: the compiler is built by
+          // a seed whose pop gives the element itself.
+          x = work[work.size - 1]
+          work.pop()
           j = 0
           while j < preds[x].size {
             y = preds[x][j]
@@ -486,7 +488,7 @@ fn lv_addr_taken(f: MFunc): Array(Bool) {
   for blk in f.blocks {
     j = 0
     while j < blk.stmts.size {
-      if r = blk.stmts[j].rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local {
+      if r = blk.stmts[j].rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local() {
         out[p.local] = true
       }
       j += 1
@@ -903,7 +905,7 @@ fn lv_bound(lp: LvLoop, ts: MTypes, hb: MBlock, pos: Int, o: MOperand, depth: In
   while k >= 0 {
     if mir_stmt_def(hb.stmts[k]) == n {
       st = hb.stmts[k]
-      sz = LvSize.new
+      sz = LvSize.new()
       lv_size_stmt(lp, ts, st, sz)
       if sz.h >= 0 {
         lp.bkind = 3
@@ -1105,9 +1107,9 @@ fn lv_checks(m: MModule, lp: LvLoop, lps: LvLoops, terms: LvTerms) {
       while j < blk.stmts.size {
         st = blk.stmts[j]
         if st.kind == msk_check_bounds() && st.args.size == 2 {
-          sz = LvSize.new
+          sz = LvSize.new()
           lv_size_at(lp, ts, blk, j, st.args[1], sz)
-          iv = LvVal.new
+          iv = LvVal.new()
           if sz.h >= 0 {
             lv_val_at(lp, ts, b, j, st.args[0], 0, iv)
           }
@@ -1148,7 +1150,7 @@ fn lv_drop_sizes(lp: LvLoop, ts: MTypes, blk: MBlock, row: Array(Bool), only: Ar
   while k < blk.stmts.size {
     v = mir_stmt_def(blk.stmts[k])
     if v >= 0 && only[v] {
-      sz = LvSize.new
+      sz = LvSize.new()
       lv_size_stmt(lp, ts, blk.stmts[k], sz)
       if sz.h >= 0 {
         all = true
@@ -1244,8 +1246,8 @@ fn lv_widen(f: MFunc, loc: MLoc, blk: MBlock, v: Int): Int {
 // v as i64 (lv_widen), and when v is itself i64 (an Int), tests that it
 // lies within the i32 range, failing to `fail` (the original loop): every
 // guard term is then a sum of such values and constants within a million,
-// which cannot overflow (Stage 29 W-INT1). Returns the block to continue
-// in; out[0] receives the local.
+// which cannot overflow. Returns the block to continue in; out[0]
+// receives the local.
 fn lv_widen_in(f: MFunc, loc: MLoc, blk0: MBlock, v: Int, fail: Int, out: Array(Int)): MBlock {
   blk = blk0
   w = lv_widen(f, loc, blk, v)
@@ -1303,7 +1305,7 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
     i += 1
   }
   xp = -1
-  if terms.uses_bound {
+  if terms.uses_bound() {
     x64 = -1
     if lp.bkind == 1 {
       x64 = lv_new_local(f, mt_i64())
@@ -1422,7 +1424,7 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
   }
   last.term = lv_goto(loc, map[hdr])
   // The original is the cold path now: its back edges are marked so the
-  // emitter keeps LLVM from unrolling or peeling it (W9b; unrolled cold
+  // emitter keeps LLVM from unrolling or peeling it (unrolled cold
   // copies cost size and, merging with the fast copy, steered the SLP
   // vectorizer away from the fast loop's natural vector width).
   for b in 0..n0 {
@@ -1498,7 +1500,7 @@ fn lv_try(m: MModule, f: MFunc, lps: LvLoops, li: Int, keep: Array(Bool)): Int {
     return -1
   }
   lv_freshness(lp)
-  terms = LvTerms.new
+  terms = LvTerms.new()
   lv_checks(m, lp, lps, terms)
   if !lp.any_own {
     return -1
@@ -1647,7 +1649,7 @@ fn lv_hoist_sizes(f: MFunc) {
   }
 }
 
-// The pass (5.9: after verify(lowered), before the leaf pass): every
+// The pass (after verify(lowered), before the leaf pass): every
 // function whose kind is unset.
 pub fn mir_loop_pass(m: MModule) {
   keep = mir_lv_summary(m)

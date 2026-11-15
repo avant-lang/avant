@@ -1,3 +1,6 @@
+/* fwrite_unlocked (puts: a line under one hold of the stream's lock). */
+#define _GNU_SOURCE
+
 #include "avant_rt.h"
 #include "avant_gc.h"
 #include "avant_fmt.h"
@@ -112,8 +115,8 @@ static size_t str_n_long(const char *s) {
       return n;
     }
   }
-  /* A C string: within the String ceiling, or a trap (Stage 29 W-INT1;
-   * a heap string is within it by construction). */
+  /* A C string: within the String ceiling, or a trap (a heap string is
+   * within it by construction). */
   size_t n = strlen(s);
   avant_size_check(n, AVANT_SIZE_STRING);
   return n;
@@ -134,8 +137,8 @@ char *avant_str_empty(void) {
   return empty_str();
 }
 
-/* A copy of the N bytes at S + OFF (RC1/RC2, avant_gc.h; Stage 28
- * W16a): S is a handle across the allocation (a heap string, or a C
+/* A copy of the N bytes at S + OFF (RC1/RC2, avant_gc.h): S is a handle
+ * across the allocation (a heap string, or a C
  * buffer, which its slot leaves alone) and the source is formed from it
  * after the allocation. */
 static char *dup_bytes_at(const char *s, size_t off, size_t n) {
@@ -161,6 +164,29 @@ static char *empty_str(void) {
     avant_pin(g_empty);
   }
   return g_empty;
+}
+
+/* A C function's `String` result (compiler/mir/lower_ffi.av passes every
+ * one through here). C may return
+ * an address inside a heap object (`strchr` of a heap string): a root
+ * slot may hold one, a reference-typed field may not (the field rule,
+ * avant_gc_internal.h: a trace reads the eight bytes before a field's
+ * word as a header), and the program may store the result in either. An
+ * address outside the collected heap (C's own memory, a literal), null
+ * and the exact start of a heap string are returned as they are; an
+ * address inside the heap that is not an object's start is returned as a
+ * fresh copy of the C string there (to its terminator). The copy
+ * allocates, so this is a collecting call: S is a handle across it
+ * (dup_bytes_at: a root slot keeps the object S lies in and follows it
+ * when it moves). */
+char *avant_c_str(char *s) {
+  size_t n;
+  if (!avant_gc_interior(s)) {
+    return s;
+  }
+  n = strlen(s);
+  avant_size_check(n, AVANT_SIZE_STRING);
+  return dup_bytes(s, n);
 }
 
 char *avant_str_concat(const char *a, const char *b) {
@@ -210,7 +236,7 @@ char *avant_str_from_i32_bytes(void *arr) {
     p[i] = (char)(unsigned char)src[i];
   }
   if (any > 255u) {
-    /* A byte outside 0..255 (D295 R3): the first one is named. */
+    /* A byte outside 0..255: the first one is named. */
     for (i = 0; i < n; i++) {
       if ((uint64_t)(int64_t)src[i] > 255u) {
         avant_trap_byte(src[i]);
@@ -238,7 +264,7 @@ char *avant_str_repeat_byte(avant_int b, avant_int n) {
 }
 
 /* A slice needs 0 <= start <= stop <= size, else it traps like an index
- * (Stage 29 W4b1, D295 R4; slices used to clamp). */
+ * (slices used to clamp). */
 static void check_range(size_t n, avant_int start, avant_int stop, size_t *out_i, size_t *out_len) {
   if (start < 0 || stop < start || (size_t)stop > n) {
     avant_trap_slice(start, stop, (avant_int)n);
@@ -283,7 +309,7 @@ char *avant_str_from_u64(uint64_t n) {
   return dup_bytes(buf, (size_t)k);
 }
 
-/* The one text of a Float64 (Stage 29 W4b1, D293, D295 R7): the shortest
+/* The one text of a Float64: the shortest
  * decimal that reads back as the same number, laid out as ECMAScript's
  * Number::toString with a decimal point kept on whole values and no '+'
  * in the exponent (the layout yyjson's writer gives Json.text, so a float
@@ -448,9 +474,9 @@ char *avant_str_from_float(double n) {
   return dup_bytes(buf, (size_t)k);
 }
 
-/* puts of a Float64 and of a Bool (Stage 29 W4b1, D293): the float's one
+/* puts of a Float64 and of a Bool: the float's one
  * text and the words true and false, through stdout's buffer as puts's
- * printf. A failed write stops the program (avant_out_check, W-FIX1i). */
+ * printf. A failed write stops the program (avant_out_check). */
 void avant_puts_f64(double v) {
   char buf[48];
   int k = avant_fmt_float_text(buf, v);
@@ -460,13 +486,52 @@ void avant_puts_f64(double v) {
 }
 
 /* puts of a String: its bytes by length, so a NUL byte inside prints
- * (Stage 29 W4b1, review 4 section 11; printf's %s stopped at it). */
+ * (printf's %s stopped at it). */
 void avant_puts_str(const char *s) {
   size_t n = s ? avant_str_n(s) : 0;
+  /* The text and its newline under one hold of stdout's lock: another
+   * thread's flush between them (a task's trap flushes stdout) would
+   * write the line without its end, and the trap's line after it. */
+  flockfile(stdout);
   if (n) {
-    fwrite(s, 1, n, stdout);
+    fwrite_unlocked(s, 1, n, stdout);
   }
-  putc('\n', stdout);
+  putc_unlocked('\n', stdout);
+  funlockfile(stdout);
+  avant_out_check();
+}
+
+/* puts of an integer: its decimal digits and a
+ * newline through stdout's buffer, checked after the write as every
+ * puts (avant_out_check); before, the generated code called
+ * printf, whose failed write was found only at the next check. Int32
+ * and UInt32 arrive widened by their sign or by zero; puts_u passes the
+ * bits as an unsigned number at their own width. */
+void avant_puts_u64(uint64_t v) {
+  char buf[24];
+  char *o = buf + sizeof(buf);
+  *--o = '\n';
+  do {
+    *--o = (char)('0' + (int)(v % 10u));
+    v /= 10u;
+  } while (v);
+  fwrite(o, 1, (size_t)(buf + sizeof(buf) - o), stdout);
+  avant_out_check();
+}
+
+void avant_puts_i64(int64_t v) {
+  char buf[24];
+  char *o = buf + sizeof(buf);
+  uint64_t u = v < 0 ? 0u - (uint64_t)v : (uint64_t)v;
+  *--o = '\n';
+  do {
+    *--o = (char)('0' + (int)(u % 10u));
+    u /= 10u;
+  } while (u);
+  if (v < 0) {
+    *--o = '-';
+  }
+  fwrite(o, 1, (size_t)(buf + sizeof(buf) - o), stdout);
   avant_out_check();
 }
 
@@ -540,7 +605,7 @@ char *avant_str_cat_i32(const char *prefix, avant_int n) {
 }
 
 /* Exact fast float parse of the strict shape [+-]digits[.digits][(e|E)
- * [+-]digits] (Stage 29 W4b1: both digit runs of the mantissa non-empty
+ * [+-]digits] (both digit runs of the mantissa non-empty
  * when present): 1 with the value when the mantissa fits in 53 bits with
  * at most 15 significant digits and the decimal exponent is within 22 (the
  * true value is then mantissa * 10^e with both operands exactly
@@ -642,7 +707,7 @@ static int fast_f64(const char *p, size_t len, double *out) {
   }
 }
 
-/* Strict number parsing (Stage 29 W4b1, D293, D295 R9): the whole text
+/* Strict number parsing: the whole text
  * is the number or the result is "absent" (*ok = 0). An integer is an
  * optional sign and digits of its base (2..36, letters either case; no
  * prefix, no space, no underscore), within the target type's range; a
@@ -651,9 +716,9 @@ static int fast_f64(const char *p, size_t len, double *out) {
  * E, an optional sign, digits) -- Avant's literal with a sign -- whose
  * value is finite. */
 static void trap_base(avant_int base) {
-  fflush(stdout);
-  fprintf(stderr, "avant runtime: base %lld out of range (2..36)\n", (long long)base);
-  exit(1);
+  char msg[64];
+  snprintf(msg, sizeof msg, "base %lld out of range (2..36)", (long long)base);
+  avant_trap_text(msg);
 }
 
 /* The magnitude of p[0..n) in base, at most limit; 0 when it is not one. */
@@ -823,7 +888,7 @@ char *avant_str_fmt_float(double v, avant_int prec) {
   /* 400: the longest %.64f (see avant_buf_push_fmt_f). */
   char buf[400];
   /* 0..64 (the longest text, a sign, 309 digits, the point and 64,
-   * fits); outside traps (Stage 29 W4b1; it was clamped to 0..16). */
+   * fits); outside traps (it was clamped to 0..16). */
   if (prec < 0 || prec > 64) {
     avant_trap_precision(prec);
   }
@@ -850,6 +915,25 @@ int32_t avant_str_eq(const char *a, const char *b) {
     return 0;
   }
   return memcmp(a, b, na) == 0 ? 1 : 0;
+}
+
+/* String order: byte by byte, then the shorter
+ * first, as sort orders Strings (avant_array.c str_cmp_raw); -1, 0 or 1. */
+int32_t avant_str_cmp(const char *a, const char *b) {
+  if (!a) {
+    a = "";
+  }
+  if (!b) {
+    b = "";
+  }
+  size_t na = avant_str_n(a);
+  size_t nb = avant_str_n(b);
+  size_t n = na < nb ? na : nb;
+  int c = n ? memcmp(a, b, n) : 0;
+  if (c != 0) {
+    return c < 0 ? -1 : 1;
+  }
+  return na < nb ? -1 : (na > nb ? 1 : 0);
 }
 
 avant_int avant_str_size(const char *s) {
@@ -920,12 +1004,12 @@ char *avant_str_strip(const char *s, int32_t mode) {
   }
 }
 
-/* An array of strings built in place (RC1, avant_gc.h; Stage 28 W16a):
+/* An array of strings built in place (RC1, avant_gc.h):
  * str_array_new allocates the array and a buffer of N slots, size 0; the
  * builder keeps the array in a handle and str_array_put stores each fresh
- * string into it with a barrier (RC3) before the next allocation. Before
- * W16a the strings waited in a malloc'ed items[] the collector could not
- * see, under one defer region (C35). */
+ * string into it with a barrier (RC3) before the next allocation. The
+ * strings used to wait in a malloc'ed items[] the collector could not
+ * see, under one defer region. */
 static void *str_array_new(int32_t n) {
   AvantArray *a = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
   if (n > 0) {
@@ -941,8 +1025,9 @@ static void *str_array_new(int32_t n) {
 
 static void str_array_put(AvantArray *a, char *p) {
   char **slot = &((char **)a->buf)[a->size++];
+  /* The barrier before the store (RC5). */
+  avant_barrier_slot_young(a->buf, slot);
   *slot = p;
-  avant_barrier_slot(a->buf, slot);
 }
 
 /* Keeps empty fields. Empty separator traps. RC1: the text, the
@@ -963,9 +1048,7 @@ void *avant_str_split(const char *s, const char *sep) {
   n = avant_str_n(s);
   m = avant_str_n(sep);
   if (m == 0) {
-    fflush(stdout);
-    fprintf(stderr, "avant runtime: split separator is empty\n");
-    exit(1);
+    avant_trap_text("split separator is empty");
   }
   for (i = 0; i + m <= n; i++) {
     if (memcmp(s + i, sep, m) == 0) {
@@ -1170,7 +1253,7 @@ static size_t utf8_char_len(const unsigned char *s, size_t n, size_t i, int *val
 }
 
 /* String.chars and Bytes.chars: one String per codepoint; invalid UTF-8
- * traps on both (Stage 29 W4b2: String.chars used to split a bad byte
+ * traps on both (String.chars used to split a bad byte
  * into a U+FFFD piece while Bytes.chars trapped; one rule now). */
 static void *chars_build(const char *s, const char *type) {
   size_t n;
@@ -1182,9 +1265,9 @@ static void *chars_build(const char *s, const char *type) {
   }
   n = avant_str_n(s);
   if (!utf8_valid((const unsigned char *)s, n)) {
-    fflush(stdout);
-    fprintf(stderr, "avant runtime: %s.chars needs valid UTF-8\n", type);
-    exit(1);
+    char msg[64];
+    snprintf(msg, sizeof msg, "%s.chars needs valid UTF-8", type);
+    avant_trap_text(msg);
   }
   while (i < n) {
     int valid = 0;

@@ -1,0 +1,191 @@
+// `switch` over a union's members.
+// A label is a member type with a binding (`case n: Int`, the name in
+// scope in its arm only), a member type alone (`case String`) or
+// `case nil`; a switch without else names every member, failures
+// included, as a value and as a statement. A statement switch's arms are
+// statements.
+
+class Node {
+  pub v: Int
+  pub next: Node? = nil
+
+  fn initialize(v: Int) {
+    self.v = v
+  }
+}
+
+struct Pt {
+  x: Int
+  y: Int
+}
+
+class Oops: Error {
+  pub message: String
+
+  fn initialize(message: String) {
+    self.message = message
+  }
+}
+
+enum ParseError: Error { empty, not_a_number }
+
+fn parse_digit(s: String): Int | ParseError {
+  if s.size == 0 {
+    return ParseError.empty
+  }
+  c = s[0]
+  if c < 48 || c > 57 {
+    return ParseError.not_a_number
+  }
+  c - 48
+}
+
+fn describe(x: Int | String): String {
+  switch x {
+    case n: Int { "int ${n * 2}" }
+    case s: String { "string of ${s.size}" }
+  }
+}
+
+fn kind(x: Int | String | Nil): String {
+  switch x {
+    case nil { "nothing" }
+    case Int { "a number" }
+    case s: String { "text ${s}" }
+  }
+}
+
+fn total(head: Node?): Int {
+  t = 0
+  cur = head
+  while true {
+    switch cur {
+      case nil { break }
+      case n: Node {
+        t += n.v
+        cur = n.next
+      }
+    }
+  }
+  t
+}
+
+fn digit_or(s: String): Int {
+  switch parse_digit(s) {
+    case d: Int { d }
+    case e: ParseError {
+      switch e {
+        case empty { -1 }
+        case not_a_number { -2 }
+      }
+    }
+  }
+}
+
+fn shape(x: Pt | Array(Int) | Float64 | Bool): String {
+  switch x {
+    case p: Pt { "point ${p.x},${p.y}" }
+    case xs: Array(Int) { "array of ${xs.size}" }
+    case Float64, Bool { "scalar" }
+  }
+}
+
+fn result(n: Int): Int | Oops | Nil {
+  if n < 0 {
+    return Oops.new("negative ${n}")
+  }
+  if n == 0 {
+    return nil
+  }
+  n
+}
+
+fn widen(x: Int | String): Int | String | Nil {
+  out: Int | String | Nil = nil
+  switch x {
+    case n: Int { out = n + 1 }
+    case String { }
+  }
+  out
+}
+
+fn main {
+  puts(describe(21)) // int 42
+  puts(describe("hello")) // string of 5
+  puts(kind(nil))
+  puts(kind(7))
+  puts(kind("abc"))
+  a = Node.new(1)
+  b = Node.new(2)
+  a.next = b
+  b.next = Node.new(3)
+  puts(total(a)) // 6
+  puts(total(nil)) // 0
+  puts(digit_or("7"))
+  puts(digit_or(""))
+  puts(digit_or("x"))
+  puts(shape(Pt { x: 1, y: 2 }))
+  puts(shape([1, 2, 3]))
+  puts(shape(1.5))
+  puts(shape(true))
+  // Failure members are members: an exhaustive statement switch.
+  for n in [-3, 0, 5] {
+    switch result(n) {
+      case v: Int { puts("value ${v}") }
+      case e: Oops { puts("error: ${e}") }
+      case nil { puts("none") }
+    }
+  }
+  // An arm that leaves covers its member.
+  count = 0
+  for x in [1, 2, 3, 4] {
+    u: Int | String = x
+    if x % 2 == 0 {
+      u = "even"
+    }
+    switch u {
+      case String { continue }
+      case n: Int { count += n }
+    }
+  }
+  puts(count) // 4
+  // A statement switch's arm may end with a call's value: it is dropped.
+  switch widen(4) {
+    case n: Int { widen(n * 10) }
+    case String { puts("string") }
+    case nil { puts("nil") }
+  }
+  if w = widen(4) {
+    switch w {
+      case n: Int { puts(n) }
+      case s: String { puts(s) }
+    }
+  }
+  // else beside a part of the members.
+  v: Int | String | Nil = "s"
+  switch v {
+    case n: Int { puts(n) }
+    else { puts("not an int") }
+  }
+  // A binding captured by a block, and the payload copied before the arm
+  // changes the union.
+  m: Int | String = 10
+  sum = 0
+  switch m {
+    case k: Int {
+      m = "changed"
+      [1, 2].each { |i| sum += i * k }
+      puts(k)
+    }
+    case String { puts("no") }
+  }
+  puts(sum) // 30
+  // A value switch whose arms give a union.
+  got: Int | Nil = switch m {
+    case Int { nil }
+    case s: String { s.size }
+  }
+  if g = got {
+    puts(g) // 7
+  }
+}

@@ -11,7 +11,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-/* The mutator's side of the collector (Stage 28 W12, moved from
+/* The mutator's side of the collector (moved from
  * avant_rt.c): thread registration (stack bounds, frame list heads), frames
  * and root slots (avant_gc_enter/leave, the root batch, reload), quiet
  * leaves, pins, defer regions (helpers that hold references in C), and the
@@ -23,19 +23,19 @@
  * thread can collect at any instruction. */
 atomic_int g_avant_shared;
 
-/* Whether a thread has registered yet: the first one is the main thread
- * (Stage 28 W17a). */
+/* Whether a thread has registered yet: the first one is the main thread. */
 static atomic_int g_first_registered;
 
 /* The calling thread's collector state (avant_gc_internal.h). */
 __thread GcThread gc_thread;
 
 /* The calling thread's innermost frame (avant_gc.h): generated code's
- * frames and runtime C's handle scopes on one chain (Stage 28 W16a; it
- * was GcThread.frame). Generated code reads and writes it since W18. */
-__thread Frame *avant_gc_top;
+ * frames and runtime C's handle scopes on one chain (it
+ * was GcThread.frame). Generated code reads and writes it. It is defined
+ * in avant_gc_alloc.c, beside the allocation path's thread-locals: all
+ * six are placed nearest the thread pointer. */
 
-/* Thread exit unregisters (Stage 28 W17c, O126). A thread that exits
+/* Thread exit unregisters. A thread that exits
  * still registered (a foreign C thread after its last callback, or any
  * thread that never called avant_gc_unregister_thread) would leave its
  * ThreadReg in gc_heap.threads while its GcThread, thread-local, is freed
@@ -72,7 +72,7 @@ static void thread_exit_hook(void *unused) {
   }
   /* No collection reads an unregistered thread's state: every frame
    * avant_gc_enter allocated (free, or still on the chain of a thread
-   * that exited inside a callback: O129) and its remembered buffer go
+   * that exited inside a callback) and its remembered buffer go
    * back to the C heap. */
   gc_thread.frame_free = NULL;
   while ((cf = gc_thread.frame_all)) {
@@ -115,8 +115,8 @@ static void register_thread(int implicit) {
       pthread_attr_destroy(&attr);
     }
   }
-  /* A thread registered by its first avant_gc_enter is a foreign one
-   * (rule 4 of gc-design.md section 4.4: native between callbacks),
+  /* A thread registered by its first avant_gc_enter is a foreign one (the
+   * handshake's rule 4 in avant_gc_safepoint.c: native between callbacks),
    * except the program's first thread (the main thread's first frame). */
   foreign = implicit && atomic_exchange(&g_first_registered, 1) != 0;
   if (!implicit) {
@@ -125,9 +125,9 @@ static void register_thread(int implicit) {
   gc_alloc_thread_init();
   gc_thread_registered(foreign);
   /* Every registered thread, a foreign one too, allocates young in its
-   * own young blocks (Stage 28 W17b; until then a foreign thread, the
+   * own young blocks (once a foreign thread, the
    * pool's workers and the HTTP loop threads allocated in the mature
-   * space: the young cursor was one per process, W17a's rule 4 proof). */
+   * space: the young cursor was one per process). */
 }
 
 void avant_gc_register_thread(void) {
@@ -141,7 +141,7 @@ void avant_gc_unregister_thread(void) {
   }
   gc_alloc_thread_leave();
   gc_thread_unregistering();
-  /* An unregistered thread holds no heap reference (O70, Stage 29 W1b):
+  /* An unregistered thread holds no heap reference:
    * no collection reads its runtime-root slots now, so they are cleared,
    * and a later registration of this thread (a C thread may unregister
    * and call back again) starts with empty slots; before, they kept
@@ -206,8 +206,8 @@ void avant_gc_leave(void) {
   }
 }
 
-/* The frame record in the caller's own stack (Stage 28 W18). Generated
- * code since W18 does not take a frame from the free list: each frame
+/* The frame record in the caller's own stack. Generated
+ * code does not take a frame from the free list: each frame
  * function keeps an AvantGcFrame in its stack frame, its slot array right
  * after it, and fills prev-free fields itself (slots, n = cap = the root
  * words, scope 0, then each slot's address). When the thread already has
@@ -290,7 +290,7 @@ void avant_gc_quiet_leave(void) {
   }
 }
 
-/* O138 (Stage 28 W18M): avant_gc_root and avant_gc_root_begin act on the
+/* avant_gc_root and avant_gc_root_begin act on the
  * innermost frame, which must be one avant_gc_enter opened. Called by user
  * C without its own avant_gc_enter, the innermost frame is a generated
  * function's record or a runtime scope, whose slot array lives in a stack
@@ -358,7 +358,7 @@ __attribute__((noinline))
 void *avant_gc_reload(void *slot) {
   gc_heap.ctr.root.reloads++;
   /*
-   * Stage 17: myc-llvm stores this return into the rooted alloca after
+   * The old myc-llvm back end stored this return into the rooted alloca after
    * a collecting CALL. The load is opaque to LLVM isel, so a pre-call
    * copy in an unrooted spill cannot replace it.
    */
@@ -451,7 +451,7 @@ void avant_unpin(void *payload) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
-/* Field pins (Stage 28 W16c, D266; avant_rt.h): the pins that stores of
+/* Field pins (avant_rt.h): the pins that stores of
  * references into C-layout fields took, recorded by the field's address
  * so that `release` can give them back. A hash of FieldRec by address,
  * chained, under the world lock like the pins themselves. A record holds
@@ -461,7 +461,7 @@ void avant_unpin(void *payload) {
  * literal string is not a heap payload and takes no pin), which is how a
  * release knows whether the field still holds Avant's value.
  *
- * C changed the memory (Stage 28 W18C, O134). When a store or a release
+ * C changed the memory. When a store or a release
  * finds the field no longer holding the value Avant last stored there,
  * C changed the field or freed the struct and reused its memory (a new
  * struct at the same address joins the old record). Either way C may
@@ -473,7 +473,7 @@ void avant_unpin(void *payload) {
  * Under AVANT_GC_VERIFY=1 a store that finds its field changed reports it
  * once per record (the first 32 fields in full) as a likely missing
  * `release`; a release that finds C's value is silent (C overwriting a
- * value Avant stored is a correct use, D266, and the release was not
+ * value Avant stored is a correct use, and the release was not
  * missing). */
 typedef struct FieldVal {
   void *v;
@@ -597,7 +597,7 @@ void avant_pin_field(void *field, void *payload) {
 static void field_release(FieldRec *r) {
   void *cur = *r->field;
   if (cur != r->last) {
-    /* C changed the field (O134): what Avant stored stays pinned. */
+    /* C changed the field: what Avant stored stays pinned. */
     field_keep_pinned(r, cur, 0);
   }
   for (uint32_t i = 0; i < r->n; i++) {
@@ -655,9 +655,9 @@ void avant_release_range(void *lo, uint64_t n) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
-/* Task roots (avant_gc.h; Stage 28 W16b, C28, R1): traced from
- * gc_heap.task_roots and rewritten when the record moves (Stage 28 W17a:
- * until then the record was PINNED while rooted, D191). */
+/* Task roots (avant_gc.h): traced from
+ * gc_heap.task_roots and rewritten when the record moves (before the
+ * safepoint handshake the record was PINNED while rooted). */
 void avant_gc_task_root_add(AvantGcTaskRoot *r, void *obj) {
   gc_init();
   r->obj = obj;
@@ -686,18 +686,18 @@ void avant_gc_task_root_drop(AvantGcTaskRoot *r) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
-/* RC4's no-GC region (avant_gc.h; Stage 28 W16a). The region's depth is
+/* RC4's no-GC region (avant_gc.h). The region's depth is
  * gc_heap.defer, the one counter defer regions used, so every rule that
  * keeps a collection out of a defer region keeps it out of this one
- * (gc_maybe_collect, the stress point, C32's limit in place and the
+ * (gc_maybe_collect, the stress point, the heap limit in place and the
  * large-object space); its entry is not a collection point. The
  * outermost entry notes its caller for "heap limit in a no-GC region"
  * and "collection inside a no-GC region". */
 static void nogc_begin(void *site) {
   gc_init();
   gc_fast_clear();
-  /* The thread's own depth (Stage 28 W17a; the only one since W17b,
-   * which retired the process-wide gc_heap.defer, O125): this thread
+  /* The thread's own depth (the only one; the process-wide
+   * gc_heap.defer is retired): this thread
    * never stops at a safepoint inside a region, nor turns native, nor
    * collects; another thread's collection waits for it to leave the
    * region and reach a safepoint. So no collection runs while the
@@ -717,7 +717,7 @@ __attribute__((visibility("hidden"))) void avant_gc_nogc_begin(void) {
 }
 
 /* The ABI names user --cc C may call (avant_rt.h): the same region
- * (Stage 28 W16a; before, the outermost entry was a collection point
+ * (before, the outermost entry was a collection point
  * with the nursery off and under AVANT_GC_STRESS=1, and runtime helpers
  * bracketed their allocations with it). */
 void avant_gc_defer_enter(void) {

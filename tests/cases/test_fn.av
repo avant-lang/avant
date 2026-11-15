@@ -57,7 +57,7 @@ fn take_str(f: fn(String): Int): Int {
 }
 
 class Box {
-  // A field default may be any expression (Stage 29 W3b, D292).
+  // A field default may be any expression.
   f: fn(): Int = { || 0 }
 
   fn initialize {
@@ -165,7 +165,7 @@ fn test_fn(c: Checks) {
   c.eq_int(m, 2, "assign inside visible")
   c.eq_int(each_sum(), 6, "each stays inline")
   h = spawn { 4 }
-  c.eq_int(h.join, 4, "spawn still runs")
+  c.eq_int(h.join() ?? -1, 4, "spawn still runs")
   c.eq_int(take_int(pick), 11, "overload from fn type")
   c.eq_int(take_str(pick), 4, "overload string")
   k = 0
@@ -190,8 +190,8 @@ fn test_fn(c: Checks) {
   if p = make_payload() {
     stored: Array(fn(): Int) = []
     stored.push({ ||
-      p.bump
-      p.doubled
+      p.bump()
+      p.doubled()
     })
     c.eq_int((stored[0])(), 44, "capture if-assign payload")
     c.eq_int(p.n, 22, "payload mutation visible")
@@ -275,10 +275,10 @@ fn test_fn(c: Checks) {
   see_f: fn(): Float64 = { || flt }
   flt = 2.5
   c.expect(see_f() == 2.5, "capture float")
-  wide: Int = 5
-  see_wide: fn(): Int = { || wide }
+  wide: Int32 = 5
+  see_wide: fn(): Int32 = { || wide }
   wide = 8
-  c.eq_int(see_wide().to_i, 8, "capture int64")
+  c.eq_int(see_wide().to_i(), 8, "capture int32")
   c.eq_int(ret_lam(3)(4), 7, "return lambda")
   nil_l: fn(): Nil = { || nil }
   c.eq_int(take_nil(return_nil), 1, "nil return")
@@ -292,7 +292,7 @@ fn test_fn(c: Checks) {
   box_n = 4
   box_see: fn(): Int = { || box_n }
   box_h = spawn { box_n + 1 }
-  c.eq_int(box_h.join, 5, "spawn copies boxed int")
+  c.eq_int(box_h.join() ?? -1, 5, "spawn copies boxed int")
   box_n = 9
   c.eq_int(box_see(), 9, "box survives spawn")
   go() { || }
@@ -303,7 +303,7 @@ fn test_fn(c: Checks) {
   outer_n = 4
   run_spawn: fn(): Int = { ||
     run_h = spawn { outer_n + 1 }
-    run_h.join
+    run_h.join() ?? -1
   }
   outer_n = 10
   c.eq_int(run_spawn(), 11, "spawn inside lambda")
@@ -313,7 +313,7 @@ fn test_fn(c: Checks) {
     lam_f()
   }
   cap_n = 9
-  c.eq_int(lam_h.join, 4, "lambda inside spawn")
+  c.eq_int(lam_h.join() ?? -1, 4, "lambda inside spawn")
   box_flag = true
   see_box_flag: fn(): Bool = { || box_flag }
   box_h = spawn {
@@ -323,25 +323,25 @@ fn test_fn(c: Checks) {
     }
     box_bit
   }
-  c.eq_int(box_h.join, 1, "spawn copies boxed bool")
+  c.eq_int(box_h.join() ?? -1, 1, "spawn copies boxed bool")
   box_flag = false
   box_shown = 0
   if see_box_flag() {
     box_shown = 1
   }
   c.eq_int(box_shown, 0, "bool box survives spawn")
-  i64: Int = 5
-  see_i64: fn(): Int = { || i64 }
-  i64_h = spawn { i64.to_i }
-  c.eq_int(i64_h.join, 5, "spawn copies boxed int64")
-  i64 = 9
-  c.eq_int(see_i64().to_i, 9, "int64 box survives spawn")
+  i32: Int32 = 5
+  see_i32: fn(): Int32 = { || i32 }
+  i32_h = spawn { i32.to_i() }
+  c.eq_int(i32_h.join() ?? -1, 5, "spawn copies boxed int32")
+  i32 = 9
+  c.eq_int(see_i32().to_i(), 9, "int32 box survives spawn")
   u64: UInt64 = 8
   see_u64: fn(): UInt64 = { || u64 }
-  u64_h = spawn { u64.to_i }
-  c.eq_int(u64_h.join, 8, "spawn copies boxed uint64")
+  u64_h = spawn { u64.to_i() }
+  c.eq_int(u64_h.join() ?? -1, 8, "spawn copies boxed uint64")
   u64 = 12
-  c.eq_int(see_u64().to_i, 12, "uint64 box survives spawn")
+  c.eq_int(see_u64().to_i(), 12, "uint64 box survives spawn")
   c.eq_int(nilish(4), 4, "nilable param")
   c.eq_int(nilish(nil), 0, "nilable nil")
   nil_f: fn(Int?): Int = { |n: Int?|
@@ -432,5 +432,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_fn(c)
-  c.finish
+  c.finish()
 }

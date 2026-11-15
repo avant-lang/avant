@@ -1,0 +1,124 @@
+// Does a binding whose scope has ended keep a structure alive? `if l = list { ... }` binds `l` for the block;
+// after the block the program can no longer name it. The collector
+// roots what a function's frame holds across a collecting call, so the
+// question is whether the frame still holds `l`'s reference after the
+// block, when the only other name, `list`, is set to nil.
+//
+// Each probe makes a string of 131,072 bytes, makes it old (three
+// complete collections), reads it through a binding whose scope then
+// ends, drops the outer name and asks for a complete collection: the
+// line says whether the bytes the collector found live fell by the
+// string's size while the function was still running, and again after
+// it returned. Built with `--cc tests/fixtures/ffi/ffi.c` (the
+// collector's counters).
+//
+// The three bindings do not keep it: the string is freed while the
+// function runs. The fourth probe is what does: the value of an
+// expression that was passed to a call (here the constructor's argument)
+// stays named by the function's frame after the statement, so the string
+// outlives the last reference the program can name until the function
+// returns.
+import std.gc
+
+lib sb {
+  fun ffi_gc_count(which: Int): Int
+}
+
+fn big(tag: Int): String {
+  s = "binding-${tag}-abcdefgh"
+  while s.size < 131072 {
+    s = s + s
+  }
+  s
+}
+
+fn live: Int {
+  sb.ffi_gc_count(2)
+}
+
+fn settle: Int {
+  gc.collect()
+  gc.collect()
+  gc.collect()
+  gc.collect()
+  live()
+}
+
+fn fell(before: Int): Int {
+  gc.collect()
+  if before - live() >= 65536 {
+    return 1
+  }
+  0
+}
+
+// `if l = v`: the optional's binding.
+fn probe_if(tag: Int): Int {
+  v: String? = big(tag)
+  before = settle()
+  n = 0
+  if l = v {
+    n = l.size
+  }
+  v = nil
+  inside = fell(before)
+  puts("if binding: read ${n >= 131072}, freed while the function runs ${inside}")
+  before
+}
+
+// A block's own local.
+fn probe_block(tag: Int): Int {
+  v: String? = big(tag)
+  before = settle()
+  n = 0
+  for i in 0..1 {
+    w = v ?? "none"
+    n = n + w.size
+  }
+  v = nil
+  inside = fell(before)
+  puts("block local: read ${n >= 131072}, freed while the function runs ${inside}")
+  before
+}
+
+// A local assigned nil itself (no second name): the control.
+fn probe_nil(tag: Int): Int {
+  v: String? = big(tag)
+  before = settle()
+  n = (v ?? "none").size
+  v = nil
+  inside = fell(before)
+  puts("no binding: read ${n >= 131072}, freed while the function runs ${inside}")
+  before
+}
+
+class Box {
+  v: String
+
+  fn initialize(v: String) {
+    self.v = v
+  }
+}
+
+// A call's argument: the string is made in the call's argument list and
+// then named by the box alone, which drops it.
+fn probe_argument(tag: Int): Int {
+  b = Box.new(big(tag))
+  before = settle()
+  n = b.v.size
+  b.v = "none"
+  inside = fell(before)
+  puts("call argument: read ${n >= 131072}, freed while the function runs ${inside}")
+  before
+}
+
+fn main {
+  b = probe_if(1)
+  puts("if binding: freed after the function returned ${fell(b)}")
+  b = probe_block(2)
+  puts("block local: freed after the function returned ${fell(b)}")
+  b = probe_nil(3)
+  puts("no binding: freed after the function returned ${fell(b)}")
+  b = probe_argument(4)
+  puts("call argument: freed after the function returned ${fell(b)}")
+}

@@ -1,20 +1,22 @@
 import harness
 import backends
 
-// Stage 28 W6a: heap strings on the new back end (AVANT_BACKEND=llvm,
-// D176; stages/stage28/mir.md W6a). For every program of the string
-// subset: (a) it compiles (--debug), and its stdout, stderr, and exit
-// status are its run golden (tests/goldens/runs, frozen from the old back
-// end at W11; until then the two back ends were compared, D184); (b) the
-// program prints the same under AVANT_GC_VERIFY=1, under
-// AVANT_YOUNG_MB=1 (a 1 MB nursery: many young collections), and under
-// both, and the verifier reports nothing (stderr unchanged); for the
-// fixtures with goldens, (c) `avant dump` under AVANT_BACKEND=llvm prints
-// exactly tests/goldens/strings/<name>.mir (D171).
+// Heap strings on the new back end (AVANT_BACKEND=llvm). For
+// every program of the string subset: (a) it compiles (--debug),
+// and its stdout, stderr, and exit status are its run golden
+// (tests/goldens/runs, frozen from the old back end when it retired; until
+// then the two back ends were compared); (b) the program prints
+// the same under AVANT_GC_VERIFY=1, under AVANT_YOUNG_MB=1 (a 1
+// MB nursery: many young collections), and under both, and the
+// verifier reports nothing (stderr unchanged); for the fixtures
+// with goldens, (c) `avant dump` under AVANT_BACKEND=llvm prints
+// exactly tests/goldens/strings/<name>.mir.
 
-fn golden_progs: Array(String) {
+// The fixtures with a MIR golden: tests/goldens/list.txt's rows for
+// this file.
+fn golden_progs(c: Checks): Array(String) {
   xs: Array(String) = []
-  names = ["churn", "concat", "interp", "members", "trap_index"]
+  names = golden_names_of(c, "test_strings")
   i = 0
   while i < names.size {
     xs.push("tests/fixtures/strings/${names[i]}.av")
@@ -50,7 +52,7 @@ fn gc_envs: Array(String) {
 }
 
 fn test_strings(c: Checks, compiler: String, root: String, dir: String) {
-  gp = golden_progs()
+  gp = golden_progs(c)
   progs: Array(String) = []
   i = 0
   while i < gp.size {
@@ -64,7 +66,7 @@ fn test_strings(c: Checks, compiler: String, root: String, dir: String) {
     i += 1
   }
 
-  // Wave 1: the compiles and the dumps.
+  // The first wave: the compiles and the dumps.
   jobs: Array(HJob) = []
   i = 0
   while i < progs.size {
@@ -101,7 +103,7 @@ fn test_strings(c: Checks, compiler: String, root: String, dir: String) {
     i += 1
   }
 
-  // Wave 2: every program, then again under
+  // The second wave: every program, then again under
   // each GC environment.
   envs = gc_envs()
   per = 1 + envs.size
@@ -154,5 +156,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

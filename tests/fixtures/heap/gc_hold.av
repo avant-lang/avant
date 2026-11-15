@@ -1,24 +1,24 @@
-// std.gc (Stage 29 W1c2, D305): `gc.hold { }` and `gc.collect()`.
+// std.gc: `gc.hold { }` and `gc.collect()`.
 //
 // GC_HOLD_CASE picks what runs; every case prints the same kind of
 // sums in every collector environment, and test_gc_hints.av reads the
 // collection counts from AVANT_GC_STATS=1 in the default environment:
 //
-//   all       (the default) every case below, one after the other
-//   garbage   64 MiB of short-lived lists inside one hold: no collection
+//   all (the default) every case below, one after the other
+//   garbage 64 MiB of short-lived lists inside one hold: no collection
 //             runs inside it; the young collection that fell due runs
 //             at its end (young=1)
-//   plain     the same allocation with no hold: young collections run
-//   collect   ten gc.collect() inside one hold: one young collection,
-//             at the hold's end
-//   collects  ten gc.collect() with no hold: ten
-//   nested    a hold inside a hold is one hold (young=1)
-//   return    a hold left by return, then 64 MiB with no hold
-//   break     a hold left by break, then the same
-//   continue  a hold left by continue, then the same
-//   try       a hold left by `?`, then the same
-//   live      a tree built and kept inside a hold, read after it
-//   thread    a hold on the main thread while a task allocates: the task
+//   plain the same allocation with no hold: young collections run
+//   collect ten gc.collect() inside one hold: one collection, at the
+//             hold's end
+//   collects ten gc.collect() with no hold: ten
+//   nested a hold inside a hold is one hold (young=1)
+//   return a hold left by return, then 64 MiB with no hold
+//   break a hold left by break, then the same
+//   continue a hold left by continue, then the same
+//   try a hold left by `?`, then the same
+//   live a tree built and kept inside a hold, read after it
+//   thread a hold on the main thread while a task allocates: the task
 //             collects (other threads are not held) and nothing waits
 //             for the hold to end
 //
@@ -202,7 +202,7 @@ fn case_thread {
   s = 0
   gc.hold {
     h = spawn { churn64() }
-    s = h.join
+    s = h.join() ?? -1
   }
   puts("thread ${s}")
 }

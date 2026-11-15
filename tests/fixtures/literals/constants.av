@@ -1,0 +1,74 @@
+// Literals and constants: character literals, the String
+// escapes, binary, octal and separated numbers, and module constants used
+// where an Int32, a UInt32, an Int, a UInt64 or a Float64 is wanted.
+
+const width = 80
+const half = width / 2
+const kib = 1 << 10
+const page = 4 * kib
+const big = 18_446_744_073_709_551_615u64
+const low = -2_147_483_648
+const ratio = 0.5
+const verbose = false
+const tab = '\t'
+const mode = 0o755
+const flags = 0b1010_0101
+
+struct Cell {
+  x: Int32
+  y: UInt32
+}
+
+class Screen {
+  pub cols: Int32 = width
+  pub rows: Int32 = half / 2
+}
+
+fn digit(c: Int): Int {
+  if c >= '0' && c <= '9' {
+    return c - '0'
+  }
+  -1
+}
+
+fn kind(c: Int): String {
+  switch c {
+    case '+', '-' { "sign" }
+    case ' ', '\t', '\n' { "space" }
+    else { "other" }
+  }
+}
+
+fn main {
+  s = Screen.new()
+  puts("${s.cols}x${s.rows}")
+  cell = Cell { x: low, y: page }
+  puts("${cell.x} ${cell.y}")
+  puts(big)
+  puts(mode)
+  puts(flags & 0b1111)
+  puts(ratio * width)
+  if !verbose {
+    puts("quiet")
+  }
+  total = 0
+  line = "4+2 9"
+  for i in 0..line.size {
+    d = digit(line[i])
+    if d >= 0 {
+      total += d
+    } else {
+      puts(kind(line[i]))
+    }
+  }
+  puts(total)
+  puts(kind(tab))
+  text = "a\tb\0c\x41\u{e9}"
+  puts(text.size)
+  puts(text[3])
+  puts(text == "a\tb\0cA\u{e9}")
+  n: UInt32 = 4_000_000_000
+  puts(n + kib)
+  xs: Array(Int32) = [width, half, -1_000]
+  puts(xs[2])
+}

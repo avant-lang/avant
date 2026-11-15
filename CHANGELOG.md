@@ -1,5 +1,55 @@
 # Avant Language changelog
 
+## 0.44.0 - 2026-11-15
+
+### Added
+
+* `switch` over a union's members (`case n: Int`, `case String`, `case nil`), over `Int32`, `UInt32` and `UInt64`, over a `Bool` (`case true`), with range labels (`case 'a'..='z'`) and constant labels; `a..=b`, the inclusive range, in `for` and `case`.
+* `v = f() else e { ...; continue }` and `if v = f() { } else e { }` read a failure where it is handled; `fn main: Void | E` and `fn main: Int | E` print a failure to stderr and exit 1; a function may return `Void | E`, and `f() else e { ... }` and `?` read it.
+* Character literals (`'a'`, `'\n'`), `0b` and `0o` literals, digit separators (`1_000_000`), the String escapes `\0`, `\xNN` and `\u{N}`, and module constants (`const max_depth = 64`, `pub const`).
+* `==` and `!=` on structs, classes, arrays and optionals; `>`, `<=` and `>=` from a type's `<`, used by `sort`, `sorted`, `min` and `max`; `<` and the like on `String`; `to_s` on every scalar, enum, error and union, and a type's own `fn to_s` is what interpolation prints.
+* A type may define `[]`, `[]=`, `&`, `|`, `^`, `<<`, `>>` and negation; every binary operator has its compound assignment; `type Expr = Num | Add` names a type; generic types bound their parameters (`class Top(T: Ranked)`, `E: Error`); external methods on `Int`, `Float64`, `Bool`, enums and the other scalars.
+* Named arguments for parameters with defaults (`pad("ab", fill: "*")`), struct field defaults, field parameters (`fn initialize(self.start, self.stop)`), and grouping parentheses in types (`(fn(Int): Int)?`).
+* An expression of literals takes its type from its context (`(2 - 1) + y` with an `Int32` `y`), `[]` as an argument takes its parameter's array type, and `b.to_i`, `to_i32`, `to_u32` and `to_u64` convert a `Bool`.
+* `Hash(K, V)` with any integer, `Bool` or enum key and `Bool`, `Float64`, enum or narrow integer values; `inc` on any integer value type.
+* `x.expect("why")` gives an optional's value or stops the program with the message and its position; `box.f(x)` calls the function a field holds; `f = util.helper` takes another module's function as a value.
+* Modules: an external method reads its fields and calls the type's methods bare; two modules may each declare a generic type of one name, or each add a same-named method to `String`, `Bytes` or `Buf`.
+* `print`, `eprint`, `eputs`, `puts()` for an empty line, `exit(status)`, `read_line()`, `file_open` (a file line by line), `dir_exists`, `dir_make`, `file_delete`, `file_size`, `dir_walk` and `process_output`.
+* A poisoned `Mutex` can be read and healed: `m.poisoned`, `m.try_with { }` (`T | MutexError`, or `Void | MutexError`), `Mutex(T).new(v, recover: f)`, `m.recover(v)` and `m.clear_poison`.
+* `avant format --calls FILE...` writes the parentheses into older code; `avant format` checks its own output and leaves the file alone if it would change a token.
+* `gc.collect()` is a complete collection, cheap when no old object died; `AVANT_GC_PROOF=0` makes it always a full one.
+
+### Fixed
+
+* `std.http` client: refuses a method, URL or header that would split the request, a response with several `Content-Length` values; reads past `100 Continue` and `103 Early Hints`; skips a `Content-Length` or `Connection` header the caller passes. Server: answers 400 for a `Host` that is not `host[:port]`; a status outside 100 to 599 traps; answers of 2 GiB or more are written whole.
+* `Channel` and `Mutex`: a buffered `send` on a channel that closes no longer waits forever; tasks waiting on a channel or a mutex no longer keep queued tasks from starting; `return` in a `spawn` or `.parallel` block is an error that says so.
+* Data races: a `spawn` in a `switch` arm, a builtin's block or an `if` guards its captured `Array`; a `spawn` or `.parallel` over an `Array` of a class is refused; changing an `Array` a running task reads, through another name or a struct method, stops the program with a message naming the operation.
+* A trap in a spawned task ends the task, not the program (see Changed); two threads trapping at once, or `exit(status)` called from a task, no longer hang the program or write its output twice.
+* A program whose unjoined task traps while main ends writes its standard output once, and a line printed by `puts` is never split by another thread's write.
+* Allocation no longer slows down when the runtime or a library adds thread-local variables.
+* A C function declared to return a `String` may return an address inside a heap string: the result is copied, so storing it no longer crashes at the next collection.
+* `avant format` no longer joins two tokens into another (`. ..` into `...`); a program nested deeper than 1,000 levels and an integer literal above `UInt64`'s range are compile errors, not compiler crashes.
+* `avant fetch` after a dependency's `git` changed fetches the new source; a test program whose report cannot be written fails instead of passing.
+* A field or parameter whose type name two modules declare resolves; two instances of such a generic type no longer share a constructor.
+* `contains` and `index_of` compare by value for arrays of arrays, classes with `fn ==`, structs and enums; a lambda ignored the value of a final `if`/`else`; `[]` and integer literals beside a lambda argument take their parameters' types; `initialize` counts fields both branches of an `if` set; a trap in a compound assignment named the line before.
+
+### Changed
+
+* Every method call takes parentheses (`xs.sort()`, `s.to_i()`, `Point.new()`); only `size` and `bytes` are read without them. `avant format --calls FILE...` migrates older code.
+* A function without parameters is declared `fn answer: Int`; `fn answer(): Int` and `fun f()` are refused.
+* `xs.pop()` returns `T?`, `nil` on an empty array (`xs.pop().expect("...")` traps); a popped or cleared element no longer stays alive in the array.
+* An `Int` and a `Float64` no longer compare or mix in an operator: write `n.to_f()` or `x.to_i()`; the error names it.
+* `&`, `^` and `|` bind tighter than comparisons: `x & 1 == 0` means `(x & 1) == 0`.
+* A line that only computes a value is an error (`_ = e` drops one on purpose); unary minus of an unsigned value is refused.
+* A trap in a spawned task is printed when it happens and `join` gives `Int | TaskError`; a `Mutex` the task held is poisoned, its channels are closed and its arrays thawed. `dir_make` and `file_delete` return `Void | IoError`.
+* `Mutex` and `Channel` are stricter: `Mutex(T).new(v)` consumes `v` and nothing from outside is stored into the guarded value; `Mutex(T)` is refused when a method of `T` keeps a reference parameter or hands out `self`; `Channel.send` copies an `Array`, refuses an `Array` of a class, and returns `false` on a closed channel.
+* `count = 0` at module level is an error that suggests `const`; `Json.kind` is the enum `JsonKind`; a type name must start with a capital letter; a user-defined `!=` is refused; an `if` or `switch` giving `nil` and one `T` is a `T?`; a `Hash` type with an unsupported key or value is refused wherever it is written; `Response.head` is no longer public.
+* `contains` and `index_of` compare by the element's `==` and refuse an element type without one; a method of `String`, `Bytes` or `Buf` named like a builtin is refused; a function's name followed by a block is a call with that block.
+* Errors are clearer: a mistake is reported once, a misspelt name gets one suggestion, a call with wrong arguments shows the function's signature, an ambiguous type names both modules, and messages no longer name internal stages or planning labels.
+* `puts` of a `String` takes the stream's lock once instead of twice.
+* The task pool and `avant test`'s default `--jobs` count the CPUs the process may use (its affinity), not every processor.
+* Faster and smaller programs: LangArena's 50 tasks take 1.7% less time (geometric mean) and 3.5% less peak memory than v0.43.0 built with the same toolchain. Allocation and collection are cheaper (`Binarytrees::Obj` 15% faster, `Etc::GameOfLife` 15% less memory), and a program that builds a large structure without `gc.hold` no longer traces or copies it while it builds (LangArena's `Binarytrees::Obj` without its hints, 10.59 s to 2.92 s and 166 MB to 114 MB, against the same v0.43.0).
+
 ## 0.43.0 - 2026-11-14
 
 ### Added

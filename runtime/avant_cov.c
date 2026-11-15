@@ -443,7 +443,7 @@ static const char *lcov_sf_path(const char *path) {
   return display_path(path);
 }
 
-/* The report's fixed, overwritten location (D129, Jest's coverage/). */
+/* The report's fixed, overwritten location (Jest's coverage/). */
 #define AVANT_LCOV_DEFAULT "coverage/lcov.info"
 
 static const char *lcov_out_path(void) {

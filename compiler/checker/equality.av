@@ -1,0 +1,433 @@
+// Equality and ordering beyond the scalars. The rule:
+//
+//   - a class compares by identity unless it defines fn ==;
+//   - a struct compares its fields in order, each by its own ==, unless
+//     it defines fn ==: the checker writes that method the first time a
+//     program compares the struct or opts it into an interface that asks
+//     for == (derive_eq_method), so it is an ordinary method, a witness of
+//     `interface Eq(T)` included;
+//   - an array is equal to another of its type when the sizes are equal
+//     and the elements are, in order; an optional, when both are nil or
+//     both hold equal values: generic functions the checker writes once
+//     (eq_template) and instantiates for each element type;
+//   - a Float64 compares by IEEE (NaN equals nothing, itself included),
+//     so an array or struct holding NaN is not equal to itself;
+//   - != is always !(a == b); >, <= and >= of a type that defines < are
+//     b < a, !(b < a) and !(a < b);
+//   - two values of different types do not compare (a compile error),
+//     an optional is never compared with nil, and a Hash, a
+//     function or a union of several types has no ==.
+//
+// Nothing here runs for a program that compares no such values: the
+// methods and functions exist only once a comparison asks for them.
+
+import location
+import source
+import token
+import lexer
+import type
+import ast
+import parser
+import typed_ir
+import checker.names
+import checker
+import checker.match
+
+// Whether ty (a struct or class) has a method of this name.
+pub fn (checker_self: Checker) user_op(ty: Ty, name: String): Bool {
+  for ms in checker_self.methods {
+    if ms.owner == ty.name && ms.name == name {
+      return true
+    }
+  }
+  false
+}
+
+// "" when a value of ty has ==, else the part that has none, shown
+// (`Hash(String, Int)`, with the field that holds it). seen holds the
+// structs being looked into, so a struct that holds an array of itself
+// ends.
+pub fn (checker_self: Checker) eq_missing(ty: Ty, seen: Array(String)): String {
+  if ty.is_integer() || ty.is_float() || ty.is_bool() || ty.is_string() || ty.is_bytes() || ty.is_enum() || ty.is_class() {
+    return ""
+  }
+  if ty.is_struct() {
+    if checker_self.user_op(ty, "==") || seen.contains(ty.name) {
+      return ""
+    }
+    seen.push(ty.name)
+    for f in ty.fields {
+      m = checker_self.eq_missing(f.ty, seen)
+      if m.size > 0 {
+        if f.ty.is_struct() || f.ty.is_array() || f.ty.is_nilable() {
+          return m
+        }
+        return "${m} (the field ${ty.show()}.${f.name})"
+      }
+    }
+    return ""
+  }
+  if ty.is_array() {
+    if e = ty.inner {
+      return checker_self.eq_missing(e, seen)
+    }
+  }
+  if ty.is_nilable() {
+    return checker_self.eq_missing(ty_without_nil(ty), seen)
+  }
+  ty.show()
+}
+
+// The refusal of == on ty, which has none (missing as eq_missing gave it).
+pub fn (checker_self: Checker) eq_refusal(ty: Ty, missing: String): String {
+  if ty.is_union() && !ty.is_nilable() {
+    return "${ty.show()} has no ==: take it apart with switch and compare its members"
+  }
+  if ty.is_struct() {
+    return "cannot compare ${ty.show()}: ${missing} has no ==; define fn == on ${ty.show()}"
+  }
+  if missing == ty.show() {
+    return "${ty.show()} has no =="
+  }
+  "cannot compare ${ty.show()}: ${missing} has no =="
+}
+
+// The derived == of the struct sty: `fn ==(other: S): Bool`,
+// each field compared in order with &&, `true` for no field; written
+// once, in the struct's module (its fields are visible there), public
+// and lazy (lowered only when called). The caller has checked
+// eq_missing.
+pub fn (checker_self: Checker) derive_eq_method(sty: Ty, loc: Location) {
+  if checker_self.user_op(sty, "==") {
+    return
+  }
+  sloc = loc
+  for sdef in checker_self.program.structs {
+    if sdef.name == sty.name && sdef.mod_name == sty.mod_name {
+      sloc = sdef.loc
+    }
+  }
+  fnn = Function.new(sloc, "==")
+  fnn.owner = sty.name
+  fnn.owner_mod = sty.mod_name
+  fnn.mod_name = sty.mod_name
+  fnn.vis = true
+  fnn.lazy = true
+  fnn.return_type = TypeName.new(sloc, "Bool")
+  fnn.params.push(Param.new(sloc, "other", ty_to_type_name(sty, sloc)))
+  body = Expr.new(ex_bool(), sloc)
+  body.bool_val = true
+  first = true
+  for f in sty.fields {
+    cmp = Expr.new(ex_binary(), sloc)
+    cmp.op = tk_eq_eq()
+    cmp.left = eq_field_of(sloc, "self", f.name)
+    cmp.right = eq_field_of(sloc, "other", f.name)
+    if first {
+      body = cmp
+      first = false
+    } else {
+      both = Expr.new(ex_binary(), sloc)
+      both.op = tk_amp_amp()
+      both.left = body
+      both.right = cmp
+      body = both
+    }
+  }
+  fnn.body.push(stmt_expr(sloc, body))
+  checker_self.attach_method_fn(fnn)
+  params: Array(Ty) = []
+  params.push(sty)
+  sig = FuncSig.new(fnn.name, fnn, params, checker_self.t_bool())
+  sig.owner = sty.name
+  checker_self.alloc_ol(fnn)
+  checker_self.methods.push(sig)
+  checker_self.note_method_named()
+  key = "${sty.name}__${fnn.name}"
+  if taken = checker_self.method_index.get(key) {
+  } else {
+    checker_self.method_index[key] = checker_self.methods.size - 1
+  }
+  if checker_self.adopt_pending {
+    checker_self.assign_one_method_emit(sig)
+    checker_self.pending.push(fnn)
+  }
+}
+
+pub fn eq_field_of(loc: Location, obj: String, name: String): Expr {
+  o = Expr.new(ex_name(), loc)
+  o.ident = obj
+  f = Expr.new(ex_field(), loc)
+  f.object = o
+  f.ident = name
+  f
+}
+
+// The generic functions behind an array's and an optional's ==, and an
+// array's min and max by a user < (each keeps the first of equal
+// elements), as Avant, parsed once per program when first needed.
+pub fn eq_template_source(name: String): String {
+  if name == "__avant_eq_array" {
+    return "fn __avant_eq_array(a: Array(T), b: Array(T)): Bool {\n  if a.size != b.size {\n    return false\n  }\n  i = 0\n  while i < a.size {\n    if a[i] != b[i] {\n      return false\n    }\n    i += 1\n  }\n  true\n}\n"
+  }
+  if name == "__avant_min" || name == "__avant_max" {
+    test = "xs[i] < m"
+    if name == "__avant_max" {
+      test = "m < xs[i]"
+    }
+    return "fn ${name}(xs: Array(T)): T? {\n  if xs.size == 0 {\n    return nil\n  }\n  m = xs[0]\n  i = 1\n  while i < xs.size {\n    if ${test} {\n      m = xs[i]\n    }\n    i += 1\n  }\n  m\n}\n"
+  }
+  if name == "__avant_contains" {
+    return "fn __avant_contains(v: T, xs: Array(T)): Bool {\n  i = 0\n  while i < xs.size {\n    if xs[i] == v {\n      return true\n    }\n    i += 1\n  }\n  false\n}\n"
+  }
+  if name == "__avant_index_of" {
+    return "fn __avant_index_of(v: T, xs: Array(T)): Int? {\n  i = 0\n  while i < xs.size {\n    if xs[i] == v {\n      return i\n    }\n    i += 1\n  }\n  nil\n}\n"
+  }
+  "fn __avant_eq_opt(a: T?, b: T?): Bool {\n  if x = a {\n    if y = b {\n      return x == y\n    }\n    return false\n  }\n  if _ = b {\n    return false\n  }\n  true\n}\n"
+}
+
+pub fn (checker_self: Checker) eq_template(name: String): FuncSig? {
+  for sig in checker_self.functions {
+    if sig.name == name && sig.node.generic {
+      return sig
+    }
+  }
+  src = Source.new("<avant>", eq_template_source(name))
+  lex = Lexer.new(src)
+  tokens = lex.tokenize()
+  ps = Parser.new(src, tokens)
+  p = ps.parse()
+  if p.functions.size != 1 {
+    return nil
+  }
+  fnn = p.functions[0]
+  fnn.mod_name = checker_self.root_module
+  checker_self.program.functions.push(fnn)
+  saved = checker_self.current_module
+  checker_self.current_module = fnn.mod_name
+  checker_self.register_function(fnn)
+  checker_self.current_module = saved
+  for sig2 in checker_self.functions {
+    if sig2.name == name && sig2.node.generic {
+      return sig2
+    }
+  }
+  nil
+}
+
+// `a == b` of two arrays or two optionals of type ty: a call of the
+// template's instance for the element type, recorded on the expression
+// (op_fn); false when it cannot be made (an error was given).
+pub fn (checker_self: Checker) eq_by_function(expr: Expr, ty: Ty): Bool {
+  name = "__avant_eq_opt"
+  arg = ty_without_nil(ty)
+  if ty.is_array() {
+    name = "__avant_eq_array"
+    if e = ty.inner {
+      arg = e
+    }
+  }
+  if sig = checker_self.eq_template(name) {
+    subst: Array(Ty) = []
+    subst.push(arg)
+    if inst = checker_self.instantiate_function(sig, subst, expr.loc) {
+      expr.resolved = inst.node.emit_name
+      expr.op_form = op_fn()
+      if expr.op == tk_not_eq() {
+        expr.op_form = op_fn() + op_not()
+      }
+      return true
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) eq_is_compare(op: Int): Bool {
+  op == tk_eq_eq() || op == tk_not_eq() || op == tk_less() || op == tk_less_eq() || op == tk_greater() || op == tk_greater_eq()
+}
+
+// A comparison whose left operand is a struct or class (check_binary,
+// once the left is typed): the type's own operator method when it has
+// one; else the derived forms of the rule above. nil when op is no
+// comparison and the type defines no method for it (the caller goes on,
+// the right still unchecked).
+pub fn (checker_self: Checker) check_agg_compare(expr: Expr, r: Expr, op: Int, opname: String, left: Ty): Ty? {
+  if checker_self.user_op(left, opname) {
+    right = checker_self.check_call_arg(r)
+    arg_tys: Array(Ty) = []
+    arg_tys.push(right)
+    none: Ty? = nil
+    rs: Array(Expr) = [r]
+    if sig = checker_self.match_method(left.name, opname, arg_tys, none, expr.loc, left.name, left.mod_name, checker_self.int_literal_flags(rs)) {
+      // A literal operand takes the parameter's type (`v + 2` with an
+      // Int32 parameter), as a method's literal argument does.
+      got = checker_self.fit_call_arg(r, right, sig.params[0])
+      if !ty_assignable(got, sig.params[0]) {
+        checker_self.fail(r.loc, "${left.show()}.${opname} takes ${sig.params[0].show()}, got ${got.show()}")
+      }
+      expr.resolved = sig.node.emit_name
+      return sig.ret
+    }
+    return checker_self.t_int()
+  }
+  if !checker_self.eq_is_compare(op) {
+    return nil
+  }
+  right = checker_self.check_expr(r)
+  if checker_self.has_err() {
+    return checker_self.t_bool()
+  }
+  if !right.same_as(left) {
+    checker_self.fail_hint(expr.loc, "cannot compare ${left.show()} with ${right.show()}: ${opname} compares two values of one type", checker_self.open_hint(r, right))
+    return checker_self.t_bool()
+  }
+  if op == tk_eq_eq() || op == tk_not_eq() {
+    if !checker_self.user_op(left, "==") {
+      if left.is_class() {
+        // Identity: the lowering compares the references.
+        return checker_self.t_bool()
+      }
+      seen: Array(String) = []
+      missing = checker_self.eq_missing(left, seen)
+      if missing.size > 0 {
+        checker_self.fail(expr.loc, checker_self.eq_refusal(left, missing))
+        return checker_self.t_bool()
+      }
+      checker_self.derive_eq_method(left, expr.loc)
+    }
+    if checker_self.resolve_compare(expr, left, right, "==") {
+      if op == tk_not_eq() {
+        expr.op_form = op_not()
+      }
+    }
+    return checker_self.t_bool()
+  }
+  if !checker_self.user_op(left, "<") {
+    checker_self.fail(expr.loc, "${left.show()} has no order: define fn < on it (>, <= and >= derive from <)")
+    return checker_self.t_bool()
+  }
+  if checker_self.resolve_compare(expr, left, right, "<") {
+    if op == tk_greater() {
+      expr.op_form = op_swap()
+    } else if op == tk_less_eq() {
+      expr.op_form = op_swap() + op_not()
+    } else if op == tk_greater_eq() {
+      expr.op_form = op_not()
+    }
+  }
+  checker_self.t_bool()
+}
+
+// expr's comparison as the method name of left's type, taking right;
+// false when no such method fits (match_method said why).
+pub fn (checker_self: Checker) resolve_compare(expr: Expr, left: Ty, right: Ty, name: String): Bool {
+  arg_tys: Array(Ty) = []
+  arg_tys.push(right)
+  none: Ty? = nil
+  if sig = checker_self.match_method(left.name, name, arg_tys, none, expr.loc, left.name, left.mod_name, checker_self.no_int_literals()) {
+    if !sig.ret.is_bool() {
+      checker_self.fail(expr.loc, "${left.show()}.${name} returns ${sig.ret.show()}; a comparison derived from it needs Bool")
+      return false
+    }
+    expr.resolved = sig.node.emit_name
+    return true
+  }
+  false
+}
+
+// sort, sorted, min and max of an array whose element type defines <
+//: the element's order is its <. sort
+// and sorted become their block form `{ |a, b| a < b }` (expr.block set,
+// nil returned, the caller goes on with the block); min and max become
+// the call of __avant_min or __avant_max for the element type. nil when
+// the element type defines no < (the builtin order applies).
+pub fn (checker_self: Checker) user_order_call(expr: Expr, array: Ty): Ty? {
+  name = expr.callee
+  if !(name == "sort" || name == "sorted" || name == "min" || name == "max") || expr.args.size != 0 {
+    return nil
+  }
+  if _ = expr.block {
+    return nil
+  }
+  if e = array.inner, e.is_agg() && checker_self.user_op(e, "<") {
+    if name == "sort" || name == "sorted" {
+      blk = Block.new(expr.loc)
+      blk.params.push("__avant_a")
+      blk.params.push("__avant_b")
+      a = Expr.new(ex_name(), expr.loc)
+      a.ident = "__avant_a"
+      b = Expr.new(ex_name(), expr.loc)
+      b.ident = "__avant_b"
+      lt = Expr.new(ex_binary(), expr.loc)
+      lt.op = tk_less()
+      lt.left = a
+      lt.right = b
+      blk.body.push(stmt_expr(expr.loc, lt))
+      expr.block = blk
+      return nil
+    }
+    if recv = expr.receiver, sig = checker_self.eq_template("__avant_${name}") {
+      subst: Array(Ty) = []
+      subst.push(e)
+      if inst = checker_self.instantiate_function(sig, subst, expr.loc) {
+        args: Array(Expr) = []
+        args.push(recv)
+        expr.args = args
+        expr.receiver = nil
+        expr.callee = "__avant_${name}"
+        expr.resolved = inst.node.emit_name
+        expr.method_call = false
+      }
+    }
+    return ty_nilable(e)
+  }
+  nil
+}
+
+// `xs.contains(v)` and `xs.index_of(v)` (expr, its argument checked)
+// with elements of type e: they compare by the element's ==, and refuse
+// what == refuses. An element the runtime searches as == compares it (an
+// integer, a Float64 by IEEE, a Bool, a String by bytes, a class without
+// fn == by identity) keeps the runtime's search; any other becomes the
+// call of a loop through ==, the value first as in the runtime's form
+// (__avant_contains, __avant_index_of).
+pub fn (checker_self: Checker) search_by_eq(expr: Expr, e: Ty) {
+  if e.is_integer() || e.is_float() || e.is_bool() || e.is_string() {
+    return
+  }
+  if e.is_class() && !checker_self.user_op(e, "==") {
+    return
+  }
+  seen: Array(String) = []
+  missing = checker_self.eq_missing(e, seen)
+  if missing.size > 0 || (e.is_union() && !e.is_nilable()) {
+    checker_self.fail(expr.loc, "${expr.callee} compares the elements with ==: ${checker_self.eq_refusal(e, missing)}")
+    return
+  }
+  if e.is_struct() {
+    checker_self.derive_eq_method(e, expr.loc)
+  }
+  name = "__avant_${expr.callee}"
+  if recv = expr.receiver, sig = checker_self.eq_template(name) {
+    subst: Array(Ty) = []
+    subst.push(e)
+    if inst = checker_self.instantiate_function(sig, subst, expr.loc) {
+      args: Array(Expr) = []
+      args.push(expr.args[0])
+      args.push(recv)
+      expr.args = args
+      expr.receiver = nil
+      expr.callee = name
+      expr.resolved = inst.node.emit_name
+      expr.method_call = false
+    }
+  }
+}
+
+// Whether the elements of an array of type array order by a user <.
+pub fn (checker_self: Checker) user_ordered(array: Ty): Bool {
+  if e = array.inner, e.is_agg() {
+    return checker_self.user_op(e, "<")
+  }
+  false
+}

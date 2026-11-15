@@ -15,7 +15,7 @@
 #    the phase (idle RSS before it). Avant also reports allocation
 #    bytes per request from AVANT_GC_STATS.
 #
-# 2. With METHOD=A|A8|B|C|Q9:
+# 2. With METHOD=A|A8|B|C|B1:
 #      METHOD=B run.sh [row ...|all]      (all: every row that built)
 #    HTTP only, HTTP_BENCH_RUNS (3) rounds; in each round every row
 #    gets a fresh server process, one unmeasured warm-up load
@@ -37,7 +37,7 @@
 #          server cores' siblings 8-11 idle; the CPU lists are for a
 #          machine whose siblings are k and k+8:
 #          HTTP_BENCH_SERVER_CPUS, HTTP_BENCH_WRK_CPUS)
-#      Q9  wrk --latency -d 5 -c 900 -t 8 --timeout 8 URL
+#      B1  wrk --latency -d 5 -c 900 -t 8 --timeout 8 URL
 #          B without pipelining (depth 1 at 900 connections)
 #    HTTP_BENCH_DURATION overrides the seconds of the measured load;
 #    HTTP_BENCH_THREADS forces a server thread count under any method
@@ -99,8 +99,8 @@ BUILD=${HTTP_BENCH_BUILD:-${TMPDIR:-/tmp}/http-ws-bench-build}
 # clones): AVANT_WORKBENCH when set, else the directory of the main
 # checkout, which git names for a worktree too (a wave's worktree under
 # /home/coghi/avant-scratch/WAVE/side/avant shares the main checkout's
-# .git), else the checkout's parent (Stage 29 W-FIX1f, O598: the
-# checkout's parent alone was wrong in a worktree).
+# .git), else the checkout's parent (the checkout's parent alone was wrong
+# in a worktree).
 workbench() {
   if [ -n "${AVANT_WORKBENCH:-}" ]; then
     printf '%s\n' "$AVANT_WORKBENCH"
@@ -174,8 +174,8 @@ build_h2o() {
 
 # build_row ROW: builds that row's servers (its HTTP server, and its
 # WebSocket server where it has one) when they are older than their
-# sources. Only the rows a command names are built (Stage 29 W-FIX1f,
-# O598: every row was built first, so one Avant row needed every
+# sources. Only the rows a command names are built (every row used to be
+# built first, so one Avant row needed every
 # toolchain); `all` and `run.sh build` build every row.
 build_row() {
   case "$1" in
@@ -410,7 +410,7 @@ wrk_line() {
     A) printf '%s' "-t4 -c64 -d${1}s --latency $URL" ;;
     A8) printf '%s' "-t8 -c256 -d${1}s --latency $URL" ;;
     B | C) printf '%s' "--latency -d $1 -c 900 -t 8 --timeout 8 $URL -s $HERE/pipe.lua -- 16" ;;
-    Q9) printf '%s' "--latency -d $1 -c 900 -t 8 --timeout 8 $URL" ;;
+    B1) printf '%s' "--latency -d $1 -c 900 -t 8 --timeout 8 $URL" ;;
   esac
 }
 
@@ -525,7 +525,7 @@ method_mode() {
   case "$METHOD" in
     A | A8)
       DUR=${HTTP_BENCH_DURATION:-10} ;;
-    B | Q9)
+    B | B1)
       DUR=${HTTP_BENCH_DURATION:-5} ;;
     C)
       DUR=${HTTP_BENCH_DURATION:-5}
@@ -533,7 +533,7 @@ method_mode() {
       SERVER_CPUS=${HTTP_BENCH_SERVER_CPUS:-0-3}
       WRK_PIN="taskset -c ${HTTP_BENCH_WRK_CPUS:-4-7,12-15}" ;;
     *)
-      say "unknown METHOD: $METHOD (A, A8, B, C, Q9)"
+      say "unknown METHOD: $METHOD (A, A8, B, C, B1)"
       exit 2 ;;
   esac
   RUNS=${HTTP_BENCH_RUNS:-3}
@@ -633,13 +633,13 @@ syscalls_mode() {
   SERVER_CPUS=
   WRK_PIN=
   case "$METHOD" in
-    A | A8 | B | Q9) ;;
+    A | A8 | B | B1) ;;
     C)
       THREADS=${HTTP_BENCH_THREADS:-4}
       SERVER_CPUS=${HTTP_BENCH_SERVER_CPUS:-0-3}
       WRK_PIN="taskset -c ${HTTP_BENCH_WRK_CPUS:-4-7,12-15}" ;;
     *)
-      say "syscalls needs METHOD=A, A8, B, C or Q9"
+      say "syscalls needs METHOD=A, A8, B, C or B1"
       exit 2 ;;
   esac
   DUR=${HTTP_BENCH_DURATION:-3}

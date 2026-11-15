@@ -1,28 +1,35 @@
-// std.sync: what tasks share (Stage 29 W8Ca; D35, D299, D300, D355).
+// std.sync: what tasks share.
 //
 //   Channel(T)   passes values from task to task. Channel(T).new is a
 //                rendezvous channel (a send waits for its receive);
 //                Channel(T).new(n) holds up to n values. send(value)
 //                sends, recv returns T? (nil once the channel is closed
 //                and empty, so `while v = ch.recv { ... }` drains it),
-//                close closes it: a send waiting on a closed rendezvous
-//                channel returns.
+//                close closes it. send returns whether the value went
+//                into the channel: on a closed channel it returns false
+//                at once, buffered or not, full or not, and a send
+//                waiting for room or for its receiver returns false when
+//                the channel closes. The values sent before
+//                the close stay for the receivers to drain.
 //   Mutex(T)     guards one value. `m.with { |x| ... }` holds the lock
 //                for the block, x naming the guarded value; the form is
 //                the compiler's (checker.av check_mutex_with, the
 //                lowering in mir/lower_task.av), on this class's two
-//                fields, and its rules (what may leave the block, O231
-//                and O541) are checker/guard.av's.
+//                fields, and its rules (what may leave the block, as
+//                its value or by a statement) are checker/guard.av's.
 //
 // Both stand on the runtime's gates (runtime/avant_task.c): a gate is a
-// number held in the object; the runtime keeps state for it only while a
-// thread locks or waits on it, so nothing is allocated per object and
-// nothing needs freeing (O532). The gate builtins (avant_gate_new, lock,
-// unlock, wait, broadcast) are names of `std` modules only (O436).
+// word in the object's `gate` field, which the gate builtins take (the
+// compiler passes the field's address); an uncontended lock and unlock
+// are one atomic operation each on that word, and the runtime keeps
+// state for a gate only while a thread waits on it, so nothing is
+// allocated per object and nothing needs freeing. The gate builtins
+// (avant_gate_new, lock, unlock, wait, broadcast) are names of `std`
+// modules only.
 //
-// T is any type (O232): the slots are T?, so a class or another Channel
-// or Mutex is an element like an Int. What a send may carry is D35's
-// rule for what crosses a task (checker/guard.av check_send).
+// T is any type: the slots are T?, so a class or another Channel or
+// Mutex is an element like an Int. What a send may carry is the rule
+// for what crosses a task (checker/guard.av check_send).
 
 pub class Channel(T) {
   slots: Array(T?)
@@ -31,6 +38,10 @@ pub class Channel(T) {
   head: Int
   closed: Bool
   has: Bool
+  // A rendezvous channel's sends that put a value into cell, and its
+  // receives that took one: a sender waits until its own value is taken.
+  sent: Int
+  taken: Int
   gate: UInt64
   cell: T?
 
@@ -40,27 +51,44 @@ pub class Channel(T) {
     self.slots = Array(T?).new(n)
   }
 
-  pub fn send(value: T) {
+  pub fn send(value: T): Bool {
     avant_gate_lock(gate)
+    ok = false
     if cap == 0 {
-      while has {
-        avant_gate_wait(gate)
-      }
-      self.cell = value
-      self.has = true
-      avant_gate_broadcast(gate)
       while has && !closed {
         avant_gate_wait(gate)
       }
+      if !closed {
+        self.cell = value
+        self.has = true
+        self.sent = sent + 1
+        mine = sent
+        avant_gate_broadcast(gate)
+        while taken < mine && !closed {
+          avant_gate_wait(gate)
+        }
+        if taken >= mine {
+          ok = true
+        } else {
+          // Closed before a receiver took it: the value goes back.
+          self.cell = nil
+          self.has = false
+          avant_gate_broadcast(gate)
+        }
+      }
     } else {
-      while count == cap {
+      while count == cap && !closed {
         avant_gate_wait(gate)
       }
-      slots[(head + count) % cap] = value
-      self.count = count + 1
-      avant_gate_broadcast(gate)
+      if !closed {
+        slots[(head + count) % cap] = value
+        self.count = count + 1
+        avant_gate_broadcast(gate)
+        ok = true
+      }
     }
     avant_gate_unlock(gate)
+    ok
   }
 
   pub fn recv: T? {
@@ -74,6 +102,7 @@ pub class Channel(T) {
         got = cell
         self.cell = nil
         self.has = false
+        self.taken = taken + 1
         avant_gate_broadcast(gate)
       }
     } else {
@@ -103,9 +132,79 @@ pub class Channel(T) {
 pub class Mutex(T) {
   cell: T
   gate: UInt64
+  // The function that rebuilds the value of a poisoned mutex
+  // (`recover:`), or nil: read only when a lock finds the poison. Held
+  // in an object of its own, so a mutex without one carries one word.
+  heal: MutexHeal(T)? = nil
 
-  fn initialize(value: T) {
+  fn initialize(value: T, recover: (fn(): T)? = nil) {
     self.cell = value
     self.gate = avant_gate_new()
+    if f = recover {
+      self.heal = MutexHeal(T).new(f)
+    }
   }
+
+  // Whether a task trapped while it held this mutex in `with`: its value
+  // may be half-changed, so `with` on it traps and `try_with` gives a
+  // MutexError, unless the mutex has a recover function.
+  pub fn poisoned: Bool {
+    avant_gate_poisoned(gate)
+  }
+
+  // Replaces the value and clears the poison, under the lock.
+  pub fn recover(value: T) {
+    avant_gate_lock(gate)
+    self.cell = value
+    avant_gate_clear_poison(gate)
+    avant_gate_unlock(gate)
+  }
+
+  // Clears the poison, keeping the value as the trapped task left it.
+  pub fn clear_poison {
+    avant_gate_lock(gate)
+    avant_gate_clear_poison(gate)
+    avant_gate_unlock(gate)
+  }
+
+  // A `with` or `try_with` that finds the mutex poisoned calls this under
+  // the lock (the lowering, mir/lower_task.av): with a recover function
+  // the value is rebuilt and the poison cleared, and the block runs;
+  // without one it returns false, and the lock traps or gives the error.
+  // A trap inside the recover function leaves the mutex poisoned.
+  pub fn __avant_heal: Bool {
+    if h = heal {
+      self.cell = h.rebuild()
+      avant_gate_clear_poison(gate)
+      return true
+    }
+    false
+  }
+}
+
+// A Mutex's recover function.
+class MutexHeal(T) {
+  f: fn(): T
+
+  fn initialize(f: fn(): T) {
+    self.f = f
+  }
+
+  fn rebuild: T {
+    g = f
+    g()
+  }
+}
+
+// What `m.try_with { }` gives on a poisoned mutex without a recover
+// function.
+pub class MutexError: Error {
+  pub fn message: String {
+    "the mutex is poisoned: a task trapped while it held it, so its value may be half-changed"
+  }
+}
+
+// The value `try_with` gives on a poisoned mutex (the lowering calls it).
+pub fn __avant_mutex_poisoned: MutexError {
+  MutexError.new()
 }

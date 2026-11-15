@@ -1,11 +1,11 @@
-// Calls into C with every conversion the language has (Stage 28 W8a,
-// stages/stage28/mir.md W8a): Int, UInt64, Float64, and Bool in
-// and out (Bool with `zeroext`, section 14 8.5), String and Bytes in, a
-// C string out, opaque `Ptr(Void)` values round-tripped, `Ptr(Void)`
-// fields in a class and in a struct (never traced, 2.3), an array of
-// them and a `Ptr(Void)?`, and arguments
-// that are heap values passed while the heap churns. Built with
-// `--cc tests/fixtures/ffi/ffi.c`; both back ends print the same.
+// Calls into C with every conversion the language has: Int,
+// UInt64, Float64, and Bool in and out (Bool with
+// `zeroext`), String and Bytes in, a C string out, opaque
+// `Ptr(Void)` values round-tripped, `Ptr(Void)` fields in a
+// class and in a struct (never traced), an array of them
+// and a `Ptr(Void)?`, and arguments that are heap values
+// passed while the heap churns. Built with `--cc
+// tests/fixtures/ffi/ffi.c`; both back ends print the same.
 
 lib ffi {
   fun ffi_add_i32(a: Int32, b: Int32): Int32
@@ -44,7 +44,7 @@ struct Pair {
 
 fn pick(p: Ptr(Void)?): Int {
   if q = p {
-    return ffi.ffi_cell_get(q).to_i
+    return ffi.ffi_cell_get(q).to_i()
   }
   -1
 }
@@ -94,7 +94,7 @@ fn main {
   cs = ffi.ffi_static_str()
   puts(cs)
   data = "ABC".bytes
-  puts(ffi.ffi_bytes_sum(data, data.size.to_i32))
+  puts(ffi.ffi_bytes_sum(data, data.size.to_i32()))
   puts(ffi.ffi_str_at(word, 6))
 
   // Heap arguments built right before the call, many times over, while
@@ -102,7 +102,7 @@ fn main {
   sum = 0
   i = 0
   while i < 3000 {
-    sum = sum + ffi.ffi_strlen("n=${i}" + "-tail").to_i
+    sum = sum + ffi.ffi_strlen("n=${i}" + "-tail").to_i()
     i = i + 1
   }
   puts(sum)
@@ -126,7 +126,7 @@ fn main {
     k = k + 1
   }
   puts(churn(20000))
-  puts(ffi.ffi_cell_get(holders[49].cell).to_i + holders[49].n)
+  puts(ffi.ffi_cell_get(holders[49].cell).to_i() + holders[49].n)
   puts(holders[7].name)
   cells: Array(Ptr(Void)) = []
   cells.push(p)

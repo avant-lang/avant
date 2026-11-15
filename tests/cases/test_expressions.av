@@ -1,0 +1,211 @@
+import harness
+import backends
+
+// Expressions: how tightly the operators bind (the bitwise operators
+// above the comparisons); the type an expression of literals takes from
+// its context; a Bool as a number; the final if/else of a lambda whose
+// result type is inferred; a statement with no effect; `[]` as an
+// argument. Each program is compiled in parallel; a refused
+// one must leave no binary, say the expected words and point at the
+// expected line and column; an accepted one must print what it should.
+
+class ECase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): ECase {
+  f = ECase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): ECase {
+  f = ECase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+// `&`, `^` and `|` bind tighter than `==`, `!=`, `<`, `<=`, `>` and
+// `>=`, and looser than the shifts and the arithmetic, keeping their own
+// order (`&` before `^` before `|`).
+fn precedence_cases: Array(ECase) {
+  xs: Array(ECase) = []
+  xs.push(accepted("prec-and-eq", "fn main {\n  x = 6\n  puts(x & 1 == 0)\n  puts(x & 2 != 0)\n  puts(x & 1 == 0 && x > 5)\n}\n", "true\ntrue\ntrue\n"))
+  xs.push(accepted("prec-or-xor", "fn main {\n  x = 6\n  puts(x | 1 == 7)\n  puts(x ^ 3 == 5)\n  puts(7 == x | 1)\n  puts(1 | 2 < 4)\n  puts(x ^ 6 >= 1)\n}\n", "true\ntrue\ntrue\ntrue\nfalse\n"))
+  xs.push(accepted("prec-bitwise-order", "fn main {\n  puts(1 | 6 & 3)\n  puts(5 ^ 1 | 8)\n  puts(12 & 10 ^ 6)\n  puts(1 << 2 & 4)\n  puts(3 + 4 & 6)\n  puts(2 * 3 | 1)\n}\n", "3\n12\n14\n4\n6\n7\n"))
+  xs.push(accepted("prec-sized", "fn main {\n  m: UInt32 = 0xF0\n  b: UInt64 = 255\n  puts(m & 0x10 == 0x10)\n  puts(b >> 4 & 1 != 0)\n  n: Int32 = 9\n  puts(n % 2 & 1 == 1)\n}\n", "true\ntrue\ntrue\n"))
+  xs.push(accepted("prec-parens-kept", "fn main {\n  x = 6\n  puts((x & 1) == 0)\n  puts(x & (1 | 2))\n  puts(x == 6 & 1)\n}\n", "true\n2\nfalse\n"))
+  xs.push(refused("prec-bool-operand", "fn main {\n  x = 6\n  puts(x & 1 == true)\n}\n", "cannot compare Int with Bool: == compares two values of one type", "3:14"))
+  xs
+}
+
+// An expression made only of literals takes the integer type its context
+// gives, on either side of an operator, as one literal does: the other
+// operand, a declared type, an element, a parameter (of a generic
+// function or method, an operator method and a type-level function too).
+fn adoption_cases: Array(ECase) {
+  xs: Array(ECase) = []
+  xs.push(accepted("adopt-left-expr", "fn main {\n  y: Int32 = 5\n  puts((2 - 1) + y)\n  puts(y + (2 - 1))\n  x: Int32 = 7\n  puts((-2147483647 - 1) &- x)\n  u: UInt64 = 3\n  puts((1 << 63) | u)\n  f = 1.5\n  puts((1 + 1) * f)\n}\n", "6\n6\n2147483641\n9223372036854775811\n3.0\n"))
+  xs.push(accepted("adopt-declared-expr", "fn main {\n  x: Int32 = (2 - 1) * 3\n  u: UInt64 = ~0\n  xs: Array(UInt64) = [0]\n  xs[0] = ~0 >> 1\n  g: Float64 = 2 * 3\n  puts(x)\n  puts(u)\n  puts(xs[0])\n  puts(g)\n}\n", "3\n18446744073709551615\n9223372036854775807\n6.0\n"))
+  xs.push(accepted("adopt-argument-expr", "fn f(n: Int32): Int32 {\n  n + 1\n}\nfn wide(n: UInt64): UInt64 {\n  n\n}\nfn main {\n  puts(f(2 - 1))\n  puts(f(-(3)))\n  puts(wide(~0))\n  puts(wide(18446744073709551615))\n}\n", "2\n-2\n18446744073709551615\n18446744073709551615\n"))
+  xs.push(accepted("adopt-generic", "fn pick(n: Int32, x: T): T {\n  puts(n)\n  x\n}\nclass K {\n  fn put(n: Int32, x: T): T {\n    puts(n)\n    x\n  }\n}\nfn main {\n  puts(pick(3, \"s\"))\n  k = K.new()\n  puts(k.put(4, \"t\"))\n  puts(k.put(2 + 3, 1))\n}\n", "3\ns\n4\nt\n5\n1\n"))
+  xs.push(accepted("adopt-operator-method", "struct V {\n  n: Int32\n  fn +(k: Int32): V {\n    V { n: n + k }\n  }\n  fn *(k: UInt64): UInt64 {\n    k / 2\n  }\n}\nfn main {\n  v = V { n: 1 }\n  w = v + 2\n  puts(w.n)\n  puts(v * 18446744073709551615)\n}\n", "3\n9223372036854775807\n"))
+  xs.push(accepted("adopt-type-function", "struct P {\n  n: Int32\n  fn self.make(n: Int32): P {\n    P { n: n }\n  }\n}\nfn main {\n  p = P.make(7)\n  q = P.make(1 + 1)\n  puts(p.n + q.n)\n}\n", "9\n"))
+  xs.push(refused("adopt-still-fits", "fn main {\n  x: Int32 = 0\n  puts((4294967296 - 1) + x)\n}\n", "integer literal does not fit in Int32", "3:9"))
+  xs.push(refused("adopt-wide-to-int", "fn f(n: Int): Int {\n  n\n}\nfn main {\n  puts(f(18446744073709551615))\n}\n", "integer literal does not fit in Int; use 18446744073709551615u64", "5:10"))
+  xs.push(refused("adopt-not-a-literal", "fn main {\n  y: Int32 = 5\n  n = 1\n  puts((n - 1) + y)\n}\n", "binary operator expects matching types, got Int and Int32", "4:16"))
+  xs
+}
+
+// A Bool as a number: `to_i`, `to_i32`, `to_u32` and `to_u64` give 1 for
+// true and 0 for false, so a count needs no branch.
+fn bool_cases: Array(ECase) {
+  xs: Array(ECase) = []
+  xs.push(accepted("bool-count", "fn main {\n  alive = [true, false, true]\n  n = 0\n  m: Int32 = 0\n  for a in alive {\n    n += a.to_i()\n    m += a.to_i32()\n  }\n  puts(n)\n  puts(m)\n  puts(true.to_u64())\n  puts(false.to_u32())\n  puts(\"\${(1 > 0).to_i()}\")\n  u: UInt32 = (2 > 3).to_u32() + 7\n  puts(u)\n}\n", "2\n2\n1\n0\n1\n7\n"))
+  xs.push(refused("bool-no-float", "fn main {\n  b = true\n  puts(b.to_f)\n}\n", "cannot read field to_f on Bool", "3:9"))
+  xs.push(refused("bool-no-wrap", "fn main {\n  b = true\n  puts(b.wrap_i())\n}\n", "cannot call wrap_i on Bool", "3:9"))
+  xs
+}
+
+// `b.to_i` is the Bool zero-extended: no branch in the function.
+fn check_bool_ll(c: Checks, compiler: String, dir: String) {
+  src = "${dir}/ex-bool-ll.av"
+  _ = file_write(src, "fn count(a: Bool): Int {\n  a.to_i()\n}\nfn main {\n  puts(count(argv().size > 0))\n}\n")
+  c.eq_int(emit_ll(compiler, src, "${dir}/ex-bool-ll.ll", "${dir}/ex-bool-ll.log"), 0, "bool ll: emits")
+  ll = log_text("${dir}/ex-bool-ll.ll")
+  body = ""
+  parts = ll.split("/count\"(i1")
+  if parts.size >= 2 {
+    body = parts[1].split("\n}\n")[0]
+  }
+  c.expect(str_has(body, " = zext i1 "), "bool ll: count zero-extends")
+  c.expect(!str_has(body, "br i1"), "bool ll: count has no branch")
+}
+
+// A lambda whose result type is inferred reads a final if/else whose
+// branches end in values as its value, as a function with a declared
+// result does; branches that give nothing keep it a statement.
+fn lambda_if_cases: Array(ECase) {
+  ap = "fn apply(x: Int, f: fn(Int): U): U {\n  f(x)\n}\nfn apply_s(s: String, f: fn(String): U): U {\n  f(s)\n}\n"
+  xs: Array(ECase) = []
+  xs.push(accepted("lambda-if-value", "${ap}fn main {\n  puts(apply(2) { |x| if x > 1 { x * 10 } else { 0 } })\n  puts(apply_s(\"7\") { |s| if n = s.to_i() { n } else { -1 } })\n  puts(apply_s(\"q\") { |s| if n = s.to_i() { n } else { -1 } })\n  puts(apply(2) { |x| if x > 2 { \"c\" } else if x > 1 { \"b\" } else { \"a\" } })\n}\n", "20\n7\n-1\nb\n"))
+  xs.push(accepted("lambda-if-statement", "${ap}fn main {\n  apply(1) { |x| if x > 0 { puts(\"pos\") } else { puts(\"neg\") } }\n  apply(2) { |x|\n    if x > 0 {\n      puts(x)\n    }\n  }\n}\n", "pos\n2\n"))
+  xs.push(accepted("lambda-if-leaves", "${ap}fn main {\n  for v in [5, 2] {\n    puts(apply(v) { |x|\n      if x > 3 {\n        return 9\n      } else {\n        x\n      }\n    })\n  }\n}\n", "9\n2\n"))
+  xs.push(refused("lambda-if-mixed", "${ap}fn main {\n  puts(apply(1) { |x| if x > 0 { x } else { puts(x) } })\n}\n", "an if used as a value needs a value at the end of each branch", "8:23"))
+  xs.push(refused("lambda-if-types", "${ap}fn main {\n  puts(apply(1) { |x| if x > 0 { x } else { \"no\" } })\n}\n", "if branches have different types Int and String", "8:23"))
+  xs
+}
+
+// A statement with no effect (a literal, a name, a field read, an
+// operator over such operands, a literal array, struct or lambda; nothing
+// that calls) is an error wherever it stands; at the end of a function
+// with no result type the message names the missing result.
+fn effect_cases: Array(ECase) {
+  xs: Array(ECase) = []
+  xs.push(refused("effect-middle", "fn main {\n  x = 1\n  x + 1\n  puts(x)\n}\n", "this line computes a value and drops it", "3:3"))
+  xs.push(refused("effect-name", "fn main {\n  x = 1\n  puts(x)\n  x\n  puts(2)\n}\n", "this line computes a value and drops it", "4:3"))
+  xs.push(refused("effect-main-tail", "fn main {\n  x = 1\n  puts(x)\n  x\n}\n", "this line computes an Int and drops it: main has no result type; to return it, declare fn main: Int", "4:3"))
+  xs.push(refused("effect-main-bool", "fn main {\n  x = argv().size\n  x > 0\n}\n", "this line computes a value and drops it; use it, or remove the line", "3:3"))
+  xs.push(refused("effect-literal", "fn main {\n  \"done\"\n  puts(1)\n}\n", "this line computes a value and drops it", "2:3"))
+  xs.push(refused("effect-tail", "fn two {\n  2\n}\nfn main {\n  two()\n}\n", "this line computes an Int and drops it: two has no result type; to return it, declare fn two: Int", "2:3"))
+  xs.push(refused("effect-method-tail", "class C {\n  pub n: Int = 1\n  fn get {\n    n * 2\n  }\n}\nfn main {\n  C.new().get()\n}\n", "this line computes an Int and drops it: get has no result type; to return it, declare fn get: Int", "4:5"))
+  xs.push(refused("effect-field", "struct P {\n  x: Int\n}\nfn main {\n  p = P { x: 1 }\n  p.x\n  puts(p.x)\n}\n", "this line computes a value and drops it", "6:3"))
+  xs.push(refused("effect-branch", "fn main {\n  x = argv().size\n  if x > 0 {\n    x == 1\n  }\n}\n", "this line computes a value and drops it", "4:5"))
+  xs.push(refused("effect-fn-name", "fn cleanup {\n  puts(1)\n}\nfn main {\n  cleanup\n}\n", "cleanup alone is the function as a value; to call it, write cleanup()", "5:3"))
+  xs.push(refused("effect-void-lambda", "fn main {\n  f: fn(Int): Void = { |n| n + 1 }\n  f(1)\n}\n", "this line computes a value and drops it", "2:28"))
+  xs.push(refused("effect-bind-void", "fn two {\n  puts(2)\n}\nfn main {\n  x = two()\n  puts(x)\n}\n", "cannot bind a Void value: two has no result type", "5:5"))
+  xs.push(accepted("effect-kept", "fn three: Int {\n  3\n}\nfn main {\n  x = 1\n  _ = x + 1\n  xs = [1, 2]\n  xs.pop()\n  x.abs()\n  puts(three())\n  puts(xs.size)\n}\n", "3\n1\n"))
+  xs
+}
+
+// `[]` as an argument takes its parameter's type: a function's, a
+// method's, an initialize's or a type-level function's.
+fn empty_array_cases: Array(ECase) {
+  xs: Array(ECase) = []
+  xs.push(accepted("empty-arg", "class Node {\n  pub kids: Array(Node)\n  fn initialize(kids: Array(Node)) {\n    self.kids = kids\n  }\n  fn add(more: Array(Int)): Int {\n    more.size\n  }\n  fn self.leaf(tags: Array(String)): Node {\n    Node.new([])\n  }\n}\nfn count(xs: Array(Int)): Int {\n  xs.size\n}\nfn main {\n  n = Node.new([])\n  puts(n.kids.size)\n  puts(count([]))\n  puts(n.add([]))\n  puts(Node.leaf([]).kids.size)\n  puts(Node.new([n]).kids.size)\n}\n", "0\n0\n0\n0\n1\n"))
+  xs.push(refused("empty-arg-generic", "fn first(xs: Array(T)): Int {\n  xs.size\n}\nfn main {\n  puts(first([]))\n}\n", "cannot infer type argument", "5:8"))
+  xs.push(refused("empty-arg-not-array", "fn count(n: Int): Int {\n  n\n}\nfn main {\n  puts(count([]))\n}\n", "empty array needs a type", "5:14"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(ECase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/ex-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/ex-${f.tag}.bin", "${dir}/ex-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "ex-${f2.tag}.bin", "ex-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/ex-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/ex-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/ex-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "ex-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_expressions.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    dir = scratch_dir()
+    all: Array(ECase) = []
+    for x in precedence_cases() {
+      all.push(x)
+    }
+    for x in adoption_cases() {
+      all.push(x)
+    }
+    for x in bool_cases() {
+      all.push(x)
+    }
+    for x in lambda_if_cases() {
+      all.push(x)
+    }
+    for x in effect_cases() {
+      all.push(x)
+    }
+    for x in empty_array_cases() {
+      all.push(x)
+    }
+    run_cases(c, compiler, dir, all)
+    check_bool_ll(c, compiler, dir)
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

@@ -1,7 +1,7 @@
 import harness
 import backends
 
-// std.gc (Stage 29 W1c2, D305): `gc.hold { }` and `gc.collect()`,
+// std.gc: `gc.hold { }` and `gc.collect()`,
 // through heap/gc_hold.av (its comment lists the cases).
 //
 // Every case together prints the known stdout, nothing on stderr and
@@ -11,8 +11,9 @@ import backends
 // the same numbers):
 //   - a hold defers the collections its allocations make due to its end:
 //     64 MiB of garbage in a hold makes one young collection, with no
-//     hold more than one; ten gc.collect() in a hold make one, without
-//     a hold ten; nested holds are one hold (one);
+//     hold more than one; ten gc.collect() in a hold make one collection
+//     (a complete one: young or full as the collector finds), without a
+//     hold ten; nested holds are one hold (one);
 //   - a hold ends on every way out: after a hold left by return, break,
 //     continue or `?`, the same 64 MiB makes more than one;
 //   - another thread still collects while the main thread holds (the
@@ -25,11 +26,11 @@ import backends
 //     AVANT_HEAP_MAX_MB=16 stops with "heap limit in a no-GC region (",
 //     and the same allocation with no hold runs under that limit.
 //
-// heap/pin_tail.av: a `pin(x) { }` or `gc.hold { }` block at a
-// function's tail whose body returns ends the function (the checker's
-// fallthrough rule, W1c2; the `pin` form was "missing return value"),
-// with the pin released on that return, plainly and under each
-// environment above.
+// heap/pin_tail.av: a `pin(x) { }` or `gc.hold { }` block
+// at a function's tail whose body returns ends the
+// function (the checker's fallthrough rule; the `pin` form
+// was "missing return value"), with the pin released on
+// that return, plainly and under each environment above.
 
 fn hold_all_out: String {
   "garbage 99000000\nplain 99000000\ncollect 495000\ncollects 495000\nnested 99049500\nreturn 49503 99000000\nbreak 148500 99000000\ncontinue 148500 99000000\ntry -1 99000000\nlive 149850000 24750000 149850000\nthread 99000000\n"
@@ -95,12 +96,20 @@ fn test_gc_hints(c: Checks, compiler: String, root: String, dir: String) {
     r = runs[envs.size + e]
     stats = log_text("${dir}/gc_hold.s${e}.err")
     c.eq_int(r.code, 0, "gc_hold.av ${cases[e]}: exit 0")
-    if ones[e] {
-      c.expect(young_one(stats), "gc_hold.av ${cases[e]}: one young collection (young=1)")
+    if cases[e] == "collect" {
+      // `gc.collect()` is a complete collection, a young one or a full
+      // one as the collector finds: what is counted is how many ran.
+      c.expect(str_has(stats, "avant gc: collections=1 "), "gc_hold.av collect: ten gc.collect() in a hold make one collection, at its end")
+    } else if cases[e] == "collects" {
+      c.expect(str_has(stats, "avant gc: collections=10 "), "gc_hold.av collects: ten gc.collect() with no hold make ten collections")
     } else {
-      c.expect(young_many(stats), "gc_hold.av ${cases[e]}: more than one young collection")
+      if ones[e] {
+        c.expect(young_one(stats), "gc_hold.av ${cases[e]}: one young collection (young=1)")
+      } else {
+        c.expect(young_many(stats), "gc_hold.av ${cases[e]}: more than one young collection")
+      }
+      c.expect(str_has(stats, " full=0 "), "gc_hold.av ${cases[e]}: no full collection")
     }
-    c.expect(str_has(stats, " full=0 "), "gc_hold.av ${cases[e]}: no full collection")
     e += 1
   }
   at = envs.size + cases.size
@@ -140,5 +149,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

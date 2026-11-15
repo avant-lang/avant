@@ -1,0 +1,126 @@
+import harness
+import backends
+
+// Type aliases (`type Ty = A | B`, recursive through classes), bounds on a
+// generic type's parameters (`class Top(T: Ranked)`) and on a parameter
+// written inside another type (`Array(T: Ranked)`), `Error` as a bound
+// (a union `T | E: Error` splits by the members marked Error), `to_s` for
+// every type interpolation prints and a type's own `fn to_s: String` as
+// its text, and external methods on the integer types, `Float64`, `Bool`
+// and enums. Each program is compiled in parallel; a refused one must
+// leave no binary, say the expected words and point at the expected line
+// and column; an accepted one must print what it should.
+
+class RCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): RCase {
+  f = RCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): RCase {
+  f = RCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(accepted("alias-recursive-union", "type Ty = Scalar | TyArray | TyUnion\n\nclass Scalar {\n  pub name: String\n  fn initialize(name: String) {\n    self.name = name\n  }\n}\n\nclass TyArray {\n  pub elem: Ty\n  fn initialize(elem: Ty) {\n    self.elem = elem\n  }\n}\n\nclass TyUnion {\n  pub members: Array(Ty) = []\n}\n\nfn show(t: Ty): String {\n  switch t {\n    case s: Scalar { s.name }\n    case a: TyArray { \"Array(\${show(a.elem)})\" }\n    case u: TyUnion {\n      text = \"\"\n      for m in u.members {\n        if text.size > 0 {\n          text = text + \" | \"\n        }\n        text = text + show(m)\n      }\n      text\n    }\n  }\n}\nfn main {\n  i: Ty = Scalar.new(\"Int\")\n  u = TyUnion.new()\n  u.members.push(i)\n  u.members.push(TyArray.new(Scalar.new(\"String\")))\n  t: Ty = TyArray.new(u)\n  puts(show(t))\n  ts: Array(Ty) = [i, t]\n  puts(ts.size)\n}\n", "Array(Int | Array(String))\n2\n"))
+  xs.push(accepted("alias-plain", "type Id = Int\ntype Names = Array(String)\ntype Pick = Int | String\n\nfn first(ns: Names): String {\n  ns[0]\n}\n\nfn pick(n: Id): Pick {\n  if n > 0 {\n    return n\n  }\n  \"none\"\n}\n\nfn main {\n  a: Id = 4\n  b: Int = a + 1\n  puts(first([\"x\", \"y\"]))\n  puts(\"\${pick(b)} \${pick(0)}\")\n  o: Id? = nil\n  puts(o ?? 7)\n}\n", "x\n5 none\n7\n"))
+  xs.push(refused("alias-self", "type Json = Int | Array(Json)\nfn main { }\n", "type Json names itself: a recursive type goes through a struct or class, whose field may hold a Json", "1:25"))
+  xs.push(refused("alias-unknown", "type T2 = Strng | Int\nfn main { }\n", "unknown type Strng", "1:11"))
+  xs.push(refused("alias-lower", "type id = Int\nfn main { }\n", "the name of type alias id is a type name, written with a capital first letter: write Id", "1:6"))
+  xs.push(refused("alias-duplicate", "struct P {\n  x: Int\n}\ntype P = Int\nfn main { }\n", "P is already defined", "4:6"))
+  xs.push(refused("alias-params", "type Pair(A) = Array(A)\nfn main { }\n", "a type alias takes no type parameters: type Pair = T names one type", "1:10"))
+  xs.push(refused("alias-args", "type Id = Int\nfn main {\n  a: Id(Int) = 1\n}\n", "Id does not take type arguments", "3:6"))
+  xs.push(accepted("alias-type-keyword-name", "fn main {\n  type = 3\n  puts(type)\n}\n", "3\n"))
+  xs.push(accepted("type-bound", "interface Ranked {\n  fn rank: Int\n}\n\nstruct Card: Ranked {\n  n: Int\n\n  fn rank: Int {\n    n\n  }\n}\n\nclass Top(T: Ranked) {\n  best: T\n\n  fn initialize(best: T) {\n    self.best = best\n  }\n\n  fn offer(x: T) {\n    if x.rank() > best.rank() {\n      self.best = x\n    }\n  }\n}\nfn main {\n  t = Top.new(Card { n: 2 })\n  t.offer(Card { n: 5 })\n  t.offer(Card { n: 3 })\n  puts(t.best.n)\n}\n", "5\n"))
+  xs.push(refused("type-bound-missing", "interface Ranked {\n  fn rank: Int\n}\n\nstruct Card: Ranked {\n  n: Int\n\n  fn rank: Int {\n    n\n  }\n}\n\nclass Top(T: Ranked) {\n  best: T\n\n  fn initialize(best: T) {\n    self.best = best\n  }\n\n  fn offer(x: T) {\n    if x.rank > best.rank {\n      self.best = x\n    }\n  }\n}\nstruct Plain {\n  n: Int\n}\n\nfn main {\n  t = Top.new(Plain { n: 1 })\n}\n", "Plain does not implement Ranked", "31:10"))
+  xs.push(refused("type-bound-written", "interface Ranked {\n  fn rank: Int\n}\n\nstruct Card: Ranked {\n  n: Int\n\n  fn rank: Int {\n    n\n  }\n}\n\nclass Top(T: Ranked) {\n  best: T\n\n  fn initialize(best: T) {\n    self.best = best\n  }\n\n  fn offer(x: T) {\n    if x.rank > best.rank {\n      self.best = x\n    }\n  }\n}\nfn keep(t: Top(Int)) {\n}\nfn main { }\n", "Int does not implement Ranked", "26:12"))
+  xs.push(refused("type-bound-unknown", "class Box(T: Nope) {\n  v: T\n  fn initialize(v: T) {\n    self.v = v\n  }\n}\nfn main { }\n", "Nope is not an interface: a bound names an interface or Error", "1:14"))
+  xs.push(refused("interface-param-bound", "interface Eq2(T: Eq2(T)) {\n  fn eq2(o: T): Bool\n}\nfn main { }\n", "an interface's type parameters take no bounds", "1:1"))
+  xs.push(accepted("bound-inside-type", "interface Ranked {\n  fn rank: Int\n}\n\nstruct Card: Ranked {\n  n: Int\n\n  fn rank: Int {\n    n\n  }\n}\n\nclass Top(T: Ranked) {\n  best: T\n\n  fn initialize(best: T) {\n    self.best = best\n  }\n\n  fn offer(x: T) {\n    if x.rank > best.rank {\n      self.best = x\n    }\n  }\n}\nfn best_of(xs: Array(T: Ranked)): Int {\n  m = 0\n  for x in xs {\n    if x.rank() > m {\n      m = x.rank()\n    }\n  }\n  m\n}\n\nfn main {\n  puts(best_of([Card { n: 4 }, Card { n: 9 }]))\n}\n", "9\n"))
+  xs.push(refused("bound-inside-type-missing", "interface Ranked {\n  fn rank: Int\n}\n\nstruct Card: Ranked {\n  n: Int\n\n  fn rank: Int {\n    n\n  }\n}\n\nclass Top(T: Ranked) {\n  best: T\n\n  fn initialize(best: T) {\n    self.best = best\n  }\n\n  fn offer(x: T) {\n    if x.rank > best.rank {\n      self.best = x\n    }\n  }\n}\nfn best_of(xs: Array(T: Ranked)): Int {\n  xs.size\n}\n\nfn main {\n  puts(best_of([1, 2]))\n}\n", "Int does not implement Ranked", "31:8"))
+  xs.push(accepted("error-bound-split", "class Bad: Error {\n  message: String = \"bad\"\n}\n\nfn parse(n: Int): Int | Bad {\n  if n < 0 {\n    return Bad.new()\n  }\n  n\n}\nfn failure(r: T | E: Error): E? {\n  if v = r {\n    return nil\n  }\n  switch r {\n    case e: E { e }\n    else { nil }\n  }\n}\n\nfn main {\n  if e = failure(parse(-1)) {\n    puts(\"failed: \${e}\")\n  }\n  if e2 = failure(parse(3)) {\n    puts(\"no\")\n  } else {\n    puts(\"ok\")\n  }\n}\n", "failed: bad\nok\n"))
+  xs.push(accepted("error-bound-plain", "class Bad: Error {\n  message: String = \"bad\"\n}\n\nfn parse(n: Int): Int | Bad {\n  if n < 0 {\n    return Bad.new()\n  }\n  n\n}\nfn describe(e: E: Error): String {\n  \"error: \${e}\"\n}\n\nfn main {\n  puts(describe(Bad.new()))\n}\n", "error: bad\n"))
+  xs.push(refused("error-bound-not-marked", "struct P {\n  x: Int\n}\nfn describe(e: E: Error): String {\n  \"x\"\n}\nfn main {\n  puts(describe(P { x: 1 }))\n}\n", "P is not marked Error, as the bound E: Error asks", "8:8"))
+  xs.push(accepted("to-s-enum-error", "enum Tok { eof, name }\n\nenum ParseError: Error { empty, bad }\n\nclass Oops: Error {\n  message: String = \"oops\"\n  cause: ParseError? = nil\n}\n\nfn f(n: Int): Int | String {\n  if n > 0 {\n    return n\n  }\n  \"zero\"\n}\n\nfn main {\n  t = Tok.name\n  puts(t.to_s() + \"/\" + Tok.eof.to_s())\n  e = ParseError.bad\n  puts(e.to_s())\n  o = Oops.new()\n  o.cause = ParseError.empty\n  puts(o.to_s())\n  puts(f(2).to_s() + f(0).to_s())\n}\n", "name/eof\nbad\noops: empty\n2zero\n"))
+  xs.push(accepted("to-s-own", "struct Vec2 {\n  x: Int\n  y: Int\n\n  fn to_s: String {\n    \"(\${x}, \${y})\"\n  }\n}\n\nenum Suit {\n  hearts\n  spades\n\n  fn to_s: String {\n    if self == Suit.hearts {\n      return \"H\"\n    }\n    \"S\"\n  }\n}\n\nfn main {\n  v = Vec2 { x: 1, y: 2 }\n  puts(\"at \${v}, \${Suit.hearts}\${Suit.spades}, \${Suit.spades.name()}\")\n  puts(v.to_s())\n}\n", "at (1, 2), HS, spades\n(1, 2)\n"))
+  xs.push(refused("to-s-error-own", "class Oops: Error {\n  message: String = \"x\"\n  fn to_s: String {\n    \"y\"\n  }\n}\nfn main { }\n", "Oops is marked Error: its text, in interpolation and from to_s, is its message and its cause; define message instead of to_s", "3:3"))
+  xs.push(refused("to-s-not-string", "struct P {\n  x: Int\n  fn to_s: Int {\n    x\n  }\n}\nfn main {\n  p = P { x: 1 }\n  puts(\"\${p}\")\n}\n", "cannot interpolate P: its to_s returns Int, and the text it prints is fn to_s: String", "9:11"))
+  xs.push(refused("to-s-none", "struct P {\n  x: Int\n}\nfn main {\n  p = P { x: 1 }\n  puts(p.to_s)\n}\n", "no field to_s on P", "6:9"))
+  xs.push(refused("to-s-optional", "enum Tok { a }\nfn main {\n  t: Tok | Nil = Tok.a\n  puts(t.to_s)\n}\n", "cannot interpolate Tok?: it holds nil", "4:8"))
+  xs.push(accepted("ext-scalars", "fn (n: Int) clamp(lo: Int, hi: Int): Int {\n  if n < lo {\n    return lo\n  }\n  if n > hi {\n    return hi\n  }\n  n\n}\n\nfn (w: Int32) twice: Int32 {\n  w * 2\n}\n\nfn (u: UInt64) top_bit: Bool {\n  (u >> 63) == 1u64\n}\n\nfn (x: Float64) half: Float64 {\n  x / 2.0\n}\n\nfn (b: Bool) word: String {\n  if b {\n    return \"yes\"\n  }\n  \"no\"\n}\n\nenum Dir { north, south }\n\nfn (d: Dir) flip: Dir {\n  if d == Dir.north {\n    return Dir.south\n  }\n  Dir.north\n}\n\nfn main {\n  n = 15\n  w: Int32 = 21\n  puts(n.clamp(0, 10))\n  puts(w.twice())\n  puts(18446744073709551615u64.top_bit())\n  puts(3.0.half())\n  puts(true.word() + false.word())\n  puts(Dir.north.flip())\n}\n", "10\n42\ntrue\n1.5\nyesno\nsouth\n"))
+  xs.push(refused("ext-int-builtin-name", "fn (n: Int) abs: Int {\n  n\n}\nfn main { }\n", "abs is a builtin of Int: a method cannot replace it; give the method another name", "1:1"))
+  xs.push(refused("ext-float-to-s", "fn (x: Float64) to_s: String {\n  \"f\"\n}\nfn main { }\n", "to_s is a builtin of Float64: a method cannot replace it; give the method another name", "1:1"))
+  xs.push(refused("ext-array", "fn (xs: Array(Int)) second: Int {\n  xs[1]\n}\nfn main { }\n", "methods can only extend a struct, a class, an enum, String, Bytes, Buf, an integer type, Float64 or Bool, not Array(Int)", "1:5"))
+  xs.push(refused("ext-int-unknown", "fn main {\n  n = 3\n  puts(n.nope)\n}\n", "no method nope on Int", "3:9"))
+  xs.push(accepted("ext-builtin-receiver-named", "fn size: Int {\n  7\n}\n\nfn (s: String) twice: Int {\n  size() * 2 + s.size\n}\n\nfn (n: Int) next: Int {\n  n + 1\n}\n\nfn main {\n  puts(\"abc\".twice())\n  puts(4.next())\n}\n", "17\n5\n"))
+  xs.push(refused("ext-builtin-receiver-bare", "fn (s: String) first: Int {\n  get(0) ?? 0\n}\nfn main { }\n", "unknown function get", "2:3"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/ty-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/ty-${f.tag}.bin", "${dir}/ty-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "ty-${f2.tag}.bin", "ty-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/ty-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/ty-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/ty-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "ty-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_types_and_text.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

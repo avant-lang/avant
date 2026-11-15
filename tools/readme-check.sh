@@ -1,5 +1,5 @@
 #!/bin/sh
-# The README's examples, checked (Stage 29, the README rewrite).
+# The README's examples, checked.
 #
 #   sh tools/readme-check.sh [FILE.md]        (default: README.md)
 #   sh tools/readme-check.sh --plan [FILE.md] (extract and plan only: no compiler)

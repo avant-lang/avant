@@ -31,43 +31,46 @@ pub fn (checker_self: Checker) subst_put(keys: Array(String), vals: Array(Ty), n
 }
 
 pub fn (checker_self: Checker) unify_ty(pattern: Ty, actual: Ty, keys: Array(String), vals: Array(Ty)): Bool {
-  if pattern.is_var {
+  if pattern.is_var() {
     return checker_self.subst_put(keys, vals, pattern.name, actual)
   }
-  if pattern.is_array {
-    if actual.is_array {
+  if pattern.is_union() {
+    return checker_self.unify_union(pattern, actual, keys, vals) == 1
+  }
+  if pattern.is_array() {
+    if actual.is_array() {
       if pe = pattern.inner, ae = actual.inner {
         return checker_self.unify_ty(pe, ae, keys, vals)
       }
     }
     return false
   }
-  if pattern.is_hash {
-    if actual.is_hash {
+  if pattern.is_hash() {
+    if actual.is_hash() {
       if pk = pattern.key, ak = actual.key, pv = pattern.val, av = actual.val, checker_self.unify_ty(pk, ak, keys, vals) {
         return checker_self.unify_ty(pv, av, keys, vals)
       }
     }
     return false
   }
-  if pattern.is_ptr {
-    if actual.is_ptr {
+  if pattern.is_ptr() {
+    if actual.is_ptr() {
       if pe = pattern.inner, ae = actual.inner {
         return checker_self.unify_ty(pe, ae, keys, vals)
       }
     }
     return false
   }
-  if pattern.is_join {
-    if actual.is_join {
+  if pattern.is_join() {
+    if actual.is_join() {
       if pe = pattern.inner, ae = actual.inner {
         return checker_self.unify_ty(pe, ae, keys, vals)
       }
     }
     return false
   }
-  if pattern.is_fn {
-    if actual.is_fn {
+  if pattern.is_fn() {
+    if actual.is_fn() {
       if pattern.members.size != actual.members.size {
         return false
       }
@@ -100,22 +103,180 @@ pub fn (checker_self: Checker) unify_ty(pattern: Ty, actual: Ty, keys: Array(Str
   actual.same_as(pattern)
 }
 
-pub fn (checker_self: Checker) infer_subst(tparams: Array(String), params: Array(Ty), arg_tys: Array(Ty), ret: Ty, expected: Ty?): Array(Ty)? {
+// A union pattern against an argument's type: the argument's members
+// (or the argument itself) less those the pattern names, concretely or
+// through a type parameter already bound; the one unbound parameter
+// left takes the rest (`T | Bad` against `Int | Bad` gives T = Int;
+// against `Int` too, since an `Int` is assignable to the union). 1 when
+// it unifies, 0 when it cannot, 2 when two or more unbound parameters
+// remain (`T | E` against `Int | Bad`): the split is ambiguous until
+// another argument or the expected result binds one of them. A pattern
+// without parameters asks for an argument assignable to it, as a call
+// to a function that is not generic does.
+pub fn (checker_self: Checker) unify_union(pattern: Ty, actual: Ty, keys: Array(String), vals: Array(Ty)): Int {
+  if !type.ty_has_var(pattern) {
+    if ty_assignable(actual, pattern) {
+      return 1
+    }
+    return 0
+  }
+  rest: Array(Ty) = []
+  if actual.is_union() {
+    for am in actual.members {
+      rest.push(am)
+    }
+  } else {
+    rest.push(actual)
+  }
+  free: Array(String) = []
+  for pm in pattern.members {
+    if pm.is_var() {
+      if bound = checker_self.subst_get(keys, vals, pm.name) {
+        bms: Array(Ty) = []
+        if bound.is_union() {
+          bms = bound.members
+        } else {
+          bms.push(bound)
+        }
+        for bm in bms {
+          rest = union_rest_without(rest, bm)
+        }
+      } else {
+        seen = false
+        for fname in free {
+          if fname == pm.name {
+            seen = true
+          }
+        }
+        if !seen {
+          free.push(pm.name)
+        }
+      }
+    } else if type.ty_has_var(pm) {
+      // A member with a parameter inside (`Array(T) | Bad`): the first
+      // remaining member it unifies with.
+      j = 0
+      found = -1
+      while j < rest.size && found < 0 {
+        if checker_self.unify_ty(pm, rest[j], keys, vals) {
+          found = j
+        }
+        j += 1
+      }
+      if found >= 0 {
+        rest = union_rest_without(rest, rest[found])
+      }
+    } else {
+      rest = union_rest_without(rest, pm)
+    }
+  }
+  if free.size == 0 {
+    if rest.size == 0 {
+      return 1
+    }
+    return 0
+  }
+  if free.size > 1 && checker_self.infer_err_params.size > 0 {
+    // A parameter bounded by Error (`r: T | E: Error`) takes the members
+    // marked Error, and the one parameter left the rest: the split is no
+    // longer ambiguous.
+    left: Array(String) = []
+    for fname in free {
+      if checker_self.infer_err_params.contains(fname) {
+        errs: Array(Ty) = []
+        keep: Array(Ty) = []
+        for rm in rest {
+          if rm.error_mark {
+            errs.push(rm)
+          } else {
+            keep.push(rm)
+          }
+        }
+        if errs.size == 0 || !checker_self.subst_put(keys, vals, fname, ty_union_build(errs)) {
+          return 0
+        }
+        rest = keep
+      } else {
+        left.push(fname)
+      }
+    }
+    free = left
+    if free.size == 0 {
+      if rest.size == 0 {
+        return 1
+      }
+      return 0
+    }
+  }
+  if free.size > 1 {
+    return 2
+  }
+  if rest.size == 0 {
+    return 0
+  }
+  if checker_self.subst_put(keys, vals, free[0], ty_union_build(rest)) {
+    return 1
+  }
+  0
+}
+
+pub fn union_rest_without(rest: Array(Ty), m: Ty): Array(Ty) {
+  out: Array(Ty) = []
+  for r in rest {
+    if !r.same_as(m) {
+      out.push(r)
+    }
+  }
+  out
+}
+
+pub fn (checker_self: Checker) infer_subst(fnn: Function, params: Array(Ty), arg_tys: Array(Ty), ret: Ty, expected: Ty?): Array(Ty)? {
+  tparams = fnn.type_params
+  checker_self.infer_err_params = []
+  for b in fnn.bounds {
+    if b.iface.name == "Error" && b.iface.args.size == 0 {
+      checker_self.infer_err_params.push(b.param)
+    }
+  }
   keys: Array(String) = []
   vals: Array(Ty) = []
+  later: Array(Int) = []
+  checker_self.infer_note = ""
   i = 0
   while i < params.size {
-    if i < arg_tys.size && !checker_self.unify_ty(params[i], arg_tys[i], keys, vals) {
-      return nil
+    if i < arg_tys.size {
+      if checker_self.is_empty_array_ty(arg_tys[i]) && type.ty_has_var(params[i]) {
+        // `[]` says nothing of a type parameter.
+        return nil
+      }
+      if params[i].is_union() {
+        u = checker_self.unify_union(params[i], arg_tys[i], keys, vals)
+        if u == 0 {
+          return nil
+        }
+        if u == 2 {
+          later.push(i)
+        }
+      } else if !checker_self.unify_ty(params[i], arg_tys[i], keys, vals) {
+        return nil
+      }
     }
     i += 1
   }
   for name in tparams {
     if got = checker_self.subst_get(keys, vals, name) {
     } else {
-      if e = expected, !e.is_void && !checker_self.unify_ty(ret, e, keys, vals) {
+      if e = expected, !e.is_void() && !checker_self.unify_ty(ret, e, keys, vals) {
         return nil
       }
+    }
+  }
+  // A union argument whose split was ambiguous, once the others and the
+  // expected result have bound what they can (unify_union).
+  for li in later {
+    if checker_self.unify_union(params[li], arg_tys[li], keys, vals) != 1 {
+      checker_self.infer_note = ": the type parameters of ${params[li].show()} split ${arg_tys[li].show()} in more than one way; give the result a declared type, or pass an argument that fixes one of them"
+      return nil
     }
   }
   out: Array(Ty) = []
@@ -132,6 +293,7 @@ pub fn (checker_self: Checker) infer_subst(tparams: Array(String), params: Array
 }
 
 pub fn (checker_self: Checker) infer_subst_recv(tparams: Array(String), params: Array(Ty), arg_tys: Array(Ty), ret: Ty, expected: Ty?, pat: Ty, act: Ty): Array(Ty)? {
+  checker_self.infer_err_params = []
   keys: Array(String) = []
   vals: Array(Ty) = []
   if pat.origin == act.origin {
@@ -157,7 +319,7 @@ pub fn (checker_self: Checker) infer_subst_recv(tparams: Array(String), params: 
   for name in tparams {
     if got = checker_self.subst_get(keys, vals, name) {
     } else {
-      if e = expected, !e.is_void && !checker_self.unify_ty(ret, e, keys, vals) {
+      if e = expected, !e.is_void() && !checker_self.unify_ty(ret, e, keys, vals) {
         return nil
       }
     }
@@ -179,11 +341,11 @@ pub fn (checker_self: Checker) subst_for_method(sig: FuncSig, call_owner: String
   if recv = sig.node.receiver, sig.owner != call_owner, act = checker_self.resolver.get_named(call_owner) {
     checker_self.resolver.set_tparams(sig.node.type_params)
     pat = checker_self.resolver.resolve(recv.type)
-    checker_self.pull_resolve
-    checker_self.resolver.clear_tparams
+    checker_self.pull_resolve()
+    checker_self.resolver.clear_tparams()
     return checker_self.infer_subst_recv(sig.node.type_params, sig.params, arg_tys, sig.ret, expected, pat, act)
   }
-  checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected)
+  checker_self.infer_subst(sig.node, sig.params, arg_tys, sig.ret, expected)
 }
 
 // The defaults of the parameters a call leaves out, spliced in as
@@ -193,21 +355,24 @@ pub fn (checker_self: Checker) subst_for_method(sig: FuncSig, call_owner: String
 // the caller wrote.
 //
 // Where a default names an earlier parameter it reads that parameter's
-// value: the argument as the call passes it, evaluated once (O546, Stage
-// 29 W-FIX1d). The name becomes a hidden one, `$F.J`: argument J of the
-// call's argument frame F, a number this call keeps in its int_bits (a
-// call has no other use for the field; 0 when no default of the call
-// names an earlier parameter). check_default_arg declares the
-// hidden names with the parameters' types, and the back end binds each
-// to the operand it lowered for that argument (mir lower_args_to).
-// Before, a copy of the argument's expression stood in for the name, so
-// the argument was evaluated once for its parameter and once more for
-// each mention (and each time a lambda in the default ran), and the
-// default was typed by the argument's type instead of the parameter's.
+// value: the argument as the call passes it, evaluated once. The name
+// becomes a hidden one, `$F.J`: argument J of the call's argument frame
+// F, a number this call keeps in its int_bits (a call has no other use
+// for the field; 0 when no default of the call names an earlier
+// parameter). check_default_arg declares the hidden names with the
+// parameters' types, and the back end binds each to the operand it
+// lowered for that argument (mir lower_args_to). Before, a copy of the
+// argument's expression stood in for the name, so the argument was
+// evaluated once for its parameter and once more for each mention (and
+// each time a lambda in the default ran), and the default was typed by
+// the argument's type instead of the parameter's.
 pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
+  given = checker_self.place_named_args(expr, fnn)
   while expr.args.size < fnn.params.size {
     i = expr.args.size
-    if d = fnn.params[i].default {
+    if i < given.size && given[i].size == 1 {
+      expr.args.push(given[i][0])
+    } else if d = fnn.params[i].default {
       spliced = clone_expr(d)
       dk = d.kind
       if i > 0 && !(dk == ex_int() || dk == ex_float() || dk == ex_bool() || dk == ex_string() || dk == ex_nil()) {
@@ -216,7 +381,7 @@ pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
         fresh = expr.int_bits == 0u64
         if fresh {
           checker_self.arg_frames = checker_self.arg_frames + 1
-          expr.int_bits = checker_self.arg_frames.to_u64
+          expr.int_bits = checker_self.arg_frames.to_u64()
         }
         from: Array(String) = []
         to: Array(Expr) = []
@@ -242,26 +407,31 @@ pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
       spliced.is_default = true
       expr.args.push(spliced)
     } else {
-      checker_self.fail(expr.loc, "${fnn.name} takes ${fnn.params.size} arguments, got ${expr.args.size}")
+      checker_self.fail(expr.loc, "${fnn.name} ${arity_text(fnn)}, given ${expr.args.size}")
       return
     }
   }
 }
 
 // A default spliced into a call by fill_defaults, checked against its
-// parameter (O343, O17, Stage 29 W-FIX1b): a default belongs to its
-// declaration, so it is checked in the callee's module, with no local of
-// the caller in scope and no receiver, whatever the call's form (before,
-// an unqualified call, a constructor and a method call checked it in the
-// calling module: a private function of the callee's module was unknown
-// there, and a function of the same name in the calling module was
-// called instead). The one scope it is checked in holds the earlier
-// parameters under their hidden names (fill_defaults), each with its
-// declared type from params, the callee's parameter types as this call
-// sees them. The enclosing lambdas' floors are lowered to that scope for
-// the check, so a hidden name is a capture only of a lambda written
-// inside the default.
+// parameter: a default belongs to its declaration, so it is checked in
+// the callee's module, with no local of the caller in scope and no
+// receiver, whatever the call's form (before, an unqualified call, a
+// constructor and a method call checked it in the calling module: a
+// private function of the callee's module was unknown there, and a
+// function of the same name in the calling module was called instead).
+// The one scope it is checked in holds the earlier parameters under
+// their hidden names (fill_defaults), each with its declared type from
+// params, the callee's parameter types as this call sees them. The
+// enclosing lambdas' floors are lowered to that scope for the check, so
+// a hidden name is a capture only of a lambda written inside the
+// default.
 pub fn (checker_self: Checker) check_default_arg(expr: Expr, i: Int, params: Array(Ty), fnn: Function): Ty {
+  if !expr.args[i].is_default {
+    // A named argument (place_named_args): the caller's, checked where
+    // the call stands against its parameter.
+    return checker_self.check_named_arg(expr.args[i], params[i])
+  }
   saved_mod = checker_self.current_module
   saved_scopes = checker_self.scopes
   saved_self = checker_self.self_ty
@@ -269,7 +439,7 @@ pub fn (checker_self: Checker) check_default_arg(expr: Expr, i: Int, params: Arr
   saved_floors = checker_self.lam_scopes
   fresh: Array(Scope) = []
   checker_self.scopes = fresh
-  checker_self.push_scope
+  checker_self.push_scope()
   if expr.int_bits != 0u64 {
     for j in 0..i {
       if j < params.size {
@@ -296,8 +466,171 @@ pub fn (checker_self: Checker) check_default_arg(expr: Expr, i: Int, params: Arr
 
 pub fn (checker_self: Checker) drop_spliced_defaults(expr: Expr) {
   while expr.args.size > 0 && expr.args[expr.args.size - 1].is_default {
-    expr.args.pop
+    expr.args.pop()
   }
+}
+
+// Named arguments (`pad("ab", fill: "*")`): names are given only to
+// parameters with defaults, after the positional arguments; the
+// positional arguments choose the overload and the names fill its
+// defaults. The parser keeps each argument's name in the call's
+// field_names, parallel to its arguments. Before a call is matched, its
+// named arguments leave expr.args for field_exprs (field_names then
+// parallel to them), so only the positional ones are matched; once the
+// callee is chosen, fill_defaults puts each at its parameter's place
+// (place_named_args) and field_names is again parallel to the arguments,
+// so a call checked again splits the same way (the defaults it spliced
+// are dropped first, wherever they stand).
+pub fn (checker_self: Checker) split_named_args(expr: Expr) {
+  if expr.field_exprs.size > 0 {
+    return
+  }
+  if expr.field_names.size == 0 {
+    checker_self.drop_spliced_defaults(expr)
+    return
+  }
+  pos: Array(Expr) = []
+  names: Array(String) = []
+  vals: Array(Expr) = []
+  for i in 0..expr.args.size {
+    a = expr.args[i]
+    if a.is_default {
+      continue
+    }
+    name = ""
+    if i < expr.field_names.size {
+      name = expr.field_names[i]
+    }
+    if name.size > 0 {
+      names.push(name)
+      vals.push(a)
+    } else {
+      pos.push(a)
+    }
+  }
+  expr.args = pos
+  if names.size == 0 {
+    expr.field_names = []
+    return
+  }
+  expr.field_names = names
+  expr.field_exprs = vals
+}
+
+// The named arguments of a call split by split_named_args, each checked
+// against fnn's parameters: by name, after the positional arguments, to
+// a parameter with a default, once. The result has one entry per
+// parameter: the argument named for it (one element) or none. The call's
+// field_names become parallel to the arguments fill_defaults builds, and
+// the order the arguments are evaluated in is kept in arg_order when it
+// is not theirs: the written arguments left to right, then the defaults
+// of the parameters left out, in parameter order.
+pub fn (checker_self: Checker) place_named_args(expr: Expr, fnn: Function): Array(Array(Expr)) {
+  given: Array(Array(Expr)) = []
+  if expr.field_exprs.size == 0 {
+    return given
+  }
+  npos = expr.args.size
+  for i in 0..fnn.params.size {
+    none: Array(Expr) = []
+    given.push(none)
+  }
+  written: Array(Int) = []
+  ok = true
+  for k in 0..expr.field_exprs.size {
+    name = expr.field_names[k]
+    v = expr.field_exprs[k]
+    p = -1
+    for j in 0..fnn.params.size {
+      if fnn.params[j].name == name {
+        p = j
+      }
+    }
+    shown = fnn.name
+    if fnn.name == "initialize" && fnn.owner.size > 0 {
+      shown = "${fnn.owner}.new"
+    }
+    if p < 0 {
+      checker_self.fail(v.loc, "${shown} has no parameter named ${name}")
+      ok = false
+    } else if p < npos {
+      checker_self.fail(v.loc, "${name} is already given by position (argument ${p + 1} of ${shown})")
+      ok = false
+    } else if given[p].size > 0 {
+      checker_self.fail(v.loc, "${name} is named twice")
+      ok = false
+    } else if d = fnn.params[p].default {
+      given[p].push(v)
+      written.push(p)
+    } else {
+      checker_self.fail(v.loc, "${name} of ${shown} has no default, so it is passed by position: a name is given only to a parameter with a default")
+      ok = false
+    }
+  }
+  expr.field_exprs = []
+  names: Array(String) = []
+  for i in 0..npos {
+    names.push("")
+  }
+  for i in npos..fnn.params.size {
+    if given[i].size > 0 {
+      names.push(fnn.params[i].name)
+    } else {
+      names.push("")
+    }
+  }
+  expr.field_names = names
+  if !ok {
+    // The named arguments are dropped with their errors; the defaults
+    // fill their places, so nothing else fails for them.
+    out: Array(Array(Expr)) = []
+    expr.field_names = []
+    return out
+  }
+  if kept = expr.arg_order {
+    if kept.size > 0 {
+      return given
+    }
+  }
+  order: Array(Int) = []
+  for i in 0..npos {
+    order.push(i)
+  }
+  for w in written {
+    order.push(w)
+  }
+  for i in npos..fnn.params.size {
+    if given[i].size == 0 {
+      order.push(i)
+    }
+  }
+  same = true
+  for i in 0..order.size {
+    if order[i] != i {
+      same = false
+    }
+  }
+  if !same {
+    expr.arg_order = order
+  }
+  given
+}
+
+// The named arguments a call kept because its callee takes none (a
+// builtin, a function value, a C function): refused, once, at the first.
+pub fn (checker_self: Checker) refuse_named_args(expr: Expr) {
+  if expr.field_exprs.size == 0 {
+    return
+  }
+  first = expr.field_exprs[0]
+  name = expr.field_names[0]
+  what = expr.callee
+  if expr.indirect {
+    what = "a fn value"
+  }
+  expr.field_exprs = []
+  expr.field_names = []
+  checker_self.fail(first.loc, "${what} takes its arguments by position (${name}: is a named argument): names are given only to a declared function's parameters with defaults")
 }
 
 pub fn (checker_self: Checker) attach_method_fn(fnn: Function) {
@@ -346,23 +679,23 @@ pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(T
   }
   inst.inst_args = ia
   checker_self.alloc_ol(inst)
-  checker_self.resolver.clear_tparams
+  checker_self.resolver.clear_tparams()
   params: Array(Ty) = []
   i = 0
   while i < inst.params.size {
     params.push(checker_self.resolver.resolve_value(inst.params[i].type))
-    checker_self.pull_resolve
+    checker_self.pull_resolve()
     i += 1
   }
   ret = checker_self.t_void()
   if t = inst.return_type {
     ret = checker_self.resolver.resolve(t)
-    checker_self.pull_resolve
+    checker_self.pull_resolve()
   }
   checker_self.program.functions.push(inst)
   nsig = FuncSig.new(inst.name, inst, params, ret)
   checker_self.functions.push(nsig)
-  checker_self.note_fn_named
+  checker_self.note_fn_named()
   checker_self.instances.push(inst)
   checker_self.pending.push(inst)
   nsig
@@ -375,6 +708,12 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   from = sig.node.type_params
   to: Array(TypeName) = []
   buf = buf_new()
+  // Two modules' templates of one name: each one's method instances
+  // carry its module.
+  if flag = checker_self.resolver.collide.get(sig.owner), sig.node.owner_mod.size > 0 {
+    buf.push_str(mod_emit_prefix(sig.node.owner_mod))
+    buf.push_str("__")
+  }
   buf.push_str(sig.owner)
   buf.push_str("__")
   buf.push_str(emit_op_name(sig.name))
@@ -385,7 +724,7 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
     buf.push_str(mangle_ty(subst[i]))
     i += 1
   }
-  emit = buf.to_s
+  emit = buf.to_s()
   if existing = checker_self.find_instance(emit) {
     return checker_self.find_sig_by_node(existing)
   }
@@ -404,24 +743,24 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   inst.inst_args = ia
   inst.owner = sig.owner
   checker_self.alloc_ol(inst)
-  checker_self.resolver.clear_tparams
+  checker_self.resolver.clear_tparams()
   params: Array(Ty) = []
   i = 0
   while i < inst.params.size {
     params.push(checker_self.resolver.resolve_value(inst.params[i].type))
-    checker_self.pull_resolve
+    checker_self.pull_resolve()
     i += 1
   }
   ret = checker_self.t_void()
   if t = inst.return_type {
     ret = checker_self.resolver.resolve(t)
-    checker_self.pull_resolve
+    checker_self.pull_resolve()
   }
   if recv = inst.receiver {
-    checker_self.resolver.clear_tparams
+    checker_self.resolver.clear_tparams()
     rty = checker_self.resolver.resolve(recv.type)
-    checker_self.pull_resolve
-    if rty.is_agg && !rty.template && rty.name.size > 0 {
+    checker_self.pull_resolve()
+    if rty.is_agg() && !rty.template && rty.name.size > 0 {
       inst.owner = rty.name
     }
   }
@@ -429,13 +768,32 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   nsig = FuncSig.new(inst.name, inst, params, ret)
   nsig.owner = inst.owner
   checker_self.methods.push(nsig)
-  checker_self.note_method_named
+  checker_self.note_method_named()
   checker_self.instances.push(inst)
   checker_self.pending.push(inst)
   nsig
 }
 
-pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location): FuncSig? {
+// The argument types a generic candidate is inferred from: an argument of
+// literals (lits[k], int_literal_flags) meeting a parameter of a concrete
+// number type takes that type, as it does for a function that is not
+// generic (fit_call_arg types the argument after the match).
+pub fn (checker_self: Checker) lit_fit_tys(params: Array(Ty), arg_tys: Array(Ty), lits: Array(Bool)): Array(Ty) {
+  out: Array(Ty) = []
+  for k in 0..arg_tys.size {
+    a = arg_tys[k]
+    if k < lits.size && k < params.size && lits[k] && a.is_numeric() && params[k].is_numeric() && !type.ty_has_var(params[k]) {
+      a = params[k]
+    }
+    if k < params.size && checker_self.is_empty_array_ty(a) && params[k].is_array() && !type.ty_has_var(params[k]) {
+      a = params[k]
+    }
+    out.push(a)
+  }
+  out
+}
+
+pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location, lits: Array(Bool)): FuncSig? {
   cands: Array(FuncSig) = []
   saw_generic = false
   named = checker_self.fn_indices_named(name)
@@ -452,13 +810,13 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
       if !is_inst && checker_self.fn_candidate(sig.node) && arity_ok(sig.node, arg_tys.size) {
         if sig.node.generic {
           saw_generic = true
-          if subst = checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected) {
+          if subst = checker_self.infer_subst(sig.node, sig.params, checker_self.lit_fit_tys(sig.params, arg_tys, lits), sig.ret, expected) {
             cands.push(sig)
           }
         } else {
           ok = true
           for k in 0..arg_tys.size {
-            if !ty_assignable(arg_tys[k], sig.params[k]) {
+            if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && sig.params[k].is_array()) {
               ok = false
             }
           }
@@ -472,7 +830,8 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
   }
   if cands.size == 0 {
     if saw_generic {
-      checker_self.fail(loc, "cannot infer type argument")
+      checker_self.fail(loc, "cannot infer type argument${checker_self.infer_note}")
+      checker_self.infer_note = ""
       return nil
     }
     only: FuncSig? = nil
@@ -493,12 +852,19 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
     if checker_self.call_mod.size > 0 {
       shown = "${checker_self.call_mod}.${name}"
     }
-    if n > 1 {
-      checker_self.fail(loc, "no matching function ${shown}")
-    } else if n == 0 && checker_self.call_mod.size > 0 && checker_self.has_private_fn(checker_self.call_mod, name) {
+    all: Array(FuncSig) = []
+    for x2 in 0..named.size {
+      sig2 = checker_self.functions[named[x2]]
+      if sig2.name == name && checker_self.fn_candidate(sig2.node) && !checker_self.sig_is_instance(sig2) {
+        all.push(sig2)
+      }
+    }
+    if n == 0 && checker_self.call_mod.size > 0 && checker_self.has_private_fn(checker_self.call_mod, name) {
       checker_self.fail(loc, "function ${shown} is private to its module; mark it pub")
+    } else if all.size > 0 {
+      checker_self.fail_no_fit(loc, shown, all, arg_tys)
     } else {
-      checker_self.fail(loc, "unknown function ${shown}")
+      checker_self.fail_hint(loc, "unknown function ${shown}", checker_self.fn_hint(name))
     }
     return nil
   }
@@ -508,7 +874,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
   }
   chosen = cands[0]
   if chosen.node.generic {
-    if subst = checker_self.infer_subst(chosen.node.type_params, chosen.params, arg_tys, chosen.ret, expected) {
+    if subst = checker_self.infer_subst(chosen.node, chosen.params, checker_self.lit_fit_tys(chosen.params, arg_tys, lits), chosen.ret, expected) {
       return checker_self.instantiate_function(chosen, subst, loc)
     }
     checker_self.fail(loc, "cannot infer type argument")
@@ -533,8 +899,22 @@ pub fn (checker_self: Checker) has_private_fn(mod: String, name: String): Bool {
 // When no method fits exactly, one non-generic method whose every other
 // argument fits and whose literal arguments meet integer parameters is
 // the match, as a function's literal argument adopts its parameter's
-// type (D315; Stage 29 W-INT2: `P.new(5)` and `p.set(5)` with an Int32
-// parameter were "no method").
+// type (`P.new(5)` and `p.set(5)` with an Int32 parameter were "no
+// method"). A method of that owner and name declared in another module
+// and not seen from the current one (private there), for the message
+// that says so; nil when there is none.
+pub fn (checker_self: Checker) hidden_method(owner: String, owner_mod: String, name: String): FuncSig? {
+  for i in checker_self.method_indices_named(name) {
+    sig = checker_self.methods[i]
+    if !sig.node.type_method && sig.owner == owner && sig.name == name && !checker_self.sig_is_instance(sig) && !checker_self.method_is_visible(sig.node, checker_self.current_module) {
+      if owner_mod.size == 0 || sig.node.owner_mod.size == 0 || sig.node.owner_mod == owner_mod {
+        return sig
+      }
+    }
+  }
+  nil
+}
+
 pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location, shown: String, owner_mod: String, lits: Array(Bool)): FuncSig? {
   cands: Array(FuncSig) = []
   saw_generic = false
@@ -562,13 +942,13 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
           if !is_inst && checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
             if sig.node.generic {
               saw_generic = true
-              if subst = checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected) {
+              if subst = checker_self.infer_subst(sig.node, sig.params, checker_self.lit_fit_tys(sig.params, arg_tys, lits), sig.ret, expected) {
                 cands.push(sig)
               }
             } else {
               ok = true
               for k in 0..arg_tys.size {
-                if !ty_assignable(arg_tys[k], sig.params[k]) {
+                if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && sig.params[k].is_array()) {
                   ok = false
                 }
               }
@@ -586,7 +966,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
     x = 0
     while x < named.size {
       sig = checker_self.methods[named[x]]
-      if sig.owner != owner && sig.node.generic && sig.name == name {
+      if sig.owner != owner && sig.node.generic && sig.name == name && (sig.node.owner_mod.size == 0 || act.mod_name.size == 0 || sig.node.owner_mod == act.mod_name) {
         if recv = sig.node.receiver, checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
           is_inst = false
           for instance in checker_self.instances {
@@ -596,7 +976,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
           }
           if !is_inst {
             saw_generic = true
-            if subst = checker_self.subst_for_method(sig, owner, arg_tys, expected) {
+            if subst = checker_self.subst_for_method(sig, owner, checker_self.lit_fit_tys(sig.params, arg_tys, lits), expected) {
               cands.push(sig)
             }
           }
@@ -623,7 +1003,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
         ok = mod_ok && !is_inst
         for k in 0..arg_tys.size {
           if !ty_assignable(arg_tys[k], sig.params[k]) {
-            if !(k < lits.size && lits[k] && sig.params[k].is_integer) {
+            if !(k < lits.size && lits[k] && sig.params[k].is_integer()) {
               ok = false
             }
           }
@@ -635,7 +1015,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
       x += 1
     }
     if cands.size > 1 {
-      checker_self.fail(loc, "ambiguous call to ${shown}.${name}")
+      checker_self.fail_ambiguous_method(loc, "${shown}.${name}", cands)
       return nil
     }
   }
@@ -643,17 +1023,36 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
     if saw_generic {
       checker_self.fail(loc, "cannot infer type argument")
     } else {
-      checker_self.fail(loc, "no method ${name} on ${shown}")
+      all: Array(FuncSig) = []
+      for x2 in 0..named.size {
+        sig2 = checker_self.methods[named[x2]]
+        if !sig2.node.type_method && sig2.owner == owner && sig2.name == name && checker_self.method_is_visible(sig2.node, checker_self.current_module) && !checker_self.sig_is_instance(sig2) {
+          if owner_mod.size == 0 || sig2.node.owner_mod.size == 0 || sig2.node.owner_mod == owner_mod {
+            all.push(sig2)
+          }
+        }
+      }
+      if all.size > 0 {
+        called = "${shown}.${name}"
+        if checker_self.in_new && name == "initialize" {
+          called = "${shown}.new"
+        }
+        checker_self.fail_no_fit(loc, called, all, arg_tys)
+      } else if hidden = checker_self.hidden_method(owner, owner_mod, name) {
+        checker_self.fail(loc, "method ${shown}.${name} of module ${hidden.node.mod_name} is private to its module; mark it pub")
+      } else {
+        checker_self.fail_hint(loc, "no method ${name} on ${shown}", checker_self.method_hint_owner(owner, owner_mod, name, arg_tys.size))
+      }
     }
     return nil
   }
   if cands.size > 1 {
-    checker_self.fail(loc, "ambiguous call to ${shown}.${name}")
+    checker_self.fail_ambiguous_method(loc, "${shown}.${name}", cands)
     return nil
   }
   chosen = cands[0]
   if chosen.node.generic {
-    if subst = checker_self.subst_for_method(chosen, owner, arg_tys, expected) {
+    if subst = checker_self.subst_for_method(chosen, owner, checker_self.lit_fit_tys(chosen.params, arg_tys, lits), expected) {
       return checker_self.instantiate_method(chosen, subst, loc)
     }
     checker_self.fail(loc, "cannot infer type argument")
@@ -673,7 +1072,7 @@ pub fn (checker_self: Checker) type_call_target(recv: Expr, callee: String): Ty?
     if found = checker_self.lookup(segs[0]) {
       return none
     }
-    if t = checker_self.resolver.get_named(segs[0]) {
+    if t = checker_self.named_type_seen(segs[0]) {
       ty = t
     }
   } else if segs.size > 1 {
@@ -686,7 +1085,7 @@ pub fn (checker_self: Checker) type_call_target(recv: Expr, callee: String): Ty?
   }
   if tt = ty {
     for sig in checker_self.methods {
-      if sig.node.type_method && sig.owner == tt.name && sig.name == callee {
+      if sig.node.type_method && sig.owner == tt.name && sig.name == callee && (tt.mod_name.size == 0 || sig.node.owner_mod.size == 0 || sig.node.owner_mod == tt.mod_name) {
         return ty
       }
     }
@@ -694,8 +1093,157 @@ pub fn (checker_self: Checker) type_call_target(recv: Expr, callee: String): Ty?
   none
 }
 
-// The enum a receiver names (`Tok`, `mod.Tok`; Stage 29 W5a1), when it
-// is a type name and not a value.
+// The type a bare name names here: when two modules declare it, the one
+// this module sees (before, such a receiver read as an unknown name,
+// though only one of them was visible).
+pub fn (checker_self: Checker) named_type_seen(name: String): Ty? {
+  if flag = checker_self.resolver.collide.get(name) {
+    owner = checker_self.visible_type_mod(name, checker_self.current_module, "")
+    if owner.size > 0 {
+      return checker_self.resolver.get_named_in(owner, name)
+    }
+    return nil
+  }
+  checker_self.resolver.get_named(name)
+}
+
+// The type a receiver names when it is a type and not a value (`T`,
+// `mod.T`, `String`), shown as written; "" otherwise. A local, a field
+// of the receiver or a module of that name wins, as in the checking of a
+// name.
+pub fn (checker_self: Checker) type_receiver(recv: Expr): String {
+  if recv.type_args.size > 0 {
+    return ""
+  }
+  // Every method call and field read passes here: a bare name is read
+  // without building its chain (no allocation).
+  if recv.kind == ex_name() {
+    name = recv.ident
+    // Most receivers are values: a name no module declares as a type and
+    // without a builtin type's capital is one, at the cost of one lookup.
+    if listed = checker_self.type_list.get(name) {
+    } else if name.size == 0 || name[0] < 65 || name[0] > 90 {
+      return ""
+    }
+    if found = checker_self.lookup(name) {
+      return ""
+    }
+    if ft = checker_self.implicit_field(name) {
+      return ""
+    }
+    if k = checker_self.known_mods.get(name) {
+      return ""
+    }
+    if t = checker_self.named_type_seen(name) {
+      return name
+    }
+    if checker_self.is_generic_template(name) || is_builtin_type_name(name) {
+      return name
+    }
+    return ""
+  }
+  if recv.kind != ex_field() {
+    return ""
+  }
+  // A chain names a type only from a module's name (`mod.T`): find its
+  // first name before building it.
+  root = recv
+  while root.kind == ex_field() {
+    if o = root.object {
+      root = o
+    } else {
+      return ""
+    }
+  }
+  if root.kind != ex_name() {
+    return ""
+  }
+  if k = checker_self.known_mods.get(root.ident) {
+  } else {
+    return ""
+  }
+  if found = checker_self.lookup(root.ident) {
+    return ""
+  }
+  segs: Array(String) = []
+  if !checker_self.ident_chain(recv, segs) {
+    return ""
+  }
+  mod = checker_self.join_segs(segs, segs.size - 1)
+  if checker_self.qualifier_ok(mod, checker_self.current_module) {
+    if t = checker_self.resolver.get_named_in(mod, segs[segs.size - 1]) {
+      return "${mod}.${segs[segs.size - 1]}"
+    }
+  }
+  ""
+}
+
+// A receiver `mod.T` that names another module's type; "" for
+// anything else, cheaply (a bare name is found by check_name's hook).
+pub fn (checker_self: Checker) receiver_type_name(recv: Expr): String {
+  if recv.kind != ex_field() {
+    return ""
+  }
+  checker_self.type_receiver(recv)
+}
+
+// The ambiguity of a receiver that is a bare type name two modules (or a
+// module's type and another's function) publish; "" otherwise.
+pub fn (checker_self: Checker) receiver_clash(recv: Expr): String {
+  if recv.kind != ex_name() || recv.mod_name.size > 0 {
+    return ""
+  }
+  name = recv.ident
+  if listed = checker_self.type_list.get(name) {
+    if found = checker_self.lookup(name) {
+      return ""
+    }
+    if ft = checker_self.implicit_field(name) {
+      return ""
+    }
+    if k = checker_self.known_mods.get(name) {
+      return ""
+    }
+    return checker_self.clash_message(name, checker_self.current_module)
+  }
+  ""
+}
+
+// The error for `T.callee` when the type T (shown as tn) has no
+// type-level function of that name.
+pub fn (checker_self: Checker) fail_no_type_fn(loc: Location, recv: Expr, tn: String, callee: String) {
+  segs: Array(String) = []
+  ty_seen: Ty? = nil
+  if checker_self.ident_chain(recv, segs) {
+    ty: Ty? = nil
+    if segs.size == 1 {
+      ty = checker_self.named_type_seen(segs[0])
+    } else {
+      ty = checker_self.resolver.get_named_in(checker_self.join_segs(segs, segs.size - 1), segs[segs.size - 1])
+    }
+    ty_seen = ty
+    if t = ty {
+      for sig in checker_self.methods {
+        if sig.owner == t.name && sig.name == callee && !sig.node.type_method && checker_self.method_is_visible(sig.node, checker_self.current_module) {
+          checker_self.fail(loc, "${tn}.${callee} is an instance method; call it on a value")
+          return
+        }
+      }
+    }
+  }
+  hint = ""
+  if t2 = ty_seen {
+    hint = checker_self.type_fn_hint(t2, callee)
+  }
+  checker_self.fail_hint(loc, "${tn} has no type-level function ${callee}", hint)
+}
+
+pub fn is_builtin_type_name(name: String): Bool {
+  name == "Int" || name == "Int32" || name == "UInt32" || name == "UInt64" || name == "Bool" || name == "Float64" || name == "String" || name == "Array" || name == "Hash" || name == "Buf" || name == "Bytes" || name == "Ptr"
+}
+
+// The enum a receiver names (`Tok`, `mod.Tok`), when it is a type name
+// and not a value.
 pub fn (checker_self: Checker) enum_type_named(recv: Expr): Ty? {
   none: Ty? = nil
   segs: Array(String) = []
@@ -706,13 +1254,13 @@ pub fn (checker_self: Checker) enum_type_named(recv: Expr): Ty? {
     if found = checker_self.lookup(segs[0]) {
       return none
     }
-    if t = checker_self.resolver.get_named(segs[0]), t.is_enum {
+    if t = checker_self.named_type_seen(segs[0]), t.is_enum() {
       return t
     }
   } else if segs.size > 1 {
     mod = checker_self.join_segs(segs, segs.size - 1)
     if checker_self.qualifier_ok(mod, checker_self.current_module) {
-      if t = checker_self.resolver.get_named_in(mod, segs[segs.size - 1]), t.is_enum {
+      if t = checker_self.resolver.get_named_in(mod, segs[segs.size - 1]), t.is_enum() {
         return t
       }
     }
@@ -722,17 +1270,18 @@ pub fn (checker_self: Checker) enum_type_named(recv: Expr): Ty? {
 
 pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
   if b = expr.block {
-    checker_self.fail(expr.loc, "${ty.show}.${expr.callee} does not take a block")
+    checker_self.fail(expr.loc, "${ty.show()}.${expr.callee} does not take a block")
     return checker_self.t_int()
   }
   arg_tys: Array(Ty) = []
   i = 0
   while i < expr.args.size {
-    arg_tys.push(checker_self.check_expr(expr.args[i]))
+    arg_tys.push(checker_self.check_call_arg(expr.args[i]))
     i += 1
   }
   cands: Array(FuncSig) = []
   saw_instance = false
+  saw_private = false
   for sig in checker_self.methods {
     if sig.owner == ty.name {
       mod_ok = true
@@ -741,10 +1290,12 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
       }
       if mod_ok && sig.name == expr.callee {
         if sig.node.type_method {
-          if checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
+          if !checker_self.method_is_visible(sig.node, checker_self.current_module) {
+            saw_private = true
+          } else if arity_ok(sig.node, arg_tys.size) {
             ok = true
             for k in 0..arg_tys.size {
-              if !ty_assignable(arg_tys[k], sig.params[k]) {
+              if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_lit_expr(expr.args[k]) && arg_tys[k].is_numeric() && sig.params[k].is_numeric()) && !(checker_self.is_empty_array_ty(arg_tys[k]) && sig.params[k].is_array()) {
                 ok = false
               }
             }
@@ -759,15 +1310,27 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
     }
   }
   if cands.size == 0 {
-    if saw_instance {
-      checker_self.fail(expr.loc, "${ty.show}.${expr.callee} is an instance method; call it on a value")
+    if saw_private {
+      checker_self.fail(expr.loc, "${ty.show()}.${expr.callee} is private to module ${ty.mod_name}; mark it pub")
     } else {
-      checker_self.fail(expr.loc, "no type-level function ${expr.callee} on ${ty.show}")
+      all: Array(FuncSig) = []
+      for sig in checker_self.methods {
+        if sig.owner == ty.name && sig.name == expr.callee && sig.node.type_method && (ty.mod_name.size == 0 || sig.node.owner_mod.size == 0 || sig.node.owner_mod == ty.mod_name) {
+          all.push(sig)
+        }
+      }
+      if all.size > 0 {
+        checker_self.fail_no_fit(expr.loc, "${ty.show()}.${expr.callee}", all, arg_tys)
+      } else if saw_instance {
+        checker_self.fail(expr.loc, "${ty.show()}.${expr.callee} is an instance method; call it on a value")
+      } else {
+        checker_self.fail_hint(expr.loc, "${ty.show()} has no type-level function ${expr.callee}", checker_self.type_fn_hint(ty, expr.callee))
+      }
     }
     return checker_self.t_int()
   }
   if cands.size > 1 {
-    checker_self.fail(expr.loc, "ambiguous call to ${ty.show}.${expr.callee}")
+    checker_self.fail_ambiguous_method(expr.loc, "${ty.show()}.${expr.callee}", cands)
     return checker_self.t_int()
   }
   sig = cands[0]
@@ -776,15 +1339,24 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
     return checker_self.t_int()
   }
   given = expr.args.size
+  for ai in 0..given {
+    if ai < sig.params.size {
+      got = checker_self.fit_call_arg(expr.args[ai], arg_tys[ai], sig.params[ai])
+      if !ty_assignable(got, sig.params[ai]) {
+        an = ai + 1
+        checker_self.fail(expr.args[ai].loc, "argument ${an} of ${ty.show()}.${expr.callee} is ${got.show()}, expected ${sig.params[ai].show()}")
+      }
+    }
+  }
   checker_self.fill_defaults(expr, sig.node)
-  // The defaults it spliced are checked like any argument (O17: they
+  // The defaults it spliced are checked like any argument (they
   // reached the back end untyped).
   for di in given..expr.args.size {
     if di < sig.params.size {
       dgot = checker_self.check_default_arg(expr, di, sig.params, sig.node)
       if !ty_assignable(dgot, sig.params[di]) {
         dn = di + 1
-        checker_self.fail(expr.args[di].loc, "argument ${dn} of ${ty.show}.${expr.callee} is ${dgot.show}, expected ${sig.params[di].show}")
+        checker_self.fail(expr.args[di].loc, "argument ${dn} of ${ty.show()}.${expr.callee} is ${dgot.show()}, expected ${sig.params[di].show()}")
       }
     }
   }
@@ -801,7 +1373,7 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
   arg_tys: Array(Ty) = []
   i = 0
   while i < expr.args.size {
-    arg_tys.push(checker_self.check_expr(expr.args[i]))
+    arg_tys.push(checker_self.check_call_arg(expr.args[i]))
     i += 1
   }
   visible = false
@@ -813,10 +1385,10 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
     }
   }
   if !visible {
-    checker_self.fail(expr.loc, "unknown function ${expr.callee}")
+    checker_self.fail_hint(expr.loc, "unknown function ${expr.callee}", checker_self.fn_hint(expr.callee))
     return checker_self.t_int()
   }
-  if sig = checker_self.match_func(expr.callee, arg_tys, expected, expr.loc) {
+  if sig = checker_self.match_func(expr.callee, arg_tys, expected, expr.loc, checker_self.int_literal_flags(expr.args)) {
     checker_self.fill_defaults(expr, sig.node)
     i = 0
     while i < expr.args.size {
@@ -829,7 +1401,7 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
-        checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
+        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show()}, expected ${sig.params[i].show()}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
       }
       i += 1
     }
@@ -861,7 +1433,7 @@ pub fn (checker_self: Checker) absorb_method_block(expr: Expr, owner: String) {
   for sig in checker_self.methods {
     if sig.name == expr.callee && checker_self.method_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && checker_self.method_targets_owner(sig, owner) && sig.params.size == want_n {
       last = sig.params[want_n - 1]
-      if last.is_fn {
+      if last.is_fn() {
         take = true
       }
     }
@@ -892,9 +1464,9 @@ pub fn (checker_self: Checker) seed_method_subst(sig: FuncSig, owner: String, ke
   if recv = sig.node.receiver, act = checker_self.resolver.get_named(owner) {
     checker_self.resolver.set_tparams(sig.node.type_params)
     pat = checker_self.resolver.resolve(recv.type)
-    checker_self.pull_resolve
-    checker_self.resolver.clear_tparams
-    if checker_self.has_err {
+    checker_self.pull_resolve()
+    checker_self.resolver.clear_tparams()
+    if checker_self.has_err() {
       return false
     }
     if pat.origin == act.origin && pat.ty_args.size == act.ty_args.size {
@@ -911,7 +1483,7 @@ pub fn (checker_self: Checker) seed_method_subst(sig: FuncSig, owner: String, ke
   false
 }
 
-pub fn (checker_self: Checker) method_deferred_ok(sig: FuncSig, owner: String, deferred: Array(Int), ctypes: Array(Ty)): Bool {
+pub fn (checker_self: Checker) method_deferred_ok(sig: FuncSig, owner: String, deferred: Array(Int), ctypes: Array(Ty), args: Array(Expr)): Bool {
   if !checker_self.method_targets_owner(sig, owner) {
     return false
   }
@@ -930,7 +1502,7 @@ pub fn (checker_self: Checker) method_deferred_ok(sig: FuncSig, owner: String, d
   while i < deferred.size {
     if deferred[i] == 0 && i < sig.params.size {
       pty = checker_self.subst_ty(sig.params[i], keys, vals)
-      if !checker_self.unify_ty(pty, ctypes[i], keys, vals) && !ty_assignable(ctypes[i], pty) {
+      if !checker_self.early_arg_unifies(args[i], ctypes[i], pty, keys, vals) {
         return false
       }
     }
@@ -940,7 +1512,7 @@ pub fn (checker_self: Checker) method_deferred_ok(sig: FuncSig, owner: String, d
   while i < deferred.size {
     if deferred[i] == 1 && i < sig.params.size {
       pty = checker_self.subst_ty(sig.params[i], keys, vals)
-      if pty.is_fn {
+      if pty.is_fn() {
         if checker_self.fn_param_needs_type(pty) {
           return false
         }
@@ -962,7 +1534,7 @@ pub fn (checker_self: Checker) collect_method_deferred(expr: Expr, owner: String
       i += 1
       continue
     }
-    if sig.name == expr.callee && checker_self.method_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && checker_self.method_deferred_ok(sig, owner, deferred, ctypes) {
+    if sig.name == expr.callee && checker_self.method_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && checker_self.method_deferred_ok(sig, owner, deferred, ctypes, expr.args) {
       cands.push(sig)
     }
     i += 1
@@ -982,11 +1554,14 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
   while i < deferred.size {
     if deferred[i] == 0 && i < sig.params.size {
       pty = checker_self.subst_ty(sig.params[i], keys, vals)
-      if !checker_self.unify_ty(pty, ctypes[i], keys, vals) && !ty_assignable(ctypes[i], pty) {
+      if !checker_self.early_arg_unifies(expr.args[i], ctypes[i], pty, keys, vals) {
         n = i + 1
-        checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${ctypes[i].show}, expected ${pty.show}")
+        checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${ctypes[i].show()}, expected ${pty.show()}")
         return checker_self.t_int()
       }
+      // `[]` and the literals take their parameters' types now that the
+      // method is chosen.
+      ctypes[i] = checker_self.fit_call_arg(expr.args[i], ctypes[i], checker_self.subst_ty(sig.params[i], keys, vals))
     }
     i += 1
   }
@@ -1000,17 +1575,17 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
       got = checker_self.check_fn_arg(expr.args[i], pty)
       if !checker_self.unify_ty(pty, got, keys, vals) && !ty_assignable(got, pty) && !checker_self.fn_compatible(got, pty) {
         n = i + 1
-        checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show}, expected ${pty.show}")
+        checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show()}, expected ${pty.show()}")
         return checker_self.t_int()
       }
     }
     i += 1
   }
-  if checker_self.has_err {
+  if checker_self.has_err() {
     return checker_self.t_int()
   }
   if sig.node.generic {
-    if e = expected, !e.is_void {
+    if e = expected, !e.is_void() {
       ret_pat = checker_self.subst_ty(sig.ret, keys, vals)
       if !checker_self.unify_ty(ret_pat, e, keys, vals) {
         checker_self.fail(expr.loc, "cannot infer type argument")
@@ -1046,7 +1621,7 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
       }
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
-        checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
+        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show()}, expected ${sig.params[i].show()}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
       }
     }
     i += 1
@@ -1055,20 +1630,42 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
   sig.ret
 }
 
+// `box.f(args)` where the field f holds a function: the call of that
+// function, as `(box.f)(args)` (a type has no method of a field's name:
+// the declaration of the second is refused).
+pub fn (checker_self: Checker) field_fn_call(expr: Expr, object: Ty, field_ty: Ty): Ty {
+  if recv = expr.receiver {
+    checker_self.check_field_visible(object, expr.callee, expr.loc)
+    fa = Expr.new(ex_field(), expr.loc)
+    fa.object = recv
+    fa.ident = expr.callee
+    fa.ty = field_ty
+    expr.indirect = true
+    expr.inner = fa
+    expr.receiver = nil
+    expr.callee = ""
+    return checker_self.check_indirect_call(expr, field_ty)
+  }
+  checker_self.t_int()
+}
+
 pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected: Ty?): Ty {
   owner = object.name
-  if object.is_bytes || object.is_string || object.is_buf {
-    owner = object.show
+  if builtin_receiver_ok(object) {
+    owner = object.show()
   }
-  shown = object.show
+  shown = object.show()
   field_owner = object
-  if object.is_ptr {
+  if object.is_ptr() {
     owner = checker_self.method_owner_name(object)
-    if inner = object.inner, inner.is_clayout {
+    if inner = object.inner, inner.is_clayout() {
       field_owner = inner
     }
   }
   if field_ty = field_owner.field_named(expr.callee) {
+    if field_ty.is_fn() && !object.is_ptr() {
+      return checker_self.field_fn_call(expr, object, field_ty)
+    }
     label = field_owner.name
     if label.size == 0 {
       label = shown
@@ -1087,16 +1684,16 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
         ctypes.push(checker_self.t_int())
       } else {
         deferred.push(0)
-        ctypes.push(checker_self.check_expr(expr.args[i]))
+        ctypes.push(checker_self.check_call_arg(expr.args[i]))
       }
       i += 1
     }
-    if checker_self.has_err {
+    if checker_self.has_err() {
       return checker_self.t_int()
     }
     cands = checker_self.collect_method_deferred(expr, owner, deferred, ctypes)
     if cands.size > 1 {
-      checker_self.fail(expr.loc, "ambiguous call to ${shown}.${expr.callee}")
+      checker_self.fail_ambiguous_method(expr.loc, "${shown}.${expr.callee}", cands)
       return checker_self.t_int()
     }
     if cands.size == 1 {
@@ -1106,7 +1703,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
   arg_tys: Array(Ty) = []
   i = 0
   while i < expr.args.size {
-    arg_tys.push(checker_self.check_expr(expr.args[i]))
+    arg_tys.push(checker_self.check_call_arg(expr.args[i]))
     i += 1
   }
   if sig = checker_self.match_method(owner, expr.callee, arg_tys, expected, expr.loc, shown, object.mod_name, checker_self.int_literal_flags(expr.args)) {
@@ -1122,7 +1719,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
-        checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
+        checker_self.fail_hint(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${got.show()}, expected ${sig.params[i].show()}", checker_self.arg_open_hint(expr.args[i], got, sig.params[i]))
       }
       i += 1
     }
@@ -1137,7 +1734,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
 pub fn (checker_self: Checker) int_literal_flags(args: Array(Expr)): Array(Bool) {
   flags: Array(Bool) = []
   for a in args {
-    flags.push(checker_self.is_int_literal(a))
+    flags.push(checker_self.is_lit_expr(a))
   }
   flags
 }
@@ -1146,4 +1743,133 @@ pub fn (checker_self: Checker) int_literal_flags(args: Array(Expr)): Array(Bool)
 pub fn (checker_self: Checker) no_int_literals: Array(Bool) {
   flags: Array(Bool) = []
   flags
+}
+
+// A function's signature as a call's error shows it:
+// `add(a: Int, b: Int = ...): Int`, shown under the name the call wrote
+// (`m.add`, `Point.make`, `p.scale`'s `Point.scale`).
+pub fn (checker_self: Checker) sig_text(shown: String, sig: FuncSig): String {
+  b = buf_new()
+  b.push_str(shown)
+  b.push_str("(")
+  for i in 0..sig.params.size {
+    if i > 0 {
+      b.push_str(", ")
+    }
+    if i < sig.node.params.size {
+      b.push_str(sig.node.params[i].name)
+      b.push_str(": ")
+    }
+    b.push_str(sig.params[i].show())
+    if i < sig.node.params.size {
+      if d = sig.node.params[i].default {
+        b.push_str(" = ...")
+      }
+    }
+  }
+  b.push_str(")")
+  if !sig.ret.is_void() {
+    b.push_str(": ")
+    b.push_str(sig.ret.show())
+  }
+  b.to_s()
+}
+
+// How many arguments fnn takes, in words: "takes no arguments", "takes 1
+// argument", "takes 1 or 2 arguments", "takes 1 to 3 arguments".
+pub fn arity_text(fnn: Function): String {
+  req = required_arity(fnn)
+  most = fnn.params.size
+  if most == 0 {
+    return "takes no arguments"
+  }
+  if req == most {
+    if most == 1 {
+      return "takes 1 argument"
+    }
+    return "takes ${most} arguments"
+  }
+  if most == req + 1 {
+    return "takes ${req} or ${most} arguments"
+  }
+  "takes ${req} to ${most} arguments"
+}
+
+pub fn arg_types_text(arg_tys: Array(Ty)): String {
+  b = buf_new()
+  b.push_str("(")
+  for i in 0..arg_tys.size {
+    if i > 0 {
+      b.push_str(", ")
+    }
+    b.push_str(arg_tys[i].show())
+  }
+  b.push_str(")")
+  b.to_s()
+}
+
+// A call of shown whose arguments fit none of sigs, the functions (or
+// methods) of that name the call can see (it said "unknown function
+// NAME" or "no method NAME on T", which sent the reader looking for a
+// missing import). One signature: its count, or its first argument of
+// the wrong type; several: each signature, none chosen.
+pub fn (checker_self: Checker) fail_no_fit(loc: Location, shown: String, sigs: Array(FuncSig), arg_tys: Array(Ty)) {
+  argc = arg_tys.size
+  if sigs.size == 1 {
+    sig = sigs[0]
+    for name in checker_self.named_now {
+      for p in sig.node.params {
+        if p.name == name {
+          if d = p.default {
+          } else {
+            checker_self.fail(loc, "${name} of ${shown} has no default, so it is passed by position: a name is given only to a parameter with a default: ${checker_self.sig_text(shown, sig)}")
+            return
+          }
+        }
+      }
+    }
+    if !arity_ok(sig.node, argc) {
+      checker_self.fail(loc, "${shown} ${arity_text(sig.node)}, given ${argc}: ${checker_self.sig_text(shown, sig)}")
+      return
+    }
+    for k in 0..argc {
+      if k < sig.params.size && !ty_assignable(arg_tys[k], sig.params[k]) {
+        n = k + 1
+        checker_self.fail(loc, "argument ${n} of ${shown} is ${arg_tys[k].show()}, expected ${sig.params[k].show()}: ${checker_self.sig_text(shown, sig)}")
+        return
+      }
+    }
+    checker_self.fail(loc, "${shown} does not take ${arg_types_text(arg_tys)}: ${checker_self.sig_text(shown, sig)}")
+    return
+  }
+  any_count = false
+  for s in sigs {
+    if arity_ok(s.node, argc) {
+      any_count = true
+    }
+  }
+  list = buf_new()
+  shown_n = 0
+  for s in sigs {
+    if shown_n < 6 {
+      if shown_n > 0 {
+        list.push_str(", ")
+      }
+      list.push_str(checker_self.sig_text(shown, s))
+    }
+    shown_n += 1
+  }
+  if shown_n > 6 {
+    more = shown_n - 6
+    list.push_str(" and ${more} more")
+  }
+  if !any_count {
+    word = "arguments"
+    if argc == 1 {
+      word = "argument"
+    }
+    checker_self.fail(loc, "no overload of ${shown} takes ${argc} ${word}: ${list.to_s()}")
+    return
+  }
+  checker_self.fail(loc, "no overload of ${shown} takes ${arg_types_text(arg_tys)}: ${list.to_s()}")
 }

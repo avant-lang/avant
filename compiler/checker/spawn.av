@@ -11,11 +11,12 @@ import loader
 import typed_ir
 import checker.names
 import checker
+import receiver_writes
 
-// std.sync's Channel and Mutex cross a task as shared handles (D35):
-// that is their purpose. A class of another module with one of those
-// names is an ordinary class (Stage 29 W8Ca: before, any class named
-// Channel or Mutex crossed).
+// std.sync's Channel and Mutex cross a task as shared handles: that
+// is their purpose. A class of another module with one of those
+// names is an ordinary class (before, any class named Channel or
+// Mutex crossed).
 pub fn (checker_self: Checker) is_share_ty(ty: Ty): Bool {
   checker_self.is_sync_ty(ty, "Channel") || checker_self.is_sync_ty(ty, "Mutex")
 }
@@ -24,33 +25,40 @@ pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
   if checker_self.is_share_ty(ty) {
     return true
   }
-  if ty.is_array {
-    return true
+  // A captured Array is shared with the task, frozen until the task
+  // ends, so its elements cross in turn: an Array of a class would put
+  // one mutable object in two tasks with no lock (send's rule,
+  // checker/guard.av send_crosses).
+  if ty.is_array() {
+    if e = ty.inner {
+      return checker_self.copyable_for_spawn(e)
+    }
+    return false
   }
   checker_self.copyable_bits(ty)
 }
 
 pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
-  if ty.is_integer {
+  if ty.is_integer() {
     return true
   }
-  // An enum is a number (Stage 29 W5a1).
-  if ty.is_enum {
+  // An enum is a number.
+  if ty.is_enum() {
     return true
   }
-  if ty.is_uint64 {
+  if ty.is_uint64() {
     return true
   }
-  if ty.is_bool {
+  if ty.is_bool() {
     return true
   }
-  if ty.is_float {
+  if ty.is_float() {
     return true
   }
-  if ty.is_string {
+  if ty.is_string() {
     return true
   }
-  if ty.is_struct {
+  if ty.is_struct() {
     for field in ty.fields {
       if !checker_self.copyable_bits(field.ty) {
         return false
@@ -61,22 +69,22 @@ pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
   false
 }
 
-// What may leave a `Mutex.with` block as its value (O231, Stage 29
-// W-FIX1b): spawn's rule for what crosses a task (a share type, or bits
-// that hold no reference to mutable state), without the frozen array
-// (that rule freezes a named array while a task is pending; a value has
-// no name to freeze) and with what holds no mutable state either:
-// `Bytes`, `nil`, and a union or a struct of such members. A class, an
-// array, a hash, a `Buf`, a `fn` or a pointer may be the guarded object
-// or a part of it: outside the block the lock no longer protects it.
+// What may leave a `Mutex.with` block as its value: spawn's rule for
+// what crosses a task (a share type, or bits that hold no reference to
+// mutable state), without the frozen array (that rule freezes a named
+// array while a task is pending; a value has no name to freeze) and
+// with what holds no mutable state either: `Bytes`, `nil`, and a union
+// or a struct of such members. A class, an array, a hash, a `Buf`, a
+// `fn` or a pointer may be the guarded object or a part of it: outside
+// the block the lock no longer protects it.
 pub fn (checker_self: Checker) leaves_mutex_with(ty: Ty): Bool {
   if checker_self.is_share_ty(ty) {
     return true
   }
-  if ty.is_nil || ty.is_bytes {
+  if ty.is_nil() || ty.is_bytes() {
     return true
   }
-  if ty.is_union {
+  if ty.is_union() {
     for m in ty.members {
       if !checker_self.leaves_mutex_with(m) {
         return false
@@ -84,7 +92,7 @@ pub fn (checker_self: Checker) leaves_mutex_with(ty: Ty): Bool {
     }
     return true
   }
-  if ty.is_struct {
+  if ty.is_struct() {
     for field in ty.fields {
       if !checker_self.leaves_mutex_with(field.ty) {
         return false
@@ -96,7 +104,7 @@ pub fn (checker_self: Checker) leaves_mutex_with(ty: Ty): Bool {
 }
 
 pub fn (checker_self: Checker) collect_spawn_captures(expr: Expr, body: Array(Stmt)) {
-  seen = Hash(String, Int).new
+  seen = Hash(String, Int).new()
   checker_self.walk_spawn_stmts(body, expr, seen)
 }
 
@@ -137,11 +145,11 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
     if target = stmt.target {
       if target.kind == ex_name() {
         if ty = checker_self.lookup(target.ident) {
-          checker_self.fail(target.loc, "spawn cannot assign to ${target.ident}; copy at send is read-only (D35)")
+          checker_self.fail(target.loc, "spawn cannot assign to ${target.ident}; copy at send is read-only")
         }
       } else if checker_self.spawn_array_frozen(target) {
         root = checker_self.expr_root_name(target)
-        checker_self.fail(target.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
+        checker_self.fail(target.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join")
         checker_self.walk_spawn_expr(target, node, seen)
       } else {
         checker_self.walk_spawn_expr(target, node, seen)
@@ -159,9 +167,9 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
     return
   }
   if k == st_pin() || k == st_release() || k == st_hold() {
-    // O131 (Stage 29 W1a): a `pin` block's value and body, and `release`'s
-    // place, are walked like any statement's (before, a name used only
-    // there was not captured, and the back end stopped with L0001).
+    // A `pin` block's value and body, and `release`'s place, are walked
+    // like any statement's (before, a name used only there was not
+    // captured, and the back end stopped with L0001).
     if e = stmt.expr {
       checker_self.walk_spawn_expr(e, node, seen)
     }
@@ -187,7 +195,12 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     if recv = expr.receiver {
       if checker_self.array_mutator(expr.callee) && checker_self.spawn_array_frozen(recv) {
         root = checker_self.expr_root_name(recv)
-        checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join (Q74-A)")
+        checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join")
+      }
+      if checker_self.spawn_array_frozen(recv) && rw_element_place(recv) {
+        // A method on an element (`xs[0].bump`): refused once the
+        // program is checked if it changes its receiver.
+        checker_self.note_element_call(expr, recv, 1)
       }
       checker_self.walk_spawn_expr(recv, node, seen)
     }
@@ -216,6 +229,13 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
   }
   if k == ex_field() {
     if obj = expr.object {
+      if checker_self.field_mutates_array(expr) && checker_self.spawn_array_frozen(obj) {
+        root = checker_self.expr_root_name(obj)
+        checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join")
+      }
+      if expr.method_call && checker_self.spawn_array_frozen(obj) && rw_element_place(obj) {
+        checker_self.note_element_call(expr, obj, 1)
+      }
       checker_self.walk_spawn_expr(obj, node, seen)
     }
     return
@@ -284,7 +304,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
       }
       checker_self.walk_spawn_stmts(b.body, node, seen)
       while checker_self.spawn_skip.size > mark {
-        dropped = checker_self.spawn_skip.pop
+        dropped = checker_self.spawn_skip.pop()
       }
     }
   }
@@ -339,6 +359,50 @@ pub fn (checker_self: Checker) array_mutator(name: String): Bool {
   name == "reserve"
 }
 
+// The type of an Array name or of an element reached from one by
+// indexing (`xs`, `xs[0]`), as the scope declares it; nil for any other
+// expression. A zero-argument mutator written without parentheses
+// (`xs.pop`, `xs.clear`, `xs.sort`, `xs.reverse`) is a field node, and
+// this tells it from a struct field of the same name.
+pub fn (checker_self: Checker) indexed_array_ty(expr: Expr): Ty? {
+  if expr.kind == ex_name() {
+    if checker_self.spawn_skip_has(expr.ident) {
+      return nil
+    }
+    if ty = checker_self.lookup(expr.ident) {
+      if ty.is_array() {
+        return ty
+      }
+    }
+    return nil
+  }
+  if expr.kind == ex_index() {
+    if l = expr.left {
+      if at = checker_self.indexed_array_ty(l) {
+        if e = at.inner {
+          if e.is_array() {
+            return e
+          }
+        }
+      }
+    }
+  }
+  nil
+}
+
+// Whether a field node is an Array mutator written without parentheses.
+pub fn (checker_self: Checker) field_mutates_array(expr: Expr): Bool {
+  if expr.kind != ex_field() || !checker_self.array_mutator(expr.ident) {
+    return false
+  }
+  if obj = expr.object {
+    if at = checker_self.indexed_array_ty(obj) {
+      return true
+    }
+  }
+  false
+}
+
 pub fn (checker_self: Checker) spawn_array_frozen(expr: Expr): Bool {
   root = checker_self.expr_root_name(expr)
   if root.size == 0 {
@@ -348,7 +412,7 @@ pub fn (checker_self: Checker) spawn_array_frozen(expr: Expr): Bool {
     return false
   }
   if ty = checker_self.lookup(root) {
-    return ty.is_array
+    return ty.is_array()
   }
   false
 }
@@ -376,6 +440,9 @@ pub fn (checker_self: Checker) pending_join(handle: String) {
 }
 
 pub fn (checker_self: Checker) scan_pending_stmt(stmt: Stmt) {
+  for st in stmt.pre {
+    checker_self.scan_pending_stmt(st)
+  }
   if e = stmt.expr {
     checker_self.scan_pending_expr(e)
   }
@@ -405,14 +472,30 @@ pub fn (checker_self: Checker) scan_pending_target(target: Expr) {
   }
   root = checker_self.expr_root_name(target)
   if root.size > 0 && checker_self.pending_has_array(root) {
-    checker_self.fail(target.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
+    checker_self.fail(target.loc, "cannot mutate ${root} while a spawn using it is running; join first")
   }
   checker_self.scan_pending_expr(target)
 }
 
 pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
   k = expr.kind
+  if k == ex_field() && checker_self.field_mutates_array(expr) {
+    if obj = expr.object {
+      root = checker_self.expr_root_name(obj)
+      if root.size > 0 && checker_self.pending_has_array(root) {
+        checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first")
+      }
+    }
+  }
   if k == ex_field() {
+    // A method on an element of a pending array (`xs[0].bump`), told
+    // from a field read once the program is checked.
+    if obj = expr.object, obj.kind == ex_index() || obj.kind == ex_field() {
+      root = checker_self.expr_root_name(obj)
+      if root.size > 0 && checker_self.pending_has_array(root) {
+        checker_self.note_element_call(expr, obj, 2)
+      }
+    }
     if expr.ident == "join" {
       if obj = expr.object, obj.kind == ex_name() {
         checker_self.pending_join(obj.ident)
@@ -429,7 +512,13 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
     if recv = expr.receiver, checker_self.array_mutator(expr.callee) {
       root = checker_self.expr_root_name(recv)
       if root.size > 0 && checker_self.pending_has_array(root) {
-        checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first (Q74-A)")
+        checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first")
+      }
+    }
+    if recv = expr.receiver, recv.kind == ex_index() || recv.kind == ex_field() {
+      root = checker_self.expr_root_name(recv)
+      if root.size > 0 && checker_self.pending_has_array(root) {
+        checker_self.note_element_call(expr, recv, 2)
       }
     }
   }
@@ -483,6 +572,35 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
   }
 }
 
+// One statement of any block, with the sender's rule around it: the
+// statement is scanned for a mutation of an Array a running spawn
+// captured, then checked, and a spawn it starts is running for the
+// block's later statements. Every walk over a block's statements calls
+// this, and scans a value's tail expression with scan_pending_expr (the
+// arms of a switch, value blocks, an `if` used as a value and
+// `?? return` called check_stmt directly, so a spawn started there was
+// never recorded and a later `push` raced the task; the tails of those
+// blocks and of a `with` body, and a binding chain's elements, were not
+// scanned).
+pub fn (checker_self: Checker) check_block_stmt(stmt: Stmt, expected: Ty, last: Bool) {
+  checker_self.scan_pending_stmt(stmt)
+  checker_self.check_stmt(stmt, expected, last)
+  if !checker_self.has_err() {
+    checker_self.register_spawn_pending(stmt)
+  }
+}
+
+// The condition of an `if` used as a block's value: its branches go
+// through check_block_stmt themselves.
+pub fn (checker_self: Checker) scan_pending_if_head(stmt: Stmt) {
+  for el in stmt.pre {
+    checker_self.scan_pending_stmt(el)
+  }
+  if c = stmt.cond {
+    checker_self.scan_pending_expr(c)
+  }
+}
+
 pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
   if stmt.kind == st_assign() {
     if v = stmt.value, v.kind == ex_call(), v.callee == "spawn" {
@@ -491,7 +609,7 @@ pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
         handle = t.ident
       }
       for i in 0..v.cap_names.size {
-        if v.cap_tys[i].is_array {
+        if v.cap_tys[i].is_array() {
           checker_self.pending_handles.push(handle)
           checker_self.pending_arrays.push(v.cap_names[i])
         }
@@ -501,7 +619,7 @@ pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
   }
   if e = stmt.expr, e.kind == ex_call(), e.callee == "spawn" {
     for i in 0..e.cap_names.size {
-      if e.cap_tys[i].is_array {
+      if e.cap_tys[i].is_array() {
         checker_self.pending_handles.push("")
         checker_self.pending_arrays.push(e.cap_names[i])
       }
@@ -514,8 +632,20 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
     return
   }
   if ty = checker_self.lookup(expr.ident) {
+    if ty.is_array() && !checker_self.copyable_for_spawn(ty) {
+      leaf = ty
+      while leaf.is_array() {
+        if e = leaf.inner {
+          leaf = e
+        } else {
+          break
+        }
+      }
+      checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: an ${ty.show()} is shared with the task, and its elements (${leaf.show()}) cannot cross to another task: a mutable object reaches another task only inside a Mutex")
+      return
+    }
     if !checker_self.copyable_for_spawn(ty) {
-      checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: ${ty.show} is not copied at send (D35)")
+      checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: ${ty.show()} is not copied at send")
       return
     }
     if prev = seen.get(expr.ident) {
@@ -524,5 +654,64 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
     seen[expr.ident] = 1
     node.cap_names.push(expr.ident)
     node.cap_tys.push(ty)
+  }
+}
+
+// ---- A method that changes its receiver, on an element.
+//
+// A struct method gets its receiver's address, so `xs[0].bump` with `fn
+// bump { self.n += 1 }` writes the element in xs's buffer, as `xs[0].n
+// += 1` does. Where the receiver is an element of an Array a running
+// task reads, through the captured name (in the task: walk_spawn_expr)
+// or the pending one (in the sender: scan_pending_expr), the call is
+// noted, and once the whole program is checked (every method body has
+// its types) it is refused when the method changes its receiver
+// (receiver_writes.av: an assignment to a place of self through struct
+// fields, or such a call on one, at any depth). A call through any other
+// path traps at run time (the freeze, mir/lower_agg.av
+// lower_method_call).
+pub fn (checker_self: Checker) note_element_call(expr: Expr, recv: Expr, side: Int) {
+  checker_self.elem_calls.push(expr)
+  checker_self.elem_roots.push(checker_self.expr_root_name(recv))
+  checker_self.elem_sides.push(side)
+}
+
+pub fn (checker_self: Checker) check_element_writes {
+  if checker_self.elem_calls.size == 0 || checker_self.any_err() {
+    return
+  }
+  rw = ReceiverWrites.new()
+  for ms in checker_self.methods {
+    rw.add(ms.node)
+  }
+  for f in checker_self.pending {
+    rw.add(f)
+  }
+  i = 0
+  while i < checker_self.elem_calls.size {
+    e = checker_self.elem_calls[i]
+    root = checker_self.elem_roots[i]
+    side = checker_self.elem_sides[i]
+    i += 1
+    recv: Expr? = nil
+    if e.kind == ex_call() {
+      recv = e.receiver
+    } else if e.kind == ex_field() && e.method_call {
+      recv = e.object
+    }
+    if r = recv, rt = r.ty, rt.is_struct(), e.resolved.size > 0, rw_element_place(r) {
+      if rw.writes(e.resolved) {
+        name = e.callee
+        if e.kind == ex_field() {
+          name = e.ident
+        }
+        if side == 1 {
+          checker_self.fail(e.loc, "spawn cannot mutate captured Array ${root}: ${rt.show()}.${name} changes its receiver, an element of ${root}; it is read-only until join")
+        } else {
+          checker_self.fail(e.loc, "cannot mutate ${root} while a spawn using it is running: ${rt.show()}.${name} changes its receiver, an element of ${root}; join first")
+        }
+        return
+      }
+    }
   }
 }

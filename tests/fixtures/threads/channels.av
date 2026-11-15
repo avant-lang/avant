@@ -1,10 +1,10 @@
-// Channels between tasks on the new back end (Stage 28 W8b, mir.md
-// W8b): Channel(T) is std.sync's generic class (Stage 29 W8Ca; it was
-// pasted here and in the suite's harness.av before), written on the gate
-// builtins, so it needs no lowering of its own.
-// Producers and a consumer exchange Ints and Strings through bounded
-// and unbuffered channels; the consumer sums what it receives and the
-// main thread prints after every join, in order.
+// Channels between tasks on the new back end: Channel(T) is
+// std.sync's generic class (it was pasted here and in the
+// suite's harness.av before), written on the gate builtins,
+// so it needs no lowering of its own. Producers and a
+// consumer exchange Ints and Strings through bounded and
+// unbuffered channels; the consumer sums what it receives
+// and the main thread prints after every join, in order.
 
 import std.sync
 
@@ -24,13 +24,13 @@ fn main {
   total = 0
   got = 0
   while got < 1000 {
-    if v = nums.recv {
+    if v = nums.recv() {
       total = total + v
       got = got + 1
     }
   }
-  puts(p1.join)
-  puts(p2.join)
+  puts(p1.join() ?? -1)
+  puts(p2.join() ?? -1)
   puts(total)
   texts = Channel(String).new(0)
   prefix = "msg"
@@ -40,18 +40,18 @@ fn main {
       texts.send("${prefix}-${i}")
       i = i + 1
     }
-    texts.close
+    texts.close()
     50
   }
   lens = 0
   count = 0
   last = ""
-  while s = texts.recv {
+  while s = texts.recv() {
     lens = lens + s.size
     count = count + 1
     last = s
   }
-  puts(st.join)
+  puts(st.join() ?? -1)
   puts(count)
   puts(lens)
   puts(last)
@@ -68,12 +68,12 @@ fn main {
   }
   names: Array(String) = []
   while names.size < 4 {
-    if r = replies.recv {
+    if r = replies.recv() {
       names.push(r)
     }
   }
   sum = 0
-  workers.each { |w| sum = sum + w.join }
+  workers.each { |w| sum = sum + (w.join() ?? -1) }
   puts(sum)
   sorted = names.sorted { |a, b| a.size < b.size || (a.size == b.size && a[6] < b[6]) }
   puts(sorted[0])

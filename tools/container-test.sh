@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install a release into a clean container and smoke-test it (D147).
+# Install a release into a clean container and smoke-test it.
 #
 #   sh tools/container-test.sh IMAGE DIST_DIR [EXPECT]
 #

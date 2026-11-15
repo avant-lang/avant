@@ -9,16 +9,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The remembered set and the store barriers (Stage 28 W12, moved from
+/* The remembered set and the store barriers (moved from
  * avant_rt.c): mature objects that may name young ones, the set's upkeep
  * after young and full collections, and the barrier entry points
  * avant_barrier and avant_barrier_at. (E's frontier policy, which kept a
  * remembered entry across young collections while its last scan found a
- * young field, Collector II Wave 2, went with E in Stage 28 W15d: S+
+ * young field, went with E: S+
  * empties the set at every young collection and remembers again only the
  * holders of objects that stay young, gc_rem_keep_young_holders.) */
 
-/* A mutator's change of header flag bits (Stage 28 W17b): in a shared
+/* A mutator's change of header flag bits: in a shared
  * program an atomic or (and), since threads remember, card and pin the
  * same object without a common lock (a plain read-modify-write could
  * drop another thread's bit); a plain one with one mutator, and in a
@@ -48,11 +48,11 @@ static void rem_push(void ***v, uint32_t *n, uint32_t *cap, void *obj) {
 }
 
 /* OBJ joins the set with BIT (REM, or REMC for a carded object). In a
- * shared program, outside a collection (Stage 28 W17b, MMTk's modbuf):
+ * shared program, outside a collection (MMTk's modbuf):
  * the thread sets the bit by an atomic or, and the one thread that set
  * it appends OBJ to its own buffer, merged into the set at the next
  * collection's pause (gc_rem_merge_all), so no barrier takes a lock and
- * no object is in the set twice. (Until W17b every such add took
+ * no object is in the set twice. (Every such add used to take
  * rem_mu.) */
 static void rem_add_bit(void *obj, uint16_t bit) {
   AvantHeader *h = avant_header(obj);
@@ -122,9 +122,9 @@ void gc_keep_add(void *obj) {
 }
 
 /* Does a field's word P name a young object (one with YOUNG)? By the
- * field rule (avant_gc_internal.h; the Valk stage, VALK-T, O585) the range
+ * field rule (avant_gc_internal.h) the range
  * test alone says whether P names a heap object, and then P is its
- * start (until VALK-T: gc_object_payload's lookup of every field). */
+ * start (it used to be gc_object_payload's lookup of every field). */
 static inline int slot_names_young(void *p) {
   Block *b;
   AvantHeader *ol;
@@ -145,7 +145,7 @@ static int rem_names_young(void *obj) {
   return found;
 }
 
-/* Candidate S (Stage 28 W15c, O88): after an S young collection emptied
+/* Candidate S: after an S young collection emptied
  * the remembered set, the holders on the keep list (the trace's holders
  * of a young large object, and the young large objects promoted at this
  * collection, promote_young_large) are remembered when they are not young
@@ -167,10 +167,10 @@ void gc_rem_keep_young_holders(void) {
   gc_heap.keep_n = 0;
 }
 
-/* After a young collection (Stage 28 W16t): the cards of every carded
+/* After a young collection: the cards of every carded
  * object it reached (the carded list: the large pointer buffers among
- * the noted objects, in the same order; until the Valk stage's VALK-T
- * this read every noted entry's header to find them, O579) are made
+ * the noted objects, in the same order; this used to read every noted
+ * entry's header to find them) are made
  * exact, and the object is
  * remembered (REMC) when a card is still marked. One scanned only by its
  * marked cards (CARD_SCAN) has those cards rechecked: a card stays marked
@@ -216,20 +216,20 @@ void gc_cards_settle(void) {
   }
 }
 
-/* C33 and O9 (Stage 28 W14b1, gc-design.md §7): the remembered set after
+/* The remembered set after
  * a full collection's mark (and its defragmentation, which rewrote the
  * entries it moved), before the sweep, O(set). An entry whose holder is
  * unmarked is dead and dropped: before, it stayed, and a later young
  * collection scanned the dead object's stale fields as roots, or, once
  * its address held a new object, scanned that unrelated object (start
- * bits cannot tell, gc-design.md §2.3). An entry whose header lacks REM
+ * bits cannot tell). An entry whose header lacks REM
  * is such an address (a new object the barrier never remembered) or a
  * duplicate left by one, and is dropped too. A live holder that names
  * no young object leaves the set with REM cleared (the barrier re-adds
  * it at its next store); with the nursery off (AVANT_NURSERY=0) no young
  * collection reads the set, so every entry leaves it, and avant_barrier
  * remembers nothing. Kept entries are made unique with the header's
- * MARKED, which no full collection uses (C36), cleared before return. */
+ * MARKED, which no full collection uses, cleared before return. */
 void gc_rem_full_scrub(void) {
   uint32_t i;
   uint32_t w = 0;
@@ -265,7 +265,7 @@ void gc_rem_full_scrub(void) {
 
 void avant_barrier(void *obj) {
   AvantHeader *h;
-  /* O9: with the nursery off no young collection runs, so nothing is
+  /* With the nursery off no young collection runs, so nothing is
    * remembered (the set grew without bound: churn.av kept 1.6 M
    * entries). */
   if (!obj || gc_thread.collecting || gc_heap.set.nursery_off) {
@@ -277,13 +277,23 @@ void avant_barrier(void *obj) {
   if (((uintptr_t)obj & (ALIGN - 1)) == 0) {
     h = avant_header(obj);
     if (h->flags & AVANT_FLAG_HEAP) {
-      /* Already scanned from the roots, or already in the remembered set. */
-      if (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_REM)) {
+      /* Already scanned from the roots. */
+      if (h->flags & AVANT_FLAG_YOUNG) {
         return;
       }
-      /* A carded object named without its slot (Stage 28 W16t): every
+      /* Already in the remembered set. (The proof's log is not asked: an
+       * old object in the set was logged when the call below remembered
+       * it, or it names a young object a collection left young, and the
+       * store that put that reference there was logged.) */
+      if (h->flags & AVANT_FLAG_REM) {
+        return;
+      }
+      /* A carded object named without its slot: every
        * card counts as marked until the next young collection. */
       if (gc_carded(h) && gc_is_heap_payload(obj, NULL, NULL)) {
+        if (!(h->flags & AVANT_FLAG_REMC)) {
+          gc_proof_store(obj, h);
+        }
         gc_hdr_or(h, AVANT_FLAG_CARD_ALL);
         rem_add_bit(obj, AVANT_FLAG_REMC);
         return;
@@ -293,10 +303,13 @@ void avant_barrier(void *obj) {
   if (!gc_is_heap_payload(obj, NULL, NULL)) {
     return;
   }
+  /* An old object's first store since the last full collection: the
+   * references it holds are logged before the store (avant_gc_proof.c). */
+  gc_proof_store(obj, avant_header(obj));
   rem_add(obj);
 }
 
-/* The barrier with the slot (Stage 28 W16t, card marking, Q5, O64): a
+/* The barrier with the slot (card marking): a
  * store of a reference into SLOT of OBJ. For a mature carded object (a
  * large pointer buffer) the slot's card is marked and the object is in
  * the set (REMC); a slot outside the object counts as every card. For
@@ -321,6 +334,12 @@ void avant_barrier_slot(void *obj, void *slot) {
         gc_hdr_or(h, AVANT_FLAG_CARD_ALL);
       }
       if (!(h->flags & AVANT_FLAG_REMC)) {
+        /* The first store since a collection emptied the set: the proof's
+         * log is asked here, where the set is (a carded buffer is above
+         * the size the log takes, so this breaks the proof: PROOF_BIG,
+         * avant_gc_proof.c), and a store into a buffer already in the set
+         * pays nothing for it. */
+        gc_proof_store(obj, h);
         rem_add_bit(obj, AVANT_FLAG_REMC);
       }
       return;
@@ -329,7 +348,7 @@ void avant_barrier_slot(void *obj, void *slot) {
   avant_barrier(obj);
 }
 
-/* Stage 28 W1b. The barrier for a store through an address that may be
+/* The barrier for a store through an address that may be
  * inside a heap object (a struct method's self, a struct field reached
  * through such a self): remembers the object containing addr, like
  * avant_barrier(object). An address on this thread's stack, or outside

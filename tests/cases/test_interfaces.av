@@ -82,7 +82,7 @@ struct Def: Full {
 }
 
 fn show(v: T: Show): String {
-  v.to_s
+  v.to_s()
 }
 
 fn same(a: T: Eq(T), b: T): Bool {
@@ -93,7 +93,7 @@ fn same(a: T: Eq(T), b: T): Bool {
 }
 
 fn both(v: T: Show + Eq(T)): String {
-  v.to_s
+  v.to_s()
 }
 
 fn sum(b: E: Fold(Int)): Int {
@@ -137,7 +137,7 @@ fn test_interfaces(c: Checks) {
     dir = "${scratch()}/interfaces-${stamp}"
     mkdir_p(dir)
     write_av(dir, "show", "pub interface Show {\n  fn to_s: String\n}\npub struct Tag {\n  pub n: Int\n}\npub fn (v: Tag) to_s: String {\n  \"tag\"\n}\npub Tag: Show\n")
-    write_av(dir, "main", "import show\nfn present(v: T: Show): String {\n  v.to_s\n}\nfn main {\n  puts(present(Tag { n: 1 }))\n}\n")
+    write_av(dir, "main", "import show\nfn present(v: T: Show): String {\n  v.to_s()\n}\nfn main {\n  puts(present(Tag { n: 1 }))\n}\n")
     bin = "${dir}/ok.bin"
     log = "${dir}/ok.log"
     out = "${dir}/ok.out"
@@ -157,7 +157,7 @@ fn test_interfaces(c: Checks) {
     asrc = "${dir}/point.av"
     clog = "${dir}/point.txt"
     _ = file_write(csrc, "#include <stdlib.h>\ntypedef struct Point { int x; } Point;\nPoint *point_new(int x) {\n  Point *p = malloc(sizeof(Point));\n  p->x = x;\n  return p;\n}\n")
-    _ = file_write(asrc, "interface Show {\n  fn to_s: String\n}\nlib math {\n  struct Point {\n    x: Int\n  }\n  fun point_new(x: Int): Ptr(Point)\n}\nfn (p: Ptr(Point)) to_s: String {\n  \"pt\"\n}\nPtr(Point): Show\nfn present(v: T: Show): String {\n  v.to_s\n}\nfn main {\n  puts(present(math.point_new(1)))\n}\n")
+    _ = file_write(asrc, "interface Show {\n  fn to_s: String\n}\nlib math {\n  struct Point {\n    x: Int\n  }\n  fun point_new(x: Int): Ptr(Point)\n}\nfn (p: Ptr(Point)) to_s: String {\n  \"pt\"\n}\nPtr(Point): Show\nfn present(v: T: Show): String {\n  v.to_s()\n}\nfn main {\n  puts(present(math.point_new(1)))\n}\n")
     flags: Array(String) = []
     flags.push("--cc")
     flags.push(csrc)
@@ -180,5 +180,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_interfaces(c)
-  c.finish
+  c.finish()
 }

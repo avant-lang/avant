@@ -1,37 +1,34 @@
-// The GC contract as emitted (Stage 28 W5a; stages/stage28/mir.md 5.1,
-// 5.2, 5.5, 5.6, 11.3): frame enter and leave, root registration, the
-// barrier (inline fast path, or the call form), and allocation (the
-// inline fast path of 5.5 with the null-bump test of 10.3, or the call
-// form). The runtime ABI is the frozen one (D163); the sequences reproduce
-// the old back end's (audit 4.1-4.4).
+// The GC contract as emitted: frame enter and leave, root registration,
+// the barrier (inline fast path, or the call form), and allocation (the
+// inline fast path, or the call form). The runtime ABI is the frozen
+// one; the sequences reproduce the old back end's.
 
 import source
 import mir.types
 import mir.ir
 import llvm.emit_core
 
-// Frames (5.1, 5.2 as emitted since Stage 28 W18). A frame function
-// keeps its frame record in its own stack frame: %gcf, an AvantGcFrame
-// (runtime/avant_rt.h: prev, slots, n, cap, scope; 32 bytes) followed by
-// the slot array, one pointer per root word of the gc.roots that follows
-// gc.enter (slots in the listed order, words in offset order). gc.enter
-// fills the record (slots, n = cap = the root words, scope 0, each
-// word's address) and links it with the module's @__avant_frame_push:
-// inline (prev = avant_gc_top, avant_gc_top = %gcf) when the thread
-// already has an innermost frame, else through avant_gc_frame_enter,
-// which also registers the thread and initializes the heap. gc.leave
-// calls @__avant_frame_pop, which unlinks it inline when %gcf is
-// innermost and not the thread's outermost frame, else through
-// avant_gc_frame_leave. Both helpers are internal and small, so the O3
-// inliner folds them into every frame (ll_gc_frame_helpers). The call
-// forms (inline_fast false) call the runtime entries directly.
-// gc.roots itself emits nothing: gc.enter has registered its slots, and
-// nothing comes between them (V16). Until W18 this was a call to
-// avant_gc_enter, a call to avant_gc_root_begin and one store per word,
-// and a call to avant_gc_leave (R5, O4).
+// Frames. A frame function keeps its frame record in its own stack
+// frame: %gcf, an AvantGcFrame (runtime/avant_rt.h: prev, slots, n, cap,
+// scope; 32 bytes) followed by the slot array, one pointer per root word
+// of the gc.roots that follows gc.enter (slots in the listed order,
+// words in offset order). gc.enter fills the record (slots, n = cap =
+// the root words, scope 0, each word's address) and links it with the
+// module's @__avant_frame_push: inline (prev = avant_gc_top,
+// avant_gc_top = %gcf) when the thread already has an innermost frame,
+// else through avant_gc_frame_enter, which also registers the thread and
+// initializes the heap. gc.leave calls @__avant_frame_pop, which unlinks
+// it inline when %gcf is innermost and not the thread's outermost frame,
+// else through avant_gc_frame_leave. Both helpers are internal and
+// small, so the inliner at -O3 folds them into every frame
+// (ll_gc_frame_helpers). The call forms (inline_fast false) call the
+// runtime entries directly. gc.roots itself emits nothing: gc.enter has
+// registered its slots, and nothing comes between them (V16). Before,
+// this was a call to avant_gc_enter, a call to avant_gc_root_begin and
+// one store per word, and a call to avant_gc_leave.
 
 // The root words of bb0's gc.roots, or -1 when the function has no
-// gc.enter (a leaf, 5.7).
+// gc.enter (a leaf).
 pub fn ll_gc_frame_words(e: LlEmit, f: MFunc): Int {
   if f.blocks.size == 0 {
     return -1
@@ -89,19 +86,19 @@ pub fn ll_gc_frame_enter(e: LlEmit) {
   }
   slots = "null"
   if n > 0 {
-    slots = e.tmp
+    slots = e.tmp()
     e.line("${slots} = getelementptr inbounds i8, ptr %gcf, i64 32")
   }
-  fs = e.tmp
+  fs = e.tmp()
   e.line("${fs} = getelementptr inbounds i8, ptr %gcf, i64 8")
   e.line("store ptr ${slots}, ptr ${fs}, align 8")
-  fn_ = e.tmp
+  fn_ = e.tmp()
   e.line("${fn_} = getelementptr inbounds i8, ptr %gcf, i64 16")
   e.line("store i32 ${n}, ptr ${fn_}, align 8")
-  fc = e.tmp
+  fc = e.tmp()
   e.line("${fc} = getelementptr inbounds i8, ptr %gcf, i64 20")
   e.line("store i32 ${n}, ptr ${fc}, align 4")
-  fsc = e.tmp
+  fsc = e.tmp()
   e.line("${fsc} = getelementptr inbounds i8, ptr %gcf, i64 24")
   e.line("store i32 0, ptr ${fsc}, align 8")
   if n > 0 {
@@ -115,12 +112,12 @@ pub fn ll_gc_frame_enter(e: LlEmit) {
       while j < words.size {
         at = e.local_name(l)
         if words[j] > 0 {
-          at = e.tmp
+          at = e.tmp()
           e.line("${at} = getelementptr inbounds i8, ptr ${e.local_name(l)}, i64 ${words[j] * 8}")
         }
         sl = slots
         if w > 0 {
-          sl = e.tmp
+          sl = e.tmp()
           e.line("${sl} = getelementptr inbounds i8, ptr %gcf, i64 ${32 + w * 8}")
         }
         e.line("store ptr ${at}, ptr ${sl}, align 8")
@@ -149,14 +146,19 @@ pub fn ll_gc_frame_leave(e: LlEmit) {
 }
 
 // The module's two frame helpers, when a frame links inline: internal
-// functions the O3 inliner folds into every caller (in --debug they stay
+// functions the inliner at -O3 folds into every caller (in --debug they stay
 // calls, so the .ll and the debug object stay small). The link and the
 // unlink of a record; the stores into avant_gc_top are volatile so that
 // LLVM cannot merge an inlined callee's unlink into the next frame's link
 // (dead-store elimination), which would leave the callee's
-// llvm.lifetime.end before any store that unlinks it (E3, D244).
+// llvm.lifetime.end before any store that unlinks it.
 pub fn ll_gc_frame_helpers(e: LlEmit) {
   e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  // The helpers call both: a frame whose every path ends in a call that
+  // never returns (exit) unlinks nowhere, so nothing else declared the
+  // leave.
+  e.need("avant_gc_frame_enter")
+  e.need("avant_gc_frame_leave")
   e.out.push_str("define internal void @__avant_frame_push(ptr %f) #0 {\nentry:\n")
   e.line("%t = load ptr, ptr @avant_gc_top, align 8")
   e.line("%c = icmp ne ptr %t, null")
@@ -187,18 +189,17 @@ pub fn ll_gc_frame_helpers(e: LlEmit) {
   e.out.push_str("}\n\n")
 }
 
-// barrier copy _h (5.6): the holder is read once (E1); null, or a heap
+// barrier copy _h: the holder is read once (E1); null, or a heap
 // object already young or remembered, skips the call. The header's flags
 // (runtime/avant_rt.h: HEAP 0x8000, YOUNG 0x20; REM 0x10) are tested with
-// one masked compare (Stage 29 VALK-A1, M8): flags & 0x8030 is above
-// 0x8000 exactly when HEAP is set and YOUNG or REM is (without HEAP it is
-// at most 0x30), the same condition as the two tests and their `and`
-// before, in four instructions where LLVM made seven. The call form when
-// inline fast paths are off. When the store the barrier precedes (V13) is
-// an element of the holder's buffer (`(*_h)[i]`, `(*_h)[i].j`), the call
-// passes the slot (avant_barrier_slot, Stage 28 W16t: a large pointer
-// buffer marks the slot's card); the slot's address is formed only on
-// the call path.
+// one masked compare: flags & 0x8030 is above 0x8000 exactly when HEAP is
+// set and YOUNG or REM is (without HEAP it is at most 0x30), the same
+// condition as the two tests and their `and` before, in four instructions
+// where LLVM made seven. The call form when inline fast paths are off.
+// When the store the barrier precedes (V13) is an element of the holder's
+// buffer (`(*_h)[i]`, `(*_h)[i].j`), the call passes the slot
+// (avant_barrier_slot, a large pointer buffer marks the slot's card); the
+// slot's address is formed only on the call path.
 pub fn ll_barrier(e: LlEmit, o: MOperand) {
   k = ll_barrier_store(e, o)
   if k >= 0 {
@@ -214,18 +215,18 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   test = e.part("test")
   call = e.part("call")
   cont = e.part("cont")
-  z = e.tmp
+  z = e.tmp()
   e.line("${z} = icmp eq ptr ${h}, null")
   e.line("br i1 ${z}, label %${cont}, label %${test}")
   e.block(test)
-  fp = e.tmp
+  fp = e.tmp()
   e.line("${fp} = getelementptr inbounds i8, ptr ${h}, i64 -2")
-  fl = e.tmp
+  fl = e.tmp()
   e.line("${fl} = load i16, ptr ${fp}, align 2")
   // 0x8030 and 0x8000 as i16.
-  mk = e.tmp
+  mk = e.tmp()
   e.line("${mk} = and i16 ${fl}, -32720")
-  skip = e.tmp
+  skip = e.tmp()
   e.line("${skip} = icmp ugt i16 ${mk}, -32768")
   e.line("br i1 ${skip}, label %${cont}, label %${call}")
   e.block(call)
@@ -274,34 +275,52 @@ pub fn ll_barrier_at(e: LlEmit, o: MOperand) {
 // The allocation call form; returns the result value.
 fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
   e.need(callee)
-  r = e.tmp
+  r = e.tmp()
   e.line("${r} = call ptr @${callee}(i64 ${size}, i32 ${ty})")
   r
 }
 
 // _d = call avant_alloc(size, type): the inline
-// fast path of 5.5, then the slow call, joined by a phi; returns the
+// fast path, then the slow call, joined by a phi; returns the
 // pointer to store into _d. A constant size and type fold the size tests
 // (and choose the call form when the fast path can never be taken).
 //
-// A shared module (Stage 28 W17b, 5.5's condition 1 lifted): every thread
-// has its own young cursor, so the path runs on any thread. It tests
-// avant_gc_fast_ok for either state the runtime publishes instead of
-// g_avant_shared and the single mutator's state: 1 (the program has one
-// thread yet; the path counts every allocation, as in an unshared
-// module) or 2 (the thread bumps in a hole the runtime charged to it,
-// hole accounting: the path counts nothing, and must not, since other
-// threads update the counters under the world lock). An unshared module
-// is unchanged.
-// An empty payload is one word (Stage 29 W-INT1, as avant_alloc): a 0-byte
-// object at a block's end would have the next block's first address as
-// its payload.
-// birth (the allocation is marked `fresh`, mir/fresh.av, Stage 29
-// VALK-A1): stores into the object follow with no barrier of their own,
-// so the slow path's result, which may be mature (born in mature space by
+// The path: the cursor's new end is compared with the limit the runtime
+// publishes, and when it fits the cursor is stored, the header written
+// and the payload zeroed. Nothing else: the runtime publishes a null
+// limit whenever the path may not run (no hole, a no-GC region, a
+// collection pending; a null limit fails the compare whatever the cursor
+// holds; under the stress mode a site finds the limit null or spent,
+// ll_alloc_slow_helper below), it counts the bytes from the cursor at
+// its next entry, takes the block record's copy of the cursor then, and
+// sets a young object's start bit when a collection promotes it or a
+// lookup needs it (runtime/avant_gc_alloc.c, gc_fast_publish,
+// gc_alloc_sync_slow, "Late start bits"). Before, the path tested
+// g_avant_shared, avant_gc_fast_ok and a null cursor before the limit,
+// stored the cursor in the block's record, set the start bit and kept
+// four counters (22 of its 40 instructions in a loop that allocates one
+// small object).
+//
+// A shared module (the fast path's single-threaded condition lifted):
+// every thread has its own young cursor, so the path runs on any thread.
+// It reads its own limit, avant_gc_limit_mt, which the runtime also
+// publishes while a thread bumps in a hole charged to it (hole
+// accounting); the limit of an unshared module, avant_gc_limit, is null
+// in a program with threads. And its path sets the object's start bit
+// itself: the late start bits are the single mutator's (another thread
+// may look an object up while its allocator is still bumping in the same
+// hole). An empty payload is one word (as avant_alloc): a 0-byte object
+// at a block's end would have the next block's first address as its
+// payload. birth (the allocation is marked `fresh`, mir/fresh.av): stores
+// into the object follow with no barrier of their own, so the slow path's
+// result, which may be mature (born in mature space by
 // avant_alloc_in_mature or on an unregistered thread), is barriered once:
 // avant_barrier returns at once for a young object. The inline path's
 // result is always young: it bumps in the thread's young hole.
+//
+// The slow call is the module's __avant_alloc_slow (ll_alloc_slow_helper
+// below: the runtime's avant_alloc_slow, and under the stress mode the
+// inline allocation itself after it).
 pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): String {
   size = e.value(args[0])
   ty = e.value(args[1])
@@ -312,9 +331,9 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
     sz = 8
     size = "8"
   } else if args[0].kind != mok_int() {
-    z = e.tmp
+    z = e.tmp()
     e.line("${z} = icmp eq i64 ${size}, 0")
-    s8 = e.tmp
+    s8 = e.tmp()
     e.line("${s8} = select i1 ${z}, i64 8, i64 ${size}")
     size = s8
   }
@@ -329,67 +348,44 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
     return ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
   }
   e.used_alloc_globals = true
-  e.need(callee)
   e.need_intrinsic("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
   shared = e.m.shared
-  c1 = ""
-  if !shared {
-    sh = e.tmp
-    e.line("${sh} = load i32, ptr @g_avant_shared, align 4")
-    c1 = e.tmp
-    e.line("${c1} = icmp eq i32 ${sh}, 0")
-  }
-  ok = e.tmp
-  e.line("${ok} = load i32, ptr @avant_gc_fast_ok, align 4")
-  c2 = e.tmp
+  limit = "@avant_gc_limit"
   if shared {
-    e.line("${c2} = icmp ne i32 ${ok}, 0")
-  } else {
-    e.line("${c2} = icmp eq i32 ${ok}, 1")
+    limit = "@avant_gc_limit_mt"
   }
-  bump = e.tmp
+  bump = e.tmp()
   e.line("${bump} = load ptr, ptr @avant_gc_bump, align 8")
-  lim = e.tmp
-  e.line("${lim} = load ptr, ptr @avant_gc_limit, align 8")
+  lim = e.tmp()
+  e.line("${lim} = load ptr, ptr ${limit}, align 8")
   if !const_size {
-    t15 = e.tmp
+    t15 = e.tmp()
     e.line("${t15} = add i64 ${size}, 15")
-    total = e.tmp
+    total = e.tmp()
     e.line("${total} = and i64 ${t15}, -8")
   }
-  bi = e.tmp
+  bi = e.tmp()
   e.line("${bi} = ptrtoint ptr ${bump} to i64")
-  c3 = e.tmp
-  e.line("${c3} = icmp ne i64 ${bi}, 0")
-  ei = e.tmp
+  ei = e.tmp()
   e.line("${ei} = add i64 ${bi}, ${total}")
-  li = e.tmp
+  li = e.tmp()
   e.line("${li} = ptrtoint ptr ${lim} to i64")
-  c4 = e.tmp
-  e.line("${c4} = icmp ule i64 ${ei}, ${li}")
-  a12 = c2
-  if !shared {
-    a12 = e.tmp
-    e.line("${a12} = and i1 ${c1}, ${c2}")
-  }
-  a34 = e.tmp
-  e.line("${a34} = and i1 ${c3}, ${c4}")
-  go = e.tmp
-  e.line("${go} = and i1 ${a12}, ${a34}")
+  go = e.tmp()
+  e.line("${go} = icmp ule i64 ${ei}, ${li}")
   if !const_size {
-    c5 = e.tmp
+    c5 = e.tmp()
     e.line("${c5} = icmp ule i64 ${total}, 8192")
-    t0 = e.tmp
+    t0 = e.tmp()
     e.line("${t0} = icmp eq i32 ${ty}, 0")
-    big = e.tmp
+    big = e.tmp()
     e.line("${big} = icmp uge i64 ${size}, 6144")
-    both = e.tmp
+    both = e.tmp()
     e.line("${both} = and i1 ${t0}, ${big}")
-    c6 = e.tmp
+    c6 = e.tmp()
     e.line("${c6} = xor i1 ${both}, true")
-    a56 = e.tmp
+    a56 = e.tmp()
     e.line("${a56} = and i1 ${c5}, ${c6}")
-    g2 = e.tmp
+    g2 = e.tmp()
     e.line("${g2} = and i1 ${go}, ${a56}")
     go = g2
   }
@@ -399,90 +395,125 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
   e.line("br i1 ${go}, label %${fast}, label %${slow}")
 
   e.block(fast)
-  end = e.tmp
-  e.line("${end} = getelementptr inbounds i8, ptr ${bump}, i64 ${total}")
-  e.line("store ptr ${end}, ptr @avant_gc_bump, align 8")
-  blk = e.tmp
-  e.line("${blk} = load ptr, ptr @avant_gc_block, align 8")
-  bp = e.tmp
-  e.line("${bp} = getelementptr inbounds i8, ptr ${blk}, i64 32")
-  e.line("store ptr ${end}, ptr ${bp}, align 8")
-  // The header: size | type << 32 | (HEAP | YOUNG) << 48.
-  if const_size {
-    hdr = (32800u64 << 48u64) | (tid.to_u64 << 32u64) | sz.to_u64
-    e.line("store i64 ${hdr.wrap_i}, ptr ${bump}, align 8")
-  } else {
-    tz = e.tmp
-    e.line("${tz} = zext i32 ${ty} to i64")
-    tsh = e.tmp
-    e.line("${tsh} = shl i64 ${tz}, 32")
-    h1 = e.tmp
-    e.line("${h1} = or i64 ${size}, ${tsh}")
-    h2 = e.tmp
-    e.line("${h2} = or i64 ${h1}, ${(32800u64 << 48u64).wrap_i}")
-    e.line("store i64 ${h2}, ptr ${bump}, align 8")
-  }
-  obj = e.tmp
-  e.line("${obj} = getelementptr inbounds i8, ptr ${bump}, i64 8")
-  e.line("call void @llvm.memset.p0.i64(ptr ${obj}, i8 0, i64 ${size}, i1 false)")
-  // set_start: avant_gc_starts[off >> 9] |= 1 << ((off >> 3) & 63).
-  base = e.tmp
-  e.line("${base} = load ptr, ptr @avant_gc_base, align 8")
-  pi = e.tmp
-  e.line("${pi} = ptrtoint ptr ${bump} to i64")
-  bsi = e.tmp
-  e.line("${bsi} = ptrtoint ptr ${base} to i64")
-  off = e.tmp
-  e.line("${off} = sub i64 ${pi}, ${bsi}")
-  st = e.tmp
-  e.line("${st} = load ptr, ptr @avant_gc_starts, align 8")
-  wd = e.tmp
-  e.line("${wd} = lshr i64 ${off}, 9")
-  b3 = e.tmp
-  e.line("${b3} = lshr i64 ${off}, 3")
-  bit = e.tmp
-  e.line("${bit} = and i64 ${b3}, 63")
-  mask = e.tmp
-  e.line("${mask} = shl i64 1, ${bit}")
-  wp = e.tmp
-  e.line("${wp} = getelementptr inbounds i64, ptr ${st}, i64 ${wd}")
-  old = e.tmp
-  e.line("${old} = load i64, ptr ${wp}, align 8")
-  nw = e.tmp
-  e.line("${nw} = or i64 ${old}, ${mask}")
-  e.line("store i64 ${nw}, ptr ${wp}, align 8")
-  // The counters: allocated_bytes (avant_g_stats + 24), since_gc,
-  // nursery_held by total; inline_allocs by one. In a shared module only
-  // in state 1 (the one thread counts); in state 2 the runtime does.
-  from = fast
-  if shared {
-    m1 = e.tmp
-    e.line("${m1} = icmp eq i32 ${ok}, 1")
-    cnt = e.part("count")
-    from = e.part("counted")
-    e.line("br i1 ${m1}, label %${cnt}, label %${from}")
-    e.block(cnt)
-  }
-  sp = e.tmp
-  e.line("${sp} = getelementptr inbounds i8, ptr @avant_g_stats, i64 24")
-  ll_bump_counter(e, sp, total)
-  ll_bump_counter(e, "@avant_since_gc", total)
-  ll_bump_counter(e, "@avant_nursery_held", total)
-  ll_bump_counter(e, "@avant_inline_allocs", "1")
-  if shared {
-    e.line("br label %${from}")
-    e.block(from)
-  }
+  obj = ll_alloc_take(e, bump, total, const_size, sz, tid, size, ty, shared)
   e.line("br label %${cont}")
 
   e.block(slow)
-  s = ll_alloc_birth(e, ll_alloc_call(e, callee, size, ty), birth)
+  e.used_alloc_slow = true
+  sc = e.tmp()
+  e.line("${sc} = call ptr @__avant_alloc_slow(i64 ${size}, i32 ${ty})")
+  s = ll_alloc_birth(e, sc, birth)
   e.line("br label %${cont}")
 
   e.block(cont)
-  r = e.tmp
-  e.line("${r} = phi ptr [ ${obj}, %${from} ], [ ${s}, %${slow} ]")
+  r = e.tmp()
+  e.line("${r} = phi ptr [ ${obj}, %${fast} ], [ ${s}, %${slow} ]")
   r
+}
+
+// The inline path's slow call, one per module (ll_alloc): the runtime's
+// avant_alloc_slow, which is avant_alloc but for one answer, null: "the
+// hole now has room for exactly this object, take it inline". Then the
+// inline allocation is made here, by the same sequence the sites run
+// (ll_alloc_take) with the size and the type as values and the cursor
+// read again (no test: the runtime made the room). The runtime answers so
+// only under AVANT_GC_STRESS=1, after the collection that mode runs
+// before every allocation: the stress pass then executes the emitted
+// inline sequence at every allocation the inline path serves, each with a
+// collection right before it and one right after (the next allocation's),
+// where before, the sequence never ran under that mode. Without the mode
+// the branch on null is never taken. What the stress pass runs is this
+// function's copy of the sequence; a site's own copy (its limit compare,
+// a constant size and type folded into the header) does not run under
+// that mode, the limit being spent whenever a site tests it;
+// AVANT_GC_VERIFY=1 without the stress mode checks the headers the sites
+// write. One function for the module, never inlined, and not code at
+// every site: with the null answer handled at the site (a jump back into
+// the inline block, or a second copy of it there) LLVM kept less of the
+// code around each allocation in registers (Maze::AStar +1.5% in
+// instructions, Binarytrees::Obj +0.9%); this way a site is what it was
+// but for the name it calls.
+pub fn ll_alloc_slow_helper(e: LlEmit) {
+  e.need("avant_alloc_slow")
+  e.need_intrinsic("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
+  e.out.push_str("define internal ptr @__avant_alloc_slow(i64 %size, i32 %ty) noinline #0 {\nentry:\n")
+  e.line("%s = call ptr @avant_alloc_slow(i64 %size, i32 %ty)")
+  e.line("%again = icmp eq ptr %s, null")
+  e.line("br i1 %again, label %redo, label %got")
+  e.block("got")
+  e.line("ret ptr %s")
+  e.block("redo")
+  e.line("%bump = load ptr, ptr @avant_gc_bump, align 8")
+  e.line("%up = add i64 %size, 15")
+  e.line("%total = and i64 %up, -8")
+  obj = ll_alloc_take(e, "%bump", "%total", false, 0, 0, "%size", "%ty", e.m.shared)
+  e.line("ret ptr ${obj}")
+  e.out.push_str("}\n\n")
+}
+
+// The inline allocation itself, at cursor BUMP for TOTAL bytes (the
+// limit allows it): the cursor's store, the header, the zeroed payload,
+// and a shared module's start bit; returns the payload's address. Emitted
+// at every inline site, where the limit compare passes (ll_alloc), and
+// once in the module's slow-call helper, where the runtime answers null
+// (ll_alloc_slow_helper).
+fn ll_alloc_take(e: LlEmit, bump: String, total: String, const_size: Bool, sz: Int, tid: Int, size: String, ty: String, shared: Bool): String {
+  end = e.tmp()
+  e.line("${end} = getelementptr inbounds i8, ptr ${bump}, i64 ${total}")
+  e.line("store ptr ${end}, ptr @avant_gc_bump, align 8")
+  // The header: size | type << 32 | (HEAP | YOUNG) << 48.
+  if const_size {
+    hdr = (32800u64 << 48u64) | (tid.to_u64() << 32u64) | sz.to_u64()
+    e.line("store i64 ${hdr.wrap_i()}, ptr ${bump}, align 8")
+  } else {
+    tz = e.tmp()
+    e.line("${tz} = zext i32 ${ty} to i64")
+    tsh = e.tmp()
+    e.line("${tsh} = shl i64 ${tz}, 32")
+    h1 = e.tmp()
+    e.line("${h1} = or i64 ${size}, ${tsh}")
+    h2 = e.tmp()
+    e.line("${h2} = or i64 ${h1}, ${(32800u64 << 48u64).wrap_i()}")
+    e.line("store i64 ${h2}, ptr ${bump}, align 8")
+  }
+  obj = e.tmp()
+  e.line("${obj} = getelementptr inbounds i8, ptr ${bump}, i64 8")
+  e.line("call void @llvm.memset.p0.i64(ptr ${obj}, i8 0, i64 ${size}, i1 false)")
+  if shared {
+    ll_alloc_start_bit(e, bump)
+  }
+  obj
+}
+
+// A shared module's inline allocation sets its object's start bit
+// (ll_alloc): avant_gc_starts[off >> 9] |= 1 << ((off >> 3) & 63), OFF
+// the header's offset from avant_gc_base.
+fn ll_alloc_start_bit(e: LlEmit, bump: String) {
+  base = e.tmp()
+  e.line("${base} = load ptr, ptr @avant_gc_base, align 8")
+  pi = e.tmp()
+  e.line("${pi} = ptrtoint ptr ${bump} to i64")
+  bsi = e.tmp()
+  e.line("${bsi} = ptrtoint ptr ${base} to i64")
+  off = e.tmp()
+  e.line("${off} = sub i64 ${pi}, ${bsi}")
+  st = e.tmp()
+  e.line("${st} = load ptr, ptr @avant_gc_starts, align 8")
+  wd = e.tmp()
+  e.line("${wd} = lshr i64 ${off}, 9")
+  b3 = e.tmp()
+  e.line("${b3} = lshr i64 ${off}, 3")
+  bit = e.tmp()
+  e.line("${bit} = and i64 ${b3}, 63")
+  mask = e.tmp()
+  e.line("${mask} = shl i64 1, ${bit}")
+  wp = e.tmp()
+  e.line("${wp} = getelementptr inbounds i64, ptr ${st}, i64 ${wd}")
+  old = e.tmp()
+  e.line("${old} = load i64, ptr ${wp}, align 8")
+  nw = e.tmp()
+  e.line("${nw} = or i64 ${old}, ${mask}")
+  e.line("store i64 ${nw}, ptr ${wp}, align 8")
 }
 
 // The birth barrier of an allocation's call result R (ll_alloc), when
@@ -495,28 +526,60 @@ fn ll_alloc_birth(e: LlEmit, r: String, birth: Bool): String {
   r
 }
 
-fn ll_bump_counter(e: LlEmit, ptr: String, by: String) {
-  x = e.tmp
-  e.line("${x} = load i64, ptr ${ptr}, align 8")
-  y = e.tmp
-  e.line("${y} = add i64 ${x}, ${by}")
-  e.line("store i64 ${y}, ptr ${ptr}, align 8")
+// _d = call avant_c_str(_s): a C function's `String` result (the Valk
+// stage; mir/lower_ffi.av c_string_owned). Only an address inside the
+// collected heap can need the runtime (it may name the inside of an
+// object, which a field may not hold), so the range test is here: the
+// address less the heap's first byte, compared with the heap's reserved
+// size (two globals the runtime sets once, when it reserves the heap;
+// both zero before, and then no address passes). C's own memory, a
+// literal and null pay the subtraction and the compare, and never the
+// call. The call form when inline fast paths are off.
+pub fn ll_c_str(e: LlEmit, args: Array(MOperand)): String {
+  e.used_heap_globals = true
+  e.need("avant_c_str")
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  s = e.value(args[0])
+  lo = e.tmp()
+  e.line("${lo} = load i64, ptr @avant_gc_heap_lo, align 8")
+  si = e.tmp()
+  e.line("${si} = ptrtoint ptr ${s} to i64")
+  off = e.tmp()
+  e.line("${off} = sub i64 ${si}, ${lo}")
+  len = e.tmp()
+  e.line("${len} = load i64, ptr @avant_gc_heap_len, align 8")
+  inh = e.tmp()
+  e.line("${inh} = icmp ult i64 ${off}, ${len}")
+  x = e.tmp()
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${inh}, i1 false)")
+  head = e.label
+  own = e.part("cstr")
+  cont = e.part("cstrd")
+  e.line("br i1 ${x}, label %${own}, label %${cont}")
+  e.block(own)
+  r = e.tmp()
+  e.line("${r} = call ptr @avant_c_str(ptr ${s})")
+  e.line("br label %${cont}")
+  e.block(cont)
+  p = e.tmp()
+  e.line("${p} = phi ptr [ ${s}, %${head} ], [ ${r}, %${own} ]")
+  p
 }
 
-// The safepoint poll at a loop head of a shared module (Stage 28 W17a,
-// gc-design.md 4.4): a volatile load of the request flag (kept in every
-// iteration), and the call, out of line, only when a collection is
-// requested; the call is a collecting call of the MIR, so every
-// reference live across it is in a slot and reloaded after it.
+// The safepoint poll at a loop head of a shared module: a volatile load
+// of the request flag (kept in every iteration), and the call, out of
+// line, only when a collection is requested; the call is a collecting
+// call of the MIR, so every reference live across it is in a slot and
+// reloaded after it.
 pub fn ll_gc_poll(e: LlEmit) {
   e.used_poll_global = true
   e.need("avant_gc_poll")
   e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
-  r = e.tmp
+  r = e.tmp()
   e.line("${r} = load volatile i32, ptr @avant_gc_requested, align 4")
-  c = e.tmp
+  c = e.tmp()
   e.line("${c} = icmp ne i32 ${r}, 0")
-  x = e.tmp
+  x = e.tmp()
   e.line("${x} = call i1 @llvm.expect.i1(i1 ${c}, i1 false)")
   yes = e.part("poll")
   cont = e.part("polled")
@@ -527,30 +590,27 @@ pub fn ll_gc_poll(e: LlEmit) {
   e.block(cont)
 }
 
-// The runtime globals the allocation fast path reads (5.5), in the
-// order of 10.3. The six thread-local ones are local-exec (VALK-A1, O137),
-// as avant_gc_top is (D268): every program the compiler builds is an
-// executable that links the runtime statically, so each access is one
-// %fs-relative load or store; without a model (general-dynamic, which the
-// linker relaxes) each address was formed apart (`mov %fs:0`, `lea`,
-// often a copy: two or three instructions more per access, O137). A
-// shared-object output (none is built today; `--lib` links a C library)
-// could not use local-exec for a variable another module defines: it needs
-// initial-exec here and for avant_gc_top (general-dynamic in a library
-// that is dlopen'ed), chosen by the driver, which knows the output kind,
-// and passed to the emitter.
-pub fn ll_alloc_globals: String {
+// The runtime globals the allocation fast path reads: the cursor
+// and the module's limit, and for a shared module the block's base and
+// start bits (ll_alloc). They are thread-local and local-exec, as
+// avant_gc_top is: every program the compiler builds is an executable that
+// links the runtime statically, so each access is one %fs-relative load or
+// store; without a model (general-dynamic, which the linker relaxes) each
+// address was formed apart (`mov %fs:0`, `lea`, often a copy: two or three
+// instructions more per access). A shared-object output (none is built
+// today; `--lib` links a C library) could not use local-exec for a
+// variable another module defines: it needs initial-exec here and for
+// avant_gc_top (general-dynamic in a library that is dlopen'ed), chosen by
+// the driver, which knows the output kind, and passed to the emitter.
+pub fn ll_alloc_globals(shared: Bool): String {
   buf = buf_new()
-  buf.push_str("@g_avant_shared = external global i32\n")
-  buf.push_str("@avant_gc_fast_ok = external thread_local(localexec) global i32\n")
   buf.push_str("@avant_gc_bump = external thread_local(localexec) global ptr\n")
-  buf.push_str("@avant_gc_limit = external thread_local(localexec) global ptr\n")
-  buf.push_str("@avant_gc_block = external thread_local(localexec) global ptr\n")
-  buf.push_str("@avant_gc_base = external thread_local(localexec) global ptr\n")
-  buf.push_str("@avant_gc_starts = external thread_local(localexec) global ptr\n")
-  buf.push_str("@avant_g_stats = external global i64\n")
-  buf.push_str("@avant_since_gc = external global i64\n")
-  buf.push_str("@avant_nursery_held = external global i64\n")
-  buf.push_str("@avant_inline_allocs = external global i64\n")
-  buf.to_s
+  if shared {
+    buf.push_str("@avant_gc_limit_mt = external thread_local(localexec) global ptr\n")
+    buf.push_str("@avant_gc_base = external thread_local(localexec) global ptr\n")
+    buf.push_str("@avant_gc_starts = external thread_local(localexec) global ptr\n")
+  } else {
+    buf.push_str("@avant_gc_limit = external thread_local(localexec) global ptr\n")
+  }
+  buf.to_s()
 }

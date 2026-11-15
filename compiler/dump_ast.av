@@ -11,11 +11,11 @@ import loader
 import checker
 
 // One line per token: kind, line, column, escaped value (the --tokens
-// dump, D137).
+// dump).
 pub fn dump_tokens(tokens: Array(Token)) {
   for t in tokens {
     loc = t.loc
-    puts("${t.kind}\t${loc.line}\t${loc.column}\t${escape_dump(t.value)}")
+    puts("${t.kind}\t${loc.line()}\t${loc.column()}\t${escape_dump(t.value)}")
   }
 }
 
@@ -35,7 +35,7 @@ pub fn escape_dump(s: String): String {
     }
     i += 1
   }
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn dump_type(t: TypeName): String {
@@ -44,6 +44,9 @@ pub fn dump_type(t: TypeName): String {
   }
   if t.fn_type {
     buf = buf_new()
+    if t.nilable {
+      buf.push_str("(")
+    }
     buf.push_str("fn(")
     for i in 0..t.args.size {
       if i > 0 {
@@ -57,12 +60,15 @@ pub fn dump_type(t: TypeName): String {
       buf.push_str(dump_type(r))
     }
     if t.nilable {
-      buf.push_str("?")
+      buf.push_str(")?")
     }
-    return buf.to_s
+    return buf.to_s()
   }
   buf = buf_new()
   if t.members.size > 0 {
+    if t.nilable {
+      buf.push_str("(")
+    }
     i = 0
     while i < t.members.size {
       if i > 0 {
@@ -70,6 +76,9 @@ pub fn dump_type(t: TypeName): String {
       }
       buf.push_str(dump_type(t.members[i]))
       i += 1
+    }
+    if t.nilable {
+      buf.push_str(")")
     }
   } else {
     buf.push_str(t.name)
@@ -87,7 +96,7 @@ pub fn dump_type(t: TypeName): String {
   if t.nilable {
     buf.push_str("?")
   }
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn dump_expr(e: Expr): String {
@@ -100,17 +109,17 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(e.int_suffix)
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_float() {
     buf.push_str("(float)")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_string() {
     buf.push_str("(string ")
     buf.push_str(escape_dump(e.value_str))
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_bool() {
     if e.bool_val {
@@ -118,17 +127,21 @@ pub fn dump_expr(e: Expr): String {
     } else {
       buf.push_str("(false)")
     }
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_nil() {
     buf.push_str("(nil)")
-    return buf.to_s
+    return buf.to_s()
+  }
+  if k == ex_void() {
+    buf.push_str("(void)")
+    return buf.to_s()
   }
   if k == ex_name() {
     buf.push_str("(name ")
     buf.push_str(e.ident)
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_call() {
     buf.push_str("(call ")
@@ -158,7 +171,7 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(")")
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_unary() {
     buf.push_str("(unary ")
@@ -168,7 +181,7 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(dump_expr(inner))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_binary() {
     buf.push_str("(binary ")
@@ -182,7 +195,7 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(dump_expr(r))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_field() {
     buf.push_str("(field ")
@@ -196,7 +209,7 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(e.ident)
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_index() {
     buf.push_str("(index ")
@@ -208,7 +221,7 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(dump_expr(r))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_try() {
     buf.push_str("(try ")
@@ -216,7 +229,7 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(dump_expr(inner))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_array() {
     buf.push_str("(array")
@@ -225,7 +238,7 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(dump_expr(elem))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_switch() {
     buf.push_str("(switch ")
@@ -236,19 +249,7 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(" (case")
       for label in arm.labels {
         buf.push_str(" ")
-        if label.kind == lb_member() {
-          if label.qual.size > 0 {
-            buf.push_str(label.qual)
-            buf.push_str(".")
-          }
-          buf.push_str(label.text)
-        } else if label.kind == lb_string() {
-          buf.push_str("(string ")
-          buf.push_str(escape_dump(label.text))
-          buf.push_str(")")
-        } else {
-          buf.push_fmt_i(label.int_val)
-        }
+        buf.push_str(dump_case_label(label))
       }
       for st in arm.body {
         buf.push_str(" ")
@@ -258,6 +259,10 @@ pub fn dump_expr(e: Expr): String {
     }
     if e.has_else {
       buf.push_str(" (else")
+      if expr_is_else_guard(e) && e.ident.size > 0 {
+        buf.push_str(" ")
+        buf.push_str(e.ident)
+      }
       for st in e.else_body {
         buf.push_str(" ")
         buf.push_str(dump_stmt(st))
@@ -265,7 +270,7 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(")")
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == ex_splice() {
     buf.push_str("(splice ")
@@ -273,10 +278,10 @@ pub fn dump_expr(e: Expr): String {
       buf.push_str(dump_expr(inner))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   buf.push_str("(expr)")
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn dump_stmt(s: Stmt): String {
@@ -288,7 +293,7 @@ pub fn dump_stmt(s: Stmt): String {
       buf.push_str(dump_expr(e))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == st_return() {
     buf.push_str("(return")
@@ -297,7 +302,7 @@ pub fn dump_stmt(s: Stmt): String {
       buf.push_str(dump_expr(e))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == st_if() {
     buf.push_str("(if")
@@ -320,6 +325,10 @@ pub fn dump_stmt(s: Stmt): String {
     }
     if s.else_body.size > 0 {
       buf.push_str(" (else")
+      if s.else_bind.size > 0 {
+        buf.push_str(" ")
+        buf.push_str(s.else_bind)
+      }
       for st in s.else_body {
         buf.push_str(" ")
         buf.push_str(dump_stmt(st))
@@ -327,7 +336,7 @@ pub fn dump_stmt(s: Stmt): String {
       buf.push_str(")")
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == st_while() {
     buf.push_str("(while ")
@@ -343,7 +352,7 @@ pub fn dump_stmt(s: Stmt): String {
       buf.push_str(dump_stmt(st))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == st_break() {
     return "(break)"
@@ -357,7 +366,7 @@ pub fn dump_stmt(s: Stmt): String {
       buf.push_str(dump_expr(e))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == st_hold() {
     buf.push_str("(gc.hold")
@@ -366,7 +375,7 @@ pub fn dump_stmt(s: Stmt): String {
       buf.push_str(dump_stmt(st))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == st_pin() {
     buf.push_str("(pin ")
@@ -378,7 +387,7 @@ pub fn dump_stmt(s: Stmt): String {
       buf.push_str(dump_stmt(st))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == st_assign() {
     buf.push_str("(assign ")
@@ -392,7 +401,7 @@ pub fn dump_stmt(s: Stmt): String {
       buf.push_str(dump_expr(v))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == st_quote() {
     buf.push_str("(quote")
@@ -401,12 +410,12 @@ pub fn dump_stmt(s: Stmt): String {
       buf.push_str(dump_stmt(st))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   buf.push_str("(stmt ")
   buf.push_fmt_i(k)
   buf.push_str(")")
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn dump_fn(fnn: Function): String {
@@ -440,7 +449,7 @@ pub fn dump_fn(fnn: Function): String {
     buf.push_str(dump_stmt(st))
   }
   buf.push_str(")")
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn dump_program(program: Program): String {
@@ -448,14 +457,27 @@ pub fn dump_program(program: Program): String {
   buf.push_str("(program")
   for s in program.structs {
     if decl = s.enum_of {
-      // An enum (Stage 29 W5a1): its members and their values.
+      // An enum: its members and their values.
       buf.push_str(" (enum ")
       buf.push_str(s.name)
       for i in 0..decl.names.size {
         buf.push_str(" (")
         buf.push_str(decl.names[i])
         buf.push_str(" ")
-        buf.push_fmt_i(decl.vals[i])
+        if decl.first_named >= 0 && i >= decl.first_named && decl.val_kinds[i] != 1 {
+          // Computed by the checker: the constant, or the next.
+          if decl.val_kinds[i] == 2 {
+            if decl.val_quals[i].size > 0 {
+              buf.push_str(decl.val_quals[i])
+              buf.push_str(".")
+            }
+            buf.push_str(decl.val_names[i])
+          } else {
+            buf.push_str("next")
+          }
+        } else {
+          buf.push_fmt_i(decl.vals[i])
+        }
         buf.push_str(")")
       }
       buf.push_str(")")
@@ -468,6 +490,17 @@ pub fn dump_program(program: Program): String {
   for c in program.classes {
     buf.push_str(" (class ")
     buf.push_str(c.name)
+    buf.push_str(")")
+  }
+  for k in program.consts {
+    // A module constant.
+    buf.push_str(" (const ")
+    if k.vis {
+      buf.push_str("pub ")
+    }
+    buf.push_str(k.name)
+    buf.push_str(" ")
+    buf.push_str(dump_expr(k.value))
     buf.push_str(")")
   }
   for function in program.functions {
@@ -495,5 +528,59 @@ pub fn dump_program(program: Program): String {
     buf.push_str("))")
   }
   buf.push_str(")")
-  buf.to_s
+  buf.to_s()
+}
+
+// A `case` label as the dumps print it (an integer, a name, a type, a
+// string, `true`/`false`, a range of two bounds).
+pub fn dump_case_label(label: CaseLabel): String {
+  buf = buf_new()
+  if label.kind == lb_member() {
+    if label.qual.size > 0 {
+      buf.push_str(label.qual)
+      buf.push_str(".")
+    }
+    buf.push_str(label.text)
+  } else if label.kind == lb_nil() {
+    buf.push_str("nil")
+  } else if label.kind == lb_bool() {
+    if label.int_val != 0 {
+      buf.push_str("true")
+    } else {
+      buf.push_str("false")
+    }
+  } else if label.kind == lb_type() {
+    buf.push_str("(type ")
+    if label.bind.size > 0 {
+      buf.push_str(label.bind)
+      buf.push_str(" ")
+    }
+    if tn = label.tname {
+      buf.push_str(dump_type(tn))
+    }
+    buf.push_str(")")
+  } else if label.kind == lb_string() {
+    buf.push_str("(string ")
+    buf.push_str(escape_dump(label.text))
+    buf.push_str(")")
+  } else if label.kind == lb_range() {
+    buf.push_str("(range ")
+    if a = label.lo {
+      buf.push_str(dump_case_label(a))
+    }
+    if label.incl {
+      buf.push_str(" ..= ")
+    } else {
+      buf.push_str(" .. ")
+    }
+    if z = label.hi {
+      buf.push_str(dump_case_label(z))
+    }
+    buf.push_str(")")
+  } else if label.neg && label.bits != 0u64 {
+    buf.push_str("-${label.bits}")
+  } else {
+    buf.push_str("${label.bits}")
+  }
+  buf.to_s()
 }

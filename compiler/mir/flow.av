@@ -1,14 +1,14 @@
-// Dataflow over a MIR function (Stage 28 W4): the locals a statement reads
-// and defines, successors and predecessors, backward liveness (V11, V12),
-// and forward must-definedness (V9). A read is a use of a local's value:
-// `copy P` reads P's local; a place written or addressed reads its local
-// only through a deref (the pointer is loaded); index operands are read.
-// A whole write (an assign to the bare local, a call's destination)
-// defines; a field write of a by-value local neither reads nor defines.
-// The callers run these only on functions that passed V1-V3. Liveness
-// and definedness are word bit sets (Stage 28 W18P, O153; the end of this
-// file): mir_live solves each function's liveness once from each block's
-// transfer, and the frame pass keeps it for V11 and V12 (gc.av).
+// Dataflow over a MIR function: the locals a statement reads and defines,
+// successors and predecessors, backward liveness (V11, V12), and forward
+// must-definedness (V9). A read is a use of a local's value: `copy P`
+// reads P's local; a place written or addressed reads its local only
+// through a deref (the pointer is loaded); index operands are read. A
+// whole write (an assign to the bare local, a call's destination) defines;
+// a field write of a by-value local neither reads nor defines. The callers
+// run these only on functions that passed V1-V3. Liveness and definedness
+// are word bit sets (the end of this file): mir_live solves each
+// function's liveness once from each block's transfer, and the frame pass
+// keeps it for V11 and V12 (gc.av).
 
 import mir.types
 import mir.ir
@@ -32,7 +32,7 @@ pub fn mir_bools_copy(a: Array(Bool)): Array(Bool) {
 }
 
 fn mir_place_reads(p: MPlace, as_value: Bool, out: Array(Int)) {
-  if as_value || p.last_deref >= 0 {
+  if as_value || p.last_deref() >= 0 {
     out.push(p.local)
   }
   i = 0
@@ -82,7 +82,7 @@ pub fn mir_stmt_reads(st: MStmt, out: Array(Int)) {
 
 pub fn mir_term_reads(f: MFunc, t: MTerm, out: Array(Int)) {
   mir_opt_reads(t.cond, out)
-  if t.kind == mtk_return() && f.has_ret {
+  if t.kind == mtk_return() && f.has_ret() {
     out.push(0)
   }
 }
@@ -98,6 +98,56 @@ pub fn mir_stmt_def(st: MStmt): Int {
     }
   }
   -1
+}
+
+// The loop heads of f: the targets of its back edges, an edge into a
+// block still on the path of a depth-first walk from the entry. Every
+// cycle has one, and an edge into a lower-numbered block that closes no
+// cycle (a dispatch block a lowering numbered after the arm it enters)
+// is none. last[h] is set to the highest-numbered source of a back edge
+// into h (-1 for a block that heads no loop).
+pub fn mir_loop_heads(f: MFunc, last: Array(Int)): Array(Bool) {
+  n = f.blocks.size
+  heads = mir_bools(n, false)
+  state: Array(Int) = []
+  for b0 in 0..n {
+    state.push(0)
+    last.push(-1)
+  }
+  path: Array(Int) = []
+  next: Array(Int) = []
+  if n > 0 {
+    path.push(0)
+    next.push(0)
+    state[0] = 1
+  }
+  while path.size > 0 {
+    top = path.size - 1
+    b = path[top]
+    succ = mir_succ(f.blocks[b])
+    if next[top] >= succ.size {
+      state[b] = 2
+      path.pop()
+      next.pop()
+      continue
+    }
+    h = succ[next[top]]
+    next[top] = next[top] + 1
+    if h < 0 || h >= n {
+      continue
+    }
+    if state[h] == 1 {
+      heads[h] = true
+      if b > last[h] {
+        last[h] = b
+      }
+    } else if state[h] == 0 {
+      state[h] = 1
+      path.push(h)
+      next.push(0)
+    }
+  }
+  heads
 }
 
 pub fn mir_succ(blk: MBlock): Array(Int) {
@@ -244,28 +294,28 @@ pub fn mir_defined_in(f: MFunc): Array(UInt64) {
   ins
 }
 
-// ---- word bit sets (Stage 28 W18P, O153). A set over a function's n
-// locals is nw = (n + 63) / 64 words; local k is bit k % 64 of word k / 64.
-// The sets of a function's blocks lie in one array, block b's at b * nw.
-// Locals out of range are left out of every set (V3 reports them, and the
-// dataflow rules run only on functions that pass V3).
+// ---- word bit sets. A set over a function's n locals is nw = (n + 63) /
+// 64 words; local k is bit k % 64 of word k / 64. The sets of a function's
+// blocks lie in one array, block b's at b * nw. Locals out of range are
+// left out of every set (V3 reports them, and the dataflow rules run only
+// on functions that pass V3).
 
 pub fn mir_nwords(n: Int): Int {
   (n + 63) / 64
 }
 
 pub fn mir_bit(xs: Array(UInt64), at: Int, k: Int): Bool {
-  ((xs[at + k / 64] >> (k % 64).to_u64) & 1u64) != 0u64
+  ((xs[at + k / 64] >> (k % 64).to_u64()) & 1u64) != 0u64
 }
 
 pub fn mir_bit_on(xs: Array(UInt64), at: Int, k: Int) {
   w = at + k / 64
-  xs[w] = xs[w] | (1u64 << (k % 64).to_u64)
+  xs[w] = xs[w] | (1u64 << (k % 64).to_u64())
 }
 
 pub fn mir_bit_off(xs: Array(UInt64), at: Int, k: Int) {
   w = at + k / 64
-  xs[w] = xs[w] & ~(1u64 << (k % 64).to_u64)
+  xs[w] = xs[w] & ~(1u64 << (k % 64).to_u64())
 }
 
 // Sets the bits of the in-range locals of ks in the set at at.
@@ -291,7 +341,7 @@ pub fn mir_live_step_bits(st: MStmt, live: Array(UInt64), n: Int, reads: Array(I
   if d >= 0 && d < n {
     mir_bit_off(live, 0, d)
   }
-  reads.clear
+  reads.clear()
   mir_stmt_reads(st, reads)
   mir_bits_mark(live, 0, n, reads)
 }
@@ -308,7 +358,7 @@ pub fn mir_live_block(f: MFunc, lv: MLive, b: Int, reads: Array(Int)) {
   }
   blk = f.blocks[b]
   if t = blk.term {
-    reads.clear
+    reads.clear()
     mir_term_reads(f, t, reads)
     mir_bits_mark(lv.gen, at, n, reads)
   }
@@ -320,7 +370,7 @@ pub fn mir_live_block(f: MFunc, lv: MLive, b: Int, reads: Array(Int)) {
       mir_bit_off(lv.gen, at, d)
       mir_bit_on(lv.kill, at, d)
     }
-    reads.clear
+    reads.clear()
     mir_stmt_reads(st, reads)
     mir_bits_mark(lv.gen, at, n, reads)
     i -= 1

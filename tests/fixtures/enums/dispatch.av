@@ -1,0 +1,71 @@
+// The dispatch of a switch over an enum that names
+// every member. The last arm is the switch's default behind a range test,
+// a gap inside the range traps, sparse values keep one case per member.
+// Every member of each shape reaches its own arm, as a value and as a
+// statement, with several labels in the last arm too.
+
+enum Four { a, b, c, d }
+
+enum Gaps { zero = 0, two = 2, three = 3, seven = 7 }
+
+enum Signed { low = -2, mid = 0, high = 3 }
+
+enum Sparse { one = 1, big = 1000, huge = 70000 }
+
+fn four(x: Four): Int {
+  switch x {
+    case a { 10 }
+    case b { 20 }
+    case c { 30 }
+    case d { 40 }
+  }
+}
+
+fn gaps(x: Gaps): String {
+  switch x {
+    case zero { "zero" }
+    case two, three { "two or three" }
+    case seven { "seven" }
+  }
+}
+
+fn signed(x: Signed): Int {
+  switch x {
+    case mid { 0 }
+    case low, high { 1 }
+  }
+}
+
+fn sparse(x: Sparse): Int {
+  switch x {
+    case one { 1 }
+    case big { 2 }
+    case huge { 3 }
+  }
+}
+
+fn main {
+  t = 0
+  for f in Four.members() {
+    t = t * 100 + four(f)
+  }
+  puts(t)
+  for g in Gaps.members() {
+    puts(gaps(g))
+  }
+  for s in Signed.members() {
+    puts(signed(s))
+  }
+  for p in Sparse.members() {
+    puts(sparse(p))
+  }
+  n = 0
+  for f2 in Four.members() {
+    switch f2 {
+      case a { n += 1 }
+      case b, c { n += 10 }
+      case d { n += 100 }
+    }
+  }
+  puts(n)
+}

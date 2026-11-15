@@ -1,17 +1,17 @@
-; A hand-written program against the frozen runtime ABI (Stage 28 W2;
-; stages/stage28/audit-abi.md sections 1.1, 2.8, 4.1-4.4). It is what the
+; A hand-written program against the frozen runtime ABI (the runtime's
+; entry points, argv, roots, barriers and leave). It is what the
 ; old back end emits for a `main` that allocates, in the order the runtime
 ; expects:
 ;   root slots: entry allocas, volatile null stores before avant_gc_enter
 ;   avant_gc_enter, then avant_gc_root_begin(n) and one store per slot,
-;   with no call in between (4.2.3)
+;   with no call in between
 ;   the type maps (built-in 1022, 1021, 1023, then class id 1, a Box with
-;   one reference field at word 0), then avant_io_init_argv (2.8)
+;   one reference field at word 0), then avant_io_init_argv
 ;   every reference stored to its slot at once, and read back from the
-;   slot after each collecting call (4.3.2, 4.3.3)
+;   slot after each collecting call
 ;   a barrier on the holder before a reference store into a heap field
-;   (4.4.2, D187)
-;   avant_gc_leave before the return (4.1.1)
+;   (the generational barrier)
+;   avant_gc_leave before the return
 ; Output: "Hello Avant 42" and exit status 0. Run under AVANT_GC_VERIFY=1
 ; and AVANT_YOUNG_MB=1 by tests/cases/test_llvm_glue.av.
 

@@ -83,8 +83,22 @@ pub fn tk_for: Int { 75 }
 pub fn tk_in: Int { 76 }
 pub fn tk_pin: Int { 77 }
 pub fn tk_release: Int { 78 }
-// `enum` (Stage 29 W5a1, D292).
+// `enum`.
 pub fn tk_enum: Int { 79 }
+// `const`.
+pub fn tk_const: Int { 80 }
+// `..=`, the inclusive range.
+pub fn tk_dot_dot_eq: Int { 81 }
+// The compound assignments of the other binary operators.
+pub fn tk_percent_eq: Int { 82 }
+pub fn tk_amp_eq: Int { 83 }
+pub fn tk_pipe_eq: Int { 84 }
+pub fn tk_caret_eq: Int { 85 }
+pub fn tk_less_less_eq: Int { 86 }
+pub fn tk_greater_greater_eq: Int { 87 }
+pub fn tk_amp_plus_eq: Int { 88 }
+pub fn tk_amp_minus_eq: Int { 89 }
+pub fn tk_amp_star_eq: Int { 90 }
 
 pub fn token_is_keyword(kind: Int): Bool {
   if kind >= 6 && kind <= 23 {
@@ -117,6 +131,9 @@ pub fn token_is_keyword(kind: Int): Bool {
   if kind == tk_enum() {
     return true
   }
+  if kind == tk_const() {
+    return true
+  }
   false
 }
 
@@ -127,7 +144,76 @@ pub fn token_is_assign_op(kind: Int): Bool {
   if kind >= 24 && kind <= 27 {
     return true
   }
-  false
+  kind >= 82 && kind <= 90
+}
+
+// A compound assignment's binary operator (`%=` is `%`); 0 for `=` and
+// every other token.
+pub fn compound_binop(kind: Int): Int {
+  if kind == tk_plus_eq() {
+    return tk_plus()
+  }
+  if kind == tk_minus_eq() {
+    return tk_minus()
+  }
+  if kind == tk_star_eq() {
+    return tk_star()
+  }
+  if kind == tk_slash_eq() {
+    return tk_slash()
+  }
+  if kind == tk_percent_eq() {
+    return tk_percent()
+  }
+  if kind == tk_amp_eq() {
+    return tk_amp()
+  }
+  if kind == tk_pipe_eq() {
+    return tk_pipe()
+  }
+  if kind == tk_caret_eq() {
+    return tk_caret()
+  }
+  if kind == tk_less_less_eq() {
+    return tk_less_less()
+  }
+  if kind == tk_greater_greater_eq() {
+    return tk_greater_greater()
+  }
+  if kind == tk_amp_plus_eq() {
+    return tk_amp_plus()
+  }
+  if kind == tk_amp_minus_eq() {
+    return tk_amp_minus()
+  }
+  if kind == tk_amp_star_eq() {
+    return tk_amp_star()
+  }
+  0
+}
+
+// The text of a compound assignment's token (`%=`); "" for any other.
+pub fn compound_text(kind: Int): String {
+  op = compound_binop(kind)
+  if op == 0 {
+    return ""
+  }
+  if op == tk_pipe() {
+    return "|="
+  }
+  if op == tk_amp() {
+    return "&="
+  }
+  if op == tk_caret() {
+    return "^="
+  }
+  if op == tk_less_less() {
+    return "<<="
+  }
+  if op == tk_greater_greater() {
+    return ">>="
+  }
+  "${fn_op_name(op)}="
 }
 
 pub fn keyword_spelling(kind: Int): String {
@@ -215,12 +301,15 @@ pub fn keyword_spelling(kind: Int): String {
   if kind == tk_enum() {
     return "enum"
   }
+  if kind == tk_const() {
+    return "const"
+  }
   ""
 }
 
-// A token kind as a message names it (Stage 29 W1a, A6): a keyword or a
-// punctuation mark in backticks, any other kind in words ("expected `{`,
-// found a string"). Before, parser messages printed the kind's number.
+// A token kind as a message names it: a keyword or a punctuation mark in
+// backticks, any other kind in words ("expected `{`, found a string").
+// Before, parser messages printed the kind's number.
 pub fn token_name(kind: Int): String {
   spell = keyword_spelling(kind)
   if spell.size > 0 {
@@ -379,14 +468,21 @@ pub fn token_name(kind: Int): String {
   if kind == tk_dot_dot() {
     return "`..`"
   }
+  if kind == tk_dot_dot_eq() {
+    return "`..=`"
+  }
   if kind == tk_question_question() {
     return "`??`"
+  }
+  ct = compound_text(kind)
+  if ct.size > 0 {
+    return "`${ct}`"
   }
   "token ${kind}"
 }
 
 pub fn keyword_table: Hash(String, Int) {
-  kw = Hash(String, Int).new
+  kw = Hash(String, Int).new()
   kw["fn"] = tk_fn()
   kw["if"] = tk_if()
   kw["else"] = tk_else()
@@ -415,6 +511,7 @@ pub fn keyword_table: Hash(String, Int) {
   kw["pin"] = tk_pin()
   kw["release"] = tk_release()
   kw["enum"] = tk_enum()
+  kw["const"] = tk_const()
   kw
 }
 
@@ -461,10 +558,46 @@ pub fn fn_op_name(kind: Int): String {
   if kind == tk_greater_eq() {
     return ">="
   }
+  if kind == tk_amp() {
+    return "&"
+  }
+  if kind == tk_pipe() {
+    return "|"
+  }
+  if kind == tk_caret() {
+    return "^"
+  }
+  if kind == tk_less_less() {
+    return "<<"
+  }
+  if kind == tk_greater_greater() {
+    return ">>"
+  }
   ""
 }
 
 pub fn emit_op_name(name: String): String {
+  if name == "&" {
+    return "amp"
+  }
+  if name == "|" {
+    return "pipe"
+  }
+  if name == "^" {
+    return "caret"
+  }
+  if name == "<<" {
+    return "shl"
+  }
+  if name == ">>" {
+    return "shr"
+  }
+  if name == "[]" {
+    return "index"
+  }
+  if name == "[]=" {
+    return "index_set"
+  }
   if name == "&+" {
     return "wplus"
   }
@@ -520,4 +653,25 @@ pub class Token {
     self.loc = loc
     self.value = value
   }
+}
+
+// A type name's CamelCase spelling: `value` ->
+// `Value`, `http_req` -> `HttpReq`, `_x` -> `X`.
+pub fn type_camel(name: String): String {
+  buf = buf_new()
+  up = true
+  for i in 0..name.size {
+    c = name[i]
+    if c == 95 {
+      up = true
+      continue
+    }
+    if up && c >= 97 && c <= 122 {
+      buf.push_byte(c - 32)
+    } else {
+      buf.push_byte(c)
+    }
+    up = false
+  }
+  buf.to_s()
 }

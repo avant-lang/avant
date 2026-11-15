@@ -1,11 +1,11 @@
 import harness
 
-// Helpers shared by the suite tests of the back end's subsets (Stage 28:
-// test_scalars.av W5b, test_strings.av W6a, ...; until W11 they compared
-// the two back ends, D176, D184; since then each program with its run
-// golden): job builders for compiles under an environment, program runs
-// with stdout and stderr in their own files, waves of at most 24 jobs,
-// and the run goldens.
+// Helpers shared by the suite tests of the back end's subsets
+// (test_scalars.av, test_strings.av, ...; until the old back end retired
+// they compared the two back ends; since then each program
+// with its run golden): job builders for compiles under an
+// environment, program runs with stdout and stderr in their
+// own files, waves of at most 24 jobs, and the run goldens.
 
 pub fn log_text(path: String): String {
   if t = file_read(path) {
@@ -26,7 +26,7 @@ pub fn key_of(rel: String): String {
     }
     i += 1
   }
-  buf.to_s
+  buf.to_s()
 }
 
 // /usr/bin/env [VAR=value ...] COMPILER ARGS... (envs: space-separated
@@ -61,8 +61,8 @@ pub fn compile_job(envs: String, compiler: String, src: String, out: String, log
   env_job(envs, compiler, a, log)
 }
 
-// The same with extra compile flags (Stage 28 W8a: `--cc FILE.c`,
-// `--lib NAME`), after the mode.
+// The same with extra compile flags (`--cc
+// FILE.c`, `--lib NAME`), after the mode.
 pub fn compile_job_flags(envs: String, compiler: String, src: String, out: String, log: String, flags: Array(String)): HJob {
   a: Array(String) = []
   a.push("compile")
@@ -87,12 +87,12 @@ pub fn run_job(dir: String, bin: String, key: String): HJob {
 }
 
 // The same with environment words (`VAR=value ...`) for the program.
-// Under an outer AVANT_GC_STRESS (harness.gc_stress_outer, W14b1) a run
-// whose words set AVANT_GC_VERIFY runs without the stress mode: the
-// verifier's whole-heap checks at a collection per allocation do not fit
-// the suite's time (VALK-TM, O602, measured with the mode kept:
-// test_gc_hints.av's gc_hold under AVANT_GC_VERIFY=1 had not ended after
-// 465 s, its file 34 s without); the run without words is the stress run.
+// Under an outer AVANT_GC_STRESS (harness.gc_stress_outer) a run whose
+// words set AVANT_GC_VERIFY runs without the stress mode: the
+// verifier's whole-heap checks at a collection per allocation do not
+// fit the suite's time (measured with the mode kept: test_gc_hints.av's
+// gc_hold under AVANT_GC_VERIFY=1 had not ended after 465 s, its file
+// 34 s without); the run without words is the stress run.
 pub fn run_job_env(dir: String, bin: String, key: String, envs: String): HJob {
   e = envs
   if gc_stress_outer() && str_has(envs, "AVANT_GC_VERIFY") {
@@ -118,8 +118,7 @@ pub fn run_waves(jobs: Array(HJob)) {
   }
 }
 
-
-// The run goldens (Stage 28 W11, tests/goldens/runs/, tools/run-goldens.sh):
+// The run goldens (tests/goldens/runs/, tools/run-goldens.sh):
 // a program's stdout, stderr, and exit status, frozen from the old back
 // end before it retired (the oracle these tests used to run as a second
 // implementation). A program's key is its path without the leading
@@ -211,7 +210,7 @@ pub fn golden_status(root: String, rel: String): Int {
     while i < lines.size {
       ws = lines[i].split(" ")
       if ws.size == 2 && ws[0] == rel {
-        return ws[1].to_i ?? -1
+        return ws[1].to_i() ?? -1
       }
       i += 1
     }
@@ -232,5 +231,5 @@ pub fn str_replace_all(s: String, from: String, to: String): String {
       i += 1
     }
   }
-  buf.to_s
+  buf.to_s()
 }

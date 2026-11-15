@@ -12,6 +12,17 @@ import typed_ir
 import checker.names
 import checker
 
+// Whether a method name is declared on the type whose methods carry the
+// owner name owner (an external method of a builtin type: `Int`).
+pub fn (checker_self: Checker) owner_has_method(owner: String, name: String): Bool {
+  for ms in checker_self.methods {
+    if ms.owner == owner && ms.name == name {
+      return true
+    }
+  }
+  false
+}
+
 pub fn (checker_self: Checker) expect_no_args(expr: Expr, ret: Ty, message: String): Ty {
   if expr.args.size == 0 {
     return ret
@@ -40,33 +51,41 @@ pub fn (checker_self: Checker) check_float_method(expr: Expr): Ty {
   if expr.callee == "to_i" {
     return checker_self.expect_no_args(expr, checker_self.t_int(), "Float64.to_i takes no arguments")
   }
-  checker_self.fail(expr.loc, "no method ${expr.callee} on Float64")
+  if checker_self.owner_has_method("Float64", expr.callee) {
+    none: Ty? = nil
+    return checker_self.dispatch_method(expr, checker_self.t_float(), none)
+  }
+  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Float64", checker_self.builtin_hint(checker_self.t_float(), expr.callee))
   checker_self.t_float()
 }
 
 pub fn (checker_self: Checker) check_int_method(expr: Expr, object: Ty): Ty {
   if b = expr.block {
-    checker_self.fail(expr.loc, "${object.show}.${expr.callee} does not take a block")
+    checker_self.fail(expr.loc, "${object.show()}.${expr.callee} does not take a block")
     return object
   }
   if expr.callee == "to_f" {
-    return checker_self.expect_no_args(expr, checker_self.t_float(), "${object.show}.to_f takes no arguments")
+    return checker_self.expect_no_args(expr, checker_self.t_float(), "${object.show()}.to_f takes no arguments")
   }
   if expr.callee == "abs" {
-    if object.is_unsigned {
-      checker_self.fail(expr.loc, "abs of a ${object.show} is the value itself")
+    if object.is_unsigned() {
+      checker_self.fail(expr.loc, "abs of a ${object.show()} is the value itself")
     }
-    return checker_self.expect_no_args(expr, object, "${object.show}.abs takes no arguments")
+    return checker_self.expect_no_args(expr, object, "${object.show()}.abs takes no arguments")
   }
   if rt = int_conversion_ty(expr.callee) {
-    return checker_self.expect_no_args(expr, rt, "${object.show}.${expr.callee} takes no arguments")
+    return checker_self.expect_no_args(expr, rt, "${object.show()}.${expr.callee} takes no arguments")
   }
   now = removed_int_conversion(expr.callee)
   if now.size > 0 {
     checker_self.fail(expr.loc, removed_int_message(expr.callee, now))
     return checker_self.t_int()
   }
-  checker_self.fail(expr.loc, "no method ${expr.callee} on ${object.show}")
+  if checker_self.owner_has_method(object.show(), expr.callee) {
+    none: Ty? = nil
+    return checker_self.dispatch_method(expr, object, none)
+  }
+  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on ${object.show()}", checker_self.builtin_hint(object, expr.callee))
   object
 }
 
@@ -81,7 +100,7 @@ pub fn (checker_self: Checker) check_bytes_method(expr: Expr): Ty {
       return ty_nilable(checker_self.t_int())
     }
     got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
-    if !got.is_int {
+    if !got.is_int() {
       checker_self.fail(expr.args[0].loc, "get index must be Int")
     }
     return ty_nilable(checker_self.t_int())
@@ -93,8 +112,8 @@ pub fn (checker_self: Checker) check_bytes_method(expr: Expr): Ty {
     }
     a = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
     bb = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
-    if a.is_int {
-      if !bb.is_int {
+    if a.is_int() {
+      if !bb.is_int() {
         checker_self.fail(expr.loc, "slice bounds must be Int")
       }
     } else {
@@ -141,18 +160,20 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
     return checker_self.expect_no_args(expr, checker_self.t_string(), "strip_right takes no arguments")
   }
   if expr.callee == "bytes" {
-    return checker_self.expect_no_args(expr, checker_self.t_bytes(), "bytes takes no arguments")
+    // A builtin read-only property is read without parentheses.
+    checker_self.fail(expr.loc, "bytes is read without parentheses: write .bytes")
+    return checker_self.t_bytes()
   }
   if expr.callee == "chars" {
     return checker_self.expect_no_args(expr, ty_array(checker_self.t_string()), "chars takes no arguments")
   }
-  // Strict parsing (Stage 29 W4b1, D293, D295 R9): the whole string is
-  // the number, else nil; an integer may name its base (2..36).
+  // Strict parsing: the whole string is the number, else nil; an
+  // integer may name its base (2..36).
   if expr.callee == "to_f" {
     return checker_self.expect_no_args(expr, ty_nilable(checker_self.t_float()), "String.to_f takes no arguments")
   }
   if expr.callee == "to_i64" {
-    // One integer spelling (Stage 29 W-ADOPT, D300, D317).
+    // One integer spelling.
     checker_self.fail(expr.loc, removed_int_message("to_i64", "to_i"))
     return ty_nilable(checker_self.t_int())
   }
@@ -165,7 +186,7 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
       checker_self.fail(expr.loc, "String.${expr.callee} takes at most one argument, the base")
     } else if expr.args.size == 1 {
       bt = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
-      if !bt.is_int {
+      if !bt.is_int() {
         checker_self.fail(expr.args[0].loc, "the base of String.${expr.callee} must be Int")
       } else if expr.args[0].kind == ex_int() && (expr.args[0].int_bits < 2u64 || expr.args[0].int_bits > 36u64) {
         checker_self.fail(expr.args[0].loc, "the base of String.${expr.callee} must be in 2..36")
@@ -179,7 +200,7 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
       return ty_nilable(checker_self.t_int())
     }
     got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
-    if !got.is_int {
+    if !got.is_int() {
       checker_self.fail(expr.args[0].loc, "get index must be Int")
     }
     return ty_nilable(checker_self.t_int())
@@ -199,7 +220,7 @@ pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
       return checker_self.t_void()
     }
     got = checker_self.check_expr_as(expr.args[0], checker_self.t_bytes())
-    if !got.is_bytes {
+    if !got.is_bytes() {
       checker_self.fail(expr.args[0].loc, "push_bytes expects Bytes")
     }
     return checker_self.t_void()
@@ -213,7 +234,7 @@ pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
       return checker_self.t_void()
     }
     bty = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
-    if !bty.is_int {
+    if !bty.is_int() {
       checker_self.fail(expr.args[0].loc, "byte must be Int")
     }
     return checker_self.t_void()
@@ -240,8 +261,8 @@ pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
     }
     start = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
     stop = checker_self.check_expr_as(expr.args[2], checker_self.t_int())
-    if start.is_int {
-      if !stop.is_int {
+    if start.is_int() {
+      if !stop.is_int() {
         checker_self.fail(expr.loc, "start and stop must be Int")
       }
     } else {
@@ -255,14 +276,14 @@ pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
       return checker_self.t_void()
     }
     v = checker_self.check_expr(expr.args[0])
-    if !v.is_numeric {
+    if !v.is_numeric() {
       checker_self.fail(expr.args[0].loc, "push_fmt_f expects Float64")
     }
-    if !v.is_float {
+    if !v.is_float() {
       expr.args[0].ty = checker_self.t_float()
     }
     prec = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
-    if !prec.is_int {
+    if !prec.is_int() {
       checker_self.fail(expr.args[1].loc, "precision must be Int")
     }
     return checker_self.t_void()
@@ -273,7 +294,7 @@ pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
       return checker_self.t_void()
     }
     n = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
-    if !n.is_int {
+    if !n.is_int() {
       checker_self.fail(expr.args[0].loc, "push_fmt_i expects Int")
     }
     return checker_self.t_void()
@@ -301,7 +322,7 @@ pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
       return ty_nilable(checker_self.t_int())
     }
     got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
-    if !got.is_int {
+    if !got.is_int() {
       checker_self.fail(expr.args[0].loc, "get index must be Int")
     }
     return ty_nilable(checker_self.t_int())
@@ -311,6 +332,10 @@ pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
 }
 
 pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
+  // An element type with its own <.
+  if ordered = checker_self.user_order_call(expr, array) {
+    return ordered
+  }
   if expr.callee == "push" {
     if b = expr.block {
       checker_self.fail(expr.loc, "push does not take a block")
@@ -323,7 +348,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
     if e = array.inner {
       got = checker_self.check_expr_as(expr.args[0], e)
       if !ty_assignable(got, e) {
-        checker_self.fail(expr.args[0].loc, "push expects ${e.show}, got ${got.show}")
+        checker_self.fail(expr.args[0].loc, "push expects ${e.show()}, got ${got.show()}")
       }
     }
     return checker_self.t_void()
@@ -337,10 +362,11 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       return checker_self.t_int()
     }
     if expr.args.size == 0 {
+      // The last element, removed, or nil when the array is empty.
       if e = array.inner {
-        return e
+        return ty_nilable(e)
       }
-      return checker_self.t_int()
+      return ty_nilable(checker_self.t_int())
     }
     checker_self.fail(expr.loc, "pop takes no arguments")
     if e = array.inner {
@@ -379,14 +405,14 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         return checker_self.t_void()
       }
       if e = array.inner {
-        checker_self.push_scope
+        checker_self.push_scope()
         checker_self.bind(b.params[0], e)
         checker_self.bind(b.params[1], e)
         checker_self.loop_depth += 1
         bt = checker_self.check_block_value(b)
         checker_self.loop_depth -= 1
-        checker_self.pop_scope
-        if !bt.is_bool {
+        checker_self.pop_scope()
+        if !bt.is_bool() {
           checker_self.fail(b.loc, "sort comparator must return Bool")
         }
       }
@@ -414,14 +440,14 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         return ty_array(checker_self.t_int())
       }
       if e = array.inner {
-        checker_self.push_scope
+        checker_self.push_scope()
         checker_self.bind(b.params[0], e)
         checker_self.bind(b.params[1], e)
         checker_self.loop_depth += 1
         bt = checker_self.check_block_value(b)
         checker_self.loop_depth -= 1
-        checker_self.pop_scope
-        if !bt.is_bool {
+        checker_self.pop_scope()
+        if !bt.is_bool() {
           checker_self.fail(b.loc, "sorted comparator must return Bool")
         }
         return ty_array(e)
@@ -453,13 +479,12 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       return checker_self.t_bool()
     }
     if e = array.inner {
-      if !checker_self.is_eq_ty(e) {
-        checker_self.fail(expr.loc, "Array.contains needs an equality element type")
-      }
       got = checker_self.check_expr_as(expr.args[0], e)
       if !ty_assignable(got, e) {
-        checker_self.fail(expr.args[0].loc, "contains expects ${e.show}")
+        checker_self.fail(expr.args[0].loc, "contains expects ${e.show()}")
+        return checker_self.t_bool()
       }
+      checker_self.search_by_eq(expr, e)
     }
     return checker_self.t_bool()
   }
@@ -475,13 +500,13 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         return checker_self.t_bool()
       }
       if e = array.inner {
-        checker_self.push_scope
+        checker_self.push_scope()
         checker_self.bind(b.params[0], e)
         checker_self.loop_depth += 1
         bt = checker_self.check_block_value(b)
         checker_self.loop_depth -= 1
-        checker_self.pop_scope
-        if !bt.is_bool {
+        checker_self.pop_scope()
+        if !bt.is_bool() {
           checker_self.fail(b.loc, "${pred_name} predicate must return Bool")
         }
       }
@@ -500,13 +525,12 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       return ty_nilable(checker_self.t_int())
     }
     if e = array.inner {
-      if !checker_self.is_eq_ty(e) {
-        checker_self.fail(expr.loc, "Array.index_of needs an equality element type")
-      }
       got = checker_self.check_expr_as(expr.args[0], e)
       if !ty_assignable(got, e) {
-        checker_self.fail(expr.args[0].loc, "index_of expects ${e.show}")
+        checker_self.fail(expr.args[0].loc, "index_of expects ${e.show()}")
+        return ty_nilable(checker_self.t_int())
       }
+      checker_self.search_by_eq(expr, e)
     }
     return ty_nilable(checker_self.t_int())
   }
@@ -523,7 +547,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
     }
     if e = array.inner {
       if checker_self.is_ordered_ty(e) {
-        if e.is_bool {
+        if e.is_bool() {
           checker_self.fail(expr.loc, "Array.min needs an ordered element type")
         }
       } else {
@@ -546,7 +570,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
     }
     if e = array.inner {
       if checker_self.is_ordered_ty(e) {
-        if e.is_bool {
+        if e.is_bool() {
           checker_self.fail(expr.loc, "Array.max needs an ordered element type")
         }
       } else {
@@ -593,16 +617,15 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       return checker_self.t_void()
     }
     if e = array.inner {
-      if e.is_integer {
-        // Any integer element (Stage 29 W-INT1: Int, Int32, UInt32,
-        // UInt64).
+      if e.is_integer() {
+        // Any integer element (Int, Int32, UInt32, UInt64).
         got = checker_self.check_expr_as(expr.args[0], e)
         if !got.same_as(e) {
-          checker_self.fail(expr.args[0].loc, "fill expects ${e.show}")
+          checker_self.fail(expr.args[0].loc, "fill expects ${e.show()}")
         }
-      } else if e.is_bool {
+      } else if e.is_bool() {
         got = checker_self.check_expr_as(expr.args[0], checker_self.t_bool())
-        if !got.is_bool {
+        if !got.is_bool() {
           checker_self.fail(expr.args[0].loc, "fill expects Bool")
         }
       } else {
@@ -623,7 +646,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       return checker_self.t_void()
     }
     n = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
-    if !n.is_int {
+    if !n.is_int() {
       checker_self.fail(expr.args[0].loc, "reserve expects Int")
     }
     return checker_self.t_void()
@@ -644,7 +667,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       return checker_self.t_int()
     }
     got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
-    if !got.is_int {
+    if !got.is_int() {
       checker_self.fail(expr.args[0].loc, "get index must be Int")
     }
     if e = array.inner {
@@ -655,7 +678,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
   if expr.callee == "parallel" {
     return checker_self.check_parallel(expr, array)
   }
-  checker_self.fail(expr.loc, "no method ${expr.callee} on Array")
+  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Array", checker_self.builtin_hint(array, expr.callee))
   checker_self.t_int()
 }
 
@@ -674,7 +697,16 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
       return ty_array(checker_self.t_int())
     }
     if e = array.inner {
-      checker_self.push_scope
+      // Each body gets its element, so an element type that cannot cross
+      // to another task (a class, a Hash, a fn, an Array of those) would
+      // put one mutable object in two bodies when the array holds it
+      // twice, or two elements reach it: the
+      // receiver obeys spawn's and send's rule for what crosses.
+      if !checker_self.copyable_for_spawn(e) {
+        checker_self.fail(expr.loc, ".parallel cannot run over an ${array.show()}: its elements (${e.show()}) cannot cross to another task, and two bodies would share one object when the array holds it twice; a mutable object reaches another task only inside a Mutex")
+        return ty_array(checker_self.t_int())
+      }
+      checker_self.push_scope()
       checker_self.bind(b.params[0], e)
       checker_self.in_task += 1
       saved_loops = checker_self.loop_depth
@@ -685,7 +717,7 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
       checker_self.try_in = saved_try
       checker_self.loop_depth = saved_loops
       checker_self.in_task -= 1
-      checker_self.pop_scope
+      checker_self.pop_scope()
       checker_self.collect_spawn_captures(expr, b.body)
       return ty_array(result)
     }
@@ -742,7 +774,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     if k = hash.key {
       got = checker_self.check_expr_as(expr.args[0], k)
       if !ty_assignable(got, k) {
-        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show()}, got ${got.show()}")
       }
     }
     return checker_self.t_bool()
@@ -766,13 +798,13 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     if k = hash.key {
       got = checker_self.check_expr_as(expr.args[0], k)
       if !ty_assignable(got, k) {
-        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show()}, got ${got.show()}")
       }
     }
     if v = hash.val {
       got2 = checker_self.check_expr_as(expr.args[1], v)
       if !ty_assignable(got2, v) {
-        checker_self.fail(expr.args[1].loc, "get_or default must be ${v.show}")
+        checker_self.fail(expr.args[1].loc, "get_or default must be ${v.show()}")
       }
       return v
     }
@@ -788,26 +820,29 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       checker_self.fail(expr.loc, "inc takes key and optional amount")
       return checker_self.t_int()
     }
-    ok = false
-    if v = hash.val, v.is_int {
-      ok = true
+    // A counter of any integer type: the amount and the result are the
+    // value's type.
+    vt = checker_self.t_int()
+    if v = hash.val {
+      vt = v
     }
-    if !ok {
-      checker_self.fail(expr.loc, "inc is Hash(K, Int) only")
+    if !vt.is_integer() {
+      checker_self.fail(expr.loc, "inc needs integer values; this hash's values are ${vt.show()}")
+      return checker_self.t_int()
     }
     if k = hash.key {
       got = checker_self.check_expr_as(expr.args[0], k)
       if !ty_assignable(got, k) {
-        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show()}, got ${got.show()}")
       }
     }
     if expr.args.size == 2 {
-      by = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
-      if !by.is_int {
-        checker_self.fail(expr.args[1].loc, "inc amount must be Int")
+      by = checker_self.check_expr_as(expr.args[1], vt)
+      if !ty_assignable(by, vt) {
+        checker_self.fail(expr.args[1].loc, "inc amount must be ${vt.show()}, got ${by.show()}")
       }
     }
-    return checker_self.t_int()
+    return vt
   }
   if expr.callee == "each" {
     if b = expr.block {
@@ -820,13 +855,13 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
         return checker_self.t_void()
       }
       if k = hash.key, v = hash.val {
-        checker_self.push_scope
+        checker_self.push_scope()
         checker_self.bind(b.params[0], k)
         checker_self.bind(b.params[1], v)
         checker_self.loop_depth += 1
-        checker_self.check_body(b.body, checker_self.t_void(), false)
+        checker_self.check_body(b.body, checker_self.return_type, false)
         checker_self.loop_depth -= 1
-        checker_self.pop_scope
+        checker_self.pop_scope()
       }
       return checker_self.t_void()
     }
@@ -857,7 +892,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     if k = hash.key {
       got = checker_self.check_expr_as(expr.args[0], k)
       if !ty_assignable(got, k) {
-        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show()}, got ${got.show()}")
       }
     }
     if v = hash.val {
@@ -866,7 +901,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     return checker_self.t_int()
   }
   if expr.callee == "delete" {
-    // The value removed, or nil when the key was absent (Stage 29 W4b2).
+    // The value removed, or nil when the key was absent.
     gone = ty_nilable(checker_self.t_int())
     if v = hash.val {
       gone = ty_nilable(v)
@@ -883,7 +918,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     if k = hash.key {
       got = checker_self.check_expr_as(expr.args[0], k)
       if !ty_assignable(got, k) {
-        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show}, got ${got.show}")
+        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show()}, got ${got.show()}")
       }
     }
     return gone
@@ -899,7 +934,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       return checker_self.t_int()
     }
     ok = false
-    if k = hash.key, v = hash.val, k.is_string && v.is_int {
+    if k = hash.key, v = hash.val, k.is_string() && v.is_int() {
       ok = true
     }
     if !ok {
@@ -911,8 +946,8 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     }
     start = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
     stop = checker_self.check_expr_as(expr.args[2], checker_self.t_int())
-    if start.is_int {
-      if !stop.is_int {
+    if start.is_int() {
+      if !stop.is_int() {
         checker_self.fail(expr.loc, "start and stop must be Int")
       }
     } else {
@@ -931,7 +966,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       return checker_self.t_int()
     }
     ok = false
-    if k = hash.key, v = hash.val, k.is_string && v.is_string {
+    if k = hash.key, v = hash.val, k.is_string() && v.is_string() {
       ok = true
     }
     if !ok {
@@ -943,8 +978,8 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     }
     start = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
     stop = checker_self.check_expr_as(expr.args[2], checker_self.t_int())
-    if start.is_int {
-      if !stop.is_int {
+    if start.is_int() {
+      if !stop.is_int() {
         checker_self.fail(expr.loc, "start and stop must be Int")
       }
     } else {
@@ -966,7 +1001,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       return ty_nilable(checker_self.t_int())
     }
     ok = false
-    if k = hash.key, v = hash.val, k.is_string && v.is_int {
+    if k = hash.key, v = hash.val, k.is_string() && v.is_int() {
       ok = true
     }
     if !ok {
@@ -983,7 +1018,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     }
     return ty_nilable(checker_self.t_int())
   }
-  checker_self.fail(expr.loc, "no method ${expr.callee} on Hash")
+  checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Hash", checker_self.builtin_hint(hash, expr.callee))
   checker_self.t_int()
 }
 
@@ -1028,7 +1063,7 @@ pub fn (checker_self: Checker) check_buf_string(expr: Expr): Ty {
     return checker_self.t_void()
   }
   buf = checker_self.check_expr(expr.args[0])
-  if !buf.is_buf {
+  if !buf.is_buf() {
     checker_self.fail(expr.args[0].loc, "${expr.callee} expects Buf")
   }
   s = checker_self.check_expr_as(expr.args[1], checker_self.t_string())
@@ -1038,8 +1073,8 @@ pub fn (checker_self: Checker) check_buf_string(expr: Expr): Ty {
   checker_self.t_void()
 }
 
-// crc32_bytes and sha256_word0 take Bytes (Stage 29 W-INT2: the
-// references hash a uint8_t buffer; the Array(Int) form is gone).
+// crc32_bytes and sha256_word0 take Bytes (the references hash a
+// uint8_t buffer; the Array(Int) form is gone).
 pub fn (checker_self: Checker) check_bytes_checksum(expr: Expr): Ty {
   if expr.args.size == 1 {
     if b = expr.block {
@@ -1051,7 +1086,7 @@ pub fn (checker_self: Checker) check_bytes_checksum(expr: Expr): Ty {
     return ty_int32()
   }
   got = checker_self.check_expr_as(expr.args[0], checker_self.t_bytes())
-  if !got.is_bytes {
+  if !got.is_bytes() {
     checker_self.fail(expr.args[0].loc, "${expr.callee} expects Bytes")
   }
   ty_int32()
@@ -1081,10 +1116,10 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     }
     bty = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
     n = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
-    if !bty.is_int {
+    if !bty.is_int() {
       checker_self.fail(expr.args[0].loc, "repeat_byte expects Int byte")
     }
-    if !n.is_int {
+    if !n.is_int() {
       checker_self.fail(expr.args[1].loc, "repeat_byte expects Int count")
     }
     return checker_self.t_string()
@@ -1103,14 +1138,14 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
       return checker_self.t_string()
     }
     got = checker_self.check_expr(expr.args[0])
-    if !got.is_numeric {
+    if !got.is_numeric() {
       checker_self.fail(expr.args[0].loc, "fmt_float expects Float64")
     }
-    if !got.is_float {
+    if !got.is_float() {
       expr.args[0].ty = checker_self.t_float()
     }
     prec = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
-    if !prec.is_int {
+    if !prec.is_int() {
       checker_self.fail(expr.args[1].loc, "precision must be Int")
     }
     return checker_self.t_string()
@@ -1131,8 +1166,8 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     }
     start = checker_self.check_expr_as(expr.args[1], checker_self.t_int())
     stop = checker_self.check_expr_as(expr.args[2], checker_self.t_int())
-    if start.is_int {
-      if !stop.is_int {
+    if start.is_int() {
+      if !stop.is_int() {
         checker_self.fail(expr.loc, "start and stop must be Int")
       }
     } else {
@@ -1162,10 +1197,10 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
       return checker_self.t_float()
     }
     got = checker_self.check_expr(expr.args[0])
-    if !got.is_numeric {
+    if !got.is_numeric() {
       checker_self.fail(expr.args[0].loc, "exp expects Float64")
     }
-    if !got.is_float {
+    if !got.is_float() {
       expr.args[0].ty = checker_self.t_float()
     }
     return checker_self.t_float()
@@ -1181,10 +1216,10 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
       return checker_self.t_float()
     }
     got = checker_self.check_expr(expr.args[0])
-    if !got.is_numeric {
+    if !got.is_numeric() {
       checker_self.fail(expr.args[0].loc, "sqrt expects Float64")
     }
-    if !got.is_float {
+    if !got.is_float() {
       expr.args[0].ty = checker_self.t_float()
     }
     return checker_self.t_float()
@@ -1202,7 +1237,7 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     i = 0
     while i < expr.args.size {
       got = checker_self.check_expr_as(expr.args[i], checker_self.t_int())
-      if !got.is_int {
+      if !got.is_int() {
         checker_self.fail(expr.args[i].loc, "wide_op expects Int")
       }
       i += 1
@@ -1221,7 +1256,7 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     return checker_self.t_int()
   }
   // The 32-bit checksums (checksum_f64, checksum_str, crc32_bytes,
-  // sha256_word0) are Int32 (Stage 29 W-INT1): the bits they always had.
+  // sha256_word0) are Int32: the bits they always had.
   if expr.callee == "checksum_f64" {
     if expr.args.size == 1 {
       if b = expr.block {
@@ -1233,10 +1268,10 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
       return ty_int32()
     }
     got = checker_self.check_expr(expr.args[0])
-    if !got.is_numeric {
+    if !got.is_numeric() {
       checker_self.fail(expr.args[0].loc, "checksum_f64 expects Float64")
     }
-    if !got.is_float {
+    if !got.is_float() {
       expr.args[0].ty = checker_self.t_float()
     }
     return ty_int32()
@@ -1255,9 +1290,9 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
       return checker_self.t_void()
     }
     // An integer, printed as the unsigned number of its bits at its own
-    // width (Stage 29 W-INT1: an Int as UInt64, an Int32 as UInt32).
+    // width (an Int as UInt64, an Int32 as UInt32).
     got = checker_self.check_expr(expr.args[0])
-    if !got.is_integer {
+    if !got.is_integer() {
       checker_self.fail(expr.args[0].loc, "puts_u expects an integer")
     }
     return checker_self.t_void()
@@ -1277,8 +1312,8 @@ pub fn (checker_self: Checker) check_i32_bytes_to_str(expr: Expr): Ty {
   }
   got = checker_self.check_expr(expr.args[0])
   ok = false
-  if got.is_array {
-    if e = got.inner, e.is_int {
+  if got.is_array() {
+    if e = got.inner, e.is_int() {
       ok = true
     }
   }

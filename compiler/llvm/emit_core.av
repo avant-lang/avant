@@ -1,17 +1,17 @@
-// The LLVM emitter's core (Stage 28 W5a; stages/stage28/mir.md 11): the
-// emitter state, LLVM type and constant texts, symbols, and the two
-// primitives every statement is built from: a place's address and an
-// operand's value. Rule E1 is structural here: an operand is loaded from
-// its local at the point of use, once per occurrence, and no LLVM value is
-// kept across MIR statements (only inside one statement's expansion).
-// Rule E2 (as amended by W9b, D207, and Stage 28 W17b): every load and
-// store of a slot is plain (slot_vol), in a shared module too; until W17b
-// a shared module's slot accesses were volatile, because another thread's
-// collection could read and rewrite them at any instruction (D191).
-// emit_gc.av holds the GC sequences, emit.av the statements, functions,
-// and the module.
+// The LLVM emitter's core: the emitter state, LLVM type and constant
+// texts, symbols, and the two primitives every statement is built from: a
+// place's address and an operand's value. Rule E1 is structural here: an
+// operand is loaded from its local at the point of use, once per
+// occurrence, and no LLVM value is kept across MIR statements (only inside
+// one statement's expansion). Rule E2: every load and store of a slot is
+// plain (slot_vol), in a shared module too; before, a shared module's slot
+// accesses were volatile, because another thread's collection could read
+// and rewrite them at any instruction. emit_gc.av holds the GC sequences,
+// emit.av the statements, functions, and the module.
 //
-// D188 and D192: LlEmit holds 27 words; no array of structs or unions.
+// Kept within what an older seed's type maps traced (see
+// compiler/checker.av, FlowFacts): LlEmit holds 27 words; no array of
+// structs or unions.
 
 import source
 import mir.types
@@ -33,7 +33,9 @@ pub class LlEmit {
   pub si: Int = 0
   pub inline_fast: Bool = true
   pub used_alloc_globals: Bool = false
+  pub used_alloc_slow: Bool = false
   pub used_poll_global: Bool = false
+  pub used_heap_globals: Bool = false
   pub used_frame_global: Bool = false
   pub frame_words: Int = -1
   pub cur_file: Int = 0
@@ -63,27 +65,27 @@ pub class LlEmit {
     self.out = buf_new()
     self.label = ""
     self.rt_names = []
-    self.rt_seen = Hash(String, Int).new
+    self.rt_seen = Hash(String, Int).new()
     self.intrinsics = []
-    self.intr_seen = Hash(String, Int).new
-    self.loop_md = Hash(String, Int).new
+    self.intr_seen = Hash(String, Int).new()
+    self.loop_md = Hash(String, Int).new()
     self.tlocs = []
-    self.tloc_seen = Hash(String, Int).new
+    self.tloc_seen = Hash(String, Int).new()
   }
 
-  // The source site of the statement being emitted (Stage 29 W4b2, D295
-  // R16), for a trap's message.
+  // The source site of the statement being emitted, for a trap's
+  // message.
   pub fn site(loc: MLoc) {
-    self.cur_file = loc.file
-    self.cur_line = loc.line
-    self.cur_col = loc.col
+    self.cur_file = loc.file()
+    self.cur_line = loc.line()
+    self.cur_col = loc.col()
   }
 
   // The site's number N in the module's table of trap texts,
   // @__avant_trap_sites ("file:line:col", one entry per text), the last
-  // argument of a trap's _at form (D295 R16). An immediate, not the
-  // text's address: a constant address in a cold block was hoisted into
-  // hot loops as a live register (+5.8% instructions on Maze::AStar).
+  // argument of a trap's _at form. An immediate, not the text's
+  // address: a constant address in a cold block was hoisted into hot
+  // loops as a live register (+5.8% instructions on Maze::AStar).
   pub fn site_ref: String {
     path = "?"
     if self.cur_file >= 0 && self.cur_file < self.m.files.size {
@@ -121,14 +123,14 @@ pub class LlEmit {
     self.label = name
   }
 
-  // A fresh temporary, %t<n> per function (E3).
+  // A fresh temporary, %t<n> per function.
   pub fn tmp: String {
     n = self.tn
     self.tn += 1
     "%t${n}"
   }
 
-  // The label of a block the current statement expands into (E3):
+  // The label of a block the current statement expands into:
   // bb<k>.s<i>.<part>, i the statement's index in its MIR block.
   pub fn part(name: String): String {
     "bb${self.bk}.s${self.si}.${name}"
@@ -154,7 +156,7 @@ pub class LlEmit {
 
   // ---- types and constants
 
-  // The LLVM type of a MIR type (2.1-2.7).
+  // The LLVM type of a MIR type.
   pub fn llt(ty: Int): String {
     ll_type_text(self.ts, ty)
   }
@@ -163,7 +165,7 @@ pub class LlEmit {
     self.ts.align_of(ty)
   }
 
-  // The zero of a type (4.3 zero).
+  // The zero of a type.
   pub fn zero_text(ty: Int): String {
     k = self.ts.kind(ty)
     if k == mk_bool() {
@@ -182,7 +184,7 @@ pub class LlEmit {
   }
 
   // An integer constant of type ty as LLVM reads it: two's complement
-  // signed decimal of the type's width (4.2).
+  // signed decimal of the type's width.
   pub fn int_text(ty: Int, x: Int): String {
     mt = self.ts.get(ty)
     width = mt.bits
@@ -195,6 +197,9 @@ pub class LlEmit {
     if width == 32 && x >= 2147483648 {
       return "${x - 4294967296}"
     }
+    if width == 16 && x >= 32768 {
+      return "${x - 65536}"
+    }
     if width == 8 && x >= 128 {
       return "${x - 256}"
     }
@@ -203,7 +208,7 @@ pub class LlEmit {
 
   // ---- locals and places
 
-  // The alloca of local n: %_<n> or %_<n>.<source name> (E3).
+  // The alloca of local n: %_<n> or %_<n>.<source name>.
   pub fn local_name(n: Int): String {
     name = self.f.locals[n].name
     if name.size == 0 {
@@ -212,15 +217,16 @@ pub class LlEmit {
     ll_local("_${n}.${name}")
   }
 
-  // E2 as amended by Stage 28 W17b: no slot access is volatile. A
-  // collection reads and rewrites a thread's slots only while that thread
-  // is stopped at a safepoint (a collecting call, the poll) or native
-  // (inside a call), in a shared module as in a single-threaded one
-  // (gc-design.md 4.4, the handshake of W17a); the slot's address escapes
-  // to the runtime at gc.roots, so LLVM must assume every such call reads
-  // and writes the slot, and the reload rule (5.3) rereads it after the
-  // call anyway. (W9b, D207: volatile only in a shared module, where
-  // another thread's collection could touch the slot at any instruction.)
+  // Rule E2: no slot access is volatile. A collection reads and rewrites
+  // a thread's slots only while that thread is stopped at a safepoint (a
+  // collecting call, the poll) or native (inside a call), in a shared
+  // module as in a single-threaded one (the collector's safepoint
+  // handshake); the slot's address escapes to the runtime at gc.roots, so
+  // LLVM must assume every such call reads and writes the slot, and the
+  // reload rule (after a collecting call, each use of a slot loads it
+  // afresh) rereads it after the call anyway. (volatile only in
+  // a shared module, where another thread's collection could touch the
+  // slot at any instruction.)
   pub fn slot_vol(local: Int): Bool {
     false
   }
@@ -233,7 +239,7 @@ pub class LlEmit {
   }
 
   pub fn load(ty: Int, ptr: String, volatile: Bool): String {
-    t = self.tmp
+    t = self.tmp()
     line("${t} = load${vol(volatile)} ${llt(ty)}, ptr ${ptr}, align ${align(ty)}")
     t
   }
@@ -260,7 +266,7 @@ pub class LlEmit {
           ty = mt.pointee
         }
       } else if pr.kind == mpk_field() {
-        t = self.tmp
+        t = self.tmp()
         line("${t} = getelementptr inbounds ${llt(ty)}, ptr ${ptr}, i32 0, i32 ${pr.field}")
         ptr = t
         ty = self.ts.layouts[mt.layout].fields[pr.field]
@@ -273,7 +279,7 @@ pub class LlEmit {
         if o = pr.index {
           idx = index64(o)
         }
-        t = self.tmp
+        t = self.tmp()
         line("${t} = getelementptr inbounds ${llt(et)}, ptr ${ptr}, i64 ${idx}")
         ptr = t
         ty = et
@@ -293,7 +299,7 @@ pub class LlEmit {
     if self.ov_ty == mt_i64() {
       return x
     }
-    t = self.tmp
+    t = self.tmp()
     line("${t} = sext i32 ${x} to i64")
     t
   }
@@ -385,7 +391,7 @@ pub fn ll_plain(s: String): Bool {
   true
 }
 
-// A global symbol (8.3): mangled names are always quoted; C names bare
+// A global symbol: mangled names are always quoted; C names bare
 // when LLVM allows it.
 pub fn ll_sym(name: String): String {
   if str_starts(name, "av.") || !ll_plain(name) {
@@ -401,7 +407,7 @@ pub fn ll_local(name: String): String {
   "%\"${name}\""
 }
 
-// A layout's LLVM struct type: always quoted (2.8).
+// A layout's LLVM struct type: always quoted.
 pub fn ll_type_name(name: String): String {
   "%\"${name}\""
 }

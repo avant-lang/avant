@@ -8,13 +8,13 @@ layout %elems(u8) = elems { 0: u8 }  size 1 align 1
 layout %Buf = buf { 0 data: ref %elems(u8), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1021
 layout %elems(Array(Int)) = elems { 0: ref %Array(Int) }  size 8 align 8 id 65535
 layout %Array(Array(Int)) = array { 0 data: ref %elems(Array(Int)), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i64 }  size 16 align 8
 
 const str.0 = "start"
 const str.1 = "v"
 const str.2 = ":"
-const str.3 = "%lld\0A"
-const str.4 = "the quick brown fox"
-const str.5 = "jumps over the lazy dog"
+const str.3 = "the quick brown fox"
+const str.4 = "jumps over the lazy dog"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -30,14 +30,13 @@ extern avant_buf_new(i64) -> ref collects
 extern avant_buf_push_byte(ref, i64) -> void collects
 extern avant_buf_size(ref) -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_i64(i64) -> void never
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_repeat_byte(i64, i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
-extern avant_trap_empty(i32) -> void never noreturn
 extern avant_trap_negative(i64, i32) -> void never noreturn
 extern avant_trap_size(i32) -> void never noreturn
-extern printf(ref str, ...) -> i32 never
 
 fn av.loops/fill(_1: i64, _2: i64) -> ref %Array(Int) frame @loops.av:17:1 {
   let _0: ref %Array(Int)
@@ -1727,11 +1726,13 @@ fn av.loops/drop_last(_1: ref %loops.Box) -> void frame @loops.av:176:1 {
   let _4: i64
   let _5: bool
   let _6: ref %Array(Int) slot
-  let _7: i32
-  let _8: bool
-  let _9: addr i64
-  let _10: i64
-  let _11 (v): i64
+  let _7: %(Nil|Int)
+  let _8: i32
+  let _9: bool
+  let _10: addr i64
+  let _11: i64
+  let _12: %(Nil|Int)
+  let _13 (v): %(Nil|Int)
 
 bb0:
   _6 = zero   @176:1
@@ -1745,22 +1746,27 @@ bb0:
 
 bb1:
   _6 = copy (*_1).0   @178:10
-  _7 = copy (*_6).1   @178:13
-  _8 = eq copy _7, const i32 0   @178:13
-  branch copy _8, bb3, bb4   @178:13
+  _8 = copy (*_6).1   @178:13
+  _9 = ne copy _8, const i32 0   @178:13
+  branch copy _9, bb3, bb4   @178:13
 
 bb2:
   gc.leave   @176:1
   return   @176:1
 
 bb3:
-  call avant_trap_empty(const i32 0) nocollect   @178:13
-  unreachable   @178:13
+  _10 = call avant_array_pop_slot(copy _6, const u64 8) collects   @178:13
+  _11 = copy (*_10)   @178:13
+  _12 = union %(Nil|Int) tag 1 (copy _11)   @178:13
+  _7 = copy _12   @178:13
+  goto bb5   @178:13
 
 bb4:
-  _9 = call avant_array_pop_slot(copy _6, const u64 8) collects   @178:13
-  _10 = copy (*_9)   @178:13
-  _11 = copy _10   @178:7
+  _7 = union %(Nil|Int) tag 0   @178:13
+  goto bb5   @178:13
+
+bb5:
+  _13 = copy _7   @178:7
   goto bb2   @177:3
 }
 
@@ -2057,54 +2063,52 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @loops.av:225:1 {
   let _25: ref %Array(Int)
   let _26: i64
   let _27: i64
-  let _28: ref %elems(Array(Int)) slot
-  let _29: ref %Array(Array(Int))
-  let _30 (rows): ref %Array(Array(Int)) slot
-  let _31: bool
-  let _32: ref %Array(Int) slot
+  let _28: ref %Array(Array(Int))
+  let _29 (rows): ref %Array(Array(Int)) slot
+  let _30: bool
+  let _31: ref %Array(Int) slot
+  let _32: i64
   let _33: i64
-  let _34: i64
-  let _35: ref %Array(Int)
-  let _36: i64
-  let _37: ref %Array(Int)
-  let _38: i64
-  let _39: ref %loops.Box
-  let _40 (bx): ref %loops.Box slot
-  let _41: bool
-  let _42: i64
-  let _43: ref %Array(Int) slot
+  let _34: ref %Array(Int)
+  let _35: i64
+  let _36: ref %Array(Int)
+  let _37: i64
+  let _38: ref %loops.Box
+  let _39 (bx): ref %loops.Box slot
+  let _40: bool
+  let _41: i64
+  let _42: ref %Array(Int) slot
+  let _43: i64
   let _44: i64
-  let _45: i64
-  let _46: ref %Array(Int)
-  let _47: i64
-  let _48: ref %Array(Int)
-  let _49: i64
+  let _45: ref %Array(Int)
+  let _46: i64
+  let _47: ref %Array(Int)
+  let _48: i64
 
 bb0:
   _4 = zero   @225:1
   _12 = zero   @225:1
   _23 = zero   @225:1
-  _28 = zero   @225:1
-  _30 = zero   @225:1
-  _32 = zero   @225:1
-  _40 = zero   @225:1
-  _43 = zero   @225:1
+  _29 = zero   @225:1
+  _31 = zero   @225:1
+  _39 = zero   @225:1
+  _42 = zero   @225:1
   gc.enter   @225:1
-  gc.roots _2, _4, _12, _23, _28, _30, _32, _40, _43   @225:1
+  gc.roots _2, _4, _12, _23, _29, _31, _39, _42   @225:1
   call __avant_type_maps() nocollect   @225:1
   call avant_io_init_argv(copy _1, copy _2) collects   @225:1
   _3 = call av.loops/fill(const i64 103, const i64 5) collects   @226:8
   _4 = copy _3   @226:6
   _5 = call av.loops/sums(copy _4) nocollect   @227:8
-  call printf(const str.3, copy _5) nocollect   @227:3
+  call avant_puts_i64(copy _5) nocollect   @227:3
   _6 = call av.loops/steps(copy _4) nocollect   @228:8
-  call printf(const str.3, copy _6) nocollect   @228:3
+  call avant_puts_i64(copy _6) nocollect   @228:3
   _7 = call av.loops/fill(const i64 8, const i64 1) collects   @229:14
   _8 = call av.loops/steps(copy _7) nocollect   @229:8
-  call printf(const str.3, copy _8) nocollect   @229:3
+  call avant_puts_i64(copy _8) nocollect   @229:3
   _9 = call av.loops/fill(const i64 20, const i64 2) collects   @230:22
   _10 = call av.loops/invariant(copy _4, copy _9, const i64 4) nocollect   @230:8
-  call printf(const str.3, copy _10) nocollect   @230:3
+  call avant_puts_i64(copy _10) nocollect   @230:3
   _11 = call avant_buf_new(const i64 0) collects   @231:7
   _12 = copy _11   @231:5
   _13 = const i64 0   @232:5
@@ -2149,64 +2153,60 @@ bb7:
   (*_25).1 = copy _24   @237:17
   (*_25).2 = copy _24   @237:17
   _26 = call av.loops/bytes(copy _12, copy _25) nocollect   @237:8
-  call printf(const str.3, copy _26) nocollect   @237:3
-  _27 = call av.loops/strings(const str.4, const str.5) nocollect   @238:8
-  call printf(const str.3, copy _27) nocollect   @238:3
-  _28 = call avant_alloc(const u64 0, const u32 65535) collects   @239:29
-  _29 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @239:29
-  (*_29).0 = copy _28 fresh   @239:29
-  (*_29).1 = const i32 0   @239:29
-  (*_29).2 = const i32 0   @239:29
-  _30 = copy _29   @239:3
+  call avant_puts_i64(copy _26) nocollect   @237:3
+  _27 = call av.loops/strings(const str.3, const str.4) nocollect   @238:8
+  call avant_puts_i64(copy _27) nocollect   @238:3
+  _28 = call avant_alloc(const u64 16, const u32 1022) collects   @239:29
+  _29 = copy _28   @239:3
   _13 = const i64 0   @240:5
   goto bb8   @241:3
 
 bb8:
-  _31 = lt copy _13, const i64 12   @241:11
-  branch copy _31, bb9, bb10   @241:3
+  _30 = lt copy _13, const i64 12   @241:11
+  branch copy _30, bb9, bb10   @241:3
 
 bb9:
-  _32 = call av.loops/fill(const i64 12, copy _13) collects   @242:15
-  call avant_array_push_ptr(copy _30, copy _32, const u32 65535) collects   @242:9
-  _33 = add copy _13, const i64 1   @243:11
-  _13 = copy _33   @243:7
+  _31 = call av.loops/fill(const i64 12, copy _13) collects   @242:15
+  call avant_array_push_ptr(copy _29, copy _31, const u32 65535) collects   @242:9
+  _32 = add copy _13, const i64 1   @243:11
+  _13 = copy _32   @243:7
   goto bb8   @241:3
 
 bb10:
-  _34 = call av.loops/grid(copy _30, const i64 12) nocollect   @245:8
-  call printf(const str.3, copy _34) nocollect   @245:3
-  _35 = call av.loops/fill(const i64 103, const i64 9) collects   @246:18
-  _36 = call av.loops/churn(copy _4, copy _35, const i64 1500) collects   @246:8
-  call printf(const str.3, copy _36) nocollect   @246:3
-  _37 = call av.loops/fill(const i64 10, const i64 3) collects   @247:14
-  _38 = call av.loops/grows(copy _37) collects   @247:8
-  call printf(const str.3, copy _38) nocollect   @247:3
-  _39 = call av.loops/Box.new(const i64 0) collects   @248:11
-  _40 = copy _39   @248:6
+  _33 = call av.loops/grid(copy _29, const i64 12) nocollect   @245:8
+  call avant_puts_i64(copy _33) nocollect   @245:3
+  _34 = call av.loops/fill(const i64 103, const i64 9) collects   @246:18
+  _35 = call av.loops/churn(copy _4, copy _34, const i64 1500) collects   @246:8
+  call avant_puts_i64(copy _35) nocollect   @246:3
+  _36 = call av.loops/fill(const i64 10, const i64 3) collects   @247:14
+  _37 = call av.loops/grows(copy _36) collects   @247:8
+  call avant_puts_i64(copy _37) nocollect   @247:3
+  _38 = call av.loops/Box.new(const i64 0) collects   @248:11
+  _39 = copy _38   @248:6
   _13 = const i64 0   @249:5
   goto bb11   @250:3
 
 bb11:
-  _41 = lt copy _13, const i64 10   @250:11
-  branch copy _41, bb12, bb13   @250:3
+  _40 = lt copy _13, const i64 10   @250:11
+  branch copy _40, bb12, bb13   @250:3
 
 bb12:
-  _42 = mul copy _13, const i64 2   @251:18
-  _43 = copy (*_40).0   @251:7
-  call avant_array_push_i64(copy _43, copy _42) collects   @251:10
-  _44 = add copy _13, const i64 1   @252:11
-  _13 = copy _44   @252:7
+  _41 = mul copy _13, const i64 2   @251:18
+  _42 = copy (*_39).0   @251:7
+  call avant_array_push_i64(copy _42, copy _41) collects   @251:10
+  _43 = add copy _13, const i64 1   @252:11
+  _13 = copy _43   @252:7
   goto bb11   @250:3
 
 bb13:
-  _45 = call av.loops/aliased(copy _40, const i64 10) collects   @254:8
-  call printf(const str.3, copy _45) nocollect   @254:3
-  _46 = call av.loops/fill(const i64 40, const i64 0) collects   @255:14
-  _47 = call av.loops/early(copy _46) nocollect   @255:8
-  call printf(const str.3, copy _47) nocollect   @255:3
-  _48 = call av.loops/fill(const i64 30, const i64 4) collects   @256:15
-  _49 = call av.loops/wobble(copy _48) nocollect   @256:8
-  call printf(const str.3, copy _49) nocollect   @256:3
+  _44 = call av.loops/aliased(copy _39, const i64 10) collects   @254:8
+  call avant_puts_i64(copy _44) nocollect   @254:3
+  _45 = call av.loops/fill(const i64 40, const i64 0) collects   @255:14
+  _46 = call av.loops/early(copy _45) nocollect   @255:8
+  call avant_puts_i64(copy _46) nocollect   @255:3
+  _47 = call av.loops/fill(const i64 30, const i64 4) collects   @256:15
+  _48 = call av.loops/wobble(copy _47) nocollect   @256:8
+  call avant_puts_i64(copy _48) nocollect   @256:3
   _0 = const i32 0   @225:1
   gc.leave   @225:1
   return   @225:1

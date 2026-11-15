@@ -1,0 +1,229 @@
+import harness
+import backends
+
+// The complete collection that proves the
+// old heap unchanged.
+//
+// ffi/proof_oracle.av: the oracle AVANT_GC_VERIFY=1 keeps for the proof's
+// log. A store into an old object behind its barrier is silent in every
+// environment; a store before its barrier, and a store with none, are
+// stopped under the verifier, each with its own report, and print the
+// same as the first without it.
+
+fn test_proof_oracle(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/proof_oracle.av", "${dir}/proof_oracle", "${dir}/proof_oracle.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "proof_oracle.av: compiles")
+  want = "proof_oracle: text-2\nproof_oracle: text-2 after the collection\n"
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "proof_oracle", "proof_oracle.g${e}", envs[e]))
+  }
+  // The two stores only C can make, without the verifier (an outer
+  // verifier pass would stop them) and under it (an outer AVANT_NURSERY=0
+  // pass has no log to check).
+  for m in 1..3 {
+    runs.push(run_job_env(dir, "proof_oracle", "proof_oracle.p${m}", "-u AVANT_GC_VERIFY PROOF_ORACLE_MODE=${m}"))
+    runs.push(run_job_env(dir, "proof_oracle", "proof_oracle.v${m}", "-u AVANT_NURSERY -u AVANT_GC_STRESS PROOF_ORACLE_MODE=${m} AVANT_GC_VERIFY=1"))
+  }
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "proof_oracle.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/proof_oracle.g${e}.out"), want, "proof_oracle.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/proof_oracle.g${e}.err"), "", "proof_oracle.av ${what}: no stderr (the oracle is silent on a store behind its barrier)")
+  }
+  for m in 1..3 {
+    what = "a store before its barrier"
+    needle = "avant gc verify: proof: a store came before its barrier: word +0 held "
+    last = "avant runtime: avant gc verify: proof: a reference was overwritten before the barrier that logs its holder"
+    if m == 2 {
+      what = "a store with no barrier"
+      needle = "avant gc verify: proof: a reference was overwritten with no barrier before the store: word +0 held "
+      last = "avant runtime: avant gc verify: proof: an old object changed without its log"
+    }
+    pi = envs.size + (m - 1) * 2
+    c.eq_int(runs[pi].code, 0, "proof_oracle.av, ${what}, without the verifier: exit 0")
+    c.eq_str(log_text("${dir}/proof_oracle.p${m}.out"), want, "proof_oracle.av, ${what}, without the verifier: the same stdout")
+    err = log_text("${dir}/proof_oracle.v${m}.err")
+    c.expect(runs[pi + 1].code != 0, "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the program is stopped")
+    c.expect(str_has(err, needle), "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the oracle's report names the word")
+    c.expect(str_has(err, "avant gc verify: proof:   holder ") && str_has(err, "avant gc verify: proof:   referent "), "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the report names the holder and the referent")
+    c.expect(str_has(err, last), "proof_oracle.av, ${what}, under AVANT_GC_VERIFY=1: the stop's own line")
+  }
+}
+
+// ffi/complete.av: every way a program can remove the last reference to
+// an old object (a field store, an element store, a shift, Hash.delete
+// in the hash's two layouts, Hash.clear, a local out of scope, `release`, a pin given back, a store
+// after a defragmenting collection, a task's end), and two that remove
+// none (Array.sort, a Hash's growth). In every environment the collection
+// after the removal frees the victim (the live bytes fall by its size)
+// and the verifier's oracle is silent. In the default environment the
+// collection before the removal is a young one and the one after it a
+// full one, for every way; from the first spawn on both are full.
+fn test_complete(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/complete.av", "${dir}/complete", "${dir}/complete.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "complete.av: compiles")
+  want = log_text("${root}/tests/goldens/runs/fixtures/ffi/complete.out")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "complete", "complete.g${e}", envs[e]))
+  }
+  runs.push(run_job_env(dir, "complete", "complete.show", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS COMPLETE_SHOW=1 AVANT_GC_STATS=1"))
+  run_waves(runs)
+  c.expect(str_has(want, "field: freed 1, ") && str_has(want, "task: freed 1, "), "complete.av: its run golden has every way's line")
+  c.expect(!str_has(want, "freed 0"), "complete.av: its run golden frees every victim")
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "complete.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/complete.g${e}.out"), want, "complete.av ${what}: its run golden's stdout (every victim freed)")
+    c.eq_str(log_text("${dir}/complete.g${e}.err"), "", "complete.av ${what}: no stderr (the oracle is silent)")
+  }
+  show = log_text("${dir}/complete.show.out")
+  ways = ["field", "element", "shift", "delete", "delete int", "clear", "pop", "array-clear", "root", "release", "pin", "defrag"]
+  for w in ways {
+    line = ""
+    for l in show.split("\n") {
+      if str_has(l, "${w}: ") {
+        line = l
+      }
+    }
+    c.expect(str_has(line, "freed 1") && str_has(line, "[before: a young collection; after: a full collection]"), "complete.av, ${w}: the collection before the removal is a young one, the one after it a full one that frees the victim (${line})")
+  }
+  for w in ["sort", "rehash"] {
+    line = ""
+    for l in show.split("\n") {
+      if str_has(l, "${w}: ") {
+        line = l
+      }
+    }
+    c.expect(str_has(line, "[before: a young collection; after: a full collection]"), "complete.av, ${w}: references moved in an old buffer make the next collection a full one (${line})")
+  }
+  c.expect(str_has(show, "task: freed 1, the task read true [before: a full collection; after: a full collection]"), "complete.av, task: a program with threads is collected by full collections")
+  err = log_text("${dir}/complete.show.err")
+  c.expect(stat_value(err, "proof_held") >= 13, "complete.av: the proof held for a collection of every way before its removal (proof_held ${stat_value(err, "proof_held")})")
+  c.expect(stat_value(err, "proof_fell_ref_lost") >= 9 && stat_value(err, "proof_fell_root_lost") >= 3 && stat_value(err, "proof_fell_threads") >= 2, "complete.av: the proof failed for a lost reference, a lost root and threads (${stat_value(err, "proof_fell_ref_lost")}, ${stat_value(err, "proof_fell_root_lost")}, ${stat_value(err, "proof_fell_threads")})")
+}
+
+// ffi/scope_binding.av: whether a binding whose scope has ended keeps what
+// it named alive (its comment has the probes). The answer is its run
+// golden's, the same in every environment, with the oracle silent: a
+// binding does not; in every probe the string is freed once the function
+// has returned.
+fn test_scope_binding(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/scope_binding.av", "${dir}/scope_binding", "${dir}/scope_binding.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "scope_binding.av: compiles")
+  want = log_text("${root}/tests/goldens/runs/fixtures/ffi/scope_binding.out")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "scope_binding", "scope_binding.g${e}", envs[e]))
+  }
+  run_waves(runs)
+  for w in ["if binding", "block local", "no binding", "call argument"] {
+    c.expect(str_has(want, "${w}: freed after the function returned 1\n"), "scope_binding.av, ${w}: the string is freed once its function has returned")
+  }
+  for w in ["if binding", "block local", "no binding"] {
+    c.expect(str_has(want, "${w}: read true, freed while the function runs 1\n"), "scope_binding.av, ${w}: a binding whose scope has ended keeps nothing alive")
+  }
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "scope_binding.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/scope_binding.g${e}.out"), want, "scope_binding.av ${what}: its run golden's stdout")
+    c.eq_str(log_text("${dir}/scope_binding.g${e}.err"), "", "scope_binding.av ${what}: no stderr")
+  }
+}
+
+// ffi/keep_young.av: a forced collection that has to trace leaves the
+// young generation young (runtime/avant_gc_collect.c, gc_collect; the
+// mark, avant_gc_mark.c). Its three parts free their victims in every
+// environment with the oracle silent: an old chain whose last reference a
+// store removed before a loop of forced collections; an old chain named
+// only by a young object that survives such a trace and then dies (the
+// trace may not leave that young object young, and traces again as an
+// ordinary one); an old chain named by a holder the trace left
+// remembered, removed by a store the inline barrier test does not send to
+// the slow call (the trace logs the holder at its end). In the default
+// environment the loop's 40 forced collections are one trace and 39 young
+// collections, the statistics line counts the traces that kept the
+// young generation and the one that went back, and two forced
+// collections with nothing young run nothing.
+fn test_keep_young(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/keep_young.av", "${dir}/keep_young", "${dir}/keep_young.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "keep_young.av: compiles")
+  want = "stable: freed 1\nvia young: freed 1\nremembered: freed 1\nchain: 50000\n"
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "keep_young", "keep_young.g${e}", envs[e]))
+  }
+  runs.push(run_job_env(dir, "keep_young", "keep_young.show", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS KEEP_SHOW=1 AVANT_GC_STATS=1"))
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "keep_young.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/keep_young.g${e}.out"), want, "keep_young.av ${what}: every victim freed")
+    c.eq_str(log_text("${dir}/keep_young.g${e}.err"), "", "keep_young.av ${what}: no stderr (the oracle is silent)")
+  }
+  show = log_text("${dir}/keep_young.show.out")
+  c.expect(str_has(show, "stable: 1 of 40 forced collections were full ones"), "keep_young.av: the loop's forced collections are one trace and young collections after it")
+  c.expect(str_has(show, "idle: 0 young and 0 full collections for two forced ones"), "keep_young.av: a forced collection with nothing young and the proof holding runs nothing")
+  err = log_text("${dir}/keep_young.show.err")
+  c.expect(stat_value(err, "full_kept_young") >= 2, "keep_young.av: traces left the young generation young (full_kept_young ${stat_value(err, "full_kept_young")})")
+  c.expect(stat_value(err, "full_kept_young_fell") >= 1, "keep_young.av: the trace that met a young object naming an old one went back to an ordinary trace (full_kept_young_fell ${stat_value(err, "full_kept_young_fell")})")
+}
+
+// The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
+fn stat_value(text: String, key: String): Int {
+  parts = text.split(" ")
+  for p in parts {
+    if p.size > key.size + 1 && str_slice(p, 0, key.size + 1) == "${key}=" {
+      return str_slice(p, key.size + 1, p.size).strip().to_i() ?? -1
+    }
+  }
+  -1
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_gc_complete.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_proof_oracle(c, compiler, avant_test_root(), scratch_dir())
+    test_complete(c, compiler, avant_test_root(), scratch_dir())
+    test_scope_binding(c, compiler, avant_test_root(), scratch_dir())
+    test_keep_young(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

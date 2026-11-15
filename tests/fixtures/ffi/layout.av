@@ -1,11 +1,11 @@
-// C layouts through pointers (Stage 28 W8a, audit 1.7, 4.6 (4)): a C
-// struct with Int, String, Bool, a nested C struct, Int, and Ptr(Void)
-// fields, laid out by the C rule (offsets checked against C's offsetof),
-// read and written through `Ptr(Rec)` (compound assignments too, nested
-// fields through the outer pointer), methods on `Ptr(Rec)` receivers
-// (one named `bump`: called on a value it is a method, not the bump
-// constructor, W10b), and heap strings stored into the C struct's `String` field: each is
-// pinned (this program never releases it), so C reads it after collections moved
+// C layouts through pointers: a C struct
+// with Int, String, Bool, a nested C struct, Int, and Ptr(Void) fields,
+// laid out by the C rule (offsets checked against C's offsetof), read and
+// written through `Ptr(Rec)` (compound assignments too, nested fields
+// through the outer pointer), methods on `Ptr(Rec)` receivers (one named
+// `bump`: called on a value it is a method, not the bump constructor), and
+// heap strings stored into the C struct's `String` field: each is pinned
+// (this program never releases it), so C reads it after collections moved
 // everything else. Built with `--cc tests/fixtures/ffi/ffi.c`.
 
 lib lay {
@@ -45,7 +45,7 @@ fn (r: Ptr(Rec)) norm2: Float64 {
 }
 
 fn (r: Ptr(Rec)) bump(by: Int) {
-  r.id += by.to_i32
+  r.id += by.to_i32()
   r.big = r.big * 2
 }
 
@@ -106,12 +106,12 @@ fn main {
   puts(lay.ffi_rec_on(r))
   puts(lay.ffi_rec_x(r))
   puts(lay.ffi_rec_big(r))
-  puts(r.norm2)
+  puts(r.norm2())
   puts(r.norm2())
   r.bump(8)
   puts(r.id)
   puts(r.big)
-  puts(r.label)
+  puts(r.label())
   base = lay.avant_pin_count()
   name = "name-" + "on-the-heap"
   r.name = name

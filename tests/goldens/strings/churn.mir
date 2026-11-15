@@ -8,8 +8,6 @@ const str.3 = "start"
 const str.4 = "|"
 const str.5 = "size mismatch at "
 const str.6 = "/"
-const str.7 = "%d\0A"
-const str.8 = "%lld\0A"
 
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
@@ -19,6 +17,7 @@ extern __avant_type_maps() -> void never
 extern avant_checksum_str(ref str) -> i32 never
 extern avant_clock_us() -> i64 never
 extern avant_io_init_argv(i32, ptr) -> void collects
+extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_i32(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
@@ -28,7 +27,6 @@ extern avant_str_repeat_byte(i64, i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
 extern avant_str_slice(ref str, i64, i64) -> ref str collects
 extern avant_trap_convert(i64, i32) -> void never noreturn
-extern printf(ref str, ...) -> i32 never
 
 fn av.churn/opaque(_1: i64) -> i64 leaf @churn.av:10:1 {
   let _0: i64
@@ -225,7 +223,9 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @churn.av:36:1 {
   let _46: i32
   let _47: i64
   let _48: i64
-  let _49: i32
+  let _49: i64
+  let _50: i32
+  let _51: i64
 
 bb0:
   _5 = zero   @36:1
@@ -288,12 +288,14 @@ bb2:
   branch copy _35, bb4, bb5   @47:5
 
 bb3:
-  call printf(const str.7, copy _6) nocollect   @60:3
-  _48 = call avant_str_size(copy _5) nocollect   @61:12
-  call printf(const str.8, copy _48) nocollect   @61:3
+  _48 = cast copy _6 to i64   @60:3
+  call avant_puts_i64(copy _48) nocollect   @60:3
+  _49 = call avant_str_size(copy _5) nocollect   @61:12
+  call avant_puts_i64(copy _49) nocollect   @61:3
   call avant_puts_str(copy _5) nocollect   @62:3
-  _49 = call avant_checksum_str(copy _5) nocollect   @63:8
-  call printf(const str.7, copy _49) nocollect   @63:3
+  _50 = call avant_checksum_str(copy _5) nocollect   @63:8
+  _51 = cast copy _50 to i64   @63:3
+  call avant_puts_i64(copy _51) nocollect   @63:3
   _0 = const i32 0   @36:1
   gc.leave   @36:1
   return   @36:1

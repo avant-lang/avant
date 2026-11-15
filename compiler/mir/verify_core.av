@@ -1,9 +1,8 @@
-// The MIR verifier's core (Stage 28 W4; stages/stage28/mir.md 6): the
-// error, the verifier state, structure (V1-V3), types (V4-V8, V10), the
-// barrier rule (V13), call marks (V18), allocations
-// (V21). verify_module.av: the module-level V10 and V20. verify_gc.av:
-// V9, V11, V12, V14-V17, V19. verify.av: the driver.
-// A function that fails V1-V3 skips the dataflow rules (its CFG or its
+// The MIR verifier's core: the error, the verifier state, structure
+// (V1-V3), types (V4-V8, V10), the barrier rule (V13), call marks (V18),
+// allocations (V21). verify_module.av: the module-level V10 and V20.
+// verify_gc.av: V9, V11, V12, V14-V17, V19. verify.av: the driver. A
+// function that fails V1-V3 skips the dataflow rules (its CFG or its
 // locals cannot be trusted); a place or operand whose type cannot be
 // computed reports its own rule once and silences the rules that need it.
 
@@ -51,13 +50,13 @@ pub class MVerr {
 
   // `V<n>: <function>: bb<k>[<i>]: <message>` (6).
   pub fn show: String {
-    "V${self.rule}: ${self.where}: ${self.message}"
+    "V${self.rule}: ${self.where()}: ${self.message}"
   }
 
   // The compiler's diagnostic form (diagnostic.av), at the MIR's location.
   pub fn render(m: MModule): String {
-    at_loc = Location.new(mir_file_name(m, self.loc.file), self.loc.line, self.loc.col, 0)
-    CompileError.new(at_loc, "V${self.rule}", "${self.where}: ${self.message}").render
+    at_loc = Location.new(mir_file_name(m, self.loc.file()), self.loc.line(), self.loc.col(), 0)
+    CompileError.new(at_loc, "V${self.rule}", "${self.where()}: ${self.message}").render()
   }
 }
 
@@ -76,9 +75,9 @@ pub class MVerifier {
   pub func: MFunc
   pub bad: Bool = false
   via_ptr: Bool = false
-  // Shared by every function and both stages' rules (Stage 28 W18P,
-  // O154): the place an assign without one is checked as (_0, never
-  // changed), and the list V3 checks a statement's locals in.
+  // Shared by every function and both stages' rules: the place an
+  // assign without one is checked as (_0, never changed), and the
+  // list V3 checks a statement's locals in.
   no_place: MPlace
   used: Array(Int)
 
@@ -126,7 +125,7 @@ pub class MVerifier {
   // ---- places and operands (V4, V6, V20)
 
   // The type of p, or -1 after a V4 report. self.via_ptr tells whether the
-  // last deref went through a ptr (then `addr` is a `ptr`, 4.3).
+  // last deref went through a ptr (then `addr` is a `ptr`).
   pub fn place_ty(p: MPlace, b: Int, i: Int, loc: MLoc): Int {
     self.via_ptr = false
     ty = local_ty(p.local)
@@ -165,7 +164,7 @@ pub class MVerifier {
       } else {
         if o = pr.index {
           // op_ty of a `copy` index reenters place_ty, which resets
-          // via_ptr (a W6a fix: `(*_p)[copy _k]` through a ptr).
+          // via_ptr (a fix: `(*_p)[copy _k]` through a ptr).
           vp = self.via_ptr
           it = op_ty(o, b, i, loc)
           self.via_ptr = vp
@@ -292,7 +291,7 @@ pub class MVerifier {
         if k == mrk_addr() {
           return self.ts.addr_of(t)
         }
-        if p.frame_local {
+        if p.frame_local() {
           return self.ts.ptr_to(t)
         }
         err(6, b, i, loc, "addr.raw of a place inside a heap object")
@@ -319,7 +318,7 @@ pub class MVerifier {
     if src == mt_f64() && tys.is_int(dst) {
       return true
     }
-    // A Float32 at the C boundary (Stage 29 W1b): f64 <-> f32 only.
+    // A Float32 at the C boundary: f64 <-> f32 only.
     if (src == mt_f64() && tys.is_f32(dst)) || (tys.is_f32(src) && dst == mt_f64()) {
       return true
     }
@@ -335,7 +334,7 @@ pub class MVerifier {
     tys.is_refkind(src) && tys.is_ptr(dst)
   }
 
-  // struct, union, fnval rvalues (4.3).
+  // struct, union, fnval rvalues.
   fn agg_ty(r: MRvalue, b: Int, i: Int, loc: MLoc): Int {
     lay = self.ts.layout_of(r.ty)
     if self.ts.kind(r.ty) != mk_agg() || lay < 0 {
@@ -453,7 +452,7 @@ pub class MVerifier {
       while j < blk.stmts.size {
         st = blk.stmts[j]
         uses = self.used
-        uses.clear
+        uses.clear()
         mir_stmt_reads(st, uses)
         if p = st.place {
           uses.push(p.local)
@@ -474,7 +473,7 @@ pub class MVerifier {
       }
       if t = blk.term {
         uses = self.used
-        uses.clear
+        uses.clear()
         mir_term_reads(f, t, uses)
         check_used(uses, b, -1, t.loc)
       }
@@ -557,15 +556,15 @@ pub class MVerifier {
     }
   }
 
-  // V13 (5.4): the four forms of the barrier before a reference store
+  // V13: the four forms of the barrier before a reference store
   // through a place that is not frame-local. The third (a `ptr` holder,
-  // C memory) is `avant_pin(o)` or, since Stage 28 W16c (D266),
-  // `avant_pin_field(a, o)`, o the stored operand.
+  // C memory) is `avant_pin(o)` or `avant_pin_field(a, o)`, o the
+  // stored operand.
   fn barrier_rule(blk: MBlock, b: Int, j: Int, p: MPlace, pt: Int, r: MRvalue) {
-    if p.frame_local || !self.ts.ref_carrying(pt) {
+    if p.frame_local() || !self.ts.ref_carrying(pt) {
       return
     }
-    if p.last_deref != 0 {
+    if p.last_deref() != 0 {
       err(13, b, j, blk.stmts[j].loc, "the holder of ${mir_place_text(self.ts, p)} is not a local")
       return
     }
@@ -680,13 +679,13 @@ pub class MVerifier {
       return
     }
     l = self.ts.layouts[lay]
-    // An element buffer (amendment 2 after W5a, W6c): any whole number
-    // of elements, with the buffer's id.
-    size_ok = a0.ival == l.size.to_i
+    // An element buffer: any whole number of elements, with the
+    // buffer's id.
+    size_ok = a0.ival == l.size.to_i()
     if l.kind == mlk_elems() {
-      size_ok = (l.size > 0 && a0.ival >= 0 && a0.ival % l.size.to_i == 0) || a0.ival == 0
+      size_ok = (l.size > 0 && a0.ival >= 0 && a0.ival % l.size.to_i() == 0) || a0.ival == 0
     }
-    if !size_ok || a1.ival != l.type_id.to_i {
+    if !size_ok || a1.ival != l.type_id.to_i() {
       err(21, b, j, st.loc, "allocation of size ${a0.ival}, type ${a1.ival} for %${l.name} (size ${l.size}, type ${l.type_id})")
     }
   }

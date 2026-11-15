@@ -61,7 +61,7 @@ def ping_ok():
 
 
 def close_unread(count):
-    # O240: `count` pipelined requests in one write, then the client
+    # `count` pipelined requests in one write, then the client
     # closes without reading one answer. The first answer meets a closed
     # socket and is reset; the next write on that connection must fail
     # quietly instead of raising SIGPIPE.
@@ -92,7 +92,7 @@ def small_rcvbuf():
 
 
 def slow_big():
-    # P191: an 8 MiB answer to a client that starts reading late. Every
+    # An 8 MiB answer to a client that starts reading late. Every
     # byte arrives, and the connection still answers the next request.
     s = small_rcvbuf()
     s.sendall(get("/big"))
@@ -107,7 +107,7 @@ def slow_big():
 
 
 def pile():
-    # P191: 64 pipelined requests for 64 KiB answers, each filled with
+    # 64 pipelined requests for 64 KiB answers, each filled with
     # its own digit, and a last small one; nothing is read for a while.
     # Every answer arrives whole and in request order.
     s = small_rcvbuf()
@@ -125,7 +125,7 @@ def pile():
 
 
 def close_big():
-    # P191: Connection: close with an answer larger than the socket
+    # Connection: close with an answer larger than the socket
     # takes at once: the connection closes after the whole answer.
     s = small_rcvbuf()
     s.sendall(get("/big", "Connection: close\r\n"))
@@ -139,7 +139,7 @@ def close_big():
 
 
 def half_close():
-    # P191: two pipelined large requests, then the client shuts down its
+    # Two pipelined large requests, then the client shuts down its
     # sending side and reads: both answers arrive whole, then the end.
     s = small_rcvbuf()
     s.sendall(get("/big") * 2)
@@ -154,7 +154,7 @@ def half_close():
 
 
 def flood():
-    # P191, memory: a client that sends requests for 64 KiB answers as
+    # Memory: a client that sends requests for 64 KiB answers as
     # fast as it can and reads nothing. The server stops taking requests
     # from it and stops reading it, so the client's own writes stop
     # being accepted long before 64 MiB of requests have gone out.
@@ -201,7 +201,7 @@ def wait_closed(s, limit):
 
 
 def idle():
-    # P192: the server's timeout is an idle timeout. The test's server
+    # The server's timeout is an idle timeout. The test's server
     # runs with it shortened to 8 s (two of uSockets' 4-second ticks, so
     # a connection is closed between 4 and 8 s after its last activity).
     # Four connections, opened together: `busy` sends a request every
@@ -282,10 +282,10 @@ def exchange(raw):
 
 
 def lengths():
-    # P193: Content-Length lines that disagree are two readings of where
+    # Content-Length lines that disagree are two readings of where
     # the body ends (request smuggling): 400 and close, the body's tail
     # never runs as a request. Repeats are refused too, identical or not,
-    # in both spellings of the list (O522, the owner's choice).
+    # in both spellings of the list.
     hidden = get("/hidden")
     post = b"POST /echo HTTP/1.1\r\nHost: x\r\n"
     out = []
@@ -313,7 +313,7 @@ def lengths():
 
 
 def hosts():
-    # O472 (H3): RFC 9112 3.2: an HTTP/1.1 request without Host, and a
+    # RFC 9112 3.2: an HTTP/1.1 request without Host, and a
     # request of any version with two Host lines (identical or not, in
     # any case) or a folded one, are answered 400 and the connection is
     # closed: a request behind it is never answered. HTTP/1.0 may omit
@@ -335,6 +335,18 @@ def hosts():
     case("1.0-two", b"GET /ping HTTP/1.0\r\nHost: a\r\nHost: b\r\n\r\n", 400, True)
     case("1.0-none", b"GET /ping HTTP/1.0\r\n\r\n", 200, True)
     case("empty", b"GET /ping HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n", 200, True)
+    # The value is uri-host [ ":" port ] (RFC
+    # 9112 3.2, RFC 3986): anything else is 400 and close.
+    for name, value in [("space", b"a b"), ("at", b"user@a"), ("path", b"a/b"), ("query", b"a?b"),
+                        ("colons", b"a:1:2"), ("port-alpha", b"a:8x"), ("pct-bad", b"a%4"),
+                        ("pct-hex", b"a%zz"), ("v6-open", b"[::1"), ("v6-empty", b"[]"),
+                        ("v6-tail", b"[::1]x"), ("v6-space", b"[::1 ]"), ("quote", b"a\"b"),
+                        ("high", b"\xc3\xa9.example")]:
+        case("bad-" + name, b"GET /ping HTTP/1.1\r\nHost: " + value + b"\r\n\r\n" + hidden, 400, True)
+    for name, value in [("name", b"example.com"), ("port", b"example.com:8080"), ("v4", b"127.0.0.1:80"),
+                        ("v6", b"[::1]:8080"), ("v6-bare", b"[2001:db8::7]"), ("pct", b"a%41b"),
+                        ("subdelims", b"a!$&'()*+,;=-._~b"), ("port-empty", b"a:")]:
+        case("ok-" + name, b"GET /ping HTTP/1.1\r\nHost: " + value + b"\r\nConnection: close\r\n\r\n", 200, True)
     s = connect()
     s.sendall(get("/ping") + get("/ping"))
     got = read_answers(s, 2)
@@ -344,7 +356,7 @@ def hosts():
 
 
 def header_split(port_file):
-    # O518: tests/fixtures/http/header_split.av writes its port to
+    # tests/fixtures/http/header_split.av writes its port to
     # port_file and answers GET /h with a header its handler sets. What
     # reaches the wire: "nothing" when the server sent no byte (it
     # trapped), else the answers' count and their header lines.
