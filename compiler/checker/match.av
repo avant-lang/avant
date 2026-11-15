@@ -730,7 +730,23 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   nsig
 }
 
-pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location): FuncSig? {
+// The argument types a generic candidate is inferred from: an argument of
+// literals (lits[k], int_literal_flags) meeting a parameter of a concrete
+// number type takes that type, as it does for a function that is not
+// generic (fit_call_arg types the argument after the match).
+pub fn (checker_self: Checker) lit_fit_tys(params: Array(Ty), arg_tys: Array(Ty), lits: Array(Bool)): Array(Ty) {
+  out: Array(Ty) = []
+  for k in 0..arg_tys.size {
+    a = arg_tys[k]
+    if k < lits.size && k < params.size && lits[k] && a.is_numeric && params[k].is_numeric && !type.ty_has_var(params[k]) {
+      a = params[k]
+    }
+    out.push(a)
+  }
+  out
+}
+
+pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expected: Ty?, loc: Location, lits: Array(Bool)): FuncSig? {
   cands: Array(FuncSig) = []
   saw_generic = false
   named = checker_self.fn_indices_named(name)
@@ -747,7 +763,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
       if !is_inst && checker_self.fn_candidate(sig.node) && arity_ok(sig.node, arg_tys.size) {
         if sig.node.generic {
           saw_generic = true
-          if subst = checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected) {
+          if subst = checker_self.infer_subst(sig.node.type_params, sig.params, checker_self.lit_fit_tys(sig.params, arg_tys, lits), sig.ret, expected) {
             cands.push(sig)
           }
         } else {
@@ -811,7 +827,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
   }
   chosen = cands[0]
   if chosen.node.generic {
-    if subst = checker_self.infer_subst(chosen.node.type_params, chosen.params, arg_tys, chosen.ret, expected) {
+    if subst = checker_self.infer_subst(chosen.node.type_params, chosen.params, checker_self.lit_fit_tys(chosen.params, arg_tys, lits), chosen.ret, expected) {
       return checker_self.instantiate_function(chosen, subst, loc)
     }
     checker_self.fail(loc, "cannot infer type argument")
@@ -880,7 +896,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
           if !is_inst && checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
             if sig.node.generic {
               saw_generic = true
-              if subst = checker_self.infer_subst(sig.node.type_params, sig.params, arg_tys, sig.ret, expected) {
+              if subst = checker_self.infer_subst(sig.node.type_params, sig.params, checker_self.lit_fit_tys(sig.params, arg_tys, lits), sig.ret, expected) {
                 cands.push(sig)
               }
             } else {
@@ -914,7 +930,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
           }
           if !is_inst {
             saw_generic = true
-            if subst = checker_self.subst_for_method(sig, owner, arg_tys, expected) {
+            if subst = checker_self.subst_for_method(sig, owner, checker_self.lit_fit_tys(sig.params, arg_tys, lits), expected) {
               cands.push(sig)
             }
           }
@@ -986,7 +1002,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
   }
   chosen = cands[0]
   if chosen.node.generic {
-    if subst = checker_self.subst_for_method(chosen, owner, arg_tys, expected) {
+    if subst = checker_self.subst_for_method(chosen, owner, checker_self.lit_fit_tys(chosen.params, arg_tys, lits), expected) {
       return checker_self.instantiate_method(chosen, subst, loc)
     }
     checker_self.fail(loc, "cannot infer type argument")
@@ -1210,7 +1226,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
   arg_tys: Array(Ty) = []
   i = 0
   while i < expr.args.size {
-    arg_tys.push(checker_self.check_expr(expr.args[i]))
+    arg_tys.push(checker_self.check_call_arg(expr.args[i]))
     i += 1
   }
   cands: Array(FuncSig) = []
@@ -1229,7 +1245,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
           } else if arity_ok(sig.node, arg_tys.size) {
             ok = true
             for k in 0..arg_tys.size {
-              if !ty_assignable(arg_tys[k], sig.params[k]) {
+              if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_lit_expr(expr.args[k]) && arg_tys[k].is_numeric && sig.params[k].is_numeric) {
                 ok = false
               }
             }
@@ -1273,6 +1289,15 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
     return checker_self.t_int()
   }
   given = expr.args.size
+  for ai in 0..given {
+    if ai < sig.params.size {
+      got = checker_self.fit_call_arg(expr.args[ai], arg_tys[ai], sig.params[ai])
+      if !ty_assignable(got, sig.params[ai]) {
+        an = ai + 1
+        checker_self.fail(expr.args[ai].loc, "argument ${an} of ${ty.show}.${expr.callee} is ${got.show}, expected ${sig.params[ai].show}")
+      }
+    }
+  }
   checker_self.fill_defaults(expr, sig.node)
   // The defaults it spliced are checked like any argument (O17: they
   // reached the back end untyped).
@@ -1298,7 +1323,7 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
   arg_tys: Array(Ty) = []
   i = 0
   while i < expr.args.size {
-    arg_tys.push(checker_self.check_expr(expr.args[i]))
+    arg_tys.push(checker_self.check_call_arg(expr.args[i]))
     i += 1
   }
   visible = false
@@ -1313,7 +1338,7 @@ pub fn (checker_self: Checker) dispatch_call(expr: Expr, expected: Ty?): Ty {
     checker_self.fail_hint(expr.loc, "unknown function ${expr.callee}", checker_self.fn_hint(expr.callee))
     return checker_self.t_int()
   }
-  if sig = checker_self.match_func(expr.callee, arg_tys, expected, expr.loc) {
+  if sig = checker_self.match_func(expr.callee, arg_tys, expected, expr.loc, checker_self.int_literal_flags(expr.args)) {
     checker_self.fill_defaults(expr, sig.node)
     i = 0
     while i < expr.args.size {
@@ -1603,7 +1628,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
   arg_tys: Array(Ty) = []
   i = 0
   while i < expr.args.size {
-    arg_tys.push(checker_self.check_expr(expr.args[i]))
+    arg_tys.push(checker_self.check_call_arg(expr.args[i]))
     i += 1
   }
   if sig = checker_self.match_method(owner, expr.callee, arg_tys, expected, expr.loc, shown, object.mod_name, checker_self.int_literal_flags(expr.args)) {
@@ -1634,7 +1659,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
 pub fn (checker_self: Checker) int_literal_flags(args: Array(Expr)): Array(Bool) {
   flags: Array(Bool) = []
   for a in args {
-    flags.push(checker_self.is_int_literal(a))
+    flags.push(checker_self.is_lit_expr(a))
   }
   flags
 }

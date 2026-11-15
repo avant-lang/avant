@@ -171,6 +171,10 @@ pub class Checker {
   // the argument in more than one way (checker/match.av infer_subst,
   // Stage 29 W5b1): added to "cannot infer type argument".
   pub infer_note: String = ""
+  // True while a call's bare integer literal argument is checked before
+  // its parameter is known: a value above Int's range is then a UInt64,
+  // and the parameter's type decides (fit_call_arg).
+  pub lit_arg: Bool = false
   // Inside the block of `Array(T).new(n) { |i| ... }` (how deep): a
   // `break` or `continue` there gets its own message.
   pub in_build: Int = 0
@@ -2998,6 +3002,9 @@ pub class Checker {
     if expr.int_bits <= literal_int_max(ty) {
       return ty
     }
+    if !has_want && self.lit_arg && expr.value_str.size == 0 {
+      return t_uint64()
+    }
     if expr.value_str.size > 0 {
       // A constant written here as its value (checker/consts.av).
       fail(expr.loc, "${expr.value_str} does not fit in ${ty.show}")
@@ -3061,6 +3068,41 @@ pub class Checker {
     false
   }
 
+  // An expression made only of integer literals (and constants): a
+  // literal, or a negation, `~`, or an arithmetic, bitwise or shift
+  // operator whose operands are such expressions (`2 - 1`, `~0`, `1 << 40`).
+  // It takes the integer type its context gives, as one literal does.
+  pub fn is_lit_expr(e: Expr): Bool {
+    if is_int_literal(e) {
+      return true
+    }
+    if e.kind == ex_unary() && (e.op == tk_minus() || e.op == tk_tilde()) {
+      if inner = e.inner {
+        return is_lit_expr(inner)
+      }
+      return false
+    }
+    if e.kind == ex_binary() && (arith_op(e.op) || shift_op(e.op)) {
+      if l = e.left, r = e.right {
+        return is_lit_expr(l) && is_lit_expr(r)
+      }
+    }
+    false
+  }
+
+  // A call's argument, checked before the call picks its function: a bare
+  // integer literal may be above Int's range (the parameter decides).
+  pub fn check_call_arg(e: Expr): Ty {
+    if e.kind != ex_int() {
+      return check_expr(e)
+    }
+    saved = self.lit_arg
+    self.lit_arg = true
+    got = check_expr(e)
+    self.lit_arg = saved
+    got
+  }
+
   pub fn check_unary(expr: Expr, has_want: Bool, want: Ty): Ty {
     if inner = expr.inner {
       if inner.kind == ex_name() || inner.kind == ex_field() {
@@ -3069,7 +3111,13 @@ pub class Checker {
       if expr.op == tk_minus() && inner.kind == ex_int() {
         return check_negated_literal(expr, inner, has_want, want)
       }
-      got = check_expr(inner)
+      got = t_int()
+      if has_want && (want.is_integer || (want.is_float && expr.op == tk_minus())) && is_lit_expr(inner) {
+        // `-(2 - 1)` and `~0` take their context's type (`u: UInt64 = ~0`).
+        got = check_expr_as(inner, want)
+      } else {
+        got = check_expr(inner)
+      }
       if expr.op == tk_minus() {
         if got.is_numeric {
           return got
@@ -3270,7 +3318,7 @@ pub class Checker {
       // D315 (Stage 29 W-INT1): an integer literal on the left adopts
       // the right operand's integer type, as one on the right adopts
       // the left's (`1 + x` types as `x + 1`).
-      left_lit = is_int_literal(l) && !is_int_literal(r)
+      left_lit = is_lit_expr(l) && !is_lit_expr(r)
       if left_lit {
         rfirst = check_expr(r)
         if rfirst.is_integer || rfirst.is_float {
@@ -3284,7 +3332,7 @@ pub class Checker {
       // Two literals take the integer type the context wants (`x:
       // Int32 = 46340 * 46340`), as one literal does.
       left = t_int()
-      if has_want && want.is_integer && is_int_literal(l) && is_int_literal(r) && arith_op(op) {
+      if has_want && is_lit_expr(l) && is_lit_expr(r) && ((want.is_integer && (arith_op(op) || shift_op(op))) || (want.is_float && arith_op(op))) {
         left = check_expr_as(l, want)
       } else {
         left = check_expr(l)
@@ -3819,6 +3867,10 @@ pub class Checker {
         }
       }
     }
+    // So does an expression of literals (`f(2 - 1)`, `f(~0)`).
+    if (want.is_integer || want.is_float) && !type.ty_has_var(want) && is_lit_expr(expr) && got.is_numeric {
+      return check_expr_as(expr, want)
+    }
     got
   }
 
@@ -3983,7 +4035,7 @@ pub class Checker {
         } else {
           ai = 0
           while ai < expr.args.size {
-            arg_tys.push(check_expr(expr.args[ai]))
+            arg_tys.push(check_call_arg(expr.args[ai]))
             ai += 1
           }
         }

@@ -976,7 +976,7 @@ fn main {
 
 ### Literals
 
-An integer literal is an `Int` unless its context gives it another number type: a declared type, a parameter, a field, a function's result, or the other operand of an operator, on either side. The context may be a `Float64` too: with a float `f`, `f * 2` and `2 * f` are float arithmetic.
+An integer literal is an `Int` unless its context gives it another number type: a declared type, a parameter (of any function or method, generic or an operator's included), a field, a function's result, or the other operand of an operator, on either side. An expression made only of literals takes its type the same way (`(2 - 1) + y`, `u: UInt64 = ~0`, `(1 << 63) | u`), and so does a literal argument above `Int`'s range when its parameter is a `UInt64`. The context may be a `Float64` too: with a float `f`, `f * 2` and `2 * f` are float arithmetic.
 
 ```avant
 fn half(n: Int32): Int32 {

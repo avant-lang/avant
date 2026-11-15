@@ -247,11 +247,18 @@ pub fn (checker_self: Checker) eq_is_compare(op: Int): Bool {
 // the right still unchecked).
 pub fn (checker_self: Checker) check_agg_compare(expr: Expr, r: Expr, op: Int, opname: String, left: Ty): Ty? {
   if checker_self.user_op(left, opname) {
-    right = checker_self.check_expr(r)
+    right = checker_self.check_call_arg(r)
     arg_tys: Array(Ty) = []
     arg_tys.push(right)
     none: Ty? = nil
-    if sig = checker_self.match_method(left.name, opname, arg_tys, none, expr.loc, left.name, left.mod_name, checker_self.no_int_literals()) {
+    rs: Array(Expr) = [r]
+    if sig = checker_self.match_method(left.name, opname, arg_tys, none, expr.loc, left.name, left.mod_name, checker_self.int_literal_flags(rs)) {
+      // A literal operand takes the parameter's type (`v + 2` with an
+      // Int32 parameter), as a method's literal argument does.
+      got = checker_self.fit_call_arg(r, right, sig.params[0])
+      if !ty_assignable(got, sig.params[0]) {
+        checker_self.fail(r.loc, "${left.show}.${opname} takes ${sig.params[0].show}, got ${got.show}")
+      }
       expr.resolved = sig.node.emit_name
       return sig.ret
     }

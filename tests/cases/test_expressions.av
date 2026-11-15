@@ -2,7 +2,8 @@ import harness
 import backends
 
 // Expressions: how tightly the operators bind (the bitwise operators
-// above the comparisons). Each program is compiled in parallel; a refused
+// above the comparisons); the type an expression of literals takes from
+// its context. Each program is compiled in parallel; a refused
 // one must leave no binary, say the expected words and point at the
 // expected line and column; an accepted one must print what it should.
 
@@ -46,6 +47,24 @@ fn precedence_cases: Array(ECase) {
   xs
 }
 
+// An expression made only of literals takes the integer type its context
+// gives, on either side of an operator, as one literal does: the other
+// operand, a declared type, an element, a parameter (of a generic
+// function or method, an operator method and a type-level function too).
+fn adoption_cases: Array(ECase) {
+  xs: Array(ECase) = []
+  xs.push(accepted("adopt-left-expr", "fn main {\n  y: Int32 = 5\n  puts((2 - 1) + y)\n  puts(y + (2 - 1))\n  x: Int32 = 7\n  puts((-2147483647 - 1) &- x)\n  u: UInt64 = 3\n  puts((1 << 63) | u)\n  f = 1.5\n  puts((1 + 1) * f)\n}\n", "6\n6\n2147483641\n9223372036854775811\n3.0\n"))
+  xs.push(accepted("adopt-declared-expr", "fn main {\n  x: Int32 = (2 - 1) * 3\n  u: UInt64 = ~0\n  xs: Array(UInt64) = [0]\n  xs[0] = ~0 >> 1\n  g: Float64 = 2 * 3\n  puts(x)\n  puts(u)\n  puts(xs[0])\n  puts(g)\n}\n", "3\n18446744073709551615\n9223372036854775807\n6.0\n"))
+  xs.push(accepted("adopt-argument-expr", "fn f(n: Int32): Int32 {\n  n + 1\n}\nfn wide(n: UInt64): UInt64 {\n  n\n}\nfn main {\n  puts(f(2 - 1))\n  puts(f(-(3)))\n  puts(wide(~0))\n  puts(wide(18446744073709551615))\n}\n", "2\n-2\n18446744073709551615\n18446744073709551615\n"))
+  xs.push(accepted("adopt-generic", "fn pick(n: Int32, x: T): T {\n  puts(n)\n  x\n}\nclass K {\n  fn put(n: Int32, x: T): T {\n    puts(n)\n    x\n  }\n}\nfn main {\n  puts(pick(3, \"s\"))\n  k = K.new\n  puts(k.put(4, \"t\"))\n  puts(k.put(2 + 3, 1))\n}\n", "3\ns\n4\nt\n5\n1\n"))
+  xs.push(accepted("adopt-operator-method", "struct V {\n  n: Int32\n  fn +(k: Int32): V {\n    V { n: n + k }\n  }\n  fn *(k: UInt64): UInt64 {\n    k / 2\n  }\n}\nfn main {\n  v = V { n: 1 }\n  w = v + 2\n  puts(w.n)\n  puts(v * 18446744073709551615)\n}\n", "3\n9223372036854775807\n"))
+  xs.push(accepted("adopt-type-function", "struct P {\n  n: Int32\n  fn self.make(n: Int32): P {\n    P { n: n }\n  }\n}\nfn main {\n  p = P.make(7)\n  q = P.make(1 + 1)\n  puts(p.n + q.n)\n}\n", "9\n"))
+  xs.push(refused("adopt-still-fits", "fn main {\n  x: Int32 = 0\n  puts((4294967296 - 1) + x)\n}\n", "integer literal does not fit in Int32", "3:9"))
+  xs.push(refused("adopt-wide-to-int", "fn f(n: Int): Int {\n  n\n}\nfn main {\n  puts(f(18446744073709551615))\n}\n", "integer literal does not fit in Int; use 18446744073709551615u64", "5:10"))
+  xs.push(refused("adopt-not-a-literal", "fn main {\n  y: Int32 = 5\n  n = 1\n  puts((n - 1) + y)\n}\n", "binary operator expects matching types, got Int and Int32", "4:16"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(ECase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -84,6 +103,9 @@ fn test_main(c: Checks) {
     dir = scratch_dir()
     all: Array(ECase) = []
     for x in precedence_cases() {
+      all.push(x)
+    }
+    for x in adoption_cases() {
       all.push(x)
     }
     run_cases(c, compiler, dir, all)
