@@ -161,6 +161,10 @@ fn format_usage_error(message: String) {
 // files that change. A file that cannot be read or formatted is reported
 // and the status is 1; the other files are still done. Usage errors exit 1.
 pub fn driver_format(args: Array(String)) {
+  if args.size > 0 && args[0] == "--calls" {
+    driver_format_calls(argv_drop_first(args))
+    return
+  }
   check = false
   write = false
   inputs: Array(String) = []
@@ -247,6 +251,99 @@ pub fn driver_format(args: Array(String)) {
     puts("canonical")
   }
   if failed || changed > 0 {
+    diag_exit(1)
+  }
+}
+
+// avant format --calls FILE...: each FILE is checked as a program's root,
+// and every method call the checker meets written without parentheses
+// (`x.name`, a bare `name` on the receiver, `T.new`) gets its `()` in the
+// source file that holds it: the root, a module it imports, the standard
+// library. A builtin read-only property (`size`, `bytes`) and a field
+// read keep their spelling. Only code the checker reaches is rewritten:
+// a generic function is checked for the instances the program makes. A
+// program with errors is still rewritten where it was checked, and the
+// status is then 1. Prints each changed file with its count.
+pub fn driver_format_calls(args: Array(String)) {
+  if args.size == 0 {
+    format_usage_error("format --calls needs a .av file")
+  }
+  paths: Array(String) = []
+  places: Array(Array(Location)) = []
+  names: Array(Array(String)) = []
+  index: Hash(String, Int) = Hash(String, Int).new()
+  failed = false
+  for root in args {
+    loader = Loader.new()
+    if merged = loader.load_root(root) {
+      if e = loader.err {
+        diag_bag(loader.errors)
+        failed = true
+        continue
+      }
+      src = Source.new(root, file_read(root) ?? "")
+      expander = Expander.new(src, merged)
+      expander.expand()
+      if e = expander.err {
+        diag_bag(expander.errors)
+        failed = true
+        continue
+      }
+      checker = Checker.new(src, merged)
+      checker.calls_migrate = true
+      checker.check()
+      if e = checker.err {
+        diag_bag(checker.errors)
+        diag_puts("${root}: the program has errors; the calls in the code checked are rewritten")
+        failed = true
+      }
+      i = 0
+      while i < checker.bare_locs.size {
+        at = checker.bare_locs[i]
+        p = at.path
+        k = index.get(p) ?? -1
+        if k < 0 {
+          k = paths.size
+          index[p] = k
+          paths.push(p)
+          none: Array(Location) = []
+          places.push(none)
+          no_names: Array(String) = []
+          names.push(no_names)
+        }
+        places[k].push(at)
+        names[k].push(checker.bare_names[i])
+        i += 1
+      }
+    } else {
+      diag_bag(loader.errors)
+      failed = true
+    }
+  }
+  k = 0
+  while k < paths.size {
+    p = paths[k]
+    if text = file_read(p) {
+      got = insert_call_parens(text, places[k], names[k])
+      if got.count > 0 {
+        if e = write_failure(file_write(p, got.text)) {
+          diag_puts(e.message)
+          failed = true
+        } else {
+          puts("${p}: ${got.count}")
+        }
+      }
+      if got.missed > 0 {
+        diag_puts("${p}: ${got.missed} calls noted where the text is not their name; left")
+        failed = true
+      }
+    } else {
+      diag_puts("${p}: not a file; ${places[k].size} calls there need their parentheses written by hand")
+      failed = true
+    }
+    k += 1
+  }
+  if failed {
     diag_exit(1)
   }
 }

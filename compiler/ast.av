@@ -278,6 +278,11 @@ pub class Expr {
   // the order they are evaluated, the written ones left to right and
   // then the defaults; nil when that is their own order.
   pub arg_order: Array(Int)? = nil
+  // A member or a name written without parentheses (`x.name`, `name`,
+  // `T.new`): where the name is; nil for every other node, and for nodes
+  // the compiler builds itself. The checker reads it to tell a method
+  // call written without parentheses from a field read.
+  pub bare_name: Location? = nil
 
   fn initialize(kind: Int, loc: Location) {
     self.kind = kind
@@ -998,6 +1003,7 @@ pub fn clone_expr(e: Expr): Expr {
   out.op = e.op
   out.implicit_field = e.implicit_field
   out.method_call = e.method_call
+  out.bare_name = e.bare_name
   out.proven = e.proven
   out.type_name = e.type_name
   out.lib_name = e.lib_name

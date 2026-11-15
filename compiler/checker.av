@@ -106,6 +106,15 @@ pub class Checker {
   // Set while a constructor's arguments are matched against initialize:
   // its messages name the call as written, T.new (Stage 29 W5c2, O364).
   pub in_new: Bool = false
+  // `avant format --calls`: a method call written without parentheses is
+  // noted (its file, the offset where `()` goes, its name) and accepted,
+  // so the formatter can write the parentheses in.
+  pub calls_migrate: Bool = false
+  pub bare_locs: Array(Location) = []
+  // The target of the assignment being checked: `x.name = v` with name a
+  // method is refused as an assignment, not taken for a call.
+  pub target_expr: Expr? = nil
+  pub bare_names: Array(String) = []
   pub return_type: Ty
   pub loop_depth: Int = 0
   pub self_ty: Ty? = nil
@@ -1569,7 +1578,9 @@ pub class Checker {
           }
         }
       }
+      self.target_expr = target
       place = check_expr(target)
+      self.target_expr = nil
       if (target.kind == ex_field() && target.method_call) || target.kind == ex_call() {
         fail(stmt.loc, "cannot assign to a method")
         return
@@ -1655,7 +1666,9 @@ pub class Checker {
         }
       }
       orig = clone_expr(target)
+      self.target_expr = target
       place = check_expr(target)
+      self.target_expr = nil
       binop = compound_binop(stmt.op)
       if target.kind == ex_call() && target.callee == "[]" && orig.kind == ex_index() {
         // `c[i] op= v` on a type with [] and []=: `c[i] = c[i] op v`.
@@ -1804,6 +1817,10 @@ pub class Checker {
       return check_lambda(expr, has_want, want)
     }
     if k == ex_call() {
+      if b0 = expr.bare_name {
+        // `T.new` written without parentheses.
+        bare_call(expr, b0, "new")
+      }
       return check_call(expr, has_want, want)
     }
     if k == ex_unary() {
@@ -1822,7 +1839,13 @@ pub class Checker {
       if got = check_module_fn_value(expr, has_want, want) {
         return got
       }
-      return check_field(expr)
+      at = expr.bare_name
+      written = expr.ident
+      got_field = check_field(expr)
+      if b0 = at, member_is_call(expr) {
+        bare_call(expr, b0, written)
+      }
+      return got_field
     }
     if k == ex_struct() {
       return check_struct_literal(expr, has_want, want)
@@ -1837,6 +1860,10 @@ pub class Checker {
       return check_array_literal(expr, has_want, want)
     }
     if k == ex_hash_new() {
+      if b0 = expr.bare_name {
+        // `Hash(K, V).new` written without parentheses.
+        bare_call(expr, b0, "new")
+      }
       return check_hash_new(expr)
     }
     if k == ex_try() {
@@ -2300,6 +2327,43 @@ pub class Checker {
       return check_buf_method(expr)
     }
     check_join(expr, object)
+  }
+
+  // Whether the member `x.name`, written without parentheses and now
+  // checked, is a method call: the checker made it a call (or what a
+  // call becomes: `n.to_s` is the interpolation "${n}"), or marked it
+  // one; a builtin read-only property (`size`, `bytes`) is not one.
+  pub fn member_is_call(expr: Expr): Bool {
+    if expr.kind != ex_field() {
+      return true
+    }
+    if !expr.method_call {
+      return false
+    }
+    if expr.ident == "bytes" {
+      if obj = expr.object, ot = obj.ty, ot.is_string {
+        return false
+      }
+    }
+    true
+  }
+
+  // A method call written without parentheses (at is its name's place,
+  // name the name as written: the check may have renamed the call):
+  // noted under `avant format --calls`. Not in a statement that
+  // already has an error: a failed receiver reads as an Int, whose
+  // members are all methods.
+  pub fn bare_call(expr: Expr, at: Location, name: String) {
+    if self.has_err {
+      return
+    }
+    if t = self.target_expr, t.loc.line == expr.loc.line && t.loc.column == expr.loc.column && t.loc.path == expr.loc.path {
+      return
+    }
+    if self.calls_migrate {
+      self.bare_locs.push(at)
+      self.bare_names.push(name)
+    }
   }
 
   pub fn check_field(expr: Expr): Ty {
@@ -3423,6 +3487,9 @@ pub class Checker {
       expr.kind = ex_call()
       expr.callee = expr.ident
       expr.receiver = r
+      if b0 = expr.bare_name {
+        bare_call(expr, b0, expr.ident)
+      }
       return check_method_call(expr, r, has_want, want)
     }
     // A module constant (Stage 29 W5b2): its value, written as a literal.

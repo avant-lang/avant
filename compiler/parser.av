@@ -2955,6 +2955,7 @@ pub class Parser {
             call = Expr.new(ex_call(), at)
             call.callee = "new"
             call.receiver = cur
+            call.bare_name = field.loc
             cur = call
           } else if self.allow_struct_lit {
             if self.struct_literal_ahead {
@@ -2963,6 +2964,7 @@ pub class Parser {
               fa = Expr.new(ex_field(), at)
               fa.object = cur
               fa.ident = field.value
+              fa.bare_name = field.loc
               cur = fa
             }
           } else if misplaced_literal_ahead(field.value) {
@@ -2971,6 +2973,7 @@ pub class Parser {
             fa = Expr.new(ex_field(), at)
             fa.object = cur
             fa.ident = field.value
+            fa.bare_name = field.loc
             cur = fa
           }
         }
@@ -3311,6 +3314,7 @@ pub class Parser {
     }
     e = Expr.new(ex_name(), tok.loc)
     e.ident = tok.value
+    e.bare_name = tok.loc
     e
   }
 
@@ -3362,14 +3366,17 @@ pub class Parser {
     } else {
       fail(meth.loc, "Hash(K, V) only supports .new")
     }
+    bare: Location? = meth.loc
     if self.current.kind == tk_l_paren() {
       self.bump
       self.skip_newlines
       expect(tk_r_paren())
+      bare = nil
     }
     e = Expr.new(ex_hash_new(), tok.loc)
     e.key_type = key
     e.val_type = val
+    e.bare_name = bare
     e
   }
 
@@ -3593,6 +3600,7 @@ pub class Parser {
         return left
       }
       left.block = block
+      left.bare_name = nil
       return left
     }
     if left.kind == ex_field() {

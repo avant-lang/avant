@@ -347,7 +347,12 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
     return IrBox.new(false)
   }
   checker = Checker.new(src, program)
+  calls_log = env_get("AVANT_FORMAT_CALLS_LOG") ?? ""
+  checker.calls_migrate = calls_log.size > 0
   checker.check
+  if calls_log.size > 0 {
+    log_call_parens(calls_log, checker)
+  }
   if e = checker.err {
     diag_bag(checker.errors)
     return IrBox.new(false)
@@ -389,6 +394,127 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
     map = ""
   }
   compile_program_llvm(src, program, checker.symbol_table(), map)
+}
+
+pub class CallParens {
+  pub text: String = ""
+  pub count: Int = 0
+  // Places noted whose text is not the name (a place written from a copy
+  // of the file older than the text): another run finds them.
+  pub missed: Int = 0
+}
+
+// text with `()` written after each name noted at its place (line and
+// column, which a stitched file's `// file:` lines map to the file each
+// part came from), unless the text there is not the name or a `(`
+// follows already. A place noted twice (a generic function's instances)
+// is written once.
+pub fn insert_call_parens(text: String, places: Array(Location), names: Array(String)): CallParens {
+  out = CallParens.new()
+  starts: Array(Int) = [0]
+  j = 0
+  while j < text.size {
+    if text[j] == 10 {
+      starts.push(j + 1)
+    }
+    j += 1
+  }
+  seen: Hash(Int, Int) = Hash(Int, Int).new()
+  at: Array(Int) = []
+  i = 0
+  while i < places.size {
+    pl = places[i]
+    n = names[i]
+    i += 1
+    if pl.line() < 1 || pl.line() > starts.size || pl.column() < 1 {
+      out.missed += 1
+      continue
+    }
+    o = starts[pl.line() - 1] + pl.column() - 1 + n.size
+    if seen.has_key(o) {
+      continue
+    }
+    seen[o] = 1
+    if o < n.size || o > text.size {
+      out.missed += 1
+      continue
+    }
+    if str_slice(text, o - n.size, o) != n {
+      out.missed += 1
+      continue
+    }
+    if o < text.size && text[o] == 40 {
+      continue
+    }
+    at.push(o)
+  }
+  at.sort()
+  b = Buf.new()
+  last = 0
+  for o in at {
+    b.push_str(str_slice(text, last, o))
+    b.push_str("()")
+    last = o
+  }
+  b.push_str(str_slice(text, last, text.size))
+  out.text = b.to_s()
+  out.count = at.size
+  out
+}
+
+// AVANT_FORMAT_CALLS_LOG=DIR (a tool's knob, not a user's): every program
+// compiled meanwhile is checked as `avant format --calls` checks it, and
+// for each of its files with a method call written without parentheses
+// DIR gets that file's text as it is (NAME.before), with the parentheses
+// written (NAME.after) and its path (NAME.path); the files themselves are
+// not changed. A suite run with it set finds the programs the suite
+// writes at run time (a test's program held in a string literal), so a
+// script can write the parentheses into the literal they came from.
+pub fn log_call_parens(dir: String, checker: Checker) {
+  paths: Array(String) = []
+  index: Hash(String, Int) = Hash(String, Int).new()
+  places: Array(Array(Location)) = []
+  names: Array(Array(String)) = []
+  i = 0
+  while i < checker.bare_locs.size {
+    at = checker.bare_locs[i]
+    k = index.get(at.path) ?? -1
+    if k < 0 {
+      k = paths.size
+      index[at.path] = k
+      paths.push(at.path)
+      none: Array(Location) = []
+      places.push(none)
+      no_names: Array(String) = []
+      names.push(no_names)
+    }
+    places[k].push(at)
+    names[k].push(checker.bare_names[i])
+    i += 1
+  }
+  tag = tmp_dir()
+  cut = 0
+  j = 0
+  while j < tag.size {
+    if tag[j] == 47 {
+      cut = j + 1
+    }
+    j += 1
+  }
+  tag = str_slice(tag, cut, tag.size)
+  k = 0
+  while k < paths.size {
+    if text = file_read(paths[k]) {
+      got = insert_call_parens(text, places[k], names[k])
+      if got.count > 0 {
+        base = "${dir}/${tag}-${k}"
+        _ = file_write("${base}.before", text)
+        _ = file_write("${base}.after", got.text)
+        _ = file_write("${base}.path", paths[k])
+      }
+    }
+    k += 1
+  }
 }
 
 // Creates the directory of the coverage slot map at path when it is
