@@ -218,18 +218,32 @@ static inline __attribute__((always_inline)) void mark_push(MarkCtx *c, void *v)
 
 /* The fields of an object that is not a small record (a pointer buffer,
  * an element buffer, a record with more than seven reference words), by
- * its bitmap. A function of its own, with its own copy of the loop's
- * state, so that drain's loop keeps its registers. */
-static __attribute__((noinline)) void scan_walk(void *p, int bits, int keep) {
+ * its bitmap. Functions of their own (below), with their own copy of the
+ * loop's state, so that drain's loop keeps its registers. */
+static inline __attribute__((always_inline)) void scan_walk(void *p, const int bits, const int keep) {
   MarkCtx c;
   mark_open(&c);
   EACH_REF_SLOT_WALK(p, slot, {
     void *v = *slot;
-    if (keep ? mark_field(&c, v, 0, 1) : bits ? mark_field(&c, v, 1, 0) : mark_field(&c, v, 0, 0)) {
+    if (mark_field(&c, v, bits, keep)) {
       mark_push(&c, v);
     }
   });
   mark_close(&c);
+}
+
+/* The walk once for each kind of mark (drain's three loops), so that
+ * each keeps its constants. */
+static __attribute__((noinline)) void scan_walk_bits(void *p) {
+  scan_walk(p, 1, 0);
+}
+
+static __attribute__((noinline)) void scan_walk_plain(void *p) {
+  scan_walk(p, 0, 0);
+}
+
+static __attribute__((noinline)) void scan_walk_keep(void *p) {
+  scan_walk(p, 0, 1);
 }
 
 /* The mark loop: each object of the work list, its reference words read
@@ -259,7 +273,13 @@ static inline __attribute__((always_inline)) void drain(const int bits, const in
       }
       if (__builtin_expect(k > TYPE_REFS_MAX, 0)) {
         mark_close(&c);
-        scan_walk(p, bits, keep);
+        if (keep) {
+          scan_walk_keep(p);
+        } else if (bits) {
+          scan_walk_bits(p);
+        } else {
+          scan_walk_plain(p);
+        }
         mark_open(&c);
         break;
       }
