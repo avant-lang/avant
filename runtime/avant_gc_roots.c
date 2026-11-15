@@ -31,8 +31,9 @@ __thread GcThread gc_thread;
 
 /* The calling thread's innermost frame (avant_gc.h): generated code's
  * frames and runtime C's handle scopes on one chain (it
- * was GcThread.frame). Generated code reads and writes it. */
-__thread Frame *avant_gc_top;
+ * was GcThread.frame). Generated code reads and writes it. It is defined
+ * in avant_gc_alloc.c, beside the allocation path's thread-locals: all
+ * six are placed nearest the thread pointer. */
 
 /* Thread exit unregisters. A thread that exits
  * still registered (a foreign C thread after its last callback, or any

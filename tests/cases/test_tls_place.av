@@ -1,0 +1,81 @@
+import harness
+
+// The thread-locals generated code reads in its hot loops (the
+// allocation cursor and limits, the start bits' base, the frame chain's
+// top) sit within 64 bytes below the thread pointer in every program,
+// whatever thread-locals its other objects add (runtime/avant_gc_alloc.c
+// says why the offset matters). Two programs are built, one plain and
+// one with std.regex, whose object adds thread-locals linked after the
+// collector; each hot variable's offset from the thread pointer is read
+// from the executable (readelf: the variable's place in the thread-local
+// segment minus the segment's size rounded up to its alignment) and must
+// be in -64..-8 in both, and move between them by less than the
+// segment's alignment (its rounding is all that may differ). A thread-local placed between them
+// and the thread pointer, or the hot ones defined in .tbss again, moves
+// them and fails this test.
+fn test_tls_place(c: Checks) {
+  c.suite("tests/cases/test_tls_place.av")
+  compiler = env_get("AVANT_COMPILER") ?? ""
+  if compiler.size == 0 {
+    return
+  }
+  dir = scratch_dir()
+  write_av(dir, "plain", "fn main: Int {\n  puts(\"plain\")\n  0\n}\n")
+  write_av(dir, "regex", "import std.regex\n\nfn main: Int {\n  r = Regex.compile(\"a+b\") else e {\n    return 1\n  }\n  puts(r.is_closed())\n  0\n}\n")
+  names = ["avant_gc_bump", "avant_gc_limit", "avant_gc_limit_mt", "avant_gc_top", "avant_gc_base", "avant_gc_starts"]
+  offsets: Array(Int) = []
+  sizes: Array(Int) = []
+  for prog in ["plain", "regex"] {
+    bin = "${dir}/${prog}.bin"
+    code = compile_av(compiler, "${dir}/${prog}.av", bin, "${dir}/${prog}.clog")
+    c.eq_int(code, 0, "tls place: the ${prog} program compiles")
+    log = "${dir}/${prog}.tls"
+    // One line per hot variable, "NAME OFFSET", then "size SIZE".
+    script = "b=${bin}; set -- $(readelf -lW \"$b\" | awk '$1 == \"TLS\" {print $6, $NF}'); mem=$(($1)); al=$(($2)); end=$(( (mem + al - 1) / al * al )); readelf -sW \"$b\" | awk '$4 == \"TLS\" {print $8, $2}' | while read n v; do case $n in avant_gc_bump|avant_gc_limit|avant_gc_limit_mt|avant_gc_top|avant_gc_base|avant_gc_starts) echo \"$n $(( 0x$v - end ))\";; esac; done | sort; echo \"size $end\""
+    args: Array(String) = []
+    args.push("-c")
+    args.push(script)
+    status = process_run_out("/bin/sh", args, log) ?? -1
+    c.eq_int(status, 0, "tls place: readelf reads the ${prog} program")
+    out = file_read(log) ?? ""
+    lines = out.split("\n")
+    seen = 0
+    for line in lines {
+      ws = line.split(" ")
+      if ws.size != 2 {
+        continue
+      }
+      if ws[0] == "size" {
+        sizes.push(ws[1].to_i() ?? -1)
+        continue
+      }
+      off = ws[1].to_i() ?? 0
+      c.expect(off >= -64 && off <= -8, "tls place: ${prog}: ${ws[0]} at ${off} from the thread pointer, within 64 bytes")
+      offsets.push(off)
+      seen += 1
+    }
+    c.eq_int(seen, names.size, "tls place: ${prog}: every hot thread-local found")
+  }
+  // The lines are sorted by name, so the two programs' offsets pair up.
+  same = offsets.size == 2 * names.size
+  if same {
+    for i in 0..names.size {
+      d = offsets[i] - offsets[names.size + i]
+      if d > 15 || d < -15 {
+        same = false
+      }
+    }
+  }
+  c.expect(same, "tls place: the hot offsets do not depend on the program's other thread-locals beyond the segment's rounding")
+  c.expect(sizes.size == 2 && sizes[1] > sizes[0], "tls place: the regex program has more thread-locals (the check is not vacuous)")
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_tls_place(c)
+  c.finish()
+}

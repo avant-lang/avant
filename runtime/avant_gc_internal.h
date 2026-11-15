@@ -2476,4 +2476,15 @@ static inline void gc_lazy_touch(Block *b) {
   }
 }
 
+/* The thread-locals generated code reads in its hot loops are
+ * thread-local common symbols, defined in avant_gc_alloc.c (where their
+ * placement is explained); the runtime's own accesses are local-exec, as
+ * an executable's are, not the initial-exec of a common symbol. */
+extern __thread uint8_t *avant_gc_bump __attribute__((tls_model("local-exec")));
+extern __thread uint8_t *avant_gc_limit __attribute__((tls_model("local-exec")));
+extern __thread uint8_t *avant_gc_limit_mt __attribute__((tls_model("local-exec")));
+extern __thread uint8_t *avant_gc_base __attribute__((tls_model("local-exec")));
+extern __thread uint64_t *avant_gc_starts __attribute__((tls_model("local-exec")));
+extern __thread AvantGcFrame *avant_gc_top __attribute__((tls_model("local-exec")));
+
 #endif

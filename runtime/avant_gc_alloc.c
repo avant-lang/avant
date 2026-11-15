@@ -27,11 +27,32 @@
  * storage, so both sides share one cursor. Only the runtime publishes or
  * clears the path (gc_fast_publish, gc_fast_refresh below); its state is
  * the thread's GcThread.fast_ok; the limit it holds is avant_gc_limit_mt. */
-__thread uint8_t *avant_gc_bump;
-__thread uint8_t *avant_gc_limit;
-__thread uint8_t *avant_gc_limit_mt;
-__thread uint8_t *avant_gc_base;
-__thread uint64_t *avant_gc_starts;
+/* These five and avant_gc_top (avant_gc.h), the thread-locals generated
+ * code reads in its hot loops, are placed last in the program's
+ * thread-local block, so they sit within 64 bytes below the thread
+ * pointer (one cache line) whatever thread-locals the program's other
+ * objects add. Generated code reads them at a fixed offset from the
+ * thread pointer (%fs:-N), and the offset matters: on the measuring
+ * machine (Zen 1), the collector benchmark's allocation loop took 60%
+ * more cycles at equal instructions once those offsets passed 1 KiB
+ * (the cursor at -0x3f0 ran at full speed, at -0x410 slow), whatever the
+ * variables' addresses and pages: 552 bytes of thread-locals in a unit
+ * linked after the collector had moved the cursor from -0x268 to -0x490.
+ * A thread-local block lays its variables
+ * out in link order and ends at the thread pointer, so the variables
+ * linked last are the nearest. They are thread-local common symbols
+ * (.tls_common), which the linker places after every object's .tbss
+ * (the linker script's "*(.tcommon)"): no object linked later can come
+ * between them and the thread pointer. avant_gc_internal.h declares
+ * them local-exec for the runtime's own accesses, as a definition in
+ * the unit gave before. tests/cases/test_tls_place.av checks the offsets
+ * in a built program. */
+__asm__(".tls_common avant_gc_bump, 8, 8\n\t"
+        ".tls_common avant_gc_limit, 8, 8\n\t"
+        ".tls_common avant_gc_limit_mt, 8, 8\n\t"
+        ".tls_common avant_gc_top, 8, 8\n\t"
+        ".tls_common avant_gc_base, 8, 8\n\t"
+        ".tls_common avant_gc_starts, 8, 8");
 
 /* The inline path's state as code generated before the path's rework
  * reads it (a seed compiler's output: the compiler B of tools/letters.sh,
