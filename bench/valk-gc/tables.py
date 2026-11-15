@@ -5,7 +5,7 @@ usage: python3 tables.py OUT > tables.md
 
 OUT is the directory run.sh wrote (VALK_GC_OUT): OUT/raw (run.sh time),
 OUT/counts (run.sh counts), OUT/trees-counts (run.sh trees-counts) and
-OUT/rounds (run.sh rounds: tools/rounds.py's loop, O652). Nothing is measured here; a table is only
+OUT/rounds (run.sh rounds: tools/rounds.py's loop). Nothing is measured here; a table is only
 a reading of those files, so it can be rebuilt at any time. Standard
 library only.
 """
@@ -139,7 +139,7 @@ def table(header, rows):
 
 
 def scenario_table(data, order, numbers, memory):
-    """Peak memory beside every time (O380, D342 Q5): memory "process" adds
+    """Peak memory beside every time: memory "process" adds
     the process's peak RSS as the last column (seven scenarios in one
     process have one peak), "scenario" puts the peak RSS of the process
     that ran the scenario beside each time (the isolated builds)."""
@@ -255,7 +255,7 @@ def emit_raw(out_dir):
         print("Avant is the `--release` row. Memory is the peak RSS of the process that ran the scenario (scenario 4's also ran 3). The verdicts are Table 2's, on time.\n")
     trees = {r: load_row(os.path.join(raw, "trees", r)) for r in TREES}
     if any(d["n"] for d in trees.values()):
-        print("## Table 11. The tree ports (set `trees`, O386): whole process, wall time and peak RSS, median (minimum–maximum)\n")
+        print("## Table 11. The tree ports (set `trees`): whole process, wall time and peak RSS, median (minimum–maximum)\n")
         rows = []
         for name in TREES:
             d = trees[name]
@@ -370,7 +370,7 @@ def emit_trees_counts(out_dir):
     c = os.path.join(out_dir, "trees-counts")
     if not os.path.isdir(c):
         return
-    print("## Table 12. The tree ports (O386): one process each, no clock\n")
+    print("## Table 12. The tree ports: one process each, no clock\n")
     print("```")
     print(read(os.path.join(c, "session.txt")).rstrip())
     print("```\n")

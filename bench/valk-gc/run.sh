@@ -4,7 +4,7 @@
 # has the method and the notes; this header is the short form.
 #
 #   run.sh build [ROW...]   build every program into $BUILD; with rows, only
-#                           what those rows use (O618), binaries.sha256
+#                           what those rows use, binaries.sha256
 #                           updated for them; avant-compiler.txt names the
 #                           Avant compiler of the directory's Avant binaries
 #   run.sh check            run every row once, untimed; verification only
@@ -20,11 +20,11 @@
 #                           exclusive and inclusive, one process per
 #                           scenario (default every scenario; `4` runs 3
 #                           then 4)
-#   run.sh rounds [ROUNDS]  the loop of tools/rounds.py (O652): as `time`,
+#   run.sh rounds [ROUNDS]  the loop of tools/rounds.py: as `time`,
 #                           each run started by its spawner (wall and peak
 #                           RSS of the program's own process), the sides
-#                           of VALK_GC_SIDES in one session (O618)
-#   run.sh trees-counts     no clock: the tree ports (set trees, O386), each
+#                           of VALK_GC_SIDES in one session
+#   run.sh trees-counts     no clock: the tree ports (set trees), each
 #                           in its own process: AVANT_GC_STATS and
 #                           instructions, in counts' fixed environment
 #   run.sh versions         the toolchains, the machine, the governor
@@ -72,10 +72,10 @@ ROWS_iso="avant avant-v3 valk go d csharp crystal java"
 # One process per entry: the scenario numbers passed to an iso build.
 # `3 4` is scenario 4 (it needs the chain scenario 3 builds).
 ISO_UNITS=("1" "2" "3" "3 4" "5" "6" "7" "8")
-# Trees (O386): two LangArena tasks, each as LangArena builds it (with
+# Trees: two LangArena tasks, each as LangArena builds it (with
 # std.gc's hints) and without the hints (trees/, README.md). Not in the
-# default sets or the full build until VALK-D1 has merged (its runs of
-# check, counts, cg and time must read what they read before): name the
+# default sets or the full build (check, counts, cg and time read what
+# they read before the set was added): name the
 # set (VALK_GC_SETS=trees) and build it (run.sh build trees).
 ROWS_trees="binarytrees-obj binarytrees-obj-unhinted calc-ast calc-ast-unhinted"
 # The checksum each prints (LangArena's run.js, prod configuration).
@@ -97,8 +97,8 @@ want_row() {
 }
 
 # want_unit N: VALK_GC_UNITS (scenario numbers, `4` the unit `3 4`)
-# restricts the iso entries; unset, every entry. Only `rounds` reads it
-# (O382); `time` and `check` are as they were until VALK-D1 has merged.
+# restricts the iso entries; unset, every entry. Only `rounds` reads it;
+# `time` and `check` are as they were before it was added.
 want_unit() {
   [ -z "${UNITS_FILTER:-}" ] && return 0
   case " $UNITS_FILTER " in *" $1 "*) return 0 ;; esac
@@ -250,10 +250,10 @@ build_row() {
         javac -d "$BUILD/java-iso" "$v/iso/Main.java" </dev/null || die "javac failed"
         (cd "$BUILD" && ls java-iso/*.class) >&3
       fi ;;
-    # Trees (O386): stitched as LangArena's harness stitches a task (the
+    # Trees: stitched as LangArena's harness stitches a task (the
     # helper, the task's library, its configuration, the task; each file
     # after a "// file:" line), built with the harness's flags (--release
-    # --cpu=v3, D284).
+    # --cpu=v3).
     trees)
       local t
       for t in $ROWS_trees; do build_row "$t"; done ;;
@@ -286,7 +286,7 @@ every_row() {
 }
 
 # note_compiler: the Avant compiler a build directory's Avant binaries
-# came from (O618), so two build directories (a base and a final
+# came from, so two build directories (a base and a final
 # compiler) each say which they hold.
 note_compiler() {
   {
@@ -299,7 +299,7 @@ note_compiler() {
 }
 
 # do_build [ROW...]: with no row, every program of the headline, variants
-# and iso sets, and binaries.sha256 rewritten; with rows (O618), only what
+# and iso sets, and binaries.sha256 rewritten; with rows, only what
 # those rows use, their lines of binaries.sha256 replaced and the others
 # kept, so a base and a final build directory can hold two rows each.
 do_build() {
@@ -500,7 +500,7 @@ do_time() {
   local gov
   gov=$(governors)
   local dir=$OUT/raw
-  # Every CPU's governor file, counted (O740): not against nproc, which
+  # Every CPU's governor file, counted: not against nproc, which
   # inside a timed slot (numactl --cpunodebind) is one node's CPUs.
   if ! all_performance; then
     [ "${VALK_GC_ALLOW_GOVERNOR:-0}" = 1 ] || die "the governor is not performance on every CPU ($gov): no timed run"
@@ -556,14 +556,14 @@ do_time() {
   say "raw files in $dir; tables: python3 $HERE/tables.py $OUT"
 }
 
-# rounds (O652): the timing loop of tools/rounds.py, through measure.py,
+# rounds: the timing loop of tools/rounds.py, through measure.py,
 # over the units `time` runs (VALK_GC_SETS, VALK_GC_ROWS, and
 # VALK_GC_UNITS for the iso entries), for every side of VALK_GC_SIDES
 # ("NAME=BUILD_DIR ...", default "this=$BUILD"): a base and a final build
 # directory are timed in one session, the side that goes first rotating
 # inside each unit. Writes $OUT/rounds (removed first): session.txt,
 # raw/round-R/SIDE--SET--ROW--UNIT.run and .out, sides/NAME.sha256 and
-# NAME.compiler.txt. `time` stays as it was until VALK-D1 has merged.
+# NAME.compiler.txt. `time` stays as it was before `rounds` was added.
 do_rounds() {
   local rounds=${1:-7} dir=$OUT/rounds sides=${VALK_GC_SIDES:-this=$BUILD}
   case "$rounds" in '' | *[!0-9]* | 0) die "rounds: ROUNDS must be a positive number" ;; esac
@@ -629,10 +629,10 @@ do_rounds() {
 # ahead-of-time programs; and the collection counts Go, D, Crystal and
 # Java print themselves.
 #
-# Every counted process runs in a fixed environment (O648, VALK-TM2):
+# Every counted process runs in a fixed environment:
 # emptied (env -i, PATH and HOME kept, then the variables a row needs)
 # and without address-space randomization (setarch -R). Measured on the
-# Avant iso program, 10 runs each (VALK-TM2's record, item 4): with the
+# Avant iso program, 10 runs each: with the
 # caller's environment and randomization a count spread over about 2,900
 # instructions (2,884 at unit 0, 2,875 at scenario 5, 2,541 at scenario
 # 1), and it read about 14,500 higher than in an empty environment (the
@@ -696,7 +696,7 @@ do_counts() {
   say "counts in $dir; tables: python3 $HERE/tables.py $OUT"
 }
 
-# trees-counts (O386): no clock. Each tree row in its own process, in
+# trees-counts: no clock. Each tree row in its own process, in
 # counts' fixed environment (fixed_env, setarch -R): its AVANT_GC_STATS=1
 # line, its checksum checked, then its user-mode instructions (perf stat
 # -e instructions:u) in a second process. Written under $OUT/trees-counts:
@@ -732,7 +732,7 @@ do_trees_counts() {
 # output, verified). The raw callgrind file is removed after the two
 # listings are made. AVANT_HEAP_RESERVE_GB=2 keeps the address range the
 # runtime reserves small enough for valgrind; it changes no count. The
-# process runs in counts' emptied environment (fixed_env, O648): callgrind
+# process runs in counts' emptied environment (fixed_env): callgrind
 # repeats exactly from run to run, but its count moves with the number of
 # variables the runtime's getenv calls walk.
 do_cg() {
