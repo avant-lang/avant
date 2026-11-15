@@ -275,6 +275,14 @@ void avant_puts_bool(int32_t v);
 void avant_puts_i64(int64_t v);
 void avant_puts_u64(uint64_t v);
 void avant_puts_str(const char *s);
+/* print, eputs, eprint (avant_io.c): HOW bit 1 a newline, bit 2 stderr. */
+void avant_out_str(const char *s, int32_t how);
+void avant_out_i64(int64_t v, int32_t how);
+void avant_out_u64(uint64_t v, int32_t how);
+void avant_out_f64(double v, int32_t how);
+void avant_out_bool(int32_t v, int32_t how);
+/* exit(status), its 0..255 checked by the generated code. */
+__attribute__((noreturn)) void avant_exit(int32_t status);
 void avant_out_check(void);
 int32_t avant_str_parse_i32(const char *s, avant_int base, int32_t *ok);
 int64_t avant_str_parse_i64(const char *s, avant_int base, int32_t *ok);

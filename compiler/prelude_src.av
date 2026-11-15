@@ -1,24 +1,40 @@
-// The prelude module's source: the file and process functions (Stage 29 W4b2, D295 R12),
-// written in Avant: file_read, file_write, dir_list, process_run and
-// process_run_out return their result or an Error value that says what
-// failed, IoError for files and directories, ProcessError for programs.
+// The prelude module's source: the file, input and process functions
+// (prelude_names), written in Avant. Each returns its result or an Error
+// value that says what failed: IoError for files, directories and
+// standard input, ProcessError for programs.
 // The loader adds this module, named `prelude`, to a program whose source
 // names one of the functions (prelude_wanted); every module of the
 // program then sees its pub names, the two error types included. The runtime entries are
 // avant_sys_* in runtime/avant_io.c. The text is built line by line
-// because the seed has no multi-line string literal yet (D299).
+// because the seed has no multi-line string literal yet.
 
 import token
 
 // The names that bring the module in: its functions. A program that
 // calls none of them may declare its own IoError or ProcessError.
 pub fn prelude_names: Array(String) {
-  ["file_read", "file_write", "dir_list", "process_run", "process_run_out"]
+  ["file_read", "file_write", "dir_list", "process_run", "process_run_out", "read_line", "file_open"]
+}
+
+// The functions of the module's second part (prelude_more_source), which
+// a program gets only when it names one of them: a program that uses
+// only the first part's functions compiles exactly the code it did
+// before the second part existed.
+pub fn prelude_more_names: Array(String) {
+  ["read_line", "file_open"]
 }
 
 // Whether a module's tokens name one of the prelude module's names.
 pub fn prelude_wanted(tokens: Array(Token)): Bool {
-  names = prelude_names()
+  names_wanted(tokens, prelude_names())
+}
+
+// Whether they name one of the second part's (prelude_more_names).
+pub fn prelude_more_wanted(tokens: Array(Token)): Bool {
+  names_wanted(tokens, prelude_more_names())
+}
+
+fn names_wanted(tokens: Array(Token), names: Array(String)): Bool {
   for t in tokens {
     if t.kind == tk_ident() {
       for n in names {
@@ -50,8 +66,8 @@ pub fn prelude_source: String {
   "  fun avant_sys_strsignal(sig: Int): String",
   "}",
   "",
-  "// A file or directory operation that failed: op is \"read\", \"write\" or",
-  "// \"list\", errno the OS error number.",
+  "// A file or directory operation that failed: op is \"read\", \"write\",",
+  "// \"list\" or \"open\", errno the OS error number.",
   "pub class IoError: Error {",
   "  pub op: String",
   "  pub path: String",
@@ -142,6 +158,83 @@ pub fn prelude_source: String {
   "  }",
   "  st",
   "}"
+  ]
+  for line in lines {
+    b.push_str(line)
+    b.push_str("\n")
+  }
+  b.to_s
+}
+
+// The module's second part: standard input and files read line by
+// line, after the first part (its error types).
+pub fn prelude_more_source: String {
+  b = buf_new()
+  lines = [
+  "lib avant_sys_more {",
+  "  fun avant_sys_read_line(handle: Int): String?",
+  "  fun avant_sys_open(path: String): Int",
+  "  fun avant_sys_close(handle: Int)",
+  "  fun avant_sys_more_errno: Int",
+  "}",
+  "",
+  "// One line of standard input without its newline; nil at the end of",
+  "// the input.",
+  "pub fn read_line: String | IoError | Nil {",
+  "  if line = avant_sys_more.avant_sys_read_line(-1) {",
+  "    return line",
+  "  }",
+  "  e = avant_sys_more.avant_sys_more_errno()",
+  "  if e != 0 {",
+  "    return IoError.new(\"read\", \"standard input\", e)",
+  "  }",
+  "  nil",
+  "}",
+  "",
+  "// A file read line by line. It closes itself at the end of the file or",
+  "// on an error; close stops it early.",
+  "pub class FileReader {",
+  "  pub path: String",
+  "  handle: Int",
+  "",
+  "  fn initialize(path: String, handle: Int) {",
+  "    self.path = path",
+  "    self.handle = handle",
+  "  }",
+  "",
+  "  // The next line without its newline; nil after the last one.",
+  "  pub fn read_line: String | IoError | Nil {",
+  "    if handle == 0 {",
+  "      return nil",
+  "    }",
+  "    if line = avant_sys_more.avant_sys_read_line(handle) {",
+  "      return line",
+  "    }",
+  "    e = avant_sys_more.avant_sys_more_errno()",
+  "    close()",
+  "    if e != 0 {",
+  "      return IoError.new(\"read\", path, e)",
+  "    }",
+  "    nil",
+  "  }",
+  "",
+  "  pub fn close {",
+  "    if handle != 0 {",
+  "      avant_sys_more.avant_sys_close(handle)",
+  "      self.handle = 0",
+  "    }",
+  "  }",
+  "}",
+  "",
+  "// The file, to read line by line.",
+  "pub fn file_open(path: String): FileReader | IoError {",
+  "  h = avant_sys_more.avant_sys_open(path)",
+  "  if h == 0 {",
+  "    return IoError.new(\"open\", path, avant_sys_more.avant_sys_more_errno())",
+  "  }",
+  "  FileReader.new(path, h)",
+  "}",
+
   ]
   for line in lines {
     b.push_str(line)

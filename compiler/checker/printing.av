@@ -109,8 +109,10 @@ pub fn (checker_self: Checker) error_text_call(inner: Expr, ty: Ty): Expr? {
   nil
 }
 
-// puts(x): x is anything interpolation prints, and puts prints exactly
-// what "${x}" prints: a scalar is written by puts itself; any other value is
+// The four writers: puts and print to stdout, eputs and eprint to
+// stderr, the two ending in `puts` with a newline. x is anything
+// interpolation prints, and the writer prints exactly what "${x}"
+// prints: a scalar is written by the writer itself; any other value is
 // first rewritten here into the String its interpolation gives (an
 // enum's name, an error's text, a union's member), checked once.
 pub fn (checker_self: Checker) check_output_call(expr: Expr): Ty {
@@ -169,5 +171,21 @@ pub fn (checker_self: Checker) check_output_call(expr: Expr): Ty {
     return checker_self.t_void()
   }
   checker_self.fail(arg.loc, "${name} cannot print ${printed.show}")
+  checker_self.t_void()
+}
+
+// exit(status): one Int, the process's exit status (0..255, checked when
+// it runs).
+pub fn (checker_self: Checker) check_exit_call(expr: Expr): Ty {
+  if b = expr.block {
+    checker_self.fail(expr.loc, "exit does not take a block")
+    return checker_self.t_void()
+  }
+  if expr.args.size != 1 {
+    checker_self.fail(expr.loc, "exit takes one Int, the exit status")
+    return checker_self.t_void()
+  }
+  // A status of another type is the mismatch check_expr_as reports.
+  checker_self.check_expr_as(expr.args[0], checker_self.t_int())
   checker_self.t_void()
 }

@@ -157,6 +157,11 @@ pub fn ll_gc_frame_leave(e: LlEmit) {
 // llvm.lifetime.end before any store that unlinks it (E3, D244).
 pub fn ll_gc_frame_helpers(e: LlEmit) {
   e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  // The helpers call both: a frame whose every path ends in a call that
+  // never returns (exit) unlinks nowhere, so nothing else declared the
+  // leave.
+  e.need("avant_gc_frame_enter")
+  e.need("avant_gc_frame_leave")
   e.out.push_str("define internal void @__avant_frame_push(ptr %f) #0 {\nentry:\n")
   e.line("%t = load ptr, ptr @avant_gc_top, align 8")
   e.line("%c = icmp ne ptr %t, null")

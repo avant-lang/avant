@@ -73,9 +73,57 @@ fn puts_cases(xs: Array(IoCase)) {
   xs.push(refused("puts-union-member", "fn f(b: Bool): Int | Array(Int) {\n  if b {\n    return 1\n  }\n  [2]\n}\nfn main {\n  puts(f(true))\n}\n", "puts cannot print Array(Int) | Int: its member Array(Int) has no text", "8:8"))
 }
 
+// print, eputs and eprint: the same values, without a newline or to
+// stderr; a write to stderr keeps its order with stdout's.
+fn writer_cases(xs: Array(IoCase)) {
+  pre = "class Bad: Error {\n  pub message: String = \"bad input\"\n}\nenum Tok { eof, name }\nfn size_or_word(n: Int): Int | String {\n  if n < 10 {\n    return n\n  }\n  \"many\"\n}\nfn parse(s: String): Int | Bad {\n  if n = s.to_i {\n    return n\n  }\n  Bad.new\n}\n"
+  xs.push(refused("print-empty", "fn main {\n  print()\n}\n", "print takes one argument", "2:3"))
+  xs.push(refused("eprint-empty", "fn main {\n  eprint()\n}\n", "eprint takes one argument", "2:3"))
+  xs.push(refused("print-block", "fn main {\n  print(1) { |x| x }\n}\n", "print does not take a block", "2:3"))
+  xs.push(accepted("print-scalars", "fn main {\n  print(\"a\")\n  print(1)\n  print(-2)\n  print(2.5)\n  print(true)\n  n: Int32 = 7\n  print(n)\n  print(18446744073709551615u64)\n  puts(\"|\")\n}\n", "a1-22.5true718446744073709551615|\n"))
+  xs.push(with_err(accepted("eputs-eprint", "fn main {\n  puts(\"out\")\n  eputs(\"e1\")\n  eprint(\"e\")\n  eprint(2)\n  eputs(1.5)\n  eputs(false)\n}\n", "out\n"), "e1\ne21.5\nfalse\n"))
+  xs.push(merged(accepted("eputs-order", "fn main {\n  puts(\"a\")\n  eputs(\"b\")\n  print(\"c\")\n  eprint(\"d\")\n  puts(\"e\")\n}\n", "a\nb\ncde\n")))
+  xs.push(with_err(accepted("eputs-union", pre + "fn main {\n  eputs(parse(\"x\"))\n  eprint(size_or_word(12))\n  eputs(Tok.eof)\n}\n", ""), "bad input\nmanyeof\n"))
+  xs.push(refused("print-optional", "fn main {\n  x = \"3\".to_i\n  print(x)\n}\n", "print cannot print Int?: it holds nil", "3:9"))
+  xs.push(refused("eputs-class", "class P {\n  x: Int = 1\n}\nfn main {\n  eputs(P.new)\n}\n", "eputs cannot print P", "5:10"))
+  xs.push(accepted("print-union", pre + "fn main {\n  print(size_or_word(1))\n  print(Tok.eof)\n  print(parse(\"z\"))\n  puts(\"\")\n}\n", "1eofbad input\n"))
+}
+
+// exit(status): what it takes, the status, what it writes first.
+fn exit_cases(xs: Array(IoCase)) {
+  xs.push(with_status(accepted("exit-status", "fn main {\n  puts(\"before\")\n  print(\"buffered\")\n  exit(3)\n  puts(\"never\")\n}\n", "before\nbuffered"), 3))
+  xs.push(with_status(accepted("exit-zero", "fn main: Int {\n  puts(\"x\")\n  exit(0)\n  5\n}\n", "x\n"), 0))
+  xs.push(with_status(with_err(accepted("exit-range", "fn main {\n  puts(\"x\")\n  code = 255 + 1\n  exit(code)\n}\n", "x\n"), "exit status 256 out of range (0..255)"), 1))
+  xs.push(with_status(with_err(accepted("exit-negative", "fn main {\n  exit(0 - 1)\n}\n", ""), "exit status -1 out of range (0..255)"), 1))
+  xs.push(refused("exit-string", "fn main {\n  exit(\"no\")\n}\n", "expected Int, got String", "2:8"))
+  xs.push(refused("exit-int32", "fn main {\n  n: Int32 = 3\n  exit(n)\n}\n", "expected Int, got Int32", "3:8"))
+  xs.push(refused("exit-none", "fn main {\n  exit()\n}\n", "exit takes one Int, the exit status", "2:3"))
+  xs.push(refused("exit-value", "fn main {\n  x = exit(1)\n}\n", "cannot bind a Void value", "2:5"))
+  xs.push(with_status(accepted("exit-in-callee", "fn work(n: Int): Int {\n  if n == 3 {\n    exit(9)\n  }\n  n\n}\nfn main {\n  for i in 0..5 {\n    puts(work(i))\n  }\n}\n", "0\n1\n2\n"), 9))
+}
+
+fn input_cases(xs: Array(IoCase)) {
+  loop = "fn main {\n  while true {\n    line = read_line() else e {\n      if err = e {\n        eputs(err.message)\n        exit(1)\n      }\n      break\n    }\n    puts(\"[\${line}]\")\n  }\n  puts(\"end\")\n}\n"
+  xs.push(with_input(accepted("read-while", "fn main {\n  n = 0\n  while line = read_line() {\n    n += 1\n    print(line)\n  }\n  puts(n)\n}\n", "abc3\n"), "a\nb\nc\n"))
+  xs.push(with_input(accepted("read-lines", loop, "[one]\n[two]\n[]\n[three]\nend\n"), "one\ntwo\r\n\nthree"))
+  xs.push(with_input(accepted("read-empty", loop, "end\n"), ""))
+  xs.push(accepted("read-devnull", "fn main {\n  if line = read_line() {\n    puts(\"got\")\n  } else {\n    puts(\"none\")\n  }\n}\n", "none\n"))
+  xs.push(with_input(accepted("read-default", "fn main {\n  name = read_line() ?? \"nobody\"\n  puts(\"hello \${name}\")\n  rest = read_line() ?? \"-\"\n  puts(rest)\n}\n", "hello ada\n-\n"), "ada\n"))
+  dir = with_status(with_err(accepted("read-error", loop, ""), "cannot read standard input: Is a directory\n"), 1)
+  dir.stdin_dir = true
+  xs.push(dir)
+  // A file read line by line: it closes itself at its end; close stops it.
+  xs.push(accepted("file-lines", "fn count(path: String): Int | IoError {\n  r = file_open(path)?\n  n = 0\n  while true {\n    line = r.read_line() else e {\n      if err = e {\n        return err\n      }\n      break\n    }\n    n += line.size\n  }\n  n\n}\nfn main {\n  _ = file_write(\"fl.txt\", \"ab\\ncde\\r\\n\\nf\")\n  puts(count(\"fl.txt\") ?? -1)\n  r = file_open(\"fl.txt\") ?? return\n  puts(r.read_line() ?? \"?\")\n  r.close\n  puts(r.read_line() ?? \"closed\")\n  r.close\n  puts(r.path)\n  w = file_open(\"fl.txt\") ?? return\n  k = 0\n  while line = w.read_line() {\n    k += 1\n  }\n  puts(k)\n  puts(w.read_line() ?? \"done\")\n}\n", "6\nab\nclosed\nfl.txt\n4\ndone\n"))
+  xs.push(accepted("file-open-errors", "fn main {\n  if r = file_open(\"no-such.txt\") {\n    puts(\"opened\")\n  } else e {\n    puts(\"\${e}\")\n  }\n  if r = file_open(\".\") {\n    puts(\"opened\")\n  } else e {\n    puts(e.message)\n    puts(e.op)\n  }\n}\n", "cannot open no-such.txt: No such file or directory\ncannot open .: Is a directory\nopen\n"))
+  xs.push(refused("read-line-dropped", "fn main {\n  read_line()\n}\n", "this statement drops a value that can be an error (Nil | IoError | String)", "2:3"))
+}
+
 fn cases: Array(IoCase) {
   xs: Array(IoCase) = []
   puts_cases(xs)
+  writer_cases(xs)
+  exit_cases(xs)
+  input_cases(xs)
   xs
 }
 

@@ -325,7 +325,7 @@ pub fn compile_source(src: Source): IrBox {
   info = ModInfo.new(name, src.path)
   program.mods.push(info)
   if prelude_wanted(tokens) {
-    add_prelude(program)
+    add_prelude(program, prelude_more_wanted(tokens))
   }
   if task_prelude_wanted(tokens) {
     add_task_prelude(program)
@@ -464,6 +464,13 @@ pub fn compile_program_llvm(src: Source, program: Program, symbols: SymbolTable,
 
 pub fn fill_std_link(program: Program, box: IrBox) {
   root = avant_root()
+  for ldef in program.libs {
+    if ldef.name == "avant_sys_more" {
+      // The prelude's second part (prelude_src.av prelude_more_source)
+      // declares its runtime in this lib block.
+      box.std_objects.push("${root}/runtime/build/avant_sys.o")
+    }
+  }
   for mod in program.mods {
     if mod.name == "std.zlib" {
       // zlib is vendored inside avant_zlib.o (D146): no -lz.

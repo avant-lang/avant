@@ -88,7 +88,7 @@ build_core "$root/build"
 # The seed-ABI copy W-INT1 built (a 32-bit avant_int for the v0.40.0
 # seed's B) is gone since W-ADOPT; a checkout built before keeps none.
 rm -rf "$root/build/seed-abi"
-for name in avant_json.c avant_http.c avant_base64.c; do
+for name in avant_json.c avant_http.c avant_base64.c avant_sys.c; do
   compile "$root/$name" "$root/build/${name%.c}.o"
 done
 

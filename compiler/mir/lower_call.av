@@ -169,6 +169,18 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       return lw.lower_puts(e.args[0], c == "puts_u", e.loc)
     }
   }
+  if (c == "print" || c == "eputs" || c == "eprint") && e.args.size == 1 {
+    how = 0
+    if c == "eputs" {
+      how = 3
+    } else if c == "eprint" {
+      how = 2
+    }
+    return lw.lower_out(e.args[0], how, e.loc)
+  }
+  if c == "exit" && e.args.size == 1 && !e.indirect {
+    return lw.lower_exit(e)
+  }
   // The 64-bit clock (Stage 29 W4b1, D295 R6): monotonic milliseconds
   // and microseconds as Int (avant_now_ms and avant_now_us, the Int
   // readings that wrapped, stay for the seed v0.40.0's compiler).
@@ -266,6 +278,74 @@ pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOpe
     v = lw.tmp(mt_i64(), b.rv_cast(v, mt_i64()))
   }
   b.call(-1, "avant_puts_i64", lw.one(v))
+  b.c_i32(0)
+}
+
+// print, eputs and eprint (puts above keeps its own writers): the
+// runtime's avant_out_* of the value's type, with how's bit 1 for a
+// newline and bit 2 for stderr. The checker has made every other value
+// the String its interpolation gives.
+pub fn (lw: MirLower) lower_out(arg: Expr, how: Int, loc: Location): MOperand {
+  b = lw.lw_b
+  ty = lw.ety(arg)
+  v = lw.lower_expr(arg)
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  lw.at(loc)
+  if ty == mt_str() {
+    return lw.lower_out_str(v, false, how)
+  }
+  f = "avant_out_i64"
+  if ty == mt_f64() {
+    f = "avant_out_f64"
+  } else if ty == mt_bool() {
+    f = "avant_out_bool"
+    v = lw.tmp(mt_i32(), b.rv_cast(v, mt_i32()))
+  } else if ty == mt_u32() || ty == mt_u64() {
+    f = "avant_out_u64"
+    if ty != mt_u64() {
+      v = lw.tmp(mt_u64(), b.rv_cast(v, mt_u64()))
+    }
+  } else if ty != mt_i64() {
+    v = lw.tmp(mt_i64(), b.rv_cast(v, mt_i64()))
+  }
+  args: Array(MOperand) = []
+  args.push(v)
+  args.push(b.c_i32(how))
+  b.call(-1, f, args)
+  b.c_i32(0)
+}
+
+// A String written: puts's own writer when puts, else avant_out_str.
+pub fn (lw: MirLower) lower_out_str(v: MOperand, puts: Bool, how: Int): MOperand {
+  b = lw.lw_b
+  if puts {
+    b.call(-1, "avant_puts_str", lw.one(v))
+    return b.c_i32(0)
+  }
+  args: Array(MOperand) = []
+  args.push(v)
+  args.push(b.c_i32(how))
+  b.call(-1, "avant_out_str", args)
+  b.c_i32(0)
+}
+
+// exit(status): the status checked as main's result is (outside 0..255
+// it traps at this call), then the runtime's exit, which never returns;
+// the block ends there.
+pub fn (lw: MirLower) lower_exit(e: Expr): MOperand {
+  b = lw.lw_b
+  v = lw.lower_expr(e.args[0])
+  if lw.failed {
+    return b.c_i32(0)
+  }
+  if lw.ety(e.args[0]) != mt_int() {
+    v = lw.tmp(mt_int(), b.rv_cast(v, mt_int()))
+  }
+  st = lw.exit_status(v, e.loc)
+  b.call(-1, "avant_exit", lw.one(st))
+  b.unreachable
   b.c_i32(0)
 }
 

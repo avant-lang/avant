@@ -227,6 +227,7 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
 
 - [Builtins](#builtins):
   - [output](#output)
+  - [input](#input)
   - [files and directories](#files-and-directories)
   - [processes and environment](#processes-and-environment)
   - [time, hashing and math](#time-hashing-and-math)
@@ -517,7 +518,7 @@ fn main {
 
 ### Printing
 
-Every scalar has one text, the same in `puts`, in interpolation and from `to_s`: integers in decimal, a `Float64` as the shortest text that reads back as the same number ([Floats](#floats)), `true` and `false`, a `String` as itself. An enum prints its member's name, an error its text (its message and its cause), and a union its member; an optional is opened first. A struct, class or enum that defines `fn to_s: String` prints that text in interpolation (a type marked `Error` cannot: its text is its message). For every type that prints, `x.to_s` is exactly `"${x}"`. `puts(x)` prints exactly what `"${x}"` prints.
+Every scalar has one text, the same in `puts`, in interpolation and from `to_s`: integers in decimal, a `Float64` as the shortest text that reads back as the same number ([Floats](#floats)), `true` and `false`, a `String` as itself. An enum prints its member's name, an error its text (its message and its cause), and a union its member; an optional is opened first. A struct, class or enum that defines `fn to_s: String` prints that text in interpolation (a type marked `Error` cannot: its text is its message). For every type that prints, `x.to_s` is exactly `"${x}"`. `puts(x)`, like every [writer](#output), prints exactly what `"${x}"` prints.
 
 ```avant
 fn size_or_word(n: Int): Int | String {
@@ -3182,8 +3183,8 @@ The prelude is the set of names every program can use without an import. The typ
 
 | Area | Names |
 | --- | --- |
-| Output | `puts`, `puts_u` |
-| Files and directories | `file_read`, `file_write`, `file_exists`, `dir_list` |
+| Output and input | `puts`, `print`, `eputs`, `eprint`, `puts_u`, `exit`, `read_line` |
+| Files and directories | `file_read`, `file_write`, `file_open`, `file_exists`, `dir_list` |
 | Processes and environment | `argv`, `env_get`, `process_run`, `process_run_out` |
 | Time | `now_ms`, `now_us` |
 | Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
@@ -3193,9 +3194,53 @@ Runnable programs that use them live in [examples/](examples): in the repository
 
 ### Output
 
-`puts(x)` writes one value and a newline to stdout. `x` is anything interpolation prints, and `puts` prints exactly what `"${x}"` prints ([Printing](#printing)): a number, a `Bool`, a `String` (every byte of it, a NUL included), a type with its own `to_s`, an enum, an error, a union of those. An optional is opened first: `puts(x)` of an `Int?` is a compile error that names the ways to open it. `puts_u(n)` prints an integer as the unsigned number its bits spell.
+| Call | Writes |
+| --- | --- |
+| `puts(x)` | `x` and a newline to stdout |
+| `print(x)` | `x` alone to stdout |
+| `eputs(x)` | `x` and a newline to stderr |
+| `eprint(x)` | `x` alone to stderr |
+| `exit(status)` | nothing: it ends the program with that exit status |
 
-`puts` takes exactly one argument: a blank line is `puts("")`. There is no `print` without a newline, no writer for stderr, no `exit(status)` and no reader for standard input yet ([Not built yet](#not-built-yet)); the exit status comes from `main`'s result, and `file_read("/dev/stdin")` reads the whole of standard input.
+```avant
+enum Level { low, high }
+
+fn main {
+  print("level: ")
+  puts(Level.high)                    // => level: high
+  n = "12".to_i ?? 0
+  puts(n * 2)                         // => 24
+  eputs("this line goes to stderr")
+}
+```
+
+- `x` is anything interpolation prints, and the writers print exactly what `"${x}"` prints ([Printing](#printing)): a number, a `Bool`, a `String` (every byte of it, a NUL included), a type with its own `to_s`, an enum, an error, a union of those. An optional is opened first: `puts(x)` of an `Int?` is a compile error that names the ways to open it.
+- stdout is buffered and written in large pieces; stderr is not. A write to stderr first sends what stdout holds, so the two keep their order when they go to one place (a terminal, `2>&1`). A failed write to either stops the program with a message, status 1.
+- `exit(status)` writes what stdout still holds, removes the program's temporary directory and ends the process, whichever task calls it. The status is an `Int` from 0 to 255; any other value traps at the call (`exit status 256 out of range (0..255)`). Without it, the exit status is `main`'s result.
+- `puts_u(n)` prints an integer as the unsigned number its bits spell.
+
+### Input
+
+`read_line()` reads one line of standard input: a `String` without its newline (a `\r` before the newline goes too), `nil` at the end of the input, or an `IoError` if the read fails. A last line without a newline is a line. `while line = read_line() { ... }` walks the lines and stops at the end or at an error; to tell the two apart, read the failure with a guard: it is `nil` at the end.
+
+```avant
+fn main {
+  count = 0
+  while true {
+    line = read_line() else e {
+      if err = e {
+        eputs("cannot read: ${err}")
+        exit(1)
+      }
+      break
+    }
+    count += line.size
+  }
+  puts(count)                         // => 0
+}
+```
+
+Run with an empty standard input, as here, it prints 0. `read_line() ?? ""` reads one answer and takes the end of the input as an empty one. When stdout is a terminal, `read_line` first writes what stdout holds, so a prompt printed with `print` shows before the program waits. `file_read("/dev/stdin")` reads the whole of standard input at once.
 
 ### Files and directories
 
@@ -3205,8 +3250,9 @@ Every call returns its result or an error value that says what failed.
 | --- | --- |
 | `file_read(path)` | `String \| IoError`: the whole file |
 | `file_write(path, body)` | `Int \| IoError`: the bytes written; the file is created or replaced |
+| `file_open(path)` | `FileReader \| IoError`: the file, to read line by line |
+| `file_exists(path)` | `Bool`: a file or a directory is there |
 | `dir_list(path)` | `Array(String) \| IoError`: the names, sorted, without `.` and `..` |
-| `file_exists(path)` | `Bool` |
 
 ```avant
 fn copy(from: String, to: String): Int | IoError {
@@ -3224,9 +3270,31 @@ fn main {
 }
 ```
 
-- `file_read` returns the whole file; split it into lines with `text.split("\n")` (a final newline gives a last, empty piece). There is no streaming reader yet.
-- An `IoError` has `op` (`"read"`, `"write"` or `"list"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. Dropping one is a compile error, like any [error](#errors-cannot-be-dropped).
-- The names `IoError` and `ProcessError` are taken only in a program that calls these functions.
+A `FileReader` reads its file a line at a time, as [`read_line`](#input) reads standard input: `r.read_line()` gives the next line without its newline, `nil` after the last one, or an `IoError`. The reader closes its file when it reaches the end or meets an error; `r.close` stops it early (a reader dropped before its end keeps its file open until the program ends).
+
+```avant
+fn longest(path: String): Int | IoError {
+  r = file_open(path)?
+  best = 0
+  while line = r.read_line() {
+    if line.size > best {
+      best = line.size
+    }
+  }
+  best
+}
+
+fn main {
+  _ = file_write("poem.txt", "one\nthree\n")
+  puts(longest("poem.txt") ?? -1)                 // => 5
+  puts(longest("missing.txt") ?? -1)              // => -1
+}
+```
+
+`file_read` returns the whole file; `file_open` reads it line by line without holding it all.
+
+- An `IoError` has `op` (`"read"`, `"write"`, `"list"` or `"open"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. Dropping one is a compile error, like any [error](#errors-cannot-be-dropped).
+- The names `IoError`, `ProcessError` and `FileReader` are taken only in a program that calls these functions.
 
 ### Processes and environment
 
@@ -3249,7 +3317,7 @@ fn main {
 }
 ```
 
-A program name without `/` is looked up on `PATH`. **A non-zero exit status is not an error**: it is the `Int`. A `ProcessError` is a program that could not start (`errno`, and `output` when it is the output file that could not be opened) or that a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`.
+A program name without `/` is looked up on `PATH`. `process_run` gives the child the program's own stdin, stdout and stderr. **A non-zero exit status is not an error**: it is the `Int`. A `ProcessError` is a program that could not start (`errno`, and `output` when it is the output file that could not be opened) or that a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`.
 
 ### Time, hashing and math
 
@@ -3938,8 +4006,6 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 | `Hash` with struct keys, or with class, array, hash or struct values; insertion order | decided | [key and value types](#key-and-value-types): a hash from the key to an index into an array; sort the keys |
 | `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion; slices of strings and arrays | planned | `str_slice`, loops, [`std.regex`](#stdregex) |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#trailing-blocks) |
-| `print` (no newline), writing to stderr, `exit(status)` | decided | `puts`; `main`'s result |
-| Reading standard input | planned | `file_read("/dev/stdin")` |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` on hashes | planned | a loop |
 | A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |

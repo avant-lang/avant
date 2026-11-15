@@ -293,6 +293,7 @@ pub class Loader {
   std_names: Hash(String, String)
   wants_prelude: Bool = false
   wants_task: Bool = false
+  wants_prelude_more: Bool = false
   lib_read: Bool = false
   lib_rec: String = ""
 
@@ -585,7 +586,7 @@ pub class Loader {
     }
     if merged = merge(path) {
       if self.wants_prelude {
-        add_prelude(merged)
+        add_prelude(merged, self.wants_prelude_more)
       }
       if self.wants_task {
         add_task_prelude(merged)
@@ -627,6 +628,9 @@ pub class Loader {
       }
       if !self.wants_task && task_prelude_wanted(tokens) {
         self.wants_task = true
+      }
+      if !self.wants_prelude_more && prelude_more_wanted(tokens) {
+        self.wants_prelude_more = true
       }
       parser = Parser.new(file, tokens)
       program = parser.parse
@@ -753,9 +757,14 @@ pub fn merge_decls(merged: Program, p: Program) {
 
 // Adds the prelude module (prelude_src.av) to a merged program: its
 // declarations after every other module's, so the program's own types
-// keep their order, and an import of it in every module.
-pub fn add_prelude(merged: Program) {
-  src = Source.new(prelude_path(), prelude_source())
+// keep their order, and an import of it in every module. more adds the
+// module's second part (prelude_more_source) after the first.
+pub fn add_prelude(merged: Program, more: Bool) {
+  text = prelude_source()
+  if more {
+    text = text + prelude_more_source()
+  }
+  src = Source.new(prelude_path(), text)
   lex = Lexer.new(src)
   tokens = lex.tokenize
   parser = Parser.new(src, tokens)

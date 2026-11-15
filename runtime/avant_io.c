@@ -323,6 +323,75 @@ avant_int avant_main_fail(const char *text) {
   return 1;
 }
 
+/* print, eputs and eprint (puts keeps its own writers in avant_str.c):
+ * one value's text, a newline when HOW has bit 1, to stderr when it has
+ * bit 2. A write to stderr first flushes what stdout holds, so the two
+ * streams keep their order when they go to one place (a terminal, `2>&1`);
+ * stdout stays buffered otherwise. Every write is checked as puts's is
+ * (out_check below). */
+static void out_check(int at_exit);
+
+static void out_bytes(const char *p, size_t n, int32_t how) {
+  FILE *f = (how & 2) ? stderr : stdout;
+  if (how & 2) {
+    fflush(stdout);
+  }
+  if (n) {
+    fwrite(p, 1, n, f);
+  }
+  if (how & 1) {
+    putc('\n', f);
+  }
+  if (ferror_unlocked(stdout) || ferror_unlocked(stderr)) {
+    out_check(0);
+  }
+}
+
+void avant_out_str(const char *s, int32_t how) {
+  out_bytes(s ? s : "", s ? avant_str_n(s) : 0, how);
+}
+
+void avant_out_i64(int64_t v, int32_t how) {
+  char buf[24];
+  char *o = buf + sizeof(buf);
+  uint64_t u = v < 0 ? 0u - (uint64_t)v : (uint64_t)v;
+  do {
+    *--o = (char)('0' + (int)(u % 10u));
+    u /= 10u;
+  } while (u);
+  if (v < 0) {
+    *--o = '-';
+  }
+  out_bytes(o, (size_t)(buf + sizeof(buf) - o), how);
+}
+
+void avant_out_u64(uint64_t v, int32_t how) {
+  char buf[24];
+  char *o = buf + sizeof(buf);
+  do {
+    *--o = (char)('0' + (int)(v % 10u));
+    v /= 10u;
+  } while (v);
+  out_bytes(o, (size_t)(buf + sizeof(buf) - o), how);
+}
+
+void avant_out_f64(double v, int32_t how) {
+  char buf[48];
+  int k = avant_fmt_float_text(buf, v);
+  out_bytes(buf, (size_t)k, how);
+}
+
+void avant_out_bool(int32_t v, int32_t how) {
+  out_bytes(v ? "true" : "false", v ? 4 : 5, how);
+}
+
+/* exit(status): the generated code has checked 0..255 (a status outside
+ * traps at its site); exit runs the atexit work: stdout flushed and
+ * checked, the private temporary directory removed. */
+void avant_exit(int32_t status) {
+  exit((int)status);
+}
+
 avant_int avant_sys_errno(void) {
   return g_sys_errno;
 }
@@ -1454,4 +1523,17 @@ static void test_status_at_exit(int status, void *arg) {
 
 __attribute__((constructor)) static void test_status_init(void) {
   on_exit(test_status_at_exit, NULL);
+}
+
+/* ---- Shared with avant_sys.c ----------------------------------------
+ *
+ * avant_sys.c (the prelude's second part, linked only by a program that
+ * calls one of its functions) uses these helpers of this file. */
+
+char *avant_io_dup(const char *s, size_t n) {
+  return dup_bytes(s, n);
+}
+
+FILE *avant_io_open_read(const char *path) {
+  return open_read(path);
 }
