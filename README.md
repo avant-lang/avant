@@ -2037,7 +2037,7 @@ fn main {
 
 ### Lambdas
 
-`{ |x| x + 1 }` is a lambda; its last expression is its result. A parameter's type may be written inside the pipes (`{ |a: Int, b: Int| a * 10 + b }`) and is optional when the expected `fn` type already gives it; a lambda whose parameter type is still unknown is an error.
+`{ |x| x + 1 }` is a lambda; its last expression is its result, a final `if`/`else` whose branches end in values included, whether the result type is expected or inferred (`apply(2) { |x| if x > 1 { x * 10 } else { 0 } }`); branches that end in statements keep the `if` a statement. A parameter's type may be written inside the pipes (`{ |a: Int, b: Int| a * 10 + b }`) and is optional when the expected `fn` type already gives it; a lambda whose parameter type is still unknown is an error.
 
 A lambda with no parameters is `{ || 1 }`.
 

@@ -3,7 +3,8 @@ import backends
 
 // Expressions: how tightly the operators bind (the bitwise operators
 // above the comparisons); the type an expression of literals takes from
-// its context; a Bool as a number. Each program is compiled in parallel; a refused
+// its context; a Bool as a number; the final if/else of a lambda whose
+// result type is inferred. Each program is compiled in parallel; a refused
 // one must leave no binary, say the expected words and point at the
 // expected line and column; an accepted one must print what it should.
 
@@ -90,6 +91,21 @@ fn check_bool_ll(c: Checks, compiler: String, dir: String) {
   c.expect(!str_has(body, "br i1"), "bool ll: count has no branch")
 }
 
+
+// A lambda whose result type is inferred reads a final if/else whose
+// branches end in values as its value, as a function with a declared
+// result does; branches that give nothing keep it a statement.
+fn lambda_if_cases: Array(ECase) {
+  ap = "fn apply(x: Int, f: fn(Int): U): U {\n  f(x)\n}\nfn apply_s(s: String, f: fn(String): U): U {\n  f(s)\n}\n"
+  xs: Array(ECase) = []
+  xs.push(accepted("lambda-if-value", "${ap}fn main {\n  puts(apply(2) { |x| if x > 1 { x * 10 } else { 0 } })\n  puts(apply_s(\"7\") { |s| if n = s.to_i { n } else { -1 } })\n  puts(apply_s(\"q\") { |s| if n = s.to_i { n } else { -1 } })\n  puts(apply(2) { |x| if x > 2 { \"c\" } else if x > 1 { \"b\" } else { \"a\" } })\n}\n", "20\n7\n-1\nb\n"))
+  xs.push(accepted("lambda-if-statement", "${ap}fn main {\n  apply(1) { |x| if x > 0 { puts(\"pos\") } else { puts(\"neg\") } }\n  apply(2) { |x|\n    if x > 0 {\n      puts(x)\n    }\n  }\n}\n", "pos\n2\n"))
+  xs.push(accepted("lambda-if-leaves", "${ap}fn main {\n  for v in [5, 2] {\n    puts(apply(v) { |x|\n      if x > 3 {\n        return 9\n      } else {\n        x\n      }\n    })\n  }\n}\n", "9\n2\n"))
+  xs.push(refused("lambda-if-mixed", "${ap}fn main {\n  puts(apply(1) { |x| if x > 0 { x } else { puts(x) } })\n}\n", "an if used as a value needs a value at the end of each branch", "8:23"))
+  xs.push(refused("lambda-if-types", "${ap}fn main {\n  puts(apply(1) { |x| if x > 0 { x } else { \"no\" } })\n}\n", "if branches have different types Int and String", "8:23"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(ECase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -134,6 +150,9 @@ fn test_main(c: Checks) {
       all.push(x)
     }
     for x in bool_cases() {
+      all.push(x)
+    }
+    for x in lambda_if_cases() {
       all.push(x)
     }
     run_cases(c, compiler, dir, all)

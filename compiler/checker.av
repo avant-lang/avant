@@ -175,6 +175,10 @@ pub class Checker {
   // its parameter is known: a value above Int's range is then a UInt64,
   // and the parameter's type decides (fit_call_arg).
   pub lit_arg: Bool = false
+  // True while check_if_value checks the final if/else of a lambda whose
+  // result type is inferred: branches that all give nothing make it a
+  // statement (Void) rather than an error.
+  pub if_void_ok: Bool = false
   // Inside the block of `Array(T).new(n) { |i| ... }` (how deep): a
   // `break` or `continue` there gets its own message.
   pub in_build: Int = 0
@@ -677,6 +681,19 @@ pub class Checker {
       return
     }
     if k == st_if() {
+      if at_tail && stmt.else_body.size > 0 && self.lambda_infer && (fallthrough(stmt.then_body) || fallthrough(stmt.else_body)) {
+        // The final if/else of a lambda whose result type is inferred is
+        // its value when its branches end in values, as in a function
+        // with a declared result; branches that give nothing keep it a
+        // statement.
+        self.if_void_ok = true
+        got = check_if_value(stmt, false, t_void())
+        if t2 = got, !t2.is_void {
+          stmt.tail_value = true
+          self.inferred_ret = t2
+        }
+        return
+      }
       if at_tail && stmt.else_body.size > 0 && !expected.is_void && !self.lambda_infer && (fallthrough(stmt.then_body) || fallthrough(stmt.else_body)) {
         // A final if/else whose branches end in values is the function's
         // value (Stage 29 W4a, D31; before, "missing return value").
@@ -5491,6 +5508,8 @@ pub class Checker {
   // branches' types join as a value switch's do. nil when every branch
   // leaves (return, break, continue).
   pub fn check_if_value(stmt: Stmt, has_want: Bool, want: Ty): Ty? {
+    void_ok = self.if_void_ok
+    self.if_void_ok = false
     self.push_scope
     for el in stmt.pre {
       check_cond_element(el)
@@ -5521,6 +5540,17 @@ pub class Checker {
     }
     if tys.size == 0 {
       return nil
+    }
+    if void_ok {
+      all_void = true
+      for tv in tys {
+        if !tv.is_void {
+          all_void = false
+        }
+      }
+      if all_void {
+        return t_void()
+      }
     }
     for t in tys {
       if t.is_void {
