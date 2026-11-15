@@ -20,6 +20,7 @@ Seven scenarios that each isolate one cost of a garbage collector, taken from [V
 | `variants/iso/` | every program with scenario numbers as arguments (one scenario per process) and an eighth scenario added by Avant | modified from the seven programs above |
 | `run.sh`, `tables.py` | the runner and the table generator | new code (not a modification of `run-gc.sh`) |
 | `trees/` | two LangArena tasks, Binarytrees::Obj and Calculator::Ast, with and without `std.gc`'s hints ([The tree ports](#the-tree-ports-o386)) | LangArena's tasks as Avant's harness builds them; the unhinted forms modified from them |
+| `diag/steady/main.av`, `diag/fullmark/main.av` | two diagnostic programs, not benchmark rows: scenario 2's loop with a settable number and kind of forced collections (the instructions of one forced collection of an unchanged heap, from the difference of two runs), and the full mark of an unchanged heap; each file's head says how it is run | Avant's own |
 
 Every port and every variant begins with a header naming its source, the repository, the commit, the license and what was changed.
 
