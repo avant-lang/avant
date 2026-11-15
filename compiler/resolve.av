@@ -895,7 +895,12 @@ pub class TypeResolver {
       i += 1
     }
     if ty_args_have_var(arg_tys) {
-      return make_pattern(kind, tn.name, arg_tys)
+      // A pattern (`Cell(T)` in a generic signature) names its template's
+      // module, as an instance does, so two modules' templates of one
+      // name keep their methods apart.
+      pat = make_pattern(kind, tn.name, arg_tys)
+      pat.mod_name = mod_name
+      return pat
     }
     origin_key = tn.name
     if flag = self.collide.get(tn.name) {

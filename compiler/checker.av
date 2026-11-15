@@ -1843,7 +1843,7 @@ pub class Checker {
         return check_type_call(expr, ty)
       }
       if obj.kind == ex_name() && obj.type_args.size > 0 {
-        if is_generic_template(obj.ident) {
+        if is_generic_template_in(obj.ident, obj.mod_name) {
           take_type_app(obj)
         } else {
           call = type_app_as_call(obj)
@@ -2590,6 +2590,13 @@ pub class Checker {
     if count == 1 {
       return found
     }
+    // Two modules' templates of one name: the one this module sees.
+    if count > 1 {
+      seen = visible_type_mod(name, self.current_module, "")
+      if seen.size > 0 {
+        return find_struct_template(name, seen)
+      }
+    }
     nil
   }
 
@@ -2614,14 +2621,27 @@ pub class Checker {
     if count == 1 {
       return found
     }
+    // Two modules' templates of one name: the one this module sees.
+    if count > 1 {
+      seen = visible_type_mod(name, self.current_module, "")
+      if seen.size > 0 {
+        return find_class_template(name, seen)
+      }
+    }
     nil
   }
 
   pub fn is_generic_template(name: String): Bool {
-    if s = find_struct_template(name, "") {
+    is_generic_template_in(name, "")
+  }
+
+  // The same, for a name written with its module (`m.Cell(Int)`), "" for
+  // a bare one.
+  pub fn is_generic_template_in(name: String, mod_name: String): Bool {
+    if s = find_struct_template(name, mod_name) {
       return true
     }
-    if c = find_class_template(name, "") {
+    if c = find_class_template(name, mod_name) {
       return true
     }
     false
@@ -3688,7 +3708,7 @@ pub class Checker {
           empty: Array(Ty) = []
           return finish_constructor(expr, ty, false, empty)
         }
-        return infer_new(expr, recv, cdef, recv.mod_name, has_want, want)
+        return infer_new(expr, recv, cdef, cdef.mod_name, has_want, want)
       }
     }
     if recv.kind == ex_field() {
@@ -4047,7 +4067,7 @@ pub class Checker {
     }
     expr.receiver = recv
     if recv.kind == ex_name() && recv.type_args.size > 0 {
-      if is_generic_template(recv.ident) {
+      if is_generic_template_in(recv.ident, recv.mod_name) {
         take_type_app(recv)
         if expr.callee == "new" {
         } else {

@@ -697,6 +697,12 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
     if recv = fnn.receiver {
       ty = checker_self.resolve_in_module(recv.type)
       checker_self.pull_resolve
+      if ty.is_agg && ty.origin.size > 0 && ty.mod_name.size > 0 && recv.type.mod_name.size == 0 && checker_self.resolver.template_count(recv.type.name) > 1 {
+        // A generic receiver whose template's name two modules declare is
+        // pinned to the one it named here, so each later reading of it
+        // (the method's instances, the receiver's match) finds that one.
+        recv.type.mod_name = ty.mod_name
+      }
       if ty.is_agg {
         fnn.owner = ty.name
         fnn.owner_mod = ty.mod_name

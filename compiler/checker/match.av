@@ -493,6 +493,12 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   from = sig.node.type_params
   to: Array(TypeName) = []
   buf = buf_new()
+  // Two modules' templates of one name: each one's method instances
+  // carry its module.
+  if flag = checker_self.resolver.collide.get(sig.owner), sig.node.owner_mod.size > 0 {
+    buf.push_str(mod_emit_prefix(sig.node.owner_mod))
+    buf.push_str("__")
+  }
   buf.push_str(sig.owner)
   buf.push_str("__")
   buf.push_str(emit_op_name(sig.name))
@@ -727,7 +733,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
     x = 0
     while x < named.size {
       sig = checker_self.methods[named[x]]
-      if sig.owner != owner && sig.node.generic && sig.name == name {
+      if sig.owner != owner && sig.node.generic && sig.name == name && (sig.node.owner_mod.size == 0 || act.mod_name.size == 0 || sig.node.owner_mod == act.mod_name) {
         if recv = sig.node.receiver, checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
           is_inst = false
           for instance in checker_self.instances {

@@ -37,6 +37,14 @@ import backends
 //     refused as at a call. Before, `m.helper` was a field read of a
 //     module, and an ambiguous bare value could only be written as a
 //     lambda calling the one meant.
+//   - Two modules may each declare a generic class of one name, with
+//     methods and external methods of the same names: each module builds
+//     its own with `Cell.new(v)`, another module names one as
+//     `ga.Cell(Int)`, a bare `Cell` that sees both is ambiguous, and every
+//     call reaches its own module's method. These were `method
+//     Cell.show is already defined`, `Cell needs type arguments` and the
+//     ambiguity's message for a qualified name; two instances of one
+//     such template shared their constructor's symbol.
 
 class MCase {
   pub tag: String = ""
@@ -122,6 +130,17 @@ fn value_cases: Array(MCase) {
   xs
 }
 
+fn generic_cases: Array(MCase) {
+  xs: Array(MCase) = []
+  ga = "pub class Cell(T) {\n  pub item: T\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  pub fn tag: String {\n    \"ga\"\n  }\n\n  pub fn swap(v: T): T {\n    old = item\n    self.item = v\n    old\n  }\n}\n\npub fn (c: Cell(T)) show: String {\n  \"ga-show\"\n}\n\npub fn (c: Cell(Int)) twice: Int {\n  c.item * 2\n}\n\npub fn mk(v: Int): Cell(Int) {\n  Cell.new(v)\n}\n\npub fn mks(v: String): Cell(String) {\n  Cell.new(v)\n}\n"
+  gb = "pub class Cell(T) {\n  pub item: T\n  pub n: Int = 0\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  pub fn tag: String {\n    \"gb\"\n  }\n\n  pub fn swap(v: T): T {\n    self.n += 1\n    self.item = v\n    v\n  }\n}\n\npub fn (c: Cell(T)) show: String {\n  \"gb-show\"\n}\n\npub fn (c: Cell(Int)) twice: Int {\n  c.item * 20\n}\n\npub fn mk(v: Int): Cell(Int) {\n  Cell.new(v)\n}\n\npub fn mks(v: String): Cell(String) {\n  Cell.new(v)\n}\n"
+  xs.push(accepted("generic-two-modules", ["main", "import ga\nimport gb\n\nfn main {\n  a = ga.mk(1)\n  b = gb.mk(2)\n  puts(\"\${a.tag} \${b.tag}\")\n  puts(\"\${a.show} \${b.show}\")\n  puts(\"\${a.twice} \${b.twice}\")\n  puts(\"\${a.swap(5)} \${b.swap(6)}\")\n  puts(\"\${a.item} \${b.item} \${b.n}\")\n  s = ga.mks(\"s\")\n  t = gb.mks(\"t\")\n  puts(\"\${s.tag} \${t.tag} \${s.show} \${t.show}\")\n}\n", "ga", ga, "gb", gb], "ga gb\nga-show gb-show\n2 40\n1 6\n5 6 1\nga gb ga-show gb-show\n"))
+  xs.push(accepted("generic-qualified", ["main", "import ga\nimport gb\n\nfn main {\n  a = ga.Cell(Int).new(1)\n  b = gb.Cell(String).new(\"s\")\n  c: gb.Cell(Int) = gb.mk(4)\n  puts(\"\${a.tag} \${a.show} \${b.tag} \${b.show} \${c.twice}\")\n}\n", "ga", ga, "gb", gb], "ga ga-show gb gb-show 80\n"))
+  xs.push(refused("generic-bare-both", ["main", "import ga\nimport gb\n\nfn main {\n  a = Cell(Int).new(1)\n  puts(a.tag)\n}\n", "ga", ga, "gb", gb], "Cell is a type of both ga and gb: write ga.Cell or gb.Cell", "main.av:5:7"))
+  xs.push(accepted("generic-bare-one", ["main", "import ga\nimport mid\n\nfn main {\n  a = Cell.new(1)\n  b: Cell(String) = Cell.new(\"x\")\n  puts(\"\${a.tag} \${a.twice} \${b.show} \${mid.other()}\")\n}\n", "ga", ga, "gb", gb, "mid", "import gb\n\npub fn other: String {\n  mk(3).show\n}\n"], "ga 2 ga-show gb-show\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(MCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -175,6 +194,9 @@ fn test_main(c: Checks) {
     }
     for v in value_cases() {
       all.push(v)
+    }
+    for g in generic_cases() {
+      all.push(g)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {
