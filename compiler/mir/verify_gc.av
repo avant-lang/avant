@@ -1,8 +1,8 @@
-// The verifier's GC and dataflow rules (Stage 28 W4; stages/stage28/mir.md
-// 5, 6): V9 (no read before a write, lowered), V11 and V12 (traced locals
-// live across a collecting call are slots, final), V14 (the fresh
-// exemption: reaching definitions and the closing barrier), V15-V17 (leaf
-// and frame shape, final), V19 (shared modules, final).
+// The verifier's GC and dataflow rules (6): V9 (no read before a write,
+// lowered), V11 and V12 (traced locals live across a collecting call are
+// slots, final), V14 (the fresh exemption: reaching definitions and the
+// closing barrier), V15-V17 (leaf and frame shape, final), V19 (shared
+// modules, final).
 
 import mir.types
 import mir.runtime
@@ -67,16 +67,15 @@ fn mir_v15(v: MVerifier) {
   }
 }
 
-// V16 as restated by Stage 29 VALK-A1 (M4, gc.av rule 2): a frame
-// function links a record (bb0 begins with the zeroed non-parameter
-// slots, gc.enter and gc.roots of every slot in local order, and no other
-// gc.enter or gc.roots follows) or links none (no frame statement at all).
-// It must link one when it has a slot, or when a thread's first Avant
-// frame can be its own (MFunc.first_frame: main, a C callback's thunk, a
-// task's thunk; the record registers the thread). The frame pass links
-// none exactly when neither holds; a record with no slot elsewhere is
-// correct and accepted (the builder's modules have them). V17 checks the
-// returns of a function that links one.
+// V16 (gc.av rule 2): a frame function links a record (bb0 begins with the
+// zeroed non-parameter slots, gc.enter and gc.roots of every slot in local
+// order, and no other gc.enter or gc.roots follows) or links none (no
+// frame statement at all). It must link one when it has a slot, or when a
+// thread's first Avant frame can be its own (MFunc.first_frame: main, a C
+// callback's thunk, a task's thunk; the record registers the thread). The
+// frame pass links none exactly when neither holds; a record with no slot
+// elsewhere is correct and accepted (the builder's modules have them). V17
+// checks the returns of a function that links one.
 fn mir_v16(v: MVerifier) {
   f = v.func
   if f.kind == mfk_unset() {
@@ -434,9 +433,8 @@ fn mir_v11_report(v: MVerifier, b: Int, j: Int, st: MStmt, w: Int, x: UInt64) {
   }
 }
 
-// V14, the fresh exemption (Stage 28 W4; restated by Stage 29 VALK-A1,
-// M5, mir/fresh.av). A `fresh` store needs no barrier of its own when
-// either form holds:
+// V14, the fresh exemption (mir/fresh.av). A `fresh` store needs
+// no barrier of its own when either form holds:
 // - open: its holder _h is open at the store: on every path, since the
 //   last collecting or indirect call and the last redefinition of _h, an
 //   allocation marked `fresh` defined _h (young, or barriered at birth on
@@ -447,7 +445,7 @@ fn mir_v11_report(v: MVerifier, b: Int, j: Int, st: MStmt, w: Int, x: UInt64) {
 //   cards counted as marked) lasts until the next collection, which only a
 //   collecting call of the thread's own can start (in a shared module a
 //   loop's poll is one, explicit at stage final).
-// - closed fill (W1b): every reaching definition of _h is an allocation's
+// - closed fill: every reaching definition of _h is an allocation's
 //   result in this function (rd 1), every path from the store to a
 //   redefinition of _h or to a return passes a closing `barrier copy _h`
 //   (pend), and _h is a slot at stage final.
@@ -460,7 +458,7 @@ fn mir_v11_report(v: MVerifier, b: Int, j: Int, st: MStmt, w: Int, x: UInt64) {
 // the closed-fill form (rd: 0 no definition reaches, 1 only alloc
 // results, 2 another; pd: a closed-fill store awaits its closing barrier;
 // both indexed by the holder's place in that short list, so a function
-// with many locals and blocks pays for the few holders, VALK-A1).
+// with many locals and blocks pays for the few holders).
 fn mir_v14(v: MVerifier) {
   f = v.func
   any = f.fresh_self

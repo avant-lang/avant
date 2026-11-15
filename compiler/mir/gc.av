@@ -1,10 +1,10 @@
-// The GC passes before emission (Stage 28 W6a; stages/stage28/mir.md 5.7,
-// 5.9 steps 2 and 3, W6a): the leaf pass, then the root-slot pass (the
-// frame pass). They replace W5's stand-in (frames.av, every traced local a
-// slot). Both run on stage-lowered MIR, where every Avant callee is marked
-// `collects` and every kind is unset, and leave a module that
-// verify(final) accepts by construction: the slot rule below is V11 and
-// V12's own liveness, so nothing the verifier asks for can be missing.
+// The GC passes before emission (5.9 steps 2 and 3): the leaf pass, then
+// the root-slot pass (the frame pass). They replace an earlier stand-in
+// (frames.av, every traced local a slot). Both run on stage-lowered MIR,
+// where every Avant callee is marked `collects` and every kind is unset,
+// and leave a module that verify(final) accepts by construction: the slot
+// rule below is V11 and V12's own liveness, so nothing the verifier asks
+// for can be missing.
 //
 // 1. Leaves (5.7; V15, V19): every function but `main` whose kind is
 //    still unset starts as a candidate; in a shared module (section 7) a function with a local
@@ -23,14 +23,14 @@
 //    collect while they hold their arguments (with AVANT_NURSERY=0 the
 //    outermost avant_gc_defer_enter runs a full collection that relies on
 //    the caller having rooted them, runtime/avant_gc_roots.c; the old
-//    back end spilled every such argument into a root, audit 4.3.2), or to
-//    (until Stage 28 W15a1, also of a row of the old quiet class, whose
+//    back end spilled every such argument into a root), or to
+//    (once also of a row of the old quiet class, whose
 //    rows are now never or collects).
 //    Then the prologue of 5.1 (zero every non-parameter slot, gc.enter,
 //    gc.roots of every slot in local order) and a gc.leave before each
 //    return.
-//    A frame function with no slot links no frame record (Stage 29
-//    VALK-A1, M4, O176): no gc.enter, gc.roots or gc.leave. It holds no
+//    A frame function with no slot links no frame record: no gc.enter,
+//    gc.roots or gc.leave. It holds no
 //    reference across any collecting call (a reference live there would
 //    be a slot by (a), an argument of an external's call by (c)), so no
 //    collection below it has anything of it to find or to move, and its
@@ -41,31 +41,29 @@
 //    callback's thunk and a task's thunk (MFunc.first_frame). Its record is
 //    what registers a thread C started (avant_gc_frame_enter), returns a
 //    foreign thread to running for the callback and to native after it
-//    (rule 4 of gc-design.md 4.4), and initializes the heap; so every
+//    (the safepoint rule), and initializes the heap; so every
 //    other Avant function runs below a frame record of its thread, as
 //    before, and a function without one needs nothing from the chain. A
 //    shared module follows the same rule: a thread stops only at a
 //    collecting call (a poll, an allocation, a native transition), where
-//    a function without a slot holds nothing (W17a's safepoints). What
+//    a function without a slot holds nothing (the safepoints). What
 //    the rule changes is a diagnostic's reach: the stalled-handshake
 //    report (AVANT_GC_VERIFY_STALL_MS) names the innermost frame record,
 //    now the innermost function that has one.
-// 3. Polls (Stage 28 W17a; gc-design.md 4.4, the safepoints of a shared
-//    program): in a shared module, before the slot set is computed, every
-//    block a back edge enters (an edge into a block on the path of a
-//    depth-first walk from the entry, so every cycle has one and no other
-//    edge is one: Stage 29 W5a3, O713) begins with
+// 3. Polls (the safepoints of a shared program): in a shared module,
+//    before the slot set is computed, every block a back edge enters (an
+//    edge into a block on the path of a depth-first walk from the entry,
+//    so every cycle has one and no other edge is one) begins with
 //    `call avant_gc_poll() collects`, a collecting call like any other,
-//    when the loop it heads holds another loop's head (an outer loop,
-//    Stage 28 W17b), or when every reference live on entry to that block
-//    is already a slot (an innermost loop that keeps a reference only in
-//    a local does not poll, as a leaf's does not: the poll would make it
-//    a slot, reloaded after the poll at every iteration, which kept
-//    Matmul's inner loops from hoisting their rows: +6-11% with every
-//    loop polling and plain slots, W17b; 2.4x with W17a's volatile
-//    slots, D207, D259). So a collection waits at most for one run of
-//    such an innermost loop. The emitter tests the request flag and
-//    calls only when it is set. Leaves have no frame and do not poll
+//    when the loop it heads holds another loop's head (an outer loop), or
+//    when every reference live on entry to that block is already a slot
+//    (an innermost loop that keeps a reference only in a local does not
+//    poll, as a leaf's does not: the poll would make it a slot, reloaded
+//    after the poll at every iteration, which kept Matmul's inner loops
+//    from hoisting their rows: +6-11% with every loop polling and plain
+//    slots; 2.4x with volatile slots). So a collection waits at most for
+//    one run of such an innermost loop. The emitter tests the request flag
+//    and calls only when it is set. Leaves have no frame and do not poll
 //    (rule 5, V15); an unshared module is unchanged.
 
 import source
@@ -248,23 +246,22 @@ fn mir_declare_poll(m: MModule): Bool {
 
 // Rule 3 above: a poll at the head of every block a back edge enters,
 // unless it heads an innermost loop and a reference live on entry to it
-// is not already a slot (W17a, by measurement: a poll there would make it
-// a slot; W17b, by measurement: outer loops poll always, which costs
-// nothing measurable on Matmul with plain slots).
+// is not already a slot (by measurement: a poll there would make it a
+// slot; by measurement: outer loops poll always, which costs nothing
+// measurable on Matmul with plain slots).
 fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
   n = f.blocks.size
   need0 = mir_slot_need(m, f, lv)
   ts = m.types
-  // The loop heads (mir/flow.av, O713): a real cycle's, by a
-  // depth-first walk; last[h] is the latest back edge's source, so the
-  // loop's blocks are h..last[h] in the lowering's order.
+  // The loop heads (mir/flow.av): a real cycle's, by a depth-first
+  // walk; last[h] is the latest back edge's source, so the loop's
+  // blocks are h..last[h] in the lowering's order.
   last: Array(Int) = []
   heads = mir_loop_heads(f, last)
   // An outer loop (one whose blocks hold another loop's head) always
-  // polls (Stage 28 W17b): its new slots cost nothing inside the inner
-  // loop (no call there, so LLVM keeps a plain slot's value in a
-  // register), and a collection then waits at most for one run of an
-  // innermost loop.
+  // polls: its new slots cost nothing inside the inner loop (no call
+  // there, so LLVM keeps a plain slot's value in a register), and a
+  // collection then waits at most for one run of an innermost loop.
   outer = mir_bools(n, false)
   for h in 0..n {
     if heads[h] {
@@ -312,13 +309,13 @@ fn mir_add_polls(m: MModule, f: MFunc, lv: MLive) {
   }
 }
 
-// The function's liveness is computed once (Stage 28 W18P, O153): the polls
-// read and define nothing, so they leave every block's transfer and
-// live-out as they were; so do gc.enter, gc.roots and gc.leave; the
-// prologue's zeroing changes bb0's transfer, which is computed again, and
-// bb0's live-in, which no live-out depends on since no edge enters bb0
-// (V2; with such an edge the liveness is not kept). The function keeps it
-// (f.live) for the verifier's V11 and V12.
+// The function's liveness is computed once: the polls read and define
+// nothing, so they leave every block's transfer and live-out as they were;
+// so do gc.enter, gc.roots and gc.leave; the prologue's zeroing changes
+// bb0's transfer, which is computed again, and bb0's live-in, which no
+// live-out depends on since no edge enters bb0 (V2; with such an edge the
+// liveness is not kept). The function keeps it (f.live) for the verifier's
+// V11 and V12.
 fn mir_add_frame(m: MModule, f: MFunc) {
   f.kind = mfk_frame()
   lv = mir_live(f)
@@ -394,8 +391,8 @@ pub fn mir_frame_pass(m: MModule) {
 // Both passes, in the order of 5.9.
 pub fn mir_gc_passes(m: MModule) {
   mir_leaf_pass(m)
-  // VALK-A1 (M5): barriers on open holders go before the slot set is
-  // computed (fresh.av).
+  // Barriers on open holders go before the slot set is computed
+  // (fresh.av).
   mir_fresh_pass(m)
   mir_frame_pass(m)
 }

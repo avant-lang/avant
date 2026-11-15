@@ -1,20 +1,19 @@
-// The call table (Stage 28 W4; stages/stage28/mir.md 4.6, D182): for every
-// external symbol the compiler may call, its MIR signature and one class:
-// never (the old fixed --gc-leaf list of pipeline.av, the libc and GC hook
-// names, __avant_type_maps), collects (everything else, and every name
-// not in the table). Flags: alloc, slot (returns the untyped `addr` of an
-// element inside the array's buffer), noreturn, varargs. The classes are
-// the old back end's (proof: old, section 14, 8.9), except the old quiet
-// class (helpers that allocated only under defer), which is gone since
-// Stage 28 W15a1 (gc-design.md section 5.1): its rows are never or
-// collects. A wave that first emits a never row proves it or moves it to
-// collects. This is the MIR's own copy; pipeline.av's list is the old back
-// end's and is not changed.
+// The call table: for every external symbol the compiler may call, its MIR
+// signature and one class: never (the old fixed --gc-leaf list of
+// pipeline.av, the libc and GC hook names, __avant_type_maps), collects
+// (everything else, and every name not in the table). Flags: alloc, slot
+// (returns the untyped `addr` of an element inside the array's buffer),
+// noreturn, varargs. The classes are the old back end's (proof: old,
+// section 14, 8.9), except the old quiet class (helpers that allocated
+// only under defer), which is gone: its rows are never or collects. A wave
+// that first emits a never row proves it or moves it to collects. This is
+// the MIR's own copy; pipeline.av's list is the old back end's and is not
+// changed.
 //
 // Rows: the 47 never names of pipeline.av, the libc and GC hooks, the old
 // quiet names, and the collects rows whose signature the core needs. A
 // collects row is only needed for its signature (an unknown name already
-// collects): W5-W8 add rows as their lowering first calls them.
+// collects): rows are added as the lowering first calls them.
 
 import source
 import mir.types
@@ -76,8 +75,8 @@ pub class MRtTable {
     self.rows.push(r)
   }
 
-  // W9b (D207): LLVM function attributes for the declaration of a row
-  // whose C body is a pure reader (each proven in mir_rt_attrs).
+  // LLVM function attributes for the declaration of a row whose C
+  // body is a pure reader (each proven in mir_rt_attrs).
   pub fn set_attrs(name: String, text: String) {
     if r = find(name) {
       r.attrs = text
@@ -149,8 +148,8 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_is_young", "ref", "i32", n, "")
   t.row("avant_gc_quiet_enter", "", "void", n, "")
   t.row("avant_gc_quiet_leave", "", "void", n, "")
-  // std.gc's `gc.hold { }` (Stage 29 W1c2): the entry collects nothing;
-  // the end is a collection point (below).
+  // std.gc's `gc.hold { }`: the entry collects nothing; the end is a
+  // collection point (below).
   t.row("avant_gc_hold_begin", "", "void", n, "")
   // In a program that spawns, a `pin` block's pin and a `gc.hold` go
   // through the task pool, which ends them when a trap ends the task
@@ -166,13 +165,13 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_array_fill_i32", "ref, i32", "void", n, "")
   t.row("avant_array_fill_i64", "ref, i64", "void", n, "")
   t.row("avant_array_fill_u8", "ref, i32", "void", n, "")
-  // The freeze (Stage 29 W8Cc, O758): a captured Array's count, at a
-  // spawn or .parallel and at its end; neither allocates.
+  // The freeze: a captured Array's count, at a spawn or .parallel
+  // and at its end; neither allocates.
   t.row("avant_array_freeze", "ref, i32", "void", n, "")
   t.row("avant_array_thaw", "ref, i32, u64", "void", n, "")
   t.row("avant_str_size", "ref str", "i64", n, "")
-  // libc's memcmp for a String switch's labels (Stage 29 W5a1, O392):
-  // never collects; LLVM expands it at a constant size.
+  // libc's memcmp for a String switch's labels: never collects; LLVM
+  // expands it at a constant size.
   t.row("memcmp", "ref str, ref str, i64", "i32", n, "")
   t.row("avant_str_byte", "ref str, i64", "i64", n, "")
   t.row("avant_str_eq", "ref str, ref str", "i32", n, "")
@@ -208,17 +207,16 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_trap_negative", "i64, i32", "void", n, "noreturn")
   t.row("avant_trap_exit_status", "i64", "void", n, "noreturn")
   t.row("avant_trap_c_null", "ref str", "void", n, "noreturn")
-  // An enum value that is no member (Stage 29 W5a1, D358): the value and
-  // the enum's name.
+  // An enum value that is no member: the value and the enum's name.
   t.row("avant_trap_enum", "i64, ref str", "void", n, "noreturn")
   // `x.expect(why)` on nil: the text given.
   t.row("avant_trap_expect", "ref str", "void", n, "noreturn")
-  // std's contract traps (W4b2, R11): no collection, no return.
+  // std's contract traps: no collection, no return.
   t.row("avant_regex_closed", "", "void", n, "noreturn")
   t.row("avant_json_misuse", "ref str", "void", n, "noreturn")
-  // Stage 29 W4b2 (D295 R16): the sited form the emitter calls for each
-  // trap row above (ll_call, ll_bounds, ll_arith_block): its parameters
-  // and the site's number in the module's table of trap texts.
+  // The sited form the emitter calls for each trap row above (ll_call,
+  // ll_bounds, ll_arith_block): its parameters and the site's number in
+  // the module's table of trap texts.
   t.row("avant_trap_overflow_in", "i32", "void", n, "noreturn")
   t.row("avant_trap_div_zero_in", "i32", "void", n, "noreturn")
   t.row("avant_trap_empty_at", "i32, i32", "void", n, "noreturn")
@@ -248,7 +246,7 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_checked_rem_i64", "i64, i64", "i64", n, "")
   t.row("avant_checked_div_u64", "u64, u64", "u64", n, "")
   t.row("avant_checked_rem_u64", "u64, u64", "u64", n, "")
-  // never: libc, the GC hooks (audit 3.1 list 3), the type-map function.
+  // never: libc, the GC hooks, the type-map function.
   t.row("printf", "ref str", "i32", n, "varargs")
   t.row("memset", "ptr, i32, u64", "ptr", n, "")
   t.row("memcpy", "ptr, ptr, u64", "ptr", n, "")
@@ -256,9 +254,9 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("malloc", "u64", "ptr", n, "")
   t.row("calloc", "u64, u64", "ptr", n, "")
   t.row("free", "ptr", "void", n, "")
-  // never: libm, for Float64 abs, floor, sqrt, exp (W5b: libm allocates
-  // nothing; mir.md W5.6; exp since W18F, before it the runtime's
-  // avant_exp, a wrapper of the same call).
+  // never: libm, for Float64 abs, floor, sqrt, exp (libm allocates
+  // nothing; exp directly, where before it was the runtime's avant_exp,
+  // a wrapper of the same call).
   t.row("fabs", "f64", "f64", n, "")
   t.row("floor", "f64", "f64", n, "")
   t.row("sqrt", "f64", "f64", n, "")
@@ -272,12 +270,12 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_gc_reload", "ptr", "ptr", n, "")
   t.row("__avant_type_maps", "", "void", n, "")
   // What was the old back end's quiet list, the Hash(K, V) entries
-  // (runtime/avant_hash.c) first. Its class is gone (gc-design.md section
-  // 5.1): a row that neither allocates nor enters a defer region is never
-  // (a hash lookup or deletion only reads or moves entries); one that
-  // allocates or reaches a named safepoint (runtime/avant_gc.h) collects
-  // (a hash insertion may grow the table), so its callers root and reload
-  // across it like any collecting call.
+  // (runtime/avant_hash.c) first. Its class is gone: a row that neither
+  // allocates nor enters a defer region is never (a hash lookup or
+  // deletion only reads or moves entries); one that allocates or reaches
+  // a named safepoint (runtime/avant_gc.h) collects (a hash insertion may
+  // grow the table), so its callers root and reload across it like any
+  // collecting call.
   t.row("avant_hash_find_ik", "ref, i64, ptr", "ptr", n, "")
   t.row("avant_hash_find_sk", "ref, ref str, ptr", "ptr", n, "")
   t.row("avant_hash_take_ik", "ref, i64, ptr", "ptr", n, "")
@@ -310,13 +308,12 @@ fn mir_rt_fill(t: MRtTable) {
   // collects: the allocation entry, the slot rows, and the rows the core
   // example and the verifier tests call.
   t.row("avant_alloc", "u64, u32", "ref", c, "alloc")
-  // The Valk stage, VALK-A2 (O599): the inline allocation path's slow call
-  // (llvm/emit_gc.av ll_alloc_slow_helper calls it); the MIR names
-  // avant_alloc only.
+  // The inline allocation path's slow call (llvm/emit_gc.av
+  // ll_alloc_slow_helper calls it); the MIR names avant_alloc only.
   t.row("avant_alloc_slow", "u64, u32", "ref", c, "")
-  // Stage 28 W17a: the safepoint poll (gc-design.md 4.4) the frame pass
-  // puts at the head of every loop of a frame function in a shared module;
-  // the emitter tests avant_gc_requested and calls it only when set.
+  // The safepoint poll the frame pass puts at the head of every loop of a
+  // frame function in a shared module; the emitter tests
+  // avant_gc_requested and calls it only when set.
   t.row("avant_gc_poll", "", "void", c, "")
   t.row("avant_array_push_slot", "ref, u64, u32", "addr", c, "slot")
   t.row("avant_array_pop_slot", "ref, u64", "addr", c, "slot")
@@ -340,10 +337,10 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_out_bool", "i32, i32", "void", n, "")
   t.row("avant_exit", "i32", "void", n, "noreturn")
   t.row("avant_str_concat", "ref str, ref str", "ref str", c, "")
-  // The Valk stage, VALK-A2 (O629): a `fun`'s `String` result (lower_ffi.av).
+  // A `fun`'s `String` result (lower_ffi.av).
   t.row("avant_c_str", "ref str", "ref str", c, "")
   t.row("avant_str_slice", "ref str, i64, i64", "ref str", c, "")
-  // collects: the string rows W6a first calls (mir.md W6a.6).
+  // collects: the string rows the lowering calls.
   t.row("avant_str_cat_i32", "ref str, i64", "ref str", c, "")
   t.row("avant_str_from_bool", "i32", "ref str", c, "")
   t.row("avant_str_from_byte", "i64", "ref str", c, "")
@@ -352,10 +349,10 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_str_strip", "ref str, i32", "ref str", c, "")
   t.row("avant_buf_new", "i64", "ref", c, "")
   t.row("avant_buf_to_str", "ref", "ref str", c, "")
-  // collects: the hand-off of a dead Buf (W18M, mir/take.av).
+  // collects: the hand-off of a dead Buf (mir/take.av).
   t.row("avant_buf_take_str", "ref", "ref str", c, "")
-  // collects: the array, hash, Buf, and string rows W6c first calls
-  // (mir.md W6c.6; the old classification, audit 3.2).
+  // collects: the array, hash, Buf, and string rows the lowering
+  // calls (the old classification).
   t.row("avant_array_push_i32", "ref, i32", "void", c, "")
   t.row("avant_array_push_i64", "ref, i64", "void", c, "")
   t.row("avant_array_reserve", "ref, i64, u64, u32", "void", c, "")
@@ -387,7 +384,7 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_bytes_chars", "ref str", "ref", c, "")
   t.row("avant_bytes_to_buf", "ref str", "ref", c, "")
   t.row("avant_str_from_i32_bytes", "ref", "ref str", c, "")
-  // collects: the rows W7a first calls (mir.md W7a.6; the old
+  // collects: the rows the union lowering calls (the old
   // classification: none is in the old never or quiet lists).
   t.row("avant_array_index_i32", "ref, i32", "i64", c, "")
   t.row("avant_array_index_i64", "ref, i64", "i64", c, "")
@@ -412,8 +409,8 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_argv", "", "ref", c, "")
   t.row("avant_env_get", "ref str, ptr", "ref str", c, "")
   t.row("avant_str_from_utf8", "ref str, ptr", "ref str", c, "")
-  // W8b: the task pool and the gates (avant_task.c), collecting as in
-  // the old back end (none is on its --gc-leaf list): avant_spawn
+  // The task pool and the gates (avant_task.c), collecting as in the
+  // old back end (none is on its --gc-leaf list): avant_spawn
   // allocates the task under defer; join, parallel_for, and the gate
   // waits block while other threads collect.
   t.row("avant_spawn", "ptr, ref", "ref", c, "")
@@ -432,9 +429,9 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_gate_lock_with", "ref, u64", "i32", c, "")
   t.row("avant_gate_poisoned", "ref, u64", "i32", n, "")
   // The gate functions take the object that holds the gate word and the
-  // word's byte offset in it (Stage 29 W8Cb, O690); a lock and a wait may
-  // wait natively, so they collect; an unlock, a signal and a broadcast
-  // never wait and never collect.
+  // word's byte offset in it; a lock and a wait may wait natively, so
+  // they collect; an unlock, a signal and a broadcast never wait and
+  // never collect.
   t.row("avant_gate_lock", "ref, u64", "void", c, "")
   t.row("avant_gate_unlock", "ref, u64", "void", n, "")
   t.row("avant_gate_wait", "ref, u64", "void", c, "")
@@ -452,18 +449,18 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_task_hold_end", "", "void", c, "")
 }
 
-// The declarations' attributes (W9b, D207 pass 3; mir.md W9b.3), each
-// read from the C body at refactor/llvm 053c726. Only `never` rows: a
-// call that cannot collect may let LLVM keep values across it. The string
-// readers end in avant_str_n (runtime/avant_str.c:118-127), which reads
-// the string's header and bytes (its argument), the GC's block, large and
-// side tables through avant_is_heap (runtime/avant_gc_heap.c,
-// gc_is_heap_payload: reads only when its out-parameters are NULL), and
-// g_avant_str_gen (an acquire load, avant_rt.h:70-72: not nosync); it
-// writes only its per-thread length cache (g_len_slots and g_len_victim,
-// static __thread in avant_str.c:77-89, memory no module code can name:
-// inaccessiblemem), and it keeps the pointer in that cache (so no
-// nocapture). It allocates, frees, and unwinds nothing and always returns.
+// The declarations' attributes, each read from the C body at refactor/llvm
+// 053c726. Only `never` rows: a call that cannot collect may let LLVM keep
+// values across it. The string readers end in avant_str_n
+// (runtime/avant_str.c:118-127), which reads the string's header and bytes
+// (its argument), the GC's block, large and side tables through
+// avant_is_heap (runtime/avant_gc_heap.c, gc_is_heap_payload: reads only
+// when its out-parameters are NULL), and g_avant_str_gen (an acquire load,
+// avant_rt.h:70-72: not nosync); it writes only its per-thread length
+// cache (g_len_slots and g_len_victim, static __thread in
+// avant_str.c:77-89, memory no module code can name: inaccessiblemem), and
+// it keeps the pointer in that cache (so no nocapture). It allocates,
+// frees, and unwinds nothing and always returns.
 fn mir_rt_attrs(t: MRtTable) {
   str_reader = "nounwind willreturn nofree memory(read, inaccessiblemem: readwrite)"
   // avant_str.c:524-526: avant_str_n.

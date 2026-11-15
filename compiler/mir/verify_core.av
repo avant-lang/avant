@@ -1,9 +1,8 @@
-// The MIR verifier's core (Stage 28 W4; stages/stage28/mir.md 6): the
-// error, the verifier state, structure (V1-V3), types (V4-V8, V10), the
-// barrier rule (V13), call marks (V18), allocations
-// (V21). verify_module.av: the module-level V10 and V20. verify_gc.av:
-// V9, V11, V12, V14-V17, V19. verify.av: the driver.
-// A function that fails V1-V3 skips the dataflow rules (its CFG or its
+// The MIR verifier's core: the error, the verifier state, structure
+// (V1-V3), types (V4-V8, V10), the barrier rule (V13), call marks (V18),
+// allocations (V21). verify_module.av: the module-level V10 and V20.
+// verify_gc.av: V9, V11, V12, V14-V17, V19. verify.av: the driver. A
+// function that fails V1-V3 skips the dataflow rules (its CFG or its
 // locals cannot be trusted); a place or operand whose type cannot be
 // computed reports its own rule once and silences the rules that need it.
 
@@ -76,9 +75,9 @@ pub class MVerifier {
   pub func: MFunc
   pub bad: Bool = false
   via_ptr: Bool = false
-  // Shared by every function and both stages' rules (Stage 28 W18P,
-  // O154): the place an assign without one is checked as (_0, never
-  // changed), and the list V3 checks a statement's locals in.
+  // Shared by every function and both stages' rules: the place an
+  // assign without one is checked as (_0, never changed), and the
+  // list V3 checks a statement's locals in.
   no_place: MPlace
   used: Array(Int)
 
@@ -165,7 +164,7 @@ pub class MVerifier {
       } else {
         if o = pr.index {
           // op_ty of a `copy` index reenters place_ty, which resets
-          // via_ptr (a W6a fix: `(*_p)[copy _k]` through a ptr).
+          // via_ptr (a fix: `(*_p)[copy _k]` through a ptr).
           vp = self.via_ptr
           it = op_ty(o, b, i, loc)
           self.via_ptr = vp
@@ -319,7 +318,7 @@ pub class MVerifier {
     if src == mt_f64() && tys.is_int(dst) {
       return true
     }
-    // A Float32 at the C boundary (Stage 29 W1b): f64 <-> f32 only.
+    // A Float32 at the C boundary: f64 <-> f32 only.
     if (src == mt_f64() && tys.is_f32(dst)) || (tys.is_f32(src) && dst == mt_f64()) {
       return true
     }
@@ -559,8 +558,8 @@ pub class MVerifier {
 
   // V13 (5.4): the four forms of the barrier before a reference store
   // through a place that is not frame-local. The third (a `ptr` holder,
-  // C memory) is `avant_pin(o)` or, since Stage 28 W16c (D266),
-  // `avant_pin_field(a, o)`, o the stored operand.
+  // C memory) is `avant_pin(o)` or `avant_pin_field(a, o)`, o the
+  // stored operand.
   fn barrier_rule(blk: MBlock, b: Int, j: Int, p: MPlace, pt: Int, r: MRvalue) {
     if p.frame_local() || !self.ts.ref_carrying(pt) {
       return
@@ -680,8 +679,8 @@ pub class MVerifier {
       return
     }
     l = self.ts.layouts[lay]
-    // An element buffer (amendment 2 after W5a, W6c): any whole number
-    // of elements, with the buffer's id.
+    // An element buffer: any whole number of elements, with the
+    // buffer's id.
     size_ok = a0.ival == l.size.to_i()
     if l.kind == mlk_elems() {
       size_ok = (l.size > 0 && a0.ival >= 0 && a0.ival % l.size.to_i() == 0) || a0.ival == 0

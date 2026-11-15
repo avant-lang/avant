@@ -1,14 +1,13 @@
-// The lowering of structs and classes (Stage 28 W6b; stages/stage28/
-// mir.md W6b): layouts and type ids (the old back end's, D186), the
-// synthesized constructors `C.new`, field places, loads and stores with
-// the barrier rule (D187), struct literals, plain methods with `self`,
-// and calls on them. A class value is a `ref %C`; a struct value is an
-// aggregate `%S` held inline; a struct method receives the address of
-// its receiver's storage (`addr %S`, 2.5, audit 2.4), so its `self` and
-// its implicit fields are reached through that address and stores
-// through it take `barrier_at`. A field of union type is a layout fact
-// (2.4: tag, then the payloads, each at its own alignment, W1b); a union
-// value is W7, except `nil` stored into a field that can hold it (a
+// The lowering of structs and classes: layouts and type ids (the old
+// back end's), the synthesized constructors `C.new`, field places, loads
+// and stores with the barrier rule, struct literals, plain methods with
+// `self`, and calls on them. A class value is a `ref %C`; a struct value
+// is an aggregate `%S` held inline; a struct method receives the address
+// of its receiver's storage (`addr %S`, 2.5), so its `self` and its
+// implicit fields are reached through that address and stores through it
+// take `barrier_at`. A field of union type is a layout fact (2.4: tag,
+// then the payloads, each at its own alignment); a union value is
+// lower_union.av's, except `nil` stored into a field that can hold it (a
 // field default, a struct literal, an assignment), which is the core
 // `union %U tag k` rvalue.
 
@@ -39,7 +38,7 @@ pub fn (lw: MirLower) class_ty(cdef: ClassDef): Ty? {
 // Classes first, in program order (decl.av assign_class_ids): each is
 // noted empty and takes the next dynamic id, so ids equal the old back
 // end's and a field `ref %C` can name any class; then each is filled.
-// Generic templates are W7.
+// Generic templates are lowered per instance (lower_generic.av).
 pub fn (lw: MirLower) note_classes {
   p = lw.lw_prog
   for cdef in p.classes {
@@ -81,8 +80,8 @@ pub fn (lw: MirLower) note_classes {
 // The MIR type of a value of struct or class type t (a local, a
 // parameter, a result): `%S` or `ref %C`; -1 after refusing.
 pub fn (lw: MirLower) value_agg_ty(t: Ty, loc: Location): Int {
-  // W8b: a JoinHandle is the runtime's pinned task object (avant_task.c
-  // avant_spawn), a heap reference like a class (audit 1.1.5).
+  // A JoinHandle is the runtime's pinned task object (avant_task.c
+  // avant_spawn), a heap reference like a class.
   if t.is_join() {
     return mt_ref()
   }
@@ -96,7 +95,7 @@ pub fn (lw: MirLower) value_agg_ty(t: Ty, loc: Location): Int {
   if t.is_array() || t.is_hash() || t.is_buf() {
     return lw.container_ty(t, loc)
   }
-  // W8a: Ptr(T) and a C layout held by value inside another (lower_ffi.av).
+  // Ptr(T) and a C layout held by value inside another (lower_ffi.av).
   if t.is_ptr() {
     return lw.ptr_ty(t, loc)
   }
@@ -155,7 +154,7 @@ pub fn (lw: MirLower) field_mty(t: Ty, loc: Location): Int {
 // not complete, so meeting it again by value inside itself refuses. An
 // array of it inside itself (`struct Node { xs: Array(Node) }`, a
 // reference) is finite: container_ty notes the struct's layout ahead
-// (struct_ahead) and its element buffer is completed here (Stage 28 W9).
+// (struct_ahead) and its element buffer is completed here.
 pub fn (lw: MirLower) struct_layout(t: Ty, loc: Location): Int {
   name = mir_mty(t)
   if lw.struct_busy(name) {
@@ -336,9 +335,9 @@ pub fn (lw: MirLower) field_of(t: Ty, name: String, loc: Location): Int {
 
 // Whether the field t is stored inside an Array's element, through
 // struct fields only (`xs[i].f`, `xs[i].pos.x`): the store changes the
-// array's buffer, so the index checks the freeze (O758, Stage 29 W8Cc;
-// lower_arr.av index_place). A class field reached from an element is
-// another object's.
+// array's buffer, so the index checks the freeze (lower_arr.av
+// index_place). A class field reached from an element is another
+// object's.
 pub fn mir_field_in_element(t: Expr): Bool {
   x = t
   while x.kind == ex_field() {
@@ -454,10 +453,10 @@ pub fn (lw: MirLower) lower_place_read(e: Expr): MOperand {
   lw.tmp(ty, lw.lw_b.rv_use(lw.lw_b.copy(p)))
 }
 
-// Stores val into p (D187, 5.4): a reference-carrying value stored
-// through a place that is not frame-local is preceded by the barrier on
-// its holder: `barrier` for a `ref` holder (a class object), `barrier_at`
-// for an `addr` holder (a struct receiver).
+// Stores val into p: a reference-carrying value stored through a place
+// that is not frame-local is preceded by the barrier on its holder:
+// `barrier` for a `ref` holder (a class object), `barrier_at` for an
+// `addr` holder (a struct receiver).
 pub fn (lw: MirLower) store_place(p: MPlace, ty: Int, val: MOperand) {
   b = lw.lw_b
   if !p.frame_local() && lw.lw_m.types.ref_carrying(ty) {
@@ -486,7 +485,7 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
     return
   }
   if et = lw.c_field_enum(t) {
-    // A C layout's enum field is C's int (Stage 29 W5a1, D358).
+    // A C layout's enum field is C's int.
     if v = st.value {
       val = lw.lower_expr(v)
       if lw.failed() {
@@ -547,9 +546,9 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
   lw.refuse(t.loc, "an untyped assignment")
 }
 
-// A store into a C layout's C scalar field (Stage 29 W1b): the value in
-// its Avant view, converted to the field's C type (a trap out of range),
-// then stored; a compound assignment reads the field into its view first.
+// A store into a C layout's C scalar field: the value in its Avant view,
+// converted to the field's C type (a trap out of range), then stored; a
+// compound assignment reads the field into its view first.
 pub fn (lw: MirLower) lower_c_field_assign(st: Stmt, t: Expr, ck: Int) {
   vt = mir_c_view_mty(ck)
   nt = lw.c_scalar_mty(ck)
@@ -651,8 +650,8 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
     return b.c_i32(0)
   }
   if e.callee == "send" && rt.is_class() && rt.mod_name == "std.sync" && (rt.origin == "Channel" || rt.name == "Channel") && args.size == 1 {
-    // What a send carries is the receiver's own (O688, D371): an Array
-    // is copied here, at every level of an array of arrays.
+    // What a send carries is the receiver's own: an Array is copied
+    // here, at every level of an array of arrays.
     if at = args[0].ty, at.is_array() {
       lw.at(args[0].loc)
       ops[0] = lw.send_copy(ops[0], lw.ety(args[0]), at)
@@ -707,7 +706,7 @@ pub fn (lw: MirLower) method_writes(sym: String): Bool {
   rw2.writes(sym)
 }
 
-// A copy of the array o (MIR type aty, Avant type t) for a send (O688):
+// A copy of the array o (MIR type aty, Avant type t) for a send:
 // `avant_array_copy`, the routine `sorted` copies with; when the
 // elements are arrays, each element is replaced by its own copy, so no
 // buffer is shared at any level.
@@ -785,10 +784,10 @@ pub fn (lw: MirLower) lower_ctors {
 }
 
 // `C.new(args)` (the old back end's emit_constructor): avant_alloc(size, id) (the
-// call form, 4.4; the inline path is W6c's), each field default in
-// declaration order (a reference-carrying one behind `barrier`, as the
-// old constructor does, the old back end's emit_field_defaults), then
-// `C.initialize(self, args)`, and the object.
+// call form; the inline path is the emitter's), each field default in declaration
+// order (a reference-carrying one behind `barrier`, as the old constructor does,
+// the old back end's emit_field_defaults), then `C.initialize(self, args)`, and
+// the object.
 pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   b = lw.lw_b
   sym = ""
@@ -849,16 +848,15 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   b.end_fn()
 }
 
-// `C.new(args)` at its call site (Stage 29 VALK-A1, M5, O204), for a class
-// with an `initialize` that takes a reference and no field code before it
-// (no default, no String's ""; ctor_field_code): the arguments, then the
-// allocation, the barrier on it (removed by the fresh pass: the
-// allocation is open, so initialize's own stores need none),
-// `C.initialize(_o, args)`, and the object; exactly what the out-of-line
-// `C.new` does, in the same order,
-// with the caller's frame rooting the arguments across the allocation
-// (scenario 7's Tree.new linked a record of two slots for them on every
-// call). nil when the class does not qualify (`C.new` is called).
+// `C.new(args)` at its call site, for a class with an `initialize` that
+// takes a reference and no field code before it (no default, no String's
+// ""; ctor_field_code): the arguments, then the allocation, the barrier on
+// it (removed by the fresh pass: the allocation is open, so initialize's
+// own stores need none), `C.initialize(_o, args)`, and the object; exactly
+// what the out-of-line `C.new` does, in the same order, with the caller's
+// frame rooting the arguments across the allocation (scenario 7's Tree.new
+// linked a record of two slots for them on every call). nil when the class
+// does not qualify (`C.new` is called).
 pub fn (lw: MirLower) lower_ctor_inline(e: Expr, ci: Int): MOperand? {
   b = lw.lw_b
   cdef = lw.lw_prog.classes[ci]
@@ -955,7 +953,7 @@ pub fn (lw: MirLower) ctor_fill(cdef: ClassDef, t: Ty, o: Int, layout: Int, init
   b = lw.lw_b
   // A default is checked with no names in scope (checker/register.av
   // check_field_defaults), so it sees none of initialize's parameters
-  // here either (W3b).
+  // here either.
   params = lw.lw_vars
   lw.lw_vars = Hash(String, Int).new()
   j = 0
@@ -971,9 +969,9 @@ pub fn (lw: MirLower) ctor_fill(cdef: ClassDef, t: Ty, o: Int, layout: Int, init
       lw.at(fd.loc)
       lw.store_place(b.field(b.deref(b.pl(o)), k), fty, v)
     } else if !fd.set_by_init {
-      // The zero of a field without a default (W3b, D292): the
-      // allocation's zero bytes, except a String's, which is "" (left
-      // out when initialize sets the field before anything can read it).
+      // The zero of a field without a default: the allocation's zero
+      // bytes, except a String's, which is "" (left out when initialize
+      // sets the field before anything can read it).
       lw.at(fd.loc)
       lw.zero_strings(b.field(b.deref(b.pl(o)), k), t.fields[k].ty, fty)
     }
@@ -984,7 +982,7 @@ pub fn (lw: MirLower) ctor_fill(cdef: ClassDef, t: Ty, o: Int, layout: Int, init
   if init_sym.size > 0 {
     // initialize's receiver must be open (MFunc.fresh_self): a field
     // default that collects closes it; the fresh pass removes this
-    // barrier when none did (VALK-A1).
+    // barrier when none did.
     b.barrier(o)
     args: Array(MOperand) = []
     args.push(b.copy_local(o))

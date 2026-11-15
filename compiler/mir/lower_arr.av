@@ -1,15 +1,14 @@
-// The lowering of arrays (Stage 28 W6c; stages/stage28/mir.md W6c): the
-// container types (`ref %Array(E)` over an element buffer `%elems(E)`,
-// `ref %Hash`, `ref %Buf`, 2.2), array literals and `Array(T).new(n)` (the
-// buffer filled by `fresh` stores and closed by one barrier, V14; then the
-// header behind its barrier), indexing with the bounds check, index and
-// element-field stores (D187: `avant_array_set_ptr` for reference
-// elements, a barrier on the element buffer for reference-carrying
-// structs), and the array members without blocks. Element-buffer type ids
-// are taken where the old back end takes them (`array_type_id`: an
-// allocation, push, reserve, or copy), so they equal its ids (D186).
-// Hashes, Buf, and the string members that make arrays are in
-// lower_hash.av.
+// The lowering of arrays: the container types (`ref %Array(E)` over an
+// element buffer `%elems(E)`, `ref %Hash`, `ref %Buf`, 2.2), array
+// literals and `Array(T).new(n)` (the buffer filled by `fresh` stores and
+// closed by one barrier, V14; then the header behind its barrier),
+// indexing with the bounds check, index and element-field stores
+// (`avant_array_set_ptr` for reference elements, a barrier on the element
+// buffer for reference-carrying structs), and the array members without
+// blocks. Element-buffer type ids are taken where the old back end takes
+// them (`array_type_id`: an allocation, push, reserve, or copy), so they
+// equal its ids. Hashes, Buf, and the string members that make arrays are
+// in lower_hash.av.
 
 import location
 import source
@@ -92,7 +91,7 @@ pub fn (lw: MirLower) container_ty(t: Ty, loc: Location): Int {
   -1
 }
 
-// `{ ref %elems(E) data, i32 size, i32 cap }` (audit 1.6.2, 1.6.4).
+// `{ ref %elems(E) data, i32 size, i32 cap }`.
 pub fn mir_arr_header(ts: MTypes, elems: Int): Array(Int) {
   f: Array(Int) = []
   f.push(ts.ref_to(elems))
@@ -116,8 +115,8 @@ pub fn (lw: MirLower) elem_of(aty: Int): Int {
   lw.lw_m.types.layouts[lw.elems_of(aty)].fields[0]
 }
 
-// The buffer's type id (3.3, D186): 65535, 0, or the next dynamic id on
-// first use; called where the old array_type_id is.
+// The buffer's type id: 65535, 0, or the next dynamic id on first use;
+// called where the old array_type_id is.
 pub fn (lw: MirLower) buf_tid(aty: Int): MOperand {
   lw.lw_b.c_u32(lw.lw_b.type_id(lw.elems_of(aty)))
 }
@@ -238,13 +237,12 @@ pub fn (lw: MirLower) array_header(aty: Int, d: Int, n: MOperand): MOperand {
 }
 
 // An array known to be empty where it is made (`[]`, `Array(T).new(0)`): the
-// header alone, with no element buffer (the Valk stage, VALK-A2, O197).
-// The allocation zeroes it: a null data word, size 0, capacity 0, the
-// state every array operation already takes for "no elements" (an
-// element is reached only below the size; a push with size = capacity
-// calls the runtime, whose growth makes the first buffer of four
-// elements, the capacity an empty buffer grew to). Until VALK-A2 an empty
-// array was two objects, the header and a buffer of one unused word:
+// header alone, with no element buffer. The allocation zeroes it: a null
+// data word, size 0, capacity 0, the state every array operation already
+// takes for "no elements" (an element is reached only below the size; a push
+// with size = capacity calls the runtime, whose growth makes the first
+// buffer of four elements, the capacity an empty buffer grew to). Before, an
+// empty array was two objects, the header and a buffer of one unused word:
 // 1.93 million such buffers were 35.6 MB of the compiler's live heap.
 pub fn (lw: MirLower) array_header_empty(aty: Int): MOperand {
   b = lw.lw_b
@@ -310,13 +308,13 @@ pub fn (lw: MirLower) elem_ty_of(e: Expr): Ty {
   ty_int()
 }
 
-// `Array(T).new(n)` and `Array(T).new(n, value)` (Stage 29 W4b1, D295
-// R5): n (a negative n traps: avant_trap_negative(n, 0)), a zeroed buffer
-// of n elements, then the value, when there is one, stored into every
-// element (a reference-carrying one behind the buffer's barrier, as an
-// array literal's), or else the zero's strings when the
-// element's zero is not all zero bytes (a String is "", W3b's
-// zero_strings); then the header with size = cap = n.
+// `Array(T).new(n)` and `Array(T).new(n, value)`: n (a negative n traps:
+// avant_trap_negative(n, 0)), a zeroed buffer of n elements, then the
+// value, when there is one, stored into every element (a
+// reference-carrying one behind the buffer's barrier, as an array
+// literal's), or else the zero's strings when the element's zero is not
+// all zero bytes (a String is "", zero_strings); then the header with
+// size = cap = n.
 pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
   b = lw.lw_b
   aty = lw.ety(e)
@@ -341,7 +339,7 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
   neg = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(k), b.c_i64(0)))
   ok = lw.trap_open(neg, true)
   lw.trap_close(ok, "avant_trap_negative", lw.two(b.copy_local(k), b.c_i32(0)), e.loc)
-  // The ceiling (Stage 29 W-INT1): the header keeps a 32-bit size.
+  // The ceiling: the header keeps a 32-bit size.
   big = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(k), b.c_i64(2147483647)))
   ok2 = lw.trap_open(big, true)
   lw.trap_close(ok2, "avant_trap_size", lw.one(b.c_i32(2)), e.loc)
@@ -352,8 +350,8 @@ pub fn (lw: MirLower) lower_array_new(e: Expr): MOperand {
   et = lw.elem_of(aty)
   want = lw.elem_ty_of(e)
   rc = b.types.ref_carrying(et)
-  // `Array(E).new(n, E.m)` with m's value 0 (Stage 29 W5a1): the
-  // allocation is zeroed already, as for the zero of an Int.
+  // `Array(E).new(n, E.m)` with m's value 0: the allocation is
+  // zeroed already, as for the zero of an Int.
   zero_member = false
   if e.elems.size == 1 && want.is_enum() {
     m0 = e.elems[0]
@@ -432,7 +430,7 @@ pub fn (lw: MirLower) fresh_zero_strings(p: MPlace, t: Ty, mt: Int) {
 
 // ---- indexing
 
-// Whether e indexes an Array or a Buf (a hash index read is a union, W7).
+// Whether e indexes an Array or a Buf (a hash index read is a union).
 pub fn mir_is_seq_index(e: Expr): Bool {
   if e.kind != ex_index() {
     return false
@@ -454,7 +452,7 @@ pub fn (lw: MirLower) seq_bounds(h: Int, i: MOperand, proven: Bool) {
 }
 
 // The size of the Array or Buf in _h as an Int: the header's i32,
-// sign-extended (Stage 29 W-INT1).
+// sign-extended.
 pub fn (lw: MirLower) seq_size(h: Int): MOperand {
   b = lw.lw_b
   n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 1))))
@@ -471,18 +469,18 @@ pub fn (lw: MirLower) seq_place(h: Int, aty: Int, i: MOperand, proven: Bool): MP
   b.index(b.deref(b.pl(d)), i)
 }
 
-// ---- the freeze (Stage 29 W8Cc, O758, D389 (c))
+// ---- the freeze
 //
-// An Array a running task captured cannot change until the task ends
-// (D35, Q74-A): the checker refuses a change through the captured name,
-// and at run time a spawn or a .parallel freezes each captured array
+// An Array a running task captured cannot change until the task ends:
+// the checker refuses a change through the captured name, and at run
+// time a spawn or a .parallel freezes each captured array
 // (lower_task.av freeze_captures) and its end thaws it (thaw_captures).
 // A frozen array's cap word is negative (runtime/avant_rt.h,
 // AVANT_ARRAY_FROZEN): the runtime's mutators test it (push only on its
 // growth path, which a frozen array always takes), and the mutations
-// generated code makes itself test it here: an element store (`xs[i] =
-// v`, `xs[i] += v`, `xs[i].f = v`), `clear`, and a sort with a block.
-// The ops are avant_rt.h's AVANT_FROZEN_*.
+// generated code makes itself test it here: an element store
+// (`xs[i] = v`, `xs[i] += v`, `xs[i].f = v`), `clear`, and a sort with
+// a block. The ops are avant_rt.h's AVANT_FROZEN_*.
 pub fn mir_frozen_clear: Int {
   2
 }
@@ -606,12 +604,12 @@ pub fn (lw: MirLower) lower_seq_index(e: Expr): MOperand {
 
 // `c[i] = v` and `c[i] op= v` (the old back end): a hash store
 // (lower_hash.av); a reference element through `avant_array_set_ptr` (the
-// value, the array, then the index; the runtime barriers, audit 4.4.2);
-// any other element (the value, then the place: the index, the array) as
-// a store into the buffer, behind `barrier` on the buffer when it is
-// reference-carrying (D187); a Buf byte truncated to u8. A compound store
-// reads and writes one place, its index and array evaluated once (the
-// old back end evaluates them twice, W6c.2).
+// value, the array, then the index; the runtime barriers); any other
+// element (the value, then the place: the index, the array) as a store
+// into the buffer, behind `barrier` on the buffer when it is
+// reference-carrying; a Buf byte truncated to u8. A compound store reads
+// and writes one place, its index and array evaluated once (the old back
+// end evaluates them twice).
 pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
   b = lw.lw_b
   if arr = t.left, ix = t.right, ct = arr.ty {
@@ -700,9 +698,9 @@ pub fn (lw: MirLower) lower_index_assign(st: Stmt, t: Expr) {
   lw.refuse(t.loc, "assignment to this index")
 }
 
-// A Buf element store (Stage 29 W4b1, D295 R3): the Int v as a byte, or
-// avant_trap_byte(v) from a cold block when v is outside 0..255 (one
-// unsigned compare; LLVM drops it where v is known to be a byte).
+// A Buf element store: the Int v as a byte, or avant_trap_byte(v) from
+// a cold block when v is outside 0..255 (one unsigned compare; LLVM
+// drops it where v is known to be a byte).
 pub fn (lw: MirLower) byte_of(v: MOperand, loc: Location): MOperand {
   b = lw.lw_b
   x = b.temp(mt_int())

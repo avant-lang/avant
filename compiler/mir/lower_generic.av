@@ -1,14 +1,13 @@
-// Symbols and receivers of functions and methods (Stage 28 W7a;
-// stages/stage28/mir.md 8.2, W7a): plain functions, overloads, generic
-// instances (monomorphic, D175: the checker clones each instance into the
-// program with its own emit name, checker/match.av instantiate_function
-// and instantiate_method; generic structs and classes arrive as their
-// instance definitions, resolve.av instantiate_template), methods on any
-// type including other modules' types, and operator methods. The
-// lowering never re-resolves a call: it lowers what the checker chose
-// (`Expr.resolved`, `Function.emit_name`). Named interfaces are bounds on
-// generics only: they are checked and erased by the checker, so nothing
-// of them reaches the MIR (2.9).
+// Symbols and receivers of functions and methods: plain functions,
+// overloads, generic instances (monomorphic, the checker clones each
+// instance into the program with its own emit name, checker/match.av
+// instantiate_function and instantiate_method; generic structs and
+// classes arrive as their instance definitions, resolve.av
+// instantiate_template), methods on any type including other modules'
+// types, and operator methods. The lowering never re-resolves a call: it
+// lowers what the checker chose (`Expr.resolved`, `Function.emit_name`).
+// Named interfaces are bounds on generics only: they are checked and
+// erased by the checker, so nothing of them reaches the MIR (2.9).
 //
 // A symbol is `av.<module>/<item>` (8.2): item = [owner "."] name, then
 // `[targs]` for a generic instance (the checker's Function.inst_args),
@@ -136,8 +135,8 @@ pub fn (lw: MirLower) method_symbol(fnn: Function): String {
 }
 
 // The receiver's MIR type: `ref %C` for a class, `addr %S` for a struct
-// (audit 2.4: the address of the receiver's storage), the value itself
-// for any other type (the old back end's emit_ptr_method_func).
+// (the address of the receiver's storage), the value itself for any
+// other type (the old back end's emit_ptr_method_func).
 pub fn (lw: MirLower) method_receiver(fnn: Function): Int {
   if ot = lw.method_owner(fnn) {
     if ot.is_struct() {

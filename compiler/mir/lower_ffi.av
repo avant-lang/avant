@@ -1,5 +1,4 @@
-// The lowering of Avant's C interface (Stage 28 W8a; stages/stage28/
-// mir.md W8a, audit 1.7, 2.10, 4.6): `Ptr(T)` values (`ptr %L` for a C
+// The lowering of Avant's C interface: `Ptr(T)` values (`ptr %L` for a C
 // layout pointee, else the untyped `ptr`), C layouts (`clayout`, laid out
 // by the C rule, reached only through `ptr %L`), calls of `lib`/`fun`
 // bindings (an external with its C name, 8.1; arguments converted as the
@@ -10,7 +9,7 @@
 // statement (unpinned at the end of its block, before every return, and
 // on `break`/`next` out of the pinning loop), and the pin of a heap value
 // stored into a C-layout field (recorded by the field's address and
-// unpinned only by `release`, D266; V13 third form), and `release`.
+// unpinned only by `release`; V13 third form), and `release`.
 
 import location
 import source
@@ -30,9 +29,9 @@ import re2c_pat
 
 // ---- types
 
-// Ptr(T) (2.3, audit 1.7.1): `ptr %L` when T is a C layout (its fields
-// are reached through it), else the untyped `ptr` (opaque, Void, and
-// every other pointee: the language reads nothing through them).
+// Ptr(T) (2.3): `ptr %L` when T is a C layout (its fields are reached
+// through it), else the untyped `ptr` (opaque, Void, and every other
+// pointee: the language reads nothing through them).
 pub fn (lw: MirLower) ptr_ty(t: Ty, loc: Location): Int {
   if inner = t.inner, inner.is_clayout() {
     l = lw.clayout_layout(inner, loc)
@@ -44,9 +43,9 @@ pub fn (lw: MirLower) ptr_ty(t: Ty, loc: Location): Int {
   mt_ptr()
 }
 
-// A C layout (2.6, audit 1.7.2): the C fields in declaration order by the
-// C rule, as the old back end's plain STRUCT; noted on first use, never
-// given a type id (it never lives on the GC heap).
+// A C layout (2.6): the C fields in declaration order by the C rule, as
+// the old back end's plain STRUCT; noted on first use, never given a type
+// id (it never lives on the GC heap).
 pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
   name = mir_mty(t)
   l = lw.lw_m.types.layout_named(name)
@@ -67,7 +66,7 @@ pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
       ft = lw.c_scalar_mty(t.fields[j].ty.c_scalar)
     }
     if t.fields[j].ty.is_enum() {
-      // C's int (D358): read through enum_from_c, written through
+      // C's int: read through enum_from_c, written through
       // enum_to_c.
       ft = mt_i32()
     }
@@ -88,7 +87,7 @@ pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
 // `ptr`, the address of a `#cb` thunk); the first binding of a C name
 // declares it, a call through another binding carries its own signature
 // (3.5). The class is the call table's for the C name, else `collects`;
-// a function that takes a callback always collects (audit 2.10).
+// a function that takes a callback always collects.
 pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -102,7 +101,7 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
       } else if param.c_scalar > 0 {
         ps.push(lw.c_scalar_mty(param.c_scalar))
       } else if param.is_enum() {
-        // C's int (D358).
+        // C's int.
         ps.push(mt_i32())
       } else {
         ps.push(lw.ty_at(param, e.loc, "a C parameter"))
@@ -204,13 +203,13 @@ pub fn (lw: MirLower) c_ret_string(t: Ty): Bool {
 
 // A C function declared to return a `String` may return an address inside
 // a heap object (`strchr` of a heap string): a root slot may hold one, a
-// reference-typed field may not (the field rule, D342 Q6;
+// reference-typed field may not (the field rule;
 // runtime/avant_gc_internal.h), and nothing in the program says which the
 // result will reach. So the result passes through avant_c_str (the Valk
-// stage, VALK-A2, O629; D352): an address outside the collected heap (C's
-// own memory, a literal), null and the exact start of a heap string come
-// back as they are; an address inside a heap object comes back as a fresh
-// copy of the C string there. A collecting call: the copy allocates.
+// stage): an address outside the collected heap (C's own memory, a
+// literal), null and the exact start of a heap string come back as they
+// are; an address inside a heap object comes back as a fresh copy of the
+// C string there. A collecting call: the copy allocates.
 pub fn (lw: MirLower) c_string_owned(dest: Int): MOperand {
   b = lw.lw_b
   args: Array(MOperand) = []
@@ -219,8 +218,8 @@ pub fn (lw: MirLower) c_string_owned(dest: Int): MOperand {
 }
 
 // A C function declared `: String` promises a string: a NULL it returns
-// traps, naming the function (Stage 29 W4b2, D295 R15; one compare and a
-// cold block). `String?` reads NULL as nil (W3b).
+// traps, naming the function (one compare and a cold block). `String?`
+// reads NULL as nil.
 pub fn (lw: MirLower) c_string_present(dest: Int, name: String, loc: Location) {
   b = lw.lw_b
   isnull = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(dest), b.c_null(b.func.locals[dest].ty)))
@@ -272,13 +271,13 @@ pub fn (lw: MirLower) cb_pointer(arg: Expr, fty: Ty): MOperand {
   b.c_fn(sym)
 }
 
-// The callback thunks (calls.av emit_cb_thunk, audit 2.10): the plain C
-// signature of the `fn` type (the emitter gives `#cb` functions the C
-// boundary's `zeroext` on Bool, 14 8.5), a call of the target with the
-// parameters (after a null environment for a lambda thunk), its result
-// returned. The leaf and frame passes decide its kind like any function's.
-// A struct, union, or fn value by value in a callback's C signature is
-// refused (the C ABI lowering, C3, is done for calls into C only).
+// The callback thunks (calls.av emit_cb_thunk): the plain C signature of
+// the `fn` type (the emitter gives `#cb` functions the C boundary's
+// `zeroext` on Bool, 14 8.5), a call of the target with the parameters
+// (after a null environment for a lambda thunk), its result returned. The
+// leaf and frame passes decide its kind like any function's. A struct,
+// union, or fn value by value in a callback's C signature is refused (the
+// C ABI lowering, C3, is done for calls into C only).
 pub fn (lw: MirLower) lower_cb_thunks {
   b = lw.lw_b
   i = 0
@@ -289,7 +288,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
     j = 0
     while j < cb.fty.members.size {
       if cb.fty.members[j].is_enum() {
-        // C's int, checked on the way in (Stage 29 W5a1, D358).
+        // C's int, checked on the way in.
         ps.push(mt_i32())
       } else {
         ps.push(lw.ty_at(cb.fty.members[j], cb.loc, "a C callback parameter"))
@@ -368,7 +367,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
 
 // The place of `p.f` with p a `Ptr(L)`, L a C layout: p in a local (the
 // holder), then `(*_h).k` (V13 wants the deref first).
-// ---- C scalar types (D64 as amended, Stage 29 W1b)
+// ---- C scalar types
 
 // The C width of a C scalar type (type.av cs_*).
 pub fn (lw: MirLower) c_scalar_mty(k: Int): Int {
@@ -399,8 +398,8 @@ pub fn (lw: MirLower) from_c_scalar(v: MOperand, k: Int): MOperand {
 }
 
 // An Avant value passed or stored as a C scalar: an integer outside the C
-// type's range traps with avant_trap_c_range(value, k) (D215: the correct
-// value or a trap); a Float64 rounds to the nearest Float32.
+// type's range traps with avant_trap_c_range(value, k) (the correct value
+// or a trap); a Float64 rounds to the nearest Float32.
 pub fn (lw: MirLower) to_c_scalar(v: MOperand, k: Int, loc: Location): MOperand {
   b = lw.lw_b
   nt = lw.c_scalar_mty(k)
@@ -459,7 +458,7 @@ pub fn (lw: MirLower) c_field_scalar(e: Expr): Int {
 }
 
 // The enum type of a C layout's field that e names (directly or through
-// a Ptr), else nil (Stage 29 W5a1).
+// a Ptr), else nil.
 pub fn (lw: MirLower) c_field_enum(e: Expr): Ty? {
   none: Ty? = nil
   if e.kind == ex_field() && !e.method_call {
@@ -500,10 +499,9 @@ pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
 // back end's emit_assign, c_layout_heap_store): the value in a local, the
 // field's address in a local (one GEP: `addr` of a place reached through
 // a `ptr` is a `ptr`), the value pinned and the pin recorded under that
-// address (`avant_pin_field`, Stage 28 W16c, D266), then stored. An
-// overwrite unpins nothing; `release` gives the recorded pins back
-// (lower_release). C memory is not traced, so no barrier (audit 4.6 (4);
-// V13 third form).
+// address (`avant_pin_field`), then stored. An overwrite unpins nothing;
+// `release` gives the recorded pins back (lower_release). C memory is not
+// traced, so no barrier (V13 third form).
 pub fn (lw: MirLower) pinned_store(p: MPlace, ty: Int, val: MOperand) {
   b = lw.lw_b
   v = lw.hold(val, ty)
@@ -516,12 +514,12 @@ pub fn (lw: MirLower) pinned_store(p: MPlace, ty: Int, val: MOperand) {
   b.assign(p, b.rv_use(b.copy_local(v)))
 }
 
-// `release(place)` (Stage 28 W16c, D266): the pins Avant's stores into
-// a C-layout field took, given back. For a field (`release(h.name)`,
-// `release(h.at)`): its address (`addr` of a place through a `ptr` is a
-// `ptr`) and its size; for a `Ptr` to a C layout (`release(h)`): the
-// pointer and the layout's size. Then `avant_release_range(lo, n)`,
-// which never collects. No store, so no V13 form.
+// `release(place)`: the pins Avant's stores into a C-layout field took,
+// given back. For a field (`release(h.name)`, `release(h.at)`): its
+// address (`addr` of a place through a `ptr` is a `ptr`) and its size;
+// for a `Ptr` to a C layout (`release(h)`): the pointer and the
+// layout's size. Then `avant_release_range(lo, n)`, which never
+// collects. No store, so no V13 form.
 pub fn (lw: MirLower) lower_release(st: Stmt) {
   b = lw.lw_b
   if e = st.expr {
@@ -642,11 +640,11 @@ pub fn (lw: MirLower) task_name(name: String): String {
   "avant_task_hold_end"
 }
 
-// `gc.hold { body }` (std.gc, Stage 29 W1c2, D305): avant_gc_hold_begin,
-// the body, avant_gc_hold_end at the end of the block when it falls
-// through. The hold is an entry of the pin stack (h -1), so it ends on
-// every way out as a pin is unpinned: before a return (and a `?` that
-// returns), and on break or continue out of a loop opened outside it.
+// `gc.hold { body }` (std.gc): avant_gc_hold_begin, the body,
+// avant_gc_hold_end at the end of the block when it falls through. The
+// hold is an entry of the pin stack (h -1), so it ends on every way out
+// as a pin is unpinned: before a return (and a `?` that returns), and on
+// break or continue out of a loop opened outside it.
 pub fn (lw: MirLower) lower_hold(st: Stmt) {
   b = lw.lw_b
   lw.at(st.loc)
@@ -685,7 +683,7 @@ pub fn (lw: MirLower) unpin_all {
   }
 }
 
-// ---- literal regex patterns (D150)
+// ---- literal regex patterns
 
 // `Regex.compile("<literal>", <literal flags>)` whose pattern re2c
 // compiled at build time (pipeline.av re2c_plan; calls.av emit_call,
@@ -740,7 +738,7 @@ pub fn (lw: MirLower) lower_re2c_compile(e: Expr): MOperand? {
   nil
 }
 
-// ---- Enums at the C boundary (Stage 29 W5a1, D358, point 10)
+// ---- Enums at the C boundary
 
 // An enum passed to C is C's int: a narrow (one-byte) enum is widened,
 // one instruction.

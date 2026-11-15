@@ -1,26 +1,23 @@
-// The lowering of the concurrency constructs (Stage 28 W8b;
-// stages/stage28/mir.md W8b, audit 6): `spawn { }` and `JoinHandle`,
-// `.parallel { |x| }` on arrays, `Mutex.with { |x| }`, and the gate
-// builtins (`avant_gate_*`, which `Channel(T)` is written in), with the
-// old back end's representations and runtime calls (calls.av:451-1116).
+// The lowering of the concurrency constructs: `spawn { }` and
+// `JoinHandle`, `.parallel { |x| }` on arrays, `Mutex.with { |x| }`,
+// and the gate builtins (`avant_gate_*`, which `Channel(T)` is written
+// in), with the old back end's representations and runtime calls
+// (calls.av:451-1116).
 //
-// A spawn copies its captures by value (D35) into a heap record
-// `%spawn_cap(<thunk>)`, which `avant_spawn` roots from the task until
-// the thunk returns (R1, Stage 28 W16b: no pin; before, it was pinned
-// here and unpinned by `avant_join`); its thunk `<enclosing>#spawnN(ref) -> i32`
-// has its own frame and copies each capture into a local (or a fresh box
-// when a lambda in the block captures it). A `.parallel` allocates the
-// result array, a context record `%par_cap(<thunk>)` holding the input,
-// the output, and the captures, and calls `avant_parallel_for` (which roots
-// the context while it runs); its thunk `<enclosing>#parN(i32, ref)` reads element i (through
-// `avant_array_get_ptr` for a reference element, else from the buffer),
-// runs the block, and stores the result (`avant_array_set_ptr`, else
-// into the buffer behind its barrier). `Mutex.with` locks the mutex's
-// gate, lowers the block in place with its parameter naming the cell,
-// and unlocks. Capture-record type ids are noted by the pre-walk at the
-// old points (decl.av collect_expr), so the type maps equal the old
-// back end's. A program that spawns or uses `.parallel` makes the
-// module shared (section 7).
+// A spawn copies its captures by value into a heap record `%spawn_cap(<thunk>)`, which
+// `avant_spawn` roots from the task until the thunk returns (no pin; before, it was pinned
+// here and unpinned by `avant_join`); its thunk `<enclosing>#spawnN(ref) -> i32` has its own
+// frame and copies each capture into a local (or a fresh box when a lambda in the block
+// captures it). A `.parallel` allocates the result array, a context record
+// `%par_cap(<thunk>)` holding the input, the output, and the captures, and calls
+// `avant_parallel_for` (which roots the context while it runs); its thunk
+// `<enclosing>#parN(i32, ref)` reads element i (through `avant_array_get_ptr` for a reference
+// element, else from the buffer), runs the block, and stores the result
+// (`avant_array_set_ptr`, else into the buffer behind its barrier). `Mutex.with` locks the
+// mutex's gate, lowers the block in place with its parameter naming the cell, and unlocks.
+// Capture-record type ids are noted by the pre-walk at the old points (decl.av collect_expr),
+// so the type maps equal the old back end's. A program that spawns or uses `.parallel` makes
+// the module shared (section 7).
 
 import location
 import source
@@ -134,7 +131,7 @@ pub fn (lw: MirLower) capture_value(name: String, t: Ty, loc: Location): MOperan
 
 // Stores the captures into the record in _c from field base on
 // (calls.av emit_spawn, emit_parallel), each behind the record's barrier
-// when it is reference-carrying (D187).
+// when it is reference-carrying.
 pub fn (lw: MirLower) store_captures(e: Expr, c: Int, base: Int) {
   b = lw.lw_b
   ts = b.types
@@ -151,19 +148,20 @@ pub fn (lw: MirLower) store_captures(e: Expr, c: Int, base: Int) {
   }
 }
 
-// The freeze of a task's captured arrays (O758, Stage 29 W8Cc, D389
-// (c); lower_arr.av "the freeze"): each Array capture in the record in
-// _c (from field base on) is frozen before the task starts, at every
-// level of an array of arrays, and thawed when the task ends, so no
-// path (an alias, a call, a field) changes it while the task reads it.
+// The freeze of a task's captured arrays (lower_arr.av "the freeze"):
+// each Array capture in the record in _c (from field base on) is
+// frozen before the task starts, at every level of an array of arrays,
+// and thawed when the task ends, so no path (an alias, a call, a
+// field) changes it while the task reads it.
 pub fn (lw: MirLower) freeze_captures(e: Expr, c: Int, base: Int) {
   lw.each_array_capture(e, c, base, true)
 }
 
 // The task's end (a spawn thunk's return, or the return of
-// `avant_parallel_for`): each frozen capture thawed. The hook O194
-// needs: when a trap may end a task without ending the program (W8Cd),
-// that end must thaw what the task's start froze, as this does.
+// `avant_parallel_for`): each frozen capture thawed. The hook a trap
+// that ends only its task needs: when a trap may end a task without
+// ending the program, that end must thaw what the task's start
+// froze, as this does.
 pub fn (lw: MirLower) thaw_captures(e: Expr, c: Int, base: Int) {
   lw.each_array_capture(e, c, base, false)
 }
@@ -376,8 +374,8 @@ pub fn (lw: MirLower) join_result_sym: String {
 // its size n, the result array (a zeroed buffer of n elements and its
 // header, as Array(T).new(n)), the context with the input, the result,
 // and the captures, then `avant_parallel_for(n, thunk, ctx)`, which roots
-// the context for the call's duration (Stage 28 W17b, O122; until then
-// the context was pinned here and unpinned after the call, W8b, D196).
+// the context for the call's duration (until then the context was pinned
+// here and unpinned after the call).
 pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -421,8 +419,8 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   if lw.failed() {
     return zero
   }
-  // The input and the captured arrays are frozen while the bodies run
-  // (O758): a body may reach them through an alias or a call.
+  // The input and the captured arrays are frozen while the bodies
+  // run: a body may reach them through an alias or a call.
   rt = ty_int()
   if t0 = recv.ty {
     rt = t0
@@ -748,10 +746,10 @@ pub fn (lw: MirLower) mutex_place(i: Int): MPlace {
   b.field(b.deref(b.pl(lw.lw_task.pholders[i])), lw.lw_task.pfields[i])
 }
 
-// A gate function's arguments (O690): the object in local h, which
-// holds the gate word as its field gi, and the word's byte offset in it.
-// The runtime reads the word at the object plus the offset only while
-// the calling thread runs, so no address inside a heap object is ever an
+// A gate function's arguments: the object in local h, which holds the
+// gate word as its field gi, and the word's byte offset in it. The
+// runtime reads the word at the object plus the offset only while the
+// calling thread runs, so no address inside a heap object is ever an
 // operand (the object may move at any collection; h is a root).
 pub fn (lw: MirLower) gate_args(h: Int, gi: Int): Array(MOperand) {
   b = lw.lw_b
@@ -861,7 +859,7 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   lw.lw_task.pfields.push(ci)
   // The lock is an entry of the pin stack (lower_ffi.av unpin: -2 - h),
   // so a return, a `?` that returns, a break or a continue out of the
-  // block releases it, as they end a `gc.hold` (O263, O313).
+  // block releases it, as they end a `gc.hold`.
   lw.lw_ffi.with_gate[h] = gi
   lw.lw_ffi.pins.push(-2 - h)
   lw.lw_ffi.pin_depth.push(lw.lw_heads.size)
@@ -1006,8 +1004,8 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
     return lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(r), b.c_i32(0)))
   }
   if mir_gate_builtin(c) && e.args.size == 1 {
-    // The gate field's object and offset (O690; the checker allows only
-    // a field, whose place is its holder's local, a deref and the field).
+    // The gate field's object and offset (the checker allows only a
+    // field, whose place is its holder's local, a deref and the field).
     p = lw.place_of(e.args[0])
     if lw.failed() {
       return b.c_i32(0)

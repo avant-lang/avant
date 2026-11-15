@@ -1,8 +1,7 @@
-// MIR types and layouts (Stage 28 W4; stages/stage28/mir.md section 2).
-// One MType per distinct type, interned by its printed text; ids 0-12 are
-// the fixed scalar and untyped kinds below. Layouts compute their C-rule
-// offsets, size, alignment, heap reference words, and root words (2.10)
-// when noted.
+// MIR types and layouts. One MType per distinct type, interned by its
+// printed text; ids 0-12 are the fixed scalar and untyped kinds below.
+// Layouts compute their C-rule offsets, size, alignment, heap reference
+// words, and root words (2.10) when noted.
 
 import source
 
@@ -32,15 +31,15 @@ pub fn mt_str: Int { 9 }
 pub fn mt_task: Int { 10 }
 pub fn mt_ptr: Int { 11 }
 pub fn mt_addr: Int { 12 }
-// The narrow integers an enum is stored in (Stage 29 W5a3, O685; D358),
-// fixed after the others so every earlier id is unchanged; a C scalar of
-// these widths (W1b) is the same type.
+// The narrow integers an enum is stored in, fixed after the others so
+// every earlier id is unchanged; a C scalar of these widths is the same
+// type.
 pub fn mt_i8: Int { 13 }
 pub fn mt_i16: Int { 14 }
 pub fn mt_u16: Int { 15 }
-// The MIR type of the language's `Int` (Stage 29 W-INT1, D314: 64-bit).
-// Sizes and capacities in the Array, Buf and Hash headers stay i32 (the
-// runtime's ceiling, AVANT_SIZE_MAX), read with a sign extension.
+// The MIR type of the language's `Int` (64-bit). Sizes and capacities
+// in the Array, Buf and Hash headers stay i32 (the runtime's ceiling,
+// AVANT_SIZE_MAX), read with a sign extension.
 pub fn mt_int: Int { 5 }
 
 // Layout kinds (2.4).
@@ -160,9 +159,9 @@ pub class MTypes {
     prim(mk_int(), 16, false, "u16")
   }
 
-  // A C scalar's type (Stage 29 W1b): f32 is interned on first use (i8,
-  // i16, u16, u8 and u32 are fixed ids, found by their text); kind mk_int,
-  // or mk_f64 with 32 bits for f32.
+  // A C scalar's type: f32 is interned on first use (i8, i16, u16, u8 and
+  // u32 are fixed ids, found by their text); kind mk_int, or mk_f64 with
+  // 32 bits for f32.
   pub fn scalar(kind: Int, bits: Int, signed: Bool, text: String): Int {
     if i = self.index.get(text) {
       return i
@@ -320,9 +319,9 @@ pub class MTypes {
   }
 
   // (Re)computes layout id's fields, offsets, size, alignment, and word
-  // sets (W6b): a class is noted empty first, so that a field of type
-  // `ref %C` can name it (recursive and mutually referring classes), and
-  // filled once every layout its fields hold by value exists.
+  // sets: a class is noted empty first, so that a field of type `ref %C`
+  // can name it (recursive and mutually referring classes), and filled
+  // once every layout its fields hold by value exists.
   pub fn set_fields(id: Int, fields: Array(Int), names: Array(String)) {
     l = self.layouts[id]
     f: Array(Int) = []

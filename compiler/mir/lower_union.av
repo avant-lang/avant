@@ -1,16 +1,15 @@
-// The lowering of unions and `T?` (Stage 28 W7a; stages/stage28/mir.md
-// W7a): a union value is its layout by value (2.4: `i32 tag`, then one
-// payload per non-nil member in the checker's member order; the tag of
-// member k is k). Construction is the `union` rvalue (other payloads
-// zero); a value meets a union type only where the checker allows it
-// (`ty_assignable`) and is converted there (`coerce`): a member is
-// wrapped with its tag, `nil` with the nil tag, and a union of fewer
-// members is re-tagged member by member (`retag`, which also narrows:
-// the success side of `if x = ...`, `?`, and `??` when it is a union).
-// Reads test the tag and copy the payload. The builtins whose result is
-// `T?` are here too: `get` on String, Bytes, Array, Buf, and Hash, hash
-// index reads, `get_slice`, `get_concat`, `index_of`, `min`, `max`,
-// `env_get`, and `file_read`.
+// The lowering of unions and `T?`: a union value is its layout by value
+// (2.4: `i32 tag`, then one payload per non-nil member in the checker's
+// member order; the tag of member k is k). Construction is the `union`
+// rvalue (other payloads zero); a value meets a union type only where
+// the checker allows it (`ty_assignable`) and is converted there
+// (`coerce`): a member is wrapped with its tag, `nil` with the nil tag,
+// and a union of fewer members is re-tagged member by member (`retag`,
+// which also narrows: the success side of `if x = ...`, `?`, and `??`
+// when it is a union). Reads test the tag and copy the payload. The
+// builtins whose result is `T?` are here too: `get` on String, Bytes,
+// Array, Buf, and Hash, hash index reads, `get_slice`, `get_concat`,
+// `index_of`, `min`, `max`, `env_get`, and `file_read`.
 
 import location
 import source
@@ -52,8 +51,8 @@ pub fn mir_payload_field(u: Ty, i: Int): Int {
 // member is wrapped with its tag; a union is re-tagged.
 pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOperand {
   if want.is_ptr() && got.is_ptr() && !lw.failed() {
-    // W8a: Ptr(A) as Ptr(B) (the checker unifies pointees): a pointer
-    // cast when the MIR types differ (`ptr %L` and `ptr`).
+    // Ptr(A) as Ptr(B) (the checker unifies pointees): a pointer cast
+    // when the MIR types differ (`ptr %L` and `ptr`).
     pw = lw.ty_at(want, loc, "a pointer")
     pg = lw.ty_at(got, loc, "a pointer")
     if lw.failed() || pw == pg {
@@ -106,8 +105,8 @@ pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
     return lw.tmp(ty, b.rv_union_nil(b.types.layout_of(ty), want.tag_of(ty_nil())))
   }
   // Every value here is checked: the field defaults of generic class
-  // instances too, since the checker types them by their fields (C14,
-  // W10b; until then this typed untyped literal defaults itself).
+  // instances too, since the checker types them by their fields
+  // (until then this typed untyped literal defaults itself).
   o = lw.lower_expr(v)
   if t = v.ty {
     return lw.coerce(o, t, want, v.loc)
@@ -118,15 +117,15 @@ pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
 // The arguments of a call, left to right, each converted to its
 // parameter's type (the old back end converts only the arguments of
 // type-level calls, calls.av:1384-1427; a `nil` or a bare T passed to a
-// `T?` parameter of a plain function or method does not compile there:
-// D196).
+// `T?` parameter of a plain function or method does not compile there;
+// the bug is not reproduced).
 //
 // frame is the call's argument frame (Expr.int_bits of a call whose
 // defaults may name an earlier parameter, else 0; checker/match.av
 // fill_defaults): each argument's operand, as the call passes it, is
 // kept under its hidden name while the later arguments are lowered, so
 // a default that names the parameter reads that operand (lower_name) and
-// the argument is evaluated once (O546).
+// the argument is evaluated once.
 pub fn (lw: MirLower) lower_args_to(args: Array(Expr), params: Array(Ty), frame: UInt64): Array(MOperand) {
   lw.lower_args_in(args, params, frame, nil)
 }
@@ -274,10 +273,10 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   b.copy_local(d)
 }
 
-// retag where one side is an optional reference (W3b, B13): from one,
-// its null pointer as to's nil and its reference as to's member; into
-// one, the payload of its reference member, null for every other member
-// (nil, or the failure side the caller's test already excluded).
+// retag where one side is an optional reference: from one, its null
+// pointer as to's nil and its reference as to's member; into one, the
+// payload of its reference member, null for every other member (nil, or
+// the failure side the caller's test already excluded).
 fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location): MOperand {
   b = lw.lw_b
   d = b.temp(tty)
@@ -369,7 +368,7 @@ pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOp
 }
 
 // `tag == k` (or `!=`) of the union in src, of type uty; for an
-// optional reference, a null test (W3b, B13).
+// optional reference, a null test.
 pub fn (lw: MirLower) tag_is(src: Int, uty: Ty, k: Int, eq: Bool): MOperand {
   b = lw.lw_b
   if r = mir_opt_word(uty) {
@@ -383,7 +382,7 @@ pub fn (lw: MirLower) tag_is(src: Int, uty: Ty, k: Int, eq: Bool): MOperand {
   lw.tmp(mt_bool(), b.rv_cmp(op, tag, b.c_i32(k)))
 }
 
-// ---- `switch` over a union (Stage 29 W5a2, D293, O210, O391)
+// ---- `switch` over a union
 
 // One tag load and one switch on it (for an optional reference, one
 // null test); each arm that binds its member copies the payload as
@@ -557,10 +556,10 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
     }
     b.at(bnil)
     if r.kind == ex_switch() && r.op == tk_return() {
-      // `?? return v`, `?? break`, `?? continue` (Stage 29 W4a): the
-      // statement leaves; nothing reaches the join from here. An else
-      // guard (`n = f() else e { ... }`, W5b1) binds its name to the
-      // failure first, and its block leaves too (the checker's rule).
+      // `?? return v`, `?? break`, `?? continue`: the statement
+      // leaves; nothing reaches the join from here. An else guard
+      // (`n = f() else e { ... }`) binds its name to the failure
+      // first, and its block leaves too (the checker's rule).
       if expr_is_else_guard(r) && r.ident.size > 0 {
         lw.bind_failure(r.ident, src, uty, fails, loc)
         if lw.failed() {
@@ -646,9 +645,9 @@ pub fn (lw: MirLower) lower_expect(l: Expr, why: Expr, result: Ty, loc: Location
   b.c_i32(0)
 }
 
-// `else e` (Stage 29 W5b1, D352), on the failure path: e holds the
-// union in src (of type uty) as its one failure member, or as the union
-// of fails (checker.av else_failure).
+// `else e`, on the failure path: e holds the union in src (of type uty)
+// as its one failure member, or as the union of fails (checker.av
+// else_failure).
 pub fn (lw: MirLower) bind_failure(name: String, src: Int, uty: Ty, fails: Array(Ty), loc: Location) {
   b = lw.lw_b
   if fails.size == 1 {
@@ -663,8 +662,7 @@ pub fn (lw: MirLower) bind_failure(name: String, src: Int, uty: Ty, fails: Array
 }
 
 // A branch to bfail when the union in src (of type uty) holds one of
-// fails (D292: several failure members), else to bok: one switch on the
-// tag.
+// fails (several failure members), else to bok: one switch on the tag.
 pub fn (lw: MirLower) branch_failure(src: Int, uty: Ty, fails: Array(Ty), bfail: Int, bok: Int) {
   b = lw.lw_b
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
@@ -678,10 +676,9 @@ pub fn (lw: MirLower) branch_failure(src: Int, uty: Ty, fails: Array(Ty), bfail:
 }
 
 // `e?` (the old back end's emit_try, emit_failure_return): the union once; on a
-// failure tag (D292: nil and the members marked Error) the function
-// returns the failure (the union itself when the result type is the
-// same, else the failure as the result type); otherwise the value is the
-// success part.
+// failure tag (nil and the members marked Error) the function returns the
+// failure (the union itself when the result type is the same, else the failure
+// as the result type); otherwise the value is the success part.
 pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
   b = lw.lw_b
   if inner = e.inner, uty = inner.ty, ret = lw.lw_ret_ty {
@@ -765,7 +762,7 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
       b.at(bf)
       lw.cov_branch(st.loc)
       if st.else_bind.size > 0 && st.else_body.size > 0 {
-        // `else e` (Stage 29 W5b1): e holds the failure.
+        // `else e`: e holds the failure.
         lw.bind_failure(st.else_bind, src, uty, fails, st.loc)
         if lw.failed() {
           return
@@ -780,9 +777,9 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
   lw.refuse(st.loc, "this if binding")
 }
 
-// One binding of an if-assign or a chain element (Stage 29 W4a): the
-// union once; on a failure tag to bfail, else on to a fresh block where
-// the name holds the success part (the builder is left there).
+// One binding of an if-assign or a chain element: the union once; on a
+// failure tag to bfail, else on to a fresh block where the name holds
+// the success part (the builder is left there).
 pub fn (lw: MirLower) lower_cond_bind(el: Stmt, bfail: Int): Int {
   b = lw.lw_b
   if c = el.cond, uty = c.ty {
@@ -834,11 +831,11 @@ pub fn (lw: MirLower) lower_cond_element(el: Stmt, bfail: Int): Int {
   -1
 }
 
-// An `if` with a condition list, or one whose branches give a value
-// (Stage 29 W4a): the elements in order, each failure to the one else
-// block (never duplicated); mode 0 is a statement, 1 writes each
-// branch's value into dest (converted to want), 2 returns it from the
-// function (its tail).
+// An `if` with a condition list, or one whose branches give a value:
+// the elements in order, each failure to the one else block (never
+// duplicated); mode 0 is a statement, 1 writes each branch's value
+// into dest (converted to want), 2 returns it from the function (its
+// tail).
 pub fn (lw: MirLower) lower_if_general(st: Stmt, mode: Int, dest: Int, want: Ty?) {
   b = lw.lw_b
   belse = b.block()
@@ -864,8 +861,8 @@ pub fn (lw: MirLower) lower_if_general(st: Stmt, mode: Int, dest: Int, want: Ty?
     b.at(belse)
     lw.cov_branch(st.loc)
     if st.else_bind.size > 0 && st.else_body.size > 0 && src >= 0 {
-      // `else e` (Stage 29 W5b1): only the binding's failure reaches
-      // belse (the checker refuses it beside a condition list).
+      // `else e`: only the binding's failure reaches belse (the
+      // checker refuses it beside a condition list).
       if c = st.cond, uty = c.ty {
         lw.bind_failure(st.else_bind, src, uty, ty_failures(uty), st.loc)
         if lw.failed() {
@@ -948,7 +945,7 @@ pub fn (lw: MirLower) opt_of(want: Ty, found: MOperand, v: MOperand, vt: Ty, loc
   b.branch(found, bt, bf)
   b.at(bt)
   if r = mir_opt_word(want) {
-    // An optional reference (W3b, B13): the reference, or null.
+    // An optional reference: the reference, or null.
     b.assign(b.pl(d), b.rv_use(v))
     b.goto(join)
     b.at(bf)
@@ -1065,7 +1062,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     }
     if oref || t.same_as(elt) {
       // An optional reference, or an element that is already the result
-      // (`get` on an `Array(T?)`, W3b: the verifier refused the old
+      // (`get` on an `Array(T?)`, the verifier refused the old
       // re-wrapping of the element as its own member).
       b.assign(b.pl(d), b.rv_use(v))
     } else {

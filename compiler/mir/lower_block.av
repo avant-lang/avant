@@ -1,17 +1,15 @@
-// The lowering of the builtins that take a block (Stage 28 W7b;
-// stages/stage28/mir.md W7b): `Array.each`, `any`, `all`, `sort { }`,
-// `sorted { }`, and `Hash.each` are inlined loops in the calling
-// function, as the old back end emitted them: the receiver once into a local, an `i32`
-// counter, the size and the element buffer read again on every
-// iteration, the block's parameters bound as the function's own named
-// locals (or through their boxes when a lambda in the block captures
-// them), the body lowered in place. A `return` in the block returns from
-// the function; `break` leaves the inlined loop and `next` goes on with
-// the next element (the old back end's `next` jumped back to the test
-// without the increment, a loop that never ends: D196). A value block
-// (`any`, `all`, the comparators) yields the expression of its last
-// statement. Blocks given to user functions are lambdas (the checker
-// absorbs them as the last argument), lower_fn.av.
+// The lowering of the builtins that take a block: `Array.each`, `any`, `all`,
+// `sort { }`, `sorted { }`, and `Hash.each` are inlined loops in the calling function,
+// as the old back end emitted them: the receiver once into a local, an `i32` counter,
+// the size and the element buffer read again on every iteration, the block's
+// parameters bound as the function's own named locals (or through their boxes when a
+// lambda in the block captures them), the body lowered in place. A `return` in the
+// block returns from the function; `break` leaves the inlined loop and `next` goes on
+// with the next element (the old back end's `next` jumped back to the test without the
+// increment, a loop that never ends; the bug is not reproduced). A value block (`any`,
+// `all`, the comparators) yields the expression of its last statement. Blocks given to
+// user functions are lambdas (the checker absorbs them as the last argument),
+// lower_fn.av.
 
 import location
 import source
@@ -93,8 +91,8 @@ pub fn (lw: MirLower) block_elem(h: Int, aty: Int, i: Int): MOperand {
 }
 
 // Stores v at index _i of the array in _h (emit_arr_store), behind the
-// buffer's barrier when the element is reference-carrying (D187; the old
-// back end stores without one, which loses the young value when a
+// buffer's barrier when the element is reference-carrying (the old back
+// end stores without one, which loses the young value when a
 // comparator's collection promoted the buffer).
 pub fn (lw: MirLower) block_store(h: Int, aty: Int, i: Int, v: MOperand) {
   b = lw.lw_b
@@ -159,16 +157,15 @@ pub fn (lw: MirLower) block_value(bl: Block, cont: Int, exit: Int): MOperand {
   b.c_bool(false)
 }
 
-// `Array(T).new(n) { |i| ... }` (D329, Stage 29 W-FIX1b): n once, with
-// `Array(T).new(n)`'s two traps (negative, the ceiling); a zeroed buffer
-// of n elements; then for i from 0 to n - 1 the block with i bound, and
-// its value stored into element i; then the header with size = cap = n,
-// as lower_array_new. The buffer is held in a slot while it fills (the
-// block may collect); elements not yet built are zero bytes, which the
-// collector reads as no reference. A reference-carrying element is
-// stored behind the buffer's barrier, as an array literal's and as
-// block_store's (the fresh pass removes the barrier while the buffer is
-// still open).
+// `Array(T).new(n) { |i| ... }`: n once, with `Array(T).new(n)`'s two
+// traps (negative, the ceiling); a zeroed buffer of n elements; then for
+// i from 0 to n - 1 the block with i bound, and its value stored into
+// element i; then the header with size = cap = n, as lower_array_new.
+// The buffer is held in a slot while it fills (the block may collect);
+// elements not yet built are zero bytes, which the collector reads as no
+// reference. A reference-carrying element is stored behind the buffer's
+// barrier, as an array literal's and as block_store's (the fresh pass
+// removes the barrier while the buffer is still open).
 pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -402,8 +399,8 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
     b.branch(cmp, moved, iexit)
     b.at(moved)
     if !do_copy {
-      // O758 (Stage 29 W8Cc): a store of the sort in place checks the
-      // freeze (the comparator may have started a task that reads it).
+      // A store of the sort in place checks the freeze (the comparator
+      // may have started a task that reads it).
       lw.frozen_check(arr, mir_frozen_sort(), e.loc)
     }
     lw.block_store(arr, aty, j, b.copy_local(pl))
@@ -469,8 +466,8 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   lw.at(e.loc)
   fl = lw.found_local()
   raw = lw.hash_find_load(ht, "find", b.copy_local(h), lw.hash_key_arg(ht, b.copy_local(kl), e.loc), fl, vty)
-  // A key the body deleted earlier in the walk is skipped (Stage 29 W1a,
-  // A4): before, it was visited with an invented value (the zero).
+  // A key the body deleted earlier in the walk is skipped: before, it
+  // was visited with an invented value (the zero).
   hit = b.block()
   b.branch(lw.found_is(fl), hit, step)
   b.at(hit)
