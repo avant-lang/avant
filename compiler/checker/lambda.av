@@ -447,6 +447,21 @@ pub fn (checker_self: Checker) finish_deferred(expr: Expr, chosen: FuncSig, defe
       return checker_self.t_int()
     }
   }
+  // The parameters the call leaves out take their defaults, and the named
+  // arguments their places, as in every other call (before, a call whose
+  // lambda was checked here reached the back end without its defaults).
+  given = expr.args.size
+  checker_self.fill_defaults(expr, sig.node)
+  for di in given..expr.args.size {
+    if di < sig.params.size {
+      dgot = checker_self.check_default_arg(expr, di, sig.params, sig.node)
+      dgot = checker_self.fit_call_arg(expr.args[di], dgot, sig.params[di])
+      if !ty_assignable(dgot, sig.params[di]) {
+        dn = di + 1
+        checker_self.fail(expr.args[di].loc, "argument ${dn} of ${expr.callee} is ${dgot.show}, expected ${sig.params[di].show}")
+      }
+    }
+  }
   expr.resolved = sig.node.emit_name
   sig.ret
 }

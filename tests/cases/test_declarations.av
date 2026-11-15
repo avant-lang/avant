@@ -56,6 +56,8 @@ fn cases: Array(RCase) {
   xs.push(refused("empty-parens-interface", "interface Sized {\n  fn size(): Int\n}\nfn main { }\n", "write fn size, not fn size()", "2:11"))
   xs.push(refused("empty-parens-fun", "lib c {\n  fun getpid(): Int32\n}\nfn main { }\n", "a fun without parameters is declared without parentheses: write fun getpid, not fun getpid()", "2:14"))
   xs.push(accepted("fun-no-parens", "lib c {\n  fun getpid: Int32\n}\nfn main {\n  puts(c.getpid() > 0)\n}\n", "true\n"))
+  // A call whose lambda argument is checked after the others takes its defaults
+  xs.push(accepted("lambda-arg-defaults", "fn apply(f: fn(Int): Int, n: Int = 1, extra: Int = 0): Int {\n  f(n) + extra\n}\nfn main {\n  puts(apply({ |v| v * 10 }))\n  puts(apply({ |v| v * 10 }, 2))\n}\n", "10\n20\n"))
   xs
 }
 
