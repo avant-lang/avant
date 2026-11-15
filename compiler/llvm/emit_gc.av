@@ -1,34 +1,32 @@
-// The GC contract as emitted (Stage 28 W5a; stages/stage28/mir.md 5.1,
-// 5.2, 5.5, 5.6, 11.3): frame enter and leave, root registration, the
-// barrier (inline fast path, or the call form), and allocation (the
+// The GC contract as emitted: frame enter and leave, root registration,
+// the barrier (inline fast path, or the call form), and allocation (the
 // inline fast path of 5.5 with the null-bump test of 10.3, or the call
-// form). The runtime ABI is the frozen one (D163); the sequences reproduce
-// the old back end's (audit 4.1-4.4).
+// form). The runtime ABI is the frozen one; the sequences reproduce the
+// old back end's.
 
 import source
 import mir.types
 import mir.ir
 import llvm.emit_core
 
-// Frames (5.1, 5.2 as emitted since Stage 28 W18). A frame function
-// keeps its frame record in its own stack frame: %gcf, an AvantGcFrame
-// (runtime/avant_rt.h: prev, slots, n, cap, scope; 32 bytes) followed by
-// the slot array, one pointer per root word of the gc.roots that follows
-// gc.enter (slots in the listed order, words in offset order). gc.enter
-// fills the record (slots, n = cap = the root words, scope 0, each
-// word's address) and links it with the module's @__avant_frame_push:
-// inline (prev = avant_gc_top, avant_gc_top = %gcf) when the thread
-// already has an innermost frame, else through avant_gc_frame_enter,
-// which also registers the thread and initializes the heap. gc.leave
-// calls @__avant_frame_pop, which unlinks it inline when %gcf is
-// innermost and not the thread's outermost frame, else through
-// avant_gc_frame_leave. Both helpers are internal and small, so the O3
-// inliner folds them into every frame (ll_gc_frame_helpers). The call
-// forms (inline_fast false) call the runtime entries directly.
-// gc.roots itself emits nothing: gc.enter has registered its slots, and
-// nothing comes between them (V16). Until W18 this was a call to
-// avant_gc_enter, a call to avant_gc_root_begin and one store per word,
-// and a call to avant_gc_leave (R5, O4).
+// Frames. A frame function keeps its frame record in its own stack
+// frame: %gcf, an AvantGcFrame (runtime/avant_rt.h: prev, slots, n, cap,
+// scope; 32 bytes) followed by the slot array, one pointer per root word
+// of the gc.roots that follows gc.enter (slots in the listed order,
+// words in offset order). gc.enter fills the record (slots, n = cap =
+// the root words, scope 0, each word's address) and links it with the
+// module's @__avant_frame_push: inline (prev = avant_gc_top,
+// avant_gc_top = %gcf) when the thread already has an innermost frame,
+// else through avant_gc_frame_enter, which also registers the thread and
+// initializes the heap. gc.leave calls @__avant_frame_pop, which unlinks
+// it inline when %gcf is innermost and not the thread's outermost frame,
+// else through avant_gc_frame_leave. Both helpers are internal and
+// small, so the inliner at -O3 folds them into every frame
+// (ll_gc_frame_helpers). The call forms (inline_fast false) call the
+// runtime entries directly. gc.roots itself emits nothing: gc.enter has
+// registered its slots, and nothing comes between them (V16). Before,
+// this was a call to avant_gc_enter, a call to avant_gc_root_begin and
+// one store per word, and a call to avant_gc_leave.
 
 // The root words of bb0's gc.roots, or -1 when the function has no
 // gc.enter (a leaf, 5.7).
@@ -149,12 +147,12 @@ pub fn ll_gc_frame_leave(e: LlEmit) {
 }
 
 // The module's two frame helpers, when a frame links inline: internal
-// functions the O3 inliner folds into every caller (in --debug they stay
+// functions the inliner at -O3 folds into every caller (in --debug they stay
 // calls, so the .ll and the debug object stay small). The link and the
 // unlink of a record; the stores into avant_gc_top are volatile so that
 // LLVM cannot merge an inlined callee's unlink into the next frame's link
 // (dead-store elimination), which would leave the callee's
-// llvm.lifetime.end before any store that unlinks it (E3, D244).
+// llvm.lifetime.end before any store that unlinks it.
 pub fn ll_gc_frame_helpers(e: LlEmit) {
   e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
   // The helpers call both: a frame whose every path ends in a call that
@@ -195,15 +193,14 @@ pub fn ll_gc_frame_helpers(e: LlEmit) {
 // barrier copy _h (5.6): the holder is read once (E1); null, or a heap
 // object already young or remembered, skips the call. The header's flags
 // (runtime/avant_rt.h: HEAP 0x8000, YOUNG 0x20; REM 0x10) are tested with
-// one masked compare (Stage 29 VALK-A1, M8): flags & 0x8030 is above
-// 0x8000 exactly when HEAP is set and YOUNG or REM is (without HEAP it is
-// at most 0x30), the same condition as the two tests and their `and`
-// before, in four instructions where LLVM made seven. The call form when
-// inline fast paths are off. When the store the barrier precedes (V13) is
-// an element of the holder's buffer (`(*_h)[i]`, `(*_h)[i].j`), the call
-// passes the slot (avant_barrier_slot, Stage 28 W16t: a large pointer
-// buffer marks the slot's card); the slot's address is formed only on
-// the call path.
+// one masked compare: flags & 0x8030 is above 0x8000 exactly when HEAP is
+// set and YOUNG or REM is (without HEAP it is at most 0x30), the same
+// condition as the two tests and their `and` before, in four instructions
+// where LLVM made seven. The call form when inline fast paths are off.
+// When the store the barrier precedes (V13) is an element of the holder's
+// buffer (`(*_h)[i]`, `(*_h)[i].j`), the call passes the slot
+// (avant_barrier_slot, a large pointer buffer marks the slot's card); the
+// slot's address is formed only on the call path.
 pub fn ll_barrier(e: LlEmit, o: MOperand) {
   k = ll_barrier_store(e, o)
   if k >= 0 {
@@ -289,39 +286,38 @@ fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
 // pointer to store into _d. A constant size and type fold the size tests
 // (and choose the call form when the fast path can never be taken).
 //
-// The path (the Valk stage, VALK-A2, M6 and M7): the cursor's new end is
-// compared with the limit the runtime publishes, and when it fits the
-// cursor is stored, the header written and the payload zeroed. Nothing
-// else: the runtime publishes a null limit whenever the path may not run
-// (no hole, a no-GC region, a collection pending; a null limit fails the
-// compare whatever the cursor holds; under the stress mode a site finds
-// the limit null or spent, ll_alloc_slow_helper below), it counts the
-// bytes from the cursor at its next entry, takes the block record's copy
-// of the cursor then, and sets a young object's start bit when a
-// collection promotes it or a lookup needs it (runtime/avant_gc_alloc.c,
-// gc_fast_publish, gc_alloc_sync_slow, "Late start bits"). Until VALK-A2
-// the path tested g_avant_shared, avant_gc_fast_ok and a null cursor
-// before the limit, stored the cursor in the block's record, set the
-// start bit and kept four counters (22 of its 40 instructions in a loop
-// that allocates one small object).
+// The path: the cursor's new end is compared with the limit the runtime
+// publishes, and when it fits the cursor is stored, the header written
+// and the payload zeroed. Nothing else: the runtime publishes a null
+// limit whenever the path may not run (no hole, a no-GC region, a
+// collection pending; a null limit fails the compare whatever the cursor
+// holds; under the stress mode a site finds the limit null or spent,
+// ll_alloc_slow_helper below), it counts the bytes from the cursor at
+// its next entry, takes the block record's copy of the cursor then, and
+// sets a young object's start bit when a collection promotes it or a
+// lookup needs it (runtime/avant_gc_alloc.c, gc_fast_publish,
+// gc_alloc_sync_slow, "Late start bits"). Before, the path tested
+// g_avant_shared, avant_gc_fast_ok and a null cursor before the limit,
+// stored the cursor in the block's record, set the start bit and kept
+// four counters (22 of its 40 instructions in a loop that allocates one
+// small object).
 //
-// A shared module (Stage 28 W17b, 5.5's condition 1 lifted): every thread
-// has its own young cursor, so the path runs on any thread. It reads its
-// own limit, avant_gc_limit_mt, which the runtime also publishes while a
-// thread bumps in a hole charged to it (hole accounting); the limit of an
-// unshared module, avant_gc_limit, is null in a program with threads. And
-// its path sets the object's start bit itself: the late start bits are
-// the single mutator's (another thread may look an object up while its
-// allocator is still bumping in the same hole).
-// An empty payload is one word (Stage 29 W-INT1, as avant_alloc): a 0-byte
-// object at a block's end would have the next block's first address as
-// its payload.
-// birth (the allocation is marked `fresh`, mir/fresh.av, Stage 29
-// VALK-A1): stores into the object follow with no barrier of their own,
-// so the slow path's result, which may be mature (born in mature space by
-// avant_alloc_in_mature or on an unregistered thread), is barriered once:
-// avant_barrier returns at once for a young object. The inline path's
-// result is always young: it bumps in the thread's young hole.
+// A shared module (5.5's condition 1 lifted): every thread has its own
+// young cursor, so the path runs on any thread. It reads its own limit,
+// avant_gc_limit_mt, which the runtime also publishes while a thread bumps
+// in a hole charged to it (hole accounting); the limit of an unshared
+// module, avant_gc_limit, is null in a program with threads. And its path
+// sets the object's start bit itself: the late start bits are the single
+// mutator's (another thread may look an object up while its allocator is
+// still bumping in the same hole). An empty payload is one word (as
+// avant_alloc): a 0-byte object at a block's end would have the next
+// block's first address as its payload. birth (the allocation is marked
+// `fresh`, mir/fresh.av): stores into the object follow with no barrier of
+// their own, so the slow path's result, which may be mature (born in
+// mature space by avant_alloc_in_mature or on an unregistered thread), is
+// barriered once: avant_barrier returns at once for a young object. The
+// inline path's result is always young: it bumps in the thread's young
+// hole.
 //
 // The slow call is the module's __avant_alloc_slow (ll_alloc_slow_helper
 // below: the runtime's avant_alloc_slow, and under the stress mode the
@@ -416,27 +412,26 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
   r
 }
 
-// The inline path's slow call, one per module (ll_alloc; the Valk stage,
-// VALK-A2, O599): the runtime's avant_alloc_slow, which is avant_alloc
-// but for one answer, null: "the hole now has room for exactly this
-// object, take it inline". Then the inline allocation is made here, by
-// the same sequence the sites run (ll_alloc_take) with the size and the
-// type as values and the cursor read again (no test: the runtime made the
-// room). The runtime answers so only under AVANT_GC_STRESS=1, after the
-// collection that mode runs before every allocation: the stress pass then
-// executes the emitted inline sequence at every allocation the inline
-// path serves, each with a collection right before it and one right after
-// (the next allocation's), where until VALK-A2 the sequence never ran
-// under that mode. Without the mode the branch on null is never taken.
-// What the stress pass runs is this function's copy of the sequence; a
-// site's own copy (its limit compare, a constant size and type folded
-// into the header) does not run under that mode, the limit being spent
-// whenever a site tests it; AVANT_GC_VERIFY=1 without the stress mode
-// checks the headers the sites write.
-// One function for the module, never inlined, and not code at every
-// site: with the null answer handled at the site (a jump back into the
-// inline block, or a second copy of it there) LLVM kept less of the code
-// around each allocation in registers (Maze::AStar +1.5% in
+// The inline path's slow call, one per module (ll_alloc): the runtime's
+// avant_alloc_slow, which is avant_alloc but for one answer, null: "the
+// hole now has room for exactly this object, take it inline". Then the
+// inline allocation is made here, by the same sequence the sites run
+// (ll_alloc_take) with the size and the type as values and the cursor
+// read again (no test: the runtime made the room). The runtime answers so
+// only under AVANT_GC_STRESS=1, after the collection that mode runs
+// before every allocation: the stress pass then executes the emitted
+// inline sequence at every allocation the inline path serves, each with a
+// collection right before it and one right after (the next allocation's),
+// where before, the sequence never ran under that mode. Without the mode
+// the branch on null is never taken. What the stress pass runs is this
+// function's copy of the sequence; a site's own copy (its limit compare,
+// a constant size and type folded into the header) does not run under
+// that mode, the limit being spent whenever a site tests it;
+// AVANT_GC_VERIFY=1 without the stress mode checks the headers the sites
+// write. One function for the module, never inlined, and not code at
+// every site: with the null answer handled at the site (a jump back into
+// the inline block, or a second copy of it there) LLVM kept less of the
+// code around each allocation in registers (Maze::AStar +1.5% in
 // instructions, Binarytrees::Obj +0.9%); this way a site is what it was
 // but for the name it calls.
 pub fn ll_alloc_slow_helper(e: LlEmit) {
@@ -533,12 +528,12 @@ fn ll_alloc_birth(e: LlEmit, r: String, birth: Bool): String {
 }
 
 // _d = call avant_c_str(_s): a C function's `String` result (the Valk
-// stage, VALK-A2, O629; mir/lower_ffi.av c_string_owned). Only an address
-// inside the collected heap can need the runtime (it may name the inside
-// of an object, which a field may not hold), so the range test is here:
-// the address less the heap's first byte, compared with the heap's
-// reserved size (two globals the runtime sets once, when it reserves the
-// heap; both zero before, and then no address passes). C's own memory, a
+// stage; mir/lower_ffi.av c_string_owned). Only an address inside the
+// collected heap can need the runtime (it may name the inside of an
+// object, which a field may not hold), so the range test is here: the
+// address less the heap's first byte, compared with the heap's reserved
+// size (two globals the runtime sets once, when it reserves the heap;
+// both zero before, and then no address passes). C's own memory, a
 // literal and null pay the subtraction and the compare, and never the
 // call. The call form when inline fast paths are off.
 pub fn ll_c_str(e: LlEmit, args: Array(MOperand)): String {
@@ -572,11 +567,11 @@ pub fn ll_c_str(e: LlEmit, args: Array(MOperand)): String {
   p
 }
 
-// The safepoint poll at a loop head of a shared module (Stage 28 W17a,
-// gc-design.md 4.4): a volatile load of the request flag (kept in every
-// iteration), and the call, out of line, only when a collection is
-// requested; the call is a collecting call of the MIR, so every
-// reference live across it is in a slot and reloaded after it.
+// The safepoint poll at a loop head of a shared module: a volatile load
+// of the request flag (kept in every iteration), and the call, out of
+// line, only when a collection is requested; the call is a collecting
+// call of the MIR, so every reference live across it is in a slot and
+// reloaded after it.
 pub fn ll_gc_poll(e: LlEmit) {
   e.used_poll_global = true
   e.need("avant_gc_poll")
@@ -598,17 +593,16 @@ pub fn ll_gc_poll(e: LlEmit) {
 
 // The runtime globals the allocation fast path reads (5.5): the cursor
 // and the module's limit, and for a shared module the block's base and
-// start bits (ll_alloc). They are thread-local and local-exec (VALK-A1,
-// O137), as avant_gc_top is (D268): every program the compiler builds is
-// an executable that links the runtime statically, so each access is one
-// %fs-relative load or store; without a model (general-dynamic, which the
-// linker relaxes) each address was formed apart (`mov %fs:0`, `lea`,
-// often a copy: two or three instructions more per access, O137). A
-// shared-object output (none is built today; `--lib` links a C library)
-// could not use local-exec for a variable another module defines: it needs
-// initial-exec here and for avant_gc_top (general-dynamic in a library
-// that is dlopen'ed), chosen by the driver, which knows the output kind,
-// and passed to the emitter.
+// start bits (ll_alloc). They are thread-local and local-exec, as
+// avant_gc_top is: every program the compiler builds is an executable that
+// links the runtime statically, so each access is one %fs-relative load or
+// store; without a model (general-dynamic, which the linker relaxes) each
+// address was formed apart (`mov %fs:0`, `lea`, often a copy: two or three
+// instructions more per access). A shared-object output (none is built
+// today; `--lib` links a C library) could not use local-exec for a
+// variable another module defines: it needs initial-exec here and for
+// avant_gc_top (general-dynamic in a library that is dlopen'ed), chosen by
+// the driver, which knows the output kind, and passed to the emitter.
 pub fn ll_alloc_globals(shared: Bool): String {
   buf = buf_new()
   buf.push_str("@avant_gc_bump = external thread_local(localexec) global ptr\n")

@@ -1,13 +1,12 @@
-// The back end's driver (Stage 28 W5a; stages/stage28/mir.md 11.4):
-// a final-stage MIR module to a linked program. It refuses a module the
-// verifier rejects (the rule's diagnostic), emits the .ll in memory
-// (emit.av), compiles it with the in-process LLVM in the job's codegen
-// mode (glue.av, D174) to an object in the compiler's private scratch
-// directory (pipeline.av tmp_new_dir, under TMPDIR; removed after the
-// link and with the process), and links it with cc: the object, the
-// runtime objects of runtime_object_names, the job's extra objects (std,
-// re2c, --cc, .o), then linker_flags_s (-pthread -lm and the job's -l
-// flags), -o OUT. No back-end process.
+// The back end's driver: a final-stage MIR module to a linked program.
+// It refuses a module the verifier rejects (the rule's diagnostic),
+// emits the .ll in memory (emit.av), compiles it with the in-process
+// LLVM in the job's codegen mode (glue.av) to an object in the
+// compiler's private scratch directory (pipeline.av tmp_new_dir, under
+// TMPDIR; removed after the link and with the process), and links it
+// with cc: the object, the runtime objects of runtime_object_names, the
+// job's extra objects (std, re2c, --cc, .o), then linker_flags_s
+// (-pthread -lm and the job's -l flags), -o OUT. No back-end process.
 //
 // Every entry returns "" on success or the message for diag_puts; the
 // caller exits 1 on a message.
@@ -63,9 +62,9 @@ pub fn llvm_verify(m: MModule): String {
 }
 
 // Verify, emit, and compile to obj_path. With job.keep_ll set, the
-// pre-optimization .ll is also written there (W5b's goldens, W9's fixed
-// point). An LLVM failure after the verifier passed is an emitter bug,
-// reported as an internal error.
+// pre-optimization .ll is also written there (for the goldens and the
+// self-hosting fixed point). An LLVM failure after the verifier passed
+// is an emitter bug, reported as an internal error.
 pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
   bad = llvm_verify(m)
   if bad.size > 0 {
@@ -94,7 +93,7 @@ pub fn llvm_object(m: MModule, job: LlvmJob, obj_path: String): String {
 }
 
 // Verify and emit only: the pre-optimization .ll written to ll_path
-// (`avant __emit-ll`, the self-hosting fixed point, D171).
+// (`avant __emit-ll`, the self-hosting fixed point).
 pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
   bad = llvm_verify(m)
   if bad.size > 0 {
@@ -107,8 +106,8 @@ pub fn llvm_emit_ll(m: MModule, inline_fast: Bool, ll_path: String): String {
 }
 
 // Verify, emit, compile, and link the program out_path. A missing
-// parent directory of out_path is created first (Stage 28 W10, kept
-// from the old driver: `compile x.av out/dir/x` works).
+// parent directory of out_path is created first (kept from the old
+// driver: `compile x.av out/dir/x` works).
 pub fn llvm_build(m: MModule, job: LlvmJob, out_path: String): String {
   parent = llvm_out_parent(out_path)
   if parent.size > 0 && fs_mkdir_p(parent) != 0 {

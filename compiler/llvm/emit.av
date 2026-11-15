@@ -1,15 +1,15 @@
-// The LLVM emitter (Stage 28 W5a; stages/stage28/mir.md 11): a verified,
-// final-stage MIR module to the textual .ll the in-process LLVM compiles
-// (compiler/llvm/glue.av). The text is deterministic (D171: only the
-// MIR's own numbers and names, in module order) and the same in every
-// codegen mode (D192; the mode selects only the glue's pipeline).
+// The LLVM emitter: a verified, final-stage MIR module to the textual
+// .ll the in-process LLVM compiles (compiler/llvm/glue.av). The text is
+// deterministic (only the MIR's own numbers and names, in module order)
+// and the same in every codegen mode (the mode selects only the glue's
+// pipeline).
 //
 // Module order (3.1, 10.3): header, layouts, string constants, the
 // allocation globals (when an inline allocation was emitted), the
 // declarations (externals and the runtime entry points the emitter calls,
 // sorted by name, then the intrinsics), the functions in module order,
 // __avant_type_maps, the attribute group. Every defined function carries
-// #0 (11.1); Avant functions are internal and mangled (D170), `main` is
+// #0 (11.1); Avant functions are internal and mangled, `main` is
 // external.
 //
 // The core (state, places, operands) is emit_core.av; the GC sequences
@@ -67,8 +67,8 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
     out.push_str("\n")
   }
   if e.tlocs.size > 0 {
-    // The trap sites (D295 R16): their texts, and the table the runtime
-    // reads through its weak reference, indexed by a trap's last argument.
+    // The trap sites: their texts, and the table the runtime reads through
+    // its weak reference, indexed by a trap's last argument.
     for i in 0..e.tlocs.size {
       t = e.tlocs[i]
       out.push_str("@tl.${i} = private unnamed_addr constant [${t.size + 1} x i8] c\"${mir_escape(t)}\\00\", align 1\n")
@@ -94,21 +94,21 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
     out.push_str("@avant_gc_requested = external global i32\n\n")
   }
   if e.used_frame_global {
-    // local-exec (Stage 28 W18): a program is an executable that links
-    // avant_rt.o, so the frame chain's head is one %fs-relative access.
+    // local-exec: a program is an executable that links avant_rt.o, so
+    // the frame chain's head is one %fs-relative access.
     out.push_str("@avant_gc_top = external thread_local(localexec) global ptr\n\n")
   }
   ll_declarations(e, out)
   out.push_str("\n")
   out.push_str(body)
   out.push_str(maps)
-  // Every function probes its stack (O439, Stage 29 W-FIX1b): a frame
-  // larger than a page touches each page it takes, so a stack overflow
-  // faults in the guard page and never steps over it into whatever is
-  // mapped below (a pool thread's guard is one 4 KB page). LLVM emits
-  // the probe only for a frame over 4,096 bytes: no LangArena task has
-  // one (their binaries are byte-identical), and the compiler's own
-  // build runs 0.011% more instructions.
+  // Every function probes its stack: a frame larger than a page
+  // touches each page it takes, so a stack overflow faults in the
+  // guard page and never steps over it into whatever is mapped below
+  // (a pool thread's guard is one 4 KB page). LLVM emits the probe
+  // only for a frame over 4,096 bytes: no LangArena task has one
+  // (their binaries are byte-identical), and the compiler's own build
+  // runs 0.011% more instructions.
   out.push_str("attributes #0 = { nounwind \"frame-pointer\"=\"all\" \"probe-stack\"=\"inline-asm\" }\n")
   if e.used_stubs {
     out.push_str("attributes #1 = { cold noinline noreturn nounwind \"frame-pointer\"=\"all\" \"probe-stack\"=\"inline-asm\" }\n")
@@ -196,7 +196,7 @@ fn ll_insert_sorted(xs: Array(String), s: String) {
 
 // `declare <ret> @name(<params>)`: `zeroext` on a C boolean (14, 8.5);
 // the traps are `noreturn nounwind cold` (11.1); a call-table row's
-// attributes follow (W9b: the pure readers, runtime.av mir_rt_attrs).
+// attributes follow (the pure readers, runtime.av mir_rt_attrs).
 fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool, attrs: String): String {
   s = ts.sigs[sig]
   buf = buf_new()
@@ -248,9 +248,9 @@ fn ll_c_param(ts: MTypes, ty: Int): String {
   ll_type_text(ts, ty)
 }
 
-// A C integer narrower than 32 bits (a C scalar type, Stage 29 W1b) is
-// extended to 32 bits by its sign, as the SysV ABI's callers do (clang's
-// `signext` and `zeroext`): C code compiled by clang relies on it.
+// A C integer narrower than 32 bits (a C scalar type) is extended to 32
+// bits by its sign, as the SysV ABI's callers do (clang's `signext` and
+// `zeroext`): C code compiled by clang relies on it.
 fn ll_c_ext(ts: MTypes, ty: Int): String {
   if ts.is_int(ty) && ts.get(ty).bits < 32 {
     return ll_pick(ts.is_signed_int(ty), "signext", "zeroext")
@@ -258,7 +258,7 @@ fn ll_c_ext(ts: MTypes, ty: Int): String {
   ""
 }
 
-// ---- __avant_type_maps (3.3, D186)
+// ---- __avant_type_maps
 
 fn ll_type_maps(e: LlEmit) {
   e.out.push_str("define internal void @__avant_type_maps() #0 {\nentry:\n")
@@ -295,7 +295,7 @@ fn ll_function(e: LlEmit, f: MFunc) {
   if f.external {
     linkage = ""
   }
-  // W8a: a C callback thunk (`#cb`, 8.2) has the C boundary's types
+  // A C callback thunk (`#cb`, 8.2) has the C boundary's types
   // (`zeroext` on Bool, section 14 8.5).
   c_abi = str_ends(f.symbol, "#cb")
   rtext = e.llt(s.ret)
@@ -382,8 +382,8 @@ fn ll_stmt(e: LlEmit, st: MStmt) {
 
 // check.bounds i, n: unsigned i >= n traps with avant_trap_bounds(i, n).
 // The operands are two i64 (an Int index against a size the header keeps
-// in 32 bits, sign-extended; Stage 29 W-INT1), or two i32 (MIR's own
-// tests), widened for the trap.
+// in 32 bits, sign-extended), or two i32 (MIR's own tests), widened for
+// the trap.
 fn ll_bounds(e: LlEmit, st: MStmt) {
   i = e.value(st.args[0])
   ity = e.ov_ty
@@ -397,8 +397,8 @@ fn ll_bounds(e: LlEmit, st: MStmt) {
   // The function's own stub (ll_trap_stubs), which names the function:
   // the check's trap block calls it with the same two arguments as the
   // plain trap, so LLVM's inlining costs and merging stay as they were
-  // (W4b2, D295 R16; a site argument per check flipped an inlining on
-  // Maze::AStar, +5.8% instructions).
+  // (a site argument per check flipped an inlining on Maze::AStar,
+  // +5.8% instructions).
   e.trap_bounds = true
   if ity != mt_i64() {
     wi = e.tmp()
@@ -428,7 +428,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
     result = ll_emit_call(e, ret == mt_void(), e.llt(ret), ll_sym(g.symbol), args)
   } else if x = e.m.ext(st.callee) {
     if x.name == "avant_gc_poll" {
-      // Stage 28 W17a: the request flag's test, the call only when set.
+      // The request flag's test, the call only when set.
       ll_gc_poll(e)
       return
     }
@@ -439,14 +439,14 @@ fn ll_call(e: LlEmit, st: MStmt) {
     s = e.ts.sigs[sig]
     ret = s.ret
     if ll_cabi_needed(e.ts, sig) || ll_cabi_needed(e.ts, x.sig) {
-      // W8a, C3: an aggregate at the C boundary (emit_cabi.av); the
+      // An aggregate at the C boundary (emit_cabi.av); the
       // destination is written there.
       ll_cabi_call(e, st, x.name, sig)
       return
     }
     intr = ll_math_intrinsic(e.ts, x)
     if intr.size > 0 {
-      // O6: the libm row as its LLVM intrinsic (no errno, so LLVM may
+      // The libm row as its LLVM intrinsic (no errno, so LLVM may
       // vectorize and fold it; a NaN where libm gives one).
       e.need_intrinsic("declare double @${intr}(double)")
       result = ll_emit_call(e, false, "double", "@${intr}", ll_args(e, st.args, s.params, true))
@@ -459,7 +459,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
       callee = ll_sym(x.name)
       if x.noreturn && str_starts(x.name, "avant_trap_") {
         // A trap the lowering raises: its sited form, with the site's
-        // text last (D295 R16).
+        // text last.
         e.need("${x.name}_at")
         callee = ll_sym("${x.name}_at")
         if args.size > 0 {
@@ -480,13 +480,13 @@ fn ll_call(e: LlEmit, st: MStmt) {
   }
 }
 
-// The LLVM intrinsic of a libm external, or "" (Stage 28 W18S, O6):
-// Float64's abs, floor, sqrt and exp (mir/runtime.av's libm rows), when
-// the external is `double (double)`, are llvm.fabs, llvm.floor, llvm.sqrt
-// and llvm.exp (W18F; llvm.exp is lowered to libm's exp, and folded only
-// for constants, with the host's libm).
-// They give the same bits as libm on every input (sqrt of a negative or a
-// NaN is a NaN either way; Avant never reads errno, the one difference).
+// The LLVM intrinsic of a libm external, or "": Float64's abs, floor,
+// sqrt and exp (mir/runtime.av's libm rows), when the external is
+// `double (double)`, are llvm.fabs, llvm.floor, llvm.sqrt and llvm.exp
+// (llvm.exp is lowered to libm's exp, and folded only for constants, with
+// the host's libm). They give the same bits as libm on every input (sqrt
+// of a negative or a NaN is a NaN either way; Avant never reads errno,
+// the one difference).
 fn ll_math_intrinsic(ts: MTypes, x: MExtern): String {
   s = ts.sigs[x.sig]
   if s.params.size != 1 || s.params[0] != mt_f64() || s.ret != mt_f64() || s.varargs {
@@ -593,7 +593,7 @@ fn ll_call_indirect(e: LlEmit, st: MStmt, fo: MOperand): String {
 
 // ---- terminators (4.5)
 
-// The loop metadata of a cold back edge (W9b: the checked copy that loop
+// The loop metadata of a cold back edge (the checked copy that loop
 // versioning keeps): one distinct node per loop header of the function,
 // numbered in emission order; node !0 is the shared unroll-disable hint.
 fn ll_cold_md(e: LlEmit, t: MTerm): String {
@@ -832,12 +832,12 @@ fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   v
 }
 
-// The function's arithmetic trap when c holds (Stage 29 W4b2, D295
-// R16): every overflow site of a function branches to its one
-// trap.ovf block, every division by zero to trap.div0, as before, so
-// LLVM keeps folding a statement's checks into one branch (a block per
-// site, or a phi of the sites, kept it from that: +7% instructions on
-// Maze::AStar); the block names the function and where it starts.
+// The function's arithmetic trap when c holds: every overflow site of
+// a function branches to its one trap.ovf block, every division by
+// zero to trap.div0, as before, so LLVM keeps folding a statement's
+// checks into one branch (a block per site, or a phi of the sites,
+// kept it from that: +7% instructions on Maze::AStar); the block names
+// the function and where it starts.
 fn ll_arith_trap(e: LlEmit, c: String, div_zero: Bool) {
   name = "ovf"
   if div_zero {
@@ -852,7 +852,7 @@ fn ll_arith_trap(e: LlEmit, c: String, div_zero: Bool) {
 }
 
 // The function's own site, "Name (file:line:col)", for the traps that
-// name their function (D295 R16): arithmetic, bounds.
+// name their function: arithmetic, bounds.
 fn ll_fn_site(e: LlEmit): String {
   loc = e.f.loc
   path = "?"
@@ -888,8 +888,8 @@ fn ll_stub(e: LlEmit, suf: String): String {
   ll_sym(e.f.symbol + suf)
 }
 
-// The function's trap stubs (D295 R16): cold, never inlined, they call
-// the runtime's trap with the function's site (ll_fn_site), so the
+// The function's trap stubs: cold, never inlined, they call the
+// runtime's trap with the function's site (ll_fn_site), so the
 // function's own trap blocks keep the plain trap's arguments.
 fn ll_trap_stubs(e: LlEmit) {
   if !e.trap_ovf && !e.trap_div0 && !e.trap_bounds {
