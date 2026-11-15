@@ -1,0 +1,57 @@
+// binarytrees_obj.av — bench/valk-gc/trees (VALK-B1, O386).
+// Origin: langarena/tasks/binarytrees_obj.av (Binarytrees::Obj), from the Avant LangArena harness
+// (langarena 37367d3; tasks for kostya/LangArena, MIT, (c) 2026 Konstantin
+// Makarchev; the Avant sources are the Avant project's).
+// Changed: nothing but this header: the hinted program as LangArena builds it.
+import std.gc
+
+class Node {
+  item: Int
+  left: Node?
+  right: Node?
+
+  fn initialize(item: Int) {
+    self.item = item
+  }
+}
+
+fn make_tree(item: Int, depth: Int): Node {
+  n = Node.new(item)
+  if depth > 0 {
+    shift = 1 << (depth - 1)
+    n.left = make_tree(item - shift, depth - 1)
+    n.right = make_tree(item + shift, depth - 1)
+  }
+  n
+}
+
+fn tree_sum(n: Node): Int {
+  total = n.item + 1
+  if l = n.left {
+    total = total &+ tree_sum(l)
+  }
+  if r = n.right {
+    total = total &+ tree_sum(r)
+  }
+  total
+}
+
+fn trees_once(depth: Int): Int {
+  gc.collect()
+  sum = 0
+  gc.hold {
+    sum = tree_sum(make_tree(0, depth))
+  }
+  sum
+}
+
+fn main {
+  acc = 0
+  for w in 0..cfg_warmup() {
+    acc = acc &+ trees_once(cfg_depth())
+  }
+  for i in 0..cfg_iterations() {
+    acc = acc &+ trees_once(cfg_depth())
+  }
+  puts_u(acc.wrap_i32)
+}

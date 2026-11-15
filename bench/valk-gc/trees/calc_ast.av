@@ -1,0 +1,34 @@
+// calc_ast.av — bench/valk-gc/trees (VALK-B1, O386).
+// Origin: langarena/tasks/calc_ast.av (Calculator::Ast), from the Avant LangArena harness
+// (langarena 37367d3; tasks for kostya/LangArena, MIT, (c) 2026 Konstantin
+// Makarchev; the Avant sources are the Avant project's).
+// Changed: nothing but this header: the hinted program as LangArena builds it.
+import std.gc
+
+fn main {
+  n = cfg_operations()
+  text = calc_generate(n)
+  gc.collect()
+  count = calc_expr_count(n)
+  sentinel = Nd.new(NdKind.number, 0, 0)
+  exprs = Array(Nd).new(count) { |i| sentinel }
+  acc: Int32 = 0
+  total = cfg_warmup() + cfg_iterations()
+  for t in 0..total {
+    gc.hold {
+      nread = calc_fill(text, exprs)
+      acc = acc &+ nread.wrap_i32
+      if nread > 0 {
+        last = exprs[nread - 1]
+        if last.kind == NdKind.assignment {
+          acc = acc &+ checksum_var(last.op.to_i).wrap_i32
+        }
+      }
+      for i in 0..nread {
+        exprs[i] = sentinel
+      }
+      gc.collect()
+    }
+  }
+  puts_u(acc)
+}
