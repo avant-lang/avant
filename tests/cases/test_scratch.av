@@ -92,20 +92,16 @@ fn run_env(env: Array(String), bin: String, log: String): Int {
 }
 
 fn run_signalled(sig: String, bin: String, out: String, log: String): Int {
+  // The signal is sent once the child has recorded its blocking child's
+  // pid (at most 30 s later), not after a fixed second: on a loaded
+  // machine the program had sometimes not started that child yet, and
+  // the checks below found no pid. A test binary may start with SIGINT
+  // ignored (an asynchronous job of sh), and an ignored signal is
+  // deliberately left ignored: env restores the default.
   args: Array(String) = []
-  args.push("--preserve-status")
-  args.push("-s")
-  args.push(sig)
-  args.push("1")
-  // A test binary may start with SIGINT ignored (an asynchronous job of
-  // sh), and an ignored signal is deliberately left ignored.
-  args.push("/usr/bin/env")
-  args.push("--default-signal=${sig}")
-  args.push("AVANT_KEEP_TMP=")
-  args.push("SCRATCH_MODE=wait")
-  args.push("SCRATCH_OUT=${out}")
-  args.push(bin)
-  process_run_out("/usr/bin/timeout", args, log) ?? -1
+  args.push("-c")
+  args.push("rm -f '${out}.pid'; /usr/bin/env --default-signal=${sig} AVANT_KEEP_TMP= SCRATCH_MODE=wait SCRATCH_OUT='${out}' '${bin}' & r=$!; n=0; while [ ! -s '${out}.pid' ] && [ $n -lt 600 ]; do sleep 0.05; n=$((n+1)); done; kill -${sig} $r; wait $r")
+  process_run_out("/bin/sh", args, log) ?? -1
 }
 
 fn test_scratch(c: Checks) {
