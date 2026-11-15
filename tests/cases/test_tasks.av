@@ -220,6 +220,14 @@ fn mutex_recover_cases(c: Checks, compiler: String, stamp: Int) {
 // one exit ends the program with its status, the output written once, no
 // hang (a second exit beside the first hung the collector's checks at
 // exit, and wrote the output twice).
+//
+// The fixture keeps six tasks busy for good and needs up to two more
+// beside them, so it runs with `--threads 16`: the pool runs at most one
+// task per CPU at once and queues the rest, so on a machine with fewer
+// than eight CPUs (a 4-CPU CI runner, `taskset -c 0-3`) the exiting task
+// never started and every run waited for its bound. Each run is bounded
+// by 20 s, and the first run that reaches it ends the cases, so a hang
+// costs one bound, not fifteen.
 fn task_exit_cases(c: Checks, compiler: String, stamp: Int) {
   bin = "${scratch()}/tasks-exit-${stamp}.bin"
   clog = "${scratch()}/tasks-exit-${stamp}.clog"
@@ -227,17 +235,21 @@ fn task_exit_cases(c: Checks, compiler: String, stamp: Int) {
   c.eq_int(code, 0, "the task-exit fixture compiles")
   kinds = ["one", "two", "trap", "main", "mutex"]
   statuses = [3, 4, 5, 6, 7]
+  hung = false
   for round in 0..3 {
     i = 0
-    while i < kinds.size {
+    while i < kinds.size && !hung {
       kind = kinds[i]
       log = "${scratch()}/tasks-exit-${stamp}-${kind}-${round}.log"
       args: Array(String) = []
       args.push("-c")
-      args.push("timeout -k 5 60 ${bin} ${kind} 2> ${log}.err")
+      args.push("timeout -k 5 20 ${bin} --threads 16 ${kind} 2> ${log}.err")
       status = process_run_out("/bin/sh", args, log) ?? -1
       out = file_read(log) ?? ""
-      if kind == "trap" {
+      if status == 124 || status == 137 {
+        hung = true
+        c.expect(false, "task exit ${kind}: the run ended within its 20 s bound (status ${status}); the cases stop here")
+      } else if kind == "trap" {
         // The task's exit or the .parallel body's trap, whichever is first.
         c.expect(status == 5 || status == 1, "task exit ${kind}: status 5 or 1, got ${status}")
       } else {
