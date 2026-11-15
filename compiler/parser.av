@@ -368,6 +368,10 @@ pub class Parser {
     self.tokens[self.tokens.size - 1]
   }
 
+  // How tightly an infix operator binds, loosest first: `??`, `||`, `&&`,
+  // `==` `!=`, `<` `<=` `>` `>=`, `|`, `^`, `&`, the shifts, `+` `-` and
+  // the wrapping forms, `*` `/` `%` `&*`. The bitwise operators bind
+  // tighter than the comparisons, so `x & 1 == 0` reads `(x & 1) == 0`.
   pub fn infix_prec(kind: Int): Int {
     switch kind {
       case 74 {
@@ -379,19 +383,19 @@ pub class Parser {
       case 54 {
         2
       }
-      case 51 {
+      case 43, 44 {
         3
       }
-      case 55 {
+      case 45, 46, 47, 48 {
         4
       }
-      case 53 {
+      case 51 {
         5
       }
-      case 43, 44 {
+      case 55 {
         6
       }
-      case 45, 46, 47, 48 {
+      case 53 {
         7
       }
       case 57, 58 {

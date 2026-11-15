@@ -457,18 +457,18 @@ From loosest to tightest binding; operators on one row associate left to right.
 | `??` | the left value, or the right side when the left is `nil` or an error ([Opening an optional](#opening-an-optional)) |
 | `\|\|` | logical or (short-circuit) |
 | `&&` | logical and (short-circuit) |
+| `==` `!=` | equality |
+| `<` `<=` `>` `>=` | ordering |
 | `\|` | bitwise or |
 | `^` | bitwise xor |
 | `&` | bitwise and |
-| `==` `!=` | equality |
-| `<` `<=` `>` `>=` | ordering |
 | `<<` `>>` | shifts |
 | `+` `-` `&+` `&-` | add, subtract; the `&` forms wrap instead of trapping |
 | `*` `/` `%` `&*` | multiply, divide, remainder; wrapping multiply |
 | `!x` `-x` `~x` | not, negate, bitwise not |
 | `x?` `x.name` `x[i]` `f(x)` | postfix: [propagate a failure](#propagate-replace-branch), member, index, call |
 
-As in C, `&`, `^` and `|` bind looser than comparisons: write `(x & 1) == 0`, since `x & 1 == 0` means `x & (1 == 0)` and does not compile. Assignment is a statement: `=`, `+=`, `-=`, `*=`, `/=`. There is no `++`, no ternary (`if` is an expression) and no `**`.
+As in Go and Rust, and unlike C, `&`, `^` and `|` bind tighter than comparisons: `x & 1 == 0` means `(x & 1) == 0`. Assignment is a statement: `=`, `+=`, `-=`, `*=`, `/=`. There is no `++`, no ternary (`if` is an expression) and no `**`.
 
 ### Equality and order
 
@@ -3805,7 +3805,7 @@ Avant will look familiar from almost anywhere, and it differs on purpose in a ha
 - **Go.** Yours already: structs with methods, byte strings, errors as values, no inheritance, channels, a 64-bit `int`. Different: an error is a member of the result type, passed up with `?` instead of `if err != nil`; overflow traps instead of wrapping; a missing key is `nil`, not a zero value; there are no interface values; what a task captures is checked, where a goroutine shares anything.
 - **Rust.** Yours already: `T?` is `Option<T>`, `T | E` is `Result<T, E>`, `?` propagates, `..` is exclusive, generics are monomorphized with trait-like bounds, things are private by default. Different: a garbage collector instead of ownership, so no lifetimes and no borrow checker; enums carry no data (a union member does, and `switch` takes it apart as `match` does); no trait objects; overflow traps in release builds too.
 - **JavaScript, TypeScript and Python.** Yours already: `${}` interpolation, closures that capture by reference, no semicolons, types you rarely write. Different: compiled ahead of time and statically typed; integers are integers (`7 / 2` is `3`); no truthiness, no `undefined`, no exceptions; strings are bytes; threads instead of an event loop.
-- **C and C++.** Yours already: braces, value structs, the operator precedence (bitwise operators below comparisons included), C libraries one `lib` block away. Different: no manual memory, no headers, no preprocessor, no implicit conversions; what is undefined behavior in C (overflow, an index out of bounds) is a trap.
+- **C and C++.** Yours already: braces, value structs, most of the operator precedence, C libraries one `lib` block away. Different: no manual memory, no headers, no preprocessor, no implicit conversions; `&`, `^` and `|` bind tighter than comparisons, so `x & 1 == 0` is `(x & 1) == 0`; what is undefined behavior in C (overflow, an index out of bounds) is a trap.
 - **Java, C#, Kotlin and Swift.** Yours already: classes as references, a collector, generics, optionals (Kotlin, Swift), value structs (C#, Swift). Different: no inheritance and no interfaces as values; no exceptions; `Int` is 64-bit where `int` is 32; an optional is opened with if-assign and `??`, not `?.` or `!!`.
 
 ## Not built yet
