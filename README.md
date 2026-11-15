@@ -1534,7 +1534,7 @@ This section is about classes: a struct has no `initialize`, and its literal nam
 2. **The type's zero**, if it has one and there is no default: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a null `Ptr`, a struct of such fields.
 3. **`initialize`**, for every other field (a class, `Array`, `Hash`, `Buf`, `Bytes`, a `fn`, a union without `nil`, a struct holding one): it must set the field on every path, before reading it and before `self` is used as a value or a method of `self` is called.
 
-A class that breaks rule 3 is refused with an error that names the field and the ways out: set it, give it a default, or make it optional (`left: Node?`, which is one pointer).
+A class that breaks rule 3 is refused with an error that names the field and the ways out: set it, give it a default, or make it optional (`left: Node?`, which is one pointer; a function as `cb: (fn(Int): Int)?`).
 
 ### Methods and self
 

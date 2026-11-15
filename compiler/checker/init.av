@@ -85,17 +85,17 @@ fn (w: InitWalk) ways(field: String, lead: String): String {
 }
 
 // ", give it a default (f: T = ...), or make it optional (f: T?)"; a
-// union becomes optional with `| Nil`; a `fn` type has no optional form
-// to suggest (grouping parentheses in types come later).
+// union becomes optional with `| Nil`, a `fn` type in grouping
+// parentheses (`(fn(Int): Int)?`: `fn(Int): Int?` returns an optional).
 fn (w: InitWalk) or_else(field: String): String {
   if ft = w.ty.field_named(field) {
     t = ft.show
-    if ft.is_fn {
-      return " or give it a default (${field}: ${t} = ...)"
-    }
     opt = "${t}?"
     if ft.is_union {
       opt = "${t} | Nil"
+    }
+    if ft.is_fn {
+      opt = "(${t})?"
     }
     return ", give it a default (${field}: ${t} = ...), or make it optional (${field}: ${opt})"
   }

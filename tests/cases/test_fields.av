@@ -52,7 +52,7 @@ fn init_cases: Array(FCase) {
   xs.push(refused("init-self-escapes", "class C {\n  xs: Array(Int)\n  fn initialize {\n    keep(self)\n    self.xs = []\n  }\n}\nfn keep(c: C) {\n  puts(c.xs.size)\n}\nfn main {\n  puts(C.new.xs.size)\n}\n", "self is used as a value in initialize before field xs of C is set"))
   xs.push(refused("init-return-early", "class C {\n  xs: Array(Int)\n  fn initialize(n: Int) {\n    if n == 0 {\n      return\n    }\n    self.xs = []\n  }\n}\nfn main {\n  puts(C.new(0).xs.size)\n}\n", "initialize returns before field xs of C is set; set it before the return (self.xs = ...)"))
   xs.push(refused("init-union-field", "class C {\n  u: Int | String\n}\nfn main {\n  c = C.new\n}\n", "make it optional (u: Int | String | Nil)"))
-  xs.push(refused("init-fn-field", "class C {\n  f: fn(Int): Int\n}\nfn main {\n  c = C.new\n}\n", "set it in an initialize (self.f = ...) or give it a default (f: fn(Int): Int = ...)"))
+  xs.push(refused("init-fn-field", "class C {\n  f: fn(Int): Int\n}\nfn main {\n  c = C.new\n}\n", "set it in an initialize (self.f = ...), give it a default (f: fn(Int): Int = ...), or make it optional (f: (fn(Int): Int)?)"))
   xs.push(refused("init-struct-holding-class", "class Leaf {\n  v: Int = 1\n}\nstruct Slot {\n  k: Int\n  leaf: Leaf\n}\nclass C {\n  slot: Slot\n}\nfn main {\n  c = C.new\n}\n", "field slot of C has no zero value"))
   xs.push(refused("init-generic-instance", "class Leaf {\n  v: Int = 1\n}\nclass Box(T) {\n  item: T\n}\nfn main {\n  a = Box(Int).new\n  b = Box(Leaf).new\n  puts(a.item)\n}\n", "field item of Box(Leaf) has no zero value"))
   xs.push(refused("init-default-self", "class C {\n  k: Int = 2\n  n: Int = self.k + 1\n}\nfn main {\n  puts(C.new.n)\n}\n", "a field default cannot use self"))
