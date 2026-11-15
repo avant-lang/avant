@@ -132,21 +132,72 @@ pub class Channel(T) {
 pub class Mutex(T) {
   cell: T
   gate: UInt64
+  // The function that rebuilds the value of a poisoned mutex
+  // (`recover:`), or nil: read only when a lock finds the poison. Held
+  // in an object of its own, so a mutex without one carries one word.
+  heal: MutexHeal(T)? = nil
 
-  fn initialize(value: T) {
+  fn initialize(value: T, recover: (fn(): T)? = nil) {
     self.cell = value
     self.gate = avant_gate_new()
+    if f = recover {
+      self.heal = MutexHeal(T).new(f)
+    }
   }
 
   // Whether a task trapped while it held this mutex in `with`: its value
   // may be half-changed, so `with` on it traps and `try_with` gives a
-  // MutexError.
+  // MutexError, unless the mutex has a recover function.
   pub fn poisoned: Bool {
     avant_gate_poisoned(gate)
   }
+
+  // Replaces the value and clears the poison, under the lock.
+  pub fn recover(value: T) {
+    avant_gate_lock(gate)
+    self.cell = value
+    avant_gate_clear_poison(gate)
+    avant_gate_unlock(gate)
+  }
+
+  // Clears the poison, keeping the value as the trapped task left it.
+  pub fn clear_poison {
+    avant_gate_lock(gate)
+    avant_gate_clear_poison(gate)
+    avant_gate_unlock(gate)
+  }
+
+  // A `with` or `try_with` that finds the mutex poisoned calls this under
+  // the lock (the lowering, mir/lower_task.av): with a recover function
+  // the value is rebuilt and the poison cleared, and the block runs;
+  // without one it returns false, and the lock traps or gives the error.
+  // A trap inside the recover function leaves the mutex poisoned.
+  pub fn __avant_heal: Bool {
+    if h = heal {
+      self.cell = h.rebuild()
+      avant_gate_clear_poison(gate)
+      return true
+    }
+    false
+  }
 }
 
-// What `m.try_with { }` gives on a poisoned mutex.
+// A Mutex's recover function.
+class MutexHeal(T) {
+  f: fn(): T
+
+  fn initialize(f: fn(): T) {
+    self.f = f
+  }
+
+  fn rebuild: T {
+    g = f
+    g()
+  }
+}
+
+// What `m.try_with { }` gives on a poisoned mutex without a recover
+// function.
 pub class MutexError: Error {
   pub fn message: String {
     "the mutex is poisoned: a task trapped while it held it, so its value may be half-changed"

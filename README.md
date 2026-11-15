@@ -2780,7 +2780,7 @@ fn main {
 
 What the task shared is left safe:
 
-- A `Mutex` the task held in `with` when it trapped is **poisoned**: its value may be half-changed, so every later `with` on it stops with `Mutex.with on a poisoned mutex: …` (in a task, that ends the task in turn; on the main thread, the program). `m.poisoned` tells, and `m.try_with { |x| … }` is the form for code that recovers: it gives the block's value, or a `MutexError` without running the block, so its type is `T | MutexError` (`Void | MutexError` when the block ends without a value).
+- A `Mutex` the task held in `with` when it trapped is **poisoned**: its value may be half-changed, so every later `with` on it stops with `Mutex.with on a poisoned mutex: …` (in a task, that ends the task in turn; on the main thread, the program). `m.poisoned` tells, and `m.try_with { |x| … }` is the form for code that recovers: it gives the block's value, or a `MutexError` without running the block, so its type is `T | MutexError` (`Void | MutexError` when the block ends without a value). A mutex heals when it knows how ([Channel and Mutex](#channel-and-mutex)): `Mutex(T).new(v, recover: f)` rebuilds the value with `f` when a lock meets the poison, `m.recover(v)` replaces it and `m.clear_poison` keeps it as it is.
 - Each `Channel` the block captured is closed, so a task waiting in `recv` or `send` on it is not left waiting for ever.
 - Each `Array` the block captured is thawed, as at the task's normal end.
 
@@ -2827,6 +2827,35 @@ fn main {
 ```
 
 - `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` holds the lock while the block runs; `x` names the guarded value, and assigning `x` changes it. Used as a value, the call gives the block's last expression; used as a statement, the block simply ends. `return`, `break`, `continue` and `?` leave the block as they leave any block, and the lock is released on every way out.
+- **A poisoned mutex heals.** A task that traps inside `with` poisons the mutex ([When a task traps](#when-a-task-traps)); three operations clear the poison, each under the lock:
+  - `Mutex(T).new(value, recover: f)` gives the mutex a function that rebuilds its value: a `with` or a `try_with` that meets the poison calls `f()`, makes its result the guarded value, clears the poison and runs the block as usual, on whichever task met it. `f` is a named function or a lambda that captures nothing (`recover: { || Stats.new }`), since it runs on another task and its result becomes the guarded value. A trap inside `f` is a trap like any other (it ends its task, or the program on the main thread) and leaves the mutex poisoned. A mutex without `recover:` traps as before; a recover function is read only after a lock meets the poison, so the lock costs the same.
+  - `m.recover(value)` replaces the value and clears the poison; `value` is given to the mutex as `Mutex(T).new(value)` takes it (a new value or a local variable it consumes).
+  - `m.clear_poison` keeps the value as the trapped task left it and clears the poison: for a value whose every state is valid.
+
+```avant
+import std.sync
+
+fn fresh: Array(Int) {
+  [0, 0, 0]
+}
+
+fn main {
+  counts = Mutex(Array(Int)).new([0, 0, 0], recover: fresh)
+  h = spawn {
+    counts.with { |c|
+      c[0] += 1
+      c[7] += 1                          // traps: the task ends, the mutex is poisoned
+    }
+    0
+  }
+  _ = h.join
+  puts(counts.poisoned)                  // => true
+  total = counts.with { |c| c.sum }      // fresh rebuilds the value first
+  puts(total)                            // => 0
+  puts(counts.poisoned)                  // => false
+}
+```
+
 - **Nothing the lock guards leaves the block.** Inside it, the guarded value and every reference reached from it (a field, an element, a name bound to one) may only be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand whose result is a plain value (`b.n`, `b.items.size`, `"${b}"`): never an argument, a stored value or a captured name, which would outlive the lock. Two stores keep it under the lock and are allowed: into the guarded value itself (`b.root = b.root.left`), and into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which then follows the same rule. A plain value (a number, a `Bool`, a `String`, `Bytes`, a struct or an optional of those, a `Channel` or a `Mutex`) is a copy and goes anywhere; the block's value, when it is used, must be one. To take a copy out, fill an array declared before the block with plain values (`b.items.each { |it| sizes.push(it.n) }`).
 - **What a `Mutex` may guard.** A method of the guarded class runs under the lock too, and the block may call it, or a method of any class the guarded value holds (`b.inner.add(c)`), with values from outside. So `Mutex(T)` is accepted only when no method of `T`, nor of any class or struct a `T` holds through its fields, elements and members, keeps a reference from outside or hands out its own: a parameter that can hold a reference is never stored (into a field, an element, a hash or an array by `push` or `fill`, also through a new object it is put in), never passed to a function or a method of another type, and never the method's result; `self` and what is reached from it are stored only into the object itself (`self.root = self.root.left`, `self.head = Node.new(v, self.head)`) and passed only to the methods of those same classes. A method may still read its parameters (`self.n == other.n`) and build new values. The error names the mutex, the class, the method and the store: `Mutex(Box) (at app.av:16:17): Box.add stores a parameter's reference (or a value reached from one) into an array (push); …`. `initialize` is not read: its object is new, and what is given to a constructor is checked where it is called.
 - **Nothing from outside comes in either.** A value stored into the guarded value (`b.child = c`, `b.items.push(c)`) must be new (a constructor call or a literal, whose parts are new or plain), reached from the guarded value already, or plain: a reference the code outside keeps would reach it without the lock.

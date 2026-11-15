@@ -129,7 +129,7 @@ fn guard_cases: Array(RCase) {
 // from outside is stored into the guarded value.
 fn consume_cases: Array(RCase) {
   xs: Array(RCase) = []
-  xs.push(refused("consume-after", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  b = Box.new\n  m = Mutex(Box).new(b)\n  b.n += 1\n  puts(m.with { |x| x.n })\n}\n", "was consumed by Mutex(Box).new at 24:17: the mutex holds its value now, so reach it only through with (D371)", "25:3"))
+  xs.push(refused("consume-after", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  b = Box.new\n  m = Mutex(Box).new(b)\n  b.n += 1\n  puts(m.with { |x| x.n })\n}\n", "was consumed by Mutex(Box).new at 24:17: the mutex holds its value now, so reach it only through with", "25:3"))
   xs.push(refused("consume-after-lambda", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  b = Box.new\n  m = Mutex(Box).new(b)\n  f = { |k: Int| b.n + k }\n  puts(f(1))\n}\n", "b was consumed by Mutex(Box).new at 24:17", "25:18"))
   xs.push(refused("consume-alias", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  b = Box.new\n  c = b\n  m = Mutex(Box).new(b)\n  c.n += 1\n}\n", "Mutex(Box).new consumes b (at 25:17), so before it the value stored into c is b or a reference reached from it (Box); until the mutex takes it, b may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since a reference kept elsewhere would reach the guarded value without the lock", "24:7"))
   xs.push(refused("consume-part", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  b = Box.new\n  inner = b.inner\n  m = Mutex(Box).new(b)\n  inner.n += 1\n}\n", "Mutex(Box).new consumes b (at 25:17), so before it the value stored into inner is b or a reference reached from it (Inner)", "24:12"))
@@ -139,7 +139,7 @@ fn consume_cases: Array(RCase) {
   xs.push(refused("consume-not-fresh", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  h = Holder.new\n  b = h.box\n  m = Mutex(Box).new(b)\n}\n", "Mutex(Box).new consumes b (at 25:17), so every value b holds must be new (a constructor call or a literal): this Box may be reached by another reference", "24:8"))
   xs.push(refused("consume-loop", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  b = Box.new\n  ms: Array(Mutex(Box)) = []\n  for i in 0..2 {\n    ms.push(Mutex(Box).new(b))\n  }\n}\n", "Mutex(Box).new consumes b inside a loop or a block that b was declared outside of: a second round would give the same value to a second mutex", "26:28"))
   xs.push(refused("consume-param", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\nputs(1)\n}\n\nfn wrap(b: Box): Mutex(Box) {\n  Mutex(Box).new(b)\n}\n", "Mutex(Box).new: b is a parameter or a name the code around holds, which another reference may reach without the lock", "27:18"))
-  xs.push(refused("consume-field", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  h = Holder.new\n  m = Mutex(Box).new(h.box)\n}\n", "Mutex(Box).new: a field or an element cannot be given to the mutex, since another reference may reach it without the lock; give it a new value (a constructor call or a literal) or a local variable, which the call consumes (D371)", "24:23"))
+  xs.push(refused("consume-field", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  h = Holder.new\n  m = Mutex(Box).new(h.box)\n}\n", "Mutex(Box).new: a field or an element cannot be given to the mutex, since another reference may reach it without the lock; give it a new value (a constructor call or a literal) or a local variable, which the call consumes", "24:23"))
   xs.push(refused("consume-element", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  xs = [Box.new]\n  m = Mutex(Box).new(xs[0])\n}\n", "Mutex(Box).new: a field or an element cannot be given to the mutex", "24:24"))
   xs.push(refused("consume-call", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  m = Mutex(Box).new(mk())\n}\n\nfn mk: Box {\n  Box.new\n}\n", "Mutex(Box).new: a call's result cannot be given to the mutex", "23:22"))
   xs.push(refused("consume-literal-part", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub n: Int = 0\n  pub inner: Inner = Inner.new\n  pub next: Box? = nil\n  pub items: Array(Inner) = []\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn take(b: Box) {\n  b.n += 1\n}\n\nfn main {\n  i = Inner.new\n  m = Mutex(Inner).new(Inner.new)\n  n = Mutex(Array(Inner)).new([i])\n}\n", "Mutex(Array(Inner)).new: this value cannot be given to the mutex", "25:31"))
@@ -218,6 +218,20 @@ fn default_cases: Array(RCase) {
   xs
 }
 
+// A poisoned Mutex heals: a recover function captures nothing (it runs on
+// whichever task meets the poison and its result becomes the guarded
+// value), and `m.recover(v)` gives the mutex v by the rule of
+// `Mutex(T).new(v)`.
+fn recover_cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(refused("recover-captures", "import std.sync\n\nfn main {\n  k = 3\n  m = Mutex(Int).new(0, recover: { || k })\n  puts(m.poisoned)\n}\n", "Mutex(Int).new's recover function cannot capture k", "5:34"))
+  xs.push(refused("recover-fn-value", "import std.sync\n\nfn main {\n  f: fn(): Int = { || 1 }\n  m = Mutex(Int).new(0, recover: f)\n  puts(m.poisoned)\n}\n", "Mutex(Int).new's recover function must be a named function or a lambda written here that captures nothing", "5:34"))
+  xs.push(refused("recover-consumed", "import std.sync\n\nclass Box {\n  pub n: Int = 0\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  b = Box.new\n  m.recover(b)\n  b.n += 1\n}\n", "b was consumed by Mutex(Box).recover at 10:4", "11:3"))
+  xs.push(refused("recover-field", "import std.sync\n\nclass Box {\n  pub n: Int = 0\n}\n\nclass Holder {\n  pub box: Box = Box.new\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new)\n  h = Holder.new\n  m.recover(h.box)\n}\n", "Mutex(Box).recover: a field or an element cannot be given to the mutex", "14:14"))
+  xs.push(accepted("recover-ok", "import std.sync\n\nclass Box {\n  pub n: Int = 0\n}\n\nfn fresh: Box {\n  Box.new\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new, recover: fresh)\n  b = Box.new\n  b.n = 4\n  m.recover(b)\n  m.clear_poison\n  n = m.with { |x| x.n }\n  puts(n)\n  k = Mutex(Int).new(1, recover: { || 2 })\n  puts(k.poisoned)\n}\n", "4\nfalse\n"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -259,6 +273,9 @@ fn test_main(c: Checks) {
     }
     for k in consume_cases() {
       all.push(k)
+    }
+    for rc in recover_cases() {
+      all.push(rc)
     }
     for gc in guarded_cases() {
       all.push(gc)

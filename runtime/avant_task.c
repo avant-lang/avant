@@ -1035,6 +1035,32 @@ int32_t avant_gate_poisoned(void *obj, uint64_t off) {
   return r;
 }
 
+/* Clears the poison of a gate the calling thread holds (Mutex.recover,
+ * clear_poison, and a recover function's rebuild under `with`): the
+ * word's bit, and the entry's flag when the gate is queued or was taken
+ * through a dead entry. Under the bucket's mutex, so no thread queues the
+ * gate meanwhile; the caller holds the lock, so the word stays locked or
+ * queued and only this call clears its poison bit. */
+void avant_gate_clear_poison(void *obj, uint64_t off) {
+  uint64_t *w = (uint64_t *)((char *)obj + off);
+  uint64_t id = __atomic_load_n(w, __ATOMIC_RELAXED) & ~GATE_BITS;
+  GateBucket *b = gate_bucket(id);
+  GateEnt *e;
+  uint64_t v;
+  pthread_mutex_lock(&b->mu);
+  e = gate_find(b, id);
+  if (e) {
+    e->poisoned = 0;
+  }
+  v = __atomic_load_n(w, __ATOMIC_RELAXED);
+  while (v & GATE_POISON) {
+    if (__atomic_compare_exchange_n(w, &v, v & ~GATE_POISON, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+      break;
+    }
+  }
+  pthread_mutex_unlock(&b->mu);
+}
+
 /* The task that held the gate numbered id trapped (run_job): the gate is
  * poisoned and its lock given up. A queued gate's entry is free at once
  * (a waiter takes it); a gate locked through its word alone gets a dead

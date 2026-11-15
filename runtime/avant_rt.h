@@ -598,6 +598,7 @@ void avant_task_hold_end(void);
 /* `m.with { }`'s lock: 1 when a task trapped while holding the
  * mutex (it is poisoned), else 0; the lock is held either way. */
 int32_t avant_gate_lock_with(void *obj, uint64_t off);
+void avant_gate_clear_poison(void *obj, uint64_t off);
 /* Mutex.poisoned: 1 when a task trapped while holding the gate. */
 int32_t avant_gate_poisoned(void *obj, uint64_t off);
 /* The recovery point's two entries for avant_rt_traps.c (hidden). */

@@ -1,0 +1,150 @@
+// A poisoned Mutex heals: a recover function given at creation rebuilds
+// the value when a `with` or a `try_with` meets the poison (under the
+// lock, on whichever task meets it), `m.recover(v)` replaces the value
+// and `m.clear_poison` keeps it, both clearing the poison; a trap inside
+// the recover function leaves the mutex poisoned. `try_with` used as a
+// statement gives `Void | MutexError`. The argument names the case. Run
+// by tests/cases/test_tasks.av.
+
+import std.sync
+
+struct Acc {
+  n: Int
+}
+
+fn at(xs: Array(Int), i: Int): Int {
+  xs[i]
+}
+
+fn fresh_acc: Acc {
+  Acc { n: 42 }
+}
+
+fn bad_acc: Acc {
+  xs = [1]
+  Acc { n: at(xs, 3) }
+}
+
+// A task that sets n to 5 and traps, poisoning m.
+fn poison(m: Mutex(Acc)) {
+  xs = [1, 2, 3]
+  h = spawn {
+    m.with { |acc|
+      acc.n = 5
+      acc.n = at(xs, 4)
+    }
+    0
+  }
+  v = h.join else e {
+    puts("trapped: ${e.what}")
+    return
+  }
+  puts("not trapped: ${v}")
+}
+
+fn bump(m: Mutex(Acc)): Void | MutexError {
+  m.try_with { |acc| acc.n += 1 }?
+}
+
+fn report_bump(m: Mutex(Acc), label: String) {
+  bump(m) else e {
+    puts("${label}: ${e}")
+    return
+  }
+  puts("${label}: ok")
+}
+
+fn statement_try(m: Mutex(Acc)) {
+  m.try_with { |acc| acc.n += 1 } else e {
+    puts("statement: ${e}")
+    return
+  }
+  puts("statement: ok")
+}
+
+fn join_task(h: JoinHandle(Int), label: String) {
+  v = h.join else e {
+    puts("${label} trapped: ${e.what}")
+    return
+  }
+  puts("${label}: ${v}")
+}
+
+fn main {
+  a = argv()
+  kind = "heal"
+  if a.size > 1 {
+    kind = a[a.size - 1]
+  }
+  if kind == "heal" {
+    m = Mutex(Acc).new(Acc { n: 0 }, recover: fresh_acc)
+    poison(m)
+    puts("poisoned: ${m.poisoned}")
+    n = m.with { |acc| acc.n }
+    puts("with: ${n}")
+    puts("poisoned: ${m.poisoned}")
+  } else if kind == "heal-lambda" {
+    m = Mutex(Acc).new(Acc { n: 0 }, recover: { || Acc { n: 7 } })
+    poison(m)
+    r = m.try_with { |acc| acc.n * 2 }
+    puts("try_with: ${r ?? -1}")
+  } else if kind == "heal-task" {
+    // Another task meets the poison and heals it.
+    m = Mutex(Acc).new(Acc { n: 0 }, recover: fresh_acc)
+    poison(m)
+    h = spawn {
+      m.with { |acc|
+        acc.n += 1
+        acc.n
+      }
+    }
+    puts("task: ${h.join ?? -1}")
+    puts("poisoned: ${m.poisoned}")
+  } else if kind == "heal-traps" {
+    // The recover function traps in a task: that task ends, and the
+    // mutex stays poisoned until m.recover.
+    m = Mutex(Acc).new(Acc { n: 0 }, recover: bad_acc)
+    poison(m)
+    h = spawn {
+      m.with { |acc| acc.n }
+    }
+    join_task(h, "heal")
+    puts("poisoned: ${m.poisoned}")
+    m.recover(Acc { n: 9 })
+    puts("poisoned: ${m.poisoned}")
+    n = m.with { |acc| acc.n }
+    puts("with: ${n}")
+  } else if kind == "recover" {
+    m = Mutex(Acc).new(Acc { n: 0 })
+    poison(m)
+    m.recover(Acc { n: 11 })
+    puts("poisoned: ${m.poisoned}")
+    n = m.with { |acc| acc.n }
+    puts("with: ${n}")
+  } else if kind == "clear" {
+    m = Mutex(Acc).new(Acc { n: 0 })
+    poison(m)
+    m.clear_poison
+    puts("poisoned: ${m.poisoned}")
+    n = m.with { |acc| acc.n }
+    puts("with: ${n}")
+  } else if kind == "try-void" {
+    m = Mutex(Acc).new(Acc { n: 1 })
+    report_bump(m, "healthy")
+    poison(m)
+    statement_try(m)
+    report_bump(m, "poisoned")
+    m.clear_poison
+    statement_try(m)
+    report_bump(m, "cleared")
+    n = m.with { |acc| acc.n }
+    puts("with: ${n}")
+  } else if kind == "heal-main-traps" {
+    // On the main thread a trap in the recover function ends the program.
+    m = Mutex(Acc).new(Acc { n: 0 }, recover: bad_acc)
+    poison(m)
+    n = m.with { |acc| acc.n }
+    puts("never ${n}")
+  }
+  puts("after")
+}

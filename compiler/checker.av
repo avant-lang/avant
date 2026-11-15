@@ -4847,6 +4847,18 @@ pub class Checker {
   }
 
   pub fn check_method_call(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
+    got = check_method_call_of(expr, recv, has_want, want)
+    if !self.has_err && expr.callee == "recover" && expr.args.size == 1 {
+      if r = expr.receiver, rt = r.ty, is_mutex_ty(rt) {
+        // `m.recover(v)` gives the mutex v as `Mutex(T).new(v)` does: the
+        // same rule for what v may be (checker/guard.av).
+        check_mutex_value(expr, rt, "recover")
+      }
+    }
+    got
+  }
+
+  pub fn check_method_call_of(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = flatten_module_receiver(recv)
     if expr.callee == "new" {
       recv = flatten_type_chain(recv)
@@ -5968,6 +5980,9 @@ pub class Checker {
     if expr.callee == "avant_gate_poisoned" {
       is_gate = true
     }
+    if expr.callee == "avant_gate_clear_poison" {
+      is_gate = true
+    }
     if is_gate {
       if expr.args.size == 1 {
         if b = expr.block {
@@ -5998,7 +6013,7 @@ pub class Checker {
   }
 
   pub fn is_gate_name(name: String): Bool {
-    name == "avant_gate_new" || name == "avant_gate_lock" || name == "avant_gate_unlock" || name == "avant_gate_wait" || name == "avant_gate_signal" || name == "avant_gate_broadcast" || name == "avant_gate_poisoned"
+    name == "avant_gate_new" || name == "avant_gate_lock" || name == "avant_gate_unlock" || name == "avant_gate_wait" || name == "avant_gate_signal" || name == "avant_gate_broadcast" || name == "avant_gate_poisoned" || name == "avant_gate_clear_poison"
   }
 
   pub fn check_join(expr: Expr, handle: Ty): Ty {

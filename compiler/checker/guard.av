@@ -45,6 +45,8 @@ pub class GuardWalk {
   pub call_loc: String = ""
   pub call_at: String = ""
   pub ctor: String = ""
+  // The consuming call's name: new, or recover (`m.recover(v)`).
+  pub verb: String = "new"
   pub passed: Bool = false
   pub declared: Bool = false
   pub decl_scope: Int = -1
@@ -249,7 +251,7 @@ pub fn (checker_self: Checker) guard_fail(w: GuardWalk, e: Expr, role: String) {
     shown = t.show
   }
   if w.consume {
-    checker_self.fail(e.loc, "${w.ctor}.new consumes ${w.place} (at ${w.call_at}), so before it ${role} is ${w.place} or a reference reached from it (${shown}); until the mutex takes it, ${w.place} may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since a reference kept elsewhere would reach the guarded value without the lock")
+    checker_self.fail(e.loc, "${w.ctor}.${w.verb} consumes ${w.place} (at ${w.call_at}), so before it ${role} is ${w.place} or a reference reached from it (${shown}); until the mutex takes it, ${w.place} may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since a reference kept elsewhere would reach the guarded value without the lock")
     return
   }
   checker_self.fail(e.loc, "Mutex.with: ${role} is the guarded value or a reference reached from it (${shown}); inside the block it may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since the lock protects it only until the block ends")
@@ -269,7 +271,7 @@ pub fn (checker_self: Checker) guard_inward(w: GuardWalk, value: Expr) {
     shown = t.show
   }
   if w.consume {
-    checker_self.fail(value.loc, "${w.ctor}.new consumes ${w.place} (at ${w.call_at}), so this value stored into ${w.place} (${shown}) must be new (a constructor call or a literal) or plain: a reference kept elsewhere would reach the guarded value without the lock")
+    checker_self.fail(value.loc, "${w.ctor}.${w.verb} consumes ${w.place} (at ${w.call_at}), so this value stored into ${w.place} (${shown}) must be new (a constructor call or a literal) or plain: a reference kept elsewhere would reach the guarded value without the lock")
     return
   }
   checker_self.fail(value.loc, "Mutex.with: this value stored into the guarded value (${shown}) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock")
@@ -650,7 +652,7 @@ pub fn (checker_self: Checker) guard_name(w: GuardWalk, e: Expr) {
     return
   }
   if w.passed && w.is_consumed_var(e.ident) {
-    checker_self.fail(e.loc, "${e.ident} was consumed by ${w.ctor}.new at ${w.call_at}: the mutex holds its value now, so reach it only through with (D371)")
+    checker_self.fail(e.loc, "${e.ident} was consumed by ${w.ctor}.${w.verb} at ${w.call_at}: the mutex holds its value now, so reach it only through with")
     return
   }
   if w.floor < 0 {
@@ -662,7 +664,7 @@ pub fn (checker_self: Checker) guard_name(w: GuardWalk, e: Expr) {
   }
   if e.ident == w.place {
     if w.consume {
-      checker_self.fail(e.loc, "${w.ctor}.new consumes ${e.ident} (at ${w.call_at}), so ${e.ident} cannot be captured by a lambda or a spawn block, which may run after the mutex has taken it")
+      checker_self.fail(e.loc, "${w.ctor}.${w.verb} consumes ${e.ident} (at ${w.call_at}), so ${e.ident} cannot be captured by a lambda or a spawn block, which may run after the mutex has taken it")
       return
     }
     checker_self.fail(e.loc, "Mutex.with: the guarded value ${e.ident} cannot be captured by a lambda or a spawn block, which may run after the lock is released")
@@ -713,7 +715,7 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
       return
     }
   }
-  if w.consume && !w.passed && e.callee == "new" && e.loc.show == w.call_loc {
+  if w.consume && !w.passed && e.callee == w.verb && e.loc.show == w.call_loc {
     checker_self.guard_consume_at(w, e)
     return
   }
@@ -800,7 +802,22 @@ pub fn (checker_self: Checker) check_mutex_new(expr: Expr, ty: Ty) {
     checker_self.guarded.push(ty.ty_args[0])
     checker_self.guarded_at.push(expr.loc)
   }
-  if checker_self.has_err || expr.args.size != 1 || ty.ty_args.size != 1 {
+  if checker_self.has_err || expr.args.size < 1 || expr.args.size > 2 || ty.ty_args.size != 1 {
+    return
+  }
+  if expr.args.size == 2 {
+    checker_self.check_mutex_recover(expr.args[1], ty)
+    if checker_self.has_err {
+      return
+    }
+  }
+  checker_self.check_mutex_value(expr, ty, "new")
+}
+
+// The value expr.args[0] given to a mutex of type ty by `Mutex(T).new` or
+// `m.recover` (verb): new, plain, or a local variable the call consumes.
+pub fn (checker_self: Checker) check_mutex_value(expr: Expr, ty: Ty, verb: String) {
+  if ty.ty_args.size != 1 || expr.args.size < 1 {
     return
   }
   if checker_self.leaves_mutex_with(ty.ty_args[0]) {
@@ -824,7 +841,31 @@ pub fn (checker_self: Checker) check_mutex_new(expr: Expr, ty: Ty) {
   } else if arg.kind == ex_call() {
     what = "a call's result"
   }
-  checker_self.fail(arg.loc, "${shown}.new: ${what} cannot be given to the mutex, since another reference may reach it without the lock; give it a new value (a constructor call or a literal) or a local variable, which the call consumes (D371)")
+  checker_self.fail(arg.loc, "${shown}.${verb}: ${what} cannot be given to the mutex, since another reference may reach it without the lock; give it a new value (a constructor call or a literal) or a local variable, which the call consumes")
+}
+
+// `Mutex(T).new(v, recover: f)`: f rebuilds the guarded value on a
+// poisoned mutex, on whichever task meets the poison, and its result
+// becomes the guarded value. So f is a named function or a lambda that
+// captures nothing: a captured name is shared with the code that made the
+// lambda, so it could reach the rebuilt value without the lock, or be
+// read by another task while it changes. (Without captures and with no
+// mutable state outside a function, what f returns is new or plain.)
+pub fn (checker_self: Checker) check_mutex_recover(arg: Expr, ty: Ty) {
+  k = arg.kind
+  if k == ex_nil() {
+    return
+  }
+  if k == ex_lambda() {
+    if arg.cap_names.size > 0 {
+      checker_self.fail(arg.loc, "${ty.show}.new's recover function cannot capture ${arg.cap_names[0]}: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function")
+    }
+    return
+  }
+  if k == ex_name() && arg.fn_ref {
+    return
+  }
+  checker_self.fail(arg.loc, "${ty.show}.new's recover function must be a named function or a lambda written here that captures nothing: a function value may capture names shared with other code, which could reach the rebuilt value without the lock")
 }
 
 // The function walks for the consuming calls check_mutex_new recorded.
@@ -840,6 +881,12 @@ pub fn (checker_self: Checker) check_consumes(body: Array(Stmt)) {
     if t = call.ty {
       w.ctor = t.show
     }
+    if call.callee == "recover" {
+      if r = call.receiver, rt = r.ty {
+        w.ctor = rt.show
+      }
+      w.verb = "recover"
+    }
     w.push
     for st in body {
       checker_self.guard_stmt(w, st)
@@ -854,7 +901,7 @@ pub fn (checker_self: Checker) check_consumes(body: Array(Stmt)) {
 // value (its first one declares the variable); after it, refused.
 pub fn (checker_self: Checker) guard_place_assign(w: GuardWalk, value: Expr) {
   if w.passed && w.is_consumed_var(w.place) {
-    checker_self.fail(value.loc, "${w.place} was consumed by ${w.ctor}.new at ${w.call_at}: the mutex holds its value now; give a new value a new name (D371)")
+    checker_self.fail(value.loc, "${w.place} was consumed by ${w.ctor}.${w.verb} at ${w.call_at}: the mutex holds its value now; give a new value a new name")
     return
   }
   if w.index_of(w.place) >= 0 && !w.is_consumed_var(w.place) {
@@ -866,7 +913,7 @@ pub fn (checker_self: Checker) guard_place_assign(w: GuardWalk, value: Expr) {
     if t = value.ty {
       shown = t.show
     }
-    checker_self.fail(value.loc, "${w.ctor}.new consumes ${w.place} (at ${w.call_at}), so every value ${w.place} holds must be new (a constructor call or a literal): this ${shown} may be reached by another reference, which would reach the guarded value without the lock")
+    checker_self.fail(value.loc, "${w.ctor}.${w.verb} consumes ${w.place} (at ${w.call_at}), so every value ${w.place} holds must be new (a constructor call or a literal): this ${shown} may be reached by another reference, which would reach the guarded value without the lock")
     return
   }
   if !w.declared {
@@ -881,20 +928,20 @@ pub fn (checker_self: Checker) guard_place_assign(w: GuardWalk, value: Expr) {
 pub fn (checker_self: Checker) guard_consume_at(w: GuardWalk, e: Expr) {
   arg = e.args[0]
   if !w.is_consumed_var(w.place) {
-    checker_self.fail(arg.loc, "${w.ctor}.new: ${w.place} is a parameter or a name the code around holds, which another reference may reach without the lock; give the mutex a new value (a constructor call or a literal) or a local variable, which the call consumes (D371)")
+    checker_self.fail(arg.loc, "${w.ctor}.${w.verb}: ${w.place} is a parameter or a name the code around holds, which another reference may reach without the lock; give the mutex a new value (a constructor call or a literal) or a local variable, which the call consumes")
     return
   }
   if w.floor >= 0 && w.decl_scope < w.floor {
-    checker_self.fail(arg.loc, "${w.ctor}.new: ${w.place} is captured by this lambda or spawn block, which cannot consume it; give the mutex a new value (a constructor call or a literal) or a variable of the block (D371)")
+    checker_self.fail(arg.loc, "${w.ctor}.${w.verb}: ${w.place} is captured by this lambda or spawn block, which cannot consume it; give the mutex a new value (a constructor call or a literal) or a variable of the block")
     return
   }
   if w.loops > w.decl_loops {
-    checker_self.fail(arg.loc, "${w.ctor}.new consumes ${w.place} inside a loop or a block that ${w.place} was declared outside of: a second round would give the same value to a second mutex; declare it inside, or give the mutex a new value (D371)")
+    checker_self.fail(arg.loc, "${w.ctor}.${w.verb} consumes ${w.place} inside a loop or a block that ${w.place} was declared outside of: a second round would give the same value to a second mutex; declare it inside, or give the mutex a new value")
     return
   }
   alias = w.alias_in_scope
   if alias.size > 0 {
-    checker_self.fail(arg.loc, "${w.ctor}.new consumes ${w.place}, but ${alias}, which holds a reference reached from it, is still in scope and would reach the guarded value without the lock (D371)")
+    checker_self.fail(arg.loc, "${w.ctor}.${w.verb} consumes ${w.place}, but ${alias}, which holds a reference reached from it, is still in scope and would reach the guarded value without the lock")
     return
   }
   w.passed = true

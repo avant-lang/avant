@@ -795,15 +795,29 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   is_try = e.callee == "try_with"
   out = -1
   done = -1
+  heal = ""
+  if lw.lw_m.shared {
+    heal = lw.mutex_heal_sym(rt)
+    if heal.size == 0 {
+      lw.refuse(e.loc, "Mutex.with without std.sync's __avant_heal (internal)")
+      return zero
+    }
+  }
   if is_try && lw.lw_m.shared {
     p0 = b.temp(mt_i32())
     b.call(p0, "avant_gate_lock_with", lw.gate_args(h, gi))
     bad0 = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(p0), b.c_i32(0)))
     okb = b.block
+    healb = b.block
     badb = b.block
     done = b.block
     out = b.temp(lw.ety(e))
-    b.branch(bad0, badb, okb)
+    b.branch(bad0, healb, okb)
+    // Poisoned: a recover function rebuilds the value (under the lock),
+    // and the block runs; without one, the error.
+    b.at(healb)
+    healed = lw.heal_call(heal, h)
+    b.branch(healed, okb, badb)
     b.at(badb)
     b.call(-1, "avant_gate_unlock", lw.gate_args(h, gi))
     if et = e.ty, me = mir_mutex_error(et) {
@@ -825,12 +839,20 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
     // A task that trapped while it held the mutex poisoned it:
     // the lock says so, and the block does not run on the value the
     // task may have left half-changed.
+    // A recover function rebuilds it first (under the lock); without
+    // one the lock traps.
     p = b.temp(mt_i32())
     b.call(p, "avant_gate_lock_with", lw.gate_args(h, gi))
     bad = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(p), b.c_i32(0)))
-    ok = lw.trap_open(bad, true)
-    none: Array(MOperand) = []
-    lw.trap_close(ok, "avant_trap_poisoned", none, e.loc)
+    ok = b.block
+    healb = b.block
+    b.branch(bad, healb, ok)
+    b.at(healb)
+    healed = lw.heal_call(heal, h)
+    lw.trap_close(lw.trap_open(healed, false), "avant_trap_poisoned", none_ops(), e.loc)
+    b.goto(ok)
+    b.at(ok)
+    lw.at(e.loc)
   } else {
     b.call(-1, "avant_gate_lock", lw.gate_args(h, gi))
   }
@@ -884,6 +906,34 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
     return b.copy_local(out)
   }
   r
+}
+
+// No operands.
+pub fn none_ops: Array(MOperand) {
+  none: Array(MOperand) = []
+  none
+}
+
+// `m.__avant_heal` on the mutex in local h (sym, std.sync's method of
+// this Mutex instance): whether a recover function rebuilt the value.
+pub fn (lw: MirLower) heal_call(sym: String, h: Int): MOperand {
+  b = lw.lw_b
+  args: Array(MOperand) = []
+  args.push(b.copy_local(h))
+  lw.call_to(mt_bool(), sym, args)
+}
+
+// The symbol of std.sync's Mutex.__avant_heal for the instance rt, ""
+// without one.
+pub fn (lw: MirLower) mutex_heal_sym(rt: Ty): String {
+  for ms in lw.lw_syms.methods {
+    if ms.name == "__avant_heal" && ms.owner == rt.name && ms.node.mod_name == "std.sync" {
+      if s = lw.lw_fn_syms.get(ms.node.emit_name) {
+        return s
+      }
+    }
+  }
+  ""
 }
 
 // The MutexError member of try_with's union, or nil.
@@ -975,5 +1025,5 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
 
 // The gate builtins taking a gate (calls.av is_gate_callee).
 pub fn mir_gate_builtin(name: String): Bool {
-  name == "avant_gate_lock" || name == "avant_gate_unlock" || name == "avant_gate_wait" || name == "avant_gate_signal" || name == "avant_gate_broadcast"
+  name == "avant_gate_lock" || name == "avant_gate_unlock" || name == "avant_gate_wait" || name == "avant_gate_signal" || name == "avant_gate_broadcast" || name == "avant_gate_clear_poison"
 }

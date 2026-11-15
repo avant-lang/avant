@@ -166,6 +166,44 @@ fn test_tasks(c: Checks) {
   if compiler = env_get("AVANT_COMPILER") {
     task_trap_cases(c, compiler, now_ms())
     task_exit_cases(c, compiler, now_ms())
+    mutex_recover_cases(c, compiler, now_ms())
+  }
+}
+
+// A poisoned mutex heals (tests/fixtures/threads/mutex_recover.av): each
+// case's status and output.
+fn mutex_recover_cases(c: Checks, compiler: String, stamp: Int) {
+  bin = "${scratch()}/tasks-recover-${stamp}.bin"
+  clog = "${scratch()}/tasks-recover-${stamp}.clog"
+  code = compile_av(compiler, "${avant_test_root()}/tests/fixtures/threads/mutex_recover.av", bin, clog)
+  c.eq_int(code, 0, "the mutex-recover fixture compiles")
+  trapped = "trapped: index 4 out of bounds (size 3) in at (mutex_recover.av:15:1)\n"
+  kinds = ["heal", "heal-lambda", "heal-task", "heal-traps", "recover", "clear", "try-void", "heal-main-traps"]
+  statuses = [0, 0, 0, 0, 0, 0, 0, 1]
+  wants = [
+  "${trapped}poisoned: true\nwith: 42\npoisoned: false\nafter\n",
+  "${trapped}try_with: 14\nafter\n",
+  "${trapped}task: 43\npoisoned: false\nafter\n",
+  "${trapped}avant runtime: index 3 out of bounds (size 1) in at (mutex_recover.av:15:1)\nheal trapped: index 3 out of bounds (size 1) in at (mutex_recover.av:15:1)\npoisoned: true\npoisoned: false\nwith: 9\nafter\n",
+  "${trapped}poisoned: false\nwith: 11\nafter\n",
+  "${trapped}poisoned: false\nwith: 5\nafter\n",
+  "${trapped}statement: the mutex is poisoned: a task trapped while it held it, so its value may be half-changed\npoisoned: the mutex is poisoned: a task trapped while it held it, so its value may be half-changed\nstatement: ok\ncleared: ok\nwith: 7\nafter\n",
+  "${trapped}avant runtime: index 3 out of bounds (size 1) in at (mutex_recover.av:15:1)\n"]
+  i = 0
+  while i < kinds.size {
+    kind = kinds[i]
+    log = "${scratch()}/tasks-recover-${stamp}-${kind}.log"
+    args: Array(String) = []
+    args.push("-c")
+    args.push("${bin} ${kind}")
+    status = process_run_out("/bin/sh", args, log) ?? -1
+    out = file_read(log) ?? ""
+    c.eq_int(status, statuses[i], "mutex recover ${kind}: status ${statuses[i]}")
+    c.expect(str_has(out, wants[i]), "mutex recover ${kind}: the output has ${wants[i]}")
+    if statuses[i] == 1 {
+      c.expect(!str_has(out, "after"), "mutex recover ${kind}: the program ends there")
+    }
+    i += 1
   }
 }
 
