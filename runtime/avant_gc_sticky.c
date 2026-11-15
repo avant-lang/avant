@@ -1022,6 +1022,11 @@ static void splus_fix(void) {
   EACH_TASK_ROOT(slot, splus_fix_slot(slot));
   noted = gc_heap.noted;
   noted_n = gc_heap.noted_n;
+  /* Nothing was copied (the collection aged blocks where they lie): no
+   * field names a moved object, and only a holder that is not young can
+   * have to be remembered (it names an object aged where it lies), so a
+   * young holder is passed over on its header. */
+  const int none_moved = avant_g_stats.copied_bytes == gc_heap.splus_copied0;
   for (i = 0; i < noted_n; i++) {
     uintptr_t e = (uintptr_t)noted[i];
     void **p;
@@ -1029,6 +1034,9 @@ static void splus_fix(void) {
     uint64_t d;
     unsigned k;
     if (!(e & NOTED_FIX)) {
+      continue;
+    }
+    if (none_moved && (avant_header((void *)(e & ~NOTED_TAGS))->flags & AVANT_FLAG_YOUNG)) {
       continue;
     }
     p = (void **)(e & ~NOTED_TAGS);
@@ -1146,11 +1154,16 @@ static void splus_evacuate(void) {
   int any = 0;
   /* A block aged where it lies: the fix-up must run for its holders. */
   int here_any = 0;
-  /* A high-survival collection (SPLUS_DENSE_NUM's comment): DENSE, the
-   * second in a row, promotes dense pure blocks in place; HERE, the first,
-   * ages their survivors where they lie. */
+  /* A dense pure block (SPLUS_DENSE_NUM's comment): DENSE, in the second
+   * high-survival collection in a row, promotes its survivors in place;
+   * HERE, in any other collection that ages, ages them where they lie
+   * instead of copying them (a dense block's copy compacts nothing, and
+   * a survivor that dies before the next collection, as a structure
+   * under construction at a collection does, was copied for nothing).
+   * HERE_N counts the blocks it took. */
   int dense = 0;
   int here = 0;
+  uint32_t here_n = 0;
   /* O92 (Stage 28 W15d item 2): the blocks evacuated hold at most one
    * young budget of survivors (avant_young_bytes); the candidates past it
    * keep their survivors in place, promoted (S's rule). A collection whose
@@ -1180,9 +1193,9 @@ static void splus_evacuate(void) {
     }
     if (sum * 2 > avant_nursery_held) {
       dense = gc_heap.young_high_prev;
-      here = !gc_heap.young_high_prev && gc_heap.splus_age;
     }
   }
+  here = !dense && gc_heap.splus_age;
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     Block *b = gc_heap.young_blocks[i];
     surv += b->idle;
@@ -1227,6 +1240,7 @@ static void splus_evacuate(void) {
         b->kept = SPLUS_AGE_HERE;
         evac_map_set(b, EVAC_MAP_AGE);
         gc_heap.ctr.sticky.here_blocks++;
+        here_n++;
         any = 1;
       }
     } else if (b->kept == SPLUS_PURE_AGED &&
@@ -1306,15 +1320,19 @@ static void splus_evacuate(void) {
     /* The survivors of the blocks aged where they lie (a pass of its own,
      * so that the copy's loop has no test for them): young again,
      * survivors, each with its start bit (a lookup must find it after the
-     * collection, when the late runs are forgotten); gc_clear_noted
-     * clears MARKED. */
-    for (i = 0; here && i < noted_n; i++) {
+     * collection, when the late runs are forgotten), and the flags the
+     * collection set cleared here, gc_clear_noted's work for them: their
+     * entries are tagged NOTED_MOVED, which it passes over (nothing reads
+     * them after the fix-up, which needs no forward for them). */
+    for (i = 0; here_n && i < noted_n; i++) {
       uintptr_t e = (uintptr_t)noted[i];
       if ((e & (NOTED_SURV | NOTED_MOVED)) == NOTED_SURV &&
           map[(uint64_t)((e & ~NOTED_TAGS) - base8) >> BLOCK_SHIFT] == EVAC_MAP_AGE) {
         AvantHeader *ah = avant_header((void *)(e & ~NOTED_TAGS));
-        ah->flags = (uint16_t)((ah->flags & ~AVANT_FLAG_PROMOTED_NOW) | AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
+        ah->flags = (uint16_t)((ah->flags & ~(AVANT_FLAG_PROMOTED_NOW | AVANT_FLAG_MARKED | AVANT_FLAG_CARD_SCAN)) |
+                               AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
         start_bit_set(ah, 1);
+        noted[i] = (void *)(e | NOTED_MOVED);
       }
     }
   }

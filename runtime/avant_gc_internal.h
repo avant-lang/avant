@@ -1869,14 +1869,21 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
 #ifndef SPLUS_AGED_SPARSE_LINES
 #define SPLUS_AGED_SPARSE_LINES 64
 #endif
-/* A young collection where nearly everything survives (splus_evacuate):
- * when more than half of the young bytes of a collection that saw at
- * least half a budget survive, a pure young block whose survivors fill
- * more than SPLUS_DENSE_NUM / SPLUS_DENSE_DEN of the lines it was
- * allocated in is not copied. At the first such collection after one
- * that was not, its survivors age where they lie (SPLUS_AGE_HERE: still
- * young, the block a survivor block until the next collection); at the
- * second in a row they are promoted where they lie. Measured on the
+/* A dense block (splus_evacuate): a pure young block whose survivors
+ * fill more than SPLUS_DENSE_NUM / SPLUS_DENSE_DEN of the lines it was
+ * allocated in is not copied. When more than half of the young bytes of
+ * a collection that saw at least half a budget survive, and the one
+ * before was such a collection too, its survivors are promoted where
+ * they lie; in any other collection that ages survivors they age where
+ * they lie (SPLUS_AGE_HERE: still young, the block a survivor block
+ * until the next collection): a dense block's copy compacts nothing,
+ * and a structure under construction at a collection (the collector
+ * benchmark's tree churn) dies before the next one, so its copy and the
+ * fix-up of its holders bought nothing (its young collections 204 M to
+ * 157 M instructions, nothing copied; the unhinted Calculator::Ast's
+ * peak heap 15.7 MB to 12.7 MB). Until then only the first collection
+ * of a high-survival pair aged in place, every other one copied. The
+ * pair's rule was measured on the
  * collector benchmark's chain build (copied 54.5 MB to 16 bytes, the
  * young collections' instructions 1,273 M to 582 M), the unhinted
  * binary-trees program (10.4 s to 5.0 s, 166 to 139 MB) and LangArena
