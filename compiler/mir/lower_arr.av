@@ -750,12 +750,12 @@ pub fn (lw: MirLower) kind_fn(base: String, et: Int, has_ptr: Bool): String {
 
 // The members of Array without a block (the old back end,
 // the old back end): in the call form `xs.m(args)` and the field form
-// `xs.m`. Evaluation orders are the old back end's (W6c.2).
+// `xs.m`. Evaluation orders are the old back end's.
 pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
   if bl = e.block {
-    lw.refuse(e.loc, "Array.${name} with a block (closures, W7b)")
+    lw.refuse(e.loc, "Array.${name} with a block")
     return zero
   }
   if name == "get" {
@@ -765,7 +765,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     return lw.lower_arr_opt(e, recv, rt, name, args)
   }
   if name == "each" || name == "any" || name == "all" {
-    lw.refuse(e.loc, "Array.${name} (closures, W7b)")
+    lw.refuse(e.loc, "Array.${name} without a block")
     return zero
   }
   if name == "parallel" {
