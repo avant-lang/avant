@@ -45,6 +45,14 @@ import backends
 //     Cell.show is already defined`, `Cell needs type arguments` and the
 //     ambiguity's message for a qualified name; two instances of one
 //     such template shared their constructor's symbol.
+//   - A function's bare name followed by a block is a call with that
+//     block, wherever a qualified name followed by one is
+//     (`puts(twice { |x| x + 1 })` as `puts(m.twice { |x| x + 1 })`):
+//     it was a parse error in an argument and a function value followed
+//     by a separate lambda elsewhere. A trailing block starts on the
+//     line its call ends on: a lambda on the next line is a value of its
+//     own (after `b = self.base` it used to be taken as the block of a
+//     call of base).
 
 class MCase {
   pub tag: String = ""
@@ -141,6 +149,18 @@ fn generic_cases: Array(MCase) {
   xs
 }
 
+fn block_cases: Array(MCase) {
+  xs: Array(MCase) = []
+  xs.push(accepted("block-bare-name", ["main", "fn twice(f: fn(Int): Int): Int {\n  f(f(1))\n}\n\nfn apply(f: fn(Int): Int) {\n  puts(f(10))\n}\n\nfn main {\n  puts(twice { |x| x + 1 })\n  n = twice { |x| x * 3 }\n  puts(n)\n  apply { |x| x - 1 }\n  m: Int = twice { |x|\n    x + 100\n  }\n  puts(m)\n  ok = twice { |x| x + 2 }\n  puts(ok)\n}\n"], "3\n9\n9\n201\n5\n"))
+  fa = "pub fn twice(f: fn(Int): Int): Int {\n  f(f(1))\n}\n"
+  fb = "pub fn twice(f: fn(Int): Int): Int {\n  f(1)\n}\n"
+  xs.push(accepted("block-bare-name-imported", ["main", "import fa\n\nfn main {\n  puts(twice { |x| x + 5 })\n  n = fa.twice { |x| x * 2 }\n  puts(n)\n}\n", "fa", fa], "11\n4\n"))
+  xs.push(refused("block-bare-name-ambiguous", ["main", "import fa\nimport fb\n\nfn main {\n  n = twice { |x| x + 1 }\n  puts(n)\n}\n", "fa", fa, "fb", fb], "ambiguous call to twice: fa.twice and fb.twice both match", "main.av:5:7"))
+  xs.push(accepted("block-next-line", ["main", "class Meth {\n  base: Int = 3\n\n  fn off(x: Int): fn(Int): Int {\n    b = self.base\n    { |y| y + x + b }\n  }\n}\n\nfn main {\n  puts(Meth.new.off(1)(2))\n}\n"], "6\n"))
+  xs.push(refused("block-fn-value", ["main", "fn main {\n  f = { |x: Int| x + 1 }\n  puts(f { |y| y })\n}\n"], "function value does not take a block", "main.av:3:8"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(MCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -197,6 +217,9 @@ fn test_main(c: Checks) {
     }
     for g in generic_cases() {
       all.push(g)
+    }
+    for b in block_cases() {
+      all.push(b)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

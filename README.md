@@ -1962,6 +1962,7 @@ fn main {
 ```
 
 - `fn(): Int` takes nothing; `fn(Int, String): Bool` takes two arguments; `fn(Int)` returns nothing.
+- A function's name followed by a block is a call with that block as its only argument, bare or qualified: `twice { |n| n + 1 }` is `twice() { |n| n + 1 }`, as `util.twice { |n| n + 1 }` is. The block starts on the line where the call ends: a lambda on the next line is a value of its own. In the head of an `if`, `while` or `switch` a block after the condition is taken as the call's only when it starts with its parameters (`{ |n|`).
 - A bare function name in a value position is that function (`f: fn(Int): Int = double`). A function of another module is named as at a call, qualified: `f = util.double`. When a name means several functions (overloads, or two imported modules' functions of one name), the expected `fn` type picks one, or the module's name does.
 - The type is invariant: `fn(Int): Int` is not `fn(Int): Int?`.
 - There is no `==` on function values, and methods are not values.

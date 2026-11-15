@@ -1980,23 +1980,23 @@ pub class Parser {
       }
       return expr
     }
+    // A trailing block starts on the line its call ends on: a block on the
+    // next line is a statement of its own (a lambda as a value), never
+    // the block of the call or field read before it.
     i = self.index
-    while i < self.tokens.size {
-      if self.tokens[i].kind != tk_newline() {
-        break
-      }
-      i += 1
-    }
     if i >= self.tokens.size {
       return expr
     }
     if self.tokens[i].kind != tk_l_brace() {
       return expr
     }
-    if expr.kind != ex_call() && expr.kind != ex_field() && expr.kind != ex_array_new() {
+    // A function's bare name followed by a block is a call with that block,
+    // as a qualified or a method name is (`twice { |x| x + 1 }` as
+    // `m.twice { |x| x + 1 }`); a capitalized name is a type's.
+    bare_fn = expr.kind == ex_name() && expr.type_args.size == 0 && expr.ident.size > 0 && !(expr.ident[0] >= 65 && expr.ident[0] <= 90)
+    if expr.kind != ex_call() && expr.kind != ex_field() && expr.kind != ex_array_new() && !bare_fn {
       return expr
     }
-    self.skip_newlines
     attach_block(expr, self.parse_trailing_block)
   }
 
@@ -3349,7 +3349,7 @@ pub class Parser {
       return call
     }
     if left.kind == ex_name() {
-      call = Expr.new(ex_call(), block.loc)
+      call = Expr.new(ex_call(), left.loc)
       call.callee = left.ident
       call.block = block
       return call
