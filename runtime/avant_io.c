@@ -387,8 +387,12 @@ void avant_out_bool(int32_t v, int32_t how) {
 
 /* exit(status): the generated code has checked 0..255 (a status outside
  * traps at its site); exit runs the atexit work: stdout flushed and
- * checked, the private temporary directory removed. */
+ * checked, the private temporary directory removed. One exit ends the
+ * process (avant_exit_claim): a task's exit while another thread traps or
+ * exits, or while main returns, waits for good. The end of main in a
+ * program with tasks comes here too. */
 void avant_exit(int32_t status) {
+  avant_exit_claim();
   exit((int)status);
 }
 

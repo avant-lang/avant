@@ -68,22 +68,30 @@ __attribute__((format(printf, 1, 2))) static void trap_out(const char *fmt, ...)
   }
 }
 
-__attribute__((noreturn)) static void trap_tail(void) {
-  const char *site = g_trap_loc;
-  g_trap_loc = NULL;
-  if (avant_task_can_recover()) {
-    avant_task_trapped(g_trap_text, site);
-  }
-  /* One trap ends the process: a second thread that traps meanwhile (two
-   * .parallel bodies) waits for good, native, so the first one's exit
-   * neither meets a second exit nor waits for it at a safepoint (two
-   * exits at once hung the program under AVANT_GC_VERIFY=1). */
+/* One exit ends the process: the first thread to end it (a trap that
+ * ends the program, `exit(status)` on any thread, the end of main in a
+ * program with tasks) goes on; any other that tries meanwhile waits for
+ * good, native, so the first one's exit work (stdout's check, the
+ * collector's checks at exit, the private directory's removal) neither
+ * meets a second exit, which would write the program's output twice and
+ * remove the directory twice, nor waits for it at a safepoint (two exits
+ * at once hung the program under AVANT_GC_VERIFY=1). */
+void avant_exit_claim(void) {
   if (__atomic_exchange_n(&g_trap_exiting, 1, __ATOMIC_ACQ_REL)) {
     avant_gc_native_begin();
     for (;;) {
       pause();
     }
   }
+}
+
+__attribute__((noreturn)) static void trap_tail(void) {
+  const char *site = g_trap_loc;
+  g_trap_loc = NULL;
+  if (avant_task_can_recover()) {
+    avant_task_trapped(g_trap_text, site);
+  }
+  avant_exit_claim();
   fflush(stdout);
   fputs("avant runtime: ", stderr);
   fputs(g_trap_text, stderr);

@@ -165,6 +165,41 @@ fn test_tasks(c: Checks) {
 
   if compiler = env_get("AVANT_COMPILER") {
     task_trap_cases(c, compiler, now_ms())
+    task_exit_cases(c, compiler, now_ms())
+  }
+}
+
+// `exit(status)` from a spawned block while other tasks run and allocate
+// (tests/fixtures/threads/task_exit.av), under the suite's collector mode:
+// one exit ends the program with its status, the output written once, no
+// hang (a second exit beside the first hung the collector's checks at
+// exit, and wrote the output twice).
+fn task_exit_cases(c: Checks, compiler: String, stamp: Int) {
+  bin = "${scratch()}/tasks-exit-${stamp}.bin"
+  clog = "${scratch()}/tasks-exit-${stamp}.clog"
+  code = compile_av(compiler, "${avant_test_root()}/tests/fixtures/threads/task_exit.av", bin, clog)
+  c.eq_int(code, 0, "the task-exit fixture compiles")
+  kinds = ["one", "two", "trap", "main", "mutex"]
+  statuses = [3, 4, 5, 6, 7]
+  for round in 0..3 {
+    i = 0
+    while i < kinds.size {
+      kind = kinds[i]
+      log = "${scratch()}/tasks-exit-${stamp}-${kind}-${round}.log"
+      args: Array(String) = []
+      args.push("-c")
+      args.push("timeout -k 5 60 ${bin} ${kind}")
+      status = process_run_out("/bin/sh", args, log) ?? -1
+      out = file_read(log) ?? ""
+      if kind == "trap" {
+        // The task's exit or the .parallel body's trap, whichever is first.
+        c.expect(status == 5 || status == 1, "task exit ${kind}: status 5 or 1, got ${status}")
+      } else {
+        c.eq_int(status, statuses[i], "task exit ${kind}: status ${statuses[i]}")
+      }
+      c.expect(str_has(out, "before\n") && !str_has(out, "before\nbefore") && !str_has(out, "after"), "task exit ${kind}: the output once, and nothing after the exit: ${out}")
+      i += 1
+    }
   }
 }
 

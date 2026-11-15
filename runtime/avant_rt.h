@@ -283,6 +283,9 @@ void avant_out_f64(double v, int32_t how);
 void avant_out_bool(int32_t v, int32_t how);
 /* exit(status), its 0..255 checked by the generated code. */
 __attribute__((noreturn)) void avant_exit(int32_t status);
+/* The one exit of the process (avant_rt_traps.c): returns to the first
+ * caller; any later one waits for good, native. */
+__attribute__((visibility("hidden"))) void avant_exit_claim(void);
 void avant_out_check(void);
 int32_t avant_str_parse_i32(const char *s, avant_int base, int32_t *ok);
 int64_t avant_str_parse_i64(const char *s, avant_int base, int32_t *ok);

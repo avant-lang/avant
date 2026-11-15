@@ -15,6 +15,7 @@ typemap 1 %task.TaskError stride 0 bits [0x3]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_exit(i32) -> void never noreturn
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_join(ref) -> i64 collects
 extern avant_join_site(ref) -> ref str never
@@ -96,8 +97,8 @@ bb4:
   _19 = call av.task/TaskError.__avant_error_text(copy _18) collects   @10:13
   call avant_puts_str(copy _19) nocollect   @10:5
   _0 = const i32 0   @11:5
-  gc.leave   @11:5
-  return   @11:5
+  call avant_exit(copy _0) nocollect   @11:5
+  unreachable   @11:5
 
 bb5:
   _20 = copy _9.1   @11:5
@@ -108,8 +109,8 @@ bb6:
   _21 = copy _14   @9:5
   call avant_puts_i64(copy _21) nocollect   @13:3
   _0 = const i32 0   @5:1
-  gc.leave   @5:1
-  return   @5:1
+  call avant_exit(copy _0) nocollect   @5:1
+  unreachable   @5:1
 }
 
 fn av.task/__avant_join_result(_1: i64, _2: ref str, _3: ref str) -> %(Int|task.TaskError) frame @<task>:22:5 {

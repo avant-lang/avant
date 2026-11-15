@@ -639,6 +639,22 @@ pub class MirLower {
     finish_at(fnn.loc)
   }
 
+  // A function's return. main's, in a program with tasks, ends the
+  // process through avant_exit with its status (in place 0): one exit
+  // ends the process, so a task's exit or trap at the same moment waits
+  // for good rather than run C's exit beside main's.
+  pub fn ret_fn {
+    b = self.lw_b
+    if self.lw_main && self.lw_m.shared {
+      args: Array(MOperand) = []
+      args.push(b.copy_local(0))
+      b.call(-1, "avant_exit", args)
+      b.unreachable
+      return
+    }
+    b.ret
+  }
+
   pub fn finish_at(loc: Location) {
     if self.failed || !self.open_now {
       return
@@ -648,7 +664,7 @@ pub class MirLower {
       if self.lw_main {
         self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
       }
-      self.lw_b.ret
+      self.ret_fn
       return
     }
     self.lw_b.unreachable
@@ -707,7 +723,7 @@ pub class MirLower {
       self.lw_b.call(dest, sym, none)
       self.lw_b.assign(self.lw_b.pl(0), self.lw_b.rv_use(self.lw_b.c_i32(0)))
     }
-    self.lw_b.ret
+    self.ret_fn
     self.lw_b.end_fn
   }
 }

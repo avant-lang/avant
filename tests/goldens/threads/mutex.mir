@@ -44,6 +44,7 @@ typemap 11 %spawn_cap(av.mutex/main#spawn4) stride 0 bits [0x1]
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
+extern avant_exit(i32) -> void never noreturn
 extern avant_gate_lock_with(ref, u64) -> i32 collects
 extern avant_gate_new() -> u64 collects
 extern avant_gate_poisoned(ref, u64) -> i32 never
@@ -641,8 +642,8 @@ bb50:
   call avant_gate_unlock(copy _136, const u64 8) nocollect   @100:19
   call avant_puts_i64(copy _141) nocollect   @100:3
   _0 = const i32 0   @37:1
-  gc.leave   @37:1
-  return   @37:1
+  call avant_exit(copy _0) nocollect   @37:1
+  unreachable   @37:1
 }
 
 fn av.task/__avant_join_result(_1: i64, _2: ref str, _3: ref str) -> %(Int|task.TaskError) frame @<task>:22:5 {
