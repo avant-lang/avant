@@ -81,7 +81,11 @@ fn test_defrag_gain(c: Checks, compiler: String, root: String, dir: String) {
   run_waves(jobs)
   c.eq_int(jobs[0].code, 0, "defrag_gain.av: compiles")
   envs = gc_envs()
-  clean = "-u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_HEAP_RESERVE_GB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS AVANT_GC_STATS=1"
+  // The three counted cases are about what a full collection does to the
+  // mature space, so every collection they force must be one:
+  // AVANT_GC_PROOF=0 (with it on, a forced collection of a heap in which
+  // no old object can have died is a young one, and moves nothing old).
+  clean = "-u AVANT_YOUNG_MB -u AVANT_HEAP_MAX_MB -u AVANT_HEAP_RESERVE_GB -u AVANT_NURSERY -u AVANT_GC_DEFRAG -u AVANT_GC_VERIFY -u AVANT_GC_STRESS AVANT_GC_PROOF=0 AVANT_GC_STATS=1"
   runs: Array(HJob) = []
   for e in 0..envs.size {
     runs.push(run_job_env(dir, "defrag_gain", "defrag_gain.g${e}", envs[e]))

@@ -58,10 +58,81 @@ fn test_proof_oracle(c: Checks, compiler: String, root: String, dir: String) {
   }
 }
 
+// ffi/complete.av: every way a program can remove the last reference to
+// an old object (a field store, an element store, a shift, Hash.delete
+// in the hash's two layouts, Hash.clear, a local out of scope, `release`, a pin given back, a store
+// after a defragmenting collection, a task's end), and two that remove
+// none (Array.sort, a Hash's growth). In every environment the collection
+// after the removal frees the victim (the live bytes fall by its size)
+// and the verifier's oracle is silent. In the default environment the
+// collection before the removal is a young one and the one after it a
+// full one, for every way; from the first spawn on both are full.
+fn test_complete(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/complete.av", "${dir}/complete", "${dir}/complete.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "complete.av: compiles")
+  want = log_text("${root}/tests/goldens/runs/fixtures/ffi/complete.out")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "complete", "complete.g${e}", envs[e]))
+  }
+  runs.push(run_job_env(dir, "complete", "complete.show", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS COMPLETE_SHOW=1 AVANT_GC_STATS=1"))
+  run_waves(runs)
+  c.expect(str_has(want, "field: freed 1, ") && str_has(want, "task: freed 1, "), "complete.av: its run golden has every way's line")
+  c.expect(!str_has(want, "freed 0"), "complete.av: its run golden frees every victim")
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "complete.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/complete.g${e}.out"), want, "complete.av ${what}: its run golden's stdout (every victim freed)")
+    c.eq_str(log_text("${dir}/complete.g${e}.err"), "", "complete.av ${what}: no stderr (the oracle is silent)")
+  }
+  show = log_text("${dir}/complete.show.out")
+  ways = ["field", "element", "shift", "delete", "delete int", "clear", "root", "release", "pin", "defrag"]
+  for w in ways {
+    line = ""
+    for l in show.split("\n") {
+      if str_has(l, "${w}: ") {
+        line = l
+      }
+    }
+    c.expect(str_has(line, "freed 1") && str_has(line, "[before: a young collection; after: a full collection]"), "complete.av, ${w}: the collection before the removal is a young one, the one after it a full one that frees the victim (${line})")
+  }
+  for w in ["sort", "rehash"] {
+    line = ""
+    for l in show.split("\n") {
+      if str_has(l, "${w}: ") {
+        line = l
+      }
+    }
+    c.expect(str_has(line, "[before: a young collection; after: a full collection]"), "complete.av, ${w}: references moved in an old buffer make the next collection a full one (${line})")
+  }
+  c.expect(str_has(show, "task: freed 1, the task read true [before: a full collection; after: a full collection]"), "complete.av, task: a program with threads is collected by full collections")
+  err = log_text("${dir}/complete.show.err")
+  c.expect(stat_value(err, "proof_held") >= 11, "complete.av: the proof held for a collection of every way before its removal (proof_held ${stat_value(err, "proof_held")})")
+  c.expect(stat_value(err, "proof_fell_ref_lost") >= 7 && stat_value(err, "proof_fell_root_lost") >= 3 && stat_value(err, "proof_fell_threads") >= 2, "complete.av: the proof failed for a lost reference, a lost root and threads (${stat_value(err, "proof_fell_ref_lost")}, ${stat_value(err, "proof_fell_root_lost")}, ${stat_value(err, "proof_fell_threads")})")
+}
+
+// The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
+fn stat_value(text: String, key: String): Int {
+  parts = text.split(" ")
+  for p in parts {
+    if p.size > key.size + 1 && str_slice(p, 0, key.size + 1) == "${key}=" {
+      return str_slice(p, key.size + 1, p.size).strip.to_i ?? -1
+    }
+  }
+  -1
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_complete.av")
   if compiler = env_get("AVANT_COMPILER") {
     test_proof_oracle(c, compiler, avant_test_root(), scratch_dir())
+    test_complete(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

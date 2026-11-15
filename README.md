@@ -2810,6 +2810,7 @@ No setting is needed. Every one is an environment variable read once when the pr
 | `AVANT_YOUNG_MB` | `0` (adaptive, 4 to 64 MiB) | a fixed budget for the young generation, in MiB |
 | `AVANT_NURSERY` | `1` | `0` turns the young generation off: full, non-moving collections only |
 | `AVANT_GC_DEFRAG` | `1` | `0` turns off defragmentation of the mature space |
+| `AVANT_GC_PROOF` | `1` | `0` makes every complete collection (`gc.collect()`) a full one, even when the collector can prove that only young objects can have died |
 | `AVANT_HEAP_RESERVE_GB` | `64` | the address space reserved for the heap, in GiB (halved automatically if the OS refuses) |
 | `AVANT_GC_STATS` | `0` | `1` prints one line of collector statistics on stderr at exit |
 | `AVANT_GC_VERIFY` | `0` | `1` runs the collector's self-checks (slow; for debugging the runtime) |

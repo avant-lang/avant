@@ -1167,6 +1167,22 @@ static void splus_evacuate(void) {
       } else {
         b->kept = 0;
       }
+    } else if (b->kept == SPLUS_MIXED) {
+      /* A complete collection (gc_sticky_collect's EVAC_MIXED): a block
+       * with mature lines whose young survivors are sparse gives them
+       * up like a pure one, so a first survivor ages (a copy in a
+       * survivor block, still young) wherever it was allocated; a dense
+       * one keeps them in place, promoted. */
+      if (b->idle > 0 && (b->idle + LINE_SIZE - 1) / LINE_SIZE <= SPLUS_SPARSE_LINES &&
+          sel + b->idle <= avant_young_bytes) {
+        sel += b->idle;
+        b->kept = SPLUS_EVAC;
+        evac_map_set(b, EVAC_MAP_EVAC);
+        gc_heap.ctr.sticky.evac_blocks++;
+        any = 1;
+      } else {
+        b->kept = 0;
+      }
     } else if (b->kept == SPLUS_PURE_AGED &&
                (b->idle + LINE_SIZE - 1) / LINE_SIZE > SPLUS_AGED_SPARSE_LINES) {
       /* O97 (Stage 28 W15e): a survivor block whose aged survivors are
@@ -1244,9 +1260,10 @@ static void splus_evacuate(void) {
   }
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     Block *b = gc_heap.young_blocks[i];
-    if (b->kept == SPLUS_EVAC && gc_heap.set.stress && gc_heap.stress_mixed[i]) {
-      /* A mixed block (stress): its mature lines stay live, the lines
-       * this collection's promotions marked are free again. */
+    if (b->kept == SPLUS_EVAC && gc_heap.evac_mixed && gc_heap.stress_mixed[i]) {
+      /* A mixed block (the stress mode, a complete collection): its
+       * mature lines stay live, the lines this collection's promotions
+       * marked are free again. */
       uint64_t lines = (uint64_t)gc_block_live_lines(b);
       memcpy(b->line_mark, gc_heap.stress_lines + (size_t)i * LINES_PER_BLOCK, LINES_PER_BLOCK);
       lines = (lines - (uint64_t)gc_block_live_lines(b)) * LINE_SIZE;
@@ -1303,7 +1320,7 @@ static void splus_finish(void) {
      * stress mode) needs its moved objects' start bits cleared here (the
      * Valk stage, VALK-T, O600: until then every evacuated block's 64
      * start words were read, and every survivor's old header). */
-    scan = copied && (b->kept == SPLUS_PART || (gc_heap.set.stress && gc_heap.stress_mixed[i]));
+    scan = copied && (b->kept == SPLUS_PART || (gc_heap.evac_mixed && gc_heap.stress_mixed[i]));
     /* A moved object was young: its header lies in the block's young
      * line range, so only that range's start words are read (two lines a
      * word; under the stress mode, which evacuates a mixed block at every
@@ -1473,7 +1490,8 @@ static __attribute__((noinline)) int young_sweep_checked(Block *b, uint32_t i, i
   }
   /* The block known to have no live line (gc_sticky_collect's comment):
    * its count alone. */
-  if ((b->kept == SPLUS_EVAC && !(stress && gc_heap.stress_mixed[i])) || (b->kept == SPLUS_PURE && b->idle == 0)) {
+  if ((b->kept == SPLUS_EVAC && !(gc_heap.evac_mixed && gc_heap.stress_mixed[i])) ||
+      (b->kept == SPLUS_PURE && b->idle == 0)) {
     if (verify && gc_block_any_live(b)) {
       gc_die("avant gc verify: a young block taken for empty has a live line");
     }
@@ -1498,7 +1516,19 @@ static __attribute__((noinline)) int young_sweep_checked(Block *b, uint32_t i, i
   return live;
 }
 
-void gc_sticky_collect(int tenure) {
+/* TENURE: every survivor is promoted (a fixed AVANT_YOUNG_MB). EVAC_MIXED:
+ * a complete collection that runs as this young one (gc_collect): a
+ * young block with mature lines is a
+ * candidate for evacuation like a pure one (its line marks are saved and
+ * restored, as the stress mode does), so the sparse first survivors of a
+ * hole in a recycled block age instead of being promoted in place. A
+ * program that asks for a collection at each point where its work is
+ * dead leaves at each a survivor or two that die before the next (the
+ * object just made, what a frame still names): promoted, each would be
+ * an old object dying, and the next complete collection would have to
+ * trace to find it; aged, it dies young and the next one is a young
+ * collection again. */
+void gc_sticky_collect(int tenure, int evac_mixed) {
   Block *b;
   uint32_t empty = 0;
   int ticked = 0;
@@ -1513,10 +1543,11 @@ void gc_sticky_collect(int tenure) {
   gc_heap.splus_on = 1;
   gc_heap.splus_copied0 = avant_g_stats.copied_bytes;
   gc_heap.splus_age = YOUNG_AGE >= 2 && !tenure;
+  gc_heap.evac_mixed = (uint8_t)(gc_heap.set.stress || (evac_mixed && gc_heap.splus_age));
   gc_heap.aged_now = 0;
   if (gc_heap.splus_on) {
     uint32_t i;
-    if (gc_heap.set.stress && gc_heap.young_blocks_n > gc_heap.stress_lines_cap) {
+    if (gc_heap.evac_mixed && gc_heap.young_blocks_n > gc_heap.stress_lines_cap) {
       gc_heap.stress_lines_cap = gc_heap.young_blocks_n * 2;
       gc_heap.stress_lines = gc_xrealloc(gc_heap.stress_lines, (size_t)gc_heap.stress_lines_cap * LINES_PER_BLOCK);
       gc_heap.stress_mixed = gc_xrealloc(gc_heap.stress_mixed, (size_t)gc_heap.stress_lines_cap);
@@ -1533,14 +1564,15 @@ void gc_sticky_collect(int tenure) {
         gc_die("avant gc verify: a fresh young block or a survivor block has a live line when a young collection begins");
       }
       yb->search = 0;
-      if (gc_heap.set.stress) {
-        /* The full stress mode (Stage 28 W16a): a block with mature
-         * lines is evacuated too (splus_evacuate), its marks restored
-         * from this copy afterwards. */
+      if (gc_heap.evac_mixed) {
+        /* The full stress mode and a complete collection
+         * (EVAC_MIXED's comment below): a block with mature lines is
+         * evacuated too (splus_evacuate), its marks restored from this
+         * copy afterwards. */
         memcpy(gc_heap.stress_lines + (size_t)i * LINES_PER_BLOCK, yb->line_mark, LINES_PER_BLOCK);
         gc_heap.stress_mixed[i] = (uint8_t)mature_lines;
       }
-      yb->kept = mature_lines ? (gc_heap.set.stress ? SPLUS_MIXED : 0)
+      yb->kept = mature_lines ? (gc_heap.evac_mixed ? SPLUS_MIXED : 0)
                               : yb->kept == SPLUS_WAS_SURV ? SPLUS_PURE_AGED : SPLUS_PURE;
       yb->idle = 0;
     }
@@ -1607,7 +1639,8 @@ void gc_sticky_collect(int tenure) {
        * start bits cleared, which a block taken again has cleared anyway).
        * AVANT_GC_VERIFY reads the marks and stops on a live one
        * (young_sweep_checked). */
-      if (b->kept == SPLUS_EVAC || (b->kept == SPLUS_PURE && b->idle == 0)) {
+      if ((b->kept == SPLUS_EVAC && !(gc_heap.evac_mixed && gc_heap.stress_mixed[i])) ||
+          (b->kept == SPLUS_PURE && b->idle == 0)) {
         int hi = b->young_hi > LINES_PER_BLOCK ? LINES_PER_BLOCK : b->young_hi;
         live = 0;
         if (hi > b->young_lo) {

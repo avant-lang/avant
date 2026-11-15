@@ -275,6 +275,12 @@
  *                          is full, non-moving collections only
  *   AVANT_GC_DEFRAG        switch, default 1: mature evacuation in full
  *                          collections
+ *   AVANT_GC_PROOF         switch, default 1: a complete collection
+ *                          (avant_gc_collect, std.gc's gc.collect())
+ *                          runs as a young collection when the collector
+ *                          can prove that no old object died since the
+ *                          last full collection (avant_gc_proof.c); 0:
+ *                          it always traces
  *   AVANT_GC_VERIFY        switch, default 0: the collector's checkers
  *                          (avant_gc_verify.c)
  *   AVANT_GC_STATS         switch, default 0: one statistics line on

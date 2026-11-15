@@ -122,6 +122,7 @@ static void gc_settings_read(GcSettings *s) {
                           1ull << 20);
   s->nursery_off = !env_bool("AVANT_NURSERY", 1);
   s->defrag = env_bool("AVANT_GC_DEFRAG", 1);
+  s->proof = env_bool("AVANT_GC_PROOF", 1);
   s->verify = env_bool("AVANT_GC_VERIFY", 0);
   s->stats = env_bool("AVANT_GC_STATS", 0);
   s->stress = env_bool("AVANT_GC_STRESS", 0);
@@ -273,6 +274,8 @@ static int region_refuses(void);
 
 void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   int full = kind == GC_FULL;
+  /* A full collection that runs as a young one: the proof holds. */
+  int complete = 0;
   int resume = 0;
   uint64_t t0;
   GcProofWhy proof = PROOF_INTACT;
@@ -326,6 +329,29 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   /* Every thread's remembered-set buffer joins the set (Stage 28 W17b)
    * before anything reads it. */
   gc_rem_merge_all();
+  if (full && allow_move) {
+    /* The complete collection (avant_gc_proof.c): a full collection, forced or due, first asks
+     * whether any old object can have died since the last one. When none
+     * can (no reference to an old object left an old object or the roots,
+     * nothing became old), what is unreachable is young, a young
+     * collection frees exactly that, and this collection is one: it is
+     * complete all the same. Otherwise it traces, as before. (A due
+     * collection seldom holds: the trigger counts what was promoted or
+     * born old, which breaks the proof; the heap limit's can.) */
+    proof = gc_proof_check();
+    gc_heap.ctr.proof.asked++;
+    if (proof != PROOF_INTACT) {
+      gc_heap.ctr.proof.fell[proof]++;
+    } else if (avant_nursery_held > PROOF_YOUNG_PER_OLD * gc_heap.proof.old_live) {
+      /* It holds, and the trace is the cheaper complete collection
+       * (PROOF_YOUNG_PER_OLD's comment). */
+      gc_heap.ctr.proof.fell[PROOF_YOUNG_HEAVY]++;
+    } else {
+      gc_heap.ctr.proof.held++;
+      full = 0;
+      complete = 1;
+    }
+  }
   if (full) {
     count_full_why(why);
   }
@@ -344,25 +370,19 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       gc_verify_lost();
     }
     /* The proof's oracle (avant_gc_verify.c): the verdict is taken
-     * at every collection, young ones too, and its conclusion checked
-     * wherever it holds. */
-    proof = gc_proof_check();
-    gc_verify_proof(full, proof == PROOF_INTACT);
+     * at every collection, the ordinary young ones too, and its
+     * conclusion checked wherever it holds: before a complete collection
+     * runs as a young one, the trace from the roots alone must reach
+     * every old object. */
+    if (!complete && !full) {
+      proof = gc_proof_check();
+    }
+    gc_verify_proof(full || complete, proof == PROOF_INTACT);
     gc_verify_starts_resume();
-  } else if (full) {
-    proof = gc_proof_check();
   }
   if (full) {
-    /* The proof that the old heap is unchanged (avant_gc_proof.c): every full collection asks it, and counts
-     * the answer. (Computed and not used yet: the collection traces
-     * whatever it says.) Then the log is emptied: this collection's end
-     * is what the next one's proof starts from. */
-    gc_heap.ctr.proof.asked++;
-    if (proof == PROOF_INTACT) {
-      gc_heap.ctr.proof.held++;
-    } else {
-      gc_heap.ctr.proof.fell[proof]++;
-    }
+    /* The log is emptied: this collection's end is what the next proof
+     * starts from. */
     gc_proof_full_begin();
   }
   gc_heap.young_clock += avant_nursery_held > gc_heap.young_carried
@@ -390,7 +410,20 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     uint64_t prom0 = gc_heap.ctr.prom.copied;
     uint64_t surv;
     avant_g_stats.young_collections++;
-    gc_sticky_collect(gc_heap.set.young_fixed ? 1 : 0);
+    if (complete) {
+      /* The return clock ticks as at a full collection (below), so the
+       * memory an earlier collection freed goes back to the OS at this
+       * one as it did when this was a trace. And the full trigger starts
+       * again, as after a trace: nothing became old since the last one
+       * (the proof), so what it counted is not mature growth to trace
+       * for; left standing, a due collection that holds would fall due
+       * again at the next allocation. What this collection promotes
+       * counts from here. */
+      gc_heap.return_clock++;
+      gc_heap.mature_since_full = 0;
+      gc_heap.promoted_since_full = 0;
+    }
+    gc_sticky_collect(gc_heap.set.young_fixed ? 1 : 0, complete);
     surv = (avant_g_stats.copied_bytes - copied0) + (gc_heap.ctr.sticky.inplace - inplace0);
     /* An object this collection promoted, in place or by its copy, is old
      * from now on and no full collection marked it (a young large
@@ -398,6 +431,16 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
      * copy stays young. */
     if (gc_heap.ctr.sticky.inplace != inplace0 || gc_heap.ctr.prom.copied != prom0) {
       gc_proof_break(PROOF_PROMOTED);
+    }
+    if (complete) {
+      /* What a complete collection found live: the old objects, all of
+       * them (the proof), and the young survivors. And the heap limit's
+       * progress rule, as for the trace it stands for. */
+      gc_heap.live += gc_heap.proof.old_live;
+      gc_heap_return(gc_heap.live);
+      if (why == GC_WHY_LIMIT && gc_heap.set.heap_max) {
+        limit_progress_check();
+      }
     }
     if (!gc_heap.set.young_fixed && !gc_heap.stress_now) {
       young_size(used, surv);
@@ -598,9 +641,15 @@ void gc_init_slow(void) {
   if (gc_heap.set.verify) {
     gc_verify_init();
   }
-  /* No young generation: no complete collection is a young one. */
+  /* The proof holds from the program's start (no object is old) and the
+   * barrier's slow call logs; with no young generation no complete
+   * collection is a young one. */
+  gc_heap.proof.logging = 1;
   if (gc_heap.set.nursery_off) {
     gc_proof_break(PROOF_NURSERY);
+  }
+  if (!gc_heap.set.proof) {
+    gc_proof_break(PROOF_OFF);
   }
 }
 

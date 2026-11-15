@@ -1,0 +1,378 @@
+// The complete collection. `gc.collect()`
+// frees every object nothing reaches. It runs as a young collection when
+// the collector can prove that no old object died since the last full
+// collection (no reference to an old object was removed from an old
+// object or from the roots, nothing became old since), and as a full
+// collection otherwise. This program removes the last reference to an
+// old object in each way a program can, one way per function:
+//
+//   field     a store into a field
+//   element   a store into an array element
+//   shift     the elements of an array moved down over the first
+//   delete    Hash.delete with String keys (the compact layout: the
+//             entry is marked deleted)
+//   delete int  Hash.delete with integer keys (the open layout: the
+//             entries after it move back)
+//   clear     Hash.clear
+//   root      a local that goes out of scope
+//   release   `release` of a C-layout field (the store pinned the value)
+//   pin       a pin given back (C pinned the value and unpins it)
+//   defrag    a field store after a full collection that moved objects
+//   task      a task's end (its capture record)
+// and two that remove no reference and must lose none:
+//   sort      Array.sort (the strings change places in their buffer)
+//   rehash    a Hash's growth (its buffers are replaced)
+//
+// Each way makes its victim old (three collections: the third is a full
+// one whatever the first two were), asks for a collection that has
+// nothing to free, removes the reference, and asks for another: the
+// bytes the collector found live must fall by the victim's size, in
+// every environment. What each collection was is printed only with
+// COMPLETE_SHOW=1 (it depends on the environment: with AVANT_NURSERY=0
+// every one is a full collection); tests/cases/test_gc_complete.av reads
+// it in the default environment: before the removal the collection is a
+// young one (the proof holds), after it a full one (the proof fails),
+// except that from the first spawn on both are full ones; and under
+// AVANT_GC_VERIFY=1 the verifier's oracle agrees every time. Built with `--cc tests/fixtures/ffi/ffi.c`
+// (the collector's counters, the pin).
+class Cell {
+  v: String
+
+  fn initialize(v: String) {
+    self.v = v
+  }
+}
+
+class Keep {
+  cell: Cell?
+  arr: Array(String)?
+  hash: Hash(String, String)?
+  ihash: Hash(Int, String)?
+  cells: Array(Cell)?
+  before: Int
+  held: Int
+  traced: Int
+  show: Bool
+}
+
+lib cc {
+  struct Pos {
+    tag: String
+    n: Int32
+  }
+  struct Holder {
+    name: String
+    id: Int32
+    link: Ptr(Void)
+    at: Pos
+    note: String
+  }
+  fun rel_new: Ptr(Holder)
+  fun rel_free(h: Ptr(Holder))
+  fun ffi_gc_count(which: Int): Int
+  fun ffi_pin_keep(s: String): Int
+  fun ffi_unpin_kept: Int
+  fun avant_gc_collect
+}
+
+// A string of at least 131,072 bytes (a large object) that begins with
+// its tag.
+fn big(tag: Int): String {
+  s = "victim-${tag}-abcdefgh"
+  while s.size < 131072 {
+    s = s + s
+  }
+  s
+}
+
+fn small(tag: Int): String {
+  "small-${tag}"
+}
+
+fn live: Int {
+  cc.ffi_gc_count(2)
+}
+
+// One complete collection; 1 when it was a full collection.
+fn collect: Int {
+  f = cc.ffi_gc_count(0)
+  cc.avant_gc_collect()
+  if cc.ffi_gc_count(0) > f {
+    return 1
+  }
+  0
+}
+
+// Everything alive is old after this: an object survives two young
+// collections young at most, and the third collection is then a full one.
+fn settle {
+  collect()
+  collect()
+  collect()
+}
+
+// The collection before the removal (nothing to free) and the bytes live
+// after it.
+fn before(k: Keep) {
+  settle()
+  k.held = 1 - collect()
+  k.before = live()
+}
+
+// The collection after the removal: 1 when the live bytes fell by at
+// least half the victim's size.
+fn freed(k: Keep, size: Int): Int {
+  k.traced = collect()
+  if k.before - live() >= size / 2 {
+    return 1
+  }
+  0
+}
+
+// With COMPLETE_SHOW=1: what the two collections were.
+fn kinds(k: Keep): String {
+  if !k.show {
+    return ""
+  }
+  b = "a young collection"
+  if k.held == 0 {
+    b = "a full collection"
+  }
+  a = "a young collection"
+  if k.traced == 1 {
+    a = "a full collection"
+  }
+  " [before: ${b}; after: ${a}]"
+}
+
+// The holders are made in functions of their own: a function's frame may
+// still name what one of its expressions made (the victim) after the
+// statement that used it, and the victim must be named by its holder
+// alone.
+fn make_cell(tag: Int): Cell {
+  Cell.new(big(tag))
+}
+
+fn make_array(tag: Int): Array(String) {
+  a: Array(String) = []
+  a.push(big(tag))
+  a
+}
+
+fn make_hash(tag: Int): Hash(String, String) {
+  h = Hash(String, String).new
+  h[small(tag)] = big(tag)
+  h
+}
+
+fn way_field(k: Keep) {
+  c = make_cell(1)
+  k.cell = c
+  before(k)
+  c.v = small(1)
+  puts("field: freed ${freed(k, 131072)}, the cell reads ${c.v}${kinds(k)}")
+}
+
+fn way_element(k: Keep) {
+  a = make_array(2)
+  a.push(small(2))
+  k.arr = a
+  before(k)
+  a[0] = small(22)
+  puts("element: freed ${freed(k, 131072)}, the array reads ${a[0]} ${a[1]}${kinds(k)}")
+}
+
+fn way_shift(k: Keep) {
+  a = make_array(3)
+  a.push(small(31))
+  a.push(small(32))
+  a.push(small(33))
+  k.arr = a
+  before(k)
+  i = 0
+  while i < a.size - 1 {
+    a[i] = a[i + 1]
+    i = i + 1
+  }
+  a.pop
+  puts("shift: freed ${freed(k, 131072)}, the array reads ${a[0]} ${a[1]} ${a[2]} (${a.size})${kinds(k)}")
+}
+
+// Hash.delete gives the value it removed: in a function of its own, so
+// no frame names that value when the collection runs.
+fn delete_key(h: Hash(String, String), tag: Int): Int {
+  h.delete(small(tag))
+  h.size
+}
+
+fn way_delete(k: Keep) {
+  h = make_hash(41)
+  h[small(42)] = small(43)
+  h[small(44)] = small(45)
+  k.hash = h
+  before(k)
+  delete_key(h, 41)
+  puts("delete: freed ${freed(k, 131072)}, the hash keeps ${h.size} and reads ${h[small(42)] ?? "nothing"} ${h[small(44)] ?? "nothing"}${kinds(k)}")
+}
+
+fn make_int_hash(tag: Int): Hash(Int, String) {
+  h = Hash(Int, String).new
+  h[tag] = big(tag)
+  h
+}
+
+fn delete_int_key(h: Hash(Int, String), tag: Int): Int {
+  h.delete(tag)
+  h.size
+}
+
+// Integer keys: several entries with the victim's first, so the delete
+// moves later entries of its cluster back over it.
+fn way_delete_int(k: Keep) {
+  h = make_int_hash(46)
+  for i in 0..20 {
+    h[47 + i * 8] = small(47 + i)
+  }
+  k.ihash = h
+  before(k)
+  delete_int_key(h, 46)
+  puts("delete int: freed ${freed(k, 131072)}, the hash keeps ${h.size} and reads ${h[47] ?? "nothing"} ${h[199] ?? "nothing"}${kinds(k)}")
+}
+
+fn way_clear(k: Keep) {
+  h = make_hash(51)
+  h[small(52)] = small(53)
+  k.hash = h
+  before(k)
+  h.clear
+  puts("clear: freed ${freed(k, 131072)}, the hash keeps ${h.size}${kinds(k)}")
+}
+
+fn root_inner(k: Keep): Int {
+  v = big(6)
+  before(k)
+  v.size
+}
+
+fn way_root(k: Keep) {
+  n = root_inner(k)
+  puts("root: freed ${freed(k, 131072)}, the local read ${n >= 131072}${kinds(k)}")
+}
+
+fn way_release(k: Keep) {
+  h = cc.rel_new()
+  h.name = big(7)
+  before(k)
+  release(h.name)
+  puts("release: freed ${freed(k, 131072)}${kinds(k)}")
+  cc.rel_free(h)
+}
+
+fn pin_inner: Int {
+  v = big(8)
+  cc.ffi_pin_keep(v)
+  v.size
+}
+
+fn way_pin(k: Keep) {
+  n = pin_inner()
+  before(k)
+  cc.ffi_unpin_kept()
+  puts("pin: freed ${freed(k, 131072)}, the local read ${n >= 131072}${kinds(k)}")
+}
+
+// 20,000 Cells of which every 50th is kept: the blocks they lie in are
+// sparse, so the full collection that makes them old moves them. The
+// kept ones are then read, and the array that holds them is dropped.
+fn way_defrag(k: Keep) {
+  all: Array(Cell) = []
+  for i in 0..20000 {
+    all.push(Cell.new(small(i)))
+  }
+  kept: Array(Cell) = []
+  i = 0
+  while i < all.size {
+    kept.push(all[i])
+    i = i + 50
+  }
+  all = []
+  k.cells = kept
+  kept = []
+  before(k)
+  sum = 0
+  if cs = k.cells {
+    for c in cs {
+      sum = sum + c.v.size
+    }
+  }
+  k.cells = nil
+  puts("defrag: freed ${freed(k, 8000)}, the kept cells read ${sum}${kinds(k)}")
+}
+
+fn way_sort(k: Keep) {
+  a: Array(String) = []
+  a.push(small(94))
+  a.push(small(92))
+  a.push(small(93))
+  a.push(small(91))
+  k.arr = a
+  before(k)
+  a.sort
+  k.traced = collect()
+  puts("sort: the array reads ${a[0]} ${a[1]} ${a[2]} ${a[3]}${kinds(k)}")
+}
+
+fn way_rehash(k: Keep) {
+  h = Hash(String, String).new
+  for i in 0..6 {
+    h[small(100 + i)] = small(200 + i)
+  }
+  k.hash = h
+  before(k)
+  for i in 6..40 {
+    h[small(100 + i)] = small(200 + i)
+  }
+  k.traced = collect()
+  found = 0
+  for i in 0..40 {
+    if v = h[small(100 + i)], v == small(200 + i) {
+      found = found + 1
+    }
+  }
+  puts("rehash: the hash keeps ${h.size} and finds ${found}${kinds(k)}")
+}
+
+fn task_inner(k: Keep): Int {
+  s = big(11)
+  h = spawn { s.size }
+  n = h.join
+  before(k)
+  n
+}
+
+// Last: from the first spawn on the program has threads, and every
+// complete collection is a full one.
+fn way_task(k: Keep) {
+  n = task_inner(k)
+  puts("task: freed ${freed(k, 131072)}, the task read ${n >= 131072}${kinds(k)}")
+}
+
+fn main {
+  k = Keep.new
+  if v = env_get("COMPLETE_SHOW"), v == "1" {
+    k.show = true
+  }
+  way_field(k)
+  way_element(k)
+  way_shift(k)
+  way_delete(k)
+  way_delete_int(k)
+  way_clear(k)
+  way_root(k)
+  way_release(k)
+  way_pin(k)
+  way_defrag(k)
+  way_sort(k)
+  way_rehash(k)
+  way_task(k)
+}

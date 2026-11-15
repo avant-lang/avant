@@ -890,3 +890,24 @@ int64_t ffi_gc_count(int64_t which) {
   avant_gc_stats(&st);
   return (int64_t)(which == 0 ? st.full_collections : which == 1 ? st.young_collections : st.live_bytes);
 }
+
+/* complete.av: C pins S (a root the program does not hold) and keeps its
+ * address, then gives the pin back. A pinned object does not move, so the
+ * address stays true. */
+void avant_pin(void *payload);
+void avant_unpin(void *payload);
+static void *ffi_pin_kept;
+
+int64_t ffi_pin_keep(void *s) {
+  ffi_pin_kept = s;
+  avant_pin(s);
+  return 1;
+}
+
+int64_t ffi_unpin_kept(void) {
+  if (ffi_pin_kept) {
+    avant_unpin(ffi_pin_kept);
+    ffi_pin_kept = NULL;
+  }
+  return 1;
+}

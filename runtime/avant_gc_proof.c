@@ -70,8 +70,8 @@
  * something is promoted or born old. */
 
 static const char *const proof_why_names[PROOF_WHYS] = {
-    "intact",    "promoted", "mature",  "freed",   "big",      "log_full",
-    "overwrite", "threads",  "nursery", "ref_lost", "root_lost", "?"};
+    "intact",  "promoted", "mature", "freed",    "big",       "log_full",    "threads",
+    "nursery", "off",      "ref_lost", "root_lost", "young_heavy", "?"};
 
 const char *gc_proof_why_name(GcProofWhy why) {
   return proof_why_names[(unsigned)why < PROOF_WHYS ? (unsigned)why : PROOF_WHYS - 1];
@@ -87,12 +87,14 @@ static void proof_push(void ***v, uint32_t *n, uint32_t *cap, void *a, void *b) 
 }
 
 /* The proof cannot hold until the next full collection ends. The first
- * reason stays, except that the two states in which nothing is logged
- * (threads, no young generation) replace any other. */
+ * reason stays, except that the states in which nothing is logged
+ * (threads, no young generation, the proof switched off) replace any
+ * other. */
 void gc_proof_break(GcProofWhy why) {
-  if (gc_heap.proof.broken == PROOF_INTACT || why == PROOF_THREADS || why == PROOF_NURSERY) {
+  if (gc_heap.proof.broken == PROOF_INTACT || (why >= PROOF_THREADS && why <= PROOF_OFF)) {
     gc_heap.proof.broken = (uint8_t)why;
   }
+  gc_heap.proof.logging = (uint8_t)(gc_heap.set.verify && gc_heap.proof.broken < PROOF_THREADS);
 }
 
 /* The first barrier's slow call on OBJ (header H: in the heap, not young,
@@ -215,11 +217,15 @@ void gc_proof_full_end(void) {
   GcProof *p = &gc_heap.proof;
   p->roots_n = 0;
   p->broken = PROOF_INTACT;
-  if (gc_heap.set.nursery_off) {
+  p->old_live = gc_heap.live;
+  if (!gc_heap.set.proof) {
+    p->broken = PROOF_OFF;
+  } else if (gc_heap.set.nursery_off) {
     p->broken = PROOF_NURSERY;
   } else if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
     p->broken = PROOF_THREADS;
   }
+  p->logging = (uint8_t)(p->broken == PROOF_INTACT || (gc_heap.set.verify && p->broken < PROOF_THREADS));
   if (p->broken == PROOF_INTACT) {
     gc_proof_each_root(proof_save_root, NULL);
     gc_heap.ctr.proof.roots = (uint64_t)p->roots_n / 2;
