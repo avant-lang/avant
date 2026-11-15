@@ -904,6 +904,9 @@ typedef struct GcStickyCounters {
   uint64_t dense_blocks;
   uint64_t here_blocks;
   uint64_t here_bytes;
+  uint64_t retires;
+  uint64_t retired;
+  uint64_t probes;
 } GcStickyCounters;
 
 /* proof: the complete collection (GcProof below). asked: the full
@@ -1487,6 +1490,11 @@ typedef struct GcHeap {
   /* The last young collection's survival exceeded half its young bytes
    * (young_size, gc-design.md §5.2; Stage 28 W15e). */
   uint8_t young_high_prev;
+  /* The tenured phase (gc_sticky_retire, avant_gc_sticky.c): on, the
+   * retirements left before the next probe, and the probes' interval. */
+  uint8_t tenure_on;
+  uint32_t tenure_left;
+  uint32_t tenure_gap;
   /* Mature growth that triggers the next full collection (gc-design.md
    * §5.4, Stage 28 W15a1): FULL_TRIGGER_MIN before the first one, then
    * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * the live bytes it left).
@@ -1763,6 +1771,9 @@ void gc_use_block(Block *b);
 void gc_fast_clear(void);
 void gc_clear_alloc_cur(uint8_t space);
 void gc_alloc_stop_all(void);
+int gc_sticky_tenure_ok(void);
+int gc_sticky_retire_ok(void);
+void gc_sticky_retire(void);
 void gc_tl_settle(GcThread *t);
 void gc_alloc_sync_slow(void);
 void gc_lazy_build_block(Block *b);
@@ -1896,6 +1907,24 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
 /* A pure young block aged where it lies (above), during the collection
  * that chose it. */
 #define SPLUS_AGE_HERE 11
+/* The tenured phase's longest interval between two probes, in budgets
+ * (gc_sticky_retire): the unhinted binary-trees program counts 16.54 G
+ * instructions at 2, 15.35 G at 8 and 15.04 G at 32, at one peak heap;
+ * the collector benchmark's scenarios do not move. */
+#ifndef TENURE_GAP_MAX
+#define TENURE_GAP_MAX 8
+#endif
+/* The survival that starts the phase and keeps it going: more than
+ * TENURE_SURV_NUM / TENURE_SURV_DEN of a collection's young bytes, after
+ * a collection where more than half survived. At 1/2 Etc::GameOfLife
+ * (whose grids survive at more than half, not 7/8) entered it and ran
+ * about 12% slower (3.17 s to 3.57 s), its old grids promoted in place;
+ * at 3/4 and at 7/8 it does not, and the collector benchmark's chain
+ * build and the unhinted binary-trees program count the same. */
+#ifndef TENURE_SURV_NUM
+#define TENURE_SURV_NUM 7
+#define TENURE_SURV_DEN 8
+#endif
 
 /* avant_gc_sticky.c: the young generation (S+) and the noted list, and
  * the young allocator's block lists in avant_gc_alloc.c. */

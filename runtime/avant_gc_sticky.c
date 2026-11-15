@@ -1850,6 +1850,129 @@ void gc_sticky_collect(int tenure, int evac_mixed) {
 #endif
 }
 
+/* Tenured births (the single mutator's high-survival phase). After two
+ * young collections in a row where more than half of the young bytes
+ * survived, the next budget's young objects are not traced: when the
+ * budget fills, every young object is promoted where it lies by one
+ * linear pass over the young blocks' start bits (gc_sticky_retire),
+ * and nothing is freed. It is a young collection that keeps every young
+ * object, so whatever is correct under a collection that promotes every
+ * survivor in place (a fixed AVANT_YOUNG_MB) is correct under it: after
+ * it no object is young, so the remembered set is emptied and no old
+ * object can name a young one. The young objects that die in the phase
+ * are promoted dead and reclaimed by the full collections the promotion
+ * triggers (each newly live line is charged to the trigger, as an
+ * in-place promotion's). A probe, an ordinary young collection, runs
+ * after one retirement, then after two, four, up to TENURE_GAP_MAX: its
+ * survival decides whether the phase goes on (young_size), and a
+ * collection the program asks for ends it. Only for one thread, not
+ * under the stress mode, a fixed budget or with the nursery off, and
+ * never with a young large object: that budget is collected, as a
+ * probe. Measured on the collector benchmark's chain build (its young
+ * collections 567 M to 293 M instructions) and the unhinted binary-trees
+ * program (22.5 G to 15.4 G instructions, peak heap 124 MB to 100 MB). */
+int gc_sticky_tenure_ok(void) {
+  return atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0 && !gc_heap.set.stress &&
+         !gc_heap.set.young_fixed && !gc_heap.set.nursery_off;
+}
+
+int gc_sticky_retire_ok(void) {
+  return gc_sticky_tenure_ok() && gc_heap.young_large_n == 0 && !gc_thread.collecting && !gc_thread.nogc;
+}
+
+/* Block B's young objects promoted in place (BYTES their sum), its young
+ * range swept, the block a mature one. A young object lies in a line
+ * that was free when the cycle began (a hole the cursor took, or a
+ * survivor block's line); a start bit in a line that was live then is a
+ * mature object's or a dead one's that a live line keeps. */
+static void retire_block(Block *b, uint8_t epoch, uint64_t *bytes) {
+  uint8_t *lines = b->line_mark;
+  uint64_t live0[2] = {0, 0};
+  int lo = b->young_lo;
+  int hi = b->young_hi > LINES_PER_BLOCK ? LINES_PER_BLOCK : b->young_hi;
+  int l;
+  int w;
+  int live;
+  for (l = lo; l < hi; l++) {
+    if (lines[l] == epoch) {
+      live0[l >> 6] |= 1ULL << (l & 63);
+    }
+  }
+  for (w = lo >> 1; w < ((hi + 1) >> 1); w++) {
+    int l0 = 2 * w;
+    uint64_t mask = 0;
+    uint64_t bits;
+    if (l0 >= lo && l0 < hi && !((live0[l0 >> 6] >> (l0 & 63)) & 1)) {
+      mask |= 0xffffffffULL;
+    }
+    if (l0 + 1 >= lo && l0 + 1 < hi && !((live0[(l0 + 1) >> 6] >> ((l0 + 1) & 63)) & 1)) {
+      mask |= 0xffffffff00000000ULL;
+    }
+    bits = b->start[w] & mask;
+    while (bits) {
+      int bit = __builtin_ctzll(bits);
+      size_t off = ((size_t)w * 64 + (size_t)bit) * 8;
+      AvantHeader *h = (AvantHeader *)(b->base + off);
+      uint16_t fl = h->flags;
+      bits &= bits - 1;
+      if ((fl & (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG)) == (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG)) {
+        size_t total = align_up(sizeof(AvantHeader) + (size_t)h->size);
+        size_t a = off >> LINE_SHIFT;
+        size_t e = (off + total - 1) >> LINE_SHIFT;
+        h->flags = (uint16_t)(fl & ~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED));
+        for (; a <= e; a++) {
+          if (lines[a] != epoch) {
+            lines[a] = epoch;
+            gc_heap.promoted_since_full += LINE_SIZE;
+            gc_heap.mature_since_full += LINE_SIZE;
+          }
+        }
+        *bytes += total;
+      } else if (gc_heap.set.verify) {
+        gc_die("avant gc verify: a start bit in a young line that is not a young object's");
+      }
+    }
+  }
+  live = sweep_lines(b, b->young_lo, b->young_hi);
+  b->young_lo = 0;
+  b->young_hi = 0;
+  b->kept = 0;
+  b->idle = 0;
+  if (live < LINES_PER_BLOCK) {
+    gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
+  }
+}
+
+/* The retirement: every young object promoted where it lies (above).
+ * The caller holds the world lock (gc_maybe_collect); one thread. */
+void gc_sticky_retire(void) {
+  uint64_t bytes = 0;
+  uint32_t i;
+  const uint8_t epoch = gc_heap.line_epoch;
+  /* The cursors go (the blocks stop being young), the inline
+   * allocations counted, every late start bit set. */
+  gc_alloc_stop_all();
+  gc_lazy_build_all();
+  gc_rem_merge_all();
+  rem_empty();
+  gc_heap.keep_n = 0;
+  for (i = 0; i < gc_heap.young_blocks_n; i++) {
+    retire_block(gc_heap.young_blocks[i], epoch, &bytes);
+  }
+  gc_heap.young_blocks_n = 0;
+  gc_lazy_drop();
+  gc_heap.ctr.sticky.retires++;
+  gc_heap.ctr.sticky.retired += bytes;
+  gc_heap.ctr.sticky.inplace += bytes;
+  avant_nursery_held = 0;
+  avant_since_gc = 0;
+  gc_heap.young_carried = 0;
+  gc_heap.aged_now = 0;
+  if (bytes) {
+    gc_proof_break(PROOF_PROMOTED);
+  }
+}
+
 /* A full collection under S promotes every object it marks (the full
  * mark clears YOUNG): after it no object is young. Before its mark the
  * young blocks become ordinary mature blocks (the full mark and sweep

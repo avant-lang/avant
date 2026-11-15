@@ -1,0 +1,87 @@
+import harness
+import backends
+
+// Tenured births (runtime/avant_gc_sticky.c, gc_sticky_retire): after
+// two young collections in a row where more than half of what they saw
+// survived, a full young budget is retired (every young object promoted
+// where it lies, nothing traced, nothing freed) until a probe, an
+// ordinary young collection at growing intervals, sees survival fall.
+//
+// heap/tenured.av builds a chain of 1,500,000 nodes through that phase,
+// with a store of a later string into an older node, garbage on the way,
+// an array of nodes growing and a young object held only by a frame slot,
+// then churns, collects (young, then complete) and checks every value.
+// It runs plainly and under AVANT_GC_VERIFY=1 (the remembered set, the
+// start bits and the freed lines are checked at every collection after a
+// retirement), and with AVANT_GC_STATS=1, whose line says the phase ran:
+// retirements and at least one probe. The gate's passes run it under the
+// stress mode, AVANT_YOUNG_MB=1 and AVANT_NURSERY=0 as well, where the
+// phase never starts: the statistics check is skipped there.
+fn test_gc_tenured(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/tenured.av", "${dir}/tenured", "${dir}/tenured.log"))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "tenured.av: compiles")
+  want = "nodes: 1500000\npicked: 366\nchurned: 16888890\nbad: 0\n"
+  envs = ["", "AVANT_GC_VERIFY=1"]
+  runs: Array(HJob) = []
+  e = 0
+  while e < envs.size {
+    runs.push(run_job_env(dir, "tenured", "tenured.g${e}", envs[e]))
+    e += 1
+  }
+  runs.push(run_job_env(dir, "tenured", "tenured.stats", "AVANT_GC_STATS=1"))
+  run_waves(runs)
+  e = 0
+  while e < envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "tenured.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/tenured.g${e}.out"), want, "tenured.av ${what}: the known stdout")
+    c.eq_str(log_text("${dir}/tenured.g${e}.err"), "", "tenured.av ${what}: no stderr (no verifier report)")
+    e += 1
+  }
+  st = runs[envs.size]
+  c.eq_int(st.code, 0, "tenured.av with AVANT_GC_STATS=1: exit 0")
+  c.eq_str(log_text("${dir}/tenured.stats.out"), want, "tenured.av with AVANT_GC_STATS=1: the known stdout")
+  outer = gc_env_outer("AVANT_GC_STATS")
+  stats = log_text("${dir}/tenured.stats.err")
+  if outer.size > 0 {
+    c.skip("tenured.av: the phase retired young budgets and probed", "outer ${outer}")
+  } else {
+    c.expect(stat_of(stats, "young_retires") > 0, "tenured.av: the phase retired young budgets (young_retires > 0)")
+    c.expect(stat_of(stats, "young_probes") > 0, "tenured.av: the phase probed (young_probes > 0)")
+  }
+}
+
+// The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
+fn stat_of(text: String, key: String): Int {
+  parts = text.split(" ")
+  for p in parts {
+    if p.size > key.size + 1 && str_slice(p, 0, key.size + 1) == "${key}=" {
+      return str_slice(p, key.size + 1, p.size).strip.to_i ?? -1
+    }
+  }
+  -1
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_gc_tenured.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    test_gc_tenured(c, compiler, avant_test_root(), scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

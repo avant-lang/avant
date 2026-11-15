@@ -203,6 +203,10 @@ static void print_sticky(StatsLine *l) {
     line_add(l, " young_dense_blocks=%llu young_here_blocks=%llu young_here=%llu", u(c->dense_blocks),
              u(c->here_blocks), u(c->here_bytes));
   }
+  if (c->retires) {
+    line_add(l, " young_retires=%llu young_retired=%llu young_probes=%llu", u(c->retires), u(c->retired),
+             u(c->probes));
+  }
 }
 
 /* The proof's segment, only in a program that forced a collection

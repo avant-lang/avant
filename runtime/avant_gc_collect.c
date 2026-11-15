@@ -153,7 +153,7 @@ _Atomic uint32_t g_avant_str_gen;
  * (O96 as filed) was measured and rejected: it does not help the suite
  * (44.6 s against 42.3) and raises the compiler's peak_heap (245 ->
  * 318 MB; W15e record, vsuite/g50s2). */
-static void young_size(uint64_t used, uint64_t surv) {
+static void young_size(uint64_t used, uint64_t surv, int budget) {
   uint64_t floor = YOUNG_BYTES_DEFAULT;
   uint64_t h = (gc_heap.space[SPACE_MATURE].bytes + gc_heap.large_bytes) / YOUNG_HEAP_DIV;
   int high;
@@ -176,6 +176,28 @@ static void young_size(uint64_t used, uint64_t surv) {
   }
   if (avant_young_bytes < floor) {
     avant_young_bytes = floor;
+  }
+  /* The tenured phase (gc_sticky_retire, avant_gc_sticky.c), decided by
+   * the collections the budget asks for only (the program's end it,
+   * gc_collect). In the phase a young collection is a probe: the phase
+   * goes on, its interval doubled up to TENURE_GAP_MAX budgets, while
+   * nearly everything still survives. Out of it, the second such
+   * collection in a row starts it. */
+  if (budget && (gc_heap.tenure_on || (high && gc_heap.young_high_prev))) {
+    int nearly = surv * TENURE_SURV_DEN > used * TENURE_SURV_NUM;
+    if (gc_heap.tenure_on) {
+      gc_heap.ctr.sticky.probes++;
+      if (nearly) {
+        gc_heap.tenure_gap = gc_heap.tenure_gap * 2 > TENURE_GAP_MAX ? TENURE_GAP_MAX : gc_heap.tenure_gap * 2;
+        gc_heap.tenure_left = gc_heap.tenure_gap;
+      } else {
+        gc_heap.tenure_on = 0;
+      }
+    } else if (nearly && gc_sticky_tenure_ok()) {
+      gc_heap.tenure_on = 1;
+      gc_heap.tenure_gap = 1;
+      gc_heap.tenure_left = 1;
+    }
   }
   gc_heap.young_high_prev = (uint8_t)high;
 }
@@ -328,6 +350,14 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     }
     resume = 1;
   }
+  /* A collection the program asks for, or the heap limit's, ends the
+   * tenured phase, whether it then traces or not: the program says its
+   * work so far is dead (the collector benchmark's churn beside a live
+   * set: the phase of the set's build retired the churn's first budget,
+   * and two more full collections followed). */
+  if (gc_heap.tenure_on && (why == GC_WHY_EXPLICIT || why == GC_WHY_LIMIT)) {
+    gc_heap.tenure_on = 0;
+  }
   t0 = now_ns();
   gc_thread.collecting = 1;
   atomic_fetch_add_explicit(&g_avant_str_gen, 1u, memory_order_release);
@@ -453,7 +483,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       }
     }
     if (!gc_heap.set.young_fixed && !gc_heap.stress_now) {
-      young_size(used, surv);
+      young_size(used, surv, why == GC_WHY_BUDGET);
     }
   } else {
     avant_g_stats.full_collections++;
@@ -598,6 +628,18 @@ void gc_maybe_collect(void) {
   if (gc_heap.mature_since_full >= gc_heap.full_trigger) {
     gc_collect(GC_FULL, 1, GC_WHY_TRIGGER);
   } else if (avant_nursery_held >= avant_young_bytes) {
+    /* The tenured phase (gc_sticky_retire): the budget is retired
+     * instead of collected, until a probe is due; a young large object
+     * makes this one a probe. */
+    if (gc_heap.tenure_on && gc_heap.tenure_left) {
+      if (!gc_sticky_tenure_ok()) {
+        gc_heap.tenure_on = 0;
+      } else if (gc_sticky_retire_ok()) {
+        gc_heap.tenure_left--;
+        gc_sticky_retire();
+        return;
+      }
+    }
     /* (Under E a young copy not expected to fit under AVANT_HEAP_MAX_MB,
      * young_copy_fits, ran as a full collection; S+'s copy needs no room:
      * it stops at the limit and promotes the rest in place.) */
