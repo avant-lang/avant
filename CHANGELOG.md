@@ -48,7 +48,7 @@
 * Errors are clearer: a mistake is reported once, a misspelt name gets one suggestion, a call with wrong arguments shows the function's signature, an ambiguous type names both modules, and messages no longer name internal stages or planning labels.
 * `puts` of a `String` takes the stream's lock once instead of twice.
 * The task pool and `avant test`'s default `--jobs` count the CPUs the process may use (its affinity), not every processor.
-* Allocation and collection are cheaper: short-lived allocation takes about 40% of the instructions, and a program that builds a large structure without `gc.hold` no longer traces or copies it while it builds (binary trees without hints, 10.4 s to 2.95 s).
+* Faster and smaller programs: LangArena's 50 tasks take 1.7% less time (geometric mean) and 3.5% less peak memory than v0.43.0 built with the same toolchain. Allocation and collection are cheaper (`Binarytrees::Obj` 15% faster, `Etc::GameOfLife` 15% less memory), and a program that builds a large structure without `gc.hold` no longer traces or copies it while it builds (binary trees without hints, 10.4 s to 2.95 s).
 
 ## 0.43.0 - 2026-11-14
 
