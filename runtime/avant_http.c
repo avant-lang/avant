@@ -2323,8 +2323,8 @@ static void srv_post(struct us_loop_t *loop) {
 
 /* Bound (host, port) pairs owned by live servers in this process.
  * SO_REUSEPORT lets every loop of one server share its port, but it
- * would also let a second server bind the same port; the wave-5
- * contract is that a second listen fails. The registry keeps the
+ * would also let a second server bind the same port; the contract is
+ * that a second listen fails. The registry keeps the
  * sharing intra-server. */
 typedef struct ListenReg {
   char host[64];
