@@ -102,9 +102,33 @@ fn finals: Array(String) {
 // The GC numbers below are the ones of the environment the runs state
 // (AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1 AVANT_GC_STATS=1) over the default
 // one; under an outer GC environment that sets anything else (the suite
-// run under GATE_GC_ENV, O26) they are skipped.
+// run under tools/gate.sh's GATE_GC_ENV) they are skipped. The example's
+// verifier runs leave an outer AVANT_GC_STRESS (example_gc_env), so it
+// is not among the names that skip them.
 fn gc_numbers_outer: String {
-  gc_env_outer("AVANT_GC_VERIFY AVANT_YOUNG_MB AVANT_GC_STATS")
+  gc_env_outer("AVANT_GC_VERIFY AVANT_YOUNG_MB AVANT_GC_STATS AVANT_GC_STRESS")
+}
+
+// The environment of the example's verifier runs. Under an outer
+// AVANT_GC_STRESS they run without the stress mode, as backends.av's
+// run_job_env runs a verifier job: with both modes each run made 399,993
+// verified collections and took 48 s alone (this file under the stress
+// mode: 51 s with them, 3.3 s without), and it caught no defect that the
+// other runs of the same build miss. Measured by planting
+// defects in the example's .ll, built in the three modes and with the
+// call forms, and running each under every environment the gate gives
+// these runs: a root left out of a frame record (caught by the verifier
+// runs; on a path run once, by the stress run alone, which the two modes
+// together missed), the inline sequence's cursor or header size wrong in
+// the module's slow-call helper (the stress run) or in a site's own copy
+// (the default and verifier runs); a dropped barrier, a wrong type id or
+// an unzeroed payload were caught by no run, the two modes together
+// included. The stress run is the plain run below, under the outer mode.
+fn example_gc_env(gcv: String): String {
+  if gc_stress_outer() {
+    return "-u AVANT_GC_STRESS ${gcv}"
+  }
+  gcv
 }
 
 fn gc_stats_10_3(c: Checks, text: String, what: String, calls: Bool) {
@@ -206,7 +230,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
   while i < ms.size {
     t = mode_tag(ms[i])
     runs.push(run_job("", "${dir}/ex-${t}", "", "${dir}/ex-${t}.run.log"))
-    runs.push(run_job("${gcv} AVANT_GC_STATS=1", "${dir}/ex-${t}", "", "${dir}/ex-${t}.gc.log"))
+    runs.push(run_job(example_gc_env("${gcv} AVANT_GC_STATS=1"), "${dir}/ex-${t}", "", "${dir}/ex-${t}.gc.log"))
     runs.push(run_job(gcv, "${dir}/cons-${t}", "", "${dir}/cons-${t}.run.log"))
     runs.push(run_job(gcv, "${dir}/traps-${t}", "", "${dir}/traps-${t}.ok.log"))
     runs.push(run_job(gcv, "${dir}/traps-${t}", "a", "${dir}/traps-${t}.ovf.log"))
@@ -215,7 +239,7 @@ fn test_mir_emit(c: Checks, compiler: String, root: String, dir: String) {
     runs.push(run_job(gcv, "${dir}/traps-${t}", "a b c d", "${dir}/traps-${t}.min.log"))
     i += 1
   }
-  runs.push(run_job("${gcv} AVANT_GC_STATS=1", "${dir}/ex-calls", "", "${dir}/ex-calls.gc.log"))
+  runs.push(run_job(example_gc_env("${gcv} AVANT_GC_STATS=1"), "${dir}/ex-calls", "", "${dir}/ex-calls.gc.log"))
   run_jobs(runs)
 
   i = 0
