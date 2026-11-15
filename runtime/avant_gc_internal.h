@@ -900,17 +900,19 @@ typedef struct GcStickyCounters {
   uint64_t aged_inplace_blocks;
 } GcStickyCounters;
 
-/* proof: the complete collection (GcProof
- * below). asked: the full collections that checked the proof (every
- * forced one, and every due one); held: the ones it held for (run as a
- * young collection once the proof is used); fell[W]: the ones that traced
- * because of W (GcProofWhy: the first reason met); logged and refs: the
- * holders and the reference words the barrier's slow call logged;
- * log_peak: the most words the log held at a check; roots: the root
- * referents saved at the last full collection. */
+/* proof: the complete collection (GcProof below). asked: the full
+ * collections that asked the proof (every forced one, and every due
+ * one); forced: the forced ones among them; held: the ones it held for,
+ * which ran as young collections; fell[W]: the ones that traced, because
+ * of W (GcProofWhy: the first reason met; a proof that held on a heap
+ * that is mostly young is among them, PROOF_YOUNG_HEAVY); logged and
+ * refs: the holders and the reference words the barrier's slow call
+ * logged; log_peak: the most words the log held at a check; roots: the
+ * root referents saved at the last full collection. */
 #define PROOF_WHYS 13
 typedef struct GcProofCounters {
   uint64_t asked;
+  uint64_t forced;
   uint64_t held;
   uint64_t fell[PROOF_WHYS];
   uint64_t logged;

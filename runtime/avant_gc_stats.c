@@ -199,16 +199,16 @@ static void print_sticky(StatsLine *l) {
            u(c->surv_blocks), u(c->aged_holders), u(c->aged_inplace_blocks));
 }
 
-/* The proof's segment, only in a program
- * that forced a collection (avant_gc_collect, std.gc's gc.collect()), so
- * the line of a program that never asks is what it was: the full
- * collections that asked the proof, the ones it held for, the ones that
- * traced with the first reason each met (GcProofWhy's names), and the
- * log's size. */
+/* The proof's segment, only in a program that forced a collection
+ * (avant_gc_collect, std.gc's gc.collect()), whether it then ran as a
+ * young collection or traced, so the line of a program that never asks
+ * is what it was: the full collections that asked the proof, the ones it
+ * held for, the ones that traced with the first reason each met
+ * (GcProofWhy's names), and the log's size. */
 static void print_proof(StatsLine *l) {
   const GcProofCounters *c = &gc_heap.ctr.proof;
   int w;
-  if (!gc_heap.ctr.why.explicit_) {
+  if (!c->forced) {
     return;
   }
   line_add(l, " proof_asked=%llu proof_held=%llu", u(c->asked), u(c->held));

@@ -340,6 +340,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
      * born old, which breaks the proof; the heap limit's can.) */
     proof = gc_proof_check();
     gc_heap.ctr.proof.asked++;
+    if (why == GC_WHY_EXPLICIT) {
+      gc_heap.ctr.proof.forced++;
+    }
     if (proof != PROOF_INTACT) {
       gc_heap.ctr.proof.fell[proof]++;
     } else if (avant_nursery_held > PROOF_YOUNG_PER_OLD * gc_heap.proof.old_live) {
