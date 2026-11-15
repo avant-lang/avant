@@ -12,6 +12,17 @@ import typed_ir
 import checker.names
 import checker
 
+// Whether a method name is declared on the type whose methods carry the
+// owner name owner (an external method of a builtin type: `Int`).
+pub fn (checker_self: Checker) owner_has_method(owner: String, name: String): Bool {
+  for ms in checker_self.methods {
+    if ms.owner == owner && ms.name == name {
+      return true
+    }
+  }
+  false
+}
+
 pub fn (checker_self: Checker) expect_no_args(expr: Expr, ret: Ty, message: String): Ty {
   if expr.args.size == 0 {
     return ret
@@ -40,6 +51,10 @@ pub fn (checker_self: Checker) check_float_method(expr: Expr): Ty {
   if expr.callee == "to_i" {
     return checker_self.expect_no_args(expr, checker_self.t_int(), "Float64.to_i takes no arguments")
   }
+  if checker_self.owner_has_method("Float64", expr.callee) {
+    none: Ty? = nil
+    return checker_self.dispatch_method(expr, checker_self.t_float(), none)
+  }
   checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Float64", checker_self.builtin_hint(checker_self.t_float(), expr.callee))
   checker_self.t_float()
 }
@@ -65,6 +80,10 @@ pub fn (checker_self: Checker) check_int_method(expr: Expr, object: Ty): Ty {
   if now.size > 0 {
     checker_self.fail(expr.loc, removed_int_message(expr.callee, now))
     return checker_self.t_int()
+  }
+  if checker_self.owner_has_method(object.show, expr.callee) {
+    none: Ty? = nil
+    return checker_self.dispatch_method(expr, object, none)
   }
   checker_self.fail_hint(expr.loc, "no method ${expr.callee} on ${object.show}", checker_self.builtin_hint(object, expr.callee))
   object

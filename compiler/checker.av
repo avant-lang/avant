@@ -656,7 +656,7 @@ pub class Checker {
         if recv = fnn.receiver {
           ty = resolve_in_module(recv.type)
           self.pull_resolve
-          if ptr_method_ok(ty) || ty.is_bytes || ty.is_string || ty.is_buf {
+          if ptr_method_ok(ty) || builtin_receiver_ok(ty) {
             self.self_name = recv.name
             if existing = lookup(self.self_name) {
               fail(fnn.loc, "duplicate parameter ${self.self_name}")
@@ -2535,6 +2535,9 @@ pub class Checker {
         return field_as_call(expr, object)
       }
       if expr.ident == "to_s" && text_to_s(object) {
+        return paren_call_of(expr)
+      }
+      if object.is_bool && owner_has_method("Bool", expr.ident) {
         return paren_call_of(expr)
       }
       if object.is_agg {
@@ -5048,6 +5051,9 @@ pub class Checker {
     expected: Ty? = nil
     if has_want {
       expected = want
+    }
+    if object.is_bool && owner_has_method("Bool", expr.callee) {
+      return dispatch_method(expr, object, expected)
     }
     if object.is_enum {
       // `t.to_i` (Stage 29 W5a1, D292): the member's value as an Int,

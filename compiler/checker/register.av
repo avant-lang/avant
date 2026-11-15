@@ -731,13 +731,13 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
         // (the method's instances, the receiver's match) finds that one.
         recv.type.mod_name = ty.mod_name
       }
-      if ty.is_agg {
+      if ty.is_agg || ty.is_enum {
         fnn.owner = ty.name
         fnn.owner_mod = ty.mod_name
         owner_ty = ty
         owner_key = ty.name
         has_owner = true
-      } else if ty.is_bytes || ty.is_string || ty.is_buf {
+      } else if builtin_receiver_ok(ty) {
         fnn.owner = ty.show
         fnn.owner_mod = ""
         owner_ty = ty
@@ -760,7 +760,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
         checker_self.current_module = saved_mod
         return
       } else {
-        checker_self.fail(recv.loc, "methods can only extend a struct or class, not ${ty.show}")
+        checker_self.fail(recv.loc, "methods can only extend a struct, a class, an enum, String, Bytes, Buf, an integer type, Float64 or Bool, not ${ty.show}")
         checker_self.resolver.clear_tparams
         checker_self.current_module = saved_mod
         return
@@ -818,7 +818,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   }
   // A builtin type's own methods and fields keep their names: a method
   // of that name would either replace the builtin or never be called.
-  if (owner_ty.is_string || owner_ty.is_bytes || owner_ty.is_buf) && name_in_list(fnn.name, builtin_member_names(owner_ty)) {
+  if builtin_receiver_ok(owner_ty) && name_in_list(fnn.name, builtin_member_names(owner_ty)) {
     checker_self.fail(fnn.loc, "${fnn.name} is a builtin of ${owner_key}: a method cannot replace it; give the method another name")
     checker_self.resolver.clear_tparams
     checker_self.current_module = saved_mod
@@ -938,7 +938,7 @@ pub fn (checker_self: Checker) methods_meet(a: Function, b: Function): Bool {
   if a.mod_name == b.mod_name {
     return true
   }
-  if a.owner == "String" || a.owner == "Bytes" || a.owner == "Buf" {
+  if builtin_owner_name(a.owner) {
     return false
   }
   a.vis || b.vis || a.name == "initialize"

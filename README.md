@@ -1630,7 +1630,7 @@ A method is a `fn` inside the type's body. Inside it, `self` is the receiver.
 
 ### External methods
 
-A method can also be declared outside the type's body, as a function with a receiver parameter. Inside it the receiver is implicit, as in a method of the type's body: a field is read bare and written through the receiver's name (`p.x = ...`), a method of the type is called bare, and a bare call that fits both a method and a function is an error asking for `p.name(...)` or the function's qualified name. A lambda inside an external method cannot capture its receiver (copy it into a local first). The receiver of a method of `String`, `Bytes` or `Buf` is always named.
+A method can also be declared outside the type's body, as a function with a receiver parameter. Inside it the receiver is implicit, as in a method of the type's body: a field is read bare and written through the receiver's name (`p.x = ...`), a method of the type is called bare, and a bare call that fits both a method and a function is an error asking for `p.name(...)` or the function's qualified name. A lambda inside an external method cannot capture its receiver (copy it into a local first). The receiver of a method of a builtin type (`String`, `Bytes`, `Buf`, an integer type, `Float64`, `Bool`) is always named.
 
 <!-- check: run pre=point_decl -->
 ```avant
@@ -1651,11 +1651,11 @@ struct Point {
 }
 -->
 
-This is how a module adds methods to a type it does not own, the builtin `String`, `Bytes` and `Buf` included (the standard library's `bytes.compress` is one).
+This is how a module adds methods to a type it does not own: an enum, and the builtin `String`, `Bytes`, `Buf`, `Int`, `Int32`, `UInt32`, `UInt64`, `Float64` and `Bool` included (the standard library's `bytes.compress` is one; `fn (n: Int) clamp(lo: Int, hi: Int): Int` is called `n.clamp(0, 10)`). `Array` and `Hash` take none yet.
 
-- A builtin type keeps its own methods and fields: `fn (s: String) to_s` or `fn (b: Bytes) size` is refused where it is declared, so a builtin is never replaced and a method is never silently left uncalled.
-- An external method of `String`, `Bytes` or `Buf` is seen like a function: in its own module and, when `pub`, in the modules that import it. A `pub` external method of a type declared in the program is part of that type, seen wherever the type is.
-- Two modules may each add a method of one name to `String`, `Bytes` or `Buf`. Each module's calls reach the one it sees; a call that sees both (two imports, or an import and the module's own) is an error that names the two modules, since a method call cannot name its module: call it from a module that imports only one of them. On a type declared in the program, two modules' methods of one name and parameter types meet wherever the type is, so the second is refused where it is declared, naming the first's module, unless both are private.
+- A builtin type keeps its own methods and fields: `fn (s: String) to_s`, `fn (b: Bytes) size` or `fn (n: Int) abs` is refused where it is declared, so a builtin is never replaced and a method is never silently left uncalled.
+- An external method of a builtin type is seen like a function: in its own module and, when `pub`, in the modules that import it. A `pub` external method of a type declared in the program is part of that type, seen wherever the type is.
+- Two modules may each add a method of one name to a builtin type. Each module's calls reach the one it sees; a call that sees both (two imports, or an import and the module's own) is an error that names the two modules, since a method call cannot name its module: call it from a module that imports only one of them. On a type declared in the program, two modules' methods of one name and parameter types meet wherever the type is, so the second is refused where it is declared, naming the first's module, unless both are private.
 
 ### Type-level functions
 
