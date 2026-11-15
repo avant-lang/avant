@@ -636,6 +636,23 @@ pub fn (checker_self: Checker) check_lambda(expr: Expr, has_want: Bool, want: Ty
     if want.is_fn {
       return checker_self.check_lambda_against(expr, want)
     }
+    if want.is_union {
+      // An optional function value (`(fn(Int): Int)?`), or any union with
+      // one function member: the lambda is that member.
+      one: Ty? = nil
+      count = 0
+      for m in want.members {
+        if m.is_fn {
+          one = m
+          count += 1
+        }
+      }
+      if f = one {
+        if count == 1 {
+          return checker_self.check_lambda_against(expr, f)
+        }
+      }
+    }
     checker_self.fail(expr.loc, "expected ${want.show}, got a lambda")
     return checker_self.t_int()
   }

@@ -94,6 +94,38 @@ pub fn mir_is_opt_ref(t: Ty): Bool {
   false
 }
 
+// An optional function value, `(fn(Int): Int)?`: the function value's
+// own pair `{ env, code }`, `nil` a null code word (no function value has
+// one: a named function is its trampoline, a lambda its thunk), so it
+// takes no tag and no more room than the function value.
+pub fn mir_opt_fn(t: Ty): Ty? {
+  if !t.is_union || t.members.size != 2 || !t.includes_nil {
+    return nil
+  }
+  for m in t.members {
+    if m.is_fn {
+      return m
+    }
+  }
+  nil
+}
+
+// An optional without a tag: a reference's pointer or a function value's
+// pair, `nil` a null word (mir_opt_ref, mir_opt_fn).
+pub fn mir_opt_word(t: Ty): Ty? {
+  if r = mir_opt_ref(t) {
+    return r
+  }
+  mir_opt_fn(t)
+}
+
+pub fn mir_is_opt_word(t: Ty): Bool {
+  if r = mir_opt_word(t) {
+    return true
+  }
+  false
+}
+
 // Whether a String or Bytes value (both are `ref str`).
 pub fn mir_is_str_ty(t: Ty): Bool {
   t.is_string || t.is_bytes

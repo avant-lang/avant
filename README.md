@@ -940,7 +940,7 @@ fn main {
 
 ### What an optional costs
 
-An optional reference costs nothing over the reference: `T?` where `T` is a class, `String`, `Bytes`, `Array`, `Hash` or `Buf` is one pointer, and `nil` is the null pointer, whether in a field, a local, an array element, a parameter or a result (`left: Node?` is 8 bytes). Any other union holds a small tag and one slot per member that is not `nil`.
+An optional reference costs nothing over the reference: `T?` where `T` is a class, `String`, `Bytes`, `Array`, `Hash` or `Buf` is one pointer, and `nil` is the null pointer, whether in a field, a local, an array element, a parameter or a result (`left: Node?` is 8 bytes). An optional function value, `(fn(Int): Int)?`, is the function value's two words, `nil` a null code word. Any other union holds a small tag and one slot per member that is not `nil`.
 
 A `T?` that nothing assigned is `nil`, whatever `T` is: an optional field without a default reads as absent.
 
@@ -2009,6 +2009,7 @@ fn main {
 - A function's name followed by a block is a call with that block as its only argument, bare or qualified: `twice { |n| n + 1 }` is `twice() { |n| n + 1 }`, as `util.twice { |n| n + 1 }` is. The block starts on the line where the call ends: a lambda on the next line is a value of its own. In the head of an `if`, `while` or `switch` a block after the condition is taken as the call's only when it starts with its parameters (`{ |n|`).
 - A bare function name in a value position is that function (`f: fn(Int): Int = double`). A function of another module is named as at a call, qualified: `f = util.double`. When a name means several functions (overloads, or two imported modules' functions of one name), the expected `fn` type picks one, or the module's name does.
 - The type is invariant: `fn(Int): Int` is not `fn(Int): Int?`.
+- An optional function value takes grouping parentheses: `(fn(Int): Int)?` is a function or `nil`, where `fn(Int): Int?` returns an `Int?`. It is opened like any optional (`if f = cb { f(1) }`, `cb ?? double`), and it is the function value itself, `nil` a null code word: no tag and no more room than a function value.
 - There is no `==` on function values, and methods are not values.
 
 ### Lambdas

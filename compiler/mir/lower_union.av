@@ -77,10 +77,11 @@ pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOp
     lw.refuse(loc, "a value of type ${got.show} as ${want.show}")
     return o
   }
-  if r = mir_opt_ref(want) {
-    // An optional reference (W3b, B13): the reference itself, or null.
+  if r = mir_opt_word(want) {
+    // An optional reference: the reference itself, or null;
+    // an optional function value (mir_opt_fn) the same.
     if got.is_nil {
-      return b.c_null(wty)
+      return lw.opt_nil(wty)
     }
     return o
   }
@@ -98,8 +99,8 @@ pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
     // `nil` into a union place: the nil tag directly.
     lw.at(v.loc)
     b = lw.lw_b
-    if r = mir_opt_ref(want) {
-      return b.c_null(ty)
+    if r = mir_opt_word(want) {
+      return lw.opt_nil(ty)
     }
     return lw.tmp(ty, b.rv_union_nil(b.types.layout_of(ty), want.tag_of(ty_nil())))
   }
@@ -228,8 +229,8 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
     return o
   }
   lw.at(loc)
-  fr = mir_is_opt_ref(from)
-  tr = mir_is_opt_ref(to)
+  fr = mir_is_opt_word(from)
+  tr = mir_is_opt_word(to)
   if fr && tr {
     return o
   }
@@ -280,7 +281,7 @@ fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location)
   b = lw.lw_b
   d = b.temp(tty)
   join = b.block
-  if fm = mir_opt_ref(from) {
+  if fm = mir_opt_word(from) {
     tl = b.types.layout_of(tty)
     b.assign(b.pl(d), b.rv_zero)
     bnil = b.block
@@ -299,8 +300,8 @@ fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location)
     b.at(join)
     return b.copy_local(d)
   }
-  if tm = mir_opt_ref(to) {
-    b.assign(b.pl(d), b.rv_use(b.c_null(tty)))
+  if tm = mir_opt_word(to) {
+    b.assign(b.pl(d), b.rv_use(lw.opt_nil(tty)))
     k = from.tag_of(tm)
     if k >= 0 {
       tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
@@ -319,7 +320,8 @@ fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location)
   b.copy_local(d)
 }
 
-// Whether the optional reference in src is null (eq) or not.
+// Whether the optional reference in src is null (eq) or not; for an
+// optional function value (mir_opt_fn), whether its code word is.
 fn (lw: MirLower) ref_is_null(src: Int, eq: Bool): MOperand {
   b = lw.lw_b
   ty = b.func.locals[src].ty
@@ -327,7 +329,23 @@ fn (lw: MirLower) ref_is_null(src: Int, eq: Bool): MOperand {
   if !eq {
     op = mop_ne()
   }
+  if b.types.kind(ty) == mk_agg() {
+    // The code word as an untyped pointer (a code value fits a `ptr`
+    // place), compared with null.
+    code = lw.tmp(mt_ptr(), b.rv_use(b.copy(b.field(b.pl(src), 1))))
+    return lw.tmp(mt_bool(), b.rv_cmp(op, code, b.c_null(mt_ptr())))
+  }
   lw.tmp(mt_bool(), b.rv_cmp(op, b.copy_local(src), b.c_null(ty)))
+}
+
+// The nil of an optional without a tag of MIR type ty (mir_opt_word): the
+// null pointer, or a function value's pair of zeros.
+pub fn (lw: MirLower) opt_nil(ty: Int): MOperand {
+  b = lw.lw_b
+  if b.types.kind(ty) == mk_agg() {
+    return lw.tmp(ty, b.rv_zero)
+  }
+  b.c_null(ty)
 }
 
 // The value of type success held by the union in src (of type uty):
@@ -338,8 +356,8 @@ pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOp
   if success.is_nil {
     return b.c_i32(0)
   }
-  if r = mir_opt_ref(uty) {
-    // The reference itself (W3b, B13).
+  if r = mir_opt_word(uty) {
+    // The reference itself, or the function value.
     return b.copy_local(src)
   }
   if success.is_union {
@@ -353,7 +371,7 @@ pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOp
 // optional reference, a null test (W3b, B13).
 pub fn (lw: MirLower) tag_is(src: Int, uty: Ty, k: Int, eq: Bool): MOperand {
   b = lw.lw_b
-  if r = mir_opt_ref(uty) {
+  if r = mir_opt_word(uty) {
     return lw.ref_is_null(src, eq == uty.members[k].is_nil)
   }
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
@@ -445,7 +463,7 @@ pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: In
     dflt = join
   }
   lw.at(e.loc)
-  if r = mir_opt_ref(uty) {
+  if r = mir_opt_word(uty) {
     kn = uty.tag_of(ty_nil())
     kr = uty.tag_of(r)
     tn = entry[kn]
@@ -873,12 +891,12 @@ pub fn (lw: MirLower) opt_of(want: Ty, found: MOperand, v: MOperand, vt: Ty, loc
   join = b.block
   b.branch(found, bt, bf)
   b.at(bt)
-  if r = mir_opt_ref(want) {
+  if r = mir_opt_word(want) {
     // An optional reference (W3b, B13): the reference, or null.
     b.assign(b.pl(d), b.rv_use(v))
     b.goto(join)
     b.at(bf)
-    b.assign(b.pl(d), b.rv_use(b.c_null(wty)))
+    b.assign(b.pl(d), b.rv_use(lw.opt_nil(wty)))
     b.goto(join)
     b.at(join)
     return b.copy_local(d)
@@ -945,14 +963,14 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     } else {
       n = lw.call_to(mt_int(), "avant_str_size", lw.one(b.copy_local(h)))
     }
-    oref = mir_is_opt_ref(t)
+    oref = mir_is_opt_word(t)
     l = -1
     if !oref {
       l = b.types.layout_of(wty)
     }
     d = b.temp(wty)
     if oref {
-      b.assign(b.pl(d), b.rv_use(b.c_null(wty)))
+      b.assign(b.pl(d), b.rv_use(lw.opt_nil(wty)))
     } else {
       b.assign(b.pl(d), b.rv_union_nil(l, t.tag_of(ty_nil())))
     }
