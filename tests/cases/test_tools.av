@@ -1,7 +1,7 @@
 import harness
 
 // The release and wave tools under tools/, through the shell scripts in
-// tests/tools/ (VALK-TM2): each prints one line per check, `ok: NAME` or
+// tests/tools/: each prints one line per check, `ok: NAME` or
 // `FAIL: NAME: why`, and every NAME below is one check here, so a check
 // that did not run fails too. They test shell tools, not the collector:
 // under a GC environment pass they skip themselves (the default passes on
@@ -45,7 +45,7 @@ fn test_tools(c: Checks) {
   jobs: Array(HJob) = []
   whats: Array(String) = []
   names: Array(Array(String)) = []
-  // O676: two packages of one compiler are the same archive.
+  // Two packages of one compiler are the same archive.
   if compiler = env_get("AVANT_COMPILER") {
     compiler = compiler_abs("tools", compiler)
     slash = 0
@@ -55,25 +55,25 @@ fn test_tools(c: Checks) {
       }
     }
     re2c = "${str_slice(compiler, 0, slash)}/re2c"
-    c.expect(file_exists(re2c), "O676: the re2c beside the compiler under test exists (${re2c})")
-    c.expect(file_exists("${root}/runtime/build/avant-bind"), "O676: runtime/build/avant-bind exists (sh runtime/build.sh)")
+    c.expect(file_exists(re2c), "package: the re2c beside the compiler under test exists (${re2c})")
+    c.expect(file_exists("${root}/runtime/build/avant-bind"), "package: runtime/build/avant-bind exists (sh runtime/build.sh)")
     w = "${scratch_dir()}/package"
     jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/package-repro.sh", compiler, re2c, w], "${w}.log"))
-    whats.push("O676 package.sh")
+    whats.push("package.sh")
     names.push(["packaged", "same-sha256", "same-bytes", "sha256-file", "commit-time", "source-date-epoch", "epoch-changes-sha256", "bad-epoch"])
   } else {
-    c.expect(false, "O676: AVANT_COMPILER names the compiler under test")
+    c.expect(false, "package: AVANT_COMPILER names the compiler under test")
   }
-  // O669: a stopped wave-final.sh leaves no process of its steps.
+  // A stopped wave-final.sh leaves no process of its steps.
   wf = "${scratch_dir()}/wave-final"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/wave-final-stop.sh", wf], "${wf}.log"))
-  whats.push("O669 wave-final.sh")
+  whats.push("wave-final.sh")
   names.push(["run-ends", "step-status", "term-leaves-nothing", "term-status", "term-within-kill-after", "term-summary", "expire-leaves-nothing", "expire-status", "expire-summary"])
-  // O693: the gate runs in a private /tmp: another lane's entry gone from
+  // The gate runs in a private /tmp: another lane's entry gone from
   // outside leaves it green, litter from inside makes it red.
   gt = "${scratch_dir()}/gate-private-tmp"
   jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/gate-private-tmp.sh", gt], "${gt}.log"))
-  whats.push("O693 gate.sh")
+  whats.push("gate.sh")
   names.push(["gone-pass-started", "gone-green", "gone-summary", "gone-private-line", "litter-red", "litter-named", "litter-entry", "litter-stays-private"])
   // The scripts at once: neither reads a clock the other could disturb
   // beyond wave-final-stop.sh's 10 s bound on a stop.

@@ -1,22 +1,22 @@
 import harness
 import backends
 
-// Stage 28 W5b: the scalar subset on the new back end (AVANT_BACKEND=llvm,
-// D176; stages/stage28/mir.md W5). For every program of the subset:
-// (a) it compiles (--debug), and its stdout, stderr, and exit status are
-// its run golden (tests/goldens/runs, frozen from the old back end at
-// W11; until then the differential, D184); for the fixtures with
-// goldens, (b) `avant dump` prints exactly tests/goldens/<stem>.mir
-// (D171); (c) AVANT_BACKEND unset, empty, or llvm is the one back end
-// and any other value is refused, naming the variable (myc since W11);
-// (d) `compile` creates a missing parent directory of its output (the
-// old driver did; W10 gave the new driver the same). (The
-// L0001 probe of this file, `break` in a lambda inside a `while`, left
-// with W10b: the checker rejects it, tests/cases/test_frontend.av.)
+// The scalar subset on the new back end (AVANT_BACKEND=llvm). For
+// every program of the subset: (a) it compiles (--debug), and its
+// stdout, stderr, and exit status are its run golden
+// (tests/goldens/runs, frozen from the old back end when it retired; until
+// then the differential); for the fixtures with goldens, (b) `avant
+// dump` prints exactly tests/goldens/<stem>.mir; (c) AVANT_BACKEND
+// unset, empty, or llvm is the one back end and any other value is
+// refused, naming the variable (myc too, since it retired); (d) `compile`
+// creates a missing parent directory of its output (the old driver
+// did; the new driver does the same). (The L0001 probe of this
+// file, `break` in a lambda inside a `while`, left once the
+// checker rejects it, tests/cases/test_frontend.av.)
 
 // The programs, relative to the root; those with a golden first.
 // The fixtures with a MIR golden: tests/goldens/list.txt's rows for
-// this file (O355).
+// this file.
 fn golden_progs(c: Checks): Array(String) {
   xs: Array(String) = []
   names = golden_names_of(c, "test_scalars")
@@ -102,9 +102,9 @@ fn test_scalars(c: Checks, compiler: String, root: String, dir: String) {
   // The default is AVANT_BACKEND unset (not the suite's own setting).
   jobs.push(env_job("-u AVANT_BACKEND", compiler, d, "${dir}/hello.default.dump"))
   jobs.push(env_job("AVANT_BACKEND=", compiler, d, "${dir}/hello.empty-env.dump"))
-  // The old back end's name is refused like any other (W11).
+  // The old back end's name is refused like any other.
   jobs.push(env_job("AVANT_BACKEND=myc", compiler, d, "${dir}/hello.myc-env.dump"))
-  // A missing parent directory of the output is created (W10).
+  // A missing parent directory of the output is created.
   jobs.push(compile_job("-u AVANT_BACKEND", compiler, "${root}/examples/hello.av", "${dir}/outdir-llvm/a/b/hello", "${dir}/outdir-llvm.log"))
   run_waves(jobs)
 

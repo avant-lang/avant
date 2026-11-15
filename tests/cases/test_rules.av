@@ -1,54 +1,54 @@
 import harness
 import backends
 
-// Stage 29 W-FIX1b: the compiler's safety rules of this wave. Each program
+// The compiler's safety rules of this wave. Each program
 // is compiled in parallel; a refused one must leave no binary, say the
 // expected words and point at the expected line and column; an accepted
 // one (the neighbouring legal forms) must print what it should.
-//   - O231, `Mutex.with`: the block's value leaves the lock, so it cannot
+//   - `Mutex.with`: the block's value leaves the lock, so it cannot
 //     be, or hold, a reference to mutable state (a class handed out this
 //     way was changed by two tasks at once, and updates were lost).
-//   - O541 (D355, Stage 29 W8Ca), `Mutex.with`'s statements: the guarded
+//   - `Mutex.with`'s statements: the guarded
 //     value and every reference reached from it may only be a receiver
 //     or an operand whose result is a plain value, never an argument, a
 //     stored value or a captured name (race3: `keep.push(b)`, `out =
 //     b.inner` and a function that stores it lost updates); a store into
 //     the guarded value itself, and a name the block declares, keep it
 //     under the lock and are allowed.
-//   - O211, O232, O436 (Stage 29 W8Ca): Channel(T) and Mutex(T) are
+//   - Channel(T) and Mutex(T) are
 //     std.sync's; a Channel of any T (a class, another Channel, a
-//     Mutex); a send carries what may cross a task (D35); the gate
+//     Mutex); a send carries what may cross a task; the gate
 //     builtins are the standard library's only.
-//   - O263, O313 (Stage 29 W8Ca): `Mutex.with` as a statement ends
+//   - `Mutex.with` as a statement ends
 //     without a value (its block's last expression is dropped, so a
 //     reference there leaves nothing); `return`, `break`, `continue` and
 //     `?` leave the block, the lock released (threads/with_exits.av runs
-//     them across tasks); a returned reference obeys O541's rule.
-//   - O687 (D371, Stage 29 W8Cb): `Mutex(T).new(v)` consumes v (a later
+//     them across tasks); a returned reference obeys the statements' rule.
+//   - `Mutex(T).new(v)` consumes v (a later
 //     use is refused, and so is every way v could have been shared
 //     before: an alias, an argument, a capture, a value from outside
 //     stored into it, a value it holds that was not new, the call in a
 //     loop around it); a field, an element, a parameter or a call's
 //     result is refused as the argument; inside `with`, a value from
 //     outside is not stored into the guarded value.
-//   - O689 (D334, Stage 29 W8Cb): `return` in a spawn or `.parallel`
+//   - `return` in a spawn or `.parallel`
 //     block is refused by name (it was a type mismatch, and a bare
 //     `return` stopped the compiler in the MIR verifier).
-//   - D329 (O237, O434), a `for` variable is not assignable: `x = ...`
+//   - a `for` variable is not assignable: `x = ...`
 //     and `x += ...` on a range's counter or an array's element, and a
 //     field of an element through struct values (`p.x = 1`,
 //     `p.pos.x += 1`), which changed the loop's copy and lost the write.
 //     A class element's field, a path through a reference, an index, and
 //     a name the body binds anew stay legal.
-//   - D329 (O246), `Array(T).new(n, value)` is refused when T is, or
+//   - `Array(T).new(n, value)` is refused when T is, or
 //     holds, a reference to an object that can change (every element
 //     would be that one object), and `Array(T).new(n) { |i| ... }` builds
 //     each element (tests/fixtures/heap/build.av runs it under the
 //     collector's modes).
-//   - O223, O17: a method whose parameters all have defaults, called
+//   - a method whose parameters all have defaults, called
 //     without parentheses, is the call with them (the build stopped in
 //     the MIR verifier); a type-level function's defaults are checked and
-//     typed like any argument. Defaults across modules (O343) are
+//     typed like any argument. Defaults across modules are
 //     tests/cases/test_modules.av's.
 
 class RCase {
@@ -125,7 +125,7 @@ fn guard_cases: Array(RCase) {
   xs
 }
 
-// O687 (D371, Stage 29 W8Cb): `Mutex(T).new(v)` consumes v, and nothing
+// `Mutex(T).new(v)` consumes v, and nothing
 // from outside is stored into the guarded value.
 fn consume_cases: Array(RCase) {
   xs: Array(RCase) = []
@@ -149,12 +149,12 @@ fn consume_cases: Array(RCase) {
   xs
 }
 
-// What a Mutex may guard (O709, D389 option 2; Stage 29 W8Cc): no method
-// of the guarded class, or of a class it holds, keeps a reference from
-// outside or hands out its own (W8Cb's F2: `add` keeping its argument,
-// `register` pushing self). The neighbours: a counter, new values pushed,
-// a list built with constructors from self's parts, a tail linked in, a
-// method comparing with another Box, a method returning a part of self.
+// What a Mutex may guard: no method of the guarded class, or of a
+// class it holds, keeps a reference from outside or hands out its
+// own (`add` keeping its argument, `register` pushing self). The
+// neighbours: a counter, new values pushed, a list built with
+// constructors from self's parts, a tail linked in, a method
+// comparing with another Box, a method returning a part of self.
 fn guarded_cases: Array(RCase) {
   xs: Array(RCase) = []
   xs.push(refused("guarded-param-push", "import std.sync\n\nclass Inner {\n  pub n: Int = 0\n}\n\nclass Box {\n  pub items: Array(Inner) = []\n\n  fn add(x: Inner) {\n    self.items.push(x)\n  }\n}\n\nfn main {\n  m = Mutex(Box).new(Box.new())\n  c = Inner.new()\n  m.with { |b| b.add(c) }\n  c.n = 5\n  puts(m.with { |b| b.items.size })\n}\n", "Box.add stores a parameter", "11:21"))

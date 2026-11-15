@@ -40,12 +40,12 @@ fn rx_sh(cmd: String): Int {
   process_run("/bin/sh", args) ?? -1
 }
 
-// A child program with a literal pattern: compiled, then run, then run
-// again by `avant run`. The compiler's re2c notes are diagnostics, on
-// stderr (O233, Stage 29 W-FIX1f2: they were printed on stdout, where
-// `avant run` put them ahead of the program's output): `compile_has`
-// must be on the compile's stderr and on `avant run`'s, `compile_lacks`
-// on neither stream, and stdout must hold no note: the compile prints
+// A child program with a literal pattern: compiled, then run, then
+// run again by `avant run`. The compiler's re2c notes are
+// diagnostics, on stderr (they were printed on stdout, where `avant
+// run` put them ahead of the program's output): `compile_has` must be
+// on the compile's stderr and on `avant run`'s, `compile_lacks` on
+// neither stream, and stdout must hold no note: the compile prints
 // only its own line, and `avant run` exactly the program's `out`.
 fn regex_child(c: Checks, compiler: String, stamp: Int, tag: String, body: String, compile_has: String, compile_lacks: String, out: String) {
   src = "${scratch()}/regex-${stamp}-${tag}.av"
@@ -278,14 +278,14 @@ fn test_std_regex(c: Checks) {
   } else {
     c.expect(false, "shared pattern survives sibling close")
   }
-  // A use after close traps (Stage 29 W4b2, test_system.av lib-regex-*).
+  // A use after close traps (test_system.av lib-regex-*).
   c.expect(shared_a.is_closed(), "closed regex says so")
   shared_b.close()
 
-  // The open or closed state is one shared place (Stage 29 W-FIX1a,
-  // P150): a copy of a Regex is the same handle, so closing through any
-  // copy closes them all, once. Each copy used to carry its own flag,
-  // and a copy of a closed Regex read the released handle.
+  // The open or closed state is one shared place: a copy of a
+  // Regex is the same handle, so closing through any copy closes
+  // them all, once. Each copy used to carry its own flag, and a
+  // copy of a closed Regex read the released handle.
   twin_a = must_compile(c, "yy+", false, "twin a")
   twin_b = must_compile(c, "yy+", false, "twin b")
   twin_copy = twin_a
@@ -302,7 +302,7 @@ fn test_std_regex(c: Checks) {
   }
   twin_b.close()
 
-  // PCRE2's failures are not "no match" (Stage 29 W-FIX1a, P40). A
+  // PCRE2's failures are not "no match". A
   // match that nests deeper than the JIT's 32 KiB stack is answered: by
   // the JIT on a larger stack, and past that by the interpreter (reached
   // here by shrinking that stack with the suite's internal variable
@@ -364,7 +364,7 @@ fn test_std_regex(c: Checks) {
     unsupported = "import std.regex\nfn main {\n  if re = Regex.compile(\"(a)\\\\1\") {\n    if m = re.find(\"baa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    re.close()\n  }\n}\n"
     regex_child(c, compiler, stamp, "regex-backref", unsupported, "stays on PCRE2", "", "1\n3\n")
 
-    // P150: every use through a copy of a closed Regex traps, whichever
+    // Every use through a copy of a closed Regex traps, whichever
     // copy was closed and wherever the copy lives (a parameter, an array,
     // a MatchIter, a Match's named groups and its groups past the third).
     // "uncached" fills the 128-entry cache with patterns in use first,
@@ -388,7 +388,7 @@ fn test_std_regex(c: Checks) {
     fourth.push("4")
     regex_trap_run(c, cbin, stamp, "names-4", fourth, "aa\nc\n", trap)
 
-    // P40: a match that reaches PCRE2's match limit traps, naming the
+    // A match that reaches PCRE2's match limit traps, naming the
     // operation: (a+)+$ on forty a's, a b and "aaa" has a match (the last
     // three a's), but the attempt at the first a backtracks past the
     // limit. It used to read as "no match": find nil, count 0, replace

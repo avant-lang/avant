@@ -1,6 +1,6 @@
 import harness
 
-// D127: one private scratch directory per process, nested through TMPDIR,
+// One private scratch directory per process, nested through TMPDIR,
 // removed at exit and on SIGINT, SIGTERM, and SIGHUP, kept by AVANT_KEEP_TMP.
 
 fn scratch_child_src: String {
@@ -13,7 +13,7 @@ fn scratch_child_src: String {
   b.push_str("  mode = \"\"\n")
   b.push_str("  if v = env_get(\"SCRATCH_MODE\") {\n    mode = v\n  }\n")
   b.push_str("  if mode == \"fail\" {\n    return 3\n  }\n")
-  // wait: block in a child (D131 forwards the signal to it), the child's
+  // wait: block in a child (an interrupted test forwards the signal to it), the child's
   // pid recorded next to the directory path so the test can check it.
   b.push_str("  if mode == \"wait\" {\n")
   b.push_str("    if out = env_get(\"SCRATCH_OUT\") {\n")
@@ -44,7 +44,7 @@ fn first_line(path: String): String {
   ""
 }
 
-// A script run under timeout (Stage 29 W-FIX1i): timeout signals its
+// A script run under timeout: timeout signals its
 // whole process group, the script's pipeline included, so a child that
 // loops is stopped and its check fails instead of hanging the suite. The
 // script's own `$?` reports a child's signal as 128 + n (timeout's own
@@ -210,10 +210,10 @@ fn test_scratch(c: Checks) {
     c.expect(str_has(std_dir, "${root}/avant-"), "t.temp_dir nests in the scratch directory")
     c.expect(std_dir.size > 0 && !file_exists(std_dir), "t.temp_dir removed at exit")
 
-    // Q146/D131: an interrupted avant test stops its jobs and leaves nothing.
+    // An interrupted avant test stops its jobs and leaves nothing.
     proj = scratch_dir()
     mkdir_p("${proj}/tests")
-    // Its own avant.toml (O116, Stage 29 W1b): with TMPDIR inside a
+    // Its own avant.toml: with TMPDIR inside a
     // checkout, the runner's walk up from proj would find the checkout's.
     _ = file_write("${proj}/avant.toml", "[package]\nname = \"slow\"\nversion = \"0.1.0\"\n")
     // The job's sleep records its own pid (exec keeps it), so the check
@@ -262,7 +262,7 @@ fn test_scratch(c: Checks) {
     unset_dir = first_line(unset_log)
     c.eq_int(unset_code, 0, "no TMPDIR exits 0")
 
-    // O35 (Stage 29 W1b): a program that crashes after creating its
+    // A program that crashes after creating its
     // private directory (a compiler crash is the same runtime path) dies
     // by the signal and leaves nothing in TMPDIR.
     crash_src = "${work}/crash.av"
@@ -286,7 +286,7 @@ fn test_scratch(c: Checks) {
       q += 1
     }
 
-    // O521 (Stage 29 W-FIX1e): a program whose standard output is a pipe
+    // A program whose standard output is a pipe
     // its reader closed (`prog | head`) dies by SIGPIPE, and SIGPIPE was
     // not among the signals that remove the directory. The program, then
     // `avant test` itself, each cut by `head -c 1`.
@@ -294,7 +294,7 @@ fn test_scratch(c: Checks) {
     mkdir_p(pbase)
     prc = "${work}/pipe.rc"
     psh = "${work}/pipe.sh"
-    // Stage 29 W-FIX1i: each run also starts with SIGPIPE ignored, as a
+    // Each run also starts with SIGPIPE ignored, as a
     // CI runner starts its jobs (sh passes an ignored signal on). The
     // runtime resets it to the default before main, so the program still
     // dies by it; before, the loop wrote to the closed pipe forever. Every
@@ -333,7 +333,7 @@ fn test_scratch(c: Checks) {
       pm += 1
     }
 
-    // Stage 29 W-FIX1i: a write to standard output that fails (here
+    // A write to standard output that fails (here
     // /dev/full, ENOSPC) is never silent: puts of a String, a Float64 or
     // a Bool stops the program at once, and a failed write left in the
     // buffer (an integer's puts) is found at exit; each names the stream

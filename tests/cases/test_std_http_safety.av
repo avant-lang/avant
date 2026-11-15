@@ -2,33 +2,33 @@ import harness
 import std.sync
 import std.http
 
-// Safety behaviours of std.http's server (Stage 29 W-FIX1a), each a
-// defect that had no test: a client that closes with pipelined answers
-// unread (O240); answers larger than the socket takes at once, and
-// answers piling up for a client that does not read (P191); a timeout
-// that closed busy connections (P192); Content-Length lines that
-// disagree (P193); a request without Host or with two (Stage 29
-// W-FIX1g, O472). The byte-level client is
-// tests/fixtures/http/raw_client.py: it prints one line per mode.
-// And of its client (Stage 29 W-FIX1d): a request larger than the
-// socket takes at once (O513); a peer that accepts and never answers,
-// or never reads (O514). And of WebSocket values whose connection is
-// gone: a WsConn kept after its server (O515), a copy of a closed
-// WsConnection (O516). And WebSocket connections opening and closing
-// together on a server with more than one loop (Stage 29 W-FIX1e,
-// O564). And a route registered while the server serves (Stage 29
-// W-FIX1f, O594). And a header that would split the answer (Stage 29
-// W-FIX1g, O518). And a client that waited for the server to close
-// after a complete response (Stage 29 W-FIX1g, O566). And a WebSocket
-// message the socket took in part (Stage 29 W-FIX1g). And the WebSocket
-// client's handshake: one longer than 2048 bytes, and one the socket
-// takes in part (Stage 29 W-FIX1g, O571). And the WebSocket client's
-// deadlines under a step of the wall clock (Stage 29 W-FIX1g, O572).
-// And the client's request checks (Stage 29 W-FIX1h, O665); a response
-// literal and a status outside 100-599 (O661, D369); a response with
-// two Content-Length values (O664); interim 1xx answers (O663); a Host
-// value that is not host[:port] (O660); the write paths past the piece
-// (O662).
+// Safety behaviours of std.http's server, each a defect
+// that had no test: a client that closes with pipelined
+// answers unread; answers larger than the socket takes
+// at once, and answers piling up for a client that does
+// not read; a timeout that closed busy connections;
+// Content-Length lines that disagree; a request without
+// Host or with two. The byte-level client is
+// tests/fixtures/http/raw_client.py: it prints one line
+// per mode. And of its client: a request larger than
+// the socket takes at once; a peer that accepts and
+// never answers, or never reads. And of WebSocket
+// values whose connection is gone: a WsConn kept after
+// its server, a copy of a closed WsConnection. And
+// WebSocket connections opening and closing together on
+// a server with more than one loop. And a route
+// registered while the server serves. And a header that
+// would split the answer. And a client that waited for
+// the server to close after a complete response. And a
+// WebSocket message the socket took in part. And the
+// WebSocket client's handshake: one longer than 2048
+// bytes, and one the socket takes in part. And the
+// WebSocket client's deadlines under a step of the wall
+// clock. And the client's request checks; a response
+// literal and a status outside 100-599; a response with
+// two Content-Length values; interim 1xx answers; a
+// Host value that is not host[:port]; the write paths
+// past the piece.
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -124,11 +124,11 @@ fn timed(what: String, started: Int, limit: Int, message: String): String {
   "${what}=${message} after ${took} ms, limit ${limit}"
 }
 
-// O514: `timeout_ms` covered the connect only, so a peer that accepted
+// `timeout_ms` covered the connect only, so a peer that accepted
 // and then stayed silent held the call for as long as it liked. It is
 // a deadline for the whole call. The peer here is a listener that is
 // never served: the kernel completes the connection, and nobody reads
-// or answers. A GET, a POST whose 8 MiB the peer stops taking (O513's
+// or answers. A GET, a POST whose 8 MiB the peer stops taking (the
 // stalled peer) and a WebSocket handshake each end at their second.
 fn timeout_round(port: Int, out: Channel(String)): Int {
   url = "http://127.0.0.1:${port}/"
@@ -165,7 +165,7 @@ fn post_big_round(port: Int, out: Channel(String), n: Int): Int {
   } else {
     out.send("HttpError")
   }
-  // A body that is not valid UTF-8 (Stage 29 W-FIX1g): it was sent as
+  // A body that is not valid UTF-8: it was sent as
   // nothing after a Content-Length of its size.
   raw = buf_new()
   raw.push_byte(255)
@@ -182,7 +182,7 @@ fn post_big_round(port: Int, out: Channel(String), n: Int): Int {
   0
 }
 
-// O513: the client wrote its request once and ignored what the socket
+// The client wrote its request once and ignored what the socket
 // took, so a request larger than the socket's buffer was cut and the
 // server waited for the rest until its idle timeout closed the
 // connection. The rest is now sent as the socket becomes writable: the
@@ -264,7 +264,7 @@ fn stale_answers(kept: Kept): Int {
 }
 
 // Against the first server: n connections that each echo one message
-// and close (the server keeps their WsConn values), then O516.
+// and close (the server keeps their WsConn values), then the rest.
 fn ws_keep_round(port: Int, n: Int, out: Channel(String)): Int {
   url = "ws://127.0.0.1:${port}/keep"
   echoed = 0
@@ -281,7 +281,7 @@ fn ws_keep_round(port: Int, n: Int, out: Channel(String)): Int {
     }
   }
   out.send("echoed ${echoed} of ${n}")
-  // O516: the registry of open client connections held addresses, and
+  // The registry of open client connections held addresses, and
   // the next connection was given the address the closed one had: a
   // copy of the closed value sent on the new connection and closed it.
   if first = Ws.connect(url) {
@@ -309,7 +309,7 @@ fn ws_keep_round(port: Int, n: Int, out: Channel(String)): Int {
   } else {
     out.send("first connect failed")
   }
-  // spawn-crossing: begin (a WsConnection is an id since W-FIX1d, so it
+  // spawn-crossing: begin (a WsConnection is an id now, so it
   // may cross a spawn; before, it held a pointer and could not)
   if conn = Ws.connect(url) {
     woke = Channel(Int).new(1)
@@ -372,7 +372,7 @@ fn ws_probe_round(port: Int, n: Int, out: Channel(String)): Int {
   0
 }
 
-// O515: a WsConn held the address of its connection's record, and the
+// A WsConn held the address of its connection's record, and the
 // records were freed when `serve` returned: a WsConn kept past that
 // read freed memory, and once a later server's connection was given
 // the same memory, the kept value sent on that connection. The value
@@ -435,7 +435,7 @@ fn ws_cases(c: Checks) {
   }
 }
 
-// O564: one client task of ws_route_cases. It opens `rounds`
+// One client task of ws_route_cases. It opens `rounds`
 // connections in turn, on /a and /b alternately, sends two messages on
 // each and closes it; /a answers each message once, /b twice (its two
 // routes, in the order they were registered). At the first answer that
@@ -494,7 +494,7 @@ fn ws_route_round(port: Int, t: Int, rounds: Int, done: Channel(Int), wrongs: Ch
   0
 }
 
-// O564: a server with more than one loop kept its open WebSocket
+// A server with more than one loop kept its open WebSocket
 // connections' ids and paths in two arrays its loop threads shared
 // with no lock; connections opening and closing together on different
 // loops raced on them, and the server trapped (an index out of bounds)
@@ -555,7 +555,7 @@ fn ws_route_cases(c: Checks) {
   }
 }
 
-// A route registered while the server serves (Stage 29 W-FIX1f, O594):
+// A route registered while the server serves:
 // the route tables are read by the loop threads with no lock, so every
 // route method traps once `serve` runs. The fixture registers the route
 // from a handler, on a loop thread, with each method in turn; each run
@@ -583,14 +583,14 @@ fn route_serving_cases(c: Checks, root: String) {
   }
 }
 
-// Response.header with CR or LF in a value or a name that is not a token
-// (Stage 29 W-FIX1g, O518): appended as it came, it added header lines
-// or a second answer (response splitting). `header` traps now. The
-// fixture's handler sets the header its argument names, and a raw
-// client reads what reaches the wire: nothing, since the process stops
-// at the trap before the answer is written. The valid case (a tab, a
-// quote and bytes over 127 in the value, the token's punctuation in the
-// name) is answered with the header as given.
+// Response.header with CR or LF in a value or a name that is not
+// a token: appended as it came, it added header lines or a second
+// answer (response splitting). `header` traps now. The fixture's
+// handler sets the header its argument names, and a raw client
+// reads what reaches the wire: nothing, since the process stops
+// at the trap before the answer is written. The valid case (a
+// tab, a quote and bytes over 127 in the value, the token's
+// punctuation in the name) is answered with the header as given.
 fn header_split_cases(c: Checks, root: String) {
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
@@ -645,7 +645,7 @@ fn header_split_cases(c: Checks, root: String) {
         c.eq_int(status, 0, "Response.header ${kind}: answered, status 0")
         c.eq_str(wire, "header_split=1 answer(s) Content-Type: text/plain; charset=utf-8|X-Ok!#$%&'*+-.^_`|~: a\\tb \"c\" \\xc3\\xa9|Content-Length: 1|Connection: close", "Response.header ${kind}: the header on the wire as given")
       } else if kind == "status-100" || kind == "status-599" {
-        // The ends of the range are answered (O661, D369).
+        // The ends of the range are answered.
         c.eq_int(status, 0, "a response's ${kind}: answered, status 0")
         c.eq_str(wire, "header_split=1 answer(s) Content-Type: text/plain; charset=utf-8|Content-Length: 1|Connection: close", "a response's ${kind}: on the wire")
       } else {
@@ -663,7 +663,7 @@ fn header_split_cases(c: Checks, root: String) {
   }
 }
 
-// O661 (Stage 29 W-FIX1h, D369): `Response.head` was a public field,
+// `Response.head` was a public field,
 // so a `Response { ... }` literal wrote any head bytes past
 // Response.header's check (CR LF among them). The field is private: a
 // literal outside std.http does not compile, and neither does reading
@@ -713,7 +713,7 @@ fn wait_port(path: String): Int {
   0
 }
 
-// O566: the client read until the server closed, and looked at the
+// The client read until the server closed, and looked at the
 // response's length only then, so a server that answers completely and
 // keeps the connection open (it ignores Connection: close) held the
 // call until its deadline, which failed it as a timeout. The client
@@ -722,7 +722,7 @@ fn wait_port(path: String): Int {
 // redirect's empty body; a body with neither still ends at the close.
 // A 304's and a HEAD answer's Content-Length is not their body's (they
 // have none): it made them invalid responses even from a server that
-// closed (Stage 29 W-FIX1g).
+// closed.
 // The fixture sends some answers in pieces 0.1 s apart (half a head,
 // half a chunk size), so a client that stops too early is caught too.
 fn client_framing_cases(c: Checks, root: String) {
@@ -771,7 +771,7 @@ fn outcome(r: Response | HttpError): String {
   }
 }
 
-// O665 (Stage 29 W-FIX1h): the client wrote the method, the URL's
+// The client wrote the method, the URL's
 // target and each header into the request as given, so CR LF in any of
 // them added request lines (the server here would have echoed an
 // X-Injected line) or a second request. A request that breaks
@@ -849,7 +849,7 @@ fn client_request_cases(c: Checks, root: String) {
   c.eq_int(server.join() ?? -1, 0, "the echo server ends")
 }
 
-// How the client reads a response (Stage 29 W-FIX1h): GET each path of
+// How the client reads a response: GET each path of
 // tests/fixtures/http/keep_server.py (which closes after each answer
 // here) and compare "STATUS BODY", or the error, with its want (a want
 // ending in " from" gets the server's authority).
@@ -878,11 +878,11 @@ fn client_response_round(c: Checks, root: String, what: String, paths: Array(Str
   c.eq_int(server.join() ?? -1, 0, "the answering server ends (${what})")
 }
 
-// O664 (Stage 29 W-FIX1h): a response with two Content-Length values
+// A response with two Content-Length values
 // was read by the first (RFC 9112 6.3: the user agent discards it, a
 // proxy may have read the other). Every repeat is refused, identical
 // or not, as a list in one line or as a folded line, the server's rule
-// for requests (D364, O522); one value is read as before.
+// for requests; one value is read as before.
 fn client_length_cases(c: Checks, root: String) {
   invalid = "invalid HTTP response body from"
   paths = ["/cl-differ", "/cl-differ-reversed", "/cl-same", "/cl-list", "/cl-folded", "/cl-bad", "/cl"]
@@ -890,7 +890,7 @@ fn client_length_cases(c: Checks, root: String) {
   client_response_round(c, root, "a response with more than one Content-Length is refused", paths, wants)
 }
 
-// O663 (Stage 29 W-FIX1h): an interim answer (100 Continue, 102, 103
+// An interim answer (100 Continue, 102, 103
 // Early Hints) before the final one was returned as the response, the
 // final answer's bytes as its body. The client reads past every interim
 // answer (RFC 9110 15.2), also when one arrives in pieces; an interim
@@ -911,11 +911,11 @@ class BigSent {
 
 // A WebSocket message larger than the socket takes at once, sent from
 // the handler (the owner thread's direct write) to a client that reads
-// late (Stage 29 W-FIX1g): the socket took a part, the rest was refused
+// late: the socket took a part, the rest was refused
 // by the send queue's 1 MiB bound and dropped, and `send_text` returned
 // false with half a frame on the wire. The rest of a frame begun is
 // queued whatever the bound now: the message arrives whole and the
-// connection carries the next one. With `chunk` (O519) the server is
+// connection carries the next one. With `chunk` the server is
 // created with AVANT_HTTP_WS_WRITE_CHUNK, an internal variable that
 // shrinks the most one write hands the socket from 1 GiB: a message
 // larger than it takes the path one of 1 GiB or more takes (its first
@@ -976,7 +976,7 @@ fn ws_big_cases(c: Checks, root: String) {
   ws_big_round(c, root, "65536", 1048581)
 }
 
-// O662 (Stage 29 W-FIX1h): three write paths took a length past
+// Three write paths took a length past
 // INT_MAX in an int or 32 bits: an answer's two parts handed to
 // us_socket_write2 (which adds them in an int), the answer's
 // Content-Length, and the WebSocket client's frame rest. The suite
@@ -986,7 +986,7 @@ fn ws_big_cases(c: Checks, root: String) {
 // answer written a piece at a time after its head, the client's
 // request and the WebSocket client's message a piece at a time. Each
 // arrives whole. (This shows the new paths; the defects themselves
-// needed 2 GiB, and the record has them at that size.)
+// needed 2 GiB, too much for the suite.)
 fn write_piece_cases(c: Checks) {
   n = 1048581
   b = buf_new()
@@ -1080,11 +1080,11 @@ fn ws_target_round(root: String, n: Int, out: Channel(String)) {
   _ = server.join()
 }
 
-// The WebSocket client's handshake (Stage 29 W-FIX1g): it was formatted
+// The WebSocket client's handshake: it was formatted
 // into 2048 bytes and copied by the length it would have had, so a
 // target of a few thousand bytes overran the buffers and glibc stopped
 // the program (SIGABRT). It is built to its length now. And it was
-// written with one call whose count was ignored (O571): a handshake the
+// written with one call whose count was ignored: a handshake the
 // socket took in part was cut, and the call timed out. A 4 MiB target
 // to a server that reads late is more than the socket takes at once;
 // the rest is sent as the socket becomes writable.
@@ -1112,7 +1112,7 @@ fn ws_handshake_cases(c: Checks, root: String) {
   expect_lines(c, out, want, "a WebSocket handshake longer than 2048 bytes:")
 }
 
-// The deadlines of Ws.connect and recv (Stage 29 W-FIX1g, O572) were
+// The deadlines of Ws.connect and recv were
 // read from the wall clock and waited for on it, so a step of the system
 // clock during the wait moved them. A test cannot step the machine's
 // clock; the fixture runs under the LD_PRELOAD shim
@@ -1168,7 +1168,7 @@ fn test_std_http_safety(c: Checks, root: String) {
   c.suite("tests/cases/test_std_http_safety.av")
   stamp = now_ms()
 
-  // O240: the client closes with pipelined answers unread. The write
+  // The client closes with pipelined answers unread. The write
   // that meets the reset connection used to raise SIGPIPE, which ended
   // this process (status 141); now it fails quietly, the connection is
   // closed, and the server answers the next client. One loop, so every
@@ -1200,19 +1200,19 @@ fn test_std_http_safety(c: Checks, root: String) {
     want.push("close_unread=alive")
     want.push("close_unread=alive")
     expect_lines(c, out, want, "a close with pipelined answers unread leaves the server alive:")
-    // P193: a second Content-Length with another value was accepted and
+    // A second Content-Length with another value was accepted and
     // the first one won, so the rest of the body ran as a request of its
     // own (GET /hidden here). Disagreeing lines, and a folded one, are
     // 400 and close; so is every repeat, identical or not, as two lines
-    // or as a list in one (Stage 29 W-FIX1g, O522); one line is a value.
+    // or as a list in one; one line is a value.
     lwant: Array(String) = []
     lwant.push("lengths=differ:400,differ-reversed:400,third-differs:400,case:400,folded:400,list:400,same:400,same-list:400,one:200")
     expect_lines(c, out, lwant, "Content-Length lines that disagree are refused:")
-    // O472 (H3): a request without Host, or with two, was answered (and
+    // A request without Host, or with two, was answered (and
     // a request behind it too). RFC 9112 3.2: 400 for an HTTP/1.1
     // request without Host and for any request with more than one; the
     // connection is closed. And for a value that is not uri-host
-    // [ ":" port ] (Stage 29 W-FIX1h, O660).
+    // [ ":" port ].
     hwant: Array(String) = []
     hwant.push("hosts=none:400,two:400,same:400,case:400,folded:400,ws-none:400,1.0-two:400,1.0-none:200,empty:200,bad-space:400,bad-at:400,bad-path:400,bad-query:400,bad-colons:400,bad-port-alpha:400,bad-pct-bad:400,bad-pct-hex:400,bad-v6-open:400,bad-v6-empty:400,bad-v6-tail:400,bad-v6-space:400,bad-quote:400,bad-high:400,ok-name:200,ok-port:200,ok-v4:200,ok-v6:200,ok-v6-bare:200,ok-pct:200,ok-subdelims:200,ok-port-empty:200,one:200")
     expect_lines(c, out, hwant, "a request without Host, or with two, is refused:")
@@ -1220,13 +1220,13 @@ fn test_std_http_safety(c: Checks, root: String) {
     c.expect(false, "listen for the close-unread test")
   }
 
-  // P191: the socket takes only part of an answer. The rest is queued
+  // The socket takes only part of an answer. The rest is queued
   // per connection and sent when the socket is writable again: no byte
   // is lost, answers stay in order, Connection: close waits for the
   // queue, and a client that does not read is not served or read
   // further, so the server's memory stays bounded.
   //
-  // P192: the 30-second timeout was armed once, when the connection was
+  // The 30-second timeout was armed once, when the connection was
   // accepted, so a busy keep-alive connection was closed like an idle
   // one. It is an idle timeout now: request bytes, and queued answer
   // bytes the client takes, start it again. The server is created with
@@ -1274,7 +1274,7 @@ fn test_std_http_safety(c: Checks, root: String) {
     out = Channel(String).new(8)
     idle_out = Channel(String).new(2)
     done = Channel(Int).new(2)
-    // O514: the client's deadline, against a listener that is never
+    // The client's deadline, against a listener that is never
     // served. Its three seconds run beside the idle round's eight; the
     // listener is closed after them, which also ends a client that did
     // not time out (the starting head's), so the check fails instead of
