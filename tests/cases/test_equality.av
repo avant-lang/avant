@@ -70,6 +70,13 @@ fn cases: Array(RCase) {
   xs.push(refused("union-eq", "fn f(n: Int): Int | String {\n  if n > 0 {\n    return n\n  }\n  \"x\"\n}\nfn main {\n  puts(f(1) == f(2))\n}\n", "Int | String has no ==: take it apart with switch and compare its members", "8:13"))
   xs.push(refused("hash-eq", "fn main {\n  h = Hash(String, Int).new\n  puts(h == h)\n}\n", "Hash(String, Int) has no ==", "3:10"))
   xs.push(refused("string-int", "fn main {\n  puts(\"a\" == 1)\n}\n", "cannot compare String with Int: == compares two values of one type", "2:12"))
+  // An integer and a Float64 neither compare nor mix: the conversion is written
+  xs.push(refused("int-float-eq", "fn main {\n  n = 3\n  x = 3.0\n  puts(n == x)\n}\n", "cannot compare Int with Float64: == compares two values of one type; convert one side: n.to_f, or x.to_i (which truncates)", "4:10"))
+  xs.push(refused("float-int-less", "fn main {\n  n = 3\n  x = 2.5\n  puts(x < n)\n}\n", "cannot compare Float64 with Int: < compares two values of one type; convert one side: n.to_f, or x.to_i (which truncates)", "4:10"))
+  xs.push(refused("float-int-times", "fn main {\n  x = 1.5\n  n = 2\n  puts(x * n)\n}\n", "binary operator expects matching types, got Float64 and Int: an integer and a Float64 do not mix; convert one side: n.to_f, or x.to_i (which truncates)", "4:10"))
+  xs.push(refused("int32-float-plus", "fn main {\n  w: Int32 = 2\n  x = 1.5\n  puts(w + x)\n}\n", "binary operator expects matching types, got Int32 and Float64: an integer and a Float64 do not mix; convert one side: w.to_f, or x.to_i32 (which truncates)", "4:10"))
+  xs.push(refused("float-literal-int", "fn main {\n  n = 2\n  puts(2.5 * n)\n}\n", "binary operator expects matching types, got Float64 and Int", "3:12"))
+  xs.push(accepted("int-float-converted", "fn main {\n  n = 3\n  x = 2.5\n  puts(n.to_f * x)\n  puts(n == x.to_i)\n  puts(x == 2)\n  puts(1 + 2.5)\n}\n", "7.5\nfalse\nfalse\n3.5\n"))
   xs.push(refused("bool-int", "fn main {\n  puts(true == 1)\n}\n", "cannot compare Bool with Int: == compares two values of one type", "2:13"))
   xs.push(accepted("eq-witness", "interface Eq(T) {\n  fn ==(other: T): Bool\n}\nstruct Id: Eq(Id) {\n  n: Int\n}\nfn same(a: T, b: T: Eq(T)): Bool {\n  a == b\n}\nfn main {\n  puts(same(Id { n: 1 }, Id { n: 1 }))\n  puts(same(Id { n: 1 }, Id { n: 2 }))\n}\n", "true\nfalse\n"))
   xs.push(refused("eq-witness-missing", "interface Eq(T) {\n  fn ==(other: T): Bool\n}\nstruct Bag: Eq(Bag) {\n  h: Hash(String, Int)\n}\nfn main { }\n", "Bag does not implement Eq(Bag): missing ==", "4:1"))

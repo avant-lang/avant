@@ -3842,13 +3842,21 @@ pub class Checker {
       fail(expr.loc, "binary operator expects matching types, got ${left.show} and ${right.show}")
       return left
     }
-    if left.is_numeric && right.is_numeric {
-      if !left.is_float {
-        l.ty = t_float()
+    if left.is_numeric && right.is_numeric && left.is_float != right.is_float {
+      // An integer and a Float64 neither mix nor compare: the operator
+      // converts neither side, so the conversion is written and no
+      // precision is lost silently above 2^53.
+      if eq_is_compare(op) {
+        fail(expr.loc, "cannot compare ${left.show} with ${right.show}: ${fn_op_name(op)} compares two values of one type; ${int_float_hint(l, left, r, right)}")
+        return t_bool()
       }
-      if !right.is_float {
-        r.ty = t_float()
+      fail(expr.loc, "binary operator expects matching types, got ${left.show} and ${right.show}: an integer and a Float64 do not mix; ${int_float_hint(l, left, r, right)}")
+      if left.is_float {
+        return left
       }
+      return right
+    }
+    if left.is_float && right.is_float {
       return float_binary(op, expr.loc)
     }
     if op == tk_eq_eq() || op == tk_not_eq() {

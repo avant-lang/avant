@@ -473,7 +473,7 @@ As in Go and Rust, and unlike C, `&`, `^` and `|` bind tighter than comparisons:
 
 ### Equality and order
 
-`==` and `!=` compare two values of one type; values of different types do not compare (a compile error), except that an integer and a `Float64` compare as floats.
+`==` and `!=` compare two values of one type; values of different types do not compare (a compile error), an integer and a `Float64` included: write the conversion (`n.to_f == x`, or `n == x.to_i`, which truncates), so no precision is lost silently above 2^53. A literal takes the other side's type (`x == 2`).
 
 - Numbers, `Bool`, `String`, `Bytes` and enums compare by value; a `Float64` by IEEE, so NaN equals nothing, itself included.
 - A struct compares its fields in order, each with its own `==`, unless it defines `fn ==`. A struct with a field that has no `==` (a `Hash`, a function) has none either: the error names the field.
@@ -1010,7 +1010,7 @@ fn main {
 
 ### Conversions
 
-Values of different number types do not mix: `x + y` with an `Int32` and an `Int`, or an `Int` and a `Float64`, is a compile error (`binary operator expects matching types, got Int32 and Int`). Only literals adapt. Convert explicitly, and choose what happens when the value does not fit.
+Values of different number types do not mix: `x + y` with an `Int32` and an `Int`, or an `Int` and a `Float64`, is a compile error (`binary operator expects matching types, got Int32 and Int`), and the operator converts neither side. Only literals adapt. Convert explicitly, and choose what happens when the value does not fit.
 
 | To | Keep the number, or trap | Reinterpret the bits, never trap |
 | --- | --- | --- |

@@ -384,3 +384,33 @@ pub fn (checker_self: Checker) count_word(n: Int, word: String): String {
   }
   "${n} ${word}s"
 }
+
+// An integer beside a Float64 in an operator: the conversion to write,
+// with the operands' names where they are names.
+pub fn (checker_self: Checker) int_float_hint(l: Expr, left: Ty, r: Expr, right: Ty): String {
+  ie = l
+  it = left
+  fe = r
+  if left.is_float {
+    ie = r
+    it = right
+    fe = l
+  }
+  iname = "n"
+  if ie.kind == ex_name() {
+    iname = ie.ident
+  }
+  fname = "x"
+  if fe.kind == ex_name() {
+    fname = fe.ident
+  }
+  conv = "to_i"
+  if it.show == "Int32" {
+    conv = "to_i32"
+  } else if it.show == "UInt32" {
+    conv = "to_u32"
+  } else if it.show == "UInt64" {
+    conv = "to_u64"
+  }
+  "convert one side: ${iname}.to_f, or ${fname}.${conv} (which truncates)"
+}
