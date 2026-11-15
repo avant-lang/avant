@@ -117,6 +117,40 @@ fn test_complete(c: Checks, compiler: String, root: String, dir: String) {
   c.expect(stat_value(err, "proof_fell_ref_lost") >= 7 && stat_value(err, "proof_fell_root_lost") >= 3 && stat_value(err, "proof_fell_threads") >= 2, "complete.av: the proof failed for a lost reference, a lost root and threads (${stat_value(err, "proof_fell_ref_lost")}, ${stat_value(err, "proof_fell_root_lost")}, ${stat_value(err, "proof_fell_threads")})")
 }
 
+// ffi/scope_binding.av: whether a binding whose scope has ended keeps what
+// it named alive (its comment has the probes). The answer is its run
+// golden's, the same in every environment, with the oracle silent: a
+// binding does not; in every probe the string is freed once the function
+// has returned.
+fn test_scope_binding(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/scope_binding.av", "${dir}/scope_binding", "${dir}/scope_binding.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "scope_binding.av: compiles")
+  want = log_text("${root}/tests/goldens/runs/fixtures/ffi/scope_binding.out")
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "scope_binding", "scope_binding.g${e}", envs[e]))
+  }
+  run_waves(runs)
+  for w in ["if binding", "block local", "no binding", "call argument"] {
+    c.expect(str_has(want, "${w}: freed after the function returned 1\n"), "scope_binding.av, ${w}: the string is freed once its function has returned")
+  }
+  for w in ["if binding", "block local", "no binding"] {
+    c.expect(str_has(want, "${w}: read true, freed while the function runs 1\n"), "scope_binding.av, ${w}: a binding whose scope has ended keeps nothing alive")
+  }
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "scope_binding.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/scope_binding.g${e}.out"), want, "scope_binding.av ${what}: its run golden's stdout")
+    c.eq_str(log_text("${dir}/scope_binding.g${e}.err"), "", "scope_binding.av ${what}: no stderr")
+  }
+}
+
 // The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
 fn stat_value(text: String, key: String): Int {
   parts = text.split(" ")
@@ -133,6 +167,7 @@ fn test_main(c: Checks) {
   if compiler = env_get("AVANT_COMPILER") {
     test_proof_oracle(c, compiler, avant_test_root(), scratch_dir())
     test_complete(c, compiler, avant_test_root(), scratch_dir())
+    test_scope_binding(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

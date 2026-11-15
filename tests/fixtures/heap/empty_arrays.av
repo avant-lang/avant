@@ -4,7 +4,12 @@
 // before anything was pushed, then after a push, a clear and a second
 // push; the output is the one an array with an (unused) buffer gave.
 
-import std.gc
+// The runtime's young collection (`gc.collect()` is the complete
+// collection, which may be a full one): this fixture is about what a
+// young collection does.
+lib gcy {
+  fun avant_gc_collect_young
+}
 
 class Bag {
   items: Array(Int) = []
@@ -101,8 +106,8 @@ fn main {
     all.push(e)
     i = i + 1
   }
-  gc.collect()
-  gc.collect()
+  gcy.avant_gc_collect_young()
+  gcy.avant_gc_collect_young()
   i = 0
   total = 0
   while i < all.size {
@@ -112,7 +117,7 @@ fn main {
     }
     i = i + 1
   }
-  gc.collect()
+  gcy.avant_gc_collect_young()
   i = 0
   filled = 0
   while i < all.size {

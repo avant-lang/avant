@@ -7,7 +7,12 @@
 // from about 100,000 nodes. Prints the count of nodes whose field reads
 // back and the count reached by the walk: `200000 200000`.
 
-import std.gc
+// The runtime's young collection (`gc.collect()` is the complete
+// collection, which may be a full one): this fixture is about what a
+// young collection does.
+lib gcy {
+  fun avant_gc_collect_young
+}
 
 lib gcrt {
   fun avant_gc_collect
@@ -51,7 +56,7 @@ fn main: Int {
   fresh = Node.new
   fresh.v = 7
   touched = touch(list, fresh)
-  gc.collect()
+  gcy.avant_gc_collect_young()
   good = 0
   cur: Node? = list
   while node = cur {

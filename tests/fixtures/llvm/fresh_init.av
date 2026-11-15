@@ -5,14 +5,19 @@
 // keep it after one. tests/cases/test_alloc_shape.av runs this program
 // plainly and under the collector's environments, and asserts the shapes
 // on tests/fixtures/llvm/alloc_shape.av. Every 97th Named meets two young
-// collections inside its initialize (gc.collect() twice: it survives the
+// collections inside its initialize (gcy.avant_gc_collect_young() twice: it survives the
 // first and is promoted at the second) before the store that keeps its
 // barrier, so the promoted case is reached in every environment. A
 // compiler that drops that barrier is refused by the MIR verifier (V14);
 // with V14 disabled as well this program still runs correctly, because
 // the object is named by a root slot of its constructing frame at the next
 // collection, which scans it (results/2026-11-13-valk-a1/demo-fresh).
-import std.gc
+// The runtime's young collection (`gc.collect()` is the complete
+// collection, which may be a full one): this fixture is about what a
+// young collection does.
+lib gcy {
+  fun avant_gc_collect_young
+}
 
 class Named {
   next: Named?
@@ -23,8 +28,8 @@ class Named {
     // No collecting call since the allocation: no barrier test.
     self.next = next
     if k % 97 == 0 {
-      gc.collect()
-      gc.collect()
+      gcy.avant_gc_collect_young()
+      gcy.avant_gc_collect_young()
     }
     // "n-${k}" allocates (a collecting call): this store keeps its test.
     self.label = "n-${k}"

@@ -4,7 +4,7 @@
 // modified from ../../main.av: main takes scenario numbers (so one process
 // can run one scenario: peak RSS, AVANT_GC_STATS and instruction counts
 // then belong to it); an optional first word selects the row counted
-// (`young`: gc.collect() in place of each forced full collection, as
+// (`young`: a young collection in place of each forced collection, as
 // ../young/main.av; `hints`: as ../hints/main.av); scenario 8 (reverse a
 // live list in place) is added and is NOT part of Valk's suite. With no
 // argument it prints what ../../main.av prints. The headline rows are
@@ -18,6 +18,7 @@ import std.gc
 
 lib gcrt {
   fun avant_gc_collect
+  fun avant_gc_collect_young
 }
 
 class Node {
@@ -115,11 +116,11 @@ fn ok_fail(ok: Bool): String {
   "FAIL"
 }
 
-// A forced collection: the runtime's full collection, or std.gc's young
-// collection in the `young` row.
+// A forced collection: the runtime's complete collection (which std.gc's
+// gc.collect() also is), or its young collection in the `young` row.
 fn collect(g: Globals) {
   if g.young {
-    gc.collect()
+    gcrt.avant_gc_collect_young()
   } else {
     gcrt.avant_gc_collect()
   }

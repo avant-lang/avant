@@ -20,7 +20,6 @@
 // VALK-A1's planted defect (a compiler whose fresh pass ignores collecting
 // calls) ran silent under the verifier for the same reason.
 // REM_INVARIANT_WARM=1 makes the store after the verifier's warm-up.
-import std.gc
 
 class Cell {
   v: String
@@ -32,6 +31,10 @@ class Cell {
 
 lib ri {
   fun ffi_rem_store(holder: Cell, v: String, barrier: Int): Int
+  // The runtime's young collection (`gc.collect()` is the complete
+  // collection, which may be a full one: this fixture is about what a
+  // young collection scans).
+  fun avant_gc_collect_young
 }
 
 fn main {
@@ -48,19 +51,19 @@ fn main {
     warm = 0
     for i in 0..300 {
       warm = warm + "warm-${i}".size
-      gc.collect()
+      ri.avant_gc_collect_young()
     }
   }
   c = Cell.new("old")
   // Two young collections: the Cell survives the first and is promoted at
   // the second (at once under a fixed young budget).
-  gc.collect()
-  gc.collect()
+  ri.avant_gc_collect_young()
+  ri.avant_gc_collect_young()
   n = 0
   for i in 0..3 {
     s = "young-${i}"
     n = n + ri.ffi_rem_store(c, s, barrier)
-    gc.collect()
+    ri.avant_gc_collect_young()
     n = n + c.v.size
   }
   puts("rem_invariant: ${c.v} ${n}")

@@ -11,8 +11,9 @@ import backends
 // the same numbers):
 //   - a hold defers the collections its allocations make due to its end:
 //     64 MiB of garbage in a hold makes one young collection, with no
-//     hold more than one; ten gc.collect() in a hold make one, without
-//     a hold ten; nested holds are one hold (one);
+//     hold more than one; ten gc.collect() in a hold make one collection
+//     (a complete one: young or full as the collector finds), without a
+//     hold ten; nested holds are one hold (one);
 //   - a hold ends on every way out: after a hold left by return, break,
 //     continue or `?`, the same 64 MiB makes more than one;
 //   - another thread still collects while the main thread holds (the
@@ -95,12 +96,20 @@ fn test_gc_hints(c: Checks, compiler: String, root: String, dir: String) {
     r = runs[envs.size + e]
     stats = log_text("${dir}/gc_hold.s${e}.err")
     c.eq_int(r.code, 0, "gc_hold.av ${cases[e]}: exit 0")
-    if ones[e] {
-      c.expect(young_one(stats), "gc_hold.av ${cases[e]}: one young collection (young=1)")
+    if cases[e] == "collect" {
+      // `gc.collect()` is a complete collection, a young one or a full
+      // one as the collector finds: what is counted is how many ran.
+      c.expect(str_has(stats, "avant gc: collections=1 "), "gc_hold.av collect: ten gc.collect() in a hold make one collection, at its end")
+    } else if cases[e] == "collects" {
+      c.expect(str_has(stats, "avant gc: collections=10 "), "gc_hold.av collects: ten gc.collect() with no hold make ten collections")
     } else {
-      c.expect(young_many(stats), "gc_hold.av ${cases[e]}: more than one young collection")
+      if ones[e] {
+        c.expect(young_one(stats), "gc_hold.av ${cases[e]}: one young collection (young=1)")
+      } else {
+        c.expect(young_many(stats), "gc_hold.av ${cases[e]}: more than one young collection")
+      }
+      c.expect(str_has(stats, " full=0 "), "gc_hold.av ${cases[e]}: no full collection")
     }
-    c.expect(str_has(stats, " full=0 "), "gc_hold.av ${cases[e]}: no full collection")
     e += 1
   }
   at = envs.size + cases.size

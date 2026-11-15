@@ -11,7 +11,12 @@
 // reads back the text from the `=` on, before and after the collections,
 // and the holder's other field is intact.
 
-import std.gc
+// The runtime's young collection (`gc.collect()` is the complete
+// collection, which may be a full one): this fixture is about what a
+// young collection does.
+lib gcy {
+  fun avant_gc_collect_young
+}
 
 lib c {
   fun strchr(s: String, ch: Int32): String?
@@ -46,8 +51,8 @@ fn main {
     _junk = "junk ${i}"
     i = i + 1
   }
-  gc.collect()
-  gc.collect()
+  gcy.avant_gc_collect_young()
+  gcy.avant_gc_collect_young()
   gcrt.avant_gc_collect()
   ok = 0
   if h.n == 7 {

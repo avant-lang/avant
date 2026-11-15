@@ -53,6 +53,13 @@
 import std.zlib
 import std.gc
 
+// The runtime's young collection (`gc.collect()` is the complete
+// collection, which may be a full one): this fixture is about what a
+// young collection does.
+lib gcy {
+  fun avant_gc_collect_young
+}
+
 lib gcrt {
   fun avant_gc_collect
 }
@@ -124,8 +131,8 @@ fn main {
     old.push(m)
     i = i + 1
   }
-  gc.collect()
-  gc.collect()
+  gcy.avant_gc_collect_young()
+  gcy.avant_gc_collect_young()
   thin: Array(Cell) = []
   i = 0
   while i < old.size {
@@ -148,7 +155,7 @@ fn main {
     }
     i = i + 1
   }
-  gc.collect()
+  gcy.avant_gc_collect_young()
   inplace = 0
   i = 0
   while i < fresh.size {
@@ -173,7 +180,7 @@ fn main {
       j = j + 1
     }
   }
-  gc.collect()
+  gcy.avant_gc_collect_young()
   held = 0
   i = 0
   while i < big.size {

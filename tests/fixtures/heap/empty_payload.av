@@ -1,4 +1,9 @@
-import std.gc
+// The runtime's young collection (`gc.collect()` is the complete
+// collection, which may be a full one): this fixture is about what a
+// young collection does.
+lib gcy {
+  fun avant_gc_collect_young
+}
 
 // O360 (Stage 29 W-FIX1b): the test W-INT1's empty-payload fix did not
 // have. An object with no payload (an empty array's buffer, an empty
@@ -61,7 +66,7 @@ fn round(steps: Int): Int {
     holders.push(Holder.new)
     _ = Pad.new
   }
-  gc.collect()
+  gcy.avant_gc_collect_young()
   bad = 0
   for k in 0..steps {
     if lits[k].size != 0 || news[k].size != 0 || holders[k].xs.size != 0 {
@@ -71,7 +76,7 @@ fn round(steps: Int): Int {
     news[k].push(k + 1)
     holders[k].xs.push(k + 2)
   }
-  gc.collect()
+  gcy.avant_gc_collect_young()
   for k in 0..steps {
     if lits[k][0] != k || news[k][0] != k + 1 || holders[k].xs[0] != k + 2 {
       bad += 1

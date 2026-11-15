@@ -1,19 +1,22 @@
 // GC microbenchmarks: the Avant port of Valk's suite, with a YOUNG
 // collection wherever upstream forces a collection.
 //
-// modified from ../../main.av: every call of the runtime's full collection
-// (avant_gc_collect, 8 places) is std.gc's gc.collect(), which collects
-// the young generation only. It is NOT a complete collection (it does not
-// reclaim an old structure: scenario 4 frees nothing here), so this row is
-// not equivalent to the other languages' rows; it is measured to show the
-// cost of Avant's "only what changed" collection beside Valk's local
-// collection (scenario 2). Nothing else differs.
+// modified from ../../main.av: every call of the runtime's complete
+// collection (avant_gc_collect, 8 places) is the runtime's young
+// collection (avant_gc_collect_young, declared through `lib` like the
+// other), which collects the young generation only. It is NOT a complete
+// collection (it does not reclaim an old structure: scenario 4 frees
+// nothing here), so this row is not equivalent to the other languages'
+// rows; it is measured to show the cost of a young collection alone
+// beside Valk's local collection (scenario 2). Nothing else differs.
 //
 // Origin as ../../main.av: ported from Valk's examples/bench/gc/main.valk
 // (https://github.com/valk-lang/valk, tag 0.8.5, commit 33224300; MIT,
 // (c) 2024 Lorenz Vandevelde; the license is in ../../upstream/LICENSE).
 
-import std.gc
+lib gcrt {
+  fun avant_gc_collect_young
+}
 
 class Node {
   next: Node?
@@ -109,7 +112,7 @@ fn ok_fail(ok: Bool): String {
 fn collect_n(n: Int) {
   i = 0
   while i < n {
-    gc.collect()
+    gcrt.avant_gc_collect_young()
     i = i + 1
   }
 }
@@ -149,13 +152,13 @@ fn bench_stable_collect(g: Globals) {
   collects = 500
   list = chain(live)
 
-  gc.collect()
+  gcrt.avant_gc_collect_young()
 
   start = now_us()
   c = 0
   while c < collects {
     g.sink = Node.new
-    gc.collect()
+    gcrt.avant_gc_collect_young()
     c = c + 1
   }
   us = now_us() - start
@@ -217,7 +220,7 @@ fn bench_mutate_links(g: Globals) {
   live = 200000
   rounds = 50
   list = chain(live)
-  gc.collect()
+  gcrt.avant_gc_collect_young()
 
   start = now_us()
   r = 0
@@ -235,7 +238,7 @@ fn bench_mutate_links(g: Globals) {
     r = r + 1
   }
   us = now_us() - start
-  gc.collect()
+  gcrt.avant_gc_collect_young()
 
   puts("live:     ${live}")
   puts("rounds:   ${rounds}")
@@ -250,7 +253,7 @@ fn bench_churn_with_live(g: Globals) {
   live = 500000
   churn = 5000000
   list = chain(live)
-  gc.collect()
+  gcrt.avant_gc_collect_young()
 
   start = now_us()
   i = churn
@@ -259,7 +262,7 @@ fn bench_churn_with_live(g: Globals) {
     n = Node.new
     g.sink = n
   }
-  gc.collect()
+  gcrt.avant_gc_collect_young()
   us = now_us() - start
 
   puts("live:     ${live}")
@@ -285,7 +288,7 @@ fn bench_tree_churn {
     check = check + build_tree(depth).check
     i = i + 1
   }
-  gc.collect()
+  gcrt.avant_gc_collect_young()
   us = now_us() - start
 
   puts("depth:    ${depth}")
