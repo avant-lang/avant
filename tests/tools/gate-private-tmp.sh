@@ -1,5 +1,5 @@
 #!/bin/sh
-# tools/gate.sh runs in a private /tmp (O693, the Valk stage, VALK-TM3).
+# tools/gate.sh runs in a private /tmp.
 # Run by tests/cases/test_tools.av; by hand:
 #
 #   sh tests/tools/gate-private-tmp.sh WORK [GATE]

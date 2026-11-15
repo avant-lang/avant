@@ -1,5 +1,5 @@
-/* An LD_PRELOAD shim for tests/cases/test_gc_checks.av (the Valk stage,
- * VALK-TM3, O667): clock_gettime(CLOCK_REALTIME) answers an hour late,
+/* An LD_PRELOAD shim for tests/cases/test_gc_checks.av:
+ * clock_gettime(CLOCK_REALTIME) answers an hour late,
  * as if the wall clock had been stepped forward between the moment a
  * deadline is read and the moment it is waited for. A deadline read from
  * the wall clock and waited for on it then lies an hour after the

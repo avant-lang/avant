@@ -1,7 +1,7 @@
-// `release` (Stage 28 W16c, D266; Q9): a store of a String into a
+// `release`: a store of a String into a
 // C-layout field pins it and records the pin under the field's address;
 // an overwrite unpins nothing, so a pointer C kept (rel_keep) and a struct
-// C copied (rel_copy) stay valid, as Q9's fixture showed. `release(h.name)`
+// C copied (rel_copy) stay valid. `release(h.name)`
 // gives back every pin Avant's stores into the field took (the current
 // value and the overwritten ones) and nulls the field if it still holds
 // Avant's value; `release(h)` does it for every field of the struct.
@@ -59,7 +59,7 @@ fn churn(n: Int): Int {
   t
 }
 
-// Q9's two cases: C keeps the first value's pointer, C copies the struct
+// The two cases: C keeps the first value's pointer, C copies the struct
 // holding the second; Avant overwrites the field each time. Then, with C
 // done (it forgets its pointer and clears its copy), the release.
 fn q9_cases(base: Int) {
@@ -96,7 +96,7 @@ fn q9_cases(base: Int) {
 
 // A field never stored, a value C stored itself, and C overwriting a value
 // Avant stored: the release never touches C's value, and gives back nothing
-// when C overwrote Avant's (C may still hold it; W18C, O134): one pin stays.
+// when C overwrote Avant's (C may still hold it): one pin stays.
 fn c_values(base: Int) {
   c = rel.rel_new()
   release(c.note)
@@ -176,7 +176,7 @@ fn main {
   base = rel.avant_pin_count()
   q9_cases(base)
   c_values(base)
-  // c_values leaves the pin of the value C overwrote (O134).
+  // c_values leaves the pin of the value C overwrote.
   base = rel.avant_pin_count()
   struct_release(base)
   bounded(base)

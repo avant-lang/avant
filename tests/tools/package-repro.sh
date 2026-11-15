@@ -1,6 +1,6 @@
 #!/bin/sh
-# tools/package.sh gives the same archive for the same files (O676,
-# VALK-TM2). Run by tests/cases/test_tools.av; by hand:
+# tools/package.sh gives the same archive for the same
+# files. Run by tests/cases/test_tools.av; by hand:
 #
 #   sh tests/tools/package-repro.sh COMPILER RE2C WORK
 #

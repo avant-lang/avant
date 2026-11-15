@@ -1,20 +1,20 @@
-// The fresh exemption across a constructor's `initialize` (Stage 29
-// VALK-A1, M5, O204, O337; compiler/mir/fresh.av), at run time: the
-// stores into an object its constructor just allocated keep no barrier
-// test while no collecting call lies between the allocation and them, and
-// keep it after one. tests/cases/test_alloc_shape.av runs this program
-// plainly and under the collector's environments, and asserts the shapes
-// on tests/fixtures/llvm/alloc_shape.av. Every 97th Named meets two young
-// collections inside its initialize (gcy.avant_gc_collect_young() twice: it survives the
-// first and is promoted at the second) before the store that keeps its
-// barrier, so the promoted case is reached in every environment. A
-// compiler that drops that barrier is refused by the MIR verifier (V14);
-// with V14 disabled as well this program still runs correctly, because
-// the object is named by a root slot of its constructing frame at the next
-// collection, which scans it (results/2026-11-13-valk-a1/demo-fresh).
-// The runtime's young collection (`gc.collect()` is the complete
-// collection, which may be a full one): this fixture is about what a
-// young collection does.
+// The fresh exemption across a constructor's `initialize`
+// (compiler/mir/fresh.av), at run time: the stores into an object
+// its constructor just allocated keep no barrier test while no
+// collecting call lies between the allocation and them, and keep it
+// after one. tests/cases/test_alloc_shape.av runs this program
+// plainly and under the collector's environments, and asserts the
+// shapes on tests/fixtures/llvm/alloc_shape.av. Every 97th Named
+// meets two young collections inside its initialize
+// (gcy.avant_gc_collect_young() twice: it survives the first and is
+// promoted at the second) before the store that keeps its barrier,
+// so the promoted case is reached in every environment. A compiler
+// that drops that barrier is refused by the MIR verifier; with V14
+// disabled as well this program still runs correctly, because the
+// object is named by a root slot of its constructing frame at the
+// next collection, which scans it. The runtime's young collection
+// (`gc.collect()` is the complete collection, which may be a full
+// one): this fixture is about what a young collection does.
 lib gcy {
   fun avant_gc_collect_young
 }
