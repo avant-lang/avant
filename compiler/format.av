@@ -126,6 +126,10 @@ pub fn token_text(t: Token): String {
   if k == tk_slash_eq() {
     return "/="
   }
+  ct = compound_text(k)
+  if ct.size > 0 {
+    return ct
+  }
   if k == tk_l_brace() {
     return "{"
   }
@@ -571,7 +575,28 @@ pub fn paren_hugs(tokens: Array(Token), i: Int, prev: Int): Bool {
   if prev == tk_fn() || prev == tk_pin() || prev == tk_release() {
     return true
   }
+  if prev == tk_eq() && index_op_name_at(tokens, prev_significant(tokens, i)) {
+    return true
+  }
   names_operator_method(tokens, i)
+}
+
+// Whether the token at i ends `fn [ ]` or `fn [ ] =`, the name of an
+// indexing operator method (`fn [](i: Int)`, `fn []=(i: Int, v: T)`).
+pub fn index_op_name_at(tokens: Array(Token), i: Int): Bool {
+  j = i
+  if j >= 0 && tokens[j].kind == tk_eq() {
+    j = prev_significant(tokens, j)
+  }
+  if j < 0 || tokens[j].kind != tk_r_bracket() {
+    return false
+  }
+  j = prev_significant(tokens, j)
+  if j < 0 || tokens[j].kind != tk_l_bracket() {
+    return false
+  }
+  j = prev_significant(tokens, j)
+  j >= 0 && tokens[j].kind == tk_fn()
 }
 
 pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight: Bool, lambda_state: Int, separate: Bool): Bool {
@@ -588,6 +613,9 @@ pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight:
     return paren_hugs(tokens, i, prev)
   }
   if after_tight {
+    return true
+  }
+  if curr == tk_eq() && prev == tk_r_bracket() && index_op_name_at(tokens, prev_significant(tokens, i)) {
     return true
   }
   if curr == tk_pipe() && lambda_state == 2 {

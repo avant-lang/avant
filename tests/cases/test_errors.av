@@ -48,7 +48,7 @@ fn test_errors(c: Checks) {
   c.suite("tests/cases/test_errors.av")
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
-    expect_err_bounded(c, compiler, stamp, "o162-many-errors", "fn pair(a: String, b: String): Array(String) {\n  bb = b\n  [a, bb]\n}\n\nfn neg(x: Int): Int {\n  y = x * 2\n  -y\n}\n\nfn first(xs: Array(Int)): Int {\n  xs[0]\n}\n\nfn main {\n  a = \"x\"\n  bb = \"y\"\n  x = \"y\"[a, bb].each { |s| puts(s) }\n  ps = pair(\"p\", \"q\")\n  puts(ps.size)\n  puts(ps[1])\n  puts(neg(4))\n  total = 1 +\n    2\n  puts(total)\n  diff = 10 -\n    3\n  puts(diff)\n  xs = [\n    1,\n    -2,\n    3\n  ]\n  puts(xs[1])\n  puts(first([\n    7,\n    8\n  ]))\n  grouped = (4 +\n    5) * 2\n}\n", "aborting due to 20 previous errors")
+    expect_err_bounded(c, compiler, stamp, "o162-many-errors", "fn pair(a: String, b: String): Array(String) {\n  bb = b\n  [a, bb]\n}\n\nfn neg(x: Int): Int {\n  y = x * 2\n  -y\n}\n\nfn first(xs: Array(Int)): Int {\n  xs[0]\n}\n\nfn main {\n  a = \"x\"\n  bb = \"y\"\n  x = \"y\"[a bb].each { |s| puts(s) }\n  ps = pair(\"p\", \"q\")\n  puts(ps.size)\n  puts(ps[1])\n  puts(neg(4))\n  total = 1 +\n    2\n  puts(total)\n  diff = 10 -\n    3\n  puts(diff)\n  xs = [\n    1,\n    -2,\n    3\n  ]\n  puts(xs[1])\n  puts(first([\n    7,\n    8\n  ]))\n  grouped = (4 +\n    5) * 2\n}\n", "aborting due to 20 previous errors")
     if o162 = file_read("${scratch()}/errors-${stamp}-o162-many-errors.log") {
       c.expect(str_has(o162, "and 2 more errors (limit 20)"), "o162 counts the errors past the limit")
     } else {
@@ -93,7 +93,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "tokens-brace", "fn main {\n  x = 1\n  switch x {\n    case 1 \"a\" {\n    }\n  }\n}\n", "expected `{`, found a string")
     expect_err(c, compiler, stamp, "tokens-in", "fn main {\n  for i, x in [1] {\n  }\n}\n", "expected `in`, found `,`")
     expect_err(c, compiler, stamp, "tokens-paren", "fn main {\n  puts((0..10).step(2))\n}\n", "expected `)`, found `..`")
-    expect_err(c, compiler, stamp, "tokens-expr", "fn main {\n  x = 3\n  x %= 3\n}\n", "expected an expression, found `=`")
+    expect_err(c, compiler, stamp, "tokens-expr", "fn main {\n  x = 3\n  x += = 3\n}\n", "expected an expression, found `=`")
     expect_err(c, compiler, stamp, "tokens-top", "42\n", "expected struct, class, enum, const, lib, fn, interface, import, quote, or comptime, found an integer")
     // Stage 29 W1a (A5): a builtin's unknown name in field form reads as a
     // method that does not exist (the field form is a call).

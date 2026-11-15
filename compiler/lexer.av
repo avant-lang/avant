@@ -913,6 +913,9 @@ pub class Lexer {
         if self.peek == 124 {
           self.bump
           kind = tk_pipe_pipe()
+        } else if self.peek == 61 {
+          self.bump
+          kind = tk_pipe_eq()
         }
         Token.new(kind, loc, "")
       }
@@ -925,18 +928,38 @@ pub class Lexer {
         } else if self.peek == 43 {
           self.bump
           kind = tk_amp_plus()
+          if self.peek == 61 {
+            self.bump
+            kind = tk_amp_plus_eq()
+          }
         } else if self.peek == 45 {
           self.bump
           kind = tk_amp_minus()
+          if self.peek == 61 {
+            self.bump
+            kind = tk_amp_minus_eq()
+          }
         } else if self.peek == 42 {
           self.bump
           kind = tk_amp_star()
+          if self.peek == 61 {
+            self.bump
+            kind = tk_amp_star_eq()
+          }
+        } else if self.peek == 61 {
+          self.bump
+          kind = tk_amp_eq()
         }
         Token.new(kind, loc, "")
       }
       case 94 {
         self.bump
-        Token.new(tk_caret(), loc, "")
+        kind = tk_caret()
+        if self.peek == 61 {
+          self.bump
+          kind = tk_caret_eq()
+        }
+        Token.new(kind, loc, "")
       }
       case 126 {
         self.bump
@@ -993,7 +1016,12 @@ pub class Lexer {
       }
       case 37 {
         self.bump
-        Token.new(tk_percent(), loc, "")
+        kind = tk_percent()
+        if self.peek == 61 {
+          self.bump
+          kind = tk_percent_eq()
+        }
+        Token.new(kind, loc, "")
       }
       case 47 {
         self.bump
@@ -1031,6 +1059,10 @@ pub class Lexer {
         } else if self.peek == 60 {
           self.bump
           kind = tk_less_less()
+          if self.peek == 61 {
+            self.bump
+            kind = tk_less_less_eq()
+          }
         }
         Token.new(kind, loc, "")
       }
@@ -1043,6 +1075,10 @@ pub class Lexer {
         } else if self.peek == 62 {
           self.bump
           kind = tk_greater_greater()
+          if self.peek == 61 {
+            self.bump
+            kind = tk_greater_greater_eq()
+          }
         }
         Token.new(kind, loc, "")
       }

@@ -1509,6 +1509,28 @@ pub class Checker {
       if target.kind == ex_index() {
         if arr = target.left, ix = target.right {
           container = check_expr(arr)
+          if container.is_agg {
+            if user_op(container, "[]=") {
+              // `c[i] = v` is the call `c.[]=(i, v)`.
+              set_args = index_args(target)
+              set_args.push(value)
+              call = op_method_call(target.loc, arr, "[]=", set_args)
+              stmt.kind = st_expr()
+              stmt.expr = call
+              stmt.target = nil
+              stmt.value = nil
+              check_expr(call)
+              return
+            }
+            if user_op(container, "[]") {
+              fail(stmt.loc, "cannot assign to an element of ${container.show}: it defines [] but not []=; define fn []=(index, value) on it")
+              return
+            }
+          }
+          if target.elems.size > 0 {
+            fail(target.elems[0].loc, "${container.show} takes one index; several (g[x, y]) are for a type that defines fn []= with as many parameters and the value")
+            return
+          }
           if container.is_hash {
             if k = container.key {
               key = check_expr_as(ix, k)
@@ -1552,6 +1574,51 @@ pub class Checker {
     fail(stmt.loc, "cannot assign to this expression")
   }
 
+  // `x op= v` where x's type defines the operator: `x = x op v`, the
+  // place written once more as it is read (a name, a field, an element
+  // at a name or a literal, so reading it twice is reading it once), the
+  // same call the hand-written assignment makes.
+  pub fn compound_through_method(stmt: Stmt, target: Expr, value: Expr, binop: Int, place: Ty) {
+    if !simple_place(target) {
+      fail(stmt.loc, "compound assignment through ${place.show}.${fn_op_name(binop)} needs a place read without side effects (a name, a field, an element at a name); write the assignment out: x = x ${fn_op_name(binop)} v")
+      return
+    }
+    read = clone_expr(target)
+    opx = Expr.new(ex_binary(), stmt.loc)
+    opx.op = binop
+    opx.left = read
+    opx.right = value
+    stmt.op = tk_eq()
+    stmt.value = opx
+    check_assign_stmt(stmt)
+  }
+
+  // A place whose reading has no side effect and gives the same value
+  // twice in a row: a name, a field of such a place, an element of one at
+  // a name or a literal.
+  pub fn simple_place(e: Expr): Bool {
+    if e.kind == ex_name() {
+      return true
+    }
+    if e.kind == ex_field() && !e.method_call {
+      if o = e.object {
+        return simple_place(o)
+      }
+      return false
+    }
+    if e.kind == ex_index() {
+      if l = e.left {
+        for x in index_args(e) {
+          if !(x.kind == ex_name() || x.kind == ex_int()) {
+            return false
+          }
+        }
+        return simple_place(l)
+      }
+    }
+    false
+  }
+
   pub fn check_compound_assign(stmt: Stmt) {
     if declared = stmt.declared {
       fail(stmt.loc, "type annotation only belongs on a new name")
@@ -1567,7 +1634,25 @@ pub class Checker {
           return
         }
       }
+      orig = clone_expr(target)
       place = check_expr(target)
+      binop = compound_binop(stmt.op)
+      if target.kind == ex_call() && target.callee == "[]" && orig.kind == ex_index() {
+        // `c[i] op= v` on a type with [] and []=: `c[i] = c[i] op v`.
+        if !simple_place(orig) {
+          fail(stmt.loc, "compound assignment to an element of a type's [] needs an index read without side effects (a name or a literal); write the assignment out: c[i] = c[i] ${fn_op_name(binop)} v")
+          return
+        }
+        opx = Expr.new(ex_binary(), stmt.loc)
+        opx.op = binop
+        opx.left = target
+        opx.right = value
+        stmt.op = tk_eq()
+        stmt.target = orig
+        stmt.value = opx
+        check_assign_stmt(stmt)
+        return
+      }
       if (target.kind == ex_field() && target.method_call) || target.kind == ex_call() {
         fail(stmt.loc, "cannot assign to a method")
         return
@@ -1583,12 +1668,44 @@ pub class Checker {
       if reject_clayout_value(place, target.loc) {
         return
       }
-      got = check_expr_as(value, place)
-      if !got.same_as(place) {
-        fail(value.loc, "cannot assign ${got.show} to ${place.show}")
+      if place.is_agg && user_op(place, fn_op_name(binop)) {
+        compound_through_method(stmt, target, value, binop, place)
+        return
+      }
+      if place.is_agg {
+        fail(stmt.loc, "compound assignment ${compound_text(stmt.op)} needs ${place.show} to define fn ${fn_op_name(binop)}")
+        return
+      }
+      got = place
+      if shift_op(binop) {
+        // A shift's amount is an Int whatever the shifted type, as in the
+        // operator.
+        got = check_expr(value)
+      } else {
+        got = check_expr_as(value, place)
+        if !got.same_as(place) {
+          fail(value.loc, "cannot assign ${got.show} to ${place.show}")
+          return
+        }
       }
       if !place.is_numeric {
         fail(stmt.loc, "compound assignment expects a numeric target, got ${place.show}")
+        return
+      }
+      // The operator's own rules (`%=` and the bitwise forms on integers
+      // only, a shift's amount), checked as the binary expression is.
+      opx = Expr.new(ex_binary(), stmt.loc)
+      opx.op = binop
+      res = binary_typed(opx, target, value, binop, place, got)
+      if self.has_err {
+        return
+      }
+      if !res.same_as(place) {
+        fail(stmt.loc, "cannot assign ${res.show} to ${place.show}")
+        return
+      }
+      if binop == tk_percent() || shift_op(binop) || bitwise_op(binop) {
+        stmt.proven = opx.proven
       }
       if target.kind == ex_name() {
         if value.kind == ex_int() {
@@ -2635,6 +2752,15 @@ pub class Checker {
         }
       }
       container = check_expr(arr)
+      if container.is_agg && user_op(container, "[]") {
+        // `c[i]` is the call `c.[](i)`.
+        rewrite_op_call(expr, arr, "[]", index_args(expr))
+        return check_expr_core(expr, false, t_int())
+      }
+      if expr.elems.size > 0 {
+        fail(expr.elems[0].loc, "${container.show} takes one index; several (g[x, y]) are for a type that defines fn [] with as many parameters")
+        return t_int()
+      }
       if container.is_string || container.is_buf || container.is_bytes {
         got = check_expr_as(ix, t_int())
         if !got.is_int {
@@ -2662,6 +2788,10 @@ pub class Checker {
         if e = container.inner {
           return e
         }
+        return t_int()
+      }
+      if container.is_agg {
+        fail(expr.loc, "cannot index ${container.show}: define fn [](index) on it")
         return t_int()
       }
       fail(expr.loc, "cannot index ${container.show}")
@@ -3437,6 +3567,42 @@ pub class Checker {
     got
   }
 
+  // A call of the operator method name on recv with args, for an operator
+  // a type defines (`c[i]`, `c[i] = v`, `-x`).
+  pub fn op_method_call(loc: Location, recv: Expr, name: String, args: Array(Expr)): Expr {
+    call = Expr.new(ex_call(), loc)
+    call.callee = name
+    call.receiver = recv
+    call.args = args
+    call
+  }
+
+  // The indexes of an index expression, in order (`g[x, y]`: x, y).
+  pub fn index_args(e: Expr): Array(Expr) {
+    out: Array(Expr) = []
+    if r = e.right {
+      out.push(r)
+    }
+    for x in e.elems {
+      out.push(x)
+    }
+    out
+  }
+
+  // expr, in place, becomes the call of the operator method name on recv.
+  pub fn rewrite_op_call(expr: Expr, recv: Expr, name: String, args: Array(Expr)) {
+    expr.kind = ex_call()
+    expr.callee = name
+    expr.receiver = recv
+    expr.args = args
+    expr.left = nil
+    expr.right = nil
+    expr.inner = nil
+    expr.elems = []
+    expr.op = 0
+    expr.proven = false
+  }
+
   pub fn check_unary(expr: Expr, has_want: Bool, want: Ty): Ty {
     if inner = expr.inner {
       if inner.kind == ex_name() || inner.kind == ex_field() {
@@ -3455,6 +3621,12 @@ pub class Checker {
       if expr.op == tk_minus() {
         if got.is_numeric {
           return got
+        }
+        if got.is_agg && user_op(got, "-") {
+          // `-x` is the call `x.-()`, the method `-` without parameters.
+          no_args: Array(Expr) = []
+          rewrite_op_call(expr, inner, "-", no_args)
+          return check_expr_core(expr, false, t_int())
         }
         fail(expr.loc, "unary minus expects Int or Float64")
         return t_int()

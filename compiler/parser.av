@@ -1311,7 +1311,7 @@ pub class Parser {
       return false
     }
     k = self.tokens[i].kind
-    if k == tk_eq() || k == tk_plus_eq() || k == tk_minus_eq() || k == tk_star_eq() || k == tk_slash_eq() {
+    if token_is_assign_op(k) {
       return true
     }
     if k != tk_colon() {
@@ -1716,6 +1716,16 @@ pub class Parser {
     if op.size > 0 {
       self.bump
       return op
+    }
+    // `fn []` and `fn []=`: indexing, read and write.
+    if tok.kind == tk_l_bracket() && self.index + 1 < self.tokens.size && self.tokens[self.index + 1].kind == tk_r_bracket() {
+      self.bump
+      self.bump
+      if self.current.kind == tk_eq() {
+        self.bump
+        return "[]="
+      }
+      return "[]"
     }
     fail(tok.loc, "expected function name")
     ""
@@ -2907,8 +2917,14 @@ pub class Parser {
         self.skip_newlines
         idxe = self.parse_expr
         self.skip_newlines
-        expect(tk_r_bracket())
         ix = Expr.new(ex_index(), at)
+        // `g[x, y]`: the indexes after the first, for a type's `fn []`.
+        while match_tok(tk_comma()) {
+          self.skip_newlines
+          ix.elems.push(self.parse_expr)
+          self.skip_newlines
+        }
+        expect(tk_r_bracket())
         ix.left = cur
         ix.right = idxe
         cur = ix

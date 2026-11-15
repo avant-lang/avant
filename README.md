@@ -469,7 +469,7 @@ From loosest to tightest binding; operators on one row associate left to right.
 | `!x` `-x` `~x` | not, negate, bitwise not |
 | `x?` `x.name` `x[i]` `f(x)` | postfix: [propagate a failure](#propagate-replace-branch), member, index, call |
 
-As in Go and Rust, and unlike C, `&`, `^` and `|` bind tighter than comparisons: `x & 1 == 0` means `(x & 1) == 0`. Assignment is a statement: `=`, `+=`, `-=`, `*=`, `/=`. There is no `++`, no ternary (`if` is an expression) and no `**`.
+As in Go and Rust, and unlike C, `&`, `^` and `|` bind tighter than comparisons: `x & 1 == 0` means `(x & 1) == 0`. Assignment is a statement: `=`, and a compound form for every binary operator, `x op= v` (`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`, `&+=`, `&-=`, `&*=`), which is `x = x op v` with the place read once. There is no `++`, no ternary (`if` is an expression) and no `**`.
 
 ### Equality and order
 
@@ -1666,7 +1666,9 @@ fn main {
 
 ### Operator methods
 
-An operator is a method whose name is the operator, declared like any other. The operators that can be defined are `+`, `-`, `*`, `/`, `%`, `&+`, `&-`, `&*`, `==`, `<`, `<=`, `>` and `>=`. `!=` is always `!(a == b)`, and a type that defines `<` gets `>`, `<=` and `>=` from it ([Equality and order](#equality-and-order)); a struct without `fn ==` compares its fields.
+An operator is a method whose name is the operator, declared like any other. The operators that can be defined are `+`, `-`, `*`, `/`, `%`, `&+`, `&-`, `&*`, the bitwise `&`, `|`, `^`, `<<`, `>>`, the comparisons `==`, `<`, `<=`, `>` and `>=`, negation (`fn -` with no parameter, for `-x`), and indexing: `fn []`, which takes the index, reads `c[i]`, and `fn []=`, which takes the index and then the value, writes `c[i] = v`, with one index or several (`g[x, y]`). Each binary operator takes one parameter, the right operand. `!`, `&&`, `||` and `~` keep their one meaning and cannot be defined. `!=` is always `!(a == b)`, and a type that defines `<` gets `>`, `<=` and `>=` from it ([Equality and order](#equality-and-order)); a struct without `fn ==` compares its fields.
+
+A compound assignment works through the type's operator: `at += delta` is `at = at + delta`, the same call, and `g[i] += 1` reads with `[]` and writes with `[]=`. The place is read twice in that form, so it must be one whose reading has no side effect: a name, a field, or an element at a name or a literal (`xs[i] += d`, not `xs[next()] += d`).
 
 ```avant
 struct Vec2 {
@@ -1686,6 +1688,34 @@ fn main {
   v = Vec2 { x: 1, y: 2 } + Vec2 { x: 10, y: 20 }
   puts(v.x)                           // => 11
   puts(v == Vec2 { x: 11, y: 22 })    // => true
+  v += Vec2 { x: 1, y: 1 }
+  puts(v.y)                           // => 23
+}
+```
+
+```avant
+class Grid {
+  cells: Array(Int)
+  width: Int
+
+  fn initialize(width: Int, height: Int) {
+    self.width = width
+    self.cells = Array(Int).new(width * height)
+  }
+
+  fn [](x: Int, y: Int): Int {
+    cells[y * width + x]
+  }
+
+  fn []=(x: Int, y: Int, v: Int) {
+    self.cells[y * width + x] = v
+  }
+}
+
+fn main {
+  g = Grid.new(3, 2)
+  g[2, 1] = 7
+  puts(g[2, 1])     // => 7
 }
 ```
 

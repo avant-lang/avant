@@ -1,0 +1,151 @@
+import harness
+import backends
+
+// Operators a type defines (`[]`, `[]=`, `&`, `|`, `^`, `<<`, `>>`, unary
+// `-`, beside the arithmetic and comparison ones) and compound assignment
+// for every binary operator, on numbers and through a type's own
+// operator. Each program is compiled in parallel; a refused one must leave
+// no binary, say the expected words and point at the expected line and
+// column; an accepted one must print what it should. The generated code
+// of a compound assignment through a type's operator is the hand-written
+// assignment's.
+
+class RCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): RCase {
+  f = RCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn cases: Array(RCase) {
+  xs: Array(RCase) = []
+  xs.push(accepted("bitwise-ops", "struct Bits {\n  w: Int\n\n  fn &(o: Bits): Bits {\n    Bits { w: w & o.w }\n  }\n\n  fn |(o: Bits): Bits {\n    Bits { w: w | o.w }\n  }\n\n  fn ^(o: Bits): Bits {\n    Bits { w: w ^ o.w }\n  }\n\n  fn <<(n: Int): Bits {\n    Bits { w: w << n }\n  }\n\n  fn >>(n: Int): Bits {\n    Bits { w: w >> n }\n  }\n}\nfn main {\n  a = Bits { w: 12 }\n  b = Bits { w: 10 }\n  puts((a & b).w)\n  puts((a | b).w)\n  puts((a ^ b).w)\n  puts((a << 2).w)\n  puts((a >> 2).w)\n}\n", "8\n14\n6\n48\n3\n"))
+  xs.push(accepted("unary-minus", "struct Vec2 {\n  x: Int\n  y: Int\n\n  fn +(o: Vec2): Vec2 {\n    Vec2 { x: x + o.x, y: y + o.y }\n  }\n\n  fn -(o: Vec2): Vec2 {\n    Vec2 { x: x - o.x, y: y - o.y }\n  }\n\n  fn -: Vec2 {\n    Vec2 { x: -x, y: -y }\n  }\n\n  fn *(k: Int): Vec2 {\n    Vec2 { x: x * k, y: y * k }\n  }\n}\nfn main {\n  v = Vec2 { x: 1, y: -2 }\n  n = -v\n  d = v - n\n  puts(\"\${n.x} \${n.y} \${d.x} \${d.y}\")\n}\n", "-1 2 2 -4\n"))
+  xs.push(accepted("index-ops", "class Grid {\n  cells: Array(Int)\n  width: Int\n\n  fn initialize(width: Int, height: Int) {\n    self.width = width\n    self.cells = Array(Int).new(width * height)\n  }\n\n  fn [](i: Int): Int {\n    cells[i]\n  }\n\n  fn [](x: Int, y: Int): Int {\n    cells[y * width + x]\n  }\n\n  fn []=(i: Int, v: Int) {\n    self.cells[i] = v\n  }\n\n  fn []=(x: Int, y: Int, v: Int) {\n    self.cells[y * width + x] = v\n  }\n}\nfn main {\n  g = Grid.new(3, 2)\n  g[4] = 7\n  g[2, 1] = 9\n  i = 4\n  g[i] += 5\n  g[0] -= 1\n  puts(\"\${g[4]} \${g[5]} \${g[0]} \${g[1, 1]}\")\n}\n", "12 9 -1 12\n"))
+  xs.push(refused("index-no-set", "class Ro {\n  fn [](i: Int): Int {\n    i * 2\n  }\n}\nfn main {\n  r = Ro.new\n  puts(r[3])\n  r[3] = 1\n}\n", "cannot assign to an element of Ro: it defines [] but not []=; define fn []=(index, value) on it", "9:8"))
+  xs.push(refused("index-none", "struct P {\n  x: Int\n}\nfn main {\n  p = P { x: 1 }\n  puts(p[0])\n}\n", "cannot index P: define fn [](index) on it", "6:9"))
+  xs.push(refused("index-no-param", "struct P {\n  x: Int\n  fn []: Int {\n    x\n  }\n}\nfn main { }\n", "fn [] takes the index: fn [](i: Int): T", "3:3"))
+  xs.push(refused("index-set-one-param", "struct P {\n  x: Int\n  fn []=(v: Int) {\n  }\n}\nfn main { }\n", "fn []= takes the index and the value: fn []=(i: Int, value: T)", "3:3"))
+  xs.push(refused("minus-two-params", "struct P {\n  x: Int\n  fn -(a: P, b: P): P {\n    a\n  }\n}\nfn main { }\n", "fn - takes no parameter (negation, -x) or one (subtraction, x - y)", "3:3"))
+  xs.push(refused("amp-no-param", "struct P {\n  x: Int\n  fn &: P {\n    self\n  }\n}\nfn main { }\n", "fn & takes one parameter, the right operand", "3:3"))
+  xs.push(refused("bang-not-definable", "struct P {\n  x: Int\n  fn !: Bool {\n    false\n  }\n}\nfn main { }\n", "expected function name", "3:6"))
+  xs.push(refused("and-not-definable", "struct P {\n  x: Int\n  fn &&(o: P): Bool {\n    false\n  }\n}\nfn main { }\n", "expected function name", "3:6"))
+  xs.push(refused("op-free-function", "fn [](i: Int): Int {\n  i\n}\nfn main { }\n", "operator methods need a receiver", "1:1"))
+  xs.push(refused("bits-undefined", "struct P {\n  x: Int\n}\nfn main {\n  a = P { x: 1 }\n  b = a | a\n}\n", "bitwise operator expects matching integer operands", "6:9"))
+  xs.push(accepted("compound-int", "fn main {\n  n = 100\n  n %= 7\n  puts(n)\n  n <<= 4\n  puts(n)\n  n >>= 2\n  puts(n)\n  n |= 3\n  puts(n)\n  n &= 6\n  puts(n)\n  n ^= 15\n  puts(n)\n  m = 9223372036854775807\n  m &+= 1\n  puts(m)\n  m &-= 1\n  puts(m)\n  m &*= 2\n  puts(m)\n}\n", "2\n32\n8\n11\n2\n13\n-9223372036854775808\n9223372036854775807\n-2\n"))
+  xs.push(accepted("compound-widths", "fn main {\n  w: Int32 = 5\n  w <<= 3\n  w %= 7\n  u: UInt64 = 1u64\n  u <<= 63\n  s = 2\n  u >>= s\n  v: UInt32 = 255\n  v ^= 15\n  puts(\"\${w} \${u} \${v}\")\n}\n", "5 2305843009213693952 240\n"))
+  xs.push(accepted("compound-places", "class Acc {\n  pub n: Int = 6\n  pub xs: Array(Int) = [1, 2, 3]\n}\nfn main {\n  a = Acc.new\n  a.n %= 4\n  a.n <<= 2\n  a.xs[1] |= 4\n  a.xs[2] <<= 1\n  b = Buf.new\n  b.push_byte(200)\n  b[0] ^= 255\n  k = 3\n  inc = { |d: Int| k <<= d }\n  inc(2)\n  puts(\"\${a.n} \${a.xs[1]} \${a.xs[2]} \${b[0]} \${k}\")\n}\n", "8 6 6 55 12\n"))
+  xs.push(refused("compound-percent-float", "fn main {\n  f = 2.5\n  f %= 2.0\n}\n", "% expects matching integer operands", "3:5"))
+  xs.push(refused("compound-bits-bool", "fn main {\n  t = true\n  t |= false\n}\n", "compound assignment expects a numeric target, got Bool", "3:5"))
+  xs.push(refused("compound-int-float", "fn main {\n  f = 2.5\n  n = 2\n  f *= n\n}\n", "cannot assign Int to Float64", "4:8"))
+  xs.push(refused("compound-shift-literal", "fn main {\n  n = 1\n  n <<= 64\n}\n", "shift amount 64 out of range for Int (0..63)", "3:5"))
+  xs.push(accepted("compound-method", "struct Vec2 {\n  x: Int\n  y: Int\n\n  fn +(o: Vec2): Vec2 {\n    Vec2 { x: x + o.x, y: y + o.y }\n  }\n\n  fn -(o: Vec2): Vec2 {\n    Vec2 { x: x - o.x, y: y - o.y }\n  }\n\n  fn -: Vec2 {\n    Vec2 { x: -x, y: -y }\n  }\n\n  fn *(k: Int): Vec2 {\n    Vec2 { x: x * k, y: y * k }\n  }\n}\nclass Body {\n  pub pos: Vec2 = Vec2 { x: 0, y: 0 }\n}\nfn main {\n  at = Vec2 { x: 1, y: 1 }\n  delta = Vec2 { x: 2, y: 3 }\n  at += delta\n  at -= Vec2 { x: 1, y: 0 }\n  at *= 2\n  b = Body.new\n  b.pos += at\n  path = [at, at]\n  i = 1\n  path[i] += delta\n  path[0] -= delta\n  puts(\"\${at.x} \${at.y} \${b.pos.x} \${b.pos.y} \${path[1].x} \${path[0].y}\")\n}\n", "4 8 4 8 6 5\n"))
+  xs.push(accepted("compound-bits-method", "struct Bits {\n  w: Int\n\n  fn &(o: Bits): Bits {\n    Bits { w: w & o.w }\n  }\n\n  fn |(o: Bits): Bits {\n    Bits { w: w | o.w }\n  }\n\n  fn ^(o: Bits): Bits {\n    Bits { w: w ^ o.w }\n  }\n\n  fn <<(n: Int): Bits {\n    Bits { w: w << n }\n  }\n\n  fn >>(n: Int): Bits {\n    Bits { w: w >> n }\n  }\n}\nfn main {\n  a = Bits { w: 12 }\n  a &= Bits { w: 10 }\n  a |= Bits { w: 1 }\n  a <<= 2\n  a ^= Bits { w: 3 }\n  a >>= 1\n  puts(a.w)\n}\n", "19\n"))
+  xs.push(refused("compound-method-side-effect", "struct Vec2 {\n  x: Int\n  y: Int\n\n  fn +(o: Vec2): Vec2 {\n    Vec2 { x: x + o.x, y: y + o.y }\n  }\n\n  fn -(o: Vec2): Vec2 {\n    Vec2 { x: x - o.x, y: y - o.y }\n  }\n\n  fn -: Vec2 {\n    Vec2 { x: -x, y: -y }\n  }\n\n  fn *(k: Int): Vec2 {\n    Vec2 { x: x * k, y: y * k }\n  }\n}\nfn pick(n: Int): Int {\n  n\n}\nfn main {\n  path = [Vec2 { x: 1, y: 1 }]\n  path[pick(0)] += Vec2 { x: 1, y: 1 }\n}\n", "compound assignment through Vec2.+ needs a place read without side effects (a name, a field, an element at a name); write the assignment out: x = x + v", "26:17"))
+  xs.push(refused("compound-method-missing", "struct Vec2 {\n  x: Int\n  y: Int\n\n  fn +(o: Vec2): Vec2 {\n    Vec2 { x: x + o.x, y: y + o.y }\n  }\n\n  fn -(o: Vec2): Vec2 {\n    Vec2 { x: x - o.x, y: y - o.y }\n  }\n\n  fn -: Vec2 {\n    Vec2 { x: -x, y: -y }\n  }\n\n  fn *(k: Int): Vec2 {\n    Vec2 { x: x * k, y: y * k }\n  }\n}\nfn main {\n  at = Vec2 { x: 1, y: 1 }\n  at /= 2\n}\n", "compound assignment /= needs Vec2 to define fn /", "23:6"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(RCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/op-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/op-${f.tag}.bin", "${dir}/op-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.ok {
+      runs.push(run_job(dir, "op-${f2.tag}.bin", "op-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/op-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/op-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/op-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "op-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+// Two programs that differ only in how one statement is written emit the
+// same .ll, their file names and trap positions aside.
+fn same_ll(c: Checks, compiler: String, dir: String, tag: String, a: String, b: String) {
+  pa = "${dir}/op-ll-${tag}.av"
+  _ = file_write(pa, a)
+  c.eq_int(emit_ll(compiler, pa, "${dir}/op-ll-${tag}.a.ll", "${dir}/op-ll-${tag}.a.log"), 0, "ll-${tag}: the long form emits")
+  la = log_text("${dir}/op-ll-${tag}.a.ll")
+  _ = file_write(pa, b)
+  c.eq_int(emit_ll(compiler, pa, "${dir}/op-ll-${tag}.b.ll", "${dir}/op-ll-${tag}.b.log"), 0, "ll-${tag}: the short form emits")
+  lb = log_text("${dir}/op-ll-${tag}.b.ll")
+  c.expect(la.size > 0, "ll-${tag}: has code")
+  c.eq_str(without_sites(lb), without_sites(la), "ll-${tag}: the same .ll, trap positions aside")
+}
+
+// The .ll without its trap positions (a trap names the operator's
+// column, which the two forms write at different places).
+fn without_sites(ll: String): String {
+  out = ""
+  for line in ll.split("\n") {
+    if !(line.size > 4 && str_slice(line, 0, 4) == "@tl.") {
+      out = out + line + "\n"
+    }
+  }
+  out
+}
+
+fn check_ll(c: Checks, compiler: String, dir: String) {
+  same_ll(c, compiler, dir, "compound-method", "struct Vec2 {\n  x: Int\n  y: Int\n\n  fn +(o: Vec2): Vec2 {\n    Vec2 { x: x + o.x, y: y + o.y }\n  }\n\n  fn -(o: Vec2): Vec2 {\n    Vec2 { x: x - o.x, y: y - o.y }\n  }\n\n  fn -: Vec2 {\n    Vec2 { x: -x, y: -y }\n  }\n\n  fn *(k: Int): Vec2 {\n    Vec2 { x: x * k, y: y * k }\n  }\n}\nfn main {\n  at = Vec2 { x: 1, y: 1 }\n  d = Vec2 { x: 2, y: 3 }\n  at = at + d\n  puts(at.x)\n}\n", "struct Vec2 {\n  x: Int\n  y: Int\n\n  fn +(o: Vec2): Vec2 {\n    Vec2 { x: x + o.x, y: y + o.y }\n  }\n\n  fn -(o: Vec2): Vec2 {\n    Vec2 { x: x - o.x, y: y - o.y }\n  }\n\n  fn -: Vec2 {\n    Vec2 { x: -x, y: -y }\n  }\n\n  fn *(k: Int): Vec2 {\n    Vec2 { x: x * k, y: y * k }\n  }\n}\nfn main {\n  at = Vec2 { x: 1, y: 1 }\n  d = Vec2 { x: 2, y: 3 }\n  at += d\n  puts(at.x)\n}\n")
+  same_ll(c, compiler, dir, "compound-field", "struct Vec2 {\n  x: Int\n  y: Int\n\n  fn +(o: Vec2): Vec2 {\n    Vec2 { x: x + o.x, y: y + o.y }\n  }\n\n  fn -(o: Vec2): Vec2 {\n    Vec2 { x: x - o.x, y: y - o.y }\n  }\n\n  fn -: Vec2 {\n    Vec2 { x: -x, y: -y }\n  }\n\n  fn *(k: Int): Vec2 {\n    Vec2 { x: x * k, y: y * k }\n  }\n}\nclass B {\n  pub pos: Vec2 = Vec2 { x: 0, y: 0 }\n}\nfn main {\n  b = B.new\n  d = Vec2 { x: 2, y: 3 }\n  b.pos = b.pos + d\n  puts(b.pos.y)\n}\n", "struct Vec2 {\n  x: Int\n  y: Int\n\n  fn +(o: Vec2): Vec2 {\n    Vec2 { x: x + o.x, y: y + o.y }\n  }\n\n  fn -(o: Vec2): Vec2 {\n    Vec2 { x: x - o.x, y: y - o.y }\n  }\n\n  fn -: Vec2 {\n    Vec2 { x: -x, y: -y }\n  }\n\n  fn *(k: Int): Vec2 {\n    Vec2 { x: x * k, y: y * k }\n  }\n}\nclass B {\n  pub pos: Vec2 = Vec2 { x: 0, y: 0 }\n}\nfn main {\n  b = B.new\n  d = Vec2 { x: 2, y: 3 }\n  b.pos += d\n  puts(b.pos.y)\n}\n")
+  same_ll(c, compiler, dir, "compound-int", "fn main {\n  n = 100\n  s = 3\n  n = n % 7\n  n = n << s\n  n = n | 5\n  puts(n)\n}\n", "fn main {\n  n = 100\n  s = 3\n  n %= 7\n  n <<= s\n  n |= 5\n  puts(n)\n}\n")
+  same_ll(c, compiler, dir, "index-compound", "class Grid {\n  cells: Array(Int)\n  width: Int\n\n  fn initialize(width: Int, height: Int) {\n    self.width = width\n    self.cells = Array(Int).new(width * height)\n  }\n\n  fn [](i: Int): Int {\n    cells[i]\n  }\n\n  fn [](x: Int, y: Int): Int {\n    cells[y * width + x]\n  }\n\n  fn []=(i: Int, v: Int) {\n    self.cells[i] = v\n  }\n\n  fn []=(x: Int, y: Int, v: Int) {\n    self.cells[y * width + x] = v\n  }\n}\nfn main {\n  g = Grid.new(2, 2)\n  g[1] = 4\n  g[1] = g[1] + 2\n  puts(g[1])\n}\n", "class Grid {\n  cells: Array(Int)\n  width: Int\n\n  fn initialize(width: Int, height: Int) {\n    self.width = width\n    self.cells = Array(Int).new(width * height)\n  }\n\n  fn [](i: Int): Int {\n    cells[i]\n  }\n\n  fn [](x: Int, y: Int): Int {\n    cells[y * width + x]\n  }\n\n  fn []=(i: Int, v: Int) {\n    self.cells[i] = v\n  }\n\n  fn []=(x: Int, y: Int, v: Int) {\n    self.cells[y * width + x] = v\n  }\n}\nfn main {\n  g = Grid.new(2, 2)\n  g[1] = 4\n  g[1] += 2\n  puts(g[1])\n}\n")
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_operators.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+    check_ll(c, compiler, scratch_dir())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

@@ -1207,3 +1207,33 @@ pub fn (checker_self: Checker) fun_union_ok(ty: Ty, loc: Location): Bool {
   checker_self.fail(loc, "a fun signature cannot use ${ty.show}: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL (String?, Bytes?, an array, a hash, a Buf or a class with ?)")
   false
 }
+
+// An operator method with the wrong number of parameters: what it takes;
+// "" when the count fits. `-` takes none (negation) or one (subtraction);
+// `[]` the index or indexes; `[]=` the indexes and the value.
+pub fn op_arity_text(name: String, n: Int): String {
+  if name == "[]" {
+    if n == 0 {
+      return "fn [] takes the index: fn [](i: Int): T"
+    }
+    return ""
+  }
+  if name == "[]=" {
+    if n < 2 {
+      return "fn []= takes the index and the value: fn []=(i: Int, value: T)"
+    }
+    return ""
+  }
+  if name == "-" {
+    if n > 1 {
+      return "fn - takes no parameter (negation, -x) or one (subtraction, x - y)"
+    }
+    return ""
+  }
+  if name == "+" || name == "*" || name == "/" || name == "%" || name == "&+" || name == "&-" || name == "&*" || name == "&" || name == "|" || name == "^" || name == "<<" || name == ">>" || name == "==" || name == "<" || name == "<=" || name == ">" || name == ">=" {
+    if n != 1 {
+      return "fn ${name} takes one parameter, the right operand"
+    }
+  }
+  ""
+}

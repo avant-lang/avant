@@ -178,7 +178,7 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
         if lw.failed {
           return
         }
-        r = lw.arith(compound_op_of(st.op), ty, cur, rhs, st.proven, st.loc)
+        r = lw.compound_arith(st, ty, cur, rhs, v)
         lw.at(st.loc)
         lw.lw_b.assign(lw.lw_b.pl(k2), lw.lw_b.rv_use(r))
       }
@@ -188,21 +188,27 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
   }
 }
 
-// `+= -= *= /=` to their binary operator token (the old compound_to_binop).
+// A compound assignment's operator token to its binary operator (`%=` to
+// `%`); any other token is returned as it is.
 pub fn compound_op_of(op: Int): Int {
-  if op == tk_plus_eq() {
-    return tk_plus()
+  b = compound_binop(op)
+  if b == 0 {
+    return op
   }
-  if op == tk_minus_eq() {
-    return tk_minus()
+  b
+}
+
+// `x op= v`: the binary operator on the place's old value and v's, checked
+// as the operator is (a shift by its amount's own type), a trap located at
+// the assignment.
+pub fn (lw: MirLower) compound_arith(st: Stmt, ty: Int, cur: MOperand, rhs: MOperand, v: Expr): MOperand {
+  // A trap in the operator names the assignment's own position.
+  lw.at(st.loc)
+  op = compound_op_of(st.op)
+  if op == tk_less_less() || op == tk_greater_greater() {
+    return lw.shift(op, ty, lw.ety(v), cur, rhs, st.loc)
   }
-  if op == tk_star_eq() {
-    return tk_star()
-  }
-  if op == tk_slash_eq() {
-    return tk_slash()
-  }
-  op
+  lw.arith(op, ty, cur, rhs, st.proven, st.loc)
 }
 
 // A returned value, converted to the function's result type (the old
