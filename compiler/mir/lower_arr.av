@@ -140,6 +140,66 @@ pub fn (lw: MirLower) hold(o: MOperand, ty: Int): Int {
   t
 }
 
+// `xs.pop()`: the last element, removed, as T?; nil on an empty array.
+// A reference comes from the runtime, which clears its word and gives
+// null (an optional reference's nil) when the array is empty; any other
+// element is read from its slot when the array is not empty, and a slot
+// that holds references is zeroed after the read, so a popped object is
+// not kept alive by its old word.
+pub fn (lw: MirLower) lower_pop(e: Expr, h2: Int, aty: Int, et: Int, want: Ty): MOperand {
+  b = lw.lw_b
+  if t = e.ty {
+    wty = lw.ty_at(t, e.loc, "a value")
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    if b.types.is_refkind(et) && mir_is_opt_word(t) {
+      v0 = lw.call_to(et, "avant_array_pop_ptr", lw.one(b.copy_local(h2)))
+      d0 = b.temp(wty)
+      b.assign(b.pl(d0), b.rv_use(v0))
+      return b.copy_local(d0)
+    }
+    d = b.temp(wty)
+    n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h2)), 1))))
+    some = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), n, b.c_i32(0)))
+    bt = b.block()
+    bf = b.block()
+    join = b.block()
+    b.branch(some, bt, bf)
+    b.at(bt)
+    v = b.c_i32(0)
+    if b.types.is_refkind(et) {
+      v = lw.call_to(et, "avant_array_pop_ptr", lw.one(b.copy_local(h2)))
+    } else {
+      s = b.temp(b.types.addr_of(et))
+      b.call(s, "avant_array_pop_slot", lw.two(b.copy_local(h2), lw.elem_size(aty)))
+      v = lw.tmp(et, b.rv_use(b.copy(b.deref(b.pl(s)))))
+      if b.types.ref_carrying(et) {
+        m = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h2)), 1))))
+        lo = lw.tmp(mt_int(), b.rv_cast(m, mt_int()))
+        hi = lw.tmp(mt_int(), b.rv_bin(mop_add(), b.copy_local(mir_bare_copy(lo)), b.c_i64(1)))
+        four = lw.two(b.copy_local(h2), b.copy_local(mir_bare_copy(lo)))
+        four.push(hi)
+        four.push(lw.elem_size(aty))
+        b.call(-1, "avant_array_zero_range", four)
+      }
+    }
+    b.assign(b.pl(d), b.rv_use(lw.coerce(v, want, t, e.loc)))
+    b.goto(join)
+    b.at(bf)
+    if r = mir_opt_word(t) {
+      b.assign(b.pl(d), b.rv_use(lw.opt_nil(wty)))
+    } else {
+      b.assign(b.pl(d), b.rv_union_nil(b.types.layout_of(wty), t.tag_of(ty_nil())))
+    }
+    b.goto(join)
+    b.at(join)
+    return b.copy_local(d)
+  }
+  lw.refuse(e.loc, "an untyped pop")
+  b.c_i32(0)
+}
+
 pub fn (lw: MirLower) one(o: MOperand): Array(MOperand) {
   a: Array(MOperand) = []
   a.push(o)
@@ -787,23 +847,20 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     return zero
   }
   if name == "pop" {
-    // C9 (W10b): pop on an empty array traps instead of reading through
-    // the runtime's null (non-references) or yielding a null reference;
-    // its message names pop (Stage 29 W4b2, D295 R16: it said "index -1
-    // out of bounds (size 0)").
-    n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h2)), 1))))
-    empty = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), n, b.c_i32(0)))
-    ok = lw.trap_open(empty, true)
-    lw.trap_close(ok, "avant_trap_empty", lw.one(b.c_i32(0)), e.loc)
-    if b.types.is_refkind(et) {
-      return lw.call_to(et, "avant_array_pop_ptr", lw.one(b.copy_local(h2)))
-    }
-    s = b.temp(b.types.addr_of(et))
-    b.call(s, "avant_array_pop_slot", lw.two(b.copy_local(h2), lw.elem_size(aty)))
-    return lw.tmp(et, b.rv_use(b.copy(b.deref(b.pl(s)))))
+    return lw.lower_pop(e, h2, aty, et, want)
   }
   if name == "clear" {
     lw.frozen_check(h2, mir_frozen_clear(), e.loc)
+    if b.types.ref_carrying(et) {
+      // The removed elements' references are zeroed (the collector reads
+      // every word of the buffer, also past the size).
+      n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h2)), 1))))
+      hi = lw.tmp(mt_int(), b.rv_cast(n, mt_int()))
+      four = lw.two(b.copy_local(h2), b.c_i64(0))
+      four.push(hi)
+      four.push(lw.elem_size(aty))
+      b.call(-1, "avant_array_zero_range", four)
+    }
     b.assign(b.field(b.deref(b.pl(h2)), 1), b.rv_use(b.c_i32(0)))
     return zero
   }

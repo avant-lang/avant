@@ -92,7 +92,7 @@ fn test_complete(c: Checks, compiler: String, root: String, dir: String) {
     c.eq_str(log_text("${dir}/complete.g${e}.err"), "", "complete.av ${what}: no stderr (the oracle is silent)")
   }
   show = log_text("${dir}/complete.show.out")
-  ways = ["field", "element", "shift", "delete", "delete int", "clear", "root", "release", "pin", "defrag"]
+  ways = ["field", "element", "shift", "delete", "delete int", "clear", "pop", "array-clear", "root", "release", "pin", "defrag"]
   for w in ways {
     line = ""
     for l in show.split("\n") {
@@ -113,8 +113,8 @@ fn test_complete(c: Checks, compiler: String, root: String, dir: String) {
   }
   c.expect(str_has(show, "task: freed 1, the task read true [before: a full collection; after: a full collection]"), "complete.av, task: a program with threads is collected by full collections")
   err = log_text("${dir}/complete.show.err")
-  c.expect(stat_value(err, "proof_held") >= 11, "complete.av: the proof held for a collection of every way before its removal (proof_held ${stat_value(err, "proof_held")})")
-  c.expect(stat_value(err, "proof_fell_ref_lost") >= 7 && stat_value(err, "proof_fell_root_lost") >= 3 && stat_value(err, "proof_fell_threads") >= 2, "complete.av: the proof failed for a lost reference, a lost root and threads (${stat_value(err, "proof_fell_ref_lost")}, ${stat_value(err, "proof_fell_root_lost")}, ${stat_value(err, "proof_fell_threads")})")
+  c.expect(stat_value(err, "proof_held") >= 13, "complete.av: the proof held for a collection of every way before its removal (proof_held ${stat_value(err, "proof_held")})")
+  c.expect(stat_value(err, "proof_fell_ref_lost") >= 9 && stat_value(err, "proof_fell_root_lost") >= 3 && stat_value(err, "proof_fell_threads") >= 2, "complete.av: the proof failed for a lost reference, a lost root and threads (${stat_value(err, "proof_fell_ref_lost")}, ${stat_value(err, "proof_fell_root_lost")}, ${stat_value(err, "proof_fell_threads")})")
 }
 
 // ffi/scope_binding.av: whether a binding whose scope has ended keeps what

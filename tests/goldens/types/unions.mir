@@ -48,7 +48,6 @@ extern avant_puts_str(ref str) -> void never
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
-extern avant_trap_empty(i32) -> void never noreturn
 
 fn av.unions/none_v() -> %(Nil|unions.V) leaf @unions.av:46:1 {
   let _0: %(Nil|unions.V)
@@ -397,17 +396,18 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @unions.av:100:1 {
   let _118 (vs): ref %Array((Nil|unions.V)) slot
   let _119: %(Nil|unions.V)
   let _120: addr %(Nil|unions.V)
-  let _121: i32
-  let _122: bool
-  let _123: addr %(Nil|unions.V)
-  let _124: %(Nil|unions.V)
-  let _125: i32
-  let _126: bool
-  let _127: %unions.V
-  let _128 (p): %unions.V
-  let _129: i64
-  let _130: i32
-  let _131: i64
+  let _121: %(Nil|unions.V)
+  let _122: i32
+  let _123: bool
+  let _124: addr %(Nil|unions.V)
+  let _125: %(Nil|unions.V)
+  let _126: i32
+  let _127: bool
+  let _128: %unions.V
+  let _129 (p): %unions.V
+  let _130: i64
+  let _131: i32
+  let _132: i64
 
 bb0:
   _4 = zero   @100:1
@@ -725,32 +725,36 @@ bb44:
   _119 = call av.unions/pick(const i64 7) nocollect   @155:11
   _120 = call avant_array_push_slot(copy _118, const u64 24, const u32 0) collects   @155:5
   (*_120) = copy _119   @155:5
-  _121 = copy (*_118).1   @156:12
-  _122 = eq copy _121, const i32 0   @156:12
-  branch copy _122, bb45, bb46   @156:12
+  _122 = copy (*_118).1   @156:12
+  _123 = ne copy _122, const i32 0   @156:12
+  branch copy _123, bb45, bb46   @156:12
 
 bb45:
-  call avant_trap_empty(const i32 0) nocollect   @156:12
-  unreachable   @156:12
+  _124 = call avant_array_pop_slot(copy _118, const u64 24) collects   @156:12
+  _125 = copy (*_124)   @156:12
+  _121 = copy _125   @156:12
+  goto bb47   @156:12
 
 bb46:
-  _123 = call avant_array_pop_slot(copy _118, const u64 24) collects   @156:12
-  _124 = copy (*_123)   @156:12
-  _125 = copy _124.0   @156:3
-  _126 = ne copy _125, const i32 0   @156:3
-  branch copy _126, bb47, bb48   @156:3
+  _121 = union %(Nil|unions.V) tag 0   @156:12
+  goto bb47   @156:12
 
 bb47:
-  _127 = copy _124.1   @156:3
-  _128 = copy _127   @156:3
-  _129 = copy _128.1   @157:11
-  call avant_puts_i64(copy _129) nocollect   @157:5
-  goto bb48   @156:3
+  _126 = copy _121.0   @156:3
+  _127 = ne copy _126, const i32 0   @156:3
+  branch copy _127, bb48, bb49   @156:3
 
 bb48:
-  _130 = copy (*_118).1   @159:10
-  _131 = cast copy _130 to i64   @159:10
-  call avant_puts_i64(copy _131) nocollect   @159:3
+  _128 = copy _121.1   @156:3
+  _129 = copy _128   @156:3
+  _130 = copy _129.1   @157:11
+  call avant_puts_i64(copy _130) nocollect   @157:5
+  goto bb49   @156:3
+
+bb49:
+  _131 = copy (*_118).1   @159:10
+  _132 = cast copy _131 to i64   @159:10
+  call avant_puts_i64(copy _132) nocollect   @159:3
   _0 = const i32 0   @100:1
   gc.leave   @100:1
   return   @100:1

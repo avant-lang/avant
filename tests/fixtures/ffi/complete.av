@@ -14,6 +14,8 @@
 //   delete int  Hash.delete with integer keys (the open layout: the
 //             entries after it move back)
 //   clear     Hash.clear
+//   pop       Array.pop (the popped element's word is cleared)
+//   array-clear  Array.clear (the elements' words are cleared)
 //   root      a local that goes out of scope
 //   release   `release` of a C-layout field (the store pinned the value)
 //   pin       a pin given back (C pinned the value and unpins it)
@@ -248,6 +250,36 @@ fn way_clear(k: Keep) {
   puts("clear: freed ${freed(k, 131072)}, the hash keeps ${h.size}${kinds(k)}")
 }
 
+// Array.pop gives the element it removed: in a function of its own, so
+// no frame names that value when the collection runs.
+fn pop_last(a: Array(String)): Int {
+  a.pop()
+  a.size
+}
+
+fn make_array_last(tag: Int): Array(String) {
+  a: Array(String) = [small(tag)]
+  a.push(big(tag))
+  a
+}
+
+fn way_pop(k: Keep) {
+  a = make_array_last(61)
+  k.arr = a
+  before(k)
+  pop_last(a)
+  puts("pop: freed ${freed(k, 131072)}, the array keeps ${a.size} and reads ${a[0]}${kinds(k)}")
+}
+
+fn way_array_clear(k: Keep) {
+  a = make_array(63)
+  a.push(small(64))
+  k.arr = a
+  before(k)
+  a.clear()
+  puts("array-clear: freed ${freed(k, 131072)}, the array keeps ${a.size}${kinds(k)}")
+}
+
 fn root_inner(k: Keep): Int {
   v = big(6)
   before(k)
@@ -368,6 +400,8 @@ fn main {
   way_delete(k)
   way_delete_int(k)
   way_clear(k)
+  way_pop(k)
+  way_array_clear(k)
   way_root(k)
   way_release(k)
   way_pin(k)

@@ -241,14 +241,22 @@ void *avant_array_get_ptr(void *arr, avant_int i) {
   return NULL;
 }
 
+/* `xs.pop()` of a reference: the last element, or NULL (the optional's
+ * nil) on an empty array. The popped word is cleared (RC5: the
+ * overwrite first), so the collector, which reads every word of the
+ * buffer, no longer reaches the element through it. */
 void *avant_array_pop_ptr(void *arr) {
   AvantArray *a = (AvantArray *)arr;
+  void *v;
   if (a) {
     ARR_FROZEN_TRAP(a, AVANT_FROZEN_POP);
   }
   if (a && a->buf && a->size > 0) {
     a->size -= 1;
-    return ((void **)a->buf)[a->size];
+    v = ((void **)a->buf)[a->size];
+    avant_gc_overwrite(a->buf);
+    ((void **)a->buf)[a->size] = NULL;
+    return v;
   }
   return NULL;
 }
@@ -305,6 +313,20 @@ void avant_array_clear(void *arr) {
     ARR_FROZEN_TRAP(a, AVANT_FROZEN_CLEAR);
     a->size = 0;
   }
+}
+
+/* Zeroes the elements LO to HI (excluded) of a buffer whose elements
+ * hold references, past the array's size (a pop's slot, a clear's
+ * elements): the collector reads every word of a buffer, so a removed
+ * reference left there would keep its object alive (RC5: the overwrite
+ * first). */
+void avant_array_zero_range(void *arr, avant_int lo, avant_int hi, uint64_t elem_size) {
+  AvantArray *a = (AvantArray *)arr;
+  if (!a || !a->buf || lo < 0 || hi <= lo) {
+    return;
+  }
+  avant_gc_overwrite(a->buf);
+  memset((uint8_t *)a->buf + (size_t)lo * (size_t)elem_size, 0, (size_t)(hi - lo) * (size_t)elem_size);
 }
 
 /* gc-lint: holds nothing (the growth is its last statement; array_grow roots the array). */

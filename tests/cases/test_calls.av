@@ -96,11 +96,22 @@ fn field_fn_cases(xs: Array(CCase)) {
   xs.push(refused("field-and-external-method", "struct P {\n  x: Int\n}\nfn (p: P) x: Int {\n  2\n}\nfn main {\n  puts(P { x: 1 }.x)\n}\n", "P.x is both a field and a method", "4:1"))
 }
 
+// `xs.pop()` gives T?: the last element, removed, or nil on an empty
+// array, for every kind of element; `pop().expect("why")` traps instead.
+fn pop_cases(xs: Array(CCase)) {
+  decl = "struct P {\n  a: Int\n  s: String\n}\nclass C {\n  pub n: Int = 5\n}\n"
+  xs.push(accepted("pop-optional", decl + "fn main {\n  xs = [1, 2, 3]\n  t = 0\n  while v = xs.pop() {\n    t = t * 10 + v\n  }\n  puts(t)\n  puts(xs.pop() ?? -1)\n  ss = [\"a\", \"b\"]\n  puts(ss.pop() ?? \"none\")\n  ps = [P { a: 1, s: \"x\" }, P { a: 2, s: \"y\" }]\n  if p = ps.pop() {\n    puts(\"\${p.a}\${p.s} \${ps.size}\")\n  }\n  cs = [C.new()]\n  puts(cs.pop().expect(\"one C\").n)\n  if _ = cs.pop() {\n    puts(\"still\")\n  } else {\n    puts(\"empty\")\n  }\n  fs = [1.5]\n  puts(fs.pop() ?? 0.0)\n  bs = [true]\n  puts(bs.pop() ?? false)\n  us: Array(Int | String) = [1, \"z\"]\n  if u = us.pop() {\n    puts(u)\n  }\n  os: Array(Int?) = [nil, 4]\n  puts(os.pop() ?? 0)\n  puts(os.pop() ?? 9)\n  ws = [7u64]\n  puts(ws.pop() ?? 0u64)\n}\n", "321\n-1\nb\n2y 1\n5\nempty\n1.5\ntrue\nz\n4\n9\n7\n"))
+  xs.push(trapped("pop-expect-empty", "fn main {\n  xs: Array(Int) = []\n  puts(\"p\")\n  puts(xs.pop().expect(\"xs has an element\"))\n}\n", "p\n", "avant runtime: xs has an element at calls-pop-expect-empty.av:4:16\n"))
+  xs.push(refused("pop-needs-opening", "fn main {\n  xs = [1, 2]\n  n: Int = xs.pop()\n  puts(n)\n}\n", "Int?", "3:14"))
+  xs.push(refused("pop-plus", "fn main {\n  xs = [1, 2]\n  puts(xs.pop() + 1)\n}\n", "Int?", "3:17"))
+}
+
 fn cases: Array(CCase) {
   xs: Array(CCase) = []
   paren_cases(xs)
   expect_cases(xs)
   field_fn_cases(xs)
+  pop_cases(xs)
   xs
 }
 

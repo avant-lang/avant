@@ -18,6 +18,7 @@ layout %Array(Array(Int)) = array { 0 data: ref %elems(Array(Int)), 1 size: i32,
 layout %Hash = hash { 0 keys: ref, 1 vals: ref, 2 meta: ref, 3 size: i32, 4 cap: i32, 5 desc: i32, 6 seed: i32 }  size 40 align 8 id 1023
 layout %elems(churn.Holder) = elems { 0: ref %churn.Holder }  size 8 align 8 id 65535
 layout %Array(churn.Holder) = array { 0 data: ref %elems(churn.Holder), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
+layout %(Nil|churn.Slot) = union { 0 tag: i32, 1 m0: %churn.Slot }  size 32 align 8
 
 const str.0 = "j"
 const str.1 = "leaf-"
@@ -46,6 +47,7 @@ extern avant_array_pop_slot(ref, u64) -> addr collects
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_array_push_slot(ref, u64, u32) -> addr collects
 extern avant_array_set_ptr(ref, i64, ref) -> void never
+extern avant_array_zero_range(ref, i64, i64, u64) -> void never
 extern avant_hash_clear(ref) -> void never
 extern avant_hash_create(u32) -> ref collects
 extern avant_hash_find_sk(ref, ref str, ptr) -> ptr never
@@ -61,7 +63,6 @@ extern avant_str_eq(ref str, ref str) -> i32 never
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_repeat_byte(i64, i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
-extern avant_trap_empty(i32) -> void never noreturn
 extern avant_trap_negative(i64, i32) -> void never noreturn
 extern avant_trap_size(i32) -> void never noreturn
 
@@ -775,27 +776,34 @@ fn av.churn/round(_1: ref %churn.Root, _2: i64) -> i64 frame @churn.av:130:1 {
   let _232: i64
   let _233: bool
   let _234: ref %Array(churn.Slot) slot
-  let _235: i32
-  let _236: bool
-  let _237: addr %churn.Slot
-  let _238: %churn.Slot
-  let _239 (dummy): %churn.Slot
-  let _240: ref %Array(churn.Leaf)
-  let _241: ref %Array(Array(Int))
-  let _242: i32
-  let _243: i64
-  let _244: bool
-  let _245: ref %elems(Array(Int)) slot
-  let _246: ref %elems(Int) slot
+  let _235: %(Nil|churn.Slot)
+  let _236: i32
+  let _237: bool
+  let _238: addr %churn.Slot
+  let _239: %churn.Slot
+  let _240: i32
+  let _241: i64
+  let _242: i64
+  let _243: %(Nil|churn.Slot)
+  let _244 (dummy): %(Nil|churn.Slot)
+  let _245: ref %Array(churn.Leaf)
+  let _246: i32
   let _247: i64
-  let _248: i64
-  let _249: ref %Array(Int)
-  let _250: ref %Array(Array(Int))
-  let _251: ref %Hash
-  let _252: i64
-  let _253: bool
-  let _254: ref %Hash
+  let _248: ref %Array(Array(Int))
+  let _249: i32
+  let _250: i64
+  let _251: bool
+  let _252: ref %elems(Array(Int)) slot
+  let _253: ref %elems(Int) slot
+  let _254: i64
   let _255: i64
+  let _256: ref %Array(Int)
+  let _257: ref %Array(Array(Int))
+  let _258: ref %Hash
+  let _259: i64
+  let _260: bool
+  let _261: ref %Hash
+  let _262: i64
 
 bb0:
   _14 = zero   @130:1
@@ -821,10 +829,10 @@ bb0:
   _217 = zero   @130:1
   _223 = zero   @130:1
   _234 = zero   @130:1
-  _245 = zero   @130:1
-  _246 = zero   @130:1
+  _252 = zero   @130:1
+  _253 = zero   @130:1
   gc.enter   @130:1
-  gc.roots _1, _14, _18, _24, _48, _50, _56, _73, _137, _152, _157, _170, _175, _191, _197, _198, _201, _207, _208, _209, _215, _217, _223, _234, _245, _246   @130:1
+  gc.roots _1, _14, _18, _24, _48, _50, _56, _73, _137, _152, _157, _170, _175, _191, _197, _198, _201, _207, _208, _209, _215, _217, _223, _234, _252, _253   @130:1
   _3 = const i64 0   @131:5
   _4 = const i64 0   @132:5
   goto bb1   @133:3
@@ -1172,65 +1180,77 @@ bb12:
 
 bb13:
   _234 = copy (*_14).2   @160:16
-  _235 = copy (*_234).1   @160:22
-  _236 = eq copy _235, const i32 0   @160:22
-  branch copy _236, bb15, bb16   @160:22
+  _236 = copy (*_234).1   @160:22
+  _237 = ne copy _236, const i32 0   @160:22
+  branch copy _237, bb15, bb16   @160:22
 
 bb14:
-  _241 = copy (*_14).4   @163:9
-  _242 = copy (*_241).1   @163:14
-  _243 = cast copy _242 to i64   @163:14
-  _244 = gt copy _243, const i64 8   @163:20
-  branch copy _244, bb17, bb18   @163:5
+  _248 = copy (*_14).4   @163:9
+  _249 = copy (*_248).1   @163:14
+  _250 = cast copy _249 to i64   @163:14
+  _251 = gt copy _250, const i64 8   @163:20
+  branch copy _251, bb18, bb19   @163:5
 
 bb15:
-  call avant_trap_empty(const i32 0) nocollect   @160:22
-  unreachable   @160:22
+  _238 = call avant_array_pop_slot(copy _234, const u64 24) collects   @160:22
+  _239 = copy (*_238)   @160:22
+  _240 = copy (*_234).1   @160:22
+  _241 = cast copy _240 to i64   @160:22
+  _242 = add copy _241, const i64 1   @160:22
+  call avant_array_zero_range(copy _234, copy _241, copy _242, const u64 24) nocollect   @160:22
+  _243 = union %(Nil|churn.Slot) tag 1 (copy _239)   @160:22
+  _235 = copy _243   @160:22
+  goto bb17   @160:22
 
 bb16:
-  _237 = call avant_array_pop_slot(copy _234, const u64 24) collects   @160:22
-  _238 = copy (*_237)   @160:22
-  _239 = copy _238   @160:13
-  _240 = copy (*_14).1   @161:8
-  (*_240).1 = const i32 0   @161:15
-  goto bb14   @159:5
+  _235 = union %(Nil|churn.Slot) tag 0   @160:22
+  goto bb17   @160:22
 
 bb17:
-  _245 = call avant_alloc(const u64 8, const u32 65535) collects   @164:16
-  _246 = call avant_alloc(const u64 24, const u32 0) collects   @164:17
-  (*_246)[const i64 0] = copy _17   @164:18
-  _247 = add.chk copy _17, const i64 1   @164:23
-  (*_246)[const i64 1] = copy _247   @164:23
-  _248 = add.chk copy _17, const i64 2   @164:30
-  (*_246)[const i64 2] = copy _248   @164:30
-  _249 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @164:17
-  (*_249).0 = copy _246 fresh   @164:17
-  (*_249).1 = const i32 3   @164:17
-  (*_249).2 = const i32 3   @164:17
-  barrier copy _245   @164:17
-  (*_245)[const i64 0] = copy _249   @164:17
-  _250 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @164:16
-  (*_250).0 = copy _245 fresh   @164:16
-  (*_250).1 = const i32 1   @164:16
-  (*_250).2 = const i32 1   @164:16
-  barrier copy _14   @164:14
-  (*_14).4 = copy _250   @164:14
-  goto bb18   @163:5
+  _244 = copy _235   @160:13
+  _245 = copy (*_14).1   @161:8
+  _246 = copy (*_245).1   @161:15
+  _247 = cast copy _246 to i64   @161:15
+  call avant_array_zero_range(copy _245, const i64 0, copy _247, const u64 8) nocollect   @161:15
+  (*_245).1 = const i32 0   @161:15
+  goto bb14   @159:5
 
 bb18:
-  _251 = copy (*_14).5   @166:9
-  _252 = call avant_hash_size(copy _251) nocollect   @166:11
-  _253 = gt copy _252, const i64 20   @166:17
-  branch copy _253, bb19, bb20   @166:5
+  _252 = call avant_alloc(const u64 8, const u32 65535) collects   @164:16
+  _253 = call avant_alloc(const u64 24, const u32 0) collects   @164:17
+  (*_253)[const i64 0] = copy _17   @164:18
+  _254 = add.chk copy _17, const i64 1   @164:23
+  (*_253)[const i64 1] = copy _254   @164:23
+  _255 = add.chk copy _17, const i64 2   @164:30
+  (*_253)[const i64 2] = copy _255   @164:30
+  _256 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @164:17
+  (*_256).0 = copy _253 fresh   @164:17
+  (*_256).1 = const i32 3   @164:17
+  (*_256).2 = const i32 3   @164:17
+  barrier copy _252   @164:17
+  (*_252)[const i64 0] = copy _256   @164:17
+  _257 = call avant_alloc(const u64 16, const u32 1022) collects fresh   @164:16
+  (*_257).0 = copy _252 fresh   @164:16
+  (*_257).1 = const i32 1   @164:16
+  (*_257).2 = const i32 1   @164:16
+  barrier copy _14   @164:14
+  (*_14).4 = copy _257   @164:14
+  goto bb19   @163:5
 
 bb19:
-  _254 = copy (*_14).5   @167:8
-  call avant_hash_clear(copy _254) nocollect   @167:10
-  goto bb20   @166:5
+  _258 = copy (*_14).5   @166:9
+  _259 = call avant_hash_size(copy _258) nocollect   @166:11
+  _260 = gt copy _259, const i64 20   @166:17
+  branch copy _260, bb20, bb21   @166:5
 
 bb20:
-  _255 = add copy _4, const i64 1   @169:11
-  _4 = copy _255   @169:7
+  _261 = copy (*_14).5   @167:8
+  call avant_hash_clear(copy _261) nocollect   @167:10
+  goto bb21   @166:5
+
+bb21:
+  _262 = add copy _4, const i64 1   @169:11
+  _4 = copy _262   @169:7
   goto bb1   @133:3
 }
 

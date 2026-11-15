@@ -423,6 +423,7 @@ void *avant_array_pop_ptr(void *arr);
 void avant_array_push_i32(void *arr, int32_t v);
 void avant_array_push_i64(void *arr, int64_t v);
 void avant_array_clear(void *arr);
+void avant_array_zero_range(void *arr, avant_int lo, avant_int hi, uint64_t elem_size);
 void avant_array_reserve(void *arr, avant_int n, uint64_t elem_size, uint32_t buf_type_id);
 void *avant_array_pop_slot(void *arr, uint64_t elem_size);
 /* The freeze (Stage 29 W8Cc, O758, D389 (c)): an Array a running task

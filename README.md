@@ -1343,8 +1343,8 @@ There are no negative indexes and no slices of arrays yet.
 | `xs.size` | number of elements |
 | `xs[i]`, `xs[i] = v`, `xs.get(i)` | read (trapping), write, read (`T?`) |
 | `xs.push(v)` | append; the storage grows as needed |
-| `xs.pop` | remove and return the last element; traps on an empty array (`avant runtime: pop on an empty Array at main.av:7:10`) |
-| `xs.clear` | remove every element |
+| `xs.pop()` | remove and return the last element, as `T?`: `nil` on an empty array (`while v = stack.pop() { ... }`); `xs.pop().expect("why")` where the array cannot be empty. The removed element's place in the buffer is cleared, so the array no longer keeps it alive |
+| `xs.clear()` | remove every element |
 | `xs.reserve(n)` | make room for `n` elements ahead of time |
 | `xs.fill(v)` | set every element (integer and `Bool` arrays) |
 | `xs.each { \|x\| ... }`, `for x in xs` | walk the elements |
@@ -2102,7 +2102,7 @@ The line is `avant runtime: WHAT` and where. Whatever the program printed before
 
 | Where the trap is | The line names | Example |
 | --- | --- | --- |
-| at one operation: `pop` on an empty array, the number conversions, shifts, `buf[i] = n`, `Array(T).new` with a negative size, `main`'s exit status, a C string result that is NULL | that operation's position | `avant runtime: pop on an empty Array at main.av:7:10` |
+| at one operation: `expect` on `nil`, the number conversions, shifts, `buf[i] = n`, `Array(T).new` with a negative size, `main`'s exit status, a C string result that is NULL | that operation's position | `avant runtime: xs has an element at main.av:7:15` |
 | an index out of bounds, an integer overflow, a division by zero | the function, and where it starts | `avant runtime: integer overflow in twice (main.av:9:1)` |
 | inside a runtime function: a slice's bounds, `push_byte`, `chr`, `repeat_byte`, `sum`, a `Hash` counter, `fmt_float`'s precision, a parse base, `split` with an empty separator, `chars` on invalid UTF-8 | the operation and its values; no position yet | `avant runtime: slice 4..2 out of range (size 5)` |
 
@@ -2111,7 +2111,7 @@ The second row is deliberate: a position for each check would cost time in hot l
 | What traps | The form that does not |
 | --- | --- |
 | `xs[i]`, `s[i]`, `buf[i]` outside the bounds | `.get(i)`, which returns `T?` |
-| `xs.pop` on an empty array | test `xs.size` first |
+| `x.expect("why")` on `nil` | `if v = x`, `x ?? fallback`, `x?` |
 | `+`, `-`, `*`, `abs`, `sum`, `inc` overflowing | `&+`, `&-`, `&*` to wrap |
 | `/`, `%` by zero | test the divisor |
 | `to_i`, `to_i32`, `to_u32`, `to_u64` out of range | `wrap_i`, `wrap_i32`, `wrap_u32`, `wrap_u64` |
@@ -2763,16 +2763,16 @@ fn main {
 
 ### When a task traps
 
-A trap inside a spawned block (an index out of bounds, an overflow, a division by zero, a `pop` on an empty array, a change to a frozen array, …) ends that task, not the program. The trap is printed to standard error when it happens, as a trap that ends the program is (`avant runtime: index 7 out of bounds …`), whether or not the task is ever joined. The task's stack is dropped where it stands (no unwinding: nothing needs to run, the collector frees what the task left), and its `join` gives a `TaskError` whose `what` is the trap's text and `site` its `FILE:LINE:COL` (empty when the trap names its function instead); `"${e}"` prints both. The program and the pool go on.
+A trap inside a spawned block (an index out of bounds, an overflow, a division by zero, an `expect` on `nil`, a change to a frozen array, …) ends that task, not the program. The trap is printed to standard error when it happens, as a trap that ends the program is (`avant runtime: index 7 out of bounds …`), whether or not the task is ever joined. The task's stack is dropped where it stands (no unwinding: nothing needs to run, the collector frees what the task left), and its `join` gives a `TaskError` whose `what` is the trap's text and `site` its `FILE:LINE:COL` (empty when the trap names its function instead); `"${e}"` prints both. The program and the pool go on.
 
 ```avant
 fn main {
   h = spawn {
     xs: Array(Int) = []
-    xs.pop()
+    xs.pop().expect("xs has an element")
   }
   v = h.join() else e {
-    puts(e.what)    // => pop on an empty Array
+    puts(e.what)    // => xs has an element
     return
   }
   puts(v)
