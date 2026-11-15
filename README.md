@@ -1629,7 +1629,7 @@ A method is a `fn` inside the type's body. Inside it, `self` is the receiver.
   - a module name used as a qualifier (`util.twice(3)`) that is also a method of the receiver is an error that asks for `self.util` or another name for the method.
 - A method without arguments is called with parentheses, as every method: `q.sum()` (`q.sum` is refused; [Functions](#functions)).
 - Methods, like fields, are private to their module unless marked `pub` ([Visibility](#visibility)).
-- Methods are not values: `box.f()` is always a method call. To call a field that holds a function, parenthesize it: `(box.f)()`.
+- Methods are not values. `box.f(x)` calls the method `f`, or, when `f` is a field that holds a function, that function (`(box.f)(x)` says the same). A type cannot have a field and a method of one name (`Box.f is both a field and a method`, at the declaration), so the call has one meaning.
 
 ### External methods
 

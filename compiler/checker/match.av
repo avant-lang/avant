@@ -1628,6 +1628,25 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
   sig.ret
 }
 
+// `box.f(args)` where the field f holds a function: the call of that
+// function, as `(box.f)(args)` (a type has no method of a field's name:
+// the declaration of the second is refused).
+pub fn (checker_self: Checker) field_fn_call(expr: Expr, object: Ty, field_ty: Ty): Ty {
+  if recv = expr.receiver {
+    checker_self.check_field_visible(object, expr.callee, expr.loc)
+    fa = Expr.new(ex_field(), expr.loc)
+    fa.object = recv
+    fa.ident = expr.callee
+    fa.ty = field_ty
+    expr.indirect = true
+    expr.inner = fa
+    expr.receiver = nil
+    expr.callee = ""
+    return checker_self.check_indirect_call(expr, field_ty)
+  }
+  checker_self.t_int()
+}
+
 pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected: Ty?): Ty {
   owner = object.name
   if builtin_receiver_ok(object) {
@@ -1642,6 +1661,9 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
     }
   }
   if field_ty = field_owner.field_named(expr.callee) {
+    if field_ty.is_fn() && !object.is_ptr() {
+      return checker_self.field_fn_call(expr, object, field_ty)
+    }
     label = field_owner.name
     if label.size == 0 {
       label = shown

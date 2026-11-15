@@ -84,10 +84,23 @@ fn expect_cases(xs: Array(CCase)) {
   xs.push(refused("expect-not-optional", "fn main {\n  n = 3\n  puts(n.expect(\"x\"))\n}\n", "expect", "3:9"))
 }
 
+// `box.f(x)` calls the function a field holds; a type cannot have a
+// field and a method of one name, inherent or external.
+fn field_fn_cases(xs: Array(CCase)) {
+  ctr = "class Ctr {\n  pub n: Int = 0\n  pub on: fn(Int): Int = { |x: Int| x * 10 }\n  pub done: fn() = { || puts(\"done\") }\n}\nstruct S {\n  g: fn(String): String\n}\n"
+  xs.push(accepted("field-fn-call", ctr + "fn main {\n  c = Ctr.new()\n  c.n = c.on(4)\n  puts(c.n)\n  c.done()\n  c.on = { |x: Int| x - 1 }\n  puts(c.on(4))\n  puts((c.on)(5))\n  s = S { g: { |t: String| t + \"!\" } }\n  puts(s.g(\"hi\"))\n  cs = [c]\n  puts(cs[0].on(1))\n}\n", "40\ndone\n3\n4\nhi!\n0\n"))
+  xs.push(refused("field-fn-arity", ctr + "fn main {\n  c = Ctr.new()\n  puts(c.on(1, 2))\n}\n", "fn(Int): Int takes 1 argument, given 2", "11:9"))
+  xs.push(refused("field-fn-arg-type", ctr + "fn main {\n  c = Ctr.new()\n  puts(c.on(\"x\"))\n}\n", "argument 1 is String, expected Int", "11:13"))
+  xs.push(refused("field-not-fn", "class Box {\n  pub n: Int = 1\n}\nfn main {\n  puts(Box.new().n(2))\n}\n", "Box.n is a field, not a method", "5:17"))
+  xs.push(refused("field-and-method", "class Box {\n  pub f: fn(Int): Int = { |x: Int| x }\n\n  fn f(x: Int): Int {\n    x\n  }\n}\nfn main {\n  puts(Box.new().f(1))\n}\n", "Box.f is both a field and a method", "4:3"))
+  xs.push(refused("field-and-external-method", "struct P {\n  x: Int\n}\nfn (p: P) x: Int {\n  2\n}\nfn main {\n  puts(P { x: 1 }.x)\n}\n", "P.x is both a field and a method", "4:1"))
+}
+
 fn cases: Array(CCase) {
   xs: Array(CCase) = []
   paren_cases(xs)
   expect_cases(xs)
+  field_fn_cases(xs)
   xs
 }
 
