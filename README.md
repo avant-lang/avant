@@ -355,7 +355,7 @@ fn main {
 }
 ```
 
-- A declaration may state its type: `xs: Array(Int) = []`, `small: Int32 = 5`. It must when the value alone does not say it, as an empty `[]` does not.
+- A declaration may state its type: `xs: Array(Int) = []`, `small: Int32 = 5`. It must when the value alone does not say it, as an empty `[]` does not; an argument `[]` takes its parameter's type (`count([])` with `xs: Array(Int)`).
 - `name : Type` is accepted; the [formatter](#formatter) prints `name: Type`.
 - `_ = expr` computes a value and drops it on purpose; `_` binds nothing and cannot be read.
 - A module has no variables, on purpose: state lives in a function's locals and is passed in values, so no two tasks can share a global by accident. A value that never changes is a [constant](#constants); `count = 0` at module level is a compile error that says so.

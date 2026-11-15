@@ -4,7 +4,8 @@ import backends
 // Expressions: how tightly the operators bind (the bitwise operators
 // above the comparisons); the type an expression of literals takes from
 // its context; a Bool as a number; the final if/else of a lambda whose
-// result type is inferred; a statement with no effect. Each program is compiled in parallel; a refused
+// result type is inferred; a statement with no effect; `[]` as an
+// argument. Each program is compiled in parallel; a refused
 // one must leave no binary, say the expected words and point at the
 // expected line and column; an accepted one must print what it should.
 
@@ -126,6 +127,16 @@ fn effect_cases: Array(ECase) {
   xs
 }
 
+// `[]` as an argument takes its parameter's type: a function's, a
+// method's, an initialize's or a type-level function's.
+fn empty_array_cases: Array(ECase) {
+  xs: Array(ECase) = []
+  xs.push(accepted("empty-arg", "class Node {\n  pub kids: Array(Node)\n  fn initialize(kids: Array(Node)) {\n    self.kids = kids\n  }\n  fn add(more: Array(Int)): Int {\n    more.size\n  }\n  fn self.leaf(tags: Array(String)): Node {\n    Node.new([])\n  }\n}\nfn count(xs: Array(Int)): Int {\n  xs.size\n}\nfn main {\n  n = Node.new([])\n  puts(n.kids.size)\n  puts(count([]))\n  puts(n.add([]))\n  puts(Node.leaf([]).kids.size)\n  puts(Node.new([n]).kids.size)\n}\n", "0\n0\n0\n0\n1\n"))
+  xs.push(refused("empty-arg-generic", "fn first(xs: Array(T)): Int {\n  xs.size\n}\nfn main {\n  puts(first([]))\n}\n", "cannot infer type argument", "5:8"))
+  xs.push(refused("empty-arg-not-array", "fn count(n: Int): Int {\n  n\n}\nfn main {\n  puts(count([]))\n}\n", "empty array needs a type", "5:14"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(ECase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -176,6 +187,9 @@ fn test_main(c: Checks) {
       all.push(x)
     }
     for x in effect_cases() {
+      all.push(x)
+    }
+    for x in empty_array_cases() {
       all.push(x)
     }
     run_cases(c, compiler, dir, all)
