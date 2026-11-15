@@ -95,8 +95,23 @@
 #                   tmpfs, as the real /tmp is on this machine, so the
 #                   suites' files stay in memory as before and nothing is
 #                   left to remove. A machine that cannot make the
-#                   namespace fails the gate unless 0 is given: then the
-#                   real /tmp is snapshotted, as before.
+#                   namespace (Ubuntu 24.04 restricts unprivileged user
+#                   namespaces through AppArmor by default; GitHub's
+#                   ubuntu-24.04 runners refuse the gate's) runs
+#                   the gate against the real /tmp, snapshotted, as 0
+#                   does; the summary's "private /tmp" line says which
+#                   mode ran and why, and private-tmp.log keeps the
+#                   refusal. The snapshot proves as much as it can there:
+#                   an entry the gate leaves in /tmp, or removes from it,
+#                   is litter; it cannot tell another process's entry
+#                   from the gate's, so on a machine where other work
+#                   uses /tmp meanwhile a red litter line may not be the
+#                   gate's (the namespace is what removes that doubt).
+#                   require: the namespace or GATE FAIL (no fallback).
+#   GATE_SNAP_TMP   the directory snapshotted in place of /tmp when the
+#                   real /tmp is (0, or the fallback); default /tmp. For
+#                   tests/tools/gate-private-tmp.sh, whose stub gate must
+#                   not see the suite's other files come and go in /tmp.
 #   GATE_EMIT_BOUND seconds (default 20): the summary reports the C' (c-llvm)
 #                   __emit-ll time of compiler/main.av within or OVER it;
 #                   report only, never a failure.
@@ -134,17 +149,13 @@ mkdir -p "$out" || exit 2
 # inside the namespace. GATE_IN_PRIVATE_TMP marks that run and is
 # removed at once, so nothing the gate starts inherits it (a gate a test
 # runs makes its own).
+snap_tmp=/tmp
 case "${GATE_PRIVATE_TMP:-1}" in
-  0) private_tmp="off (GATE_PRIVATE_TMP=0): the real /tmp is snapshotted" ;;
-  1)
+  0) private_tmp="off (GATE_PRIVATE_TMP=0): the real /tmp is snapshotted"; snap_tmp=${GATE_SNAP_TMP:-/tmp} ;;
+  1|require)
     if [ "${GATE_IN_PRIVATE_TMP:-}" = 1 ]; then
       private_tmp="a tmpfs in a mount namespace of its own"
-    else
-      unshare --user --map-current-user --mount --keep-caps true < /dev/null > "$out/private-tmp.log" 2>&1 || {
-        echo "gate: cannot make a private /tmp ($(tail -1 "$out/private-tmp.log")); GATE_PRIVATE_TMP=0 runs against the real /tmp" | tee "$out/summary.txt"
-        echo "GATE FAIL: no private /tmp" | tee -a "$out/summary.txt"
-        exit 1
-      }
+    elif unshare --user --map-current-user --mount --keep-caps sh -c 'mount -t tmpfs tmpfs /tmp' < /dev/null > "$out/private-tmp.log" 2>&1; then
       # Fd 9 keeps the real /tmp reachable (/proc/self/fd/9) after the
       # tmpfs covers it, to bind the checkout and GATE_OUT back when they
       # lie under it.
@@ -159,11 +170,20 @@ case "${GATE_PRIVATE_TMP:-1}" in
           esac
         done
         exec 9<&-
-        exec setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all env -u TMPDIR GATE_IN_PRIVATE_TMP=1 GATE_OUT="$out" GATE_SEED="$seed" sh "$root/tools/gate.sh" "$@"
+        exec setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all env -u TMPDIR -u GATE_SNAP_TMP GATE_IN_PRIVATE_TMP=1 GATE_OUT="$out" GATE_SEED="$seed" sh "$root/tools/gate.sh" "$@"
       ' gate "$root" "$out" "$seed" "$@" < /dev/null
+    else
+      why=$(tail -1 "$out/private-tmp.log")
+      if [ "${GATE_PRIVATE_TMP:-1}" = require ]; then
+        echo "gate: cannot make a private /tmp ($why); GATE_PRIVATE_TMP=require stops here" | tee "$out/summary.txt"
+        echo "GATE FAIL: no private /tmp" | tee -a "$out/summary.txt"
+        exit 1
+      fi
+      private_tmp="none, this machine refuses the namespace ($why): the real /tmp is snapshotted (fallback)"
+      snap_tmp=${GATE_SNAP_TMP:-/tmp}
     fi
     ;;
-  *) echo "gate: GATE_PRIVATE_TMP must be 0 or 1" >&2; exit 2 ;;
+  *) echo "gate: GATE_PRIVATE_TMP must be 0, 1 or require" >&2; exit 2 ;;
 esac
 unset GATE_IN_PRIVATE_TMP
 REUSE=${GATE_REUSE_C:-}
@@ -190,7 +210,7 @@ finish() {
 # harness's own claude-* directory) and PREFIX.repo (every repository path,
 # ignored files included, except .git/ and results/).
 snap() {
-  find /tmp -mindepth 1 -maxdepth 1 ! -name 'claude-*' | LC_ALL=C sort > "$1.tmp"
+  find "$snap_tmp" -mindepth 1 -maxdepth 1 ! -name 'claude-*' | LC_ALL=C sort > "$1.tmp"
   find . -path ./.git -prune -o -path ./results -prune -o -print | LC_ALL=C sort > "$1.repo"
 }
 
