@@ -3184,7 +3184,7 @@ The prelude is the set of names every program can use without an import. The typ
 | Area | Names |
 | --- | --- |
 | Output and input | `puts`, `print`, `eputs`, `eprint`, `puts_u`, `exit`, `read_line` |
-| Files and directories | `file_read`, `file_write`, `file_open`, `file_exists`, `dir_list` |
+| Files and directories | `file_read`, `file_write`, `file_open`, `file_exists`, `file_size`, `file_delete`, `dir_list`, `dir_walk`, `dir_exists`, `dir_make` |
 | Processes and environment | `argv`, `env_get`, `process_run`, `process_run_out` |
 | Time | `now_ms`, `now_us` |
 | Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
@@ -3251,8 +3251,13 @@ Every call returns its result or an error value that says what failed.
 | `file_read(path)` | `String \| IoError`: the whole file |
 | `file_write(path, body)` | `Int \| IoError`: the bytes written; the file is created or replaced |
 | `file_open(path)` | `FileReader \| IoError`: the file, to read line by line |
+| `file_size(path)` | `Int \| IoError`: its size in bytes |
+| `file_delete(path)` | `IoError?`: `nil` when the file is removed (a directory is an error) |
 | `file_exists(path)` | `Bool`: a file or a directory is there |
 | `dir_list(path)` | `Array(String) \| IoError`: the names, sorted, without `.` and `..` |
+| `dir_walk(path)` | `Array(String) \| IoError`: every name below it, as a path relative to it |
+| `dir_make(path)` | `IoError?`: `nil` when the directory and its missing parents are made; one that is there already is fine |
+| `dir_exists(path)` | `Bool`: a directory is there |
 
 ```avant
 fn copy(from: String, to: String): Int | IoError {
@@ -3293,7 +3298,27 @@ fn main {
 
 `file_read` returns the whole file; `file_open` reads it line by line without holding it all.
 
-- An `IoError` has `op` (`"read"`, `"write"`, `"list"` or `"open"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. Dropping one is a compile error, like any [error](#errors-cannot-be-dropped).
+The file system's basics make a tool's directory walk and its housekeeping:
+
+```avant
+fn main {
+  _ = dir_make("logs/old")
+  _ = file_write("logs/old/a.txt", "one\n")
+  names = dir_walk("logs") ?? []
+  puts(names.size)                                // => 2
+  puts(names[1])                                  // => old/a.txt
+  puts(dir_exists("logs/old"))                    // => true
+  puts(file_size("logs/old/a.txt") ?? -1)         // => 4
+  if e = file_delete("logs") {
+    puts(e.message)                               // => cannot delete logs: Is a directory
+  }
+  _ = file_delete("logs/old/a.txt")
+  puts(file_exists("logs/old/a.txt"))             // => false
+}
+```
+
+- `dir_walk` lists a directory before what it holds and the names of each directory sorted; a link to a directory is listed and not followed.
+- An `IoError` has `op` (`"read"`, `"write"`, `"list"`, `"open"`, `"stat"`, `"delete"` or `"make"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. Dropping one is a compile error, like any [error](#errors-cannot-be-dropped).
 - The names `IoError`, `ProcessError` and `FileReader` are taken only in a program that calls these functions.
 
 ### Processes and environment

@@ -1537,3 +1537,11 @@ char *avant_io_dup(const char *s, size_t n) {
 FILE *avant_io_open_read(const char *path) {
   return open_read(path);
 }
+
+int avant_io_list_names(const char *path, char ***out, int32_t *np) {
+  return list_names(path, out, np);
+}
+
+void *avant_io_names_array(char **names, int32_t n) {
+  return names_array(names, n);
+}

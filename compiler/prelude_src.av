@@ -13,7 +13,7 @@ import token
 // The names that bring the module in: its functions. A program that
 // calls none of them may declare its own IoError or ProcessError.
 pub fn prelude_names: Array(String) {
-  ["file_read", "file_write", "dir_list", "process_run", "process_run_out", "read_line", "file_open"]
+  ["file_read", "file_write", "dir_list", "process_run", "process_run_out", "read_line", "file_open", "dir_exists", "dir_make", "dir_walk", "file_delete", "file_size"]
 }
 
 // The functions of the module's second part (prelude_more_source), which
@@ -21,7 +21,7 @@ pub fn prelude_names: Array(String) {
 // only the first part's functions compiles exactly the code it did
 // before the second part existed.
 pub fn prelude_more_names: Array(String) {
-  ["read_line", "file_open"]
+  ["read_line", "file_open", "dir_exists", "dir_make", "dir_walk", "file_delete", "file_size"]
 }
 
 // Whether a module's tokens name one of the prelude module's names.
@@ -67,7 +67,7 @@ pub fn prelude_source: String {
   "}",
   "",
   "// A file or directory operation that failed: op is \"read\", \"write\",",
-  "// \"list\" or \"open\", errno the OS error number.",
+  "// \"list\", \"open\", \"stat\", \"delete\" or \"make\", errno the OS error number.",
   "pub class IoError: Error {",
   "  pub op: String",
   "  pub path: String",
@@ -167,7 +167,8 @@ pub fn prelude_source: String {
 }
 
 // The module's second part: standard input and files read line by
-// line, after the first part (its error types).
+// line and the file system's basics, after the first part (its error
+// types).
 pub fn prelude_more_source: String {
   b = buf_new()
   lines = [
@@ -175,6 +176,11 @@ pub fn prelude_more_source: String {
   "  fun avant_sys_read_line(handle: Int): String?",
   "  fun avant_sys_open(path: String): Int",
   "  fun avant_sys_close(handle: Int)",
+  "  fun avant_sys_is_dir(path: String): Int",
+  "  fun avant_sys_make_dir(path: String): Int",
+  "  fun avant_sys_delete(path: String): Int",
+  "  fun avant_sys_size(path: String): Int",
+  "  fun avant_sys_walk(path: String): Array(String)?",
   "  fun avant_sys_more_errno: Int",
   "}",
   "",
@@ -233,6 +239,47 @@ pub fn prelude_more_source: String {
   "    return IoError.new(\"open\", path, avant_sys_more.avant_sys_more_errno())",
   "  }",
   "  FileReader.new(path, h)",
+  "}",
+  "",
+  "// Whether path names a directory.",
+  "pub fn dir_exists(path: String): Bool {",
+  "  avant_sys_more.avant_sys_is_dir(path) == 1",
+  "}",
+  "",
+  "// Makes the directory and its missing parents; one that exists is fine.",
+  "// nil on success, else what failed.",
+  "pub fn dir_make(path: String): IoError? {",
+  "  if avant_sys_more.avant_sys_make_dir(path) != 0 {",
+  "    return IoError.new(\"make\", path, avant_sys_more.avant_sys_more_errno())",
+  "  }",
+  "  nil",
+  "}",
+  "",
+  "// Removes a file (not a directory): nil on success, else what failed.",
+  "pub fn file_delete(path: String): IoError? {",
+  "  if avant_sys_more.avant_sys_delete(path) != 0 {",
+  "    return IoError.new(\"delete\", path, avant_sys_more.avant_sys_more_errno())",
+  "  }",
+  "  nil",
+  "}",
+  "",
+  "// The size in bytes.",
+  "pub fn file_size(path: String): Int | IoError {",
+  "  n = avant_sys_more.avant_sys_size(path)",
+  "  if n < 0 {",
+  "    return IoError.new(\"stat\", path, avant_sys_more.avant_sys_more_errno())",
+  "  }",
+  "  n",
+  "}",
+  "",
+  "// Every name below the directory, as a path relative to it: a directory",
+  "// before what it holds, each directory's names sorted; links are not",
+  "// followed.",
+  "pub fn dir_walk(path: String): Array(String) | IoError {",
+  "  if names = avant_sys_more.avant_sys_walk(path) {",
+  "    return names",
+  "  }",
+  "  IoError.new(\"list\", path, avant_sys_more.avant_sys_more_errno())",
   "}",
 
   ]
