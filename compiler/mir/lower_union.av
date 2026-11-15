@@ -33,12 +33,12 @@ import mir.lower_hash
 // The payload field of member index i of u (type.av payload_index: 1 +
 // the non-nil members before it), or -1 for nil.
 pub fn mir_payload_field(u: Ty, i: Int): Int {
-  if u.members[i].is_nil {
+  if u.members[i].no_payload {
     return -1
   }
   n = 1
   for j in 0..i {
-    if !u.members[j].is_nil {
+    if !u.members[j].no_payload {
       n += 1
     }
   }
@@ -79,15 +79,16 @@ pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOp
   }
   if r = mir_opt_word(want) {
     // An optional reference: the reference itself, or null;
-    // an optional function value (mir_opt_fn) the same.
-    if got.is_nil {
+    // an optional function value (mir_opt_fn) the same. `Void | E` is
+    // one reference the same way, Void its null.
+    if got.no_payload {
       return lw.opt_nil(wty)
     }
     return o
   }
   l = b.types.layout_of(wty)
   lw.at(loc)
-  if got.is_nil {
+  if got.no_payload {
     return lw.tmp(wty, b.rv_union_nil(l, want.tag_of(got)))
   }
   lw.tmp(wty, b.rv_union(l, want.tag_of(got), o))
@@ -261,7 +262,7 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
     b.at(arms[i])
     m = from.members[members[i]]
     k = to.tag_of(m)
-    if m.is_nil {
+    if m.no_payload {
       b.assign(b.pl(d), b.rv_union_nil(tl, k))
     } else {
       p = lw.tmp(lw.ty_at(m, loc, "a member"), b.rv_use(b.copy(b.field(b.pl(src), mir_payload_field(from, members[i])))))
@@ -288,8 +289,8 @@ fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location)
     bval = b.block
     b.branch(lw.ref_is_null(src, true), bnil, bval)
     b.at(bnil)
-    if to.includes_nil {
-      b.assign(b.pl(d), b.rv_union_nil(tl, to.tag_of(ty_nil())))
+    if em = from.empty_member, to.includes_member(em) {
+      b.assign(b.pl(d), b.rv_union_nil(tl, to.tag_of(em)))
     }
     b.goto(join)
     b.at(bval)
@@ -353,7 +354,7 @@ pub fn (lw: MirLower) opt_nil(ty: Int): MOperand {
 // when success is a union of several members, nothing for Nil.
 pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOperand {
   b = lw.lw_b
-  if success.is_nil {
+  if success.no_payload {
     return b.c_i32(0)
   }
   if r = mir_opt_word(uty) {
@@ -372,7 +373,7 @@ pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOp
 pub fn (lw: MirLower) tag_is(src: Int, uty: Ty, k: Int, eq: Bool): MOperand {
   b = lw.lw_b
   if r = mir_opt_word(uty) {
-    return lw.ref_is_null(src, eq == uty.members[k].is_nil)
+    return lw.ref_is_null(src, eq == uty.members[k].no_payload)
   }
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
   op = mop_eq()
@@ -464,7 +465,10 @@ pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: In
   }
   lw.at(e.loc)
   if r = mir_opt_word(uty) {
-    kn = uty.tag_of(ty_nil())
+    kn = 0
+    if em = uty.empty_member {
+      kn = uty.tag_of(em)
+    }
     kr = uty.tag_of(r)
     tn = entry[kn]
     tr = entry[kr]
@@ -535,7 +539,12 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
     }
     lw.at(loc)
     src = lw.hold(u, lty)
-    d = b.temp(rty)
+    // A `Void | E` on the left: the success is nothing, so no value.
+    void = result.is_void
+    d = -1
+    if !void {
+      d = b.temp(rty)
+    }
     fails = ty_failures(uty)
     bnil = b.block
     bval = b.block
@@ -569,10 +578,17 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
         return b.c_i32(0)
       }
       lw.at(loc)
-      b.assign(b.pl(d), b.rv_use(v))
+      if !void {
+        b.assign(b.pl(d), b.rv_use(v))
+      }
       b.goto(join)
     }
     b.at(bval)
+    if void {
+      b.goto(join)
+      b.at(join)
+      return b.c_i32(0)
+    }
     if result.same_as(uty) {
       b.assign(b.pl(d), b.rv_use(b.copy_local(src)))
     } else {

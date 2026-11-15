@@ -2734,7 +2734,7 @@ fn main {
 
 What the task shared is left safe:
 
-- A `Mutex` the task held in `with` when it trapped is **poisoned**: its value may be half-changed, so every later `with` on it stops with `Mutex.with on a poisoned mutex: …` (in a task, that ends the task in turn; on the main thread, the program). `m.poisoned` tells, and `m.try_with { |x| … }` is the form for code that recovers: it gives the block's value, or a `MutexError` without running the block, so its type is `T | MutexError` (its block ends in a value).
+- A `Mutex` the task held in `with` when it trapped is **poisoned**: its value may be half-changed, so every later `with` on it stops with `Mutex.with on a poisoned mutex: …` (in a task, that ends the task in turn; on the main thread, the program). `m.poisoned` tells, and `m.try_with { |x| … }` is the form for code that recovers: it gives the block's value, or a `MutexError` without running the block, so its type is `T | MutexError` (`Void | MutexError` when the block ends without a value).
 - Each `Channel` the block captured is closed, so a task waiting in `recv` or `send` on it is not left waiting for ever.
 - Each `Array` the block captured is thawed, as at the task's normal end.
 

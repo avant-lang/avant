@@ -2110,6 +2110,11 @@ pub class Parser {
       s.op = op.kind
       return s
     }
+    // `f() else e { ... }`: the else guard of a call whose success is
+    // nothing (`Void | E`), the guard of an assignment without a name.
+    if self.current.kind == tk_else() {
+      return stmt_expr(expr2.loc, self.parse_else_guard(expr2))
+    }
     stmt_expr(expr2.loc, expr2)
   }
 
@@ -2169,7 +2174,16 @@ pub class Parser {
     if expr.kind != ex_call() && expr.kind != ex_field() && expr.kind != ex_array_new() && !bare_fn {
       return expr
     }
-    attach_block(expr, self.parse_trailing_block)
+    got = attach_block(expr, self.parse_trailing_block)
+    // A postfix `?` right after the block passes the call's failure up
+    // (`m.try_with { |n| n += 1 }?`), as after any call.
+    if self.current.kind == tk_question() {
+      at = self.bump.loc
+      tr = Expr.new(ex_try(), at)
+      tr.inner = got
+      return tr
+    }
+    got
   }
 
   pub fn if_assign_ahead: Bool {

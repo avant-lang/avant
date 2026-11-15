@@ -134,6 +134,15 @@ fn voidtail_cases: Array(FCase) {
 // A case's source may hold more modules: after a line `//== name.av`
 // the lines up to the next such line are the module name.av, written
 // beside the program (its own lines are the ones before the first).
+// A try_with whose block ends without a value gives Void | MutexError:
+// a statement reads it with `else e`, `?` passes the error up.
+fn void_result_cases: Array(FCase) {
+  xs: Array(FCase) = []
+  // try_with whose block ends without a value: Void | MutexError.
+  xs.push(accepted("void-try-with", "import std.sync\n\nfn bump(m: Mutex(Int)): Int | MutexError {\n  m.try_with { |n| n += 1 }?\n  m.try_with { |n| n }?\n}\n\nfn main {\n  m = Mutex(Int).new(1)\n  m.try_with { |n| n += 2 } else e {\n    puts(\"never: \${e}\")\n    return\n  }\n  _ = m.try_with { |n| n += 3 }\n  puts(bump(m) ?? -1)\n}\n", "7\n"))
+  xs
+}
+
 fn write_sources(dir: String, src: String, text: String) {
   parts = text.split("//== ")
   _ = file_write(src, parts[0])
@@ -211,6 +220,9 @@ fn test_main(c: Checks) {
     }
     for f_ruling_cases in ruling_cases() {
       all.push(f_ruling_cases)
+    }
+    for f_void in void_result_cases() {
+      all.push(f_void)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

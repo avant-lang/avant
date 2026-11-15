@@ -870,6 +870,10 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   r = zero
   if v = got, !vt.is_void {
     r = lw.tmp(lw.ety(e), b.rv_use(v))
+  } else if vt.is_union && vt.includes_void {
+    // A `try_with` whose block ends without a value: its success is
+    // the Void member of `Void | MutexError`.
+    r = lw.coerce(zero, ty_void(), vt, e.loc)
   }
   b.call(-1, "avant_gate_unlock", lw.gate_args(h, gi))
   if out >= 0 {

@@ -1047,6 +1047,13 @@ pub class Checker {
         if !self.has_err && (!at_tail || expected.is_void) {
           refuse_dropped_error(got, stmt.loc)
         }
+        if !self.has_err && !got.is_void && expr.kind == ex_binary() && expr.op == tk_question_question() {
+          if r = expr.right, expr_is_else_guard(r) {
+            // `f() else e { ... }` as a statement is for a success that is
+            // nothing (Void | E); a value is named (`v = f() else e`).
+            fail(stmt.loc, "an else guard without a name to assign is for a result whose success is nothing (Void | E); this success is ${got.show}: write `v = ... else ${r.ident} { ... }`, or `_ = ... else ${r.ident} { ... }` to drop it")
+          }
+        }
         if at_tail {
           if expected.is_void {
             // The uniform void tail (D300, D18 amended; Stage 29 W4a): a
@@ -1322,6 +1329,10 @@ pub class Checker {
           can = true
         }
       }
+    }
+    if can && got.is_union && got.includes_void {
+      fail(loc, "this statement drops a value that can be an error (${got.show}); read the error with `else e { ... }`, pass it up with ?, or discard it on purpose with _ = ...")
+      return
     }
     if can {
       fail(loc, "this statement drops a value that can be an error (${got.show}); handle it (if-assign or ??), pass it up with ?, or discard it on purpose with _ = ...")
@@ -4960,10 +4971,6 @@ pub class Checker {
         // mutex is poisoned (a task trapped holding it): T | MutexError.
         got = check_mutex_with(expr, object)
         if self.has_err {
-          return got
-        }
-        if got.is_void {
-          fail(expr.loc, "Mutex.try_with's block must end in a value (its result is the value or a MutexError); to test a mutex before a with that gives none, read m.poisoned")
           return got
         }
         if me = self.resolver.get_named_in("std.sync", "MutexError") {

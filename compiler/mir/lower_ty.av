@@ -81,9 +81,18 @@ pub fn mir_enum_ty(t: Ty): Int {
 }
 
 // An optional reference is its reference's one pointer, `nil` the null
-// pointer (type.av ty_opt_ref); every other union keeps the
-// tag-and-payloads layout (2.4).
+// pointer (type.av ty_opt_ref); so is `Void | R` with R one reference
+// (a class marked Error), `Void` the null pointer. Every other union
+// keeps the tag-and-payloads layout (2.4).
 pub fn mir_opt_ref(t: Ty): Ty? {
+  if t.is_union && t.members.size == 2 && t.includes_void {
+    for m in t.members {
+      if !m.is_void && (m.is_class || m.is_string || m.is_bytes || m.is_array || m.is_hash || m.is_buf || m.is_join) {
+        return m
+      }
+    }
+    return nil
+  }
   ty_opt_ref(t)
 }
 

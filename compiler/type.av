@@ -140,6 +140,9 @@ pub class Ty {
   pub fn is_class: Bool { self.kind == tyk_class() }
   pub fn is_ptr: Bool { self.kind == tyk_ptr() }
   pub fn is_nil: Bool { self.kind == tyk_nil() }
+  // A union member that carries nothing: `Nil`, or the `Void` of a
+  // failure-or-nothing result (`Void | E`). It takes a tag and no payload.
+  pub fn no_payload: Bool { self.kind == tyk_nil() || self.kind == tyk_void() }
   pub fn is_union: Bool { self.kind == tyk_union() }
   pub fn is_hash: Bool { self.kind == tyk_hash() }
   pub fn is_buf: Bool { self.kind == tyk_buf() }
@@ -358,6 +361,25 @@ pub class Ty {
     false
   }
 
+  pub fn includes_void: Bool {
+    for mem in self.members {
+      if mem.is_void {
+        return true
+      }
+    }
+    false
+  }
+
+  // The member that carries nothing (`Nil` or `Void`), or nil.
+  pub fn empty_member: Ty? {
+    for mem in self.members {
+      if mem.no_payload {
+        return mem
+      }
+    }
+    nil
+  }
+
   pub fn tag_of(member: Ty): Int {
     for i in 0..self.members.size {
       if self.members[i].same_as(member) {
@@ -370,7 +392,7 @@ pub class Ty {
   pub fn payload_index(member: Ty): Int {
     n = 0
     for m in self.members {
-      if !m.is_nil {
+      if !m.no_payload {
         if m.same_as(member) {
           return n + 1
         }
@@ -383,7 +405,7 @@ pub class Ty {
   pub fn payload_members: Array(Ty) {
     kept: Array(Ty) = []
     for m in self.members {
-      if !m.is_nil {
+      if !m.no_payload {
         kept.push(m)
       }
     }
@@ -927,6 +949,10 @@ pub fn ty_flatten_into(ty: Ty, into: Array(Ty)) {
 pub fn ty_member_before(a: Ty, b: Ty): Bool {
   if a.is_nil || b.is_nil {
     return a.is_nil && !b.is_nil
+  }
+  // `Void` next, for the same reason: a zeroed `Void | E` is the success.
+  if a.is_void || b.is_void {
+    return a.is_void && !b.is_void
   }
   sa = a.show
   sb = b.show
