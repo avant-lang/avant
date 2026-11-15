@@ -1,11 +1,11 @@
-// The metamorphic probe matrix (Valk stage VALK-TM, L4; learned from
-// Valk's tests/probe/gen.py). Each static rule of the checker comes as a
-// pair: an unsafe program (the compiler must refuse it, with the rule's
-// words) and its safe twin (the compiler must accept it). The marked
-// statement or expression of both is rewritten under every syntactic
-// wrapper below, each program is checked by `avant dump` (the whole front
-// end, the lowering and the MIR verifier; no link), and each verdict is
-// one row of a table:
+// The metamorphic probe matrix (learned from
+// Valk's tests/probe/gen.py). Each static rule of the checker comes
+// as a pair: an unsafe program (the compiler must refuse it, with
+// the rule's words) and its safe twin (the compiler must accept
+// it). The marked statement or expression of both is rewritten
+// under every syntactic wrapper below, each program is checked by
+// `avant dump` (the whole front end, the lowering and the MIR
+// verifier; no link), and each verdict is one row of a table:
 //
 //   AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm run tests/probe_matrix.av
 //
@@ -15,8 +15,8 @@
 // table row by row. A row's class is `ok` (the verdict the pair asks
 // for), `hole` (an unsafe program accepted), `refused` (a safe program
 // rejected) or `other` (an unsafe program rejected for another reason
-// than the rule's). A row that is not `ok` is a finding of the record
-// that blessed it.
+// than the rule's). A row that is not `ok` is a finding, to be reported
+// by whoever blessed it.
 //
 // A new rule joins by adding one `rule(...)` below: its name, its kind
 // (`stmt`: the marked text is a statement; `expr`: an expression of the
@@ -63,12 +63,12 @@ fn prelude_decls: String {
   "class ParseError: Error {\n  message: String\n\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\n\nfn parse_age(s: String): Int | ParseError {\n  n = s.to_i() ?? return ParseError.new(\"not a number: \${s}\")\n  n\n}\n\nfn probe_cond: Bool {\n  argv().size > 0\n}\n\nfn probe_k: Int {\n  argv().size\n}\n\nfn probe_maybe: Int? {\n  if argv().size > 0 {\n    return 1\n  }\n  nil\n}\n"
 }
 
-// The rules the README states that one program pair can show. Left out
-// for now: the never-read locals and the walk's mutation rules (W6, W8:
-// not built yet).
+// The rules the README states that one program pair
+// can show. Left out for now: the never-read locals
+// and the walk's mutation rules (not built yet).
 //
 // A rule whose programs need the task runtime (`spawn`, `.parallel`,
-// `std.sync`) is written as any other (O641, Stage 29 W5d2): its site
+// `std.sync`) is written as any other: its site
 // declares what the task needs (the import, the class, the values it
 // captures), and its marked text starts the task and joins it (a `spawn`
 // block ends with an Int, its handle is joined), so each wrapper wraps the
@@ -85,7 +85,7 @@ fn prelude_decls: String {
 // method call's argument, an interpolation, a `for` body, a builtin's
 // block and the fallback of `??`; a statement in an arm of a `switch`
 // over a union's members and an expression as such a switch's value
-// (Stage 29 W5a2). Left out: `?? return` (it ends the function and wraps
+// . Left out: `?? return` (it ends the function and wraps
 // no expression of its own; the fallback row covers the operand of
 // `??`) and a bare block (the language has none).
 fn rules: Array(PRule) {
@@ -105,18 +105,18 @@ fn rules: Array(PRule) {
   // README "Visibility": a field without pub is private to its module.
   xs.push(rule("private-field", "expr", "Int", "import probe_mod\n\nfn main {\n  pb = PBox.new()\n@\n}\n", "", "pb.secret", "pb.open", "is private to module probe_mod"))
   // README "Numbers": values of different number types do not mix.
-  // README "Channel and Mutex" (O541, Stage 29 W8Ca): inside `with` the
+  // README "Channel and Mutex": inside `with` the
   // guarded value is never an argument, a stored value or a captured name.
   xs.push(rule("mutex-guard-escape", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  m = Mutex(PBox).new(PBox.new())\n  keep: Array(PBox) = []\n  m.with { |b|\n@\n  }\n  puts(keep.size)\n}\n", "", "keep.push(b)", "keep.push(PBox.new())", "Mutex.with: "))
-  // README "Channel and Mutex" (O687, D371, Stage 29 W8Cb): Mutex(T).new
+  // README "Channel and Mutex": Mutex(T).new
   // consumes the name it is given, and nothing from outside is stored
   // into the guarded value.
   xs.push(rule("mutex-new-consumed", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  b = PBox.new()\n  m = Mutex(PBox).new(b)\n@\n}\n", "", "b.n += 1", "m.with { |x| x.n += 1 }", "was consumed by Mutex(PBox).new"))
   xs.push(rule("mutex-with-inward", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n  pub child: PBox? = nil\n}\n\nfn main {\n  m = Mutex(PBox).new(PBox.new())\n  mine = PBox.new()\n@\n  puts(mine.n)\n}\n", "", "m.with { |b| b.child = mine }", "m.with { |b| b.child = PBox.new() }", "comes from outside it"))
-  // README "Channel and Mutex" (O709, D389, Stage 29 W8Cc): no method of
+  // README "Channel and Mutex": no method of
   // a class a Mutex guards keeps a reference from outside.
   xs.push(rule("mutex-guarded-method", "stmt", "", "import std.sync\n\nclass PBad {\n  pub child: PBad? = nil\n\n  fn adopt(x: PBad) {\n    self.child = x\n  }\n}\n\nclass PGood {\n  pub child: PGood? = nil\n\n  fn grow {\n    self.child = PGood.new()\n  }\n}\n\nfn main {\n@\n}\n", "", "pm = Mutex(PBad).new(PBad.new())\npm.with { |b| b.child = nil }", "pm = Mutex(PGood).new(PGood.new())\npm.with { |b| b.grow() }", "PBad.adopt stores a parameter"))
-  // README "Spawn" and "What may cross a task" (O641, Stage 29 W5d2): a
+  // README "Spawn" and "What may cross a task": a
   // task captures by copy what may cross, never assigns a captured name,
   // and a captured Array is read-only on both sides until the join.
   tsite = "class PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  pb = PBox.new()\n@\n  puts(pb.n)\n}\n"
@@ -124,11 +124,11 @@ fn rules: Array(PRule) {
   xs.push(rule("spawn-assign-capture", "stmt", "", tsite, "", "pk = 1\nph = spawn {\n  pk = 2\n  pk\n}\nputs(ph.join() ?? -1)", "pk = 1\nph = spawn {\n  pj = 2\n  pj + pk\n}\nputs(ph.join() ?? -1)", "spawn cannot assign to pk"))
   xs.push(rule("spawn-array-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn {\n  pxs.push(3)\n  pxs.size\n}\nputs(ph.join() ?? -1)", "pxs = [1, 2]\nph = spawn {\n  pxs.size\n}\nputs(ph.join() ?? -1)", "spawn cannot mutate captured Array pxs"))
   xs.push(rule("spawn-sender-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn { pxs.size }\npxs.push(3)\nputs(ph.join() ?? -1)", "pxs = [1, 2]\nph = spawn { pxs.size }\nputs(ph.join() ?? -1)\npxs.push(3)", "cannot mutate pxs while a spawn using it is running"))
-  // A zero-argument mutator written without parentheses is a mutation (Stage 29 W-FIX1j, F1).
+  // A zero-argument mutator written without parentheses is a mutation.
   xs.push(rule("spawn-sender-mutate-bare", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn { pxs.size }\npxs.clear()\nputs(ph.join() ?? -1)", "pxs = [1, 2]\nph = spawn { pxs.size }\nputs(ph.join() ?? -1)\npxs.clear()", "cannot mutate pxs while a spawn using it is running"))
   xs.push(rule("spawn-array-mutate-bare", "stmt", "", tsite, "", "pxs = [2, 1]\nph = spawn {\n  pxs.sort()\n  pxs.size\n}\nputs(ph.join() ?? -1)", "pxs = [2, 1]\nph = spawn {\n  pys = pxs.sorted()\n  pys.size\n}\nputs(ph.join() ?? -1)", "spawn cannot mutate captured Array pxs"))
   // A captured Array is shared with the task, so its elements cross in
-  // turn (O712, Stage 29 W8Cc): an Array of a class is refused, an Array
+  // turn: an Array of a class is refused, an Array
   // of Mutexes is not.
   xs.push(rule("spawn-capture-array-class", "stmt", "", tsite, "", "pxs = [pb]\nph = spawn {\n  pc = pxs[0]\n  pc.n += 1\n  0\n}\nputs(ph.join() ?? -1)", "pxs = [pb.n]\nph = spawn {\n  pc = pxs[0]\n  pc + 1\n}\nputs(ph.join() ?? -1)", "its elements (PBox) cannot cross to another task"))
   // README "Parallel": its block captures by the same rule.
@@ -144,30 +144,30 @@ fn rules: Array(PRule) {
   xs.push(rule("dangling-minus", "stmt", "", main_site, "", "pt = probe_k()\n- 1\nputs(pt)", "pt = probe_k() -\n  1\nputs(pt)", "this line starts with `-`"))
   xs.push(rule("dangling-bracket", "stmt", "", main_site, "", "pt = probe_k()\n[pt, 1]\nputs(pt)", "pt = [probe_k(),\n  1]\nputs(pt.size)", "this line starts with `[`"))
   xs.push(rule("number-mix", "expr", "Int", "fn main {\n  pa: Int32 = 1\n  pn = 2\n@\n}\n", "", "pa + pn", "pn + pn", "binary operator expects matching types"))
-  // README "Enums" and "Switch" (Stage 29 W5a1, D292, D293, D327, D358).
+  // README "Enums" and "Switch".
   esite = "enum Tok { a, b }\n\nenum PE: Error { bad }\n\nfn ef(n: Int): Int | PE {\n  if n > 0 {\n    return PE.bad\n  }\n  n\n}\n\nfn main {\n  t = Tok.from_i(probe_k()) ?? Tok.a\n@\n}\n"
   xs.push(rule("enum-switch-missing", "stmt", "", esite, "", "switch t {\n  case a { puts(1) }\n}", "switch t {\n  case a { puts(1) }\n  case b { puts(2) }\n}", "switch over Tok does not cover b"))
   xs.push(rule("enum-from-int", "stmt", "", esite, "", "pt: Tok = 1\nputs(pt)", "pt: Tok = Tok.from_i(1) ?? Tok.a\nputs(pt)", "cannot assign Int to Tok"))
   xs.push(rule("enum-qualified-label", "stmt", "", esite, "", "switch t {\n  case Tok.a { puts(1) }\n  case b { puts(2) }\n}", "switch t {\n  case a { puts(1) }\n  case b { puts(2) }\n}", "write the member without its type in a case label"))
   xs.push(rule("enum-else-beside-full", "stmt", "", esite, "", "switch t {\n  case a { puts(1) }\n  case b { puts(2) }\n  else { puts(3) }\n}", "switch t {\n  case a { puts(1) }\n  case b { puts(2) }\n}", "every member of Tok is named; remove the else"))
   xs.push(rule("enum-error-dropped", "stmt", "", esite, "", "ef(1)", "_ = ef(1)", "drops a value that can be an error"))
-  // README "Switch" over a union (Stage 29 W5a2, D293, O391).
+  // README "Switch" over a union.
   usite = "class Oops: Error {\n  pub message: String = \"oops\"\n}\n\nfn uf(n: Int): Int | Oops | Nil {\n  if n > 1 {\n    return Oops.new()\n  }\n  if n > 0 {\n    return nil\n  }\n  n\n}\n\nfn main {\n  u = uf(probe_k())\n@\n}\n"
   xs.push(rule("union-switch-missing", "stmt", "", usite, "", "switch u {\n  case n: Int { puts(n) }\n  case nil { puts(0) }\n}", "switch u {\n  case n: Int { puts(n) }\n  case nil { puts(0) }\n  case Oops { puts(1) }\n}", "does not cover Oops"))
   xs.push(rule("union-binding-outside-arm", "stmt", "", usite, "", "switch u {\n  case n: Int { puts(n) }\n  else { puts(0) }\n}\nputs(n)", "switch u {\n  case n: Int { puts(n) }\n  else { puts(0) }\n}\nputs(1)", "unknown name n"))
   xs.push(rule("union-case-nil-without-nil", "stmt", "", usite, "", "w: Int | String = 1\nswitch w {\n  case nil { puts(0) }\n  else { puts(1) }\n}", "w: Int | String | Nil = 1\nswitch w {\n  case nil { puts(0) }\n  else { puts(1) }\n}", "has no nil member"))
   xs.push(rule("union-label-not-member", "stmt", "", usite, "", "switch u {\n  case f: Float64 { puts(f) }\n  else { puts(0) }\n}", "switch u {\n  case f: Int { puts(f) }\n  else { puts(0) }\n}", "is not a member of"))
-  // README "Reading the error itself" (Stage 29 W5b1, D352): the else
+  // README "Reading the error itself": the else
   // guard's block leaves, it reads a value that can fail, and its own
   // name is not bound inside it; a return in a builtin's value block has
-  // the function's result type (O544).
+  // the function's result type.
   xs.push(rule("guard-must-leave", "stmt", "", main_site, "", "n = parse_age(\"1\") else e {\n  puts(e.message)\n}\nputs(n)", "n = parse_age(\"1\") else e {\n  puts(e.message)\n  return\n}\nputs(n)", "the block of else e must leave"))
   xs.push(rule("guard-no-failure", "stmt", "", main_site, "", "n = probe_k() else e {\n  return\n}\nputs(n)", "n = parse_age(\"1\") else e {\n  return\n}\nputs(n)", "else e needs a value that can fail"))
   xs.push(rule("guard-reads-own-name", "stmt", "", main_site, "", "n = parse_age(\"1\") else e {\n  puts(n)\n  return\n}\nputs(n)", "n = parse_age(\"1\") else e {\n  puts(e.message)\n  return\n}\nputs(n)", "unknown name n"))
   xs.push(rule("value-block-return-type", "stmt", "", "fn site: Int {\n@\n  0\n}\n\nfn main {\n  puts(site())\n}\n", "", "if [1].any { |x|\n  if x > 0 {\n    return \"one\"\n  }\n  false\n} {\n  puts(1)\n}", "if [1].any { |x|\n  if x > 0 {\n    return 1\n  }\n  false\n} {\n  puts(1)\n}", "return type is String, expected Int"))
-  // README "Constants" and "Literals" (Stage 29 W5b2, D314, D315, D327
-  // Q7, D352, O298, O455): a constant is not assigned and holds a scalar,
-  // a module has no variables, and a literal (or a constant written in)
+  // README "Constants" and "Literals": a constant is not
+  // assigned and holds a scalar, a module has no
+  // variables, and a literal (or a constant written in)
   // that does not fit its type is refused at every width.
   ksite = "const limit = 3\n\nconst big = 3000000000\n\nfn main {\n@\n}\n"
   xs.push(rule("const-assigned", "stmt", "", ksite, "", "limit = 4", "puts(limit)", "limit is a constant and cannot be assigned"))
@@ -182,8 +182,8 @@ fn rules: Array(PRule) {
   // anywhere; `_ =` drops one on purpose.
   esite = "fn main {\n  ev = probe_k()\n@\n  puts(ev)\n}\n"
   xs.push(rule("no-effect", "stmt", "", esite, "", "ev + 1", "_ = ev + 1", "this line computes a value and drops it"))
-  // README "Switch" over integers and Bool (Stage 29 W5a3, O390, O236,
-  // O493): no two labels share a value, a label fits the value's type,
+  // README "Switch" over integers and Bool: no two
+  // labels share a value, a label fits the value's type,
   // and a Bool switch without else names true and false.
   rsite = "const lo = 1\n\nfn main {\n  rv = probe_k()\n  rb = rv > 0\n  rw: Int32 = 1\n@\n}\n"
   xs.push(rule("range-overlap", "stmt", "", rsite, "", "switch rv {\n  case 0..=9 { puts(1) }\n  case 5 { puts(2) }\n  else { puts(3) }\n}", "switch rv {\n  case 0..=9 { puts(1) }\n  case 10 { puts(2) }\n  else { puts(3) }\n}", "case 5 overlaps case 0..=9"))
@@ -191,8 +191,8 @@ fn rules: Array(PRule) {
   xs.push(rule("label-outside-type", "stmt", "", rsite, "", "switch rw {\n  case 3000000000 { puts(1) }\n  else { puts(2) }\n}", "switch rw {\n  case 2147483647 { puts(1) }\n  else { puts(2) }\n}", "case label 3000000000 does not fit in Int32"))
   xs.push(rule("bool-switch-missing", "stmt", "", rsite, "", "switch rb {\n  case true { puts(1) }\n}", "switch rb {\n  case true { puts(1) }\n  case false { puts(2) }\n}", "switch over Bool does not cover false"))
   xs.push(rule("bool-int-label", "stmt", "", rsite, "", "switch rb {\n  case 1 { puts(1) }\n  case false { puts(2) }\n}", "switch rb {\n  case true { puts(1) }\n  case false { puts(2) }\n}", "write `case true`"))
-  // README "Opening an optional" and "Compile errors" (Stage 29 W5c1,
-  // O257): an optional is opened or tested, never compared with nil or
+  // README "Opening an optional" and "Compile errors": an
+  // optional is opened or tested, never compared with nil or
   // used as its value; a call gives what its function takes.
   osite = "fn ptwo(a: Int, b: Int): Int {\n  a + b\n}\n\nfn main {\n  px: Int? = probe_k()\n@\n}\n"
   xs.push(rule("nil-compare", "stmt", "", osite, "", "puts(px == nil)", "if _ = px {\n  puts(1)\n} else {\n  puts(0)\n}", "an optional is never compared with nil"))

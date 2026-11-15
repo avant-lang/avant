@@ -1,17 +1,17 @@
 import harness
 import backends
 
-// Stage 29 W5a1: enumerations and switch over them (D292, D293, D320,
-// D327, D358). Each program is compiled in parallel; a refused one must
+// Enumerations and switch over them. Each program is compiled
+// in parallel; a refused one must
 // leave no binary, say the expected words and point at the expected line
 // and column; an accepted one must print what it should. The programs
 // that run (tests/fixtures/enums/) are checked by the run goldens in every
 // collector mode; this file holds the rules' refusals, their accepted
 // neighbours, and two checks on the generated code:
 //   - a switch over an enum that names every member has a trap, never
-//     LLVM's unreachable, as the path no member takes (D358, point 10);
+//     LLVM's unreachable, as the path no member takes (a value from C may be no member);
 //   - a program that neither prints an enum, nor calls from_name, nor
-//     reads members, carries no name table (O394).
+//     reads members, carries no name table.
 
 class RCase {
   pub tag: String = ""
@@ -130,7 +130,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   _ = file_write(pr, "enum Tok { eof, name, number }\nfn main {\n  puts(Tok.number)\n}\n")
   c.eq_int(emit_ll(compiler, pr, "${dir}/enum-ll-print.ll", "${dir}/enum-ll-print.log"), 0, "ll-print: emits")
   c.expect(str_has(log_text("${dir}/enum-ll-print.ll"), "number"), "ll-print: the names are there when printed")
-  // O682 (Stage 29 W5a2): the last arm is the default behind a range
+  // The last arm is the default behind a range
   // test, so a four-member switch has three cases, and the trap stays.
   d4 = "${dir}/enum-ll-last.av"
   _ = file_write(d4, "enum Four { a, b, c, d }\nfn f(x: Four): String {\n  switch x {\n    case a { \"a\" }\n    case b { \"b\" }\n    case c { \"c\" }\n    case d { \"d\" }\n  }\n}\nfn main {\n  h = spawn { 1 }\n  puts(f(Four.from_i(3) ?? Four.a))\n  puts(h.join() ?? -1)\n}\n")

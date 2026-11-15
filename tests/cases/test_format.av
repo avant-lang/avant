@@ -22,9 +22,9 @@ fn read_or_empty(path: String): String {
 }
 
 // The corpus pass (`format --write` or `--check` on the copied corpus).
-// Under an outer AVANT_GC_STRESS (harness.gc_stress_outer) the formatter
-// runs without it: with it this file took 71 s alone, 6 s without (Stage
-// 29 W5d1, O602's line of about 60 s); the formatter's own allocation
+// Under an outer AVANT_GC_STRESS (harness.gc_stress_outer) the
+// formatter runs without it: with it this file took 71 s alone, 6 s
+// without (the suite's bound of about 60 s a file); the formatter's own allocation
 // under the stress mode is still run by the rest of this file.
 fn format_corpus(compiler: String, dir: String, flag: String, log: String): Int {
   args: Array(String) = []
@@ -102,22 +102,22 @@ fn test_format(c: Checks) {
     check_flags.push("--check")
     check_log = "${scratch()}/format-${stamp}-check.log"
     check_code = run_format(compiler, "format", messy, check_log, check_flags)
-    c.eq_int(check_code, 1, "check messy exits 1 (D49, Stage 29 W1b)")
+    c.eq_int(check_code, 1, "check messy exits 1")
     if check_out = file_read(check_log) {
       c.expect(str_has(check_out, "would change ${messy}"), "check reports drift")
     } else {
       c.expect(false, "read check log")
     }
 
-    // D280: the formatter keeps every line break, so the token that starts
+    // The formatter keeps every line break, so the token that starts
     // each line, and with it where a statement begins, never changes.
-    d280_src = "${scratch()}/format-${stamp}-d280.av"
-    d280_log = "${scratch()}/format-${stamp}-d280.log"
-    _ = file_write(d280_src, "fn main {\nt = 1 +\n2\nxs = [\n1,\n-2\n]\n[1, 2].each { |v| puts(v) }\nm = t\n* 2\ny=-t\n-y\n}\n")
-    d280_code = run_format(compiler, "format", d280_src, d280_log, empty_flags)
-    c.eq_int(d280_code, 0, "format D280 lines exits 0")
-    c.eq_str(read_or_empty(d280_log), "fn main {\n  t = 1 +\n  2\n  xs = [\n  1,\n  -2\n  ]\n  [1, 2].each { |v| puts(v) }\n  m = t\n  * 2\n  y = -t\n  -y\n}\n", "format keeps the first token of every line (D280)")
-    // Stage 29 W3a (D299): `pub` before a field formats like `pub` before fn.
+    lead_src = "${scratch()}/format-${stamp}-lead.av"
+    lead_log = "${scratch()}/format-${stamp}-lead.log"
+    _ = file_write(lead_src, "fn main {\nt = 1 +\n2\nxs = [\n1,\n-2\n]\n[1, 2].each { |v| puts(v) }\nm = t\n* 2\ny=-t\n-y\n}\n")
+    lead_code = run_format(compiler, "format", lead_src, lead_log, empty_flags)
+    c.eq_int(lead_code, 0, "format of lines that start with an operator exits 0")
+    c.eq_str(read_or_empty(lead_log), "fn main {\n  t = 1 +\n  2\n  xs = [\n  1,\n  -2\n  ]\n  [1, 2].each { |v| puts(v) }\n  m = t\n  * 2\n  y = -t\n  -y\n}\n", "format keeps the first token of every line")
+    // `pub` before a field formats like `pub` before fn.
     pubf_src = "${scratch()}/format-${stamp}-pubf.av"
     pubf_log = "${scratch()}/format-${stamp}-pubf.log"
     _ = file_write(pubf_src, "pub struct P {\n    pub   x :Int\nkept: Int = 2\n  pub fn get: Int { x }\n}\n")
@@ -284,7 +284,7 @@ fn test_format(c: Checks) {
     dump_body = "fn main{\nputs( \"ok\" )\n}\n"
     c.wrote(file_write(dump_src, dump_body), "write dump fixture")
     // The emitted .ll (no source locations, unlike the MIR dump; the old
-    // back end's IR until Stage 28 W11): formatting changes no code.
+    // back end's IR until it retired): formatting changes no code.
     before = "${scratch()}/format-${stamp}-before.ll"
     after = "${scratch()}/format-${stamp}-after.ll"
     before_code = emit_ll(compiler, dump_src, before, "${before}.log")
@@ -343,7 +343,7 @@ fn test_format(c: Checks) {
       c.expect(false, "read usage")
     }
 
-    // D49 as amended (Stage 29 W1b): several files and directories.
+    // Several files and directories.
     many = "${scratch()}/format-${stamp}-many"
     mkdir_p("${many}/sub")
     mkdir_p("${many}/deps")
@@ -379,9 +379,9 @@ fn test_format(c: Checks) {
     nd_code = run_format(compiler, "format", "${many}/missing.txt", nd_log, check_flags)
     c.eq_int(nd_code, 1, "a path that is neither .av nor a directory exits 1")
 
-    // Two tokens printed side by side stay two tokens (D49; Stage 29
-    // W5d1, O464): before, `. ..` became `...`, `? ?` became `??`,
-    // `! ==` became `!==` (`!=` and `=`) and `- ==` became `-==`.
+    // Two tokens printed side by side stay two tokens:
+    // before, `. ..` became `...`, `? ?` became `??`, `! ==`
+    // became `!==` (`!=` and `=`) and `- ==` became `-==`.
     join_src = "${scratch()}/format-${stamp}-join.av"
     c.wrote(file_write(join_src, "fn main {\n  a = b . ..c\n  d = e ?? ? ?\n  f = ! ==\n  g = - ==\n  h = 5. ..k\n  m = n ?. ..<\n}\n"), "write joining tokens")
     join_log = "${scratch()}/format-${stamp}-join.log"
@@ -389,7 +389,7 @@ fn test_format(c: Checks) {
     c.eq_int(join_code, 0, "joining tokens: format exits 0")
     c.eq_str(read_or_empty(join_log), "fn main {\n  a = b. ..c\n  d = e ??? ?\n  f = ! ==\n  g = - ==\n  h = 5. ..k\n  m = n?. ..<\n}\n", "tokens that would join keep a space between them")
 
-    // The self-check (Stage 29 W5d1, O464, D280): the canonical text is
+    // The self-check: the canonical text is
     // lexed by the compiler's lexer and must give the source's tokens
     // and line breaks; AVANT_FORMAT_FAULT (the suite's only) breaks the
     // reprint on purpose, and the file is left as it is.
@@ -410,10 +410,10 @@ fn test_format(c: Checks) {
       c.eq_str(read_or_empty(fault_src), fault_body, "self-check (${fault}): the file is left as it is")
     }
 
-    // The corpus formatted twice (Stage 29 W5d1, O464; Valk's
-    // fmt/corpus.sh): every source of the repository is formatted, each
-    // through the self-check, and the result formatted again changes
-    // nothing (the one non-canonical source, surface.av, included).
+    // The corpus formatted twice (Valk's fmt/corpus.sh): every
+    // source of the repository is formatted, each through the
+    // self-check, and the result formatted again changes nothing
+    // (the one non-canonical source, surface.av, included).
     corpus = "${scratch()}/format-${stamp}-corpus"
     mkdir_p(corpus)
     tar_args = ["-c", "cd '${root}' && find compiler lib examples bench tests -name '*.av' | tar cf - -T - | tar xf - -C '${corpus}'"]
