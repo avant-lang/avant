@@ -62,7 +62,7 @@ fn test_ffi(c: Checks) {
     cb_bin = "${scratch()}/ffi-waveg-${stamp}-cb"
     cb_clog = "${scratch()}/ffi-waveg-${stamp}-cb-cc.log"
     cb_rlog = "${scratch()}/ffi-waveg-${stamp}-cb-run.log"
-    cb_body = "lib libc {\n  struct CInt {\n    v: Int32\n  }\n  fun qsort(base: Ptr(CInt), nmemb: Int, size: Int, compar: fn(Ptr(CInt), Ptr(CInt)): Int32)\n  fun cb_buf_new(n: Int32): Ptr(CInt)\n  fun cb_buf_set(b: Ptr(CInt), i: Int32, v: Int32)\n  fun cb_buf_get(b: Ptr(CInt), i: Int32): Int32\n  fun cb_buf_free(b: Ptr(CInt))\n}\nfn cmp_asc(a: Ptr(CInt), b: Ptr(CInt)): Int32 {\n  if a.v < b.v {\n    return -1\n  }\n  if a.v > b.v {\n    return 1\n  }\n  0\n}\nfn cmp_desc(a: Ptr(CInt), b: Ptr(CInt)): Int32 {\n  if a.v > b.v {\n    return -1\n  }\n  if a.v < b.v {\n    return 1\n  }\n  0\n}\nfn show(buf: Ptr(CInt), n: Int): String {\n  out = \"\"\n  i = 0\n  while i < n {\n    out = \"\${out}\${libc.cb_buf_get(buf, i.to_i32)}\"\n    i = i + 1\n  }\n  out\n}\nfn main {\n  n = 6\n  buf = libc.cb_buf_new(n.to_i32)\n  vals = [5, 2, 9, 1, 7, 3]\n  i = 0\n  while i < n {\n    libc.cb_buf_set(buf, i.to_i32, vals[i].to_i32)\n    i = i + 1\n  }\n  libc.qsort(buf, n, 4, cmp_asc)\n  puts(show(buf, n))\n  libc.qsort(buf, n, 4, cmp_desc)\n  puts(show(buf, n))\n  libc.qsort(buf, n, 4, { |a: Ptr(CInt), b: Ptr(CInt)| a.v - b.v })\n  puts(show(buf, n))\n  libc.cb_buf_free(buf)\n}\n"
+    cb_body = "lib libc {\n  struct CInt {\n    v: Int32\n  }\n  fun qsort(base: Ptr(CInt), nmemb: Int, size: Int, compar: fn(Ptr(CInt), Ptr(CInt)): Int32)\n  fun cb_buf_new(n: Int32): Ptr(CInt)\n  fun cb_buf_set(b: Ptr(CInt), i: Int32, v: Int32)\n  fun cb_buf_get(b: Ptr(CInt), i: Int32): Int32\n  fun cb_buf_free(b: Ptr(CInt))\n}\nfn cmp_asc(a: Ptr(CInt), b: Ptr(CInt)): Int32 {\n  if a.v < b.v {\n    return -1\n  }\n  if a.v > b.v {\n    return 1\n  }\n  0\n}\nfn cmp_desc(a: Ptr(CInt), b: Ptr(CInt)): Int32 {\n  if a.v > b.v {\n    return -1\n  }\n  if a.v < b.v {\n    return 1\n  }\n  0\n}\nfn show(buf: Ptr(CInt), n: Int): String {\n  out = \"\"\n  i = 0\n  while i < n {\n    out = \"\${out}\${libc.cb_buf_get(buf, i.to_i32())}\"\n    i = i + 1\n  }\n  out\n}\nfn main {\n  n = 6\n  buf = libc.cb_buf_new(n.to_i32())\n  vals = [5, 2, 9, 1, 7, 3]\n  i = 0\n  while i < n {\n    libc.cb_buf_set(buf, i.to_i32(), vals[i].to_i32())\n    i = i + 1\n  }\n  libc.qsort(buf, n, 4, cmp_asc)\n  puts(show(buf, n))\n  libc.qsort(buf, n, 4, cmp_desc)\n  puts(show(buf, n))\n  libc.qsort(buf, n, 4, { |a: Ptr(CInt), b: Ptr(CInt)| a.v - b.v })\n  puts(show(buf, n))\n  libc.cb_buf_free(buf)\n}\n"
     c.wrote(file_write(cb_src, cb_body), "write callback proof")
     cb_flags: Array(String) = []
     cb_flags.push("--cc")
@@ -131,5 +131,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_ffi(c)
-  c.finish
+  c.finish()
 }

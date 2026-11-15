@@ -25,7 +25,7 @@ class TCase {
 
 // The one error the program has: the words at pos, and no other error.
 fn only(tag: String, src: String, needle: String, pos: String): TCase {
-  f = TCase.new
+  f = TCase.new()
   f.tag = tag
   f.src = src
   f.want = needle
@@ -50,7 +50,7 @@ fn without(tag: String, src: String, needle: String, pos: String, absent: String
 
 // A program that compiles and prints out.
 fn accepted(tag: String, src: String, out: String): TCase {
-  f = TCase.new
+  f = TCase.new()
   f.tag = tag
   f.src = src
   f.want = out
@@ -95,7 +95,7 @@ fn cases: Array(TCase) {
   xs.push(first("casc-unknown-callee", "fn main {\n  x = outer(inner())\n  puts(x)\n}\n", "unknown function outer", "2:7"))
   xs.push(only("casc-field-type", "struct Nd {\n  a: Int32\n}\n\nfn main {\n  n = 5\n  d = Nd { a: n }\n  puts(d.a)\n}\n", "field a is Int, expected Int32", "7:15"))
   xs.push(only("casc-array-element", "fn main {\n  n = 5\n  xs: Array(Int32) = [1, n]\n  puts(xs.size)\n}\n", "array element is Int, expected Int32", "3:26"))
-  xs.push(only("casc-method-arg", "class C {\n  fn go(n: Int): Int {\n    n\n  }\n}\n\nfn main {\n  c = C.new\n  puts(c.go(nosuch))\n}\n", "unknown name nosuch", "9:13"))
+  xs.push(only("casc-method-arg", "class C {\n  fn go(n: Int): Int {\n    n\n  }\n}\n\nfn main {\n  c = C.new()\n  puts(c.go(nosuch))\n}\n", "unknown name nosuch", "9:13"))
   xs.push(only("casc-lambda-arg", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(1) { |a, b| a + b })\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument", "6:17"))
   // O364: a constructor's integer argument names the call as written; a negative literal where an unsigned type is wanted does not fit.
   xs.push(only("ctor-int-mix", "class Nd {\n  a: Int32 = 0\n\n  fn initialize(a: Int32) {\n    self.a = a\n  }\n}\n\nfn main {\n  n = 5\n  d = Nd.new(n)\n  puts(d.a)\n}\n", "argument 1 of Nd.new is Int, expected Int32: Nd.new(a: Int32)", "11:9"))
@@ -185,5 +185,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

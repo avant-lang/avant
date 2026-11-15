@@ -35,9 +35,9 @@ fn divide(a: Int, b: Int): Int {
 }
 
 fn cmp_trap(a: Ptr(CInt), b: Ptr(CInt)): Int32 {
-  x = a.v.to_i
+  x = a.v.to_i()
   y = x - x
-  (x / y).to_i32
+  (x / y).to_i32()
 }
 
 fn doubled(xs: Array(Int)): Int {
@@ -47,10 +47,10 @@ fn doubled(xs: Array(Int)): Int {
 
 // The join, printed: the block's Int, or the trap's text and site.
 fn show(h: JoinHandle(Int)): Int {
-  v = h.join else e {
+  v = h.join() else e {
     puts("trapped: ${e.what}")
     puts("site: ${e.site.size > 0}")
-    puts("message: ${e.message.size > 0}")
+    puts("message: ${e.message().size > 0}")
     return 1
   }
   puts("value: ${v}")
@@ -86,7 +86,7 @@ fn main: Int {
   } else if kind == "pop" {
     h = spawn {
       e: Array(Int) = []
-      e.pop
+      e.pop()
     }
     _ = show(h)
   } else if kind == "twice" {
@@ -101,7 +101,7 @@ fn main: Int {
     bad = 0
     good = 0
     for h in hs {
-      if v = h.join {
+      if v = h.join() {
         good += v
       } else {
         bad += 1
@@ -115,14 +115,14 @@ fn main: Int {
     }
     _ = show(h)
   } else if kind == "channel" {
-    ch = Channel(Int).new
+    ch = Channel(Int).new()
     h = spawn {
       x = at(xs, 8)
       _ = ch.send(x)
       0
     }
     // The task's trap closes the channel it captured: recv ends.
-    got = ch.recv
+    got = ch.recv()
     if v = got {
       puts("received ${v}")
     } else {
@@ -148,7 +148,7 @@ fn main: Int {
     } else if kind == "mutex-try" {
       // The state reads, and try_with gives a MutexError for it; a
       // mutex no task poisoned gives its value.
-      puts("poisoned: ${m.poisoned}")
+      puts("poisoned: ${m.poisoned()}")
       res = m.try_with { |acc| acc.n }
       if r = res {
         puts("r: ${r}")
@@ -156,7 +156,7 @@ fn main: Int {
         puts("try_with: ${e}")
       }
       fresh = Mutex(Acc).new(Acc { n: 3 })
-      puts("fresh poisoned: ${fresh.poisoned}")
+      puts("fresh poisoned: ${fresh.poisoned()}")
       res2 = fresh.try_with { |acc| acc.n + 1 }
       if v = res2 {
         puts("fresh: ${v}")
@@ -196,7 +196,7 @@ fn main: Int {
     }
     sum = 0
     for h2 in hs {
-      sum += h2.join ?? 0
+      sum += h2.join() ?? 0
     }
     puts("sum ${sum}")
   } else if kind == "callback" {

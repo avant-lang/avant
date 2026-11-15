@@ -74,7 +74,7 @@ fn lv_opt_local(o: MOperand?): Int {
 // A small integer constant (|v| <= 1000000), or false.
 fn lv_small_const(o: MOperand?, out: Array(Int)): Bool {
   if x = o, x.kind == mok_int() && x.ival <= 1000000 && x.ival >= -1000000 {
-    out[0] = x.ival.to_i
+    out[0] = x.ival.to_i()
     return true
   }
   false
@@ -88,7 +88,7 @@ fn lv_copy_local(local: Int): MOperand {
 
 fn lv_c_i64(v: Int): MOperand {
   o = MOperand.new(mok_int(), mt_i64())
-  o.ival = v.to_i
+  o.ival = v.to_i()
   o
 }
 
@@ -217,11 +217,11 @@ fn lv_place_writes_size(ts: MTypes, f: MFunc, p: MPlace): Bool {
 fn lv_stmt_keeps(m: MModule, f: MFunc, blk: MBlock, j: Int, keep: Array(Bool)): Bool {
   st = blk.stmts[j]
   if st.kind == msk_assign() {
-    if p = st.place, p.last_deref >= 0 {
+    if p = st.place, p.last_deref() >= 0 {
       if !lv_place_writes_size(m.types, f, p) {
         return true
       }
-      return p.last_deref == 0 && lv_fresh_here(blk, j, p.local)
+      return p.last_deref() == 0 && lv_fresh_here(blk, j, p.local)
     }
     return true
   }
@@ -296,8 +296,8 @@ fn lv_rpo(f: MFunc): Array(Int) {
       }
     } else {
       post.push(b)
-      stack.pop
-      next.pop
+      stack.pop()
+      next.pop()
     }
   }
   rpo: Array(Int) = []
@@ -385,7 +385,7 @@ pub fn mir_lv_loops(f: MFunc): LvLoops {
       }
     }
   }
-  lp = LvLoops.new
+  lp = LvLoops.new()
   for h in rpo {
     body = mir_bools(n, false)
     found = false
@@ -401,7 +401,7 @@ pub fn mir_lv_loops(f: MFunc): LvLoops {
           work.push(p)
         }
         while work.size > 0 {
-          x = work.pop
+          x = work.pop()
           j = 0
           while j < preds[x].size {
             y = preds[x][j]
@@ -486,7 +486,7 @@ fn lv_addr_taken(f: MFunc): Array(Bool) {
   for blk in f.blocks {
     j = 0
     while j < blk.stmts.size {
-      if r = blk.stmts[j].rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local {
+      if r = blk.stmts[j].rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local() {
         out[p.local] = true
       }
       j += 1
@@ -903,7 +903,7 @@ fn lv_bound(lp: LvLoop, ts: MTypes, hb: MBlock, pos: Int, o: MOperand, depth: In
   while k >= 0 {
     if mir_stmt_def(hb.stmts[k]) == n {
       st = hb.stmts[k]
-      sz = LvSize.new
+      sz = LvSize.new()
       lv_size_stmt(lp, ts, st, sz)
       if sz.h >= 0 {
         lp.bkind = 3
@@ -1105,9 +1105,9 @@ fn lv_checks(m: MModule, lp: LvLoop, lps: LvLoops, terms: LvTerms) {
       while j < blk.stmts.size {
         st = blk.stmts[j]
         if st.kind == msk_check_bounds() && st.args.size == 2 {
-          sz = LvSize.new
+          sz = LvSize.new()
           lv_size_at(lp, ts, blk, j, st.args[1], sz)
-          iv = LvVal.new
+          iv = LvVal.new()
           if sz.h >= 0 {
             lv_val_at(lp, ts, b, j, st.args[0], 0, iv)
           }
@@ -1148,7 +1148,7 @@ fn lv_drop_sizes(lp: LvLoop, ts: MTypes, blk: MBlock, row: Array(Bool), only: Ar
   while k < blk.stmts.size {
     v = mir_stmt_def(blk.stmts[k])
     if v >= 0 && only[v] {
-      sz = LvSize.new
+      sz = LvSize.new()
       lv_size_stmt(lp, ts, blk.stmts[k], sz)
       if sz.h >= 0 {
         all = true
@@ -1303,7 +1303,7 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
     i += 1
   }
   xp = -1
-  if terms.uses_bound {
+  if terms.uses_bound() {
     x64 = -1
     if lp.bkind == 1 {
       x64 = lv_new_local(f, mt_i64())
@@ -1498,7 +1498,7 @@ fn lv_try(m: MModule, f: MFunc, lps: LvLoops, li: Int, keep: Array(Bool)): Int {
     return -1
   }
   lv_freshness(lp)
-  terms = LvTerms.new
+  terms = LvTerms.new()
   lv_checks(m, lp, lps, terms)
   if !lp.any_own {
     return -1

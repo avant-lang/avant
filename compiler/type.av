@@ -109,24 +109,24 @@ pub class Ty {
   pub fn is_int32: Bool { self.kind == tyk_int32() }
   pub fn is_uint32: Bool { self.kind == tyk_uint32() }
   pub fn is_integer: Bool {
-    if self.is_int {
+    if self.is_int() {
       return true
     }
-    if self.is_int32 || self.is_uint32 {
+    if self.is_int32() || self.is_uint32() {
       return true
     }
-    self.is_uint64
+    self.is_uint64()
   }
   // An unsigned integer type (UInt64, UInt32).
   pub fn is_unsigned: Bool {
-    self.is_uint64 || self.is_uint32
+    self.is_uint64() || self.is_uint32()
   }
   // The width of an integer type in bits (Int is 64), else 0.
   pub fn int_width: Int {
-    if self.is_int32 || self.is_uint32 {
+    if self.is_int32() || self.is_uint32() {
       return 32
     }
-    if self.is_integer {
+    if self.is_integer() {
       return 64
     }
     0
@@ -182,7 +182,7 @@ pub class Ty {
 
   // The index of an enum's member named name, or -1.
   pub fn enum_index(name: String): Int {
-    names = self.enum_names
+    names = self.enum_names()
     for i in 0..names.size {
       if names[i] == name {
         return i
@@ -191,16 +191,16 @@ pub class Ty {
     -1
   }
   pub fn is_agg: Bool {
-    if self.is_struct {
+    if self.is_struct() {
       return true
     }
-    self.is_class
+    self.is_class()
   }
   pub fn is_numeric: Bool {
-    if self.is_integer {
+    if self.is_integer() {
       return true
     }
-    self.is_float
+    self.is_float()
   }
 
   pub fn field_named(name: String): Ty? {
@@ -354,7 +354,7 @@ pub class Ty {
 
   pub fn includes_nil: Bool {
     for mem in self.members {
-      if mem.is_nil {
+      if mem.is_nil() {
         return true
       }
     }
@@ -363,7 +363,7 @@ pub class Ty {
 
   pub fn includes_void: Bool {
     for mem in self.members {
-      if mem.is_void {
+      if mem.is_void() {
         return true
       }
     }
@@ -373,7 +373,7 @@ pub class Ty {
   // The member that carries nothing (`Nil` or `Void`), or nil.
   pub fn empty_member: Ty? {
     for mem in self.members {
-      if mem.no_payload {
+      if mem.no_payload() {
         return mem
       }
     }
@@ -392,7 +392,7 @@ pub class Ty {
   pub fn payload_index(member: Ty): Int {
     n = 0
     for m in self.members {
-      if !m.no_payload {
+      if !m.no_payload() {
         if m.same_as(member) {
           return n + 1
         }
@@ -405,7 +405,7 @@ pub class Ty {
   pub fn payload_members: Array(Ty) {
     kept: Array(Ty) = []
     for m in self.members {
-      if !m.no_payload {
+      if !m.no_payload() {
         kept.push(m)
       }
     }
@@ -413,7 +413,7 @@ pub class Ty {
   }
 
   pub fn is_nilable: Bool {
-    if self.is_union && self.includes_nil {
+    if self.is_union() && self.includes_nil() {
       return self.members.size == 2
     }
     false
@@ -491,47 +491,47 @@ pub class Ty {
       buf = buf_new()
       buf.push_str("Array(")
       if e = self.inner {
-        buf.push_str(e.show)
+        buf.push_str(e.show())
       }
       buf.push_str(")")
-      return buf.to_s
+      return buf.to_s()
     }
     if k == tyk_hash() {
       buf = buf_new()
       buf.push_str("Hash(")
       if ke = self.key {
-        buf.push_str(ke.show)
+        buf.push_str(ke.show())
       }
       buf.push_str(", ")
       if va = self.val {
-        buf.push_str(va.show)
+        buf.push_str(va.show())
       }
       buf.push_str(")")
-      return buf.to_s
+      return buf.to_s()
     }
     if k == tyk_ptr() {
       buf = buf_new()
       buf.push_str("Ptr(")
       if e = self.inner {
-        buf.push_str(e.show)
+        buf.push_str(e.show())
       }
       buf.push_str(")")
-      return buf.to_s
+      return buf.to_s()
     }
     if k == tyk_join() {
       buf = buf_new()
       buf.push_str("JoinHandle(")
       if e = self.inner {
-        buf.push_str(e.show)
+        buf.push_str(e.show())
       }
       buf.push_str(")")
-      return buf.to_s
+      return buf.to_s()
     }
     if k == tyk_union() {
-      return self.show_union
+      return self.show_union()
     }
     if k == tyk_fn() {
-      return self.show_fn
+      return self.show_fn()
     }
     self.name
   }
@@ -544,31 +544,31 @@ pub class Ty {
       if i > 0 {
         buf.push_str(", ")
       }
-      buf.push_str(self.members[i].show)
+      buf.push_str(self.members[i].show())
       i += 1
     }
     buf.push_str("): ")
     if r = self.inner {
-      buf.push_str(r.show)
+      buf.push_str(r.show())
     } else {
       buf.push_str("Void")
     }
-    buf.to_s
+    buf.to_s()
   }
 
   pub fn show_union: String {
-    if self.is_nilable {
+    if self.is_nilable() {
       non_nil = ty_without_nil(self)
       buf = buf_new()
-      if non_nil.is_union || non_nil.is_fn {
+      if non_nil.is_union() || non_nil.is_fn() {
         buf.push_str("(")
-        buf.push_str(non_nil.show)
+        buf.push_str(non_nil.show())
         buf.push_str(")?")
       } else {
-        buf.push_str(non_nil.show)
+        buf.push_str(non_nil.show())
         buf.push_str("?")
       }
-      return buf.to_s
+      return buf.to_s()
     }
     buf = buf_new()
     i = 0
@@ -576,10 +576,10 @@ pub class Ty {
       if i > 0 {
         buf.push_str(" | ")
       }
-      buf.push_str(self.members[i].show)
+      buf.push_str(self.members[i].show())
       i += 1
     }
-    buf.to_s
+    buf.to_s()
   }
 }
 
@@ -697,7 +697,7 @@ pub fn ty_var(name: String): Ty {
 }
 
 pub fn ty_has_var(ty: Ty): Bool {
-  if ty.is_var {
+  if ty.is_var() {
     return true
   }
   if inner = ty.inner, ty_has_var(inner) {
@@ -786,7 +786,7 @@ pub fn mangle_ty(ty: Ty): String {
       buf.push_str("_")
       buf.push_str(mangle_ty(va))
     }
-    return buf.to_s
+    return buf.to_s()
   }
   if k == tyk_union() {
     buf = buf_new()
@@ -796,7 +796,7 @@ pub fn mangle_ty(ty: Ty): String {
       }
       buf.push_str(mangle_ty(ty.members[i]))
     }
-    return buf.to_s
+    return buf.to_s()
   }
   if k == tyk_fn() {
     buf = buf_new()
@@ -811,7 +811,7 @@ pub fn mangle_ty(ty: Ty): String {
     } else {
       buf.push_str("Void")
     }
-    return buf.to_s
+    return buf.to_s()
   }
   if ty.origin.size > 0 && ty.ty_args.size > 0 {
     buf = buf_new()
@@ -824,7 +824,7 @@ pub fn mangle_ty(ty: Ty): String {
       buf.push_str("__")
       buf.push_str(mangle_ty(ty_arg))
     }
-    return buf.to_s
+    return buf.to_s()
   }
   if ty.emit_base.size > 0 {
     return ty.emit_base
@@ -843,7 +843,7 @@ pub fn mod_emit_prefix(mod_name: String): String {
     }
     i += 1
   }
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn ty_owned_symbol(ty: Ty, suffix: String): String {
@@ -892,14 +892,14 @@ pub fn ty_hash(key: Ty, val: Ty): Ty {
 // whose `==` a hash can agree with. A value is any of those or a Float64.
 // A type parameter is checked where it is bound.
 pub fn hash_type_problem(k: Ty, v: Ty): String {
-  if k.is_float {
+  if k.is_float() {
     return "a Hash key cannot be a Float64: its == follows IEEE 754 (NaN is not equal to itself, -0.0 equals 0.0), so no hash agrees with it; use an integer key (a fixed-point value, or an index)"
   }
-  if !(k.is_integer || k.is_bool || k.is_enum || k.is_string || k.is_var) {
-    return "a Hash key is an integer, a Bool, an enum or a String, not ${k.show}"
+  if !(k.is_integer() || k.is_bool() || k.is_enum() || k.is_string() || k.is_var()) {
+    return "a Hash key is an integer, a Bool, an enum or a String, not ${k.show()}"
   }
-  if !(v.is_integer || v.is_bool || v.is_float || v.is_enum || v.is_string || v.is_var) {
-    return "Hash values of type ${v.show} are not built yet: a value is a number, a Bool, an enum or a String; a Hash from the key to an index into an Array(${v.show}) does the same"
+  if !(v.is_integer() || v.is_bool() || v.is_float() || v.is_enum() || v.is_string() || v.is_var()) {
+    return "Hash values of type ${v.show()} are not built yet: a value is a number, a Bool, an enum or a String; a Hash from the key to an index into an Array(${v.show()}) does the same"
   }
   ""
 }
@@ -928,7 +928,7 @@ pub fn ty_app(kind: Int, name: String, origin: String, label: String, args: Arra
 }
 
 pub fn ty_flatten_into(ty: Ty, into: Array(Ty)) {
-  if ty.is_union {
+  if ty.is_union() {
     i = 0
     while i < ty.members.size {
       ty_flatten_into(ty.members[i], into)
@@ -947,15 +947,15 @@ pub fn ty_flatten_into(ty: Ty, into: Array(Ty)) {
 // are ordered by their module-qualified key, so both written orders build
 // one member list.
 pub fn ty_member_before(a: Ty, b: Ty): Bool {
-  if a.is_nil || b.is_nil {
-    return a.is_nil && !b.is_nil
+  if a.is_nil() || b.is_nil() {
+    return a.is_nil() && !b.is_nil()
   }
   // `Void` next, for the same reason: a zeroed `Void | E` is the success.
-  if a.is_void || b.is_void {
-    return a.is_void && !b.is_void
+  if a.is_void() || b.is_void() {
+    return a.is_void() && !b.is_void()
   }
-  sa = a.show
-  sb = b.show
+  sa = a.show()
+  sb = b.show()
   if str_lt(sa, sb) {
     return true
   }
@@ -983,7 +983,7 @@ pub fn ty_qual_key(ty: Ty): String {
   buf = buf_new()
   if k == tyk_union() {
     ty_qual_list(buf, ty.members, "|")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == tyk_fn() {
     buf.push_str("fn(")
@@ -992,7 +992,7 @@ pub fn ty_qual_key(ty: Ty): String {
     if r = ty.inner {
       buf.push_str(ty_qual_key(r))
     }
-    return buf.to_s
+    return buf.to_s()
   }
   if k == tyk_hash() {
     buf.push_str("Hash(")
@@ -1004,7 +1004,7 @@ pub fn ty_qual_key(ty: Ty): String {
       buf.push_str(ty_qual_key(va))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if k == tyk_array() || k == tyk_ptr() || k == tyk_join() {
     if k == tyk_array() {
@@ -1020,7 +1020,7 @@ pub fn ty_qual_key(ty: Ty): String {
       buf.push_str(ty_qual_key(e))
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   if ty.mod_name.size > 0 {
     buf.push_str(ty.mod_name)
@@ -1031,10 +1031,10 @@ pub fn ty_qual_key(ty: Ty): String {
     buf.push_str("(")
     ty_qual_list(buf, ty.ty_args, ",")
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
-  buf.push_str(ty.show)
-  buf.to_s
+  buf.push_str(ty.show())
+  buf.to_s()
 }
 
 pub fn ty_union_build(types: Array(Ty)): Ty {
@@ -1097,12 +1097,12 @@ pub fn ty_nilable(inner: Ty): Ty {
 // (mir_opt_ref) and the rule for a `fun` signature (checker/register.av,
 // O549) read this one definition.
 pub fn ty_opt_ref(t: Ty): Ty? {
-  if !t.is_union || t.members.size != 2 {
+  if !t.is_union() || t.members.size != 2 {
     return nil
   }
   for m in t.members {
-    if !m.is_nil && (m.is_class || m.is_string || m.is_bytes || m.is_array || m.is_hash || m.is_buf || m.is_join) {
-      if t.includes_nil {
+    if !m.is_nil() && (m.is_class() || m.is_string() || m.is_bytes() || m.is_array() || m.is_hash() || m.is_buf() || m.is_join()) {
+      if t.includes_nil() {
         return m
       }
     }
@@ -1113,7 +1113,7 @@ pub fn ty_opt_ref(t: Ty): Ty? {
 pub fn ty_without_nil(ty: Ty): Ty {
   kept: Array(Ty) = []
   for m in ty.members {
-    if !m.is_nil {
+    if !m.is_nil() {
       kept.push(m)
     }
   }
@@ -1127,7 +1127,7 @@ pub fn ty_without_nil(ty: Ty): Ty {
 // has `Nil` as its only failure for if-assign and `??`, so the error is
 // the value read; postfix `?` refuses it (it would pass up the `nil`).
 pub fn ty_is_failure(m: Ty): Bool {
-  m.is_nil || m.error_mark
+  m.is_nil() || m.error_mark
 }
 
 pub fn ty_has_success(ty: Ty): Bool {
@@ -1143,11 +1143,11 @@ pub fn ty_has_success(ty: Ty): Bool {
 // order; empty when ty has none).
 pub fn ty_failures(ty: Ty): Array(Ty) {
   out: Array(Ty) = []
-  if !ty.is_union {
+  if !ty.is_union() {
     return out
   }
   if !ty_has_success(ty) {
-    if ty.includes_nil {
+    if ty.includes_nil() {
       out.push(ty_nil())
     }
     return out
@@ -1189,10 +1189,10 @@ pub fn ty_assignable(got: Ty, want: Ty): Bool {
   if got.same_as(want) {
     return true
   }
-  if want.is_union && want.includes_member(got) {
+  if want.is_union() && want.includes_member(got) {
     return true
   }
-  if got.is_union && want.is_union {
+  if got.is_union() && want.is_union() {
     for mem in got.members {
       if !want.includes_member(mem) {
         return false
@@ -1256,16 +1256,16 @@ pub fn type_is_builtin(name: String): Bool {
 
 // Whether a value of type t has a natural zero (D292).
 pub fn ty_has_zero(t: Ty): Bool {
-  if t.is_integer || t.is_float || t.is_bool || t.is_string {
+  if t.is_integer() || t.is_float() || t.is_bool() || t.is_string() {
     return true
   }
-  if t.is_union {
-    return t.includes_nil
+  if t.is_union() {
+    return t.includes_nil()
   }
-  if t.is_ptr {
+  if t.is_ptr() {
     return true
   }
-  if t.is_struct {
+  if t.is_struct() {
     for f in t.fields {
       if f.defaulted || !ty_has_zero(f.ty) {
         return false
@@ -1282,10 +1282,10 @@ pub fn ty_has_zero(t: Ty): Bool {
 // object. A String and Bytes cannot change; a number, a Bool, a function
 // value, a pointer and a JoinHandle are not counted.
 pub fn ty_holds_mutable_ref(t: Ty): Bool {
-  if t.is_class || t.is_array || t.is_hash || t.is_buf {
+  if t.is_class() || t.is_array() || t.is_hash() || t.is_buf() {
     return true
   }
-  if t.is_union {
+  if t.is_union() {
     for m in t.members {
       if ty_holds_mutable_ref(m) {
         return true
@@ -1293,7 +1293,7 @@ pub fn ty_holds_mutable_ref(t: Ty): Bool {
     }
     return false
   }
-  if t.is_struct {
+  if t.is_struct() {
     for f in t.fields {
       if ty_holds_mutable_ref(f.ty) {
         return true
@@ -1306,10 +1306,10 @@ pub fn ty_holds_mutable_ref(t: Ty): Bool {
 // Whether the zero of t needs a store (a String, or a struct holding
 // one): the allocation's zero bytes are every other zero.
 pub fn ty_zero_stores(t: Ty): Bool {
-  if t.is_string {
+  if t.is_string() {
     return true
   }
-  if t.is_struct {
+  if t.is_struct() {
     for f in t.fields {
       if ty_zero_stores(f.ty) {
         return true

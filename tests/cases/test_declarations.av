@@ -19,7 +19,7 @@ class RCase {
 }
 
 fn refused(tag: String, src: String, needle: String, pos: String): RCase {
-  f = RCase.new
+  f = RCase.new()
   f.tag = tag
   f.src = src
   f.want = needle
@@ -28,7 +28,7 @@ fn refused(tag: String, src: String, needle: String, pos: String): RCase {
 }
 
 fn accepted(tag: String, src: String, out: String): RCase {
-  f = RCase.new
+  f = RCase.new()
   f.tag = tag
   f.src = src
   f.want = out
@@ -79,11 +79,11 @@ fn cases: Array(RCase) {
   xs.push(accepted("struct-default", "${opts}fn main {\n  o = Opts { port: 80 }\n  puts(\"\${o.port} \${o.loops} \${o.name}\")\n  p = Opts { name: \"x\", port: 1, loops: 2 }\n  puts(\"\${p.port} \${p.loops} \${p.name}\")\n}\n", "80 4 srv\n1 2 x\n"))
   xs.push(accepted("struct-default-each", "fn next_id(c: Counter): Int {\n  c.n += 1\n  c.n\n}\nclass Counter {\n  n: Int = 0\n}\nstruct Tag {\n  label: String\n  items: Array(Int) = []\n}\nfn main {\n  a = Tag { label: \"a\" }\n  b = Tag { label: \"b\" }\n  a.items.push(1)\n  puts(\"\${a.items.size} \${b.items.size}\")\n}\n", "1 0\n"))
   xs.push(accepted("struct-default-generic", "struct Pair(T) {\n  a: T\n  b: Int = 9\n}\nfn main {\n  p = Pair { a: \"z\" }\n  q = Pair(Int) { a: 1, b: 2 }\n  puts(\"\${p.a} \${p.b} \${q.a} \${q.b}\")\n}\n", "z 9 1 2\n"))
-  xs.push(accepted("struct-default-all", "struct Opts {\n  loops: Int = 4\n}\nclass Server {\n  opts: Opts = Opts { }\n}\nfn main {\n  puts(Server.new.opts.loops)\n  xs = Array(Opts).new(2, Opts { loops: 1 })\n  puts(xs[1].loops)\n}\n", "4\n1\n"))
+  xs.push(accepted("struct-default-all", "struct Opts {\n  loops: Int = 4\n}\nclass Server {\n  opts: Opts = Opts { }\n}\nfn main {\n  puts(Server.new().opts.loops)\n  xs = Array(Opts).new(2, Opts { loops: 1 })\n  puts(xs[1].loops)\n}\n", "4\n1\n"))
   xs.push(refused("struct-missing", "${opts}fn main {\n  o = Opts { loops: 1 }\n  puts(o.port)\n}\n", "missing field port (a literal leaves out only a field that declares a default)", "7:7"))
   xs.push(refused("struct-default-field", "struct O {\n  a: Int\n  b: Int = a\n}\nfn main { }\n", "a field default cannot read another field (a of O)", "3:12"))
   xs.push(refused("struct-default-type", "struct O {\n  a: Int = \"x\"\n}\nfn main { }\n", "cannot assign String to Int", "2:12"))
-  xs.push(refused("struct-default-no-zero", "struct O {\n  a: Int\n  b: Int = 2\n}\nclass C {\n  o: O\n}\nfn main {\n  puts(C.new.o.b)\n}\n", "field o of C has no zero value, no default, and C has no initialize to set it", "6:3"))
+  xs.push(refused("struct-default-no-zero", "struct O {\n  a: Int\n  b: Int = 2\n}\nclass C {\n  o: O\n}\nfn main {\n  puts(C.new().o.b)\n}\n", "field o of C has no zero value, no default, and C has no initialize to set it", "6:3"))
   xs.push(refused("struct-default-array-new", "struct O {\n  b: Int = 2\n}\nfn main {\n  xs = Array(O).new(3)\n  puts(xs.size)\n}\n", "Array(O).new(n) needs an element value: O has no zero value", "5:8"))
   // Field parameters of initialize
   xs.push(accepted("field-params", "class Span {\n  start: Int\n  stop: Int\n  name: String\n  fn initialize(self.start, self.stop, self.name = \"span\") {\n    puts(\"\${start}..\${stop}\")\n  }\n}\nclass Holder(T) {\n  v: T\n  fn initialize(self.v) {\n  }\n}\nfn main {\n  s = Span.new(1, 4)\n  t = Span.new(2, 3, name: \"t\")\n  puts(\"\${s.name} \${t.name} \${t.stop}\")\n  puts(Holder.new(\"h\").v)\n}\n", "1..4\n2..3\nspan t 3\nh\n"))
@@ -96,9 +96,9 @@ fn cases: Array(RCase) {
   xs.push(refused("field-param-wrong-arg", "class C {\n  a: Int\n  fn initialize(self.a) {\n  }\n}\nfn main {\n  puts(C.new(\"x\").a)\n}\n", "argument 1 of C.new is String, expected Int", "7:9"))
   // Grouping parentheses in types, and an optional function value
   xs.push(accepted("grouped-union", "fn f(k: Int): (Int | String)? {\n  if k == 0 {\n    return nil\n  }\n  if k == 1 {\n    return 7\n  }\n  \"s\"\n}\nfn main {\n  for k in 0..3 {\n    switch f(k) {\n      case nil { puts(\"nil\") }\n      case n: Int { puts(n) }\n      case s: String { puts(s) }\n    }\n  }\n}\n", "nil\n7\ns\n"))
-  xs.push(accepted("optional-fn", "class Handler {\n  v: Int\n  cb: (fn(Int): Int)?\n\n  fn initialize(self.v, self.cb = nil) {\n  }\n\n  fn run: Int {\n    if f = cb {\n      return f(v)\n    }\n    v\n  }\n}\n\nfn double(n: Int): Int {\n  n * 2\n}\n\nfn pick(k: Int): (fn(Int): Int)? {\n  if k % 3 == 0 {\n    return nil\n  }\n  if k % 3 == 1 {\n    return double\n  }\n  { |n| n + k }\n}\n\nfn main {\n  f: (fn(Int): Int)? = nil\n  g = f ?? double\n  puts(g(5))\n  total = 0\n  for k in 0..6 {\n    if h = pick(k) {\n      total += h(10)\n    } else {\n      total += 1\n    }\n  }\n  puts(total)\n  hs = [Handler.new(1), Handler.new(2, cb: double), Handler.new(3, cb: { |n| n * 100 })]\n  for x in hs {\n    puts(x.run)\n  }\n  fs: Array(fn(Int): Int) = [double]\n  if e = fs.get(0) {\n    puts(e(21))\n  }\n  if e2 = fs.get(3) {\n    puts(e2(1))\n  } else {\n    puts(\"none\")\n  }\n  u: (fn(Int): Int)? = double\n  switch u {\n    case nil { puts(\"nil\") }\n    case w: fn(Int): Int { puts(w(4)) }\n  }\n}\n", "10\n69\n1\n4\n300\n42\nnone\n8\n"))
+  xs.push(accepted("optional-fn", "class Handler {\n  v: Int\n  cb: (fn(Int): Int)?\n\n  fn initialize(self.v, self.cb = nil) {\n  }\n\n  fn run: Int {\n    if f = cb {\n      return f(v)\n    }\n    v\n  }\n}\n\nfn double(n: Int): Int {\n  n * 2\n}\n\nfn pick(k: Int): (fn(Int): Int)? {\n  if k % 3 == 0 {\n    return nil\n  }\n  if k % 3 == 1 {\n    return double\n  }\n  { |n| n + k }\n}\n\nfn main {\n  f: (fn(Int): Int)? = nil\n  g = f ?? double\n  puts(g(5))\n  total = 0\n  for k in 0..6 {\n    if h = pick(k) {\n      total += h(10)\n    } else {\n      total += 1\n    }\n  }\n  puts(total)\n  hs = [Handler.new(1), Handler.new(2, cb: double), Handler.new(3, cb: { |n| n * 100 })]\n  for x in hs {\n    puts(x.run())\n  }\n  fs: Array(fn(Int): Int) = [double]\n  if e = fs.get(0) {\n    puts(e(21))\n  }\n  if e2 = fs.get(3) {\n    puts(e2(1))\n  } else {\n    puts(\"none\")\n  }\n  u: (fn(Int): Int)? = double\n  switch u {\n    case nil { puts(\"nil\") }\n    case w: fn(Int): Int { puts(w(4)) }\n  }\n}\n", "10\n69\n1\n4\n300\n42\nnone\n8\n"))
   xs.push(refused("optional-fn-shown", "fn main {\n  f: (fn(Int): Int)? = 1\n}\n", "cannot assign Int to (fn(Int): Int)?", "2:24"))
-  xs.push(refused("fn-field-hint", "class C {\n  f: fn(Int): Int\n}\nfn main {\n  c = C.new\n}\n", "or make it optional (f: (fn(Int): Int)?)", "2:3"))
+  xs.push(refused("fn-field-hint", "class C {\n  f: fn(Int): Int\n}\nfn main {\n  c = C.new()\n}\n", "or make it optional (f: (fn(Int): Int)?)", "2:3"))
   xs
 }
 
@@ -151,5 +151,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

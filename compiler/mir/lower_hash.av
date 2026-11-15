@@ -42,12 +42,12 @@ pub fn mir_hash_val(ht: Ty): Ty {
 // A String key: the `_sk` entries; every other key is an integer of its
 // width (an enum, a Bool) and takes the `_ik` entries.
 pub fn mir_hash_key_str(ht: Ty): Bool {
-  mir_hash_key(ht).is_string
+  mir_hash_key(ht).is_string()
 }
 
 // A value the collector traces: stored by the runtime behind the barrier.
 pub fn mir_hash_val_ref(ht: Ty): Bool {
-  mir_hash_val(ht).is_string
+  mir_hash_val(ht).is_string()
 }
 
 // The entry `avant_hash_<op>_ik` or `_sk` for the hash's key.
@@ -65,7 +65,7 @@ pub fn (lw: MirLower) hash_desc(ht: Ty, loc: Location): Int {
   ts = lw.lw_m.types
   kty = lw.ty_at(mir_hash_key(ht), loc, "a hash key")
   vty = lw.ty_at(mir_hash_val(ht), loc, "a hash value")
-  if lw.failed {
+  if lw.failed() {
     return 0
   }
   d = 0
@@ -92,7 +92,7 @@ pub fn (lw: MirLower) hash_key_arg(ht: Ty, k: MOperand, loc: Location): MOperand
     return k
   }
   kty = lw.ty_at(mir_hash_key(ht), loc, "a hash key")
-  if lw.failed || kty == mt_i64() {
+  if lw.failed() || kty == mt_i64() {
     return k
   }
   b = lw.lw_b
@@ -131,14 +131,14 @@ pub fn (lw: MirLower) hash_find_load(ht: Ty, op: String, h: MOperand, k: MOperan
 pub fn (lw: MirLower) lower_hash_new(e: Expr): MOperand {
   b = lw.lw_b
   ty = lw.ety(e)
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   d = 0
   if t = e.ty {
     d = lw.hash_desc(t, e.loc)
   }
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   lw.at(e.loc)
@@ -159,7 +159,7 @@ pub fn (lw: MirLower) lower_hash_store(st: Stmt, t: Expr, arr: Expr, ix: Expr, h
     val = lw.snap(lw.snap(lw.lower_expr(v), ix), arr)
     key = lw.snap(lw.lower_expr(ix), arr)
     h = lw.lower_expr(arr)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     lw.at(st.loc)
@@ -205,7 +205,7 @@ pub fn (lw: MirLower) hash_delete_stmt(e: Expr): Bool {
     return false
   }
   if recv = e.receiver, ht = recv.ty {
-    if !ht.is_hash || e.resolved.size > 0 {
+    if !ht.is_hash() || e.resolved.size > 0 {
       return false
     }
     f = "avant_hash_del"
@@ -213,7 +213,7 @@ pub fn (lw: MirLower) hash_delete_stmt(e: Expr): Bool {
       f = "avant_hash_del_i32k"
     }
     ops = lw.args_then_recv(e.args, recv)
-    if lw.failed {
+    if lw.failed() {
       return true
     }
     lw.at(e.loc)
@@ -228,12 +228,12 @@ pub fn (lw: MirLower) hash_delete_stmt(e: Expr): Bool {
 // first, as every argument).
 pub fn (lw: MirLower) hash_get_or(e: Expr, ht: Ty, ops: Array(MOperand), vty: Int): MOperand {
   b = lw.lw_b
-  fl = lw.found_local
+  fl = lw.found_local()
   v = lw.hash_find_load(ht, "find", ops[0], lw.hash_key_arg(ht, ops[1], e.loc), fl, vty)
   r = b.temp(vty)
-  hit = b.block
-  miss = b.block
-  join = b.block
+  hit = b.block()
+  miss = b.block()
+  join = b.block()
   b.branch(lw.found_is(fl), hit, miss)
   b.at(hit)
   b.assign(b.pl(r), b.rv_use(v))
@@ -283,7 +283,7 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
   }
   ty = lw.ety(e)
   vty = lw.ty_at(mir_hash_val(ht), e.loc, "a hash value")
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   f = ""
@@ -310,16 +310,16 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
     n = 3
   }
   if f.size == 0 || (n >= 0 && args.size != n) || (n < 0 && (args.size < 1 || args.size > 2)) {
-    lw.refuse(e.loc, "the member .${name} of ${ht.show}")
+    lw.refuse(e.loc, "the member .${name} of ${ht.show()}")
     return zero
   }
   ops = lw.args_then_recv(args, recv)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
   if name == "has_key" {
-    fl = lw.found_local
+    fl = lw.found_local()
     fops: Array(MOperand) = []
     fops.push(ops[0])
     fops.push(lw.hash_key_arg(ht, ops[1], e.loc))
@@ -375,7 +375,7 @@ pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(
   }
   ty = lw.ety(e)
   ops = lw.args_then_recv(args, recv)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
@@ -393,17 +393,17 @@ pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(
 pub fn (lw: MirLower) str_heap_member(e: Expr, recv: Expr, rt: Ty, name: String, args: Array(Expr)): MOperand? {
   f = ""
   n = 0
-  if rt.is_string && name == "split" {
+  if rt.is_string() && name == "split" {
     f = "avant_str_split"
     n = 1
-  } else if rt.is_string && name == "fields" {
+  } else if rt.is_string() && name == "fields" {
     f = "avant_str_fields"
   } else if name == "chars" {
     f = "avant_str_chars"
-    if rt.is_bytes {
+    if rt.is_bytes() {
       f = "avant_bytes_chars"
     }
-  } else if rt.is_bytes && name == "to_buf" {
+  } else if rt.is_bytes() && name == "to_buf" {
     f = "avant_bytes_to_buf"
   }
   if f.size == 0 || args.size != n || e.resolved.size > 0 {
@@ -411,7 +411,7 @@ pub fn (lw: MirLower) str_heap_member(e: Expr, recv: Expr, rt: Ty, name: String,
   }
   ty = lw.ety(e)
   ops = lw.args_then_recv(args, recv)
-  if lw.failed {
+  if lw.failed() {
     return lw.lw_b.c_i32(0)
   }
   lw.at(e.loc)
@@ -436,7 +436,7 @@ pub fn (lw: MirLower) heap_builtin(e: Expr, c: String): MOperand? {
   }
   ty = lw.ety(e)
   ops = lw.lower_args(e.args)
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   lw.at(e.loc)

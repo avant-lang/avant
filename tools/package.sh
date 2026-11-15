@@ -165,17 +165,17 @@ fn main {
   if re2 = Regex.compile(p + "+") {
     puts(re2.count("bb"))
   }
-  if back = "z".bytes.compress.uncompress {
+  if back = "z".bytes.compress().uncompress() {
     puts(back.size)
   }
-  puts("a".bytes.to_base64)
+  puts("a".bytes.to_base64())
   if server = Http.listen(0) {
-    server.close
+    server.close()
   }
   h = spawn {
     1
   }
-  puts(h.join ?? -1)
+  puts(h.join() ?? -1)
 }
 EOF_AV
 ( cd "$floor_dir" && env -i HOME="$floor_dir" PATH=/usr/bin:/bin TMPDIR="$floor_dir" \

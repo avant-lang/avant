@@ -80,7 +80,7 @@ fn testing_write(s: String) {
 fn testing_slice(s: String, start: Int, stop: Int): String {
   b = buf_new()
   b.push_slice(s, start, stop)
-  b.to_s
+  b.to_s()
 }
 
 fn testing_has(hay: String, needle: String): Bool {
@@ -221,7 +221,7 @@ pub class Test {
     now = now_ms()
     dur = 0
     if self.rec_at > 0 {
-      dur = (now - self.rec_at).to_i
+      dur = (now - self.rec_at).to_i()
     }
     self.rec_at = now
     self.rec_name.push(name)
@@ -261,7 +261,7 @@ pub class Test {
       }
       i += 1
     }
-    b.to_s
+    b.to_s()
   }
 
   fn junit_secs(ms: Int): String {
@@ -312,8 +312,8 @@ pub class Test {
     // not written is a report without this process's checks, so the
     // run fails and says why (O416, Stage 29 W-FIX1d; the failure was
     // dropped).
-    _ = file_write(frag, b.to_s) else e {
-      report_lost("the JUnit fragment was not written: ${e.message}")
+    _ = file_write(frag, b.to_s()) else e {
+      report_lost("the JUnit fragment was not written: ${e.message()}")
       return
     }
   }
@@ -362,7 +362,7 @@ pub class Test {
   }
 
   pub fn check(cond: Bool, name: String): Nil {
-    if self.quiet || !picked(name) {
+    if self.quiet() || !picked(name) {
       return nil
     }
     if cond {
@@ -376,7 +376,7 @@ pub class Test {
   // got == want by the type's own ==; on failure both are printed as
   // interpolation prints them, so T is any type that has == and a text.
   pub fn check_eq(got: T, want: T, name: String): Nil {
-    if self.quiet || !picked(name) {
+    if self.quiet() || !picked(name) {
       return nil
     }
     if got == want {
@@ -430,8 +430,8 @@ pub class Test {
     // The runner starts the parallel bodies from this file: if it is
     // not written they never run, so the run fails and says why (O416;
     // the failure was dropped).
-    _ = file_write(self.names_path, b.to_s) else e {
-      report_lost("the parallel names were not written, so the parallel tests cannot run: ${e.message}")
+    _ = file_write(self.names_path, b.to_s()) else e {
+      report_lost("the parallel names were not written, so the parallel tests cannot run: ${e.message()}")
       return
     }
   }
@@ -476,7 +476,7 @@ pub class Test {
 
   pub fn golden(path: String, got: String): Nil {
     label = "golden ${path}"
-    if self.quiet || !picked(label) {
+    if self.quiet() || !picked(label) {
       return nil
     }
     if text = file_read(path) {
@@ -496,7 +496,7 @@ pub class Test {
 
   pub fn run_golden(program: String, want: String): Nil {
     label = "run_golden ${program}"
-    if self.quiet || !picked(label) {
+    if self.quiet() || !picked(label) {
       return nil
     }
     compiler = ""
@@ -508,7 +508,7 @@ pub class Test {
       testing_write("  AVANT_COMPILER is not set")
       return nil
     }
-    base = "${self.temp_dir}/case"
+    base = "${self.temp_dir()}/case"
     out = "${base}.bin"
     compile_log = "${base}.compile"
     args: Array(String) = []
@@ -552,7 +552,7 @@ pub class Test {
 
   pub fn rejects(source: String, substring: String): Nil {
     label = "rejects ${source}"
-    if self.quiet || !picked(label) {
+    if self.quiet() || !picked(label) {
       return nil
     }
     compiler = ""
@@ -564,7 +564,7 @@ pub class Test {
       testing_write("  AVANT_COMPILER is not set")
       return nil
     }
-    base = "${self.temp_dir}/case"
+    base = "${self.temp_dir()}/case"
     out = "${base}.bin"
     stdout_path = "${base}.out"
     stderr_path = "${base}.err"
@@ -595,7 +595,7 @@ pub class Test {
     if self.matches_path.size > 0 && self.matched > 0 {
       switch file_write(self.matches_path, "${self.matched}\n") {
         case Int { }
-        case e: IoError { report_lost("the --name matches were not written: ${e.message}") }
+        case e: IoError { report_lost("the --name matches were not written: ${e.message()}") }
       }
     }
     if self.mode == 1 {

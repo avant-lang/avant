@@ -193,7 +193,7 @@ fn main {
   puts(sum)
   puts(xs.size)
 
-  h = Hash(String, Int).new
+  h = Hash(String, Int).new()
   h["a"] = 10
   h["b"] = 20
   if v = h.get("a") {
@@ -230,7 +230,7 @@ fn main {
   h = spawn {
     21 * 2
   }
-  puts(h.join ?? -1)
+  puts(h.join() ?? -1)
 }
 EOF
 expect std-threads "42" "$avant" run threads.av
@@ -263,7 +263,7 @@ fn main {
       puts(m.start)
       puts(m.end)
     }
-    re.close
+    re.close()
   }
 }
 EOF
@@ -290,7 +290,7 @@ fn main {
       puts(m.start)
       puts(m.end)
     }
-    re.close
+    re.close()
   }
 }
 EOF
@@ -301,7 +301,7 @@ src zlib.av <<'EOF'
 import std.zlib
 
 fn main {
-  if back = "hello zlib".bytes.compress.uncompress {
+  if back = "hello zlib".bytes.compress().uncompress() {
     puts(String.from_utf8(back) ?? "")
   }
 }
@@ -312,7 +312,7 @@ src base64.av <<'EOF'
 import std.base64
 
 fn main {
-  puts("aaa".bytes.to_base64)
+  puts("aaa".bytes.to_base64())
 }
 EOF
 expect std-base64 "YWFh" "$avant" run base64.av
@@ -323,18 +323,18 @@ import std.http
 fn main {
   if server = Http.listen(0) {
     server.get("/") { |req|
-      server.close
+      server.close()
       Response.text("Hello Avant")
     }
-    port = server.port
+    port = server.port()
     handle = spawn {
       if resp = Http.get("http://127.0.0.1:${port}/") {
         puts(String.from_utf8(resp.body) ?? "")
       }
       0
     }
-    server.serve
-    _ = handle.join
+    server.serve()
+    _ = handle.join()
   }
 }
 EOF
@@ -354,9 +354,9 @@ src tests/test_ok.av <<'EOF'
 import std.testing
 
 fn main: Int {
-  t = Test.new
+  t = Test.new()
   t.check(1 + 1 == 2, "arithmetic")
-  t.finish
+  t.finish()
 }
 EOF
 if run avant-test "$avant" test; then

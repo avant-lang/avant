@@ -13,31 +13,31 @@ import mir.types
 // bool, Float64 f64, Void void, String and Bytes `ref str` (a literal's
 // constant or a heap string, W6a).
 pub fn mir_scalar_ty(t: Ty): Int {
-  if t.is_int {
+  if t.is_int() {
     return mt_i64()
   }
-  if t.is_enum {
+  if t.is_enum() {
     return mir_enum_ty(t)
   }
-  if t.is_int32 {
+  if t.is_int32() {
     return mt_i32()
   }
-  if t.is_uint32 {
+  if t.is_uint32() {
     return mt_u32()
   }
-  if t.is_uint64 {
+  if t.is_uint64() {
     return mt_u64()
   }
-  if t.is_bool {
+  if t.is_bool() {
     return mt_bool()
   }
-  if t.is_float {
+  if t.is_float() {
     return mt_f64()
   }
-  if t.is_void {
+  if t.is_void() {
     return mt_void()
   }
-  if t.is_string || t.is_bytes {
+  if t.is_string() || t.is_bytes() {
     return mt_str()
   }
   -1
@@ -52,12 +52,12 @@ pub fn mir_scalar_ty(t: Ty): Int {
 pub fn mir_enum_narrow: Bool { true }
 
 pub fn mir_enum_ty(t: Ty): Int {
-  if !mir_enum_narrow() || t.enum_c_int {
+  if !mir_enum_narrow() || t.enum_c_int() {
     return mt_i32()
   }
   lo = 0
   hi = 0
-  for v in t.enum_vals {
+  for v in t.enum_vals() {
     if v < lo {
       lo = v
     }
@@ -85,9 +85,9 @@ pub fn mir_enum_ty(t: Ty): Int {
 // (a class marked Error), `Void` the null pointer. Every other union
 // keeps the tag-and-payloads layout (2.4).
 pub fn mir_opt_ref(t: Ty): Ty? {
-  if t.is_union && t.members.size == 2 && t.includes_void {
+  if t.is_union() && t.members.size == 2 && t.includes_void() {
     for m in t.members {
-      if !m.is_void && (m.is_class || m.is_string || m.is_bytes || m.is_array || m.is_hash || m.is_buf || m.is_join) {
+      if !m.is_void() && (m.is_class() || m.is_string() || m.is_bytes() || m.is_array() || m.is_hash() || m.is_buf() || m.is_join()) {
         return m
       }
     }
@@ -108,11 +108,11 @@ pub fn mir_is_opt_ref(t: Ty): Bool {
 // one: a named function is its trampoline, a lambda its thunk), so it
 // takes no tag and no more room than the function value.
 pub fn mir_opt_fn(t: Ty): Ty? {
-  if !t.is_union || t.members.size != 2 || !t.includes_nil {
+  if !t.is_union() || t.members.size != 2 || !t.includes_nil() {
     return nil
   }
   for m in t.members {
-    if m.is_fn {
+    if m.is_fn() {
       return m
     }
   }
@@ -137,7 +137,7 @@ pub fn mir_is_opt_word(t: Ty): Bool {
 
 // Whether a String or Bytes value (both are `ref str`).
 pub fn mir_is_str_ty(t: Ty): Bool {
-  t.is_string || t.is_bytes
+  t.is_string() || t.is_bytes()
 }
 
 // The arity of a string builtin (lower_str.av; calls.av:205-249,
@@ -160,10 +160,10 @@ pub fn mir_str_builtin_arity(c: String): Int {
 // parentheses; any other type is refused before a symbol or a layout
 // needs it, so its shown name is enough here.
 pub fn mir_mty(t: Ty): String {
-  if t.is_enum {
+  if t.is_enum() {
     return "${mir_module_part(t.mod_name)}.${t.name}"
   }
-  if t.is_struct || t.is_class {
+  if t.is_struct() || t.is_class() {
     // A generic instance (W7a): its template's name and the type
     // arguments, `main.Pair(Int,String)` (resolve.av instantiate_template:
     // origin and ty_args).
@@ -177,29 +177,29 @@ pub fn mir_mty(t: Ty): String {
         buf0.push_str(mir_mty(t.ty_args[j]))
       }
       buf0.push_str(")")
-      return buf0.to_s
+      return buf0.to_s()
     }
     return "${mir_module_part(t.mod_name)}.${t.name}"
   }
-  if t.is_nil {
+  if t.is_nil() {
     return "Nil"
   }
   // W6c: the containers (8.2: `Array(T)`, `Hash(K,V)`, `Buf`).
-  if t.is_array {
+  if t.is_array() {
     if e = t.inner {
       return "Array(${mir_mty(e)})"
     }
   }
-  if t.is_hash {
+  if t.is_hash() {
     if k = t.key, v = t.val {
       return "Hash(${mir_mty(k)},${mir_mty(v)})"
     }
   }
-  if t.is_buf {
+  if t.is_buf() {
     return "Buf"
   }
   // W8b: `JoinHandle(T)` (8.2).
-  if t.is_join {
+  if t.is_join() {
     if je = t.inner {
       return "JoinHandle(${mir_mty(je)})"
     }
@@ -207,19 +207,19 @@ pub fn mir_mty(t: Ty): String {
   }
   // W8a: `Ptr(T)` (8.2); a C layout or an opaque C type as `module.Name`
   // when the resolver gave it a module, else its bare name.
-  if t.is_ptr {
+  if t.is_ptr() {
     if pe = t.inner {
       return "Ptr(${mir_mty(pe)})"
     }
     return "Ptr(Void)"
   }
-  if t.is_clayout || t.is_opaque {
+  if t.is_clayout() || t.is_opaque() {
     if t.mod_name.size > 0 {
       return "${mir_module_part(t.mod_name)}.${t.name}"
     }
     return t.name
   }
-  if t.is_union {
+  if t.is_union() {
     buf = buf_new()
     buf.push_str("(")
     i = 0
@@ -231,10 +231,10 @@ pub fn mir_mty(t: Ty): String {
       i += 1
     }
     buf.push_str(")")
-    return buf.to_s
+    return buf.to_s()
   }
   // W7b: `fn(A,B):R` (8.2), a missing result is Void.
-  if t.is_fn {
+  if t.is_fn() {
     buf2 = buf_new()
     buf2.push_str("fn(")
     fk = 0
@@ -251,36 +251,36 @@ pub fn mir_mty(t: Ty): String {
     } else {
       buf2.push_str("Void")
     }
-    return buf2.to_s
+    return buf2.to_s()
   }
-  if t.is_int {
+  if t.is_int() {
     return "Int"
   }
-  if t.is_uint64 {
+  if t.is_uint64() {
     return "UInt64"
   }
-  if t.is_int32 {
+  if t.is_int32() {
     return "Int32"
   }
-  if t.is_uint32 {
+  if t.is_uint32() {
     return "UInt32"
   }
-  if t.is_bool {
+  if t.is_bool() {
     return "Bool"
   }
-  if t.is_float {
+  if t.is_float() {
     return "Float64"
   }
-  if t.is_string {
+  if t.is_string() {
     return "String"
   }
-  if t.is_bytes {
+  if t.is_bytes() {
     return "Bytes"
   }
-  if t.is_void {
+  if t.is_void() {
     return "Void"
   }
-  t.show
+  t.show()
 }
 
 fn mir_module_byte(c: Int): Bool {
@@ -314,7 +314,7 @@ pub fn mir_module_part(name: String): String {
     }
     i += 1
   }
-  buf.to_s
+  buf.to_s()
 }
 
 // The IEEE 754 bits of v, computed exactly: scaling by 2 is exact, so the
@@ -358,9 +358,9 @@ pub fn mir_f64_bits(v: Float64): Int {
     frac = x - 1.0
   }
   scaled = frac * 67108864.0
-  hi = scaled.floor
+  hi = scaled.floor()
   lo = (scaled - hi) * 67108864.0
-  top | (biased.to_i << 52) | (hi.to_i.to_i << 26) | lo.to_i.to_i
+  top | (biased.to_i() << 52) | (hi.to_i().to_i() << 26) | lo.to_i().to_i()
 }
 
 // The type of a C scalar's Avant view: Float64 for Float32, Int (i64)

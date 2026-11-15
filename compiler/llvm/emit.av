@@ -42,7 +42,7 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
     ll_function(e, m.funcs[i])
     i += 1
   }
-  body = e.out.to_s
+  body = e.out.to_s()
   e.out = buf_new()
   ll_type_maps(e)
   if e.used_frame_global {
@@ -51,7 +51,7 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   if e.used_alloc_slow {
     ll_alloc_slow_helper(e)
   }
-  maps = e.out.to_s
+  maps = e.out.to_s()
 
   out = buf_new()
   out.push_str("source_filename = \"${m.name}\"\n")
@@ -114,7 +114,7 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
     out.push_str("attributes #1 = { cold noinline noreturn nounwind \"frame-pointer\"=\"all\" \"probe-stack\"=\"inline-asm\" }\n")
   }
   ll_loop_md(e, out)
-  out.to_s
+  out.to_s()
 }
 
 // The layouts as named LLVM struct types, in creation order. An element
@@ -221,7 +221,7 @@ fn ll_declare(ts: MTypes, name: String, sig: Int, noreturn: Bool, attrs: String)
     buf.push_str(" ${attrs}")
   }
   buf.push_str("\n")
-  buf.to_s
+  buf.to_s()
 }
 
 // A parameter or result type at the C boundary.
@@ -267,12 +267,12 @@ fn ll_type_maps(e: LlEmit) {
     stride = mir_map_stride(e.ts, tm)
     if stride == 0 && chunks.size == 1 {
       e.need("avant_type_map")
-      e.line("call void @avant_type_map(i32 ${tm.id}, i64 ${chunks[0].wrap_i})")
+      e.line("call void @avant_type_map(i32 ${tm.id}, i64 ${chunks[0].wrap_i()})")
     } else {
       e.need("avant_type_map_at")
       for c in 0..chunks.size {
         if c == 0 || chunks[c] != 0u64 {
-          e.line("call void @avant_type_map_at(i32 ${tm.id}, i32 ${stride}, i32 ${64 * c}, i64 ${chunks[c].wrap_i})")
+          e.line("call void @avant_type_map_at(i32 ${tm.id}, i32 ${stride}, i32 ${64 * c}, i64 ${chunks[c].wrap_i()})")
         }
       }
     }
@@ -388,7 +388,7 @@ fn ll_bounds(e: LlEmit, st: MStmt) {
   i = e.value(st.args[0])
   ity = e.ov_ty
   n = e.value(st.args[1])
-  c = e.tmp
+  c = e.tmp()
   e.line("${c} = icmp uge ${e.llt(ity)} ${i}, ${n}")
   oob = e.part("oob")
   ok = e.part("ok")
@@ -401,9 +401,9 @@ fn ll_bounds(e: LlEmit, st: MStmt) {
   // Maze::AStar, +5.8% instructions).
   e.trap_bounds = true
   if ity != mt_i64() {
-    wi = e.tmp
+    wi = e.tmp()
     e.line("${wi} = sext i32 ${i} to i64")
-    wn = e.tmp
+    wn = e.tmp()
     e.line("${wn} = sext i32 ${n} to i64")
     i = wi
     n = wn
@@ -465,7 +465,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
         if args.size > 0 {
           args = "${args}, "
         }
-        args = "${args}i32 ${e.site_ref}"
+        args = "${args}i32 ${e.site_ref()}"
       }
       rt = ll_c_type(e.ts, ret)
       if s.varargs || sig != x.sig {
@@ -512,7 +512,7 @@ fn ll_emit_call(e: LlEmit, is_void: Bool, ret: String, callee: String, args: Str
     e.line("call ${ret} ${callee}(${args})")
     return ""
   }
-  t = e.tmp
+  t = e.tmp()
   e.line("${t} = call ${ret} ${callee}(${args})")
   t
 }
@@ -535,7 +535,7 @@ fn ll_fn_type(e: LlEmit, s: MSig): String {
     buf.push_str("...")
   }
   buf.push_str(")")
-  buf.to_s
+  buf.to_s()
 }
 
 // The argument list: each operand loaded here, in order; a fixed
@@ -562,7 +562,7 @@ fn ll_args(e: LlEmit, ops: Array(MOperand), params: Array(Int), c_boundary: Bool
     }
     i += 1
   }
-  buf.to_s
+  buf.to_s()
 }
 
 // call indirect copy P (4.4): the fnval's environment (word 0) is the
@@ -572,9 +572,9 @@ fn ll_call_indirect(e: LlEmit, st: MStmt, fo: MOperand): String {
   fty = e.ov_ty
   l = e.ts.layouts[e.ts.layout_of(fty)]
   s = e.ts.sigs[e.ts.get(l.fields[1]).sig]
-  env = e.tmp
+  env = e.tmp()
   e.line("${env} = extractvalue ${e.llt(fty)} ${fv}, 0")
-  code = e.tmp
+  code = e.tmp()
   e.line("${code} = extractvalue ${e.llt(fty)} ${fv}, 1")
   rest: Array(Int) = []
   for i in 1..s.params.size {
@@ -642,10 +642,10 @@ fn ll_term(e: LlEmit, t: MTerm) {
         buf.push_str(" ${e.llt(ty)} ${e.int_text(ty, t.values[i])}, label %bb${t.targets[i]}")
       }
       buf.push_str(" ]")
-      e.line(buf.to_s)
+      e.line(buf.to_s())
     }
   } else if k == mtk_return() {
-    if e.f.has_ret {
+    if e.f.has_ret() {
       ty = e.f.locals[0].ty
       x = e.load(ty, e.local_name(0), e.slot_vol(0))
       e.line("ret ${e.llt(ty)} ${x}")
@@ -735,7 +735,7 @@ fn ll_rvalue(e: LlEmit, r: MRvalue, pt: Int): String {
 
 // E4: aggregates are built by insertvalue chains from zeroinitializer.
 fn ll_insert(e: LlEmit, aty: Int, agg: String, fty: Int, x: String, idx: Int): String {
-  t = e.tmp
+  t = e.tmp()
   e.line("${t} = insertvalue ${e.llt(aty)} ${agg}, ${e.llt(fty)} ${x}, ${idx}")
   t
 }
@@ -747,7 +747,7 @@ fn ll_unary(e: LlEmit, r: MRvalue): String {
     if r.op == mop_neg_chk() {
       return ll_overflow(e, "ssub", ty, "0", x)
     }
-    t = e.tmp
+    t = e.tmp()
     if r.op == mop_neg() && ty == mt_f64() {
       e.line("${t} = fneg double ${x}")
     } else if r.op == mop_neg() {
@@ -788,7 +788,7 @@ fn ll_binary(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
   } else if op == mop_shr() {
     name = ll_pick(signed, "ashr", "lshr")
   }
-  t = e.tmp
+  t = e.tmp()
   e.line("${t} = ${name} ${lt} ${x}, ${y}")
   t
 }
@@ -801,7 +801,7 @@ fn ll_pick(c: Bool, a: String, b: String): String {
 }
 
 fn ll_cmp(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
-  t = e.tmp
+  t = e.tmp()
   if ty == mt_f64() {
     names = ["oeq", "une", "olt", "ole", "ogt", "oge"]
     e.line("${t} = fcmp ${names[op - mop_eq()]} double ${x}, ${y}")
@@ -822,11 +822,11 @@ fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   lt = e.llt(ty)
   pair = "{ ${lt}, i1 }"
   e.need_intrinsic("declare ${pair} @llvm.${name}.with.overflow.${lt}(${lt}, ${lt})")
-  r = e.tmp
+  r = e.tmp()
   e.line("${r} = call ${pair} @llvm.${name}.with.overflow.${lt}(${lt} ${x}, ${lt} ${y})")
-  v = e.tmp
+  v = e.tmp()
   e.line("${v} = extractvalue ${pair} ${r}, 0")
-  o = e.tmp
+  o = e.tmp()
   e.line("${o} = extractvalue ${pair} ${r}, 1")
   ll_arith_trap(e, o, false)
   v
@@ -856,14 +856,14 @@ fn ll_arith_trap(e: LlEmit, c: String, div_zero: Bool) {
 fn ll_fn_site(e: LlEmit): String {
   loc = e.f.loc
   path = "?"
-  if loc.file >= 0 && loc.file < e.m.files.size {
-    path = e.m.files[loc.file]
+  if loc.file() >= 0 && loc.file() < e.m.files.size {
+    path = e.m.files[loc.file()]
   }
   fname = e.f.source_name
   if fname.size == 0 {
     fname = e.f.symbol
   }
-  e.text_ref("${fname} (${path}:${loc.line}:${loc.col})")
+  e.text_ref("${fname} (${path}:${loc.line()}:${loc.col()})")
 }
 
 // The function's shared arithmetic trap blocks (ll_arith_trap).
@@ -930,7 +930,7 @@ fn ll_checked(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
   // div.chk, rem.chk: divisor 0 traps; signed (MIN, -1) traps for div
   // and gives 0 for rem (a safe divisor of 1).
   lt = e.llt(ty)
-  z = e.tmp
+  z = e.tmp()
   e.line("${z} = icmp eq ${lt} ${y}, 0")
   ll_arith_trap(e, z, true)
   d = y
@@ -943,21 +943,21 @@ fn ll_checked(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
     } else if width == 8 {
       min = "-128"
     }
-    m1 = e.tmp
+    m1 = e.tmp()
     e.line("${m1} = icmp eq ${lt} ${x}, ${min}")
-    m2 = e.tmp
+    m2 = e.tmp()
     e.line("${m2} = icmp eq ${lt} ${y}, -1")
-    mm = e.tmp
+    mm = e.tmp()
     e.line("${mm} = and i1 ${m1}, ${m2}")
     if op == mop_div() {
       ll_arith_trap(e, mm, false)
     } else {
-      d = e.tmp
+      d = e.tmp()
       e.line("${d} = select i1 ${mm}, ${lt} 1, ${lt} ${y}")
     }
   }
   name = ll_pick(op == mop_div(), ll_pick(signed, "sdiv", "udiv"), ll_pick(signed, "srem", "urem"))
-  t = e.tmp
+  t = e.tmp()
   e.line("${t} = ${name} ${lt} ${x}, ${d}")
   t
 }
@@ -989,7 +989,7 @@ fn ll_cast(e: LlEmit, x: String, src: Int, dst: Int): String {
   if name.size == 0 {
     return x
   }
-  t = e.tmp
+  t = e.tmp()
   e.line("${t} = ${name} ${e.llt(src)} ${x} to ${e.llt(dst)}")
   t
 }

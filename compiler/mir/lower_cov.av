@@ -48,7 +48,7 @@ pub fn (lw: MirLower) cov_point(kind: Int, path: String, line: Int, name: String
 // A counted point and the touch of its line (the old back end's cov_register,
 // emit_cov_hit, cov_touch_line).
 pub fn (lw: MirLower) cov_at(kind: Int, loc: Location, name: String) {
-  if !lw.lw_cov.on || lw.failed || !lw.open_now {
+  if !lw.lw_cov.on || lw.failed() || !lw.open_now() {
     return
   }
   // The prelude and task modules (prelude_src.av) are the language's,
@@ -57,8 +57,8 @@ pub fn (lw: MirLower) cov_at(kind: Int, loc: Location, name: String) {
     return
   }
   lw.at(loc)
-  lw.cov_point(kind, loc.path, loc.line, name)
-  lw.cov_point(4, loc.path, loc.line, "")
+  lw.cov_point(kind, loc.path, loc.line(), name)
+  lw.cov_point(4, loc.path, loc.line(), "")
 }
 
 pub fn (lw: MirLower) cov_stmt(st: Stmt) {
@@ -94,7 +94,7 @@ pub fn (lw: MirLower) cov_init {
 // rewritten to its slot, and the map written (the old back end's write_cov_map).
 pub fn (lw: MirLower) cov_finish {
   c = lw.lw_cov
-  if !c.on || lw.failed {
+  if !c.on || lw.failed() {
     return
   }
   // Runs of points with one rank, then the runs in rank order (a stable
@@ -121,7 +121,7 @@ pub fn (lw: MirLower) cov_finish {
   }
   buf = buf_new()
   buf.push_str("avant-cov 1\n")
-  line_slot = Hash(String, Int).new
+  line_slot = Hash(String, Int).new()
   n = 0
   for r in 0..order.size {
     s0 = starts[order[r]]
@@ -149,7 +149,7 @@ pub fn (lw: MirLower) cov_finish {
     for blk in fn_.blocks {
       for st in blk.stmts {
         if st.kind == msk_call() && st.callee == "avant_cov_hit" && st.args.size == 1 {
-          ev = st.args[0].ival.to_i
+          ev = st.args[0].ival.to_i()
           if ev >= 0 && ev < slot_of.size {
             st.args[0] = b.c_i32(slot_of[ev])
           }
@@ -160,8 +160,8 @@ pub fn (lw: MirLower) cov_finish {
   // A coverage build without its slot map cannot be reported on (the
   // counters would have no lines): the build fails and says why (O416,
   // Stage 29 W-FIX1d; the failure was dropped and the binary built).
-  if e = mir_cov_write_failure(file_write(c.map_path, buf.to_s)) {
-    lw.fail_build("error: the coverage map was not written: ${e.message}")
+  if e = mir_cov_write_failure(file_write(c.map_path, buf.to_s())) {
+    lw.fail_build("error: the coverage map was not written: ${e.message()}")
   }
 }
 

@@ -127,7 +127,7 @@ pub class JobSched {
   // finished.
   pub fn wait_one: Int {
     while self.running < self.limit {
-      k = self.pick
+      k = self.pick()
       if k < 0 {
         break
       }
@@ -162,7 +162,7 @@ pub class JobSched {
       }
       i += 1
     }
-    self.wait_one
+    self.wait_one()
   }
 }
 
@@ -421,7 +421,7 @@ fn job_failed(f: FileRun, cmd: JobCmd) {
     f.why = "${cmd.what} could not start"
   } else if cmd.signal > 0 {
     // process_run's wording: "WHAT killed by signal N (NAME)".
-    f.why = ProcessError.new(cmd.what, 0, cmd.signal, "").message
+    f.why = ProcessError.new(cmd.what, 0, cmd.signal, "").message()
   } else {
     f.why = "${cmd.what} exited with status ${cmd.code}"
   }
@@ -536,7 +536,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     i += 1
   }
   while true {
-    k = sched.wait_one
+    k = sched.wait_one()
     if k < 0 {
       break
     }
@@ -710,7 +710,7 @@ fn xml_chars(s: String): String {
       i += n
     }
   }
-  b.to_s
+  b.to_s()
 }
 
 fn xml_escape(text: String): String {
@@ -732,7 +732,7 @@ fn xml_escape(text: String): String {
     }
     i += 1
   }
-  b.to_s
+  b.to_s()
 }
 
 // The text of a CDATA section (Stage 29 W-FIX1f, O596): a section ends
@@ -761,7 +761,7 @@ fn cdata_text(text: String): String {
     return s
   }
   b.push_str(str_slice(s, from, s.size))
-  b.to_s
+  b.to_s()
 }
 
 fn find_from(text: String, needle: String, from: Int): Int {
@@ -910,15 +910,15 @@ fn write_junit(path: String, files: Array(FileRun)) {
   b = buf_new()
   b.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
   b.push_str("<testsuites tests=\"${tests}\" failures=\"${bad}\" time=\"${secs_str(total_ms)}\">\n")
-  b.push_str(body.to_s)
+  b.push_str(body.to_s())
   if fb_tests > 0 {
     b.push_str("  <testsuite name=\"avant test\" tests=\"${fb_tests}\" failures=\"${fb_bad}\" time=\"0.000\">\n")
-    b.push_str(fb.to_s)
+    b.push_str(fb.to_s())
     b.push_str("  </testsuite>\n")
   }
   b.push_str("</testsuites>\n")
-  if e = write_failure(file_write(path, b.to_s)) {
-    diag_puts(e.message)
+  if e = write_failure(file_write(path, b.to_s())) {
+    diag_puts(e.message())
     diag_exit(1)
   }
 }
@@ -1293,10 +1293,10 @@ pub fn driver_test(args: Array(String)) {
     for k in 0..cov_include.size {
       host.cov.add_tree(abs_join(anchor, cov_include[k]), cov_exclude)
     }
-    if host.cov.has_rows {
+    if host.cov.has_rows() {
       fs_mkdir_p("coverage")
       lost = !host.cov.write_lcov("coverage/lcov.info")
-      host.cov.print_table
+      host.cov.print_table()
     }
   }
   if bad > 0 || lost {

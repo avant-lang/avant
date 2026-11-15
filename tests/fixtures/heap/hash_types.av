@@ -20,27 +20,27 @@ fn check(what: String, ok: Bool) {
 }
 
 fn int32_keys {
-  h = Hash(Int32, Int32).new
+  h = Hash(Int32, Int32).new()
   i = 0
   while i < 3000 {
-    k = (i - 1500).to_i32
-    h[k] = (i * 3).to_i32
+    k = (i - 1500).to_i32()
+    h[k] = (i * 3).to_i32()
     i += 1
   }
   check("int32 size", h.size == 3000)
-  check("int32 neg", (h[-1500.to_i32] ?? 0.to_i32) == 0.to_i32)
-  check("int32 last", (h[1499.to_i32] ?? 0.to_i32) == 8997.to_i32)
-  check("int32 absent", !h.has_key(1500.to_i32))
+  check("int32 neg", (h[-1500.to_i32()] ?? 0.to_i32()) == 0.to_i32())
+  check("int32 last", (h[1499.to_i32()] ?? 0.to_i32()) == 8997.to_i32())
+  check("int32 absent", !h.has_key(1500.to_i32()))
   // Delete every even key, as a statement and as a value.
   i = 0
   gone = 0
   while i < 3000 {
-    k = (i - 1500).to_i32
+    k = (i - 1500).to_i32()
     if i % 4 == 0 {
       h.delete(k)
     } else if i % 4 == 2 {
       if v = h.delete(k) {
-        gone += v.to_i
+        gone += v.to_i()
       }
     }
     i += 1
@@ -48,34 +48,34 @@ fn int32_keys {
   check("int32 deleted", h.size == 1500)
   sum = 0
   h.each { |k, v|
-    sum += v.to_i - 3 * (k.to_i + 1500)
+    sum += v.to_i() - 3 * (k.to_i() + 1500)
   }
   check("int32 each", sum == 0)
-  ks = h.keys
-  ks.sort
-  check("int32 keys", ks.size == 1500 && ks[0] == -1499.to_i32 && ks[ks.size - 1] == 1499.to_i32)
-  vs = h.values
+  ks = h.keys()
+  ks.sort()
+  check("int32 keys", ks.size == 1500 && ks[0] == -1499.to_i32() && ks[ks.size - 1] == 1499.to_i32())
+  vs = h.values()
   vt = 0
   for v in vs {
-    vt += v.to_i
+    vt += v.to_i()
   }
   puts("int32 ${h.size} ${gone} ${vt}")
   // The counting idiom on a narrow key and value: get, then set.
-  c = Hash(Int32, Int32).new
+  c = Hash(Int32, Int32).new()
   for j in 0..100 {
-    g = (j % 7).to_i32
+    g = (j % 7).to_i32()
     if n = c.get(g) {
-      c[g] = n + 1.to_i32
+      c[g] = n + 1.to_i32()
     } else {
-      c[g] = 1.to_i32
+      c[g] = 1.to_i32()
     }
   }
-  puts("bump ${c[0.to_i32] ?? 0.to_i32} ${c[6.to_i32] ?? 0.to_i32} ${c.size}")
-  puts("inc ${c.inc(0.to_i32)} ${c.inc(9.to_i32, 5.to_i32)} ${c.get_or(8.to_i32, -1.to_i32)}")
+  puts("bump ${c[0.to_i32()] ?? 0.to_i32()} ${c[6.to_i32()] ?? 0.to_i32()} ${c.size}")
+  puts("inc ${c.inc(0.to_i32())} ${c.inc(9.to_i32(), 5.to_i32())} ${c.get_or(8.to_i32(), -1.to_i32())}")
 }
 
 fn wide_keys {
-  u = Hash(UInt64, Int).new
+  u = Hash(UInt64, Int).new()
   big = 18446744073709551615u64
   u[big] = 1
   u[big - 1u64] = 2
@@ -88,14 +88,14 @@ fn wide_keys {
     t += v
   }
   puts("u64 ${u.size} ${t}")
-  w = Hash(UInt32, UInt32).new
+  w = Hash(UInt32, UInt32).new()
   for i in 0..500 {
-    w[(4294967295 - i).to_u32] = i.to_u32
+    w[(4294967295 - i).to_u32()] = i.to_u32()
   }
-  check("u32 top", (w[4294967295.to_u32] ?? 1.to_u32) == 0.to_u32)
-  check("u32 low", (w[(4294967295 - 499).to_u32] ?? 0.to_u32) == 499.to_u32)
-  puts("u32 ${w.size} ${w.inc(7.to_u32)}")
-  n = Hash(Int, Int).new
+  check("u32 top", (w[4294967295.to_u32()] ?? 1.to_u32()) == 0.to_u32())
+  check("u32 low", (w[(4294967295 - 499).to_u32()] ?? 0.to_u32()) == 499.to_u32())
+  puts("u32 ${w.size} ${w.inc(7.to_u32())}")
+  n = Hash(Int, Int).new()
   n[-9223372036854775807 - 1] = 1
   n[9223372036854775807] = 2
   n[-1] = 3
@@ -106,35 +106,35 @@ fn wide_keys {
 }
 
 fn small_keys {
-  b = Hash(Bool, String).new
+  b = Hash(Bool, String).new()
   b[true] = "yes"
   b[false] = "no"
   b[true] = "still yes"
   puts("bool ${b.size} ${b[true] ?? ""} ${b[false] ?? ""}")
   b.delete(false)
   puts("bool ${b.size} ${b.has_key(false)} ${b.get_or(false, "none")}")
-  e = Hash(Color, Int).new
+  e = Hash(Color, Int).new()
   e[Color.red] = 1
   e[Color.blue] = 3
   e.inc(Color.blue)
   puts("color ${e.size} ${e[Color.blue] ?? 0} ${e.has_key(Color.green)}")
-  wd = Hash(Wide, Wide).new
+  wd = Hash(Wide, Wide).new()
   wd[Wide.low] = Wide.high
   wd[Wide.high] = Wide.low
   wd[Wide.mid] = Wide.mid
   if x = wd[Wide.low] {
     puts("wide ${x} ${wd.size}")
   }
-  p = Hash(Port, Int32).new
-  p[Port.http] = 1.to_i32
-  p[Port.top] = 2.to_i32
-  p.inc(Port.alt, 7.to_i32)
+  p = Hash(Port, Int32).new()
+  p[Port.http] = 1.to_i32()
+  p[Port.top] = 2.to_i32()
+  p.inc(Port.alt, 7.to_i32())
   p.delete(Port.http)
-  puts("port ${p.size} ${p[Port.top] ?? 0.to_i32} ${p[Port.alt] ?? 0.to_i32} ${p.has_key(Port.http)}")
+  puts("port ${p.size} ${p[Port.top] ?? 0.to_i32()} ${p[Port.alt] ?? 0.to_i32()} ${p.has_key(Port.http)}")
 }
 
 fn values_of_every_kind {
-  f = Hash(String, Float64).new
+  f = Hash(String, Float64).new()
   f["pi"] = 3.25
   f["e"] = 2.5
   f["neg"] = -0.125
@@ -146,22 +146,22 @@ fn values_of_every_kind {
   if v = f.delete("e") {
     puts("float gone ${v} ${f.size}")
   }
-  bv = Hash(Int, Bool).new
+  bv = Hash(Int, Bool).new()
   for i in 0..50 {
     bv[i] = i % 3 == 0
   }
   trues = 0
-  for v in bv.values {
+  for v in bv.values() {
     if v {
       trues += 1
     }
   }
   puts("bools ${bv.size} ${trues} ${bv[3] ?? false} ${bv[4] ?? true}")
-  cv = Hash(String, Color).new
+  cv = Hash(String, Color).new()
   cv["sky"] = Color.blue
   cv["leaf"] = Color.green
   puts("colors ${cv["sky"] ?? Color.red} ${cv.get_or("rose", Color.red)}")
-  sv = Hash(Int, String).new
+  sv = Hash(Int, String).new()
   for i in 0..2000 {
     sv[i] = "v${i}"
   }
@@ -179,15 +179,15 @@ fn values_of_every_kind {
     total += k
   }
   puts("int-string ${sv.size} ${total}")
-  sv.clear
+  sv.clear()
   sv[1] = "again"
   puts("int-string after clear ${sv.size} ${sv[1] ?? ""}")
 }
 
 fn string_keys {
-  h = Hash(String, Int32).new
+  h = Hash(String, Int32).new()
   for i in 0..1000 {
-    h["k${i}"] = i.to_i32
+    h["k${i}"] = i.to_i32()
   }
   for i in 0..1000 {
     if i % 2 == 1 {
@@ -196,20 +196,20 @@ fn string_keys {
   }
   for i in 0..1000 {
     if i % 4 == 1 {
-      h["k${i}"] = (i * 2).to_i32
+      h["k${i}"] = (i * 2).to_i32()
     }
   }
   check("string-int32 size", h.size == 750)
-  check("string-int32 back", (h["k5"] ?? 0.to_i32) == 10.to_i32 && !h.has_key("k7"))
-  ks = h.keys
-  ks.sort
-  puts("string-int32 ${h.size} ${ks[0]} ${ks[ks.size - 1]} ${h.inc("k0", 3.to_i32)}")
-  ss = Hash(String, String).new
+  check("string-int32 back", (h["k5"] ?? 0.to_i32()) == 10.to_i32() && !h.has_key("k7"))
+  ks = h.keys()
+  ks.sort()
+  puts("string-int32 ${h.size} ${ks[0]} ${ks[ks.size - 1]} ${h.inc("k0", 3.to_i32())}")
+  ss = Hash(String, String).new()
   ss["a"] = "x"
   ss["a"] = "y"
   ss["b"] = "z"
-  vs = ss.values
-  vs.sort
+  vs = ss.values()
+  vs.sort()
   puts("string-string ${ss.size} ${vs[0]} ${vs[1]}")
 }
 

@@ -43,7 +43,7 @@ pub fn (lw: MirLower) lower_block_call(e: Expr): MOperand? {
   }
   if bl = e.block, recv = e.receiver, rt = recv.ty {
     c = e.callee
-    if rt.is_array && e.args.size == 0 {
+    if rt.is_array() && e.args.size == 0 {
       if c == "each" && bl.params.size == 1 {
         return lw.arr_each(e, recv, bl)
       }
@@ -54,7 +54,7 @@ pub fn (lw: MirLower) lower_block_call(e: Expr): MOperand? {
         return lw.arr_sort_block(e, recv, bl, c == "sorted")
       }
     }
-    if rt.is_hash && c == "each" && e.args.size == 0 && bl.params.size == 2 {
+    if rt.is_hash() && c == "each" && e.args.size == 0 && bl.params.size == 2 {
       return lw.hash_each(e, recv, rt, bl)
     }
   }
@@ -66,7 +66,7 @@ pub fn (lw: MirLower) lower_block_call(e: Expr): MOperand? {
 pub fn (lw: MirLower) block_recv(recv: Expr, ty: Int): Int {
   b = lw.lw_b
   a = lw.lower_expr(recv)
-  if lw.failed {
+  if lw.failed() {
     return 0
   }
   lw.at(recv.loc)
@@ -119,8 +119,8 @@ pub fn (lw: MirLower) block_body(stmts: Array(Stmt), cont: Int, exit: Int) {
   lw.lw_heads.push(cont)
   lw.lw_exits.push(exit)
   lw.lower_stmts(stmts)
-  lw.lw_heads.pop
-  lw.lw_exits.pop
+  lw.lw_heads.pop()
+  lw.lw_exits.pop()
 }
 
 // A value block (emit_pred_block, emit_cmp_block): every statement but
@@ -139,17 +139,17 @@ pub fn (lw: MirLower) block_value(bl: Block, cont: Int, exit: Int): MOperand {
     i += 1
   }
   lw.block_body(head, cont, exit)
-  if lw.failed {
+  if lw.failed() {
     return b.c_bool(false)
   }
-  if !lw.open_now {
+  if !lw.open_now() {
     // Every path left the block: the value is never used.
     return b.c_bool(false)
   }
   last = bl.body[bl.body.size - 1]
   if x = last.expr {
     v = lw.lower_expr(x)
-    if lw.failed {
+    if lw.failed() {
       return b.c_bool(false)
     }
     lw.at(x.loc)
@@ -173,11 +173,11 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
   aty = lw.ety(e)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   nv = lw.lower_expr(e.args[0])
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
@@ -198,10 +198,10 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
   rc = b.types.ref_carrying(et)
   i = b.temp(mt_int())
   b.assign(b.pl(i), b.rv_use(b.c_i64(0)))
-  head = b.block
-  body = b.block
-  step = b.block
-  exit = b.block
+  head = b.block()
+  body = b.block()
+  step = b.block()
+  exit = b.block()
   b.goto(head)
   b.at(head)
   c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(i), b.copy_local(k)))
@@ -219,14 +219,14 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
     j += 1
   }
   lw.block_body(first, step, exit)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
-  if lw.open_now {
+  if lw.open_now() {
     last = bl.body[bl.body.size - 1]
     if x = last.expr {
       v = lw.lower_coerced(x, et, want)
-      if lw.failed {
+      if lw.failed() {
         return zero
       }
       lw.at(x.loc)
@@ -258,20 +258,20 @@ pub fn (lw: MirLower) arr_each(e: Expr, recv: Expr, bl: Block): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
   aty = lw.ety(recv)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   h = lw.block_recv(recv, aty)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
   i = b.temp(mt_i32())
   b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
-  head = b.block
-  body = b.block
-  step = b.block
-  exit = b.block
+  head = b.block()
+  body = b.block()
+  step = b.block()
+  exit = b.block()
   b.goto(head)
   b.at(head)
   lw.block_test(h, i, body, exit)
@@ -294,11 +294,11 @@ pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MO
   b = lw.lw_b
   zero = b.c_bool(false)
   aty = lw.ety(recv)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   h = lw.block_recv(recv, aty)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
@@ -306,10 +306,10 @@ pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MO
   b.assign(b.pl(res), b.rv_use(b.c_bool(!is_any)))
   i = b.temp(mt_i32())
   b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
-  head = b.block
-  body = b.block
-  step = b.block
-  exit = b.block
+  head = b.block()
+  body = b.block()
+  step = b.block()
+  exit = b.block()
   b.goto(head)
   b.at(head)
   lw.block_test(h, i, body, exit)
@@ -317,12 +317,12 @@ pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MO
   v = lw.block_elem(h, aty, i)
   lw.bind_name(bl.params[0], lw.elem_ty_of(recv), lw.elem_of(aty), v, bl.loc, true)
   p = lw.block_value(bl, step, exit)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
-  if lw.open_now {
+  if lw.open_now() {
     lw.at(e.loc)
-    hit = b.block
+    hit = b.block()
     if !is_any {
       p = lw.tmp(mt_bool(), b.rv_un(mop_not(), p))
     }
@@ -347,11 +347,11 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
   b = lw.lw_b
   zero = b.c_i32(0)
   aty = lw.ety(recv)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   arr = lw.block_recv(recv, aty)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
@@ -366,9 +366,9 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
   nl = mir_bare_copy(n)
   i = b.temp(mt_i32())
   b.assign(b.pl(i), b.rv_use(b.c_i32(1)))
-  head = b.block
-  body = b.block
-  exit = b.block
+  head = b.block()
+  body = b.block()
+  exit = b.block()
   b.goto(head)
   b.at(head)
   c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(i), b.copy_local(nl)))
@@ -378,9 +378,9 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
   vl = mir_bare_copy(v)
   j = b.temp(mt_i32())
   b.assign(b.pl(j), b.rv_use(b.copy_local(i)))
-  ihead = b.block
-  ibody = b.block
-  iexit = b.block
+  ihead = b.block()
+  ibody = b.block()
+  iexit = b.block()
   b.goto(ihead)
   b.at(ihead)
   c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), b.copy_local(j), b.c_i32(0)))
@@ -393,12 +393,12 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
   lw.bind_name(bl.params[0], want, et, b.copy_local(vl), bl.loc, true)
   lw.bind_name(bl.params[1], want, et, b.copy_local(pl), bl.loc, true)
   cmp = lw.block_value(bl, iexit, iexit)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
-  if lw.open_now {
+  if lw.open_now() {
     lw.at(e.loc)
-    moved = b.block
+    moved = b.block()
     b.branch(cmp, moved, iexit)
     b.at(moved)
     if !do_copy {
@@ -443,11 +443,11 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   kty = lw.ty_at(kt, e.loc, "a hash key")
   vty = lw.ty_at(vt, e.loc, "a hash value")
   aty = lw.ty_at(ty_array(kt), e.loc, "the keys")
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   h = lw.block_recv(recv, hty)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
@@ -455,10 +455,10 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   b.call(keys, "avant_hash_keys", lw.one(b.copy_local(h)))
   i = b.temp(mt_i32())
   b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
-  head = b.block
-  body = b.block
-  step = b.block
-  exit = b.block
+  head = b.block()
+  body = b.block()
+  step = b.block()
+  exit = b.block()
   b.goto(head)
   b.at(head)
   lw.block_test(keys, i, body, exit)
@@ -467,11 +467,11 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   kl = mir_bare_copy(kv)
   lw.bind_name(bl.params[0], kt, kty, b.copy_local(kl), bl.loc, true)
   lw.at(e.loc)
-  fl = lw.found_local
+  fl = lw.found_local()
   raw = lw.hash_find_load(ht, "find", b.copy_local(h), lw.hash_key_arg(ht, b.copy_local(kl), e.loc), fl, vty)
   // A key the body deleted earlier in the walk is skipped (Stage 29 W1a,
   // A4): before, it was visited with an invented value (the zero).
-  hit = b.block
+  hit = b.block()
   b.branch(lw.found_is(fl), hit, step)
   b.at(hit)
   val = lw.tmp(vty, b.rv_use(raw))

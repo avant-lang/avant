@@ -58,7 +58,7 @@ pub class GuardWalk {
   }
 
   pub fn push {
-    self.scopes.push(Hash(String, Int).new)
+    self.scopes.push(Hash(String, Int).new())
   }
 
   pub fn pop {
@@ -68,7 +68,7 @@ pub class GuardWalk {
       self.declared = false
       self.decl_scope = -1
     }
-    dropped = self.scopes.pop
+    dropped = self.scopes.pop()
   }
 
   // Whether name is the consumed variable, in its scope (consume mode).
@@ -81,7 +81,7 @@ pub class GuardWalk {
   pub fn alias_in_scope: String {
     i = self.scopes.size - 1
     while i >= 0 {
-      for k in self.scopes[i].keys {
+      for k in self.scopes[i].keys() {
         if k != self.place {
           if v = self.scopes[i].get(k), v == 1 {
             return k
@@ -126,13 +126,13 @@ pub class GuardWalk {
 }
 
 pub fn (checker_self: Checker) guard_with_block(place: String, b: Block, value_used: Bool) {
-  if checker_self.has_err {
+  if checker_self.has_err() {
     return
   }
   w = GuardWalk.new(place)
-  w.push
+  w.push()
   w.declare(place, true)
-  w.push
+  w.push()
   last = b.body.size - 1
   i = 0
   while i < b.body.size {
@@ -146,7 +146,7 @@ pub fn (checker_self: Checker) guard_with_block(place: String, b: Block, value_u
     } else {
       checker_self.guard_stmt(w, st)
     }
-    if checker_self.has_err {
+    if checker_self.has_err() {
       return
     }
     i += 1
@@ -248,7 +248,7 @@ pub fn (checker_self: Checker) guard_tail_reaches(w: GuardWalk, body: Array(Stmt
 pub fn (checker_self: Checker) guard_fail(w: GuardWalk, e: Expr, role: String) {
   shown = "a value"
   if t = e.ty {
-    shown = t.show
+    shown = t.show()
   }
   if w.consume {
     checker_self.fail(e.loc, "${w.ctor}.${w.verb} consumes ${w.place} (at ${w.call_at}), so before it ${role} is ${w.place} or a reference reached from it (${shown}); until the mutex takes it, ${w.place} may only be a receiver or an operand whose result is a plain value, never an argument, a stored value or a captured name, since a reference kept elsewhere would reach the guarded value without the lock")
@@ -263,12 +263,12 @@ pub fn (checker_self: Checker) guard_fail(w: GuardWalk, e: Expr, role: String) {
 // already, or new (guard_fresh). A store of a reference the code around
 // keeps would let that code reach the guarded value without the lock.
 pub fn (checker_self: Checker) guard_inward(w: GuardWalk, value: Expr) {
-  if checker_self.has_err || checker_self.guard_plain(value) || checker_self.guard_reaches(w, value) || checker_self.guard_fresh(value) {
+  if checker_self.has_err() || checker_self.guard_plain(value) || checker_self.guard_reaches(w, value) || checker_self.guard_fresh(value) {
     return
   }
   shown = "a value"
   if t = value.ty {
-    shown = t.show
+    shown = t.show()
   }
   if w.consume {
     checker_self.fail(value.loc, "${w.ctor}.${w.verb} consumes ${w.place} (at ${w.call_at}), so this value stored into ${w.place} (${shown}) must be new (a constructor call or a literal) or plain: a reference kept elsewhere would reach the guarded value without the lock")
@@ -320,7 +320,7 @@ pub fn (checker_self: Checker) guard_fresh(e: Expr): Bool {
       ctor = true
     }
     if e.callee == "new" {
-      if t = e.ty, t.is_class && e.resolved == ty_owned_symbol(t, "new") {
+      if t = e.ty, t.is_class() && e.resolved == ty_owned_symbol(t, "new") {
         ctor = true
       }
     }
@@ -357,21 +357,21 @@ pub fn (checker_self: Checker) guard_fresh(e: Expr): Bool {
 // is reached and not plain.
 pub fn (checker_self: Checker) guard_use(w: GuardWalk, e: Expr, role: String) {
   checker_self.guard_expr(w, e)
-  if !checker_self.has_err && checker_self.guard_bad(w, e) {
+  if !checker_self.has_err() && checker_self.guard_bad(w, e) {
     checker_self.guard_fail(w, e, role)
   }
 }
 
 pub fn (checker_self: Checker) guard_body(w: GuardWalk, body: Array(Stmt)) {
-  w.push
+  w.push()
   for st in body {
     checker_self.guard_stmt(w, st)
-    if checker_self.has_err {
-      w.pop
+    if checker_self.has_err() {
+      w.pop()
       return
     }
   }
-  w.pop
+  w.pop()
 }
 
 pub fn (checker_self: Checker) guard_stmt(w: GuardWalk, st: Stmt) {
@@ -393,7 +393,7 @@ pub fn (checker_self: Checker) guard_stmt(w: GuardWalk, st: Stmt) {
     return
   }
   if k == st_if() {
-    w.push
+    w.push()
     for el in st.pre {
       if c = el.cond {
         checker_self.guard_expr(w, c)
@@ -409,21 +409,21 @@ pub fn (checker_self: Checker) guard_stmt(w: GuardWalk, st: Stmt) {
       }
     }
     checker_self.guard_body(w, st.then_body)
-    w.pop
+    w.pop()
     if c3 = st.cond, st.else_bind.size > 0 {
       // `else e` (Stage 29 W5b1): the failure is reached when the
       // condition's value is.
-      w.push
+      w.push()
       w.declare(st.else_bind, checker_self.guard_bad(w, c3))
       checker_self.guard_body(w, st.else_body)
-      w.pop
+      w.pop()
       return
     }
     checker_self.guard_body(w, st.else_body)
     return
   }
   if k == st_while() {
-    w.push
+    w.push()
     w.loops += 1
     for p in st.pre {
       checker_self.guard_stmt(w, p)
@@ -433,7 +433,7 @@ pub fn (checker_self: Checker) guard_stmt(w: GuardWalk, st: Stmt) {
     }
     checker_self.guard_body(w, st.body)
     w.loops -= 1
-    w.pop
+    w.pop()
     return
   }
   if k == st_pin() || k == st_release() || k == st_hold() {
@@ -447,7 +447,7 @@ pub fn (checker_self: Checker) guard_stmt(w: GuardWalk, st: Stmt) {
 pub fn (checker_self: Checker) guard_assign(w: GuardWalk, st: Stmt) {
   if target = st.target, value = st.value {
     checker_self.guard_expr(w, value)
-    if checker_self.has_err {
+    if checker_self.has_err() {
       return
     }
     bad = checker_self.guard_bad(w, value)
@@ -524,7 +524,7 @@ pub fn (checker_self: Checker) guard_assign(w: GuardWalk, st: Stmt) {
 }
 
 pub fn (checker_self: Checker) guard_expr(w: GuardWalk, e: Expr) {
-  if checker_self.has_err {
+  if checker_self.has_err() {
     return
   }
   k = e.kind
@@ -560,10 +560,10 @@ pub fn (checker_self: Checker) guard_expr(w: GuardWalk, e: Expr) {
       if l2 = e.left, expr_is_else_guard(r) && r.ident.size > 0 {
         // An else guard's failure (Stage 29 W5b1) is a name of its
         // block, reached when the guarded value is: as an if-assign's.
-        w.push
+        w.push()
         w.declare(r.ident, checker_self.guard_bad(w, l2))
         checker_self.guard_body(w, r.else_body)
-        w.pop
+        w.pop()
         return
       }
       checker_self.guard_expr(w, r)
@@ -621,7 +621,7 @@ pub fn (checker_self: Checker) guard_expr(w: GuardWalk, e: Expr) {
     for cs in e.cases {
       // A union switch's binding (Stage 29 W5a2) is a name of the
       // block, reached when the union is: as an if-assign's.
-      w.push
+      w.push()
       if c2 = e.cond {
         for label in cs.labels {
           if label.bind.size > 0 {
@@ -630,7 +630,7 @@ pub fn (checker_self: Checker) guard_expr(w: GuardWalk, e: Expr) {
         }
       }
       checker_self.guard_body(w, cs.body)
-      w.pop
+      w.pop()
     }
     if e.has_else {
       checker_self.guard_body(w, e.else_body)
@@ -677,7 +677,7 @@ pub fn (checker_self: Checker) guard_name(w: GuardWalk, e: Expr) {
 
 pub fn (checker_self: Checker) guard_captured_body(w: GuardWalk, b: Block) {
   saved = w.floor
-  w.push
+  w.push()
   if w.floor < 0 {
     w.floor = w.scopes.size - 1
   }
@@ -686,11 +686,11 @@ pub fn (checker_self: Checker) guard_captured_body(w: GuardWalk, b: Block) {
   }
   for st in b.body {
     checker_self.guard_stmt(w, st)
-    if checker_self.has_err {
+    if checker_self.has_err() {
       break
     }
   }
-  w.pop
+  w.pop()
   w.floor = saved
 }
 
@@ -715,7 +715,7 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
       return
     }
   }
-  if w.consume && !w.passed && e.callee == w.verb && e.loc.show == w.call_loc {
+  if w.consume && !w.passed && e.callee == w.verb && e.loc.show() == w.call_loc {
     checker_self.guard_consume_at(w, e)
     return
   }
@@ -727,14 +727,14 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
   stores = recv_bad && (e.callee == "push" || e.callee == "fill")
   for arg in e.args {
     checker_self.guard_use(w, arg, "this argument")
-    if checker_self.has_err {
+    if checker_self.has_err() {
       return
     }
     if stores {
       // `push` and `fill` store their argument into a reached array:
       // what comes in must not stay reachable from outside (O687).
       checker_self.guard_inward(w, arg)
-      if checker_self.has_err {
+      if checker_self.has_err() {
         return
       }
     }
@@ -745,7 +745,7 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
     // goes into the call's result (`map`, `parallel`, the array building
     // form), which is reached only when the receiver is: a reached value
     // at its end is refused otherwise.
-    w.push
+    w.push()
     w.loops += 1
     for p in b.params {
       w.declare(p, recv_bad)
@@ -761,13 +761,13 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
       } else {
         checker_self.guard_stmt(w, st)
       }
-      if checker_self.has_err {
+      if checker_self.has_err() {
         break
       }
       i += 1
     }
     w.loops -= 1
-    w.pop
+    w.pop()
   }
 }
 
@@ -802,12 +802,12 @@ pub fn (checker_self: Checker) check_mutex_new(expr: Expr, ty: Ty) {
     checker_self.guarded.push(ty.ty_args[0])
     checker_self.guarded_at.push(expr.loc)
   }
-  if checker_self.has_err || expr.args.size < 1 || expr.args.size > 2 || ty.ty_args.size != 1 {
+  if checker_self.has_err() || expr.args.size < 1 || expr.args.size > 2 || ty.ty_args.size != 1 {
     return
   }
   if expr.args.size == 2 {
     checker_self.check_mutex_recover(expr.args[1], ty)
-    if checker_self.has_err {
+    if checker_self.has_err() {
       return
     }
   }
@@ -828,7 +828,7 @@ pub fn (checker_self: Checker) check_mutex_value(expr: Expr, ty: Ty, verb: Strin
   if checker_self.guard_fresh(arg) {
     return
   }
-  shown = ty.show
+  shown = ty.show()
   if arg.kind == ex_name() && !arg.implicit_field {
     if f = checker_self.current_fn {
       checker_self.consumes.push(expr)
@@ -858,39 +858,39 @@ pub fn (checker_self: Checker) check_mutex_recover(arg: Expr, ty: Ty) {
   }
   if k == ex_lambda() {
     if arg.cap_names.size > 0 {
-      checker_self.fail(arg.loc, "${ty.show}.new's recover function cannot capture ${arg.cap_names[0]}: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function")
+      checker_self.fail(arg.loc, "${ty.show()}.new's recover function cannot capture ${arg.cap_names[0]}: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function")
     }
     return
   }
   if k == ex_name() && arg.fn_ref {
     return
   }
-  checker_self.fail(arg.loc, "${ty.show}.new's recover function must be a named function or a lambda written here that captures nothing: a function value may capture names shared with other code, which could reach the rebuilt value without the lock")
+  checker_self.fail(arg.loc, "${ty.show()}.new's recover function must be a named function or a lambda written here that captures nothing: a function value may capture names shared with other code, which could reach the rebuilt value without the lock")
 }
 
 // The function walks for the consuming calls check_mutex_new recorded.
 pub fn (checker_self: Checker) check_consumes(body: Array(Stmt)) {
   for call in checker_self.consumes {
-    if checker_self.has_err {
+    if checker_self.has_err() {
       return
     }
     w = GuardWalk.new(call.args[0].ident)
     w.consume = true
-    w.call_loc = call.loc.show
-    w.call_at = "${call.loc.line}:${call.loc.column}"
+    w.call_loc = call.loc.show()
+    w.call_at = "${call.loc.line()}:${call.loc.column()}"
     if t = call.ty {
-      w.ctor = t.show
+      w.ctor = t.show()
     }
     if call.callee == "recover" {
       if r = call.receiver, rt = r.ty {
-        w.ctor = rt.show
+        w.ctor = rt.show()
       }
       w.verb = "recover"
     }
-    w.push
+    w.push()
     for st in body {
       checker_self.guard_stmt(w, st)
-      if checker_self.has_err {
+      if checker_self.has_err() {
         return
       }
     }
@@ -911,7 +911,7 @@ pub fn (checker_self: Checker) guard_place_assign(w: GuardWalk, value: Expr) {
   if !checker_self.guard_fresh(value) {
     shown = "a value"
     if t = value.ty {
-      shown = t.show
+      shown = t.show()
     }
     checker_self.fail(value.loc, "${w.ctor}.${w.verb} consumes ${w.place} (at ${w.call_at}), so every value ${w.place} holds must be new (a constructor call or a literal): this ${shown} may be reached by another reference, which would reach the guarded value without the lock")
     return
@@ -939,7 +939,7 @@ pub fn (checker_self: Checker) guard_consume_at(w: GuardWalk, e: Expr) {
     checker_self.fail(arg.loc, "${w.ctor}.${w.verb} consumes ${w.place} inside a loop or a block that ${w.place} was declared outside of: a second round would give the same value to a second mutex; declare it inside, or give the mutex a new value")
     return
   }
-  alias = w.alias_in_scope
+  alias = w.alias_in_scope()
   if alias.size > 0 {
     checker_self.fail(arg.loc, "${w.ctor}.${w.verb} consumes ${w.place}, but ${alias}, which holds a reference reached from it, is still in scope and would reach the guarded value without the lock")
     return
@@ -962,25 +962,25 @@ pub fn (checker_self: Checker) send_crosses(t: Ty): Bool {
 }
 
 pub fn (checker_self: Checker) check_send(expr: Expr) {
-  if checker_self.has_err || expr.args.size != 1 {
+  if checker_self.has_err() || expr.args.size != 1 {
     return
   }
   arg = expr.args[0]
   if t = arg.ty {
-    if t.is_array && !checker_self.send_crosses(t) {
+    if t.is_array() && !checker_self.send_crosses(t) {
       leaf = t
-      while leaf.is_array {
+      while leaf.is_array() {
         if e = leaf.inner {
           leaf = e
         } else {
           break
         }
       }
-      checker_self.fail(arg.loc, "Channel.send: an ${t.show} is copied at the send, but its elements (${leaf.show}) cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex")
+      checker_self.fail(arg.loc, "Channel.send: an ${t.show()} is copied at the send, but its elements (${leaf.show()}) cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex")
       return
     }
     if !checker_self.send_crosses(t) {
-      checker_self.fail(arg.loc, "Channel.send: a ${t.show} cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex; send plain values, or a Mutex(${t.show}) shared by both tasks")
+      checker_self.fail(arg.loc, "Channel.send: a ${t.show()} cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex; send plain values, or a Mutex(${t.show()}) shared by both tasks")
     }
   }
 }
@@ -1026,10 +1026,10 @@ pub class ClassWalk {
   pub owner: String = ""
   pub method: String = ""
   // name -> 1 rooted at self, 2 at a parameter, 3 either.
-  pub roots: Hash(String, Int) = Hash(String, Int).new
-  pub params: Hash(String, Int) = Hash(String, Int).new
+  pub roots: Hash(String, Int) = Hash(String, Int).new()
+  pub params: Hash(String, Int) = Hash(String, Int).new()
   // The methods of the checked types, by emit name.
-  pub checked: Hash(String, Int) = Hash(String, Int).new
+  pub checked: Hash(String, Int) = Hash(String, Int).new()
   pub changed: Bool = false
 
   pub fn root_of(name: String): Int {
@@ -1055,12 +1055,12 @@ pub class ClassWalk {
 pub fn (checker_self: Checker) check_guarded_types {
   i = 0
   while i < checker_self.guarded.size {
-    if checker_self.any_err {
+    if checker_self.any_err() {
       return
     }
     t = checker_self.guarded[i]
-    if !checker_self.guarded_ok.has_key(t.show) {
-      checker_self.guarded_ok[t.show] = 1
+    if !checker_self.guarded_ok.has_key(t.show()) {
+      checker_self.guarded_ok[t.show()] = 1
       checker_self.check_guarded(t, checker_self.guarded_at[i])
     }
     i += 1
@@ -1074,11 +1074,11 @@ pub fn (checker_self: Checker) guarded_reach(t: Ty, seen: Hash(String, Int), out
   if checker_self.is_share_ty(t) || checker_self.leaves_mutex_with(t) {
     return
   }
-  if seen.has_key(t.show) {
+  if seen.has_key(t.show()) {
     return
   }
-  seen[t.show] = 1
-  if t.is_class || t.is_struct {
+  seen[t.show()] = 1
+  if t.is_class() || t.is_struct() {
     out.push(t)
     for f in t.fields {
       checker_self.guarded_reach(f.ty, seen, out)
@@ -1109,13 +1109,13 @@ pub fn (checker_self: Checker) guarded_method_of(ms: FuncSig, t: Ty): Bool {
 }
 
 pub fn (checker_self: Checker) check_guarded(t: Ty, at: Location) {
-  seen = Hash(String, Int).new
+  seen = Hash(String, Int).new()
   types: Array(Ty) = []
   checker_self.guarded_reach(t, seen, types)
   if types.size == 0 {
     return
   }
-  checked = Hash(String, Int).new
+  checked = Hash(String, Int).new()
   for ct in types {
     for ms in checker_self.methods {
       if checker_self.guarded_method_of(ms, ct) && ms.node.name != "initialize" {
@@ -1126,8 +1126,8 @@ pub fn (checker_self: Checker) check_guarded(t: Ty, at: Location) {
   for ct in types {
     for ms in checker_self.methods {
       if checker_self.guarded_method_of(ms, ct) && ms.node.name != "initialize" {
-        w = ClassWalk.new
-        w.mutex = "Mutex(${t.show})"
+        w = ClassWalk.new()
+        w.mutex = "Mutex(${t.show()})"
         // The file's own name, not its path: a message is the same from
         // any directory (the probe matrix compares it).
         base = at.path
@@ -1138,8 +1138,8 @@ pub fn (checker_self: Checker) check_guarded(t: Ty, at: Location) {
           }
           j += 1
         }
-        w.at = "${base}:${at.line}:${at.column}"
-        w.owner = ct.show
+        w.at = "${base}:${at.line()}:${at.column()}"
+        w.owner = ct.show()
         w.method = ms.node.name
         w.checked = checked
         i = 0
@@ -1160,7 +1160,7 @@ pub fn (checker_self: Checker) check_guarded(t: Ty, at: Location) {
           rounds += 1
         }
         checker_self.cw_body(w, ms.node.body)
-        if checker_self.any_err {
+        if checker_self.any_err() {
           return
         }
         if !checker_self.leaves_mutex_with(ms.ret) && ms.node.body.size > 0 {
@@ -1477,7 +1477,7 @@ pub fn (checker_self: Checker) cw_store(w: ClassWalk, target_bits: Int, value: E
 pub fn (checker_self: Checker) cw_body(w: ClassWalk, body: Array(Stmt)) {
   for st in body {
     checker_self.cw_stmt(w, st)
-    if checker_self.any_err {
+    if checker_self.any_err() {
       return
     }
   }
@@ -1487,7 +1487,7 @@ pub fn (checker_self: Checker) cw_stmt(w: ClassWalk, st: Stmt) {
   if st.kind == st_return() {
     if e = st.expr {
       checker_self.cw_expr(w, e)
-      if !checker_self.any_err && (checker_self.cw_root(w, e) & 2) != 0 {
+      if !checker_self.any_err() && (checker_self.cw_root(w, e) & 2) != 0 {
         checker_self.cw_fail(w, e.loc, "returns a parameter's reference (or a value reached from one), which a with block would take as reached from the guarded value")
       }
     }
@@ -1496,7 +1496,7 @@ pub fn (checker_self: Checker) cw_stmt(w: ClassWalk, st: Stmt) {
   if st.kind == st_assign() {
     if target = st.target, value = st.value {
       checker_self.cw_expr(w, value)
-      if checker_self.any_err {
+      if checker_self.any_err() {
         return
       }
       if target.kind == ex_name() && !target.implicit_field {
@@ -1561,7 +1561,7 @@ pub fn (checker_self: Checker) cw_root_place(w: ClassWalk, e: Expr): Int {
 }
 
 pub fn (checker_self: Checker) cw_expr(w: ClassWalk, e: Expr) {
-  if checker_self.any_err {
+  if checker_self.any_err() {
     return
   }
   if e.kind == ex_call() {
@@ -1611,14 +1611,14 @@ pub fn (checker_self: Checker) cw_call(w: ClassWalk, e: Expr) {
   for a in e.args {
     checker_self.cw_expr(w, a)
   }
-  if checker_self.any_err {
+  if checker_self.any_err() {
     return
   }
   if recv2 = e.receiver, e.resolved.size == 0 && (e.callee == "push" || e.callee == "fill") {
     tb = checker_self.cw_root_place(w, recv2)
     for a in e.args {
       checker_self.cw_store(w, tb, a, "an array (${e.callee})")
-      if checker_self.any_err {
+      if checker_self.any_err() {
         return
       }
     }

@@ -34,7 +34,7 @@ pub fn type_name_text(tn: TypeName): String {
       }
       b.push_str(type_name_text(tn.members[i]))
     }
-    return b.to_s
+    return b.to_s()
   }
   out = tn.name
   if tn.mod_name.size > 0 && !tn.pinned {
@@ -48,7 +48,7 @@ pub fn type_name_text(tn: TypeName): String {
       }
       ab.push_str(type_name_text(tn.args[j]))
     }
-    out = "${out}(${ab.to_s})"
+    out = "${out}(${ab.to_s()})"
   }
   if tn.nilable {
     out = "${out}?"
@@ -106,13 +106,13 @@ pub fn (checker_self: Checker) wrap_entry(fnn: Function, t: TypeName) {
   for j in 0..t.members.size {
     if j != void_at && j != int_at {
       mty = checker_self.resolve_in_module(t.members[j])
-      checker_self.pull_resolve
-      if checker_self.has_err {
+      checker_self.pull_resolve()
+      if checker_self.has_err() {
         checker_self.current_module = saved
         return
       }
       if !mty.error_mark {
-        checker_self.fail(t.members[j].loc, "${checker_self.entry_rule_text(fnn.name, shown)}: ${mty.show} is not marked Error")
+        checker_self.fail(t.members[j].loc, "${checker_self.entry_rule_text(fnn.name, shown)}: ${mty.show()} is not marked Error")
         checker_self.current_module = saved
         return
       }
@@ -134,11 +134,11 @@ pub fn (checker_self: Checker) wrap_entry(fnn: Function, t: TypeName) {
     b.push_str("    case __avant_e: ${f} {\n      avant_entry.avant_main_fail(\"\${__avant_e}\")\n    }\n")
   }
   b.push_str("  }\n}\n")
-  src = Source.new("<avant>", b.to_s)
+  src = Source.new("<avant>", b.to_s())
   lex = Lexer.new(src)
-  tokens = lex.tokenize
+  tokens = lex.tokenize()
   ps = Parser.new(src, tokens)
-  p = ps.parse
+  p = ps.parse()
   for lb in p.libs {
     lb.mod_name = fnn.mod_name
     checker_self.program.libs.push(lb)

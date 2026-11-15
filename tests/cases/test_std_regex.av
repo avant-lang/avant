@@ -16,7 +16,7 @@ fn repeated(piece: String, n: Int, tail: String): String {
     b.push_str(piece)
   }
   b.push_str(tail)
-  b.to_s
+  b.to_s()
 }
 
 fn rx_quote(s: String): String {
@@ -30,7 +30,7 @@ fn rx_quote(s: String): String {
     }
   }
   b.push_str("'")
-  b.to_s
+  b.to_s()
 }
 
 fn rx_sh(cmd: String): Int {
@@ -137,7 +137,7 @@ fn test_std_regex(c: Checks) {
   } else {
     c.expect(false, "find from offset")
   }
-  lit.close
+  lit.close()
 
   cap = must_compile(c, "x(y)", false, "capture")
   if m = cap.find("xy") {
@@ -153,11 +153,11 @@ fn test_std_regex(c: Checks) {
     } else {
       c.expect(true, "group beyond count is nil")
     }
-    c.eq_int(m.group_count, 1, "group count")
+    c.eq_int(m.group_count(), 1, "group count")
   } else {
     c.expect(false, "capture find")
   }
-  cap.close
+  cap.close()
 
   word = must_compile(c, "bot", true, "caseless")
   if m = word.find("GoogleBot") {
@@ -165,7 +165,7 @@ fn test_std_regex(c: Checks) {
   } else {
     c.expect(false, "caseless find")
   }
-  word.close
+  word.close()
 
   braces = must_compile(c, "\\{\\{(.*?)\\}\\}", false, "braces")
   if m = braces.find("{{TITLE}}{{a}b}}") {
@@ -175,7 +175,7 @@ fn test_std_regex(c: Checks) {
   } else {
     c.expect(false, "non-greedy find")
   }
-  braces.close
+  braces.close()
 
   built = "x"
   built = built + "(y)"
@@ -186,12 +186,12 @@ fn test_std_regex(c: Checks) {
   } else {
     c.expect(false, "computed find")
   }
-  dyn.close
+  dyn.close()
 
   counted = must_compile(c, "a+", false, "count")
   c.eq_int(counted.count("aa ba"), 2, "count")
   c.eq_int(counted.count("zz"), 0, "count none")
-  counted.close
+  counted.close()
 
   back = "(a)\\1"
   bref = must_compile(c, back, false, "backref")
@@ -201,11 +201,11 @@ fn test_std_regex(c: Checks) {
   } else {
     c.expect(false, "backref find")
   }
-  bref.close
+  bref.close()
 
   if bad = Regex.compile("(unclosed") {
     c.expect(false, "bad pattern is RegexError")
-    bad.close
+    bad.close()
   } else {
     c.expect(true, "bad pattern is RegexError")
   }
@@ -222,7 +222,7 @@ fn test_std_regex(c: Checks) {
   } else {
     c.expect(false, "named find")
   }
-  named.close
+  named.close()
 
   multi = must_compile(c, "(a)(b)?", false, "optional group")
   if m = multi.find("xa") {
@@ -240,16 +240,16 @@ fn test_std_regex(c: Checks) {
   } else {
     c.expect(false, "optional group find")
   }
-  multi.close
+  multi.close()
 
   iter_re = must_compile(c, "a+", false, "iterator")
   total = 0
   iter = iter_re.matches("aa ba aaa")
-  while m = iter.next {
+  while m = iter.next() {
     total = total + (m.end - m.start)
   }
   c.eq_int(total, 6, "iterator total length")
-  if extra = iter.next {
+  if extra = iter.next() {
     c.expect(false, "iterator stays done")
   } else {
     c.expect(true, "iterator stays done")
@@ -261,26 +261,26 @@ fn test_std_regex(c: Checks) {
   c.eq_str(parts[1], " b", "split piece")
   dst = buf_new()
   iter_re.replace_into(dst, "aa ba", "[$0]")
-  c.eq_str(dst.to_s, "[aa] b[a]", "replace_into")
-  iter_re.close
+  c.eq_str(dst.to_s(), "[aa] b[a]", "replace_into")
+  iter_re.close()
 
   swap = must_compile(c, "(a+)(b+)", false, "swap groups")
   c.eq_str(swap.replace("aabb", "$2$1"), "bbaa", "replace with groups")
   c.eq_str(swap.replace("aabb", r"${2}-${1}"), "bb-aa", "replace with braced groups")
-  swap.close
+  swap.close()
 
   shared_a = must_compile(c, "zz+", false, "shared a")
   shared_b = must_compile(c, "zz+", false, "shared b")
-  shared_a.close
-  shared_a.close
+  shared_a.close()
+  shared_a.close()
   if m = shared_b.find("azzz") {
     c.eq_int(m.end, 4, "shared pattern survives sibling close")
   } else {
     c.expect(false, "shared pattern survives sibling close")
   }
   // A use after close traps (Stage 29 W4b2, test_system.av lib-regex-*).
-  c.expect(shared_a.is_closed, "closed regex says so")
-  shared_b.close
+  c.expect(shared_a.is_closed(), "closed regex says so")
+  shared_b.close()
 
   // The open or closed state is one shared place (Stage 29 W-FIX1a,
   // P150): a copy of a Regex is the same handle, so closing through any
@@ -289,18 +289,18 @@ fn test_std_regex(c: Checks) {
   twin_a = must_compile(c, "yy+", false, "twin a")
   twin_b = must_compile(c, "yy+", false, "twin b")
   twin_copy = twin_a
-  c.expect(!twin_copy.is_closed, "a copy of an open regex is open")
-  twin_a.close
-  c.expect(twin_copy.is_closed, "closing a regex closes its copies")
-  twin_copy.close
-  twin_a.close
-  c.expect(!twin_b.is_closed, "another compile of the same pattern stays open")
+  c.expect(!twin_copy.is_closed(), "a copy of an open regex is open")
+  twin_a.close()
+  c.expect(twin_copy.is_closed(), "closing a regex closes its copies")
+  twin_copy.close()
+  twin_a.close()
+  c.expect(!twin_b.is_closed(), "another compile of the same pattern stays open")
   if m = twin_b.find("ayyy") {
     c.eq_int(m.end, 4, "another compile of the same pattern still matches")
   } else {
     c.expect(false, "another compile of the same pattern still matches")
   }
-  twin_b.close
+  twin_b.close()
 
   // PCRE2's failures are not "no match" (Stage 29 W-FIX1a, P40). A
   // match that nests deeper than the JIT's 32 KiB stack is answered: by
@@ -325,13 +325,13 @@ fn test_std_regex(c: Checks) {
   }
   c.eq_int(deep.count(deep_text), 1, "and counts it")
   set_env("AVANT_RE_JIT_STACK_KB", "")
-  deep.close
+  deep.close()
 
   // Groups past the 63rd are read: the span pairs were capped at 64, so
   // they read as "did not take part".
   many = must_compile(c, repeated("(x)", 70, ""), false, "seventy groups")
   if m = many.find(repeated("x", 70, "")) {
-    c.eq_int(m.group_count, 70, "seventy groups counted")
+    c.eq_int(m.group_count(), 70, "seventy groups counted")
     c.eq_str(m.group(63) ?? "nil", "x", "group 63")
     c.eq_str(m.group(64) ?? "nil", "x", "group 64 took part")
     c.eq_str(m.group(70) ?? "nil", "x", "group 70 took part")
@@ -343,7 +343,7 @@ fn test_std_regex(c: Checks) {
   } else {
     c.expect(false, "seventy groups match")
   }
-  many.close
+  many.close()
 
   scoped_len = 0
   if re = Regex.compile("q+") {
@@ -357,11 +357,11 @@ fn test_std_regex(c: Checks) {
 
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
-    literal = "import std.regex\nfn main {\n  if re = Regex.compile(\"a+\") {\n    if m = re.find(\"xxaa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    re.close\n  }\n}\n"
+    literal = "import std.regex\nfn main {\n  if re = Regex.compile(\"a+\") {\n    if m = re.find(\"xxaa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    re.close()\n  }\n}\n"
     regex_child(c, compiler, stamp, "regex-literal", literal, "", "stays on PCRE2", "2\n4\n")
-    computed = "import std.regex\nfn main {\n  p = \"a\"\n  p = p + \"+\"\n  if re = Regex.compile(p) {\n    if m = re.find(\"xxaa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    re.close\n  }\n}\n"
+    computed = "import std.regex\nfn main {\n  p = \"a\"\n  p = p + \"+\"\n  if re = Regex.compile(p) {\n    if m = re.find(\"xxaa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    re.close()\n  }\n}\n"
     regex_child(c, compiler, stamp, "regex-computed", computed, "", "stays on PCRE2", "2\n4\n")
-    unsupported = "import std.regex\nfn main {\n  if re = Regex.compile(\"(a)\\\\1\") {\n    if m = re.find(\"baa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    re.close\n  }\n}\n"
+    unsupported = "import std.regex\nfn main {\n  if re = Regex.compile(\"(a)\\\\1\") {\n    if m = re.find(\"baa\") {\n      puts(m.start)\n      puts(m.end)\n    }\n    re.close()\n  }\n}\n"
     regex_child(c, compiler, stamp, "regex-backref", unsupported, "stays on PCRE2", "", "1\n3\n")
 
     // P150: every use through a copy of a closed Regex traps, whichever
@@ -370,7 +370,7 @@ fn test_std_regex(c: Checks) {
     // "uncached" fills the 128-entry cache with patterns in use first,
     // so the pattern is freed by close itself: that run used to end in a
     // segmentation fault.
-    copies = "import std.regex\n\nfn shut(r: Regex) {\n  r.close\n}\n\nfn main {\n  args = argv()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  held: Array(Regex) = []\n  if mode == \"uncached\" {\n    for i in 0..128 {\n      if r = Regex.compile(\"h\${i}x+\") {\n        held.push(r)\n      }\n    }\n  }\n  p = \"(?<w>a+)(b)(c)(d)\"\n  if mode != \"names\" {\n    p = \"q\" + \"+z\"\n  }\n  if re = Regex.compile(p) {\n    copy = re\n    if mode == \"copy-find\" || mode == \"uncached\" {\n      re.close\n      puts(\"closed \${copy.is_closed}\")\n      if m = copy.find(\"aqqz\") {\n        puts(m.start)\n      }\n    }\n    if mode == \"copy-close\" {\n      copy.close\n      puts(\"closed \${re.is_closed}\")\n      puts(re.count(\"qz qqz\"))\n    }\n    if mode == \"param\" {\n      shut(re)\n      puts(\"closed \${re.is_closed}\")\n      puts(re.replace(\"qz\", \"x\"))\n    }\n    if mode == \"array\" {\n      xs: Array(Regex) = []\n      xs.push(re)\n      re.close\n      puts(\"closed \${xs[0].is_closed}\")\n      puts(xs[0].split(\"aqzb\").size)\n    }\n    if mode == \"iter\" {\n      it = re.matches(\"qz qqz\")\n      if m = it.next {\n        puts(m.end)\n      }\n      copy.close\n      if m = it.next {\n        puts(m.end)\n      }\n    }\n    if mode == \"names\" {\n      if m = re.find(\"xaabcd\") {\n        re.close\n        puts(m.group(1) ?? \"?\")\n        puts(m.group(3) ?? \"?\")\n        if args.size > 2 {\n          puts(m.group(4) ?? \"?\")\n        } else {\n          puts(m.group(\"w\") ?? \"?\")\n        }\n      }\n    }\n  }\n  puts(held.size)\n}\n"
+    copies = "import std.regex\n\nfn shut(r: Regex) {\n  r.close()\n}\n\nfn main {\n  args = argv()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  held: Array(Regex) = []\n  if mode == \"uncached\" {\n    for i in 0..128 {\n      if r = Regex.compile(\"h\${i}x+\") {\n        held.push(r)\n      }\n    }\n  }\n  p = \"(?<w>a+)(b)(c)(d)\"\n  if mode != \"names\" {\n    p = \"q\" + \"+z\"\n  }\n  if re = Regex.compile(p) {\n    copy = re\n    if mode == \"copy-find\" || mode == \"uncached\" {\n      re.close()\n      puts(\"closed \${copy.is_closed()}\")\n      if m = copy.find(\"aqqz\") {\n        puts(m.start)\n      }\n    }\n    if mode == \"copy-close\" {\n      copy.close()\n      puts(\"closed \${re.is_closed()}\")\n      puts(re.count(\"qz qqz\"))\n    }\n    if mode == \"param\" {\n      shut(re)\n      puts(\"closed \${re.is_closed()}\")\n      puts(re.replace(\"qz\", \"x\"))\n    }\n    if mode == \"array\" {\n      xs: Array(Regex) = []\n      xs.push(re)\n      re.close()\n      puts(\"closed \${xs[0].is_closed()}\")\n      puts(xs[0].split(\"aqzb\").size)\n    }\n    if mode == \"iter\" {\n      it = re.matches(\"qz qqz\")\n      if m = it.next() {\n        puts(m.end)\n      }\n      copy.close()\n      if m = it.next() {\n        puts(m.end)\n      }\n    }\n    if mode == \"names\" {\n      if m = re.find(\"xaabcd\") {\n        re.close()\n        puts(m.group(1) ?? \"?\")\n        puts(m.group(3) ?? \"?\")\n        if args.size > 2 {\n          puts(m.group(4) ?? \"?\")\n        } else {\n          puts(m.group(\"w\") ?? \"?\")\n        }\n      }\n    }\n  }\n  puts(held.size)\n}\n"
     csrc = "${scratch()}/regex-${stamp}-copies.av"
     cbin = "${scratch()}/regex-${stamp}-copies.bin"
     _ = file_write(csrc, copies)
@@ -393,7 +393,7 @@ fn test_std_regex(c: Checks) {
     // three a's), but the attempt at the first a backtracks past the
     // limit. It used to read as "no match": find nil, count 0, replace
     // and split the text unchanged, the iterator done.
-    limits = "import std.regex\n\nfn main {\n  args = argv()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  p = \"(a+)+\"\n  p = p + \"\$\"\n  b = buf_new()\n  for i in 0..40 {\n    b.push_str(\"a\")\n  }\n  b.push_str(\"b aaa\")\n  text = b.to_s\n  if re = Regex.compile(p) {\n    puts(\"start\")\n    if mode == \"find\" {\n      if m = re.find(text) {\n        puts(m.start)\n      } else {\n        puts(\"nil\")\n      }\n    }\n    if mode == \"count\" {\n      puts(re.count(text))\n    }\n    if mode == \"replace\" {\n      puts(re.replace(text, \"X\"))\n    }\n    if mode == \"split\" {\n      puts(re.split(text).size)\n    }\n    if mode == \"matches\" {\n      it = re.matches(text)\n      if m = it.next {\n        puts(m.start)\n      } else {\n        puts(\"nil\")\n      }\n    }\n  }\n}\n"
+    limits = "import std.regex\n\nfn main {\n  args = argv()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  p = \"(a+)+\"\n  p = p + \"\$\"\n  b = buf_new()\n  for i in 0..40 {\n    b.push_str(\"a\")\n  }\n  b.push_str(\"b aaa\")\n  text = b.to_s()\n  if re = Regex.compile(p) {\n    puts(\"start\")\n    if mode == \"find\" {\n      if m = re.find(text) {\n        puts(m.start)\n      } else {\n        puts(\"nil\")\n      }\n    }\n    if mode == \"count\" {\n      puts(re.count(text))\n    }\n    if mode == \"replace\" {\n      puts(re.replace(text, \"X\"))\n    }\n    if mode == \"split\" {\n      puts(re.split(text).size)\n    }\n    if mode == \"matches\" {\n      it = re.matches(text)\n      if m = it.next() {\n        puts(m.start)\n      } else {\n        puts(\"nil\")\n      }\n    }\n  }\n}\n"
     lsrc = "${scratch()}/regex-${stamp}-limits.av"
     lbin = "${scratch()}/regex-${stamp}-limits.bin"
     _ = file_write(lsrc, limits)
@@ -415,5 +415,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_std_regex(c)
-  c.finish
+  c.finish()
 }

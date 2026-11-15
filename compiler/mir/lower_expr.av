@@ -87,7 +87,7 @@ pub fn (lw: MirLower) tmp(ty: Int, rv: MRvalue): MOperand {
 
 pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
   zero = lw.lw_b.c_i32(0)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   k = e.kind
@@ -123,10 +123,10 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
       if mir_is_str_ty(at) {
         return lw.lower_str_index(e, arr, ix)
       }
-      if at.is_array || at.is_buf {
+      if at.is_array() || at.is_buf() {
         return lw.lower_seq_index(e)
       }
-      if at.is_hash {
+      if at.is_hash() {
         ka: Array(Expr) = []
         ka.push(ix)
         return lw.lower_hash_read(e, arr, at, "get", ka)
@@ -161,7 +161,7 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
 pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
   b = lw.lw_b
   ty = lw.ety(e)
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   if e.kind == ex_bool() {
@@ -174,7 +174,7 @@ pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
     v = e.float_val
     text = e.value_str
     if e.kind == ex_int() {
-      v = e.int_bits.to_f
+      v = e.int_bits.to_f()
       text = "${e.int_bits}"
     } else if text.size == 0 {
       text = "0.0"
@@ -186,14 +186,14 @@ pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
     return b.c_f64(mir_f64_bits(v), text)
   }
   if ty == mt_i64() || ty == mt_i32() || ty == mt_u32() || ty == mt_u8() {
-    v64 = e.int_bits.wrap_i
+    v64 = e.int_bits.wrap_i()
     if neg {
       v64 = 0 &- v64
     }
     return b.c_int(ty, v64)
   }
   if ty == mt_u64() {
-    return b.c_u64(e.int_bits.wrap_i)
+    return b.c_u64(e.int_bits.wrap_i())
   }
   lw.refuse(e.loc, "this literal")
   b.c_i32(0)
@@ -215,7 +215,7 @@ pub fn (lw: MirLower) lower_name(e: Expr): MOperand {
     return lw.box_read(e)
   }
   ty = lw.ety(e)
-  if lw.failed {
+  if lw.failed() {
     return lw.lw_b.c_i32(0)
   }
   k = lw.var_find(e.ident, ty)
@@ -230,13 +230,13 @@ pub fn (lw: MirLower) lower_unary(e: Expr): MOperand {
   b = lw.lw_b
   if inner = e.inner {
     if e.op == tk_minus() && (inner.kind == ex_int() || inner.kind == ex_float()) {
-      if it = inner.ty, !it.is_uint64 {
+      if it = inner.ty, !it.is_uint64() {
         return lw.literal(inner, true)
       }
     }
     ty = lw.ety(e)
     a = lw.lower_expr(inner)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -292,7 +292,7 @@ pub fn (lw: MirLower) lower_binary(e: Expr): MOperand {
   }
   if l = e.left, r = e.right {
     lt = lw.ety(l)
-    if lw.failed {
+    if lw.failed() {
       return zero
     }
     if lt == mt_str() {
@@ -305,7 +305,7 @@ pub fn (lw: MirLower) lower_binary(e: Expr): MOperand {
     }
     a = lw.snap(lw.lower_expr(l), r)
     c = lw.lower_expr(r)
-    if lw.failed {
+    if lw.failed() {
       return zero
     }
     lw.at(e.loc)
@@ -329,20 +329,20 @@ pub fn (lw: MirLower) lower_logical(e: Expr): MOperand {
   b = lw.lw_b
   if l = e.left, r = e.right {
     a = lw.lower_expr(l)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
     d = b.temp(mt_bool())
     b.assign(b.pl(d), b.rv_use(a))
-    right = b.block
-    join = b.block
+    right = b.block()
+    join = b.block()
     // Under coverage (W8b) the short path has its own block, and each
     // path counts its branch in the old order (the old back end's emit_logical:
     // THEN, then ELSE: && evaluates the right side in THEN, || in ELSE).
     short = join
     if lw.lw_cov.on {
-      short = b.block
+      short = b.block()
     }
     if e.op == tk_amp_amp() {
       b.branch(b.copy_local(d), right, short)
@@ -367,7 +367,7 @@ pub fn (lw: MirLower) lower_logical(e: Expr): MOperand {
     }
     b.at(right)
     c = lw.lower_expr(r)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -386,8 +386,8 @@ pub fn (lw: MirLower) lower_logical(e: Expr): MOperand {
 // other block (the result of trap_open).
 pub fn (lw: MirLower) trap_open(c: MOperand, trap_on: Bool): Int {
   b = lw.lw_b
-  bt = b.block
-  ok = b.block
+  bt = b.block()
+  ok = b.block()
   if trap_on {
     b.branch(c, bt, ok)
   } else {
@@ -400,7 +400,7 @@ pub fn (lw: MirLower) trap_open(c: MOperand, trap_on: Bool): Int {
 pub fn (lw: MirLower) trap_close(ok: Int, trap: String, args: Array(MOperand), loc: Location) {
   b = lw.lw_b
   b.call(-1, trap, args)
-  b.unreachable
+  b.unreachable()
   b.at(ok)
   lw.at(loc)
 }
@@ -504,7 +504,7 @@ pub fn (lw: MirLower) shift(op: Int, ty: Int, at: Int, a: MOperand, c: MOperand,
     }
     lim = b.c_u64(width - 1)
     if ut == mt_u32() {
-      lim = b.c_u32((width - 1).to_i)
+      lim = b.c_u32((width - 1).to_i())
     }
     ok = lw.trap_open(lw.tmp(mt_bool(), b.rv_cmp(mop_gt(), u, lim)), true)
     amt64 = lw.dup(c)

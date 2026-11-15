@@ -269,23 +269,23 @@ pub fn (checker_self: Checker) implicit_field(name: String): Ty? {
 
 pub fn (checker_self: Checker) check: Program {
   checker_self.resolver = load_types(checker_self.program)
-  checker_self.pull_resolve
-  checker_self.note_modules
-  checker_self.clear_poison
-  checker_self.note_consts
-  checker_self.check_enum_consts
-  checker_self.check_type_names
-  checker_self.clear_poison
-  checker_self.check_aliases
-  checker_self.clear_poison
-  checker_self.prepare_entry
+  checker_self.pull_resolve()
+  checker_self.note_modules()
+  checker_self.clear_poison()
+  checker_self.note_consts()
+  checker_self.check_enum_consts()
+  checker_self.check_type_names()
+  checker_self.clear_poison()
+  checker_self.check_aliases()
+  checker_self.clear_poison()
+  checker_self.prepare_entry()
   for lb in checker_self.program.libs {
-    checker_self.clear_poison
+    checker_self.clear_poison()
     checker_self.register_lib(lb)
   }
   i = 0
   while i < checker_self.program.functions.size {
-    checker_self.clear_poison
+    checker_self.clear_poison()
     fnn = checker_self.program.functions[i]
     if fn_is_method(fnn) {
       checker_self.register_method(fnn)
@@ -295,23 +295,23 @@ pub fn (checker_self: Checker) check: Program {
     i += 1
   }
   checker_self.ready_adopt = true
-  checker_self.clear_poison
-  checker_self.check_interface_sigs
-  checker_self.clear_poison
-  checker_self.adopt_new_types
-  checker_self.clear_poison
-  checker_self.apply_late_opt_ins
-  checker_self.clear_poison
-  checker_self.check_param_bound_decls
+  checker_self.clear_poison()
+  checker_self.check_interface_sigs()
+  checker_self.clear_poison()
+  checker_self.adopt_new_types()
+  checker_self.clear_poison()
+  checker_self.apply_late_opt_ins()
+  checker_self.clear_poison()
+  checker_self.check_param_bound_decls()
   checker_self.bounds_ready = true
-  checker_self.check_bound_uses
-  checker_self.clear_poison
-  checker_self.reserve_constructors
-  checker_self.clear_poison
-  checker_self.assign_emit_names
-  checker_self.clear_poison
-  checker_self.check_field_defaults
-  if checker_self.any_err {
+  checker_self.check_bound_uses()
+  checker_self.clear_poison()
+  checker_self.reserve_constructors()
+  checker_self.clear_poison()
+  checker_self.assign_emit_names()
+  checker_self.clear_poison()
+  checker_self.check_field_defaults()
+  if checker_self.any_err() {
     return checker_self.program
   }
   has_entry = false
@@ -355,19 +355,19 @@ pub fn (checker_self: Checker) check: Program {
   // C14: generic class instances made while checking the bodies get their
   // cloned field defaults typed by their fields too (the first pass ran
   // before they existed), so no back end sees an untyped default.
-  checker_self.clear_poison
-  checker_self.check_field_defaults
+  checker_self.clear_poison()
+  checker_self.check_field_defaults()
   // W3b (B5, D292): no field is read unset (checker/init.av).
-  checker_self.clear_poison
-  checker_self.check_inits
+  checker_self.clear_poison()
+  checker_self.check_inits()
   // O709 (D389): what a Mutex guards keeps nothing from outside and
   // hands out nothing of its own (checker/guard.av).
-  checker_self.clear_poison
-  checker_self.check_guarded_types
+  checker_self.clear_poison()
+  checker_self.check_guarded_types()
   // A method that changes its receiver, called on an element of an
   // Array a running task reads (checker/spawn.av).
-  checker_self.clear_poison
-  checker_self.check_element_writes
+  checker_self.clear_poison()
+  checker_self.check_element_writes()
   checker_self.program
 }
 
@@ -405,10 +405,10 @@ pub fn (checker_self: Checker) check_aliases {
   }
   saved = checker_self.current_module
   for al2 in checker_self.program.aliases {
-    checker_self.clear_poison
+    checker_self.clear_poison()
     checker_self.current_module = al2.mod_name
     _ = checker_self.resolve_in_module(clone_type_name(al2.target))
-    checker_self.pull_resolve
+    checker_self.pull_resolve()
   }
   checker_self.current_module = saved
 }
@@ -466,26 +466,26 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
       checker_self.resolver.c_scalar_ok = true
       pty = checker_self.resolver.resolve_value(cfun.params[k].type)
       checker_self.resolver.c_scalar_ok = false
-      checker_self.pull_resolve
-      if pty.is_fn {
+      checker_self.pull_resolve()
+      if pty.is_fn() {
         mi = 0
         bad = false
         narrow = ""
         while mi < pty.members.size {
-          if pty.members[mi].is_fn {
+          if pty.members[mi].is_fn() {
             bad = true
           }
           if pty.members[mi].c_scalar > 0 {
-            narrow = pty.members[mi].show
+            narrow = pty.members[mi].show()
           }
           mi += 1
         }
         if r = pty.inner {
-          if r.is_fn {
+          if r.is_fn() {
             bad = true
           }
           if r.c_scalar > 0 {
-            narrow = r.show
+            narrow = r.show()
           }
         }
         if bad {
@@ -493,7 +493,7 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
           return
         }
         if narrow.size > 0 {
-          checker_self.fail(cfun.params[k].loc, "a C callback cannot take or return ${narrow} yet; use its Avant type (${ty_c_view(ty_c_scalar(c_scalar_of(narrow))).show})")
+          checker_self.fail(cfun.params[k].loc, "a C callback cannot take or return ${narrow} yet; use its Avant type (${ty_c_view(ty_c_scalar(c_scalar_of(narrow))).show()})")
           return
         }
       }
@@ -508,16 +508,16 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
       checker_self.resolver.c_scalar_ok = true
       ty = checker_self.resolver.resolve(t)
       checker_self.resolver.c_scalar_ok = false
-      checker_self.pull_resolve
-      if ty.is_opaque {
-        checker_self.fail(t.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
+      checker_self.pull_resolve()
+      if ty.is_opaque() {
+        checker_self.fail(t.loc, "${ty.show()} is opaque; use Ptr(${ty.show()})")
         return
       }
-      if ty.is_clayout {
-        checker_self.fail(t.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
+      if ty.is_clayout() {
+        checker_self.fail(t.loc, "${ty.show()} is a C layout; use Ptr(${ty.show()})")
         return
       }
-      if ty.is_fn {
+      if ty.is_fn() {
         checker_self.fail(t.loc, "C function pointers are not supported")
         return
       }
@@ -569,7 +569,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
     return
   }
   checker_self.check_trailing_defaults(fnn)
-  if checker_self.has_err {
+  if checker_self.has_err() {
     return
   }
   tparams = collect_fn_type_params(fnn, checker_self.resolver.named)
@@ -588,7 +588,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   fnn.type_params = tparams
   fnn.generic = tparams.size > 0
   checker_self.attach_bounds(fnn)
-  if checker_self.has_err {
+  if checker_self.has_err() {
     return
   }
   saved_mod = checker_self.current_module
@@ -598,28 +598,28 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   i = 0
   while i < fnn.params.size {
     params.push(checker_self.resolve_value_in_module(fnn.params[i].type))
-    checker_self.pull_resolve
+    checker_self.pull_resolve()
     i += 1
   }
   ret = checker_self.t_void()
   if t = fnn.return_type {
     ty = checker_self.resolve_in_module(t)
-    checker_self.pull_resolve
-    if ty.is_opaque {
-      checker_self.fail(t.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
-      checker_self.resolver.clear_tparams
+    checker_self.pull_resolve()
+    if ty.is_opaque() {
+      checker_self.fail(t.loc, "${ty.show()} is opaque; use Ptr(${ty.show()})")
+      checker_self.resolver.clear_tparams()
       checker_self.current_module = saved_mod
       return
     }
-    if ty.is_clayout {
-      checker_self.fail(t.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
-      checker_self.resolver.clear_tparams
+    if ty.is_clayout() {
+      checker_self.fail(t.loc, "${ty.show()} is a C layout; use Ptr(${ty.show()})")
+      checker_self.resolver.clear_tparams()
       checker_self.current_module = saved_mod
       return
     }
     ret = ty
   }
-  checker_self.resolver.clear_tparams
+  checker_self.resolver.clear_tparams()
   // An instance's signature names its type arguments as they were
   // written where the generic is used (pinned): that module's rule,
   // already applied there. The template's own signature was checked
@@ -640,9 +640,9 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   }
   checker_self.current_module = saved_mod
   if fnn.name == "main" || fnn.name == "run" {
-    if ret.is_void {
-    } else if !ret.is_int {
-      checker_self.fail(fnn.loc, checker_self.entry_rule_text(fnn.name, ret.show))
+    if ret.is_void() {
+    } else if !ret.is_int() {
+      checker_self.fail(fnn.loc, checker_self.entry_rule_text(fnn.name, ret.show()))
       return
     }
   }
@@ -671,7 +671,7 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
   checker_self.alloc_ol(fnn)
   sig = FuncSig.new(fnn.name, fnn, params, ret)
   checker_self.functions.push(sig)
-  checker_self.note_fn_named
+  checker_self.note_fn_named()
   if taken = checker_self.fn_index.get(fnn.name) {
   } else {
     checker_self.fn_index[fnn.name] = checker_self.functions.size - 1
@@ -679,15 +679,15 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
 }
 
 pub fn (checker_self: Checker) ptr_method_ok(ty: Ty): Bool {
-  if ty.is_ptr {
+  if ty.is_ptr() {
     if inner = ty.inner {
-      if inner.is_void {
+      if inner.is_void() {
         return true
       }
-      if inner.is_opaque {
+      if inner.is_opaque() {
         return true
       }
-      if inner.is_clayout {
+      if inner.is_clayout() {
         return true
       }
     }
@@ -696,7 +696,7 @@ pub fn (checker_self: Checker) ptr_method_ok(ty: Ty): Bool {
 }
 
 pub fn (checker_self: Checker) method_owner_name(ty: Ty): String {
-  if ty.is_ptr {
+  if ty.is_ptr() {
     return mangle_ty(ty)
   }
   ty.name
@@ -717,36 +717,36 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
       fnn.owner_mod = found.mod_name
       has_owner = true
     } else {
-      checker_self.resolver.clear_tparams
+      checker_self.resolver.clear_tparams()
       checker_self.current_module = saved_mod
       return
     }
   } else {
     if recv = fnn.receiver {
       ty = checker_self.resolve_in_module(recv.type)
-      checker_self.pull_resolve
-      if ty.is_agg && ty.origin.size > 0 && ty.mod_name.size > 0 && recv.type.mod_name.size == 0 && checker_self.resolver.template_count(recv.type.name) > 1 {
+      checker_self.pull_resolve()
+      if ty.is_agg() && ty.origin.size > 0 && ty.mod_name.size > 0 && recv.type.mod_name.size == 0 && checker_self.resolver.template_count(recv.type.name) > 1 {
         // A generic receiver whose template's name two modules declare is
         // pinned to the one it named here, so each later reading of it
         // (the method's instances, the receiver's match) finds that one.
         recv.type.mod_name = ty.mod_name
       }
-      if ty.is_agg || ty.is_enum {
+      if ty.is_agg() || ty.is_enum() {
         fnn.owner = ty.name
         fnn.owner_mod = ty.mod_name
         owner_ty = ty
         owner_key = ty.name
         has_owner = true
       } else if builtin_receiver_ok(ty) {
-        fnn.owner = ty.show
+        fnn.owner = ty.show()
         fnn.owner_mod = ""
         owner_ty = ty
-        owner_key = ty.show
+        owner_key = ty.show()
         has_owner = true
       } else if checker_self.ptr_method_ok(ty) {
         if tparams.size > 0 {
           checker_self.fail(recv.loc, "Ptr methods are not generic")
-          checker_self.resolver.clear_tparams
+          checker_self.resolver.clear_tparams()
           checker_self.current_module = saved_mod
           return
         }
@@ -754,65 +754,65 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
         fnn.owner = owner_key
         owner_ty = ty
         has_owner = true
-      } else if ty.is_ptr {
-        checker_self.fail(recv.loc, "methods on ${ty.show} cannot be declared: a Ptr receiver points to a C layout (a struct inside a lib block), an opaque C type or Void, as in fn (p: Ptr(Pair)) sum")
-        checker_self.resolver.clear_tparams
+      } else if ty.is_ptr() {
+        checker_self.fail(recv.loc, "methods on ${ty.show()} cannot be declared: a Ptr receiver points to a C layout (a struct inside a lib block), an opaque C type or Void, as in fn (p: Ptr(Pair)) sum")
+        checker_self.resolver.clear_tparams()
         checker_self.current_module = saved_mod
         return
       } else {
-        checker_self.fail(recv.loc, "methods can only extend a struct, a class, an enum, String, Bytes, Buf, an integer type, Float64 or Bool, not ${ty.show}")
-        checker_self.resolver.clear_tparams
+        checker_self.fail(recv.loc, "methods can only extend a struct, a class, an enum, String, Bytes, Buf, an integer type, Float64 or Bool, not ${ty.show()}")
+        checker_self.resolver.clear_tparams()
         checker_self.current_module = saved_mod
         return
       }
     } else {
       checker_self.fail(fnn.loc, "unknown type")
-      checker_self.resolver.clear_tparams
+      checker_self.resolver.clear_tparams()
       checker_self.current_module = saved_mod
       return
     }
   }
   if !has_owner {
-    checker_self.resolver.clear_tparams
+    checker_self.resolver.clear_tparams()
     checker_self.current_module = saved_mod
     return
   }
   if fnn.name == "!=" {
     // != is always !(a == b), never its own method.
     checker_self.fail(fnn.loc, "!= is always !(a == b): define == only")
-    checker_self.resolver.clear_tparams
+    checker_self.resolver.clear_tparams()
     checker_self.current_module = saved_mod
     return
   }
   if fnn.name == "to_s" && owner_ty.error_mark {
     // An error's text is its message and its cause (`"${e}"`, e.to_s).
-    checker_self.fail(fnn.loc, "${owner_ty.show} is marked Error: its text, in interpolation and from to_s, is its message and its cause; define message instead of to_s")
-    checker_self.resolver.clear_tparams
+    checker_self.fail(fnn.loc, "${owner_ty.show()} is marked Error: its text, in interpolation and from to_s, is its message and its cause; define message instead of to_s")
+    checker_self.resolver.clear_tparams()
     checker_self.current_module = saved_mod
     return
   }
   arity = op_arity_text(fnn.name, fnn.params.size)
   if arity.size > 0 {
     checker_self.fail(fnn.loc, arity)
-    checker_self.resolver.clear_tparams
+    checker_self.resolver.clear_tparams()
     checker_self.current_module = saved_mod
     return
   }
   if fnn.name == "new" {
     checker_self.fail(fnn.loc, "new is reserved; write initialize")
-    checker_self.resolver.clear_tparams
+    checker_self.resolver.clear_tparams()
     checker_self.current_module = saved_mod
     return
   }
   field_owner = owner_ty
-  if owner_ty.is_ptr {
+  if owner_ty.is_ptr() {
     if inner = owner_ty.inner {
       field_owner = inner
     }
   }
   if field_ty = field_owner.field_named(fnn.name) {
     checker_self.fail(fnn.loc, "${field_owner.name}.${fnn.name} is both a field and a method")
-    checker_self.resolver.clear_tparams
+    checker_self.resolver.clear_tparams()
     checker_self.current_module = saved_mod
     return
   }
@@ -820,21 +820,21 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   // of that name would either replace the builtin or never be called.
   if builtin_receiver_ok(owner_ty) && name_in_list(fnn.name, builtin_member_names(owner_ty)) {
     checker_self.fail(fnn.loc, "${fnn.name} is a builtin of ${owner_key}: a method cannot replace it; give the method another name")
-    checker_self.resolver.clear_tparams
+    checker_self.resolver.clear_tparams()
     checker_self.current_module = saved_mod
     return
   }
   checker_self.check_trailing_defaults(fnn)
-  if checker_self.has_err {
-    checker_self.resolver.clear_tparams
+  if checker_self.has_err() {
+    checker_self.resolver.clear_tparams()
     checker_self.current_module = saved_mod
     return
   }
   fnn.type_params = tparams
   fnn.generic = tparams.size > 0
   checker_self.attach_bounds(fnn)
-  if checker_self.has_err {
-    checker_self.resolver.clear_tparams
+  if checker_self.has_err() {
+    checker_self.resolver.clear_tparams()
     checker_self.current_module = saved_mod
     return
   }
@@ -842,28 +842,28 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   i = 0
   while i < fnn.params.size {
     params.push(checker_self.resolve_value_in_module(fnn.params[i].type))
-    checker_self.pull_resolve
+    checker_self.pull_resolve()
     i += 1
   }
   ret = checker_self.t_void()
   if t = fnn.return_type {
     ty = checker_self.resolve_in_module(t)
-    checker_self.pull_resolve
-    if ty.is_opaque {
-      checker_self.fail(t.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
-      checker_self.resolver.clear_tparams
+    checker_self.pull_resolve()
+    if ty.is_opaque() {
+      checker_self.fail(t.loc, "${ty.show()} is opaque; use Ptr(${ty.show()})")
+      checker_self.resolver.clear_tparams()
       checker_self.current_module = saved_mod
       return
     }
-    if ty.is_clayout {
-      checker_self.fail(t.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
-      checker_self.resolver.clear_tparams
+    if ty.is_clayout() {
+      checker_self.fail(t.loc, "${ty.show()} is a C layout; use Ptr(${ty.show()})")
+      checker_self.resolver.clear_tparams()
       checker_self.current_module = saved_mod
       return
     }
     ret = ty
   }
-  checker_self.resolver.clear_tparams
+  checker_self.resolver.clear_tparams()
   // An instance's signature names its type arguments as they were
   // written where the generic is used (pinned): that module's rule,
   // already applied there. The template's own signature was checked
@@ -884,7 +884,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   }
   checker_self.current_module = saved_mod
   if fnn.name == "initialize" {
-    if !ret.is_void {
+    if !ret.is_void() {
       checker_self.fail(fnn.loc, "initialize cannot return a value")
       return
     }
@@ -916,7 +916,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   sig = FuncSig.new(fnn.name, fnn, params, ret)
   sig.owner = owner_key
   checker_self.methods.push(sig)
-  checker_self.note_method_named
+  checker_self.note_method_named()
   key = "${owner_key}__${fnn.name}"
   if taken = checker_self.method_index.get(key) {
   } else {
@@ -951,7 +951,7 @@ pub fn (checker_self: Checker) adopt_one_struct(sdef: StructDef) {
       sdef.methods[j].generic = true
     } else {
       checker_self.register_method(sdef.methods[j])
-      if checker_self.has_err {
+      if checker_self.has_err() {
         return
       }
     }
@@ -970,7 +970,7 @@ pub fn (checker_self: Checker) adopt_one_class(cdef: ClassDef) {
       cdef.methods[j].generic = true
     } else {
       checker_self.register_method(cdef.methods[j])
-      if checker_self.has_err {
+      if checker_self.has_err() {
         return
       }
     }
@@ -980,7 +980,7 @@ pub fn (checker_self: Checker) adopt_one_class(cdef: ClassDef) {
     return
   }
   checker_self.check_decl_opts(cdef.name, cdef.opt_ins, cdef.mod_name, cdef.loc)
-  if checker_self.has_err {
+  if checker_self.has_err() {
     return
   }
   if checker_self.adopt_pending {
@@ -1006,7 +1006,7 @@ pub fn (checker_self: Checker) adopt_new_types {
   if checker_self.in_adopt {
     return
   }
-  if checker_self.has_err {
+  if checker_self.has_err() {
     return
   }
   checker_self.in_adopt = true
@@ -1020,7 +1020,7 @@ pub fn (checker_self: Checker) adopt_new_types {
         checker_self.adopted[slot] = 1
         checker_self.note_type_owner(sdef.name, sdef.mod_name, sdef.vis)
         checker_self.adopt_one_struct(sdef)
-        checker_self.clear_poison
+        checker_self.clear_poison()
         grow = true
       }
     }
@@ -1031,7 +1031,7 @@ pub fn (checker_self: Checker) adopt_new_types {
         checker_self.adopted[slot] = 1
         checker_self.note_type_owner(cdef.name, cdef.mod_name, cdef.vis)
         checker_self.adopt_one_class(cdef)
-        checker_self.clear_poison
+        checker_self.clear_poison()
         grow = true
       }
     }
@@ -1132,12 +1132,12 @@ pub fn (checker_self: Checker) check_field_defaults {
             continue
           }
           if want = ty.field_named(field.name) {
-            checker_self.push_scope
+            checker_self.push_scope()
             got = checker_self.check_expr_as(default, want)
             if !ty_assignable(got, want) {
-              checker_self.fail(default.loc, "cannot assign ${got.show} to ${want.show}")
+              checker_self.fail(default.loc, "cannot assign ${got.show()} to ${want.show()}")
             }
-            checker_self.pop_scope
+            checker_self.pop_scope()
           }
         }
         j += 1
@@ -1160,12 +1160,12 @@ pub fn (checker_self: Checker) check_field_defaults {
             continue
           }
           if swant = sty.field_named(sfield.name) {
-            checker_self.push_scope
+            checker_self.push_scope()
             sgot = checker_self.check_expr_as(sd, swant)
             if !ty_assignable(sgot, swant) {
-              checker_self.fail(sd.loc, "cannot assign ${sgot.show} to ${swant.show}")
+              checker_self.fail(sd.loc, "cannot assign ${sgot.show()} to ${swant.show()}")
             }
-            checker_self.pop_scope
+            checker_self.pop_scope()
           }
         }
       }
@@ -1232,17 +1232,17 @@ pub fn (checker_self: Checker) method_indices_named(name: String): Array(Int) {
 // result a segmentation fault). It is refused until the nullable pointer
 // is decided (W9): the refusal holds whichever way that goes.
 pub fn (checker_self: Checker) fun_union_ok(ty: Ty, loc: Location): Bool {
-  if !ty.is_union {
+  if !ty.is_union() {
     return true
   }
   if m = ty_opt_ref(ty) {
     return true
   }
-  if ty.members.size == 2 && ty.includes_nil && ty_without_nil(ty).is_ptr {
-    checker_self.fail(loc, "a fun signature cannot use ${ty.show}: C has one pointer there, and Ptr(T)? is a tag and a pointer in Avant, not a nullable pointer (that is not decided yet); declare ${ty_without_nil(ty).show}")
+  if ty.members.size == 2 && ty.includes_nil() && ty_without_nil(ty).is_ptr() {
+    checker_self.fail(loc, "a fun signature cannot use ${ty.show()}: C has one pointer there, and Ptr(T)? is a tag and a pointer in Avant, not a nullable pointer (that is not decided yet); declare ${ty_without_nil(ty).show()}")
     return false
   }
-  checker_self.fail(loc, "a fun signature cannot use ${ty.show}: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL (String?, Bytes?, an array, a hash, a Buf or a class with ?)")
+  checker_self.fail(loc, "a fun signature cannot use ${ty.show()}: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL (String?, Bytes?, an array, a hash, a Buf or a class with ?)")
   false
 }
 

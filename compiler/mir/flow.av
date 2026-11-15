@@ -32,7 +32,7 @@ pub fn mir_bools_copy(a: Array(Bool)): Array(Bool) {
 }
 
 fn mir_place_reads(p: MPlace, as_value: Bool, out: Array(Int)) {
-  if as_value || p.last_deref >= 0 {
+  if as_value || p.last_deref() >= 0 {
     out.push(p.local)
   }
   i = 0
@@ -82,7 +82,7 @@ pub fn mir_stmt_reads(st: MStmt, out: Array(Int)) {
 
 pub fn mir_term_reads(f: MFunc, t: MTerm, out: Array(Int)) {
   mir_opt_reads(t.cond, out)
-  if t.kind == mtk_return() && f.has_ret {
+  if t.kind == mtk_return() && f.has_ret() {
     out.push(0)
   }
 }
@@ -127,8 +127,8 @@ pub fn mir_loop_heads(f: MFunc, last: Array(Int)): Array(Bool) {
     succ = mir_succ(f.blocks[b])
     if next[top] >= succ.size {
       state[b] = 2
-      path.pop
-      next.pop
+      path.pop()
+      next.pop()
       continue
     }
     h = succ[next[top]]
@@ -305,17 +305,17 @@ pub fn mir_nwords(n: Int): Int {
 }
 
 pub fn mir_bit(xs: Array(UInt64), at: Int, k: Int): Bool {
-  ((xs[at + k / 64] >> (k % 64).to_u64) & 1u64) != 0u64
+  ((xs[at + k / 64] >> (k % 64).to_u64()) & 1u64) != 0u64
 }
 
 pub fn mir_bit_on(xs: Array(UInt64), at: Int, k: Int) {
   w = at + k / 64
-  xs[w] = xs[w] | (1u64 << (k % 64).to_u64)
+  xs[w] = xs[w] | (1u64 << (k % 64).to_u64())
 }
 
 pub fn mir_bit_off(xs: Array(UInt64), at: Int, k: Int) {
   w = at + k / 64
-  xs[w] = xs[w] & ~(1u64 << (k % 64).to_u64)
+  xs[w] = xs[w] & ~(1u64 << (k % 64).to_u64())
 }
 
 // Sets the bits of the in-range locals of ks in the set at at.
@@ -341,7 +341,7 @@ pub fn mir_live_step_bits(st: MStmt, live: Array(UInt64), n: Int, reads: Array(I
   if d >= 0 && d < n {
     mir_bit_off(live, 0, d)
   }
-  reads.clear
+  reads.clear()
   mir_stmt_reads(st, reads)
   mir_bits_mark(live, 0, n, reads)
 }
@@ -358,7 +358,7 @@ pub fn mir_live_block(f: MFunc, lv: MLive, b: Int, reads: Array(Int)) {
   }
   blk = f.blocks[b]
   if t = blk.term {
-    reads.clear
+    reads.clear()
     mir_term_reads(f, t, reads)
     mir_bits_mark(lv.gen, at, n, reads)
   }
@@ -370,7 +370,7 @@ pub fn mir_live_block(f: MFunc, lv: MLive, b: Int, reads: Array(Int)) {
       mir_bit_off(lv.gen, at, d)
       mir_bit_on(lv.kill, at, d)
     }
-    reads.clear
+    reads.clear()
     mir_stmt_reads(st, reads)
     mir_bits_mark(lv.gen, at, n, reads)
     i -= 1

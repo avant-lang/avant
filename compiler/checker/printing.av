@@ -23,15 +23,15 @@ import checker
 // other is checked as an interpolation part).
 pub fn (checker_self: Checker) scalar_to_s(expr: Expr, object: Ty): Ty {
   if b = expr.block {
-    checker_self.fail(expr.loc, "${object.show}.to_s does not take a block")
+    checker_self.fail(expr.loc, "${object.show()}.to_s does not take a block")
     return checker_self.t_string()
   }
   if expr.args.size != 0 {
-    checker_self.fail(expr.loc, "${object.show}.to_s takes no arguments")
+    checker_self.fail(expr.loc, "${object.show()}.to_s takes no arguments")
     return checker_self.t_string()
   }
   if recv = expr.receiver {
-    part = InterpPart.new
+    part = InterpPart.new()
     part.expr = recv
     parts: Array(InterpPart) = []
     parts.push(part)
@@ -40,7 +40,7 @@ pub fn (checker_self: Checker) scalar_to_s(expr: Expr, object: Ty): Ty {
     expr.receiver = nil
     expr.callee = ""
     expr.method_call = false
-    if !(object.is_integer || object.is_float || object.is_bool || object.is_string) {
+    if !(object.is_integer() || object.is_float() || object.is_bool() || object.is_string()) {
       // An enum's name, an error's text, a union's member: what
       // interpolation makes of the value.
       return checker_self.check_interp(expr)
@@ -51,7 +51,7 @@ pub fn (checker_self: Checker) scalar_to_s(expr: Expr, object: Ty): Ty {
 
 // Whether a union's member prints by interpolation.
 pub fn text_member_ok(m: Ty): Bool {
-  m.is_integer || m.is_float || m.is_bool || m.is_string || m.is_enum || m.error_mark
+  m.is_integer() || m.is_float() || m.is_bool() || m.is_string() || m.is_enum() || m.error_mark
 }
 
 // The text of a union value inner (checked, of type ty): the switch
@@ -59,13 +59,13 @@ pub fn text_member_ok(m: Ty): Bool {
 // with ty as its discriminant (inner is not checked again); nil, with an
 // error given, when a member does not print.
 pub fn (checker_self: Checker) union_text(inner: Expr, ty: Ty): Expr? {
-  if ty.includes_nil {
-    checker_self.fail(inner.loc, "cannot interpolate ${ty.show}: it holds nil; ${checker_self.open_text(inner)}")
+  if ty.includes_nil() {
+    checker_self.fail(inner.loc, "cannot interpolate ${ty.show()}: it holds nil; ${checker_self.open_text(inner)}")
     return nil
   }
   for m in ty.members {
     if !text_member_ok(m) {
-      checker_self.fail(inner.loc, "cannot interpolate ${ty.show}: its member ${m.show} has no text")
+      checker_self.fail(inner.loc, "cannot interpolate ${ty.show()}: its member ${m.show()} has no text")
       return nil
     }
   }
@@ -79,7 +79,7 @@ pub fn (checker_self: Checker) union_text(inner: Expr, ty: Ty): Expr? {
     arm.labels.push(label)
     v = Expr.new(ex_name(), inner.loc)
     v.ident = "__avant_v"
-    part = InterpPart.new
+    part = InterpPart.new()
     part.expr = v
     text = Expr.new(ex_interp(), inner.loc)
     text.parts.push(part)
@@ -136,13 +136,13 @@ pub fn (checker_self: Checker) check_output_call(expr: Expr): Ty {
   }
   arg = expr.args[0]
   printed = checker_self.check_expr(arg)
-  if printed.is_integer || printed.is_string || printed.is_float || printed.is_bool {
+  if printed.is_integer() || printed.is_string() || printed.is_float() || printed.is_bool() {
     return checker_self.t_void()
   }
-  if checker_self.has_err {
+  if checker_self.has_err() {
     return checker_self.t_void()
   }
-  if (printed.is_agg || printed.is_enum) && !printed.error_mark && checker_self.user_op(printed, "to_s") {
+  if (printed.is_agg() || printed.is_enum()) && !printed.error_mark && checker_self.user_op(printed, "to_s") {
     // A type that defines `fn to_s: String` prints its text, as in
     // interpolation.
     if own = checker_self.own_text_call(arg, printed) {
@@ -150,21 +150,21 @@ pub fn (checker_self: Checker) check_output_call(expr: Expr): Ty {
     }
     return checker_self.t_void()
   }
-  if printed.is_enum {
+  if printed.is_enum() {
     // An enum prints its member's name (an error enum: its message).
     if call = checker_self.enum_text_call(arg, printed) {
       expr.args[0] = call
     }
     return checker_self.t_void()
   }
-  if printed.is_union {
-    if printed.includes_nil {
-      checker_self.fail(arg.loc, "${name} cannot print ${printed.show}: it holds nil; ${checker_self.open_text(arg)}")
+  if printed.is_union() {
+    if printed.includes_nil() {
+      checker_self.fail(arg.loc, "${name} cannot print ${printed.show()}: it holds nil; ${checker_self.open_text(arg)}")
       return checker_self.t_void()
     }
     for m in printed.members {
       if !text_member_ok(m) {
-        checker_self.fail(arg.loc, "${name} cannot print ${printed.show}: its member ${m.show} has no text")
+        checker_self.fail(arg.loc, "${name} cannot print ${printed.show()}: its member ${m.show()} has no text")
         return checker_self.t_void()
       }
     }
@@ -179,7 +179,7 @@ pub fn (checker_self: Checker) check_output_call(expr: Expr): Ty {
     }
     return checker_self.t_void()
   }
-  checker_self.fail(arg.loc, "${name} cannot print ${printed.show}")
+  checker_self.fail(arg.loc, "${name} cannot print ${printed.show()}")
   checker_self.t_void()
 }
 

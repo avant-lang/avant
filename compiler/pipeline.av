@@ -144,10 +144,10 @@ pub fn diag_exit(code: Int) {
 }
 
 pub fn diag_bag(bag: DiagBag) {
-  if bag.is_empty {
+  if bag.is_empty() {
     return
   }
-  text = bag.render_all
+  text = bag.render_all()
   if text.size > 0 && text[text.size - 1] == 10 {
     diag_puts(str_slice(text, 0, text.size - 1))
     return
@@ -296,7 +296,7 @@ pub fn linker_flags_s(extra: Array(String)): String {
     buf.push_str(" ")
     buf.push_str(extra[i])
   }
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn compile_source(src: Source): IrBox {
@@ -304,13 +304,13 @@ pub fn compile_source(src: Source): IrBox {
     return compile_av_path(src.path)
   }
   lex = Lexer.new(src)
-  tokens = lex.tokenize
+  tokens = lex.tokenize()
   if e = lex.err {
     diag_bag(lex.errors)
     return IrBox.new(false)
   }
   parser = Parser.new(src, tokens)
-  program = parser.parse
+  program = parser.parse()
   if e = parser.err {
     diag_bag(parser.errors)
     return IrBox.new(false)
@@ -341,7 +341,7 @@ pub fn compile_program(src: Source, program: Program): IrBox {
 // the scratch directory, for a program that runs inside this process.
 pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
   expander = Expander.new(src, program)
-  expander.expand
+  expander.expand()
   if e = expander.err {
     diag_bag(expander.errors)
     return IrBox.new(false)
@@ -349,7 +349,7 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
   checker = Checker.new(src, program)
   calls_log = env_get("AVANT_FORMAT_CALLS_LOG") ?? ""
   checker.calls_migrate = calls_log.size > 0
-  checker.check
+  checker.check()
   if calls_log.size > 0 {
     log_call_parens(calls_log, checker)
   }
@@ -744,7 +744,7 @@ pub fn compile_re2c(src: String): String {
   c_path = "${base}.c"
   log_path = "${base}.log"
   if e = write_failure(file_write(re_path, src)) {
-    diag_puts("re2c: ${e.message}")
+    diag_puts("re2c: ${e.message()}")
     return ""
   }
   args: Array(String) = []
@@ -809,7 +809,7 @@ pub fn compile_c_file(path: String): String {
 }
 
 pub fn parse_link(args: Array(String)): LinkJob {
-  job = LinkJob.new
+  job = LinkJob.new()
   i = 0
   while i < args.size {
     arg = args[i]
@@ -916,7 +916,7 @@ pub fn parse_link(args: Array(String)): LinkJob {
 }
 
 pub fn split_run_args(args: Array(String)): RunSplit {
-  split = RunSplit.new
+  split = RunSplit.new()
   left: Array(String) = []
   i = 0
   seen = false
@@ -949,7 +949,7 @@ pub fn split_run_args(args: Array(String)): RunSplit {
 }
 
 pub fn take_av_files(args: Array(String)): CliSplit {
-  split = CliSplit.new
+  split = CliSplit.new()
   i = 0
   while i < args.size {
     if str_ends(args[i], ".av") {
@@ -967,7 +967,7 @@ pub fn take_av_files(args: Array(String)): CliSplit {
 }
 
 pub fn take_out_path(args: Array(String), source: String): CliSplit {
-  split = CliSplit.new
+  split = CliSplit.new()
   if args.size == 0 {
     split.paths.push(drop_av_suffix(source))
     return split

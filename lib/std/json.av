@@ -57,7 +57,7 @@ pub class JsonError: Error {
 
 fn json_error(code: Int): JsonError {
   if code == 1 {
-    off = jsonc.avant_json_error_offset().to_i
+    off = jsonc.avant_json_error_offset().to_i()
     return JsonError.new("invalid JSON at byte ${off}: ${jsonc.avant_json_error_text()}", off)
   }
   JsonError.new("JSON parse ran out of memory")
@@ -100,14 +100,14 @@ pub struct Json {
   }
 
   pub fn self.obj: JsonBuilder {
-    b = JsonBuilder.new
-    b.obj
+    b = JsonBuilder.new()
+    b.obj()
     b
   }
 
   pub fn self.arr: JsonBuilder {
-    b = JsonBuilder.new
-    b.arr
+    b = JsonBuilder.new()
+    b.arr()
     b
   }
 
@@ -121,31 +121,31 @@ pub struct Json {
   // rather than build a JsonKind? through kind: on the W5b2 proving
   // ground's walk, the base's instructions (+0.02%) instead of +6.7%.
   pub fn is_null: Bool {
-    jsonc.avant_json_kind(self.node) == JsonKind.null.to_i
+    jsonc.avant_json_kind(self.node) == JsonKind.null.to_i()
   }
 
   pub fn is_bool: Bool {
-    jsonc.avant_json_kind(self.node) == JsonKind.bool.to_i
+    jsonc.avant_json_kind(self.node) == JsonKind.bool.to_i()
   }
 
   pub fn is_int: Bool {
-    jsonc.avant_json_kind(self.node) == JsonKind.int.to_i
+    jsonc.avant_json_kind(self.node) == JsonKind.int.to_i()
   }
 
   pub fn is_float: Bool {
-    jsonc.avant_json_kind(self.node) == JsonKind.float.to_i
+    jsonc.avant_json_kind(self.node) == JsonKind.float.to_i()
   }
 
   pub fn is_str: Bool {
-    jsonc.avant_json_kind(self.node) == JsonKind.str.to_i
+    jsonc.avant_json_kind(self.node) == JsonKind.str.to_i()
   }
 
   pub fn is_arr: Bool {
-    jsonc.avant_json_kind(self.node) == JsonKind.arr.to_i
+    jsonc.avant_json_kind(self.node) == JsonKind.arr.to_i()
   }
 
   pub fn is_obj: Bool {
-    jsonc.avant_json_kind(self.node) == JsonKind.obj.to_i
+    jsonc.avant_json_kind(self.node) == JsonKind.obj.to_i()
   }
 
   pub fn len: Int {
@@ -177,7 +177,7 @@ pub struct Json {
   }
 
   pub fn iter: JsonIter {
-    JsonIter.new(self.node, self.pool, self.len)
+    JsonIter.new(self.node, self.pool, self.len())
   }
 
   pub fn f64s(key: String): Array(Float64)? {
@@ -265,36 +265,36 @@ pub struct Json {
   }
 
   pub fn to_value: JsonValue {
-    v = JsonValue.new
-    v.kind = self.kind
-    if self.is_int {
+    v = JsonValue.new()
+    v.kind = self.kind()
+    if self.is_int() {
       // An integer beyond Int keeps its value as a float.
-      if i = self.int {
+      if i = self.int() {
         v.int_val = i
       } else {
         v.kind = JsonKind.float
-        v.f64_val = self.f64 ?? 0.0
+        v.f64_val = self.f64() ?? 0.0
       }
-    } else if self.is_float {
-      v.f64_val = self.f64 ?? 0.0
-    } else if self.is_str {
-      v.str_val = self.str ?? ""
-    } else if self.is_bool {
-      v.bool_val = self.bool ?? false
-    } else if self.is_arr {
+    } else if self.is_float() {
+      v.f64_val = self.f64() ?? 0.0
+    } else if self.is_str() {
+      v.str_val = self.str() ?? ""
+    } else if self.is_bool() {
+      v.bool_val = self.bool() ?? false
+    } else if self.is_arr() {
       i = 0
-      while i < self.len {
+      while i < self.len() {
         if child = at(i) {
-          v.arr.push(child.to_value)
+          v.arr.push(child.to_value())
         }
         i += 1
       }
-    } else if self.is_obj {
+    } else if self.is_obj() {
       i = 0
-      while i < self.len {
+      while i < self.len() {
         if key = key_at(i), child = get(key) {
           v.keys.push(key)
-          v.vals.push(child.to_value)
+          v.vals.push(child.to_value())
         }
         i += 1
       }
@@ -370,7 +370,7 @@ pub class JsonBuilder {
   root_done: Bool = false
 
   pub fn self.into(dst: Buf): JsonBuilder {
-    b = JsonBuilder.new
+    b = JsonBuilder.new()
     b.buf = dst
     b
   }
@@ -392,7 +392,7 @@ pub class JsonBuilder {
   }
 
   pub fn obj: JsonBuilder {
-    self.before_value
+    self.before_value()
     self.buf.push_str("{")
     self.stack.push(1)
     self.counts.push(0)
@@ -400,7 +400,7 @@ pub class JsonBuilder {
   }
 
   pub fn arr: JsonBuilder {
-    self.before_value
+    self.before_value()
     self.buf.push_str("[")
     self.stack.push(2)
     self.counts.push(0)
@@ -413,8 +413,8 @@ pub class JsonBuilder {
       return self
     }
     top = self.stack[self.stack.size - 1]
-    self.stack.pop
-    self.counts.pop
+    self.stack.pop()
+    self.counts.pop()
     if top == 1 {
       self.buf.push_str("}")
     } else {
@@ -439,19 +439,19 @@ pub class JsonBuilder {
   }
 
   pub fn null: JsonBuilder {
-    self.before_value
+    self.before_value()
     self.buf.push_str("null")
     self
   }
 
   pub fn value(v: Int): JsonBuilder {
-    self.before_value
+    self.before_value()
     self.buf.push_fmt_i(v)
     self
   }
 
   pub fn value(v: Float64): JsonBuilder {
-    self.before_value
+    self.before_value()
     d = v - v
     if d != 0.0 {
       self.buf.push_str("null")
@@ -462,13 +462,13 @@ pub class JsonBuilder {
   }
 
   pub fn value(v: String): JsonBuilder {
-    self.before_value
+    self.before_value()
     builder_escape(self.buf, v)
     self
   }
 
   pub fn value(v: Bool): JsonBuilder {
-    self.before_value
+    self.before_value()
     if v {
       self.buf.push_str("true")
     } else {
@@ -478,14 +478,14 @@ pub class JsonBuilder {
   }
 
   pub fn value(v: Json): JsonBuilder {
-    self.before_value
-    self.buf.push_str(v.text)
+    self.before_value()
+    self.buf.push_str(v.text())
     self
   }
 
   pub fn value(v: JsonBuilder): JsonBuilder {
-    self.before_value
-    self.buf.push_str(v.to_s)
+    self.before_value()
+    self.buf.push_str(v.to_s())
     self
   }
 
@@ -545,13 +545,13 @@ pub class JsonBuilder {
 
   pub fn set_null(name: String): JsonBuilder {
     key(name)
-    self.null
+    self.null()
   }
 
   pub fn to_s: String {
     if self.stack.size > 0 {
       jsonc.avant_json_misuse("JsonBuilder.to_s: ${self.stack.size} containers still open")
     }
-    self.buf.to_s
+    self.buf.to_s()
   }
 }

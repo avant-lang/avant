@@ -14,7 +14,7 @@ class Tally {
 }
 
 fn main {
-  m = Mutex(Tally).new(Tally.new)
+  m = Mutex(Tally).new(Tally.new())
   workers: Array(JoinHandle(Int)) = []
   for t in 0..16 {
     workers.push(spawn {
@@ -32,11 +32,11 @@ fn main {
   }
   pings: Array(JoinHandle(Int)) = []
   for p in 0..4 {
-    ping = Channel(String).new
-    pong = Channel(Int).new
+    ping = Channel(String).new()
+    pong = Channel(Int).new()
     pings.push(spawn {
       got = 0
-      while s = ping.recv {
+      while s = ping.recv() {
         _ = pong.send(s.size)
         got += 1
       }
@@ -46,18 +46,18 @@ fn main {
       sum = 0
       for i in 0..1000 {
         _ = ping.send("p${p}-${i}")
-        sum += pong.recv ?? 0
+        sum += pong.recv() ?? 0
       }
-      ping.close
+      ping.close()
       sum
     })
   }
   for w in workers {
-    _ = w.join
+    _ = w.join()
   }
   total = 0
   for h in pings {
-    total += h.join ?? -1
+    total += h.join() ?? -1
   }
   n = m.with { |x| x.n }
   logged = m.with { |x| x.log.size }

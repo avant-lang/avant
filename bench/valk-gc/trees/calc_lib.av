@@ -30,18 +30,18 @@ fn node_num(v: Int): Nd {
 }
 
 fn node_var(id: Int): Nd {
-  Nd.new(NdKind.variable, id.to_i32, 0)
+  Nd.new(NdKind.variable, id.to_i32(), 0)
 }
 
 fn node_bin(op: Int, left: Nd, right: Nd): Nd {
-  n = Nd.new(NdKind.binary, op.to_i32, 0)
+  n = Nd.new(NdKind.binary, op.to_i32(), 0)
   n.left = left
   n.right = right
   n
 }
 
 fn node_assign(id: Int, expr: Nd): Nd {
-  n = Nd.new(NdKind.assignment, id.to_i32, 0)
+  n = Nd.new(NdKind.assignment, id.to_i32(), 0)
   n.left = expr
   n
 }
@@ -98,7 +98,7 @@ class Parser {
 
   fn skip_ws {
     while is_space(self.current) == 1 {
-      self.advance
+      self.advance()
     }
   }
 
@@ -118,10 +118,10 @@ class Parser {
 
   fn parse_number: Nd? {
     v: Int = 0
-    while self.is_digit == 1 {
-      d = (self.current - 48).to_i
+    while self.is_digit() == 1 {
+      d = (self.current - 48).to_i()
       v = v * 10 + d
-      self.advance
+      self.advance()
     }
     node_num(v)
   }
@@ -129,55 +129,55 @@ class Parser {
   fn parse_variable: Nd? {
     id = 0
     if self.current == 118 {
-      self.advance
-      while self.is_digit == 1 {
+      self.advance()
+      while self.is_digit() == 1 {
         id = id * 10 + (self.current - 48)
-        self.advance
+        self.advance()
       }
     } else {
-      while self.is_letter == 1 || self.is_digit == 1 {
-        self.advance
+      while self.is_letter() == 1 || self.is_digit() == 1 {
+        self.advance()
       }
     }
-    self.skip_ws
+    self.skip_ws()
     if self.current == 61 {
-      self.advance
-      expr = self.parse_expression ?? return nil
+      self.advance()
+      expr = self.parse_expression() ?? return nil
       return node_assign(id, expr)
     }
     node_var(id)
   }
 
   fn parse_factor: Nd? {
-    self.skip_ws
+    self.skip_ws()
     switch self.current {
-      case '0'..='9' { return self.parse_number }
-      case 'a'..='z', 'A'..='Z' { return self.parse_variable }
+      case '0'..='9' { return self.parse_number() }
+      case 'a'..='z', 'A'..='Z' { return self.parse_variable() }
       case '(' {
-        self.advance
-        node = self.parse_expression
-        self.skip_ws
+        self.advance()
+        node = self.parse_expression()
+        self.skip_ws()
         if self.current == ')' {
-          self.advance
+          self.advance()
         }
         return node
       }
       else {
-        self.advance
+        self.advance()
         return node_num(0)
       }
     }
   }
 
   fn parse_term: Nd? {
-    node = self.parse_factor ?? return nil
+    node = self.parse_factor() ?? return nil
     keep = 1
     while keep == 1 {
-      self.skip_ws
+      self.skip_ws()
       if self.current == '*' || self.current == '/' || self.current == '%' {
         op = self.current
-        self.advance
-        right = self.parse_factor ?? return nil
+        self.advance()
+        right = self.parse_factor() ?? return nil
         node = node_bin(op, node, right)
       } else {
         keep = 0
@@ -187,14 +187,14 @@ class Parser {
   }
 
   fn parse_expression: Nd? {
-    node = self.parse_term ?? return nil
+    node = self.parse_term() ?? return nil
     keep = 1
     while keep == 1 {
-      self.skip_ws
+      self.skip_ws()
       if self.current == '+' || self.current == '-' {
         op = self.current
-        self.advance
-        right = self.parse_term ?? return nil
+        self.advance()
+        right = self.parse_term() ?? return nil
         node = node_bin(op, node, right)
       } else {
         keep = 0
@@ -205,17 +205,17 @@ class Parser {
 
   fn parse {
     while self.current != -1 {
-      self.skip_ws
+      self.skip_ws()
       if self.current == -1 {
         break
       }
-      node = self.parse_expression ?? break
+      node = self.parse_expression() ?? break
       self.exprs[self.n] = node
       self.n += 1
-      self.skip_ws
+      self.skip_ws()
       while self.current == 10 {
-        self.advance
-        self.skip_ws
+        self.advance()
+        self.skip_ws()
       }
     }
   }
@@ -227,12 +227,12 @@ fn calc_expr_count(n: Int): Int {
 
 fn calc_fill(text: String, exprs: Array(Nd)): Int {
   p = Parser.new(text, exprs)
-  p.parse
+  p.parse()
   p.n
 }
 
 fn calc_generate(n: Int): String {
-  rng = Rng.new
+  rng = Rng.new()
   buf = buf_new(64 + n * 64)
   buf.push_str("v0 = 1\n")
   for i in 0..10 {
@@ -318,7 +318,7 @@ fn calc_generate(n: Int): String {
     }
     buf.push_byte(10)
   }
-  buf.to_s
+  buf.to_s()
 }
 
 fn eval_node(node: Nd, env: Array(Int)): Int {
@@ -327,12 +327,12 @@ fn eval_node(node: Nd, env: Array(Int)): Int {
     return node.value
   }
   if k == NdKind.variable {
-    return env[node.op.to_i]
+    return env[node.op.to_i()]
   }
   if k == NdKind.assignment {
     a = node.left ?? return 0
     v = eval_node(a, env)
-    env[node.op.to_i] = v
+    env[node.op.to_i()] = v
     return v
   }
   if l = node.left, r = node.right {

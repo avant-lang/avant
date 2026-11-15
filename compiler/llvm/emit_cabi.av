@@ -233,7 +233,7 @@ fn ll_cabi_join(xs: Array(String)): String {
     }
     buf.push_str(xs[i])
   }
-  buf.to_s
+  buf.to_s()
 }
 
 // `declare` of a C external whose signature holds an aggregate.
@@ -280,9 +280,9 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
       a2 = ll_cabi_addr(e, st.args[i])
       vol = e.pa_vol
       for j in 0..v.parts.size {
-        g = e.tmp
+        g = e.tmp()
         e.line("${g} = getelementptr inbounds i8, ptr ${a2}, i64 ${v.offs[j]}")
-        x2 = e.tmp
+        x2 = e.tmp()
         e.line("${x2} = load${e.vol(vol)} ${v.parts[j]}, ptr ${g}, align ${e.align(v.ty)}")
         args.push("${v.parts[j]} ${x2}")
       }
@@ -309,7 +309,7 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
     e.line(call)
     return
   }
-  r = e.tmp
+  r = e.tmp()
   e.line("${r} = ${call}")
   if st.dest < 0 {
     return
@@ -323,10 +323,10 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
   for j in 0..rv.parts.size {
     x = r
     if rv.parts.size > 1 {
-      x = e.tmp
+      x = e.tmp()
       e.line("${x} = extractvalue ${rtext} ${r}, ${j}")
     }
-    g = e.tmp
+    g = e.tmp()
     e.line("${g} = getelementptr inbounds i8, ptr ${e.local_name(d)}, i64 ${rv.offs[j]}")
     e.line("store${e.vol(slot)} ${rv.parts[j]} ${x}, ptr ${g}, align ${e.align(rv.ty)}")
   }

@@ -65,20 +65,20 @@ pub class LlEmit {
     self.out = buf_new()
     self.label = ""
     self.rt_names = []
-    self.rt_seen = Hash(String, Int).new
+    self.rt_seen = Hash(String, Int).new()
     self.intrinsics = []
-    self.intr_seen = Hash(String, Int).new
-    self.loop_md = Hash(String, Int).new
+    self.intr_seen = Hash(String, Int).new()
+    self.loop_md = Hash(String, Int).new()
     self.tlocs = []
-    self.tloc_seen = Hash(String, Int).new
+    self.tloc_seen = Hash(String, Int).new()
   }
 
   // The source site of the statement being emitted (Stage 29 W4b2, D295
   // R16), for a trap's message.
   pub fn site(loc: MLoc) {
-    self.cur_file = loc.file
-    self.cur_line = loc.line
-    self.cur_col = loc.col
+    self.cur_file = loc.file()
+    self.cur_line = loc.line()
+    self.cur_col = loc.col()
   }
 
   // The site's number N in the module's table of trap texts,
@@ -238,7 +238,7 @@ pub class LlEmit {
   }
 
   pub fn load(ty: Int, ptr: String, volatile: Bool): String {
-    t = self.tmp
+    t = self.tmp()
     line("${t} = load${vol(volatile)} ${llt(ty)}, ptr ${ptr}, align ${align(ty)}")
     t
   }
@@ -265,7 +265,7 @@ pub class LlEmit {
           ty = mt.pointee
         }
       } else if pr.kind == mpk_field() {
-        t = self.tmp
+        t = self.tmp()
         line("${t} = getelementptr inbounds ${llt(ty)}, ptr ${ptr}, i32 0, i32 ${pr.field}")
         ptr = t
         ty = self.ts.layouts[mt.layout].fields[pr.field]
@@ -278,7 +278,7 @@ pub class LlEmit {
         if o = pr.index {
           idx = index64(o)
         }
-        t = self.tmp
+        t = self.tmp()
         line("${t} = getelementptr inbounds ${llt(et)}, ptr ${ptr}, i64 ${idx}")
         ptr = t
         ty = et
@@ -298,7 +298,7 @@ pub class LlEmit {
     if self.ov_ty == mt_i64() {
       return x
     }
-    t = self.tmp
+    t = self.tmp()
     line("${t} = sext i32 ${x} to i64")
     t
   }

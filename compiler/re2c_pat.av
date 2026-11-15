@@ -12,7 +12,7 @@ pub class Re2cPlan {
   pub notes: Array(String)
 
   fn initialize {
-    h = Hash(String, Int).new
+    h = Hash(String, Int).new()
     self.ids = h
     self.groups = []
     self.notes = []
@@ -140,7 +140,7 @@ pub class RePat {
       i += 1
     }
     buf.push_byte(q)
-    buf.to_s
+    buf.to_s()
   }
 
   pub fn push_class_char(buf: Buf, c: Int) {
@@ -156,8 +156,8 @@ pub class RePat {
       fail("truncated escape")
       return false
     }
-    c = self.peek
-    self.bump
+    c = self.peek()
+    self.bump()
     if c == 100 || c == 68 {
       buf.push_str("0-9")
       return true
@@ -199,21 +199,21 @@ pub class RePat {
   }
 
   pub fn parse_class: String {
-    self.bump
+    self.bump()
     neg = false
-    if self.peek == 94 {
+    if self.peek() == 94 {
       neg = true
-      self.bump
+      self.bump()
     }
     body = buf_new()
-    if self.peek == 93 {
+    if self.peek() == 93 {
       body.push_str(class_atom(93))
-      self.bump
+      self.bump()
     }
-    while self.at < self.len && self.peek != 93 {
-      c = self.peek
+    while self.at < self.len && self.peek() != 93 {
+      c = self.peek()
       if c == 92 {
-        self.bump
+        self.bump()
         if !class_escape(body) {
           return ""
         }
@@ -232,72 +232,72 @@ pub class RePat {
           body.push_str(class_atom(ob))
         }
       } else {
-        self.bump
+        self.bump()
         push_class_char(body, c)
       }
     }
-    if self.peek != 93 {
+    if self.peek() != 93 {
       fail("unclosed class")
       return ""
     }
-    self.bump
+    self.bump()
     if neg {
-      return "[^${body.to_s}]"
+      return "[^${body.to_s()}]"
     }
-    "[${body.to_s}]"
+    "[${body.to_s()}]"
   }
 
   pub fn read_digits: String {
     buf = buf_new()
-    while self.peek >= 48 && self.peek <= 57 {
-      buf.push_byte(self.peek)
-      self.bump
+    while self.peek() >= 48 && self.peek() <= 57 {
+      buf.push_byte(self.peek())
+      self.bump()
     }
-    buf.to_s
+    buf.to_s()
   }
 
   pub fn take_quant: String {
     self.nongreedy = false
-    c = self.peek
+    c = self.peek()
     if c == 42 || c == 43 {
-      self.bump
-      if self.peek == 63 {
-        self.bump
+      self.bump()
+      if self.peek() == 63 {
+        self.bump()
         self.nongreedy = true
-      } else if self.peek == 43 {
+      } else if self.peek() == 43 {
         fail("possessive")
       }
       return chr(c)
     }
     if c == 63 {
-      self.bump
-      if self.peek == 63 {
-        self.bump
+      self.bump()
+      if self.peek() == 63 {
+        self.bump()
         self.nongreedy = true
       }
       return "?"
     }
     if c == 123 {
-      self.bump
+      self.bump()
       n = read_digits()
       if n.size == 0 {
         fail("bad repetition")
         return ""
       }
-      if self.peek == 125 {
-        self.bump
-        if self.peek == 63 {
-          self.bump
+      if self.peek() == 125 {
+        self.bump()
+        if self.peek() == 63 {
+          self.bump()
           self.nongreedy = true
         }
         return "{${n}}"
       }
-      if self.peek == 44 {
-        self.bump
-        if self.peek == 125 {
-          self.bump
-          if self.peek == 63 {
-            self.bump
+      if self.peek() == 44 {
+        self.bump()
+        if self.peek() == 125 {
+          self.bump()
+          if self.peek() == 63 {
+            self.bump()
             self.nongreedy = true
           }
           return "{${n},}"
@@ -307,13 +307,13 @@ pub class RePat {
           fail("bad repetition")
           return ""
         }
-        if self.peek != 125 {
+        if self.peek() != 125 {
           fail("bad repetition")
           return ""
         }
-        self.bump
-        if self.peek == 63 {
-          self.bump
+        self.bump()
+        if self.peek() == 63 {
+          self.bump()
           self.nongreedy = true
         }
         return "{${n},${m}}"
@@ -329,8 +329,8 @@ pub class RePat {
       fail("truncated escape")
       return ""
     }
-    c = self.peek
-    self.bump
+    c = self.peek()
+    self.bump()
     if c >= 48 && c <= 57 {
       fail("backreference")
       return ""
@@ -375,12 +375,12 @@ pub class RePat {
       return empty
     }
     left = parse_concat()
-    if self.peek != 124 {
+    if self.peek() != 124 {
       return left
     }
     acc = fold(left)
-    while self.peek == 124 {
-      self.bump
+    while self.peek() == 124 {
+      self.bump()
       right = fold(parse_concat())
       if self.bad {
         return empty
@@ -395,7 +395,7 @@ pub class RePat {
   pub fn parse_concat: Array(String) {
     parts: Array(String) = []
     while self.at < self.len {
-      c = self.peek
+      c = self.peek()
       if c == 124 || c == 41 {
         return parts
       }
@@ -445,13 +445,13 @@ pub class RePat {
   }
 
   pub fn parse_atom: String {
-    c = self.peek
+    c = self.peek()
     if c == 0 {
       fail("empty atom")
       return ""
     }
     if c == 46 {
-      self.bump
+      self.bump()
       return "R."
     }
     if c == 91 {
@@ -465,24 +465,24 @@ pub class RePat {
       return parse_group()
     }
     if c == 92 {
-      self.bump
+      self.bump()
       return escape_atom()
     }
     if c == 41 || c == 124 {
       fail("empty atom")
       return ""
     }
-    self.bump
+    self.bump()
     "L" + chr(c)
   }
 
   pub fn parse_group: String {
-    self.bump
+    self.bump()
     cap = true
-    if self.peek == 63 {
-      self.bump
-      if self.peek == 58 {
-        self.bump
+    if self.peek() == 63 {
+      self.bump()
+      if self.peek() == 58 {
+        self.bump()
         cap = false
       } else {
         fail("lookaround")
@@ -490,11 +490,11 @@ pub class RePat {
       }
     }
     inner = parse_alt()
-    if self.peek != 41 {
+    if self.peek() != 41 {
       fail("unclosed group")
       return ""
     }
-    self.bump
+    self.bump()
     if inner.size == 1 {
       if inner[0] == "n" {
         if cap {
@@ -628,7 +628,7 @@ pub class RePat {
         return ""
       }
     }
-    out.to_s
+    out.to_s()
   }
 
   pub fn translate(pat: String, caseless: Int): String {
@@ -693,7 +693,7 @@ pub class Re2cCollect {
   notes: Array(String)
 
   fn initialize {
-    h = Hash(String, Int).new
+    h = Hash(String, Int).new()
     self.ids = h
     self.pats = []
     self.flags = []
@@ -715,7 +715,7 @@ pub class Re2cCollect {
       self.notes.push("re2c: pattern stays on PCRE2 (capture groups beyond the first): ${re2c_show(pat)}")
       return
     }
-    tr = RePat.new
+    tr = RePat.new()
     body = tr.translate(pat, flags)
     if tr.bad {
       self.notes.push("re2c: pattern stays on PCRE2 (${tr.why}): ${re2c_show(pat)}")
@@ -743,7 +743,7 @@ pub class Re2cCollect {
                   fv = 1
                 }
               } else if fl.kind == ex_int() && fl.int_bits <= 2147483647u64 {
-                fv = fl.int_bits.to_i
+                fv = fl.int_bits.to_i()
               } else {
                 ok = false
               }
@@ -982,13 +982,13 @@ pub class Re2cCollect {
     buf.push_str("    default: return 0;\n")
     buf.push_str("  }\n")
     buf.push_str("}\n")
-    buf.to_s
+    buf.to_s()
   }
 }
 
 pub fn re2c_plan(program: Program): Re2cPlan {
-  plan = Re2cPlan.new
-  col = Re2cCollect.new
+  plan = Re2cPlan.new()
+  col = Re2cCollect.new()
   col.walk_fns(program.functions)
   for cls in program.classes {
     col.walk_fns(cls.methods)
@@ -1003,6 +1003,6 @@ pub fn re2c_plan(program: Program): Re2cPlan {
   plan.ids = col.ids
   plan.groups = col.groups
   plan.count = col.pats.size
-  plan.src = col.source
+  plan.src = col.source()
   plan
 }

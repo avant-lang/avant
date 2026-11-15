@@ -51,13 +51,13 @@ pub class MVerr {
 
   // `V<n>: <function>: bb<k>[<i>]: <message>` (6).
   pub fn show: String {
-    "V${self.rule}: ${self.where}: ${self.message}"
+    "V${self.rule}: ${self.where()}: ${self.message}"
   }
 
   // The compiler's diagnostic form (diagnostic.av), at the MIR's location.
   pub fn render(m: MModule): String {
-    at_loc = Location.new(mir_file_name(m, self.loc.file), self.loc.line, self.loc.col, 0)
-    CompileError.new(at_loc, "V${self.rule}", "${self.where}: ${self.message}").render
+    at_loc = Location.new(mir_file_name(m, self.loc.file()), self.loc.line(), self.loc.col(), 0)
+    CompileError.new(at_loc, "V${self.rule}", "${self.where()}: ${self.message}").render()
   }
 }
 
@@ -292,7 +292,7 @@ pub class MVerifier {
         if k == mrk_addr() {
           return self.ts.addr_of(t)
         }
-        if p.frame_local {
+        if p.frame_local() {
           return self.ts.ptr_to(t)
         }
         err(6, b, i, loc, "addr.raw of a place inside a heap object")
@@ -453,7 +453,7 @@ pub class MVerifier {
       while j < blk.stmts.size {
         st = blk.stmts[j]
         uses = self.used
-        uses.clear
+        uses.clear()
         mir_stmt_reads(st, uses)
         if p = st.place {
           uses.push(p.local)
@@ -474,7 +474,7 @@ pub class MVerifier {
       }
       if t = blk.term {
         uses = self.used
-        uses.clear
+        uses.clear()
         mir_term_reads(f, t, uses)
         check_used(uses, b, -1, t.loc)
       }
@@ -562,10 +562,10 @@ pub class MVerifier {
   // C memory) is `avant_pin(o)` or, since Stage 28 W16c (D266),
   // `avant_pin_field(a, o)`, o the stored operand.
   fn barrier_rule(blk: MBlock, b: Int, j: Int, p: MPlace, pt: Int, r: MRvalue) {
-    if p.frame_local || !self.ts.ref_carrying(pt) {
+    if p.frame_local() || !self.ts.ref_carrying(pt) {
       return
     }
-    if p.last_deref != 0 {
+    if p.last_deref() != 0 {
       err(13, b, j, blk.stmts[j].loc, "the holder of ${mir_place_text(self.ts, p)} is not a local")
       return
     }
@@ -682,11 +682,11 @@ pub class MVerifier {
     l = self.ts.layouts[lay]
     // An element buffer (amendment 2 after W5a, W6c): any whole number
     // of elements, with the buffer's id.
-    size_ok = a0.ival == l.size.to_i
+    size_ok = a0.ival == l.size.to_i()
     if l.kind == mlk_elems() {
-      size_ok = (l.size > 0 && a0.ival >= 0 && a0.ival % l.size.to_i == 0) || a0.ival == 0
+      size_ok = (l.size > 0 && a0.ival >= 0 && a0.ival % l.size.to_i() == 0) || a0.ival == 0
     }
-    if !size_ok || a1.ival != l.type_id.to_i {
+    if !size_ok || a1.ival != l.type_id.to_i() {
       err(21, b, j, st.loc, "allocation of size ${a0.ival}, type ${a1.ival} for %${l.name} (size ${l.size}, type ${l.type_id})")
     }
   }

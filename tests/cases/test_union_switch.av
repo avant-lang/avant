@@ -19,7 +19,7 @@ class RCase {
 }
 
 fn refused(tag: String, src: String, needle: String, pos: String): RCase {
-  f = RCase.new
+  f = RCase.new()
   f.tag = tag
   f.src = src
   f.want = needle
@@ -28,7 +28,7 @@ fn refused(tag: String, src: String, needle: String, pos: String): RCase {
 }
 
 fn accepted(tag: String, src: String, out: String): RCase {
-  f = RCase.new
+  f = RCase.new()
   f.tag = tag
   f.src = src
   f.want = out
@@ -38,7 +38,7 @@ fn accepted(tag: String, src: String, out: String): RCase {
 
 fn cases: Array(RCase) {
   xs: Array(RCase) = []
-  pre = "class Oops: Error {\n  pub message: String = \"oops\"\n}\nfn r(n: Int): Int | Oops | Nil {\n  if n > 0 {\n    return n\n  }\n  if n < 0 {\n    return Oops.new\n  }\n  nil\n}\n"
+  pre = "class Oops: Error {\n  pub message: String = \"oops\"\n}\nfn r(n: Int): Int | Oops | Nil {\n  if n > 0 {\n    return n\n  }\n  if n < 0 {\n    return Oops.new()\n  }\n  nil\n}\n"
   xs.push(refused("cover-missing", "fn f(x: Int | String): Int {\n  switch x {\n    case n: Int { n }\n  }\n}\nfn main { puts(f(1)) }\n", "switch over Int | String does not cover String: name them or add else", "2:3"))
   xs.push(refused("cover-missing-failure", pre + "fn main {\n  switch r(1) {\n    case n: Int { puts(n) }\n    case nil { puts(0) }\n  }\n}\n", "does not cover Oops: name them or add else", "14:3"))
   xs.push(refused("cover-missing-nil", pre + "fn main {\n  switch r(1) {\n    case n: Int { puts(n) }\n    case Oops { puts(1) }\n  }\n}\n", "does not cover nil: name them or add else", "14:3"))
@@ -65,8 +65,8 @@ fn cases: Array(RCase) {
   xs.push(accepted("stmt-arm-discard", pre + "fn main {\n  switch 1 {\n    case 1 { _ = r(1) }\n    else { puts(0) }\n  }\n  puts(\"done\")\n}\n", "done\n"))
   xs.push(accepted("cover-neighbours", pre + "fn show(x: Int | Oops | Nil): String {\n  switch x {\n    case n: Int { \"n\${n}\" }\n    case e: Oops { \"e:\${e}\" }\n    case nil { \"nil\" }\n  }\n}\nfn main {\n  puts(show(r(2)))\n  puts(show(r(-1)))\n  puts(show(r(0)))\n  switch r(3) {\n    case n: Int { puts(n) }\n    else { puts(0) }\n  }\n}\n", "n2\ne:oops\nnil\n3\n"))
   xs.push(accepted("binding-shadows", "fn main {\n  n = \"outer\"\n  x: Int | String = 5\n  switch x {\n    case n: Int { puts(n) }\n    case String { puts(0) }\n  }\n  puts(n)\n}\n", "5\nouter\n"))
-  xs.push(refused("guard-binding-escapes", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  u: PBox | Int = PBox.new\n  m = Mutex(PBox | Int).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    switch b {\n      case p: PBox { keep.push(p) }\n      case Int { }\n    }\n  }\n  puts(keep.size)\n}\n", "Mutex.with: this argument is the guarded value or a reference reached from it (PBox)", "13:32"))
-  xs.push(accepted("guard-binding-plain", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  u: PBox | Int = PBox.new\n  m = Mutex(PBox | Int).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    switch b {\n      case p: PBox { keep.push(PBox.new) }\n      case Int { }\n    }\n  }\n  puts(keep.size)\n}\n", "1\n"))
+  xs.push(refused("guard-binding-escapes", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  u: PBox | Int = PBox.new()\n  m = Mutex(PBox | Int).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    switch b {\n      case p: PBox { keep.push(p) }\n      case Int { }\n    }\n  }\n  puts(keep.size)\n}\n", "Mutex.with: this argument is the guarded value or a reference reached from it (PBox)", "13:32"))
+  xs.push(accepted("guard-binding-plain", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  u: PBox | Int = PBox.new()\n  m = Mutex(PBox | Int).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    switch b {\n      case p: PBox { keep.push(PBox.new()) }\n      case Int { }\n    }\n  }\n  puts(keep.size)\n}\n", "1\n"))
   xs
 }
 
@@ -131,5 +131,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

@@ -18,7 +18,7 @@ lib c {
 
 fn consumer(ch: Channel(Int)): Int {
   got = 0
-  while v = ch.recv {
+  while v = ch.recv() {
     got += v
   }
   got
@@ -28,7 +28,7 @@ fn main {
   n = task.avant_chosen_threads()
   args = argv()
   if args.size > 1 {
-    n = args[1].to_i ?? n
+    n = args[1].to_i() ?? n
   }
   ch = Channel(Int).new(1)
   tasks: Array(JoinHandle(Int)) = []
@@ -44,22 +44,22 @@ fn main {
     for i in 0..n {
       _ = ch.send(1)
     }
-    ch.close
+    ch.close()
     0
   }
-  _ = producer.join
+  _ = producer.join()
   total = 0
   for t in tasks {
-    total += t.join ?? -1
+    total += t.join() ?? -1
   }
   puts(total == n)
   // Mutex waiters: tasks waiting for the lock while its holder waits on
   // a channel that a queued task fills.
   m = Mutex(Int).new(0)
-  gate = Channel(Int).new
+  gate = Channel(Int).new()
   holder = spawn {
     m.with { |x|
-      x += gate.recv ?? 0
+      x += gate.recv() ?? 0
     }
     0
   }
@@ -76,10 +76,10 @@ fn main {
     _ = gate.send(100)
     0
   }
-  _ = opener.join
-  _ = holder.join
+  _ = opener.join()
+  _ = holder.join()
   for l in lockers {
-    _ = l.join
+    _ = l.join()
   }
   final = m.with { |x| x }
   puts(final == 100 + n)

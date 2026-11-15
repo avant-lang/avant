@@ -6,8 +6,8 @@ import std.regex
 
 fn test_holes(c: Checks) {
   c.suite("tests/cases/test_holes.av")
-  c.eq_str("aaa".bytes.to_base64, "YWFh", "to_base64")
-  if dec = "aaa".bytes.to_base64.bytes.from_base64 {
+  c.eq_str("aaa".bytes.to_base64(), "YWFh", "to_base64")
+  if dec = "aaa".bytes.to_base64().bytes.from_base64() {
     text = String.from_utf8(dec) ?? ""
     c.eq_str(text, "aaa", "from_base64")
   } else {
@@ -17,18 +17,18 @@ fn test_holes(c: Checks) {
   if err = "aaa".bytes.to_base64_into(bb) {
     c.expect(false, "to_base64_into ${err.message}")
   } else {
-    c.eq_str(bb.to_s, "YWFh", "to_base64_into")
+    c.eq_str(bb.to_s(), "YWFh", "to_base64_into")
   }
   db = buf_new(8)
-  if err2 = bb.to_s.bytes.from_base64_into(db) {
+  if err2 = bb.to_s().bytes.from_base64_into(db) {
     c.expect(false, "from_base64_into ${err2.message}")
   } else {
-    c.eq_str(db.to_s, "aaa", "from_base64_into")
+    c.eq_str(db.to_s(), "aaa", "from_base64_into")
   }
 
   c.eq_str(sha256("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "sha256")
   raw = "hello".bytes
-  if back = raw.compress.uncompress {
+  if back = raw.compress().uncompress() {
     text = String.from_utf8(back) ?? ""
     c.eq_str(text, "hello", "zlib roundtrip")
   } else {
@@ -41,7 +41,7 @@ fn test_holes(c: Checks) {
         if x = cell.f64("x") {
           if y = cell.f64("y") {
             if z = cell.f64("z") {
-              c.eq_int((x + y + z).to_i, 6, "json walk")
+              c.eq_int((x + y + z).to_i(), 6, "json walk")
             } else {
               c.expect(false, "json walk z")
             }
@@ -56,13 +56,13 @@ fn test_holes(c: Checks) {
       }
       sum = 0.0
       ci = 0
-      while ci < coords.len {
+      while ci < coords.len() {
         if cell2 = coords.at(ci) {
           sum = sum + (cell2.f64("x") ?? 0.0) + (cell2.f64("y") ?? 0.0) + (cell2.f64("z") ?? 0.0)
         }
         ci += 1
       }
-      c.eq_int(sum.to_i, 6, "coordinate sum")
+      c.eq_int(sum.to_i(), 6, "coordinate sum")
     } else {
       c.expect(false, "get coordinates")
     }
@@ -70,7 +70,7 @@ fn test_holes(c: Checks) {
     c.expect(false, "parse")
   }
 
-  hs = Hash(String, Int).new
+  hs = Hash(String, Int).new()
   c.eq_int(hs.inc_slice("ab ab", 0, 2), 1, "inc_slice 1")
   c.eq_int(hs.inc_slice("ab ab", 3, 5), 2, "inc_slice 2")
   c.eq_int(hs.size, 1, "inc_slice size")
@@ -82,16 +82,16 @@ fn test_holes(c: Checks) {
     c.expect(false, "get_concat")
   }
 
-  c.eq_int((str_to_f_slice("x=12.9,", 2, 6) ?? 0.0).to_i, 12, "str_to_f_slice")
+  c.eq_int((str_to_f_slice("x=12.9,", 2, 6) ?? 0.0).to_i(), 12, "str_to_f_slice")
   lo = wide_op(0, -1, 0, 1, 0)
   c.eq_int(lo, 0, "wide_op lo")
   c.eq_int(wide_hi(), 1, "wide_hi")
   cs = checksum_f64(1.0)
   c.expect(cs != 0, "checksum_f64")
-  c.eq_int(sqrt(4.0).to_i, 2, "sqrt")
+  c.eq_int(sqrt(4.0).to_i(), 2, "sqrt")
   jb = buf_new(64)
   gen = JsonBuilder.into(jb)
-  gen.obj.key("coordinates").arr.end.set("info", "some info").end
+  gen.obj().key("coordinates").arr().end().set("info", "some info").end()
   c.expect(jb.starts_with("{\"coordinates\":"), "json builder into")
   if re = Regex.compile("a+") {
     c.eq_int(re.count("aa ba"), 2, "regex count")
@@ -101,7 +101,7 @@ fn test_holes(c: Checks) {
     } else {
       c.expect(false, "regex find")
     }
-    re.close
+    re.close()
   } else {
     c.expect(false, "regex compile")
   }
@@ -111,7 +111,7 @@ fn test_holes(c: Checks) {
     } else {
       c.expect(false, "regex capture find")
     }
-    cap.close
+    cap.close()
   } else {
     c.expect(false, "regex capture compile")
   }
@@ -126,5 +126,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_holes(c)
-  c.finish
+  c.finish()
 }

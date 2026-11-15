@@ -297,7 +297,7 @@ fn test_bind(c: Checks) {
     sc_buf = buf_new()
     sc_buf.push_str(sc_txt)
     sc_buf.push_str("\nfn main {\n  puts(hdr_cs.cs_neg_i8(-127))\n  puts(hdr_cs.cs_inc_u8(254))\n  puts(hdr_cs.cs_inc_u32(4294967294))\n  puts(hdr_cs.cs_half_f32(5.0))\n  puts(hdr_cs.cs_sum(-1, 2, -3, 4, 5, 0.5))\n  p = hdr_cs.cs_pix_new()\n  hdr_cs.cs_pix_fill(p)\n  puts(\"\${p.r} \${p.w} \${p.h} \${p.tag} \${p.id} \${p.gain}\")\n}\n")
-    _ = file_write(sc_src, sc_buf.to_s)
+    _ = file_write(sc_src, sc_buf.to_s())
     sc_bin = "${scratch()}/bind-${stamp}-cs.bin"
     sc_clog = "${scratch()}/bind-${stamp}-cs-cc.log"
     sc_cc: Array(String) = []
@@ -341,7 +341,7 @@ fn test_bind(c: Checks) {
     en_cc.push("--cc")
     en_cc.push("${root}/tests/fixtures/ffi/cenum.c")
     en_src = "${scratch()}/bind-${stamp}-enum.av"
-    _ = file_write(en_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  c = cenum.next_color(Color.green)\n  puts(c)\n  puts(cenum.next_color(c))\n  puts(cenum.method_code(HttpMethod.http_post))\n  m = cenum.method_of(1)\n  puts(m)\n  puts(cenum.color_of(5).to_i)\n  puts(cenum.big_value(7))\n  puts(cenum.clash_value(1))\n  r = cenum.req_new()\n  cenum.req_fill(r, 2)\n  puts(\"\${r.method} \${r.color} \${r.n}\")\n  r.method = HttpMethod.http_get\n  puts(cenum.req_method_code(r))\n  cb.call_color(show, 6)\n  switch m {\n    case http_get { puts(\"get\") }\n    case http_head, http_post { puts(\"not get\") }\n  }\n}\n")
+    _ = file_write(en_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  c = cenum.next_color(Color.green)\n  puts(c)\n  puts(cenum.next_color(c))\n  puts(cenum.method_code(HttpMethod.http_post))\n  m = cenum.method_of(1)\n  puts(m)\n  puts(cenum.color_of(5).to_i())\n  puts(cenum.big_value(7))\n  puts(cenum.clash_value(1))\n  r = cenum.req_new()\n  cenum.req_fill(r, 2)\n  puts(\"\${r.method} \${r.color} \${r.n}\")\n  r.method = HttpMethod.http_get\n  puts(cenum.req_method_code(r))\n  cb.call_color(show, 6)\n  switch m {\n    case http_get { puts(\"get\") }\n    case http_head, http_post { puts(\"not get\") }\n  }\n}\n")
     en_bin = "${scratch()}/bind-${stamp}-enum.bin"
     c.eq_int(compile_av_flags(compiler, en_src, en_bin, "${scratch()}/bind-${stamp}-enum-cc.log", en_cc), 0, "C enums: the bound program compiles")
     if file_exists(en_bin) {
@@ -419,7 +419,7 @@ fn test_bind(c: Checks) {
     gen_buf = buf_new()
     gen_buf.push_str(add_txt)
     gen_buf.push_str("\nfn main {\n  puts(add.avant_add(20, 22))\n}\n")
-    c.wrote(file_write(gen_src, gen_buf.to_s), "write generated add program")
+    c.wrote(file_write(gen_src, gen_buf.to_s()), "write generated add program")
     gen_bin = "${scratch()}/bind-${stamp}-gen.bin"
     gen_clog = "${scratch()}/bind-${stamp}-gen-cc.log"
     gen_cc: Array(String) = []
@@ -461,5 +461,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_bind(c)
-  c.finish
+  c.finish()
 }

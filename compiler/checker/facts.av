@@ -66,11 +66,11 @@ pub fn (checker_self: Checker) annotate_vstep(prev: Stmt, stmt: Stmt) {
               if cl.op == tk_plus() {
                 if cll = cl.left, clr = cl.right {
                   if cll.kind == ex_name() && cll.ident == ivar && checker_self.lit_small(clr) {
-                    coff = clr.int_bits.to_i
+                    coff = clr.int_bits.to_i()
                     matched = true
                   }
                   if clr.kind == ex_name() && clr.ident == ivar && checker_self.lit_small(cll) {
-                    coff = cll.int_bits.to_i
+                    coff = cll.int_bits.to_i()
                     matched = true
                   }
                 }
@@ -82,7 +82,7 @@ pub fn (checker_self: Checker) annotate_vstep(prev: Stmt, stmt: Stmt) {
           step = checker_self.body_vstep(stmt.body, ivar)
           if step > 0 {
             stmt.vstep = step
-            stmt.vstart = v.int_bits.to_i
+            stmt.vstart = v.int_bits.to_i()
             stmt.vle = is_le
             stmt.vcoff = coff
           }
@@ -117,17 +117,17 @@ pub fn (checker_self: Checker) stmt_vstep(s: Stmt, ivar: String): Int {
     if t = s.target, t.kind == ex_name() && t.ident == ivar {
       if s.op == tk_plus_eq() {
         if v = s.value, v.kind == ex_int() && v.int_bits >= 1u64 && v.int_bits <= 1000000u64 {
-          return v.int_bits.to_i
+          return v.int_bits.to_i()
         }
         return 0 - 2
       }
       if s.op == tk_eq() {
         if v = s.value, v.kind == ex_binary() && v.op == tk_plus(), l = v.left, r = v.right {
           if l.kind == ex_name() && l.ident == ivar && r.kind == ex_int() && r.int_bits >= 1u64 && r.int_bits <= 1000000u64 {
-            return r.int_bits.to_i
+            return r.int_bits.to_i()
           }
           if r.kind == ex_name() && r.ident == ivar && l.kind == ex_int() && l.int_bits >= 1u64 && l.int_bits <= 1000000u64 {
-            return l.int_bits.to_i
+            return l.int_bits.to_i()
           }
         }
         return 0 - 2
@@ -362,9 +362,9 @@ pub fn (checker_self: Checker) bound_delta_of(e: Expr): Int {
       base = checker_self.bound_delta_of(l)
       if checker_self.lit_small(r) {
         if e.op == tk_minus() {
-          return base - r.int_bits.to_i
+          return base - r.int_bits.to_i()
         }
-        return base + r.int_bits.to_i
+        return base + r.int_bits.to_i()
       }
     }
   }
@@ -481,14 +481,14 @@ pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
               if sz.op == tk_plus() || sz.op == tk_minus() {
                 if sl2 = sz.left, sr2 = sz.right {
                   if sl2.kind == ex_name() && checker_self.lit_small(sr2) {
-                    d = sr2.int_bits.to_i
+                    d = sr2.int_bits.to_i()
                     if sz.op == tk_minus() {
                       d = 0 - d
                     }
                     checker_self.cs_put(v, sl2.ident, d)
                   }
                   if sr2.kind == ex_name() && checker_self.lit_small(sl2) && sz.op == tk_plus() {
-                    checker_self.cs_put(v, sr2.ident, sl2.int_bits.to_i)
+                    checker_self.cs_put(v, sr2.ident, sl2.int_bits.to_i())
                   }
                 }
               }
@@ -912,10 +912,10 @@ pub fn (checker_self: Checker) push_loop_facts(cond: Expr, body: Array(Stmt)) {
 
 pub fn (checker_self: Checker) pop_loop_facts(saved: Int) {
   while checker_self.facts.fact_var.size > saved {
-    dropped_s = checker_self.facts.fact_var.pop
-    dropped_c = checker_self.facts.fact_cont.pop
-    dropped_k = checker_self.facts.fact_slack.pop
-    dropped_l = checker_self.facts.fact_live.pop
+    dropped_s = checker_self.facts.fact_var.pop()
+    dropped_c = checker_self.facts.fact_cont.pop()
+    dropped_k = checker_self.facts.fact_slack.pop()
+    dropped_l = checker_self.facts.fact_live.pop()
   }
 }
 
@@ -1057,21 +1057,21 @@ pub fn (checker_self: Checker) cap_kill_guards(name: String) {
 
 pub fn (checker_self: Checker) pop_guard_facts(sg: Int, sn: Int, sp: Int, se: Int) {
   while checker_self.facts.gcap_var.size > sg {
-    dv = checker_self.facts.gcap_var.pop
-    dc = checker_self.facts.gcap_val.pop
-    dl = checker_self.facts.gcap_live.pop
+    dv = checker_self.facts.gcap_var.pop()
+    dc = checker_self.facts.gcap_val.pop()
+    dl = checker_self.facts.gcap_live.pop()
   }
   while checker_self.facts.gnn_var.size > sn {
-    dv2 = checker_self.facts.gnn_var.pop
-    dl2 = checker_self.facts.gnn_live.pop
+    dv2 = checker_self.facts.gnn_var.pop()
+    dl2 = checker_self.facts.gnn_live.pop()
   }
   while checker_self.facts.gpos_var.size > sp {
-    dv3 = checker_self.facts.gpos_var.pop
-    dl3 = checker_self.facts.gpos_live.pop
+    dv3 = checker_self.facts.gpos_var.pop()
+    dl3 = checker_self.facts.gpos_live.pop()
   }
   while checker_self.facts.gne_var.size > se {
-    dv4 = checker_self.facts.gne_var.pop
-    dl4 = checker_self.facts.gne_live.pop
+    dv4 = checker_self.facts.gne_var.pop()
+    dl4 = checker_self.facts.gne_live.pop()
   }
 }
 
@@ -1103,7 +1103,7 @@ pub fn sqrt_toi_src(e: Expr): Expr? {
 pub fn (checker_self: Checker) is_sqrt_toi(e: Expr): Bool {
   if src = sqrt_toi_src(e) {
     if t = src.ty {
-      return t.is_int
+      return t.is_int()
     }
     if src.kind == ex_name() {
       return true
@@ -1318,10 +1318,10 @@ pub fn (checker_self: Checker) push_guard_facts(e: Expr) {
 // The largest value of ty a cap test allows (Stage 29 W-INT1: Int is
 // 64-bit; the caps are non-negative Int bounds).
 pub fn (checker_self: Checker) cap_max(ty: Ty): Int {
-  if ty.is_int32 {
+  if ty.is_int32() {
     return 2147483647
   }
-  if ty.is_uint32 {
+  if ty.is_uint32() {
     return 4294967295
   }
   9223372036854775807
@@ -1355,7 +1355,7 @@ pub fn (checker_self: Checker) cap_pair_proven(op: Int, cl: Int, cr: Int, ty: Ty
     return checker_self.cap_prod_ok(cl, cr, ty)
   }
   if op == tk_minus() {
-    if ty.is_unsigned {
+    if ty.is_unsigned() {
       return false
     }
     if cl > 2147483647 {

@@ -66,7 +66,7 @@ pub fn (lw: MirLower) note_classes {
       j = 0
       while j < t.fields.size {
         ft = lw.field_mty(t.fields[j].ty, cdef.loc)
-        if lw.failed {
+        if lw.failed() {
           return
         }
         fields.push(ft)
@@ -83,39 +83,39 @@ pub fn (lw: MirLower) note_classes {
 pub fn (lw: MirLower) value_agg_ty(t: Ty, loc: Location): Int {
   // W8b: a JoinHandle is the runtime's pinned task object (avant_task.c
   // avant_spawn), a heap reference like a class (audit 1.1.5).
-  if t.is_join {
+  if t.is_join() {
     return mt_ref()
   }
-  if t.is_fn {
+  if t.is_fn() {
     l0 = lw.fn_layout(t, loc)
     if l0 < 0 {
       return -1
     }
     return lw.lw_m.types.agg(l0)
   }
-  if t.is_array || t.is_hash || t.is_buf {
+  if t.is_array() || t.is_hash() || t.is_buf() {
     return lw.container_ty(t, loc)
   }
   // W8a: Ptr(T) and a C layout held by value inside another (lower_ffi.av).
-  if t.is_ptr {
+  if t.is_ptr() {
     return lw.ptr_ty(t, loc)
   }
-  if t.is_clayout {
+  if t.is_clayout() {
     l1 = lw.clayout_layout(t, loc)
     if l1 < 0 {
       return -1
     }
     return lw.lw_m.types.agg(l1)
   }
-  if t.is_class {
+  if t.is_class() {
     l = lw.lw_m.types.layout_named(mir_mty(t))
     if l < 0 {
-      lw.refuse(loc, "class ${t.show} (not in the program's classes)")
+      lw.refuse(loc, "class ${t.show()} (not in the program's classes)")
       return -1
     }
     return lw.lw_m.types.ref_to(l)
   }
-  if t.is_struct {
+  if t.is_struct() {
     l = lw.struct_layout(t, loc)
     if l < 0 {
       return -1
@@ -133,7 +133,7 @@ pub fn (lw: MirLower) field_mty(t: Ty, loc: Location): Int {
     // function value its pair (mir_opt_fn).
     return lw.field_mty(r, loc)
   }
-  if t.is_union {
+  if t.is_union() {
     l = lw.union_layout(t, loc)
     if l < 0 {
       return -1
@@ -145,8 +145,8 @@ pub fn (lw: MirLower) field_mty(t: Ty, loc: Location): Int {
     return m
   }
   m = lw.value_agg_ty(t, loc)
-  if m < 0 && !lw.failed {
-    lw.refuse(loc, "a field of type ${t.show}")
+  if m < 0 && !lw.failed() {
+    lw.refuse(loc, "a field of type ${t.show()}")
   }
   m
 }
@@ -159,7 +159,7 @@ pub fn (lw: MirLower) field_mty(t: Ty, loc: Location): Int {
 pub fn (lw: MirLower) struct_layout(t: Ty, loc: Location): Int {
   name = mir_mty(t)
   if lw.struct_busy(name) {
-    lw.refuse(loc, "struct ${t.show} holding itself by value")
+    lw.refuse(loc, "struct ${t.show()} holding itself by value")
     return -1
   }
   l = lw.lw_m.types.layout_named(name)
@@ -172,7 +172,7 @@ pub fn (lw: MirLower) struct_layout(t: Ty, loc: Location): Int {
   j = 0
   while j < t.fields.size {
     ft = lw.field_mty(t.fields[j].ty, loc)
-    if lw.failed {
+    if lw.failed() {
       return -1
     }
     fields.push(ft)
@@ -231,11 +231,11 @@ pub fn (lw: MirLower) union_layout(t: Ty, loc: Location): Int {
   i = 0
   while i < t.members.size {
     m = t.members[i]
-    if m.no_payload {
+    if m.no_payload() {
       nil_tag = i
     } else {
       pt = lw.field_mty(m, loc)
-      if lw.failed {
+      if lw.failed() {
         return -1
       }
       payloads.push(pt)
@@ -266,7 +266,7 @@ pub fn (lw: MirLower) owner_ty(fnn: Function): Ty? {
 pub fn (lw: MirLower) owner_text(ot: Ty, mod_name: String): String {
   m = mir_mty(ot)
   pre = "${mir_module_part(ot.mod_name)}."
-  if (ot.is_struct || ot.is_class) && mir_module_part(ot.mod_name) == mir_module_part(mod_name) && str_starts(m, pre) {
+  if (ot.is_struct() || ot.is_class()) && mir_module_part(ot.mod_name) == mir_module_part(mod_name) && str_starts(m, pre) {
     return str_slice(m, pre.size, m.size)
   }
   m
@@ -329,7 +329,7 @@ pub fn (lw: MirLower) clone_place(p: MPlace): MPlace {
 pub fn (lw: MirLower) field_of(t: Ty, name: String, loc: Location): Int {
   k = t.field_index(name)
   if k < 0 {
-    lw.refuse(loc, "the field ${name} of ${t.show}")
+    lw.refuse(loc, "the field ${name} of ${t.show()}")
   }
   k
 }
@@ -342,7 +342,7 @@ pub fn (lw: MirLower) field_of(t: Ty, name: String, loc: Location): Int {
 pub fn mir_field_in_element(t: Expr): Bool {
   x = t
   while x.kind == ex_field() {
-    if obj = x.object, ot = obj.ty, ot.is_struct {
+    if obj = x.object, ot = obj.ty, ot.is_struct() {
       x = obj
     } else {
       return false
@@ -350,7 +350,7 @@ pub fn mir_field_in_element(t: Expr): Bool {
   }
   if x.kind == ex_index() {
     if l = x.left, lt = l.ty {
-      return lt.is_array
+      return lt.is_array()
     }
   }
   false
@@ -365,7 +365,7 @@ pub fn mir_field_in_element(t: Expr): Bool {
 pub fn (lw: MirLower) place_of(e: Expr): MPlace {
   b = lw.lw_b
   if e.kind == ex_index() {
-    if arr = e.left, at = arr.ty, at.is_array || at.is_buf {
+    if arr = e.left, at = arr.ty, at.is_array() || at.is_buf() {
       return lw.index_place(e)
     }
   }
@@ -391,7 +391,7 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
       return b.deref(b.pl(lw.lw_self))
     }
     ty = lw.ety(e)
-    if lw.failed {
+    if lw.failed() {
       return b.pl(0)
     }
     k = lw.var_find(e.ident, ty)
@@ -403,17 +403,17 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
   }
   if e.kind == ex_field() && !e.method_call {
     if obj = e.object, ot = obj.ty {
-      if ot.is_struct || ot.is_clayout {
+      if ot.is_struct() || ot.is_clayout() {
         p = lw.place_of(obj)
         k = lw.field_of(ot, e.ident, e.loc)
         return b.field(p, k)
       }
-      if ot.is_ptr {
+      if ot.is_ptr() {
         return lw.ptr_field_place(e, obj, ot)
       }
-      if ot.is_class {
+      if ot.is_class() {
         o = lw.lower_expr(obj)
-        if lw.failed {
+        if lw.failed() {
           return b.pl(0)
         }
         h = mir_bare_copy(o)
@@ -429,7 +429,7 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
   }
   ty = lw.ety(e)
   v = lw.lower_expr(e)
-  if lw.failed {
+  if lw.failed() {
     return b.pl(0)
   }
   lw.at(e.loc)
@@ -443,11 +443,11 @@ pub fn (lw: MirLower) place_of(e: Expr): MPlace {
 // past their statement).
 pub fn (lw: MirLower) lower_place_read(e: Expr): MOperand {
   ty = lw.ety(e)
-  if lw.failed {
+  if lw.failed() {
     return lw.lw_b.c_i32(0)
   }
   p = lw.place_of(e)
-  if lw.failed {
+  if lw.failed() {
     return lw.lw_b.c_i32(0)
   }
   lw.at(e.loc)
@@ -460,7 +460,7 @@ pub fn (lw: MirLower) lower_place_read(e: Expr): MOperand {
 // for an `addr` holder (a struct receiver).
 pub fn (lw: MirLower) store_place(p: MPlace, ty: Int, val: MOperand) {
   b = lw.lw_b
-  if !p.frame_local && lw.lw_m.types.ref_carrying(ty) {
+  if !p.frame_local() && lw.lw_m.types.ref_carrying(ty) {
     h = p.local
     if lw.lw_m.types.is_ptr(b.func.locals[h].ty) {
       lw.pinned_store(p, ty, val)
@@ -489,11 +489,11 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
     // A C layout's enum field is C's int (Stage 29 W5a1, D358).
     if v = st.value {
       val = lw.lower_expr(v)
-      if lw.failed {
+      if lw.failed() {
         return
       }
       p0 = lw.place_of(t)
-      if lw.failed {
+      if lw.failed() {
         return
       }
       lw.at(st.loc)
@@ -503,39 +503,39 @@ pub fn (lw: MirLower) lower_field_assign(st: Stmt, t: Expr) {
   }
   if tt = t.ty {
     ty = lw.field_mty(tt, t.loc)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     if v = st.value {
       if st.op == tk_eq() {
         val = lw.lower_coerced(v, ty, tt)
-        if lw.failed {
+        if lw.failed() {
           return
         }
         lw.lw_task.store_check = mir_field_in_element(t)
         p = lw.place_of(t)
         lw.lw_task.store_check = false
-        if lw.failed {
+        if lw.failed() {
           return
         }
         lw.at(st.loc)
         lw.store_place(p, ty, val)
         return
       }
-      if !(tt.is_integer || tt.is_float) {
-        lw.refuse(st.loc, "compound assignment to a field of type ${tt.show}")
+      if !(tt.is_integer() || tt.is_float()) {
+        lw.refuse(st.loc, "compound assignment to a field of type ${tt.show()}")
         return
       }
       lw.lw_task.store_check = mir_field_in_element(t)
       p2 = lw.place_of(t)
       lw.lw_task.store_check = false
-      if lw.failed {
+      if lw.failed() {
         return
       }
       lw.at(st.loc)
       cur = lw.tmp(ty, lw.lw_b.rv_use(lw.lw_b.copy(lw.clone_place(p2))))
       rhs = lw.lower_expr(v)
-      if lw.failed {
+      if lw.failed() {
         return
       }
       r = lw.compound_arith(st, ty, cur, rhs, v)
@@ -557,11 +557,11 @@ pub fn (lw: MirLower) lower_c_field_assign(st: Stmt, t: Expr, ck: Int) {
     if v = st.value {
       if st.op == tk_eq() {
         val = lw.lower_coerced(v, vt, tt)
-        if lw.failed {
+        if lw.failed() {
           return
         }
         p = lw.place_of(t)
-        if lw.failed {
+        if lw.failed() {
           return
         }
         lw.at(st.loc)
@@ -569,14 +569,14 @@ pub fn (lw: MirLower) lower_c_field_assign(st: Stmt, t: Expr, ck: Int) {
         return
       }
       p2 = lw.place_of(t)
-      if lw.failed {
+      if lw.failed() {
         return
       }
       lw.at(st.loc)
       raw = lw.tmp(nt, lw.lw_b.rv_use(lw.lw_b.copy(lw.clone_place(p2))))
       cur = lw.from_c_scalar(raw, ck)
       rhs = lw.lower_expr(v)
-      if lw.failed {
+      if lw.failed() {
         return
       }
       r = lw.compound_arith(st, vt, cur, rhs, v)
@@ -597,7 +597,7 @@ pub fn (lw: MirLower) lower_struct_lit(e: Expr): MOperand {
   b = lw.lw_b
   if t = e.ty {
     sty = lw.ety(e)
-    if lw.failed || !t.is_struct {
+    if lw.failed() || !t.is_struct() {
       lw.refuse(e.loc, "this struct literal")
       return b.c_i32(0)
     }
@@ -611,14 +611,14 @@ pub fn (lw: MirLower) lower_struct_lit(e: Expr): MOperand {
     }
     for i in 0..e.field_names.size {
       k = lw.field_of(t, e.field_names[i], e.loc)
-      if lw.failed {
+      if lw.failed() {
         return b.c_i32(0)
       }
       o = lw.lower_coerced(e.field_exprs[i], b.types.layouts[l].fields[k], t.fields[k].ty)
       for j in i + 1..e.field_exprs.size {
         o = lw.snap(o, e.field_exprs[j])
       }
-      if lw.failed {
+      if lw.failed() {
         return b.c_i32(0)
       }
       slots[k] = o
@@ -647,19 +647,19 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
   b = lw.lw_b
   ret = lw.ety(e)
   ops = lw.lower_args_in(args, lw.callee_params(e.resolved, e), e.int_bits, e.arg_order)
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
-  if e.callee == "send" && rt.is_class && rt.mod_name == "std.sync" && (rt.origin == "Channel" || rt.name == "Channel") && args.size == 1 {
+  if e.callee == "send" && rt.is_class() && rt.mod_name == "std.sync" && (rt.origin == "Channel" || rt.name == "Channel") && args.size == 1 {
     // What a send carries is the receiver's own (O688, D371): an Array
     // is copied here, at every level of an array of arrays.
-    if at = args[0].ty, at.is_array {
+    if at = args[0].ty, at.is_array() {
       lw.at(args[0].loc)
       ops[0] = lw.send_copy(ops[0], lw.ety(args[0]), at)
     }
   }
   r = b.c_i32(0)
-  if !rt.is_struct {
+  if !rt.is_struct() {
     r = lw.lower_expr(recv)
   } else {
     // A method that changes its receiver, called on an Array's element
@@ -668,7 +668,7 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
     lw.lw_task.store_check = lw.lw_m.shared && rw_element_place(recv) && lw.method_writes(e.resolved)
     p = lw.place_of(recv)
     lw.lw_task.store_check = false
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -676,7 +676,7 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
     b.assign(b.pl(a), b.rv_addr(p))
     r = b.copy_local(a)
   }
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   all: Array(MOperand) = []
@@ -699,7 +699,7 @@ pub fn (lw: MirLower) method_writes(sym: String): Bool {
   if rw = lw.lw_task.writes {
     return rw.writes(sym)
   }
-  rw2 = ReceiverWrites.new
+  rw2 = ReceiverWrites.new()
   for ms in lw.lw_syms.methods {
     rw2.add(ms.node)
   }
@@ -716,15 +716,15 @@ pub fn (lw: MirLower) send_copy(o: MOperand, aty: Int, t: Ty): MOperand {
   h = lw.hold(o, aty)
   c = b.temp(aty)
   b.call(c, "avant_array_copy", lw.three(b.copy_local(h), lw.elem_size(aty), lw.buf_tid(aty)))
-  if inner = t.inner, inner.is_array {
+  if inner = t.inner, inner.is_array() {
     ity = lw.elem_of(aty)
     n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(c)), 1))))
     nl = mir_bare_copy(n)
     i = b.temp(mt_i32())
     b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
-    head = b.block
-    body = b.block
-    exit = b.block
+    head = b.block()
+    body = b.block()
+    exit = b.block()
     b.goto(head)
     b.at(head)
     more = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(i), b.copy_local(nl)))
@@ -750,7 +750,7 @@ pub fn (lw: MirLower) lower_named_call(e: Expr): MOperand? {
   if sym = lw.lw_fn_syms.get(e.resolved) {
     ret = lw.ety(e)
     args = lw.lower_args_in(e.args, lw.callee_params(e.resolved, e), e.int_bits, e.arg_order)
-    if lw.failed {
+    if lw.failed() {
       return lw.lw_b.c_i32(0)
     }
     lw.at(e.loc)
@@ -774,7 +774,7 @@ pub fn (lw: MirLower) initialize_of(cdef: ClassDef): Function? {
 pub fn (lw: MirLower) lower_ctors {
   p = lw.lw_prog
   i = 0
-  while i < p.classes.size && !lw.failed {
+  while i < p.classes.size && !lw.failed() {
     if p.classes[i].type_params.size == 0 {
       if t = lw.class_ty(p.classes[i]) {
         lw.lower_ctor(p.classes[i], t)
@@ -795,8 +795,8 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   if got = lw.lw_fn_syms.get(ty_owned_symbol(t, "new")) {
     sym = got
   }
-  lw.lw_vars = Hash(String, Int).new
-  lw.reset_closures
+  lw.lw_vars = Hash(String, Int).new()
+  lw.reset_closures()
   lw.lw_self = 0
   lw.lw_self_struct = false
   lw.lw_self_name = ""
@@ -805,7 +805,7 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   lw.lw_fn_loc = cdef.loc
   lw.lw_main = false
   cty = lw.value_agg_ty(t, cdef.loc)
-  if lw.failed {
+  if lw.failed() {
     return
   }
   lw.lw_ret = cty
@@ -824,7 +824,7 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
       }
     }
   }
-  if lw.failed {
+  if lw.failed() {
     return
   }
   b.begin_fn(sym, b.sig(params, cty, false), lw.mloc(cdef.loc), "new")
@@ -837,16 +837,16 @@ pub fn (lw: MirLower) lower_ctor(cdef: ClassDef, t: Ty) {
   lw.at(cdef.loc)
   o = b.temp(cty)
   aargs: Array(MOperand) = []
-  aargs.push(b.c_u64(b.types.layouts[layout].size.to_i))
+  aargs.push(b.c_u64(b.types.layouts[layout].size.to_i()))
   aargs.push(b.c_u32(b.types.layouts[layout].type_id))
   b.call(o, "avant_alloc", aargs)
   lw.ctor_fill(cdef, t, o, layout, init_sym, params.size)
-  if lw.failed {
+  if lw.failed() {
     return
   }
   b.assign(b.pl(0), b.rv_use(b.copy_local(o)))
-  b.ret
-  b.end_fn
+  b.ret()
+  b.end_fn()
 }
 
 // `C.new(args)` at its call site (Stage 29 VALK-A1, M5, O204), for a class
@@ -881,7 +881,7 @@ pub fn (lw: MirLower) lower_ctor_inline(e: Expr, ci: Int): MOperand? {
       }
     }
   }
-  if init_sym.size == 0 || !refs || lw.failed {
+  if init_sym.size == 0 || !refs || lw.failed() {
     return nil
   }
   if t = lw.class_ty(cdef) {
@@ -889,18 +889,18 @@ pub fn (lw: MirLower) lower_ctor_inline(e: Expr, ci: Int): MOperand? {
       return nil
     }
     cty = lw.value_agg_ty(t, cdef.loc)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     layout = b.types.layout_of(cty)
     args = lw.lower_args_in(e.args, lw.callee_params(e.resolved, e), e.int_bits, e.arg_order)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
     o = b.temp(cty)
     aargs: Array(MOperand) = []
-    aargs.push(b.c_u64(b.types.layouts[layout].size.to_i))
+    aargs.push(b.c_u64(b.types.layouts[layout].size.to_i()))
     aargs.push(b.c_u32(b.types.layouts[layout].type_id))
     b.call(o, "avant_alloc", aargs)
     b.barrier(o)
@@ -934,12 +934,12 @@ pub fn (lw: MirLower) ctor_field_code(cdef: ClassDef, t: Ty): Bool {
 
 // Whether zero_strings stores anything into a place of type t.
 pub fn (lw: MirLower) has_strings(t: Ty): Bool {
-  if t.is_string {
+  if t.is_string() {
     return true
   }
-  if t.is_struct {
+  if t.is_struct() {
     for fl in t.fields {
-      if (fl.ty.is_string || fl.ty.is_struct) && lw.has_strings(fl.ty) {
+      if (fl.ty.is_string() || fl.ty.is_struct()) && lw.has_strings(fl.ty) {
         return true
       }
     }
@@ -957,15 +957,15 @@ pub fn (lw: MirLower) ctor_fill(cdef: ClassDef, t: Ty, o: Int, layout: Int, init
   // check_field_defaults), so it sees none of initialize's parameters
   // here either (W3b).
   params = lw.lw_vars
-  lw.lw_vars = Hash(String, Int).new
+  lw.lw_vars = Hash(String, Int).new()
   j = 0
-  while j < cdef.fields.size && !lw.failed {
+  while j < cdef.fields.size && !lw.failed() {
     fd = cdef.fields[j]
     k = t.field_index(fd.name)
     fty = b.types.layouts[layout].fields[k]
     if dv = fd.default {
       v = lw.lower_coerced(dv, fty, t.fields[k].ty)
-      if lw.failed {
+      if lw.failed() {
         return
       }
       lw.at(fd.loc)
@@ -999,15 +999,15 @@ pub fn (lw: MirLower) ctor_fill(cdef: ClassDef, t: Ty, o: Int, layout: Int, init
 // (a String field, or a struct field's String fields, nested).
 pub fn (lw: MirLower) zero_strings(p: MPlace, t: Ty, mt: Int) {
   b = lw.lw_b
-  if t.is_string {
+  if t.is_string() {
     lw.store_place(p, mt, b.str_const(""))
     return
   }
-  if t.is_struct {
+  if t.is_struct() {
     l = b.types.layout_of(mt)
     for i in 0..t.fields.size {
       ft = t.fields[i].ty
-      if ft.is_string || ft.is_struct {
+      if ft.is_string() || ft.is_struct() {
         lw.zero_strings(b.field(p, i), ft, b.types.layouts[l].fields[i])
       }
     }

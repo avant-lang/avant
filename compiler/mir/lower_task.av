@@ -114,7 +114,7 @@ pub fn (lw: MirLower) task_layout(e: Expr, sym: String, par: Bool): Int {
     fields.push(lw.field_mty(e.cap_tys[i], e.loc))
     names.push(e.cap_names[i])
   }
-  if lw.failed {
+  if lw.failed() {
     return -1
   }
   lw.lw_b.note_layout(name, mlk_record(), fields, names)
@@ -140,9 +140,9 @@ pub fn (lw: MirLower) store_captures(e: Expr, c: Int, base: Int) {
   ts = b.types
   l = ts.layout_of(b.func.locals[c].ty)
   i = 0
-  while i < e.cap_names.size && !lw.failed {
+  while i < e.cap_names.size && !lw.failed() {
     v = lw.capture_value(e.cap_names[i], e.cap_tys[i], e.loc)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     lw.at(e.loc)
@@ -173,9 +173,9 @@ pub fn (lw: MirLower) each_array_capture(e: Expr, c: Int, base: Int, freeze: Boo
   ts = b.types
   l = ts.layout_of(b.func.locals[c].ty)
   i = 0
-  while i < e.cap_names.size && !lw.failed {
+  while i < e.cap_names.size && !lw.failed() {
     t = e.cap_tys[i]
-    if t.is_array {
+    if t.is_array() {
       lw.at(e.loc)
       v = lw.tmp(ts.layouts[l].fields[base + i], b.rv_use(b.copy(b.field(b.deref(b.pl(c)), base + i))))
       if freeze {
@@ -193,7 +193,7 @@ pub fn (lw: MirLower) new_record(l: Int, tid: Int, loc: Location): Int {
   b = lw.lw_b
   lw.at(loc)
   c = b.temp(b.types.ref_to(l))
-  b.call(c, "avant_alloc", lw.two(b.c_u64(b.types.layouts[l].size.to_i), b.c_u32(tid)))
+  b.call(c, "avant_alloc", lw.two(b.c_u64(b.types.layouts[l].size.to_i()), b.c_u32(tid)))
   c
 }
 
@@ -214,7 +214,7 @@ pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
   arg = b.c_null(mt_ref())
   if e.cap_names.size > 0 {
     l = lw.task_layout(e, sym, false)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     tid = 0
@@ -223,11 +223,11 @@ pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
     }
     c = lw.new_record(l, tid, e.loc)
     lw.store_captures(e, c, 0)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.freeze_captures(e, c, 0)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     arg = b.copy_local(c)
@@ -249,7 +249,7 @@ pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
 // task's channels end). A spawn without either needs no `#fail` thunk.
 pub fn (lw: MirLower) task_fails(e: Expr): Bool {
   for t in e.cap_tys {
-    if t.is_array || mir_is_channel(t) {
+    if t.is_array() || mir_is_channel(t) {
       return true
     }
   }
@@ -257,7 +257,7 @@ pub fn (lw: MirLower) task_fails(e: Expr): Bool {
 }
 
 pub fn mir_is_channel(t: Ty): Bool {
-  t.is_class && t.mod_name == "std.sync" && (t.origin == "Channel" || t.name == "Channel")
+  t.is_class() && t.mod_name == "std.sync" && (t.origin == "Channel" || t.name == "Channel")
 }
 
 // `<enclosing>#spawnN#fail(_1: ref)`: what the runtime runs on the worker
@@ -283,7 +283,7 @@ pub fn (lw: MirLower) lower_fail_thunk(e: Expr, sym: String, l: Int) {
   lw.thaw_captures(e, c, 0)
   ts = b.types
   i = 0
-  while i < e.cap_names.size && !lw.failed {
+  while i < e.cap_names.size && !lw.failed() {
     t = e.cap_tys[i]
     if mir_is_channel(t) {
       lw.at(e.loc)
@@ -292,7 +292,7 @@ pub fn (lw: MirLower) lower_fail_thunk(e: Expr, sym: String, l: Int) {
       b.assign(b.pl(h), b.rv_use(b.copy(b.field(b.deref(b.pl(c)), i))))
       gi = lw.field_of(t, "gate", e.loc)
       ci = lw.field_of(t, "closed", e.loc)
-      if lw.failed {
+      if lw.failed() {
         return
       }
       b.call(-1, "avant_gate_lock", lw.gate_args(h, gi))
@@ -303,9 +303,9 @@ pub fn (lw: MirLower) lower_fail_thunk(e: Expr, sym: String, l: Int) {
     i += 1
   }
   lw.at(e.loc)
-  b.ret
+  b.ret()
   lw.finish_at(e.loc)
-  b.end_fn
+  b.end_fn()
 }
 
 // `h.join` (calls.av emit_join): `avant_join(h)` waits, frees the task,
@@ -316,14 +316,14 @@ pub fn (lw: MirLower) lower_fail_thunk(e: Expr, sym: String, l: Int) {
 pub fn (lw: MirLower) lower_join(e: Expr, recv: Expr): MOperand {
   b = lw.lw_b
   h0 = lw.lower_expr(recv)
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   lw.at(e.loc)
   h = b.temp(mt_ref())
   b.assign(b.pl(h), b.rv_use(h0))
   r = lw.call_to(mt_int(), "avant_join", lw.one(b.copy_local(h)))
-  sym = lw.join_result_sym
+  sym = lw.join_result_sym()
   if sym.size == 0 {
     return r
   }
@@ -336,9 +336,9 @@ pub fn (lw: MirLower) lower_join(e: Expr, recv: Expr): MOperand {
   ety = lw.ety(e)
   out = b.temp(ety)
   none = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(w), b.c_null(mt_str())))
-  ok = b.block
-  bad = b.block
-  done = b.block
+  ok = b.block()
+  bad = b.block()
+  done = b.block()
   b.branch(none, ok, bad)
   b.at(ok)
   et = ty_int()
@@ -360,7 +360,7 @@ pub fn (lw: MirLower) lower_join(e: Expr, recv: Expr): MOperand {
 
 // The symbol of the task module's __avant_join_result, "" without one.
 pub fn (lw: MirLower) join_result_sym: String {
-  for f in lw.lowered_functions {
+  for f in lw.lowered_functions() {
     if f.name == "__avant_join_result" && f.mod_name == "task" {
       if s = lw.lw_fn_syms.get(f.emit_name) {
         return s
@@ -393,11 +393,11 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   lw.lw_task.pending.push(MirTask.new(e, sym, true, idx))
   aty = lw.ety(recv)
   oty = lw.ety(e)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   a0 = lw.lower_expr(recv)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
@@ -410,7 +410,7 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   b.call(d, "avant_alloc", lw.two(bytes, lw.buf_tid(oty)))
   out = lw.tmp(oty, b.rv_use(lw.array_header(oty, d, lw.dup(n))))
   l = lw.task_layout(e, sym, true)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   c = lw.new_record(l, b.type_id(l), e.loc)
@@ -418,7 +418,7 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   lw.store_place(b.field(b.deref(b.pl(c)), 0), ts.layouts[l].fields[0], b.copy_local(a))
   lw.store_place(b.field(b.deref(b.pl(c)), 1), ts.layouts[l].fields[1], lw.dup(out))
   lw.store_captures(e, c, 2)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   // The input and the captured arrays are frozen while the bodies run
@@ -429,7 +429,7 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
   }
   lw.freeze_array(b.copy_local(a), rt, e.loc)
   lw.freeze_captures(e, c, 2)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
@@ -446,8 +446,8 @@ pub fn (lw: MirLower) lower_parallel(e: Expr, recv: Expr): MOperand {
 // Lowers the queued thunks in pre-walk order, with the lambdas each one
 // makes; a thunk may queue further thunks (a spawn inside a spawn).
 pub fn (lw: MirLower) lower_pending_tasks {
-  lw.lower_pending_lambdas
-  while lw.lw_task.done < lw.lw_task.pending.size && !lw.failed {
+  lw.lower_pending_lambdas()
+  while lw.lw_task.done < lw.lw_task.pending.size && !lw.failed() {
     // The queue is in lowering order; the old back end emits in pre-walk
     // order: take the lowest index not lowered yet.
     best = -1
@@ -466,7 +466,7 @@ pub fn (lw: MirLower) lower_pending_tasks {
     } else {
       lw.lower_spawn_thunk(t)
     }
-    lw.lower_pending_lambdas
+    lw.lower_pending_lambdas()
   }
 }
 
@@ -565,9 +565,9 @@ pub fn (lw: MirLower) begin_task(t: MirTask, ps: Array(Int), ret: Int, rec: Int,
   lw.lw_cl.boxed = names
   lw.at(e.loc)
   i = 0
-  while i < names.size && !lw.failed {
+  while i < names.size && !lw.failed() {
     k = lw.box_local_of(names[i], tys[i], e.loc)
-    b.assign(b.pl(k), b.rv_zero)
+    b.assign(b.pl(k), b.rv_zero())
     i += 1
   }
   c = -1
@@ -583,12 +583,12 @@ pub fn (lw: MirLower) begin_task(t: MirTask, ps: Array(Int), ret: Int, rec: Int,
 pub fn (lw: MirLower) load_captures(e: Expr, c: Int, l: Int, base: Int) {
   b = lw.lw_b
   i = 0
-  while i < e.cap_names.size && !lw.failed {
+  while i < e.cap_names.size && !lw.failed() {
     ft = b.types.layouts[l].fields[base + i]
     lw.at(e.loc)
     v = lw.tmp(ft, b.rv_use(b.copy(b.field(b.deref(b.pl(c)), base + i))))
     ty = lw.ty_at(e.cap_tys[i], e.loc, "a capture")
-    if lw.failed {
+    if lw.failed() {
       return
     }
     lw.bind_name(e.cap_names[i], e.cap_tys[i], ty, v, e.loc, false)
@@ -608,22 +608,22 @@ pub fn (lw: MirLower) task_value(bl: Block, want: Ty): MOperand? {
   }
   i = 0
   while i < bl.body.size - 1 {
-    if lw.failed || !lw.open_now {
+    if lw.failed() || !lw.open_now() {
       return nil
     }
     lw.lower_stmt(bl.body[i])
     i += 1
   }
-  if lw.failed || !lw.open_now {
+  if lw.failed() || !lw.open_now() {
     return nil
   }
   last = bl.body[bl.body.size - 1]
   if x = last.expr, last.kind == st_expr() {
     v = lw.lower_expr(x)
-    if lw.failed {
+    if lw.failed() {
       return nil
     }
-    if xt = x.ty, !want.is_void {
+    if xt = x.ty, !want.is_void() {
       return lw.coerce(v, xt, want, x.loc)
     }
     return v
@@ -650,17 +650,17 @@ pub fn (lw: MirLower) lower_spawn_thunk(t: MirTask) {
     if l >= 0 {
       lw.load_captures(e, c, l, 0)
     }
-    if got = lw.task_value(bl, ty_int()), lw.open_now {
+    if got = lw.task_value(bl, ty_int()), lw.open_now() {
       lw.at(e.loc)
       b.assign(b.pl(0), b.rv_use(got))
       if l >= 0 {
         lw.thaw_captures(e, c, 0)
       }
-      b.ret
+      b.ret()
     }
     lw.finish_at(e.loc)
-    b.end_fn
-    if l >= 0 && lw.task_fails(e) && !lw.failed {
+    b.end_fn()
+    if l >= 0 && lw.task_fails(e) && !lw.failed() {
       lw.lower_fail_thunk(e, t.sym, l)
     }
     return
@@ -675,7 +675,7 @@ pub fn (lw: MirLower) lower_par_thunk(t: MirTask) {
   b = lw.lw_b
   if bl = e.block, recv = e.receiver {
     l = lw.task_layout(e, t.sym, true)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     ps: Array(Int) = []
@@ -704,11 +704,11 @@ pub fn (lw: MirLower) lower_par_thunk(t: MirTask) {
     }
     lw.bind_name(bl.params[0], lw.elem_ty_of(recv), et, v, bl.loc, false)
     lw.load_captures(e, c, l, 2)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     want = lw.elem_ty_of(e)
-    if got = lw.task_value(bl, want), lw.open_now {
+    if got = lw.task_value(bl, want), lw.open_now() {
       lw.at(e.loc)
       ot = lw.elem_of(oty)
       r = lw.tmp(ot, b.rv_use(got))
@@ -719,10 +719,10 @@ pub fn (lw: MirLower) lower_par_thunk(t: MirTask) {
         b.assign(b.pl(ob), b.rv_use(b.copy(b.field(b.deref(b.pl(dh)), 0))))
         lw.store_place(b.index(b.deref(b.pl(ob)), b.copy_local(1)), ot, r)
       }
-      b.ret
+      b.ret()
     }
     lw.finish_at(e.loc)
-    b.end_fn
+    b.end_fn()
     return
   }
   lw.refuse(e.loc, "a .parallel without a block")
@@ -779,12 +779,12 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   mty = lw.ety(recv)
   gi = lw.field_of(rt, "gate", e.loc)
   ci = lw.field_of(rt, "cell", e.loc)
-  if lw.failed || bl.params.size != 1 {
+  if lw.failed() || bl.params.size != 1 {
     lw.refuse(e.loc, "this Mutex.with")
     return zero
   }
   o = lw.lower_expr(recv)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
@@ -807,10 +807,10 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
     p0 = b.temp(mt_i32())
     b.call(p0, "avant_gate_lock_with", lw.gate_args(h, gi))
     bad0 = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(p0), b.c_i32(0)))
-    okb = b.block
-    healb = b.block
-    badb = b.block
-    done = b.block
+    okb = b.block()
+    healb = b.block()
+    badb = b.block()
+    done = b.block()
     out = b.temp(lw.ety(e))
     b.branch(bad0, healb, okb)
     // Poisoned: a recover function rebuilds the value (under the lock),
@@ -821,7 +821,7 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
     b.at(badb)
     b.call(-1, "avant_gate_unlock", lw.gate_args(h, gi))
     if et = e.ty, me = mir_mutex_error(et) {
-      sym = lw.mutex_error_sym
+      sym = lw.mutex_error_sym()
       if sym.size == 0 {
         lw.refuse(e.loc, "Mutex.try_with without std.sync's MutexError (internal)")
         return zero
@@ -844,8 +844,8 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
     p = b.temp(mt_i32())
     b.call(p, "avant_gate_lock_with", lw.gate_args(h, gi))
     bad = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(p), b.c_i32(0)))
-    ok = b.block
-    healb = b.block
+    ok = b.block()
+    healb = b.block()
     b.branch(bad, healb, ok)
     b.at(healb)
     healed = lw.heal_call(heal, h)
@@ -873,15 +873,15 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   if bl.body.size > 0 {
     got = lw.task_value(bl, vt)
   }
-  lw.lw_ffi.pins.pop
-  lw.lw_ffi.pin_depth.pop
-  lw.lw_task.pnames.pop
-  lw.lw_task.pholders.pop
-  lw.lw_task.pfields.pop
-  if lw.failed {
+  lw.lw_ffi.pins.pop()
+  lw.lw_ffi.pin_depth.pop()
+  lw.lw_task.pnames.pop()
+  lw.lw_task.pholders.pop()
+  lw.lw_task.pfields.pop()
+  if lw.failed() {
     return zero
   }
-  if !lw.open_now {
+  if !lw.open_now() {
     if out >= 0 {
       b.at(done)
       return b.copy_local(out)
@@ -890,9 +890,9 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   }
   lw.at(e.loc)
   r = zero
-  if v = got, !vt.is_void {
+  if v = got, !vt.is_void() {
     r = lw.tmp(lw.ety(e), b.rv_use(v))
-  } else if vt.is_union && vt.includes_void {
+  } else if vt.is_union() && vt.includes_void() {
     // A `try_with` whose block ends without a value: its success is
     // the Void member of `Void | MutexError`.
     r = lw.coerce(zero, ty_void(), vt, e.loc)
@@ -939,7 +939,7 @@ pub fn (lw: MirLower) mutex_heal_sym(rt: Ty): String {
 // The MutexError member of try_with's union, or nil.
 pub fn mir_mutex_error(t: Ty): Ty? {
   for m in t.members {
-    if m.is_class && m.mod_name == "std.sync" && m.name == "MutexError" {
+    if m.is_class() && m.mod_name == "std.sync" && m.name == "MutexError" {
       return m
     }
   }
@@ -948,7 +948,7 @@ pub fn mir_mutex_error(t: Ty): Ty? {
 
 // The symbol of std.sync's __avant_mutex_poisoned, "" without one.
 pub fn (lw: MirLower) mutex_error_sym: String {
-  for f in lw.lowered_functions {
+  for f in lw.lowered_functions() {
     if f.name == "__avant_mutex_poisoned" && f.mod_name == "std.sync" {
       if s = lw.lw_fn_syms.get(f.emit_name) {
         return s
@@ -965,14 +965,14 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
   c = e.callee
   if recv = e.receiver {
     if rt = recv.ty {
-      if rt.is_join && c == "join" {
+      if rt.is_join() && c == "join" {
         return lw.lower_join(e, recv)
       }
       if bl = e.block {
-        if rt.is_array && c == "parallel" {
+        if rt.is_array() && c == "parallel" {
           return lw.lower_parallel(e, recv)
         }
-        if rt.is_class && (c == "with" || c == "try_with") && rt.mod_name == "std.sync" && (rt.origin == "Mutex" || rt.name == "Mutex") {
+        if rt.is_class() && (c == "with" || c == "try_with") && rt.mod_name == "std.sync" && (rt.origin == "Mutex" || rt.name == "Mutex") {
           return lw.lower_mutex_with(e, recv, rt, bl)
         }
       }
@@ -993,7 +993,7 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
   if c == "avant_gate_poisoned" && e.args.size == 1 {
     // Whether the gate is poisoned (Mutex.poisoned): a Bool.
     p0 = lw.place_of(e.args[0])
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     if p0.proj.size != 2 || p0.proj[0].kind != mpk_deref() || p0.proj[1].kind != mpk_field() {
@@ -1009,7 +1009,7 @@ pub fn (lw: MirLower) lower_task_call(e: Expr): MOperand? {
     // The gate field's object and offset (O690; the checker allows only
     // a field, whose place is its holder's local, a deref and the field).
     p = lw.place_of(e.args[0])
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     if p.proj.size != 2 || p.proj[0].kind != mpk_deref() || p.proj[1].kind != mpk_field() {

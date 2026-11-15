@@ -89,12 +89,12 @@ fn (w: InitWalk) ways(field: String, lead: String): String {
 // parentheses (`(fn(Int): Int)?`: `fn(Int): Int?` returns an optional).
 fn (w: InitWalk) or_else(field: String): String {
   if ft = w.ty.field_named(field) {
-    t = ft.show
+    t = ft.show()
     opt = "${t}?"
-    if ft.is_union {
+    if ft.is_union() {
       opt = "${t} | Nil"
     }
-    if ft.is_fn {
+    if ft.is_fn() {
       opt = "(${t})?"
     }
     return ", give it a default (${field}: ${t} = ...), or make it optional (${field}: ${opt})"
@@ -118,7 +118,7 @@ pub fn (checker_self: Checker) check_inits {
 }
 
 pub fn (checker_self: Checker) check_class_init(cdef: ClassDef, ty: Ty) {
-  w = InitWalk.new(ty.show, ty)
+  w = InitWalk.new(ty.show(), ty)
   first_loc = cdef.loc
   for field in cdef.fields {
     field.set_by_init = false
@@ -380,7 +380,7 @@ pub fn (checker_self: Checker) init_switch(w: InitWalk, e: Expr, set: Array(Stri
 
 pub fn init_switch_exhaustive(e: Expr): Bool {
   if c = e.cond, ct = c.ty {
-    return ct.is_enum || ct.is_union || ct.is_bool
+    return ct.is_enum() || ct.is_union() || ct.is_bool()
   }
   false
 }

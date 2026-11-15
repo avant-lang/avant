@@ -19,7 +19,7 @@ class RCase {
 }
 
 fn refused(tag: String, src: String, needle: String, pos: String): RCase {
-  f = RCase.new
+  f = RCase.new()
   f.tag = tag
   f.src = src
   f.want = needle
@@ -28,7 +28,7 @@ fn refused(tag: String, src: String, needle: String, pos: String): RCase {
 }
 
 fn accepted(tag: String, src: String, out: String): RCase {
-  f = RCase.new
+  f = RCase.new()
   f.tag = tag
   f.src = src
   f.want = out
@@ -38,13 +38,13 @@ fn accepted(tag: String, src: String, out: String): RCase {
 
 fn cases: Array(RCase) {
   xs: Array(RCase) = []
-  pre = "class Bad: Error {\n  pub message: String = \"bad\"\n}\nclass Worse: Error {\n  pub message: String = \"worse\"\n}\nfn f(s: String): Int | Bad {\n  n = s.to_i ?? return Bad.new\n  n\n}\nfn g(s: String): Int | Bad | Worse | Nil {\n  if s == \"w\" {\n    return Worse.new\n  }\n  if s == \"\" {\n    return nil\n  }\n  f(s)\n}\n"
+  pre = "class Bad: Error {\n  pub message: String = \"bad\"\n}\nclass Worse: Error {\n  pub message: String = \"worse\"\n}\nfn f(s: String): Int | Bad {\n  n = s.to_i() ?? return Bad.new()\n  n\n}\nfn g(s: String): Int | Bad | Worse | Nil {\n  if s == \"w\" {\n    return Worse.new()\n  }\n  if s == \"\" {\n    return nil\n  }\n  f(s)\n}\n"
   xs.push(refused("guard-must-leave", pre + "fn main {\n  n = f(\"a\") else e {\n    puts(e.message)\n  }\n  puts(n)\n}\n", "the block of else e must leave (return, break, continue or exit)", "21:14"))
   xs.push(refused("guard-leaves-one-branch", pre + "fn main {\n  for s in [\"1\"] {\n    n = f(s) else e {\n      if e.message == \"bad\" {\n        continue\n      }\n    }\n    puts(n)\n  }\n}\n", "the block of else e must leave", "22:14"))
   xs.push(refused("guard-not-union", pre + "fn main {\n  n = 5 else e {\n    return\n  }\n  puts(n)\n}\n", "else e needs a value that can fail (T? or T | E with E marked Error), got Int", "21:9"))
   xs.push(refused("guard-no-failure", pre + "fn h(x: Int | String): Int {\n  n = x else e {\n    return 0\n  }\n  n\n}\nfn main {\n  puts(h(1))\n}\n", "else e on Int | String: it has no failure member", "21:9"))
-  xs.push(refused("guard-no-success", pre + "fn h(x: Bad | Worse): Int {\n  n = x else e {\n    return 0\n  }\n  1\n}\nfn main {\n  puts(h(Bad.new))\n}\n", "it has no success value, every member is a failure", "21:9"))
-  xs.push(refused("guard-nil-only", pre + "fn main {\n  n = \"3\".to_i else e {\n    return\n  }\n  puts(n)\n}\n", "else e on Int?: its only failure is nil, which carries nothing to read; leave with `?? return`, `?? break` or `?? continue`", "21:16"))
+  xs.push(refused("guard-no-success", pre + "fn h(x: Bad | Worse): Int {\n  n = x else e {\n    return 0\n  }\n  1\n}\nfn main {\n  puts(h(Bad.new()))\n}\n", "it has no success value, every member is a failure", "21:9"))
+  xs.push(refused("guard-nil-only", pre + "fn main {\n  n = \"3\".to_i() else e {\n    return\n  }\n  puts(n)\n}\n", "else e on Int?: its only failure is nil, which carries nothing to read; leave with `?? return`, `?? break` or `?? continue`", "21:18"))
   xs.push(refused("guard-reads-own-name", pre + "fn main {\n  n = f(\"a\") else e {\n    puts(n)\n    return\n  }\n  puts(n)\n}\n", "unknown name n", "22:10"))
   xs.push(refused("guard-no-name", pre + "fn main {\n  n = f(\"a\") else {\n    return\n  }\n  puts(n)\n}\n", "an else guard names the failure it reads: write `else e { ... }`; to leave without reading it, write `?? return`, `?? break` or `?? continue`", "21:14"))
   xs.push(refused("guard-name-after", pre + "fn main {\n  n = f(\"a\") else e {\n    return\n  }\n  puts(e)\n}\n", "unknown name e", "24:8"))
@@ -54,13 +54,13 @@ fn cases: Array(RCase) {
   xs.push(refused("guard-failures-union", pre + "fn main {\n  n = g(\"1\") else e {\n    puts(e.message)\n    return\n  }\n  puts(n)\n}\n", "cannot read field message on Nil | Bad | Worse", "22:11"))
   xs.push(refused("guard-continue-outside-loop", pre + "fn main {\n  n = f(\"1\") else e {\n    continue\n  }\n  puts(n)\n}\n", "continue is only valid inside a loop", "22:5"))
   xs.push(refused("guard-return-type", pre + "fn h(s: String): Int {\n  n = f(s) else e {\n    return e\n  }\n  n\n}\nfn main {\n  puts(h(\"1\"))\n}\n", "return type is Bad, expected Int", "22:5"))
-  xs.push(refused("guard-escapes-with", "import std.sync\nclass PBox: Error {\n  pub message: String = \"p\"\n}\nfn main {\n  u: Int | PBox = PBox.new\n  m = Mutex(Int | PBox).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    n = b else e {\n      keep.push(e)\n      return\n    }\n    puts(n)\n  }\n  puts(keep.size)\n}\n", "Mutex.with: this argument is the guarded value or a reference reached from it (PBox)", "11:17"))
-  xs.push(accepted("guard-plain-with", "import std.sync\nclass PBox: Error {\n  pub message: String = \"p\"\n}\nfn main {\n  u: Int | PBox = PBox.new\n  m = Mutex(Int | PBox).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    n = b else e {\n      keep.push(PBox.new)\n      puts(keep.size)\n      return\n    }\n    puts(n)\n  }\n  puts(keep.size)\n}\n", "1\n"))
+  xs.push(refused("guard-escapes-with", "import std.sync\nclass PBox: Error {\n  pub message: String = \"p\"\n}\nfn main {\n  u: Int | PBox = PBox.new()\n  m = Mutex(Int | PBox).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    n = b else e {\n      keep.push(e)\n      return\n    }\n    puts(n)\n  }\n  puts(keep.size)\n}\n", "Mutex.with: this argument is the guarded value or a reference reached from it (PBox)", "11:17"))
+  xs.push(accepted("guard-plain-with", "import std.sync\nclass PBox: Error {\n  pub message: String = \"p\"\n}\nfn main {\n  u: Int | PBox = PBox.new()\n  m = Mutex(Int | PBox).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    n = b else e {\n      keep.push(PBox.new())\n      puts(keep.size)\n      return\n    }\n    puts(n)\n  }\n  puts(keep.size)\n}\n", "1\n"))
   xs.push(accepted("guard-paths", pre + "fn main {\n  for s in [\"4\", \"x\", \"\", \"w\", \"5\"] {\n    n = g(s) else e {\n      switch e {\n        case b: Bad { puts(\"bad \${b.message}\") }\n        case w: Worse { puts(w.message) }\n        case nil { puts(\"nil\") }\n      }\n      continue\n    }\n    puts(n + 1)\n  }\n}\n", "5\nbad bad\nnil\nworse\n6\n"))
   xs.push(accepted("guard-shadows", pre + "fn main {\n  e = \"outer\"\n  for s in [\"x\", \"2\"] {\n    n = f(s) else e {\n      puts(e.message)\n      continue\n    }\n    puts(n)\n  }\n  puts(e)\n}\n", "bad\n2\nouter\n"))
   xs.push(accepted("guard-in-lambda", pre + "fn main {\n  twice = { |s: String| \n    n = f(s) else e {\n      return -1\n    }\n    n * 2\n  }\n  puts(twice(\"4\"))\n  puts(twice(\"q\"))\n}\n", "8\n-1\n"))
   xs.push(accepted("guard-declared", pre + "fn h(s: String): Int | Bad {\n  n: Int = f(s) else e {\n    return e\n  }\n  n + 1\n}\nfn main {\n  puts(h(\"2\") ?? 0)\n  puts(h(\"z\") ?? 0)\n}\n", "3\n0\n"))
-  xs.push(accepted("guard-field-target", pre + "class Acc {\n  pub n: Int = 0\n}\nfn main {\n  a = Acc.new\n  for s in [\"3\", \"x\"] {\n    a.n = f(s) else e {\n      puts(\"kept \${a.n}: \${e.message}\")\n      break\n    }\n  }\n  puts(a.n)\n}\n", "kept 3: bad\n3\n"))
+  xs.push(accepted("guard-field-target", pre + "class Acc {\n  pub n: Int = 0\n}\nfn main {\n  a = Acc.new()\n  for s in [\"3\", \"x\"] {\n    a.n = f(s) else e {\n      puts(\"kept \${a.n}: \${e.message}\")\n      break\n    }\n  }\n  puts(a.n)\n}\n", "kept 3: bad\n3\n"))
   xs.push(accepted("guard-discard", pre + "fn main {\n  for s in [\"1\", \"x\"] {\n    _ = f(s) else e {\n      puts(\"rejected \${s}\")\n      continue\n    }\n    puts(\"ok \${s}\")\n  }\n}\n", "ok 1\nrejected x\n"))
   xs.push(accepted("guard-nested-leave", pre + "fn h(s: String): String {\n  n = f(s) else e {\n    if s == \"\" {\n      return \"empty\"\n    } else {\n      return e.message\n    }\n  }\n  \"\${n}\"\n}\nfn main {\n  puts(h(\"\"))\n  puts(h(\"w\"))\n  puts(h(\"3\"))\n}\n", "empty\nbad\n3\n"))
   xs.push(accepted("ifelse-reads", pre + "fn main {\n  for s in [\"4\", \"x\"] {\n    if n = f(s) {\n      puts(n)\n    } else e {\n      puts(\"failed: \${e.message}\")\n    }\n  }\n}\n", "4\nfailed: bad\n"))
@@ -74,19 +74,19 @@ fn cases: Array(RCase) {
   xs.push(refused("ifelse-no-binding", pre + "fn main {\n  x = 1\n  if x > 0 {\n    puts(x)\n  } else e {\n    puts(0)\n  }\n}\n", "else e names the failure of an if-assign (if v = f() { } else e { }); this if binds nothing", "22:3"))
   xs.push(refused("ifelse-chain", pre + "fn main {\n  if a = f(\"1\"), b = f(\"2\") {\n    puts(a + b)\n  } else e {\n    puts(0)\n  }\n}\n", "else e reads the failure of an if-assign's one binding, and this condition has several elements", "21:3"))
   xs.push(refused("ifelse-chain-test", pre + "fn main {\n  if a = f(\"1\"), a > 0 {\n    puts(a)\n  } else e {\n    puts(0)\n  }\n}\n", "this condition has several elements", "21:3"))
-  xs.push(refused("ifelse-nil-only", pre + "fn main {\n  if n = \"3\".to_i {\n    puts(n)\n  } else e {\n    puts(0)\n  }\n}\n", "else e on Int?: its only failure is nil, which carries nothing to read", "21:13"))
+  xs.push(refused("ifelse-nil-only", pre + "fn main {\n  if n = \"3\".to_i() {\n    puts(n)\n  } else e {\n    puts(0)\n  }\n}\n", "else e on Int?: its only failure is nil, which carries nothing to read", "21:13"))
   xs.push(refused("ifelse-no-failure", pre + "fn h(x: Int | String) {\n  if n = x {\n    puts(1)\n  } else e {\n    puts(0)\n  }\n}\nfn main {\n  h(1)\n}\n", "if-assign on Int | String: it has no failure member", "21:10"))
   xs.push(refused("ifelse-type", pre + "fn main {\n  if n = f(\"x\") {\n    puts(n)\n  } else e {\n    x: Int = e\n    puts(x)\n  }\n}\n", "cannot assign Bad to Int", "24:14"))
   xs.push(refused("ifelse-value-type", pre + "fn h(s: String): Int {\n  if n = f(s) {\n    n\n  } else e {\n    e\n  }\n}\nfn main {\n  puts(h(\"1\"))\n}\n", "expected Int, got Bad", "24:5"))
-  xs.push(refused("ifelse-escapes-with", "import std.sync\nclass PBox: Error {\n  pub message: String = \"p\"\n}\nfn main {\n  u: Int | PBox = PBox.new\n  m = Mutex(Int | PBox).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    if n = b {\n      puts(n)\n    } else e {\n      keep.push(e)\n    }\n  }\n  puts(keep.size)\n}\n", "Mutex.with: this argument is the guarded value or a reference reached from it (PBox)", "13:17"))
-  xs.push(accepted("ifelse-plain-with", "import std.sync\nclass PBox: Error {\n  pub message: String = \"p\"\n}\nfn main {\n  u: Int | PBox = PBox.new\n  m = Mutex(Int | PBox).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    if n = b {\n      puts(n)\n    } else e {\n      keep.push(PBox.new)\n    }\n  }\n  puts(keep.size)\n}\n", "1\n"))
-  xs.push(accepted("generic-union-param", pre + "fn first_ok(xs: Array(T | Bad)): T? {\n  for x in xs {\n    if v = x {\n      return v\n    }\n  }\n  nil\n}\nfn main {\n  xs: Array(Int | Bad) = [Bad.new, 3]\n  puts(first_ok(xs) ?? -1)\n  ys: Array(String | Bad) = [\"a\"]\n  puts(first_ok(ys) ?? \"none\")\n}\n", "3\na\n"))
+  xs.push(refused("ifelse-escapes-with", "import std.sync\nclass PBox: Error {\n  pub message: String = \"p\"\n}\nfn main {\n  u: Int | PBox = PBox.new()\n  m = Mutex(Int | PBox).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    if n = b {\n      puts(n)\n    } else e {\n      keep.push(e)\n    }\n  }\n  puts(keep.size)\n}\n", "Mutex.with: this argument is the guarded value or a reference reached from it (PBox)", "13:17"))
+  xs.push(accepted("ifelse-plain-with", "import std.sync\nclass PBox: Error {\n  pub message: String = \"p\"\n}\nfn main {\n  u: Int | PBox = PBox.new()\n  m = Mutex(Int | PBox).new(u)\n  keep: Array(PBox) = []\n  m.with { |b|\n    if n = b {\n      puts(n)\n    } else e {\n      keep.push(PBox.new())\n    }\n  }\n  puts(keep.size)\n}\n", "1\n"))
+  xs.push(accepted("generic-union-param", pre + "fn first_ok(xs: Array(T | Bad)): T? {\n  for x in xs {\n    if v = x {\n      return v\n    }\n  }\n  nil\n}\nfn main {\n  xs: Array(Int | Bad) = [Bad.new(), 3]\n  puts(first_ok(xs) ?? -1)\n  ys: Array(String | Bad) = [\"a\"]\n  puts(first_ok(ys) ?? \"none\")\n}\n", "3\na\n"))
   xs.push(accepted("generic-union-two-params", pre + "fn or_else(r: T | E, d: T): T {\n  if v = r {\n    return v\n  }\n  d\n}\nfn main {\n  puts(or_else(f(\"x\"), 9))\n  puts(or_else(f(\"4\"), 9))\n  puts(or_else(g(\"w\"), 1))\n}\n", "9\n4\n1\n"))
   xs.push(accepted("generic-union-by-result", pre + "fn failure(r: T | E): E? {\n  n = r else e {\n    return e\n  }\n  nil\n}\nfn main {\n  e: Bad? = failure(f(\"x\"))\n  if b = e {\n    puts(b.message)\n  }\n  ok: Bad? = failure(f(\"1\"))\n  if b2 = ok {\n    puts(\"no\")\n  } else {\n    puts(\"none\")\n  }\n}\n", "bad\nnone\n"))
-  xs.push(accepted("generic-union-member", pre + "fn opt(x: T?, d: T): T {\n  x ?? d\n}\nfn wrap(x: T | Bad): Int {\n  if v = x {\n    return 1\n  }\n  0\n}\nfn main {\n  puts(opt(\"3\".to_i, 0))\n  puts(opt(\"q\".to_i, 7))\n  puts(wrap(5))\n  puts(wrap(f(\"z\")))\n}\n", "3\n7\n1\n0\n"))
+  xs.push(accepted("generic-union-member", pre + "fn opt(x: T?, d: T): T {\n  x ?? d\n}\nfn wrap(x: T | Bad): Int {\n  if v = x {\n    return 1\n  }\n  0\n}\nfn main {\n  puts(opt(\"3\".to_i(), 0))\n  puts(opt(\"q\".to_i(), 7))\n  puts(wrap(5))\n  puts(wrap(f(\"z\")))\n}\n", "3\n7\n1\n0\n"))
   xs.push(accepted("generic-concrete-union-param", pre + "fn pick(xs: Array(T), y: Int | String): T {\n  xs[0]\n}\nfn main {\n  puts(pick([5], 1))\n  puts(pick([\"a\"], \"b\"))\n}\n", "5\na\n"))
   xs.push(refused("generic-union-ambiguous", pre + "fn failure(r: T | E): E? {\n  n = r else e {\n    return e\n  }\n  nil\n}\nfn main {\n  if e = failure(f(\"x\")) {\n    puts(e.message)\n  }\n}\n", "cannot infer type argument: the type parameters of E | T split Bad | Int in more than one way; give the result a declared type", "27:10"))
-  xs.push(refused("generic-union-no-rest", pre + "fn first_ok(x: T | Bad): Int {\n  1\n}\nfn main {\n  puts(first_ok(Bad.new))\n}\n", "cannot infer type argument", "24:8"))
+  xs.push(refused("generic-union-no-rest", pre + "fn first_ok(x: T | Bad): Int {\n  1\n}\nfn main {\n  puts(first_ok(Bad.new()))\n}\n", "cannot infer type argument", "24:8"))
   xs
 }
 
@@ -138,5 +138,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

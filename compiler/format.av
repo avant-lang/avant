@@ -704,8 +704,8 @@ pub fn tokens_join(prev: Token, curr: Token): Bool {
     return false
   }
   lex = Lexer.new(Source.new("", a + b))
-  got = lex.tokenize
-  if lex.has_err || got.size != 3 {
+  got = lex.tokenize()
+  if lex.has_err() || got.size != 3 {
     return true
   }
   if got[0].kind != prev.kind || got[0].value != prev.value {
@@ -848,15 +848,15 @@ pub fn reprint(tokens: Array(Token)): String {
   if pending > 0 {
     push_newlines(buf, collapse_newlines(pending))
   }
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn format_source(path: String, text: String): FormatResult {
   src = Source.new(path, text)
   lex = Lexer.new(src)
-  tokens = lex.tokenize_format
+  tokens = lex.tokenize_format()
   if e = lex.err {
-    return FormatResult.new(false, "", e.show)
+    return FormatResult.new(false, "", e.show())
   }
   out = fault_for_test(reprint(tokens))
   if e = self_check(path, text, out) {
@@ -909,9 +909,9 @@ pub fn token_shown(t: Token): String {
 // and the error names the first token that would change.
 pub fn self_check(path: String, before: String, after: String): String? {
   la = Lexer.new(Source.new(path, before))
-  ta = la.tokenize
+  ta = la.tokenize()
   lb = Lexer.new(Source.new(path, after))
-  tb = lb.tokenize
+  tb = lb.tokenize()
   n = ta.size
   if tb.size < n {
     n = tb.size
@@ -920,14 +920,14 @@ pub fn self_check(path: String, before: String, after: String): String? {
     a = ta[i]
     b = tb[i]
     if a.kind != b.kind || a.value != b.value {
-      return "${a.loc.show}: format would change this program: ${token_shown(a)} would become ${token_shown(b)}; the file is left as it is (a formatter bug)"
+      return "${a.loc.show()}: format would change this program: ${token_shown(a)} would become ${token_shown(b)}; the file is left as it is (a formatter bug)"
     }
   }
   if ta.size != tb.size {
     at = ta[n - 1]
-    return "${at.loc.show}: format would change this program: the canonical text has ${tb.size} tokens, the source ${ta.size}; the file is left as it is (a formatter bug)"
+    return "${at.loc.show()}: format would change this program: the canonical text has ${tb.size} tokens, the source ${ta.size}; the file is left as it is (a formatter bug)"
   }
-  if la.has_err != lb.has_err {
+  if la.has_err() != lb.has_err() {
     return "${path}: format would change this program: the canonical text does not lex as the source does; the file is left as it is (a formatter bug)"
   }
   nil

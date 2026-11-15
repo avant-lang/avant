@@ -18,7 +18,7 @@ class ECase {
 }
 
 fn refused(tag: String, src: String, needle: String, pos: String): ECase {
-  f = ECase.new
+  f = ECase.new()
   f.tag = tag
   f.src = src
   f.want = needle
@@ -27,7 +27,7 @@ fn refused(tag: String, src: String, needle: String, pos: String): ECase {
 }
 
 fn accepted(tag: String, src: String, out: String): ECase {
-  f = ECase.new
+  f = ECase.new()
   f.tag = tag
   f.src = src
   f.want = out
@@ -58,7 +58,7 @@ fn adoption_cases: Array(ECase) {
   xs.push(accepted("adopt-left-expr", "fn main {\n  y: Int32 = 5\n  puts((2 - 1) + y)\n  puts(y + (2 - 1))\n  x: Int32 = 7\n  puts((-2147483647 - 1) &- x)\n  u: UInt64 = 3\n  puts((1 << 63) | u)\n  f = 1.5\n  puts((1 + 1) * f)\n}\n", "6\n6\n2147483641\n9223372036854775811\n3.0\n"))
   xs.push(accepted("adopt-declared-expr", "fn main {\n  x: Int32 = (2 - 1) * 3\n  u: UInt64 = ~0\n  xs: Array(UInt64) = [0]\n  xs[0] = ~0 >> 1\n  g: Float64 = 2 * 3\n  puts(x)\n  puts(u)\n  puts(xs[0])\n  puts(g)\n}\n", "3\n18446744073709551615\n9223372036854775807\n6.0\n"))
   xs.push(accepted("adopt-argument-expr", "fn f(n: Int32): Int32 {\n  n + 1\n}\nfn wide(n: UInt64): UInt64 {\n  n\n}\nfn main {\n  puts(f(2 - 1))\n  puts(f(-(3)))\n  puts(wide(~0))\n  puts(wide(18446744073709551615))\n}\n", "2\n-2\n18446744073709551615\n18446744073709551615\n"))
-  xs.push(accepted("adopt-generic", "fn pick(n: Int32, x: T): T {\n  puts(n)\n  x\n}\nclass K {\n  fn put(n: Int32, x: T): T {\n    puts(n)\n    x\n  }\n}\nfn main {\n  puts(pick(3, \"s\"))\n  k = K.new\n  puts(k.put(4, \"t\"))\n  puts(k.put(2 + 3, 1))\n}\n", "3\ns\n4\nt\n5\n1\n"))
+  xs.push(accepted("adopt-generic", "fn pick(n: Int32, x: T): T {\n  puts(n)\n  x\n}\nclass K {\n  fn put(n: Int32, x: T): T {\n    puts(n)\n    x\n  }\n}\nfn main {\n  puts(pick(3, \"s\"))\n  k = K.new()\n  puts(k.put(4, \"t\"))\n  puts(k.put(2 + 3, 1))\n}\n", "3\ns\n4\nt\n5\n1\n"))
   xs.push(accepted("adopt-operator-method", "struct V {\n  n: Int32\n  fn +(k: Int32): V {\n    V { n: n + k }\n  }\n  fn *(k: UInt64): UInt64 {\n    k / 2\n  }\n}\nfn main {\n  v = V { n: 1 }\n  w = v + 2\n  puts(w.n)\n  puts(v * 18446744073709551615)\n}\n", "3\n9223372036854775807\n"))
   xs.push(accepted("adopt-type-function", "struct P {\n  n: Int32\n  fn self.make(n: Int32): P {\n    P { n: n }\n  }\n}\nfn main {\n  p = P.make(7)\n  q = P.make(1 + 1)\n  puts(p.n + q.n)\n}\n", "9\n"))
   xs.push(refused("adopt-still-fits", "fn main {\n  x: Int32 = 0\n  puts((4294967296 - 1) + x)\n}\n", "integer literal does not fit in Int32", "3:9"))
@@ -71,7 +71,7 @@ fn adoption_cases: Array(ECase) {
 // true and 0 for false, so a count needs no branch.
 fn bool_cases: Array(ECase) {
   xs: Array(ECase) = []
-  xs.push(accepted("bool-count", "fn main {\n  alive = [true, false, true]\n  n = 0\n  m: Int32 = 0\n  for a in alive {\n    n += a.to_i\n    m += a.to_i32()\n  }\n  puts(n)\n  puts(m)\n  puts(true.to_u64)\n  puts(false.to_u32)\n  puts(\"\${(1 > 0).to_i}\")\n  u: UInt32 = (2 > 3).to_u32 + 7\n  puts(u)\n}\n", "2\n2\n1\n0\n1\n7\n"))
+  xs.push(accepted("bool-count", "fn main {\n  alive = [true, false, true]\n  n = 0\n  m: Int32 = 0\n  for a in alive {\n    n += a.to_i()\n    m += a.to_i32()\n  }\n  puts(n)\n  puts(m)\n  puts(true.to_u64())\n  puts(false.to_u32())\n  puts(\"\${(1 > 0).to_i()}\")\n  u: UInt32 = (2 > 3).to_u32() + 7\n  puts(u)\n}\n", "2\n2\n1\n0\n1\n7\n"))
   xs.push(refused("bool-no-float", "fn main {\n  b = true\n  puts(b.to_f)\n}\n", "cannot read field to_f on Bool", "3:9"))
   xs.push(refused("bool-no-wrap", "fn main {\n  b = true\n  puts(b.wrap_i())\n}\n", "cannot call wrap_i on Bool", "3:9"))
   xs
@@ -80,7 +80,7 @@ fn bool_cases: Array(ECase) {
 // `b.to_i` is the Bool zero-extended: no branch in the function.
 fn check_bool_ll(c: Checks, compiler: String, dir: String) {
   src = "${dir}/ex-bool-ll.av"
-  _ = file_write(src, "fn count(a: Bool): Int {\n  a.to_i\n}\nfn main {\n  puts(count(argv().size > 0))\n}\n")
+  _ = file_write(src, "fn count(a: Bool): Int {\n  a.to_i()\n}\nfn main {\n  puts(count(argv().size > 0))\n}\n")
   c.eq_int(emit_ll(compiler, src, "${dir}/ex-bool-ll.ll", "${dir}/ex-bool-ll.log"), 0, "bool ll: emits")
   ll = log_text("${dir}/ex-bool-ll.ll")
   body = ""
@@ -98,7 +98,7 @@ fn check_bool_ll(c: Checks, compiler: String, dir: String) {
 fn lambda_if_cases: Array(ECase) {
   ap = "fn apply(x: Int, f: fn(Int): U): U {\n  f(x)\n}\nfn apply_s(s: String, f: fn(String): U): U {\n  f(s)\n}\n"
   xs: Array(ECase) = []
-  xs.push(accepted("lambda-if-value", "${ap}fn main {\n  puts(apply(2) { |x| if x > 1 { x * 10 } else { 0 } })\n  puts(apply_s(\"7\") { |s| if n = s.to_i { n } else { -1 } })\n  puts(apply_s(\"q\") { |s| if n = s.to_i { n } else { -1 } })\n  puts(apply(2) { |x| if x > 2 { \"c\" } else if x > 1 { \"b\" } else { \"a\" } })\n}\n", "20\n7\n-1\nb\n"))
+  xs.push(accepted("lambda-if-value", "${ap}fn main {\n  puts(apply(2) { |x| if x > 1 { x * 10 } else { 0 } })\n  puts(apply_s(\"7\") { |s| if n = s.to_i() { n } else { -1 } })\n  puts(apply_s(\"q\") { |s| if n = s.to_i() { n } else { -1 } })\n  puts(apply(2) { |x| if x > 2 { \"c\" } else if x > 1 { \"b\" } else { \"a\" } })\n}\n", "20\n7\n-1\nb\n"))
   xs.push(accepted("lambda-if-statement", "${ap}fn main {\n  apply(1) { |x| if x > 0 { puts(\"pos\") } else { puts(\"neg\") } }\n  apply(2) { |x|\n    if x > 0 {\n      puts(x)\n    }\n  }\n}\n", "pos\n2\n"))
   xs.push(accepted("lambda-if-leaves", "${ap}fn main {\n  for v in [5, 2] {\n    puts(apply(v) { |x|\n      if x > 3 {\n        return 9\n      } else {\n        x\n      }\n    })\n  }\n}\n", "9\n2\n"))
   xs.push(refused("lambda-if-mixed", "${ap}fn main {\n  puts(apply(1) { |x| if x > 0 { x } else { puts(x) } })\n}\n", "an if used as a value needs a value at the end of each branch", "8:23"))
@@ -118,13 +118,13 @@ fn effect_cases: Array(ECase) {
   xs.push(refused("effect-main-bool", "fn main {\n  x = argv().size\n  x > 0\n}\n", "this line computes a value and drops it; use it, or remove the line", "3:3"))
   xs.push(refused("effect-literal", "fn main {\n  \"done\"\n  puts(1)\n}\n", "this line computes a value and drops it", "2:3"))
   xs.push(refused("effect-tail", "fn two {\n  2\n}\nfn main {\n  two()\n}\n", "this line computes an Int and drops it: two has no result type; to return it, declare fn two: Int", "2:3"))
-  xs.push(refused("effect-method-tail", "class C {\n  pub n: Int = 1\n  fn get {\n    n * 2\n  }\n}\nfn main {\n  C.new.get()\n}\n", "this line computes an Int and drops it: get has no result type; to return it, declare fn get: Int", "4:5"))
+  xs.push(refused("effect-method-tail", "class C {\n  pub n: Int = 1\n  fn get {\n    n * 2\n  }\n}\nfn main {\n  C.new().get()\n}\n", "this line computes an Int and drops it: get has no result type; to return it, declare fn get: Int", "4:5"))
   xs.push(refused("effect-field", "struct P {\n  x: Int\n}\nfn main {\n  p = P { x: 1 }\n  p.x\n  puts(p.x)\n}\n", "this line computes a value and drops it", "6:3"))
   xs.push(refused("effect-branch", "fn main {\n  x = argv().size\n  if x > 0 {\n    x == 1\n  }\n}\n", "this line computes a value and drops it", "4:5"))
   xs.push(refused("effect-fn-name", "fn cleanup {\n  puts(1)\n}\nfn main {\n  cleanup\n}\n", "cleanup alone is the function as a value; to call it, write cleanup()", "5:3"))
   xs.push(refused("effect-void-lambda", "fn main {\n  f: fn(Int): Void = { |n| n + 1 }\n  f(1)\n}\n", "this line computes a value and drops it", "2:28"))
   xs.push(refused("effect-bind-void", "fn two {\n  puts(2)\n}\nfn main {\n  x = two()\n  puts(x)\n}\n", "cannot bind a Void value: two has no result type", "5:5"))
-  xs.push(accepted("effect-kept", "fn three: Int {\n  3\n}\nfn main {\n  x = 1\n  _ = x + 1\n  xs = [1, 2]\n  xs.pop\n  x.abs\n  puts(three())\n  puts(xs.size)\n}\n", "3\n1\n"))
+  xs.push(accepted("effect-kept", "fn three: Int {\n  3\n}\nfn main {\n  x = 1\n  _ = x + 1\n  xs = [1, 2]\n  xs.pop()\n  x.abs()\n  puts(three())\n  puts(xs.size)\n}\n", "3\n1\n"))
   xs
 }
 
@@ -207,5 +207,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

@@ -21,7 +21,7 @@ import mir.lower
 pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
   i = 0
   while i < body.size {
-    if lw.failed || !lw.open_now {
+    if lw.failed() || !lw.open_now() {
       return
     }
     st = body[i]
@@ -31,7 +31,7 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
       return
     }
     if i == body.size - 1 && st.kind == st_expr() && lw.lw_ret != mt_void() {
-      if e = st.expr, et = e.ty, et.is_void && e.kind == ex_switch() {
+      if e = st.expr, et = e.ty, et.is_void() && e.kind == ex_switch() {
         // A last switch whose every arm leaves (Stage 29 W5b1, O715):
         // a statement; nothing follows it.
         lw.lower_stmt(st)
@@ -45,12 +45,12 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
       if e = st.expr {
         lw.cov_stmt(st)
         v = lw.lower_ret_value(e)
-        if lw.failed {
+        if lw.failed() {
           return
         }
         lw.at(st.loc)
         lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(v))
-        lw.ret_fn
+        lw.ret_fn()
         return
       }
     }
@@ -62,7 +62,7 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
 pub fn (lw: MirLower) lower_stmts(body: Array(Stmt)) {
   i = 0
   while i < body.size {
-    if lw.failed || !lw.open_now {
+    if lw.failed() || !lw.open_now() {
       return
     }
     lw.lower_stmt(body[i])
@@ -104,7 +104,7 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
       return
     }
     lw.at(st.loc)
-    lw.unpin_loop
+    lw.unpin_loop()
     if k == st_break() {
       lw.lw_b.goto(lw.lw_exits[lw.lw_exits.size - 1])
     } else {
@@ -154,7 +154,7 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
     }
     if tt = t.ty {
       ty = lw.ty_at(tt, t.loc, "a local")
-      if lw.failed {
+      if lw.failed() {
         return
       }
       if lw.name_in_box(t.ident) {
@@ -164,7 +164,7 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
       if v = st.value {
         if st.op == tk_eq() {
           val = lw.lower_coerced(v, ty, tt)
-          if lw.failed {
+          if lw.failed() {
             return
           }
           k = lw.var_get(t.ident, ty)
@@ -180,7 +180,7 @@ pub fn (lw: MirLower) lower_assign(st: Stmt) {
         }
         cur = lw.snap(lw.lw_b.copy_local(k2), v)
         rhs = lw.lower_expr(v)
-        if lw.failed {
+        if lw.failed() {
           return
         }
         r = lw.compound_arith(st, ty, cur, rhs, v)
@@ -223,7 +223,7 @@ pub fn (lw: MirLower) lower_ret_value(e: Expr): MOperand {
   if rt = lw.lw_ret_ty, t = e.ty {
     v = lw.coerce(v, t, rt, e.loc)
   }
-  if lw.lw_main && lw.lw_ret == mt_int() && !lw.failed {
+  if lw.lw_main && lw.lw_ret == mt_int() && !lw.failed() {
     return lw.exit_status(v, e.loc)
   }
   v
@@ -248,7 +248,7 @@ pub fn (lw: MirLower) exit_status(v: MOperand, loc: Location): MOperand {
 pub fn (lw: MirLower) lower_return(st: Stmt) {
   if e = st.expr {
     v = lw.lower_ret_value(e)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     lw.at(st.loc)
@@ -257,16 +257,16 @@ pub fn (lw: MirLower) lower_return(st: Stmt) {
     } else if lw.lw_main {
       lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
     }
-    lw.unpin_all
-    lw.ret_fn
+    lw.unpin_all()
+    lw.ret_fn()
     return
   }
   lw.at(st.loc)
   if lw.lw_main {
     lw.lw_b.assign(lw.lw_b.pl(0), lw.lw_b.rv_use(lw.lw_b.c_i32(0)))
   }
-  lw.unpin_all
-  lw.ret_fn
+  lw.unpin_all()
+  lw.ret_fn()
 }
 
 pub fn (lw: MirLower) lower_if(st: Stmt) {
@@ -280,14 +280,14 @@ pub fn (lw: MirLower) lower_if(st: Stmt) {
   }
   if c = st.cond {
     cv = lw.lower_expr(c)
-    if lw.failed {
+    if lw.failed() {
       return
     }
-    bt = lw.lw_b.block
-    bf = lw.lw_b.block
+    bt = lw.lw_b.block()
+    bf = lw.lw_b.block()
     join = bf
     if st.else_body.size > 0 || lw.lw_cov.on {
-      join = lw.lw_b.block
+      join = lw.lw_b.block()
     }
     lw.at(st.loc)
     lw.lw_b.branch(cv, bt, bf)
@@ -306,7 +306,7 @@ pub fn (lw: MirLower) lower_if(st: Stmt) {
 }
 
 pub fn (lw: MirLower) goto_if_open(bb: Int, loc: Location) {
-  if lw.failed || !lw.open_now {
+  if lw.failed() || !lw.open_now() {
     return
   }
   lw.at(loc)
@@ -315,18 +315,18 @@ pub fn (lw: MirLower) goto_if_open(bb: Int, loc: Location) {
 
 pub fn (lw: MirLower) lower_while(st: Stmt) {
   lw.lower_stmts(st.pre)
-  if lw.failed || !lw.open_now {
+  if lw.failed() || !lw.open_now() {
     return
   }
-  head = lw.lw_b.block
+  head = lw.lw_b.block()
   lw.at(st.loc)
   lw.lw_b.goto(head)
   lw.lw_b.at(head)
-  body = lw.lw_b.block
-  exit = lw.lw_b.block
+  body = lw.lw_b.block()
+  exit = lw.lw_b.block()
   if c = st.cond {
     cv = lw.lower_expr(c)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     lw.at(st.loc)
@@ -340,8 +340,8 @@ pub fn (lw: MirLower) lower_while(st: Stmt) {
   lw.cov_branch(st.loc)
   lw.lower_stmts(st.body)
   lw.goto_if_open(head, st.loc)
-  lw.lw_heads.pop
-  lw.lw_exits.pop
+  lw.lw_heads.pop()
+  lw.lw_exits.pop()
   lw.lw_b.at(exit)
 }
 
@@ -354,7 +354,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
   if t = e.ty {
     rty = lw.ty_at(t, e.loc, "a switch value")
   }
-  if lw.failed {
+  if lw.failed() {
     return lw.lw_b.c_i32(0)
   }
   if e.op == tk_if() && e.else_body.size == 1 && rty != mt_void() {
@@ -366,13 +366,13 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
   }
   if c = e.cond {
     cv = lw.lower_expr(c)
-    if lw.failed {
+    if lw.failed() {
       return lw.lw_b.c_i32(0)
     }
-    if ct0 = c.ty, ct0.is_string {
+    if ct0 = c.ty, ct0.is_string() {
       return lw.lower_str_switch(e, cv, rty)
     }
-    if ct1 = c.ty, ct1.is_union {
+    if ct1 = c.ty, ct1.is_union() {
       return lw.lower_union_switch(e, cv, ct1, rty)
     }
     cty = mt_i32()
@@ -382,7 +382,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     enum_ty: Ty? = nil
     if ct = c.ty {
       cty = mir_scalar_ty(ct)
-      if ct.is_enum && !e.has_else {
+      if ct.is_enum() && !e.has_else {
         enum_ty = ct
       }
     }
@@ -399,7 +399,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     dest = -1
     if rty != mt_void() {
       dest = lw.lw_b.temp(rty)
-      lw.lw_b.assign(lw.lw_b.pl(dest), lw.lw_b.rv_zero)
+      lw.lw_b.assign(lw.lw_b.pl(dest), lw.lw_b.rv_zero())
     }
     values: Array(Int) = []
     targets: Array(Int) = []
@@ -415,7 +415,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     // polls (mir/gc.av).
     pre = -1
     if et0 = enum_ty, !lw.lw_cov.on && e.cases.size > 1 && enum_labels_dense(e) {
-      pre = lw.lw_b.block
+      pre = lw.lw_b.block()
     }
     // A range label (Stage 29 W5a3, O493) is two compares before the
     // switch, in a block numbered before the arms (no back edge, no
@@ -429,7 +429,7 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     for wc in e.cases {
       for wl in wc.labels {
         if wl.kind == lb_range() {
-          wide_bl.push(lw.lw_b.block)
+          wide_bl.push(lw.lw_b.block())
         }
       }
     }
@@ -440,13 +440,13 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     if lw.lw_cov.on {
       for pc in e.cases {
         for pl in pc.labels {
-          pre_en.push(lw.lw_b.block)
+          pre_en.push(lw.lw_b.block())
         }
       }
     }
     next_en = 0
     for i in 0..e.cases.size {
-      arm = lw.lw_b.block
+      arm = lw.lw_b.block()
       arms.push(arm)
       j = 0
       while j < e.cases[i].labels.size {
@@ -490,13 +490,13 @@ pub fn (lw: MirLower) lower_switch(e: Expr): MOperand {
     }
     other = -1
     if e.has_else || lw.lw_cov.on {
-      other = lw.lw_b.block
+      other = lw.lw_b.block()
     }
     trap = -1
     if et = enum_ty {
-      trap = lw.lw_b.block
+      trap = lw.lw_b.block()
     }
-    join = lw.lw_b.block
+    join = lw.lw_b.block()
     if other < 0 {
       other = join
     }
@@ -661,7 +661,7 @@ pub fn (lw: MirLower) lower_arm(body: Array(Stmt), dest: Int, sw: Expr) {
   }
   i = 0
   while i < body.size {
-    if lw.failed || !lw.open_now {
+    if lw.failed() || !lw.open_now() {
       return
     }
     st = body[i]
@@ -671,7 +671,7 @@ pub fn (lw: MirLower) lower_arm(body: Array(Stmt), dest: Int, sw: Expr) {
         if t = e.ty, want = sw.ty {
           v = lw.coerce(v, t, want, e.loc)
         }
-        if lw.failed {
+        if lw.failed() {
           return
         }
         lw.at(st.loc)
@@ -691,9 +691,9 @@ pub fn (lw: MirLower) enum_trap(v: MOperand, t: Ty, loc: Location) {
   lw.at(loc)
   args: Array(MOperand) = []
   args.push(lw.tmp(mt_int(), b.rv_cast(v, mt_int())))
-  args.push(b.str_const(t.show))
+  args.push(b.str_const(t.show()))
   b.call(-1, "avant_trap_enum", args)
-  b.unreachable
+  b.unreachable()
 }
 
 // A switch over a String (Stage 29 W5a1, D293, O392; the lowering chosen
@@ -709,7 +709,7 @@ pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperan
   dest = -1
   if rty != mt_void() {
     dest = b.temp(rty)
-    b.assign(b.pl(dest), b.rv_zero)
+    b.assign(b.pl(dest), b.rv_zero())
   }
   // The dispatch's blocks are numbered before the arms (Stage 29 W5a3,
   // O713): an edge into a block numbered lower than its source is a back
@@ -729,7 +729,7 @@ pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperan
       }
       if !seen {
         sizes.push(label.text.size)
-        size_blocks.push(b.block)
+        size_blocks.push(b.block())
       }
     }
   }
@@ -751,12 +751,12 @@ pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperan
         lab_loc.push(label3.loc)
         nx = -1
         if sizes[k0] != 0 {
-          nx = b.block
+          nx = b.block()
         }
         lab_next.push(nx)
         en = -1
         if lw.lw_cov.on {
-          en = b.block
+          en = b.block()
         }
         lab_entry.push(en)
       }
@@ -764,13 +764,13 @@ pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperan
   }
   arms: Array(Int) = []
   for i in 0..e.cases.size {
-    arms.push(b.block)
+    arms.push(b.block())
   }
   other = -1
   if e.has_else || lw.lw_cov.on {
-    other = b.block
+    other = b.block()
   }
-  join = b.block
+  join = b.block()
   if other < 0 {
     other = join
   }

@@ -35,7 +35,7 @@ fn tm_union_offset: String {
 }
 
 fn tm_barriers: String {
-  tm_common() + "struct Rec {\n  n: Int\n  name: String\n}\n\nclass Holder {\n  name: String\n  r: Rec\n  fn initialize {\n    self.name = \"a\"\n    self.r = Rec { n: 0, name: \"a\" }\n  }\n  fn set(i: Int) {\n    self.name = \"name\${i}\"\n  }\n}\n\nclass Pair {\n  set: fn(Int): Int\n  get: fn(): String\n  fn initialize(set: fn(Int): Int, get: fn(): String) {\n    self.set = set\n    self.get = get\n  }\n}\n\nfn make_pair: Pair {\n  s = \"start\"\n  setter: fn(Int): Int = { |k|\n    s = \"cap\${k}\"\n    0\n  }\n  getter: fn(): String = { || s }\n  Pair.new(setter, getter)\n}\n\nfn main: Int {\n  hs: Array(Holder) = []\n  i = 0\n  while i < 2000 {\n    hs.push(Holder.new)\n    i = i + 1\n  }\n  churn(400000)\n  i = 0\n  while i < 2000 {\n    h = hs[i]\n    h.set(i)\n    h.r.name = \"r\${i}\"\n    i = i + 1\n  }\n  churn(400000)\n  wrong = 0\n  i = 0\n  while i < 2000 {\n    if hs[i].name != \"name\${i}\" {\n      wrong = wrong + 1\n    }\n    if hs[i].r.name != \"r\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  p = make_pair()\n  churn(400000)\n  wrong = 0\n  i = 0\n  while i < 60 {\n    (p.set)(i)\n    churn(60000)\n    if (p.get)() != \"cap\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n"
+  tm_common() + "struct Rec {\n  n: Int\n  name: String\n}\n\nclass Holder {\n  name: String\n  r: Rec\n  fn initialize {\n    self.name = \"a\"\n    self.r = Rec { n: 0, name: \"a\" }\n  }\n  fn set(i: Int) {\n    self.name = \"name\${i}\"\n  }\n}\n\nclass Pair {\n  set: fn(Int): Int\n  get: fn(): String\n  fn initialize(set: fn(Int): Int, get: fn(): String) {\n    self.set = set\n    self.get = get\n  }\n}\n\nfn make_pair: Pair {\n  s = \"start\"\n  setter: fn(Int): Int = { |k|\n    s = \"cap\${k}\"\n    0\n  }\n  getter: fn(): String = { || s }\n  Pair.new(setter, getter)\n}\n\nfn main: Int {\n  hs: Array(Holder) = []\n  i = 0\n  while i < 2000 {\n    hs.push(Holder.new())\n    i = i + 1\n  }\n  churn(400000)\n  i = 0\n  while i < 2000 {\n    h = hs[i]\n    h.set(i)\n    h.r.name = \"r\${i}\"\n    i = i + 1\n  }\n  churn(400000)\n  wrong = 0\n  i = 0\n  while i < 2000 {\n    if hs[i].name != \"name\${i}\" {\n      wrong = wrong + 1\n    }\n    if hs[i].r.name != \"r\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  p = make_pair()\n  churn(400000)\n  wrong = 0\n  i = 0\n  while i < 60 {\n    (p.set)(i)\n    churn(60000)\n    if (p.get)() != \"cap\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n"
 }
 
 fn tm_wide_class: String {
@@ -46,7 +46,7 @@ fn tm_wide_class: String {
     b.push_str("  f${k}: Int\n")
   }
   b.push_str("  name: String\n  fn initialize(i: Int) {\n    self.name = \"w\${i}\"\n  }\n}\n\nfn main: Int {\n  ws: Array(Wide) = []\n  i = 0\n  while i < 500 {\n    ws.push(Wide.new(i))\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < ws.size {\n    if ws[i].name != \"w\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n")
-  b.to_s
+  b.to_s()
 }
 
 // Junk is id 1 and C1 .. C398 are ids 2 .. 399, so Named is class id
@@ -62,7 +62,7 @@ fn tm_many_classes: String {
     b.push_str("class C${k} {\n  v: Int\n}\n\n")
   }
   b.push_str("fn main: Int {\n  n = 7\n  f: fn(): Int = { || n }\n  ns: Array(Named) = []\n  i = 0\n  while i < 2000 {\n    ns.push(Named.new(i))\n    i = i + 1\n  }\n  churn(200000)\n  wrong = 0\n  i = 0\n  while i < ns.size {\n    if ns[i].name != \"x\${i}\" {\n      wrong = wrong + 1\n    }\n    i = i + 1\n  }\n  puts(wrong + f() * 0)\n  0\n}\n")
-  b.to_s
+  b.to_s()
 }
 
 // O578 (the Valk stage, VALK-T): the collector reads a small record's
@@ -120,7 +120,7 @@ fn tm_ref_lists: String {
     b.push_str("    wrong = wrong + x${n}[i].wrong(i)\n")
   }
   b.push_str("    i = i + 1\n  }\n  puts(wrong)\n  0\n}\n")
-  b.to_s
+  b.to_s()
 }
 
 fn tm_run_env(bin: String, name: String, value: String, log: String): Int {
@@ -215,5 +215,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_gc_typemaps(c)
-  c.finish
+  c.finish()
 }

@@ -15,7 +15,7 @@ import checker
 pub fn (checker_self: Checker) note_modules {
   checker_self.root_module = checker_self.program.root_module
   checker_self.current_module = checker_self.root_module
-  km = Hash(String, Int).new
+  km = Hash(String, Int).new()
   for info in checker_self.program.mods {
     km[info.name] = 1
     for imp in info.imports {
@@ -23,13 +23,13 @@ pub fn (checker_self: Checker) note_modules {
     }
   }
   checker_self.known_mods = km
-  tm = Hash(String, String).new
-  tv = Hash(String, Int).new
+  tm = Hash(String, String).new()
+  tv = Hash(String, Int).new()
   checker_self.type_mod = tm
   checker_self.type_vis = tv
-  tlist = Hash(String, String).new
+  tlist = Hash(String, String).new()
   checker_self.type_list = tlist
-  tmulti = Hash(String, Int).new
+  tmulti = Hash(String, Int).new()
   checker_self.type_multi = tmulti
   for sdef in checker_self.program.structs {
     checker_self.remember_type(sdef.name, sdef.mod_name, sdef.vis)
@@ -67,7 +67,7 @@ pub fn (checker_self: Checker) field_hidden(owner: Ty, name: String): Bool {
 }
 
 pub fn (checker_self: Checker) field_private_text(owner: Ty, name: String): String {
-  "field ${name} of ${owner.show} is private to module ${owner.mod_name}; mark it pub"
+  "field ${name} of ${owner.show()} is private to module ${owner.mod_name}; mark it pub"
 }
 
 pub fn (checker_self: Checker) check_field_visible(owner: Ty, name: String, loc: Location): Bool {
@@ -283,7 +283,7 @@ pub fn (checker_self: Checker) fail_ambiguous_call(loc: Location, name: String, 
   if mods.size > 2 {
     both = "all"
   }
-  checker_self.fail(loc, "${plain}: ${defs.to_s} ${both} match; write ${calls.to_s}")
+  checker_self.fail(loc, "${plain}: ${defs.to_s()} ${both} match; write ${calls.to_s()}")
 }
 
 // "a(x: Int) and a(s: String)", "f(), g() and h()": the signatures of
@@ -300,7 +300,7 @@ pub fn (checker_self: Checker) sigs_text(shown: String, cands: Array(FuncSig)): 
     }
     b.push_str(checker_self.sig_text(shown, cands[k]))
   }
-  b.to_s
+  b.to_s()
 }
 
 pub fn (checker_self: Checker) both_word(n: Int): String {
@@ -339,7 +339,7 @@ pub fn (checker_self: Checker) fail_ambiguous_method(loc: Location, shown: Strin
       }
       defs.push_str(mods[k])
     }
-    checker_self.fail(loc, "ambiguous call to ${shown}: the methods of modules ${defs.to_s} ${checker_self.both_word(mods.size)} match, and a method call cannot name its module; call it from a module that imports only one of them")
+    checker_self.fail(loc, "ambiguous call to ${shown}: the methods of modules ${defs.to_s()} ${checker_self.both_word(mods.size)} match, and a method call cannot name its module; call it from a module that imports only one of them")
     return
   }
   checker_self.fail(loc, "ambiguous call to ${shown}: ${checker_self.sigs_text(shown, cands)} ${checker_self.both_word(cands.size)} match")
@@ -363,7 +363,7 @@ pub fn (checker_self: Checker) fail_ambiguous_value(loc: Location, name: String,
   }
   if mods.size < 2 {
     first = cands[0]
-    checker_self.fail(loc, "ambiguous function value ${name}: ${checker_self.sigs_text(name, cands)} ${checker_self.both_word(cands.size)} match; give the value its fn type to pick one (f: ${checker_self.fn_sig_ty(first).show} = ${name})")
+    checker_self.fail(loc, "ambiguous function value ${name}: ${checker_self.sigs_text(name, cands)} ${checker_self.both_word(cands.size)} match; give the value its fn type to pick one (f: ${checker_self.fn_sig_ty(first).show()} = ${name})")
     return
   }
   defs = buf_new()
@@ -388,7 +388,7 @@ pub fn (checker_self: Checker) fail_ambiguous_value(loc: Location, name: String,
     }
     picks.push_str("${mods[k2]}.${name}")
   }
-  checker_self.fail(loc, "ambiguous function value ${name}: ${defs.to_s} ${checker_self.both_word(mods.size)} match; write ${picks.to_s}")
+  checker_self.fail(loc, "ambiguous function value ${name}: ${defs.to_s()} ${checker_self.both_word(mods.size)} match; write ${picks.to_s()}")
 }
 
 pub fn (checker_self: Checker) method_is_visible(fnn: Function, from_mod: String): Bool {
@@ -445,7 +445,7 @@ pub fn (checker_self: Checker) clash_message(name: String, from_mod: String): St
     kinds.push("a lib")
     mods.push(owner)
   }
-  fn_mods = Hash(String, Int).new
+  fn_mods = Hash(String, Int).new()
   for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
     if sig.name == name && checker_self.fn_is_visible(sig.node, from_mod) {
@@ -487,9 +487,9 @@ pub fn (checker_self: Checker) clash_message(name: String, from_mod: String): St
     if mods.size > 2 {
       both = ""
     }
-    return "${name} is a type of ${both}${what.to_s}: write ${spell.to_s}"
+    return "${name} is a type of ${both}${what.to_s()}: write ${spell.to_s()}"
   }
-  "${name} is ${what.to_s}: write ${spell.to_s}"
+  "${name} is ${what.to_s()}: write ${spell.to_s()}"
 }
 
 pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String): Bool {
@@ -509,7 +509,7 @@ pub fn (checker_self: Checker) clash_unqualified(name: String, from_mod: String)
     }
     origins.push("lib:${owner}")
   }
-  fn_mods = Hash(String, Int).new
+  fn_mods = Hash(String, Int).new()
   for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
     if sig.name == name && checker_self.fn_is_visible(sig.node, from_mod) {
@@ -688,7 +688,7 @@ pub fn (checker_self: Checker) resolve_in_module_core(tn: TypeName): Ty {
 // declare was `unknown type`, though the same name as a result type
 // resolved; O165's family.)
 pub fn (checker_self: Checker) resolve_value_in_module(tn: TypeName): Ty {
-  mark = checker_self.err_count
+  mark = checker_self.err_count()
   ty = checker_self.resolve_in_module(tn)
   if checker_self.new_err_since(mark) {
     return ty
@@ -700,7 +700,7 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
   if !fnn.vis {
     return
   }
-  if ty.is_agg {
+  if ty.is_agg() {
     owner = fnn.mod_name
     if ty.mod_name.size > 0 {
       owner = ty.mod_name
@@ -730,18 +730,18 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
         }
       }
       if vis != 1 {
-        checker_self.fail(loc, "pub signature cannot use private type ${ty.show}")
+        checker_self.fail(loc, "pub signature cannot use private type ${ty.show()}")
       }
     }
     return
   }
-  if ty.is_array {
+  if ty.is_array() {
     if elem = ty.inner {
       checker_self.ensure_pub_sig_ty(elem, loc, fnn)
     }
     return
   }
-  if ty.is_hash {
+  if ty.is_hash() {
     if hk = ty.key {
       checker_self.ensure_pub_sig_ty(hk, loc, fnn)
     }
@@ -750,13 +750,13 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
     }
     return
   }
-  if ty.is_ptr {
+  if ty.is_ptr() {
     if inner = ty.inner {
       checker_self.ensure_pub_sig_ty(inner, loc, fnn)
     }
     return
   }
-  if ty.is_clayout {
+  if ty.is_clayout() {
     owner = fnn.mod_name
     if ty.mod_name.size > 0 {
       owner = ty.mod_name
@@ -780,19 +780,19 @@ pub fn (checker_self: Checker) ensure_pub_sig_ty(ty: Ty, loc: Location, fnn: Fun
     }
     return
   }
-  if ty.is_join {
+  if ty.is_join() {
     if jin = ty.inner {
       checker_self.ensure_pub_sig_ty(jin, loc, fnn)
     }
     return
   }
-  if ty.is_union {
+  if ty.is_union() {
     for mem in ty.members {
       checker_self.ensure_pub_sig_ty(mem, loc, fnn)
     }
     return
   }
-  if ty.is_fn {
+  if ty.is_fn() {
     for mem in ty.members {
       checker_self.ensure_pub_sig_ty(mem, loc, fnn)
     }
@@ -817,7 +817,7 @@ pub fn (checker_self: Checker) type_from_recv(recv: Expr, loc: Location): Ty? {
   if recv.kind == ex_field() {
     if obj = recv.object {
       object = checker_self.check_expr(obj)
-      if !object.is_module {
+      if !object.is_module() {
         checker_self.fail(loc, "new is a type constructor")
         return nil
       }
@@ -865,7 +865,7 @@ pub fn (checker_self: Checker) dispatch_qualified_call(expr: Expr, mod: String):
       got = checker_self.fit_call_arg(expr.args[i], got, sig.params[i])
       if !ty_assignable(got, sig.params[i]) {
         n = i + 1
-        checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show}, expected ${sig.params[i].show}")
+        checker_self.fail(expr.args[i].loc, "argument ${n} of ${expr.callee} is ${got.show()}, expected ${sig.params[i].show()}")
       }
       i += 1
     }

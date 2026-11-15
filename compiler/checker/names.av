@@ -8,7 +8,7 @@ import ast
 import resolve
 
 pub fn reserved_c_names: Hash(String, Int) {
-  h = Hash(String, Int).new
+  h = Hash(String, Int).new()
   names = [
   "main",
   "avant_alloc",
@@ -205,7 +205,7 @@ pub fn builtin_owner_name(name: String): Bool {
 // The builtin value types an external method may extend, besides the
 // program's own types and C pointers.
 pub fn builtin_receiver_ok(ty: Ty): Bool {
-  ty.is_bytes || ty.is_string || ty.is_buf || ty.is_integer || ty.is_float || ty.is_bool
+  ty.is_bytes() || ty.is_string() || ty.is_buf() || ty.is_integer() || ty.is_float() || ty.is_bool()
 }
 
 pub fn is_op_fn_name(name: String): Bool {
@@ -262,8 +262,8 @@ pub fn binary_op_method_name(op: Int): String {
 }
 
 pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
-  if ty.is_union {
-    if ty.is_nilable {
+  if ty.is_union() {
+    if ty.is_nilable() {
       inner = ty_without_nil(ty)
       tn = ty_to_type_name(inner, loc)
       if !tn.nilable {
@@ -348,7 +348,7 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
     for m in ty.members {
       tn.args.push(ty_to_type_name(m, loc))
     }
-    if r = ty.inner, !r.is_void {
+    if r = ty.inner, !r.is_void() {
       tn.ret = ty_to_type_name(r, loc)
     }
     return tn
@@ -382,19 +382,19 @@ pub fn iface_key_of(name: String, args: Array(Ty)): String {
     buf.push_str("__")
     buf.push_str(mangle_ty(arg))
   }
-  buf.to_s
+  buf.to_s()
 }
 
 pub fn impl_type_key(ty: Ty): String {
-  if ty.is_ptr {
+  if ty.is_ptr() {
     return mangle_ty(ty)
   }
   ty.name
 }
 
 pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
-  if a.is_var {
-    if b.is_var {
+  if a.is_var() {
+    if b.is_var() {
       ia = ap.index_of(a.name) ?? -1
       ib = bp.index_of(b.name) ?? -1
       if ia < 0 {
@@ -404,13 +404,13 @@ pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
     }
     return false
   }
-  if b.is_var {
+  if b.is_var() {
     return false
   }
   if a.kind != b.kind {
     return false
   }
-  if a.is_fn {
+  if a.is_fn() {
     if a.members.size != b.members.size {
       return false
     }
@@ -424,7 +424,7 @@ pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
     }
     return false
   }
-  if a.is_union {
+  if a.is_union() {
     if a.members.size != b.members.size {
       return false
     }
@@ -435,25 +435,25 @@ pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
     }
     return true
   }
-  if a.is_ptr {
+  if a.is_ptr() {
     if ae = a.inner, be = b.inner {
       return ty_eq_sig(ae, be, ap, bp)
     }
     return false
   }
-  if a.is_array {
+  if a.is_array() {
     if ae = a.inner, be = b.inner {
       return ty_eq_sig(ae, be, ap, bp)
     }
     return false
   }
-  if a.is_join {
+  if a.is_join() {
     if ae = a.inner, be = b.inner {
       return ty_eq_sig(ae, be, ap, bp)
     }
     return false
   }
-  if a.is_hash {
+  if a.is_hash() {
     if ak = a.key, av = a.val, bk = b.key, bv = b.val, ty_eq_sig(ak, bk, ap, bp) {
       return ty_eq_sig(av, bv, ap, bp)
     }

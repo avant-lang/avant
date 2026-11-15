@@ -235,7 +235,7 @@ pub fn driver_format(args: Array(String)) {
       } else if write {
         if !same {
           if e = write_failure(file_write(path, got.text)) {
-            diag_puts(e.message)
+            diag_puts(e.message())
             failed = true
           }
         }
@@ -327,7 +327,7 @@ pub fn driver_format_calls(args: Array(String)) {
       got = insert_call_parens(text, places[k], names[k])
       if got.count > 0 {
         if e = write_failure(file_write(p, got.text)) {
-          diag_puts(e.message)
+          diag_puts(e.message())
           failed = true
         } else {
           puts("${p}: ${got.count}")
@@ -373,9 +373,9 @@ fn driver_dump_layer(mode: String, path: String) {
   }
   if src = source_read(path) {
     lex = Lexer.new(src)
-    tokens = lex.tokenize
+    tokens = lex.tokenize()
     if e = lex.err {
-      diag_puts(e.show)
+      diag_puts(e.show())
       diag_exit(1)
     }
     if mode == "--tokens" {
@@ -383,9 +383,9 @@ fn driver_dump_layer(mode: String, path: String) {
       return
     }
     parser = Parser.new(src, tokens)
-    program = parser.parse
+    program = parser.parse()
     if e = parser.err {
-      diag_puts(e.show)
+      diag_puts(e.show())
       diag_exit(1)
     }
     puts(dump_program(program))
@@ -406,13 +406,13 @@ fn driver_dump_checked(path: String) {
     }
     src = Source.new(path, file_read(path) ?? "")
     expander = Expander.new(src, merged)
-    expander.expand
+    expander.expand()
     if e = expander.err {
       diag_bag(expander.errors)
       diag_exit(1)
     }
     checker = Checker.new(src, merged)
-    checker.check
+    checker.check()
     if e = checker.err {
       diag_bag(checker.errors)
       diag_exit(1)

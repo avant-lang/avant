@@ -64,7 +64,7 @@ class MCase {
 }
 
 fn accepted(tag: String, mods: Array(String), out: String): MCase {
-  f = MCase.new
+  f = MCase.new()
   f.tag = tag
   f.mods = mods
   f.want = out
@@ -74,7 +74,7 @@ fn accepted(tag: String, mods: Array(String), out: String): MCase {
 
 // pos is `module.av:line:column`.
 fn refused(tag: String, mods: Array(String), needle: String, pos: String): MCase {
-  f = MCase.new
+  f = MCase.new()
   f.tag = tag
   f.mods = mods
   f.want = needle
@@ -88,40 +88,40 @@ fn builtin_cases: Array(MCase) {
   xs.push(refused("builtin-chars", ["main", "fn (s: String) chars: Int {\n  5\n}\n\nfn main {\n  puts(1)\n}\n"], "chars is a builtin of String: a method cannot replace it", "main.av:1:1"))
   xs.push(refused("builtin-size", ["main", "fn main {\n  puts(1)\n}\n\nfn (b: Bytes) size: Int {\n  5\n}\n"], "size is a builtin of Bytes: a method cannot replace it", "main.av:5:1"))
   xs.push(refused("builtin-buf", ["main", "import ext\n\nfn main {\n  puts(1)\n}\n", "ext", "pub fn (b: Buf) to_s: String {\n  \"buf\"\n}\n"], "to_s is a builtin of Buf: a method cannot replace it", "ext.av:1:5"))
-  xs.push(accepted("builtin-other-name", ["main", "fn (s: String) show: String {\n  \"<\${s.to_s}>\"\n}\n\nfn (b: Buf) text: String {\n  b.to_s\n}\n\nfn main {\n  puts(\"abc\".show)\n  b = buf_new()\n  b.push_str(\"xy\")\n  puts(b.text)\n  puts(\"abc\".chars.size)\n}\n"], "<abc>\nxy\n3\n"))
+  xs.push(accepted("builtin-other-name", ["main", "fn (s: String) show: String {\n  \"<\${s.to_s()}>\"\n}\n\nfn (b: Buf) text: String {\n  b.to_s()\n}\n\nfn main {\n  puts(\"abc\".show())\n  b = buf_new()\n  b.push_str(\"xy\")\n  puts(b.text())\n  puts(\"abc\".chars().size)\n}\n"], "<abc>\nxy\n3\n"))
   xs.push(refused("ext-private-imported", ["main", "import ext\n\nfn main {\n  puts(\"x\".quiet())\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n\npub fn (s: String) loud: String {\n  \"L\"\n}\n"], "method String.quiet of module ext is private to its module; mark it pub", "main.av:4:11"))
-  xs.push(refused("ext-private-field-form", ["main", "import ext\n\nfn main {\n  puts(\"x\".quiet)\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n"], "method String.quiet of module ext is private to its module; mark it pub", "main.av:4:11"))
-  xs.push(accepted("ext-pub-imported", ["main", "import ext\n\nfn main {\n  puts(\"x\".loud)\n  puts(ext.go())\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n\npub fn (s: String) loud: String {\n  \"L\${s.quiet}\"\n}\n\npub fn go: String {\n  \"y\".quiet\n}\n"], "Lq\nq\n"))
+  xs.push(refused("ext-private-field-form", ["main", "import ext\n\nfn main {\n  puts(\"x\".quiet())\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n"], "method String.quiet of module ext is private to its module; mark it pub", "main.av:4:11"))
+  xs.push(accepted("ext-pub-imported", ["main", "import ext\n\nfn main {\n  puts(\"x\".loud())\n  puts(ext.go())\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n\npub fn (s: String) loud: String {\n  \"L\${s.quiet()}\"\n}\n\npub fn go: String {\n  \"y\".quiet()\n}\n"], "Lq\nq\n"))
   xs
 }
 
 fn twin_cases: Array(MCase) {
   xs: Array(MCase) = []
-  ma = "pub fn (s: String) shout: String {\n  \"ma \${s}\"\n}\n\npub fn go: String {\n  \"a\".shout\n}\n"
+  ma = "pub fn (s: String) shout: String {\n  \"ma \${s}\"\n}\n\npub fn go: String {\n  \"a\".shout()\n}\n"
   mb = "pub fn (s: String) shout: String {\n  \"mb \${s}\"\n}\n\npub fn go: String {\n  \"b\".shout()\n}\n"
   xs.push(accepted("twin-builtin-each-own", ["main", "import ma\nimport mb\n\nfn main {\n  puts(ma.go())\n  puts(mb.go())\n}\n", "ma", ma, "mb", mb], "ma a\nmb b\n"))
-  xs.push(accepted("twin-builtin-one-imported", ["main", "import ma\nimport mid\n\nfn main {\n  puts(\"x\".shout)\n  puts(mid.go())\n}\n", "ma", ma, "mb", mb, "mid", "import mb\n\npub fn go: String {\n  \"m\".shout\n}\n"], "ma x\nmb m\n"))
-  xs.push(refused("twin-builtin-both-imported", ["main", "import ma\nimport mb\n\nfn main {\n  puts(\"x\".shout)\n}\n", "ma", ma, "mb", mb], "ambiguous call to String.shout: the methods of modules ma and mb both match, and a method call cannot name its module; call it from a module that imports only one of them", "main.av:5:11"))
+  xs.push(accepted("twin-builtin-one-imported", ["main", "import ma\nimport mid\n\nfn main {\n  puts(\"x\".shout())\n  puts(mid.go())\n}\n", "ma", ma, "mb", mb, "mid", "import mb\n\npub fn go: String {\n  \"m\".shout()\n}\n"], "ma x\nmb m\n"))
+  xs.push(refused("twin-builtin-both-imported", ["main", "import ma\nimport mb\n\nfn main {\n  puts(\"x\".shout())\n}\n", "ma", ma, "mb", mb], "ambiguous call to String.shout: the methods of modules ma and mb both match, and a method call cannot name its module; call it from a module that imports only one of them", "main.av:5:11"))
   xs.push(refused("twin-builtin-own-and-imported", ["main", "import ma\n\nfn (s: String) shout: String {\n  s\n}\n\nfn main {\n  puts(\"x\".shout())\n}\n", "ma", ma], "the methods of modules ma and main both match", "main.av:8:11"))
-  xs.push(accepted("twin-builtin-private", ["main", "import ext\n\nfn (s: String) quiet: String {\n  \"own\"\n}\n\nfn main {\n  puts(\"x\".quiet)\n  puts(ext.go())\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n\npub fn go: String {\n  \"y\".quiet\n}\n"], "own\nq\n"))
+  xs.push(accepted("twin-builtin-private", ["main", "import ext\n\nfn (s: String) quiet: String {\n  \"own\"\n}\n\nfn main {\n  puts(\"x\".quiet())\n  puts(ext.go())\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n\npub fn go: String {\n  \"y\".quiet()\n}\n"], "own\nq\n"))
   pt = "pub class Point {\n  pub x: Int = 1\n}\n"
   xs.push(refused("twin-type-pub", ["main", "import pa\nimport pb\n\nfn main {\n  puts(1)\n}\n", "p", pt, "pa", "import p\n\npub fn (q: Point) norm: Int {\n  q.x + 10\n}\n", "pb", "import p\n\npub fn (q: Point) norm: Int {\n  q.x + 20\n}\n"], "method Point.norm is already defined in module pa", "pb.av:3:5"))
   xs.push(refused("twin-type-pub-and-private", ["main", "import pa\nimport pb\n\nfn main {\n  puts(1)\n}\n", "p", pt, "pa", "import p\n\npub fn (q: Point) norm: Int {\n  q.x + 10\n}\n", "pb", "import p\n\nfn (q: Point) norm: Int {\n  q.x + 20\n}\n"], "method Point.norm is already defined in module pa", "pb.av:3:1"))
-  xs.push(accepted("twin-type-private", ["main", "import p\nimport pa\nimport pb\n\nfn main {\n  puts(pa.ta())\n  puts(pb.tb())\n}\n", "p", pt, "pa", "import p\n\nfn (q: Point) norm: Int {\n  q.x + 10\n}\n\npub fn ta: Int {\n  Point.new.norm\n}\n", "pb", "import p\n\nfn (q: Point) norm: Int {\n  q.x + 20\n}\n\npub fn tb: Int {\n  Point.new.norm()\n}\n"], "11\n21\n"))
+  xs.push(accepted("twin-type-private", ["main", "import p\nimport pa\nimport pb\n\nfn main {\n  puts(pa.ta())\n  puts(pb.tb())\n}\n", "p", pt, "pa", "import p\n\nfn (q: Point) norm: Int {\n  q.x + 10\n}\n\npub fn ta: Int {\n  Point.new().norm()\n}\n", "pb", "import p\n\nfn (q: Point) norm: Int {\n  q.x + 20\n}\n\npub fn tb: Int {\n  Point.new().norm()\n}\n"], "11\n21\n"))
   xs
 }
 
 fn receiver_cases: Array(MCase) {
   xs: Array(MCase) = []
-  xs.push(accepted("receiver-bare", ["main", "class Cell(T) {\n  item: T\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  fn get: T {\n    item\n  }\n}\n\nfn (c: Cell(T)) twice: Array(T) {\n  [get, item]\n}\n\nstruct V {\n  a: Int\n  b: Int\n\n  fn sum: Int {\n    a + b\n  }\n}\n\nfn (v: V) scaled(k: Int): Int {\n  m = 100\n  m * k + a + sum() + norm\n}\n\nfn (v: V) norm: Int {\n  if b > 0 { b } else { 0 - b }\n}\n\nfn main {\n  puts(Cell.new(3).twice.size)\n  puts(V { a: 1, b: -2 }.scaled(2))\n}\n"], "2\n202\n"))
+  xs.push(accepted("receiver-bare", ["main", "class Cell(T) {\n  item: T\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  fn get: T {\n    item\n  }\n}\n\nfn (c: Cell(T)) twice: Array(T) {\n  [get(), item]\n}\n\nstruct V {\n  a: Int\n  b: Int\n\n  fn sum: Int {\n    a + b\n  }\n}\n\nfn (v: V) scaled(k: Int): Int {\n  m = 100\n  m * k + a + sum() + norm()\n}\n\nfn (v: V) norm: Int {\n  if b > 0 { b } else { 0 - b }\n}\n\nfn main {\n  puts(Cell.new(3).twice().size)\n  puts(V { a: 1, b: -2 }.scaled(2))\n}\n"], "2\n202\n"))
   pt = "class Point {\n  x: Int = 3\n  y: Int = 4\n\n  fn sum: Int {\n    x + y\n  }\n}\n\n"
-  xs.push(refused("receiver-bare-write", ["main", "${pt}fn (p: Point) move {\n  x = 5\n}\n\nfn main {\n  Point.new.move\n}\n"], "x is a field of Point; write p.x = ... to change the field, or choose another name for a local", "main.av:11:3"))
-  xs.push(accepted("receiver-write-named", ["main", "${pt}fn (p: Point) move {\n  p.x = 5\n  p.y += sum\n}\n\nfn main {\n  q = Point.new\n  q.move\n  puts(q.sum)\n}\n"], "18\n"))
-  xs.push(refused("receiver-method-and-function", ["main", "${pt}fn sum: Int {\n  1\n}\n\nfn (p: Point) twice: Int {\n  sum() * 2\n}\n\nfn main {\n  puts(Point.new.twice)\n}\n"], "sum is both a method of Point and a function; write p.sum(...) for the method, or qualify the function", "main.av:15:3"))
-  xs.push(accepted("receiver-qualified-function", ["main", "${pt}fn sum: Int {\n  1\n}\n\nfn (p: Point) both: Int {\n  p.sum * 10 + main.sum()\n}\n\nfn main {\n  puts(Point.new.both)\n}\n"], "71\n"))
-  xs.push(refused("receiver-lambda", ["main", "${pt}fn (p: Point) later: Int {\n  f = { |k: Int| k + x }\n  f(1)\n}\n\nfn main {\n  puts(Point.new.later)\n}\n"], "a lambda cannot capture the receiver p of an external method; copy it into a local first", "main.av:11:22"))
-  xs.push(refused("receiver-private-field", ["main", "import geo\n\nfn (p: Spot) peek: Int {\n  x + 1\n}\n\nfn main {\n  puts(make().peek)\n}\n", "geo", "pub struct Spot {\n  x: Int\n}\n\npub fn make: Spot {\n  Spot { x: 1 }\n}\n"], "private", "main.av:4:3"))
-  xs.push(accepted("receiver-other-module", ["main", "import geo\n\nfn (p: Spot) peek: Int {\n  x + far\n}\n\nfn main {\n  puts(make().peek)\n}\n", "geo", "pub struct Spot {\n  pub x: Int\n\n  pub fn far: Int {\n    x * 10\n  }\n}\n\npub fn make: Spot {\n  Spot { x: 1 }\n}\n"], "11\n"))
+  xs.push(refused("receiver-bare-write", ["main", "${pt}fn (p: Point) move {\n  x = 5\n}\n\nfn main {\n  Point.new().move()\n}\n"], "x is a field of Point; write p.x = ... to change the field, or choose another name for a local", "main.av:11:3"))
+  xs.push(accepted("receiver-write-named", ["main", "${pt}fn (p: Point) move {\n  p.x = 5\n  p.y += sum()\n}\n\nfn main {\n  q = Point.new()\n  q.move()\n  puts(q.sum())\n}\n"], "18\n"))
+  xs.push(refused("receiver-method-and-function", ["main", "${pt}fn sum: Int {\n  1\n}\n\nfn (p: Point) twice: Int {\n  sum() * 2\n}\n\nfn main {\n  puts(Point.new().twice())\n}\n"], "sum is both a method of Point and a function; write p.sum(...) for the method, or qualify the function", "main.av:15:3"))
+  xs.push(accepted("receiver-qualified-function", ["main", "${pt}fn sum: Int {\n  1\n}\n\nfn (p: Point) both: Int {\n  p.sum() * 10 + main.sum()\n}\n\nfn main {\n  puts(Point.new().both())\n}\n"], "71\n"))
+  xs.push(refused("receiver-lambda", ["main", "${pt}fn (p: Point) later: Int {\n  f = { |k: Int| k + x }\n  f(1)\n}\n\nfn main {\n  puts(Point.new().later())\n}\n"], "a lambda cannot capture the receiver p of an external method; copy it into a local first", "main.av:11:22"))
+  xs.push(refused("receiver-private-field", ["main", "import geo\n\nfn (p: Spot) peek: Int {\n  x + 1\n}\n\nfn main {\n  puts(make().peek())\n}\n", "geo", "pub struct Spot {\n  x: Int\n}\n\npub fn make: Spot {\n  Spot { x: 1 }\n}\n"], "private", "main.av:4:3"))
+  xs.push(accepted("receiver-other-module", ["main", "import geo\n\nfn (p: Spot) peek: Int {\n  x + far()\n}\n\nfn main {\n  puts(make().peek())\n}\n", "geo", "pub struct Spot {\n  pub x: Int\n\n  pub fn far: Int {\n    x * 10\n  }\n}\n\npub fn make: Spot {\n  Spot { x: 1 }\n}\n"], "11\n"))
   xs
 }
 
@@ -142,10 +142,10 @@ fn generic_cases: Array(MCase) {
   xs: Array(MCase) = []
   ga = "pub class Cell(T) {\n  pub item: T\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  pub fn tag: String {\n    \"ga\"\n  }\n\n  pub fn swap(v: T): T {\n    old = item\n    self.item = v\n    old\n  }\n}\n\npub fn (c: Cell(T)) show: String {\n  \"ga-show\"\n}\n\npub fn (c: Cell(Int)) twice: Int {\n  c.item * 2\n}\n\npub fn mk(v: Int): Cell(Int) {\n  Cell.new(v)\n}\n\npub fn mks(v: String): Cell(String) {\n  Cell.new(v)\n}\n"
   gb = "pub class Cell(T) {\n  pub item: T\n  pub n: Int = 0\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  pub fn tag: String {\n    \"gb\"\n  }\n\n  pub fn swap(v: T): T {\n    self.n += 1\n    self.item = v\n    v\n  }\n}\n\npub fn (c: Cell(T)) show: String {\n  \"gb-show\"\n}\n\npub fn (c: Cell(Int)) twice: Int {\n  c.item * 20\n}\n\npub fn mk(v: Int): Cell(Int) {\n  Cell.new(v)\n}\n\npub fn mks(v: String): Cell(String) {\n  Cell.new(v)\n}\n"
-  xs.push(accepted("generic-two-modules", ["main", "import ga\nimport gb\n\nfn main {\n  a = ga.mk(1)\n  b = gb.mk(2)\n  puts(\"\${a.tag} \${b.tag}\")\n  puts(\"\${a.show} \${b.show}\")\n  puts(\"\${a.twice} \${b.twice}\")\n  puts(\"\${a.swap(5)} \${b.swap(6)}\")\n  puts(\"\${a.item} \${b.item} \${b.n}\")\n  s = ga.mks(\"s\")\n  t = gb.mks(\"t\")\n  puts(\"\${s.tag} \${t.tag} \${s.show} \${t.show}\")\n}\n", "ga", ga, "gb", gb], "ga gb\nga-show gb-show\n2 40\n1 6\n5 6 1\nga gb ga-show gb-show\n"))
-  xs.push(accepted("generic-qualified", ["main", "import ga\nimport gb\n\nfn main {\n  a = ga.Cell(Int).new(1)\n  b = gb.Cell(String).new(\"s\")\n  c: gb.Cell(Int) = gb.mk(4)\n  puts(\"\${a.tag} \${a.show} \${b.tag} \${b.show} \${c.twice}\")\n}\n", "ga", ga, "gb", gb], "ga ga-show gb gb-show 80\n"))
-  xs.push(refused("generic-bare-both", ["main", "import ga\nimport gb\n\nfn main {\n  a = Cell(Int).new(1)\n  puts(a.tag)\n}\n", "ga", ga, "gb", gb], "Cell is a type of both ga and gb: write ga.Cell or gb.Cell", "main.av:5:7"))
-  xs.push(accepted("generic-bare-one", ["main", "import ga\nimport mid\n\nfn main {\n  a = Cell.new(1)\n  b: Cell(String) = Cell.new(\"x\")\n  puts(\"\${a.tag} \${a.twice} \${b.show} \${mid.other()}\")\n}\n", "ga", ga, "gb", gb, "mid", "import gb\n\npub fn other: String {\n  mk(3).show\n}\n"], "ga 2 ga-show gb-show\n"))
+  xs.push(accepted("generic-two-modules", ["main", "import ga\nimport gb\n\nfn main {\n  a = ga.mk(1)\n  b = gb.mk(2)\n  puts(\"\${a.tag()} \${b.tag()}\")\n  puts(\"\${a.show()} \${b.show()}\")\n  puts(\"\${a.twice()} \${b.twice()}\")\n  puts(\"\${a.swap(5)} \${b.swap(6)}\")\n  puts(\"\${a.item} \${b.item} \${b.n}\")\n  s = ga.mks(\"s\")\n  t = gb.mks(\"t\")\n  puts(\"\${s.tag()} \${t.tag()} \${s.show()} \${t.show()}\")\n}\n", "ga", ga, "gb", gb], "ga gb\nga-show gb-show\n2 40\n1 6\n5 6 1\nga gb ga-show gb-show\n"))
+  xs.push(accepted("generic-qualified", ["main", "import ga\nimport gb\n\nfn main {\n  a = ga.Cell(Int).new(1)\n  b = gb.Cell(String).new(\"s\")\n  c: gb.Cell(Int) = gb.mk(4)\n  puts(\"\${a.tag()} \${a.show()} \${b.tag()} \${b.show()} \${c.twice()}\")\n}\n", "ga", ga, "gb", gb], "ga ga-show gb gb-show 80\n"))
+  xs.push(refused("generic-bare-both", ["main", "import ga\nimport gb\n\nfn main {\n  a = Cell(Int).new(1)\n  puts(a.tag())\n}\n", "ga", ga, "gb", gb], "Cell is a type of both ga and gb: write ga.Cell or gb.Cell", "main.av:5:7"))
+  xs.push(accepted("generic-bare-one", ["main", "import ga\nimport mid\n\nfn main {\n  a = Cell.new(1)\n  b: Cell(String) = Cell.new(\"x\")\n  puts(\"\${a.tag()} \${a.twice()} \${b.show()} \${mid.other()}\")\n}\n", "ga", ga, "gb", gb, "mid", "import gb\n\npub fn other: String {\n  mk(3).show()\n}\n"], "ga 2 ga-show gb-show\n"))
   xs
 }
 
@@ -156,7 +156,7 @@ fn block_cases: Array(MCase) {
   fb = "pub fn twice(f: fn(Int): Int): Int {\n  f(1)\n}\n"
   xs.push(accepted("block-bare-name-imported", ["main", "import fa\n\nfn main {\n  puts(twice { |x| x + 5 })\n  n = fa.twice { |x| x * 2 }\n  puts(n)\n}\n", "fa", fa], "11\n4\n"))
   xs.push(refused("block-bare-name-ambiguous", ["main", "import fa\nimport fb\n\nfn main {\n  n = twice { |x| x + 1 }\n  puts(n)\n}\n", "fa", fa, "fb", fb], "ambiguous call to twice: fa.twice and fb.twice both match", "main.av:5:7"))
-  xs.push(accepted("block-next-line", ["main", "class Meth {\n  base: Int = 3\n\n  fn off(x: Int): fn(Int): Int {\n    b = self.base\n    { |y| y + x + b }\n  }\n}\n\nfn main {\n  puts(Meth.new.off(1)(2))\n}\n"], "6\n"))
+  xs.push(accepted("block-next-line", ["main", "class Meth {\n  base: Int = 3\n\n  fn off(x: Int): fn(Int): Int {\n    b = self.base\n    { |y| y + x + b }\n  }\n}\n\nfn main {\n  puts(Meth.new().off(1)(2))\n}\n"], "6\n"))
   xs.push(refused("block-fn-value", ["main", "fn main {\n  f = { |x: Int| x + 1 }\n  puts(f { |y| y })\n}\n"], "function value does not take a block", "main.av:3:8"))
   xs
 }
@@ -234,5 +234,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

@@ -18,7 +18,7 @@ import checker
 // suggestion is never computed.
 
 pub fn (checker_self: Checker) hints_wanted: Bool {
-  checker_self.errors.count < 20
+  checker_self.errors.count() < 20
 }
 
 // Whether name is a name a programmer wrote (not a compiler temporary).
@@ -37,7 +37,7 @@ pub fn hint_name_ok(name: String): Bool {
 pub fn (checker_self: Checker) offer_locals(sg: Suggest, rank: Int) {
   i = checker_self.scopes.size - 1
   while i >= 0 {
-    for k in checker_self.scopes[i].names.keys {
+    for k in checker_self.scopes[i].names.keys() {
       if hint_name_ok(k) {
         sg.offer(k, rank)
       }
@@ -100,7 +100,7 @@ pub fn (checker_self: Checker) offer_consts(sg: Suggest, rank: Int) {
 
 // The modules the current module may qualify a name with.
 pub fn (checker_self: Checker) offer_modules(sg: Suggest, rank: Int) {
-  for m in checker_self.known_mods.keys {
+  for m in checker_self.known_mods.keys() {
     if checker_self.qualifier_ok(m, checker_self.current_module) {
       sg.offer(m, rank)
     }
@@ -111,7 +111,7 @@ pub fn (checker_self: Checker) offer_modules(sg: Suggest, rank: Int) {
 // constant, a function, then (for a capitalized name) a type or (else) a
 // module.
 pub fn (checker_self: Checker) name_hint(name: String): String {
-  if !checker_self.hints_wanted {
+  if !checker_self.hints_wanted() {
     return ""
   }
   sg = Suggest.new(name)
@@ -128,7 +128,7 @@ pub fn (checker_self: Checker) name_hint(name: String): String {
   } else {
     checker_self.offer_modules(sg, 5)
   }
-  sg.hint
+  sg.hint()
 }
 
 // The types the current module may name.
@@ -141,7 +141,7 @@ pub fn (checker_self: Checker) offer_types(sg: Suggest, rank: Int) {
 
 // An unknown function: a function, a builtin, a local holding a function.
 pub fn (checker_self: Checker) fn_hint(name: String): String {
-  if !checker_self.hints_wanted {
+  if !checker_self.hints_wanted() {
     return ""
   }
   sg = Suggest.new(name)
@@ -150,16 +150,16 @@ pub fn (checker_self: Checker) fn_hint(name: String): String {
   i = checker_self.scopes.size - 1
   while i >= 0 {
     sc = checker_self.scopes[i]
-    for k in sc.names.keys {
+    for k in sc.names.keys() {
       if id = sc.names.get(k) {
-        if hint_name_ok(k) && checker_self.resolver.ty_at(id).is_fn {
+        if hint_name_ok(k) && checker_self.resolver.ty_at(id).is_fn() {
           sg.offer(k, 2)
         }
       }
     }
     i -= 1
   }
-  sg.hint
+  sg.hint()
 }
 
 // The functions the checker itself provides (`puts`, `argv`, ...), which
@@ -171,19 +171,19 @@ pub fn builtin_fn_names: String {
 // `x.name` on a struct or class without that field: its fields, then its
 // methods that take no argument (the field form calls them).
 pub fn (checker_self: Checker) field_hint(ty: Ty, name: String): String {
-  if !checker_self.hints_wanted {
+  if !checker_self.hints_wanted() {
     return ""
   }
   sg = Suggest.new(name)
   checker_self.offer_fields(sg, ty, 0)
   checker_self.offer_methods(sg, ty, false, true, 1)
-  sg.hint
+  sg.hint()
 }
 
 // `x.name(...)` on a struct, a class or an enum without that method: its
 // methods, then (no argument written) its fields.
 pub fn (checker_self: Checker) method_hint(ty: Ty, name: String, argc: Int): String {
-  if !checker_self.hints_wanted {
+  if !checker_self.hints_wanted() {
     return ""
   }
   sg = Suggest.new(name)
@@ -191,52 +191,52 @@ pub fn (checker_self: Checker) method_hint(ty: Ty, name: String, argc: Int): Str
   if argc == 0 {
     checker_self.offer_fields(sg, ty, 1)
   }
-  sg.hint
+  sg.hint()
 }
 
 // `T.name` on a type without that type-level function: its type-level
 // functions, then an enum's members (the field form).
 pub fn (checker_self: Checker) type_fn_hint(ty: Ty, name: String): String {
-  if !checker_self.hints_wanted {
+  if !checker_self.hints_wanted() {
     return ""
   }
   sg = Suggest.new(name)
   checker_self.offer_methods(sg, ty, true, false, 0)
-  for m in ty.enum_names {
+  for m in ty.enum_names() {
     sg.offer(m, 1)
   }
-  sg.hint
+  sg.hint()
 }
 
 // `Tok.name` or `case name` naming no member of the enum: its members,
 // then (outside a label) its type-level functions.
 pub fn (checker_self: Checker) member_hint(ty: Ty, name: String, labels: Bool): String {
-  if !checker_self.hints_wanted {
+  if !checker_self.hints_wanted() {
     return ""
   }
   sg = Suggest.new(name)
-  for m in ty.enum_names {
+  for m in ty.enum_names() {
     sg.offer(m, 0)
   }
   if !labels {
     checker_self.offer_methods(sg, ty, true, false, 1)
   }
-  sg.hint
+  sg.hint()
 }
 
 // `x.name` or `x.name(...)` on a builtin receiver (O340): the builtin
 // methods and fields of its kind, then the methods the library adds to
 // it (`String.starts_with`, ...).
 pub fn (checker_self: Checker) builtin_hint(ty: Ty, name: String): String {
-  if !checker_self.hints_wanted {
+  if !checker_self.hints_wanted() {
     return ""
   }
   sg = Suggest.new(name)
   sg.offer_list(builtin_member_names(ty), 0)
-  owner = ty.show
-  if ty.is_array {
+  owner = ty.show()
+  if ty.is_array() {
     owner = "Array"
-  } else if ty.is_hash {
+  } else if ty.is_hash() {
     owner = "Hash"
   }
   for ms in checker_self.methods {
@@ -244,7 +244,7 @@ pub fn (checker_self: Checker) builtin_hint(ty: Ty, name: String): String {
       sg.offer(ms.name, 1)
     }
   }
-  sg.hint
+  sg.hint()
 }
 
 // The methods and fields the checker itself gives a builtin receiver
@@ -252,28 +252,28 @@ pub fn (checker_self: Checker) builtin_hint(ty: Ty, name: String): String {
 // those checks; tests/cases/test_names.av compiles each name on its type
 // and fails if one is not a method or field there.
 pub fn builtin_member_names(ty: Ty): String {
-  if ty.is_float {
+  if ty.is_float() {
     return "abs exp floor sqrt to_i to_s"
   }
-  if ty.is_integer {
+  if ty.is_integer() {
     return "abs to_f to_i to_i32 to_s to_u32 to_u64 wrap_i wrap_i32 wrap_u32 wrap_u64"
   }
-  if ty.is_string {
+  if ty.is_string() {
     return "size bytes chars fields get split strip strip_left strip_right to_f to_i to_s to_u64"
   }
-  if ty.is_bytes {
+  if ty.is_bytes() {
     return "size chars get slice to_buf"
   }
-  if ty.is_array {
+  if ty.is_array() {
     return "size all any clear contains each fill get index_of max min parallel pop push reserve reverse sort sorted sum"
   }
-  if ty.is_hash {
+  if ty.is_hash() {
     return "size clear delete each get has_key inc keys values"
   }
-  if ty.is_buf {
+  if ty.is_buf() {
     return "size clear get push_byte push_bytes push_slice push_str starts_with to_bytes to_s"
   }
-  if ty.is_join {
+  if ty.is_join() {
     return "join"
   }
   ""
@@ -298,7 +298,7 @@ pub fn name_in_list(name: String, names: String): Bool {
 // `x.name(...)` where match_method found no method of that name on the
 // type named owner: the type's own suggestion, or a builtin's.
 pub fn (checker_self: Checker) method_hint_owner(owner: String, owner_mod: String, name: String, argc: Int): String {
-  if !checker_self.hints_wanted {
+  if !checker_self.hints_wanted() {
     return ""
   }
   if owner == "String" {
@@ -335,7 +335,7 @@ pub fn (checker_self: Checker) open_text(e: Expr): String {
 // The hint for a use of a value of type ty as its value: "; open it ..."
 // when ty is an optional, else "".
 pub fn (checker_self: Checker) open_hint(e: Expr, ty: Ty): String {
-  if ty.is_nilable {
+  if ty.is_nilable() {
     return "; ${checker_self.open_text(e)}"
   }
   ""
@@ -347,12 +347,12 @@ pub fn (checker_self: Checker) nil_compare_text(e: Expr, ty: Ty): String {
   if e.kind == ex_name() {
     n = e.ident
   }
-  "${n} is ${ty.show} and an optional is never compared with nil: test it with `if _ = ${n} { ... } else { ... }`, or ${checker_self.open_text(e)}"
+  "${n} is ${ty.show()} and an optional is never compared with nil: test it with `if _ = ${n} { ... } else { ... }`, or ${checker_self.open_text(e)}"
 }
 
 // An optional argument where its value would fit: open it.
 pub fn (checker_self: Checker) arg_open_hint(arg: Expr, got: Ty, want: Ty): String {
-  if got.is_nilable && !want.is_nilable && ty_assignable(ty_without_nil(got), want) {
+  if got.is_nilable() && !want.is_nilable() && ty_assignable(ty_without_nil(got), want) {
     return checker_self.open_hint(arg, got)
   }
   ""
@@ -361,12 +361,12 @@ pub fn (checker_self: Checker) arg_open_hint(arg: Expr, got: Ty, want: Ty): Stri
 // An unknown type the checker reports itself (a struct literal, `T.new`):
 // the types the current module sees.
 pub fn (checker_self: Checker) type_hint_here(name: String): String {
-  if !checker_self.hints_wanted {
+  if !checker_self.hints_wanted() {
     return ""
   }
   sg = Suggest.new(name)
   checker_self.offer_types(sg, 0)
-  sg.hint
+  sg.hint()
 }
 
 // "no arguments", "1 argument", "2 arguments" (O257).
@@ -391,7 +391,7 @@ pub fn (checker_self: Checker) int_float_hint(l: Expr, left: Ty, r: Expr, right:
   ie = l
   it = left
   fe = r
-  if left.is_float {
+  if left.is_float() {
     ie = r
     it = right
     fe = l
@@ -406,11 +406,11 @@ pub fn (checker_self: Checker) int_float_hint(l: Expr, left: Ty, r: Expr, right:
   }
   // A Float64 converts to an Int; another width goes on from there.
   conv = "to_i"
-  if it.show == "Int32" {
+  if it.show() == "Int32" {
     conv = "to_i.to_i32"
-  } else if it.show == "UInt32" {
+  } else if it.show() == "UInt32" {
     conv = "to_i.to_u32"
-  } else if it.show == "UInt64" {
+  } else if it.show() == "UInt64" {
     conv = "to_i.to_u64"
   }
   "convert one side: ${iname}.to_f, or ${fname}.${conv} (which truncates)"

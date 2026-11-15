@@ -52,7 +52,7 @@ pub fn (lw: MirLower) fn_layout(t: Ty, loc: Location): Int {
   if r = t.inner {
     ret = lw.ty_at(r, loc, "an fn result")
   }
-  if lw.failed {
+  if lw.failed() {
     return -1
   }
   b = lw.lw_b
@@ -79,7 +79,7 @@ pub fn (lw: MirLower) box_layout(t: Ty, loc: Location): Int {
     return known
   }
   ft = lw.field_mty(t, loc)
-  if lw.failed {
+  if lw.failed() {
     return -1
   }
   fields: Array(Int) = []
@@ -104,7 +104,7 @@ pub fn (lw: MirLower) env_layout(e: Expr, sym: String): Int {
       // The receiver, by value (W3b, B7): a class's reference, a
       // struct's copy.
       vt = lw.field_mty(e.cap_tys[i], e.loc)
-      if lw.failed {
+      if lw.failed() {
         return -1
       }
       fields.push(vt)
@@ -112,7 +112,7 @@ pub fn (lw: MirLower) env_layout(e: Expr, sym: String): Int {
       continue
     }
     bl = lw.box_layout(e.cap_tys[i], e.loc)
-    if lw.failed {
+    if lw.failed() {
       return -1
     }
     fields.push(lw.lw_m.types.ref_to(bl))
@@ -145,7 +145,7 @@ pub fn (lw: MirLower) lam_base(fnn: Function): String {
 
 pub fn (lw: MirLower) prewalk_stmts(body: Array(Stmt), encl: String) {
   i = 0
-  while i < body.size && !lw.failed {
+  while i < body.size && !lw.failed() {
     st = body[i]
     k = st.kind
     if k == st_if() {
@@ -187,7 +187,7 @@ pub fn (lw: MirLower) prewalk_list(es: Array(Expr), encl: String) {
 }
 
 pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
-  if lw.failed {
+  if lw.failed() {
     return
   }
   k = e.kind
@@ -199,7 +199,7 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
     // (the checker boxes their locals there).
     if recv = e.receiver {
       lw.prewalk_expr(recv, encl)
-      if rt = recv.ty, rt.is_array && e.callee == "parallel" && mir_has_block(e) {
+      if rt = recv.ty, rt.is_array() && e.callee == "parallel" && mir_has_block(e) {
         lw.prewalk_par(e, encl)
       }
     } else if e.callee == "spawn" && mir_has_block(e) {
@@ -273,14 +273,14 @@ pub fn (lw: MirLower) prewalk_lambda(e: Expr, encl: String) {
       lw.lw_cl.cap_tys.push(e.cap_tys[i])
     }
     bl = lw.box_layout(e.cap_tys[i], e.loc)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     lw.lw_b.type_id(bl)
   }
   if e.cap_names.size > 0 {
     el = lw.env_layout(e, sym)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     lw.lw_b.type_id(el)
@@ -314,7 +314,7 @@ pub fn (lw: MirLower) box_local_of(name: String, t: Ty, loc: Location): Int {
     return got
   }
   bl = lw.box_layout(t, loc)
-  if lw.failed {
+  if lw.failed() {
     return 0
   }
   k = lw.lw_b.local(lw.lw_m.types.ref_to(bl), name)
@@ -327,14 +327,14 @@ pub fn (lw: MirLower) box_local_of(name: String, t: Ty, loc: Location): Int {
 // the old back end's explicit zero store).
 pub fn (lw: MirLower) ensure_box(name: String, t: Ty, loc: Location): Int {
   k = lw.box_local_of(name, t, loc)
-  if lw.failed || lw.lw_cl.box_ready.has_key(name) {
+  if lw.failed() || lw.lw_cl.box_ready.has_key(name) {
     return k
   }
   b = lw.lw_b
   bl = b.types.layout_of(b.func.locals[k].ty)
   lw.at(loc)
   args: Array(MOperand) = []
-  args.push(b.c_u64(b.types.layouts[bl].size.to_i))
+  args.push(b.c_u64(b.types.layouts[bl].size.to_i()))
   args.push(b.c_u32(b.type_id(bl)))
   b.call(k, "avant_alloc", args)
   lw.lw_cl.box_ready[name] = 1
@@ -425,7 +425,7 @@ pub fn (lw: MirLower) begin_boxes(names: Array(String), pnames: Array(String), p
   lw.lw_cl.boxed = bx
   lw.at(lw.lw_fn_loc)
   i = 0
-  while i < bx.size && !lw.failed {
+  while i < bx.size && !lw.failed() {
     n = bx[i]
     pi = mir_name_index(pnames, n)
     t: Ty? = nil
@@ -436,12 +436,12 @@ pub fn (lw: MirLower) begin_boxes(names: Array(String), pnames: Array(String), p
     }
     if tt = t {
       k = lw.box_local_of(n, tt, lw.lw_fn_loc)
-      b.assign(b.pl(k), b.rv_zero)
+      b.assign(b.pl(k), b.rv_zero())
     }
     i += 1
   }
   i = 0
-  while i < pnames.size && !lw.failed {
+  while i < pnames.size && !lw.failed() {
     n2 = pnames[i]
     if mir_name_index(bx, n2) >= 0 && i < ptys.size {
       lw.ensure_box(n2, ptys[i], lw.lw_fn_loc)
@@ -457,7 +457,7 @@ pub fn (lw: MirLower) box_read(e: Expr): MOperand {
   ty = lw.ety(e)
   if t = e.ty {
     p = lw.box_place(e.ident, t, e.loc)
-    if lw.failed {
+    if lw.failed() {
       return lw.lw_b.c_i32(0)
     }
     lw.at(e.loc)
@@ -476,7 +476,7 @@ pub fn (lw: MirLower) box_assign(st: Stmt, t: Expr, tt: Ty, ty: Int) {
   if v = st.value {
     if st.op == tk_eq() {
       val = lw.lower_coerced(v, ty, tt)
-      if lw.failed {
+      if lw.failed() {
         return
       }
       lw.box_store(t.ident, tt, val, st.loc)
@@ -484,7 +484,7 @@ pub fn (lw: MirLower) box_assign(st: Stmt, t: Expr, tt: Ty, ty: Int) {
     }
     cur = lw.box_read(t)
     rhs = lw.lower_expr(v)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     r = lw.compound_arith(st, ty, cur, rhs, v)
@@ -500,7 +500,7 @@ pub fn (lw: MirLower) lower_fn_ref(e: Expr): MOperand {
   b = lw.lw_b
   if t = e.ty, sym = lw.lw_fn_syms.get(e.resolved) {
     l = lw.fn_layout(t, e.loc)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -536,7 +536,7 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
     e.resolved = sym
   }
   l = lw.fn_layout(t, e.loc)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lam = MirLam.new(e, sym)
@@ -547,17 +547,17 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
     return lw.tmp(fty, b.rv_fnval(l, b.c_null(mt_ref()), b.c_fn(sym)))
   }
   el = lw.env_layout(e, sym)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
   env = b.temp(b.types.ref_to(el))
   args: Array(MOperand) = []
-  args.push(b.c_u64(b.types.layouts[el].size.to_i))
+  args.push(b.c_u64(b.types.layouts[el].size.to_i()))
   args.push(b.c_u32(b.type_id(el)))
   b.call(env, "avant_alloc", args)
   i = 0
-  while i < e.cap_names.size && !lw.failed {
+  while i < e.cap_names.size && !lw.failed() {
     name = e.cap_names[i]
     if name == "self" {
       // The receiver's value (W3b, B7): the method's self, or the
@@ -566,7 +566,7 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
       se.ident = "self"
       se.ty = e.cap_tys[i]
       sv = lw.lower_expr(se)
-      if lw.failed {
+      if lw.failed() {
         return zero
       }
       lw.at(e.loc)
@@ -578,7 +578,7 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
       // A lambda in a default captures an earlier parameter (O546): the
       // argument's operand goes into a box of its own first.
       lw.bind_name(name, e.cap_tys[i], lw.ty_at(e.cap_tys[i], e.loc, "a capture"), lw.dup(ao), e.loc, true)
-      if lw.failed {
+      if lw.failed() {
         return zero
       }
     }
@@ -622,7 +622,7 @@ pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
   } else {
     nt = ty_fn(e.cap_tys, rt)
     fty = lw.ty_at(nt, e.loc, "an fn value")
-    if lw.failed {
+    if lw.failed() {
       return zero
     }
     ne = Expr.new(ex_name(), e.loc)
@@ -630,19 +630,19 @@ pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
     ne.ty = nt
     f = lw.lower_name(ne)
   }
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
   h = b.temp(fty)
   b.assign(b.pl(h), b.rv_use(f))
   args = lw.lower_args_to(e.args, e.cap_tys, 0u64)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   lw.at(e.loc)
   ret = lw.ety(e)
-  if lw.failed {
+  if lw.failed() {
     return zero
   }
   if ret == mt_void() {
@@ -657,7 +657,7 @@ pub fn (lw: MirLower) lower_indirect(e: Expr): MOperand {
 // ---- thunks and trampolines
 
 pub fn (lw: MirLower) lower_pending_lambdas {
-  while lw.lw_cl.pending.size > 0 && !lw.failed {
+  while lw.lw_cl.pending.size > 0 && !lw.failed() {
     lam = lw.lw_cl.pending[0]
     rest: Array(MirLam) = []
     for i in 1..lw.lw_cl.pending.size {
@@ -679,7 +679,7 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
   lw.begin_at(e.loc)
   if t = e.ty {
     l = lw.fn_layout(t, e.loc)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     sig = lw.fn_code_sig(l)
@@ -722,7 +722,7 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
     lw.lw_cl.caps = caps
     if caps.size > 0 {
       el = lw.env_layout(e, lam.sym)
-      if lw.failed {
+      if lw.failed() {
         return
       }
       lw.at(e.loc)
@@ -741,7 +741,7 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
       lw.lower_body(bl2.body)
     }
     lw.finish_at(e.loc)
-    b.end_fn
+    b.end_fn()
     return
   }
   lw.refuse(e.loc, "an untyped lambda")
@@ -753,7 +753,7 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
 pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
   b = lw.lw_b
   i = 0
-  while i < fns.size && !lw.failed {
+  while i < fns.size && !lw.failed() {
     f = fns[i]
     if f.as_value && !f.generic && !fn_is_method(f) {
       if sym = lw.lw_fn_syms.get(f.emit_name), fs = lw.lw_syms.find_fn(f.emit_name) {
@@ -764,7 +764,7 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
           ps.push(lw.ty_at(param, f.loc, "a parameter"))
         }
         ret = lw.ty_at(fs.ret, f.loc, "a result")
-        if lw.failed {
+        if lw.failed() {
           return
         }
         b.begin_fn("${sym}#fnval", b.sig(ps, ret, false), lw.mloc(f.loc), f.name)
@@ -784,8 +784,8 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
           b.call(r, sym, args)
           b.assign(b.pl(0), b.rv_use(b.copy_local(r)))
         }
-        b.ret
-        b.end_fn
+        b.ret()
+        b.end_fn()
       }
     }
     i += 1

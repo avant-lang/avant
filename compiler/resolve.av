@@ -66,11 +66,11 @@ pub class TypeResolver {
   pub bound_uses: Array(BoundUse)
 
   fn initialize {
-    n = Hash(String, Int).new
+    n = Hash(String, Int).new()
     self.named = n
-    col = Hash(String, Int).new
+    col = Hash(String, Int).new()
     self.collide = col
-    o = Hash(String, Int).new
+    o = Hash(String, Int).new()
     self.opaques = o
     inn: Array(Ty) = []
     inn.push(ty_void())
@@ -84,7 +84,7 @@ pub class TypeResolver {
     self.t_nil = ty_nil()
     self.t_buf = ty_buf()
     self.t_bytes = ty_bytes()
-    tp = Hash(String, Int).new
+    tp = Hash(String, Int).new()
     self.tparams = tp
     self.tparam_names = []
     self.program = nil
@@ -93,18 +93,18 @@ pub class TypeResolver {
     self.type_name_mods = []
     self.scope_mod = ""
     self.aliases = []
-    ai = Hash(String, Int).new
+    ai = Hash(String, Int).new()
     self.alias_ix = ai
     self.alias_inflight = []
     self.bound_uses = []
     self.inst_depth = 0
     self.failed = false
     self.err = nil
-    self.errors = DiagBag.new
+    self.errors = DiagBag.new()
   }
 
   pub fn set_tparams(names: Array(String)) {
-    tp = Hash(String, Int).new
+    tp = Hash(String, Int).new()
     copy: Array(String) = []
     i = 0
     while i < names.size {
@@ -117,7 +117,7 @@ pub class TypeResolver {
   }
 
   pub fn clear_tparams {
-    tp = Hash(String, Int).new
+    tp = Hash(String, Int).new()
     self.tparams = tp
     self.tparam_names = []
   }
@@ -128,7 +128,7 @@ pub class TypeResolver {
 
   pub fn fail(loc: Location, message: String) {
     e = CompileError.new(loc, diag_code(3, message), message)
-    if self.errors.count == 0 {
+    if self.errors.count() == 0 {
       self.err = e
     }
     self.failed = true
@@ -190,7 +190,7 @@ pub class TypeResolver {
   pub fn type_hint(name: String): String {
     sg = Suggest.new(name)
     offer_types(sg, 0)
-    sg.hint
+    sg.hint()
   }
 
   // The builtin types (rank), then the declared ones scope_mod sees
@@ -263,7 +263,7 @@ pub class TypeResolver {
         if owners.size > 2 {
           both = ""
         }
-        fail(tn.loc, "${tn.name} is a type of ${both}${what.to_s}: write ${spell.to_s}")
+        fail(tn.loc, "${tn.name} is a type of ${both}${what.to_s()}: write ${spell.to_s()}")
       }
       if owners.size == 0 {
         // Declared only by modules this one does not see: reported once,
@@ -345,15 +345,15 @@ pub class TypeResolver {
 
   // ty as a value's type: an opaque type, a C layout and Void are not.
   pub fn value_only(ty: Ty, tn: TypeName): Ty {
-    if ty.is_opaque {
-      fail(tn.loc, "${ty.show} is opaque; use Ptr(${ty.show})")
+    if ty.is_opaque() {
+      fail(tn.loc, "${ty.show()} is opaque; use Ptr(${ty.show()})")
       return self.t_int
     }
-    if ty.is_clayout {
-      fail(tn.loc, "${ty.show} is a C layout; use Ptr(${ty.show})")
+    if ty.is_clayout() {
+      fail(tn.loc, "${ty.show()} is a C layout; use Ptr(${ty.show()})")
       return self.t_int
     }
-    if ty.is_void {
+    if ty.is_void() {
       fail(tn.loc, "Void is not a value; use Ptr(Void) or omit a return type")
       return self.t_int
     }
@@ -396,7 +396,7 @@ pub class TypeResolver {
         i += 1
       }
       u = ty_union_build(parts)
-      if u.is_union && u.includes_void {
+      if u.is_union() && u.includes_void() {
         void_union_check(u, tn)
       }
       return u
@@ -410,7 +410,7 @@ pub class TypeResolver {
       reject_args(tn)
       if !self.c_scalar_ok {
         view = ty_c_view(ty_c_scalar(cs))
-        fail(tn.loc, "${tn.name} is a C type: it is allowed in a `fun` signature and a C layout's field only (in Avant it is ${view.show})")
+        fail(tn.loc, "${tn.name} is a C type: it is allowed in a `fun` signature and a C layout's field only (in Avant it is ${view.show()})")
       }
       return ty_c_scalar(cs)
     }
@@ -552,19 +552,19 @@ pub class TypeResolver {
   // be a second way to say nothing.
   pub fn void_union_check(u: Ty, tn: TypeName) {
     for m in u.members {
-      if m.is_nil {
-        fail(tn.loc, "${u.show} holds both Void and Nil: a union holds Void beside failures marked Error only (Void | E), and Nil is not one here")
+      if m.is_nil() {
+        fail(tn.loc, "${u.show()} holds both Void and Nil: a union holds Void beside failures marked Error only (Void | E), and Nil is not one here")
         return
       }
-      if !m.is_void && !m.error_mark {
-        fail(tn.loc, "${u.show}: a union holds Void beside failures marked Error only (Void | E, nothing or a failure); ${m.show} is not marked Error")
+      if !m.is_void() && !m.error_mark {
+        fail(tn.loc, "${u.show()}: a union holds Void beside failures marked Error only (Void | E, nothing or a failure); ${m.show()} is not marked Error")
         return
       }
     }
   }
 
   pub fn resolve_uninline(tn: TypeName): Ty {
-    saved = self.save_inflight
+    saved = self.save_inflight()
     self.struct_inflight = []
     ty = resolve(tn)
     self.struct_inflight = saved
@@ -572,7 +572,7 @@ pub class TypeResolver {
   }
 
   pub fn resolve_value_uninline(tn: TypeName): Ty {
-    saved = self.save_inflight
+    saved = self.save_inflight()
     self.struct_inflight = []
     ty = resolve_value(tn)
     self.struct_inflight = saved
@@ -597,11 +597,11 @@ pub class TypeResolver {
       if i > 0 {
         buf.push_str(", ")
       }
-      buf.push_str(args[i].show)
+      buf.push_str(args[i].show())
       i += 1
     }
     buf.push_str(")")
-    buf.to_s
+    buf.to_s()
   }
 
   pub fn inst_key(origin: String, args: Array(Ty)): String {
@@ -611,7 +611,7 @@ pub class TypeResolver {
       buf.push_str("__")
       buf.push_str(mangle_ty(arg))
     }
-    buf.to_s
+    buf.to_s()
   }
 
   pub fn find_struct_template(name: String, mod_name: String): StructDef? {
@@ -774,7 +774,7 @@ pub class TypeResolver {
       return self.t_int
     }
     arg_tys: Array(Ty) = []
-    mark0 = self.err_count
+    mark0 = self.err_count()
     i = 0
     while i < tn.args.size {
       arg_tys.push(resolve(tn.args[i]))
@@ -789,7 +789,7 @@ pub class TypeResolver {
   }
 
   pub fn check_type_params(loc: Location, type_name: String, params: Array(String)) {
-    seen = Hash(String, Int).new
+    seen = Hash(String, Int).new()
     for p in params {
       if prev = seen.get(p) {
         fail(loc, "duplicate type parameter ${p}")
@@ -834,8 +834,8 @@ pub class TypeResolver {
 
   pub fn fill_inst_fields(ty: Ty, fields: Array(Field)) {
     resolved: Array(TyField) = []
-    seen = Hash(String, Int).new
-    mark0 = self.err_count
+    seen = Hash(String, Int).new()
+    mark0 = self.err_count()
     for field in fields {
       if prev = seen.get(field.name) {
         fail(field.loc, "duplicate field ${field.name}")
@@ -899,7 +899,7 @@ pub class TypeResolver {
       }
     }
     if found = get_named(tn.name) {
-      if found.is_struct || found.is_class || found.is_clayout {
+      if found.is_struct() || found.is_class() || found.is_clayout() {
         tn.mod_name = found.mod_name
         tn.pinned = true
       }
@@ -965,7 +965,7 @@ pub class TypeResolver {
     qualify_seen(t, al.mod_name)
     ty = resolve(t)
     self.scope_mod = saved
-    self.alias_inflight.pop
+    self.alias_inflight.pop()
     ty
   }
 
@@ -983,7 +983,7 @@ pub class TypeResolver {
     self.scope_mod = al.mod_name
     pin_type_name(t)
     self.scope_mod = saved
-    self.alias_inflight.pop
+    self.alias_inflight.pop()
     tn.name = t.name
     tn.args = t.args
     tn.members = t.members
@@ -1042,7 +1042,7 @@ pub class TypeResolver {
       return self.t_int
     }
     arg_tys: Array(Ty) = []
-    mark0 = self.err_count
+    mark0 = self.err_count()
     i = 0
     while i < tn.args.size {
       arg_tys.push(resolve(tn.args[i]))
@@ -1173,9 +1173,9 @@ pub class TypeResolver {
       if is_struct {
         self.struct_inflight.push(key)
         fill_inst_fields(shell, fields)
-        self.struct_inflight.pop
+        self.struct_inflight.pop()
       } else {
-        saved = self.save_inflight
+        saved = self.save_inflight()
         self.struct_inflight = []
         fill_inst_fields(shell, fields)
         self.struct_inflight = saved
@@ -1226,7 +1226,7 @@ pub fn note_ptr_opaque_skip(tn: TypeName, resolver: TypeResolver, skip: Hash(Str
 }
 
 pub fn note_ptr_opaque(tn: TypeName, resolver: TypeResolver) {
-  empty = Hash(String, Int).new
+  empty = Hash(String, Int).new()
   note_ptr_opaque_skip(tn, resolver, empty)
 }
 
@@ -1269,7 +1269,7 @@ pub fn collect_opaques(program: Program, resolver: TypeResolver) {
   fns = program_all_functions(program)
   for fnn in fns {
     names = collect_fn_type_params(fnn, resolver.named)
-    skip = Hash(String, Int).new
+    skip = Hash(String, Int).new()
     for name in names {
       skip[name] = 1
     }
@@ -1286,37 +1286,37 @@ pub fn collect_opaques(program: Program, resolver: TypeResolver) {
 }
 
 pub fn c_field_ok(ty: Ty): Bool {
-  if ty.is_integer {
+  if ty.is_integer() {
     return true
   }
   // An enum is C's int in a C layout (Stage 29 W5a1, D358).
-  if ty.is_enum {
+  if ty.is_enum() {
     return true
   }
-  if ty.is_uint64 {
+  if ty.is_uint64() {
     return true
   }
-  if ty.is_bool {
+  if ty.is_bool() {
     return true
   }
-  if ty.is_float {
+  if ty.is_float() {
     return true
   }
-  if ty.is_string {
+  if ty.is_string() {
     return true
   }
-  if ty.is_clayout {
+  if ty.is_clayout() {
     return true
   }
-  if ty.is_ptr {
+  if ty.is_ptr() {
     if inner = ty.inner {
-      if inner.is_void {
+      if inner.is_void() {
         return true
       }
-      if inner.is_opaque {
+      if inner.is_opaque() {
         return true
       }
-      if inner.is_clayout {
+      if inner.is_clayout() {
         return true
       }
     }
@@ -1326,7 +1326,7 @@ pub fn c_field_ok(ty: Ty): Bool {
 
 pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(String, Int)) {
   resolved: Array(TyField) = []
-  seen = Hash(String, Int).new
+  seen = Hash(String, Int).new()
   i = 0
   while i < layout.fields.size {
     field = layout.fields[i]
@@ -1335,14 +1335,14 @@ pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(
       return
     }
     seen[field.name] = 1
-    markf = resolver.err_count
+    markf = resolver.err_count()
     resolver.c_scalar_ok = true
     ty = resolver.resolve(field.type)
     resolver.c_scalar_ok = false
     if resolver.new_err_since(markf) {
       return
     }
-    if ty.is_clayout {
+    if ty.is_clayout() {
       if mark = ready.get(resolver.type_key(ty.mod_name, ty.name)) {
       } else {
         resolver.fail(field.loc, "${ty.name} is not a complete C layout yet")
@@ -1350,7 +1350,7 @@ pub fn fill_clayout_fields(resolver: TypeResolver, layout: CLayout, ready: Hash(
       }
     }
     if !c_field_ok(ty) {
-      resolver.fail(field.loc, "C layout fields must be C types, not ${ty.show}")
+      resolver.fail(field.loc, "C layout fields must be C types, not ${ty.show()}")
       return
     }
     resolved.push(TyField.new(field.name, ty))
@@ -1394,7 +1394,7 @@ pub fn type_is_pub(p: Program, m: String, name: String): Bool {
 
 pub fn fill_type_fields(resolver: TypeResolver, mod_name: String, name: String, fields: Array(Field)) {
   resolved: Array(TyField) = []
-  seen = Hash(String, Int).new
+  seen = Hash(String, Int).new()
   for field in fields {
     if prev = seen.get(field.name) {
       resolver.fail(field.loc, "duplicate field ${field.name}")
@@ -1417,7 +1417,7 @@ pub fn fill_type_fields(resolver: TypeResolver, mod_name: String, name: String, 
 }
 
 pub fn load_types(program: Program): TypeResolver {
-  resolver = TypeResolver.new
+  resolver = TypeResolver.new()
   resolver.program = program
   for sdef in program.structs {
     if sdef.name == "Error" {
@@ -1435,7 +1435,7 @@ pub fn load_types(program: Program): TypeResolver {
     if decl = sdef.enum_of {
       // An enum (Stage 29 W5a1): its own type kind, with its members.
       sty = ty_named(tyk_enum(), sdef.name)
-      info = TyEnum.new
+      info = TyEnum.new()
       info.names = decl.names
       info.vals = decl.vals
       info.c_int = decl.c_int
@@ -1524,7 +1524,7 @@ pub fn load_types(program: Program): TypeResolver {
       fill_type_fields(resolver, cdef2.mod_name, cdef2.name, cdef2.fields)
     }
   }
-  ready = Hash(String, Int).new
+  ready = Hash(String, Int).new()
   for lib_def in program.libs {
     j = 0
     while j < lib_def.layouts.size {

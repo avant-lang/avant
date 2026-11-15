@@ -74,12 +74,12 @@ pub fn (checker_self: Checker) free_fn_fits(name: String, argc: Int): Bool {
 // an error when a function fits too; nil when no method fits (the call
 // is a function's).
 pub fn (checker_self: Checker) bare_method_call(expr: Expr, name: String, argc: Int): Expr? {
-  if st = checker_self.bare_receiver {
+  if st = checker_self.bare_receiver() {
     if !checker_self.receiver_method_fits(st, name, argc) {
       return nil
     }
     if checker_self.free_fn_fits(name, argc) {
-      checker_self.fail(expr.loc, "${name} is both a method of ${st.show} and a function; write ${checker_self.self_name}.${name}(...) for the method, or qualify the function (module.${name}(...))")
+      checker_self.fail(expr.loc, "${name} is both a method of ${st.show()} and a function; write ${checker_self.self_name}.${name}(...) for the method, or qualify the function (module.${name}(...))")
       return nil
     }
     r = Expr.new(ex_name(), expr.loc)
@@ -94,7 +94,7 @@ pub fn (checker_self: Checker) bare_method_call(expr: Expr, name: String, argc: 
 pub fn (checker_self: Checker) refuse_bare_field_write(target: Expr, loc: Location) {
   owner = "the receiver"
   if st = checker_self.self_ty {
-    owner = st.show
+    owner = st.show()
   }
   checker_self.fail(target.loc, "${target.ident} is a field of ${owner}; write ${checker_self.self_name}.${target.ident} = ... to change the field, or choose another name for a local")
 }
@@ -141,7 +141,7 @@ pub fn (checker_self: Checker) refuse_copy_write(target: Expr, loc: Location) {
     return
   }
   if st = checker_self.self_ty {
-    if !st.is_struct {
+    if !st.is_struct() {
       return
     }
   } else {
@@ -253,7 +253,7 @@ pub fn (checker_self: Checker) refuse_for_field_write(target: Expr, loc: Locatio
   while cur.kind == ex_field() {
     if o = cur.object {
       if ot = o.ty {
-        if !ot.is_struct {
+        if !ot.is_struct() {
           return false
         }
       } else {

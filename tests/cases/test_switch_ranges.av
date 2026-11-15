@@ -19,7 +19,7 @@ class RCase {
 }
 
 fn refused(tag: String, src: String, needle: String, pos: String): RCase {
-  f = RCase.new
+  f = RCase.new()
   f.tag = tag
   f.src = src
   f.want = needle
@@ -28,7 +28,7 @@ fn refused(tag: String, src: String, needle: String, pos: String): RCase {
 }
 
 fn accepted(tag: String, src: String, out: String): RCase {
-  f = RCase.new
+  f = RCase.new()
   f.tag = tag
   f.src = src
   f.want = out
@@ -89,7 +89,7 @@ fn cases: Array(RCase) {
   xs.push(refused("const-overlap", "const lo = 1\nconst hi = 5\nfn main {\n  switch argv().size {\n    case lo..=hi { puts(1) }\n    case 3 { puts(2) }\n    else { }\n  }\n}\n", "case 3 overlaps case lo..=hi", "6:10"))
   xs.push(refused("const-local-shadow", "const tab = 9\nfn main {\n  tab2 = 9\n  switch argv().size {\n    case tab2 { puts(1) }\n    else { }\n  }\n}\n", "tab2 is not a constant", "5:10"))
   // O726: an enum member's value may be a constant.
-  xs.push(accepted("enum-const-values", "const http_ok = 200\nconst base = 7\nenum Status { ok = http_ok, created, not_found = 404, later = base }\nenum Small { a = base, b }\nfn word(s: Status): String {\n  switch s {\n    case ok, created { \"fine\" }\n    case not_found { \"missing\" }\n    case later { \"later\" }\n  }\n}\nfn main {\n  puts(Status.created.to_i)\n  puts(Status.later.to_i)\n  if s = Status.from_i(201) {\n    puts(s)\n  }\n  if t = Status.from_i(7) {\n    puts(word(t))\n  }\n  puts(Status.from_i(8) ?? Status.ok)\n  puts(word(Status.ok))\n  puts(Small.b.to_i)\n  puts(\"\${Small.a}\")\n}\n", "201\n7\ncreated\nlater\nok\nfine\n8\na\n"))
+  xs.push(accepted("enum-const-values", "const http_ok = 200\nconst base = 7\nenum Status { ok = http_ok, created, not_found = 404, later = base }\nenum Small { a = base, b }\nfn word(s: Status): String {\n  switch s {\n    case ok, created { \"fine\" }\n    case not_found { \"missing\" }\n    case later { \"later\" }\n  }\n}\nfn main {\n  puts(Status.created.to_i())\n  puts(Status.later.to_i())\n  if s = Status.from_i(201) {\n    puts(s)\n  }\n  if t = Status.from_i(7) {\n    puts(word(t))\n  }\n  puts(Status.from_i(8) ?? Status.ok)\n  puts(word(Status.ok))\n  puts(Small.b.to_i())\n  puts(\"\${Small.a}\")\n}\n", "201\n7\ncreated\nlater\nok\nfine\n8\na\n"))
   xs.push(refused("enum-const-unknown", "enum Status { ok = nope }\nfn main {\n  puts(Status.ok.to_i)\n}\n", "nope is not a constant: an enum member's value is an integer literal or a constant", "1:15"))
   xs.push(refused("enum-const-same-value", "const one = 1\nenum S { a = 1, b = one }\nfn main {\n  puts(S.a.to_i)\n}\n", "members a and b of S have the same value 1", "2:17"))
   xs.push(refused("enum-const-next-same-value", "const one = 1\nenum S { a = one, b, c = 2 }\nfn main {\n  puts(S.a.to_i)\n}\n", "members b and c of S have the same value 2", "2:22"))
@@ -97,7 +97,7 @@ fn cases: Array(RCase) {
   xs.push(refused("enum-const-float", "const half = 0.5\nenum S { a = half }\nfn main {\n  puts(S.a.to_i)\n}\n", "the constant half = 0.5 is not an integer", "2:10"))
   xs.push(refused("enum-value-string", "enum S { a = \"x\" }\nfn main {\n  puts(S.a.to_i)\n}\n", "an enum member's value is an integer literal or a constant", "1:14"))
   // O685: an enum is stored in one byte (u8, i8), two (u16, i16) or four.
-  xs.push(accepted("enum-narrow", "enum Sign { neg = -1, zero, pos }\nenum Wide { a = 0, b = 300, c = 65535 }\nenum Mid { lo = -300, hi = 300 }\nclass Box {\n  pub s: Sign = Sign.neg\n  pub w: Wide = Wide.c\n  pub m: Mid = Mid.lo\n}\nstruct P {\n  s: Sign\n  w: Wide\n}\nfn sw(s: Sign): Int {\n  switch s {\n    case neg { -10 }\n    case zero { 0 }\n    case pos { 10 }\n  }\n}\nfn ww(w: Wide): String {\n  switch w {\n    case a { \"a\" }\n    case b { \"b\" }\n    case c { \"c\" }\n  }\n}\nfn main {\n  xs = Array(Sign).new(5, Sign.pos)\n  xs[1] = Sign.neg\n  ws: Array(Wide) = [Wide.c, Wide.b, Wide.a]\n  ms = Mid.members\n  for x in xs {\n    puts(sw(x))\n  }\n  for w in ws {\n    puts(\"\${w} \${w.to_i} \${ww(w)}\")\n  }\n  for m in ms {\n    puts(\"\${m} \${m.to_i}\")\n  }\n  bx = Box.new\n  puts(\"\${bx.s} \${bx.w} \${bx.m}\")\n  p = P { s: Sign.zero, w: Wide.b }\n  puts(\"\${p.s} \${p.w.to_i}\")\n  o: Wide? = Wide.from_i(65535)\n  if v = o {\n    puts(v)\n  }\n  q: Sign? = Sign.from_i(-1)\n  puts(q ?? Sign.pos)\n  puts(Sign.from_i(5) ?? Sign.zero)\n  puts(Mid.from_name(\"hi\") ?? Mid.lo)\n  u: Int | Sign = Sign.neg\n  switch u {\n    case n: Int { puts(n) }\n    case s: Sign { puts(s.to_i) }\n  }\n  puts(Sign.neg == xs[1])\n  puts(Wide.c != ws[1])\n}\n", "10\n-10\n10\n10\n10\nc 65535 c\nb 300 b\na 0 a\nlo -300\nhi 300\nneg c lo\nzero 300\nc\nneg\nzero\nhi\n-1\ntrue\ntrue\n"))
+  xs.push(accepted("enum-narrow", "enum Sign { neg = -1, zero, pos }\nenum Wide { a = 0, b = 300, c = 65535 }\nenum Mid { lo = -300, hi = 300 }\nclass Box {\n  pub s: Sign = Sign.neg\n  pub w: Wide = Wide.c\n  pub m: Mid = Mid.lo\n}\nstruct P {\n  s: Sign\n  w: Wide\n}\nfn sw(s: Sign): Int {\n  switch s {\n    case neg { -10 }\n    case zero { 0 }\n    case pos { 10 }\n  }\n}\nfn ww(w: Wide): String {\n  switch w {\n    case a { \"a\" }\n    case b { \"b\" }\n    case c { \"c\" }\n  }\n}\nfn main {\n  xs = Array(Sign).new(5, Sign.pos)\n  xs[1] = Sign.neg\n  ws: Array(Wide) = [Wide.c, Wide.b, Wide.a]\n  ms = Mid.members()\n  for x in xs {\n    puts(sw(x))\n  }\n  for w in ws {\n    puts(\"\${w} \${w.to_i()} \${ww(w)}\")\n  }\n  for m in ms {\n    puts(\"\${m} \${m.to_i()}\")\n  }\n  bx = Box.new()\n  puts(\"\${bx.s} \${bx.w} \${bx.m}\")\n  p = P { s: Sign.zero, w: Wide.b }\n  puts(\"\${p.s} \${p.w.to_i()}\")\n  o: Wide? = Wide.from_i(65535)\n  if v = o {\n    puts(v)\n  }\n  q: Sign? = Sign.from_i(-1)\n  puts(q ?? Sign.pos)\n  puts(Sign.from_i(5) ?? Sign.zero)\n  puts(Mid.from_name(\"hi\") ?? Mid.lo)\n  u: Int | Sign = Sign.neg\n  switch u {\n    case n: Int { puts(n) }\n    case s: Sign { puts(s.to_i()) }\n  }\n  puts(Sign.neg == xs[1])\n  puts(Wide.c != ws[1])\n}\n", "10\n-10\n10\n10\n10\nc 65535 c\nb 300 b\na 0 a\nlo -300\nhi 300\nneg c lo\nzero 300\nc\nneg\nzero\nhi\n-1\ntrue\ntrue\n"))
   xs
 }
 
@@ -158,7 +158,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   // enters, so no edge into an arm is taken for a back edge: a program
   // that spawns polls in its loops only (mir/gc.av), and these have none.
   pw = "${dir}/sr-ll-nopoll.av"
-  _ = file_write(pw, "fn s(m: String): Int {\n  switch m {\n    case \"GET\", \"HEAD\" { 1 }\n    case \"POST\" { 2 }\n    case \"\" { 3 }\n    else { 0 }\n  }\n}\nfn r(c: Int): Int {\n  switch c {\n    case 'a'..='z' { 1 }\n    case 1000..=100000 { 2 }\n    case 200000..=300000 { 3 }\n    else { 0 }\n  }\n}\nfn main {\n  h = spawn { 1 }\n  puts(s(\"HEAD\") + r(argv().size))\n  puts(h.join ?? -1)\n}\n")
+  _ = file_write(pw, "fn s(m: String): Int {\n  switch m {\n    case \"GET\", \"HEAD\" { 1 }\n    case \"POST\" { 2 }\n    case \"\" { 3 }\n    else { 0 }\n  }\n}\nfn r(c: Int): Int {\n  switch c {\n    case 'a'..='z' { 1 }\n    case 1000..=100000 { 2 }\n    case 200000..=300000 { 3 }\n    else { 0 }\n  }\n}\nfn main {\n  h = spawn { 1 }\n  puts(s(\"HEAD\") + r(argv().size))\n  puts(h.join() ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, pw, "${dir}/sr-ll-nopoll.ll", "${dir}/sr-ll-nopoll.log"), 0, "ll-nopoll: emits")
   pll = log_text("${dir}/sr-ll-nopoll.ll")
   c.expect(str_has(pll, "@memcmp("), "ll-nopoll: the String switch compares")
@@ -168,11 +168,11 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   // numbering rule took for a back edge: two polls in a program with no
   // loop.
   aw = "${dir}/sr-ll-abs.av"
-  _ = file_write(aw, "fn main {\n  h = spawn { 1 }\n  q = -3\n  puts(q.abs)\n  puts(h.join ?? -1)\n}\n")
+  _ = file_write(aw, "fn main {\n  h = spawn { 1 }\n  q = -3\n  puts(q.abs())\n  puts(h.join() ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, aw, "${dir}/sr-ll-abs.ll", "${dir}/sr-ll-abs.log"), 0, "ll-abs: emits")
   c.expect(!str_has(log_text("${dir}/sr-ll-abs.ll"), "avant_gc_poll"), "ll-abs: no poll in a program without a loop")
   lw2 = "${dir}/sr-ll-loop.av"
-  _ = file_write(lw2, "fn main {\n  h = spawn { 1 }\n  xs: Array(String) = []\n  for i in 0..argv().size + 3 {\n    xs.push(\"\${i}\")\n  }\n  puts(xs.size)\n  puts(h.join ?? -1)\n}\n")
+  _ = file_write(lw2, "fn main {\n  h = spawn { 1 }\n  xs: Array(String) = []\n  for i in 0..argv().size + 3 {\n    xs.push(\"\${i}\")\n  }\n  puts(xs.size)\n  puts(h.join() ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, lw2, "${dir}/sr-ll-loop.ll", "${dir}/sr-ll-loop.log"), 0, "ll-loop: emits")
   c.expect(str_has(log_text("${dir}/sr-ll-loop.ll"), "avant_gc_poll"), "ll-loop: a loop that holds a reference still polls")
   nw = "${dir}/sr-ll-narrow.av"
@@ -201,5 +201,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

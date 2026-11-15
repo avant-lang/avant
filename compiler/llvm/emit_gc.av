@@ -89,19 +89,19 @@ pub fn ll_gc_frame_enter(e: LlEmit) {
   }
   slots = "null"
   if n > 0 {
-    slots = e.tmp
+    slots = e.tmp()
     e.line("${slots} = getelementptr inbounds i8, ptr %gcf, i64 32")
   }
-  fs = e.tmp
+  fs = e.tmp()
   e.line("${fs} = getelementptr inbounds i8, ptr %gcf, i64 8")
   e.line("store ptr ${slots}, ptr ${fs}, align 8")
-  fn_ = e.tmp
+  fn_ = e.tmp()
   e.line("${fn_} = getelementptr inbounds i8, ptr %gcf, i64 16")
   e.line("store i32 ${n}, ptr ${fn_}, align 8")
-  fc = e.tmp
+  fc = e.tmp()
   e.line("${fc} = getelementptr inbounds i8, ptr %gcf, i64 20")
   e.line("store i32 ${n}, ptr ${fc}, align 4")
-  fsc = e.tmp
+  fsc = e.tmp()
   e.line("${fsc} = getelementptr inbounds i8, ptr %gcf, i64 24")
   e.line("store i32 0, ptr ${fsc}, align 8")
   if n > 0 {
@@ -115,12 +115,12 @@ pub fn ll_gc_frame_enter(e: LlEmit) {
       while j < words.size {
         at = e.local_name(l)
         if words[j] > 0 {
-          at = e.tmp
+          at = e.tmp()
           e.line("${at} = getelementptr inbounds i8, ptr ${e.local_name(l)}, i64 ${words[j] * 8}")
         }
         sl = slots
         if w > 0 {
-          sl = e.tmp
+          sl = e.tmp()
           e.line("${sl} = getelementptr inbounds i8, ptr %gcf, i64 ${32 + w * 8}")
         }
         e.line("store ptr ${at}, ptr ${sl}, align 8")
@@ -219,18 +219,18 @@ pub fn ll_barrier(e: LlEmit, o: MOperand) {
   test = e.part("test")
   call = e.part("call")
   cont = e.part("cont")
-  z = e.tmp
+  z = e.tmp()
   e.line("${z} = icmp eq ptr ${h}, null")
   e.line("br i1 ${z}, label %${cont}, label %${test}")
   e.block(test)
-  fp = e.tmp
+  fp = e.tmp()
   e.line("${fp} = getelementptr inbounds i8, ptr ${h}, i64 -2")
-  fl = e.tmp
+  fl = e.tmp()
   e.line("${fl} = load i16, ptr ${fp}, align 2")
   // 0x8030 and 0x8000 as i16.
-  mk = e.tmp
+  mk = e.tmp()
   e.line("${mk} = and i16 ${fl}, -32720")
-  skip = e.tmp
+  skip = e.tmp()
   e.line("${skip} = icmp ugt i16 ${mk}, -32768")
   e.line("br i1 ${skip}, label %${cont}, label %${call}")
   e.block(call)
@@ -279,7 +279,7 @@ pub fn ll_barrier_at(e: LlEmit, o: MOperand) {
 // The allocation call form; returns the result value.
 fn ll_alloc_call(e: LlEmit, callee: String, size: String, ty: String): String {
   e.need(callee)
-  r = e.tmp
+  r = e.tmp()
   e.line("${r} = call ptr @${callee}(i64 ${size}, i32 ${ty})")
   r
 }
@@ -336,9 +336,9 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
     sz = 8
     size = "8"
   } else if args[0].kind != mok_int() {
-    z = e.tmp
+    z = e.tmp()
     e.line("${z} = icmp eq i64 ${size}, 0")
-    s8 = e.tmp
+    s8 = e.tmp()
     e.line("${s8} = select i1 ${z}, i64 8, i64 ${size}")
     size = s8
   }
@@ -359,38 +359,38 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
   if shared {
     limit = "@avant_gc_limit_mt"
   }
-  bump = e.tmp
+  bump = e.tmp()
   e.line("${bump} = load ptr, ptr @avant_gc_bump, align 8")
-  lim = e.tmp
+  lim = e.tmp()
   e.line("${lim} = load ptr, ptr ${limit}, align 8")
   if !const_size {
-    t15 = e.tmp
+    t15 = e.tmp()
     e.line("${t15} = add i64 ${size}, 15")
-    total = e.tmp
+    total = e.tmp()
     e.line("${total} = and i64 ${t15}, -8")
   }
-  bi = e.tmp
+  bi = e.tmp()
   e.line("${bi} = ptrtoint ptr ${bump} to i64")
-  ei = e.tmp
+  ei = e.tmp()
   e.line("${ei} = add i64 ${bi}, ${total}")
-  li = e.tmp
+  li = e.tmp()
   e.line("${li} = ptrtoint ptr ${lim} to i64")
-  go = e.tmp
+  go = e.tmp()
   e.line("${go} = icmp ule i64 ${ei}, ${li}")
   if !const_size {
-    c5 = e.tmp
+    c5 = e.tmp()
     e.line("${c5} = icmp ule i64 ${total}, 8192")
-    t0 = e.tmp
+    t0 = e.tmp()
     e.line("${t0} = icmp eq i32 ${ty}, 0")
-    big = e.tmp
+    big = e.tmp()
     e.line("${big} = icmp uge i64 ${size}, 6144")
-    both = e.tmp
+    both = e.tmp()
     e.line("${both} = and i1 ${t0}, ${big}")
-    c6 = e.tmp
+    c6 = e.tmp()
     e.line("${c6} = xor i1 ${both}, true")
-    a56 = e.tmp
+    a56 = e.tmp()
     e.line("${a56} = and i1 ${c5}, ${c6}")
-    g2 = e.tmp
+    g2 = e.tmp()
     e.line("${g2} = and i1 ${go}, ${a56}")
     go = g2
   }
@@ -405,13 +405,13 @@ pub fn ll_alloc(e: LlEmit, callee: String, args: Array(MOperand), birth: Bool): 
 
   e.block(slow)
   e.used_alloc_slow = true
-  sc = e.tmp
+  sc = e.tmp()
   e.line("${sc} = call ptr @__avant_alloc_slow(i64 ${size}, i32 ${ty})")
   s = ll_alloc_birth(e, sc, birth)
   e.line("br label %${cont}")
 
   e.block(cont)
-  r = e.tmp
+  r = e.tmp()
   e.line("${r} = phi ptr [ ${obj}, %${fast} ], [ ${s}, %${slow} ]")
   r
 }
@@ -464,25 +464,25 @@ pub fn ll_alloc_slow_helper(e: LlEmit) {
 // once in the module's slow-call helper, where the runtime answers null
 // (ll_alloc_slow_helper).
 fn ll_alloc_take(e: LlEmit, bump: String, total: String, const_size: Bool, sz: Int, tid: Int, size: String, ty: String, shared: Bool): String {
-  end = e.tmp
+  end = e.tmp()
   e.line("${end} = getelementptr inbounds i8, ptr ${bump}, i64 ${total}")
   e.line("store ptr ${end}, ptr @avant_gc_bump, align 8")
   // The header: size | type << 32 | (HEAP | YOUNG) << 48.
   if const_size {
-    hdr = (32800u64 << 48u64) | (tid.to_u64 << 32u64) | sz.to_u64
-    e.line("store i64 ${hdr.wrap_i}, ptr ${bump}, align 8")
+    hdr = (32800u64 << 48u64) | (tid.to_u64() << 32u64) | sz.to_u64()
+    e.line("store i64 ${hdr.wrap_i()}, ptr ${bump}, align 8")
   } else {
-    tz = e.tmp
+    tz = e.tmp()
     e.line("${tz} = zext i32 ${ty} to i64")
-    tsh = e.tmp
+    tsh = e.tmp()
     e.line("${tsh} = shl i64 ${tz}, 32")
-    h1 = e.tmp
+    h1 = e.tmp()
     e.line("${h1} = or i64 ${size}, ${tsh}")
-    h2 = e.tmp
-    e.line("${h2} = or i64 ${h1}, ${(32800u64 << 48u64).wrap_i}")
+    h2 = e.tmp()
+    e.line("${h2} = or i64 ${h1}, ${(32800u64 << 48u64).wrap_i()}")
     e.line("store i64 ${h2}, ptr ${bump}, align 8")
   }
-  obj = e.tmp
+  obj = e.tmp()
   e.line("${obj} = getelementptr inbounds i8, ptr ${bump}, i64 8")
   e.line("call void @llvm.memset.p0.i64(ptr ${obj}, i8 0, i64 ${size}, i1 false)")
   if shared {
@@ -495,29 +495,29 @@ fn ll_alloc_take(e: LlEmit, bump: String, total: String, const_size: Bool, sz: I
 // (ll_alloc): avant_gc_starts[off >> 9] |= 1 << ((off >> 3) & 63), OFF
 // the header's offset from avant_gc_base.
 fn ll_alloc_start_bit(e: LlEmit, bump: String) {
-  base = e.tmp
+  base = e.tmp()
   e.line("${base} = load ptr, ptr @avant_gc_base, align 8")
-  pi = e.tmp
+  pi = e.tmp()
   e.line("${pi} = ptrtoint ptr ${bump} to i64")
-  bsi = e.tmp
+  bsi = e.tmp()
   e.line("${bsi} = ptrtoint ptr ${base} to i64")
-  off = e.tmp
+  off = e.tmp()
   e.line("${off} = sub i64 ${pi}, ${bsi}")
-  st = e.tmp
+  st = e.tmp()
   e.line("${st} = load ptr, ptr @avant_gc_starts, align 8")
-  wd = e.tmp
+  wd = e.tmp()
   e.line("${wd} = lshr i64 ${off}, 9")
-  b3 = e.tmp
+  b3 = e.tmp()
   e.line("${b3} = lshr i64 ${off}, 3")
-  bit = e.tmp
+  bit = e.tmp()
   e.line("${bit} = and i64 ${b3}, 63")
-  mask = e.tmp
+  mask = e.tmp()
   e.line("${mask} = shl i64 1, ${bit}")
-  wp = e.tmp
+  wp = e.tmp()
   e.line("${wp} = getelementptr inbounds i64, ptr ${st}, i64 ${wd}")
-  old = e.tmp
+  old = e.tmp()
   e.line("${old} = load i64, ptr ${wp}, align 8")
-  nw = e.tmp
+  nw = e.tmp()
   e.line("${nw} = or i64 ${old}, ${mask}")
   e.line("store i64 ${nw}, ptr ${wp}, align 8")
 }
@@ -546,28 +546,28 @@ pub fn ll_c_str(e: LlEmit, args: Array(MOperand)): String {
   e.need("avant_c_str")
   e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
   s = e.value(args[0])
-  lo = e.tmp
+  lo = e.tmp()
   e.line("${lo} = load i64, ptr @avant_gc_heap_lo, align 8")
-  si = e.tmp
+  si = e.tmp()
   e.line("${si} = ptrtoint ptr ${s} to i64")
-  off = e.tmp
+  off = e.tmp()
   e.line("${off} = sub i64 ${si}, ${lo}")
-  len = e.tmp
+  len = e.tmp()
   e.line("${len} = load i64, ptr @avant_gc_heap_len, align 8")
-  inh = e.tmp
+  inh = e.tmp()
   e.line("${inh} = icmp ult i64 ${off}, ${len}")
-  x = e.tmp
+  x = e.tmp()
   e.line("${x} = call i1 @llvm.expect.i1(i1 ${inh}, i1 false)")
   head = e.label
   own = e.part("cstr")
   cont = e.part("cstrd")
   e.line("br i1 ${x}, label %${own}, label %${cont}")
   e.block(own)
-  r = e.tmp
+  r = e.tmp()
   e.line("${r} = call ptr @avant_c_str(ptr ${s})")
   e.line("br label %${cont}")
   e.block(cont)
-  p = e.tmp
+  p = e.tmp()
   e.line("${p} = phi ptr [ ${s}, %${head} ], [ ${r}, %${own} ]")
   p
 }
@@ -581,11 +581,11 @@ pub fn ll_gc_poll(e: LlEmit) {
   e.used_poll_global = true
   e.need("avant_gc_poll")
   e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
-  r = e.tmp
+  r = e.tmp()
   e.line("${r} = load volatile i32, ptr @avant_gc_requested, align 4")
-  c = e.tmp
+  c = e.tmp()
   e.line("${c} = icmp ne i32 ${r}, 0")
-  x = e.tmp
+  x = e.tmp()
   e.line("${x} = call i1 @llvm.expect.i1(i1 ${c}, i1 false)")
   yes = e.part("poll")
   cont = e.part("polled")
@@ -619,5 +619,5 @@ pub fn ll_alloc_globals(shared: Bool): String {
   } else {
     buf.push_str("@avant_gc_limit = external thread_local(localexec) global ptr\n")
   }
-  buf.to_s
+  buf.to_s()
 }

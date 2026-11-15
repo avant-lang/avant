@@ -40,8 +40,8 @@ struct Q {
   }
 
   fn twice {
-    bump
-    self.bump
+    bump()
+    self.bump()
   }
 
   fn get: Int {
@@ -53,11 +53,11 @@ struct Q {
 // call: kind names the method.
 fn change_q(kind: String, qs: Array(Q)) {
   if kind == "method" {
-    qs[0].bump
+    qs[0].bump()
   } else if kind == "method-held" {
-    qs[0].shift
+    qs[0].shift()
   } else if kind == "method-bare" {
-    qs[0].twice
+    qs[0].twice()
   } else if kind == "method-field" {
     qs[0].pos.move(2)
   }
@@ -84,21 +84,21 @@ fn change(kind: String, xs: Array(Int)) {
   } else if kind == "sender-call" {
     grow(xs)
   } else if kind == "sender-field" {
-    ho = Holder.new
+    ho = Holder.new()
     ho.xs = xs
     ho.xs.push(3)
   } else if kind == "pop" {
-    _ = ys.pop
+    _ = ys.pop()
   } else if kind == "clear" {
-    ys.clear
+    ys.clear()
   } else if kind == "fill" {
     ys.fill(0)
   } else if kind == "sort" {
-    ys.sort
+    ys.sort()
   } else if kind == "sort-block" {
     ys.sort { |a, b| a < b }
   } else if kind == "reverse" {
-    ys.reverse
+    ys.reverse()
   } else if kind == "reserve" {
     ys.reserve(100)
   } else if kind == "store" {
@@ -115,7 +115,7 @@ fn main: Int {
     kind = a[a.size - 1]
   }
   puts("before")
-  gate = Channel(Int).new
+  gate = Channel(Int).new()
   xs = [3, 1, 2]
   if kind == "task-alias" || kind == "task-call" || kind == "task-field" {
     // The task changes what it captured, through another path.
@@ -126,15 +126,15 @@ fn main: Int {
       } else if kind == "task-call" {
         grow(xs)
       } else {
-        ho = Holder.new
+        ho = Holder.new()
         ho.xs = xs
-        ho.xs.clear
+        ho.xs.clear()
       }
       xs.size
     }
     // The trap ends the task (the runtime prints it), and its join gives
     // the trap.
-    vh = h.join else e {
+    vh = h.join() else e {
       return 1
     }
     puts(vh)
@@ -143,23 +143,23 @@ fn main: Int {
   if kind == "element-field" {
     ps = [P { n: 1 }]
     h1 = spawn {
-      _ = gate.recv
+      _ = gate.recv()
       ps[0].n
     }
     bump(ps)
     gate.send(1)
-    puts(h1.join ?? -1)
+    puts(h1.join() ?? -1)
     return 0
   }
   if kind == "method" || kind == "method-held" || kind == "method-bare" || kind == "method-field" {
     qs = [Q { n: 1, pos: Pos { x: 0 } }]
     h3 = spawn {
-      _ = gate.recv
-      qs[0].get
+      _ = gate.recv()
+      qs[0].get()
     }
     change_q(kind, qs)
     gate.send(1)
-    puts(h3.join ?? -1)
+    puts(h3.join() ?? -1)
     return 0
   }
   if kind == "task-method" {
@@ -167,11 +167,11 @@ fn main: Int {
     qs2 = [Q { n: 1, pos: Pos { x: 0 } }]
     h4 = spawn {
       change_q("method", qs2)
-      qs2[0].get
+      qs2[0].get()
     }
     // The trap ends the task (the runtime prints it), and its join gives
     // the trap.
-    vh4 = h4.join else e {
+    vh4 = h4.join() else e {
       return 1
     }
     puts(vh4)
@@ -180,13 +180,13 @@ fn main: Int {
   if kind == "nested" {
     xss = [[1, 2], [3]]
     h2 = spawn {
-      _ = gate.recv
+      _ = gate.recv()
       xss[0].size
     }
     inner = xss[0]
     inner.push(5)
     gate.send(1)
-    puts(h2.join ?? -1)
+    puts(h2.join() ?? -1)
     return 0
   }
   if kind == "parallel" {
@@ -196,12 +196,12 @@ fn main: Int {
     return 0
   }
   h = spawn {
-    _ = gate.recv
+    _ = gate.recv()
     xs.size
   }
   change(kind, xs)
   gate.send(1)
-  puts(h.join ?? -1)
+  puts(h.join() ?? -1)
   0
 }
 

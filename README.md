@@ -27,8 +27,8 @@ fn parse(line: String): Item | BadLine {
   if f.size != 3 {
     return BadLine { message: "expected name,qty,cents: ${line}" }
   }
-  qty = f[1].to_i ?? return BadLine { message: "bad quantity: ${f[1]}" }
-  cents = f[2].to_i ?? return BadLine { message: "bad price: ${f[2]}" }
+  qty = f[1].to_i() ?? return BadLine { message: "bad quantity: ${f[1]}" }
+  cents = f[2].to_i() ?? return BadLine { message: "bad price: ${f[2]}" }
   Item { name: f[0], qty: qty, cents: cents }
 }
 
@@ -41,8 +41,8 @@ fn main {
     }
     items.push(item)
   }
-  totals = items.parallel { |item| item.total }
-  puts("${items.size} items, ${totals.sum} cents")
+  totals = items.parallel { |item| item.total() }
+  puts("${items.size} items, ${totals.sum()} cents")
 }
 ```
 
@@ -68,7 +68,7 @@ import std.http
 fn main {
   if server = Http.listen(8080) {
     server.get("/") { |req| Response.text("hello") }
-    server.serve
+    server.serve()
   }
 }
 ```
@@ -511,7 +511,7 @@ fn main {
   puts("apple" < "banana")               // => true
   vs = [Version { major: 1, minor: 4 }, Version { major: 1, minor: 2 }]
   puts(vs[0] >= vs[1])                    // => true
-  if v = vs.min {
+  if v = vs.min() {
     puts("${v.major}.${v.minor}")         // => 1.2
   }
 }
@@ -539,7 +539,7 @@ struct Vec2 {
 }
 
 fn main {
-  puts(42.to_s + "/" + 2.5.to_s)                       // => 42/2.5
+  puts(42.to_s() + "/" + 2.5.to_s())                       // => 42/2.5
   puts("${size_or_word(3)} ${size_or_word(30)}")      // => 3 many
   puts("at ${Vec2 { x: 1, y: 2 }}")                   // => at (1, 2)
 }
@@ -626,7 +626,7 @@ A condition may bind a name: `if v = expr { ... }` runs the block when `expr` gi
 
 ```avant
 fn main {
-  ports = Hash(String, Int).new
+  ports = Hash(String, Int).new()
   ports["http"] = 80
   ports["https"] = 443
 
@@ -825,13 +825,13 @@ enum Status { ok = 200, created, not_found = 404 }
 fn main {
   t = Tok.name
   puts("${t}")                       // => name
-  puts(t.to_i)                       // => 1
+  puts(t.to_i())                       // => 1
   if u = Tok.from_i(2) {
     puts(u == Tok.number)            // => true
   }
   puts(Tok.from_name("eof") ?? Tok.name)   // => eof
-  puts(Status.created.to_i)          // => 201
-  puts(Tok.members.size)             // => 3
+  puts(Status.created.to_i())          // => 201
+  puts(Tok.members().size)             // => 3
 }
 ```
 
@@ -857,7 +857,7 @@ enum Dir {
 }
 
 fn main {
-  puts(Dir.west.turn)      // => north
+  puts(Dir.west.turn())      // => north
 }
 ```
 
@@ -908,7 +908,7 @@ fn double_port(cfg: Hash(String, Int)): Int? {
 }
 
 fn main {
-  cfg = Hash(String, Int).new
+  cfg = Hash(String, Int).new()
   puts(port_of(cfg))                 // => 8080
   puts(double_port(cfg) ?? 0)        // => 0
   cfg["port"] = 9000
@@ -928,7 +928,7 @@ class Config {
 }
 
 fn main {
-  c = Config.new
+  c = Config.new()
   c.port = "auto"
   c.port = 9000
   puts("stored")   // => stored
@@ -1017,7 +1017,7 @@ fn main {
   puts(half)                  // => 3.5
   puts(0.1 + 0.2)             // => 0.30000000000000004
   n = 3
-  puts(n.to_f * half)         // => 10.5
+  puts(n.to_f() * half)         // => 10.5
 }
 ```
 
@@ -1085,11 +1085,11 @@ Use `to_*` by default: the result is the same number, or the program stops and s
 fn main {
   big = 5000000000
   minus = -1
-  puts(big.wrap_i32)        // => 705032704
-  puts(minus.wrap_u32)      // => 4294967295
-  puts(minus.wrap_u64)      // => 18446744073709551615
+  puts(big.wrap_i32())        // => 705032704
+  puts(minus.wrap_u32())      // => 4294967295
+  puts(minus.wrap_u64())      // => 18446744073709551615
   f = 2.9
-  puts(f.to_i)              // => 2
+  puts(f.to_i())              // => 2
 }
 ```
 
@@ -1130,8 +1130,8 @@ fn main {
 ```avant
 fn main {
   x = 2.0
-  puts(x.sqrt)                 // => 1.4142135623730951
-  puts(fmt_float(x.sqrt, 3))   // => 1.414
+  puts(x.sqrt())                 // => 1.4142135623730951
+  puts(fmt_float(x.sqrt(), 3))   // => 1.414
   puts(x * 3.0)                // => 6.0
 }
 ```
@@ -1146,7 +1146,7 @@ fn main {
   line = "hello ${name}, you have ${2 + 3} messages"
   puts(line)                          // => hello Ada, you have 5 messages
   puts(line.size)                     // => 30
-  puts("  padded ".strip + "!")       // => padded!
+  puts("  padded ".strip() + "!")       // => padded!
   words = "to be or not".split(" ")
   puts(words.size)                    // => 4
 }
@@ -1168,8 +1168,8 @@ fn main {
   s = "né"
   puts(s.size)             // => 3
   puts(s[0])               // => 110
-  puts(s.chars.size)       // => 2
-  puts(s.chars[1])         // => é
+  puts(s.chars().size)       // => 2
+  puts(s.chars()[1])         // => é
 }
 ```
 
@@ -1203,13 +1203,13 @@ fn main {
 
 ```avant
 fn main {
-  puts("42".to_i ?? 0)          // => 42
-  puts("-17".to_i ?? 0)         // => -17
-  puts("12abc".to_i ?? -1)      // => -1
-  puts(" 42".to_i ?? -1)        // => -1
+  puts("42".to_i() ?? 0)          // => 42
+  puts("-17".to_i() ?? 0)         // => -17
+  puts("12abc".to_i() ?? -1)      // => -1
+  puts(" 42".to_i() ?? -1)        // => -1
   puts("ff".to_i(16) ?? -1)     // => 255
-  puts("2.5".to_f ?? 0.0)       // => 2.5
-  puts("1e3".to_f ?? 0.0)       // => 1000.0
+  puts("2.5".to_f() ?? 0.0)       // => 2.5
+  puts("1e3".to_f() ?? 0.0)       // => 1000.0
 }
 ```
 
@@ -1224,13 +1224,13 @@ fn main {
 
 ```avant
 fn main {
-  out = Buf.new
+  out = Buf.new()
   for i in 1..4 {
     out.push_str("item ")
     out.push_fmt_i(i)
     out.push_byte(10)               // a newline
   }
-  text = out.to_s
+  text = out.to_s()
   puts(text.size)                   // => 21
 
   raw = "héllo".bytes
@@ -1279,9 +1279,9 @@ fn main {
   puts(xs.size)          // => 4
   puts(xs[0])            // => 3
   xs[0] = 4
-  xs.sort
+  xs.sort()
   puts(xs[0])            // => 1
-  puts(xs.sum)           // => 12
+  puts(xs.sum())           // => 12
   puts(xs.contains(5))   // => true
 
   total = 0
@@ -1305,7 +1305,7 @@ fn main {
   c = Array(Float64).new(4)           // four elements, each 0.0
   d = Array(String).new(2, "none")    // two elements, each "none"
   e: Array(Int32) = [1, 2, 3]         // dense: 4 bytes per element
-  f = Array(Node).new(2) { |i| Node.new }                  // two elements, each its own Node
+  f = Array(Node).new(2) { |i| Node.new() }                  // two elements, each its own Node
   g = Array(Array(Int)).new(3) { |y| Array(Int).new(4) }   // a grid of 3 rows of 4
   g[0][0] = 7
   puts(g[1][0])                       // => 0
@@ -1367,7 +1367,7 @@ fn main {
   puts(by_length[0])                          // => fig
   puts(words.index_of("fig") ?? -1)           // => 1
   puts(words.any { |w| w.size > 5 })          // => true
-  puts(words.max ?? "")                       // => pear
+  puts(words.max() ?? "")                       // => pear
 }
 ```
 
@@ -1381,7 +1381,7 @@ A `String`, `Bytes` or `Buf` holds at most 2,147,483,647 bytes and an `Array` at
 
 ```avant
 fn main {
-  stock = Hash(String, Int).new
+  stock = Hash(String, Int).new()
   stock["tea"] = 12
   stock["milk"] = 3
 
@@ -1413,7 +1413,7 @@ fn main {
 
 ```avant
 fn main {
-  count = Hash(String, Int).new
+  count = Hash(String, Int).new()
   for w in "the cat and the hat and the bat".split(" ") {
     count.inc(w)
   }
@@ -1421,8 +1421,8 @@ fn main {
   if old = count.delete("cat") {
     puts(old)                             // => 1
   }
-  keys = count.keys
-  keys.sort
+  keys = count.keys()
+  keys.sort()
   puts(keys[0])                           // => and
 }
 ```
@@ -1439,15 +1439,15 @@ A key is an integer of any width (`Int`, `Int32`, `UInt32`, `UInt64`), a `Bool`,
 enum Suit { clubs, hearts }
 
 fn main {
-  seen = Hash(Int32, Int32).new
+  seen = Hash(Int32, Int32).new()
   for x in [7, -2, 7, 7] {
-    seen.inc(x.to_i32)
+    seen.inc(x.to_i32())
   }
-  puts(seen[7.to_i32] ?? 0.to_i32)        // => 3
-  names = Hash(Int, String).new
+  puts(seen[7.to_i32()] ?? 0.to_i32())        // => 3
+  names = Hash(Int, String).new()
   names[404] = "not found"
   puts(names.get_or(500, "unknown"))      // => unknown
-  score = Hash(Suit, Float64).new
+  score = Hash(Suit, Float64).new()
   score[Suit.hearts] = 2.5
   puts(score[Suit.hearts] ?? 0.0)         // => 2.5
 }
@@ -1484,11 +1484,11 @@ fn main {
   q = p                  // a copy
   q.x = 50
   puts(p.x)              // => 1
-  puts(q.sum)            // => 52
+  puts(q.sum())            // => 52
 
-  c = Counter.new
+  c = Counter.new()
   d = c                  // the same object
-  c.inc
+  c.inc()
   puts(d.value)          // => 1
 }
 ```
@@ -1601,7 +1601,7 @@ class Span {
 fn main {
   s = Span.new(2, 9)
   t = Span.new(0, 1, label: "t")
-  puts("${s.label} ${s.size} ${t.label}")   // => span 7 t
+  puts("${s.label} ${s.size()} ${t.label}")   // => span 7 t
 }
 ```
 
@@ -1677,7 +1677,7 @@ struct Money {
 }
 
 fn main {
-  puts(Money.zero.cents)     // => 0
+  puts(Money.zero().cents)     // => 0
   puts(Money.of(3).cents)    // => 300
 }
 ```
@@ -1801,7 +1801,7 @@ class ParseError: Error {
 }
 
 fn parse_age(s: String): Int | ParseError {
-  n = s.to_i ?? return ParseError.new("not a number: ${s}")
+  n = s.to_i() ?? return ParseError.new("not a number: ${s}")
   if n < 0 || n > 150 {
     return ParseError.new("out of range: ${n}")
   }
@@ -1811,7 +1811,7 @@ fn parse_age(s: String): Int | ParseError {
 fn age_gap(a: String, b: String): Int | ParseError {
   x = parse_age(a)?            // a failure here returns from age_gap
   y = parse_age(b)?
-  (x - y).abs
+  (x - y).abs()
 }
 
 fn main {
@@ -1872,7 +1872,7 @@ class ParseError: Error {
 }
 
 fn parse_age(s: String): Int | ParseError {
-  n = s.to_i ?? return ParseError.new("not a number: ${s}")
+  n = s.to_i() ?? return ParseError.new("not a number: ${s}")
   if n < 0 || n > 150 {
     return ParseError.new("out of range: ${n}")
   }
@@ -2241,8 +2241,8 @@ class Scale {
 }
 
 fn main {
-  s = Scale.new
-  f = s.by
+  s = Scale.new()
+  f = s.by()
   s.k = 10
   puts(f(4))    // => 40
 }
@@ -2413,7 +2413,7 @@ struct Celsius: Show {
 }
 
 fn announce(v: T: Show): String {
-  "value: ${v.to_s}"
+  "value: ${v.to_s()}"
 }
 
 fn main {
@@ -2498,7 +2498,7 @@ import vec
 
 fn main {
   v = Vec2 { x: 3, y: 4 }
-  puts(v.length2)          // => 25
+  puts(v.length2())        // => 25
   puts(origin().x)         // => 0
   puts(vec.origin().y)     // => 0
 }
@@ -2728,7 +2728,7 @@ fn fib(n: Int): Int {
 fn main {
   h = spawn { fib(27) }                           // one task, on the pool
   fibs = [20, 21, 22, 23].parallel { |n| fib(n) } // one task per element
-  puts(h.join ?? 0)  // => 196418
+  puts(h.join() ?? 0)  // => 196418
   puts(fibs[3])      // => 28657
 }
 ```
@@ -2750,7 +2750,7 @@ fn main {
   }
   total = 0
   for h in handles {
-    total += h.join ?? 0
+    total += h.join() ?? 0
   }
   puts(total)    // => 30
 }
@@ -2768,9 +2768,9 @@ A trap inside a spawned block (an index out of bounds, an overflow, a division b
 fn main {
   h = spawn {
     xs: Array(Int) = []
-    xs.pop
+    xs.pop()
   }
-  v = h.join else e {
+  v = h.join() else e {
     puts(e.what)    // => pop on an empty Array
     return
   }
@@ -2820,7 +2820,7 @@ fn main {
     })
   }
   for h in handles {
-    _ = h.join
+    _ = h.join()
   }
   puts(hits.with { |n| n })    // => 4000
 }
@@ -2849,11 +2849,11 @@ fn main {
     }
     0
   }
-  _ = h.join
-  puts(counts.poisoned)                  // => true
-  total = counts.with { |c| c.sum }      // fresh rebuilds the value first
+  _ = h.join()
+  puts(counts.poisoned())                  // => true
+  total = counts.with { |c| c.sum() }      // fresh rebuilds the value first
   puts(total)                            // => 0
-  puts(counts.poisoned)                  // => false
+  puts(counts.poisoned())                  // => false
 }
 ```
 
@@ -2873,14 +2873,14 @@ fn main {
     for i in 1..6 {
       jobs.send(i * i)
     }
-    jobs.close
+    jobs.close()
     0
   }
   total = 0
-  while v = jobs.recv {               // nil once the channel is closed and empty
+  while v = jobs.recv() {               // nil once the channel is closed and empty
     total += v
   }
-  _ = producer.join
+  _ = producer.join()
   puts(total)    // => 55
 }
 ```
@@ -2961,7 +2961,7 @@ class Tree {
 }
 
 fn build(depth: Int): Tree {
-  t = Tree.new
+  t = Tree.new()
   if depth > 0 {
     t.left = build(depth - 1)
     t.right = build(depth - 1)
@@ -3085,7 +3085,7 @@ fn main {
   p = c.malloc(8)
   p.a = 40
   p.b = 2
-  puts(p.sum)     // => 42
+  puts(p.sum())     // => 42
   c.free(p)
 }
 ```
@@ -3284,7 +3284,7 @@ enum Level { low, high }
 fn main {
   print("level: ")
   puts(Level.high)                    // => level: high
-  n = "12".to_i ?? 0
+  n = "12".to_i() ?? 0
   puts(n * 2)                         // => 24
   eputs("this line goes to stderr")
 }
@@ -3379,7 +3379,7 @@ The file system's basics make a tool's directory walk and its housekeeping:
 ```avant
 fn remove(path: String) {
   file_delete(path) else e {
-    puts(e.message)
+    puts(e.message())
     return
   }
   puts("removed ${path}")
@@ -3476,17 +3476,17 @@ fn main {
     puts(doc.str("name") ?? "?")       // => ada
     puts(doc.int("age") ?? 0)          // => 36
     if langs = doc.get("langs"), first = langs.at(0) {
-      puts(langs.len)                  // => 2
-      puts(first.str ?? "?")           // => avant
+      puts(langs.len())                  // => 2
+      puts(first.str() ?? "?")           // => avant
     }
   }
 
-  out = Json.obj
+  out = Json.obj()
   out.set("ok", true)
   out.set("count", 2)
-  out.key("tags").arr.add("x").add("y").end
-  out.end
-  puts(out.to_s)                       // => {"ok":true,"count":2,"tags":["x","y"]}
+  out.key("tags").arr().add("x").add("y").end()
+  out.end()
+  puts(out.to_s())                       // => {"ok":true,"count":2,"tags":["x","y"]}
 }
 ```
 
@@ -3534,7 +3534,7 @@ fn main {
     }
     puts(re.count("a@b.com, c@d.com"))         // => 2
     puts(re.replace("a@b.com", "$2 at $1"))    // => b at a
-    re.close
+    re.close()
   }
 }
 ```
@@ -3573,10 +3573,10 @@ import std.http
 fn main {
   if server = Http.listen(0) {                 // port 0: the OS picks a free port
     server.get("/hello") { |req|
-      server.close                             // this example answers once, then stops
+      server.close()                             // this example answers once, then stops
       Response.text("hello ${req.query ?? "nobody"}")
     }
-    port = server.port
+    port = server.port()
     client = spawn {
       if resp = Http.get("http://127.0.0.1:${port}/hello?ada") {
         puts(resp.status)                               // => 200
@@ -3584,8 +3584,8 @@ fn main {
       }
       0                                        // a spawn block ends with an Int, for now
     }
-    server.serve
-    _ = client.join
+    server.serve()
+    _ = client.join()
   }
 }
 ```
@@ -3609,7 +3609,7 @@ fn main {
     server.route("OPTIONS", "/") { |req|
       Response.text("", 204)
     }
-    server.serve
+    server.serve()
   }
 }
 ```
@@ -3665,7 +3665,7 @@ fn main {
     server.websocket_close("/echo") { |conn, code, reason|
       puts("closed with ${code}")
     }
-    server.serve
+    server.serve()
   }
 }
 ```
@@ -3686,9 +3686,9 @@ fn main {
   if conn = Ws.connect("ws://127.0.0.1:8080/echo") {
     conn.send_text("hi")
     if msg = conn.recv() {
-      puts(msg.text ?? "")
+      puts(msg.text() ?? "")
     }
-    conn.close
+    conn.close()
   }
 }
 ```
@@ -3703,8 +3703,8 @@ After `close`, every copy of the connection answers as closed, whatever connecti
 import std.zlib
 
 fn main {
-  packed = "avant avant avant avant".bytes.compress
-  if back = packed.uncompress, text = String.from_utf8(back) {
+  packed = "avant avant avant avant".bytes.compress()
+  if back = packed.uncompress(), text = String.from_utf8(back) {
     puts(text)       // => avant avant avant avant
   }
 }
@@ -3718,9 +3718,9 @@ fn main {
 import std.base64
 
 fn main {
-  enc = "avant".bytes.to_base64
+  enc = "avant".bytes.to_base64()
   puts(enc)                                    // => YXZhbnQ=
-  if raw = enc.bytes.from_base64 {
+  if raw = enc.bytes.from_base64() {
     puts(String.from_utf8(raw) ?? "")          // => avant
   }
 }
@@ -3740,10 +3740,10 @@ fn greet(name: String): String {
 }
 
 fn main: Int {
-  t = Test.new
+  t = Test.new()
   t.check(greet("Ada") == "Hello, Ada", "greet uses the name")
   t.check_eq(greet(""), "Hello, ", "greet handles empty")
-  t.finish
+  t.finish()
 }
 ```
 
@@ -3811,13 +3811,13 @@ fn greet(name: String): String {
 }
 
 fn main: Int {
-  t = Test.new
+  t = Test.new()
   names = ["Ada", "Bo", "Cy"]
   wants = ["Hello, Ada", "Hello, Bo", "Hello, Cy"]
   for i in 0..names.size {
     t.check(greet(names[i]) == wants[i], "greet ${names[i]}")
   }
-  t.finish
+  t.finish()
 }
 ```
 
@@ -3827,10 +3827,10 @@ fn main: Int {
 import std.testing
 
 fn main: Int {
-  t = Test.new
-  dir = t.temp_dir
+  t = Test.new()
+  dir = t.temp_dir()
   t.check((file_write("${dir}/notes.txt", "hi") ?? -1) == 2, "write in temp_dir")
-  t.finish
+  t.finish()
 }
 ```
 
@@ -3843,11 +3843,11 @@ fn main: Int {
 import std.testing
 
 fn main: Int {
-  t = Test.new
+  t = Test.new()
   t.golden("want.txt", "Hello Avant\n")
   t.run_golden("hello.av", "hello.want")
   t.rejects("bad.av", "unknown name")
-  t.finish
+  t.finish()
 }
 ```
 
@@ -3862,14 +3862,14 @@ Checks written in the file, and bodies passed to `t.test`, run one at a time in 
 import std.testing
 
 fn main: Int {
-  t = Test.new
+  t = Test.new()
   t.test("adds") {
     t.check(1 + 2 == 3, "1+2")
   }
   t.parallel("other") {
     t.check(true, "other")
   }
-  t.finish
+  t.finish()
 }
 ```
 

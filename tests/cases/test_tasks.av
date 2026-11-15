@@ -11,11 +11,11 @@ fn test_tasks(c: Checks) {
 
   s = "hello"
   hs = spawn { s.size }
-  c.eq_int(hs.join ?? -1, 5, "string spawn")
+  c.eq_int(hs.join() ?? -1, 5, "string spawn")
 
   p = Pair { a: 2, b: 5 }
   hp = spawn { p.a + p.b }
-  c.eq_int(hp.join ?? -1, 7, "struct spawn")
+  c.eq_int(hp.join() ?? -1, 7, "struct spawn")
 
   xs = [1, 2, 3, 4]
   ys = xs.parallel { |item| item * 10 }
@@ -45,18 +45,18 @@ fn test_tasks(c: Checks) {
   buf.send(kept)
   buf.send(5)
   c.eq_int(kept, 4, "sender stays")
-  buf.close
-  if a = buf.recv {
+  buf.close()
+  if a = buf.recv() {
     c.eq_int(a, 4, "fifo 0")
   } else {
     c.expect(false, "fifo 0")
   }
-  if b = buf.recv {
+  if b = buf.recv() {
     c.eq_int(b, 5, "fifo 1")
   } else {
     c.expect(false, "fifo 1")
   }
-  if extra = buf.recv {
+  if extra = buf.recv() {
     c.expect(false, "closed empty")
   } else {
     c.expect(true, "closed empty")
@@ -65,34 +65,34 @@ fn test_tasks(c: Checks) {
   wrap = Channel(Int).new(2)
   wrap.send(1)
   wrap.send(2)
-  if w0 = wrap.recv {
+  if w0 = wrap.recv() {
     c.eq_int(w0, 1, "wrap pop")
   } else {
     c.expect(false, "wrap pop")
   }
   wrap.send(3)
-  if w1 = wrap.recv {
+  if w1 = wrap.recv() {
     c.eq_int(w1, 2, "wrap mid")
   } else {
     c.expect(false, "wrap mid")
   }
-  if w2 = wrap.recv {
+  if w2 = wrap.recv() {
     c.eq_int(w2, 3, "wrap last")
   } else {
     c.expect(false, "wrap last")
   }
 
-  ch = Channel(Int).new
+  ch = Channel(Int).new()
   hr = spawn {
     ch.send(7)
     1
   }
-  if n = ch.recv {
+  if n = ch.recv() {
     c.eq_int(n, 7, "rendezvous")
   } else {
     c.expect(false, "rendezvous")
   }
-  c.eq_int(hr.join ?? -1, 1, "rendezvous join")
+  c.eq_int(hr.join() ?? -1, 1, "rendezvous join")
 
   many = Channel(Int).new(2)
   h1 = spawn {
@@ -104,30 +104,30 @@ fn test_tasks(c: Checks) {
     1
   }
   sum = 0
-  if m0 = many.recv {
+  if m0 = many.recv() {
     sum += m0
   } else {
     c.expect(false, "two senders 0")
   }
-  if m1 = many.recv {
+  if m1 = many.recv() {
     sum += m1
   } else {
     c.expect(false, "two senders 1")
   }
   c.eq_int(sum, 3, "two senders")
-  c.eq_int((h1.join ?? -1) + (h2.join ?? -1), 2, "two joins")
+  c.eq_int((h1.join() ?? -1) + (h2.join() ?? -1), 2, "two joins")
 
-  cs = Channel(String).new
+  cs = Channel(String).new()
   hcs = spawn {
     cs.send("hi")
     1
   }
-  if msg = cs.recv {
+  if msg = cs.recv() {
     c.eq_str(msg, "hi", "channel string")
   } else {
     c.expect(false, "channel string")
   }
-  c.eq_int(hcs.join ?? -1, 1, "channel string join")
+  c.eq_int(hcs.join() ?? -1, 1, "channel string join")
 
   mu = Mutex(Int).new(1)
   bumped = mu.with { |x|
@@ -159,7 +159,7 @@ fn test_tasks(c: Checks) {
       1
     }
   }
-  c.eq_int(hm.join ?? -1, 1, "mutex spawn")
+  c.eq_int(hm.join() ?? -1, 1, "mutex spawn")
   after = shared.with { |x| x }
   c.eq_int(after, 11, "mutex after spawn")
 
@@ -303,5 +303,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_tasks(c)
-  c.finish
+  c.finish()
 }

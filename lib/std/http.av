@@ -487,7 +487,7 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
   // respond entry is no safepoint, so no thread collects while it writes
   // (Stage 28 W17a: until the handshake a defer region here and a second
   // one in the entry kept other loop threads' collections off, O111).
-  httpc.avant_http_req_respond(raw, resp.status, resp.head_block, resp.body)
+  httpc.avant_http_req_respond(raw, resp.status, resp.head_block(), resp.body)
 }
 
 // The C loop calls this named function once per WebSocket message and
@@ -771,7 +771,7 @@ fn remove_dot_segments(path: String): String {
     if seg == "." {
     } else if seg == ".." {
       if kept.size > 1 {
-        kept.pop
+        kept.pop()
       }
     } else {
       kept.push(seg)
@@ -784,7 +784,7 @@ fn remove_dot_segments(path: String): String {
     }
     buf.push_str(kept[i])
   }
-  out = buf.to_s
+  out = buf.to_s()
   if out.size == 0 {
     return "/"
   }
@@ -933,7 +933,7 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     if left <= 0 {
       return HttpError.new("request to ${p.authority} timed out")
     }
-    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s, left)
+    raw = httpc.avant_http_fetch(p.host, p.port, buf.to_s(), left)
     code = httpc.avant_http_take_status()
     if code == 1 {
       return HttpError.new("could not connect to ${p.authority}")
@@ -993,7 +993,7 @@ pub class Http {
     if httpc.avant_http_take_status() != 0 {
       return HttpError.new("could not listen on ${host}:${port}")
     }
-    state = HttpState.new
+    state = HttpState.new()
     state.bound_port = httpc.avant_http_port(handle)
     Server { handle: handle, state: state }
   }

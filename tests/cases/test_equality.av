@@ -26,7 +26,7 @@ class RCase {
 }
 
 fn refused(tag: String, src: String, needle: String, pos: String): RCase {
-  f = RCase.new
+  f = RCase.new()
   f.tag = tag
   f.src = src
   f.want = needle
@@ -35,7 +35,7 @@ fn refused(tag: String, src: String, needle: String, pos: String): RCase {
 }
 
 fn accepted(tag: String, src: String, out: String): RCase {
-  f = RCase.new
+  f = RCase.new()
   f.tag = tag
   f.src = src
   f.want = out
@@ -56,21 +56,21 @@ fn cases: Array(RCase) {
   // == and the order
   pt = "struct P {\n  x: Int\n  y: Int\n}\n"
   xs.push(accepted("struct-eq", "${pt}fn main {\n  a = P { x: 1, y: 2 }\n  puts(a == P { x: 1, y: 2 })\n  puts(a != P { x: 1, y: 3 })\n}\n", "true\ntrue\n"))
-  xs.push(refused("struct-hash-field", "struct Bag {\n  n: Int\n  h: Hash(String, Int)\n}\nfn main {\n  a = Bag { n: 1, h: Hash(String, Int).new }\n  puts(a == a)\n}\n", "cannot compare Bag: Hash(String, Int) (the field Bag.h) has no ==; define fn == on Bag", "7:10"))
+  xs.push(refused("struct-hash-field", "struct Bag {\n  n: Int\n  h: Hash(String, Int)\n}\nfn main {\n  a = Bag { n: 1, h: Hash(String, Int).new() }\n  puts(a == a)\n}\n", "cannot compare Bag: Hash(String, Int) (the field Bag.h) has no ==; define fn == on Bag", "7:10"))
   xs.push(refused("struct-fn-field", "struct Cb {\n  f: fn(Int): Int\n}\nfn same(n: Int): Int {\n  n\n}\nfn main {\n  c = Cb { f: same }\n  puts(c == c)\n}\n", "cannot compare Cb: fn(Int): Int (the field Cb.f) has no ==; define fn == on Cb", "9:10"))
   xs.push(refused("struct-other-type", "${pt}fn main {\n  a = P { x: 1, y: 2 }\n  puts(a == 1)\n}\n", "cannot compare P with Int: == compares two values of one type", "7:10"))
   xs.push(refused("struct-no-order", "${pt}fn main {\n  a = P { x: 1, y: 2 }\n  puts(a < a)\n}\n", "P has no order: define fn < on it (>, <= and >= derive from <)", "7:10"))
   xs.push(refused("user-not-eq", "struct M {\n  c: Int\n  fn !=(o: M): Bool { c != o.c }\n}\nfn main { }\n", "!= is always !(a == b): define == only", "3:3"))
   xs.push(accepted("derived-order", "struct M {\n  c: Int\n  fn <(o: M): Bool { c < o.c }\n}\nfn main {\n  a = M { c: 1 }\n  b = M { c: 2 }\n  puts(\"\${a < b} \${a > b} \${a <= b} \${a >= b} \${b <= b} \${b >= b}\")\n}\n", "true false true false true true\n"))
-  xs.push(accepted("class-identity", "class C {\n  n: Int = 0\n}\nfn main {\n  a = C.new\n  b = C.new\n  c = a\n  puts(\"\${a == b} \${a == c} \${a != b}\")\n}\n", "false true true\n"))
+  xs.push(accepted("class-identity", "class C {\n  n: Int = 0\n}\nfn main {\n  a = C.new()\n  b = C.new()\n  c = a\n  puts(\"\${a == b} \${a == c} \${a != b}\")\n}\n", "false true true\n"))
   xs.push(accepted("array-eq", "fn main {\n  puts([1, 2] == [1, 2])\n  puts([1, 2] != [2, 1])\n  puts([\"a\"] == [\"b\"])\n  puts([[1], [2]] == [[1], [2]])\n  puts([0.0 / 0.0] == [0.0 / 0.0])\n}\n", "true\ntrue\nfalse\ntrue\nfalse\n"))
-  xs.push(refused("array-hash-elems", "fn main {\n  a = [Hash(String, Int).new]\n  puts(a == a)\n}\n", "cannot compare Array(Hash(String, Int)): Hash(String, Int) has no ==", "3:10"))
+  xs.push(refused("array-hash-elems", "fn main {\n  a = [Hash(String, Int).new()]\n  puts(a == a)\n}\n", "cannot compare Array(Hash(String, Int)): Hash(String, Int) has no ==", "3:10"))
   xs.push(refused("array-order", "fn main {\n  puts([1] < [2])\n}\n", "Array(Int) has no order: <, <=, > and >= compare numbers and Strings", "2:12"))
   xs.push(accepted("optional-eq", "fn main {\n  a: Int? = 1\n  b: Int? = 1\n  n: Int? = nil\n  puts(\"\${a == b} \${a == n} \${n == n} \${n != a}\")\n}\n", "true false true true\n"))
   xs.push(refused("optional-with-value", "fn main {\n  a: Int? = 1\n  puts(a == 1)\n}\n", "cannot compare Int? with Int: == compares two values of one type; open it with", "3:10"))
   xs.push(refused("optional-with-nil", "fn main {\n  a: Int? = 1\n  puts(a == nil)\n}\n", "a is Int? and an optional is never compared with nil", "3:10"))
   xs.push(refused("union-eq", "fn f(n: Int): Int | String {\n  if n > 0 {\n    return n\n  }\n  \"x\"\n}\nfn main {\n  puts(f(1) == f(2))\n}\n", "Int | String has no ==: take it apart with switch and compare its members", "8:13"))
-  xs.push(refused("hash-eq", "fn main {\n  h = Hash(String, Int).new\n  puts(h == h)\n}\n", "Hash(String, Int) has no ==", "3:10"))
+  xs.push(refused("hash-eq", "fn main {\n  h = Hash(String, Int).new()\n  puts(h == h)\n}\n", "Hash(String, Int) has no ==", "3:10"))
   xs.push(refused("string-int", "fn main {\n  puts(\"a\" == 1)\n}\n", "cannot compare String with Int: == compares two values of one type", "2:12"))
   // An integer and a Float64 neither compare nor mix: the conversion is written
   xs.push(refused("int-float-eq", "fn main {\n  n = 3\n  x = 3.0\n  puts(n == x)\n}\n", "cannot compare Int with Float64: == compares two values of one type; convert one side: n.to_f, or x.to_i (which truncates)", "4:10"))
@@ -78,21 +78,21 @@ fn cases: Array(RCase) {
   xs.push(refused("float-int-times", "fn main {\n  x = 1.5\n  n = 2\n  puts(x * n)\n}\n", "binary operator expects matching types, got Float64 and Int: an integer and a Float64 do not mix; convert one side: n.to_f, or x.to_i (which truncates)", "4:10"))
   xs.push(refused("int32-float-plus", "fn main {\n  w: Int32 = 2\n  x = 1.5\n  puts(w + x)\n}\n", "binary operator expects matching types, got Int32 and Float64: an integer and a Float64 do not mix; convert one side: w.to_f, or x.to_i.to_i32 (which truncates)", "4:10"))
   xs.push(refused("float-literal-int", "fn main {\n  n = 2\n  puts(2.5 * n)\n}\n", "binary operator expects matching types, got Float64 and Int", "3:12"))
-  xs.push(accepted("int-float-converted", "fn main {\n  n = 3\n  x = 2.5\n  w: Int32 = 2\n  puts(n.to_f * x)\n  puts(n == x.to_i)\n  puts(x == 2)\n  puts(1 + 2.5)\n  puts(w + x.to_i.to_i32)\n}\n", "7.5\nfalse\nfalse\n3.5\n4\n"))
+  xs.push(accepted("int-float-converted", "fn main {\n  n = 3\n  x = 2.5\n  w: Int32 = 2\n  puts(n.to_f() * x)\n  puts(n == x.to_i())\n  puts(x == 2)\n  puts(1 + 2.5)\n  puts(w + x.to_i().to_i32())\n}\n", "7.5\nfalse\nfalse\n3.5\n4\n"))
   xs.push(refused("bool-int", "fn main {\n  puts(true == 1)\n}\n", "cannot compare Bool with Int: == compares two values of one type", "2:13"))
   xs.push(accepted("eq-witness", "interface Eq(T) {\n  fn ==(other: T): Bool\n}\nstruct Id: Eq(Id) {\n  n: Int\n}\nfn same(a: T, b: T: Eq(T)): Bool {\n  a == b\n}\nfn main {\n  puts(same(Id { n: 1 }, Id { n: 1 }))\n  puts(same(Id { n: 1 }, Id { n: 2 }))\n}\n", "true\nfalse\n"))
   xs.push(refused("eq-witness-missing", "interface Eq(T) {\n  fn ==(other: T): Bool\n}\nstruct Bag: Eq(Bag) {\n  h: Hash(String, Int)\n}\nfn main { }\n", "Bag does not implement Eq(Bag): missing ==", "4:1"))
-  xs.push(accepted("min-max-sort", "struct M {\n  c: Int\n  fn <(o: M): Bool { c < o.c }\n}\nfn main {\n  ms = [M { c: 3 }, M { c: 1 }, M { c: 2 }]\n  lo = ms.min ?? M { c: 0 }\n  hi = ms.max() ?? M { c: 0 }\n  s = ms.sorted\n  ms.sort()\n  puts(\"\${lo.c} \${hi.c} \${s[0].c}\${s[1].c}\${s[2].c} \${ms[0].c}\${ms[2].c}\")\n}\n", "1 3 123 13\n"))
+  xs.push(accepted("min-max-sort", "struct M {\n  c: Int\n  fn <(o: M): Bool { c < o.c }\n}\nfn main {\n  ms = [M { c: 3 }, M { c: 1 }, M { c: 2 }]\n  lo = ms.min() ?? M { c: 0 }\n  hi = ms.max() ?? M { c: 0 }\n  s = ms.sorted()\n  ms.sort()\n  puts(\"\${lo.c} \${hi.c} \${s[0].c}\${s[1].c}\${s[2].c} \${ms[0].c}\${ms[2].c}\")\n}\n", "1 3 123 13\n"))
   // contains and index_of compare by the element's ==
   xs.push(accepted("contains-by-eq", "struct P {\n  x: Int\n  y: Int\n}\n\nclass Name {\n  pub s: String\n\n  fn initialize(s: String) {\n    self.s = s\n  }\n\n  fn ==(o: Name): Bool {\n    s == o.s\n  }\n}\n\nenum Tok { a, b, c }\n\nfn main {\n  ps = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]\n  puts(\"\${ps.contains(P { x: 3, y: 4 })} \${ps.contains(P { x: 4, y: 3 })} \${ps.index_of(P { x: 3, y: 4 }) ?? -1}\")\n  ns = [Name.new(\"ada\"), Name.new(\"bo\")]\n  puts(\"\${ns.contains(Name.new(\"bo\"))} \${ns.index_of(Name.new(\"cy\")) ?? -1}\")\n  grid = [[1, 2], [3]]\n  puts(\"\${grid.contains([3])} \${grid.index_of([1, 2]) ?? -1}\")\n  opts: Array(Int?) = [nil, 5]\n  puts(\"\${opts.contains(5)} \${opts.index_of(nil) ?? -1}\")\n  ts = [Tok.c, Tok.a]\n  puts(\"\${ts.contains(Tok.a)} \${ts.contains(Tok.b)} \${ts.index_of(Tok.a) ?? -1}\")\n  bs = [\"ab\".bytes, \"cd\".bytes]\n  puts(\"\${bs.contains(\"cd\".bytes)} \${bs.index_of(\"ab\".bytes) ?? -1}\")\n  fs = [1.5, 0.0 / 0.0]\n  puts(\"\${fs.contains(1.5)} \${fs.contains(0.0 / 0.0)}\")\n}\n", "true false 1\ntrue -1\ntrue 0\ntrue 0\ntrue false 1\ntrue 0\ntrue false\n"))
-  xs.push(refused("contains-hash", "fn main {\n  hs = [Hash(String, Int).new]\n  puts(hs.contains(Hash(String, Int).new))\n}\n", "contains compares the elements with ==: Hash(String, Int) has no ==", "3:10"))
-  xs.push(refused("index-of-struct-hash-field", "struct Bag {\n  h: Hash(String, Int)\n}\nfn main {\n  bs = [Bag { h: Hash(String, Int).new }]\n  puts(bs.index_of(bs[0]) ?? -1)\n}\n", "index_of compares the elements with ==: cannot compare Bag: Hash(String, Int) (the field Bag.h) has no ==; define fn == on Bag", "6:10"))
-  xs.push(refused("contains-buf", "fn main {\n  bs = [Buf.new]\n  puts(bs.contains(bs[0]))\n}\n", "contains compares the elements with ==: Buf has no ==", "3:10"))
+  xs.push(refused("contains-hash", "fn main {\n  hs = [Hash(String, Int).new()]\n  puts(hs.contains(Hash(String, Int).new()))\n}\n", "contains compares the elements with ==: Hash(String, Int) has no ==", "3:10"))
+  xs.push(refused("index-of-struct-hash-field", "struct Bag {\n  h: Hash(String, Int)\n}\nfn main {\n  bs = [Bag { h: Hash(String, Int).new() }]\n  puts(bs.index_of(bs[0]) ?? -1)\n}\n", "index_of compares the elements with ==: cannot compare Bag: Hash(String, Int) (the field Bag.h) has no ==; define fn == on Bag", "6:10"))
+  xs.push(refused("contains-buf", "fn main {\n  bs = [Buf.new()]\n  puts(bs.contains(bs[0]))\n}\n", "contains compares the elements with ==: Buf has no ==", "3:10"))
   // String order
   xs.push(accepted("string-order", "fn main {\n  puts(\"\${\"a\" < \"b\"} \${\"b\" < \"a\"} \${\"ab\" < \"abc\"} \${\"abc\" <= \"abc\"} \${\"B\" < \"a\"} \${\"z\" >= \"a\"} \${\"\" < \"a\"}\")\n}\n", "true false true true true true true\n"))
   xs.push(refused("string-minus", "fn main {\n  puts(\"a\" - \"b\")\n}\n", "unsupported operator on String (+ joins two Strings; ==, !=, <, <=, > and >= compare them)", "2:12"))
   // Printing
-  xs.push(accepted("to-s", "fn main {\n  n: Int32 = -5\n  u: UInt64 = 18446744073709551615u64\n  puts(3.to_s + n.to_s + u.to_s() + 2.5.to_s + true.to_s + \"s\".to_s)\n}\n", "3-5184467440737095516152.5trues\n"))
+  xs.push(accepted("to-s", "fn main {\n  n: Int32 = -5\n  u: UInt64 = 18446744073709551615u64\n  puts(3.to_s() + n.to_s() + u.to_s() + 2.5.to_s() + true.to_s() + \"s\".to_s())\n}\n", "3-5184467440737095516152.5trues\n"))
   xs.push(refused("to-s-args", "fn main {\n  puts(3.to_s(2))\n}\n", "Int.to_s takes no arguments", "2:9"))
   xs.push(accepted("union-text", "class Oops: Error {\n  message: String\n  fn initialize(message: String) {\n    self.message = message\n  }\n}\nfn f(n: Int): Int | String | Oops {\n  if n == 0 {\n    return 5\n  }\n  if n == 1 {\n    return \"five\"\n  }\n  Oops.new(\"no\")\n}\nfn main {\n  puts(\"\${f(0)} \${f(1)} \${f(2)}\")\n}\n", "5 five no\n"))
   xs.push(refused("union-text-struct", "${pt}fn f(n: Int): Int | P {\n  if n > 0 {\n    return n\n  }\n  P { x: 1, y: 2 }\n}\nfn main {\n  puts(\"\${f(1)}\")\n}\n", "cannot interpolate Int | P: its member P has no text", "12:11"))
@@ -203,5 +203,5 @@ fn main: Int {
   c = Checks.new()
   c.started = now_ms()
   test_main(c)
-  c.finish
+  c.finish()
 }

@@ -135,7 +135,7 @@ fn mir_mark_calls(m: MModule, f: MFunc) {
 
 // The leaf pass (step 2 of 5.9).
 pub fn mir_leaf_pass(m: MModule) {
-  cand = Hash(String, Int).new
+  cand = Hash(String, Int).new()
   for f in m.funcs {
     if f.kind == mfk_unset() && f.symbol != "main" && !(m.shared && mir_holds_roots(m, f)) {
       cand[f.symbol] = 1
@@ -186,7 +186,7 @@ pub fn mir_slot_need(m: MModule, f: MFunc, lv: MLive): Array(Bool) {
     blk = f.blocks[b]
     mir_words_load(live, lv.outs, b * nw, nw)
     if t = blk.term {
-      reads.clear
+      reads.clear()
       mir_term_reads(f, t, reads)
       mir_bits_mark(live, 0, n, reads)
     }
@@ -212,7 +212,7 @@ pub fn mir_slot_need(m: MModule, f: MFunc, lv: MLive): Array(Bool) {
         }
       }
       if st.kind == msk_assign() {
-        if r = st.rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local && p.local >= 0 && p.local < n {
+        if r = st.rv, p = r.place, (r.kind == mrk_addr() || r.kind == mrk_addr_raw()) && p.frame_local() && p.local >= 0 && p.local < n {
           mir_bit_on(need, 0, p.local)
         }
       }
@@ -335,7 +335,7 @@ fn mir_add_frame(m: MModule, f: MFunc) {
     }
     k += 1
   }
-  if slots.size == 0 && !f.first_frame {
+  if slots.size == 0 && !f.first_frame() {
     // No record (rule 2 above): nothing is added, so the liveness is
     // still the function's own, every block's transfer included.
     f.live = lv

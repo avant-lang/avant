@@ -110,7 +110,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
       return lw.lower_opt_cstr(e, "avant_str_from_utf8")
     }
     if rt = recv.ty {
-      if e.callee == "or" && rt.is_union && e.args.size == 1 {
+      if e.callee == "or" && rt.is_union() && e.args.size == 1 {
         if t = e.ty {
           return lw.lower_coalesce(recv, e.args[0], t, e.loc)
         }
@@ -122,34 +122,34 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
           return lw.lower_method_call(e, recv, rt, sym0, e.args)
         }
       }
-      if rt.is_enum && e.callee == "to_i" && e.args.size == 0 && e.resolved.size == 0 {
+      if rt.is_enum() && e.callee == "to_i" && e.args.size == 0 && e.resolved.size == 0 {
         // `t.to_i` (Stage 29 W5a1): the value, extended to an Int.
         v = lw.lower_expr(recv)
-        if lw.failed {
+        if lw.failed() {
           return zero
         }
         lw.at(e.loc)
         return lw.tmp(mt_int(), lw.lw_b.rv_cast(v, mt_int()))
       }
-      if (mir_is_str_ty(rt) || rt.is_buf) && e.callee == "get" {
+      if (mir_is_str_ty(rt) || rt.is_buf()) && e.callee == "get" {
         return lw.lower_get(e, recv, rt, e.args)
       }
-      if (rt.is_integer || rt.is_float || (rt.is_bool && mir_bool_conversion(e.callee))) && e.args.size == 0 {
+      if (rt.is_integer() || rt.is_float() || (rt.is_bool() && mir_bool_conversion(e.callee))) && e.args.size == 0 {
         return lw.member(recv, rt, e.callee, e)
       }
       if mir_is_str_ty(rt) && e.resolved.size == 0 {
         return lw.str_member(e, recv, rt, e.callee, e.args)
       }
-      if rt.is_array {
+      if rt.is_array() {
         return lw.arr_member(e, recv, rt, e.callee, e.args)
       }
-      if rt.is_hash {
+      if rt.is_hash() {
         return lw.hash_member(e, recv, rt, e.callee, e.args)
       }
-      if rt.is_buf {
+      if rt.is_buf() {
         return lw.buf_member(e, recv, e.callee, e.args)
       }
-      if (rt.is_class || rt.is_struct) && !ast_is_ctor_call(e) {
+      if (rt.is_class() || rt.is_struct()) && !ast_is_ctor_call(e) {
         if sym = lw.lw_fn_syms.get(e.resolved) {
           return lw.lower_method_call(e, recv, rt, sym, e.args)
         }
@@ -199,7 +199,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   }
   if (c == "sqrt" || c == "exp") && e.args.size == 1 {
     a = lw.lower_expr(e.args[0])
-    if lw.failed {
+    if lw.failed() {
       return zero
     }
     lw.at(e.loc)
@@ -228,7 +228,7 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   if sym = lw.lw_fn_syms.get(name), fs = lw.lw_syms.find_fn(name) {
     ret = lw.ty_at(fs.ret, e.loc, "a call result")
     args = lw.lower_args_in(e.args, fs.params, e.int_bits, e.arg_order)
-    if lw.failed {
+    if lw.failed() {
       return zero
     }
     lw.at(e.loc)
@@ -250,7 +250,7 @@ pub fn (lw: MirLower) lower_puts(arg: Expr, unsigned: Bool, loc: Location): MOpe
   b = lw.lw_b
   ty = lw.ety(arg)
   v = lw.lower_expr(arg)
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   lw.at(loc)
@@ -293,7 +293,7 @@ pub fn (lw: MirLower) lower_out(arg: Expr, how: Int, loc: Location): MOperand {
   b = lw.lw_b
   ty = lw.ety(arg)
   v = lw.lower_expr(arg)
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   lw.at(loc)
@@ -341,7 +341,7 @@ pub fn (lw: MirLower) lower_out_str(v: MOperand, puts: Bool, how: Int): MOperand
 pub fn (lw: MirLower) lower_exit(e: Expr): MOperand {
   b = lw.lw_b
   v = lw.lower_expr(e.args[0])
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   if lw.ety(e.args[0]) != mt_int() {
@@ -349,25 +349,25 @@ pub fn (lw: MirLower) lower_exit(e: Expr): MOperand {
   }
   st = lw.exit_status(v, e.loc)
   b.call(-1, "avant_exit", lw.one(st))
-  b.unreachable
+  b.unreachable()
   b.c_i32(0)
 }
 
 pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
   if e.type_call {
     // An enum's member (Stage 29 W5a1): its value, a constant.
-    if t = e.ty, t.is_enum {
+    if t = e.ty, t.is_enum() {
       return lw.enum_const(t, e.ident)
     }
   }
   if obj = e.object, ot = obj.ty {
-    if e.method_call && e.resolved.size > 0 && !(ot.is_class || ot.is_struct) {
+    if e.method_call && e.resolved.size > 0 && !(ot.is_class() || ot.is_struct()) {
       if sym1 = lw.lw_fn_syms.get(e.resolved) {
         none4: Array(Expr) = []
         return lw.lower_method_call(e, obj, ot, sym1, none4)
       }
     }
-    if ot.is_integer || ot.is_float || (ot.is_bool && mir_bool_conversion(e.ident)) {
+    if ot.is_integer() || ot.is_float() || (ot.is_bool() && mir_bool_conversion(e.ident)) {
       return lw.member(obj, ot, e.ident, e)
     }
     if mir_is_str_ty(ot) {
@@ -375,19 +375,19 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
       return lw.str_member(e, obj, ot, e.ident, none)
     }
     none3: Array(Expr) = []
-    if ot.is_join && e.ident == "join" {
+    if ot.is_join() && e.ident == "join" {
       return lw.lower_join(e, obj)
     }
-    if ot.is_array {
+    if ot.is_array() {
       return lw.arr_member(e, obj, ot, e.ident, none3)
     }
-    if ot.is_hash {
+    if ot.is_hash() {
       return lw.hash_member(e, obj, ot, e.ident, none3)
     }
-    if ot.is_buf {
+    if ot.is_buf() {
       return lw.buf_member(e, obj, e.ident, none3)
     }
-    if ot.is_class || ot.is_struct {
+    if ot.is_class() || ot.is_struct() {
       if e.method_call {
         if sym = lw.lw_fn_syms.get(e.resolved) {
           none2: Array(Expr) = []
@@ -399,11 +399,11 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
       return lw.lower_place_read(e)
     }
   }
-  if obj2 = e.object, ot2 = obj2.ty, (ot2.is_ptr || ot2.is_clayout) && !e.method_call {
+  if obj2 = e.object, ot2 = obj2.ty, (ot2.is_ptr() || ot2.is_clayout()) && !e.method_call {
     ck = lw.c_field_scalar(e)
     if ck > 0 {
       p = lw.place_of(e)
-      if lw.failed {
+      if lw.failed() {
         return lw.lw_b.c_i32(0)
       }
       lw.at(e.loc)
@@ -412,7 +412,7 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
     }
     if et = lw.c_field_enum(e) {
       p2 = lw.place_of(e)
-      if lw.failed {
+      if lw.failed() {
         return lw.lw_b.c_i32(0)
       }
       lw.at(e.loc)
@@ -436,16 +436,16 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
   from = lw.ety(obj)
   ty = lw.ety(e)
   v = lw.lower_expr(obj)
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   lw.at(e.loc)
-  if ot.is_bool {
+  if ot.is_bool() {
     // `b.to_i` and the sized forms: the Bool zero-extended, no branch.
     if mir_bool_conversion(name) {
       return lw.tmp(ty, b.rv_cast(v, ty))
     }
-  } else if ot.is_float {
+  } else if ot.is_float() {
     if name == "to_i" {
       return lw.f64_to_i32(v, e.loc)
     }
@@ -475,7 +475,7 @@ pub fn (lw: MirLower) member(obj: Expr, ot: Ty, name: String, e: Expr): MOperand
       return lw.int_abs(from, v, e.loc)
     }
   }
-  lw.refuse(e.loc, "the member .${name} of ${ot.show}")
+  lw.refuse(e.loc, "the member .${name} of ${ot.show()}")
   b.c_i32(0)
 }
 
@@ -486,8 +486,8 @@ pub fn (lw: MirLower) int_abs(ty: Int, v: MOperand, loc: Location): MOperand {
   d = b.temp(ty)
   b.assign(b.pl(d), b.rv_use(v))
   c = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(d), lw.int_const(ty, 0)))
-  neg = b.block
-  join = b.block
+  neg = b.block()
+  join = b.block()
   b.branch(c, neg, join)
   b.at(neg)
   min = lw.int_const(ty, 0 - 2147483647 - 1)
@@ -595,7 +595,7 @@ pub fn (lw: MirLower) enum_const(t: Ty, member: String): MOperand {
   idx = t.enum_index(member)
   v = 0
   if idx >= 0 {
-    v = t.enum_vals[idx]
+    v = t.enum_vals()[idx]
   }
   lw.lw_b.c_int(mir_enum_ty(t), v)
 }

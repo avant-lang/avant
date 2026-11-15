@@ -33,12 +33,12 @@ import mir.lower_hash
 // The payload field of member index i of u (type.av payload_index: 1 +
 // the non-nil members before it), or -1 for nil.
 pub fn mir_payload_field(u: Ty, i: Int): Int {
-  if u.members[i].no_payload {
+  if u.members[i].no_payload() {
     return -1
   }
   n = 1
   for j in 0..i {
-    if !u.members[j].no_payload {
+    if !u.members[j].no_payload() {
       n += 1
     }
   }
@@ -51,44 +51,44 @@ pub fn mir_payload_field(u: Ty, i: Int): Int {
 // emit_wrap_union): unchanged unless want is a union that got is not; a
 // member is wrapped with its tag; a union is re-tagged.
 pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOperand {
-  if want.is_ptr && got.is_ptr && !lw.failed {
+  if want.is_ptr() && got.is_ptr() && !lw.failed() {
     // W8a: Ptr(A) as Ptr(B) (the checker unifies pointees): a pointer
     // cast when the MIR types differ (`ptr %L` and `ptr`).
     pw = lw.ty_at(want, loc, "a pointer")
     pg = lw.ty_at(got, loc, "a pointer")
-    if lw.failed || pw == pg {
+    if lw.failed() || pw == pg {
       return o
     }
     lw.at(loc)
     return lw.tmp(pw, lw.lw_b.rv_cast(o, pw))
   }
-  if !want.is_union || got.same_as(want) || lw.failed {
+  if !want.is_union() || got.same_as(want) || lw.failed() {
     return o
   }
   b = lw.lw_b
   wty = lw.ty_at(want, loc, "a value")
-  if lw.failed {
+  if lw.failed() {
     return o
   }
-  if got.is_union {
+  if got.is_union() {
     return lw.retag(o, got, want, loc)
   }
   if !want.includes_member(got) {
-    lw.refuse(loc, "a value of type ${got.show} as ${want.show}")
+    lw.refuse(loc, "a value of type ${got.show()} as ${want.show()}")
     return o
   }
   if r = mir_opt_word(want) {
     // An optional reference: the reference itself, or null;
     // an optional function value (mir_opt_fn) the same. `Void | E` is
     // one reference the same way, Void its null.
-    if got.no_payload {
+    if got.no_payload() {
       return lw.opt_nil(wty)
     }
     return o
   }
   l = b.types.layout_of(wty)
   lw.at(loc)
-  if got.no_payload {
+  if got.no_payload() {
     return lw.tmp(wty, b.rv_union_nil(l, want.tag_of(got)))
   }
   lw.tmp(wty, b.rv_union(l, want.tag_of(got), o))
@@ -96,7 +96,7 @@ pub fn (lw: MirLower) coerce(o: MOperand, got: Ty, want: Ty, loc: Location): MOp
 
 // v lowered and converted to want (the MIR type ty of a place).
 pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
-  if v.kind == ex_nil() && want.is_union && want.includes_nil {
+  if v.kind == ex_nil() && want.is_union() && want.includes_nil() {
     // `nil` into a union place: the nil tag directly.
     lw.at(v.loc)
     b = lw.lw_b
@@ -165,8 +165,8 @@ pub fn (lw: MirLower) lower_args_in(args: Array(Expr), params: Array(Ty), frame:
     i += 1
   }
   while lw.lw_arg_names.size > mark {
-    lw.lw_arg_names.pop
-    lw.lw_arg_ops.pop
+    lw.lw_arg_names.pop()
+    lw.lw_arg_ops.pop()
   }
   out
 }
@@ -195,8 +195,8 @@ pub fn (lw: MirLower) lower_args_ordered(args: Array(Expr), params: Array(Ty), f
     }
   }
   while lw.lw_arg_names.size > mark {
-    lw.lw_arg_names.pop
-    lw.lw_arg_ops.pop
+    lw.lw_arg_names.pop()
+    lw.lw_arg_ops.pop()
   }
   out
 }
@@ -226,7 +226,7 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   b = lw.lw_b
   fty = lw.ty_at(from, loc, "a value")
   tty = lw.ty_at(to, loc, "a value")
-  if lw.failed {
+  if lw.failed() {
     return o
   }
   lw.at(loc)
@@ -241,7 +241,7 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   }
   tl = b.types.layout_of(tty)
   d = b.temp(tty)
-  b.assign(b.pl(d), b.rv_zero)
+  b.assign(b.pl(d), b.rv_zero())
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
   values: Array(Int) = []
   targets: Array(Int) = []
@@ -249,20 +249,20 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
   members: Array(Int) = []
   for i in 0..from.members.size {
     if to.includes_member(from.members[i]) {
-      arm = b.block
-      values.push(i.to_i)
+      arm = b.block()
+      values.push(i.to_i())
       targets.push(arm)
       arms.push(arm)
       members.push(i)
     }
   }
-  join = b.block
+  join = b.block()
   b.switch_on(tag, values, targets, join)
   for i in 0..arms.size {
     b.at(arms[i])
     m = from.members[members[i]]
     k = to.tag_of(m)
-    if m.no_payload {
+    if m.no_payload() {
       b.assign(b.pl(d), b.rv_union_nil(tl, k))
     } else {
       p = lw.tmp(lw.ty_at(m, loc, "a member"), b.rv_use(b.copy(b.field(b.pl(src), mir_payload_field(from, members[i])))))
@@ -281,15 +281,15 @@ pub fn (lw: MirLower) retag(o: MOperand, from: Ty, to: Ty, loc: Location): MOper
 fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location): MOperand {
   b = lw.lw_b
   d = b.temp(tty)
-  join = b.block
+  join = b.block()
   if fm = mir_opt_word(from) {
     tl = b.types.layout_of(tty)
-    b.assign(b.pl(d), b.rv_zero)
-    bnil = b.block
-    bval = b.block
+    b.assign(b.pl(d), b.rv_zero())
+    bnil = b.block()
+    bval = b.block()
     b.branch(lw.ref_is_null(src, true), bnil, bval)
     b.at(bnil)
-    if em = from.empty_member, to.includes_member(em) {
+    if em = from.empty_member(), to.includes_member(em) {
       b.assign(b.pl(d), b.rv_union_nil(tl, to.tag_of(em)))
     }
     b.goto(join)
@@ -306,8 +306,8 @@ fn (lw: MirLower) retag_ref(src: Int, from: Ty, to: Ty, tty: Int, loc: Location)
     k = from.tag_of(tm)
     if k >= 0 {
       tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
-      arm = b.block
-      values: Array(Int) = [k.to_i]
+      arm = b.block()
+      values: Array(Int) = [k.to_i()]
       targets: Array(Int) = [arm]
       b.switch_on(tag, values, targets, join)
       b.at(arm)
@@ -344,7 +344,7 @@ fn (lw: MirLower) ref_is_null(src: Int, eq: Bool): MOperand {
 pub fn (lw: MirLower) opt_nil(ty: Int): MOperand {
   b = lw.lw_b
   if b.types.kind(ty) == mk_agg() {
-    return lw.tmp(ty, b.rv_zero)
+    return lw.tmp(ty, b.rv_zero())
   }
   b.c_null(ty)
 }
@@ -354,14 +354,14 @@ pub fn (lw: MirLower) opt_nil(ty: Int): MOperand {
 // when success is a union of several members, nothing for Nil.
 pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOperand {
   b = lw.lw_b
-  if success.no_payload {
+  if success.no_payload() {
     return b.c_i32(0)
   }
   if r = mir_opt_word(uty) {
     // The reference itself, or the function value.
     return b.copy_local(src)
   }
-  if success.is_union {
+  if success.is_union() {
     return lw.retag(b.copy_local(src), uty, success, loc)
   }
   st = lw.ty_at(success, loc, "a value")
@@ -373,7 +373,7 @@ pub fn (lw: MirLower) unwrap(src: Int, uty: Ty, success: Ty, loc: Location): MOp
 pub fn (lw: MirLower) tag_is(src: Int, uty: Ty, k: Int, eq: Bool): MOperand {
   b = lw.lw_b
   if r = mir_opt_word(uty) {
-    return lw.ref_is_null(src, eq == uty.members[k].no_payload)
+    return lw.ref_is_null(src, eq == uty.members[k].no_payload())
   }
   tag = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.pl(src), 0))))
   op = mop_eq()
@@ -395,7 +395,7 @@ pub fn (lw: MirLower) tag_is(src: Int, uty: Ty, k: Int, eq: Bool): MOperand {
 pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: Int): MOperand {
   b = lw.lw_b
   uty_m = lw.ty_at(uty, e.loc, "a union")
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   lw.at(e.loc)
@@ -403,7 +403,7 @@ pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: In
   dest = -1
   if rty != mt_void() {
     dest = b.temp(rty)
-    b.assign(b.pl(dest), b.rv_zero)
+    b.assign(b.pl(dest), b.rv_zero())
   }
   // The block each member enters by (its arm's, or under coverage a
   // block of its own that counts the label), -1 for an unnamed member.
@@ -428,7 +428,7 @@ pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: In
       }
       entry_arm[k] = i2
       if lw.lw_cov.on {
-        en = b.block
+        en = b.block()
         cov_entries.push(en)
         cov_arms.push(i2)
         cov_locs.push(label.loc)
@@ -438,7 +438,7 @@ pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: In
   }
   arms: Array(Int) = []
   for i in 0..e.cases.size {
-    arms.push(b.block)
+    arms.push(b.block())
   }
   for k4 in 0..entry.size {
     if entry_arm[k4] >= 0 && entry[k4] < 0 {
@@ -447,9 +447,9 @@ pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: In
   }
   other = -1
   if e.has_else || lw.lw_cov.on {
-    other = b.block
+    other = b.block()
   }
-  join = b.block
+  join = b.block()
   // The default: the else, or (without one) the last arm's member.
   dflt = other
   dmember = -1
@@ -466,7 +466,7 @@ pub fn (lw: MirLower) lower_union_switch(e: Expr, cv: MOperand, uty: Ty, rty: In
   lw.at(e.loc)
   if r = mir_opt_word(uty) {
     kn = 0
-    if em = uty.empty_member {
+    if em = uty.empty_member() {
       kn = uty.tag_of(em)
     }
     kr = uty.tag_of(r)
@@ -534,21 +534,21 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
     rty = lw.ty_at(result, loc, "a value")
     lty = lw.ety(l)
     u = lw.lower_expr(l)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(loc)
     src = lw.hold(u, lty)
     // A `Void | E` on the left: the success is nothing, so no value.
-    void = result.is_void
+    void = result.is_void()
     d = -1
     if !void {
       d = b.temp(rty)
     }
     fails = ty_failures(uty)
-    bnil = b.block
-    bval = b.block
-    join = b.block
+    bnil = b.block()
+    bval = b.block()
+    join = b.block()
     if fails.size == 1 {
       c = lw.tag_is(src, uty, uty.tag_of(fails[0]), true)
       b.branch(c, bnil, bval)
@@ -563,18 +563,18 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
       // failure first, and its block leaves too (the checker's rule).
       if expr_is_else_guard(r) && r.ident.size > 0 {
         lw.bind_failure(r.ident, src, uty, fails, loc)
-        if lw.failed {
+        if lw.failed() {
           return b.c_i32(0)
         }
       }
       lw.lower_stmts(r.else_body)
-      if lw.failed {
+      if lw.failed() {
         return b.c_i32(0)
       }
       lw.goto_if_open(join, loc)
     } else {
       v = lw.lower_coerced(r, rty, result)
-      if lw.failed {
+      if lw.failed() {
         return b.c_i32(0)
       }
       lw.at(loc)
@@ -631,7 +631,7 @@ pub fn (lw: MirLower) branch_failure(src: Int, uty: Ty, fails: Array(Ty), bfail:
   values: Array(Int) = []
   targets: Array(Int) = []
   for f in fails {
-    values.push(uty.tag_of(f).to_i)
+    values.push(uty.tag_of(f).to_i())
     targets.push(bfail)
   }
   b.switch_on(tag, values, targets, bok)
@@ -647,7 +647,7 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
   if inner = e.inner, uty = inner.ty, ret = lw.lw_ret_ty {
     ity = lw.ety(inner)
     u = lw.lower_expr(inner)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -657,8 +657,8 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
     if sp = ty_success_part(uty) {
       success = sp
     }
-    bf = b.block
-    bok = b.block
+    bf = b.block()
+    bok = b.block()
     if fails.size == 1 {
       c = lw.tag_is(src, uty, uty.tag_of(fails[0]), true)
       b.branch(c, bf, bok)
@@ -674,8 +674,8 @@ pub fn (lw: MirLower) lower_try(e: Expr): MOperand {
     } else {
       b.assign(b.pl(0), b.rv_use(lw.retag(b.copy_local(src), uty, ret, e.loc)))
     }
-    lw.unpin_all
-    b.ret
+    lw.unpin_all()
+    b.ret()
     b.at(bok)
     return lw.unwrap(src, uty, success, e.loc)
   }
@@ -698,16 +698,16 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
     cty = lw.ety(c)
     sty = lw.ty_at(success, st.loc, "a binding")
     u = lw.lower_expr(c)
-    if lw.failed {
+    if lw.failed() {
       return
     }
     lw.at(st.loc)
     src = lw.hold(u, cty)
-    bt = b.block
-    bf = b.block
+    bt = b.block()
+    bf = b.block()
     join = bf
     if st.else_body.size > 0 || lw.lw_cov.on {
-      join = b.block
+      join = b.block()
     }
     if fails.size == 1 {
       ok = lw.tag_is(src, uty, uty.tag_of(fails[0]), false)
@@ -727,7 +727,7 @@ pub fn (lw: MirLower) lower_if_bind(st: Stmt) {
       if st.else_bind.size > 0 && st.else_body.size > 0 {
         // `else e` (Stage 29 W5b1): e holds the failure.
         lw.bind_failure(st.else_bind, src, uty, fails, st.loc)
-        if lw.failed {
+        if lw.failed() {
           return
         }
       }
@@ -754,12 +754,12 @@ pub fn (lw: MirLower) lower_cond_bind(el: Stmt, bfail: Int): Int {
     cty = lw.ety(c)
     sty = lw.ty_at(success, el.loc, "a binding")
     u = lw.lower_expr(c)
-    if lw.failed {
+    if lw.failed() {
       return -1
     }
     lw.at(el.loc)
     src = lw.hold(u, cty)
-    bok = b.block
+    bok = b.block()
     if fails.size == 1 {
       ok = lw.tag_is(src, uty, uty.tag_of(fails[0]), false)
       b.branch(ok, bok, bfail)
@@ -783,10 +783,10 @@ pub fn (lw: MirLower) lower_cond_element(el: Stmt, bfail: Int): Int {
   }
   if c = el.cond {
     cv = lw.lower_expr(c)
-    if lw.failed {
+    if lw.failed() {
       return -1
     }
-    bok = lw.lw_b.block
+    bok = lw.lw_b.block()
     lw.at(el.loc)
     lw.lw_b.branch(cv, bok, bfail)
     lw.lw_b.at(bok)
@@ -801,20 +801,20 @@ pub fn (lw: MirLower) lower_cond_element(el: Stmt, bfail: Int): Int {
 // function (its tail).
 pub fn (lw: MirLower) lower_if_general(st: Stmt, mode: Int, dest: Int, want: Ty?) {
   b = lw.lw_b
-  belse = b.block
+  belse = b.block()
   join = belse
   has_else = st.else_body.size > 0 || lw.lw_cov.on
   if has_else {
-    join = b.block
+    join = b.block()
   }
   for el in st.pre {
     _ = lw.lower_cond_element(el, belse)
-    if lw.failed {
+    if lw.failed() {
       return
     }
   }
   src = lw.lower_cond_element(st, belse)
-  if lw.failed {
+  if lw.failed() {
     return
   }
   lw.cov_branch(st.loc)
@@ -828,7 +828,7 @@ pub fn (lw: MirLower) lower_if_general(st: Stmt, mode: Int, dest: Int, want: Ty?
       // belse (the checker refuses it beside a condition list).
       if c = st.cond, uty = c.ty {
         lw.bind_failure(st.else_bind, src, uty, ty_failures(uty), st.loc)
-        if lw.failed {
+        if lw.failed() {
           return
         }
       }
@@ -849,7 +849,7 @@ pub fn (lw: MirLower) lower_branch(body: Array(Stmt), mode: Int, dest: Int, want
   b = lw.lw_b
   i = 0
   while i < body.size {
-    if lw.failed || !lw.open_now {
+    if lw.failed() || !lw.open_now() {
       return
     }
     st = body[i]
@@ -864,19 +864,19 @@ pub fn (lw: MirLower) lower_branch(body: Array(Stmt), mode: Int, dest: Int, want
           lw.cov_stmt(st)
           if mode == 2 {
             v = lw.lower_ret_value(e)
-            if lw.failed {
+            if lw.failed() {
               return
             }
             lw.at(st.loc)
             b.assign(b.pl(0), b.rv_use(v))
-            lw.ret_fn
+            lw.ret_fn()
             return
           }
           v2 = lw.lower_expr(e)
           if t = e.ty, w = want {
             v2 = lw.coerce(v2, t, w, e.loc)
           }
-          if lw.failed {
+          if lw.failed() {
             return
           }
           lw.at(st.loc)
@@ -898,13 +898,13 @@ pub fn (lw: MirLower) lower_branch(body: Array(Stmt), mode: Int, dest: Int, want
 pub fn (lw: MirLower) opt_of(want: Ty, found: MOperand, v: MOperand, vt: Ty, loc: Location): MOperand {
   b = lw.lw_b
   wty = lw.ty_at(want, loc, "a value")
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   d = b.temp(wty)
-  bt = b.block
-  bf = b.block
-  join = b.block
+  bt = b.block()
+  bf = b.block()
+  join = b.block()
   b.branch(found, bt, bf)
   b.at(bt)
   if r = mir_opt_word(want) {
@@ -956,7 +956,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     wty = lw.ety(e)
     aty = lw.ety(recv)
     r = lw.lower_expr(recv)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     if args.size > 0 {
@@ -968,13 +968,13 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     if args.size > 0 {
       iv = lw.lower_expr(args[0])
     }
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
     ix = lw.hold(iv, mt_int())
     n = b.c_i64(0)
-    if rt.is_array || rt.is_buf {
+    if rt.is_array() || rt.is_buf() {
       n = lw.seq_size(h)
     } else {
       n = lw.call_to(mt_int(), "avant_str_size", lw.one(b.copy_local(h)))
@@ -993,13 +993,13 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
     c1 = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(ix), b.c_i64(0)))
     c2 = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ix), n))
     c = lw.tmp(mt_bool(), b.rv_bin(mop_and(), c1, c2))
-    bt = b.block
-    join = b.block
+    bt = b.block()
+    join = b.block()
     b.branch(c, bt, join)
     b.at(bt)
     elt = ty_int()
     v = b.c_i32(0)
-    if rt.is_array {
+    if rt.is_array() {
       if inner = rt.inner {
         elt = inner
       }
@@ -1011,7 +1011,7 @@ pub fn (lw: MirLower) lower_get(e: Expr, recv: Expr, rt: Ty, args: Array(Expr)):
         b.assign(b.pl(dd), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
         v = lw.tmp(et, b.rv_use(b.copy(b.index(b.deref(b.pl(dd)), b.copy_local(ix)))))
       }
-    } else if rt.is_buf {
+    } else if rt.is_buf() {
       dd2 = b.temp(b.types.ref_to(lw.elems_of(aty)))
       b.assign(b.pl(dd2), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 0))))
       byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(dd2)), b.copy_local(ix)))))
@@ -1047,7 +1047,7 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
   b = lw.lw_b
   if t = e.ty {
     aty = lw.ety(recv)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     et = lw.elem_of(aty)
@@ -1060,12 +1060,12 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
       }
       f = lw.kind_fn("avant_array_index", cet, true)
       if f.size == 0 {
-        lw.refuse(e.loc, "Array.index_of on ${want.show}")
+        lw.refuse(e.loc, "Array.index_of on ${want.show()}")
         return b.c_i32(0)
       }
       v = lw.snap(lw.lower_coerced(args[0], et, want), recv)
       a = lw.lower_expr(recv)
-      if lw.failed {
+      if lw.failed() {
         return b.c_i32(0)
       }
       lw.at(e.loc)
@@ -1079,13 +1079,13 @@ pub fn (lw: MirLower) lower_arr_opt(e: Expr, recv: Expr, rt: Ty, name: String, a
     }
     mf = lw.kind_fn("avant_array_${name}", et, false)
     if args.size > 0 || mf.size == 0 || et == mt_bool() {
-      lw.refuse(e.loc, "Array.${name} on ${want.show}")
+      lw.refuse(e.loc, "Array.${name} on ${want.show()}")
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    fl = lw.found_local
+    fl = lw.found_local()
     a2 = lw.lower_expr(recv)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -1107,11 +1107,11 @@ pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String,
   if t = e.ty {
     vt = mir_hash_val(ht)
     vty = lw.ty_at(vt, e.loc, "a hash value")
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
-    fl = lw.found_local
+    fl = lw.found_local()
     f = ""
     if (name == "get" || name == "delete") && args.size == 1 {
       f = name
@@ -1125,7 +1125,7 @@ pub fn (lw: MirLower) lower_hash_read(e: Expr, recv: Expr, ht: Ty, name: String,
       return b.c_i32(0)
     }
     ops = lw.args_then_recv(args, recv)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -1151,9 +1151,9 @@ pub fn (lw: MirLower) lower_opt_cstr(e: Expr, f: String): MOperand {
   b = lw.lw_b
   if t = e.ty {
     lw.at(e.loc)
-    fl = lw.found_local
+    fl = lw.found_local()
     ops = lw.lower_args(e.args)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -1178,7 +1178,7 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   if c == "wide_op" && e.args.size == 5 {
     // calls.av:291-309: the arguments last to first, then the call.
     wops = lw.lower_args_rev(e.args)
-    if lw.failed {
+    if lw.failed() {
       return b.c_i32(0)
     }
     lw.at(e.loc)
@@ -1209,7 +1209,7 @@ pub fn (lw: MirLower) io_builtin(e: Expr, c: String): MOperand? {
   }
   ty = lw.ety(e)
   ops = lw.lower_args(e.args)
-  if lw.failed {
+  if lw.failed() {
     return b.c_i32(0)
   }
   lw.at(e.loc)

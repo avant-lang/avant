@@ -23,15 +23,15 @@ import ast
 pub class ReceiverWrites {
   // The methods by emit name: their index in fns.
   pub fns: Array(Function) = []
-  pub index: Hash(String, Int) = Hash(String, Int).new
+  pub index: Hash(String, Int) = Hash(String, Int).new()
   // Per method: 1 writes self directly, 2 does not; its calls on self's
   // places, by emit name, in `calls` from calls_at to calls_end.
-  direct: Hash(String, Int) = Hash(String, Int).new
+  direct: Hash(String, Int) = Hash(String, Int).new()
   calls: Array(String) = []
-  calls_at: Hash(String, Int) = Hash(String, Int).new
-  calls_end: Hash(String, Int) = Hash(String, Int).new
+  calls_at: Hash(String, Int) = Hash(String, Int).new()
+  calls_end: Hash(String, Int) = Hash(String, Int).new()
   // The answers: 1 writes, 2 does not.
-  answer: Hash(String, Int) = Hash(String, Int).new
+  answer: Hash(String, Int) = Hash(String, Int).new()
   // The receiver's name in the method being read (`self`, or an
   // external method's `fn (p: P) m`).
   recv: String = "self"
@@ -49,7 +49,7 @@ pub class ReceiverWrites {
     if a = self.answer.get(sym) {
       return a == 1
     }
-    seen = Hash(String, Int).new
+    seen = Hash(String, Int).new()
     todo: Array(String) = []
     todo.push(sym)
     seen[sym] = 1
@@ -92,7 +92,7 @@ pub class ReceiverWrites {
     } else {
       // Every method reached was read whole and none writes: none of
       // them does (a cycle among them adds no write).
-      for k in seen.keys {
+      for k in seen.keys() {
         self.answer[k] = 2
       }
     }
@@ -168,12 +168,12 @@ pub class ReceiverWrites {
     }
     hit = false
     if e.kind == ex_call() && e.resolved.size > 0 {
-      if r = e.receiver, rt = r.ty, rt.is_struct, rw_self_place(r, self.recv) {
+      if r = e.receiver, rt = r.ty, rt.is_struct(), rw_self_place(r, self.recv) {
         self.calls.push(e.resolved)
       }
     }
     if e.kind == ex_field() && e.method_call && e.resolved.size > 0 {
-      if o = e.object, ot = o.ty, ot.is_struct, rw_self_place(o, self.recv) {
+      if o = e.object, ot = o.ty, ot.is_struct(), rw_self_place(o, self.recv) {
         self.calls.push(e.resolved)
       }
     }
@@ -228,7 +228,7 @@ pub class ReceiverWrites {
 pub fn rw_self_place(e: Expr, recv: String): Bool {
   x = e
   while x.kind == ex_field() && !x.method_call {
-    if o = x.object, ot = o.ty, ot.is_struct {
+    if o = x.object, ot = o.ty, ot.is_struct() {
       x = o
     } else {
       return false
@@ -242,7 +242,7 @@ pub fn rw_self_place(e: Expr, recv: String): Bool {
 pub fn rw_element_place(e: Expr): Bool {
   x = e
   while x.kind == ex_field() && !x.method_call {
-    if o = x.object, ot = o.ty, ot.is_struct {
+    if o = x.object, ot = o.ty, ot.is_struct() {
       x = o
     } else {
       return false
@@ -250,7 +250,7 @@ pub fn rw_element_place(e: Expr): Bool {
   }
   if x.kind == ex_index() {
     if l = x.left, lt = l.ty {
-      return lt.is_array
+      return lt.is_array()
     }
   }
   false

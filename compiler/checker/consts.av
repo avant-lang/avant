@@ -37,28 +37,28 @@ pub fn const_slot(mod_name: String, name: String): String {
 }
 
 fn cv_of_int(v: Int): ConstVal {
-  r = ConstVal.new
+  r = ConstVal.new()
   r.kind = cv_int()
   r.iv = v
   r
 }
 
 fn cv_of_u64(v: UInt64): ConstVal {
-  r = ConstVal.new
+  r = ConstVal.new()
   r.kind = cv_u64()
   r.uv = v
   r
 }
 
 fn cv_of_float(v: Float64): ConstVal {
-  r = ConstVal.new
+  r = ConstVal.new()
   r.kind = cv_float()
   r.fv = v
   r
 }
 
 fn cv_of_bool(v: Bool): ConstVal {
-  r = ConstVal.new
+  r = ConstVal.new()
   r.kind = cv_bool()
   r.bv = v
   r
@@ -81,9 +81,9 @@ pub fn cv_text(v: ConstVal): String {
 // The magnitude of v as a UInt64 (the minimum's is 2^63).
 fn int_mag(v: Int): UInt64 {
   if v < 0 {
-    return (0 &- v).wrap_u64
+    return (0 &- v).wrap_u64()
   }
-  v.to_u64
+  v.to_u64()
 }
 
 // Registers every constant, refuses a second one of a name in a module
@@ -94,7 +94,7 @@ pub fn (checker_self: Checker) note_consts {
     slot = const_slot(k.mod_name, k.name)
     if pi = checker_self.const_vals.get(slot) {
       if pd = checker_self.const_list[pi].def {
-        checker_self.fail(k.loc, "duplicate constant ${k.name} (the first is at ${pd.loc.show})")
+        checker_self.fail(k.loc, "duplicate constant ${k.name} (the first is at ${pd.loc.show()})")
       }
       continue
     }
@@ -105,7 +105,7 @@ pub fn (checker_self: Checker) note_consts {
         clash = true
       }
     }
-    cv = ConstVal.new
+    cv = ConstVal.new()
     cv.def = k
     checker_self.const_vals[slot] = checker_self.const_list.size
     checker_self.const_list.push(cv)
@@ -218,7 +218,7 @@ pub fn (checker_self: Checker) const_named(e: Expr): ConstVal? {
     if ft = checker_self.implicit_field(e.ident) {
       return nil
     }
-    if st = checker_self.bare_receiver, checker_self.receiver_method_fits(st, e.ident, 0) {
+    if st = checker_self.bare_receiver(), checker_self.receiver_method_fits(st, e.ident, 0) {
       return nil
     }
     return checker_self.find_const(e.ident, checker_self.current_module, e.loc)
@@ -322,7 +322,7 @@ pub fn (checker_self: Checker) fold_const(e: Expr, m: String): ConstVal? {
       checker_self.fail(e.loc, "integer literal does not fit in Int; use ${e.int_bits}u64")
       return nil
     }
-    return cv_of_int(e.int_bits.to_i)
+    return cv_of_int(e.int_bits.to_i())
   }
   if k == ex_float() {
     return cv_of_float(e.float_val)
@@ -468,11 +468,11 @@ pub fn (checker_self: Checker) fold_binary(e: Expr, a: ConstVal, b: ConstVal): C
     }
     x2 = a.uv
     if a.kind == cv_int() {
-      x2 = a.iv.to_u64
+      x2 = a.iv.to_u64()
     }
     y2 = b.uv
     if b.kind == cv_int() {
-      y2 = b.iv.to_u64
+      y2 = b.iv.to_u64()
     }
     return checker_self.fold_u64(e, op, x2, y2)
   }
@@ -503,10 +503,10 @@ fn cmp_result(op: Int, lt: Bool, eq: Bool): ConstVal? {
 
 pub fn (checker_self: Checker) cv_float_of(v: ConstVal): Float64 {
   if v.kind == cv_int() {
-    return v.iv.to_f
+    return v.iv.to_f()
   }
   if v.kind == cv_u64() {
-    return v.uv.to_f
+    return v.uv.to_f()
   }
   v.fv
 }
@@ -543,9 +543,9 @@ pub fn (checker_self: Checker) fold_int(e: Expr, op: Int, a: Int, b: Int): Const
       } else {
         p = ua * ub
         if neg {
-          r = 0 &- p.wrap_i
+          r = 0 &- p.wrap_i()
         } else {
-          r = p.to_i
+          r = p.to_i()
         }
       }
     }
@@ -567,7 +567,7 @@ pub fn (checker_self: Checker) fold_int(e: Expr, op: Int, a: Int, b: Int): Const
       return nil
     }
     if op == tk_less_less() {
-      r = (a.wrap_u64 << b).wrap_i
+      r = (a.wrap_u64() << b).wrap_i()
     } else {
       r = a >> b
     }
@@ -663,7 +663,7 @@ pub fn (checker_self: Checker) check_const_label(label: CaseLabel, disc: Ty): Bo
     ne.ident = label.text
   }
   what = "an integer literal or an integer constant"
-  if disc.is_bool {
+  if disc.is_bool() {
     what = "true, false or a Bool constant"
   }
   cv = checker_self.const_named(ne)
@@ -671,7 +671,7 @@ pub fn (checker_self: Checker) check_const_label(label: CaseLabel, disc: Ty): Bo
     if !checker_self.const_value(c, label.loc) {
       return false
     }
-    if disc.is_bool {
+    if disc.is_bool() {
       if c.kind != cv_bool() {
         checker_self.fail(label.loc, "the constant ${checker_self.case_label_text(label)} = ${cv_text(c)} is not a Bool: a case label of a switch over Bool is ${what}")
         return false
@@ -685,23 +685,23 @@ pub fn (checker_self: Checker) check_const_label(label: CaseLabel, disc: Ty): Bo
     if c.kind == cv_int() {
       label.neg = c.iv < 0
       if label.neg {
-        label.bits = (0 &- c.iv).wrap_u64
+        label.bits = (0 &- c.iv).wrap_u64()
       } else {
-        label.bits = c.iv.to_u64
+        label.bits = c.iv.to_u64()
       }
       label.int_val = c.iv
     } else if c.kind == cv_u64() {
       label.neg = false
       label.bits = c.uv
-      label.int_val = c.uv.wrap_i
+      label.int_val = c.uv.wrap_i()
     } else {
-      checker_self.fail(label.loc, "the constant ${checker_self.case_label_text(label)} = ${cv_text(c)} is not an integer: a case label of a switch over ${disc.show} is ${what}")
+      checker_self.fail(label.loc, "the constant ${checker_self.case_label_text(label)} = ${cv_text(c)} is not an integer: a case label of a switch over ${disc.show()} is ${what}")
       return false
     }
     return checker_self.check_int_label(label, disc)
   }
-  if !checker_self.has_err {
-    checker_self.fail(label.loc, "${checker_self.case_label_text(label)} is not a constant: a case label of a switch over ${disc.show} is ${what}")
+  if !checker_self.has_err() {
+    checker_self.fail(label.loc, "${checker_self.case_label_text(label)} is not a constant: a case label of a switch over ${disc.show()} is ${what}")
   }
   false
 }
@@ -739,7 +739,7 @@ pub fn (checker_self: Checker) check_enum_consts {
             } else if c.kind == cv_int() && c.iv >= -2147483648 && c.iv <= 2147483647 {
               value = c.iv
             } else if c.kind == cv_u64() && c.uv <= 2147483647u64 {
-              value = c.uv.to_i
+              value = c.uv.to_i()
             } else if c.kind == cv_int() || c.kind == cv_u64() {
               checker_self.fail(loc, "the value of ${decl.names[i]}, the constant ${cname} = ${cv_text(c)}, does not fit in Int32")
               ok = false

@@ -35,7 +35,7 @@ fn poison(m: Mutex(Acc)) {
     }
     0
   }
-  v = h.join else e {
+  v = h.join() else e {
     puts("trapped: ${e.what}")
     return
   }
@@ -63,7 +63,7 @@ fn statement_try(m: Mutex(Acc)) {
 }
 
 fn join_task(h: JoinHandle(Int), label: String) {
-  v = h.join else e {
+  v = h.join() else e {
     puts("${label} trapped: ${e.what}")
     return
   }
@@ -79,10 +79,10 @@ fn main {
   if kind == "heal" {
     m = Mutex(Acc).new(Acc { n: 0 }, recover: fresh_acc)
     poison(m)
-    puts("poisoned: ${m.poisoned}")
+    puts("poisoned: ${m.poisoned()}")
     n = m.with { |acc| acc.n }
     puts("with: ${n}")
-    puts("poisoned: ${m.poisoned}")
+    puts("poisoned: ${m.poisoned()}")
   } else if kind == "heal-lambda" {
     m = Mutex(Acc).new(Acc { n: 0 }, recover: { || Acc { n: 7 } })
     poison(m)
@@ -98,8 +98,8 @@ fn main {
         acc.n
       }
     }
-    puts("task: ${h.join ?? -1}")
-    puts("poisoned: ${m.poisoned}")
+    puts("task: ${h.join() ?? -1}")
+    puts("poisoned: ${m.poisoned()}")
   } else if kind == "heal-traps" {
     // The recover function traps in a task: that task ends, and the
     // mutex stays poisoned until m.recover.
@@ -109,23 +109,23 @@ fn main {
       m.with { |acc| acc.n }
     }
     join_task(h, "heal")
-    puts("poisoned: ${m.poisoned}")
+    puts("poisoned: ${m.poisoned()}")
     m.recover(Acc { n: 9 })
-    puts("poisoned: ${m.poisoned}")
+    puts("poisoned: ${m.poisoned()}")
     n = m.with { |acc| acc.n }
     puts("with: ${n}")
   } else if kind == "recover" {
     m = Mutex(Acc).new(Acc { n: 0 })
     poison(m)
     m.recover(Acc { n: 11 })
-    puts("poisoned: ${m.poisoned}")
+    puts("poisoned: ${m.poisoned()}")
     n = m.with { |acc| acc.n }
     puts("with: ${n}")
   } else if kind == "clear" {
     m = Mutex(Acc).new(Acc { n: 0 })
     poison(m)
-    m.clear_poison
-    puts("poisoned: ${m.poisoned}")
+    m.clear_poison()
+    puts("poisoned: ${m.poisoned()}")
     n = m.with { |acc| acc.n }
     puts("with: ${n}")
   } else if kind == "try-void" {
@@ -134,7 +134,7 @@ fn main {
     poison(m)
     statement_try(m)
     report_bump(m, "poisoned")
-    m.clear_poison
+    m.clear_poison()
     statement_try(m)
     report_bump(m, "cleared")
     n = m.with { |acc| acc.n }
