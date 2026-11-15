@@ -221,7 +221,7 @@ fn client_cases(c: Checks) {
       post_big_round(port, out, 8388608)
     }
     server.serve
-    c.eq_int(task.join, 0, "client post task")
+    c.eq_int(task.join ?? -1, 0, "client post task")
     want: Array(String) = []
     want.push("status 200: 8388608 bytes, 0 out of place")
     want.push("status 200: 4 bytes, sum 88174")
@@ -397,7 +397,7 @@ fn ws_cases(c: Checks) {
       ws_keep_round(port, n, out)
     }
     server.serve
-    c.eq_int(task.join, 0, "ws keep task")
+    c.eq_int(task.join ?? -1, 0, "ws keep task")
     want: Array(String) = []
     want.push("echoed ${n} of ${n}")
     want.push("closed copy: send=false recv=nothing close_code=1006; the later connection: still here")
@@ -425,7 +425,7 @@ fn ws_cases(c: Checks) {
       ws_probe_round(port, n, out)
     }
     server.serve
-    c.eq_int(task.join, 0, "ws probe task")
+    c.eq_int(task.join ?? -1, 0, "ws probe task")
     want: Array(String) = []
     want.push("operations through the first server's WsConn values that did not answer closed: 0")
     want.push("stray messages: 0")
@@ -542,7 +542,7 @@ fn ws_route_cases(c: Checks) {
     server.serve
     failed = 0
     for h in handles {
-      failed += h.join
+      failed += h.join ?? -1
     }
     _ = stopper.join
     wrong = ""
@@ -639,7 +639,7 @@ fn header_split_cases(c: Checks, root: String) {
       pargs.push(port_file)
       _ = process_run_out("/usr/bin/python3", pargs, wlog)
       wire = nth_line(file_read(wlog) ?? "", 0)
-      status = server.join
+      status = server.join ?? -1
       text = file_read(log) ?? ""
       if kind == "ok" {
         c.eq_int(status, 0, "Response.header ${kind}: answered, status 0")
@@ -759,7 +759,7 @@ fn client_framing_cases(c: Checks, root: String) {
   }
   if resp = Http.get("http://127.0.0.1:${port}/__stop", true, 4000) {
   }
-  c.eq_int(server.join, 0, "the keep-open server ends")
+  c.eq_int(server.join ?? -1, 0, "the keep-open server ends")
 }
 
 // The result of one client call as a line: "STATUS BODY" or the
@@ -846,7 +846,7 @@ fn client_request_cases(c: Checks, root: String) {
   c.eq_str(outcome(Http.get("${base}/echo?q=%41~", false, 4000)), "200 GET /echo?q=%41~ HTTP/1.1|Host: 127.0.0.1:${port}|Content-Length: 0|Connection: close", "a valid target is sent as given")
   if resp = Http.get("${base}/__stop", true, 4000) {
   }
-  c.eq_int(server.join, 0, "the echo server ends")
+  c.eq_int(server.join ?? -1, 0, "the echo server ends")
 }
 
 // How the client reads a response (Stage 29 W-FIX1h): GET each path of
@@ -875,7 +875,7 @@ fn client_response_round(c: Checks, root: String, what: String, paths: Array(Str
   }
   if resp = Http.get("http://127.0.0.1:${port}/__stop", true, 4000) {
   }
-  c.eq_int(server.join, 0, "the answering server ends (${what})")
+  c.eq_int(server.join ?? -1, 0, "the answering server ends (${what})")
 }
 
 // O664 (Stage 29 W-FIX1h): a response with two Content-Length values
@@ -958,7 +958,7 @@ fn ws_big_round(c: Checks, root: String, chunk: String, size: Int) {
       0
     }
     server.serve
-    c.eq_int(task.join, 0, "ws big-message task (${size} bytes)")
+    c.eq_int(task.join ?? -1, 0, "ws big-message task (${size} bytes)")
     want: Array(String) = []
     want.push("ws_big=whole,then the big send returned true")
     piece = "1 GiB"
@@ -1038,7 +1038,7 @@ fn write_piece_cases(c: Checks) {
     }
     server.serve
     set_env("AVANT_HTTP_WS_WRITE_CHUNK", "")
-    c.eq_int(task.join, 0, "write-piece task")
+    c.eq_int(task.join ?? -1, 0, "write-piece task")
     want: Array(String) = []
     want.push("200 ${n} true")
     want.push("200 ${n} true")
@@ -1194,7 +1194,7 @@ fn test_std_http_safety(c: Checks, root: String) {
       close_unread_round(port, out, root, stamp)
     }
     server.serve
-    c.eq_int(handle.join, 0, "close-unread task")
+    c.eq_int(handle.join ?? -1, 0, "close-unread task")
     want: Array(String) = []
     want.push("close_unread=alive")
     want.push("close_unread=alive")
@@ -1313,10 +1313,10 @@ fn test_std_http_safety(c: Checks, root: String) {
     if q = quiet {
       q.close
     }
-    c.eq_int(queue_task.join, 0, "output-queue task")
-    c.eq_int(idle_task.join, 0, "idle-timeout task")
-    c.eq_int(stopper.join, 0, "stopper task")
-    c.eq_int(timeout_task.join, 0, "client-deadline task")
+    c.eq_int(queue_task.join ?? -1, 0, "output-queue task")
+    c.eq_int(idle_task.join ?? -1, 0, "idle-timeout task")
+    c.eq_int(stopper.join ?? -1, 0, "stopper task")
+    c.eq_int(timeout_task.join ?? -1, 0, "client-deadline task")
     twant: Array(String) = []
     twant.push("get=timed out in time")
     twant.push("post=timed out in time")

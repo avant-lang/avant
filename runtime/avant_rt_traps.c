@@ -1,5 +1,7 @@
 #include "avant_rt.h"
+#include "avant_gc.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -34,17 +36,58 @@ static const char *site_or(int32_t site) {
   return t ? t : "?";
 }
 
+/* The trap's text is formed in a buffer of the thread's own: a trap in a task that may end the task (the recovery
+ * point of avant_task.c: a pool worker running a spawned block, not
+ * inside a C callback) hands it to avant_task_trapped, which returns to
+ * the task's entry and ends the task, and its join gives the text and
+ * the site as a TaskError; any other trap prints it as before (the
+ * program's stdout flushed first, then "avant runtime: WHAT[ at SITE]",
+ * status 1). */
+static __thread char g_trap_text[1024];
+static __thread size_t g_trap_n;
+
 static void trap_head(void) {
-  fflush(stdout);
-  fputs("avant runtime: ", stderr);
+  g_trap_n = 0;
+  g_trap_text[0] = 0;
+}
+
+__attribute__((format(printf, 1, 2))) static void trap_out(const char *fmt, ...) {
+  va_list ap;
+  size_t room = sizeof g_trap_text - g_trap_n;
+  int k;
+  if (room <= 1) {
+    return;
+  }
+  va_start(ap, fmt);
+  k = vsnprintf(g_trap_text + g_trap_n, room, fmt, ap);
+  va_end(ap);
+  if (k > 0) {
+    g_trap_n += (size_t)k < room ? (size_t)k : room - 1;
+  }
 }
 
 __attribute__((noreturn)) static void trap_tail(void) {
-  if (g_trap_loc) {
-    fprintf(stderr, " at %s", g_trap_loc);
+  const char *site = g_trap_loc;
+  g_trap_loc = NULL;
+  if (avant_task_can_recover()) {
+    avant_task_trapped(g_trap_text, site);
+  }
+  fflush(stdout);
+  fputs("avant runtime: ", stderr);
+  fputs(g_trap_text, stderr);
+  if (site) {
+    fprintf(stderr, " at %s", site);
   }
   fputc('\n', stderr);
   exit(1);
+}
+
+/* A trap whose text a runtime unit formed (avant_str.c's argument
+ * checks): the same path. */
+void avant_trap_text(const char *what) {
+  trap_head();
+  trap_out("%s", what);
+  trap_tail();
 }
 
 /* Integer overflow and division by zero raised by the generated code
@@ -55,19 +98,19 @@ __attribute__((noreturn)) static void trap_tail(void) {
  * costing the hot path. */
 void avant_trap_overflow_in(int32_t fn) {
   trap_head();
-  fprintf(stderr, "integer overflow in %s", site_or(fn));
+  trap_out("integer overflow in %s", site_or(fn));
   trap_tail();
 }
 
 void avant_trap_bounds_in(avant_int index, avant_int size, int32_t fn) {
   trap_head();
-  fprintf(stderr, "index %lld out of bounds (size %lld) in %s", (long long)index, (long long)size, site_or(fn));
+  trap_out("index %lld out of bounds (size %lld) in %s", (long long)index, (long long)size, site_or(fn));
   trap_tail();
 }
 
 void avant_trap_div_zero_in(int32_t fn) {
   trap_head();
-  fprintf(stderr, "division by zero in %s", site_or(fn));
+  trap_out("division by zero in %s", site_or(fn));
   trap_tail();
 }
 
@@ -76,7 +119,7 @@ void avant_trap_empty_at(int32_t what, int32_t site) {
   static const char *names[] = {"pop on an empty Array", "shift on an empty Array"};
   g_trap_loc = site_text(site);
   trap_head();
-  fputs(names[what == 1 ? 1 : 0], stderr);
+  trap_out("%s", names[what == 1 ? 1 : 0]);
   trap_tail();
 }
 
@@ -93,7 +136,7 @@ static const char *frozen_op(int32_t op) {
 
 void avant_trap_frozen(int32_t op) {
   trap_head();
-  fprintf(stderr, "%s on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends; join the task first", frozen_op(op));
+  trap_out("%s on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends; join the task first", frozen_op(op));
   trap_tail();
 }
 
@@ -102,21 +145,34 @@ void avant_trap_frozen_at(int32_t op, int32_t site) {
   avant_trap_frozen(op);
 }
 
+/* `m.with { }` on a mutex a task held when it trapped: the value may be half-changed, so the block does not run
+ * on it. */
+void avant_trap_poisoned(void) {
+  trap_head();
+  trap_out("Mutex.with on a poisoned mutex: a task trapped while it held this mutex, so its value may be half-changed");
+  trap_tail();
+}
+
+void avant_trap_poisoned_at(int32_t site) {
+  g_trap_loc = site_text(site);
+  avant_trap_poisoned();
+}
+
 static __attribute__((noreturn, cold)) void avant_trap_bounds(avant_int index, avant_int size) {
   trap_head();
-  fprintf(stderr, "index %lld out of bounds (size %lld)", (long long)index, (long long)size);
+  trap_out("index %lld out of bounds (size %lld)", (long long)index, (long long)size);
   trap_tail();
 }
 
 static __attribute__((noreturn, cold)) void avant_trap_div_zero(void) {
   trap_head();
-  fprintf(stderr, "division by zero");
+  trap_out("division by zero");
   trap_tail();
 }
 
 void avant_trap_overflow(void) {
   trap_head();
-  fprintf(stderr, "integer overflow");
+  trap_out("integer overflow");
   trap_tail();
 }
 
@@ -129,9 +185,9 @@ static __attribute__((noreturn, cold)) void avant_trap_shift(int64_t amount, int
   trap_head();
   int top = (t == 1 || t == 3) ? 31 : 63;
   if (kind & 8) {
-    fprintf(stderr, "shift amount %llu out of range for %s (0..%d)", (unsigned long long)amount, names[t], top);
+    trap_out("shift amount %llu out of range for %s (0..%d)", (unsigned long long)amount, names[t], top);
   } else {
-    fprintf(stderr, "shift amount %lld out of range for %s (0..%d)", (long long)amount, names[t], top);
+    trap_out("shift amount %lld out of range for %s (0..%d)", (long long)amount, names[t], top);
   }
   trap_tail();
 }
@@ -144,7 +200,7 @@ static __attribute__((noreturn, cold)) void avant_trap_to_i(double x) {
   /* The value as Avant prints it (W4b1's shortest round-trip text). */
   avant_fmt_float_text(text, x);
   trap_head();
-  fprintf(stderr, "to_i of Float64 %s out of range for Int", text);
+  trap_out("to_i of Float64 %s out of range for Int", text);
   trap_tail();
 }
 
@@ -161,9 +217,9 @@ static __attribute__((noreturn, cold)) void avant_trap_convert(int64_t value, in
   int unsigned_from = from == 2 || from == 3;
   trap_head();
   if (unsigned_from) {
-    fprintf(stderr, "%s of %s %llu out of range for %s", methods[to], names[from], (unsigned long long)value, names[to]);
+    trap_out("%s of %s %llu out of range for %s", methods[to], names[from], (unsigned long long)value, names[to]);
   } else {
-    fprintf(stderr, "%s of %s %lld out of range for %s", methods[to], names[from], (long long)value, names[to]);
+    trap_out("%s of %s %lld out of range for %s", methods[to], names[from], (long long)value, names[to]);
   }
   trap_tail();
 }
@@ -172,7 +228,7 @@ static __attribute__((noreturn, cold)) void avant_trap_convert(int64_t value, in
  * element, chr, repeat_byte. */
 void avant_trap_byte(avant_int value) {
   trap_head();
-  fprintf(stderr, "byte %lld out of range (0..255)", (long long)value);
+  trap_out("byte %lld out of range (0..255)", (long long)value);
   trap_tail();
 }
 
@@ -180,7 +236,7 @@ void avant_trap_byte(avant_int value) {
  * D295 R4: slices trap like indexing). */
 void avant_trap_slice(avant_int start, avant_int stop, avant_int size) {
   trap_head();
-  fprintf(stderr, "slice %lld..%lld out of range (size %lld)", (long long)start, (long long)stop, (long long)size);
+  trap_out("slice %lld..%lld out of range (size %lld)", (long long)start, (long long)stop, (long long)size);
   trap_tail();
 }
 
@@ -188,7 +244,7 @@ void avant_trap_slice(avant_int start, avant_int stop, avant_int size) {
  * push_fmt_f used to clamp it to 0..16 silently). */
 void avant_trap_precision(avant_int prec) {
   trap_head();
-  fprintf(stderr, "precision %lld out of range (0..64)", (long long)prec);
+  trap_out("precision %lld out of range (0..64)", (long long)prec);
   trap_tail();
 }
 
@@ -201,9 +257,9 @@ void avant_trap_size(int32_t kind) {
   int k = kind >= 0 && kind <= 3 ? kind : 0;
   trap_head();
   if (k == AVANT_SIZE_HASH) {
-    fprintf(stderr, "Hash would exceed %d slots", AVANT_HASH_SLOTS_MAX);
+    trap_out("Hash would exceed %d slots", AVANT_HASH_SLOTS_MAX);
   } else {
-    fprintf(stderr, "%s would exceed %d %s", what[k], AVANT_SIZE_MAX, k == AVANT_SIZE_ARRAY ? "elements" : "bytes");
+    trap_out("%s would exceed %d %s", what[k], AVANT_SIZE_MAX, k == AVANT_SIZE_ARRAY ? "elements" : "bytes");
   }
   trap_tail();
 }
@@ -217,7 +273,7 @@ void avant_trap_size_at(int32_t kind, int32_t site) {
 void avant_trap_negative(avant_int n, int32_t what) {
   static const char *names[] = {"Array size", "repeat_byte count"};
   trap_head();
-  fprintf(stderr, "%s %lld is negative", names[what == 1 ? 1 : 0], (long long)n);
+  trap_out("%s %lld is negative", names[what == 1 ? 1 : 0], (long long)n);
   trap_tail();
 }
 
@@ -229,7 +285,7 @@ void avant_trap_c_range(int64_t value, int32_t kind) {
   static const char *ranges[] = {"?", "-128..127", "-32768..32767", "0..255", "0..65535", "0..4294967295", "-2147483648..2147483647"};
   int k = kind >= 1 && kind <= 6 ? kind : 0;
   trap_head();
-  fprintf(stderr, "%lld out of range for the C type %s (%s)", (long long)value, names[k], ranges[k]);
+  trap_out("%lld out of range for the C type %s (%s)", (long long)value, names[k], ranges[k]);
   trap_tail();
 }
 
@@ -378,7 +434,7 @@ __attribute__((constructor)) static void avant_cpu_check(void) {
 void avant_trap_exit_status_at(avant_int status, int32_t site) {
   g_trap_loc = site_text(site);
   trap_head();
-  fprintf(stderr, "exit status %lld out of range (0..255)", (long long)status);
+  trap_out("exit status %lld out of range (0..255)", (long long)status);
   trap_tail();
 }
 
@@ -387,7 +443,7 @@ void avant_trap_exit_status_at(avant_int status, int32_t site) {
 void avant_trap_c_null_at(const char *name, int32_t site) {
   g_trap_loc = site_text(site);
   trap_head();
-  fprintf(stderr, "C function %s returned NULL for String (declare String?)", name);
+  trap_out("C function %s returned NULL for String (declare String?)", name);
   trap_tail();
 }
 
@@ -397,7 +453,7 @@ void avant_trap_c_null_at(const char *name, int32_t site) {
 void avant_trap_enum_at(int64_t value, const char *name, int32_t site) {
   g_trap_loc = site_text(site);
   trap_head();
-  fprintf(stderr, "%lld is not a member of %s", (long long)value, name);
+  trap_out("%lld is not a member of %s", (long long)value, name);
   trap_tail();
 }
 

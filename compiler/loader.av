@@ -289,6 +289,7 @@ pub class Loader {
   mod_paths: Hash(String, String)
   std_names: Hash(String, String)
   wants_prelude: Bool = false
+  wants_task: Bool = false
   lib_read: Bool = false
   lib_rec: String = ""
 
@@ -583,6 +584,9 @@ pub class Loader {
       if self.wants_prelude {
         add_prelude(merged)
       }
+      if self.wants_task {
+        add_task_prelude(merged)
+      }
       return merged
     }
     nil
@@ -617,6 +621,9 @@ pub class Loader {
       }
       if !self.wants_prelude && prelude_wanted(tokens) {
         self.wants_prelude = true
+      }
+      if !self.wants_task && task_prelude_wanted(tokens) {
+        self.wants_task = true
       }
       parser = Parser.new(file, tokens)
       program = parser.parse
@@ -753,6 +760,21 @@ pub fn add_prelude(merged: Program) {
     info.imports.push("prelude")
   }
   merged.mods.push(ModInfo.new("prelude", prelude_path()))
+}
+
+// The task module: as the prelude, named `task`.
+pub fn add_task_prelude(merged: Program) {
+  src = Source.new(task_prelude_path(), task_prelude_source())
+  lex = Lexer.new(src)
+  tokens = lex.tokenize
+  parser = Parser.new(src, tokens)
+  p = parser.parse
+  tag_module(p, "task", task_prelude_path())
+  merge_decls(merged, p)
+  for info in merged.mods {
+    info.imports.push("task")
+  }
+  merged.mods.push(ModInfo.new("task", task_prelude_path()))
 }
 
 pub fn load_program(path: String): Loader {

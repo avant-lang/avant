@@ -149,3 +149,59 @@ pub fn prelude_source: String {
   }
   b.to_s
 }
+
+// The task module's source: TaskError, the
+// failure `h.join` gives when a trap ended the task, and the function
+// the lowering calls to make join's value. The loader adds it, named
+// `task`, to a program whose source spawns (task_prelude_wanted); every
+// module of the program then sees TaskError.
+pub fn task_prelude_wanted(tokens: Array(Token)): Bool {
+  for t in tokens {
+    if t.kind == tk_spawn() {
+      return true
+    }
+  }
+  false
+}
+
+pub fn task_prelude_path: String {
+  "<task>"
+}
+
+pub fn task_prelude_source: String {
+  b = buf_new()
+  lines = [
+  "// A task that a trap ended : the trap's text (what) and its",
+  "// site (FILE:LINE:COL, \"\" when the trap has none).",
+  "pub class TaskError: Error {",
+  "  pub what: String",
+  "  pub site: String",
+  "",
+  "  fn initialize(what: String, site: String) {",
+  "    self.what = what",
+  "    self.site = site",
+  "  }",
+  "",
+  "  pub fn message: String {",
+  "    if site.size > 0 {",
+  "      return \"the task trapped: \${what} at \${site}\"",
+  "    }",
+  "    \"the task trapped: \${what}\"",
+  "  }",
+  "}",
+  "",
+  "// The value of `h.join` (mir/lower_task.av lower_join): the block's Int,",
+  "// or the trap that ended the task.",
+  "pub fn __avant_join_result(value: Int, what: String?, site: String): Int | TaskError {",
+  "  if w = what {",
+  "    return TaskError.new(w, site)",
+  "  }",
+  "  value",
+  "}"
+  ]
+  for line in lines {
+    b.push_str(line)
+    b.push_str("\n")
+  }
+  b.to_s
+}

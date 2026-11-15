@@ -120,17 +120,17 @@ fn rules: Array(PRule) {
   // task captures by copy what may cross, never assigns a captured name,
   // and a captured Array is read-only on both sides until the join.
   tsite = "class PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  pb = PBox.new\n@\n  puts(pb.n)\n}\n"
-  xs.push(rule("spawn-capture-class", "stmt", "", tsite, "", "ph = spawn { pb.n }\nputs(ph.join)", "pn = pb.n\nph = spawn { pn }\nputs(ph.join)", "spawn cannot capture pb: PBox is not copied at send"))
-  xs.push(rule("spawn-assign-capture", "stmt", "", tsite, "", "pk = 1\nph = spawn {\n  pk = 2\n  pk\n}\nputs(ph.join)", "pk = 1\nph = spawn {\n  pj = 2\n  pj + pk\n}\nputs(ph.join)", "spawn cannot assign to pk"))
-  xs.push(rule("spawn-array-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn {\n  pxs.push(3)\n  pxs.size\n}\nputs(ph.join)", "pxs = [1, 2]\nph = spawn {\n  pxs.size\n}\nputs(ph.join)", "spawn cannot mutate captured Array pxs"))
-  xs.push(rule("spawn-sender-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn { pxs.size }\npxs.push(3)\nputs(ph.join)", "pxs = [1, 2]\nph = spawn { pxs.size }\nputs(ph.join)\npxs.push(3)", "cannot mutate pxs while a spawn using it is running"))
+  xs.push(rule("spawn-capture-class", "stmt", "", tsite, "", "ph = spawn { pb.n }\nputs(ph.join ?? -1)", "pn = pb.n\nph = spawn { pn }\nputs(ph.join ?? -1)", "spawn cannot capture pb: PBox is not copied at send"))
+  xs.push(rule("spawn-assign-capture", "stmt", "", tsite, "", "pk = 1\nph = spawn {\n  pk = 2\n  pk\n}\nputs(ph.join ?? -1)", "pk = 1\nph = spawn {\n  pj = 2\n  pj + pk\n}\nputs(ph.join ?? -1)", "spawn cannot assign to pk"))
+  xs.push(rule("spawn-array-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn {\n  pxs.push(3)\n  pxs.size\n}\nputs(ph.join ?? -1)", "pxs = [1, 2]\nph = spawn {\n  pxs.size\n}\nputs(ph.join ?? -1)", "spawn cannot mutate captured Array pxs"))
+  xs.push(rule("spawn-sender-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn { pxs.size }\npxs.push(3)\nputs(ph.join ?? -1)", "pxs = [1, 2]\nph = spawn { pxs.size }\nputs(ph.join ?? -1)\npxs.push(3)", "cannot mutate pxs while a spawn using it is running"))
   // A zero-argument mutator written without parentheses is a mutation (Stage 29 W-FIX1j, F1).
-  xs.push(rule("spawn-sender-mutate-bare", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn { pxs.size }\npxs.clear\nputs(ph.join)", "pxs = [1, 2]\nph = spawn { pxs.size }\nputs(ph.join)\npxs.clear", "cannot mutate pxs while a spawn using it is running"))
-  xs.push(rule("spawn-array-mutate-bare", "stmt", "", tsite, "", "pxs = [2, 1]\nph = spawn {\n  pxs.sort\n  pxs.size\n}\nputs(ph.join)", "pxs = [2, 1]\nph = spawn {\n  pys = pxs.sorted\n  pys.size\n}\nputs(ph.join)", "spawn cannot mutate captured Array pxs"))
+  xs.push(rule("spawn-sender-mutate-bare", "stmt", "", tsite, "", "pxs = [1, 2]\nph = spawn { pxs.size }\npxs.clear\nputs(ph.join ?? -1)", "pxs = [1, 2]\nph = spawn { pxs.size }\nputs(ph.join ?? -1)\npxs.clear", "cannot mutate pxs while a spawn using it is running"))
+  xs.push(rule("spawn-array-mutate-bare", "stmt", "", tsite, "", "pxs = [2, 1]\nph = spawn {\n  pxs.sort\n  pxs.size\n}\nputs(ph.join ?? -1)", "pxs = [2, 1]\nph = spawn {\n  pys = pxs.sorted\n  pys.size\n}\nputs(ph.join ?? -1)", "spawn cannot mutate captured Array pxs"))
   // A captured Array is shared with the task, so its elements cross in
   // turn (O712, Stage 29 W8Cc): an Array of a class is refused, an Array
   // of Mutexes is not.
-  xs.push(rule("spawn-capture-array-class", "stmt", "", tsite, "", "pxs = [pb]\nph = spawn {\n  pc = pxs[0]\n  pc.n += 1\n  0\n}\nputs(ph.join)", "pxs = [pb.n]\nph = spawn {\n  pc = pxs[0]\n  pc + 1\n}\nputs(ph.join)", "its elements (PBox) cannot cross to another task"))
+  xs.push(rule("spawn-capture-array-class", "stmt", "", tsite, "", "pxs = [pb]\nph = spawn {\n  pc = pxs[0]\n  pc.n += 1\n  0\n}\nputs(ph.join ?? -1)", "pxs = [pb.n]\nph = spawn {\n  pc = pxs[0]\n  pc + 1\n}\nputs(ph.join ?? -1)", "its elements (PBox) cannot cross to another task"))
   // README "Parallel": its block captures by the same rule.
   xs.push(rule("parallel-capture-class", "stmt", "", tsite, "", "pys = [1, 2].parallel { |x| x + pb.n }\nputs(pys.size)", "pn = pb.n\npys = [1, 2].parallel { |x| x + pn }\nputs(pys.size)", "cannot capture pb: PBox is not copied at send"))
   // README "Channel and Mutex": the value of `with`, when it is used, is

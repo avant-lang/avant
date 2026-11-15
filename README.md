@@ -199,6 +199,7 @@ Avant is pre-1.0 and young: the language still changes between releases ([CHANGE
   - [package limits](#package-limits)
 - [Concurrency](#concurrency):
   - [spawn](#spawn)
+  - [when a task traps](#when-a-task-traps)
   - [parallel](#parallel)
   - [Channel and Mutex](#channel-and-mutex)
   - [choosing a tool](#choosing-a-tool)
@@ -2591,14 +2592,14 @@ fn fib(n: Int): Int {
 fn main {
   h = spawn { fib(27) }                           // one task, on the pool
   fibs = [20, 21, 22, 23].parallel { |n| fib(n) } // one task per element
-  puts(h.join)       // => 196418
+  puts(h.join ?? 0)  // => 196418
   puts(fibs[3])      // => 28657
 }
 ```
 
 ### Spawn
 
-`spawn { ... }` runs the block as a task and returns a `JoinHandle(Int)` at once; `.join` waits for the task and gives the block's value, which is an `Int` for now. Handles are ordinary values: keep them in an array to wait for many.
+`spawn { ... }` runs the block as a task and returns a `JoinHandle(Int)` at once; `.join` waits for the task and gives the block's value, an `Int` for now, or the `TaskError` of a trap that ended the task: its type is `Int | TaskError` ([When a task traps](#when-a-task-traps)), read with `??`, `?`, an if-assign or `else e` like any failure. Handles are ordinary values: keep them in an array to wait for many.
 
 ```avant
 fn work(id: Int): Int {
@@ -2613,7 +2614,7 @@ fn main {
   }
   total = 0
   for h in handles {
-    total += h.join
+    total += h.join ?? 0
   }
   puts(total)    // => 30
 }
@@ -2621,7 +2622,33 @@ fn main {
 
 - A value the block captures is copied when the task is sent ([What may cross a task](#what-may-cross-a-task)); the block cannot assign a captured variable.
 - A captured `Array` is shared for reading: the block may not change it, and the sender may not change it until the task ends. Written through the captured name, either change is a compile error. Through any other path to the same array (another name for it, a function it is passed to, a field that holds it) the change stops the program at run time: `avant runtime: push on an array a running task reads: …`, status 1, naming the operation (`push`, `pop`, `clear`, `fill`, `sort`, `reverse`, `reserve` or an element store). The array is frozen from the `spawn` until the task ends (not until the join, so a dropped handle does not keep it frozen), at every level of an array of arrays; `.parallel`'s input and the arrays its block captures are frozen while its bodies run. A program that never spawns or uses `.parallel` keeps its code; in one that does, an element store and `clear` cost one compare more, and the runtime's mutators test the array once a call (a `push` with room only when it must grow).
-- Calling `.join` or `.parallel` from inside a pool worker is refused: at compile time when it is written in the block, at run time when it is reached through a call, with a trap (`avant runtime: .parallel called from a pool worker: …`, status 1). A nested `spawn` from a worker is allowed.
+- Calling `.join` or `.parallel` from inside a pool worker is refused: at compile time when it is written in the block; at run time, reached through a call, it traps (`.parallel called from a pool worker: …`), which ends the task. A nested `spawn` from a worker is allowed.
+
+### When a task traps
+
+A trap inside a spawned block (an index out of bounds, an overflow, a division by zero, a `pop` on an empty array, a change to a frozen array, …) ends that task, not the program. The task's stack is dropped where it stands (no unwinding: nothing needs to run, the collector frees what the task left), and its `join` gives a `TaskError` whose `what` is the trap's text and `site` its `FILE:LINE:COL` (empty when the trap names its function instead); `"${e}"` prints both. The program and the pool go on.
+
+```avant
+fn main {
+  h = spawn {
+    xs: Array(Int) = []
+    xs.pop
+  }
+  v = h.join else e {
+    puts(e.what)    // => pop on an empty Array
+    return
+  }
+  puts(v)
+}
+```
+
+What the task shared is left safe:
+
+- A `Mutex` the task held in `with` when it trapped is **poisoned**: its value may be half-changed, so every later `with` on it stops with `Mutex.with on a poisoned mutex: …` (in a task, that ends the task in turn).
+- Each `Channel` the block captured is closed, so a task waiting in `recv` or `send` on it is not left waiting for ever.
+- Each `Array` the block captured is thawed, as at the task's normal end.
+
+Some traps still end the program: one in a `.parallel` body (the caller waits for every body), one inside a C callback (the jump would skip C's frames), one on the main thread or an HTTP handler's thread, and the runtime's own stops (the heap limit, the collector's checks). A task whose handle is never joined ends silently when it traps. Tasks already share no mutable objects (only immutable `String`s, frozen arrays, `Channel`s and `Mutex`es cross), as Erlang's processes share nothing; a trap that ends only its task is the task-level half of "let it crash".
 
 ### Parallel
 

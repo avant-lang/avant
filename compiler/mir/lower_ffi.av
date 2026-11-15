@@ -337,6 +337,13 @@ pub fn (lw: MirLower) lower_cb_thunks {
       }
       j += 1
     }
+    // A trap inside a callback ends the process, also in a task: the
+    // task's recovery point would skip the C frames between (runtime/avant_task.c). Only a program that spawns has
+    // tasks: any other program's thunk is as before.
+    none: Array(MOperand) = []
+    if lw.lw_m.shared {
+      b.call(-1, "avant_task_cb_enter", none)
+    }
     if ret == mt_void() {
       b.call(-1, cb.target, args)
     } else if rt = cb.fty.inner, rt.is_enum {
@@ -347,6 +354,9 @@ pub fn (lw: MirLower) lower_cb_thunks {
       d = b.temp(ret)
       b.call(d, cb.target, args)
       b.assign(b.pl(0), b.rv_use(b.copy_local(d)))
+    }
+    if lw.lw_m.shared {
+      b.call(-1, "avant_task_cb_leave", none)
     }
     b.ret
     b.end_fn
@@ -572,7 +582,7 @@ pub fn (lw: MirLower) lower_pin(st: Stmt) {
       }
       args: Array(MOperand) = []
       args.push(b.copy_local(h))
-      b.call(-1, "avant_pin", args)
+      b.call(-1, lw.task_name("avant_pin"), args)
       lw.lw_ffi.pins.push(h)
       lw.lw_ffi.pin_depth.push(lw.lw_heads.size)
       lw.lower_stmts(st.body)
@@ -605,11 +615,31 @@ pub fn (lw: MirLower) unpin(h: Int) {
   }
   if h < 0 {
     // A `gc.hold` block's entry (lower_hold).
-    lw.lw_b.call(-1, "avant_gc_hold_end", args)
+    lw.lw_b.call(-1, lw.task_name("avant_gc_hold_end"), args)
     return
   }
   args.push(lw.lw_b.copy_local(h))
-  lw.lw_b.call(-1, "avant_unpin", args)
+  lw.lw_b.call(-1, lw.task_name("avant_unpin"), args)
+}
+
+// A `pin` block's and a `gc.hold`'s runtime entry: in a program that
+// spawns, the task pool's form (runtime/avant_task.c), which keeps what a
+// task holds so that a trap ending the task gives it back; the
+// collector's own otherwise.
+pub fn (lw: MirLower) task_name(name: String): String {
+  if !lw.lw_m.shared {
+    return name
+  }
+  if name == "avant_pin" {
+    return "avant_task_pin"
+  }
+  if name == "avant_unpin" {
+    return "avant_task_unpin"
+  }
+  if name == "avant_gc_hold_begin" {
+    return "avant_task_hold_begin"
+  }
+  "avant_task_hold_end"
 }
 
 // `gc.hold { body }` (std.gc, Stage 29 W1c2, D305): avant_gc_hold_begin,
@@ -621,7 +651,7 @@ pub fn (lw: MirLower) lower_hold(st: Stmt) {
   b = lw.lw_b
   lw.at(st.loc)
   none: Array(MOperand) = []
-  b.call(-1, "avant_gc_hold_begin", none)
+  b.call(-1, lw.task_name("avant_gc_hold_begin"), none)
   lw.lw_ffi.pins.push(-1)
   lw.lw_ffi.pin_depth.push(lw.lw_heads.size)
   lw.lower_stmts(st.body)

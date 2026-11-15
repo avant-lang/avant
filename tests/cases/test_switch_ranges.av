@@ -158,7 +158,7 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   // enters, so no edge into an arm is taken for a back edge: a program
   // that spawns polls in its loops only (mir/gc.av), and these have none.
   pw = "${dir}/sr-ll-nopoll.av"
-  _ = file_write(pw, "fn s(m: String): Int {\n  switch m {\n    case \"GET\", \"HEAD\" { 1 }\n    case \"POST\" { 2 }\n    case \"\" { 3 }\n    else { 0 }\n  }\n}\nfn r(c: Int): Int {\n  switch c {\n    case 'a'..='z' { 1 }\n    case 1000..=100000 { 2 }\n    case 200000..=300000 { 3 }\n    else { 0 }\n  }\n}\nfn main {\n  h = spawn { 1 }\n  puts(s(\"HEAD\") + r(argv().size))\n  puts(h.join)\n}\n")
+  _ = file_write(pw, "fn s(m: String): Int {\n  switch m {\n    case \"GET\", \"HEAD\" { 1 }\n    case \"POST\" { 2 }\n    case \"\" { 3 }\n    else { 0 }\n  }\n}\nfn r(c: Int): Int {\n  switch c {\n    case 'a'..='z' { 1 }\n    case 1000..=100000 { 2 }\n    case 200000..=300000 { 3 }\n    else { 0 }\n  }\n}\nfn main {\n  h = spawn { 1 }\n  puts(s(\"HEAD\") + r(argv().size))\n  puts(h.join ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, pw, "${dir}/sr-ll-nopoll.ll", "${dir}/sr-ll-nopoll.log"), 0, "ll-nopoll: emits")
   pll = log_text("${dir}/sr-ll-nopoll.ll")
   c.expect(str_has(pll, "@memcmp("), "ll-nopoll: the String switch compares")
@@ -168,11 +168,11 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   // numbering rule took for a back edge: two polls in a program with no
   // loop.
   aw = "${dir}/sr-ll-abs.av"
-  _ = file_write(aw, "fn main {\n  h = spawn { 1 }\n  q = -3\n  puts(q.abs)\n  puts(h.join)\n}\n")
+  _ = file_write(aw, "fn main {\n  h = spawn { 1 }\n  q = -3\n  puts(q.abs)\n  puts(h.join ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, aw, "${dir}/sr-ll-abs.ll", "${dir}/sr-ll-abs.log"), 0, "ll-abs: emits")
   c.expect(!str_has(log_text("${dir}/sr-ll-abs.ll"), "avant_gc_poll"), "ll-abs: no poll in a program without a loop")
   lw2 = "${dir}/sr-ll-loop.av"
-  _ = file_write(lw2, "fn main {\n  h = spawn { 1 }\n  xs: Array(String) = []\n  for i in 0..argv().size + 3 {\n    xs.push(\"\${i}\")\n  }\n  puts(xs.size)\n  puts(h.join)\n}\n")
+  _ = file_write(lw2, "fn main {\n  h = spawn { 1 }\n  xs: Array(String) = []\n  for i in 0..argv().size + 3 {\n    xs.push(\"\${i}\")\n  }\n  puts(xs.size)\n  puts(h.join ?? -1)\n}\n")
   c.eq_int(emit_ll(compiler, lw2, "${dir}/sr-ll-loop.ll", "${dir}/sr-ll-loop.log"), 0, "ll-loop: emits")
   c.expect(str_has(log_text("${dir}/sr-ll-loop.ll"), "avant_gc_poll"), "ll-loop: a loop that holds a reference still polls")
   nw = "${dir}/sr-ll-narrow.av"

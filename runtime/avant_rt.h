@@ -494,6 +494,9 @@ __attribute__((noreturn, cold)) void avant_trap_bounds_in(avant_int index, avant
 __attribute__((noreturn, cold)) void avant_trap_empty_at(int32_t what, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_frozen(int32_t op);
 __attribute__((noreturn, cold)) void avant_trap_frozen_at(int32_t op, int32_t site);
+/* `with` on a poisoned mutex. */
+__attribute__((noreturn, cold)) void avant_trap_poisoned(void);
+__attribute__((noreturn, cold)) void avant_trap_poisoned_at(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_bounds_at(avant_int index, avant_int size, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_div_zero_at(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_overflow_at(int32_t site);
@@ -560,7 +563,34 @@ avant_int avant_chosen_threads(void);
 avant_int avant_usable_cpus(void);
 void avant_set_flag_threads(long n);
 void *avant_spawn(void *fn, void *arg);
+/* A spawn whose block may trap without ending the program: fail, when not null, is the block's end on a trap (the
+ * captures' thaw and the captured channels' close), called with the
+ * record on the worker after the trap returned to the task's entry. */
+void *avant_spawn_f(void *fn, void *arg, void *fail);
 avant_int avant_join(void *handle);
+/* After avant_join: the trap that ended the task (its text, without the
+ * site), or null when the block returned; and the trap's site, "" when
+ * none. Static C strings, valid for the run (an Avant String). */
+char *avant_join_what(void *handle);
+char *avant_join_site(void *handle);
+/* A C callback's thunk in a program that spawns brackets its call:
+ * a trap inside a callback stays a process trap. */
+void avant_task_cb_enter(void);
+void avant_task_cb_leave(void);
+/* A `pin` block's pin and a `gc.hold` in a program that spawns: the
+ * collector's avant_pin, avant_unpin, avant_gc_hold_begin and _end,
+ * noted on the thread so that a trap ending a task gives them back. */
+void avant_task_pin(void *payload);
+void avant_task_unpin(void *payload);
+void avant_task_hold_begin(void);
+void avant_task_hold_end(void);
+/* `m.with { }`'s lock: 1 when a task trapped while holding the
+ * mutex (it is poisoned), else 0; the lock is held either way. */
+int32_t avant_gate_lock_with(void *obj, uint64_t off);
+/* The recovery point's two entries for avant_rt_traps.c (hidden). */
+__attribute__((visibility("hidden"))) int avant_task_can_recover(void);
+__attribute__((visibility("hidden"), noreturn)) void avant_task_trapped(const char *what, const char *site);
+__attribute__((visibility("hidden"), noreturn)) void avant_trap_text(const char *what);
 void avant_parallel_for(avant_int n, void *fn, void *ctx);
 uint64_t avant_gate_new(void);
 /* The gate functions take the object holding the gate word and the word's

@@ -708,9 +708,9 @@ static int fast_f64(const char *p, size_t len, double *out) {
  * E, an optional sign, digits) -- Avant's literal with a sign -- whose
  * value is finite. */
 static void trap_base(avant_int base) {
-  fflush(stdout);
-  fprintf(stderr, "avant runtime: base %lld out of range (2..36)\n", (long long)base);
-  exit(1);
+  char msg[64];
+  snprintf(msg, sizeof msg, "base %lld out of range (2..36)", (long long)base);
+  avant_trap_text(msg);
 }
 
 /* The magnitude of p[0..n) in base, at most limit; 0 when it is not one. */
@@ -1040,9 +1040,7 @@ void *avant_str_split(const char *s, const char *sep) {
   n = avant_str_n(s);
   m = avant_str_n(sep);
   if (m == 0) {
-    fflush(stdout);
-    fprintf(stderr, "avant runtime: split separator is empty\n");
-    exit(1);
+    avant_trap_text("split separator is empty");
   }
   for (i = 0; i + m <= n; i++) {
     if (memcmp(s + i, sep, m) == 0) {
@@ -1259,9 +1257,9 @@ static void *chars_build(const char *s, const char *type) {
   }
   n = avant_str_n(s);
   if (!utf8_valid((const unsigned char *)s, n)) {
-    fflush(stdout);
-    fprintf(stderr, "avant runtime: %s.chars needs valid UTF-8\n", type);
-    exit(1);
+    char msg[64];
+    snprintf(msg, sizeof msg, "%s.chars needs valid UTF-8", type);
+    avant_trap_text(msg);
   }
   while (i < n) {
     int valid = 0;

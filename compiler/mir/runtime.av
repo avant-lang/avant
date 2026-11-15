@@ -152,6 +152,12 @@ fn mir_rt_fill(t: MRtTable) {
   // std.gc's `gc.hold { }` (Stage 29 W1c2): the entry collects nothing;
   // the end is a collection point (below).
   t.row("avant_gc_hold_begin", "", "void", n, "")
+  // In a program that spawns, a `pin` block's pin and a `gc.hold` go
+  // through the task pool, which ends them when a trap ends the task
+  // (runtime/avant_task.c); the same calls underneath.
+  t.row("avant_task_pin", "ref", "void", n, "")
+  t.row("avant_task_unpin", "ref", "void", n, "")
+  t.row("avant_task_hold_begin", "", "void", n, "")
   t.row("avant_array_get_ptr", "ref, i64", "ref", n, "")
   t.row("avant_array_set_ptr", "ref, i64, ref", "void", n, "")
   t.row("avant_array_pop_ptr", "ref", "ref", n, "")
@@ -187,6 +193,7 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_clock_us", "", "i64", n, "")
   t.row("avant_trap_empty", "i32", "void", n, "noreturn")
   t.row("avant_trap_frozen", "i32", "void", n, "noreturn")
+  t.row("avant_trap_poisoned", "", "void", n, "noreturn")
   t.row("avant_trap_bounds", "i64, i64", "void", n, "noreturn")
   t.row("avant_trap_div_zero", "", "void", n, "noreturn")
   t.row("avant_trap_overflow", "", "void", n, "noreturn")
@@ -213,6 +220,7 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_trap_div_zero_in", "i32", "void", n, "noreturn")
   t.row("avant_trap_empty_at", "i32, i32", "void", n, "noreturn")
   t.row("avant_trap_frozen_at", "i32, i32", "void", n, "noreturn")
+  t.row("avant_trap_poisoned_at", "i32", "void", n, "noreturn")
   t.row("avant_trap_bounds_at", "i64, i64, i32", "void", n, "noreturn")
   t.row("avant_trap_bounds_in", "i64, i64, i32", "void", n, "noreturn")
   t.row("avant_trap_div_zero_at", "i32", "void", n, "noreturn")
@@ -400,6 +408,16 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_join", "ref", "i64", c, "")
   t.row("avant_parallel_for", "i64, ptr, ref", "void", c, "")
   t.row("avant_gate_new", "", "u64", c, "")
+  // A trap ends its task: a spawn with its end on a
+  // trap; the trap a join found (static C strings: no collection); a C
+  // callback's bracket in a program that spawns; `with`'s lock, which
+  // says whether the mutex is poisoned.
+  t.row("avant_spawn_f", "ptr, ref, ptr", "ref", c, "")
+  t.row("avant_join_what", "ref", "ref str", n, "")
+  t.row("avant_join_site", "ref", "ref str", n, "")
+  t.row("avant_task_cb_enter", "", "void", n, "")
+  t.row("avant_task_cb_leave", "", "void", n, "")
+  t.row("avant_gate_lock_with", "ref, u64", "i32", c, "")
   // The gate functions take the object that holds the gate word and the
   // word's byte offset in it (Stage 29 W8Cb, O690); a lock and a wait may
   // wait natively, so they collect; an unlock, a signal and a broadcast
@@ -415,6 +433,7 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_sha256_word0", "ref", "i32", c, "")
   t.row("avant_gc_collect_young", "", "void", c, "")
   t.row("avant_gc_hold_end", "", "void", c, "")
+  t.row("avant_task_hold_end", "", "void", c, "")
 }
 
 // The declarations' attributes (W9b, D207 pass 3; mir.md W9b.3), each

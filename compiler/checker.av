@@ -2359,9 +2359,9 @@ pub class Checker {
             fail(expr.loc, "join inside a pool worker")
           }
           if inner = object.inner {
-            return inner
+            return join_result(inner)
           }
-          return t_int()
+          return join_result(t_int())
         }
         return field_as_call(expr, object)
       }
@@ -5770,9 +5770,22 @@ pub class Checker {
       fail(expr.loc, "join takes no arguments")
     }
     if inner = handle.inner {
-      return inner
+      return join_result(inner)
     }
-    t_int()
+    join_result(t_int())
+  }
+
+  // What `h.join` gives: the block's value,
+  // or the TaskError of the trap that ended the task (the task module's
+  // class, prelude_src.av; a program that spawns has it).
+  pub fn join_result(inner: Ty): Ty {
+    if te = self.resolver.get_named_in("task", "TaskError") {
+      parts: Array(Ty) = []
+      parts.push(inner)
+      parts.push(te)
+      return ty_union_build(parts)
+    }
+    inner
   }
 
   // Where an arm's value is: its last statement (the branch a message

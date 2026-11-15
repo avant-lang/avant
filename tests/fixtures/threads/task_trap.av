@@ -1,0 +1,210 @@
+// A trap in a spawned block ends the task, not the program: the join
+// gives a TaskError with the trap's text and site, the pool goes on, a
+// mutex the task held is poisoned (the next `with` stops the program),
+// the channels the task captured are closed, and the arrays it captured
+// are thawed. A trap in a C callback, in the runtime itself (the heap
+// limit) or in a .parallel body still ends the program. The argument
+// names the case; without one (the run goldens) it is bounds. Run by
+// tests/cases/test_tasks.av.
+
+import std.sync
+import std.gc
+
+lib gc_rt {
+  fun avant_pin_count: Int
+}
+
+lib libc {
+  struct CInt {
+    v: Int32
+  }
+  fun calloc(n: Int, size: Int): Ptr(CInt)
+  fun qsort(base: Ptr(CInt), nmemb: Int, size: Int, compar: fn(Ptr(CInt), Ptr(CInt)): Int32)
+}
+
+struct Acc {
+  n: Int
+}
+
+fn at(xs: Array(Int), i: Int): Int {
+  xs[i]
+}
+
+fn divide(a: Int, b: Int): Int {
+  a / b
+}
+
+fn cmp_trap(a: Ptr(CInt), b: Ptr(CInt)): Int32 {
+  x = a.v.to_i
+  y = x - x
+  (x / y).to_i32
+}
+
+fn doubled(xs: Array(Int)): Int {
+  ys = xs.parallel { |x| x * 2 }
+  ys[0]
+}
+
+// The join, printed: the block's Int, or the trap's text and site.
+fn show(h: JoinHandle(Int)): Int {
+  v = h.join else e {
+    puts("trapped: ${e.what}")
+    puts("site: ${e.site.size > 0}")
+    puts("message: ${e.message.size > 0}")
+    return 1
+  }
+  puts("value: ${v}")
+  0
+}
+
+fn main: Int {
+  a = argv()
+  kind = "bounds"
+  if a.size > 1 {
+    kind = a[a.size - 1]
+  }
+  puts("before")
+  xs = [1, 2, 3]
+  if kind == "bounds" {
+    h = spawn { at(xs, 7) }
+    _ = show(h)
+    // The pool goes on, and the array the task read is thawed (an
+    // alias changes it: the run-time freeze would stop the program).
+    ys = xs
+    ys.push(4)
+    h2 = spawn { xs.size }
+    _ = show(h2)
+  } else if kind == "overflow" {
+    h = spawn {
+      big = 9223372036854775807
+      big + xs.size
+    }
+    _ = show(h)
+  } else if kind == "divide" {
+    h = spawn { divide(10, xs.size - 3) }
+    _ = show(h)
+  } else if kind == "pop" {
+    h = spawn {
+      e: Array(Int) = []
+      e.pop
+    }
+    _ = show(h)
+  } else if kind == "twice" {
+    h = spawn { at(xs, 9) }
+    _ = show(h)
+    _ = show(h)
+  } else if kind == "many" {
+    hs: Array(JoinHandle(Int)) = []
+    for i in 0..200 {
+      hs.push(spawn { at(xs, i % 6) })
+    }
+    bad = 0
+    good = 0
+    for h in hs {
+      if v = h.join {
+        good += v
+      } else {
+        bad += 1
+      }
+    }
+    puts("good ${good} bad ${bad}")
+  } else if kind == "nested" {
+    h = spawn {
+      inner = spawn { at(xs, 5) }
+      1
+    }
+    _ = show(h)
+  } else if kind == "channel" {
+    ch = Channel(Int).new
+    h = spawn {
+      x = at(xs, 8)
+      _ = ch.send(x)
+      0
+    }
+    // The task's trap closes the channel it captured: recv ends.
+    got = ch.recv
+    if v = got {
+      puts("received ${v}")
+    } else {
+      puts("closed")
+    }
+    _ = show(h)
+  } else if kind == "mutex" || kind == "mutex-main" {
+    m = Mutex(Acc).new(Acc { n: 0 })
+    h = spawn {
+      m.with { |acc|
+        acc.n = 5
+        acc.n = at(xs, 4)
+      }
+      0
+    }
+    _ = show(h)
+    if kind == "mutex" {
+      // Another task's lock of the poisoned mutex ends that task too.
+      h2 = spawn {
+        m.with { |acc| acc.n }
+      }
+      _ = show(h2)
+    } else {
+      // The main thread's lock ends the program.
+      n = m.with { |acc| acc.n }
+      puts("never ${n}")
+    }
+  } else if kind == "pin-hold" {
+    // A trap inside a `pin` block and a `gc.hold` gives both back.
+    base = gc_rt.avant_pin_count()
+    word = "pinned"
+    h = spawn {
+      n = 0
+      gc.hold {
+        pin(word) {
+          n = at(xs, 6)
+        }
+      }
+      n
+    }
+    _ = show(h)
+    puts("pins left: ${gc_rt.avant_pin_count() - base}")
+    // The worker collects again: many tasks that allocate end.
+    hs: Array(JoinHandle(Int)) = []
+    for i in 0..64 {
+      hs.push(spawn {
+        t = 0
+        for j in 0..2000 {
+          t += "${j}".size
+        }
+        t
+      })
+    }
+    sum = 0
+    for h2 in hs {
+      sum += h2.join ?? 0
+    }
+    puts("sum ${sum}")
+  } else if kind == "callback" {
+    h = spawn {
+      buf = libc.calloc(4, 4)
+      buf.v = 3
+      libc.qsort(buf, 2, 4, cmp_trap)
+      0
+    }
+    _ = show(h)
+  } else if kind == "heap" {
+    h = spawn {
+      ys: Array(Array(Int)) = []
+      while true {
+        ys.push(Array(Int).new(100000, 7))
+      }
+      ys.size
+    }
+    _ = show(h)
+  } else if kind == "parallel" {
+    rs = xs.parallel { |x| at(xs, x + 5) }
+    puts(rs.size)
+  } else if kind == "worker-parallel" {
+    h = spawn { doubled(xs) }
+    _ = show(h)
+  }
+  puts("after")
+  0
+}

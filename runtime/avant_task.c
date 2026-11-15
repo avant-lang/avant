@@ -5,10 +5,12 @@
 
 #include <limits.h>
 #include <pthread.h>
+#include <setjmp.h>
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -44,6 +46,12 @@ typedef struct {
   pthread_cond_t done_cv;
   /* R1: roots arg (avant_gc_task_root_add) until fn has returned. */
   AvantGcTaskRoot root;
+  /* the block's end on a trap (avant_spawn_f), and the trap that
+   * ended the task (malloc'd, kept for the run: join hands them out as
+   * Strings, and a handle may be joined twice), or null. */
+  void (*fail)(void *);
+  char *what;
+  char *site;
 } AvantTask;
 
 /* A .parallel call's completion count and condition, and its context's
@@ -98,6 +106,146 @@ static void die_task(const char *msg) {
   fprintf(stderr, "avant runtime: %s\n", msg);
   abort();
 }
+
+/* ---- A trap ends its task.
+ *
+ * A pool worker running a spawned block keeps a recovery point (run_job):
+ * a jump buffer, and what the thread had when the block started (its
+ * innermost frame record, the gates it held, its C callback depth). A
+ * trap of the language (avant_rt_traps.c's trap_tail) on that thread,
+ * while no C callback is running inside the block (a trap there stays
+ * the process's: C frames would be skipped), hands its text and site to
+ * avant_task_trapped, which jumps back to the entry: no unwinding (the
+ * collector runs no destructors, and the block's frames are garbage once
+ * the frame chain is set back to the entry's). There the task ends:
+ * every gate the block still held is poisoned and given up (a Mutex held
+ * at the trap: its next `with` is told, avant_gate_lock_with), the
+ * block's end on a trap runs (the generated `#fail` thunk: the captured
+ * arrays thawed, the captured channels closed), and the join gives
+ * the trap as a TaskError. The normal path pays the jump buffer's save
+ * at the task's start (_setjmp: no signal mask) and two thread-local
+ * stores; a gate's lock and unlock note the gate held (held_push).
+ *
+ * Not recovered (each a process trap, as before): a trap in a C
+ * callback; the runtime's own failures (an allocation past the heap
+ * limit, the collector's checks, die_task) and the library traps that do
+ * not go through trap_tail; a trap on any other thread (main, an HTTP
+ * loop) or in a .parallel body (a .parallel is one expression of its
+ * caller, which waits for every body: no task to end).
+ *
+ * What the collector holds for the block (a `gc.hold`, a `pin` block's
+ * pins) ends at the jump: a program that spawns opens them through the
+ * pool's own entries (avant_task_pin, avant_task_hold_begin), which note
+ * them. A C-layout field's pins stay, as a missing `release` leaves
+ * them (memory, never correctness). */
+typedef struct AvantRecover {
+  jmp_buf jb;
+  AvantGcFrame *top;
+  int held;
+  int cb;
+  int pins;
+  int holds;
+  char *what;
+  char *site;
+} AvantRecover;
+
+static __thread AvantRecover *g_recover;
+static __thread int g_cb_depth;
+
+/* The gates this thread holds, innermost last (their numbers: a word's
+ * address is not stable across a collection, its number is). Past
+ * HELD_MAX nested locks the count goes on and the numbers are not kept:
+ * a trap then stays the process's. */
+#define HELD_MAX 32
+static __thread uint64_t g_held[HELD_MAX];
+static __thread int g_held_n;
+
+/* A lock and an unlock pair up, so the count needs no test; a slot past
+ * HELD_MAX wraps (the count says the numbers are not all kept). */
+static inline void held_push(uint64_t id) {
+  int n = g_held_n;
+  g_held[n & (HELD_MAX - 1)] = id;
+  g_held_n = n + 1;
+}
+
+static inline void held_pop(void) {
+  g_held_n--;
+}
+
+/* The pins of `pin` blocks and the holds of `gc.hold` this thread has
+ * open, through avant_task_pin and avant_task_hold_begin (a program that
+ * spawns calls those): a trap that ends the task gives them back. A
+ * pinned object does not move, so its address is kept as it is. Past
+ * PIN_MAX open pins a trap stays the process's. */
+#define PIN_MAX 32
+static __thread void *g_pins[PIN_MAX];
+static __thread int g_pin_n;
+static __thread int g_hold_n;
+
+void avant_task_pin(void *payload) {
+  int n = g_pin_n;
+  avant_pin(payload);
+  if (n < PIN_MAX) {
+    g_pins[n] = payload;
+  }
+  g_pin_n = n + 1;
+}
+
+void avant_task_unpin(void *payload) {
+  avant_unpin(payload);
+  if (g_pin_n > 0) {
+    g_pin_n--;
+  }
+}
+
+void avant_task_hold_begin(void) {
+  g_hold_n++;
+  avant_gc_hold_begin();
+}
+
+void avant_task_hold_end(void) {
+  if (g_hold_n > 0) {
+    g_hold_n--;
+  }
+  avant_gc_hold_end();
+}
+
+int avant_task_can_recover(void) {
+  AvantRecover *r = g_recover;
+  return r && g_cb_depth == r->cb && g_held_n <= HELD_MAX && g_pin_n <= PIN_MAX;
+}
+
+static char *dup_text(const char *s) {
+  size_t n = s ? strlen(s) : 0;
+  char *d = (char *)malloc(n + 1);
+  if (!d) {
+    die_task("out of memory");
+  }
+  if (n) {
+    memcpy(d, s, n);
+  }
+  d[n] = 0;
+  return d;
+}
+
+void avant_task_trapped(const char *what, const char *site) {
+  AvantRecover *r = g_recover;
+  r->what = dup_text(what);
+  r->site = dup_text(site ? site : "");
+  /* The block's frames are left: the chain is the entry's again. */
+  avant_gc_top = r->top;
+  longjmp(r->jb, 1);
+}
+
+void avant_task_cb_enter(void) {
+  g_cb_depth++;
+}
+
+void avant_task_cb_leave(void) {
+  g_cb_depth--;
+}
+
+static void gate_dead(uint64_t id);
 
 /* .join or .parallel reached from a pool worker through a call (the
  * checker refuses one written in a spawn block or a .parallel body): a
@@ -324,7 +472,44 @@ static void run_job(Job *job) {
     AvantTask *t = job->task;
     /* The record is read from its root, which a collection rewrites when
      * the record moves (Stage 28 W17a; t->arg is its address at spawn). */
-    t->result = t->fn(t->arg ? t->root.obj : NULL);
+    AvantRecover rec;
+    rec.top = avant_gc_top;
+    rec.held = g_held_n;
+    rec.cb = g_cb_depth;
+    rec.pins = g_pin_n;
+    rec.holds = g_hold_n;
+    rec.what = NULL;
+    rec.site = NULL;
+    g_recover = &rec;
+    if (_setjmp(rec.jb) == 0) {
+      t->result = t->fn(t->arg ? t->root.obj : NULL);
+      g_recover = NULL;
+    } else {
+      /* The block trapped (avant_task_trapped): the task ends here. */
+      int i;
+      g_recover = NULL;
+      for (i = g_held_n; i > rec.held; i--) {
+        gate_dead(g_held[i - 1]);
+      }
+      g_held_n = rec.held;
+      g_cb_depth = rec.cb;
+      /* The block's pins and holds end (the collector's state is the
+       * entry's again); a hold's end may collect: the frames are the
+       * entry's, and nothing of the block is held. */
+      while (g_pin_n > rec.pins) {
+        g_pin_n--;
+        avant_unpin(g_pins[g_pin_n]);
+      }
+      while (g_hold_n > rec.holds) {
+        avant_task_hold_end();
+      }
+      t->result = 0;
+      t->what = rec.what;
+      t->site = rec.site;
+      if (t->fail && t->arg) {
+        t->fail(t->root.obj);
+      }
+    }
     avant_gc_native_begin();
     /* R1: the record is the task's until its function returns; from
      * here it lives only as long as something else names it. */
@@ -415,7 +600,24 @@ typedef struct {
   avant_int result;
 } AvantJoinHandle;
 
+/* a joined task that trapped leaves its trap in the handle's task
+ * word, tagged with the low bit (the handle keeps its two words, so a
+ * program's allocations are the same as before). */
+typedef struct {
+  char *what;
+  char *site;
+} TaskTrap;
+
+static TaskTrap *handle_trap(AvantJoinHandle *hd) {
+  uintptr_t w = (uintptr_t)hd->task;
+  return (w & 1u) ? (TaskTrap *)(w & ~(uintptr_t)1u) : NULL;
+}
+
 void *avant_spawn(void *fn, void *arg) {
+  return avant_spawn_f(fn, arg, NULL);
+}
+
+void *avant_spawn_f(void *fn, void *arg, void *fail) {
   AvantJoinHandle *hd;
   AvantTask *t;
   Job *job;
@@ -430,6 +632,7 @@ void *avant_spawn(void *fn, void *arg) {
   t->arg = arg;
   t->result = 0;
   t->done = 0;
+  t->fail = (void (*)(void *))fail;
   if (pthread_cond_init(&t->done_cv, NULL) != 0) {
     free(t);
     return NULL;
@@ -478,13 +681,22 @@ avant_int avant_join(void *handle) {
   avant_gc_lock(&pool_mu);
   /* hd->task is read again after each wait: a join that finishes first
    * clears it, and the task is then gone. */
-  while (hd->task && !hd->task->done) {
+  while (hd->task && !handle_trap(hd) && !hd->task->done) {
     avant_gc_cond_wait(&hd->task->done_cv, &pool_mu);
   }
-  t = hd->task;
+  t = handle_trap(hd) ? NULL : hd->task;
   if (t) {
     hd->result = t->result;
     hd->task = NULL;
+    if (t->what) {
+      TaskTrap *tt = (TaskTrap *)malloc(sizeof(TaskTrap));
+      if (!tt) {
+        die_task("out of memory");
+      }
+      tt->what = t->what;
+      tt->site = t->site;
+      hd->task = (AvantTask *)((uintptr_t)tt | 1u);
+    }
   }
   result = hd->result;
   pthread_mutex_unlock(&pool_mu);
@@ -495,6 +707,16 @@ avant_int avant_join(void *handle) {
     free(t);
   }
   return result;
+}
+
+char *avant_join_what(void *handle) {
+  TaskTrap *tt = handle ? handle_trap((AvantJoinHandle *)handle) : NULL;
+  return tt ? tt->what : NULL;
+}
+
+char *avant_join_site(void *handle) {
+  TaskTrap *tt = handle ? handle_trap((AvantJoinHandle *)handle) : NULL;
+  return tt ? tt->site : (char *)"";
 }
 
 void avant_parallel_for(avant_int n, void *fn, void *ctx) {
@@ -582,11 +804,21 @@ void avant_parallel_for(avant_int n, void *fn, void *ctx) {
 #define GATE_BUCKETS 1024
 #define GATE_LOCKED 1ull
 #define GATE_QUEUED 2ull
-#define GATE_BITS 3ull
+/* a task trapped while holding the gate (a Mutex
+ * held in `with`): poisoned, for good. A poisoned word never takes the
+ * fast paths, so only the slow paths read it; the number is shifted by
+ * three since. */
+#define GATE_POISON 4ull
+#define GATE_BITS 7ull
 
 typedef struct GateEnt {
   uint64_t id;
   int locked;
+  /* the holder's task trapped; dead: it did so while the gate was
+   * not queued, so the entry waits for the next lock to queue it (the
+   * word still says locked). */
+  int poisoned;
+  int dead;
   int lock_waiters;
   int cond_waiters;
   pthread_cond_t lock_cv;
@@ -615,7 +847,7 @@ static void gate_init(void) {
 
 /* id is a word without its bits. */
 static GateBucket *gate_bucket(uint64_t id) {
-  return &gate_buckets[((id >> 2) * 0x9E3779B97F4A7C15ull) >> 54];
+  return &gate_buckets[((id >> 3) * 0x9E3779B97F4A7C15ull) >> 54];
 }
 
 static GateEnt *gate_find(GateBucket *b, uint64_t id) {
@@ -644,6 +876,8 @@ static GateEnt *gate_take(GateBucket *b, uint64_t id) {
   }
   e->id = id;
   e->locked = 0;
+  e->poisoned = 0;
+  e->dead = 0;
   e->lock_waiters = 0;
   e->cond_waiters = 0;
   e->next = b->live;
@@ -680,8 +914,15 @@ static GateEnt *gate_queue(GateBucket *b, uint64_t *w, uint64_t id) {
       return NULL;
     }
     if (__atomic_compare_exchange_n(w, &v, v | GATE_QUEUED, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+      e = gate_find(b, id);
+      if (e && e->dead) {
+        /* Its holder's task trapped (gate_dead): the lock is free. */
+        e->dead = 0;
+        return e;
+      }
       e = gate_take(b, id);
       e->locked = 1;
+      e->poisoned = (v & GATE_POISON) != 0;
       return e;
     }
   }
@@ -701,21 +942,24 @@ static void gate_acquire(GateBucket *b, GateEnt *e) {
 
 uint64_t avant_gate_new(void) {
   pthread_once(&gate_once, gate_init);
-  return __atomic_add_fetch(&gate_next, 1, __ATOMIC_RELAXED) << 2;
+  return __atomic_add_fetch(&gate_next, 1, __ATOMIC_RELAXED) << 3;
 }
 
-static void gate_lock_slow(uint64_t *w) {
+/* 1 when the gate is poisoned. */
+static int gate_lock_slow(uint64_t *w) {
   uint64_t id = __atomic_load_n(w, __ATOMIC_RELAXED) & ~GATE_BITS;
   GateBucket *b = gate_bucket(id);
   GateEnt *e;
+  int poisoned;
   pthread_mutex_lock(&b->mu);
   for (;;) {
     uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
-    if (!(v & GATE_BITS)) {
-      /* Unlocked meanwhile. */
+    if (!(v & (GATE_LOCKED | GATE_QUEUED))) {
+      /* Unlocked meanwhile, or poisoned and free. */
       if (__atomic_compare_exchange_n(w, &v, v | GATE_LOCKED, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
         pthread_mutex_unlock(&b->mu);
-        return;
+        held_push(id);
+        return (v & GATE_POISON) != 0;
       }
       continue;
     }
@@ -725,17 +969,56 @@ static void gate_lock_slow(uint64_t *w) {
     }
   }
   gate_acquire(b, e);
+  poisoned = e->poisoned;
   pthread_mutex_unlock(&b->mu);
   pool_resume();
+  held_push(id);
+  return poisoned;
 }
 
 void avant_gate_lock(void *obj, uint64_t off) {
   uint64_t *w = (uint64_t *)((char *)obj + off);
   uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
   if (!(v & GATE_BITS) && __atomic_compare_exchange_n(w, &v, v | GATE_LOCKED, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+    held_push(v);
     return;
   }
-  gate_lock_slow(w);
+  (void)gate_lock_slow(w);
+}
+
+int32_t avant_gate_lock_with(void *obj, uint64_t off) {
+  uint64_t *w = (uint64_t *)((char *)obj + off);
+  uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
+  if (!(v & GATE_BITS) && __atomic_compare_exchange_n(w, &v, v | GATE_LOCKED, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+    held_push(v);
+    return 0;
+  }
+  return gate_lock_slow(w);
+}
+
+/* The task that held the gate numbered id trapped (run_job): the gate is
+ * poisoned and its lock given up. A queued gate's entry is free at once
+ * (a waiter takes it); a gate locked through its word alone gets a dead
+ * entry, which the next lock, finding the word locked, queues and takes
+ * (gate_queue). The word itself is not read: its address may have moved. */
+static void gate_dead(uint64_t id) {
+  GateBucket *b = gate_bucket(id);
+  GateEnt *e;
+  pthread_mutex_lock(&b->mu);
+  e = gate_find(b, id);
+  if (!e) {
+    e = gate_take(b, id);
+    e->dead = 1;
+  }
+  e->locked = 0;
+  e->poisoned = 1;
+  if (e->lock_waiters > 0) {
+    pthread_cond_signal(&e->lock_cv);
+  }
+  if (e->cond_waiters > 0) {
+    pthread_cond_broadcast(&e->cond_cv);
+  }
+  pthread_mutex_unlock(&b->mu);
 }
 
 static void gate_unlock_slow(uint64_t *w) {
@@ -749,9 +1032,9 @@ static void gate_unlock_slow(uint64_t *w) {
     if (!(v & GATE_LOCKED)) {
       die_task("gate unlocked without its lock");
     }
-    /* Not queued after all (a compare-and-swap that failed spuriously
-     * cannot, but the word is read again under the mutex). */
-    __atomic_store_n(w, id, __ATOMIC_RELEASE);
+    /* Not queued (a poisoned gate's unlock, or a compare-and-swap that
+     * failed spuriously: the word is read again under the mutex). */
+    __atomic_store_n(w, id | (v & GATE_POISON), __ATOMIC_RELEASE);
     pthread_mutex_unlock(&b->mu);
     return;
   }
@@ -763,8 +1046,8 @@ static void gate_unlock_slow(uint64_t *w) {
   if (e->lock_waiters > 0) {
     pthread_cond_signal(&e->lock_cv);
   } else if (e->cond_waiters == 0) {
-    /* Nobody waits: the gate is plain again. */
-    __atomic_store_n(w, id, __ATOMIC_RELEASE);
+    /* Nobody waits: the gate is plain again (poisoned for good). */
+    __atomic_store_n(w, id | (e->poisoned ? GATE_POISON : 0), __ATOMIC_RELEASE);
     gate_put(b, e);
   }
   pthread_mutex_unlock(&b->mu);
@@ -773,6 +1056,7 @@ static void gate_unlock_slow(uint64_t *w) {
 void avant_gate_unlock(void *obj, uint64_t off) {
   uint64_t *w = (uint64_t *)((char *)obj + off);
   uint64_t v = __atomic_load_n(w, __ATOMIC_RELAXED);
+  held_pop();
   if ((v & GATE_BITS) == GATE_LOCKED && __atomic_compare_exchange_n(w, &v, v & ~GATE_BITS, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
     return;
   }

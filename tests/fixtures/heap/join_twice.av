@@ -56,7 +56,7 @@ fn main {
   s1 = 0
   i = 0
   while i < hs.size {
-    v = hs[i].join
+    v = hs[i].join ?? -1
     first.push(v)
     s1 += v
     i += 1
@@ -65,7 +65,7 @@ fn main {
   gc_rt.avant_gc_collect_young()
   s2 = 0
   for i in 0..hs.size {
-    v = hs[i].join
+    v = hs[i].join ?? -1
     if v != first[i] {
       bad += 1
     }
@@ -75,7 +75,7 @@ fn main {
   s3 = 0
   i = 0
   while i < hs.size {
-    v = hs[i].join
+    v = hs[i].join ?? -1
     if v != first[i] || v != work(1000 + i * 7) {
       bad += 1
     }
@@ -87,11 +87,11 @@ fn main {
   // A handle in a class field, joined twice with collections between.
   tag = "field"
   holder = Holder.new(spawn { work(500) + tag.size })
-  a = holder.h.join
+  a = holder.h.join ?? -1
   churn(300)
   gc_rt.avant_gc_collect_young()
   gc_rt.avant_gc_collect()
-  b = holder.h.join
+  b = holder.h.join ?? -1
   if a != b {
     bad += 1
   }
@@ -101,9 +101,9 @@ fn main {
   // long finished before its first join.
   h = spawn { 42 }
   churn(100)
-  x = h.join
-  y = h.join
-  z = h.join
+  x = h.join ?? -1
+  y = h.join ?? -1
+  z = h.join ?? -1
   if x != 42 || y != 42 || z != 42 {
     bad += 1
   }
@@ -114,8 +114,8 @@ fn main {
   for i in 0..200 {
     s = "task-${i}"
     k = spawn { s.size }
-    p = k.join
-    q = k.join
+    p = k.join ?? -1
+    q = k.join ?? -1
     if p != q {
       bad += 1
     }

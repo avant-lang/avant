@@ -230,7 +230,7 @@ fn main {
   h = spawn {
     21 * 2
   }
-  puts(h.join)
+  puts(h.join ?? -1)
 }
 EOF
 expect std-threads "42" "$avant" run threads.av

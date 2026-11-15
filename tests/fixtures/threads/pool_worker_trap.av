@@ -1,7 +1,7 @@
 // .join and .parallel reached through a call from a pool worker (Stage
 // 29 W-FIX1f, O234). The checker refuses them written in a spawn block
-// or a .parallel body; reached through a call, they stop the program
-// with a trap: one line on stderr, status 1 (they aborted, status 134).
+// or a .parallel body; reached through a call, they trap: the trap ends
+// the task, and the program prints the join's error, status 1.
 // The argument says which: join or parallel. "before" comes first: a
 // trap flushes stdout before it writes its line. Run by
 // tests/cases/test_safety.av; without an argument (the run goldens) it
@@ -14,7 +14,7 @@ fn doubled(xs: Array(Int)): Int {
 
 fn joined: Int {
   h = spawn { 1 }
-  h.join
+  h.join ?? -1
 }
 
 fn main: Int {
@@ -34,6 +34,11 @@ fn main: Int {
     }
     n
   }
-  puts(t.join)
+  // The trap ends the task; its join gives the trap.
+  v = t.join else e {
+    puts("avant runtime: ${e.what}")
+    return 1
+  }
+  puts(v)
   0
 }

@@ -2,8 +2,10 @@
 // 29 W8Cc, O758, D389 (c)): the checker refuses a change through the
 // captured name, and at run time every other path (an alias, a call, a
 // field holding the array) stops the program with a trap, status 1,
-// naming the operation. The argument names the case; without one (the
-// run goldens) it is sender-alias. Run by tests/cases/test_safety.av.
+// naming the operation; in the task the trap ends the task, and the
+// program prints the join's error and ends with status 1. The argument
+// names the case; without one (the run goldens) it is sender-alias.
+// Run by tests/cases/test_safety.av.
 //
 // In the sender's cases the task waits on a channel that is never sent
 // to, so it is still running when the sender makes its change.
@@ -130,7 +132,12 @@ fn main: Int {
       }
       xs.size
     }
-    puts(h.join)
+    // The trap ends the task, and its join gives the trap.
+    vh = h.join else e {
+      puts("avant runtime: ${e.what}")
+      return 1
+    }
+    puts(vh)
     return 0
   }
   if kind == "element-field" {
@@ -141,7 +148,7 @@ fn main: Int {
     }
     bump(ps)
     gate.send(1)
-    puts(h1.join)
+    puts(h1.join ?? -1)
     return 0
   }
   if kind == "method" || kind == "method-held" || kind == "method-bare" || kind == "method-field" {
@@ -152,7 +159,7 @@ fn main: Int {
     }
     change_q(kind, qs)
     gate.send(1)
-    puts(h3.join)
+    puts(h3.join ?? -1)
     return 0
   }
   if kind == "task-method" {
@@ -162,7 +169,12 @@ fn main: Int {
       change_q("method", qs2)
       qs2[0].get
     }
-    puts(h4.join)
+    // The trap ends the task, and its join gives the trap.
+    vh4 = h4.join else e {
+      puts("avant runtime: ${e.what}")
+      return 1
+    }
+    puts(vh4)
     return 0
   }
   if kind == "nested" {
@@ -174,7 +186,7 @@ fn main: Int {
     inner = xss[0]
     inner.push(5)
     gate.send(1)
-    puts(h2.join)
+    puts(h2.join ?? -1)
     return 0
   }
   if kind == "parallel" {
@@ -189,7 +201,7 @@ fn main: Int {
   }
   change(kind, xs)
   gate.send(1)
-  puts(h.join)
+  puts(h.join ?? -1)
   0
 }
 

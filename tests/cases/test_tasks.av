@@ -11,11 +11,11 @@ fn test_tasks(c: Checks) {
 
   s = "hello"
   hs = spawn { s.size }
-  c.eq_int(hs.join, 5, "string spawn")
+  c.eq_int(hs.join ?? -1, 5, "string spawn")
 
   p = Pair { a: 2, b: 5 }
   hp = spawn { p.a + p.b }
-  c.eq_int(hp.join, 7, "struct spawn")
+  c.eq_int(hp.join ?? -1, 7, "struct spawn")
 
   xs = [1, 2, 3, 4]
   ys = xs.parallel { |item| item * 10 }
@@ -92,7 +92,7 @@ fn test_tasks(c: Checks) {
   } else {
     c.expect(false, "rendezvous")
   }
-  c.eq_int(hr.join, 1, "rendezvous join")
+  c.eq_int(hr.join ?? -1, 1, "rendezvous join")
 
   many = Channel(Int).new(2)
   h1 = spawn {
@@ -115,7 +115,7 @@ fn test_tasks(c: Checks) {
     c.expect(false, "two senders 1")
   }
   c.eq_int(sum, 3, "two senders")
-  c.eq_int(h1.join + h2.join, 2, "two joins")
+  c.eq_int((h1.join ?? -1) + (h2.join ?? -1), 2, "two joins")
 
   cs = Channel(String).new
   hcs = spawn {
@@ -127,7 +127,7 @@ fn test_tasks(c: Checks) {
   } else {
     c.expect(false, "channel string")
   }
-  c.eq_int(hcs.join, 1, "channel string join")
+  c.eq_int(hcs.join ?? -1, 1, "channel string join")
 
   mu = Mutex(Int).new(1)
   bumped = mu.with { |x|
@@ -159,9 +159,63 @@ fn test_tasks(c: Checks) {
       1
     }
   }
-  c.eq_int(hm.join, 1, "mutex spawn")
+  c.eq_int(hm.join ?? -1, 1, "mutex spawn")
   after = shared.with { |x| x }
   c.eq_int(after, 11, "mutex after spawn")
+
+  if compiler = env_get("AVANT_COMPILER") {
+    task_trap_cases(c, compiler, now_ms())
+  }
+}
+
+// A trap in a spawned block ends the task (tests/fixtures/threads/
+// task_trap.av): each case's status and output.
+fn task_trap_cases(c: Checks, compiler: String, stamp: Int) {
+  bin = "${scratch()}/tasks-trap-${stamp}.bin"
+  clog = "${scratch()}/tasks-trap-${stamp}.clog"
+  code = compile_av(compiler, "${avant_test_root()}/tests/fixtures/threads/task_trap.av", bin, clog)
+  c.eq_int(code, 0, "the task-trap fixture compiles")
+  kinds = ["bounds", "overflow", "divide", "pop", "twice", "many", "nested", "channel", "mutex", "pin-hold", "mutex-main", "callback", "heap"]
+  statuses = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1]
+  wants = [
+    "before\ntrapped: index 7 out of bounds (size 3) in at (task_trap.av:29:1)\nsite: false\nmessage: true\nvalue: 4\nafter\n",
+    "trapped: integer overflow in task",
+    "trapped: division by zero in divide",
+    "trapped: pop on an empty Array\nsite: true",
+    "trapped: index 9 out of bounds (size 3) in at (task_trap.av:29:1)\nsite: false\nmessage: true\ntrapped: index 9 out of bounds",
+    "good 201 bad 99\nafter\n",
+    "value: 1\nafter\n",
+    "closed\ntrapped: index 8 out of bounds",
+    "trapped: index 4 out of bounds (size 3) in at (task_trap.av:29:1)\nsite: false\nmessage: true\ntrapped: Mutex.with on a poisoned mutex: a task trapped while it held this mutex, so its value may be half-changed\nsite: true\nmessage: true\nafter\n",
+    "trapped: index 6 out of bounds (size 3) in at (task_trap.av:29:1)\nsite: false\nmessage: true\npins left: 0\nsum 440960\nafter\n",
+    "trapped: index 4 out of bounds (size 3) in at (task_trap.av:29:1)\nsite: false\nmessage: true\navant runtime: Mutex.with on a poisoned mutex: a task trapped while it held this mutex, so its value may be half-changed at task_trap.av:",
+    "before\navant runtime: division by zero in cmp_trap",
+    "avant runtime: heap limit"]
+  i = 0
+  while i < kinds.size {
+    kind = kinds[i]
+    log = "${scratch()}/tasks-trap-${stamp}-${kind}.log"
+    args: Array(String) = []
+    args.push("-c")
+    if kind == "heap" {
+      args.push("AVANT_HEAP_MAX_MB=64 ${bin} heap")
+    } else {
+      args.push("${bin} ${kind}")
+    }
+    status = process_run_out("/bin/sh", args, log) ?? -1
+    out = file_read(log) ?? ""
+    if kind == "heap" {
+      // The collector's own stop (an abort), not a trap.
+      c.expect(status != 0, "task trap heap: the program ends")
+    } else {
+      c.eq_int(status, statuses[i], "task trap ${kind}: status ${statuses[i]}")
+    }
+    c.expect(str_has(out, wants[i]), "task trap ${kind}: the output has ${wants[i]}")
+    if statuses[i] == 1 {
+      c.expect(!str_has(out, "after"), "task trap ${kind}: the program ends there")
+    }
+    i += 1
+  }
 }
 
 fn main: Int {

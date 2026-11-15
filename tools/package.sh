@@ -175,7 +175,7 @@ fn main {
   h = spawn {
     1
   }
-  puts(h.join)
+  puts(h.join ?? -1)
 }
 EOF_AV
 ( cd "$floor_dir" && env -i HOME="$floor_dir" PATH=/usr/bin:/bin TMPDIR="$floor_dir" \

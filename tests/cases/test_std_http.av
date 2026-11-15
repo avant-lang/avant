@@ -209,7 +209,7 @@ fn test_std_http(c: Checks) {
       client_round(port, out)
     }
     server.serve
-    c.eq_int(handle.join, 0, "client round task")
+    c.eq_int(handle.join ?? -1, 0, "client round task")
     want: Array(String) = []
     want.push("hello=200:hello http")
     want.push("q=/q|lang=avant&x=1")
@@ -256,7 +256,7 @@ fn test_std_http(c: Checks) {
       limit_round(port, out, script, stamp)
     }
     server.serve
-    c.eq_int(handle.join, 0, "limit round task")
+    c.eq_int(handle.join ?? -1, 0, "limit round task")
     want: Array(String) = []
     want.push("big=413")
     want.push("keepalive=pong,pong")
@@ -325,8 +325,8 @@ fn test_std_http(c: Checks) {
       ws_client_round(port, cout)
     }
     server.serve
-    c.eq_int(handle.join, 0, "ws round task")
-    c.eq_int(chandle.join, 0, "ws client task")
+    c.eq_int(handle.join ?? -1, 0, "ws round task")
+    c.eq_int(chandle.join ?? -1, 0, "ws client task")
     if line = cout.recv {
       c.eq_str(line, "ws-client=text:abc:true:2", "ws client round")
     } else {
@@ -417,7 +417,7 @@ fn test_std_http(c: Checks) {
     }
   }
   c.eq_str(got_body, "hello chunked world", "chunked response decoded")
-  handle2.join
+  _ = handle2.join
 
   if opened = Http.listen(0) {
     port = opened.port
@@ -478,11 +478,11 @@ fn test_std_http(c: Checks) {
       0
     }
     server.serve
-    c.eq_int(h1.join, 0, "hammer task 1")
-    c.eq_int(h2.join, 0, "hammer task 2")
-    c.eq_int(h3.join, 0, "hammer task 3")
-    c.eq_int(h4.join, 0, "hammer task 4")
-    c.eq_int(stopper.join, 0, "hammer stopper")
+    c.eq_int(h1.join ?? -1, 0, "hammer task 1")
+    c.eq_int(h2.join ?? -1, 0, "hammer task 2")
+    c.eq_int(h3.join ?? -1, 0, "hammer task 3")
+    c.eq_int(h4.join ?? -1, 0, "hammer task 4")
+    c.eq_int(stopper.join ?? -1, 0, "hammer stopper")
     for i in 0..4 {
       if line = out.recv {
         c.eq_str(line, "hammer=25/25", "hammer round ${i}")
