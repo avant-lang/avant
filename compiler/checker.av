@@ -708,9 +708,17 @@ pub class Checker {
   }
 
   pub fn check_block(body: Array(Stmt), expected: Ty, at_tail: Bool) {
+    // A block's statements have their own errors: after it the statement
+    // that holds it is failed only if its own parts are (a condition), so
+    // its later checks (a missing return value) are not taken for
+    // cascades of an error inside the block.
+    saved_poison = self.poisoned
+    saved_weak = self.weak_at
     self.push_scope
     check_body(body, expected, at_tail)
     self.pop_scope
+    self.poisoned = saved_poison
+    self.weak_at = saved_weak
   }
 
   pub fn fallthrough(body: Array(Stmt)): Bool {
