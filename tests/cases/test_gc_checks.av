@@ -250,6 +250,14 @@ fn test_empty_payload(c: Checks, compiler: String, root: String, dir: String) {
 // for the object and answers null; the module's __avant_alloc_slow then
 // runs the sequence): at least 39,000 of the 40,000, where W-FIX1c's
 // form ran none.
+// What the stress mode runs is the helper's copy of the sequence; each
+// site's own copy (a constant size and type) is checked under
+// AVANT_GC_VERIFY=1, the third run of each build: every header of an
+// inline run must be a fresh young object's with a registered type id
+// whose reference words fit its size, and no payload word may still hold
+// the poison the hole was filled with when the cursor took it (a short
+// zeroing). Cell's two reference fields are never stored by its
+// constructor, so they are the zeroing's alone.
 fn test_stress_inline(c: Checks, compiler: String, root: String, dir: String) {
   jobs: Array(HJob) = []
   jobs.push(compile_job("", compiler, "${root}/tests/fixtures/heap/stress_inline.av", "${dir}/stress_inline", "${dir}/stress_inline.log"))
@@ -263,14 +271,18 @@ fn test_stress_inline(c: Checks, compiler: String, root: String, dir: String) {
   for b in 0..bins.size {
     runs.push(run_job_env(dir, bins[b], "${bins[b]}.plain", clean))
     runs.push(run_job_env(dir, bins[b], "${bins[b]}.stress", "${clean} AVANT_GC_STRESS=1"))
+    runs.push(run_job_env(dir, bins[b], "${bins[b]}.verify", "${clean} AVANT_GC_VERIFY=1"))
   }
   run_waves(runs)
   for b in 0..bins.size {
     what = bins[b]
     plain = log_text("${dir}/${what}.plain.err")
     stress = log_text("${dir}/${what}.stress.err")
-    c.eq_int(runs[b * 2].code, 0, "${what}: exit 0")
-    c.eq_int(runs[b * 2 + 1].code, 0, "${what} under AVANT_GC_STRESS=1: exit 0")
+    c.eq_int(runs[b * 3].code, 0, "${what}: exit 0")
+    c.eq_int(runs[b * 3 + 1].code, 0, "${what} under AVANT_GC_STRESS=1: exit 0")
+    c.eq_int(runs[b * 3 + 2].code, 0, "${what} under AVANT_GC_VERIFY=1: exit 0")
+    c.eq_str(log_text("${dir}/${what}.verify.out"), "stress_inline: 0 bad\n", "${what} under AVANT_GC_VERIFY=1: the known stdout")
+    c.expect(!str_has(log_text("${dir}/${what}.verify.err"), "avant gc verify"), "${what} under AVANT_GC_VERIFY=1: the verifier is silent")
     c.eq_str(log_text("${dir}/${what}.plain.out"), "stress_inline: 0 bad\n", "${what}: the known stdout")
     c.eq_str(log_text("${dir}/${what}.stress.out"), "stress_inline: 0 bad\n", "${what} under AVANT_GC_STRESS=1: the known stdout")
     c.eq_int(stat_value(plain, "alloc"), 1440000, "${what}: 40,000 allocations of generated code and no other (1,440,000 bytes)")

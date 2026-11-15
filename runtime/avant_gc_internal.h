@@ -1883,8 +1883,21 @@ void gc_defrag_release(void);
 
 /* AVANT_GC_STRESS=1: freed memory is filled with GC_POISON (Stage 28 W16a). */
 #define GC_POISON 0xdb
+#define GC_POISON_WORD 0xdbdbdbdbdbdbdbdbULL
 static inline void gc_poison(void *p, size_t n) {
   if (gc_heap.set.stress) {
+    memset(p, GC_POISON, n);
+  }
+}
+/* Under either check mode (AVANT_GC_VERIFY=1 or AVANT_GC_STRESS=1): a
+ * hole handed to the young cursor (young_note_hole) is filled with
+ * GC_POISON before anything is allocated in it, so that a payload word
+ * an allocation sequence failed to zero still holds the poison when
+ * inline_walk reads the run; and under the verifier the lines a young
+ * sweep frees in a block it keeps are filled too, and must still hold
+ * it when they become allocatable again (gc_verify_held_lines). */
+static inline void gc_poison_checked(void *p, size_t n) {
+  if (gc_heap.set.verify | gc_heap.set.stress) {
     memset(p, GC_POISON, n);
   }
 }

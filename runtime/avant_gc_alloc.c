@@ -569,6 +569,46 @@ __attribute__((visibility("hidden"))) void avant_gc_shrink(void *payload, uint64
  * header is a fresh young object's (HEAP | YOUNG and nothing else, a
  * size) and the last object ends at the cursor; the verifier also notes
  * each start for its eager comparison. */
+/* The highest reference word of a record's map plus one (0: none). */
+static size_t map_words_used(const TypeMap *m) {
+  uint32_t c = m->nchunks;
+  while (c-- > 0) {
+    if (m->words[c]) {
+      return (size_t)c * 64 + 64 - (size_t)__builtin_clzll(m->words[c]);
+    }
+  }
+  return 0;
+}
+
+/* What a check mode asks of one header of an inline run, beyond its
+ * flags and its size: its type id is one a module registered (or the
+ * byte or pointer-buffer id) and a record type's reference words lie
+ * inside the object's size, since every trace reads a record's fields by
+ * its type's map and passes over a word past the size without a look;
+ * and no payload word holds the hole's poison, which a sequence that
+ * zeroed the payload short leaves there (young_note_hole). */
+static void inline_check(const AvantHeader *h) {
+  uint32_t id = h->type_id;
+  size_t nw = (size_t)h->size / sizeof(uint64_t);
+  const uint64_t *w = (const uint64_t *)payload_of((AvantHeader *)h);
+  size_t i;
+  if (id != AVANT_TYPE_BYTES && id != AVANT_TYPE_PTRS) {
+    const TypeMap *m;
+    if (id >= MAX_TYPES || !gc_heap.type_set[id]) {
+      gc_die("avant gc verify: the inline allocation sequence left a header whose type id no module registered");
+    }
+    m = &gc_heap.types[id];
+    if (!m->stride && map_words_used(m) > nw) {
+      gc_die("avant gc verify: the inline allocation sequence left a header whose type has reference words past the object's size");
+    }
+  }
+  for (i = 0; i < nw; i++) {
+    if (w[i] == GC_POISON_WORD) {
+      gc_die("avant gc verify: the inline allocation sequence left a payload word it did not zero");
+    }
+  }
+}
+
 static __attribute__((noinline)) void inline_walk(uint8_t *lo, uint8_t *hi) {
   const int check = gc_heap.set.verify | gc_heap.set.stress;
   uint8_t *p = lo;
@@ -577,6 +617,9 @@ static __attribute__((noinline)) void inline_walk(uint8_t *lo, uint8_t *hi) {
     const AvantHeader *h = (const AvantHeader *)p;
     if (check && (h->flags != (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG) || h->size == 0)) {
       gc_die("avant gc verify: the inline allocation sequence left a header that is not a fresh young object's");
+    }
+    if (check) {
+      inline_check(h);
     }
     if (gc_heap.set.verify) {
       gc_verify_starts_note(p);
@@ -867,6 +910,9 @@ void gc_sticky_push(Block ***v, uint32_t *n, uint32_t *cap, Block *b) {
 static void young_note_hole(Block *b) {
   uint8_t lo = (uint8_t)((b->bump - b->base) >> LINE_SHIFT);
   uint8_t hi = (uint8_t)((b->limit - b->base) >> LINE_SHIFT);
+  /* The check modes: the hole holds the poison until something is
+   * allocated in it (gc_poison_checked's comment). */
+  gc_poison_checked(b->bump, (size_t)(b->limit - b->bump));
   if (!b->young_hi) {
     gc_sticky_push(&gc_heap.young_blocks, &gc_heap.young_blocks_n, &gc_heap.young_blocks_cap, b);
     b->young_lo = lo;
