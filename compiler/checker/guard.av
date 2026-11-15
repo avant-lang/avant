@@ -6,13 +6,13 @@ import checker
 import checker.spawn
 import typed_ir
 
-// What may happen to the guarded value inside `Mutex.with` (O541, D355;
-// Stage 29 W8Ca). The lock protects the cell only while the block runs,
-// so the guarded value, and every reference reached from it, may only be
-// a receiver (`b.items.push(x)`, `b.n += 1`) or an operand whose result
-// is a plain value (`b.n`, `b.items.size`, `"${b}"`, `b.next == nil`):
-// never an argument, a value stored where it outlives the block, a
-// returned value, or a captured name. A plain value (checker/spawn.av
+// What may happen to the guarded value inside `Mutex.with`. The lock
+// protects the cell only while the block runs, so the guarded value, and
+// every reference reached from it, may only be a receiver
+// (`b.items.push(x)`, `b.n += 1`) or an operand whose result is a plain
+// value (`b.n`, `b.items.size`, `"${b}"`, `b.next == nil`): never an
+// argument, a value stored where it outlives the block, a returned
+// value, or a captured name. A plain value (checker/spawn.av
 // leaves_mutex_with: a number, a Bool, a String, Bytes, a share type, a
 // struct, optional or union of those) is a copy and goes anywhere.
 //
@@ -28,7 +28,7 @@ import typed_ir
 //
 // The walk runs after the block is checked (every node carries its
 // type), on the block's own statements; what the methods it calls do is
-// the rule on the classes a Mutex may guard (O709; check_guarded, below).
+// the rule on the classes a Mutex may guard (check_guarded, below).
 pub class GuardWalk {
   pub place: String = ""
   // One scope per nested body: name -> 1 when the name is reached, 0 not.
@@ -36,11 +36,11 @@ pub class GuardWalk {
   // The scope index a lambda's or a spawn block's body starts at, -1
   // outside one: a reached name declared below it is captured there.
   pub floor: Int = -1
-  // The walk of a function for `Mutex(T).new(place)` (O687, D371;
-  // check_consumes below): the consuming call's position, the mutex type
-  // shown, whether the walk has passed the call, whether place was
-  // declared by an assignment of this walk and in which scope, and how
-  // many loops enclose the walk now and enclosed that declaration.
+  // The walk of a function for `Mutex(T).new(place)` (check_consumes
+  // below): the consuming call's position, the mutex type shown, whether
+  // the walk has passed the call, whether place was declared by an
+  // assignment of this walk and in which scope, and how many loops
+  // enclose the walk now and enclosed that declaration.
   pub consume: Bool = false
   pub call_loc: String = ""
   pub call_at: String = ""
@@ -139,7 +139,7 @@ pub fn (checker_self: Checker) guard_with_block(place: String, b: Block, value_u
     st = b.body[i]
     if i == last && value_used && st.kind == st_expr() {
       // The block's value: its type is checked by leaves_mutex_with
-      // (O231) in checker.av check_mutex_with.
+      // in checker.av check_mutex_with.
       if e = st.expr {
         checker_self.guard_expr(w, e)
       }
@@ -259,9 +259,9 @@ pub fn (checker_self: Checker) guard_fail(w: GuardWalk, e: Expr, role: String) {
 
 // A value stored into the guarded value (or, before `Mutex(T).new`
 // consumes a name, into that name's value) must not stay reachable from
-// outside (O687, D371): it is plain, reached from the guarded value
-// already, or new (guard_fresh). A store of a reference the code around
-// keeps would let that code reach the guarded value without the lock.
+// outside: it is plain, reached from the guarded value already, or new
+// (guard_fresh). A store of a reference the code around keeps would let
+// that code reach the guarded value without the lock.
 pub fn (checker_self: Checker) guard_inward(w: GuardWalk, value: Expr) {
   if checker_self.has_err() || checker_self.guard_plain(value) || checker_self.guard_reaches(w, value) || checker_self.guard_fresh(value) {
     return
@@ -277,11 +277,11 @@ pub fn (checker_self: Checker) guard_inward(w: GuardWalk, value: Expr) {
   checker_self.fail(value.loc, "Mutex.with: this value stored into the guarded value (${shown}) comes from outside it; it must be new (a constructor call or a literal), reached from the guarded value, or plain, since a reference kept outside the block would reach the guarded value without the lock")
 }
 
-// Whether e makes a value no other reference reaches (O687, D371): a
-// plain value, a constructor call, `Array(T).new`, `Hash(K, V).new`,
-// `Buf.new`, or an array or struct literal, whose arguments, elements
-// and fields are new or plain in turn (a reference given to a
-// constructor may be kept by the object it builds).
+// Whether e makes a value no other reference reaches: a plain value,
+// a constructor call, `Array(T).new`, `Hash(K, V).new`, `Buf.new`, or
+// an array or struct literal, whose arguments, elements and fields
+// are new or plain in turn (a reference given to a constructor may be
+// kept by the object it builds).
 pub fn (checker_self: Checker) guard_fresh(e: Expr): Bool {
   if checker_self.guard_plain(e) {
     return true
@@ -411,8 +411,8 @@ pub fn (checker_self: Checker) guard_stmt(w: GuardWalk, st: Stmt) {
     checker_self.guard_body(w, st.then_body)
     w.pop()
     if c3 = st.cond, st.else_bind.size > 0 {
-      // `else e` (Stage 29 W5b1): the failure is reached when the
-      // condition's value is.
+      // `else e`: the failure is reached when the condition's
+      // value is.
       w.push()
       w.declare(st.else_bind, checker_self.guard_bad(w, c3))
       checker_self.guard_body(w, st.else_body)
@@ -462,7 +462,7 @@ pub fn (checker_self: Checker) guard_assign(w: GuardWalk, st: Stmt) {
       }
       if name == w.place {
         // A store into the guarded cell itself: what comes in must not
-        // stay reachable from outside (O687).
+        // stay reachable from outside.
         checker_self.guard_inward(w, value)
         return
       }
@@ -558,8 +558,8 @@ pub fn (checker_self: Checker) guard_expr(w: GuardWalk, e: Expr) {
     }
     if r = e.right {
       if l2 = e.left, expr_is_else_guard(r) && r.ident.size > 0 {
-        // An else guard's failure (Stage 29 W5b1) is a name of its
-        // block, reached when the guarded value is: as an if-assign's.
+        // An else guard's failure is a name of its block, reached when
+        // the guarded value is: as an if-assign's.
         w.push()
         w.declare(r.ident, checker_self.guard_bad(w, l2))
         checker_self.guard_body(w, r.else_body)
@@ -619,8 +619,8 @@ pub fn (checker_self: Checker) guard_expr(w: GuardWalk, e: Expr) {
       checker_self.guard_expr(w, c)
     }
     for cs in e.cases {
-      // A union switch's binding (Stage 29 W5a2) is a name of the
-      // block, reached when the union is: as an if-assign's.
+      // A union switch's binding is a name of the block, reached
+      // when the union is: as an if-assign's.
       w.push()
       if c2 = e.cond {
         for label in cs.labels {
@@ -732,7 +732,7 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
     }
     if stores {
       // `push` and `fill` store their argument into a reached array:
-      // what comes in must not stay reachable from outside (O687).
+      // what comes in must not stay reachable from outside.
       checker_self.guard_inward(w, arg)
       if checker_self.has_err() {
         return
@@ -771,7 +771,7 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
   }
 }
 
-// ---- `Mutex(T).new(v)` consumes v (O687, D371; Stage 29 W8Cb).
+// ---- `Mutex(T).new(v)` consumes v.
 //
 // The mutex must be the only way to its value. So the argument of
 // `Mutex(T).new`, when T can hold a reference to mutable state (not
@@ -798,7 +798,7 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
 // `return` is not told apart.
 pub fn (checker_self: Checker) check_mutex_new(expr: Expr, ty: Ty) {
   if ty.ty_args.size == 1 {
-    // What it guards is checked once the program is (O709).
+    // What it guards is checked once the program is.
     checker_self.guarded.push(ty.ty_args[0])
     checker_self.guarded_at.push(expr.loc)
   }
@@ -947,15 +947,14 @@ pub fn (checker_self: Checker) guard_consume_at(w: GuardWalk, e: Expr) {
   w.passed = true
 }
 
-// Channel.send (D35; Stage 29 W8Ca, O232): the value crosses to the
-// task that receives it, so it obeys spawn's rule for what crosses
-// (checker/spawn.av copyable_for_spawn): a class instance, a Hash, a
-// Buf, a fn or a struct holding one would be one mutable object in two
-// tasks with no lock, and is refused. An Array is copied at the send
-// (O688, D371; Stage 29 W8Cb: mir/lower_agg.av send_copy), so the
-// receiver owns an independent array; its elements cross in turn, and an
-// array of arrays is copied at every level. Since O712 (Stage 29 W8Cc)
-// spawn's rule asks the same of a captured Array's elements, so the two
+// Channel.send: the value crosses to the task that receives it, so it
+// obeys spawn's rule for what crosses (checker/spawn.av
+// copyable_for_spawn): a class instance, a Hash, a Buf, a fn or a struct
+// holding one would be one mutable object in two tasks with no lock, and
+// is refused. An Array is copied at the send (mir/lower_agg.av
+// send_copy), so the receiver owns an independent array; its elements
+// cross in turn, and an array of arrays is copied at every level.
+// Spawn's rule asks the same of a captured Array's elements, so the two
 // rules are one.
 pub fn (checker_self: Checker) send_crosses(t: Ty): Bool {
   checker_self.copyable_for_spawn(t)
@@ -976,16 +975,16 @@ pub fn (checker_self: Checker) check_send(expr: Expr) {
           break
         }
       }
-      checker_self.fail(arg.loc, "Channel.send: an ${t.show()} is copied at the send, but its elements (${leaf.show()}) cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex")
+      checker_self.fail(arg.loc, "Channel.send: an ${t.show()} is copied at the send, but its elements (${leaf.show()}) cannot cross to another task: a mutable object reaches another task only inside a Mutex")
       return
     }
     if !checker_self.send_crosses(t) {
-      checker_self.fail(arg.loc, "Channel.send: a ${t.show()} cannot cross to another task (D35): a mutable object reaches another task only inside a Mutex; send plain values, or a Mutex(${t.show()}) shared by both tasks")
+      checker_self.fail(arg.loc, "Channel.send: a ${t.show()} cannot cross to another task: a mutable object reaches another task only inside a Mutex; send plain values, or a Mutex(${t.show()}) shared by both tasks")
     }
   }
 }
 
-// ---- What a Mutex may guard (O709, D389: option 2; Stage 29 W8Cc).
+// ---- What a Mutex may guard (option 2).
 //
 // Inside `with` the rules above read the block's code, not the methods
 // it calls: `b.add(c)` with a method that keeps c, or `b.register(keep)`
@@ -1457,7 +1456,7 @@ pub fn (checker_self: Checker) cw_alias_expr(w: ClassWalk, e: Expr) {
 // ---- the stores and the calls
 
 pub fn (checker_self: Checker) cw_fail(w: ClassWalk, loc: Location, what: String) {
-  checker_self.fail(loc, "${w.mutex} (at ${w.at}): ${w.owner}.${w.method} ${what}; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock (O709)")
+  checker_self.fail(loc, "${w.mutex} (at ${w.at}): ${w.owner}.${w.method} ${what}; a class a Mutex guards, and every class it holds, may not keep a reference from outside or hand out its own, since either would reach the guarded value without the lock")
 }
 
 // A store of value into a place whose holder is rooted at target_bits (a

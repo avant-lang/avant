@@ -1,12 +1,11 @@
-// The lowering of heap strings (Stage 28 W6a; stages/stage28/mir.md W6a):
-// interpolation, `+`, `==` and `!=` on String and Bytes, indexing, the
-// members `size to_i to_f bytes strip strip_left strip_right` and Bytes
-// `size slice`, and the builtins `chr repeat_byte str_slice fmt_float
-// checksum_str str_to_f_slice`. A String or Bytes value is a `ref str`
-// (2.9): a literal is a `const str.N` (not a heap object, 3.2), every
-// other value comes from a runtime call. Each call's mark comes from the
-// call table (runtime.av; the proofs are in W6a.6). The evaluation order
-// of each construct is the old back end's (W6a.2): left to right, except
+// The lowering of heap strings: interpolation, `+`, `==` and `!=` on
+// String and Bytes, indexing, the members `size to_i to_f bytes strip
+// strip_left strip_right` and Bytes `size slice`, and the builtins `chr
+// repeat_byte str_slice fmt_float checksum_str str_to_f_slice`. A String
+// or Bytes value is a `ref str` (2.9): a literal is a `const str.N` (not
+// a heap object, 3.2), every other value comes from a runtime call. Each
+// call's mark comes from the call table (runtime.av). The evaluation
+// order of each construct is the old back end's: left to right, except
 // the builtins and `Bytes.slice`, which evaluate their arguments last to
 // first (`slice` then its receiver).
 
@@ -81,7 +80,7 @@ pub fn (lw: MirLower) to_str(v: MOperand, t: Ty): MOperand {
     return lw.str_call1("avant_str_from_int", v)
   }
   if t.is_int32() || t.is_uint32() {
-    // Its value as an Int (extended by its sign; Stage 29 W-INT1).
+    // Its value as an Int (extended by its sign).
     w32 = lw.tmp(mt_int(), b.rv_cast(v, mt_int()))
     return lw.str_call1("avant_str_from_int", w32)
   }
@@ -99,10 +98,10 @@ pub fn (lw: MirLower) to_str(v: MOperand, t: Ty): MOperand {
   v
 }
 
-// A String literal's text (Stage 29 W5b2, O287): a static constant, which
-// the runtime reads as a C string; a text with a NUL byte (\0 or \x00)
-// is built at run time from its pieces and avant_str_from_byte(0), so its
-// size counts every byte (a static string has no length but its NUL).
+// A String literal's text: a static constant, which the runtime reads as
+// a C string; a text with a NUL byte (\0 or \x00) is built at run time
+// from its pieces and avant_str_from_byte(0), so its size counts every
+// byte (a static string has no length but its NUL).
 pub fn (lw: MirLower) text_value(text: String): MOperand {
   b = lw.lw_b
   has_nul = false
@@ -359,8 +358,8 @@ pub fn (lw: MirLower) lower_str_builtin(e: Expr, c: String): MOperand {
   if c == "str_slice" {
     return lw.str_call("avant_str_slice", ops)
   }
-  // str_to_f_slice (Stage 29 W4b1): strict, Float64? like String.to_f.
-  // NaN is "absent" (a parsed float is never NaN).
+  // str_to_f_slice: strict, Float64? like String.to_f. NaN is "absent"
+  // (a parsed float is never NaN).
   v = lw.hold(lw.call_to(mt_f64(), "avant_str_parse_f64_slice", ops), mt_f64())
   if t = e.ty {
     got = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(v), b.copy_local(v)))
@@ -370,9 +369,9 @@ pub fn (lw: MirLower) lower_str_builtin(e: Expr, c: String): MOperand {
   b.c_i32(0)
 }
 
-// String.to_i, to_u64 (an optional base, 10 by default) and to_f
-// (Stage 29 W4b1, D293, D295 R9): strict, through avant_str_parse_* and a
-// found flag, giving T?. The base, then the receiver.
+// String.to_i, to_u64 (an optional base, 10 by default) and to_f: strict,
+// through avant_str_parse_* and a found flag, giving T?. The base, then
+// the receiver.
 pub fn (lw: MirLower) str_parse(e: Expr, recv: Expr, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b
   base = b.c_i64(10)
@@ -391,7 +390,7 @@ pub fn (lw: MirLower) str_parse(e: Expr, recv: Expr, name: String, args: Array(E
   mt = mt_f64()
   f = "avant_str_parse_f64"
   if name == "to_i" {
-    // Int is 64-bit (Stage 29 W-INT1).
+    // Int is 64-bit.
     vt = ty_int()
     mt = mt_int()
     f = "avant_str_parse_i64"

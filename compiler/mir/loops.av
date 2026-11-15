@@ -1,5 +1,4 @@
-// Loop versioning (Stage 28 W9b; stages/stage28/mir.md W9b, D207 pass 1;
-// the old back end's loop trick, D182, now a MIR pass).
+// Loop versioning (the old back end's loop trick, now a MIR pass).
 //
 // For a loop whose header tests `_i < X` or `_i <= X` (an induction
 // variable _i that the loop only increases by positive constants, and a
@@ -15,11 +14,11 @@
 // before the leaf and root-slot passes, which see the copy like any code.
 //
 // The variable, the bound and the invariant locals are i32 or i64 (an Int
-// is i64 since Stage 29 W-INT1); an i64 one is tested to lie within the
-// i32 range in the guard before any arithmetic, so the guard's sums
-// cannot overflow, and the header's size of an Array or Buf is its i32
-// field read and sign-extended (seen through the cast).
-// An index is known in range when, at the check, it is (all in i64):
+// is i64); an i64 one is tested to lie within the i32 range in the guard
+// before any arithmetic, so the guard's sums cannot overflow, and the
+// header's size of an Array or Buf is its i32 field read and
+// sign-extended (seen through the cast). An index is known in range when,
+// at the check, it is (all in i64):
 // - the induction variable plus a constant c, the variable unchanged
 //   since the header test passed: from entry_i + c >= 0 (the variable
 //   only grows) and X - 1 + c < size (X + c for `<=`);
@@ -213,7 +212,7 @@ fn lv_place_writes_size(ts: MTypes, f: MFunc, p: MPlace): Bool {
 // Whether statement j of blk keeps every size; keep[] is the
 // per-function summary (by index into m.funcs) as known so far. A size
 // store into an object allocated earlier in the same block (an array
-// header being filled, W6c.3) changes no object that existed before.
+// header being filled) changes no object that existed before.
 fn lv_stmt_keeps(m: MModule, f: MFunc, blk: MBlock, j: Int, keep: Array(Bool)): Bool {
   st = blk.stmts[j]
   if st.kind == msk_assign() {
@@ -1247,8 +1246,8 @@ fn lv_widen(f: MFunc, loc: MLoc, blk: MBlock, v: Int): Int {
 // v as i64 (lv_widen), and when v is itself i64 (an Int), tests that it
 // lies within the i32 range, failing to `fail` (the original loop): every
 // guard term is then a sum of such values and constants within a million,
-// which cannot overflow (Stage 29 W-INT1). Returns the block to continue
-// in; out[0] receives the local.
+// which cannot overflow. Returns the block to continue in; out[0]
+// receives the local.
 fn lv_widen_in(f: MFunc, loc: MLoc, blk0: MBlock, v: Int, fail: Int, out: Array(Int)): MBlock {
   blk = blk0
   w = lv_widen(f, loc, blk, v)
@@ -1425,7 +1424,7 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
   }
   last.term = lv_goto(loc, map[hdr])
   // The original is the cold path now: its back edges are marked so the
-  // emitter keeps LLVM from unrolling or peeling it (W9b; unrolled cold
+  // emitter keeps LLVM from unrolling or peeling it (unrolled cold
   // copies cost size and, merging with the fast copy, steered the SLP
   // vectorizer away from the fast loop's natural vector width).
   for b in 0..n0 {

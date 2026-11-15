@@ -79,8 +79,8 @@ pub fn show_usage {
   puts("--keep-tmp keeps the private temporary directory of compile, run, test, fetch, or bind and prints its path.")
 }
 
-// --keep-tmp (D127) may sit anywhere before a literal --. It is taken out
-// here, so no command's own parser sees it.
+// --keep-tmp may sit anywhere before a literal --. It is taken out here,
+// so no command's own parser sees it.
 fn take_keep_tmp(args: Array(String)): Array(String) {
   rest: Array(String) = []
   program = false
@@ -99,8 +99,8 @@ fn take_keep_tmp(args: Array(String)): Array(String) {
   rest
 }
 
-// The commands that spawn children create the scratch directory first
-// (Q138), so TMPDIR is exported before any child runs.
+// The commands that spawn children create the scratch directory
+// first, so TMPDIR is exported before any child runs.
 fn spawns_children(command: String): Bool {
   if command == "run" || command == "r" || command == "test" || command == "t" {
     return true
@@ -111,9 +111,9 @@ fn spawns_children(command: String): Bool {
   str_ends(command, ".av")
 }
 
-// The .av files under dir (format's directory argument, D49 as amended in
-// Stage 29 W1b), walked like `avant test` walks tests/: a name that starts
-// with `.` and a directory named `deps` are skipped.
+// The .av files under dir (format's directory argument), walked like
+// `avant test` walks tests/: a name that starts with `.` and a directory
+// named `deps` are skipped.
 fn format_walk(dir: String, into: Array(String)) {
   names = dir_list(dir) ?? []
   i = 0
@@ -153,13 +153,13 @@ fn format_usage_error(message: String) {
   diag_exit(1)
 }
 
-// avant format PATH... [--check | --write] (D49, amended in Stage 29 W1b):
-// each PATH is a .av file or a directory walked for .av files. With one
-// file and no flag the canonical text goes to stdout. --check prints
-// `would change PATH` for each file that is not canonical (`canonical`
-// when none is) and exits 1 if any would change; --write rewrites the
-// files that change. A file that cannot be read or formatted is reported
-// and the status is 1; the other files are still done. Usage errors exit 1.
+// avant format PATH... [--check | --write]: each PATH is a .av file or a
+// directory walked for .av files. With one file and no flag the canonical
+// text goes to stdout. --check prints `would change PATH` for each file
+// that is not canonical (`canonical` when none is) and exits 1 if any would
+// change; --write rewrites the files that change. A file that cannot be
+// read or formatted is reported and the status is 1; the other files are
+// still done. Usage errors exit 1.
 pub fn driver_format(args: Array(String)) {
   if args.size > 0 && args[0] == "--calls" {
     driver_format_calls(argv_drop_first(args))
@@ -348,14 +348,13 @@ pub fn driver_format_calls(args: Array(String)) {
   }
 }
 
-// The hidden front-end dumps of one file (D137): tokens, AST, or the
-// checked tree, for the goldens. Not in the usage text. The dumps are the
-// bytes compiler/lex_dump.av printed; a front-end error goes to stderr
-// with status 1, as in dump (D142), so a golden can never record one.
-// Tokens and the AST read the one file; the checked tree loads the
-// program through the loader, as compile and dump do, and prints the root
-// file's declarations only (D352, Q159's A; O192, Stage 29 W5d2), so a
-// program that imports has a --check golden of its own code.
+// The hidden front-end dumps of one file: tokens, AST, or the checked
+// tree, for the goldens. Not in the usage text. The dumps are the bytes
+// compiler/lex_dump.av printed; a front-end error goes to stderr with
+// status 1, as in dump, so a golden can never record one. Tokens and the
+// AST read the one file; the checked tree loads the program through the
+// loader, as compile and dump do, and prints the root file's declarations
+// only, so a program that imports has a --check golden of its own code.
 fn dump_layer_mode(arg: String): Bool {
   if arg == "--tokens" {
     return true
@@ -452,7 +451,7 @@ pub fn driver_dump(args: Array(String)) {
   box = compile_av_paths(split.paths)
   if box.ok {
     if m = box.mir {
-      // The final-stage MIR (D171); a module the verifier rejects is
+      // The final-stage MIR; a module the verifier rejects is
       // printed, then its errors, exit 1.
       print_ir(mir_print(m, true))
       bad = llvm_verify(m)
@@ -466,11 +465,10 @@ pub fn driver_dump(args: Array(String)) {
   diag_exit(1)
 }
 
-// Stage 28 W6c: the inline allocation and barrier fast paths (mir.md
-// 5.5, 5.6) are on in every mode. AVANT_LLVM_CALL_FORMS=1 (internal,
-// like AVANT_BACKEND, D176) emits their call forms instead, so the
-// suite can prove both forms (the program-level twin of __mir-build
-// --call-forms).
+// The inline allocation and barrier fast paths are on in every mode.
+// AVANT_LLVM_CALL_FORMS=1 (internal, like AVANT_BACKEND) emits their
+// call forms instead, so the suite can prove both forms (the
+// program-level twin of __mir-build --call-forms).
 fn llvm_inline_fast: Bool {
   if v = env_get("AVANT_LLVM_CALL_FORMS"), v == "1" {
     return false
@@ -510,7 +508,7 @@ pub fn driver_run(args: Array(String)) {
     diag_exit(1)
   }
   job.codegen = verb_codegen(job.codegen, "run")
-  // A local run takes the machine's highest x86-64 level (O140).
+  // A local run takes the machine's highest x86-64 level.
   if job.cpu.size == 0 {
     job.cpu = llvm_cpu_name(llvm_host_level())
   }
@@ -522,7 +520,7 @@ pub fn driver_run(args: Array(String)) {
       job.objects.push(box.re2c_obj)
     }
     attach_std_link(box, job)
-    // Compile, then run the program here with the user's stdin (Wave D:
+    // Compile, then run the program here with the user's stdin (only
     // the tools the compiler starts get /dev/null, tool_run).
     out = tmp_path("run.bin")
     if m = box.mir {
@@ -571,7 +569,7 @@ pub fn driver_compile(args: Array(String)) {
     }
     attach_std_link(box, job)
     if m = box.mir {
-      // The driver leaves this line to its caller (D194).
+      // The driver leaves this line to its caller.
       err = llvm_build(m, llvm_job_of(job), out_path)
       if err.size > 0 {
         diag_puts(err)
@@ -674,8 +672,8 @@ pub fn driver_fetch(args: Array(String)) {
   diag_exit(1)
 }
 
-// Internal (Stage 28 W2), not in the usage text: compiles a textual LLVM
-// IR file to an object with the in-process LLVM (compiler/llvm/glue.av).
+// Internal, not in the usage text: compiles a textual LLVM IR file to an
+// object with the in-process LLVM (compiler/llvm/glue.av).
 //   avant __llvm-obj IN.ll OUT.o [--debug|--release]
 // No flag is compile's bare mode. Exit 0, or 1 with the message on stderr.
 fn driver_llvm_obj(args: Array(String)) {
@@ -704,10 +702,10 @@ fn driver_llvm_obj(args: Array(String)) {
   }
 }
 
-// Internal (Stage 28 W5a), not in the usage text: builds one of the
-// builder-made MIR modules by name (llvm/emit_cases.av), verifies it at
-// stage final, emits the .ll, compiles it with the in-process LLVM, and
-// links it like a program (llvm/driver.av).
+// Internal, not in the usage text: builds one of the builder-made MIR
+// modules by name (llvm/emit_cases.av), verifies it at stage final,
+// emits the .ll, compiles it with the in-process LLVM, and links it
+// like a program (llvm/driver.av).
 //   avant __mir-build NAME OUT [--debug|--release] [--emit-ll FILE]
 //                    [--object] [--call-forms] [--time]
 //   avant __mir-build --list
@@ -780,23 +778,23 @@ fn driver_mir_build(args: Array(String)) {
   diag_exit(1)
 }
 
-// Internal (Stage 28 W9), not in the usage text: writes the
-// pre-optimization .ll that `compile` hands to
-// the in-process LLVM (the same lowering, verifier, emitter, and
-// fast-path setting; the text does not depend on the mode, mir.md 11).
-// The self-hosting fixed point compares it between two compilers (D171).
+// Internal, not in the usage text: writes the pre-optimization .ll that
+// `compile` hands to the in-process LLVM (the same lowering, verifier,
+// emitter, and fast-path setting; the text does not depend on the
+// mode). The self-hosting fixed point compares it between two
+// compilers.
 //   avant __emit-ll SRC.av OUT.ll
 // Exit 0, or 1 with the message on stderr.
-// `avant version` and `avant --version` (O534, Stage 29 W-FIX1e): the
-// version and the commit this binary was built from. The compiler does
-// not carry them (an identical compiler stays byte-identical across
-// commits); they come from the build's record beside the executable:
-// EXE.versions.txt, which tools/letters.sh writes beside each compiler
-// it builds, else versions.txt in the same directory (a release
-// archive, D148, and tools/package.sh). `version:` is avant.toml's
-// version (a release's `tag: vX` is read when there is none), `avant:`
-// the commit, and `dirty: yes` says that compiler/, lib/ or runtime/
-// had changes the commit does not hold.
+// `avant version` and `avant --version`: the version and the commit
+// this binary was built from. The compiler does not carry them (an
+// identical compiler stays byte-identical across commits); they come
+// from the build's record beside the executable: EXE.versions.txt,
+// which tools/letters.sh writes beside each compiler it builds, else
+// versions.txt in the same directory (a release archive, and
+// tools/package.sh). `version:` is avant.toml's version (a release's
+// `tag: vX` is read when there is none), `avant:` the commit, and
+// `dirty: yes` says that compiler/, lib/ or runtime/ had changes the
+// commit does not hold.
 fn driver_version(args: Array(String)) {
   if args.size > 0 {
     diag_puts("avant version takes no arguments")

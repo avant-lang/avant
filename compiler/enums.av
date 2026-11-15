@@ -1,8 +1,8 @@
-// The functions every enum has (Stage 29 W5a1, D292, D320, D358), written
-// by the parser as Avant (parser.av parse_enum) and checked like any
-// method. Each is lazy (ast.av Function.lazy): the lowering emits it only
-// when a call reaches it, so a program that never prints an enum, never
-// calls from_name and never reads members pays for no name table (O394).
+// The functions every enum has, written by the parser as Avant (parser.av
+// parse_enum) and checked like any method. Each is lazy (ast.av
+// Function.lazy): the lowering emits it only when a call reaches it, so a
+// program that never prints an enum, never calls from_name and never
+// reads members pays for no name table.
 //
 //   fn name: String                      switch self { case m { "m" } ... }
 //   fn self.from_i(n: Int): Tok?         switch n { case v { return Tok.m } ... }; nil
@@ -10,7 +10,7 @@
 //   fn self.from_name(s: String): Tok?   switch s { case "m" { return Tok.m } ... }; nil
 //   fn self.members: Array(Tok)          [Tok.m, ...]
 //   fn message: String                   self.name (an enum marked Error
-//                                        that defines none, D327)
+//                                        that defines none)
 //
 // `t.to_i` is not a function: the checker types it and the lowering
 // extends the value (checker.av check_enum_method, mir lower_call.av).
@@ -136,7 +136,7 @@ pub fn enum_members_method(loc: Location, owner: String, decl: EnumDecl): Functi
   fnn
 }
 
-// An enum marked Error that defines no message (D327): its message is the
+// An enum marked Error that defines no message: its message is the
 // member's name.
 pub fn enum_message_method(loc: Location, owner: String): Function {
   fnn = enum_synth_fn(loc, owner, "message", TypeName.new(loc, "String"))

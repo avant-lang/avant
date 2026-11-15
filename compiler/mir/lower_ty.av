@@ -1,17 +1,15 @@
-// The lowering's type and name helpers (Stage 28 W5b; stages/stage28/mir.md
-// 2.9, 8.2, W5.3): the Avant-to-MIR type map of the scalar subset, the
-// canonical type text mty used by mangled symbols, the module part of a
-// symbol, and the exact bit pattern of an f64 literal (the language has no
-// bit cast; amendment 7 after W4).
+// The lowering's type and name helpers: the Avant-to-MIR type map of the
+// scalar subset, the canonical type text mty used by mangled symbols, the
+// module part of a symbol, and the exact bit pattern of an f64 literal (the
+// language has no bit cast).
 
 import source
 import type
 import mir.types
 
-// The MIR type of t in the supported subset (2.9), or -1: Int i64 (Stage
-// 29 W-INT1, D314), Int32 i32, UInt32 u32, UInt64 u64, Bool
-// bool, Float64 f64, Void void, String and Bytes `ref str` (a literal's
-// constant or a heap string, W6a).
+// The MIR type of t in the supported subset (2.9), or -1: Int i64, Int32
+// i32, UInt32 u32, UInt64 u64, Bool bool, Float64 f64, Void void, String
+// and Bytes `ref str` (a literal's constant or a heap string).
 pub fn mir_scalar_ty(t: Ty): Int {
   if t.is_int() {
     return mt_i64()
@@ -43,12 +41,11 @@ pub fn mir_scalar_ty(t: Ty): Int {
   -1
 }
 
-// An enum declared in Avant (Stage 29 W5a1, D358, O394) is stored in the
-// smallest width that fits its values: one byte when every value is in
-// 0..255 (u8) or -128..127 (i8), else two (u16, i16; Stage 29 W5a3,
-// O685), else four (i32, C's int, which a C enum always is).
-// mir_enum_narrow is the switch the proving ground's Int32 build turns
-// off.
+// An enum declared in Avant is stored in the smallest width that fits
+// its values: one byte when every value is in 0..255 (u8) or -128..127
+// (i8), else two (u16, i16), else four (i32, C's int, which a C enum
+// always is). mir_enum_narrow is the switch the proving ground's Int32
+// build turns off.
 pub fn mir_enum_narrow: Bool { true }
 
 pub fn mir_enum_ty(t: Ty): Int {
@@ -155,8 +152,8 @@ pub fn mir_str_builtin_arity(c: String): Int {
   -1
 }
 
-// mty (8.2): scalars by name; a struct or class as `module.Name` (W6b);
-// a union as its members in the checker's order joined by `|` in
+// mty (8.2): scalars by name; a struct or class as `module.Name`; a
+// union as its members in the checker's order joined by `|` in
 // parentheses; any other type is refused before a symbol or a layout
 // needs it, so its shown name is enough here.
 pub fn mir_mty(t: Ty): String {
@@ -164,9 +161,9 @@ pub fn mir_mty(t: Ty): String {
     return "${mir_module_part(t.mod_name)}.${t.name}"
   }
   if t.is_struct() || t.is_class() {
-    // A generic instance (W7a): its template's name and the type
-    // arguments, `main.Pair(Int,String)` (resolve.av instantiate_template:
-    // origin and ty_args).
+    // A generic instance: its template's name and the type arguments,
+    // `main.Pair(Int,String)` (resolve.av instantiate_template: origin and
+    // ty_args).
     if t.origin.size > 0 && t.ty_args.size > 0 {
       buf0 = buf_new()
       buf0.push_str("${mir_module_part(t.mod_name)}.${t.origin}(")
@@ -184,7 +181,7 @@ pub fn mir_mty(t: Ty): String {
   if t.is_nil() {
     return "Nil"
   }
-  // W6c: the containers (8.2: `Array(T)`, `Hash(K,V)`, `Buf`).
+  // The containers (8.2: `Array(T)`, `Hash(K,V)`, `Buf`).
   if t.is_array() {
     if e = t.inner {
       return "Array(${mir_mty(e)})"
@@ -198,15 +195,15 @@ pub fn mir_mty(t: Ty): String {
   if t.is_buf() {
     return "Buf"
   }
-  // W8b: `JoinHandle(T)` (8.2).
+  // `JoinHandle(T)` (8.2).
   if t.is_join() {
     if je = t.inner {
       return "JoinHandle(${mir_mty(je)})"
     }
     return "JoinHandle"
   }
-  // W8a: `Ptr(T)` (8.2); a C layout or an opaque C type as `module.Name`
-  // when the resolver gave it a module, else its bare name.
+  // `Ptr(T)` (8.2); a C layout or an opaque C type as `module.Name` when
+  // the resolver gave it a module, else its bare name.
   if t.is_ptr() {
     if pe = t.inner {
       return "Ptr(${mir_mty(pe)})"
@@ -233,7 +230,7 @@ pub fn mir_mty(t: Ty): String {
     buf.push_str(")")
     return buf.to_s()
   }
-  // W7b: `fn(A,B):R` (8.2), a missing result is Void.
+  // `fn(A,B):R` (8.2), a missing result is Void.
   if t.is_fn() {
     buf2 = buf_new()
     buf2.push_str("fn(")
@@ -364,7 +361,7 @@ pub fn mir_f64_bits(v: Float64): Int {
 }
 
 // The type of a C scalar's Avant view: Float64 for Float32, Int (i64)
-// for the others (UInt32 is an everyday type since Stage 29 W-INT1).
+// for the others (UInt32 is an everyday type).
 pub fn mir_c_view_mty(k: Int): Int {
   if k == cs_uint32() {
     return mt_u32()

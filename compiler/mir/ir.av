@@ -1,12 +1,13 @@
-// The MIR as data (Stage 28 W4; stages/stage28/mir.md sections 3, 4, 12).
-// Non-SSA: typed locals _0 .. _n, basic blocks of statements over places
-// and operands, one terminator per block. Kinds are Int constants (like
-// tyk_* in type.av); types are interned ids into MTypes (types.av).
+// The MIR as data. Non-SSA: typed locals _0 .. _n, basic blocks of
+// statements over places and operands, one terminator per block. Kinds
+// are Int constants (like tyk_* in type.av); types are interned ids into
+// MTypes (types.av).
 //
-// D188 and D192 (while the CI seed predates W1b): every class here holds
-// at most 16 words; arrays hold classes, scalars, or Strings only; the only
-// union-typed fields are `C?` with C a class; MLoc is the only struct and
-// holds three Ints.
+// Kept within what an older seed's type maps traced (see
+// compiler/checker.av, FlowFacts): every class here holds at most 16 words;
+// arrays hold classes, scalars, or Strings only; the only union-typed
+// fields are `C?` with C a class; MLoc is the only struct and holds three
+// Ints.
 
 import mir.types
 import mir.runtime
@@ -95,8 +96,8 @@ pub fn mst_lowered: Int { 1 }
 pub fn mst_final: Int { 2 }
 
 // A source location (9): file indexes the module's file table.
-// Stored in 32 bits (Stage 29 W-ADOPT: every statement and terminator
-// holds one inline) and read as Int.
+// Stored in 32 bits (every statement and terminator holds one inline)
+// and read as Int.
 pub struct MLoc {
   file32: Int32
   line32: Int32
@@ -205,10 +206,10 @@ pub class MTerm {
   pub cond: MOperand? = nil
   pub targets: Array(Int) = []
   pub values: Array(Int) = []
-  // W9b: the back edge of a loop that loop versioning left as the checked
-  // copy (the cold path): 1 + the loop header's block number, else 0. The
-  // emitter tells LLVM not to unroll or peel that loop (one loop
-  // metadata node per header).
+  // The back edge of a loop that loop versioning left as the checked copy
+  // (the cold path): 1 + the loop header's block number, else 0. The
+  // emitter tells LLVM not to unroll or peel that loop (one loop metadata
+  // node per header).
   pub cold: Int = 0
 
   fn initialize(kind: Int, loc: MLoc) {
@@ -236,15 +237,15 @@ pub fn mir_zero_words(k: Int): Array(UInt64) {
   xs
 }
 
-// The liveness of a function's locals (flow.av, Stage 28 W18P): word bit
-// sets of nw words, block b's at b * nw of each array. gen (read before
-// any definition in the block, its terminator included) and kill
-// (defined in it) are each block's transfer, outs the live-out sets (the
-// least solution), succ and succ_at (block b's successors are
-// succ[succ_at[b]] .. succ[succ_at[b + 1] - 1]) the edges it was solved
-// for. The frame pass leaves it on the function (MFunc.live) for V11 and
-// V12, which use it only while the function's blocks still have those
-// transfers and those edges.
+// The liveness of a function's locals (flow.av): word bit sets of nw
+// words, block b's at b * nw of each array. gen (read before any
+// definition in the block, its terminator included) and kill (defined in
+// it) are each block's transfer, outs the live-out sets (the least
+// solution), succ and succ_at (block b's successors are succ[succ_at[b]]
+// .. succ[succ_at[b + 1] - 1]) the edges it was solved for. The frame
+// pass leaves it on the function (MFunc.live) for V11 and V12, which use
+// it only while the function's blocks still have those transfers and
+// those edges.
 pub class MLive {
   pub n: Int = 0
   pub nw: Int = 0
@@ -293,11 +294,11 @@ pub class MFunc {
   // Called from C or by the runtime, so a thread's first Avant frame may
   // be this function's (a C callback's thunk, a task's thunk; `main` is
   // one by its symbol): it keeps its frame record even with no root slot
-  // (gc.av, VALK-A1).
+  // (gc.av).
   pub entry: Bool = false
-  // A class's `initialize` (Stage 29 VALK-A1, M5): its receiver _1 is open
-  // at entry (fresh.av: young, or barriered, with no collecting call
-  // since), because every call of it passes an open first argument (V14).
+  // A class's `initialize`: its receiver _1 is open at entry (fresh.av:
+  // young, or barriered, with no collecting call since), because every
+  // call of it passes an open first argument (V14).
   pub fresh_self: Bool = false
 
   fn initialize(symbol: String, sig: Int, loc: MLoc) {

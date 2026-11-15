@@ -1,9 +1,8 @@
-// The lowering of expressions (Stage 28 W5b; stages/stage28/mir.md W5.2,
-// W5.3): literals, locals, unary and binary operators with the old back
-// end's checked semantics and traps, short-circuit logic, the scalar
-// conversions; calls and the scalar members are in lower_call.av. An
-// expression lowers to an operand: `copy _k` for a local, a constant, or
-// `copy` of a fresh temporary.
+// The lowering of expressions: literals, locals, unary and binary
+// operators with the old back end's checked semantics and traps,
+// short-circuit logic, the scalar conversions; calls and the scalar
+// members are in lower_call.av. An expression lowers to an operand:
+// `copy _k` for a local, a constant, or `copy` of a fresh temporary.
 
 import location
 import source
@@ -18,7 +17,7 @@ import mir.lower_ty
 import mir.lower
 
 // Whether e contains a switch, whose arms can assign locals (the reason
-// an earlier operand is snapshotted, W5.3).
+// an earlier operand is snapshotted).
 pub fn mir_has_switch(e: Expr): Bool {
   if e.kind == ex_switch() {
     return true
@@ -71,7 +70,7 @@ pub fn (lw: MirLower) dup(o: MOperand): MOperand {
 }
 
 // o, copied into a temporary first when a later expression contains a
-// switch (the old left-to-right snapshot, W5.2).
+// switch (the old left-to-right snapshot).
 pub fn (lw: MirLower) snap(o: MOperand, later: Expr): MOperand {
   if p = o.place, mir_has_switch(later) {
     return lw.tmp(lw.lw_b.func.locals[p.local].ty, lw.lw_b.rv_use(o))
@@ -156,8 +155,8 @@ pub fn (lw: MirLower) lower_expr(e: Expr): MOperand {
 }
 
 // A literal, negated when neg (`-` on a literal folds; the checker keeps a
-// negated literal within its type, the minimum included, Stage 29 W-INT1).
-// The value is computed in 64 bits, wrapping, so the minimum folds too.
+// negated literal within its type, the minimum included). The value is
+// computed in 64 bits, wrapping, so the minimum folds too.
 pub fn (lw: MirLower) literal(e: Expr, neg: Bool): MOperand {
   b = lw.lw_b
   ty = lw.ety(e)
@@ -337,9 +336,9 @@ pub fn (lw: MirLower) lower_logical(e: Expr): MOperand {
     b.assign(b.pl(d), b.rv_use(a))
     right = b.block()
     join = b.block()
-    // Under coverage (W8b) the short path has its own block, and each
-    // path counts its branch in the old order (the old back end's emit_logical:
-    // THEN, then ELSE: && evaluates the right side in THEN, || in ELSE).
+    // Under coverage the short path has its own block, and each path counts its
+    // branch in the old order (the old back end's emit_logical: THEN, then
+    // ELSE: && evaluates the right side in THEN, || in ELSE).
     short = join
     if lw.lw_cov.on {
       short = b.block()
@@ -380,10 +379,10 @@ pub fn (lw: MirLower) lower_logical(e: Expr): MOperand {
   b.c_i32(0)
 }
 
-// A noreturn trap when c equals trap_on (W11b): trap_open branches on c and
-// leaves the lowering in the trap block, where the caller builds the
-// trap's arguments; trap_close calls the trap there and continues in the
-// other block (the result of trap_open).
+// A noreturn trap when c equals trap_on: trap_open branches on c and leaves
+// the lowering in the trap block, where the caller builds the trap's
+// arguments; trap_close calls the trap there and continues in the other
+// block (the result of trap_open).
 pub fn (lw: MirLower) trap_open(c: MOperand, trap_on: Bool): Int {
   b = lw.lw_b
   bt = b.block()
@@ -418,9 +417,9 @@ pub fn (lw: MirLower) int_const(ty: Int, v: Int): MOperand {
   lw.lw_b.c_int(mt_i32(), v)
 }
 
-// + - * / % &+ &- &* & | ^ on one type (W5.3): checked unless Float64 or
-// proven. % of (MIN, -1) is 0 for every signed type (C4, W11b): rem.chk
-// gives it; / of (MIN, -1) keeps its overflow trap.
+// + - * / % &+ &- &* & | ^ on one type: checked unless Float64 or
+// proven. % of (MIN, -1) is 0 for every signed type: rem.chk gives it; /
+// of (MIN, -1) keeps its overflow trap.
 pub fn (lw: MirLower) arith(op: Int, ty: Int, a: MOperand, c: MOperand, proven: Bool, loc: Location): MOperand {
   b = lw.lw_b
   f = ty == mt_f64()
@@ -471,13 +470,13 @@ pub fn (lw: MirLower) arith(op: Int, ty: Int, a: MOperand, c: MOperand, proven: 
   b.c_i32(0)
 }
 
-// << >> (C1, W11b): an amount outside 0..width - 1, negative included,
-// traps with avant_trap_shift(amount, kind) (kind: 16 + 0 Int, 1 Int32,
-// 2 UInt64, 3 UInt32, + 8 when the amount is unsigned; Stage 29 W-INT1;
-// below 16 the seed's codes); the test is one unsigned
-// compare in the amount's own type (a signed amount viewed as the unsigned
-// type of its width, which costs nothing), skipped for a constant amount
-// in range. Then the amount in the left type, and shl or shr by signedness.
+// << >>: an amount outside 0..width - 1, negative included, traps with
+// avant_trap_shift(amount, kind) (kind: 16 + 0 Int, 1 Int32, 2 UInt64, 3
+// UInt32, + 8 when the amount is unsigned; below 16 the seed's codes); the
+// test is one unsigned compare in the amount's own type (a signed amount
+// viewed as the unsigned type of its width, which costs nothing), skipped
+// for a constant amount in range. Then the amount in the left type, and shl
+// or shr by signedness.
 pub fn (lw: MirLower) shift(op: Int, ty: Int, at: Int, a: MOperand, c: MOperand, loc: Location): MOperand {
   b = lw.lw_b
   width = 64

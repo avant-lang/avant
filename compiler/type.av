@@ -26,20 +26,19 @@ pub fn tyk_clayout: Int { 20 }
 pub fn tyk_fn: Int { 21 }
 pub fn tyk_iface: Int { 22 }
 pub fn tyk_bytes: Int { 23 }
-// Stage 29 W-INT1 (D314): `Int` is 64-bit; Int32 and UInt32 are everyday
-// value types (dense storage, C's int). Kind 2 was `Int64`, which named
-// `Int` for one release and is gone (W-ADOPT, D300's one spelling).
+// `Int` is 64-bit; Int32 and UInt32 are everyday value types (dense
+// storage, C's int). Kind 2 was `Int64`, which named `Int` for one
+// release and is gone (one spelling for each meaning).
 pub fn tyk_int32: Int { 24 }
 pub fn tyk_uint32: Int { 25 }
-// An enumeration (Stage 29 W5a1, D292, D358): a distinct type whose values
-// are its members, each an integer (enum_vals) with a name (enum_names),
-// in declaration order. Not an integer type: no arithmetic, no ordering,
-// no conversion; `==` and `!=` compare two values of one enum.
+// An enumeration: a distinct type whose values are its members, each an
+// integer (enum_vals) with a name (enum_names), in declaration order. Not
+// an integer type: no arithmetic, no ordering, no conversion; `==` and
+// `!=` compare two values of one enum.
 pub fn tyk_enum: Int { 26 }
 
-// An enum's members (Stage 29 W5a1): names and values in declaration
-// order, the values distinct (C's rule: one more than the previous member
-// unless written).
+// An enum's members: names and values in declaration order, the values
+// distinct (C's rule: one more than the previous member unless written).
 pub class TyEnum {
   pub names: Array(String) = []
   pub vals: Array(Int) = []
@@ -53,8 +52,8 @@ pub class TyEnum {
 pub class TyField {
   pub name: String = ""
   pub ty: Ty
-  // false for a field without `pub` (Stage 29 W3a, D299); a C layout's
-  // fields are C's and stay visible.
+  // false for a field without `pub`; a C layout's fields are C's and
+  // stay visible.
   pub vis: Bool = true
   // The field declares a default (a struct literal may leave it out):
   // a struct with such a field has no zero value of its own, since its
@@ -68,11 +67,11 @@ pub class TyField {
 }
 
 pub class Ty {
-  // Sum type: `kind` is the variant tag (tyk_* values, unchanged since
-  // Stage 11; the runtime tag in emitted IR derives from it). Each variant
-  // owns a subset of the payload fields below; the ty_* constructors in
-  // this file are the only construction path, and agg shells get their
-  // `fields` filled once by resolve before any read.
+  // Sum type: `kind` is the variant tag (tyk_* values, long unchanged; the
+  // runtime tag in emitted IR derives from it). Each variant owns a subset
+  // of the payload fields below; the ty_* constructors in this file are
+  // the only construction path, and agg shells get their `fields` filled
+  // once by resolve before any read.
   pub kind: Int = 0
   pub name: String = ""
   label: String = ""
@@ -86,16 +85,15 @@ pub class Ty {
   pub ty_args: Array(Ty) = []
   pub mod_name: String = ""
   pub emit_base: String = ""
-  // A C scalar type (D64 as amended, Stage 29 W1b): cs_* below, 0 for
-  // every other type. Such a Ty has its Avant view's kind (an integer
-  // type or Float64) and its C name as label; it appears only in a `fun` signature
-  // and a C layout's field, where the back end passes and stores the C
-  // width and converts at the boundary.
+  // A C scalar type: cs_* below, 0 for every other type. Such a Ty has its Avant
+  // view's kind (an integer type or Float64) and its C name as label; it appears
+  // only in a `fun` signature and a C layout's field, where the back end passes
+  // and stores the C width and converts at the boundary.
   pub c_scalar: Int = 0
-  // Marked `Error` (D292, Stage 29 W4a): a class or struct declared
-  // `class E: Error`; in a union it is a failure (ty_failures below).
-  // Set on the type's one Ty when the resolver binds its declaration
-  // (resolve.av load_types, instantiate_template), so every check sees it.
+  // Marked `Error`: a class or struct declared `class E: Error`; in a
+  // union it is a failure (ty_failures below). Set on the type's one Ty
+  // when the resolver binds its declaration (resolve.av load_types,
+  // instantiate_template), so every check sees it.
   pub error_mark: Bool = false
   // An enum's members (tyk_enum), nil for every other type.
   pub members_of: TyEnum? = nil
@@ -172,7 +170,7 @@ pub class Ty {
     none
   }
 
-  // A C enum (declared in a lib block, Stage 29 W5a1): C's int.
+  // A C enum (declared in a lib block): C's int.
   pub fn enum_c_int: Bool {
     if m = self.members_of {
       return m.c_int
@@ -583,13 +581,10 @@ pub class Ty {
   }
 }
 
-// The C scalar types (D64 as amended, Stage 29 W1b): the C width and
-// signedness of a `fun` parameter or result or a C layout's field, seen in
-// Avant as their view type: Int8, Int16, UInt8 and UInt16 as Int, Float32
-// as Float64. UInt32 (5) and Int32 are everyday types since Stage 29
-// W-INT1 (D314): cs_uint32 stays only as a range kind (avant_trap_c_range). From C a value converts exactly; to C an
-// integer outside the C type's range traps (D215), and a Float64 rounds to
-// the nearest Float32.
+// The C scalar types: the C width and signedness of a `fun` parameter or result or a C layout's field, seen in Avant
+// as their view type: Int8, Int16, UInt8 and UInt16 as Int, Float32 as Float64. UInt32 (5) and Int32 are everyday
+// types: cs_uint32 stays only as a range kind (avant_trap_c_range). From C a value converts exactly; to C an integer
+// outside the C type's range traps, and a Float64 rounds to the nearest Float32.
 pub fn cs_int8: Int { 1 }
 pub fn cs_int16: Int { 2 }
 pub fn cs_uint8: Int { 3 }
@@ -639,11 +634,10 @@ pub fn ty_c_view(t: Ty): Ty {
   Ty.new(t.kind)
 }
 
-// The integer conversions (D295, D312; Stage 29 W-INT1, D314): to_i,
-// to_i32, to_u64 and to_u32 keep the value or trap; wrap_i, wrap_i32,
-// wrap_u64 and wrap_u32 take the two's-complement bits at the target's
-// width (truncating, or extending by the source's sign). The result
-// type, or nil.
+// The integer conversions: to_i, to_i32, to_u64 and to_u32 keep the
+// value or trap; wrap_i, wrap_i32, wrap_u64 and wrap_u32 take the
+// two's-complement bits at the target's width (truncating, or
+// extending by the source's sign). The result type, or nil.
 pub fn int_conversion_ty(name: String): Ty? {
   if name == "to_i" || name == "wrap_i" {
     return Ty.new(tyk_int())
@@ -660,10 +654,9 @@ pub fn int_conversion_ty(name: String): Ty? {
   nil
 }
 
-// One integer spelling (Stage 29 W-ADOPT, D300, D317): `Int64`, the `i64`
-// suffix, `to_i64` and `wrap_i64` named `Int`'s forms for one release and
-// are refused with the form to write. The replacement of a removed
-// conversion's name, or "".
+// One integer spelling: `Int64`, the `i64` suffix, `to_i64` and
+// `wrap_i64` named `Int`'s forms for one release and are refused with the
+// form to write. The replacement of a removed conversion's name, or "".
 pub fn removed_int_conversion(name: String): String {
   if name == "to_i64" {
     return "to_i"
@@ -939,13 +932,12 @@ pub fn ty_flatten_into(ty: Ty, into: Array(Ty)) {
   }
 }
 
-// Union member order (D200, C15): `Nil` first, so it always takes tag 0 and
-// a zeroed `T?` (a field nothing assigned, a fresh buffer) reads as nil
-// whatever T is called (Stage 29 W1a, A1; before, `Abc?` and `Int?` read as
-// present because their names sort before `Nil`). The other members by
-// shown name; equal shown names (same-named types from different modules)
-// are ordered by their module-qualified key, so both written orders build
-// one member list.
+// Union member order: `Nil` first, so it always takes tag 0 and a zeroed
+// `T?` (a field nothing assigned, a fresh buffer) reads as nil whatever T
+// is called (before, `Abc?` and `Int?` read as present because their names
+// sort before `Nil`). The other members by shown name; equal shown names
+// (same-named types from different modules) are ordered by their
+// module-qualified key, so both written orders build one member list.
 pub fn ty_member_before(a: Ty, b: Ty): Bool {
   if a.is_nil() || b.is_nil() {
     return a.is_nil() && !b.is_nil()
@@ -1089,13 +1081,13 @@ pub fn ty_nilable(inner: Ty): Ty {
   ty_union_build(parts)
 }
 
-// An optional reference (Stage 29 W3b, B13): a union of exactly `Nil`
-// and one reference type (a class, `String`, `Bytes`, `Array`, `Hash`,
-// `Buf`, a `JoinHandle`) is that reference's one pointer, `nil` the null
-// pointer; its reference member, or nil for any other type. Every other
-// union keeps the tag-and-payloads layout. The back end's layouts
-// (mir_opt_ref) and the rule for a `fun` signature (checker/register.av,
-// O549) read this one definition.
+// An optional reference: a union of exactly `Nil` and one reference type
+// (a class, `String`, `Bytes`, `Array`, `Hash`, `Buf`, a `JoinHandle`)
+// is that reference's one pointer, `nil` the null pointer; its reference
+// member, or nil for any other type. Every other union keeps the
+// tag-and-payloads layout. The back end's layouts (mir_opt_ref) and the
+// rule for a `fun` signature (checker/register.av) read this one
+// definition.
 pub fn ty_opt_ref(t: Ty): Ty? {
   if !t.is_union() || t.members.size != 2 {
     return nil
@@ -1120,12 +1112,12 @@ pub fn ty_without_nil(ty: Ty): Ty {
   ty_union_build(kept)
 }
 
-// The one failure rule (D292, Stage 29 W4a): in a union the failures are
-// `Nil` and every member marked `Error` (`class E: Error`); the rest is
-// the success value, one type or a smaller union. A union with no
-// success member but `Nil` (an optional error, `E?`, such as a `cause`)
-// has `Nil` as its only failure for if-assign and `??`, so the error is
-// the value read; postfix `?` refuses it (it would pass up the `nil`).
+// The one failure rule: in a union the failures are `Nil` and every
+// member marked `Error` (`class E: Error`); the rest is the success
+// value, one type or a smaller union. A union with no success member but
+// `Nil` (an optional error, `E?`, such as a `cause`) has `Nil` as its
+// only failure for if-assign and `??`, so the error is the value read;
+// postfix `?` refuses it (it would pass up the `nil`).
 pub fn ty_is_failure(m: Ty): Bool {
   m.is_nil() || m.error_mark
 }
@@ -1211,7 +1203,7 @@ pub fn type_is_builtin(name: String): Bool {
     return true
   }
   // `Int64` stays a reserved name: the resolver refuses it with the form
-  // to write (Stage 29 W-ADOPT, D300's one spelling).
+  // to write (one spelling for each meaning).
   if name == "Int64" {
     return true
   }
@@ -1254,7 +1246,7 @@ pub fn type_is_builtin(name: String): Bool {
   name == "JoinHandle"
 }
 
-// Whether a value of type t has a natural zero (D292).
+// Whether a value of type t has a natural zero.
 pub fn ty_has_zero(t: Ty): Bool {
   if t.is_integer() || t.is_float() || t.is_bool() || t.is_string() {
     return true
@@ -1277,10 +1269,10 @@ pub fn ty_has_zero(t: Ty): Bool {
 }
 
 // Whether a value of type t is, or holds, a reference to an object that
-// can change (D329, Stage 29 W-FIX1b): a class, an array, a hash, a Buf,
-// or a struct or union holding one. Copies of such a value share the
-// object. A String and Bytes cannot change; a number, a Bool, a function
-// value, a pointer and a JoinHandle are not counted.
+// can change: a class, an array, a hash, a Buf, or a struct or union
+// holding one. Copies of such a value share the object. A String and
+// Bytes cannot change; a number, a Bool, a function value, a pointer and
+// a JoinHandle are not counted.
 pub fn ty_holds_mutable_ref(t: Ty): Bool {
   if t.is_class() || t.is_array() || t.is_hash() || t.is_buf() {
     return true

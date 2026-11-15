@@ -1,12 +1,12 @@
-// `avant __mir-selftest` (internal, D190; not in the usage text): builds
-// the MIR of the core tests with the builder, prints the 10.2 example
-// between `== example print` and `== end`, and runs the verifier on each
-// case: one line `case NAME STAGE RULES` (RULES is `ok` or the rules the
-// module breaks, ascending, e.g. `V11`), then each error indented.
-// tests/cases/test_mir.av holds the expectations. The rejecting cases are
-// those of stages/stage28/mir.md 6 in module `t`, whose helpers (mk,
-// churn, use, name) are correct final-stage functions, so a case trips
-// only its own rule.
+// `avant __mir-selftest` (internal; not in the usage text): builds the
+// MIR of the core tests with the builder, prints the 10.2 example between
+// `== example print` and `== end`, and runs the verifier on each case:
+// one line `case NAME STAGE RULES` (RULES is `ok` or the rules the module
+// breaks, ascending, e.g. `V11`), then each error indented.
+// tests/cases/test_mir.av holds the expectations. The rejecting cases,
+// one per verifier rule, are in module `t`, whose helpers (mk, churn,
+// use, name) are correct final-stage functions, so a case trips only its
+// own rule.
 
 import source
 import mir.types
@@ -147,7 +147,7 @@ fn st_both(out: Buf, name: String, m: MModule) {
 }
 
 // ---- rejecting cases (6), one per rule, plus the second cases of V11
-// and V14 and a few more named in the record.
+// and V14 and a few more.
 fn st_rejecting(out: Buf) {
   lo = mst_lowered()
   fi = mst_final()
@@ -299,8 +299,8 @@ fn st_rejecting(out: Buf) {
   b.ret()
   st_case(out, "v13_barrier_on_other", lo, b.module)
 
-  // V13 third form, recorded (Stage 28 W16c): avant_pin_field of another
-  // operand than the one stored.
+  // V13 third form, recorded: avant_pin_field of another operand than
+  // the one stored.
   b = st_base(false)
   cell0 = b.note_layout("c.cell", mlk_clayout(), st_tys(mt_str(), -1), st_names("s"))
   st_fn(b, "f", st_tys(b.ptr_to(b.agg(cell0)), mt_str()), vd, mfk_unset())
@@ -365,9 +365,9 @@ fn st_rejecting(out: Buf) {
   b.ret()
   st_case(out, "v17_no_leave", fi, b.module)
 
-  // V16 as restated by VALK-A1 (M4): a frame function with a slot links a
-  // record, and so does one a thread's first Avant frame can be (main, a
-  // C callback's thunk), slot or none.
+  // V16: a frame function with a slot links a record, and so does one a
+  // thread's first Avant frame can be (main, a C callback's thunk), slot
+  // or none.
   b = st_base(false)
   st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
   l1 = b.local(mt_str(), "")
@@ -417,8 +417,8 @@ fn st_rejecting(out: Buf) {
   b.ret()
   st_case(out, "v21_wrong_type_id", lo, b.module)
 
-  // W6c: an element buffer takes any whole number of elements (12 bytes
-  // of i32 verify, see the heap goldens), but not a partial one.
+  // An element buffer takes any whole number of elements (12 bytes of
+  // i32 verify, see the heap goldens), but not a partial one.
   b = st_base(false)
   ef: Array(Int) = []
   ef.push(mt_i32())
@@ -432,7 +432,7 @@ fn st_rejecting(out: Buf) {
 }
 
 // The accepting cases that verify at both stages, by name (also what
-// `avant __mir-build` emits, W5a).
+// `avant __mir-build` emits).
 pub fn mir_selftest_finals: Array(String) {
   xs: Array(String) = []
   xs.push("ok_base")
@@ -506,8 +506,8 @@ fn st_accepting(out: Buf) {
   st_both(out, "ok_fresh_fill_closed", st_ok_module("ok_fresh_fill_closed"))
   st_both(out, "ok_addr_in_slot", st_ok_module("ok_addr_in_slot"))
 
-  // A frame function with no slot and no frame statement (VALK-A1, M4):
-  // it collects, holds no reference across it, links no record.
+  // A frame function with no slot and no frame statement: it collects,
+  // holds no reference across it, links no record.
   b = st_base(false)
   st_fn(b, "f", st_tys(-1, -1), vd, mfk_frame())
   l1 = b.local(mt_str(), "")
@@ -518,8 +518,8 @@ fn st_accepting(out: Buf) {
   st_case(out, "ok_frameless", fi, b.module)
 
   // V13 forms 2, 3, 4: barrier_at on an addr holder, a pin before a store
-  // into C memory (avant_pin, or avant_pin_field with the field's address,
-  // Stage 28 W16c), a by-value push through a slot row's address.
+  // into C memory (avant_pin, or avant_pin_field with the field's
+  // address), a by-value push through a slot row's address.
   b = st_base(false)
   rec = b.types.layout_named("main.Rec")
   st_fn(b, "f", st_tys(b.addr_of(b.agg(rec)), mt_str()), vd, mfk_unset())
@@ -547,9 +547,10 @@ fn st_accepting(out: Buf) {
   st_case(out, "ok_barrier_forms", lo, b.module)
 }
 
-// ---- the GC passes (gc.av, W6a): stage-lowered functions in module t,
-// after mir_gc_passes; one line per function, `pass CASE SYMBOL KIND
-// slots LIST`, then the verifier's answer at final for the case.
+// ---- the GC passes (gc.av): stage-lowered functions in module t,
+// after mir_gc_passes; one line per function,
+// `pass CASE SYMBOL KIND slots LIST`, then the verifier's answer at
+// final for the case.
 fn st_pass_report(out: Buf, name: String, m: MModule, first: Int) {
   mir_gc_passes(m)
   for i in first..m.funcs.size {
@@ -640,12 +641,12 @@ fn st_passes(out: Buf) {
 }
 
 // ---- the dataflow rules over many locals and the frame pass's liveness
-// kept for the verifier (Stage 28 W18P): functions with more than 64
-// locals (V9, V11, V12 across a word boundary of the liveness sets), the
-// GC passes on such a function and on loops of a shared module (polls),
-// and a function changed after the passes (its liveness no longer
-// describes it: the verifier computes its own) or changed so that it
-// breaks V11 while its liveness still describes it.
+// kept for the verifier: functions with more than 64 locals (V9, V11,
+// V12 across a word boundary of the liveness sets), the GC passes on
+// such a function and on loops of a shared module (polls), and a
+// function changed after the passes (its liveness no longer describes
+// it: the verifier computes its own) or changed so that it breaks V11
+// while its liveness still describes it.
 
 // n locals of type ty, numbered from the first free one.
 fn st_fill(b: MirBuilder, n: Int, ty: Int) {

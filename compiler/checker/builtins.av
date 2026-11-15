@@ -167,13 +167,13 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
   if expr.callee == "chars" {
     return checker_self.expect_no_args(expr, ty_array(checker_self.t_string()), "chars takes no arguments")
   }
-  // Strict parsing (Stage 29 W4b1, D293, D295 R9): the whole string is
-  // the number, else nil; an integer may name its base (2..36).
+  // Strict parsing: the whole string is the number, else nil; an
+  // integer may name its base (2..36).
   if expr.callee == "to_f" {
     return checker_self.expect_no_args(expr, ty_nilable(checker_self.t_float()), "String.to_f takes no arguments")
   }
   if expr.callee == "to_i64" {
-    // One integer spelling (Stage 29 W-ADOPT, D300, D317).
+    // One integer spelling.
     checker_self.fail(expr.loc, removed_int_message("to_i64", "to_i"))
     return ty_nilable(checker_self.t_int())
   }
@@ -618,8 +618,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
     }
     if e = array.inner {
       if e.is_integer() {
-        // Any integer element (Stage 29 W-INT1: Int, Int32, UInt32,
-        // UInt64).
+        // Any integer element (Int, Int32, UInt32, UInt64).
         got = checker_self.check_expr_as(expr.args[0], e)
         if !got.same_as(e) {
           checker_self.fail(expr.args[0].loc, "fill expects ${e.show()}")
@@ -902,7 +901,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     return checker_self.t_int()
   }
   if expr.callee == "delete" {
-    // The value removed, or nil when the key was absent (Stage 29 W4b2).
+    // The value removed, or nil when the key was absent.
     gone = ty_nilable(checker_self.t_int())
     if v = hash.val {
       gone = ty_nilable(v)
@@ -1074,8 +1073,8 @@ pub fn (checker_self: Checker) check_buf_string(expr: Expr): Ty {
   checker_self.t_void()
 }
 
-// crc32_bytes and sha256_word0 take Bytes (Stage 29 W-INT2: the
-// references hash a uint8_t buffer; the Array(Int) form is gone).
+// crc32_bytes and sha256_word0 take Bytes (the references hash a
+// uint8_t buffer; the Array(Int) form is gone).
 pub fn (checker_self: Checker) check_bytes_checksum(expr: Expr): Ty {
   if expr.args.size == 1 {
     if b = expr.block {
@@ -1257,7 +1256,7 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
     return checker_self.t_int()
   }
   // The 32-bit checksums (checksum_f64, checksum_str, crc32_bytes,
-  // sha256_word0) are Int32 (Stage 29 W-INT1): the bits they always had.
+  // sha256_word0) are Int32: the bits they always had.
   if expr.callee == "checksum_f64" {
     if expr.args.size == 1 {
       if b = expr.block {
@@ -1291,7 +1290,7 @@ pub fn (checker_self: Checker) check_langarena_call(expr: Expr): Ty? {
       return checker_self.t_void()
     }
     // An integer, printed as the unsigned number of its bits at its own
-    // width (Stage 29 W-INT1: an Int as UInt64, an Int32 as UInt32).
+    // width (an Int as UInt64, an Int32 as UInt32).
     got = checker_self.check_expr(expr.args[0])
     if !got.is_integer() {
       checker_self.fail(expr.args[0].loc, "puts_u expects an integer")

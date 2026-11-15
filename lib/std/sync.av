@@ -1,4 +1,4 @@
-// std.sync: what tasks share (Stage 29 W8Ca; D35, D299, D300, D355).
+// std.sync: what tasks share.
 //
 //   Channel(T)   passes values from task to task. Channel(T).new is a
 //                rendezvous channel (a send waits for its receive);
@@ -9,27 +9,27 @@
 //                into the channel: on a closed channel it returns false
 //                at once, buffered or not, full or not, and a send
 //                waiting for room or for its receiver returns false when
-//                the channel closes (O691, D371). The values sent before
+//                the channel closes. The values sent before
 //                the close stay for the receivers to drain.
 //   Mutex(T)     guards one value. `m.with { |x| ... }` holds the lock
 //                for the block, x naming the guarded value; the form is
 //                the compiler's (checker.av check_mutex_with, the
 //                lowering in mir/lower_task.av), on this class's two
-//                fields, and its rules (what may leave the block, O231
-//                and O541) are checker/guard.av's.
+//                fields, and its rules (what may leave the block, as
+//                its value or by a statement) are checker/guard.av's.
 //
 // Both stand on the runtime's gates (runtime/avant_task.c): a gate is a
 // word in the object's `gate` field, which the gate builtins take (the
-// compiler passes the field's address, O690); an uncontended lock and
-// unlock are one atomic operation each on that word, and the runtime
-// keeps state for a gate only while a thread waits on it, so nothing is
-// allocated per object and nothing needs freeing (O532). The gate
-// builtins (avant_gate_new, lock, unlock, wait, broadcast) are names of
-// `std` modules only (O436).
+// compiler passes the field's address); an uncontended lock and unlock
+// are one atomic operation each on that word, and the runtime keeps
+// state for a gate only while a thread waits on it, so nothing is
+// allocated per object and nothing needs freeing. The gate builtins
+// (avant_gate_new, lock, unlock, wait, broadcast) are names of `std`
+// modules only.
 //
-// T is any type (O232): the slots are T?, so a class or another Channel
-// or Mutex is an element like an Int. What a send may carry is D35's
-// rule for what crosses a task (checker/guard.av check_send).
+// T is any type: the slots are T?, so a class or another Channel or
+// Mutex is an element like an Int. What a send may carry is the rule
+// for what crosses a task (checker/guard.av check_send).
 
 pub class Channel(T) {
   slots: Array(T?)

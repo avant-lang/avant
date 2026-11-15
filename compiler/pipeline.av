@@ -53,8 +53,8 @@ lib scratch_rt {
   fun avant_tmp_keep
 }
 
-// File and process helpers in runtime/avant_io.c (D140): no /bin/rm,
-// chmod, mkdir, or sh -c pwd. Internal; no prelude name (D132).
+// File and process helpers in runtime/avant_io.c: no /bin/rm, chmod,
+// mkdir, or sh -c pwd. Internal; no prelude name.
 lib fs_rt {
   fun avant_fs_unlink(path: String): Int
   fun avant_fs_remove_tree(path: String): Int
@@ -91,7 +91,7 @@ pub fn process_run_split(path: String, args: Array(String), out: String, err: St
 }
 
 // A tool the compiler runs (cc, re2c, the bind helper, git): stdin is
-// /dev/null, never the compiler's own (Wave D: a tool that reads a
+// /dev/null, never the compiler's own (a tool that reads a
 // non-terminal stdin would take the user's input or hang on a socket).
 pub fn tool_run(path: String, args: Array(String)): Int {
   fs_rt.avant_tool_run(path, args, "", "")
@@ -107,9 +107,9 @@ pub fn tool_run_split(path: String, args: Array(String), out: String, err: Strin
   fs_rt.avant_tool_run(path, args, out, err)
 }
 
-// The process's private scratch directory (D127). Every temporary the
-// compiler writes lives in it; it is removed at exit, and children nest
-// inside it through TMPDIR.
+// The process's private scratch directory. Every temporary the compiler
+// writes lives in it; it is removed at exit, and children nest inside
+// it through TMPDIR.
 pub fn tmp_dir: String {
   scratch_rt.avant_tmp_dir()
 }
@@ -160,7 +160,7 @@ pub class LinkJob {
   pub flags: Array(String) = []
   pub err: String = ""
   pub codegen: String = ""
-  // --cpu=baseline|v2|v3|v4|native (Stage 28 W18S, O140), "" when absent.
+  // --cpu=baseline|v2|v3|v4|native, "" when absent.
   pub cpu: String = ""
 }
 
@@ -228,12 +228,12 @@ pub fn avant_checkout_root: String {
   ""
 }
 
-// The root whose runtime/ the compiler links and compiles against (D149):
+// The root whose runtime/ the compiler links and compiles against:
 // AVANT_ROOT; else a checkout (the parent of the compiler's bin/, then the
 // current directory) when it holds runtime/build/avant_rt.o; else the
 // compiler's own install, the directory of its executable, when that holds
-// one (the release layout, D148); else ".". A checkout wins so that a seed
-// in bin/vX/ links the runtime of the tree it builds.
+// one (the release layout); else ".". A checkout wins so that a seed in
+// bin/vX/ links the runtime of the tree it builds.
 pub fn avant_root: String {
   if v = env_get("AVANT_ROOT") {
     return v
@@ -337,8 +337,8 @@ pub fn compile_program(src: Source, program: Program): IrBox {
   compile_program(src, program, "")
 }
 
-// cov_map is the coverage slot map's default path (D129); empty means
-// the scratch directory, for a program that runs inside this process.
+// cov_map is the coverage slot map's default path; empty means the
+// scratch directory, for a program that runs inside this process.
 pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
   expander = Expander.new(src, program)
   expander.expand()
@@ -361,7 +361,7 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
     diag_puts(err)
     return IrBox.new(false)
   }
-  // The literal regex patterns re2c can match (D150).
+  // The literal regex patterns re2c can match.
   plan = re2c_plan(program)
   for note in plan.notes {
     diag_puts(note)
@@ -380,8 +380,8 @@ pub fn compile_program(src: Source, program: Program, cov_map: String): IrBox {
   }
   if coverage_wanted() {
     // The slot map is written while the program is lowered, before the
-    // driver creates a missing output directory (W10b): its directory
-    // exists first.
+    // driver creates a missing output directory: its directory exists
+    // first.
     if err = cov_map_dir(coverage_map_path(map)) {
       diag_puts(err)
       return IrBox.new(false)
@@ -534,10 +534,10 @@ pub fn cov_map_dir(path: String): String? {
   nil
 }
 
-// AVANT_BACKEND (D176, internal; D210): unset, empty, or "llvm" is the
-// one back end (the lowering to MIR, then llvm/driver.av). Any other
-// value is refused with this message, naming the variable (the old back
-// end it selected retired in Stage 28 W11).
+// AVANT_BACKEND (internal): unset, empty, or "llvm" is the one back end
+// (the lowering to MIR, then llvm/driver.av). Any other value is
+// refused with this message, naming the variable (the old back end it
+// selected is retired).
 pub fn backend_refusal: String? {
   if v = env_get("AVANT_BACKEND") {
     if v.size == 0 || v == "llvm" {
@@ -548,7 +548,7 @@ pub fn backend_refusal: String? {
   nil
 }
 
-// Coverage (D129): AVANT_COVERAGE set to anything but "" or "0".
+// Coverage: AVANT_COVERAGE set to anything but "" or "0".
 pub fn coverage_wanted: Bool {
   if v = env_get("AVANT_COVERAGE"), v.size > 0 {
     if v == "0" {
@@ -559,8 +559,8 @@ pub fn coverage_wanted: Bool {
   false
 }
 
-// The slot map's path (D129): AVANT_COVERAGE_MAP when set, else the
-// default the driver chose (beside the output binary, or the scratch
+// The slot map's path: AVANT_COVERAGE_MAP when set, else the default
+// the driver chose (beside the output binary, or the scratch
 // directory when the program runs inside this process).
 pub fn coverage_map_path(fallback: String): String {
   if v = env_get("AVANT_COVERAGE_MAP"), v.size > 0 {
@@ -569,12 +569,11 @@ pub fn coverage_map_path(fallback: String): String {
   fallback
 }
 
-// The back end's half of compile_program (Stage 28 W5b): the checked
-// program lowered to final-stage MIR (mir/lower.av), carried in the box
-// for compile, run, and dump; a construct the lowering does not support
-// yet stops here with its diagnostic.
-// cov_map: the coverage slot map's path when AVANT_COVERAGE is on (W8b),
-// else empty.
+// The back end's half of compile_program: the checked program lowered to
+// final-stage MIR (mir/lower.av), carried in the box for compile, run,
+// and dump; a construct the lowering does not support yet stops here
+// with its diagnostic. cov_map: the coverage slot map's path when
+// AVANT_COVERAGE is on, else empty.
 pub fn compile_program_llvm(src: Source, program: Program, symbols: SymbolTable, cov_map: String): IrBox {
   low = mir_lower_program(program, symbols, src.path, avant_root(), cov_map)
   if low.err.size > 0 {
@@ -599,7 +598,7 @@ pub fn fill_std_link(program: Program, box: IrBox) {
   }
   for mod in program.mods {
     if mod.name == "std.zlib" {
-      // zlib is vendored inside avant_zlib.o (D146): no -lz.
+      // zlib is vendored inside avant_zlib.o: no -lz.
       box.std_objects.push("${root}/runtime/build/avant_zlib.o")
     }
     if mod.name == "std.base64" {
@@ -611,7 +610,7 @@ pub fn fill_std_link(program: Program, box: IrBox) {
       box.std_objects.push("${root}/runtime/build/yyjson.o")
     }
     if mod.name == "std.regex" {
-      // PCRE2 is vendored inside avant_re.o (D146): no -lpcre2-8.
+      // PCRE2 is vendored inside avant_re.o: no -lpcre2-8.
       box.std_objects.push("${root}/runtime/build/avant_re.o")
     }
     if mod.name == "std.http" {
@@ -679,8 +678,8 @@ pub fn cwd_physical: String {
   fs_rt.avant_fs_cwd()
 }
 
-// The coverage map default for a binary written to out (D129): beside
-// it, absolute, since the program opens it from wherever it runs.
+// The coverage map default for a binary written to out: beside it,
+// absolute, since the program opens it from wherever it runs.
 pub fn coverage_map_beside(out: String): String {
   if coverage_wanted() {
     if out.size > 0 && out[0] == 47 {
@@ -719,8 +718,8 @@ pub fn run_cc(args: Array(String)): Int {
   tool_run("/usr/bin/env", wrapped)
 }
 
-// re2c, in the order D150 set: AVANT_RE2C, the re2c beside the
-// compiler's own executable (a release ships one, D151), then the system's.
+// re2c, in this order: AVANT_RE2C, the re2c beside the compiler's own
+// executable (a release ships one), then the system's.
 pub fn re2c_bin: String {
   if v = env_get("AVANT_RE2C"), file_exists(v) {
     return v
@@ -764,8 +763,8 @@ pub fn compile_re2c(src: String): String {
   cc: Array(String) = []
   cc.push("-c")
   cc.push("-O2")
-  // Placed as the runtime is (Stage 29 WP, runtime/build.sh): the
-  // matcher is linked after the runtime, so its growth moved this code.
+  // Placed as the runtime is (runtime/build.sh): the matcher is linked
+  // after the runtime, so its growth moved this code.
   cc.push("-falign-functions=64")
   cc.push("-falign-loops=32")
   cc.push("-std=c11")

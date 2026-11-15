@@ -47,15 +47,14 @@ pub class TypeResolver {
   struct_inflight: Array(String)
   inst_depth: Int = 0
   // Set while a `fun` signature or a C layout's fields resolve: the only
-  // places a C scalar type (Int8 ... Float32) may be named (Stage 29 W1b).
+  // places a C scalar type (Int8 ... Float32) may be named.
   pub c_scalar_ok: Bool = false
-  // Every declared type name, for "did you mean" (Stage 29 W3a), with
-  // its module (Stage 29 W5c1).
+  // Every declared type name, for "did you mean", with its module.
   type_names: Array(String)
   type_name_mods: Array(String)
   // The module a type name is being resolved in, when the caller knows
   // it (the checker's resolve_in_module, a type's fields): a suggestion
-  // names only a type that module sees (W5c1); "" offers every type.
+  // names only a type that module sees; "" offers every type.
   pub scope_mod: String = ""
   // The type aliases (`type Ty = A | B`): by type_key(module, name), and
   // by the bare name when one module declares it (-1 when two do); the
@@ -135,9 +134,9 @@ pub class TypeResolver {
     self.errors.push(e)
   }
 
-  // Every error counts, kept or not (O163, Stage 29 W1a; O162 fixed the
-  // parser the same way): the bag keeps at most 20 and drops repeats, so
-  // its item count cannot be a mark.
+  // Every error counts, kept or not (the parser counts the same way):
+  // the bag keeps at most 20 and drops repeats, so its item count
+  // cannot be a mark.
   pub fn err_count: Int {
     self.errors.pushes
   }
@@ -183,10 +182,10 @@ pub class TypeResolver {
   }
 
   // The known type name nearest to name, as " (did you mean `String`?)",
-  // or "" when none is close (Stage 29 W3a, D298: a name that is not a
-  // single capital letter is no longer a type parameter).
-  // The suggestion is compiler/suggest.av's (Stage 29 W5c1): the builtin
-  // types first, then the declared ones.
+  // or "" when none is close (a name that is not a single capital letter
+  // is no longer a type parameter). The suggestion is
+  // compiler/suggest.av's: the builtin types first, then the declared
+  // ones.
   pub fn type_hint(name: String): String {
     sg = Suggest.new(name)
     offer_types(sg, 0)
@@ -225,9 +224,9 @@ pub class TypeResolver {
   // A bare type name that types of two modules share (collide), written
   // in module mod_name (a field's type: the checker's views do not reach
   // it): the one such type mod_name sees, its own or an import's pub one,
-  // is pinned with its module; two are ambiguous, named both (Stage 29
-  // W5c1, O224: before, a field said "unknown type Token" even when the
-  // module saw only one Token).
+  // is pinned with its module; two are ambiguous, named both (before, a
+  // field said "unknown type Token" even when the module saw only one
+  // Token).
   pub fn qualify_seen(tn: TypeName, mod_name: String) {
     for a in tn.args {
       qualify_seen(a, mod_name)
@@ -415,7 +414,7 @@ pub class TypeResolver {
       return ty_c_scalar(cs)
     }
     if tn.name == "Int64" {
-      // One integer spelling (Stage 29 W-ADOPT, D300, D317).
+      // One integer spelling.
       fail(tn.loc, removed_int_message("Int64", "Int"))
       return self.t_int
     }
@@ -855,11 +854,11 @@ pub class TypeResolver {
     ty.fields = resolved
   }
 
-  // Pins the user type names inside a type argument (O255, Stage 29
-  // W-FIX1b): each is given the module of the type it resolves to here,
-  // where the generic is used, and marked, so the instance's fields and
-  // methods, which are checked in the generic's own module, read the
-  // same types. Type parameters and built-in names are left as they are.
+  // Pins the user type names inside a type argument: each is given the
+  // module of the type it resolves to here, where the generic is used,
+  // and marked, so the instance's fields and methods, which are checked
+  // in the generic's own module, read the same types. Type parameters
+  // and built-in names are left as they are.
   pub fn pin_type_name(tn: TypeName) {
     if !tn.fn_type && tn.members.size == 0 && !tn.pinned && tn.args.size == 0 {
       if al = find_alias(tn) {
@@ -1289,7 +1288,7 @@ pub fn c_field_ok(ty: Ty): Bool {
   if ty.is_integer() {
     return true
   }
-  // An enum is C's int in a C layout (Stage 29 W5a1, D358).
+  // An enum is C's int in a C layout.
   if ty.is_enum() {
     return true
   }
@@ -1433,7 +1432,7 @@ pub fn load_types(program: Program): TypeResolver {
     }
     sty = ty_named(tyk_struct(), sdef.name)
     if decl = sdef.enum_of {
-      // An enum (Stage 29 W5a1): its own type kind, with its members.
+      // An enum: its own type kind, with its members.
       sty = ty_named(tyk_enum(), sdef.name)
       info = TyEnum.new()
       info.names = decl.names

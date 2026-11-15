@@ -1,11 +1,11 @@
-// The receiver inside a method (Stage 29 W3b, B6, D292). A field is
-// written `self.name = ...`: a bare `name = ...` where `name` is a field
-// of the receiver (no local of that name) is refused, naming both ways
-// out. A bare name resolves, in order: a local or parameter; a field of
-// the receiver (read); a method of the receiver (call); a function of the
-// module or the prelude. A bare call that fits both a method of the
-// receiver and a function is refused, naming `self.name(...)` and the
-// function's qualified form: nothing wins silently (D308's rule).
+// The receiver inside a method. A field is written `self.name = ...`: a
+// bare `name = ...` where `name` is a field of the receiver (no local of
+// that name) is refused, naming both ways out. A bare name resolves, in
+// order: a local or parameter; a field of the receiver (read); a method
+// of the receiver (call); a function of the module or the prelude. A bare
+// call that fits both a method of the receiver and a function is refused,
+// naming `self.name(...)` and the function's qualified form: nothing wins
+// silently.
 
 import location
 import source
@@ -99,11 +99,11 @@ pub fn (checker_self: Checker) refuse_bare_field_write(target: Expr, loc: Locati
   checker_self.fail(target.loc, "${target.ident} is a field of ${owner}; write ${checker_self.self_name}.${target.ident} = ... to change the field, or choose another name for a local")
 }
 
-// self inside a lambda of an inherent method (Stage 29 W3b, B7, S13):
-// every enclosing lambda captures it, by value, since self is never
-// reassigned (a class receiver's reference, a struct receiver's copy);
-// the receiver's type, or nil after refusing (an external method's
-// receiver may be reassigned, so it is not captured this way).
+// self inside a lambda of an inherent method: every enclosing lambda
+// captures it, by value, since self is never reassigned (a class
+// receiver's reference, a struct receiver's copy); the receiver's
+// type, or nil after refusing (an external method's receiver may be
+// reassigned, so it is not captured this way).
 pub fn (checker_self: Checker) capture_receiver(loc: Location): Ty? {
   if checker_self.self_name != "self" {
     checker_self.fail(loc, "a lambda cannot capture the receiver ${checker_self.self_name} of an external method; copy it into a local first")
@@ -167,13 +167,12 @@ pub fn (checker_self: Checker) refuse_copy_write(target: Expr, loc: Location) {
   }
 }
 
-// A `for` loop's variable (D329, Stage 29 W-FIX1b; O237, O434). The loop
-// is a `while` over a hidden counter: a range's variable is that counter,
-// an array's variable is a copy of the element, stored again at each
-// step. The parser marks the loop's own stores (for_kind 3 and 4);
-// note_for_var records each one's target with the scope that holds it,
-// so a name the body binds anew (an if-assign, a block parameter) is not
-// taken for the loop's.
+// A `for` loop's variable. The loop is a `while` over a hidden counter: a
+// range's variable is that counter, an array's variable is a copy of the
+// element, stored again at each step. The parser marks the loop's own
+// stores (for_kind 3 and 4); note_for_var records each one's target with
+// the scope that holds it, so a name the body binds anew (an if-assign, a
+// block parameter) is not taken for the loop's.
 pub fn (checker_self: Checker) note_for_var(name: String, kind: Int) {
   at = checker_self.lookup_index(name)
   for i in 0..checker_self.for_names.size {

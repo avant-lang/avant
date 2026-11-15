@@ -1,17 +1,17 @@
-// The LLVM emitter's core (Stage 28 W5a; stages/stage28/mir.md 11): the
-// emitter state, LLVM type and constant texts, symbols, and the two
-// primitives every statement is built from: a place's address and an
-// operand's value. Rule E1 is structural here: an operand is loaded from
-// its local at the point of use, once per occurrence, and no LLVM value is
-// kept across MIR statements (only inside one statement's expansion).
-// Rule E2 (as amended by W9b, D207, and Stage 28 W17b): every load and
-// store of a slot is plain (slot_vol), in a shared module too; until W17b
-// a shared module's slot accesses were volatile, because another thread's
-// collection could read and rewrite them at any instruction (D191).
-// emit_gc.av holds the GC sequences, emit.av the statements, functions,
-// and the module.
+// The LLVM emitter's core: the emitter state, LLVM type and constant
+// texts, symbols, and the two primitives every statement is built from: a
+// place's address and an operand's value. Rule E1 is structural here: an
+// operand is loaded from its local at the point of use, once per
+// occurrence, and no LLVM value is kept across MIR statements (only inside
+// one statement's expansion). Rule E2: every load and store of a slot is
+// plain (slot_vol), in a shared module too; before, a shared module's slot
+// accesses were volatile, because another thread's collection could read
+// and rewrite them at any instruction. emit_gc.av holds the GC sequences,
+// emit.av the statements, functions, and the module.
 //
-// D188 and D192: LlEmit holds 27 words; no array of structs or unions.
+// Kept within what an older seed's type maps traced (see
+// compiler/checker.av, FlowFacts): LlEmit holds 27 words; no array of
+// structs or unions.
 
 import source
 import mir.types
@@ -73,8 +73,8 @@ pub class LlEmit {
     self.tloc_seen = Hash(String, Int).new()
   }
 
-  // The source site of the statement being emitted (Stage 29 W4b2, D295
-  // R16), for a trap's message.
+  // The source site of the statement being emitted, for a trap's
+  // message.
   pub fn site(loc: MLoc) {
     self.cur_file = loc.file()
     self.cur_line = loc.line()
@@ -83,9 +83,9 @@ pub class LlEmit {
 
   // The site's number N in the module's table of trap texts,
   // @__avant_trap_sites ("file:line:col", one entry per text), the last
-  // argument of a trap's _at form (D295 R16). An immediate, not the
-  // text's address: a constant address in a cold block was hoisted into
-  // hot loops as a live register (+5.8% instructions on Maze::AStar).
+  // argument of a trap's _at form. An immediate, not the text's
+  // address: a constant address in a cold block was hoisted into hot
+  // loops as a live register (+5.8% instructions on Maze::AStar).
   pub fn site_ref: String {
     path = "?"
     if self.cur_file >= 0 && self.cur_file < self.m.files.size {
@@ -217,15 +217,15 @@ pub class LlEmit {
     ll_local("_${n}.${name}")
   }
 
-  // E2 as amended by Stage 28 W17b: no slot access is volatile. A
-  // collection reads and rewrites a thread's slots only while that thread
-  // is stopped at a safepoint (a collecting call, the poll) or native
-  // (inside a call), in a shared module as in a single-threaded one
-  // (gc-design.md 4.4, the handshake of W17a); the slot's address escapes
-  // to the runtime at gc.roots, so LLVM must assume every such call reads
-  // and writes the slot, and the reload rule (5.3) rereads it after the
-  // call anyway. (W9b, D207: volatile only in a shared module, where
-  // another thread's collection could touch the slot at any instruction.)
+  // Rule E2: no slot access is volatile. A collection reads and rewrites
+  // a thread's slots only while that thread is stopped at a safepoint (a
+  // collecting call, the poll) or native (inside a call), in a shared
+  // module as in a single-threaded one (the collector's safepoint
+  // handshake); the slot's address escapes to the runtime at gc.roots, so
+  // LLVM must assume every such call reads and writes the slot, and the
+  // reload rule (5.3) rereads it after the call anyway. (volatile only in
+  // a shared module, where another thread's collection could touch the
+  // slot at any instruction.)
   pub fn slot_vol(local: Int): Bool {
     false
   }

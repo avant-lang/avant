@@ -41,14 +41,14 @@ lib job_rt {
   fun avant_job_wait: Int
   fun avant_job_status: Int
   fun avant_job_signal: Int
-  // The CPUs the process may use (its affinity mask; Stage 29 W8Cc, O700).
+  // The CPUs the process may use (its affinity mask).
   fun avant_usable_cpus: Int
 }
 
-// One test job (D131): /usr/bin/env with its variables and command as
-// arguments, stdout and stderr to log. No shell: statuses come from
-// waitpid, and the runtime can stop every job's process group on a signal.
-// kind 0 compiles file, 1 runs its serial work, 2 runs one parallel name.
+// One test job: /usr/bin/env with its variables and command as arguments,
+// stdout and stderr to log. No shell: statuses come from waitpid, and the
+// runtime can stop every job's process group on a signal. kind 0 compiles
+// file, 1 runs its serial work, 2 runs one parallel name.
 pub class JobCmd {
   args: Array(String)
   log: String = ""
@@ -72,10 +72,10 @@ pub class JobCmd {
   }
 }
 
-// Keeps up to limit jobs running and hands back each one as it finishes
-// (D136). Jobs are added while others run, so a file's run starts as soon
-// as its own compile is done: there is no phase barrier. A free slot takes
-// a waiting run before a waiting compile, and the earliest file first.
+// Keeps up to limit jobs running and hands back each one as it finishes.
+// Jobs are added while others run, so a file's run starts as soon as its
+// own compile is done: there is no phase barrier. A free slot takes a
+// waiting run before a waiting compile, and the earliest file first.
 pub class JobSched {
   jobs: Array(JobCmd) = []
   limit: Int = 1
@@ -313,8 +313,8 @@ fn listed(paths: Array(String), path: String): Bool {
   false
 }
 
-// filter and matches (O330): `--name`'s pattern and the file in which a
-// test process writes how many names it matched; both empty except for a
+// filter and matches: `--name`'s pattern and the file in which a test
+// process writes how many names it matched; both empty except for a
 // file's serial run.
 fn env_base(compiler: String, names: String, only: String, frag: String, filter: String, matches: String): Array(String) {
   a: Array(String) = []
@@ -410,7 +410,7 @@ fn emit_file(host: TestHost, f: FileRun) {
 }
 
 // How the first failed job of a file ended, for its FAIL line and its
-// JUnit failure (O520): a test process that a signal killed was only
+// JUnit failure: a test process that a signal killed was only
 // `FAIL file` before. The signal is named because an exit status of
 // 128+n cannot tell `exit 141` from SIGPIPE.
 fn job_failed(f: FileRun, cmd: JobCmd) {
@@ -472,9 +472,9 @@ fn take_par_logs(f: FileRun) {
   }
 }
 
-// [test] first (D136): the listed files move to the front in the listed
-// order and the rest keep walk order. Applied after --shard picks its
-// slice, so a shard's files do not depend on the list.
+// [test] first: the listed files move to the front in the listed order
+// and the rest keep walk order. Applied after --shard picks its slice,
+// so a shard's files do not depend on the list.
 fn order_first(files: Array(FileRun), first_abs: Array(String)): Array(FileRun) {
   if first_abs.size == 0 {
     return files
@@ -508,9 +508,9 @@ fn order_first(files: Array(FileRun), first_abs: Array(String)): Array(FileRun) 
   out
 }
 
-// Runs files through one scheduler (D136): each file's serial work is
-// queued when its compile finishes, its parallel names when its serial
-// work finishes (D84), and the file is reported when its last job ends.
+// Runs files through one scheduler: each file's serial work is queued
+// when its compile finishes, its parallel names when its serial work
+// finishes, and the file is reported when its last job ends.
 fn run_many(host: TestHost, files: Array(FileRun)) {
   if files.size == 0 {
     return
@@ -528,7 +528,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     args.push(f.abs)
     args.push(f.bin)
     args.push("--debug")
-    // The tests are local runs: the machine's highest level (O140).
+    // The tests are local runs: the machine's highest level.
     args.push("--cpu=${llvm_cpu_name(llvm_host_level())}")
     cjob = JobCmd.new(args, "${host.fresh()}.log", 0, i)
     cjob.what = "the compile"
@@ -574,9 +574,9 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
           f.parallels.push(name)
         }
       }
-      // `--name` (O330): a file whose serial run passed, matched no name
-      // and listed no parallel body was not selected: no line, not
-      // counted, not in the JUnit report.
+      // `--name`: a file whose serial run passed, matched no name and
+      // listed no parallel body was not selected: no line, not counted,
+      // not in the JUnit report.
       if cmd.matches.size > 0 {
         if cmd.code == 0 && f.ok && f.parallels.size == 0 && !file_exists(cmd.matches) {
           f.unmatched = true
@@ -628,11 +628,11 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
 }
 
 // The length of the character XML 1.0 can carry that starts at byte i
-// of s, or 0 (Stage 29 W-FIX1f2, O620). The report is UTF-8, and XML 1.0
-// allows tab, line feed, carriage return and the characters from U+0020
-// on, except the surrogates, U+FFFE and U+FFFF, in CDATA as in text and
-// attributes: a control character (a terminal colour's escape), a byte
-// that is not UTF-8, and those three are not allowed.
+// of s, or 0. The report is UTF-8, and XML 1.0 allows tab, line feed,
+// carriage return and the characters from U+0020 on, except the
+// surrogates, U+FFFE and U+FFFF, in CDATA as in text and attributes: a
+// control character (a terminal colour's escape), a byte that is not
+// UTF-8, and those three are not allowed.
 fn xml_char_len(s: String, i: Int): Int {
   c = s[i]
   if c < 128 {
@@ -679,10 +679,10 @@ fn xml_char_len(s: String, i: Int): Int {
 }
 
 // s with each byte XML 1.0 cannot carry written as a visible escape,
-// \xNN (two lowercase hex digits; O620), so the report stays XML and
-// shows where the byte was. A text without such a byte is returned as
-// it is. A backslash is not escaped: the report is read by people, and
-// \x1b in it means the byte.
+// \xNN (two lowercase hex digits), so the report stays XML and shows
+// where the byte was. A text without such a byte is returned as it is.
+// A backslash is not escaped: the report is read by people, and \x1b
+// in it means the byte.
 fn xml_chars(s: String): String {
   i = 0
   while i < s.size {
@@ -735,13 +735,12 @@ fn xml_escape(text: String): String {
   b.to_s()
 }
 
-// The text of a CDATA section (Stage 29 W-FIX1f, O596): a section ends
-// at its first "]]>", so each one in the text is split across two
-// sections, "]]" ending the first and ">" opening the next, and a parser
-// reads the text back byte for byte. (Escaping the output as text
-// instead would turn every < and & a diagnostic quotes into an entity
-// in the report file.) A byte XML cannot carry is written as \xNN
-// first (xml_chars, O620).
+// The text of a CDATA section: a section ends at its first "]]>", so
+// each one in the text is split across two sections, "]]" ending the
+// first and ">" opening the next, and a parser reads the text back byte
+// for byte. (Escaping the output as text instead would turn every < and
+// & a diagnostic quotes into an entity in the report file.) A byte XML
+// cannot carry is written as \xNN first (xml_chars).
 fn cdata_text(text: String): String {
   s = xml_chars(text)
   b = buf_new()
@@ -881,7 +880,7 @@ fn write_junit(path: String, files: Array(FileRun)) {
     // A file without fragments is one case. A failed file whose
     // fragments count no failure (a process killed after it wrote its
     // fragment, a parallel test killed before it wrote one) gets one
-    // too, so the report never shows a failed file as passing (O520).
+    // too, so the report never shows a failed file as passing.
     if fragtext.size == 0 || (!f.ok && frag_bad == 0) {
       fb_tests += 1
       tests += 1
@@ -1047,8 +1046,8 @@ pub fn driver_test(args: Array(String)) {
     }
   }
   if jobs < 1 {
-    // The CPUs this process may use, as the task pool's bound (O700): a
-    // run under `taskset -c 0-3` or in a container's cpuset starts four
+    // The CPUs this process may use, as the task pool's bound: a run
+    // under `taskset -c 0-3` or in a container's cpuset starts four
     // test processes, not one per online processor.
     jobs = job_rt.avant_usable_cpus()
   }
@@ -1275,8 +1274,8 @@ pub fn driver_test(args: Array(String)) {
   }
   bad = host.bad
   good = host.good
-  // `--name` that no file matched (O330) is an error naming the pattern
-  // and the files.
+  // `--name` that no file matched is an error naming the pattern and
+  // the files.
   if name_pat.size > 0 && bad + good == 0 {
     if files.size == 1 {
       test_fail("--name ${name_pat} matches no check, test or parallel test in ${files[0].rel}")

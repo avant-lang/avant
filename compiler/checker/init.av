@@ -1,19 +1,19 @@
-// Field initialization (Stage 29 W3b, B5, D292): no field is ever read
-// unset. A field whose type has a natural zero (`0`, `0.0`, `false`, `""`,
-// `nil` for any `T?`, a null `Ptr`, a struct of such fields) starts at it;
-// a field with a written default starts at that value (evaluated in
-// declaration order before `initialize`). Every other field (a class,
-// `Array`, `Hash`, `Buf`, `Bytes`, a `fn`, a union without `nil`, a struct
-// holding one) is required: `initialize` sets it on every path before any
-// read of it and before `self` escapes (a method call on `self`, `self` as
-// a value, a lambda that uses the receiver); otherwise the class is
-// refused with an error that names the field and the ways out. Checked
-// after the bodies, on every class and every generic class instance (a
-// field of type `T` is required when `T` has no zero). The same walk finds
-// the fields whose zero needs a store (a String's "") that initialize sets
-// on every path before any read and before self escapes: their zero
-// store is left out (Field.set_by_init), so a class whose initialize sets
-// its strings builds exactly as before.
+// Field initialization: no field is ever read unset. A field whose type
+// has a natural zero (`0`, `0.0`, `false`, `""`, `nil` for any `T?`, a
+// null `Ptr`, a struct of such fields) starts at it; a field with a
+// written default starts at that value (evaluated in declaration order
+// before `initialize`). Every other field (a class, `Array`, `Hash`,
+// `Buf`, `Bytes`, a `fn`, a union without `nil`, a struct holding one) is
+// required: `initialize` sets it on every path before any read of it and
+// before `self` escapes (a method call on `self`, `self` as a value, a
+// lambda that uses the receiver); otherwise the class is refused with an
+// error that names the field and the ways out. Checked after the bodies,
+// on every class and every generic class instance (a field of type `T` is
+// required when `T` has no zero). The same walk finds the fields whose
+// zero needs a store (a String's "") that initialize sets on every path
+// before any read and before self escapes: their zero store is left out
+// (Field.set_by_init), so a class whose initialize sets its strings builds
+// exactly as before.
 
 import location
 import source
@@ -350,7 +350,7 @@ pub fn (checker_self: Checker) init_value(w: InitWalk, v: Expr, set: Array(Strin
 // A `switch` statement: with `else`, every arm; without, a miss runs
 // nothing, so the set before it is one of the ways out, unless the
 // switch is over an enum or a union, which the checker has made name
-// every member (Stage 29 W5b1, O718): then only its arms are.
+// every member: then only its arms are.
 pub fn (checker_self: Checker) init_switch(w: InitWalk, e: Expr, set: Array(String)): Array(String)? {
   if e.op == tk_if() && e.else_body.size == 1 && e.cases.size == 0 {
     // A value `if` (the checker's form: its one statement is the if,

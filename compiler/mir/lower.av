@@ -1,16 +1,15 @@
-// The lowering: AST + checker facts -> MIR (Stage 28 W5b; stages/stage28/
-// mir.md 5.9 step 1, W5.3). This file holds the lowering's state, the
-// program and function level, locations, and refusals; statements are in
-// lower_stmt.av, expressions in lower_expr.av, types and names in
-// lower_ty.av; heap strings in lower_str.av. The result is stage-lowered
-// MIR (Avant calls `collects`, no gc.*, kinds unset); mir_lower_program
-// verifies it at stage lowered, then runs the leaf and root-slot passes
-// (gc.av, 5.9) so the module is ready for verify(final) and emission.
+// The lowering: AST + checker facts -> MIR (5.9 step 1). This file holds
+// the lowering's state, the program and function level, locations, and
+// refusals; statements are in lower_stmt.av, expressions in
+// lower_expr.av, types and names in lower_ty.av; heap strings in
+// lower_str.av. The result is stage-lowered MIR (Avant calls `collects`,
+// no gc.*, kinds unset); mir_lower_program verifies it at stage lowered,
+// then runs the leaf and root-slot passes (gc.av, 5.9) so the module is
+// ready for verify(final) and emission.
 //
-// The subset is the scalars (W5), heap strings (W6a), structs and
-// classes with their plain methods and constructors (W6b,
-// lower_agg.av), and arrays, hashes, Buf, and Bytes (W6c, lower_arr.av,
-// lower_hash.av): every other
+// The subset is the scalars, heap strings, structs and classes with
+// their plain methods and constructors (lower_agg.av), and arrays,
+// hashes, Buf, and Bytes (lower_arr.av, lower_hash.av): every other
 // construct stops the lowering with `not yet supported by the llvm back
 // end: <what>` at its location (refuse), and the module is not used.
 //
@@ -45,7 +44,7 @@ pub class MirLowered {
   }
 }
 
-// A lambda waiting for its thunk (W7b): the lambda and its symbol.
+// A lambda waiting for its thunk: the lambda and its symbol.
 pub class MirLam {
   pub expr: Expr
   pub sym: String = ""
@@ -56,13 +55,13 @@ pub class MirLam {
   }
 }
 
-// The closure state of the function being lowered (W7b, lower_fn.av):
-// the captured names of a thunk (its environment's fields, in order) and
-// the environment local; the boxed names of the function or thunk, each
-// with its box local and whether the box was allocated yet (the old
-// back end's first need, in lowering order); the type of each name a
-// lambda captures, by enclosing symbol (`sym|name`, from the prewalk);
-// the lambdas waiting for their thunks; the lambda counter per enclosing
+// The closure state of the function being lowered (lower_fn.av): the
+// captured names of a thunk (its environment's fields, in order) and the
+// environment local; the boxed names of the function or thunk, each with
+// its box local and whether the box was allocated yet (the old back
+// end's first need, in lowering order); the type of each name a lambda
+// captures, by enclosing symbol (`sym|name`, from the prewalk); the
+// lambdas waiting for their thunks; the lambda counter per enclosing
 // symbol (8.2: `#lamN` in source order).
 pub class MirClosures {
   pub caps: Array(String) = []
@@ -114,9 +113,9 @@ pub class MirFfi {
   }
 }
 
-// A spawn or `.parallel` thunk waiting to be lowered (W8b, lower_task.av):
-// the call, its symbol (`<enclosing>#spawnN`, `#parN`, 8.2), and its
-// place in the pre-walk (the old back end's pending order).
+// A spawn or `.parallel` thunk waiting to be lowered (lower_task.av): the
+// call, its symbol (`<enclosing>#spawnN`, `#parN`, 8.2), and its place in
+// the pre-walk (the old back end's pending order).
 pub class MirTask {
   pub expr: Expr
   pub sym: String = ""
@@ -131,8 +130,8 @@ pub class MirTask {
   }
 }
 
-// The thread state (W8b): the thunks to lower (in pre-walk order, each
-// queued when its call is lowered), the pre-walk counters, and the open
+// The thread state: the thunks to lower (in pre-walk order, each queued
+// when its call is lowered), the pre-walk counters, and the open
 // `Mutex.with` places (the block parameter's name, the local holding the
 // mutex, the cell's field index), innermost last.
 pub class MirTasks {
@@ -146,18 +145,18 @@ pub class MirTasks {
   pub pfields: Array(Int) = []
   // A field store's place is being formed (lower_agg.av
   // lower_field_assign): the array index it goes through checks the
-  // freeze (O758, Stage 29 W8Cc; lower_arr.av index_place).
+  // freeze (lower_arr.av index_place).
   pub store_check: Bool = false
   // Which struct methods change their receiver (made at the first
   // method call on an element in a program that spawns).
   pub writes: ReceiverWrites? = nil
 }
 
-// The coverage state (W8b, lower_cov.av; audit 5): whether the build
-// counts, the slot map's path, and every counted point in lowering order
-// (kind 1 statement, 2 branch, 3 function, 4 line touch; its path, line,
-// name, and the rank of the function it is in, which orders the slots as
-// the old back end numbers them).
+// The coverage state (lower_cov.av): whether the build counts, the slot
+// map's path, and every counted point in lowering order (kind 1
+// statement, 2 branch, 3 function, 4 line touch; its path, line, name,
+// and the rank of the function it is in, which orders the slots as the
+// old back end numbers them).
 pub class MirCov {
   pub on: Bool = false
   pub map_path: String = ""
@@ -180,12 +179,12 @@ pub class MirLower {
   lw_err: String = ""
   pub lw_fn_syms: Hash(String, String)
   // A constructor's resolved name (`ty_owned_symbol(t, "new")`) to its
-  // class's index in lw_prog.classes (VALK-A1: inline constructors).
+  // class's index in lw_prog.classes (inline constructors).
   pub lw_ctor_cls: Hash(String, Int)
   pub lw_vars: Hash(String, Int)
   // The arguments of the calls being lowered whose defaults may name an
-  // earlier parameter (O546): each hidden name (ast arg_frame_name) with
-  // the operand lowered for that argument, innermost call last.
+  // earlier parameter: each hidden name (ast arg_frame_name) with the
+  // operand lowered for that argument, innermost call last.
   pub lw_arg_names: Array(String)
   pub lw_arg_ops: Array(MOperand)
   pub lw_heads: Array(Int)
@@ -295,7 +294,7 @@ pub class MirLower {
   }
 
   // ---- locals: one per (source name, MIR type), as the old back end's
-  // named locals (W5.2).
+  // named locals.
   pub fn var_key(name: String, ty: Int): String {
     "${name}|${ty}"
   }
@@ -322,8 +321,8 @@ pub class MirLower {
   pub fn lower_program {
     p = self.lw_prog
     fns = self.lowered_functions()
-    // W6b: the layouts and type ids of every class (program order, one
-    // allocator, D186) and the symbols of methods and constructors.
+    // The layouts and type ids of every class (program order, one
+    // allocator) and the symbols of methods and constructors.
     self.note_classes()
     if self.failed() {
       return
@@ -351,9 +350,9 @@ pub class MirLower {
       i += 1
     }
     self.note_ctor_symbols()
-    // W7b: lambda symbols, then the box and environment maps in the old
-    // back end's order (decl.av collect_arrays), before any element
-    // buffer's id.
+    // Lambda symbols, then the box and environment maps in the old back
+    // end's order (decl.av collect_arrays), before any element buffer's
+    // id.
     i = 0
     while i < fns.size && !self.failed() {
       prewalk_function(fns[i])
@@ -386,8 +385,8 @@ pub class MirLower {
     self.lw_cov.rank = 1000000
     self.lower_ctors()
     self.lower_pending_lambdas()
-    // W8b: the spawn and .parallel thunks after the constructors (the old
-    // back end's order), with the lambdas they make.
+    // The spawn and .parallel thunks after the constructors (the old back
+    // end's order), with the lambdas they make.
     self.lower_pending_tasks()
     lower_trampolines(fns)
     self.lower_cb_thunks()
@@ -407,10 +406,10 @@ pub class MirLower {
     self.cov_finish()
   }
 
-  // The lazy functions a call reaches (ast.av Function.lazy, Stage 29
-  // W5a1: an enum's name, from_i, from_name, members), lowered after the
-  // rest, until no new call reaches one (one may call another: an error
-  // enum's text calls its message, which calls name).
+  // The lazy functions a call reaches (ast.av Function.lazy, an enum's
+  // name, from_i, from_name, members), lowered after the rest, until no
+  // new call reaches one (one may call another: an error enum's text
+  // calls its message, which calls name).
   pub fn lower_lazy(fns: Array(Function)) {
     called = Hash(String, Int).new()
     scanned = 0
@@ -449,8 +448,8 @@ pub class MirLower {
 
   // The functions to lower, in program order (program_all_functions):
   // every one but the generic templates and the methods of generic
-  // struct and class templates (the checker's instances stand for them,
-  // D175).
+  // struct and class templates (the checker's instances stand for
+  // them).
   pub fn lowered_functions: Array(Function) {
     out: Array(Function) = []
     for f in self.lw_all {
@@ -518,7 +517,7 @@ pub class MirLower {
     self.lw_ffi.reset_pins()
   }
 
-  // No captures, no boxes: the closure state of a new function (W7b).
+  // No captures, no boxes: the closure state of a new function.
   pub fn reset_closures {
     self.lw_cl.caps = mir_no_names()
     self.lw_cl.env = -1
@@ -577,7 +576,7 @@ pub class MirLower {
       if self.lw_main {
         sret = mt_i32()
       }
-      // The source name a trap prints (W4b2): Owner.name for a method.
+      // The source name a trap prints: Owner.name for a method.
       sname = fnn.name
       if fnn.owner.size > 0 {
         sname = "${fnn.owner}.${fnn.name}"
@@ -631,8 +630,8 @@ pub class MirLower {
     self.cov_init()
   }
 
-  // The end of a body that falls through (W5.3): a void function returns
-  // (a void main returns 0); with a result the end is unreachable, since
+  // The end of a body that falls through: a void function returns (a
+  // void main returns 0); with a result the end is unreachable, since
   // the checker requires a return (E4007) and the tail value was lowered
   // as one.
   pub fn finish_body(fnn: Function) {
@@ -695,8 +694,8 @@ pub class MirLower {
     if rty == mt_int() {
       t = self.lw_b.temp(mt_int())
       self.lw_b.call(t, sym, none)
-      // run's Int is the exit status: outside 0..255 it traps (W4b2,
-      // D295 R14; lower_stmt.av exit_status).
+      // run's Int is the exit status: outside 0..255 it traps
+      // (lower_stmt.av exit_status).
       b = self.lw_b
       u = b.temp(mt_u64())
       b.assign(b.pl(u), b.rv_cast(b.copy_local(t), mt_u64()))
@@ -743,7 +742,7 @@ pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: Stri
 }
 
 // cov_map: the coverage slot map's path when the build counts
-// (AVANT_COVERAGE, audit 5), else empty.
+// (AVANT_COVERAGE), else empty.
 pub fn mir_lower_program(program: Program, symbols: SymbolTable, root_path: String, avant_root: String, cov_map: String): MirLowered {
   dir = ""
   i = root_path.size - 1

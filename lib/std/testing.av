@@ -1,7 +1,7 @@
 // The report's lines (runtime/avant_io.c, avant_test_write): all of a
 // line to standard output, or the process stops with the stream and the
-// reason, status 1, as `puts` does (the Valk stage, VALK-TM3, O698; a
-// raw write(2) whose result was ignored before).
+// reason, status 1, as `puts` does (before, a raw write(2) whose
+// result was ignored).
 lib avant_testing_io {
   fun avant_test_write(buf: String, count: Int)
 }
@@ -10,23 +10,23 @@ lib avant_testing_tmp {
   fun avant_tmp_new_dir: String
 }
 
-// A failed check fails the process (D84, runtime/avant_io.c): if the
+// A failed check fails the process (runtime/avant_io.c): if the
 // program would exit 0, it exits 1.
 lib avant_testing_status {
   fun avant_test_fail
 }
 
-// File and process helpers in runtime/avant_io.c (D140). Internal.
+// File and process helpers in runtime/avant_io.c. Internal.
 lib avant_testing_fs {
   fun avant_fs_chmod_x(path: String): Int
   fun avant_process_run_split(path: String, args: Array(String), out: String, err: String): Int
 }
 
 // The length of the character XML 1.0 can carry that starts at byte i
-// of s, or 0 (Stage 29 W-FIX1f2, O620): tab, line feed, carriage return
-// and UTF-8 characters from U+0020 on, except the surrogates, U+FFFE and
-// U+FFFF. Every other byte (a control character such as a terminal
-// colour's escape, a byte that is not UTF-8) is written as \xNN.
+// of s, or 0: tab, line feed, carriage return and UTF-8 characters from
+// U+0020 on, except the surrogates, U+FFFE and U+FFFF. Every other byte
+// (a control character such as a terminal colour's escape, a byte that
+// is not UTF-8) is written as \xNN.
 fn testing_xml_char_len(s: String, i: Int): Int {
   c = s[i]
   if c < 128 {
@@ -109,8 +109,8 @@ fn testing_read(path: String): String {
 }
 
 // Runs bin with args, stdout and stderr to their own files, and returns
-// its status (D140): no sh script. /usr/bin/env -u keeps the runner's
-// listing and selection variables away from the program it starts.
+// its status: no sh script. /usr/bin/env -u keeps the runner's listing
+// and selection variables away from the program it starts.
 fn testing_run(bin: String, args: Array(String), out_path: String, err_path: String): Int {
   wrapped: Array(String) = []
   wrapped.push("-u")
@@ -180,10 +180,10 @@ pub class Test {
       if v = env_get("AVANT_TEST_NAMES"), v.size > 0 {
         self.names_path = v
       }
-      // `avant test --name PATTERN` (O330, VALK-TM2): only the checks,
-      // `test` bodies and `parallel` bodies whose names contain PATTERN
-      // run; a selected body runs whole. The runner reads the file
-      // AVANT_TEST_MATCHES names to tell a file where nothing matched.
+      // `avant test --name PATTERN`: only the checks, `test` bodies and
+      // `parallel` bodies whose names contain PATTERN run; a selected
+      // body runs whole. The runner reads the file AVANT_TEST_MATCHES
+      // names to tell a file where nothing matched.
       if v = env_get("AVANT_TEST_FILTER"), v.size > 0 {
         self.filter = v
       }
@@ -310,7 +310,7 @@ pub class Test {
     b.push_str("</testsuite>\n")
     // The runner builds its report from these fragments: one that is
     // not written is a report without this process's checks, so the
-    // run fails and says why (O416, Stage 29 W-FIX1d; the failure was
+    // run fails and says why (the failure was
     // dropped).
     _ = file_write(frag, b.to_s()) else e {
       report_lost("the JUnit fragment was not written: ${e.message()}")
@@ -354,8 +354,8 @@ pub class Test {
     false
   }
 
-  // A new, empty directory for the test's files (D128, Go's t.TempDir).
-  // Each call makes another. They live in the program's private scratch
+  // A new, empty directory for the test's files (Go's t.TempDir). Each
+  // call makes another. They live in the program's private scratch
   // directory and are removed when the program exits.
   pub fn temp_dir: String {
     avant_testing_tmp.avant_tmp_new_dir()
@@ -428,8 +428,8 @@ pub class Test {
       i += 1
     }
     // The runner starts the parallel bodies from this file: if it is
-    // not written they never run, so the run fails and says why (O416;
-    // the failure was dropped).
+    // not written they never run, so the run fails and says why (the
+    // failure was dropped).
     _ = file_write(self.names_path, b.to_s()) else e {
       report_lost("the parallel names were not written, so the parallel tests cannot run: ${e.message()}")
       return
@@ -461,11 +461,11 @@ pub class Test {
       return nil
     }
     // No runner is listening (`avant run`, or the compiled binary run
-    // directly; O320, Stage 29 W-FIX1d): nothing would start this body
-    // in a process of its own, so it runs here, in source order. Before,
-    // it was skipped without a word and `finish` reported the serial
-    // checks alone with status 0. The names are checked as the runner
-    // checks them.
+    // directly): nothing would start this body in a process of its
+    // own, so it runs here, in source order. Before, it was skipped
+    // without a word and `finish` reported the serial checks alone
+    // with status 0. The names are checked as the runner checks
+    // them.
     if remember_parallel(name) {
       self.depth += 1
       body()

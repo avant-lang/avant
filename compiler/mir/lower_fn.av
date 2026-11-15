@@ -1,14 +1,13 @@
-// The lowering of `fn` values, lambdas, and closures (Stage 28 W7b;
-// stages/stage28/mir.md W7b, audit 1.5): an `fn` value is the `fnval`
-// pair `{ ref env, code }` by value (2.7, 4.3), its layout named by mty
-// (`%fn(Int):Int`); a named function used as a value is its trampoline
-// `<sym>#fnval` with a null environment; a lambda is its thunk
-// `<enclosing>#lamN` (8.2) with a null environment when it captures
-// nothing, else a fresh environment record `%env(<thunk>)` holding one
-// box per capture in capture order. Captures are by reference (audit
-// 1.5.4, trick #21): a captured variable lives in a heap box `%box(T)`
-// allocated at its first need in the defining frame (the old back end's
-// box_ready, in lowering order), and is read and written through the box
+// The lowering of `fn` values, lambdas, and closures: an `fn` value is
+// the `fnval` pair `{ ref env, code }` by value (2.7, 4.3), its layout
+// named by mty (`%fn(Int):Int`); a named function used as a value is its
+// trampoline `<sym>#fnval` with a null environment; a lambda is its
+// thunk `<enclosing>#lamN` (8.2) with a null environment when it
+// captures nothing, else a fresh environment record `%env(<thunk>)`
+// holding one box per capture in capture order. Captures are by
+// reference: a captured variable lives in a heap box `%box(T)` allocated
+// at its first need in the defining frame (the old back end's box_ready,
+// in lowering order), and is read and written through the box
 // everywhere, in the defining frame and in every thunk (through the
 // environment). Indirect calls are `call indirect` (always collecting).
 // Box and environment type ids are noted by a prewalk in the old back
@@ -71,7 +70,7 @@ pub fn (lw: MirLower) fn_code_sig(layout: Int): Int {
   ts.get(ts.layouts[layout].fields[1]).sig
 }
 
-// A box `%box(T)`: a record of one T (audit 1.5.4), with its own type id.
+// A box `%box(T)`: a record of one T, with its own type id.
 pub fn (lw: MirLower) box_layout(t: Ty, loc: Location): Int {
   name = "box(${mir_mty(t)})"
   known = lw.lw_m.types.layout_named(name)
@@ -90,7 +89,7 @@ pub fn (lw: MirLower) box_layout(t: Ty, loc: Location): Int {
 }
 
 // The environment of a lambda's thunk: `%env(<thunk>)`, one `ref
-// %box(T)` per capture in capture order (audit 1.5.4).
+// %box(T)` per capture in capture order.
 pub fn (lw: MirLower) env_layout(e: Expr, sym: String): Int {
   name = "env(${sym})"
   known = lw.lw_m.types.layout_named(name)
@@ -101,8 +100,8 @@ pub fn (lw: MirLower) env_layout(e: Expr, sym: String): Int {
   names: Array(String) = []
   for i in 0..e.cap_names.size {
     if e.cap_names[i] == "self" {
-      // The receiver, by value (W3b, B7): a class's reference, a
-      // struct's copy.
+      // The receiver, by value: a class's reference, a struct's
+      // copy.
       vt = lw.field_mty(e.cap_tys[i], e.loc)
       if lw.failed() {
         return -1
@@ -193,7 +192,7 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
   k = e.kind
   if k == ex_call() {
     lw.prewalk_opt(e.inner, encl)
-    // W8b: the spawn and .parallel records at the old points (decl.av
+    // The spawn and .parallel records at the old points (decl.av
     // collect_expr): a .parallel's after its receiver, a spawn's before
     // its arguments; their blocks are walked in the enclosing function
     // (the checker boxes their locals there).
@@ -369,7 +368,7 @@ pub fn (lw: MirLower) box_place(name: String, t: Ty, loc: Location): MPlace {
 }
 
 // Stores v into name's box (store_box_value, calls.av:1756-1768: the
-// barrier on the box first when T is reference-carrying, D187).
+// barrier on the box first when T is reference-carrying).
 pub fn (lw: MirLower) box_store(name: String, t: Ty, v: MOperand, loc: Location) {
   b = lw.lw_b
   h = lw.box_holder(name, t, loc, false)
@@ -383,7 +382,7 @@ pub fn (lw: MirLower) box_store(name: String, t: Ty, v: MOperand, loc: Location)
 // variable on every iteration (fresh): its box is allocated at each
 // binding, so lambdas made in different iterations capture different
 // variables (the old back end fails to compile a captured block
-// parameter: D196).
+// parameter; the bug is not reproduced).
 pub fn (lw: MirLower) bind_name(name: String, t: Ty, ty: Int, v: MOperand, loc: Location, fresh: Bool) {
   if lw.name_in_box(name) {
     if mir_name_index(lw.lw_cl.caps, name) < 0 {
@@ -513,9 +512,8 @@ pub fn (lw: MirLower) lower_fn_ref(e: Expr): MOperand {
 // A lambda (emit_lambda, calls.av:1834-1858): without captures, its thunk
 // with a null environment; with captures, a fresh environment, then each
 // capture's box pointer (allocating a box at its first need), stored
-// behind the environment's barrier (D187; the old back end stores
-// without one), then the fnval. The thunk is lowered after the current
-// function.
+// behind the environment's barrier (the old back end stores without one),
+// then the fnval. The thunk is lowered after the current function.
 pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -560,8 +558,8 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
   while i < e.cap_names.size && !lw.failed() {
     name = e.cap_names[i]
     if name == "self" {
-      // The receiver's value (W3b, B7): the method's self, or the
-      // enclosing thunk's captured one.
+      // The receiver's value: the method's self, or the enclosing
+      // thunk's captured one.
       se = Expr.new(ex_name(), e.loc)
       se.ident = "self"
       se.ty = e.cap_tys[i]
@@ -575,7 +573,7 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
       continue
     }
     if ao = lw.arg_frame_op(name) {
-      // A lambda in a default captures an earlier parameter (O546): the
+      // A lambda in a default captures an earlier parameter: the
       // argument's operand goes into a box of its own first.
       lw.bind_name(name, e.cap_tys[i], lw.ty_at(e.cap_tys[i], e.loc, "a capture"), lw.dup(ao), e.loc, true)
       if lw.failed() {
@@ -712,7 +710,7 @@ pub fn (lw: MirLower) lower_thunk(lam: MirLam) {
     self_at = -1
     for cap_name in e.cap_names {
       if cap_name == "self" {
-        // Not a box: read once into the thunk's own self (W3b, B7).
+        // Not a box: read once into the thunk's own self.
         self_at = caps.size
         caps.push("#self")
       } else {
