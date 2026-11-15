@@ -1135,7 +1135,8 @@ pub class Checker {
       return
     }
     if at_tail && self.lam_exprs.size == 0 && !got.is_void && !got.is_nil {
-      if cf = self.current_fn {
+      // An entry point's result can only be an Int (or a failure).
+      if cf = self.current_fn, !((cf.name == "main" || cf.name == "run") && cf.owner.size == 0 && !got.is_int) {
         if rt = cf.return_type {
         } else {
           fail(at, "this line computes ${a_type(got)} and drops it: ${cf.name} has no result type; to return it, declare fn ${cf.name}: ${got.show}")
