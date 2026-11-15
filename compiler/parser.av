@@ -103,6 +103,10 @@ pub class Parser {
   peak: Int = 0
   too_deep: CompileError? = nil
   deep: Bool = false
+  // The names of the last argument list's arguments, parallel to them
+  // ("" for a positional one), or empty when none is named: the call
+  // that list belongs to takes them (take_arg_names).
+  arg_names: Array(String) = []
 
   fn initialize(source: Source, tokens: Array(Token)) {
     self.source = source
@@ -2702,6 +2706,7 @@ pub class Parser {
             args = self.parse_arg_list
             call = Expr.new(ex_call(), at)
             call.args = args
+            take_arg_names(call)
             call.receiver = cur
             call.splice = sp
             cur = call
@@ -2727,6 +2732,7 @@ pub class Parser {
               call = Expr.new(ex_call(), at)
               call.callee = field.value
               call.args = args
+              take_arg_names(call)
               call.receiver = cur
               cur = call
             }
@@ -2773,6 +2779,7 @@ pub class Parser {
         call.indirect = true
         call.inner = cur
         call.args = args
+        take_arg_names(call)
         cur = call
       } else {
         keep = false
@@ -2863,6 +2870,7 @@ pub class Parser {
         args = self.parse_arg_list
         call = Expr.new(ex_call(), sp.loc)
         call.args = args
+        take_arg_names(call)
         call.splice = sp
         return call
       }
@@ -3035,7 +3043,9 @@ pub class Parser {
         truncate_errors(call_mark)
       } else if self.index == after {
         e.args = exprs
+        take_arg_names(e)
       }
+      self.arg_names = []
       self.index = after
       return e
     }
@@ -3240,6 +3250,7 @@ pub class Parser {
     e = Expr.new(ex_call(), name.loc)
     e.callee = name.value
     e.args = args
+    take_arg_names(e)
     e
   }
 
@@ -3400,13 +3411,27 @@ pub class Parser {
     expect(tk_l_paren())
     self.skip_newlines
     args: Array(Expr) = []
+    names: Array(String) = []
+    named = false
     // A struct literal is unambiguous inside the parentheses, also in a
     // condition or a for operand (Stage 29 W3a).
     old = self.allow_struct_lit
     self.allow_struct_lit = true
     if self.current.kind != tk_r_paren() {
       while true {
+        // A named argument, `loops: 4`: a name and a colon, which no
+        // expression starts with. Names follow the positional arguments.
+        name = ""
+        if self.current.kind == tk_ident() && self.index + 1 < self.tokens.size && self.tokens[self.index + 1].kind == tk_colon() {
+          name = self.bump.value
+          self.bump
+          self.skip_newlines
+          named = true
+        } else if named {
+          fail(self.current.loc, "a positional argument cannot follow a named one: write the positional arguments first")
+        }
         args.push(maybe_trailing_block(self.parse_expr))
+        names.push(name)
         self.skip_newlines
         if match_tok(tk_comma()) {
           self.skip_newlines
@@ -3417,7 +3442,21 @@ pub class Parser {
     }
     self.allow_struct_lit = old
     expect(tk_r_paren())
+    if named {
+      self.arg_names = names
+    } else {
+      self.arg_names = []
+    }
     args
+  }
+
+  // The call gets the names of the argument list just read (Expr.field_names,
+  // parallel to its arguments, when one is named).
+  pub fn take_arg_names(call: Expr) {
+    if self.arg_names.size > 0 {
+      call.field_names = self.arg_names
+      self.arg_names = []
+    }
   }
 }
 

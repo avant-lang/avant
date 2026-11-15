@@ -423,7 +423,8 @@ fn main {
 - The last expression is the result, a final `if`/`else` or `switch` included; `return` leaves early.
 - In a function that returns nothing, a value at the end is simply dropped, as it is anywhere else in the body. (An error is never dropped silently: [Errors cannot be dropped](#errors-cannot-be-dropped).)
 - Parameters may have trailing defaults (`times: Int = 1`); functions may be [overloaded](#overloads-and-defaults) and [generic](#generic-functions).
-- There are no named arguments, no variadics and no multiple results; return a struct.
+- A parameter with a default may be named at the call, after the positional arguments: `pad("ab", fill: "*")` ([Overloads and defaults](#overloads-and-defaults)).
+- There are no variadics and no multiple results; return a struct.
 
 ### Built-in types
 
@@ -1589,9 +1590,12 @@ fn main {
   puts(pad("ab"))          // => ab......
   puts(pad("ab", 4))       // => ab..
   puts(pad("ab", 4, "*"))  // => ab**
+  puts(pad("ab", fill: "-"))            // => ab------
+  puts(pad("ab", fill: "+", width: 3))  // => ab+
 }
 ```
 
+- **Named arguments:** a parameter with a default may be given by its name, after the positional arguments, in any order (`pad("ab", fill: "-")`). The positional arguments choose the overload, and the names fill its defaults; a name is given only to a parameter with a default (`pad(s: "ab")` is refused: `s` is passed by position), once, and not to one the positional arguments already reach. The arguments are evaluated as written, left to right, then the defaults of the parameters left out. A default's parameter name is part of the function's public surface. Builtins and function values take their arguments by position.
 - A default is evaluated at each call that leaves its argument out. It belongs to the function's own module: it may call that module's private functions, and a name in it never means something of the caller's (a function, a method or a local of the same name), however the call is written.
 - A default may name an earlier parameter (`fn span(a: Int, b: Int = a + 1)`). It reads that parameter's value, with its declared type: the argument is evaluated once, so `span(next())` calls `next` once.
 - A method whose parameters all have defaults may be called without parentheses, like a method without parameters: `conn.recv` is `conn.recv()`.

@@ -141,6 +141,9 @@ pub class Checker {
   // Stage 29 W3b: checking a field default (evaluated before initialize,
   // with no receiver).
   pub in_default: Bool = false
+  // The names of the named arguments of the call being matched
+  // (check_call), for fail_no_fit's message.
+  pub named_now: Array(String) = []
   // The class whose field defaults are being checked (O187, Stage 29
   // W4a): a bare name of one of its fields gets its own message.
   pub default_owner: Ty? = nil
@@ -3430,7 +3433,92 @@ pub class Checker {
   }
 
   pub fn check_call(expr: Expr, has_want: Bool, want: Ty): Ty {
-    drop_spliced_defaults(expr)
+    split_named_args(expr)
+    if expr.field_exprs.size == 0 {
+      return check_call_parts(expr, has_want, want)
+    }
+    if !named_callee_possible(expr) {
+      // Refused once, and checked on as the positional arguments they
+      // would be, so no other error follows from the refusal.
+      stash_names = expr.field_names
+      stash = expr.field_exprs
+      for v in stash {
+        expr.args.push(v)
+      }
+      expr.field_names = []
+      expr.field_exprs = []
+      got0 = check_call_parts(expr, has_want, want)
+      expr.field_names = stash_names
+      expr.field_exprs = stash
+      refuse_named_args(expr)
+      return got0
+    }
+    mark = err_count
+    saved = self.named_now
+    self.named_now = expr.field_names
+    got = check_call_parts(expr, has_want, want)
+    self.named_now = saved
+    if new_err_since(mark) {
+      // The call's own error said what failed (fail_no_fit names a
+      // parameter without a default that a name was given to).
+      expr.field_exprs = []
+      expr.field_names = []
+    } else {
+      refuse_named_args(expr)
+    }
+    got
+  }
+
+  // Whether a call with named arguments may reach a declared function or
+  // method that takes them: one of that name exists. A function value,
+  // and a name no declaration has (a builtin), takes none.
+  pub fn named_callee_possible(expr: Expr): Bool {
+    if expr.indirect {
+      return false
+    }
+    if r = expr.receiver {
+    } else if existing = lookup(expr.callee), existing.is_fn {
+      return false
+    }
+    if expr.callee == "new" {
+      return true
+    }
+    if fn_indices_named(expr.callee).size > 0 || method_indices_named(expr.callee).size > 0 {
+      return true
+    }
+    // A generic type's methods are registered with its first instance.
+    for sdef in self.program.structs {
+      for m in sdef.methods {
+        if m.name == expr.callee {
+          return true
+        }
+      }
+    }
+    for cdef in self.program.classes {
+      for m2 in cdef.methods {
+        if m2.name == expr.callee {
+          return true
+        }
+      }
+    }
+    false
+  }
+
+  // A named argument, checked against the parameter it was placed at
+  // (checker/match.av place_named_args), as a positional one would be.
+  pub fn check_named_arg(arg: Expr, param: Ty): Ty {
+    if param.is_fn {
+      if arg.kind == ex_name() {
+        if local = lookup(arg.ident) {
+          return check_expr_as(arg, param)
+        }
+      }
+      return check_fn_arg(arg, param)
+    }
+    check_expr_as(arg, param)
+  }
+
+  pub fn check_call_parts(expr: Expr, has_want: Bool, want: Ty): Ty {
     if expr.indirect {
       if inner = expr.inner {
         callee = check_expr(inner)

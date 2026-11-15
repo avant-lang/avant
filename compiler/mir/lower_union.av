@@ -126,6 +126,20 @@ pub fn (lw: MirLower) lower_coerced(v: Expr, ty: Int, want: Ty): MOperand {
 // a default that names the parameter reads that operand (lower_name) and
 // the argument is evaluated once (O546).
 pub fn (lw: MirLower) lower_args_to(args: Array(Expr), params: Array(Ty), frame: UInt64): Array(MOperand) {
+  lw.lower_args_in(args, params, frame, nil)
+}
+
+// The arguments of a call as lower_args_to lowers them, evaluated in
+// order when it is given (Expr.arg_order: named arguments written out of
+// their parameters' order, checker/match.av place_named_args): each
+// argument is lowered at its turn and kept at its own index, so the call
+// passes them in parameter order.
+pub fn (lw: MirLower) lower_args_in(args: Array(Expr), params: Array(Ty), frame: UInt64, order: Array(Int)?): Array(MOperand) {
+  if ord = order {
+    if ord.size == args.size {
+      return lw.lower_args_ordered(args, params, frame, ord)
+    }
+  }
   out: Array(MOperand) = []
   mark = lw.lw_arg_names.size
   i = 0
@@ -147,6 +161,36 @@ pub fn (lw: MirLower) lower_args_to(args: Array(Expr), params: Array(Ty), frame:
       lw.lw_arg_ops.push(o)
     }
     i += 1
+  }
+  while lw.lw_arg_names.size > mark {
+    lw.lw_arg_names.pop
+    lw.lw_arg_ops.pop
+  }
+  out
+}
+
+pub fn (lw: MirLower) lower_args_ordered(args: Array(Expr), params: Array(Ty), frame: UInt64, ord: Array(Int)): Array(MOperand) {
+  out: Array(MOperand) = []
+  for a in args {
+    out.push(lw.lw_b.c_i32(0))
+  }
+  mark = lw.lw_arg_names.size
+  for k in 0..ord.size {
+    i = ord[k]
+    o = lw.lower_expr(args[i])
+    if i < params.size {
+      if t = args[i].ty {
+        o = lw.coerce(o, t, params[i], args[i].loc)
+      }
+    }
+    for k2 in k + 1..ord.size {
+      o = lw.snap(o, args[ord[k2]])
+    }
+    out[i] = o
+    if frame != 0u64 {
+      lw.lw_arg_names.push(arg_frame_name(frame, i))
+      lw.lw_arg_ops.push(o)
+    }
   }
   while lw.lw_arg_names.size > mark {
     lw.lw_arg_names.pop

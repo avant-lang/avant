@@ -58,6 +58,22 @@ fn cases: Array(RCase) {
   xs.push(accepted("fun-no-parens", "lib c {\n  fun getpid: Int32\n}\nfn main {\n  puts(c.getpid() > 0)\n}\n", "true\n"))
   // A call whose lambda argument is checked after the others takes its defaults
   xs.push(accepted("lambda-arg-defaults", "fn apply(f: fn(Int): Int, n: Int = 1, extra: Int = 0): Int {\n  f(n) + extra\n}\nfn main {\n  puts(apply({ |v| v * 10 }))\n  puts(apply({ |v| v * 10 }, 2))\n}\n", "10\n20\n"))
+  // Named arguments for parameters with defaults
+  pad = "fn pad(s: String, width: Int = 8, fill: String = \".\"): String {\n  out = s\n  while out.size < width {\n    out = out + fill\n  }\n  out\n}\n"
+  xs.push(accepted("named", "${pad}fn main {\n  puts(pad(\"ab\", fill: \"*\"))\n  puts(pad(\"ab\", 4, fill: \"-\"))\n  puts(pad(\"ab\", fill: \"+\", width: 5))\n  puts(pad(\"ab\", width: 3))\n}\n", "ab******\nab--\nab+++\nab.\n"))
+  // The written arguments are evaluated left to right as written, then the defaults.
+  xs.push(accepted("named-order", "fn note(tag: String, n: Int): Int {\n  puts(tag)\n  n\n}\nfn three(a: Int, b: Int = note(\"default b\", 10), c: Int = 100, d: Int = note(\"default d\", 1000)): Int {\n  a + b + c + d\n}\nfn main {\n  puts(three(note(\"a\", 1), d: note(\"d\", 4), c: note(\"c\", 3)))\n}\n", "a\nd\nc\ndefault b\n18\n"))
+  xs.push(accepted("named-reads-earlier", "fn span(a: Int, b: Int = a + 1, c: Int = b * 2): Int {\n  a * 100 + b * 10 + c\n}\nfn main {\n  puts(span(1, c: 5))\n  puts(span(1, b: 4))\n}\n", "125\n148\n"))
+  xs.push(accepted("named-forms", "fn wrap(x: T, times: Int = 1): Array(T) {\n  out: Array(T) = []\n  for i in 0..times {\n    out.push(x)\n  }\n  out\n}\nfn apply(f: fn(Int): Int, n: Int = 1, extra: Int = 0): Int {\n  f(n) + extra\n}\nstruct Pt {\n  x: Int\n  y: Int\n  fn shifted(dx: Int = 0, dy: Int = 0): Pt {\n    Pt { x: x + dx, y: y + dy }\n  }\n  fn self.make(x: Int, y: Int = 3): Pt {\n    Pt { x: x, y: y }\n  }\n}\nfn (p: Pt) scaled(k: Int = 2, off: Int = 0): Int {\n  p.x * k + off\n}\nclass Conn {\n  host: String\n  port: Int\n  fn initialize(host: String, port: Int = 80) {\n    self.host = host\n    self.port = port\n  }\n}\nfn main {\n  puts(wrap(\"a\", times: 3).size)\n  puts(apply({ |v| v * 10 }))\n  puts(apply({ |v| v * 10 }, extra: 5, n: 2))\n  p = Pt { x: 1, y: 7 }\n  q = p.shifted(dy: 1)\n  puts(\"\${q.x} \${q.y}\")\n  puts(Pt.make(2, y: 8).y)\n  puts(p.scaled(off: 1))\n  puts(Conn.new(\"h\", port: 8080).port)\n  puts(Conn.new(\"h\").port)\n}\n", "3\n10\n25\n1 8\n8\n3\n8080\n80\n"))
+  xs.push(refused("named-unknown", "${pad}fn main {\n  puts(pad(\"a\", wide: 3))\n}\n", "pad has no parameter named wide", "9:23"))
+  xs.push(refused("named-no-default", "${pad}fn main {\n  puts(pad(s: \"a\"))\n}\n", "s of pad has no default, so it is passed by position: a name is given only to a parameter with a default", "9:8"))
+  xs.push(refused("named-by-position", "${pad}fn main {\n  puts(pad(\"a\", 3, width: 4))\n}\n", "width is already given by position (argument 2 of pad)", "9:27"))
+  xs.push(refused("named-twice", "${pad}fn main {\n  puts(pad(\"a\", fill: \"x\", fill: \"y\"))\n}\n", "fill is named twice", "9:34"))
+  xs.push(refused("named-then-positional", "${pad}fn main {\n  puts(pad(\"a\", fill: \"x\", 3))\n}\n", "a positional argument cannot follow a named one: write the positional arguments first", "9:28"))
+  xs.push(refused("named-wrong-type", "${pad}fn main {\n  puts(pad(\"a\", width: \"x\"))\n}\n", "expected Int, got String", "9:24"))
+  xs.push(refused("named-builtin", "fn main {\n  xs = [1]\n  xs.push(v: 2)\n}\n", "push takes its arguments by position (v: is a named argument)", "3:14"))
+  xs.push(refused("named-fn-value", "fn main {\n  f = { |x: Int| x }\n  puts(f(x: 1))\n}\n", "a fn value takes its arguments by position (x: is a named argument)", "3:13"))
+  xs.push(refused("named-overload", "fn show(n: Int, width: Int = 4): String {\n  \"\${n}\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  puts(show(\"a\", width: 2))\n}\n", "show has no parameter named width", "8:25"))
   xs
 }
 

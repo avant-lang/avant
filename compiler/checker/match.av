@@ -323,9 +323,12 @@ pub fn (checker_self: Checker) subst_for_method(sig: FuncSig, call_owner: String
 // each mention (and each time a lambda in the default ran), and the
 // default was typed by the argument's type instead of the parameter's.
 pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
+  given = checker_self.place_named_args(expr, fnn)
   while expr.args.size < fnn.params.size {
     i = expr.args.size
-    if d = fnn.params[i].default {
+    if i < given.size && given[i].size == 1 {
+      expr.args.push(given[i][0])
+    } else if d = fnn.params[i].default {
       spliced = clone_expr(d)
       dk = d.kind
       if i > 0 && !(dk == ex_int() || dk == ex_float() || dk == ex_bool() || dk == ex_string() || dk == ex_nil()) {
@@ -380,6 +383,11 @@ pub fn (checker_self: Checker) fill_defaults(expr: Expr, fnn: Function) {
 // the check, so a hidden name is a capture only of a lambda written
 // inside the default.
 pub fn (checker_self: Checker) check_default_arg(expr: Expr, i: Int, params: Array(Ty), fnn: Function): Ty {
+  if !expr.args[i].is_default {
+    // A named argument (place_named_args): the caller's, checked where
+    // the call stands against its parameter.
+    return checker_self.check_named_arg(expr.args[i], params[i])
+  }
   saved_mod = checker_self.current_module
   saved_scopes = checker_self.scopes
   saved_self = checker_self.self_ty
@@ -416,6 +424,169 @@ pub fn (checker_self: Checker) drop_spliced_defaults(expr: Expr) {
   while expr.args.size > 0 && expr.args[expr.args.size - 1].is_default {
     expr.args.pop
   }
+}
+
+// Named arguments (`pad("ab", fill: "*")`): names are given only to
+// parameters with defaults, after the positional arguments; the
+// positional arguments choose the overload and the names fill its
+// defaults. The parser keeps each argument's name in the call's
+// field_names, parallel to its arguments. Before a call is matched, its
+// named arguments leave expr.args for field_exprs (field_names then
+// parallel to them), so only the positional ones are matched; once the
+// callee is chosen, fill_defaults puts each at its parameter's place
+// (place_named_args) and field_names is again parallel to the arguments,
+// so a call checked again splits the same way (the defaults it spliced
+// are dropped first, wherever they stand).
+pub fn (checker_self: Checker) split_named_args(expr: Expr) {
+  if expr.field_exprs.size > 0 {
+    return
+  }
+  if expr.field_names.size == 0 {
+    checker_self.drop_spliced_defaults(expr)
+    return
+  }
+  pos: Array(Expr) = []
+  names: Array(String) = []
+  vals: Array(Expr) = []
+  for i in 0..expr.args.size {
+    a = expr.args[i]
+    if a.is_default {
+      continue
+    }
+    name = ""
+    if i < expr.field_names.size {
+      name = expr.field_names[i]
+    }
+    if name.size > 0 {
+      names.push(name)
+      vals.push(a)
+    } else {
+      pos.push(a)
+    }
+  }
+  expr.args = pos
+  if names.size == 0 {
+    expr.field_names = []
+    return
+  }
+  expr.field_names = names
+  expr.field_exprs = vals
+}
+
+// The named arguments of a call split by split_named_args, each checked
+// against fnn's parameters: by name, after the positional arguments, to
+// a parameter with a default, once. The result has one entry per
+// parameter: the argument named for it (one element) or none. The call's
+// field_names become parallel to the arguments fill_defaults builds, and
+// the order the arguments are evaluated in is kept in arg_order when it
+// is not theirs: the written arguments left to right, then the defaults
+// of the parameters left out, in parameter order.
+pub fn (checker_self: Checker) place_named_args(expr: Expr, fnn: Function): Array(Array(Expr)) {
+  given: Array(Array(Expr)) = []
+  if expr.field_exprs.size == 0 {
+    return given
+  }
+  npos = expr.args.size
+  for i in 0..fnn.params.size {
+    none: Array(Expr) = []
+    given.push(none)
+  }
+  written: Array(Int) = []
+  ok = true
+  for k in 0..expr.field_exprs.size {
+    name = expr.field_names[k]
+    v = expr.field_exprs[k]
+    p = -1
+    for j in 0..fnn.params.size {
+      if fnn.params[j].name == name {
+        p = j
+      }
+    }
+    shown = fnn.name
+    if fnn.name == "initialize" && fnn.owner.size > 0 {
+      shown = "${fnn.owner}.new"
+    }
+    if p < 0 {
+      checker_self.fail(v.loc, "${shown} has no parameter named ${name}")
+      ok = false
+    } else if p < npos {
+      checker_self.fail(v.loc, "${name} is already given by position (argument ${p + 1} of ${shown})")
+      ok = false
+    } else if given[p].size > 0 {
+      checker_self.fail(v.loc, "${name} is named twice")
+      ok = false
+    } else if d = fnn.params[p].default {
+      given[p].push(v)
+      written.push(p)
+    } else {
+      checker_self.fail(v.loc, "${name} of ${shown} has no default, so it is passed by position: a name is given only to a parameter with a default")
+      ok = false
+    }
+  }
+  expr.field_exprs = []
+  names: Array(String) = []
+  for i in 0..npos {
+    names.push("")
+  }
+  for i in npos..fnn.params.size {
+    if given[i].size > 0 {
+      names.push(fnn.params[i].name)
+    } else {
+      names.push("")
+    }
+  }
+  expr.field_names = names
+  if !ok {
+    // The named arguments are dropped with their errors; the defaults
+    // fill their places, so nothing else fails for them.
+    out: Array(Array(Expr)) = []
+    expr.field_names = []
+    return out
+  }
+  if kept = expr.arg_order {
+    if kept.size > 0 {
+      return given
+    }
+  }
+  order: Array(Int) = []
+  for i in 0..npos {
+    order.push(i)
+  }
+  for w in written {
+    order.push(w)
+  }
+  for i in npos..fnn.params.size {
+    if given[i].size == 0 {
+      order.push(i)
+    }
+  }
+  same = true
+  for i in 0..order.size {
+    if order[i] != i {
+      same = false
+    }
+  }
+  if !same {
+    expr.arg_order = order
+  }
+  given
+}
+
+// The named arguments a call kept because its callee takes none (a
+// builtin, a function value, a C function): refused, once, at the first.
+pub fn (checker_self: Checker) refuse_named_args(expr: Expr) {
+  if expr.field_exprs.size == 0 {
+    return
+  }
+  first = expr.field_exprs[0]
+  name = expr.field_names[0]
+  what = expr.callee
+  if expr.indirect {
+    what = "a fn value"
+  }
+  expr.field_exprs = []
+  expr.field_names = []
+  checker_self.fail(first.loc, "${what} takes its arguments by position (${name}: is a named argument): names are given only to a declared function's parameters with defaults")
 }
 
 pub fn (checker_self: Checker) attach_method_fn(fnn: Function) {
@@ -1546,6 +1717,17 @@ pub fn (checker_self: Checker) fail_no_fit(loc: Location, shown: String, sigs: A
   argc = arg_tys.size
   if sigs.size == 1 {
     sig = sigs[0]
+    for name in checker_self.named_now {
+      for p in sig.node.params {
+        if p.name == name {
+          if d = p.default {
+          } else {
+            checker_self.fail(loc, "${name} of ${shown} has no default, so it is passed by position: a name is given only to a parameter with a default: ${checker_self.sig_text(shown, sig)}")
+            return
+          }
+        }
+      }
+    }
     if !arity_ok(sig.node, argc) {
       checker_self.fail(loc, "${shown} ${arity_text(sig.node)}, given ${argc}: ${checker_self.sig_text(shown, sig)}")
       return

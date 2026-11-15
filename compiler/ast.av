@@ -265,6 +265,11 @@ pub class Expr {
   // when the method is the right operand's (`a > b` as `b < a`);
   // op_not() when the result is negated (`!=` as `!(a == b)`).
   pub op_form: Int = 0
+  // A call with named arguments written out of their parameters' order
+  // (checker/match.av place_named_args): the indexes of its arguments in
+  // the order they are evaluated, the written ones left to right and
+  // then the defaults; nil when that is their own order.
+  pub arg_order: Array(Int)? = nil
 
   fn initialize(kind: Int, loc: Location) {
     self.kind = kind
@@ -952,6 +957,13 @@ pub fn clone_expr(e: Expr): Expr {
   out.resolved = e.resolved
   out.op_form = e.op_form
   out.spawn_thunk = e.spawn_thunk
+  if order = e.arg_order {
+    kept: Array(Int) = []
+    for x in order {
+      kept.push(x)
+    }
+    out.arg_order = kept
+  }
   if sp = e.splice {
     out.splice = clone_expr(sp)
   }
