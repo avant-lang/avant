@@ -2940,7 +2940,7 @@ Allocation-heavy code is where Avant is weakest today, and it is being worked on
 - **A large structure that all stays alive** (a big tree, a long list, a graph built once). While it grows, the collector copies its objects out of the young generation and traces them again: the build pays for the same objects more than once. [Collection hints](#collection-hints) exist for this shape.
 - **A large live heap.** A full collection traces everything that is alive, so its cost grows with the live data, not with the garbage.
 
-LangArena shows it: `Binarytrees::Arena` is at 1.42× the best time and 1.92× the best memory, and `Binarytrees::Obj` and `Calculator::Ast` post good times only because their source carries hints ([Reading these numbers](#reading-these-numbers)).
+LangArena shows it: `Binarytrees::Arena` is at 1.22× the best time and 1.93× the best memory, and `Binarytrees::Obj` and `Calculator::Ast` post good times only because their source carries hints ([Reading these numbers](#reading-these-numbers)).
 
 Until this improves:
 
@@ -4134,118 +4134,124 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 
 ## Benchmarks
 
-Every number here was measured on one machine (an AMD Ryzen 7 5700G), each language built with optimizations, and the rows where Avant loses are printed as plainly as the rows where it wins. Read [Reading these numbers](#reading-these-numbers) before quoting any of them.
+Each table names the machine and the day it measured: LangArena on a server (an AMD EPYC 7351P), the HTTP servers on a desktop (an AMD Ryzen 7 5700G), and numbers from the two machines are never compared. Each language is built with optimizations, and the rows where Avant loses are printed as plainly as the rows where it wins. Read [Reading these numbers](#reading-these-numbers) before quoting any of them.
 
 ### LangArena
 
-[LangArena](https://github.com/kostya/LangArena) runs the same tasks in many languages. Seconds, lower is better; **bold** is the best of the five. One process per task, timed by its wall clock, with peak memory from `/usr/bin/time`: the same wrapper for every language. Avant measured on 2026-11-12 (the development tree after release 0.41.0, `--release --cpu=v3`, one run, the machine otherwise idle, governor `performance`, all 50 task checksums correct); the other languages on 2026-11-07.
+[LangArena](https://github.com/kostya/LangArena) runs the same tasks in many languages. Seconds, lower is better; **bold** is the best of the five. One process per task, timed by its wall clock, with its peak memory (`ru_maxrss`, what `/usr/bin/time` reports): the other languages through LangArena's harness under `/usr/bin/time`, Avant by a spawner that reads the same two numbers without a wrapper's start-up. Avant measured on the server on 2026-11-15 (release 0.44.0, `--release --cpu=v3`, the median of 5 rounds, the machine otherwise idle, all 50 task checksums correct); the other languages measured on the same server on 2026-11-14. The server: an AMD EPYC 7351P (Zen 1, 16 cores, 32 threads), boost off at a fixed 2.4 GHz, governor `performance`.
 
 | Language | 50 tasks (s) | Average peak memory |
 | --- | ---: | ---: |
-| Avant | **39.200** | **19.9 MB** |
-| C | 59.890 | 22.9 MB |
-| Rust | 59.945 | 29.3 MB |
-| Crystal | 87.011 | 65.9 MB |
-| Go | 119.708 | 63.0 MB |
+| Avant | **103.636** | **19.3 MB** |
+| C | 138.008 | 23.0 MB |
+| Rust | 137.709 | 29.3 MB |
+| Crystal | 194.527 | 65.2 MB |
+| Go | 311.401 | 62.8 MB |
 
 **The total flatters Avant.** Much of that gap is not the language: the four `Matmul` rows and `Hash::CRC32` are not comparable programs, two rows carry collection hints, and several rows measure C libraries ([Reading these numbers](#reading-these-numbers)). The honest reading is task by task.
 
 | Task | Avant | C | Rust | Crystal | Go |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `Binarytrees::Obj` | **0.618** | 2.736 | 2.865 | 1.325 | 1.881 |
-| `Binarytrees::Arena` | 0.435 | 0.355 | **0.341** | 0.759 | 0.362 |
-| `Brainfuck::Array` | 1.773 | 1.896 | 1.825 | 1.968 | **1.546** |
-| `Brainfuck::Recursion` | 1.553 | 1.570 | **1.522** | 1.745 | 1.709 |
-| `Matmul::Single` | **1.117** | 5.646 | 5.758 | 5.832 | 5.769 |
-| `Matmul::T4` | **0.947** | 1.485 | 1.551 | 3.380 | 1.558 |
-| `Matmul::T8` | **0.593** | 0.799 | 0.858 | 2.642 | 0.888 |
-| `Matmul::T16` | 0.601 | **0.482** | 0.729 | 2.339 | 0.781 |
-| `Base64::Encode` | 0.123 | **0.119** | 0.352 | 1.633 | 2.591 |
-| `Base64::Decode` | **0.145** | 0.147 | 0.398 | 1.520 | 1.886 |
-| `Json::Generate` | **0.246** | 0.661 | 0.337 | 1.173 | 1.256 |
-| `Json::ParseDom` | **0.098** | **0.098** | 1.694 | 0.540 | 1.609 |
-| `Json::ParseMapping` | 0.234 | **0.229** | 0.425 | 1.546 | 2.871 |
-| `CSV::Parse` | **0.759** | 2.247 | 0.881 | 3.418 | 3.000 |
-| `Etc::Sieve` | 1.450 | **0.920** | 0.979 | 2.360 | 1.896 |
-| `Etc::TextRaytracer` | **0.999** | 1.307 | 1.019 | 1.341 | 1.831 |
-| `Etc::NeuralNet` | 1.305 | **1.073** | 1.165 | 1.260 | 2.219 |
-| `Etc::CacheSimulation` | **0.492** | 0.762 | 0.863 | 1.298 | 1.638 |
-| `Etc::GameOfLife` | 1.433 | 1.487 | 1.503 | 2.816 | **0.980** |
-| `Etc::Words` | 1.037 | 2.284 | 1.080 | **0.902** | 1.372 |
-| `Etc::LogParser` | 0.467 | 0.496 | **0.348** | 1.207 | 28.911 |
-| `Template::Regex` | **0.916** | 1.269 | 3.660 | 1.673 | 7.730 |
-| `Template::Parse` | **0.755** | 1.132 | 1.181 | 2.737 | 0.891 |
-| `Sort::Quick` | 1.312 | **1.186** | 1.193 | 1.550 | 1.305 |
-| `Sort::Merge` | 1.738 | **1.165** | 1.540 | 2.309 | 1.593 |
-| `Sort::Self` | **0.101** | 2.095 | 0.412 | 1.079 | 1.333 |
-| `Graph::BFS` | **1.150** | 1.372 | 1.787 | 3.057 | 2.615 |
-| `Graph::DFS` | **1.219** | 1.225 | 1.450 | 2.190 | 1.742 |
-| `Graph::AStar` | **0.777** | 2.212 | 2.340 | 1.950 | 3.867 |
-| `Hash::SHA256` | **0.249** | 1.155 | 1.218 | 1.214 | 1.243 |
-| `Hash::CRC32` | **0.131** | 0.986 | 0.986 | 0.987 | 4.197 |
-| `Calculator::Ast` | **0.450** | 1.041 | 0.600 | 0.494 | 0.580 |
-| `Calculator::Interpreter` | **0.255** | 1.248 | 0.901 | 1.088 | 0.871 |
-| `Maze::Generator` | 0.668 | **0.596** | 1.012 | 2.718 | 1.457 |
-| `Maze::BFS` | 0.700 | **0.670** | 1.272 | 3.683 | 2.168 |
-| `Maze::AStar` | **1.175** | 1.776 | 1.464 | 4.363 | 4.092 |
-| `CLBG::Fannkuchredux` | 1.355 | 1.298 | 1.371 | 1.229 | **1.162** |
-| `CLBG::Mandelbrot` | 0.982 | **0.981** | 1.025 | 0.998 | 1.013 |
-| `CLBG::Nbody` | 1.256 | 1.271 | **1.200** | 1.296 | 1.445 |
-| `CLBG::Spectralnorm` | **0.984** | 1.035 | 1.031 | 1.039 | 1.065 |
-| `Compress::BWTEncode` | **0.330** | 0.505 | 0.418 | 1.332 | 2.140 |
-| `Compress::BWTDecode` | **0.685** | 0.721 | 1.024 | 1.152 | 1.938 |
-| `Compress::HuffEncode` | **0.634** | 0.795 | 0.717 | 1.104 | 0.908 |
-| `Compress::HuffDecode` | 0.521 | **0.445** | 0.556 | 0.907 | 1.265 |
-| `Compress::ArithEncode` | 1.218 | 1.036 | **0.977** | 1.139 | 1.015 |
-| `Compress::ArithDecode` | 0.961 | **0.895** | 1.359 | 0.960 | 0.910 |
-| `Compress::LZWEncode` | **0.196** | 1.413 | 0.707 | 1.052 | 1.244 |
-| `Compress::LZWDecode` | **0.238** | 0.659 | 0.659 | 0.633 | 1.634 |
-| `Distance::Jaro` | 0.963 | **0.894** | 0.895 | 1.282 | 0.930 |
-| `Distance::NGram` | 0.855 | 2.014 | **0.497** | 0.794 | 0.798 |
+| `Binarytrees::Obj` | **1.103** | 6.487 | 6.849 | 2.925 | 6.155 |
+| `Binarytrees::Arena` | 1.108 | 1.039 | **0.908** | 1.653 | 0.953 |
+| `Brainfuck::Array` | 4.828 | **3.455** | 4.066 | 7.098 | 3.837 |
+| `Brainfuck::Recursion` | 5.696 | 4.721 | 5.276 | **4.689** | 5.132 |
+| `Matmul::Single` | **3.461** | 11.101 | 11.558 | 11.829 | 12.492 |
+| `Matmul::T4` | **2.252** | 2.924 | 3.015 | 4.757 | 7.838 |
+| `Matmul::T8` | **1.301** | 1.587 | 1.644 | 4.544 | 4.070 |
+| `Matmul::T16` | 0.978 | **0.830** | 1.065 | 3.608 | 2.139 |
+| `Base64::Encode` | **0.440** | 0.497 | 1.041 | 3.490 | 5.941 |
+| `Base64::Decode` | **0.504** | 0.573 | 0.977 | 3.351 | 3.958 |
+| `Json::Generate` | **0.604** | 1.554 | 0.670 | 2.979 | 3.592 |
+| `Json::ParseDom` | **0.241** | 0.292 | 4.273 | 1.710 | 5.128 |
+| `Json::ParseMapping` | **0.640** | 0.746 | 1.157 | 4.371 | 8.027 |
+| `CSV::Parse` | **1.957** | 6.257 | 2.789 | 9.475 | 8.802 |
+| `Etc::Sieve` | 8.345 | **1.893** | 1.916 | 4.490 | 3.792 |
+| `Etc::TextRaytracer` | **2.478** | 3.250 | 2.538 | 3.525 | 4.135 |
+| `Etc::NeuralNet` | 3.225 | **2.654** | 2.967 | 3.137 | 4.717 |
+| `Etc::CacheSimulation` | **1.056** | 2.243 | 2.077 | 4.198 | 5.057 |
+| `Etc::GameOfLife` | 3.536 | 3.577 | 3.606 | 6.274 | **2.488** |
+| `Etc::Words` | 2.527 | 4.621 | 2.481 | **2.300** | 2.949 |
+| `Etc::LogParser` | 1.208 | 1.345 | **0.864** | 2.942 | 79.266 |
+| `Template::Regex` | **2.122** | 3.200 | 8.642 | 4.342 | 21.198 |
+| `Template::Parse` | **1.564** | 2.479 | 2.802 | 6.547 | 2.551 |
+| `Sort::Quick` | 3.039 | 2.651 | **2.640** | 3.635 | 2.915 |
+| `Sort::Merge` | 4.732 | **2.394** | 3.303 | 5.566 | 3.589 |
+| `Sort::Self` | **0.575** | 4.487 | 1.544 | 2.453 | 3.063 |
+| `Graph::BFS` | **2.146** | 2.425 | 2.895 | 4.292 | 5.223 |
+| `Graph::DFS` | 2.192 | **2.133** | 2.531 | 3.782 | 3.300 |
+| `Graph::AStar` | **1.922** | 5.225 | 5.525 | 4.678 | 10.289 |
+| `Hash::SHA256` | **0.492** | 2.246 | 2.144 | 2.263 | 2.559 |
+| `Hash::CRC32` | **0.247** | 1.943 | 1.950 | 1.940 | 9.272 |
+| `Calculator::Ast` | **1.161** | 2.739 | 1.639 | 1.333 | 2.132 |
+| `Calculator::Interpreter` | **0.550** | 2.830 | 2.167 | 2.102 | 1.799 |
+| `Maze::Generator` | **1.074** | 1.226 | 2.027 | 5.454 | 3.396 |
+| `Maze::BFS` | **1.285** | 1.317 | 2.117 | 6.553 | 4.350 |
+| `Maze::AStar` | **1.870** | 3.557 | 2.590 | 7.896 | 7.585 |
+| `CLBG::Fannkuchredux` | 2.989 | 2.680 | **2.398** | 2.455 | 2.598 |
+| `CLBG::Mandelbrot` | 2.239 | 2.188 | 2.304 | 2.251 | **2.178** |
+| `CLBG::Nbody` | 3.451 | 3.516 | **3.280** | 3.566 | 4.008 |
+| `CLBG::Spectralnorm` | **2.651** | 2.724 | 2.729 | 2.874 | 2.712 |
+| `Compress::BWTEncode` | 1.988 | 1.717 | **0.979** | 3.335 | 4.607 |
+| `Compress::BWTDecode` | **3.444** | 3.691 | 4.109 | 4.159 | 6.540 |
+| `Compress::HuffEncode` | 1.998 | 1.943 | **1.605** | 2.468 | 2.520 |
+| `Compress::HuffDecode` | 1.334 | **1.037** | 1.576 | 2.481 | 3.471 |
+| `Compress::ArithEncode` | 3.255 | 2.679 | **2.633** | 3.306 | 2.871 |
+| `Compress::ArithDecode` | 2.685 | **2.330** | 3.327 | 2.574 | 2.554 |
+| `Compress::LZWEncode` | **0.439** | 3.278 | 1.616 | 2.475 | 3.937 |
+| `Compress::LZWDecode` | **0.573** | 1.489 | 1.601 | 1.787 | 5.814 |
+| `Distance::Jaro` | 2.150 | **2.020** | 2.090 | 2.837 | 2.047 |
+| `Distance::NGram` | 1.981 | 4.216 | **1.210** | 1.779 | 1.856 |
 
 ### Where Avant loses
 
-Among these five, Avant is the fastest on 27 of the 50 tasks. Against the best of *every* language measured on this machine (C and C++ under both GCC and Clang included, so a wider field than the table above), its time is at or ahead of the best on 25 tasks, the median task is 1.01× the best, and three tasks are more than 1.5× behind. The worst rows by time:
+Among these five, Avant is the fastest on 28 of the 50 tasks. Against the best of *every* language measured on this machine (C under both GCC and Clang, so a wider field than the table above), its time is at or ahead of the best on 28 tasks, the median task is 0.98× the best, and four tasks are more than 1.5× behind. The worst rows by time:
 
 | Task | Avant (s) | Best (s) | Behind by |
 | --- | ---: | ---: | ---: |
-| `Etc::GameOfLife` | 1.433 | 0.813 (C++, GCC) | 1.76× |
-| `Distance::NGram` | 0.855 | 0.497 (Rust) | 1.72× |
-| `Etc::Sieve` | 1.450 | 0.920 (C, Clang) | 1.58× |
-| `Sort::Merge` | 1.738 | 1.165 (C, Clang) | 1.49× |
-| `CLBG::Spectralnorm` | 0.984 | 0.671 (C++, GCC) | 1.47× |
-| `Binarytrees::Arena` | 0.435 | 0.306 (C, GCC) | 1.42× |
-| `Etc::NeuralNet` | 1.305 | 0.948 (C++, Clang) | 1.38× |
-| `Etc::LogParser` | 0.467 | 0.348 (Rust) | 1.34× |
+| `Etc::Sieve` | 8.345 | 1.893 (C, Clang) | 4.41× |
+| `Compress::BWTEncode` | 1.988 | 0.979 (Rust) | 2.03× |
+| `Sort::Merge` | 4.732 | 2.394 (C, Clang) | 1.98× |
+| `Distance::NGram` | 1.981 | 1.210 (Rust) | 1.64× |
+| `Etc::GameOfLife` | 3.536 | 2.488 (Go) | 1.42× |
+| `Etc::LogParser` | 1.208 | 0.864 (Rust) | 1.40× |
+| `Brainfuck::Array` | 4.828 | 3.455 (C, Clang) | 1.40× |
+| `Brainfuck::Recursion` | 5.696 | 4.378 (C, GCC) | 1.30× |
 
-Memory, the same way: at or below the best on 32 tasks, the median task at 0.90× the best, five tasks more than 1.5× above it. The worst rows by peak memory:
+`Etc::Sieve` has two speeds on this machine, from one process to the next with the same binary: most runs take 8.3 s and a few 2.9 s (in a session of Sieve alone, 20 runs per binary: 1 of this release's took 2.9 s, 3 of v0.43.0's published binary, none of v0.43.0 built from its source on the same machine); the table shows the median. Its slow speed runs at about a third of C's instructions per cycle, and the cause is being worked on.
+
+Memory, the same way: at or below the best on 33 tasks, the median task at 0.89× the best, six tasks more than 1.5× above it. The worst rows by peak memory:
 
 | Task | Avant (MB) | Best (MB) | Above by |
 | --- | ---: | ---: | ---: |
-| `CLBG::Spectralnorm` | 6.1 | 2.7 (C, GCC) | 2.21× |
-| `Binarytrees::Arena` | 51.3 | 26.7 (C, Clang) | 1.92× |
-| `Etc::LogParser` | 17.7 | 9.9 (C, GCC) | 1.78× |
-| `Etc::GameOfLife` | 53.7 | 30.4 (Go) | 1.77× |
-| `Sort::Self` | 11.3 | 7.1 (C, Clang) | 1.59× |
+| `CLBG::Spectralnorm` | 6.1 | 2.9 (C, Clang) | 2.13× |
+| `Binarytrees::Arena` | 51.6 | 26.8 (C, Clang) | 1.93× |
+| `Etc::LogParser` | 18.3 | 9.9 (C, Clang) | 1.84× |
+| `Sort::Self` | 11.6 | 7.3 (C, Clang) | 1.59× |
+| `Etc::GameOfLife` | 45.6 | 29.5 (Go) | 1.55× |
+| `Compress::ArithEncode` | 4.1 | 2.7 (C, Clang) | 1.53× |
 
-Crystal and Go are compiled and garbage-collected, as Avant is, so Avant should never be behind either of them on any task, in time or in memory. It is behind on twelve, and each is treated as a defect until it is fixed:
+Crystal and Go are compiled and garbage-collected, as Avant is, so Avant should never be behind either of them on any task, in time or in memory. It is behind on fifteen, and each is treated as a defect until it is fixed:
 
 | Task | Behind |
 | --- | --- |
-| `Etc::GameOfLife` | time 1.46× Go; memory 1.77× Go |
-| `Binarytrees::Arena` | time 1.20× Go |
-| `Compress::ArithEncode` | time 1.07× Crystal, 1.20× Go |
-| `CLBG::Fannkuchredux` | time 1.10× Crystal, 1.17× Go |
-| `Etc::Words` | time 1.15× Crystal |
-| `Brainfuck::Array` | time 1.15× Go |
-| `Sort::Merge` | time 1.09× Go |
-| `Distance::NGram` | time 1.08× Crystal, 1.07× Go |
-| `Compress::ArithDecode` | time 1.06× Go |
-| `Etc::NeuralNet` | time 1.04× Crystal |
-| `Distance::Jaro` | time 1.04× Go |
-| `Sort::Quick` | time 1.01× Go |
+| `Binarytrees::Arena` | time 1.16× Go |
+| `Brainfuck::Array` | time 1.26× Go |
+| `Brainfuck::Recursion` | time 1.21× Crystal, 1.11× Go |
+| `Etc::Sieve` | time 1.86× Crystal, 2.20× Go |
+| `Etc::NeuralNet` | time 1.03× Crystal |
+| `Etc::GameOfLife` | time 1.42× Go; memory 1.55× Go |
+| `Etc::Words` | time 1.10× Crystal |
+| `Sort::Quick` | time 1.04× Go |
+| `Sort::Merge` | time 1.32× Go |
+| `CLBG::Fannkuchredux` | time 1.22× Crystal, 1.15× Go |
+| `CLBG::Mandelbrot` | time 1.03× Go |
+| `Compress::ArithEncode` | time 1.13× Go |
+| `Compress::ArithDecode` | time 1.04× Crystal, 1.05× Go |
+| `Distance::Jaro` | time 1.05× Go |
+| `Distance::NGram` | time 1.11× Crystal, 1.07× Go |
 
-These come from one run; ratios within a few percent may be that run's noise.
+Avant's numbers are the median of five rounds, the other languages' come from one run; ratios within a few percent may be that run's noise.
 
 One weakness these tables understate is allocation-heavy code. `Binarytrees::Arena`, which allocates most, is behind in both time and memory; the two rows that would be worse still are fast only because they are hinted; and [What allocation costs today](#what-allocation-costs-today) says what to expect and what to do meanwhile.
 
@@ -4284,14 +4290,14 @@ The WebSocket echo was not measured in that session. These are the earlier numbe
 
 These notes are about [LangArena](#langarena).
 
-- **Build flags.** Avant: `--release --cpu=v3` (x86-64-v3). C and C++: LangArena's `-O3 -march=native -mtune=native` (Zen 3 here, a superset of v3); the C column is Clang, the faster of the two C compilers measured (GCC: 59.499 s, 23.4 MB). Rust (`cargo build --release`), Go and Crystal (`--release`): their defaults.
+- **Build flags.** Avant: `--release --cpu=v3` (x86-64-v3). C and C++: LangArena's `-O3 -march=native -mtune=native` (Zen 1 here, a superset of v3); the C column is Clang, the faster of the two C compilers measured (GCC: 143.231 s, 23.0 MB). Rust (`cargo build --release`), Go and Crystal (`--release`): their defaults.
 - **The whole process is timed**: start-up, data preparation, warm-up and the timed iterations. LangArena's published numbers count only the timed iterations.
 - **Compiled-in task sizes.** Avant's task configuration is compiled into the program as constants, while the other languages read `run.js` at run time, so LLVM can specialize Avant's loops on the sizes.
-- **Rows that are not comparable programs.** The four `Matmul` tasks: Avant's port sums with eight independent accumulators, which vectorizes, and the references use one. `Hash::CRC32`: Avant calls a runtime builtin written in C with slice-by-4 tables, and every reference is the bitwise loop. `Compress::LZWEncode` and `LZWDecode`: Avant keys the dictionary by integer, C by string. Together these seven rows are 7.6 of the 20.7 seconds between Avant's total and C's.
+- **Rows that are not comparable programs.** The four `Matmul` tasks: Avant's port sums with eight independent accumulators, which vectorizes, and the references use one. `Hash::CRC32`: Avant calls a runtime builtin written in C with slice-by-4 tables, and every reference is the bitwise loop. `Compress::LZWEncode` and `LZWDecode`: Avant keys the dictionary by integer, C by string. Together these seven rows are 13.9 of the 34.4 seconds between Avant's total and C's.
 - **Rows that measure C, not Avant.** `Hash::SHA256` and `Hash::CRC32` call runtime builtins that do the whole task in C, where the references implement it in the language; the Burrows-Wheeler transform inside `Compress::BWTEncode` and `BWTDecode` is runtime C too.
 - **Rows that carry collection hints.** `Binarytrees::Obj` and `Calculator::Ast` call `gc.hold` and `gc.collect()` ([Collection hints](#collection-hints)) in their Avant source: the same algorithm as the references, with the programmer telling the collector when not to run and when everything is dead. No reference program has an equivalent. Read these two rows as what a hinted program does, not as the collector's ordinary behaviour: without the hints, `Binarytrees::Obj` is several times slower than every language in the table.
 - **Library-leaning rows.** `Json::ParseDom` and `Json::ParseMapping` (yyjson in Avant and C; simdjson in C++; serde in Rust), `Base64::Encode` and `Decode` (the aklomp codec in Avant and C), `Template::Regex` and `Etc::LogParser` (PCRE2 in Avant and C, RE2 in C++, the `regex` crate in Rust): the speed is those libraries', reached through Avant's bindings. `Sort::Self` is each language's own library sort, by the task's definition. In `CSV::Parse`, Rust and C++ use CSV libraries; in `Json::Generate`, C and C++ use JSON libraries and Avant writes into its own buffer.
-- **Scope.** All 50 of LangArena's tasks. `Etc::TextRaytracer` runs its whole render (0.999 s, level with Rust's 1.019 s); it was left out while an earlier build hoisted that render out of the timed loop.
+- **Scope.** All 50 of LangArena's tasks. `Etc::TextRaytracer` runs its whole render (2.478 s, level with Rust's 2.538 s); it was left out while an earlier build hoisted that render out of the timed loop.
 - **Equivalent programs is the rule**: Avant's tasks are meant to follow the algorithms and the data widths of the C and Rust references, and a row that does not is named above until it is rewritten.
 
 ## Goals
@@ -4309,7 +4315,7 @@ The bars are measurable, and [LangArena](#langarena) is the public scoreboard:
 | Interop | C libraries usable with little ceremony |
 | Concurrency | built in, and obvious |
 
-Where Avant stands today (2026-11-12): on LangArena, the median task is at 1.01× the best language's time and 0.90× its memory, with three tasks beyond the 1.5× bar in time and five in memory, and twelve tasks behind Crystal or Go ([Where Avant loses](#where-avant-loses)). Allocation-heavy code is the weakest area ([What allocation costs today](#what-allocation-costs-today)). On HTTP, Avant's server is level with the fastest servers at 64 connections without pipelining, and slower than the servers that batch their writes when requests are pipelined ([HTTP and WebSocket servers](#http-and-websocket-servers)). On expressiveness, Avant's LangArena sources are 5,482 lines against Crystal's 4,220 (30% more, and 18% more once compressed): not Crystal's density yet, and the forms that will close the gap are listed in [Not built yet](#not-built-yet). Each of these is treated as a defect until it is fixed, and the numbers on this page are printed as measured, the bad rows beside the good ones.
+Where Avant stands today: on LangArena (2026-11-15), the median task is at 0.98× the best language's time and 0.89× its memory, with four tasks beyond the 1.5× bar in time and six in memory, and fifteen tasks behind Crystal or Go ([Where Avant loses](#where-avant-loses)). Allocation-heavy code is the weakest area ([What allocation costs today](#what-allocation-costs-today)). On HTTP, Avant's server is level with the fastest servers at 64 connections without pipelining, and slower than the servers that batch their writes when requests are pipelined ([HTTP and WebSocket servers](#http-and-websocket-servers)). On expressiveness, Avant's LangArena sources are 5,482 lines against Crystal's 4,220 (30% more, and 18% more once compressed): not Crystal's density yet, and the forms that will close the gap are listed in [Not built yet](#not-built-yet). Each of these is treated as a defect until it is fixed, and the numbers on this page are printed as measured, the bad rows beside the good ones.
 
 Avant is not a better TypeScript, not a borrow-checker language, not a dynamic language with types bolted on, and not a research language. It does not try to please everyone.
 
