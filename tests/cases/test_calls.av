@@ -38,11 +38,13 @@ fn accepted(tag: String, src: String, out: String): CCase {
   f
 }
 
-fn trapped(tag: String, src: String, err: String): CCase {
+// A program that traps: its stdout is out, its stderr holds err.
+fn trapped(tag: String, src: String, out: String, err: String): CCase {
   f = CCase.new()
   f.tag = tag
   f.src = src
   f.want = err
+  f.pos = out
   f.kind = 2
   f
 }
@@ -69,9 +71,23 @@ fn paren_cases(xs: Array(CCase)) {
   xs.push(accepted("paren-neighbours", box + "enum Tok { a, b }\nfn main {\n  b = Box.new()\n  puts(b.n + b.twice())\n  s = \"abc\"\n  xs = [3, 1, 2]\n  xs.sort()\n  h = Hash(String, Int).new()\n  h[\"k\"] = 1\n  by = s.bytes\n  bf = Buf.new()\n  bf.push_str(\"xy\")\n  puts(s.size + by.size + xs.size + h.size + bf.size + h.keys().size)\n  puts(Tok.members().size)\n  puts(Tok.b.name())\n  puts(2.25.sqrt())\n  puts(4.to_s())\n}\n", "6\n13\n2\nb\n1.5\n4\n"))
 }
 
+// `x.expect("why")`: the value of an optional, or a trap printing why
+// and the call's position; why is evaluated only on nil (note prints
+// nothing on the way that finds the value).
+fn expect_cases(xs: Array(CCase)) {
+  find = "fn find(xs: Array(Int), v: Int): Int? {\n  for x in xs {\n    if x == v {\n      return x\n    }\n  }\n  nil\n}\n"
+  xs.push(accepted("expect-value", find + "class Node {\n  pub v: Int = 7\n}\nfn note(s: String): String {\n  puts(\"evaluated\")\n  s\n}\nfn main {\n  puts(find([1, 2, 3], 2).expect(\"two is there\"))\n  s: String? = \"hi\"\n  puts(s.expect(note(\"set\")).size)\n  n: Node? = Node.new()\n  puts(n.expect(\"made\").v)\n  big: UInt64? = 18446744073709551615u64\n  puts(big.expect(\"max\"))\n}\n", "2\n2\n7\n18446744073709551615\n"))
+  xs.push(trapped("expect-nil", find + "fn main {\n  puts(find([1, 2], 2).expect(\"two\"))\n  b = find([1], 5).expect(\"five is in the list\")\n  puts(b)\n}\n", "2\n", "avant runtime: five is in the list at calls-expect-nil.av:11:19\n"))
+  xs.push(refused("expect-error-union", "class Bad: Error {\n  message: String = \"bad\"\n}\nfn f(n: Int): Int | Bad {\n  if n > 0 {\n    return Bad.new()\n  }\n  n\n}\nfn main {\n  puts(f(1).expect(\"positive\"))\n}\n", "expect opens an optional (T?), and Bad | Int can fail with an error: read it with ?, if-assign, ?? or switch", "11:12"))
+  xs.push(refused("expect-no-message", find + "fn main {\n  puts(find([1], 1).expect())\n}\n", "expect takes one String, why the value cannot be nil: x.expect(\"why\")", "10:20"))
+  xs.push(refused("expect-not-string", find + "fn main {\n  puts(find([1], 1).expect(3))\n}\n", "expected String, got Int", "10:28"))
+  xs.push(refused("expect-not-optional", "fn main {\n  n = 3\n  puts(n.expect(\"x\"))\n}\n", "expect", "3:9"))
+}
+
 fn cases: Array(CCase) {
   xs: Array(CCase) = []
   paren_cases(xs)
+  expect_cases(xs)
   xs
 }
 
@@ -102,7 +118,8 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(CCase)) {
     } else if f3.kind == 2 {
       c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
       c.eq_int(runs[k].code, 1, "${f3.tag}: exit 1")
-      c.eq_str(log_text("${dir}/calls-${f3.tag}.run.err"), f3.want, "${f3.tag}: stderr")
+      c.eq_str(log_text("${dir}/calls-${f3.tag}.run.out"), f3.pos, "${f3.tag}: stdout")
+      c.expect(str_has(log_text("${dir}/calls-${f3.tag}.run.err"), f3.want), "${f3.tag}: stderr says ${f3.want}")
       k += 1
     } else {
       c.expect(jobs[i].code != 0 && !file_exists("${dir}/calls-${f3.tag}.bin"), "${f3.tag}: refused")

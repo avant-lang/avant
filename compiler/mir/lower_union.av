@@ -606,6 +606,46 @@ pub fn (lw: MirLower) lower_coalesce(l: Expr, r: Expr, result: Ty, loc: Location
   b.c_i32(0)
 }
 
+// `x.expect(why)` on an optional: x once; when it holds nil, why
+// (evaluated only then) and a trap that prints it with the call's site;
+// otherwise the value.
+pub fn (lw: MirLower) lower_expect(l: Expr, why: Expr, result: Ty, loc: Location): MOperand {
+  b = lw.lw_b
+  if uty = l.ty {
+    rty = lw.ty_at(result, loc, "a value")
+    lty = lw.ety(l)
+    u = lw.lower_expr(l)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(loc)
+    src = lw.hold(u, lty)
+    d = b.temp(rty)
+    fails = ty_failures(uty)
+    bnil = b.block()
+    bval = b.block()
+    c = lw.tag_is(src, uty, uty.tag_of(fails[0]), true)
+    b.branch(c, bnil, bval)
+    b.at(bnil)
+    w = lw.lower_expr(why)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(loc)
+    b.call(-1, "avant_trap_expect", lw.one(w))
+    b.unreachable()
+    b.at(bval)
+    success = ty_without_nil(uty)
+    if sp = ty_success_part(uty) {
+      success = sp
+    }
+    b.assign(b.pl(d), b.rv_use(lw.coerce(lw.unwrap(src, uty, success, loc), success, result, loc)))
+    return b.copy_local(d)
+  }
+  lw.refuse(loc, "an untyped expect")
+  b.c_i32(0)
+}
+
 // `else e` (Stage 29 W5b1, D352), on the failure path: e holds the
 // union in src (of type uty) as its one failure member, or as the union
 // of fails (checker.av else_failure).

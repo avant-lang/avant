@@ -896,6 +896,7 @@ These forms take the value out of a `T?`. All of them work the same way on a res
 | `x ?? return`, `?? return v`, `?? break`, `?? continue` | the value, or leaves | absence ends this function or iteration, and the rest should not nest |
 | `if v = x { ... } else { ... }` | `v` inside the block | absence needs its own code path |
 | `x.or(fallback)` | the same as `x ?? fallback` | you prefer a method chain |
+| `x.expect("why")` | the value, or stops the program printing `why` and the call's position | absence is a bug: the message says what the program assumed |
 
 ```avant
 fn port_of(cfg: Hash(String, Int)): Int {
@@ -916,7 +917,7 @@ fn main {
 }
 ```
 
-`x?` compiles only in a function whose result can carry the `nil` (here `Int?`); otherwise the compiler says what would be returned and where it cannot go. There is no `?.` chaining, no `!` to force a value out and no `x == nil`: open it. To test for absence without using the value, write `if _ = x { ... } else { ... }`.
+`x?` compiles only in a function whose result can carry the `nil` (here `Int?`); otherwise the compiler says what would be returned and where it cannot go. `x.expect("why")` is the one way to assert a value is there: on `nil` it traps as an index out of bounds does (`avant runtime: why at main.av:7:12`, status 1; in a spawned block it ends the task: [When a task traps](#when-a-task-traps)), its message evaluated only then; it opens an optional only, since a result that can fail with an error says what failed and is read with the forms above. There is no `?.` chaining, no `!` or `!!` to force a value out and no `x == nil`: open it. To test for absence without using the value, write `if _ = x { ... } else { ... }`.
 
 ### Unions
 

@@ -526,6 +526,7 @@ __attribute__((noreturn, cold)) void avant_trap_negative(avant_int n, int32_t wh
 __attribute__((noreturn, cold)) void avant_trap_exit_status_at(avant_int status, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_c_null_at(const char *name, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_enum_at(int64_t value, const char *name, int32_t site);
+__attribute__((noreturn, cold)) void avant_trap_expect_at(const char *why, int32_t site);
 
 /* The size ceiling (Stage 29 W-INT1, review 6 section 1.6): a String,
  * Bytes or Buf holds at most AVANT_SIZE_MAX bytes and an Array at most

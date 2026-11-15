@@ -5059,6 +5059,9 @@ pub class Checker {
       fail(expr.loc, "or takes one fallback")
       return object
     }
+    if expr.callee == "expect" && object.is_union() {
+      return check_expect(expr, object)
+    }
     if expr.callee == "with" {
       if is_mutex_ty(object) {
         return check_mutex_with(expr, object)
@@ -5140,6 +5143,38 @@ pub class Checker {
     // A method of the value inside an optional (O257): open it first.
     fail_hint(expr.loc, "cannot call ${expr.callee} on ${object.show()}", open_hint(recv, object))
     t_int()
+  }
+
+  // `x.expect("why")` on an optional: the value, or when x is nil a trap
+  // that prints why and the call's position. Only an optional: a union
+  // with an error member says what failed, which ?, if-assign, ?? and
+  // switch read.
+  pub fn check_expect(expr: Expr, object: Ty): Ty {
+    payload = ty_without_nil(object)
+    if s = ty_success_part(object) {
+      payload = s
+    }
+    fails = ty_failures(object)
+    if !object.is_nilable() || fails.size != 1 || !fails[0].is_nil() {
+      for a in expr.args {
+        check_expr(a)
+      }
+      fail(expr.loc, "expect opens an optional (T?), and ${object.show()} can fail with an error: read it with ?, if-assign, ?? or switch")
+      return payload
+    }
+    if b = expr.block {
+      fail(expr.loc, "expect takes no block: x.expect(\"why\")")
+      return payload
+    }
+    if expr.args.size != 1 {
+      for a in expr.args {
+        check_expr(a)
+      }
+      fail(expr.loc, "expect takes one String, why the value cannot be nil: x.expect(\"why\")")
+      return payload
+    }
+    check_expr_as(expr.args[0], t_string())
+    payload
   }
 
   // An `each` block (Stage 29 W5b1, O544): its statements are checked as

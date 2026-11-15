@@ -477,6 +477,14 @@ void avant_trap_enum_at(int64_t value, const char *name, int32_t site) {
   trap_tail();
 }
 
+/* `x.expect(why)` on an optional that holds nil: the program's own text. */
+void avant_trap_expect_at(const char *why, int32_t site) {
+  g_trap_loc = site_text(site);
+  trap_head();
+  trap_out("%s", why ? why : "");
+  trap_tail();
+}
+
 /* The sited forms of the traps above that the generated code raises
  * (Stage 29 W4b2): the site, then the trap. */
 void avant_trap_bounds_at(avant_int index, avant_int size, int32_t site) {

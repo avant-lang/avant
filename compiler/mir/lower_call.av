@@ -115,6 +115,11 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
           return lw.lower_coalesce(recv, e.args[0], t, e.loc)
         }
       }
+      if e.callee == "expect" && rt.is_union() && e.args.size == 1 {
+        if t = e.ty {
+          return lw.lower_expect(recv, e.args[0], t, e.loc)
+        }
+      }
       // A user method on any type (Expr.resolved names a program method;
       // the builtin members have none, W6a.1).
       if !ast_is_ctor_call(e) && e.resolved.size > 0 {
