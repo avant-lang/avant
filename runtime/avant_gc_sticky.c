@@ -16,8 +16,8 @@
  * avant_gc_internal.h), the copy (splus_copy) and the noted list (below, moved
  * from avant_gc_young.c, which held E's young copy).
  *
- * Candidate S, the in-place young generation (gc-design.md §3.1,
- * StickyImmix), is what this file does with every
+ * Candidate S, the in-place young generation (StickyImmix),
+ * is what this file does with every
  * survivor it does not copy (it could once also be built alone, with
  * GC_STICKY_COPY 0: avant_gc_internal.h).
  * A young collection under S moves nothing. It traces from the roots
@@ -26,10 +26,10 @@
  * its lines marked live at the current line epoch. A young object it
  * does not reach is garbage, reclaimed by the line sweep of the blocks
  * young allocation used, never visited. Mature objects are scanned one
- * level where R1' says (gc-design.md §1.3): when a root, a young
+ * level where R1' says (avant_gc.h): when a root, a young
  * object's field or a remembered object's field names them; deeper ones
  * only when remembered. After the collection no object is young, so the
- * remembered set is emptied (§3.1.1 point 1).
+ * remembered set is emptied.
  *
  * Nothing moves, so nothing is rewritten and nothing needs pinning: no
  * frame slot, C stack word or register is changed, and a young object a
@@ -38,7 +38,7 @@
  * collecting calls, and runtime C keeps what it holds across a
  * collecting call in handle scopes (RC1, avant_gc.h). */
 /* The noted list: every header MARKED a young collection sets, cleared
- * when it ends (gc-design.md §2.6), in the order the trace reached
+ * when it ends, in the order the trace reached
  * them. An entry is the object's payload address with tag bits in its
  * three low bits (avant_gc_internal.h,
  * NOTED_*), so that the passes after the trace read the list and skip
@@ -249,7 +249,7 @@ static __attribute__((noinline)) void y_work_grow(void) {
  * young_size reads (sticky.inplace) and the collection's live bytes:
  * summed per block in Block.idle (S+'s survivor bytes) and added once
  * after the trace (gc_sticky_collect), not per object. The mature growth
- * it causes for the full-collection trigger (gc-design.md §5.4: in-place
+ * it causes for the full-collection trigger (in-place
  * promotions count) is the lines it newly makes live, whole: what the
  * heap loses to it until a full collection, since nothing compacts it (a
  * survivor alone in a line costs the line; counted by its bytes, a heap
@@ -293,7 +293,7 @@ static inline __attribute__((always_inline)) void promote_young(YCtx *c, void *s
   }
 }
 
-/* Variant S+ (gc-design.md §3.1, §3.3): the opportunistic
+/* Variant S+: the opportunistic
  * young copy. A young collection traces and promotes in place as S does,
  * and sums each young block's survivor bytes. After the trace a young
  * block that held no mature line when the collection began and whose
@@ -311,8 +311,9 @@ static inline __attribute__((always_inline)) void promote_young(YCtx *c, void *s
  * objects is named imprecisely: a pin or PINNED, or a registered slot
  * location inside it. (Once also a word of the collecting
  * thread's C stack at a collection runtime C entered, the pin scan;
- * runtime C roots what it holds, RC1, and gc-design.md
- * section 4.3's proof retired the scan.) Nothing moves with the nursery
+ * runtime C roots what it holds, RC1, and the scan was retired once
+ * every runtime C site was converted and the suite passed without it
+ * under the stress mode and the verifier.) Nothing moves with the nursery
  * off (no young collection); in a shared program the copy runs as in an
  * unshared one (the safepoint handshake stops the other
  * threads; before it, nothing moved there). Copying is optional: a block
@@ -676,13 +677,13 @@ static void trace_all(void) {
   trace_drain();
 }
 
-/* Every remembered entry leaves the set, REM cleared (gc-design.md
- * §3.1.1 point 1): after an S young collection no block object is young.
+/* Every remembered entry leaves the set, REM cleared: after an S young
+ * collection no block object is young.
  * Run before any line is freed, while every entry's header is intact (no
  * allocation happens during the collection, and the set holds only
  * objects remembered since the last collection). rem_rebuild then
  * remembers again the holders that name a young large object staying
- * young (§3.1.1 point 1 as amended: the one case where
+ * young (the one case where
  * an object is still young after an S young collection). */
 static void rem_empty(void) {
   uint32_t i;
@@ -709,7 +710,7 @@ static void rem_rebuild(void) {
 
 /* The young lines LO..HI of block B after the trace: a line no survivor
  * marked at the current epoch is free, and its start bits are cleared
- * (32 granules, half a start word; gc-design.md §2.3, §3.1.1 point 2), so
+ * (32 granules, half a start word), so
  * its dead objects are no longer heap payloads and a later hole there
  * has clear start bits for the inline allocation path. A dead object
  * whose header lies in a live line keeps its start bit: nothing infers

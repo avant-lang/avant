@@ -118,8 +118,7 @@ void avant_gc_root(void *slot);
  * collector scans the first count entries. avant_gc_root (one slot per
  * call) and avant_gc_reload (a slot read after a collecting call) are
  * the old myc back end's ABI: the current compiler emits neither, and
- * they stay as deprecated entries until a release note retires them
- * (gc-design.md section 1.4). */
+ * they stay as deprecated entries until a release note retires them. */
 void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
 /* Frames in the caller's stack: generated code keeps
@@ -222,9 +221,9 @@ void avant_gc_collect_young(void);
  * every reference the runtime held for it. */
 void avant_gc_register_thread(void);
 void avant_gc_unregister_thread(void);
-/* Threads and the stop-the-world handshake (gc-design.md
- * section 4.4). A collection stops every other registered thread at a
- * safepoint (a collecting call, or avant_gc_poll) or finds it native.
+/* Threads and the stop-the-world handshake. A collection stops every other
+ * registered thread at a safepoint (a collecting call, or avant_gc_poll) or
+ * finds it native.
  * avant_gc_requested is nonzero while a collection is requested or
  * running; generated code in a program that spawns or uses .parallel
  * tests it at every loop back-edge of a frame function and calls

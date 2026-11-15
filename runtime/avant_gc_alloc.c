@@ -319,8 +319,8 @@ void gc_use_block(Block *b) {
   gc_thread.limit = b->limit;
   /* The young cursor's block is a mature-space block (a fresh one or a
    * recycled one with holes); the inline path follows it into its holes
-   * (their start bits are clear, gc-design.md §2.3) unless S_INLINE_HOLES
-   * is 0 and the hole is not a whole block. Any other block clears it,
+   * (their start bits are clear) unless S_INLINE_HOLES is 0 and the hole
+   * is not a whole block. Any other block clears it,
    * so generated code never writes start bits through another block's
    * base. */
   if (b == gc_thread.ycur && !gc_thread.collecting &&
@@ -878,7 +878,7 @@ void gc_clear_alloc_cur(uint8_t space) {
   gc_heap.space[space].fresh = 0;
 }
 
-/* The young allocator (candidate S's, gc-design.md §3.1).
+/* The young allocator (candidate S's, in-place young collection).
  * There is no nursery space: young objects are allocated, YOUNG flagged,
  * into free lines of mature-space blocks, and each thread's young
  * cursor (GcThread.ycur; once one per process, in
@@ -1076,12 +1076,12 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
   }
   Block *b = gc_new_block(bspace);
   if (!b && (gc_thread.nogc || gc_thread.hold) && !gc_thread.collecting) {
-    /* gc-design.md §5.4: never collect inside a no-GC (defer)
+    /* Never collect inside a no-GC (defer)
      * region, where a runtime helper holds fresh objects the collector
      * cannot see (avant_str_split's items[]). The allocation proceeds
      * past the limit and the full collection runs at the first
      * collection point after the region (gc_maybe_collect), unless the
-     * region alone is over the limit (§5.4). */
+     * region alone is over the limit. */
     gc_region_limit_check(total);
     gc_heap.over_limit = 1;
     b = gc_new_block(bspace);
@@ -1287,7 +1287,7 @@ void *avant_alloc(uint64_t nbytes, uint32_t type_id) {
   }
   gc_maybe_collect();
   if (large) {
-    /* One young budget (gc-design.md §5.1): young large
+    /* One young budget: young large
      * bytes count in avant_nursery_held, so gc_maybe_collect above
      * already ran the young collection they are due (the eager
      * collection for one replaced buffer and the separate large budget

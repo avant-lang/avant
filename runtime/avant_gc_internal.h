@@ -40,10 +40,10 @@
  * runtime units and user programs see avant_rt.h (the shipped ABI) and
  * avant_gc.h (what the rest of the runtime may call); never this file.
  * The collector's state is one GcHeap, gc_heap, and one GcThread per
- * thread, gc_thread (gc-design.md §1.1); no unit keeps
+ * thread, gc_thread; no unit keeps
  * a variable of its own, and the only free-standing variables are the
  * ones generated code or the rest of the runtime name (avant_rt.h, the
- * inline allocation path's thread-locals and counters, mir.md §5.5;
+ * inline allocation path's thread-locals and counters;
  * g_avant_shared, avant_gc.h). Functions a unit shares with another
  * carry the gc_ prefix (without exception: the ten that were
  * global before the collector's split and kept their names while avant_rt.o's
@@ -131,7 +131,7 @@
 #define HEAP_RESERVE_GB_DEFAULT 64
 #define HEAP_RESERVE_GB_MIN 1
 #define LOS_LIMIT 8192
-/* Card marking for large pointer buffers (gc-design.md): a card is
+/* Card marking for large pointer buffers: a card is
  * 2^CARD_SHIFT bytes of heap address space, one byte
  * of the side table gc_heap.cards. Settable at build time for a
  * measurement. */
@@ -147,10 +147,10 @@
 #endif
 #define CARD_SIZE (1u << CARD_SHIFT)
 #define SCALAR_LOS_MIN 6144
-/* The default young budget (gc-design.md §5.2): 4 MiB, chosen
- * among 4, 8 and 16 MiB on the final collector (LangArena
- * prod at each: M1 total 42.29 / 42.53 / 42.67 s, average RSS 28.27 /
- * 28.21 / 29.02 MB, worst M2 memory multiplier 2.57 / 3.62 / 3.74).
+/* The default young budget: 4 MiB, chosen among 4, 8 and 16 MiB on the
+ * final collector (LangArena prod at each: total wall time 42.29 /
+ * 42.53 / 42.67 s, average RSS 28.27 / 28.21 / 29.02 MB, worst memory
+ * multiplier of the memory-heavy rows 2.57 / 3.62 / 3.74).
  * Settable at build time for a measurement. */
 #ifndef YOUNG_BYTES_DEFAULT
 #define YOUNG_BYTES_DEFAULT (4ull * 1024ull * 1024ull)
@@ -201,7 +201,7 @@
 #ifndef YOUNG_AGE
 #define YOUNG_AGE 2
 #endif
-/* The full-collection trigger (gc-design.md §5.4): mature
+/* The full-collection trigger: mature
  * growth since the last full collection reaching
  * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * live after it), uncapped. */
 #define FULL_TRIGGER_MIN (4ull * 1024ull * 1024ull)
@@ -249,7 +249,7 @@
 #define SPACE_NURSERY 1
 #define SPACE_COUNT 2
 
-/* The heap (gc-design.md §2.1-2.3). One reserved
+/* The heap. One reserved
  * address range (gc_heap_reserve, avant_gc_heap.c) of 4 MiB chunks,
  * each 128 blocks of 32 KiB, each 128 lines of 256 bytes. Every
  * per-block and per-line datum lives in a contiguous side table indexed
@@ -300,7 +300,7 @@ typedef struct Block {
 
 _Static_assert(sizeof(Block) == 64, "a block record is 64 bytes");
 
-/* One chunk's entry in the chunk map (gc-design.md §2.2, §2.4). kind:
+/* One chunk's entry in the chunk map. kind:
  *   CHUNK_FREE       in no use (never committed past the high-water
  *                    mark; below it, given back: its data may be dirty)
  *   CHUNK_SMALL      128 blocks of small objects; used counts the blocks
@@ -341,7 +341,7 @@ typedef struct GcChunk {
   uint64_t dirty_pages[PAGE_WORDS];
 } GcChunk;
 
-/* One space's state (gc-design.md §1.1), indexed
+/* One space's state, indexed
  * by SPACE_* in gc_heap.space (SPACE_COUNT of them):
  *   list   the space's blocks (avant_gc_heap.c owns the lists). The
  *          mature space's are two stacks and a direction: list and back,
@@ -466,7 +466,7 @@ static inline uint32_t gc_frame_slot_count(const Frame *f) {
 }
 
 /* A registered thread's collector state as other threads see it
- * (gc-design.md section 4.4). state is GC_RUNNING, GC_NATIVE or
+ * (the handshake). state is GC_RUNNING, GC_NATIVE or
  * GC_SAFEPOINT (avant_gc_safepoint.c); owner is the thread's GcThread,
  * whose runtime-held slots every collection visits. */
 enum { GC_RUNNING = 0, GC_NATIVE = 1, GC_SAFEPOINT = 2 };
@@ -617,8 +617,8 @@ typedef struct BlockSet {
  * its marked cards. The other objects keep object remembering (REM),
  * a hybrid of the two.
  * REMC: a carded object is in the remembered set. It is not REM, so the
- * generated code's inline barrier test (HEAP and YOUNG or REM, mir.md
- * §5.6) never skips a store into a mature carded object: every such
+ * generated code's inline barrier test (HEAP and YOUNG or REM) never
+ * skips a store into a mature carded object: every such
  * store reaches the runtime with its slot. CARD_ALL: every card counts
  * as marked (a barrier that named the holder only: avant_barrier,
  * avant_barrier_at); the next young collection scans the whole object
@@ -650,10 +650,9 @@ typedef struct BlockSet {
  * (the bits are cleared before anything moves). */
 #define AVANT_FLAG_LOGGED 512u
 
-/* The collector's counters, per family (gc-design.md
- * §1.7). AvantGcStats (avant_rt.h, ABI: avant_g_stats) keeps its
- * seven; every other counter is a field of one family here, written
- * where its event happens and printed by its family's routine in
+/* The collector's counters, per family. AvantGcStats (avant_rt.h, ABI:
+ * avant_g_stats) keeps its seven; every other counter is a field of one family
+ * here, written where its event happens and printed by its family's routine in
  * avant_gc_stats.c (AVANT_GC_STATS=1, one line at exit). */
 
 /* root: root bookkeeping call counts: every call to
@@ -708,8 +707,8 @@ typedef struct GcDefCounters {
  * the nursery bytes in use and the surviving bytes at each probe,
  * min/max are the extreme surviving-byte readings, and hist buckets the
  * surv/used ratio in percent (0, 1-10, 10-25, 25-50, 50-75, 75-100) so
- * phase oscillation is visible. The probe is retired (gc-design.md
- * §5.2): the family stays in the statistics line,
+ * phase oscillation is visible. The probe is retired: the family stays
+ * in the statistics line,
  * always 0. */
 typedef struct GcSrvCounters {
   uint64_t probes;
@@ -787,8 +786,8 @@ typedef struct GcLosCounters {
   uint64_t drop_bytes;
 } GcLosCounters;
 
-/* pause, why, frag, prom (gc-design.md §3.4 M5 and
- * M6). pause: the wall time of every collection (CLOCK_MONOTONIC around
+/* pause, why, frag, prom: the pause, cause, fragmentation and promotion
+ * statistics. pause: the wall time of every collection (CLOCK_MONOTONIC around
  * gc_collect's body), young and full summed in nanoseconds, and the
  * longest single pause. */
 typedef struct GcPauseCounters {
@@ -822,10 +821,11 @@ typedef struct GcWhyCounters {
   uint64_t explicit_;
 } GcWhyCounters;
 
-/* frag: M6, at each full collection after the mark (before the sweep):
+/* frag: fragmentation, at each full collection after the mark (before
+ * the sweep):
  * the free lines of the partly used blocks (some line live, some free)
  * of every space, and every block's lines. free_lines and lines are
- * summed over the full collections; weighted is §3.4 rule 5's aggregate,
+ * summed over the full collections; weighted is the program's aggregate,
  * the free-line fraction weighted by the heap bytes (gc_heap.heap_bytes)
  * at each full collection, kept as the two sums (num in line-fraction
  * times bytes, den in bytes) so the line prints num / den in parts per
@@ -849,7 +849,7 @@ typedef struct GcPromCounters {
   uint64_t large;
 } GcPromCounters;
 
-/* size: the young budget's adaptations (gc-design.md §5.2, young_size in
+/* size: the young budget's adaptations (young_size in
  * avant_gc_collect.c): doublings and halvings. */
 typedef struct GcSizeCounters {
   uint64_t grows;
@@ -861,7 +861,7 @@ typedef struct GcSizeCounters {
  * fields as 0. S+ counts the blocks it keeps in place in
  * sticky.kept_blocks.) */
 
-/* sticky (candidate S, gc-design.md §3.1): inplace is the
+/* sticky (candidate S, the in-place young collection): inplace is the
  * bytes S's young collections promoted in place (block objects; young
  * large objects count in prom.large as for E); blocks the young blocks
  * swept, holes the holes the young allocator took (a fresh block is one
@@ -950,7 +950,7 @@ typedef struct GcCounters {
   uint64_t peak_live;
 } GcCounters;
 
-/* The settings (gc-design.md §1.7): read from the
+/* The settings: read from the
  * environment once, by gc_init_slow (gc_settings_read,
  * avant_gc_collect.c), and never changed after. The knobs, their values
  * and the parsing rule are documented in one place, avant_gc.h. */
@@ -974,8 +974,7 @@ typedef struct GcSettings {
   int verify;
   /* AVANT_GC_STATS: the statistics line at exit (avant_gc_stats.c). */
   int stats;
-  /* AVANT_GC_STRESS (gc-design.md §4.2 item 1, the
-   * minimal step): a young collection at every outermost
+  /* AVANT_GC_STRESS: a young collection at every outermost
    * avant_gc_defer_enter and at every avant_alloc (runtime C's, and
    * generated code's: the inline allocation path
    * is never published under it), with the nursery on. A young
@@ -1117,16 +1116,16 @@ typedef struct GcProof {
   uint32_t cur_cap;
 } GcProof;
 
-/* The collector's state (gc-design.md §1.1): one
+/* The collector's state: one
  * GcHeap, gc_heap (defined in avant_gc_heap.c), shared by every
  * collector unit and guarded by the world lock unless a field says
  * otherwise. The fields are grouped by the unit that owns them. What the
  * generated code reads or writes by name stays outside (the inline
  * allocation path's thread-locals and counters, avant_g_stats,
- * g_avant_str_gen; mir.md §5.5), as does g_avant_shared, which the
+ * g_avant_str_gen), as does g_avant_shared, which the
  * runtime's other units read. Per-thread state is GcThread. */
 typedef struct GcHeap {
-  /* avant_gc_heap.c. The reservation (gc-design.md §2.1): base is 4 MiB
+  /* avant_gc_heap.c. The reservation: base is 4 MiB
    * aligned; reserved bytes from it are reserved, the first committed
    * of them committed (whole chunks, in order). The side tables are
    * reserved for the whole range and committed by the slice of each
@@ -1138,7 +1137,7 @@ typedef struct GcHeap {
   uint64_t *starts;
   uint64_t *marks;
   uint8_t *lines;
-  /* The line marks' epoch (gc-design.md §2.2): a line is
+  /* The line marks' epoch: a line is
    * live when its mark equals it (line_live). A full collection advances
    * it instead of zeroing every block's marks (gc_line_epoch_advance);
    * young collections mark with it and never advance it, so marks
@@ -1219,8 +1218,7 @@ typedef struct GcHeap {
   uint64_t large_bytes;
   /* Bytes and count of young large objects. They do not move. A young
    * collection frees the ones the mark does not reach. Their bytes are
-   * also counted in avant_nursery_held, the one young budget
-   * (gc-design.md §5.1). */
+   * also counted in avant_nursery_held, the one young budget. */
   uint64_t young_large;
   int young_large_n;
   /* The young-allocation clock: young bytes
@@ -1257,7 +1255,7 @@ typedef struct GcHeap {
   uint32_t keep_n;
   uint32_t keep_cap;
 
-  /* avant_gc_sticky.c. The noted list (gc-design.md §2.6): every
+  /* avant_gc_sticky.c. The noted list: every
    * object a young collection flags MARKED (its "traced this cycle" bit):
    * the young objects it reaches, the mature and large objects it scans, the
    * remembered objects. gc_clear_noted clears exactly those
@@ -1482,7 +1480,7 @@ typedef struct GcHeap {
   /* Set while a stress point's young collection runs (it makes no
    * sizing decision). */
   int stress_now;
-  /* gc-design.md §5.4: an allocation inside a no-GC
+  /* An allocation inside a no-GC
    * (defer) region that went past AVANT_HEAP_MAX_MB. The full collection
    * it needed runs at the first collection point after the region: the
    * next gc_maybe_collect, which the allocation fast paths (C and inline)
@@ -1498,15 +1496,15 @@ typedef struct GcHeap {
    * the full collection's cause, ctr.why). */
   uint64_t promoted_since_full;
   /* The last young collection's survival exceeded half its young bytes
-   * (young_size, gc-design.md §5.2). */
+   * (young_size). */
   uint8_t young_high_prev;
   /* The tenured phase (gc_sticky_retire, avant_gc_sticky.c): on, the
    * retirements left before the next probe, and the probes' interval. */
   uint8_t tenure_on;
   uint32_t tenure_left;
   uint32_t tenure_gap;
-  /* Mature growth that triggers the next full collection (gc-design.md
-   * §5.4): FULL_TRIGGER_MIN before the first one, then
+  /* Mature growth that triggers the next full collection:
+   * FULL_TRIGGER_MIN before the first one, then
    * max(FULL_TRIGGER_MIN, (HEAP_FACTOR - 1) * the live bytes it left).
    * Before, twice the live set plus 4 MiB capped at 32 MiB: the cap made
    * a program with a large live set collect too often for its size. */
@@ -1551,13 +1549,12 @@ typedef struct GcHeap {
   ThreadReg *threads;
   pthread_mutex_t world;
   pthread_mutex_t threads_mu;
-  /* avant_gc_safepoint.c. The handshake (gc-design.md
-   * section 4.4): its own lock, used only by the collector, the safepoint
-   * and native transitions and thread registration (rule 1: never held
-   * with a runtime lock a stopped thread could wait for); stopped_cv
-   * wakes the collector when a thread stops or turns native, resume_cv
-   * wakes the stopped threads when the collection is done. The request
-   * flag itself is avant_gc_requested (generated code polls it). */
+  /* avant_gc_safepoint.c. The handshake: its own lock, used only by the
+   * collector, the safepoint and native transitions and thread registration
+   * (rule 1: never held with a runtime lock a stopped thread could wait for);
+   * stopped_cv wakes the collector when a thread stops or turns native,
+   * resume_cv wakes the stopped threads when the collection is done. The
+   * request flag itself is avant_gc_requested (generated code polls it). */
   pthread_mutex_t hs_mu;
   pthread_cond_t hs_stopped_cv;
   pthread_cond_t hs_resume_cv;
@@ -1577,8 +1574,8 @@ typedef struct GcHeap {
 
 extern GcHeap gc_heap;
 
-/* A mutator thread's collector state (gc-design.md
- * §1.1): gc_thread, thread-local, defined in avant_gc_roots.c. */
+/* A mutator thread's collector state: gc_thread, thread-local, defined
+ * in avant_gc_roots.c. */
 typedef struct GcThread {
   /* The thread's free frames (its innermost frame is avant_gc_top,
    * avant_gc.h: runtime C's scopes push onto it
@@ -1597,7 +1594,7 @@ typedef struct GcThread {
   /* The thread's registration (gc_heap.threads), its frame head and
    * stack bounds. */
   ThreadReg reg;
-  /* Runtime-held references (gc-design.md §1.4): thread-local slots of
+  /* Runtime-held references: thread-local slots of
    * the runtime's other units that hold a heap reference, registered by
    * avant_gc_add_root (once each, by the thread that owns them). A
    * collection reads and rewrites them like root slots. */
@@ -1618,13 +1615,13 @@ typedef struct GcThread {
   int collector;
   int foreign;
   int base_native;
-  /* The thread's allocation cursors (gc-design.md section
-   * 4.4 "What it enables"; they were gc_heap's, one per process, so only
-   * one thread could allocate young). cur and limit: the C cursor's block
-   * and its hole's limit (the cursor itself is the thread's
-   * avant_gc_bump); fast_block: the block the inline path is published
-   * on; ycur: the young cursor's block (a young block, owned by this
-   * thread until the next collection); overflow: its young overflow
+  /* The thread's allocation cursors (per thread since the handshake stops the
+   * world for a collection; they were gc_heap's, one per process, so only one
+   * thread could allocate young). cur and limit: the C cursor's block and its
+   * hole's limit (the cursor itself is the thread's avant_gc_bump);
+   * fast_block: the block the inline path is published on; ycur: the young
+   * cursor's block (a young block, owned by this thread until the next
+   * collection); overflow: its young overflow
    * block; cur_whole: ycur's hole is a whole block. A collection clears
    * every thread's (gc_alloc_stop_all, avant_gc_alloc.c).
    *
@@ -1693,7 +1690,7 @@ typedef struct GcThread {
    * (barriers and allocation read it; no other thread runs meanwhile);
    * the bytes allocated inside this thread's outermost no-GC region and
    * the address its helper entered it from (for "heap limit in a no-GC
-   * region", gc-design.md section 5.4). The region's depth is nogc,
+   * region"). The region's depth is nogc,
    * above. */
   int collecting;
   uint64_t region_bytes;
@@ -1827,7 +1824,7 @@ void gc_rem_thread_leave(void);
 void gc_hdr_or(AvantHeader *h, uint16_t bits);
 void gc_hdr_and(AvantHeader *h, uint16_t bits);
 
-/* The young generation is S+ (gc-design.md §3.1, §3.3): candidate S, the
+/* The young generation is S+: candidate S, the
  * in-place young collection, with the
  * opportunistic young copy (avant_gc_sticky.c: survivors of young blocks
  * are copied out when every reference to them is precise). Once a
@@ -2086,7 +2083,7 @@ void gc_print_stats(void);
 /* avant_gc_roots.c */
 extern atomic_int g_avant_shared;
 
-/* avant_gc_safepoint.c (gc-design.md section 4.4): the
+/* avant_gc_safepoint.c: the
  * request flag generated code polls, the stop-the-world handshake, the
  * thread states. gc_stop_world returns 1 when this thread holds the
  * request and every other registered thread is at a safepoint or native,
@@ -2134,7 +2131,7 @@ static inline size_t hash_ptr(void *p) {
   return (size_t)x;
 }
 
-/* O(1) lookups (gc-design.md §2.3). An address is in the committed
+/* O(1) lookups. An address is in the committed
  * heap iff its offset from gc_heap.base is below gc_heap.committed (an
  * address below the base wraps to a large offset); its chunk, block and
  * line are that offset shifted. block_of answers only for a block in
@@ -2228,15 +2225,15 @@ static inline int gc_young_at(void *start, const Block *b, const AvantHeader *ol
  * default), the inline allocation path runs in holes of recycled blocks
  * as in whole free blocks: the slow path sets avant_gc_bump and publishes
  * the limit at the hole's end (the generated code needs nothing else),
- * and the hole's start bits are clear (gc-design.md §2.3: the sweeps
- * clear the lines they free). 0 publishes the inline path only in whole
+ * and the hole's start bits are clear (the sweeps clear the lines they
+ * free). 0 publishes the inline path only in whole
  * blocks; holes are then filled through the C path (kept for a
  * measurement). */
 #ifndef S_INLINE_HOLES
 #define S_INLINE_HOLES 1
 #endif
 
-/* The full collection's mark (gc-design.md §2.2):
+/* The full collection's mark:
  * one bit per 8-byte granule in the side table gc_heap.marks, at the granule
  * of the object's header (the same index as its start bit), cleared per
  * chunk by gc_clear_side_marks when a full collection starts. Every
@@ -2255,7 +2252,7 @@ static inline void full_set_mark(AvantHeader *h) {
 }
 
 /* Start bits by address, for any chunk (large objects' headers have one
- * too, gc-design.md §2.3). */
+ * too). */
 static inline uint64_t granule_of(const void *p) {
   return (uint64_t)((uintptr_t)p - (uintptr_t)gc_heap.base) >> 3;
 }
@@ -2397,7 +2394,7 @@ static inline void *payload_of(AvantHeader *h) {
   return (void *)(h + 1);
 }
 
-/* Forwarding in the header (gc-design.md §3.2): a moved
+/* Forwarding in the header: a moved
  * object's old header keeps its flags word (FORWARDED set) and holds
  * the new payload address in the 48 bits of size and type id, which the
  * old copy no longer needs (heap addresses are below 2^48,

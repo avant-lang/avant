@@ -137,7 +137,7 @@ static inline __attribute__((always_inline)) void *verify_trace_r(void *p) {
   }
   AvantHeader *h = avant_header(start);
   /* A moved object is reached through its copy: its own header holds the
-   * forward, not a size or a type (gc-design.md §3.2). */
+   * forward, not a size or a type. */
   if (h->flags & AVANT_FLAG_FORWARDED) {
     start = gc_forward_of(h);
   }
@@ -242,8 +242,8 @@ static uint64_t verify_mark_reachable(int stale) {
   return bad;
 }
 
-/* AVANT_GC_VERIFY after an S young collection's trace, before its sweep
- * (gc-design.md §3.1): independent reachability from the
+/* AVANT_GC_VERIFY after an S young collection's trace, before its
+ * sweep: independent reachability from the
  * roots and the remembered set (verify_mark_reachable, which ignores the
  * collector's own tracing rules), then for every object it reaches:
  * a block object must no longer be young (the collection promoted it in
@@ -351,10 +351,10 @@ static void verify_sticky_whole(void) {
   verify_clear_traced();
 }
 
-/* The remembered-set check (gc-design.md §4.2 item 2):
+/* The remembered-set check:
  * before a young collection traces, every field of a non-young object
  * that names a young object must belong to a remembered holder or to an
- * object the three-way rule R1' (§1.3) names this cycle: a root (slot,
+ * object the three-way rule R1' (avant_gc.h) names this cycle: a root (slot,
  * pin, runtime TLS slot), a field of a young object, or a field of a
  * remembered object. Those three are computed by a first pass over the
  * roots, the young objects and the remembered set. Only holders the
@@ -373,9 +373,8 @@ static void verify_sticky_whole(void) {
  * The named objects are gc_heap.rnamed; the reports are counted in
  * gc_heap.missing_barriers. */
 
-/* The lost-reference check (gc-design.md
- * section 4.3): a reference the program can still use that names heap
- * memory where no object lives. It replaces the conservative C-stack
+/* The lost-reference check: a reference the program can still use that names
+ * heap memory where no object lives. It replaces the conservative C-stack
  * cross-check (the words of the collecting thread's stack naming a block
  * defragmentation frees), which could not tell a live reference from a
  * dead copy and reported dead spills by the ten thousand once both

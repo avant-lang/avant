@@ -27,7 +27,7 @@ uint64_t avant_young_bytes;
 
 uint64_t avant_nursery_held;
 
-/* Young sizing (gc-design.md §5.2).
+/* Young sizing.
  * The young budget starts at YOUNG_BYTES_DEFAULT (4 MiB; 8 MiB once) and
  * adapts within [floor, YOUNG_BYTES_CAP]
  * after every young collection the policy runs (young_size, below: the
@@ -105,8 +105,8 @@ static uint64_t env_u64(const char *name, uint64_t fallback, uint64_t lo, uint64
   return n;
 }
 
-/* Retired knobs (gc-design.md §1.7), and AVANT_GC_STACK_REWRITE with the
- * C-stack scans (§4.3): setting one is reported, and it has no effect. */
+/* Retired knobs, and AVANT_GC_STACK_REWRITE with the conservative C-stack
+ * scans: setting one is reported, and it has no effect. */
 static const char *const retired_knobs[] = {
     "AVANT_NURSERY_DISCARD", "AVANT_GC_REM_FRONTIER", "AVANT_GC_YOUNG_SIZING",
     "AVANT_GC_COPY_RESERVE", "AVANT_GC_STACK_REWRITE"};
@@ -138,8 +138,8 @@ static void gc_settings_read(GcSettings *s) {
 
 _Atomic uint32_t g_avant_str_gen;
 
-/* §5.2's rule, after a young collection that saw USED young bytes and
- * SURV surviving ones. The budget doubles, up to
+/* The young sizing rule, after a young collection that saw USED young
+ * bytes and SURV surviving ones. The budget doubles, up to
  * YOUNG_BYTES_CAP, at the second consecutive young collection where more
  * than half the young bytes survived, and halves back toward its floor
  * when less than a tenth survived. The floor is the larger of
@@ -243,7 +243,7 @@ static void count_full_why(GcWhy why) {
   }
 }
 
-/* M6 (gc-design.md §3.4): after a full collection's mark, the free
+/* The fragmentation statistic: after a full collection's mark, the free
  * lines of every partly used block of LIST, and all its lines. */
 static void frag_scan(Block *list, uint64_t *free_lines, uint64_t *lines) {
   Block *b;
@@ -325,7 +325,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   if (!full && !allow_move) {
     gc_die("a young collection always moves");
   }
-  /* The handshake (gc-design.md section 4.4): the world
+  /* The handshake (avant_gc_safepoint.c): the world
    * lock is released (rule 1) while this thread raises the request and
    * waits for every other registered thread to stop at a safepoint or be
    * native, then taken again. When another thread held the request, this
@@ -625,7 +625,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
   }
 
   if (full) {
-    /* gc-design.md §5.4: max(4 MiB, (F - 1) * live), F = 2, uncapped. */
+    /* The full trigger: max(4 MiB, (F - 1) * live), F = 2, uncapped. */
     uint64_t next = (uint64_t)(HEAP_FACTOR - 1) * gc_heap.live;
     gc_heap.full_trigger = next < FULL_TRIGGER_MIN ? FULL_TRIGGER_MIN : next;
   }
@@ -809,7 +809,7 @@ void gc_verify_exit_run(void (*check)(void)) {
 
 /* The heap-goal collection at the HTTP boundary (the request path's
  * allocations all pass through C helpers under defer). It is an ordinary
- * collection request (gc-design.md §5.4): the
+ * collection request: the
  * policy runs what is due (gc_maybe_collect: the young budget, which
  * counts the helpers' allocations, the full trigger, a pending
  * heap-limit collection), as at any allocation's slow path. Before, it
@@ -849,7 +849,7 @@ static __attribute__((noreturn)) void region_die(const char *what) {
   region_die_at(what, gc_thread.region_site);
 }
 
-/* gc-design.md §5.4: an allocation inside a no-GC region proceeds past
+/* An allocation inside a no-GC region proceeds past
  * AVANT_HEAP_MAX_MB (the full collection runs after the region),
  * unless the region alone has allocated more than the limit: no
  * collection after it could bring the heap back under the limit. */

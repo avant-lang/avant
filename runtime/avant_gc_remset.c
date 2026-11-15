@@ -222,7 +222,7 @@ void gc_cards_settle(void) {
  * unmarked is dead and dropped: before, it stayed, and a later young
  * collection scanned the dead object's stale fields as roots, or, once
  * its address held a new object, scanned that unrelated object (start
- * bits cannot tell, gc-design.md §2.3). An entry whose header lacks REM
+ * bits cannot tell). An entry whose header lacks REM
  * is such an address (a new object the barrier never remembered) or a
  * duplicate left by one, and is dropped too. A live holder that names
  * no young object leaves the set with REM cleared (the barrier re-adds

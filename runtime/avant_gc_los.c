@@ -9,9 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The large-object space (in the heap's chunks, gc-design.md §2.4). An object
- * too large for a block (or a medium
- * scalar buffer) takes an exact run of whole 4 KiB pages,
+/* The large-object space (in the heap's chunks). An object too large for a
+ * block (or a medium scalar buffer) takes an exact run of whole 4 KiB pages,
  * ceil((16 + size) / 4096), first fit from the free-page bitmap of a
  * large-object chunk (CHUNK_LARGE); an object larger than a chunk holds
  * takes a run of whole contiguous chunks (CHUNK_HUGE, then
@@ -21,8 +20,7 @@
  * (avant_gc_heap.c). Large objects never move. No list, hash or address
  * range: every walk goes over the chunks (gc_large_next), and the bytes
  * the large objects hold are a counter (gc_heap.large_bytes). Every large
- * object is born young and dies young (gc-design.md
- * §5.3): gc_reclaim_young_large. */
+ * object is born young and dies young: gc_reclaim_young_large. */
 
 static uint64_t run_pages(size_t payload) {
   return ((uint64_t)payload + 16 + PAGE_SIZE - 1) >> PAGE_SHIFT;
@@ -204,12 +202,11 @@ void gc_large_chunk_gone(uint64_t c) {
 }
 
 /* Give back the run of the object (or spare) whose header is H: its
- * pages free in its chunk, or its huge run's chunks free. The memory
- * stays resident for reuse; a full collection's gc_heap_return gives
- * back what stays idle (gc-design.md §2.4 asked for an immediate madvise
- * of runs of 64 KiB or more: measured, it made every reuse fault its
- * pages in again, Json::ParseDom +53%, so returning waits for the
- * hysteresis). */
+ * pages free in its chunk, or its huge run's chunks free. The memory stays
+ * resident for reuse; a full collection's gc_heap_return gives back what stays
+ * idle (an immediate madvise of runs of 64 KiB or more was tried: measured, it
+ * made every reuse fault its pages in again, Json::ParseDom +53%, so returning
+ * waits for the hysteresis). */
 static void give_run(AvantHeader *h) {
   uint64_t c = chunk_index(h);
   GcChunk *ch = &gc_heap.chunks[c];
@@ -368,7 +365,7 @@ static void note_live_sample(uint64_t live) {
   }
 }
 
-/* A young large object leaves the young generation (gc-design.md §5.3):
+/* A young large object leaves the young generation:
  * YOUNG and its age bit SURVIVED are cleared and its bytes become mature
  * growth. One with reference fields joins the kept list, so the
  * remembered set holds it while its fields name young objects (the
@@ -395,9 +392,9 @@ static void promote_young_large(AvantHeader *h) {
   }
 }
 
-/* After a young collection's trace (gc-design.md §5.3:
- * young large objects die young). Every large object is born young. An
- * unreached young large object is freed at once (or kept as the spare);
+/* After a young collection's trace (young large objects die young). Every
+ * large object is born young. An unreached young large object is freed at once
+ * (or kept as the spare);
  * a reached one stays young at its first survival (SURVIVED marks it)
  * and is promoted at a later one once LARGE_AGE_BYTES of young
  * allocation passed since its birth (the stamp in
@@ -466,7 +463,7 @@ void gc_sweep_large(void) {
 
 void *gc_los_alloc(size_t payload, uint32_t type_id) {
   size_t bytes = (size_t)(run_pages(payload) << PAGE_SHIFT);
-  /* Every large object is born young (gc-design.md §5.3; once only
+  /* Every large object is born young (once only
    * scalar ones were), except a mature-allocating
    * thread's and with the nursery off. */
   int young = !gc_heap.set.nursery_off && !gc_thread.alloc_mature;
@@ -478,7 +475,7 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
     if (gc_thread.nogc || gc_thread.hold) {
       /* Inside a no-GC region the allocation proceeds past the
        * limit and the collection runs after the region, unless the
-       * region alone is over the limit (gc-design.md §5.4). */
+       * region alone is over the limit. */
       gc_region_limit_check(bytes);
       gc_limit_collect_pending();
     } else {
@@ -537,7 +534,7 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
                                                      : 0);
     gc_heap.young_large += bytes;
     gc_heap.young_large_n++;
-    /* The one young budget (gc-design.md §5.1). */
+    /* The one young budget. */
     avant_nursery_held += bytes;
   } else {
     gc_heap.mature_since_full += bytes;

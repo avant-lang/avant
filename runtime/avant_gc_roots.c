@@ -114,8 +114,8 @@ static void register_thread(int implicit) {
       pthread_attr_destroy(&attr);
     }
   }
-  /* A thread registered by its first avant_gc_enter is a foreign one
-   * (rule 4 of gc-design.md section 4.4: native between callbacks),
+  /* A thread registered by its first avant_gc_enter is a foreign one (the
+   * handshake's rule 4 in avant_gc_safepoint.c: native between callbacks),
    * except the program's first thread (the main thread's first frame). */
   foreign = implicit && atomic_exchange(&g_first_registered, 1) != 0;
   if (!implicit) {

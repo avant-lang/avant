@@ -29,9 +29,9 @@
  *     promotes young objects in place and copies the survivors of the
  *     young blocks it evacuates, rewriting root slots, runtime TLS slots
  *     and the fields of the objects it scanned; it never reads or
- *     rewrites a word of the C stack (the conservative scans are retired,
- *     gc-design.md section 4.3: runtime C roots what it
- *     holds, RC1 below), and pinned objects never move. A full collection
+ *     rewrites a word of the C stack (the conservative scans are retired:
+ *     runtime C roots what it holds, RC1 below), and pinned objects
+ *     never move. A full collection
  *     may evacuate sparse mature blocks holding no pinned object; it
  *     rewrites every precise reference. Every other registered thread is
  *     stopped at a safepoint or native meanwhile (the safepoint
@@ -72,12 +72,12 @@
  *     variable registers that slot once per thread with
  *     avant_gc_add_root before it first holds one (avant_hash.c's last
  *     key); the collections on that thread read and rewrite it like a
- *     root slot (gc-design.md section 1.4; it replaced a
- *     callback from the collector into avant_hash.c).
+ *     root slot (it replaced a callback from the collector into
+ *     avant_hash.c).
  *
- * The runtime-C contract, RC1-RC5 (gc-design.md section
- * 4.2; it replaces the earlier defer discipline and named
- * safepoints). A runtime C function is a mutator like generated code:
+ * The runtime-C contract, RC1-RC5 (it replaces the earlier defer
+ * discipline and named safepoints). A runtime C function is a mutator
+ * like generated code:
  * any call that may collect (an allocation, a helper that allocates, a
  * callback into Avant) may run a young collection that moves the young
  * objects it can (S+'s copy) and frees the unreached ones, or a full
@@ -104,7 +104,7 @@
  *   nested block for a second). It is thread-local, takes no lock and
  *   allocates nothing. The same in a shared program: other threads
  *   collect only while this one is stopped at a
- *   safepoint or native (gc-design.md section 4.4), so a scope no longer
+ *   safepoint or native (the handshake), so a scope no longer
  *   holds a no-GC region there (before the safepoint handshake it did,
  *   and took the world lock twice).
  *
@@ -157,14 +157,14 @@
  *   inside dies naming the region's function ("collection inside a
  *   no-GC region (...)"). avant_gc_defer_enter/leave, the ABI names
  *   user --cc C may call, are the same region; generated code never
- *   emits either (mir.md section 5.8).
+ *   emits either.
  *
  *   A function that allocates but holds no reference across the
  *   allocation (its inputs are C memory, or it reads nothing after it)
  *   needs no scope; tools/gc-lint.sh asks such a function for a comment
  *   "gc-lint: holds nothing" naming why.
  *
- *   How it is checked (gc-design.md section 4.2): AVANT_GC_STRESS=1 runs
+ *   How it is checked: AVANT_GC_STRESS=1 runs
  *   a young collection before every allocation (avant_alloc; generated
  *   code's allocations too, the inline path being
  *   off under it) that moves
@@ -175,7 +175,8 @@
  *   when an allocating call stands in a function with neither a scope,
  *   a region nor the comment.
  *
- *   The checklist (gc-audit.md section 13's table, moved here, every
+ *   The checklist (every allocation site of runtime C outside the
+ *   collector and what it holds across the allocation, every
  *   row converted; "C" converted to RC1-RC3, "N" nothing
  *   held, or a no-GC region kept, with its reason):
  *     row (unit)                                   verdict
@@ -225,21 +226,21 @@
  *       (avant_json.c)                             runtime roots
  *                                                  (avant_gc_add_root)
  *
- *   One young budget (gc-design.md section 5.1): avant_nursery_held
+ *   One young budget: avant_nursery_held
  *   counts every young byte, the nursery's and the young large
  *   objects', helper allocations included; a collection is due when it
  *   reaches avant_young_bytes.
  *
  *
- *   The young collection's three-way rule, R1' (gc-design.md section
- *   1.3). A young collection scans one level of every
+ *   The young collection's three-way rule, R1'. A young collection
+ *   scans one level of every
  *   non-young object that is named (a) by a root (a frame slot, a pin, a
  *   runtime root of avant_gc_add_root), (b) by a field of a young
  *   object, or (c) by a field of a remembered object; deeper non-young
  *   objects are followed only when they are remembered themselves. The
  *   generated code's fresh-store exemption relies on it (a buffer
- *   promoted in the middle of its fill is still found through its slot,
- *   mir.md section 5.4), and so did the runtime builders that fill a
+ *   promoted in the middle of its fill is still found through its
+ *   slot), and so did the runtime builders that fill a
  *   born-mature large reference buffer (array_grow, str_array_build,
  *   hash_array_str, avant_array_copy, avant_argv: a young array header
  *   (b) or a root (a) names the buffer), which also barrier the
@@ -253,10 +254,10 @@
  */
 
 /*
- * The collector's settings (gc-design.md section 1.7): the environment
- * variables below, read once when the collector
- * starts (gc_init_slow, avant_gc_collect.c) into one settings struct.
- * One rule for all of them: unset or empty is the default; a switch is
+ * The collector's settings: the environment variables below, read once
+ * when the collector starts (gc_init_slow, avant_gc_collect.c) into one
+ * settings struct. One rule for all of them: unset or empty is the
+ * default; a switch is
  * on for exactly 1 and off for exactly 0; a number is decimal digits
  * only, in its range; any other value is reported on stderr at start-up
  * ("avant runtime: warning: ...") and the default applies.
@@ -264,7 +265,7 @@
  *   AVANT_YOUNG_MB         number, 0..2^30, default 0: the young
  *                          generation's budget in MiB, fixed; 0 is the
  *                          adaptive budget (4 MiB to start, within 4 to
- *                          64 MiB; gc-design.md section 5.2)
+ *                          64 MiB)
  *   AVANT_HEAP_MAX_MB      number, 0..2^30, default 0: the heap limit in
  *                          MiB ("heap limit" past it); 0 is no limit
  *   AVANT_HEAP_RESERVE_GB  number, 1..2^20, default 64: the heap's
@@ -333,7 +334,8 @@ void avant_gc_poll(void);
 void avant_gc_native_begin(void);
 void avant_gc_native_end(void);
 /* Runtime-internal: a blocking lock or condition wait at
- * a collecting call (rule 2 of gc-design.md section 4.4): an uncontended
+ * a collecting call (the handshake's rule 2 in avant_gc_safepoint.c: a
+ * thread blocked in a runtime wait is native): an uncontended
  * lock is taken at once; a contended one, and every wait, is native, so
  * a collection does not wait for this thread, and the thread returns to
  * running only when no collection is in progress (the mutex is held

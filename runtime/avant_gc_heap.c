@@ -568,7 +568,7 @@ static uint64_t chunk_resident_free(uint64_t c) {
   return n;
 }
 
-/* Returning memory after a full collection (gc-design.md §2.5, §5.5).
+/* Returning memory after a full collection.
  * Two rules keep a cycle from returning what the next one
  * takes back. Only idle memory goes back: memory freed before this full
  * collection began and not reused since (a block's, a chunk's idle
@@ -864,14 +864,13 @@ size_t gc_obj_total(const AvantHeader *h) {
   return align_up(sizeof(AvantHeader) + (size_t)h->size);
 }
 
-/* H1 (gc-audit.md §2): p is a heap payload iff it is 8-aligned and its
+/* p is a heap payload iff it is 8-aligned and its
  * header is the start of a live object: in the committed range (one
  * compare; static objects such as string literals fail it at once),
  * its granule's start bit set, and its chunk a small-object chunk whose
  * block is in use, or a large-object chunk (a large object's header has
- * its start bit too, gc-design.md §2.3; it is set exactly while the
- * object lives). OL receives a large object's header, OB a block
- * object's block. */
+ * its start bit too; it is set exactly while the object lives). OL
+ * receives a large object's header, OB a block object's block. */
 /* No start bit at granule G (offset OFF): an object the inline path
  * allocated has none until something needs it (late start bits,
  * avant_gc_alloc.c): its block's are set now,
@@ -929,7 +928,7 @@ int gc_is_heap_payload(void *p, Block **ob, AvantHeader **ol) {
 
 /* The large object whose page run holds byte offset OFF of the heap, or
  * NULL: in a large-object chunk the page table names the run's first
- * page (one read, gc-design.md §2.4); in a huge run the object starts
+ * page (one read); in a huge run the object starts
  * its head chunk. The header is 8 bytes into the run's first page. */
 static AvantHeader *large_holding(uintptr_t off) {
   uint64_t c = off >> CHUNK_SHIFT;
@@ -960,7 +959,7 @@ static AvantHeader *large_holding(uintptr_t off) {
  * the young copy must still move the object and keep the same offset
  * into it. In a block: the nearest start bit at or before p, a 64-bit
  * word of the start bitmap at a time, bounded by the block (an object
- * never spans two blocks, H4), and p must lie inside that object. In a
+ * never spans two blocks), and p must lie inside that object. In a
  * large-object chunk or a huge run: large_holding.
  */
 void *gc_object_payload(void *p, Block **ob, AvantHeader **ol) {
@@ -1045,7 +1044,7 @@ __attribute__((visibility("hidden"))) int avant_gc_interior(const void *p) {
   return !gc_is_heap_payload((void *)(uintptr_t)p, NULL, NULL);
 }
 
-/* The contract (ABI name kept, gc-design.md §3.1): 1 when a young
+/* The contract (ABI name kept): 1 when a young
  * collection can move this object, 0 when no collection before the next
  * full one moves it; .parallel keeps a raw address only on 0. Under S+
  *  a young block object may be copied, so it is 1 for one
@@ -1094,7 +1093,7 @@ void gc_zero_line_marks(Block *list) {
   }
 }
 
-/* The start of a full collection's line marking (gc-design.md §2.2): the
+/* The start of a full collection's line marking: the
  * epoch advances, so every line mark of every block
  * is stale at once (no walk of the block lists zeroing them, as before).
  * Epochs run 1..255; past 255 every committed small chunk's line marks
@@ -1121,7 +1120,7 @@ void gc_line_epoch_advance(void) {
 
 /* The start of a full collection: every committed chunk's slice of the
  * mark bitmap cleared with one memset (64 KiB per chunk), instead of a
- * walk over every object's header (gc-design.md §2.2). */
+ * walk over every object's header. */
 void gc_clear_side_marks(void) {
   uint64_t c;
   uint64_t n = gc_heap.committed >> CHUNK_SHIFT;

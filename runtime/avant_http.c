@@ -1282,7 +1282,7 @@ typedef struct AvantWsEvent {
   size_t reason_len;
 } AvantWsEvent;
 
-/* Rule 3 of gc-design.md section 4.4: a thread runs the
+/* The handshake's rule 3 (avant_gc_safepoint.c): a thread runs the
  * uSockets loop native (epoll_wait and the C callbacks touch no heap
  * object), and each dispatch into Avant returns to running at its entry
  * (a safepoint while a collection is in progress) and to native when it

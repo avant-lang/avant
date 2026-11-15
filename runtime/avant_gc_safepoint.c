@@ -9,7 +9,7 @@
 #include <string.h>
 #include <time.h>
 
-/* Threads stop at safepoints (gc-design.md section 4.4), so no thread's C
+/* Threads stop at safepoints, so no thread's C
  * code runs while a collection moves what it holds. Every registered
  * thread is in one of three
  * states (ThreadReg.state):
@@ -36,7 +36,7 @@
  * collection), so a thread that registers during a collection waits for
  * its end.
  *
- * The five no-deadlock rules (section 4.4) as kept here:
+ * The five no-deadlock rules, as kept here:
  *   1. The collector holds no runtime lock while it waits: gc_collect
  *      releases the world lock before gc_stop_world, and hs_mu is
  *      released by the condition wait (barriers take no lock:

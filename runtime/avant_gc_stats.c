@@ -134,10 +134,9 @@ static void print_los(StatsLine *l) {
            u(spare_bytes), u(c->trims), u(c->trim_bytes), u(c->drops), u(c->drop_bytes));
 }
 
-/* The pause, cause and fragmentation families (gc-design.md §3.4 M5,
- * M6), appended after the los
- * family: pause times in ns, full collections by cause, M6's
- * fragmentation (frag_ppm is §3.4 rule 5's aggregate, the free-line
+/* The pause, cause and fragmentation families, appended after the los
+ * family: pause times in ns, full collections by cause, the
+ * fragmentation (frag_ppm is the program's aggregate, the free-line
  * fraction weighted by heap bytes over the full collections), and bytes
  * promoted by young collections. */
 static void print_pause(StatsLine *l) {
