@@ -1,12 +1,12 @@
 import harness
 
-// Stage 28 W1b (D185): every reference the program holds is traced.
+// Every reference the program holds is traced.
 // Each fixture keeps references in a place the collector used to miss,
 // churns a one-Int class through the nursery, and counts the values that
-// no longer read back. Before W1b: an element buffer of a by-value struct
-// or union had type id 0 and was never scanned (audit-abi 8.1); a class
-// past 64 payload words lost its late pointer bits (8.4); class ids and
-// closure-record ids (400 + i) collided past 399 classes (8.3); a union
+// no longer read back. Before these fixes: an element buffer of a by-value struct
+// or union had type id 0 and was never scanned; a class
+// past 64 payload words lost its late pointer bits; class ids and
+// closure-record ids (400 + i) collided past 399 classes; a union
 // payload after a 4-byte member was mapped one word too far; and stores
 // through an implicit field, a struct field inside a class, an array
 // element of a struct, or a captured variable skipped the write barrier.
@@ -65,10 +65,10 @@ fn tm_many_classes: String {
   b.to_s()
 }
 
-// O578 (the Valk stage, VALK-T): the collector reads a small record's
+// The collector reads a small record's
 // reference words from a per-type list (at most seven reference words,
 // all among the first 256 payload words) and walks every other type's
-// bitmap. One class on each side of each limit: R7 and R8 (seven and
+// bitmap. One class on each side of each limit: Refs7 and Refs8 (seven and
 // eight references), Far and Far2 (a reference at payload word 255 and
 // at word 256), and Mix (seven references between scalars). Every field
 // of 150 objects of each must read back after the churn and after a full
@@ -101,13 +101,13 @@ fn tm_ref_lists: String {
   b = buf_new(65536)
   b.push_str("lib gcrt {\n  fun avant_gc_collect\n}\n\n")
   b.push_str(tm_common())
-  tm_ref_class(b, "R7", 0, 7, false)
-  tm_ref_class(b, "R8", 0, 8, false)
+  tm_ref_class(b, "Refs7", 0, 7, false)
+  tm_ref_class(b, "Refs8", 0, 8, false)
   tm_ref_class(b, "Far", 255, 1, false)
   tm_ref_class(b, "Far2", 256, 1, false)
   tm_ref_class(b, "Mix", 0, 7, true)
   b.push_str("fn main: Int {\n")
-  names = ["R7", "R8", "Far", "Far2", "Mix"]
+  names = ["Refs7", "Refs8", "Far", "Far2", "Mix"]
   for n in 0..names.size {
     b.push_str("  x${n}: Array(${names[n]}) = []\n")
   }
@@ -132,9 +132,9 @@ fn tm_run_env(bin: String, name: String, value: String, log: String): Int {
 
 fn tm_run_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log: String): Int {
   args: Array(String) = []
-  // Under an outer AVANT_GC_STRESS a verifier run leaves the stress mode
-  // out (a whole-heap check at a collection per allocation; W14b1;
-  // VALK-TM, O602, measured with it kept: this file 232 s, 18 s without).
+  // Under an outer AVANT_GC_STRESS a verifier run leaves the stress
+  // mode out (a whole-heap check at a collection per allocation,
+  // measured with it kept: this file 232 s, 18 s without).
   if gc_stress_outer() && (n1 == "AVANT_GC_VERIFY" || n2 == "AVANT_GC_VERIFY") {
     args.push("-u")
     args.push("AVANT_GC_STRESS")

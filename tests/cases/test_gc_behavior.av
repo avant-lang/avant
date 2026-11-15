@@ -49,9 +49,9 @@ fn run_with_env(bin: String, name: String, value: String, log: String): Int {
 
 fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, log: String): Int {
   args: Array(String) = []
-  // Under an outer AVANT_GC_STRESS a verifier run leaves the stress mode
-  // out (a whole-heap check at a collection per allocation; W14b1;
-  // VALK-TM, O602, measured with it kept: this file 72 s, 16 s without).
+  // Under an outer AVANT_GC_STRESS a verifier run leaves the stress
+  // mode out (a whole-heap check at a collection per allocation,
+  // measured with it kept: this file 72 s, 16 s without).
   if gc_stress_outer() && (n1 == "AVANT_GC_VERIFY" || n2 == "AVANT_GC_VERIFY") {
     args.push("-u")
     args.push("AVANT_GC_STRESS")
@@ -62,7 +62,7 @@ fn run_with_env2(bin: String, n1: String, v1: String, n2: String, v2: String, lo
   process_run_out("/usr/bin/env", args, log) ?? -1
 }
 
-// The fixtures' checksums wrap with &+ and &*: since Stage 29 W-INT1 they
+// The fixtures' checksums wrap with &+ and &*: since Int became 64-bit they
 // wrap at Int's 64 bits, so each is the exact sum (its low 32 bits are the
 // 32-bit value it was before).
 fn test_gc_behavior(c: Checks) {
@@ -86,8 +86,8 @@ fn test_gc_behavior(c: Checks) {
     // A 1 MB young space forces hundreds of young collections through
     // the build. A mature tree interior that tenured together with its
     // children used to become invisible to later young collections, and
-    // its fields kept pointing at from-space addresses (F1 in
-    // avant-ledgers/archive/experiments/gc-baseline-2026-11-03.md): this run segfaulted.
+    // its fields kept pointing at from-space addresses (found by an early
+    // collector baseline): this run segfaulted.
     log2 = "${scratch()}/gcb-${stamp}.run2"
     rc2 = run_with_env(bin, "AVANT_YOUNG_MB", "1", log2)
     c.eq_int(rc2, 0, "trees survive at 1 MB young size")
@@ -127,7 +127,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read churn small-young run")
     }
-    // Rooting survives cheap registration (Collector II Wave 0): many
+    // Rooting survives cheap registration: many
     // pointer locals and one optional local stay live across collecting
     // calls in a loop while fresh trees churn through the nursery. If a
     // live local stops being registered as a root, the small-young run
@@ -157,8 +157,8 @@ fn test_gc_behavior(c: Checks) {
     // Registration lands at frame entry, before any collecting call in
     // the entry block: pick is one straight-line block, so a batch
     // planted at the end of that block would run after its frame left
-    // and publish its slots into the caller's frame (Collector II
-    // Wave 0 regression shape, first seen on Graph::BFS).
+    // and publish its slots into the caller's frame (an early
+    // regression's shape, first seen on Graph::BFS).
     src4 = "${scratch()}/gcb-${stamp}-rootsline.av"
     bin4 = "${scratch()}/gcb-${stamp}-rootsline.bin"
     c.wrote(file_write(src4, roots_line_fixture()), "write roots-line fixture")
@@ -181,7 +181,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read roots-line small-young run")
     }
-    // Allocation and barrier fast paths (Collector II Wave 1): young
+    // Allocation and barrier fast paths: young
     // trees are stored into a mature root (the barrier frontier), bump
     // arena trees are reclaimed in a loop, and arrays grow through the
     // nursery. A fast path that skips the barrier, the payload zeroing,
@@ -192,10 +192,10 @@ fn test_gc_behavior(c: Checks) {
     code5 = compile_av(compiler, src5, bin5, "${scratch()}/gcb-${stamp}-alloc.clog")
     c.eq_int(code5, 0, "compile alloc fixture")
     want5 = "1679073713\n"
-    // The fixture's trees were bump arena trees until Stage 29 W1a
-    // removed the form (D298; they needed AVANT_NURSERY=1, since a bump
-    // gave nil without the nursery); they are built with Node.new now, so
-    // an outer GC environment applies to these runs too.
+    // The fixture's trees were bump arena trees until the language
+    // removed the form (they needed AVANT_NURSERY=1, since a bump
+    // gave nil without the nursery); they are built with Node.new
+    // now, so an outer GC environment applies to these runs too.
     log10 = "${scratch()}/gcb-${stamp}.run10"
     rc10 = run_av_bin(bin5, log10)
     c.eq_int(rc10, 0, "alloc and barrier paths survive at default young size")
@@ -212,11 +212,11 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read alloc small-young run")
     }
-    // Remembered set as a dirty frontier (Collector II Wave 2): a
+    // Remembered set as a dirty frontier: a
     // tenured graph is dirtied whole, then only a strided subset is
     // re-dirtied while nursery churn forces young collections. An
     // eviction that loses a young edge leaves a mature field pointing
-    // at from-space (the F1 shape), which breaks this checksum or
+    // at from-space (the shape above), which breaks this checksum or
     // segfaults at the small young size; the checksum is identical
     // with the frontier disabled and under every frontier policy.
     src6 = "${scratch()}/gcb-${stamp}-frontier.av"
@@ -241,7 +241,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read frontier small-young run")
     }
-    // Mature defragmentation (Collector II Wave 3): a tenured set of
+    // Mature defragmentation: a tenured set of
     // one-line objects is pruned to every 8th survivor inside a helper
     // whose frame is gone before explicit full collections, so the
     // mature blocks sit at 33-64 of 128 live lines. A defragmenting
@@ -279,7 +279,7 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read defrag nursery-off run")
     }
-    // Survival-capped growth (Collector II Wave 4): retained trees grow
+    // Survival-capped growth: retained trees grow
     // in steps while fresh trees churn and die around them. Whatever
     // the young threshold does, retained trees must stay reachable and
     // read back with the same values; a sizing or reserve bug that
@@ -361,8 +361,8 @@ fn test_gc_behavior(c: Checks) {
     } else {
       c.expect(false, "read literal small-young run")
     }
-    // Q123-A: no reference may be lost by a young copy. The verifier
-    // prints any report on stderr (since Stage 28 W16b its
+    // No reference may be lost by a young copy. The verifier
+    // prints any report on stderr (with its
     // lost-reference check: a root or field naming freed memory, or an
     // access to a block a collection freed), which the run log captures,
     // so an exact-output match is the zero-report assertion.

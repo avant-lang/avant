@@ -1,6 +1,6 @@
 import harness
 
-// Stage 29 W3a: a module program that compiles and prints want.
+// A module program that compiles and prints want.
 fn mod_runs(c: Checks, compiler: String, dir: String, name: String, want: String, tag: String) {
   bin = "${dir}/${name}.bin"
   log = "${dir}/${name}.log"
@@ -16,7 +16,7 @@ fn mod_runs(c: Checks, compiler: String, dir: String, name: String, want: String
   }
 }
 
-// Stage 29 W3a: a module program that fails to compile with needle.
+// A module program that fails to compile with needle.
 fn mod_fails(c: Checks, compiler: String, dir: String, name: String, needle: String, tag: String) {
   bin = "${dir}/${name}.bin"
   log = "${dir}/${name}.log"
@@ -30,11 +30,11 @@ fn mod_fails(c: Checks, compiler: String, dir: String, name: String, needle: Str
   }
 }
 
-// Functions are scoped per module (Stage 29 W3a, D298; D42 rules 3 and 7
-// replaced): two modules may export one name and signature; only an
-// unqualified call that sees both is ambiguous, and its message names the
-// qualified forms; `module.name()` picks one; as for types, a module's
-// own function does not win over an imported one of the same signature.
+// Functions are scoped per module: two
+// modules may export one name and signature; only an unqualified call
+// that sees both is ambiguous, and its message names the qualified
+// forms; `module.name()` picks one; as for types, a module's own
+// function does not win over an imported one of the same signature.
 fn test_fn_scopes(c: Checks, compiler: String, dir: String) {
   write_av(dir, "fa", "pub fn helper: Int { 1 }\nfn secret: Int { 7 }\npub fn pick(s: String): Int { s.size }\npub fn twice(f: fn(Int): Int): Int { f(f(1)) }\n")
   write_av(dir, "fb", "pub fn helper: Int { 2 }\npub fn pick(n: Int): Int { n }\npub fn twice(f: fn(Int): Int): Int { f(1) }\n")
@@ -461,12 +461,12 @@ fn test_modules(c: Checks) {
   }
 }
 
-// Fields are private unless `pub` (Stage 29 W3a, D299; D42 rule 5
-// replaced): outside its type's module a field without `pub` cannot be
-// read, written, or named in a literal; a comptime walk from another
-// module sees only the `pub` fields. No build is exempt: the compiler's
-// own layout (a checkout's `compiler/main.av` root) obeys the rule too
-// (its W3a bootstrap exemption ended with the v0.40.0 seed, W3a2).
+// Fields are private unless `pub`: outside
+// its type's module a field without `pub` cannot be read, written,
+// or named in a literal; a comptime walk from another module sees
+// only the `pub` fields. No build is exempt: the compiler's own
+// layout (a checkout's `compiler/main.av` root) obeys the rule too
+// (its bootstrap exemption ended with the v0.40.0 seed).
 fn test_field_privacy(c: Checks, compiler: String, dir: String) {
   write_av(dir, "acct", "pub class Account {\n  amount: Int = 0\n  pub owner: String = \"\"\n  pub fn balance: Int { amount }\n  pub fn add(n: Int) { self.amount = amount + n }\n}\npub struct Span {\n  pub lo: Int\n  pub hi: Int\n}\npub struct Secret {\n  pub shown: Int\n  kept: Int\n}\npub fn secret(n: Int): Secret { Secret { shown: n, kept: n * 2 } }\npub fn (s: Secret) kept_twice: Int { s.kept * 2 }\n")
   write_av(dir, "pfok", "import acct\nfn main {\n  a = Account.new()\n  a.add(5)\n  a.owner = \"ann\"\n  puts(a.balance())\n  puts(a.owner)\n  s = Span { lo: 1, hi: 4 }\n  s.hi = 6\n  puts(s.hi - s.lo)\n  t = secret(3)\n  puts(t.shown + t.kept_twice())\n}\n")
@@ -513,14 +513,14 @@ fn test_field_privacy(c: Checks, compiler: String, dir: String) {
   }
 }
 
-// A parameter default belongs to its declaration (O343, O17, O223, Stage
-// 29 W-FIX1b): spliced into a call, it is checked in the callee's module,
-// with none of the caller's names in scope, whatever the call's form: a
-// qualified call, an unqualified one, a constructor, a method with and
-// without parentheses, a type-level function. Before, only the qualified
-// call did; the others reported `unknown function secret`, or called the
-// calling module's function of that name. An earlier parameter named by a
-// default is that parameter's value (test_default_once).
+// A parameter default belongs to its declaration: spliced into a
+// call, it is checked in the callee's module, with none of the
+// caller's names in scope, whatever the call's form: a qualified
+// call, an unqualified one, a constructor, a method with and without
+// parentheses, a type-level function. Before, only the qualified
+// call did; the others reported `unknown function secret`, or called
+// the calling module's function of that name. An earlier parameter
+// named by a default is that parameter's value (test_default_once).
 fn test_default_modules(c: Checks, compiler: String, dir: String) {
   write_av(dir, "dlib", "fn secret: Int {\n  7\n}\n\npub fn pick(n: Int = secret()): Int {\n  n\n}\n\npub fn span(a: Int, b: Int = a + secret()): Int {\n  a * 100 + b\n}\n\npub fn same(a: String, b: String = a): String {\n  \"\${a}\${b}\"\n}\n\npub class Box {\n  pub v: Int = 0\n\n  fn initialize(v: Int = secret()) {\n    self.v = v\n  }\n\n  pub fn plus(k: Int = secret()): Int {\n    v + k\n  }\n\n  pub fn self.make(k: Int = secret()): Int {\n    k\n  }\n}\n\npub struct Pt {\n  pub x: Int\n\n  pub fn far(k: Int = secret()): Int {\n    x + k\n  }\n}\n\npub fn (s: String) pad(k: Int = secret()): Int {\n  s.size + k\n}\n")
   write_av(dir, "dplain", "import dlib\n\nfn main {\n  puts(dlib.pick())\n  puts(pick())\n  b = Box.new()\n  puts(b.v)\n  puts(b.plus())\n  puts(b.plus())\n  puts(Box.make())\n  puts(Box.make())\n  p = Pt { x: 1 }\n  puts(p.far())\n  puts(\"ab\".pad())\n}\n")
@@ -529,13 +529,13 @@ fn test_default_modules(c: Checks, compiler: String, dir: String) {
   mod_runs(c, compiler, dir, "dsame", "7\n7\n7\n14\n14\n7\n7\n21\n28\n90008\n714\n102\nabab\n1000\n", "the calling module's function, method and local of the same name do not capture a default")
 }
 
-// A default that names an earlier parameter reads that parameter's value
-// (O546, Stage 29 W-FIX1d): the argument as the call passes it, evaluated
-// once, with the parameter's declared type. Before, a copy of the
-// argument's expression stood in for the name: the argument ran once for
-// its parameter and once more for each mention (`pair(tick(t))` left two
-// ticks and returned 1102), and again each time a lambda in the default
-// ran; a default that used an optional parameter as declared, or called a
+// A default that names an earlier parameter reads that parameter's
+// value: the argument as the call passes it, evaluated once, with the
+// parameter's declared type. Before, a copy of the argument's expression
+// stood in for the name: the argument ran once for its parameter and
+// once more for each mention (`pair(tick(t))` left two ticks and
+// returned 1102), and again each time a lambda in the default ran; a
+// default that used an optional parameter as declared, or called a
 // function with such a default of its own, did not compile. Every call
 // path counts its ticks: functions unqualified, imported and qualified,
 // two defaults in a row, a constructor, a method of a class and of a
@@ -548,14 +548,14 @@ fn test_default_once(c: Checks, compiler: String, dir: String) {
   mod_runs(c, compiler, dir, "odecl", "nested 101101 ticks 1\noptional 1 7 ticks 1\ninside a lambda 1023 ticks 1\nlambda through a default 33 ticks 1\na block's own parameter 12; the caller's a 9 99\n", "a default reads its earlier parameter as declared: optional, through another default, in a lambda")
 }
 
-// An imported generic takes types of the module that uses it (O255,
-// Stage 29 W-FIX1b): before, `Box(Point)` with Box imported and Point
-// declared here reported `unknown type Point`, because the instance's
-// fields and methods read the argument's name again inside Box's module.
-// An instance now carries each argument pinned to the type it named where
-// it was written. Privacy holds where a name is written: a private type
-// of another module is refused as an argument, an element type, or a
-// part of a union or a function type.
+// An imported generic takes types of the module that uses it:
+// before, `Box(Point)` with Box imported and Point declared here
+// reported `unknown type Point`, because the instance's fields and
+// methods read the argument's name again inside Box's module. An
+// instance now carries each argument pinned to the type it named
+// where it was written. Privacy holds where a name is written: a
+// private type of another module is refused as an argument, an
+// element type, or a part of a union or a function type.
 fn test_generic_modules(c: Checks, compiler: String, dir: String) {
   write_av(dir, "gbx", "pub class Box(T) {\n  pub item: T\n\n  fn initialize(item: T) {\n    self.item = item\n  }\n\n  pub fn get: T {\n    item\n  }\n\n  pub fn set(v: T) {\n    self.item = v\n  }\n\n  pub fn pair: Duo(T, Int) {\n    Duo { a: item, b: 2 }\n  }\n\n  pub fn many(n: Int): Array(T) {\n    Array(T).new(n) { |i| item }\n  }\n}\n\npub struct Duo(A, B) {\n  pub a: A\n  pub b: B\n\n  pub fn first: A {\n    a\n  }\n}\n\npub fn wrap(x: T): Box(T) {\n  Box.new(x)\n}\n\npub fn firsts(xs: Array(T)): T {\n  xs[0]\n}\n\npub fn twice(x: T, f: fn(T): T): T {\n  f(f(x))\n}\n")
   write_av(dir, "gtag", "import gbx\n\npub struct Tag {\n  pub name: String\n}\n\nstruct Hidden {\n  pub n: Int\n}\n\npub fn tagged(name: String): Box(Tag) {\n  Box.new(Tag { name: name })\n}\n\npub fn hidden_n: Int {\n  h = Box.new(Hidden { n: 41 })\n  d = Duo { a: Hidden { n: 1 }, b: h.get() }\n  d.first().n + d.b.n\n}\n")
@@ -581,10 +581,10 @@ fn test_generic_modules(c: Checks, compiler: String, dir: String) {
   mod_fails(c, compiler, dir, "gamb", "Item is a type of both gsame1 and gsame2: write gsame1.Item or gsame2.Item", "an argument two imports declare is ambiguous")
 }
 
-// O165's probe (Stage 29 W-FIX1b): two modules declare a class Item and
+// Two modules declare a class Item and
 // a struct Pt, each with methods, operators, a type-level function, a
 // generic method and an external method of the same names; every call
-// reaches its own module's. What the probe found and this wave fixed: a
+// reaches its own module's. What the probe found, since fixed: a
 // parameter of such a type (`fn +(o: Item)`) was `unknown type Item`
 // (resolve_value_in_module looked the name up bare).
 fn test_same_name_methods(c: Checks, compiler: String, dir: String) {
