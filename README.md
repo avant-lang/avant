@@ -1317,7 +1317,7 @@ A `String`, `Bytes` or `Buf` holds at most 2,147,483,647 bytes and an `Array` at
 
 ## Hashes
 
-`Hash(K, V)` maps keys to values. A lookup returns `V?`: a missing key is `nil`, never a default value and never a crash. Today the key and value types are limited to three combinations ([Key and value types](#key-and-value-types)).
+`Hash(K, V)` maps keys to values. A lookup returns `V?`: a missing key is `nil`, never a default value and never a crash. A key is an integer of any width, a `Bool`, an enum or a `String`; a value is any of those or a `Float64` ([Key and value types](#key-and-value-types)).
 
 ```avant
 fn main {
@@ -1346,7 +1346,7 @@ fn main {
 | `h.get_or(k, default)` | the value, or `default` |
 | `h.has_key(k)` | `Bool` |
 | `h.delete(k)` | remove the key; returns the value it held, or `nil` |
-| `h.inc(k)`, `h.inc(k, by)` | add to a counter, starting from 0 (`Hash(K, Int)` only); traps on overflow |
+| `h.inc(k)`, `h.inc(k, by)` | add to a counter, starting from 0, and give its new value (integer values only; `by` has the value's type); traps on overflow |
 | `h.size`, `h.clear` | number of keys; remove all |
 | `h.keys`, `h.values` | arrays, in unspecified order |
 | `h.each { \|k, v\| ... }` | walk every key with its value |
@@ -1373,7 +1373,28 @@ fn main {
 
 ### Key and value types
 
-Today a key is a `String` or an `Int`, and a value is an `Int` or a `String`, which gives exactly `Hash(String, Int)`, `Hash(String, String)` and `Hash(Int, Int)`. Other combinations (`Hash(Int, String)`, struct keys, class or array values) are a compile error for now ([Not built yet](#not-built-yet)). The usual workaround for richer values is a hash from the key to an index into an array.
+A key is an integer of any width (`Int`, `Int32`, `UInt32`, `UInt64`), a `Bool`, an enum or a `String`. A value is any of those or a `Float64`. Keys and values are stored at their own width, not boxed: a `Hash(Int32, Int32)` holds 8 bytes an entry where a `Hash(Int, Int)` holds 16, so a narrow type is the cheaper table when its values fit.
+
+```avant
+enum Suit { clubs, hearts }
+
+fn main {
+  seen = Hash(Int32, Int32).new
+  for x in [7, -2, 7, 7] {
+    seen.inc(x.to_i32)
+  }
+  puts(seen[7.to_i32] ?? 0.to_i32)        // => 3
+  names = Hash(Int, String).new
+  names[404] = "not found"
+  puts(names.get_or(500, "unknown"))      // => unknown
+  score = Hash(Suit, Float64).new
+  score[Suit.hearts] = 2.5
+  puts(score[Suit.hearts] ?? 0.0)         // => 2.5
+}
+```
+
+- A `Float64` key is a compile error: `==` on `Float64` follows IEEE 754 (`NaN` is not equal to itself, `-0.0` equals `0.0`), so no hash agrees with it. Key by an integer instead.
+- Struct keys and class, array, hash or struct values are not built yet ([Not built yet](#not-built-yet)); a hash from the key to an index into an array does the same.
 
 ## Structs and classes
 
@@ -3794,7 +3815,7 @@ What is missing, said in one place, and repeated beside each feature it limits. 
 | Missing | Status | Today |
 | --- | --- | --- |
 | Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
-| `Hash` with other key and value types; insertion order | decided | [three combinations](#key-and-value-types); sort the keys |
+| `Hash` with struct keys, or with class, array, hash or struct values; insertion order | decided | [key and value types](#key-and-value-types): a hash from the key to an index into an array; sort the keys |
 | `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion; slices of strings and arrays | planned | `str_slice`, loops, [`std.regex`](#stdregex) |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#trailing-blocks) |
 | `print` (no newline), writing to stderr, `exit(status)` | decided | `puts`; `main`'s result |
