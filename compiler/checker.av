@@ -950,6 +950,9 @@ pub class Checker {
             }
           }
         }
+        if !self.has_err && (!at_tail || expected.is_void) && no_effect(expr) {
+          refuse_no_effect(expr, stmt, got, at_tail)
+        }
       }
       return
     }
@@ -1059,6 +1062,140 @@ pub class Checker {
   // Discarding an error is a compile error (Stage 29 W4a, D295): a
   // statement whose value can be an Error (a type marked Error, or a
   // union holding one) is refused, naming the ways out.
+  // An expression whose value is all it does (checked first): a literal,
+  // a name, a field read, an operator over such operands, or a literal
+  // array, struct or lambda; nothing that calls (a method, a function, an
+  // operator method, a conversion) or leaves (`?`, `?? return`).
+  pub fn no_effect(e: Expr): Bool {
+    k = e.kind
+    if k == ex_int() || k == ex_float() || k == ex_bool() || k == ex_nil() || k == ex_string() || k == ex_name() || k == ex_lambda() {
+      return true
+    }
+    if k == ex_interp() {
+      for part in e.parts {
+        if pe = part.expr, !no_effect(pe) {
+          return false
+        }
+      }
+      return true
+    }
+    if e.method_call || e.resolved.size > 0 || e.op_form != 0 {
+      return false
+    }
+    if k == ex_field() {
+      if o = e.object {
+        return no_effect(o)
+      }
+      return e.implicit_field
+    }
+    if k == ex_unary() {
+      if inner = e.inner {
+        return no_effect(inner)
+      }
+      return false
+    }
+    if k == ex_binary() {
+      if l = e.left, r = e.right {
+        return no_effect(l) && no_effect(r)
+      }
+      return false
+    }
+    if k == ex_index() {
+      if o = e.left, i = e.right {
+        return no_effect(o) && no_effect(i)
+      }
+      return false
+    }
+    if k == ex_array() {
+      for el in e.elems {
+        if !no_effect(el) {
+          return false
+        }
+      }
+      return true
+    }
+    if k == ex_struct() {
+      for fe in e.field_exprs {
+        if !no_effect(fe) {
+          return false
+        }
+      }
+      return true
+    }
+    false
+  }
+
+  // A statement with no effect is an error anywhere (it computes a value
+  // nobody uses); at the end of a function with no result type the likely
+  // cause is the missing result, and a bare function name a missing call.
+  pub fn refuse_no_effect(e: Expr, stmt: Stmt, got: Ty, at_tail: Bool) {
+    at = start_loc(e)
+    if e.kind == ex_name() && e.fn_ref {
+      fail(at, "${e.ident} alone is the function as a value; to call it, write ${e.ident}()")
+      return
+    }
+    if at_tail && self.lam_exprs.size == 0 && !got.is_void && !got.is_nil {
+      if cf = self.current_fn {
+        if rt = cf.return_type {
+        } else {
+          fail(at, "this line computes ${a_type(got)} and drops it: ${cf.name} has no result type; to return it, declare fn ${cf.name}: ${got.show}")
+          return
+        }
+      }
+    }
+    fail(at, "this line computes a value and drops it; use it, or remove the line")
+  }
+
+  // Where an expression starts in the source: its leftmost operand's
+  // position (an operator's own position is its operator's).
+  pub fn start_loc(e: Expr): Location {
+    if e.kind == ex_binary() || e.kind == ex_index() {
+      if l = e.left {
+        return start_loc(l)
+      }
+    }
+    if e.kind == ex_field() {
+      if o = e.object {
+        return start_loc(o)
+      }
+    }
+    e.loc
+  }
+
+  // After "cannot bind a Void value": the called function's name when it
+  // was declared with no result type (`fn two { 2 }`), the likely cause.
+  pub fn void_callee_note(value: Expr): String {
+    if value.kind != ex_call() || value.resolved.size == 0 {
+      return ""
+    }
+    for sig in self.functions {
+      if sig.node.emit_name == value.resolved {
+        if rt = sig.node.return_type {
+          return ""
+        }
+        return ": ${sig.node.name} has no result type"
+      }
+    }
+    for msig in self.methods {
+      if msig.node.emit_name == value.resolved {
+        if rt2 = msig.node.return_type {
+          return ""
+        }
+        return ": ${msig.node.name} has no result type"
+      }
+    }
+    ""
+  }
+
+  // `an Int`, `a String`: a type's name with its article.
+  pub fn a_type(t: Ty): String {
+    s = t.show
+    if s.size > 0 && (s[0] == 65 || s[0] == 69 || s[0] == 73 || s[0] == 79 || s[0] == 85) {
+      return "an ${s}"
+    }
+    "a ${s}"
+  }
+
   pub fn refuse_dropped_error(got: Ty, loc: Location) {
     can = got.error_mark
     if got.is_union {
@@ -1224,7 +1361,7 @@ pub class Checker {
         }
         got = check_expr(value)
         if got.is_void {
-          fail(stmt.loc, "cannot bind a Void value")
+          fail(stmt.loc, "cannot bind a Void value${void_callee_note(value)}")
           return
         }
         if reject_clayout_value(got, value.loc) {

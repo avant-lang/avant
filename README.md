@@ -421,7 +421,7 @@ fn main {
 ```
 
 - The last expression is the result, a final `if`/`else` or `switch` included; `return` leaves early.
-- In a function that returns nothing, a value at the end is simply dropped, as it is anywhere else in the body. (An error is never dropped silently: [Errors cannot be dropped](#errors-cannot-be-dropped).)
+- In a function that returns nothing, the value of a call at the end is dropped, as it is anywhere else in the body. (An error is never dropped silently: [Errors cannot be dropped](#errors-cannot-be-dropped).) A line that only computes a value, with no call in it (`x + 1`, a name, a literal, a field read), is an error anywhere, since nothing uses it; at the end of a function with no result type the error says to declare one (`fn two { 2 }` is refused: write `fn two: Int { 2 }`). `_ = x + 1` drops a value on purpose.
 - Parameters may have trailing defaults (`times: Int = 1`); functions may be [overloaded](#overloads-and-defaults) and [generic](#generic-functions).
 - A parameter with a default may be named at the call, after the positional arguments: `pad("ab", fill: "*")` ([Overloads and defaults](#overloads-and-defaults)).
 - There are no variadics and no multiple results; return a struct.

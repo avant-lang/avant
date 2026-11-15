@@ -4,7 +4,7 @@ import backends
 // Expressions: how tightly the operators bind (the bitwise operators
 // above the comparisons); the type an expression of literals takes from
 // its context; a Bool as a number; the final if/else of a lambda whose
-// result type is inferred. Each program is compiled in parallel; a refused
+// result type is inferred; a statement with no effect. Each program is compiled in parallel; a refused
 // one must leave no binary, say the expected words and point at the
 // expected line and column; an accepted one must print what it should.
 
@@ -91,7 +91,6 @@ fn check_bool_ll(c: Checks, compiler: String, dir: String) {
   c.expect(!str_has(body, "br i1"), "bool ll: count has no branch")
 }
 
-
 // A lambda whose result type is inferred reads a final if/else whose
 // branches end in values as its value, as a function with a declared
 // result does; branches that give nothing keep it a statement.
@@ -103,6 +102,27 @@ fn lambda_if_cases: Array(ECase) {
   xs.push(accepted("lambda-if-leaves", "${ap}fn main {\n  for v in [5, 2] {\n    puts(apply(v) { |x|\n      if x > 3 {\n        return 9\n      } else {\n        x\n      }\n    })\n  }\n}\n", "9\n2\n"))
   xs.push(refused("lambda-if-mixed", "${ap}fn main {\n  puts(apply(1) { |x| if x > 0 { x } else { puts(x) } })\n}\n", "an if used as a value needs a value at the end of each branch", "8:23"))
   xs.push(refused("lambda-if-types", "${ap}fn main {\n  puts(apply(1) { |x| if x > 0 { x } else { \"no\" } })\n}\n", "if branches have different types Int and String", "8:23"))
+  xs
+}
+
+// A statement with no effect (a literal, a name, a field read, an
+// operator over such operands, a literal array, struct or lambda; nothing
+// that calls) is an error wherever it stands; at the end of a function
+// with no result type the message names the missing result.
+fn effect_cases: Array(ECase) {
+  xs: Array(ECase) = []
+  xs.push(refused("effect-middle", "fn main {\n  x = 1\n  x + 1\n  puts(x)\n}\n", "this line computes a value and drops it", "3:3"))
+  xs.push(refused("effect-name", "fn main {\n  x = 1\n  puts(x)\n  x\n  puts(2)\n}\n", "this line computes a value and drops it", "4:3"))
+  xs.push(refused("effect-main-tail", "fn main {\n  x = 1\n  puts(x)\n  x\n}\n", "this line computes an Int and drops it: main has no result type; to return it, declare fn main: Int", "4:3"))
+  xs.push(refused("effect-literal", "fn main {\n  \"done\"\n  puts(1)\n}\n", "this line computes a value and drops it", "2:3"))
+  xs.push(refused("effect-tail", "fn two {\n  2\n}\nfn main {\n  two()\n}\n", "this line computes an Int and drops it: two has no result type; to return it, declare fn two: Int", "2:3"))
+  xs.push(refused("effect-method-tail", "class C {\n  pub n: Int = 1\n  fn get {\n    n * 2\n  }\n}\nfn main {\n  C.new.get()\n}\n", "this line computes an Int and drops it: get has no result type; to return it, declare fn get: Int", "4:5"))
+  xs.push(refused("effect-field", "struct P {\n  x: Int\n}\nfn main {\n  p = P { x: 1 }\n  p.x\n  puts(p.x)\n}\n", "this line computes a value and drops it", "6:3"))
+  xs.push(refused("effect-branch", "fn main {\n  x = argv().size\n  if x > 0 {\n    x == 1\n  }\n}\n", "this line computes a value and drops it", "4:5"))
+  xs.push(refused("effect-fn-name", "fn cleanup {\n  puts(1)\n}\nfn main {\n  cleanup\n}\n", "cleanup alone is the function as a value; to call it, write cleanup()", "5:3"))
+  xs.push(refused("effect-void-lambda", "fn main {\n  f: fn(Int): Void = { |n| n + 1 }\n  f(1)\n}\n", "this line computes a value and drops it", "2:28"))
+  xs.push(refused("effect-bind-void", "fn two {\n  puts(2)\n}\nfn main {\n  x = two()\n  puts(x)\n}\n", "cannot bind a Void value: two has no result type", "5:5"))
+  xs.push(accepted("effect-kept", "fn three: Int {\n  3\n}\nfn main {\n  x = 1\n  _ = x + 1\n  xs = [1, 2]\n  xs.pop\n  x.abs\n  puts(three())\n  puts(xs.size)\n}\n", "3\n1\n"))
   xs
 }
 
@@ -153,6 +173,9 @@ fn test_main(c: Checks) {
       all.push(x)
     }
     for x in lambda_if_cases() {
+      all.push(x)
+    }
+    for x in effect_cases() {
       all.push(x)
     }
     run_cases(c, compiler, dir, all)
