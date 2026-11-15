@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 /* Language traps and checked arithmetic (Wave B safety floor).
  * Moved out of avant_rt.c in the collector stage, Wave 2: these are
@@ -44,6 +45,7 @@ static const char *site_or(int32_t site) {
  * program's stdout flushed first, then "avant runtime: WHAT[ at SITE]",
  * status 1). */
 static __thread char g_trap_text[1024];
+static int g_trap_exiting;
 static __thread size_t g_trap_n;
 
 static void trap_head(void) {
@@ -71,6 +73,16 @@ __attribute__((noreturn)) static void trap_tail(void) {
   g_trap_loc = NULL;
   if (avant_task_can_recover()) {
     avant_task_trapped(g_trap_text, site);
+  }
+  /* One trap ends the process: a second thread that traps meanwhile (two
+   * .parallel bodies) waits for good, native, so the first one's exit
+   * neither meets a second exit nor waits for it at a safepoint (two
+   * exits at once hung the program under AVANT_GC_VERIFY=1). */
+  if (__atomic_exchange_n(&g_trap_exiting, 1, __ATOMIC_ACQ_REL)) {
+    avant_gc_native_begin();
+    for (;;) {
+      pause();
+    }
   }
   fflush(stdout);
   fputs("avant runtime: ", stderr);
