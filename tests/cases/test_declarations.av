@@ -74,6 +74,17 @@ fn cases: Array(RCase) {
   xs.push(refused("named-builtin", "fn main {\n  xs = [1]\n  xs.push(v: 2)\n}\n", "push takes its arguments by position (v: is a named argument)", "3:14"))
   xs.push(refused("named-fn-value", "fn main {\n  f = { |x: Int| x }\n  puts(f(x: 1))\n}\n", "a fn value takes its arguments by position (x: is a named argument)", "3:13"))
   xs.push(refused("named-overload", "fn show(n: Int, width: Int = 4): String {\n  \"\${n}\"\n}\nfn show(s: String): String {\n  s\n}\nfn main {\n  puts(show(\"a\", width: 2))\n}\n", "show has no parameter named width", "8:25"))
+  // Struct fields with defaults: a literal leaves out exactly those
+  opts = "struct Opts {\n  port: Int\n  loops: Int = 4\n  name: String = \"srv\"\n}\n"
+  xs.push(accepted("struct-default", "${opts}fn main {\n  o = Opts { port: 80 }\n  puts(\"\${o.port} \${o.loops} \${o.name}\")\n  p = Opts { name: \"x\", port: 1, loops: 2 }\n  puts(\"\${p.port} \${p.loops} \${p.name}\")\n}\n", "80 4 srv\n1 2 x\n"))
+  xs.push(accepted("struct-default-each", "fn next_id(c: Counter): Int {\n  c.n += 1\n  c.n\n}\nclass Counter {\n  n: Int = 0\n}\nstruct Tag {\n  label: String\n  items: Array(Int) = []\n}\nfn main {\n  a = Tag { label: \"a\" }\n  b = Tag { label: \"b\" }\n  a.items.push(1)\n  puts(\"\${a.items.size} \${b.items.size}\")\n}\n", "1 0\n"))
+  xs.push(accepted("struct-default-generic", "struct Pair(T) {\n  a: T\n  b: Int = 9\n}\nfn main {\n  p = Pair { a: \"z\" }\n  q = Pair(Int) { a: 1, b: 2 }\n  puts(\"\${p.a} \${p.b} \${q.a} \${q.b}\")\n}\n", "z 9 1 2\n"))
+  xs.push(accepted("struct-default-all", "struct Opts {\n  loops: Int = 4\n}\nclass Server {\n  opts: Opts = Opts { }\n}\nfn main {\n  puts(Server.new.opts.loops)\n  xs = Array(Opts).new(2, Opts { loops: 1 })\n  puts(xs[1].loops)\n}\n", "4\n1\n"))
+  xs.push(refused("struct-missing", "${opts}fn main {\n  o = Opts { loops: 1 }\n  puts(o.port)\n}\n", "missing field port (a literal leaves out only a field that declares a default)", "7:7"))
+  xs.push(refused("struct-default-field", "struct O {\n  a: Int\n  b: Int = a\n}\nfn main { }\n", "a field default cannot read another field (a of O)", "3:12"))
+  xs.push(refused("struct-default-type", "struct O {\n  a: Int = \"x\"\n}\nfn main { }\n", "cannot assign String to Int", "2:12"))
+  xs.push(refused("struct-default-no-zero", "struct O {\n  a: Int\n  b: Int = 2\n}\nclass C {\n  o: O\n}\nfn main {\n  puts(C.new.o.b)\n}\n", "field o of C has no zero value, no default, and C has no initialize to set it", "6:3"))
+  xs.push(refused("struct-default-array-new", "struct O {\n  b: Int = 2\n}\nfn main {\n  xs = Array(O).new(3)\n  puts(xs.size)\n}\n", "Array(O).new(n) needs an element value: O has no zero value", "5:8"))
   xs
 }
 

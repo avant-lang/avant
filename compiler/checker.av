@@ -2502,6 +2502,7 @@ pub class Checker {
   }
 
   pub fn check_struct_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
+    drop_struct_defaults(expr)
     if expr.type_args.size > 0 {
       tn = TypeName.new(expr.loc, expr.type_name)
       tn.mod_name = expr.mod_name
@@ -2565,11 +2566,96 @@ pub class Checker {
       if prev = seen.get(f.name) {
       } else if field_hidden(ty, f.name) {
         fail(expr.loc, "${ty.show} has private fields (${f.name}); a literal outside module ${ty.mod_name} cannot build it")
+      } else if f.defaulted {
+        splice_struct_default(expr, ty, f)
       } else {
-        fail(expr.loc, "missing field ${f.name}")
+        fail(expr.loc, "missing field ${f.name}${missing_field_hint(ty)}")
       }
     }
     ty
+  }
+
+  // A struct literal leaves out exactly the fields that declare a default
+  // (`Opts { port: 80 }` with `loops: Int = 4`): each is the default's
+  // expression, spliced into the literal after the written fields (so the
+  // written ones are evaluated first, left to right, then the defaults in
+  // declaration order) and marked (Expr.is_default), so a literal checked
+  // again drops them first. A default belongs to the struct's
+  // declaration: it is checked in the struct's module, with no local of
+  // the literal's scope and no receiver, as a parameter's default is.
+  pub fn drop_struct_defaults(expr: Expr) {
+    n = expr.field_exprs.size
+    while n > 0 && expr.field_exprs[n - 1].is_default {
+      expr.field_exprs.pop
+      expr.field_names.pop
+      n -= 1
+    }
+  }
+
+  pub fn struct_field_default(ty: Ty, name: String): Expr? {
+    for sdef in self.program.structs {
+      if sdef.name == ty.name && sdef.mod_name == ty.mod_name {
+        for f in sdef.fields {
+          if f.name == name {
+            return f.default
+          }
+        }
+      }
+    }
+    nil
+  }
+
+  pub fn splice_struct_default(expr: Expr, ty: Ty, f: TyField) {
+    if d = struct_field_default(ty, f.name) {
+      v = clone_expr(d)
+      v.is_default = true
+      expr.field_names.push(f.name)
+      expr.field_exprs.push(v)
+      saved_mod = self.current_module
+      saved_scopes = self.scopes
+      saved_self = self.self_ty
+      saved_name = self.self_name
+      saved_floors = self.lam_scopes
+      saved_in = self.in_default
+      saved_owner = self.default_owner
+      fresh: Array(Scope) = []
+      self.scopes = fresh
+      push_scope
+      floors: Array(Int) = []
+      for fl in saved_floors {
+        floors.push(0)
+      }
+      self.lam_scopes = floors
+      self.current_module = ty.mod_name
+      self.self_ty = nil
+      self.self_name = ""
+      self.in_default = true
+      self.default_owner = ty
+      got = check_expr_as(v, f.ty)
+      if !ty_assignable(got, f.ty) {
+        fail(v.loc, "cannot assign ${got.show} to ${f.ty.show}")
+      }
+      self.in_default = saved_in
+      self.default_owner = saved_owner
+      self.self_name = saved_name
+      self.self_ty = saved_self
+      self.current_module = saved_mod
+      self.lam_scopes = saved_floors
+      self.scopes = saved_scopes
+      return
+    }
+    fail(expr.loc, "missing field ${f.name}")
+  }
+
+  // ": a literal leaves out only a field that declares a default" when
+  // the struct has one, so the rule shows where it is met.
+  pub fn missing_field_hint(ty: Ty): String {
+    for f in ty.fields {
+      if f.defaulted {
+        return " (a literal leaves out only a field that declares a default)"
+      }
+    }
+    ""
   }
 
   pub fn find_struct_template(name: String, mod_name: String): StructDef? {
@@ -2760,8 +2846,10 @@ pub class Checker {
         if prev = seen.get(f.name) {
         } else if field_hidden(ty, f.name) {
           fail(expr.loc, "${ty.show} has private fields (${f.name}); a literal outside module ${ty.mod_name} cannot build it")
+        } else if f.defaulted {
+          splice_struct_default(expr, ty, f)
         } else {
-          fail(expr.loc, "missing field ${f.name}")
+          fail(expr.loc, "missing field ${f.name}${missing_field_hint(ty)}")
         }
       }
       return ty

@@ -1427,7 +1427,7 @@ When in doubt, start with a struct: it allocates nothing and cannot be changed b
 
 ### Structs
 
-A struct literal names every field, in any order. A copy is independent of the original.
+A struct literal names every field, in any order, except the fields that declare a default, which it may leave out (below). A copy is independent of the original.
 
 A method may change its struct receiver, and the change is the caller's: no `mutating` mark is needed. A struct passed as an argument is a copy, so a change made through a parameter stays in the callee. The same line runs through arrays: `xs[i].x = v` changes the element in place, while `q = xs[i]` gives a copy, and a change to `q` does not reach the array. `for p in xs` gives a copy too, and assigning to `p` or to a field of it is a compile error ([For](#for)).
 
@@ -1453,6 +1453,23 @@ fn main {
   puts(a.x)                // => 4
   puts(scaled_sum(a))      // => 1200
   puts(a.x)                // => 4
+}
+```
+
+A field may declare a default, any expression that does not use `self` or another field, as a class field's may. A literal that leaves the field out gets the default, evaluated at that literal, after the fields it names; a literal leaves out only fields that declare one. A struct with such a field has no zero value of its own (its zero would not be what a literal gives it): a class field of its type has a default or is set in `initialize`, and `Array(T).new(n)` takes a value.
+
+```avant
+struct Opts {
+  port: Int
+  loops: Int = 4
+  name: String = "srv"
+}
+
+fn main {
+  a = Opts { port: 80 }
+  b = Opts { port: 81, name: "api" }
+  puts("${a.port} ${a.loops} ${a.name}")   // => 80 4 srv
+  puts("${b.port} ${b.loops} ${b.name}")   // => 81 4 api
 }
 ```
 
@@ -1488,7 +1505,7 @@ fn main {
 
 ### Field initialization
 
-This section is about classes: a struct has no `initialize` and no field defaults (`struct fields have no defaults; use a literal`), because its literal names every field. No class field is ever read unset. For each field, in order:
+This section is about classes: a struct has no `initialize`, and its literal names every field that has no default ([Structs](#structs)). No class field is ever read unset. For each field, in order:
 
 1. **A default**, if the field has one: any expression that does not use `self` (`xs: Array(Int) = []`, `seen: Hash(String, Int) = Hash(String, Int).new`, `at: Span = Span.new(0, 0)`). Defaults are evaluated at each construction, in declaration order, before `initialize`. A default cannot read another field; compute such a value in `initialize`.
 2. **The type's zero**, if it has one and there is no default: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a null `Ptr`, a struct of such fields.

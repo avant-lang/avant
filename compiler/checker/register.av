@@ -1102,6 +1102,33 @@ pub fn (checker_self: Checker) check_field_defaults {
       }
     }
   }
+  // A struct's field defaults, checked once at their declaration as a
+  // class's are; each literal that leaves a field out checks its own copy
+  // (checker.av splice_struct_default).
+  for sdef in checker_self.program.structs {
+    if sdef.type_params.size > 0 {
+      continue
+    }
+    checker_self.current_module = sdef.mod_name
+    if sty = checker_self.resolver.get_named_for(sdef.mod_name, sdef.name) {
+      checker_self.default_owner = sty
+      for sfield in sdef.fields {
+        if sd = sfield.default {
+          if t = sd.ty {
+            continue
+          }
+          if swant = sty.field_named(sfield.name) {
+            checker_self.push_scope
+            sgot = checker_self.check_expr_as(sd, swant)
+            if !ty_assignable(sgot, swant) {
+              checker_self.fail(sd.loc, "cannot assign ${sgot.show} to ${swant.show}")
+            }
+            checker_self.pop_scope
+          }
+        }
+      }
+    }
+  }
   checker_self.self_ty = saved
   checker_self.self_name = saved_name
   checker_self.in_default = false
