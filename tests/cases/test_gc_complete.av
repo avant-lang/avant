@@ -162,8 +162,9 @@ fn test_scope_binding(c: Checks, compiler: String, root: String, dir: String) {
 // remembered, removed by a store the inline barrier test does not send to
 // the slow call (the trace logs the holder at its end). In the default
 // environment the loop's 40 forced collections are one trace and 39 young
-// collections, and the statistics line counts the traces that kept the
-// young generation and the one that went back.
+// collections, the statistics line counts the traces that kept the
+// young generation and the one that went back, and two forced
+// collections with nothing young run nothing.
 fn test_keep_young(c: Checks, compiler: String, root: String, dir: String) {
   jobs: Array(HJob) = []
   jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/keep_young.av", "${dir}/keep_young", "${dir}/keep_young.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
@@ -188,6 +189,7 @@ fn test_keep_young(c: Checks, compiler: String, root: String, dir: String) {
   }
   show = log_text("${dir}/keep_young.show.out")
   c.expect(str_has(show, "stable: 1 of 40 forced collections were full ones"), "keep_young.av: the loop's forced collections are one trace and young collections after it")
+  c.expect(str_has(show, "idle: 0 young and 0 full collections for two forced ones"), "keep_young.av: a forced collection with nothing young and the proof holding runs nothing")
   err = log_text("${dir}/keep_young.show.err")
   c.expect(stat_value(err, "full_kept_young") >= 2, "keep_young.av: traces left the young generation young (full_kept_young ${stat_value(err, "full_kept_young")})")
   c.expect(stat_value(err, "full_kept_young_fell") >= 1, "keep_young.av: the trace that met a young object naming an old one went back to an ordinary trace (full_kept_young_fell ${stat_value(err, "full_kept_young_fell")})")

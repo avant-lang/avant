@@ -915,7 +915,8 @@ typedef struct GcStickyCounters {
 /* proof: the complete collection (GcProof below). asked: the full
  * collections that asked the proof (every forced one, and every due
  * one); forced: the forced ones among them; held: the ones it held for,
- * which ran as young collections; fell[W]: the ones that traced, because
+ * which ran as young collections (idle: of them, the ones with nothing
+ * young, which ran nothing); fell[W]: the ones that traced, because
  * of W (GcProofWhy: the first reason met; a proof that held on a heap
  * that is mostly young is among them, PROOF_YOUNG_HEAVY); logged and
  * refs: the holders and the reference words the barrier's slow call
@@ -926,6 +927,7 @@ typedef struct GcProofCounters {
   uint64_t asked;
   uint64_t forced;
   uint64_t held;
+  uint64_t idle;
   uint64_t fell[PROOF_WHYS];
   uint64_t logged;
   uint64_t refs;

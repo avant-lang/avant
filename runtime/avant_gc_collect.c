@@ -403,6 +403,25 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       gc_heap.ctr.proof.held++;
       full = 0;
       complete = 1;
+      if (!avant_nursery_held && !gc_heap.young_blocks_n && !gc_heap.young_large_n && !gc_heap.set.verify &&
+          !gc_heap.set.stress) {
+        /* It holds and nothing is young (no young block, no young large
+         * object, nothing allocated since the last collection): there is
+         * nothing to free, and a young collection would only walk the
+         * roots (Binarytrees::Obj asks for one right after the collection
+         * its hold's end made: 72 collections for 36). What a complete
+         * collection restarts it restarts; the rest is left as it is.
+         * The check modes run it all the same. */
+        gc_heap.ctr.proof.idle++;
+        gc_heap.mature_since_full = 0;
+        gc_heap.promoted_since_full = 0;
+        avant_g_stats.collections--;
+        gc_thread.collecting = 0;
+        if (resume) {
+          gc_resume_world();
+        }
+        return;
+      }
     }
   }
   if (full) {

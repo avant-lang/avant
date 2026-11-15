@@ -3,8 +3,8 @@
 // collection the program asks for traces; it first runs a young
 // collection (its survivors stay young, in survivor blocks) and then
 // marks through the young objects without promoting them, so the next
-// forced collection can run as a young one again. Three parts, each
-// with a victim whose bytes the collector must find freed:
+// forced collection can run as a young one again. Three parts with a
+// victim each whose bytes the collector must find freed, and a fourth:
 //
 //   stable    an old holder takes a fresh object before each of 40
 //             forced collections, and the first store removes the last
@@ -18,6 +18,7 @@
 //   remembered after such a trace the old holder is remembered (it names
 //             a young object); a store into it removes the last reference
 //             to an old chain, and the next collection frees it
+//   idle      two forced collections with nothing young: neither runs
 //
 // The bytes the collector found live must fall by each victim's size in
 // every environment, and the verifier's oracle is silent. Built with
@@ -178,6 +179,22 @@ fn part_remembered(h: Holder): Int {
   0
 }
 
+// Two forced collections with nothing allocated in between, after enough
+// collections that nothing is young: the proof holds and there is nothing
+// to collect, so neither runs (KEEP_SHOW=1 says how many young and full
+// collections they made).
+fn part_idle(show: Bool) {
+  settle()
+  settle()
+  y = cc.ffi_gc_count(1)
+  f = fulls()
+  collect()
+  collect()
+  if show {
+    puts("idle: ${cc.ffi_gc_count(1) - y} young and ${fulls() - f} full collections for two forced ones")
+  }
+}
+
 fn main {
   show = false
   if v = env_get("KEEP_SHOW"), v == "1" {
@@ -188,5 +205,6 @@ fn main {
   puts("stable: freed ${part_stable(h, show)}")
   puts("via young: freed ${part_via_young(h, show)}")
   puts("remembered: freed ${part_remembered(h)}")
+  part_idle(show)
   puts("chain: ${length(keepalive)}")
 }

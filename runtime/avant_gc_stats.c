@@ -228,6 +228,10 @@ static void print_proof(StatsLine *l) {
     return;
   }
   line_add(l, " proof_asked=%llu proof_held=%llu", u(c->asked), u(c->held));
+  /* Only in a program that had one (the line of any other is as it was). */
+  if (c->idle) {
+    line_add(l, " proof_idle=%llu", u(c->idle));
+  }
   for (w = 1; w < PROOF_WHYS - 1; w++) {
     if (c->fell[w]) {
       line_add(l, " proof_fell_%s=%llu", gc_proof_why_name((GcProofWhy)w), u(c->fell[w]));
