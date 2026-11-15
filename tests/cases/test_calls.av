@@ -106,12 +106,22 @@ fn pop_cases(xs: Array(CCase)) {
   xs.push(refused("pop-plus", "fn main {\n  xs = [1, 2]\n  puts(xs.pop() + 1)\n}\n", "Int?", "3:17"))
 }
 
+// A call with a lambda argument checks its other arguments before it
+// picks its function; `[]` and an integer literal among them still take
+// their parameters' types, as in every other call.
+fn early_arg_cases(xs: Array(CCase)) {
+  decl = "fn apply(xs: Array(Int), f: fn(Int): Int): Int {\n  t = 0\n  for x in xs {\n    t += f(x)\n  }\n  t + xs.size\n}\nfn big(n: UInt64, f: fn(UInt64): UInt64): UInt64 {\n  f(n)\n}\nclass Box {\n  fn each_of(xs: Array(String), f: fn(String): Int): Int {\n    n = 0\n    for x in xs {\n      n += f(x)\n    }\n    n\n  }\n}\n"
+  xs.push(accepted("lambda-call-empty-array", decl + "fn main {\n  puts(apply([]) { |x| x * 2 })\n  puts(apply([1, 2]) { |x| x * 2 })\n  puts(big(18446744073709551615) { |n| n / 5 })\n  puts(Box.new().each_of([]) { |s| s.size })\n}\n", "0\n8\n3689348814741910323\n0\n"))
+  xs.push(refused("lambda-call-empty-array-generic", "fn first(xs: Array(T), f: fn(T): T): Int {\n  xs.size\n}\nfn main {\n  puts(first([]) { |x| x })\n}\n", "cannot infer type argument", "5:8"))
+}
+
 fn cases: Array(CCase) {
   xs: Array(CCase) = []
   paren_cases(xs)
   expect_cases(xs)
   field_fn_cases(xs)
   pop_cases(xs)
+  early_arg_cases(xs)
   xs
 }
 

@@ -237,13 +237,13 @@ pub fn (checker_self: Checker) deferred_slots_are_fn(sig: FuncSig, deferred: Arr
   true
 }
 
-pub fn (checker_self: Checker) deferred_unifies(sig: FuncSig, deferred: Array(Int), ctypes: Array(Ty)): Bool {
+pub fn (checker_self: Checker) deferred_unifies(sig: FuncSig, deferred: Array(Int), ctypes: Array(Ty), args: Array(Expr)): Bool {
   keys: Array(String) = []
   vals: Array(Ty) = []
   if sig.node.generic {
     i = 0
     while i < deferred.size {
-      if deferred[i] == 0 && i < sig.params.size && !checker_self.unify_ty(sig.params[i], ctypes[i], keys, vals) {
+      if deferred[i] == 0 && i < sig.params.size && !checker_self.early_arg_unifies(args[i], ctypes[i], sig.params[i], keys, vals) {
         return false
       }
       i += 1
@@ -266,7 +266,7 @@ pub fn (checker_self: Checker) deferred_unifies(sig: FuncSig, deferred: Array(In
   }
   for i in 0..deferred.size {
     if deferred[i] == 0 {
-      if i < sig.params.size && !ty_assignable(ctypes[i], sig.params[i]) {
+      if i < sig.params.size && !checker_self.early_arg_fits(args[i], ctypes[i], sig.params[i]) {
         return false
       }
     } else {
@@ -314,6 +314,31 @@ pub fn (checker_self: Checker) absorb_fn_block_q(expr: Expr, qual: String) {
   }
 }
 
+// Whether an argument checked before the call picks its function (got,
+// from check_call_arg) fits the parameter pty: as its type does, or as
+// `[]` takes a concrete array parameter's type and an integer literal an
+// integer parameter's (fit_call_arg types it once the function is
+// chosen).
+pub fn (checker_self: Checker) early_arg_fits(arg: Expr, got: Ty, pty: Ty): Bool {
+  if ty_assignable(got, pty) {
+    return true
+  }
+  if checker_self.is_empty_array_ty(got) {
+    return pty.is_array() && !type.ty_has_var(pty)
+  }
+  arg.kind == ex_int() && pty.is_integer()
+}
+
+// The same for a generic parameter: unified, unless the argument is `[]`
+// (it says nothing of the element) or a literal meeting a concrete
+// integer parameter.
+pub fn (checker_self: Checker) early_arg_unifies(arg: Expr, got: Ty, pty: Ty, keys: Array(String), vals: Array(Ty)): Bool {
+  if checker_self.is_empty_array_ty(got) || (arg.kind == ex_int() && pty.is_integer()) {
+    return checker_self.early_arg_fits(arg, got, pty)
+  }
+  checker_self.unify_ty(pty, got, keys, vals) || ty_assignable(got, pty)
+}
+
 pub fn (checker_self: Checker) dispatch_deferred(expr: Expr, expected: Ty?): Ty? {
   checker_self.dispatch_deferred_q(expr, expected, "")
 }
@@ -348,7 +373,7 @@ pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qu
     if deferred[i] == 1 {
       ctypes.push(checker_self.t_int())
     } else {
-      ctypes.push(checker_self.check_expr(expr.args[i]))
+      ctypes.push(checker_self.check_call_arg(expr.args[i]))
     }
     i += 1
   }
@@ -360,7 +385,7 @@ pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qu
   for i in 1..checker_self.functions.size {
     sig = checker_self.functions[i]
     if sig.name == expr.callee && checker_self.fn_candidate_q(sig.node, qual) && !checker_self.sig_is_instance(sig) && arity_ok(sig.node, expr.args.size) && checker_self.deferred_slots_are_fn(sig, deferred) {
-      if checker_self.deferred_unifies(sig, deferred, ctypes) {
+      if checker_self.deferred_unifies(sig, deferred, ctypes, expr.args) {
         cands.push(sig)
       } else {
         if sig.node.generic {
@@ -439,12 +464,25 @@ pub fn (checker_self: Checker) finish_deferred(expr: Expr, chosen: FuncSig, defe
   if sig.node.generic {
     i = 0
     while i < deferred.size {
-      if deferred[i] == 0 && i < sig.params.size && !checker_self.unify_ty(sig.params[i], ctypes[i], keys, vals) {
+      if deferred[i] == 0 && i < sig.params.size && !checker_self.early_arg_unifies(expr.args[i], ctypes[i], sig.params[i], keys, vals) {
         checker_self.fail(expr.loc, "cannot infer type argument")
         return checker_self.t_int()
       }
       i += 1
     }
+  }
+  // `[]` and the literals take their parameters' types now that the
+  // function is chosen.
+  i = 0
+  while i < deferred.size {
+    if deferred[i] == 0 && i < sig.params.size {
+      fpty = sig.params[i]
+      if sig.node.generic {
+        fpty = checker_self.subst_ty(sig.params[i], keys, vals)
+      }
+      ctypes[i] = checker_self.fit_call_arg(expr.args[i], ctypes[i], fpty)
+    }
+    i += 1
   }
   i = 0
   while i < expr.args.size {

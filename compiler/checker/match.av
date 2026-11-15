@@ -1484,7 +1484,7 @@ pub fn (checker_self: Checker) seed_method_subst(sig: FuncSig, owner: String, ke
   false
 }
 
-pub fn (checker_self: Checker) method_deferred_ok(sig: FuncSig, owner: String, deferred: Array(Int), ctypes: Array(Ty)): Bool {
+pub fn (checker_self: Checker) method_deferred_ok(sig: FuncSig, owner: String, deferred: Array(Int), ctypes: Array(Ty), args: Array(Expr)): Bool {
   if !checker_self.method_targets_owner(sig, owner) {
     return false
   }
@@ -1503,7 +1503,7 @@ pub fn (checker_self: Checker) method_deferred_ok(sig: FuncSig, owner: String, d
   while i < deferred.size {
     if deferred[i] == 0 && i < sig.params.size {
       pty = checker_self.subst_ty(sig.params[i], keys, vals)
-      if !checker_self.unify_ty(pty, ctypes[i], keys, vals) && !ty_assignable(ctypes[i], pty) {
+      if !checker_self.early_arg_unifies(args[i], ctypes[i], pty, keys, vals) {
         return false
       }
     }
@@ -1535,7 +1535,7 @@ pub fn (checker_self: Checker) collect_method_deferred(expr: Expr, owner: String
       i += 1
       continue
     }
-    if sig.name == expr.callee && checker_self.method_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && checker_self.method_deferred_ok(sig, owner, deferred, ctypes) {
+    if sig.name == expr.callee && checker_self.method_is_visible(sig.node, checker_self.current_module) && !checker_self.sig_is_instance(sig) && checker_self.method_deferred_ok(sig, owner, deferred, ctypes, expr.args) {
       cands.push(sig)
     }
     i += 1
@@ -1555,11 +1555,14 @@ pub fn (checker_self: Checker) finish_method_deferred(expr: Expr, chosen: FuncSi
   while i < deferred.size {
     if deferred[i] == 0 && i < sig.params.size {
       pty = checker_self.subst_ty(sig.params[i], keys, vals)
-      if !checker_self.unify_ty(pty, ctypes[i], keys, vals) && !ty_assignable(ctypes[i], pty) {
+      if !checker_self.early_arg_unifies(expr.args[i], ctypes[i], pty, keys, vals) {
         n = i + 1
         checker_self.fail(expr.args[i].loc, "argument ${n} of ${shown}.${expr.callee} is ${ctypes[i].show()}, expected ${pty.show()}")
         return checker_self.t_int()
       }
+      // `[]` and the literals take their parameters' types now that the
+      // method is chosen.
+      ctypes[i] = checker_self.fit_call_arg(expr.args[i], ctypes[i], checker_self.subst_ty(sig.params[i], keys, vals))
     }
     i += 1
   }
@@ -1682,7 +1685,7 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
         ctypes.push(checker_self.t_int())
       } else {
         deferred.push(0)
-        ctypes.push(checker_self.check_expr(expr.args[i]))
+        ctypes.push(checker_self.check_call_arg(expr.args[i]))
       }
       i += 1
     }
