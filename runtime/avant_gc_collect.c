@@ -301,9 +301,15 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
    * one stopped until that collection was done; a collection the policy
    * asked for (the budget, the trigger, a stress point) is then
    * reconsidered, an explicit or heap-limit one runs. */
-  if (!gc_thread.collector && why == GC_WHY_STRESS && gc_stop_world_held()) {
-    /* A stress collection with no other thread running keeps the world
-     * lock (gc_stop_world_held, O121). */
+  if (!gc_thread.collector &&
+      (why == GC_WHY_STRESS || atomic_load_explicit(&g_avant_shared, memory_order_acquire) == 0) &&
+      gc_stop_world_held()) {
+    /* A stress collection with no other thread running, and any
+     * collection of a program with one thread, keeps the world lock
+     * (gc_stop_world_held): there is no thread to wait for, so the lock's
+     * round trip buys nothing (about 70 instructions a young collection
+     * on a heap that does not change). A threaded program's collections
+     * outside the stress mode take the full handshake, as before. */
     resume = 1;
   } else if (!gc_thread.collector) {
     for (;;) {

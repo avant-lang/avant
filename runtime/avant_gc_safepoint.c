@@ -242,10 +242,11 @@ int gc_stop_world(void) {
   return 1;
 }
 
-/* A stress collection's handshake without the world lock's round trip
- * (the Valk stage, VALK-TM3, O121). The caller holds the world lock.
- * When no other thread is running (each is native or stopped at a
- * safepoint), there is nothing to wait for, so rule 1 (no runtime lock
+/* A collection's handshake without the world lock's round trip: a
+ * stress collection's, and every collection of a program with one thread
+ * (gc_collect). The caller holds the world lock. When no other thread
+ * is running (each is native or stopped at a safepoint), there is
+ * nothing to wait for, so rule 1 (no runtime lock
  * held while the collector waits) does not ask for the world lock to be
  * released: the request is raised under hs_mu and the collection runs at
  * once. Releasing it anyway, as gc_stop_world's caller must, handed it to
