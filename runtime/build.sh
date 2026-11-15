@@ -5,6 +5,13 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 cc=${CC:-cc}
 mkdir -p "$root/build"
+# One build of a tree's runtime at a time: the objects are written in
+# place, and a second build started meanwhile (another test run of the
+# same checkout) would link a runtime with half its units. The second
+# waits for the first, on a lock file in runtime/build.
+if [ -z "${AVANT_RUNTIME_BUILD_LOCK:-}" ] && command -v flock > /dev/null 2>&1; then
+  AVANT_RUNTIME_BUILD_LOCK=1 exec flock "$root/build/.build.lock" sh "$root/build.sh" "$@"
+fi
 # Code placement (Stage 29 WP, O186): every runtime function starts on a
 # 64-byte boundary and loops on 32, as the compiler places a program's own
 # code (runtime/avant_llvm.c, place_functions). gcc's default is 16 for

@@ -66,6 +66,12 @@ set -u
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 2
 [ -f compiler/main.av ] && [ -f runtime/build.sh ] || { echo "letters: $root is not an avant checkout" >&2; exit 2; }
+# One run of the letters in a checkout at a time (they write bin/ and
+# runtime/build in place): a second run waits for the first.
+if [ -z "${AVANT_LETTERS_LOCK:-}" ] && command -v flock > /dev/null 2>&1; then
+  mkdir -p bin
+  AVANT_LETTERS_LOCK=1 exec flock "$root/bin/.letters.lock" sh "$root/tools/letters.sh" "$@"
+fi
 
 COMPILER_LINK="runtime/build/avant_llvm.o"
 
