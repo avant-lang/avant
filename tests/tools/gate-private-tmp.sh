@@ -42,6 +42,7 @@ printf '#!/bin/sh\necho "gc-lint: clean (stub)"\n' > "$fake/tools/gc-lint.sh"
 printf '#!/bin/sh\necho "README CHECK PASS (stub)"\n' > "$fake/tools/readme-check.sh"
 printf '#!/bin/sh\necho "README LINKS PASS (stub)"\n' > "$fake/tools/readme-links.sh"
 printf '#!/bin/sh\necho "FORMAT CHECK PASS (stub)"\n' > "$fake/tools/format-check.sh"
+printf '#!/bin/sh\necho "NO LEDGER REFS PASS (stub)"\n' > "$fake/tools/no-ledger-refs.sh"
 cat > "$fake/tools/stub-avant" <<'STUB'
 #!/bin/sh
 # The stub compiler. STUB_WAIT=1: tell the caller this pass started

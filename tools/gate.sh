@@ -16,7 +16,10 @@
 # block compiled and run, and tools/readme-links.sh), and `avant format
 # --check` over every tracked source
 # (tools/format-check.sh): a red one fails the
-# gate. Prints one summary line per suite, one
+# gate. Before the builds it runs the runtime-C rooting lint
+# (tools/gc-lint.sh) and the check that no tracked file names an
+# identifier of the planning notes (tools/no-ledger-refs.sh). Prints one
+# summary line per suite, one
 # for the README checks, the fixed point, and a final `GATE PASS` or
 # `GATE FAIL: ...` line; exits 0 only on PASS (1 on any failure, 2 on
 # usage).
@@ -200,6 +203,15 @@ if sh tools/gc-lint.sh > "$out/gc-lint.txt" 2>&1 < /dev/null; then
   echo "gate: $(tail -1 "$out/gc-lint.txt")" | tee -a "$out/summary.txt"
 else
   fail "gc-lint: $(tail -1 "$out/gc-lint.txt") (gc-lint.txt)"
+fi
+
+# No tracked file names an identifier of the planning notes, which live
+# outside this repository (tools/no-ledger-refs.sh, its allowlist
+# tools/no-ledger-refs.allow); a second of reading, no build needed.
+if sh tools/no-ledger-refs.sh > "$out/no-ledger-refs.txt" 2>&1 < /dev/null; then
+  echo "gate: $(tail -1 "$out/no-ledger-refs.txt")" | tee -a "$out/summary.txt"
+else
+  fail "no-ledger-refs: $(tail -1 "$out/no-ledger-refs.txt") (no-ledger-refs.txt)"
 fi
 
 # The letters come from tools/letters.sh (its own timeouts: runtime 300 s,
