@@ -178,6 +178,12 @@ fn ruling_cases: Array(FCase) {
   xs.push(refused("mod-method-call", "import errvutil\nclass C {\n  fn errvutil: Int {\n    1\n  }\n  fn run: Int {\n    errvutil.twice(3)\n  }\n}\nfn main {\n  puts(C.new().run())\n}\n//== errvutil.av\npub fn twice(n: Int): Int {\n  n * 2\n}\n", "errvutil is both a module and a method of C; write self.errvutil for the method, or give the method another name to use the module"))
   xs.push(accepted("mod-no-method", "import errvutil2\nclass C {\n  fn other: Int {\n    1\n  }\n  fn run: Int {\n    errvutil2.twice(3) + self.other()\n  }\n}\nfn main {\n  puts(C.new().run())\n}\n//== errvutil2.av\npub fn twice(n: Int): Int {\n  n * 2\n}\n", "7\n"))
   xs.push(refused("mod-method-gc", "import std.gc\nclass C {\n  fn gc: Int {\n    1\n  }\n  fn run {\n    gc.collect()\n  }\n}\nfn main {\n  C.new().run()\n}\n", "gc is both a module and a method of C; write self.gc for the method"))
+  // A field of a module's name: neither the field nor the module wins
+  // silently, in a qualifier or as a bare name.
+  xs.push(refused("mod-field-call", "import errvutil3\nclass C {\n  errvutil3: Int = 1\n\n  fn run: Int {\n    errvutil3.twice(3)\n  }\n}\nfn main {\n  puts(C.new().run())\n}\n//== errvutil3.av\npub fn twice(n: Int): Int {\n  n * 2\n}\n", "errvutil3 is both a module and a field of C; write self.errvutil3 for the field, or give the field another name to use the module"))
+  xs.push(refused("mod-field-bare", "import errvutil4\nclass C {\n  errvutil4: Int = 1\n\n  fn run: Int {\n    errvutil4 + 1\n  }\n}\nfn main {\n  puts(C.new().run())\n}\n//== errvutil4.av\npub fn twice(n: Int): Int {\n  n * 2\n}\n", "errvutil4 is both a module and a field of C"))
+  xs.push(accepted("mod-field-self", "import errvutil5\nclass C {\n  pub errvutil5: Int = 1\n\n  fn run: Int {\n    self.errvutil5 + 1\n  }\n}\nfn main {\n  c = C.new()\n  puts(c.run() + errvutil5.twice(c.errvutil5))\n}\n//== errvutil5.av\npub fn twice(n: Int): Int {\n  n * 2\n}\n", "4\n"))
+  xs.push(refused("mod-field-gc", "import std.gc\nclass C {\n  gc: Int = 1\n\n  fn run {\n    gc.collect()\n  }\n}\nfn main {\n  C.new().run()\n}\n", "gc is both a module and a field of C; write self.gc for the field"))
   xs.push(refused("default-reads-field", "class C {\n  k: Int = 2\n  n: Int = k + 1\n}\nfn main {\n  puts(C.new().n)\n}\n", "a field default cannot read another field (k of C): defaults are evaluated before initialize, in declaration order; compute it in initialize instead"))
   xs
 }

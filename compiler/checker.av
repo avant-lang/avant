@@ -1180,6 +1180,10 @@ pub class Checker {
       fail(loc, "${name} is both a module and a method of ${st.show()}; write ${self.self_name}.${name} for the method, or give the method another name to use the module")
       return true
     }
+    if st2 = self.bare_receiver(), f = st2.field_named(name) {
+      fail(loc, "${name} is both a module and a field of ${st2.show()}; write ${self.self_name}.${name} for the field, or give the field another name to use the module")
+      return true
+    }
     false
   }
 
@@ -3463,6 +3467,12 @@ pub class Checker {
       return existing
     }
     if field_ty = implicit_field(expr.ident) {
+      if k0 = self.known_mods.get(expr.ident), qualifier_ok(expr.ident, self.current_module) {
+        // A field and a module of one name: neither wins silently.
+        if module_is_method(expr.ident, expr.loc) {
+          return t_int()
+        }
+      }
       if st = self.self_ty {
         check_field_visible(st, expr.ident, expr.loc)
       }
@@ -3759,6 +3769,11 @@ pub class Checker {
         got = check_expr(inner)
       }
       if expr.op == tk_minus() {
+        if got.is_unsigned() {
+          // As a negated literal is: an unsigned type has no negatives.
+          fail(expr.loc, "unary minus of an unsigned value: ${got.show()} has no negative values (to wrap, write 0 &- x)")
+          return got
+        }
         if got.is_numeric() {
           return got
         }
@@ -3769,11 +3784,6 @@ pub class Checker {
           return check_expr_core(expr, false, t_int())
         }
         fail(expr.loc, "unary minus expects Int or Float64")
-        if got.is_unsigned() {
-          // As a negated literal is: an unsigned type has no negatives.
-          fail(expr.loc, "unary minus of an unsigned value: ${got.show()} has no negative values (to wrap, write 0 &- x)")
-          return got
-        }
         return t_int()
       }
       if expr.op == tk_bang() {
@@ -4972,6 +4982,12 @@ pub class Checker {
       if found = lookup(recv.ident) {
       } else {
         if !(recv.type_args.size > 0) {
+          if recv.ident == "gc" && imported_by(self.current_module, "std.gc") {
+            // A field named gc beside `import std.gc`: neither wins.
+            if f0 = implicit_field("gc"), module_is_method(recv.ident, recv.loc) {
+              return t_int()
+            }
+          }
           if names_std_gc(recv.ident) {
             if module_is_method(recv.ident, recv.loc) {
               return t_int()
