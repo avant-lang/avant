@@ -1,0 +1,189 @@
+import harness
+import backends
+
+// Stage 29 W5c2: the messages for types, fields, numbers and cascades. A
+// struct literal where a `{` opens a block, a function value of the wrong
+// fn type (O238); one rule against cascades: an expression whose type
+// already failed is not reported again (O277, O636, O760, O192); the
+// integer messages of constructors and unsigned literals (O364); the
+// messages W5c1 wrote without a program that reaches them (O764). Each
+// program is compiled in parallel; a refused one must leave no binary,
+// exit non-zero, say the expected words at the expected line and column,
+// and, when the case says so, say nothing else (one error, no cascade).
+
+class TCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub single: Bool = false
+  pub absent: String = ""
+  pub ok: Bool = false
+  // Other modules beside main.av: name, body, name, body, ...
+  pub mods: Array(String) = []
+}
+
+// The one error the program has: the words at pos, and no other error.
+fn only(tag: String, src: String, needle: String, pos: String): TCase {
+  f = TCase.new
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f.single = true
+  f
+}
+
+// The words at pos; other errors may follow.
+fn first(tag: String, src: String, needle: String, pos: String): TCase {
+  f = only(tag, src, needle, pos)
+  f.single = false
+  f
+}
+
+// The program's one error, without the words absent.
+fn without(tag: String, src: String, needle: String, pos: String, absent: String): TCase {
+  f = only(tag, src, needle, pos)
+  f.absent = absent
+  f
+}
+
+// A program that compiles and prints out.
+fn accepted(tag: String, src: String, out: String): TCase {
+  f = TCase.new
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn with_mods(f: TCase, mods: Array(String)): TCase {
+  f.mods = mods
+  f
+}
+
+fn cases: Array(TCase) {
+  xs: Array(TCase) = []
+  // O238: a struct literal where the `{` opens a block says to parenthesize it.
+  xs.push(only("lit-if", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  p = P { x: 1, y: 2 }\n  if p.x == P { x: 1, y: 2 }.x {\n    puts(1)\n  }\n}\n", "a struct literal in a condition needs parentheses around it: (P { ... })", "8:13"))
+  xs.push(only("lit-if-one-field", "struct Q {\n  x: Int\n}\n\nfn main {\n  q = Q { x: 1 }\n  if q.x == Q { x: 1 }.x {\n    puts(1)\n  }\n}\n", "a struct literal in a condition needs parentheses around it: (Q { ... })", "7:13"))
+  xs.push(only("lit-while", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  p = P { x: 1, y: 2 }\n  while p.y != P { x: 1, y: 2 }.y {\n    p = P { x: 1, y: 2 }\n  }\n  puts(p.x)\n}\n", "a struct literal in a condition needs parentheses around it: (P { ... })", "8:16"))
+  xs.push(only("lit-elsif", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  p = P { x: 1, y: 2 }\n  if p.x == 0 {\n    puts(0)\n  } else if p.x == P { x: 1, y: 2 }.x {\n    puts(1)\n  }\n}\n", "a struct literal in a condition needs parentheses around it: (P { ... })", "10:20"))
+  xs.push(only("lit-for", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  for q in P { x: 1, y: 2 }.x..3 {\n    puts(q)\n  }\n}\n", "a struct literal in a `for` needs parentheses around it: (P { ... })", "7:12"))
+  xs.push(with_mods(only("lit-qualified", "import geo\nfn main {\n  p = geo.P { x: 1 }\n  if p.x == geo.P { x: 1 }.x {\n    puts(1)\n  }\n}\n", "a struct literal in a condition needs parentheses around it: (geo.P { ... })", "4:17"), ["geo", "pub struct P {\n  pub x: Int\n}\n"]))
+  xs.push(accepted("lit-parenthesized", "struct P {\n  x: Int\n  y: Int\n}\n\nfn main {\n  p = P { x: 1, y: 2 }\n  if p.x == (P { x: 1, y: 2 }).x {\n    puts(1)\n  }\n  for q in (P { x: 1, y: 2 }).x..3 {\n    puts(q)\n  }\n}\n", "1\n1\n2\n"))
+  xs.push(accepted("lit-capital-local-block", "fn main {\n  X = 5\n  y = 5\n  if y == X {\n    z: Int = 1\n    puts(z)\n  }\n  if y == X {}\n  puts(2)\n}\n", "1\n2\n"))
+  // O238: a function value of another fn type says what it is, not `unknown function`.
+  xs.push(only("fn-value-type", "fn f(n: Int): Int? {\n  n\n}\n\nfn main {\n  g: fn(Int): Int = f\n  puts(g(1))\n}\n", "f is fn(Int): Int?, expected fn(Int): Int: a fn type matches only itself", "6:21"))
+  xs.push(only("fn-value-arg", "fn f(n: Int): Int? {\n  n\n}\n\nfn apply(g: fn(Int): Int): Int {\n  g(1)\n}\n\nfn main {\n  puts(apply(f))\n}\n", "f is fn(Int): Int?, expected fn(Int): Int: a fn type matches only itself", "10:14"))
+  xs.push(only("fn-value-overloads", "fn f(n: Int): Int? {\n  n\n}\n\nfn f(s: String): Int {\n  s.size\n}\n\nfn main {\n  g: fn(Int): Int = f\n  puts(g(1))\n}\n", "f is fn(Int): Int? or fn(String): Int, expected fn(Int): Int: a fn type matches only itself", "10:21"))
+  xs.push(only("fn-value-unknown", "fn helper(n: Int): Int {\n  n\n}\n\nfn main {\n  g: fn(Int): Int = nothere\n  puts(g(1))\n}\n", "unknown function nothere", "6:21"))
+  // The cascade rule (O277, O636, O760, O192): an expression whose type already failed is not reported again.
+  xs.push(only("casc-for-bytes", "fn main {\n  s = \"abc\"\n  for c in s.bytes {\n    puts(c)\n  }\n}\n", "for needs a range (a..b) or an Array, got Bytes", "3:3"))
+  xs.push(only("casc-for-failed-array", "fn main {\n  xs = nosuch()\n  for x in xs {\n    puts(x.foo)\n  }\n  puts(xs.size + 1)\n}\n", "unknown function nosuch", "2:8"))
+  xs.push(only("casc-number-mix", "fn main {\n  pa: Int32 = 1\n  pn = 2\n  px = pa + pn\n  puts(px)\n}\n", "binary operator expects matching types, got Int32 and Int", "4:11"))
+  xs.push(only("casc-number-mix-float", "fn main {\n  x = 1.5\n  n = 2\n  puts(x * n)\n}\n", "expected Float64, got Int", "4:12"))
+  xs.push(only("casc-if-cond", "fn main {\n  x = 1\n  if x + \"a\" {\n    puts(1)\n  }\n}\n", "binary operator expects numeric operands, got Int and String", "3:8"))
+  xs.push(only("casc-while-cond", "fn main {\n  x = 1\n  while x - \"a\" {\n    x += 1\n  }\n}\n", "binary operator expects numeric operands, got Int and String", "3:11"))
+  xs.push(only("casc-failed-local", "fn main {\n  xs = [2, 1]\n  ys = xs.srted\n  puts(ys.size)\n}\n", "no method srted on Array (did you mean `sorted`?)", "3:10"))
+  xs.push(only("casc-failed-local-chain", "fn main {\n  xs = [2, 1]\n  ys = xs.srted\n  if ys > 1 {\n    puts(ys)\n  }\n  zs = [ys, 2]\n  puts(zs.size)\n}\n", "no method srted on Array (did you mean `sorted`?)", "3:10"))
+  xs.push(only("casc-failed-declared", "fn main {\n  n: Nosuch = 1\n  puts(n.size)\n  puts(n + 1)\n}\n", "unknown type Nosuch", "2:6"))
+  xs.push(first("casc-rebound", "fn main {\n  xs = [2, 1]\n  ys = xs.srted\n  ys = 5\n  puts(ys.size)\n}\n", "no method size on Int", "5:10"))
+  xs.push(first("casc-independent", "fn main {\n  a = nosuch1\n  b = nosuch2\n  puts(a + b)\n}\n", "unknown name nosuch2", "3:7"))
+  xs.push(first("casc-struct-kept", "struct P {\n  a: Int\n}\n\nfn main {\n  p = P { a: nope }\n  puts(p.a + 1)\n  q = p\n  puts(q.b)\n}\n", "no field b on P", "9:9"))
+  xs.push(first("casc-unknown-callee", "fn main {\n  x = outer(inner())\n  puts(x)\n}\n", "unknown function outer", "2:7"))
+  xs.push(only("casc-field-type", "struct Nd {\n  a: Int32\n}\n\nfn main {\n  n = 5\n  d = Nd { a: n }\n  puts(d.a)\n}\n", "field a is Int, expected Int32", "7:15"))
+  xs.push(only("casc-array-element", "fn main {\n  n = 5\n  xs: Array(Int32) = [1, n]\n  puts(xs.size)\n}\n", "array element is Int, expected Int32", "3:26"))
+  xs.push(only("casc-method-arg", "class C {\n  fn go(n: Int): Int {\n    n\n  }\n}\n\nfn main {\n  c = C.new\n  puts(c.go(nosuch))\n}\n", "unknown name nosuch", "9:13"))
+  xs.push(only("casc-lambda-arg", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(1) { |a, b| a + b })\n}\n", "the lambda has 2 parameters where fn(Int): Int takes 1 argument", "6:17"))
+  // O364: a constructor's integer argument names the call as written; a negative literal where an unsigned type is wanted does not fit.
+  xs.push(only("ctor-int-mix", "class Nd {\n  a: Int32 = 0\n\n  fn initialize(a: Int32) {\n    self.a = a\n  }\n}\n\nfn main {\n  n = 5\n  d = Nd.new(n)\n  puts(d.a)\n}\n", "argument 1 of Nd.new is Int, expected Int32: Nd.new(a: Int32)", "11:9"))
+  xs.push(only("ctor-count", "class Nd {\n  a: Int32 = 0\n\n  fn initialize(a: Int32) {\n    self.a = a\n  }\n}\n\nfn main {\n  d = Nd.new(1, 2)\n  puts(d.a)\n}\n", "Nd.new takes 1 argument, given 2: Nd.new(a: Int32)", "10:9"))
+  xs.push(only("ctor-generic", "class Box(T) {\n  a: Int32 = 0\n\n  fn initialize(a: Int32, v: T) {\n    self.a = a\n  }\n}\n\nfn main {\n  n = 5\n  d = Box(Int).new(n, 1)\n  puts(d.a)\n}\n", "argument 1 of Box(Int).new is Int, expected Int32: Box(Int).new(a: Int32, v: Int)", "11:15"))
+  xs.push(only("ctor-direct-initialize", "class Nd {\n  a: Int32 = 0\n\n  fn initialize(a: Int32) {\n    self.a = a\n  }\n}\n\nfn main {\n  d = Nd.new(1)\n  n = 5\n  d.initialize(n)\n  puts(d.a)\n}\n", "argument 1 of Nd.initialize is Int, expected Int32: Nd.initialize(a: Int32)", "12:4"))
+  xs.push(only("unsigned-negative-declared", "fn main {\n  a: UInt32 = -1\n  puts(a)\n}\n", "a negative literal does not fit in UInt32", "2:15"))
+  xs.push(only("unsigned-negative-arg", "fn f(a: UInt32): UInt32 {\n  a\n}\n\nfn main {\n  puts(f(-1))\n}\n", "a negative literal does not fit in UInt32", "6:10"))
+  xs.push(only("unsigned-negative-operand", "fn main {\n  u: UInt64 = 5u64\n  puts(u + -1)\n}\n", "a negative literal does not fit in UInt64", "3:12"))
+  xs.push(only("unsigned-negative-element", "fn main {\n  xs: Array(UInt32) = [1, -2]\n  puts(xs.size)\n}\n", "a negative literal does not fit in UInt32", "2:27"))
+  xs.push(only("unsigned-negative-const", "const neg = -1\n\nfn main {\n  a: UInt32 = neg\n  puts(a)\n}\n", "the constant neg = -1 does not fit in UInt32", "4:15"))
+  xs.push(only("unsigned-negative-suffix", "fn main {\n  a = -1u64\n  puts(a)\n}\n", "a negative literal does not fit in UInt64", "2:7"))
+  xs.push(accepted("unsigned-negative-overload", "fn f(a: UInt32): Int {\n  1\n}\n\nfn f(a: Int): Int {\n  2\n}\n\nfn main {\n  puts(f(-1))\n  puts(f(1))\n}\n", "2\n2\n"))
+  // O764: the two messages W5c1 wrote without a program that reaches them.
+  xs.push(only("deferred-no-fit", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(\"x\") { |n| n + 1 })\n}\n", "argument 1 of apply is String, expected Int: apply(n: Int, f: fn(Int): Int): Int", "6:8"))
+  xs.push(only("deferred-no-fit-name", "fn helper(n: Int): Int {\n  n\n}\n\nfn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn main {\n  puts(apply(\"x\", helper))\n}\n", "argument 1 of apply is String, expected Int: apply(n: Int, f: fn(Int): Int): Int", "10:8"))
+  xs.push(only("deferred-no-fit-overloads", "fn apply(n: Int, f: fn(Int): Int): Int {\n  f(n)\n}\n\nfn apply(b: Bool, f: fn(Int): Int): Int {\n  f(1)\n}\n\nfn main {\n  puts(apply(\"x\") { |n| n + 1 })\n}\n", "no overload of apply takes (String, a lambda): apply(n: Int, f: fn(Int): Int): Int, apply(b: Bool, f: fn(Int): Int): Int", "10:8"))
+  xs.push(with_mods(only("template-two-modules-field", "import ga\nimport gb\n\nclass W(T) {\n  pub b: Box(T)\n\n  fn initialize(b: Box(T)) {\n    self.b = b\n  }\n}\n\nfn main {\n  w = W(Int).new(ga.Box(Int).new(1))\n  puts(w.b.v)\n}\n", "ambiguous name Box; qualify it", "5:10"), ["ga", "pub class Box(T) {\n  pub v: T\n\n  fn initialize(v: T) {\n    self.v = v\n  }\n}\n", "gb", "pub class Box(T) {\n  pub v: T\n\n  fn initialize(v: T) {\n    self.v = v\n  }\n}\n"]))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(TCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/tm-${f.tag}.av"
+    if f.mods.size > 0 {
+      d = "${dir}/tm-${f.tag}"
+      mkdir_p(d)
+      k = 0
+      while k + 1 < f.mods.size {
+        write_av(d, f.mods[k], f.mods[k + 1])
+        k += 2
+      }
+      src = "${d}/main.av"
+    }
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/tm-${f.tag}.bin", "${dir}/tm-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f1 in cases {
+    if f1.ok {
+      runs.push(run_job(dir, "tm-${f1.tag}.bin", "tm-${f1.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f2 = cases[i]
+    log = log_text("${dir}/tm-${f2.tag}.log")
+    if f2.ok {
+      c.eq_int(jobs[i].code, 0, "${f2.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f2.tag}: exit 0")
+      c.eq_str(log_text("${dir}/tm-${f2.tag}.run.out"), f2.want, "${f2.tag}: stdout")
+      k += 1
+      continue
+    }
+    file = "tm-${f2.tag}.av"
+    if f2.mods.size > 0 {
+      file = "main.av"
+    }
+    c.expect(jobs[i].code != 0 && !file_exists("${dir}/tm-${f2.tag}.bin"), "${f2.tag}: refused")
+    c.expect(str_has(log, f2.want), "${f2.tag}: says ${f2.want}")
+    c.expect(str_has(log, "${file}:${f2.pos}\n"), "${f2.tag}: at ${f2.pos}")
+    if f2.single {
+      c.expect(!str_has(log, "aborting due to"), "${f2.tag}: one error")
+    }
+    if f2.absent.size > 0 {
+      c.expect(!str_has(log, f2.absent), "${f2.tag}: does not say ${f2.absent}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_type_messages.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish
+}

@@ -58,7 +58,7 @@ fn cases: Array(RCase) {
   xs.push(refused("label-type-on-int", "fn main {\n  x = 1\n  switch x {\n    case Int { puts(0) }\n    else { puts(1) }\n  }\n}\n", "a member-type or nil label needs a union to switch over, got Int", "4:10"))
   xs.push(refused("label-nil-on-enum", "enum Tok { a, b }\nfn main {\n  switch Tok.a {\n    case nil { puts(0) }\n    else { puts(1) }\n  }\n}\n", "a member-type or nil label needs a union to switch over, got Tok", "4:10"))
   xs.push(refused("value-needs-cover", "fn f(x: Int | String): Int {\n  switch x {\n    case Int { 1 }\n  }\n}\nfn main { puts(f(1)) }\n", "does not cover String", "2:3"))
-  xs.push(refused("binding-wrong-type", "fn main {\n  x: Int | String = 1\n  switch x {\n    case s: String { puts(s + 1) }\n    case Int { puts(0) }\n  }\n}\n", "expected String, got Int", "4:31"))
+  xs.push(refused("binding-wrong-type", "fn main {\n  x: Int | String = 1\n  switch x {\n    case s: String { puts(s + 1) }\n    case Int { puts(0) }\n  }\n}\n", "binary operator expects numeric operands, got String and Int", "4:29"))
   xs.push(refused("stmt-arm-drops-error", pre + "fn main {\n  switch 1 {\n    case 1 { r(1) }\n    else { puts(0) }\n  }\n}\n", "this statement drops a value that can be an error", "15:14"))
   xs.push(refused("value-mixed-arms", "fn main {\n  x = switch 1 {\n    case 1 { 2 }\n    else { puts(0) }\n  }\n  puts(x)\n}\n", "switch cases must all produce a value, or none", "2:7"))
   xs.push(accepted("stmt-arm-value", "fn main {\n  switch argv().size {\n    case 1 {\n      argv().size + 1\n    }\n    else {\n      puts(0)\n    }\n  }\n  puts(\"done\")\n}\n", "done\n"))

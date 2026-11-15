@@ -994,7 +994,11 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
         }
       }
       if all.size > 0 {
-        checker_self.fail_no_fit(loc, "${shown}.${name}", all, arg_tys)
+        called = "${shown}.${name}"
+        if checker_self.in_new && name == "initialize" {
+          called = "${shown}.new"
+        }
+        checker_self.fail_no_fit(loc, called, all, arg_tys)
       } else if hidden = checker_self.hidden_method(owner, owner_mod, name) {
         checker_self.fail(loc, "method ${shown}.${name} of module ${hidden.node.mod_name} is private to its module; mark it pub")
       } else {

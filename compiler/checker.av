@@ -13,6 +13,9 @@ import checker.names
 
 pub class Scope {
   pub names: Hash(String, Int)
+  // The names a failed statement bound to a failed value's Int (the
+  // cascade rule, Stage 29 W5c2): reading one reports nothing more.
+  pub failed: Hash(String, Int)? = nil
 
   fn initialize {
     n = Hash(String, Int).new
@@ -86,6 +89,14 @@ pub class Checker {
   resolver_hidden: Int = 0
   resolver_kept: Int = 0
   poisoned: Bool = false
+  // The error count just after a generic `expected T, got U` (an
+  // operand that does not fit the type it is checked with), 0 when the
+  // last error is another: the cascade rule lets the reader's own message
+  // replace it.
+  weak_at: Int = 0
+  // Set while a constructor's arguments are matched against initialize:
+  // its messages name the call as written, T.new (Stage 29 W5c2, O364).
+  pub in_new: Bool = false
   pub return_type: Ty
   pub loop_depth: Int = 0
   pub self_ty: Ty? = nil
@@ -303,9 +314,52 @@ pub class Checker {
 
   pub fn clear_poison {
     self.poisoned = false
+    self.weak_at = 0
+  }
+
+  // The cascade rule (Stage 29 W5c2, O277, O636, O760, O192): an
+  // expression whose type already failed is not reported again. Once a
+  // statement has an error (poisoned, cleared before each statement), what
+  // reads the failed part (an operator, a call, a condition, an
+  // assignment) adds no message of its own; a name the statement bound is
+  // failed too (bind), so a later statement that reads it reports nothing
+  // either (check_name). The silenced error still counts as a repeat, so
+  // every mark (new_err_since) sees it, and the compile still fails. One
+  // exception keeps the clearer message: when the statement's error is the
+  // generic `expected T, got U` of an operand (check_expr_flag), the
+  // reader's own message about it (`binary operator expects matching
+  // types`, `cannot assign`, `return type is`) takes its place. A name
+  // that does not exist (`unknown function f`) reads no type and is never
+  // a cascade: it is reported in a statement that already failed too.
+  pub fn cascaded(message: String): Bool {
+    if !self.poisoned || names_missing(message) {
+      return false
+    }
+    if self.weak_at > 0 && self.weak_at == self.errors.pushes {
+      self.errors.truncate(self.weak_at - 1)
+      self.weak_at = 0
+      if self.errors.count == 0 {
+        self.err = nil
+      }
+      return false
+    }
+    self.errors.note(1, false)
+    true
+  }
+
+  pub fn names_missing(message: String): Bool {
+    for w in ["unknown name ", "unknown function ", "unknown type ", "unknown module "] {
+      if message.size > w.size && str_slice(message, 0, w.size) == w {
+        return true
+      }
+    }
+    false
   }
 
   pub fn fail(loc: Location, message: String) {
+    if cascaded(message) {
+      return
+    }
     e = CompileError.new(loc, diag_code(4, message), message)
     if self.errors.count == 0 {
       self.err = e
@@ -318,6 +372,9 @@ pub class Checker {
   // An error with a hint after it (" (did you mean `x`?)", Stage 29
   // W5c1): the code is the message's, whatever the hint says.
   pub fn fail_hint(loc: Location, message: String, hint: String) {
+    if cascaded(message) {
+      return
+    }
     e = CompileError.new(loc, diag_code(4, message), "${message}${hint}")
     if self.errors.count == 0 {
       self.err = e
@@ -380,6 +437,53 @@ pub class Checker {
     id = intern(ty)
     last = self.scopes[self.scopes.size - 1]
     last.names[name] = id
+    if self.poisoned && ty.is_int {
+      if fs = last.failed {
+        fs[name] = 1
+      } else {
+        fs2 = Hash(String, Int).new
+        fs2[name] = 1
+        last.failed = fs2
+      }
+    } else if fs3 = last.failed {
+      fs3.delete(name)
+    }
+  }
+
+  // A name assigned a value that checked (or declared with a type that
+  // resolved) is no longer failed.
+  pub fn unfail(name: String) {
+    i = lookup_index(name)
+    if i >= 0 {
+      if fs = self.scopes[i].failed {
+        fs.delete(name)
+      }
+    }
+  }
+
+  // A name bound by a statement that failed (bind), in the scope that
+  // binds it now.
+  pub fn name_failed(name: String): Bool {
+    i = lookup_index(name)
+    if i < 0 {
+      return false
+    }
+    if fs = self.scopes[i].failed {
+      if _ = fs.get(name) {
+        return true
+      }
+    }
+    false
+  }
+
+  // A failed name is one a statement bound to the type a failed
+  // expression is given (Int: what every check returns after its error).
+  // Reading a failed name (the cascade rule): the statement is poisoned
+  // without a message of its own, so what reads the name adds none.
+  pub fn read_failed_name {
+    self.failed = true
+    self.poisoned = true
+    self.errors.note(1, false)
   }
 
   pub fn lookup(name: String): Ty? {
@@ -604,9 +708,17 @@ pub class Checker {
   }
 
   pub fn check_block(body: Array(Stmt), expected: Ty, at_tail: Bool) {
+    // A block's statements have their own errors: after it the statement
+    // that holds it is failed only if its own parts are (a condition), so
+    // its later checks (a missing return value) are not taken for
+    // cascades of an error inside the block.
+    saved_poison = self.poisoned
+    saved_weak = self.weak_at
     self.push_scope
     check_body(body, expected, at_tail)
     self.pop_scope
+    self.poisoned = saved_poison
+    self.weak_at = saved_weak
   }
 
   pub fn fallthrough(body: Array(Stmt)): Bool {
@@ -818,7 +930,9 @@ pub class Checker {
           }
         }
         if stmt.for_kind == 2 {
-          if pt = stmt.pre[0].target, pty = lookup(pt.ident), !pty.is_array {
+          // The array's own error, if it failed, is the loop's (the
+          // cascade rule): the hidden name holds the failed value.
+          if pt = stmt.pre[0].target, pty = lookup(pt.ident), !pty.is_array, !name_failed(pt.ident) {
             fail(stmt.loc, "for needs a range (a..b) or an Array, got ${pty.show}")
           }
         }
@@ -1317,8 +1431,10 @@ pub class Checker {
           return
         }
         if declared = stmt.declared {
+          ann_mark = self.err_count
           want = resolve_in_module(declared)
           self.pull_resolve
+          ann_ok = !new_err_since(ann_mark)
           if reject_clayout_value(want, declared.loc) {
             return
           }
@@ -1344,6 +1460,9 @@ pub class Checker {
             bind(target.ident, want)
             target.ty = want
           }
+          if ann_ok {
+            unfail(target.ident)
+          }
           return
         }
         if existing = lookup(target.ident) {
@@ -1351,6 +1470,9 @@ pub class Checker {
           got = check_expr_as(value, existing)
           if !ty_assignable(got, existing) {
             fail(value.loc, "cannot assign ${got.show} to ${existing.show}")
+          }
+          if !self.poisoned {
+            unfail(target.ident)
           }
           target.ty = existing
           return
@@ -1503,6 +1625,8 @@ pub class Checker {
     }
     if has_want && !type.ty_has_var(want) && !ty_assignable(kind, want) && !fn_compatible(kind, want) {
       fail(expr.loc, "expected ${want.show}, got ${kind.show}")
+      // The generic message: the reader's own replaces it (fail).
+      self.weak_at = self.errors.pushes
     }
     expr.ty = kind
     kind
@@ -3057,6 +3181,9 @@ pub class Checker {
       return t_int()
     }
     if existing = lookup(expr.ident) {
+      if name_failed(expr.ident) {
+        read_failed_name
+      }
       note_capture(expr.ident, existing)
       return existing
     }
@@ -3198,13 +3325,16 @@ pub class Checker {
     }
     ty = literal_int_ty(lit, has_want, want)
     if ty.is_unsigned {
-      if lit.int_suffix.size == 0 {
-        ty = t_int()
+      // An unsigned type has no negative value: the literal does not fit,
+      // whether the type is its suffix's or the context's (Stage 29 W5c2,
+      // O364; `a: UInt32 = -1` said `cannot assign Int to UInt32`).
+      if lit.value_str.size > 0 {
+        fail(expr.loc, "${lit.value_str} does not fit in ${ty.show}")
       } else {
         fail(expr.loc, "a negative literal does not fit in ${ty.show}")
-        lit.ty = ty
-        return ty
       }
+      lit.ty = ty
+      return ty
     }
     if lit.int_bits > literal_int_max(ty) + 1u64 {
       if lit.value_str.size > 0 {
@@ -4244,7 +4374,10 @@ pub class Checker {
           }
         }
         none: Ty? = nil
-        if sig = match_method(ty.name, "initialize", arg_tys, none, expr.loc, shown, ty.mod_name, int_literal_flags(expr.args)) {
+        self.in_new = true
+        found = match_method(ty.name, "initialize", arg_tys, none, expr.loc, shown, ty.mod_name, int_literal_flags(expr.args))
+        self.in_new = false
+        if sig = found {
           fill_defaults(expr, sig.node)
           i = 0
           while i < expr.args.size {
@@ -4803,11 +4936,13 @@ pub class Checker {
       return t_void()
     }
     branch_tys: Array(Ty) = []
+    branch_locs: Array(Location) = []
     i = 0
     while i < expr.cases.size {
       bt = check_switch_branch_bound(expr.cases[i].body, has_want, want, arm_binding(expr.cases[i]), arm_binding_ty(expr.cases[i], disc))
       if !arm_leaves(expr.cases[i].body) {
         branch_tys.push(bt)
+        branch_locs.push(arm_value_loc(expr.cases[i].body, expr.loc))
       }
       i += 1
     }
@@ -4815,6 +4950,7 @@ pub class Checker {
       et = check_switch_branch(expr.else_body, has_want, want)
       if !arm_leaves(expr.else_body) {
         branch_tys.push(et)
+        branch_locs.push(arm_value_loc(expr.else_body, expr.loc))
       }
     }
     all_void = true
@@ -4839,9 +4975,10 @@ pub class Checker {
     }
     if has_want && !want.is_void {
       one = true
-      for branch_ty in branch_tys {
+      for bi in 0..branch_tys.size {
+        branch_ty = branch_tys[bi]
         if !ty_assignable(branch_ty, want) {
-          fail(expr.loc, "switch branch is ${branch_ty.show}, expected ${want.show}")
+          fail(branch_locs[bi], "switch branch is ${branch_ty.show}, expected ${want.show}")
         }
         if !branch_ty.same_as(branch_tys[0]) {
           one = false
@@ -5628,6 +5765,19 @@ pub class Checker {
       return inner
     }
     t_int()
+  }
+
+  // Where an arm's value is: its last statement (the branch a message
+  // about the value's type points at, Stage 29 W5c2), else at.
+  pub fn arm_value_loc(body: Array(Stmt), at: Location): Location {
+    if body.size == 0 {
+      return at
+    }
+    last = body[body.size - 1]
+    if e = last.expr {
+      return e.loc
+    }
+    last.loc
   }
 
   pub fn check_switch_branch(body: Array(Stmt), has_want: Bool, want: Ty): Ty {
