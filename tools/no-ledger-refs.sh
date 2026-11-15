@@ -7,16 +7,21 @@
 #
 # Scans every file `git ls-files` lists (under PATH when given), except
 # results/ (working notes that are not tracked as part of the language),
-# binary files and the allowlist itself (whose reasons quote the false
-# matches they allow). A line is reported when it holds, outside the spans
-# the allowlist permits:
+# binary files, the allowlist (whose reasons quote the false matches they
+# allow) and this script (whose text names what it reports). A line is
+# reported when it holds, outside the spans the allowlist permits:
 #   - a label of one capital D, O, Q, P, R or F followed by digits, as a
 #     whole word (with an optional lower-case letter after the digits);
 #   - a wave name: W followed by digits and letters, W- followed by a
 #     capital, VALK- followed by a letter or digit, or the
 #     word Wave followed by a capital or a digit;
 #   - the word Stage followed by a number;
-#   - a dated path of the notes, results/ or records/ followed by a date.
+#   - a dated path of the notes, results/ or records/ followed by a date;
+#   - the name of one of the notes' documents (gc-design.md, mir.md,
+#     gc-audit.md, floor.md, operating.md, philosophy.md, decisions.md,
+#     questions.md, roadmap.md, syntax.md, synthesis.md, triage.md,
+#     plan.md, gc.md, benchmarks.md), or a path into the notes'
+#     repository (avant-ledgers, research/valk/).
 # The allowlist (tools/no-ledger-refs.allow) holds the legitimate
 # matches: one entry a line, `GLOB REGEX REASON...`; in the files whose
 # path matches GLOB (fnmatch, `*` crossing `/`), every span REGEX (a
@@ -53,6 +58,9 @@ REF = re.compile(
     r"|\bWave\s+[A-Z0-9]"
     r"|\bStage\s+[0-9]+"
     r"|\b(?:results|records)/[0-9]{4}-[0-9]{2}-[0-9]{2}"
+    r"|\b(?:gc-design|mir|gc-audit|floor|operating|philosophy|decisions"
+    r"|questions|roadmap|syntax|synthesis|triage|plan|gc|benchmarks)\.md\b"
+    r"|\bavant-ledgers\b|\bresearch/valk/"
 )
 
 allow = []
@@ -73,7 +81,7 @@ with open("tools/no-ledger-refs.allow", encoding="utf-8") as f:
 
 files = subprocess.run(["git", "ls-files", "-z", "--"] + paths, check=True,
                        stdout=subprocess.PIPE).stdout.decode("utf-8", "surrogateescape").split("\0")
-files = [p for p in files if p and not p.startswith("results/") and p != "tools/no-ledger-refs.allow"]
+files = [p for p in files if p and not p.startswith("results/") and p not in ("tools/no-ledger-refs.allow", "tools/no-ledger-refs.sh")]
 reported = 0
 bad_files = 0
 scanned = 0
