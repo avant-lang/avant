@@ -151,6 +151,48 @@ fn test_scope_binding(c: Checks, compiler: String, root: String, dir: String) {
   }
 }
 
+// ffi/keep_young.av: a forced collection that has to trace leaves the
+// young generation young (runtime/avant_gc_collect.c, gc_collect; the
+// mark, avant_gc_mark.c). Its three parts free their victims in every
+// environment with the oracle silent: an old chain whose last reference a
+// store removed before a loop of forced collections; an old chain named
+// only by a young object that survives such a trace and then dies (the
+// trace may not leave that young object young, and traces again as an
+// ordinary one); an old chain named by a holder the trace left
+// remembered, removed by a store the inline barrier test does not send to
+// the slow call (the trace logs the holder at its end). In the default
+// environment the loop's 40 forced collections are one trace and 39 young
+// collections, and the statistics line counts the traces that kept the
+// young generation and the one that went back.
+fn test_keep_young(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/keep_young.av", "${dir}/keep_young", "${dir}/keep_young.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "keep_young.av: compiles")
+  want = "stable: freed 1\nvia young: freed 1\nremembered: freed 1\nchain: 50000\n"
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "keep_young", "keep_young.g${e}", envs[e]))
+  }
+  runs.push(run_job_env(dir, "keep_young", "keep_young.show", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS KEEP_SHOW=1 AVANT_GC_STATS=1"))
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "keep_young.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/keep_young.g${e}.out"), want, "keep_young.av ${what}: every victim freed")
+    c.eq_str(log_text("${dir}/keep_young.g${e}.err"), "", "keep_young.av ${what}: no stderr (the oracle is silent)")
+  }
+  show = log_text("${dir}/keep_young.show.out")
+  c.expect(str_has(show, "stable: 1 of 40 forced collections were full ones"), "keep_young.av: the loop's forced collections are one trace and young collections after it")
+  err = log_text("${dir}/keep_young.show.err")
+  c.expect(stat_value(err, "full_kept_young") >= 2, "keep_young.av: traces left the young generation young (full_kept_young ${stat_value(err, "full_kept_young")})")
+  c.expect(stat_value(err, "full_kept_young_fell") >= 1, "keep_young.av: the trace that met a young object naming an old one went back to an ordinary trace (full_kept_young_fell ${stat_value(err, "full_kept_young_fell")})")
+}
+
 // The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
 fn stat_value(text: String, key: String): Int {
   parts = text.split(" ")
@@ -168,6 +210,7 @@ fn test_main(c: Checks) {
     test_proof_oracle(c, compiler, avant_test_root(), scratch_dir())
     test_complete(c, compiler, avant_test_root(), scratch_dir())
     test_scope_binding(c, compiler, avant_test_root(), scratch_dir())
+    test_keep_young(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

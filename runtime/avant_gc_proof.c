@@ -227,7 +227,9 @@ void gc_proof_full_end(void) {
   GcProof *p = &gc_heap.proof;
   p->roots_n = 0;
   p->broken = PROOF_INTACT;
-  p->old_live = gc_heap.live;
+  /* The old objects' bytes: a trace that left the young generation young
+   * marked young objects too (gc_heap.keep_young_live). */
+  p->old_live = gc_heap.live - gc_heap.keep_young_live;
   if (!gc_heap.set.proof) {
     p->broken = PROOF_OFF;
   } else if (gc_heap.set.nursery_off) {
@@ -242,6 +244,22 @@ void gc_proof_full_end(void) {
   }
   if (gc_heap.set.verify) {
     gc_verify_proof_rebase();
+  }
+  /* After a trace that left the young generation young the remembered
+   * set is not empty: an old holder that names a young object stays
+   * remembered, and the inline barrier test skips a remembered holder,
+   * so its first store since this collection would not reach the slow
+   * call. Each is logged now instead, as that first store would log it
+   * (after the oracle took its copy, which the log must match). */
+  if (gc_heap.keep_young && avant_gc_proof_logging) {
+    uint32_t i;
+    for (i = 0; i < gc_heap.rem_n; i++) {
+      void *obj = gc_heap.remset[i];
+      AvantHeader *h = avant_header(obj);
+      if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG | AVANT_FLAG_LOGGED)) == AVANT_FLAG_HEAP) {
+        gc_proof_log(obj, h);
+      }
+    }
   }
 }
 

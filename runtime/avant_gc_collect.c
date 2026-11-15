@@ -381,6 +381,20 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     }
     if (proof != PROOF_INTACT) {
       gc_heap.ctr.proof.fell[proof]++;
+      /* A trace the program asked for, when what broke the proof is
+       * undone by a full collection's end (not threads, no young
+       * generation or the proof off) and the young generation is small
+       * beside the old live bytes, leaves the young generation young:
+       * a young collection first (its survivors age into survivor
+       * blocks), then a mark through young objects that promotes none of
+       * them (avant_gc_mark.c, gc_mark_roots). So the next forced
+       * collection can hold again: the collector benchmark's stable heap
+       * stores a fresh object before each forced collection, and a trace
+       * that promoted it made the next store remove the last reference to
+       * an old object, every time. */
+      gc_heap.keep_young = (uint8_t)(why == GC_WHY_EXPLICIT && proof != PROOF_THREADS && proof != PROOF_NURSERY &&
+                                     proof != PROOF_OFF && !gc_heap.set.young_fixed &&
+                                     avant_nursery_held && avant_nursery_held * KEEP_YOUNG_DIV <= gc_heap.proof.old_live);
     } else if (avant_nursery_held > PROOF_YOUNG_PER_OLD * gc_heap.proof.old_live) {
       /* It holds, and the trace is the cheaper complete collection
        * (PROOF_YOUNG_PER_OLD's comment). */
@@ -486,6 +500,24 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
       young_size(used, surv, why == GC_WHY_BUDGET);
     }
   } else {
+    uint64_t keep_held = 0;
+    if (gc_heap.keep_young) {
+      /* The young collection of a trace that leaves the young generation
+       * young: as a complete collection runs it (a sparse first survivor
+       * ages, also from a hole of a recycled block), so that every young
+       * object it leaves lies in a survivor block or is a young large
+       * object. It makes no sizing decision. */
+      avant_g_stats.young_collections++;
+      gc_sticky_collect(0, 1);
+      keep_held = avant_nursery_held;
+      gc_heap.live = 0;
+      gc_heap.work_n = 0;
+      gc_heap.keep_young_live = 0;
+      gc_heap.keep_yold = 0;
+      if (!keep_held) {
+        gc_heap.keep_young = 0;
+      }
+    }
     avant_g_stats.full_collections++;
     gc_heap.return_clock++;
     /* A full collection walks the mature blocks in order (its sweep, its
@@ -538,12 +570,17 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     /* Dead and clean remembered entries leave the set (C33, O9). */
     gc_rem_full_scrub();
     gc_sweep_large();
-    gc_filter_blocks(&gc_heap.space[SPACE_MATURE].list, gc_keep_if_live);
+    gc_filter_blocks(&gc_heap.space[SPACE_MATURE].list, gc_heap.keep_young ? gc_keep_young_or_live : gc_keep_if_live);
     /* A full collection promotes every object it marks (the mark clears
      * YOUNG), so no object is young after it: gc_sticky_full_end empties
      * the young budget (avant_nursery_held). (Before Stage 28 W15d E's
      * nursery survivors were summed here, O28.) */
     gc_sticky_full_end();
+    if (gc_heap.keep_young) {
+      avant_nursery_held = keep_held;
+      gc_heap.ctr.sticky.keeps++;
+      gc_heap.ctr.sticky.keep_bytes += gc_heap.keep_young_live;
+    }
     gc_heap.mature_since_full = 0;
     gc_heap.promoted_since_full = 0;
     gc_heap.last_full_at = avant_g_stats.allocated_bytes;
@@ -555,6 +592,8 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     /* What the next proof starts from: the roots as they are now,
      * an empty log. After everything this collection moves or frees. */
     gc_proof_full_end();
+    gc_heap.keep_young = 0;
+    gc_heap.keep_young_live = 0;
   }
 
   if (full) {

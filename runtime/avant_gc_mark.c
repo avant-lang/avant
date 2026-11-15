@@ -31,7 +31,12 @@
  * after the mark (gc_mark_roots). */
 static inline void mark_object(void *start, AvantHeader *h, Block *b) {
   size_t total = align_up(sizeof(AvantHeader) + (size_t)h->size);
-  if (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
+  if (gc_heap.keep_young && (h->flags & AVANT_FLAG_YOUNG)) {
+    /* A trace that leaves the young generation young: the object stays
+     * young, and its lines stay unmarked (its block is a young block). */
+    gc_heap.keep_young_live += total;
+    b = NULL;
+  } else if (h->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
     h->flags &= (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED);
   }
   if (b) {
@@ -130,7 +135,7 @@ static __attribute__((noinline)) void mark_lines_rest(uint8_t *lines, size_t l, 
  * nest's registers were spilled around it (167 instructions per object of
  * a full collection against 149); the small record's loop is now its own
  * (drain) and the bitmap walk is a function of its own (scan_walk). */
-static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v, const int bits) {
+static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v, const int bits, const int keep) {
   uintptr_t off = (uintptr_t)v - c->base8;
   uint64_t g;
   uint64_t w;
@@ -153,6 +158,12 @@ static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v,
   total = align_up(sizeof(AvantHeader) + (size_t)h->size);
   c->live += total;
   if (__builtin_expect((fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED | AVANT_FLAG_LARGE)) != 0, 0)) {
+    if (keep && (fl & AVANT_FLAG_YOUNG)) {
+      /* Left young (KEEP, the trace that leaves the young generation
+       * young): no flag cleared, no line marked. */
+      gc_heap.keep_young_live += total;
+      return h->type_id != AVANT_TYPE_BYTES;
+    }
     if (fl & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
       h->flags = (uint16_t)(fl & ~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED));
       /* Its late start bit, in the loop that sets them (BITS, a
@@ -178,6 +189,21 @@ static inline __attribute__((always_inline)) int mark_field(MarkCtx *c, void *v,
   return h->type_id != AVANT_TYPE_BYTES;
 }
 
+/* Does the young object P name an object that is not young? (Out of the
+ * loop: only a trace that leaves the young generation young asks it, of
+ * the few young objects a young collection just left.) */
+static __attribute__((noinline)) int young_names_old(void *p) {
+  EACH_REF_SLOT(p, slot, {
+    void *v = *slot;
+    Block *vb;
+    AvantHeader *vl;
+    if (gc_field_object(v, &vb, &vl) && !(avant_header(v)->flags & AVANT_FLAG_YOUNG)) {
+      return 1;
+    }
+  });
+  return 0;
+}
+
 static inline __attribute__((always_inline)) void mark_push(MarkCtx *c, void *v) {
   if (__builtin_expect(c->n == c->cap, 0)) {
     gc_heap.work_n = c->n;
@@ -194,12 +220,12 @@ static inline __attribute__((always_inline)) void mark_push(MarkCtx *c, void *v)
  * an element buffer, a record with more than seven reference words), by
  * its bitmap. A function of its own, with its own copy of the loop's
  * state, so that drain's loop keeps its registers. */
-static __attribute__((noinline)) void scan_walk(void *p, int bits) {
+static __attribute__((noinline)) void scan_walk(void *p, int bits, int keep) {
   MarkCtx c;
   mark_open(&c);
   EACH_REF_SLOT_WALK(p, slot, {
     void *v = *slot;
-    if (mark_field(&c, v, bits)) {
+    if (keep ? mark_field(&c, v, 0, 1) : bits ? mark_field(&c, v, 1, 0) : mark_field(&c, v, 0, 0)) {
       mark_push(&c, v);
     }
   });
@@ -214,7 +240,7 @@ static __attribute__((noinline)) void scan_walk(void *p, int bits) {
  * no pop); the others are pushed. The order of a full mark changes
  * nothing it leaves: marks, line marks and the live bytes are sets and a
  * sum. */
-static inline __attribute__((always_inline)) void drain(const int bits) {
+static inline __attribute__((always_inline)) void drain(const int bits, const int keep) {
   MarkCtx c;
   mark_open(&c);
   while (c.n) {
@@ -224,9 +250,16 @@ static inline __attribute__((always_inline)) void drain(const int bits) {
       uint64_t d = gc_heap.refs[ph->type_id];
       unsigned k = (unsigned)(d & 0xffu);
       void *next = NULL;
+      if (keep && (ph->flags & AVANT_FLAG_YOUNG) && young_names_old(p)) {
+        /* An old object reached through a young one: the trace cannot
+         * leave the young generation young (gc_mark_roots). */
+        gc_heap.keep_yold = 1;
+        c.n = 0;
+        break;
+      }
       if (__builtin_expect(k > TYPE_REFS_MAX, 0)) {
         mark_close(&c);
-        scan_walk(p, bits);
+        scan_walk(p, bits, keep);
         mark_open(&c);
         break;
       }
@@ -236,7 +269,7 @@ static inline __attribute__((always_inline)) void drain(const int bits) {
           d >>= 8;
           if ((size_t)(d & 0xffu) < nw) {
             void *v = p[d & 0xffu];
-            if (mark_field(&c, v, bits)) {
+            if (mark_field(&c, v, bits, keep)) {
               mark_push(&c, v);
             }
           }
@@ -244,7 +277,7 @@ static inline __attribute__((always_inline)) void drain(const int bits) {
         d >>= 8;
         if ((size_t)(d & 0xffu) < nw) {
           void *v = p[d & 0xffu];
-          if (mark_field(&c, v, bits)) {
+          if (mark_field(&c, v, bits, keep)) {
             next = v;
           }
         }
@@ -261,11 +294,16 @@ static inline __attribute__((always_inline)) void drain(const int bits) {
 /* The loop twice, once for each way a young object the mark promotes
  * gets its late start bit (gc_mark_roots chooses). */
 static __attribute__((noinline)) void drain_bits(void) {
-  drain(1);
+  drain(1, 0);
 }
 
 static __attribute__((noinline)) void drain_plain(void) {
-  drain(0);
+  drain(0, 0);
+}
+
+/* The trace that leaves the young generation young (gc_mark_roots). */
+static __attribute__((noinline)) void drain_keep(void) {
+  drain(0, 1);
 }
 
 static void mark_tls_slot(void **slot) {
@@ -298,6 +336,29 @@ void gc_mark_roots(void) {
    * and the loop's own bit otherwise (a heap that is mostly young, a
    * program's first full collection). */
   gc_heap.mark_bits = (uint8_t)(avant_nursery_held * 8 > gc_heap.proof.old_live);
+  if (gc_heap.keep_young) {
+    /* The trace that leaves the young generation young (gc_collect):
+     * nothing it marks is promoted, so no start bit is set in its loop.
+     * If a young object names an old one, that old object's only path
+     * may run through the young generation, which the proof does not
+     * follow (avant_gc_proof.c): the mark stops and the collection
+     * becomes an ordinary trace, marked again from the start. */
+    gc_heap.mark_bits = 0;
+    drain_keep();
+    if (!gc_heap.keep_yold) {
+      return;
+    }
+    gc_heap.ctr.sticky.keep_fell++;
+    gc_heap.keep_young = 0;
+    gc_heap.work_n = 0;
+    gc_heap.live = 0;
+    gc_heap.keep_young_live = 0;
+    gc_sticky_keep_drop();
+    gc_clear_side_marks();
+    gc_line_epoch_advance();
+    gc_mark_roots();
+    return;
+  }
   if (gc_heap.mark_bits) {
     drain_bits();
   } else {

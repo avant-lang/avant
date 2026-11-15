@@ -1,0 +1,192 @@
+// A forced collection that has to trace leaves the young generation
+// young. When an old object died since the last full collection, the
+// collection the program asks for traces; it first runs a young
+// collection (its survivors stay young, in survivor blocks) and then
+// marks through the young objects without promoting them, so the next
+// forced collection can run as a young one again. Three parts, each
+// with a victim whose bytes the collector must find freed:
+//
+//   stable    an old holder takes a fresh object before each of 40
+//             forced collections, and the first store removes the last
+//             reference to an old object: the first collection traces,
+//             and with KEEP_SHOW=1 the program says how many of the 40
+//             were full ones (one in the default environment)
+//   via young a young object that survives a trace names an old chain
+//             nothing else names; it then dies, and the next collection
+//             frees the old chain too (the trace may not leave such a
+//             young object young: it traces again as an ordinary one)
+//   remembered after such a trace the old holder is remembered (it names
+//             a young object); a store into it removes the last reference
+//             to an old chain, and the next collection frees it
+//
+// The bytes the collector found live must fall by each victim's size in
+// every environment, and the verifier's oracle is silent. Built with
+// `--cc tests/fixtures/ffi/ffi.c` (the collector's counters).
+class Node {
+  next: Node?
+  v: Int
+}
+
+class Box {
+  n: Node?
+}
+
+class Holder {
+  sink: Node?
+  box: Box?
+  keep: Node?
+  other: Node?
+}
+
+lib cc {
+  fun ffi_gc_count(which: Int): Int
+  fun avant_gc_collect
+}
+
+fn live: Int {
+  cc.ffi_gc_count(2)
+}
+
+fn fulls: Int {
+  cc.ffi_gc_count(0)
+}
+
+fn collect {
+  cc.avant_gc_collect()
+}
+
+// Everything alive is old after it (the third collection is a full one).
+fn settle {
+  collect()
+  collect()
+  collect()
+}
+
+fn chain(n: Int): Node {
+  head = Node.new
+  i = 1
+  while i < n {
+    x = Node.new
+    x.v = i
+    x.next = head
+    head = x
+    i += 1
+  }
+  head
+}
+
+fn length(n: Node): Int {
+  k = 0
+  p: Node? = n
+  while x = p {
+    k += 1
+    p = x.next
+  }
+  k
+}
+
+fn make_box(n: Node?): Box {
+  b = Box.new
+  b.n = n
+  b
+}
+
+fn fresh(v: Int): Node {
+  n = Node.new
+  n.v = v
+  n
+}
+
+// Each victim is a chain of 20,000 nodes (about 640 KB), so its death
+// shows in the live bytes; made in a function of its own, so that no
+// frame of the caller names it.
+fn make_victim(h: Holder) {
+  h.sink = chain(20000)
+}
+
+fn make_other(h: Holder) {
+  h.other = chain(20000)
+}
+
+fn make_keep(h: Holder) {
+  h.keep = chain(20000)
+}
+
+fn part_stable(h: Holder, show: Bool): Int {
+  make_victim(h)
+  settle()
+  b = live()
+  f = fulls()
+  c = 0
+  while c < 40 {
+    h.sink = fresh(c)
+    collect()
+    c += 1
+  }
+  if show {
+    puts("stable: ${fulls() - f} of 40 forced collections were full ones")
+  }
+  if b - live() >= 300000 {
+    return 1
+  }
+  0
+}
+
+// The young box names the old chain the holder's `other` named until
+// now.
+fn box_old(h: Holder) {
+  h.box = make_box(h.other)
+  h.other = nil
+}
+
+fn part_via_young(h: Holder, show: Bool): Int {
+  make_other(h)
+  settle()
+  box_old(h)
+  // A store into an old holder (other) removed a reference: this one
+  // traces, and the young box names the old string.
+  f0 = fulls()
+  collect()
+  b = live()
+  f1 = fulls()
+  h.box = nil
+  collect()
+  if show {
+    puts("via young: ${f1 - f0} then ${fulls() - f1} full, live ${b} then ${live()}")
+  }
+  if b - live() >= 300000 {
+    return 1
+  }
+  0
+}
+
+fn part_remembered(h: Holder): Int {
+  make_keep(h)
+  make_other(h)
+  settle()
+  h.other = nil
+  h.sink = fresh(1)
+  // Traces (the store of nil removed a reference); the holder then
+  // names a young node and stays remembered.
+  collect()
+  b = live()
+  h.keep = nil
+  collect()
+  if b - live() >= 300000 {
+    return 1
+  }
+  0
+}
+
+fn main {
+  show = false
+  if v = env_get("KEEP_SHOW"), v == "1" {
+    show = true
+  }
+  h = Holder.new
+  keepalive = chain(50000)
+  puts("stable: freed ${part_stable(h, show)}")
+  puts("via young: freed ${part_via_young(h, show)}")
+  puts("remembered: freed ${part_remembered(h)}")
+  puts("chain: ${length(keepalive)}")
+}

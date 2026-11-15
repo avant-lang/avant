@@ -1980,32 +1980,57 @@ void gc_sticky_retire(void) {
  * allocator's lists are dropped; after its sweep, which released every
  * empty block, part_blocks is rebuilt from the blocks with free lines and
  * the young budget is empty. */
-void gc_sticky_full_begin(void) {
+/* The young blocks become ordinary mature blocks: a full collection
+ * promotes every object it marks, so none of them holds a young object
+ * after it. */
+void gc_sticky_keep_drop(void) {
   uint32_t i;
-  /* A copy block the stress mode kept (splus_finish) becomes an ordinary
-   * mature block: its free rest is free lines for the full sweep. */
-  if (gc_heap.splus_dst) {
-    gc_reset_block_bump(gc_heap.splus_dst);
-    gc_heap.splus_dst = NULL;
-  }
   for (i = 0; i < gc_heap.young_blocks_n; i++) {
     gc_heap.young_blocks[i]->young_lo = 0;
     gc_heap.young_blocks[i]->young_hi = 0;
     gc_heap.young_blocks[i]->kept = 0;
   }
   gc_heap.young_blocks_n = 0;
+}
+
+void gc_sticky_full_begin(void) {
+  /* A copy block the stress mode kept (splus_finish) becomes an ordinary
+   * mature block: its free rest is free lines for the full sweep. */
+  if (gc_heap.splus_dst) {
+    gc_reset_block_bump(gc_heap.splus_dst);
+    gc_heap.splus_dst = NULL;
+  }
+  /* A trace that leaves the young generation young keeps the young
+   * blocks (after its young collection, every one a survivor block,
+   * SPLUS_WAS_SURV): its mark marks no line of theirs, and the sweep
+   * passes over them (gc_keep_young_or_live). */
+  if (!gc_heap.keep_young) {
+    gc_sticky_keep_drop();
+  }
   gc_heap.part_blocks_n = 0;
   /* The blocks the verifier held back become ordinary mature blocks,
    * their poisoned lines checked first. */
   gc_verify_held_lines();
 }
 
+/* The full sweep's test: a young block that a trace leaving the young
+ * generation young kept is kept as it is (its objects are the next young
+ * collection's to free); any other block by its live lines. */
+int gc_keep_young_or_live(Block *b) {
+  if (b->kept == SPLUS_WAS_SURV) {
+    return 1;
+  }
+  return gc_keep_if_live(b);
+}
+
 void gc_sticky_full_end(void) {
   Block *b;
   for (b = gc_heap.space[SPACE_MATURE].list; b; b = b->next) {
-    if (gc_block_live_lines(b) < LINES_PER_BLOCK) {
+    if (b->kept != SPLUS_WAS_SURV && gc_block_live_lines(b) < LINES_PER_BLOCK) {
       gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
     }
   }
+  /* (A trace that leaves the young generation young puts back the
+   * budget its young collection left, gc_collect.) */
   avant_nursery_held = 0;
 }

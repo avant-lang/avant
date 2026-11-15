@@ -2328,11 +2328,15 @@ static inline void *vp_shadow_word(void **slot) {
   return v;
 }
 
-/* Does the copy's word V name a heap object (it did at the last full
- * collection: a field's word is null, a static address or a start)? */
+/* Does the copy's word V name an old object (it did at the last full
+ * collection: a field's word is null, a static address or a start)? A
+ * reference to an object that was young then is not the proof's: the log
+ * holds only references to objects that are not young, and after a trace
+ * that left the young generation young a remembered holder's copy names
+ * young objects. */
 static inline int vp_heap_ref(void *v) {
   uintptr_t off = (uintptr_t)v - (uintptr_t)gc_heap.base - sizeof(AvantHeader);
-  return off < vp_shadow_len;
+  return off < vp_shadow_len && vp_bit(vp_old, (const AvantHeader *)((uint8_t *)v - sizeof(AvantHeader)));
 }
 
 static void vp_describe(const char *what, void *p) {

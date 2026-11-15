@@ -907,6 +907,9 @@ typedef struct GcStickyCounters {
   uint64_t retires;
   uint64_t retired;
   uint64_t probes;
+  uint64_t keeps;
+  uint64_t keep_fell;
+  uint64_t keep_bytes;
 } GcStickyCounters;
 
 /* proof: the complete collection (GcProof below). asked: the full
@@ -1057,6 +1060,17 @@ typedef enum GcProofWhy {
  * it always was. */
 #ifndef PROOF_YOUNG_PER_OLD
 #define PROOF_YOUNG_PER_OLD 8
+#endif
+
+/* A trace the program asks for leaves the young generation young only
+ * when the young bytes are at most the old live bytes / KEEP_YOUNG_DIV
+ * (gc_collect): its young collection first copies what survives of them
+ * (all of it, at worst, also what only a dead old holder remembers), and
+ * an ordinary trace promotes it where it lies. At 1/8 the collector
+ * benchmark's free of its 5,000,000-node chain, whose last budget a dead
+ * remembered chain keeps alive, took 76 ms for 0.7. */
+#ifndef KEEP_YOUNG_DIV
+#define KEEP_YOUNG_DIV 64
 #endif
 
 /* An old holder with more payload than this is not logged: a store into
@@ -1513,6 +1527,16 @@ typedef struct GcHeap {
   /* This full collection's mark sets the late start bits in its loop
    * (avant_gc_mark.c, gc_mark_roots); else gc_lazy_build_live does. */
   uint8_t mark_bits;
+  /* This full collection leaves the young generation young
+   * (gc_collect's comment where it is chosen; avant_gc_mark.c,
+   * gc_mark_roots): the mark marks through young objects without
+   * promoting them or marking their lines, the survivor blocks stay
+   * young blocks through the sweep. keep_yold: the mark met a young
+   * object that names an old one, and the collection went back to an
+   * ordinary trace. keep_young_live: the young bytes it marked. */
+  uint8_t keep_young;
+  uint8_t keep_yold;
+  uint64_t keep_young_live;
   /* This young collection evacuates blocks with mature lines too: the
    * stress mode, and a complete collection (gc_sticky_collect). */
   uint8_t evac_mixed;
@@ -1941,6 +1965,8 @@ static inline void *gc_noted_object(uint32_t i) {
 void gc_sticky_collect(int tenure, int evac_mixed);
 void gc_sticky_full_begin(void);
 void gc_sticky_full_end(void);
+void gc_sticky_keep_drop(void);
+int gc_keep_young_or_live(Block *b);
 void gc_sticky_push(Block ***v, uint32_t *n, uint32_t *cap, Block *b);
 void gc_evac_map_ensure(void);
 

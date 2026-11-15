@@ -207,6 +207,12 @@ static void print_sticky(StatsLine *l) {
     line_add(l, " young_retires=%llu young_retired=%llu young_probes=%llu", u(c->retires), u(c->retired),
              u(c->probes));
   }
+  /* Only in a program that had a trace that left the young generation
+   * young (or tried to). */
+  if (c->keeps || c->keep_fell) {
+    line_add(l, " full_kept_young=%llu full_kept_young_bytes=%llu full_kept_young_fell=%llu", u(c->keeps),
+             u(c->keep_bytes), u(c->keep_fell));
+  }
 }
 
 /* The proof's segment, only in a program that forced a collection
