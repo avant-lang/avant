@@ -3769,6 +3769,11 @@ pub class Checker {
           return check_expr_core(expr, false, t_int())
         }
         fail(expr.loc, "unary minus expects Int or Float64")
+        if got.is_unsigned() {
+          // As a negated literal is: an unsigned type has no negatives.
+          fail(expr.loc, "unary minus of an unsigned value: ${got.show()} has no negative values (to wrap, write 0 &- x)")
+          return got
+        }
         return t_int()
       }
       if expr.op == tk_bang() {

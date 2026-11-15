@@ -154,6 +154,11 @@ fn fit_cases: Array(LCase) {
   xs.push(refused("fit-uint64-hex", "fn main {\n  x = 0x1_0000_0000_0000_0000\n  puts(x)\n}\n", "integer literal does not fit in UInt64, the widest integer type", "2:7"))
   xs.push(refused("fit-uint64-huge", "fn main {\n  x = 99999999999999999999999999\n  puts(x)\n}\n", "integer literal does not fit in UInt64, the widest integer type", "2:7"))
   xs.push(refused("fit-uint64-negative", "fn main {\n  x = -1u64\n  puts(x)\n}\n", "a negative literal does not fit in UInt64", "2:7"))
+  // Unary minus of an unsigned operand, as of a negated literal: an
+  // expression of literals in an unsigned context, a variable.
+  xs.push(refused("negate-unsigned-literals", "fn main {\n  w: UInt32 = -(1 - 1)\n  puts(w)\n}\n", "unary minus of an unsigned value: UInt32 has no negative values", "2:15"))
+  xs.push(refused("negate-unsigned-name", "fn main {\n  u = 3u64\n  puts(-u)\n}\n", "unary minus of an unsigned value: UInt64 has no negative values", "3:8"))
+  xs.push(accepted("negate-unsigned-wrap", "fn main {\n  u = 3u64\n  puts(0u64 &- u)\n  s = -(2 - 1)\n  puts(s)\n}\n", "18446744073709551613\n-1\n"))
   xs.push(accepted("fit-uint64-extremes", "fn f(a: UInt64): UInt64 {\n  a\n}\nfn main {\n  x: UInt64 = 18446744073709551615u64\n  puts(x)\n  puts(f(18446744073709551615u64))\n  y: UInt64 = 9223372036854775808\n  puts(y)\n  puts(0xffff_ffff_ffff_ffffu64)\n}\n", "18446744073709551615\n18446744073709551615\n9223372036854775808\n18446744073709551615\n"))
   xs
 }

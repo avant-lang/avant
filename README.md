@@ -1102,7 +1102,7 @@ The rule: an operation gives the mathematically correct value when one exists, a
 
 - `+`, `-`, `*` trap on overflow at the operands' width; `/` and `%` trap on division by zero. `abs` of the minimum value, a `sum` that overflows and a `Hash` `inc` that overflows trap the same way.
 - `/` truncates toward zero and `%` takes the sign of the dividend (`-7 / 2` is `-3`, `-7 % 2` is `-1`): C's, Go's and Rust's rule, not Python's or Ruby's. `MIN % -1` is `0`; only `MIN / -1` overflows.
-- `&+`, `&-`, `&*` wrap on overflow. Wrapping is always spelled, never implied.
+- `&+`, `&-`, `&*` wrap on overflow. Wrapping is always spelled, never implied: an unsigned value has no unary minus (`-u` with `u: UInt64` is a compile error, as `-1u64` is), and its two's complement is `0u64 &- u`.
 - `<<` and `>>` take an amount in `0..63` for `Int` and `UInt64`, `0..31` for `Int32` and `UInt32`. Any other amount, a negative one included, traps (`avant runtime: shift amount 64 out of range for Int (0..63)`); a literal amount out of range is a compile error. The amount is an `Int` or the shifted value's own type.
 - Integers have `abs` (unsigned types do not: it would be the value itself) and `to_f`.
 
