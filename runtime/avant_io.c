@@ -1545,3 +1545,22 @@ int avant_io_list_names(const char *path, char ***out, int32_t *np) {
 void *avant_io_names_array(char **names, int32_t n) {
   return names_array(names, n);
 }
+
+char **avant_io_build_argv(const char *path, void *args) {
+  return build_argv(path, args);
+}
+
+void avant_io_free_argv(char **argv) {
+  free_argv(argv);
+}
+
+__attribute__((noreturn)) void avant_io_child_fail(int errfd, int32_t stage) {
+  child_fail(errfd, stage);
+  _exit(127);
+}
+
+/* The child a blocking run waits on, which the scratch directory's
+ * signal handler stops before it removes the directory. */
+void avant_io_wait_child(int32_t pid) {
+  g_wait_child = (pid_t)pid;
+}

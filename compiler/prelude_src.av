@@ -13,7 +13,7 @@ import token
 // The names that bring the module in: its functions. A program that
 // calls none of them may declare its own IoError or ProcessError.
 pub fn prelude_names: Array(String) {
-  ["file_read", "file_write", "dir_list", "process_run", "process_run_out", "read_line", "file_open", "dir_exists", "dir_make", "dir_walk", "file_delete", "file_size"]
+  ["file_read", "file_write", "dir_list", "process_run", "process_run_out", "read_line", "file_open", "dir_exists", "dir_make", "dir_walk", "file_delete", "file_size", "process_output"]
 }
 
 // The functions of the module's second part (prelude_more_source), which
@@ -21,7 +21,7 @@ pub fn prelude_names: Array(String) {
 // only the first part's functions compiles exactly the code it did
 // before the second part existed.
 pub fn prelude_more_names: Array(String) {
-  ["read_line", "file_open", "dir_exists", "dir_make", "dir_walk", "file_delete", "file_size"]
+  ["read_line", "file_open", "dir_exists", "dir_make", "dir_walk", "file_delete", "file_size", "process_output"]
 }
 
 // Whether a module's tokens name one of the prelude module's names.
@@ -167,8 +167,8 @@ pub fn prelude_source: String {
 }
 
 // The module's second part: standard input and files read line by
-// line and the file system's basics, after the first part (its error
-// types).
+// line, the file system's basics and a child process's output, after
+// the first part (its error types and process_result).
 pub fn prelude_more_source: String {
   b = buf_new()
   lines = [
@@ -181,7 +181,10 @@ pub fn prelude_more_source: String {
   "  fun avant_sys_delete(path: String): Int",
   "  fun avant_sys_size(path: String): Int",
   "  fun avant_sys_walk(path: String): Array(String)?",
+  "  fun avant_sys_capture(path: String, args: Array(String), input: String): Int",
+  "  fun avant_sys_captured(which: Int): String",
   "  fun avant_sys_more_errno: Int",
+  "  fun avant_sys_more_signal: Int",
   "}",
   "",
   "// One line of standard input without its newline; nil at the end of",
@@ -281,7 +284,38 @@ pub fn prelude_more_source: String {
   "  }",
   "  IoError.new(\"list\", path, avant_sys_more.avant_sys_more_errno())",
   "}",
-
+  "",
+  "// What a finished program gave: its exit status and what it wrote.",
+  "pub class ProcessOutput {",
+  "  pub status: Int",
+  "  pub stdout: String",
+  "  pub stderr: String",
+  "",
+  "  fn initialize(status: Int, stdout: String, stderr: String) {",
+  "    self.status = status",
+  "    self.stdout = stdout",
+  "    self.stderr = stderr",
+  "  }",
+  "}",
+  "",
+  "// Runs the program as process_run does, with input on its stdin, and",
+  "// captures its stdout and stderr.",
+  "pub fn process_output(path: String, args: Array(String), input: String = \"\"): ProcessOutput | ProcessError {",
+  "  st = avant_sys_more.avant_sys_capture(path, args, input)",
+  "  if st < 0 {",
+  "    return process_failure(path, st)",
+  "  }",
+  "  ProcessOutput.new(st, avant_sys_more.avant_sys_captured(1), avant_sys_more.avant_sys_captured(2))",
+  "}",
+  "",
+  "// Why a captured run failed: a signal, or a start (or an output too",
+  "// large to hold) that failed.",
+  "fn process_failure(path: String, st: Int): ProcessError {",
+  "  if st == -2 {",
+  "    return ProcessError.new(path, 0, avant_sys_more.avant_sys_more_signal(), \"\")",
+  "  }",
+  "  ProcessError.new(path, avant_sys_more.avant_sys_more_errno(), 0, \"\")",
+  "}"
   ]
   for line in lines {
     b.push_str(line)

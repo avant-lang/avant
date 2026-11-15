@@ -3185,7 +3185,7 @@ The prelude is the set of names every program can use without an import. The typ
 | --- | --- |
 | Output and input | `puts`, `print`, `eputs`, `eprint`, `puts_u`, `exit`, `read_line` |
 | Files and directories | `file_read`, `file_write`, `file_open`, `file_exists`, `file_size`, `file_delete`, `dir_list`, `dir_walk`, `dir_exists`, `dir_make` |
-| Processes and environment | `argv`, `env_get`, `process_run`, `process_run_out` |
+| Processes and environment | `argv`, `env_get`, `process_run`, `process_run_out`, `process_output` |
 | Time | `now_ms`, `now_us` |
 | Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
 | Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `bytes_to_str`, `buf_new` ([String operations](#string-operations)) |
@@ -3319,7 +3319,7 @@ fn main {
 
 - `dir_walk` lists a directory before what it holds and the names of each directory sorted; a link to a directory is listed and not followed.
 - An `IoError` has `op` (`"read"`, `"write"`, `"list"`, `"open"`, `"stat"`, `"delete"` or `"make"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. Dropping one is a compile error, like any [error](#errors-cannot-be-dropped).
-- The names `IoError`, `ProcessError` and `FileReader` are taken only in a program that calls these functions.
+- The names `IoError`, `ProcessError`, `FileReader` and `ProcessOutput` are taken only in a program that calls these functions.
 
 ### Processes and environment
 
@@ -3329,6 +3329,7 @@ fn main {
 | `env_get(name)` | `String?`: `nil` when the variable is not set |
 | `process_run(program, args)` | `Int \| ProcessError`: runs the program, waits, and gives its exit status |
 | `process_run_out(program, args, out)` | the same, with stdout and stderr written to the file `out` |
+| `process_output(program, args, input)` | `ProcessOutput \| ProcessError`: runs the program with `input` on its stdin (`""` when left out), waits, and gives its `status`, `stdout` and `stderr` |
 
 ```avant
 fn main {
@@ -3339,10 +3340,14 @@ fn main {
     puts(home.size > 0)                                  // => true
   }
   puts(argv().size)                                      // => 1
+  if r = process_output("tr", ["a-z", "A-Z"], "shout") {
+    puts(r.stdout)                                       // => SHOUT
+    puts(r.status)                                       // => 0
+  }
 }
 ```
 
-A program name without `/` is looked up on `PATH`. `process_run` gives the child the program's own stdin, stdout and stderr. **A non-zero exit status is not an error**: it is the `Int`. A `ProcessError` is a program that could not start (`errno`, and `output` when it is the output file that could not be opened) or that a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`.
+A program name without `/` is looked up on `PATH`. `process_run` gives the child the program's own stdin, stdout and stderr; `process_output` gives it `input` and then the end of its input, and reads its stdout and stderr as they come, so neither can fill and stall it (a child that stops reading its input early is not an error). **A non-zero exit status is not an error**: it is the `Int`. A `ProcessError` is a program that could not start (`errno`, and `output` when it is the output file that could not be opened) or that a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`.
 
 ### Time, hashing and math
 
