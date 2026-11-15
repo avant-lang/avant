@@ -199,7 +199,17 @@ static void young_size(uint64_t used, uint64_t surv, int budget) {
       gc_heap.tenure_left = 1;
     }
   }
-  gc_heap.young_high_prev = (uint8_t)high;
+  /* The streak of high-survival collections is the budget's: a collection
+   * the program asks for (BUDGET 0) neither makes nor breaks it. Its
+   * survival says what the program kept at that point, not what a budget
+   * keeps (the collector benchmark's stable heap: 499 forced collections
+   * of one new object each, each one surviving, left the streak set for
+   * the chain build that follows, which then made one more young
+   * collection, aged 8 MB in place and copied 5.6 KB more: about 100 M
+   * instructions). */
+  if (budget) {
+    gc_heap.young_high_prev = (uint8_t)high;
+  }
 }
 
 static uint64_t now_ns(void) {
