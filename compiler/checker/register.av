@@ -250,10 +250,11 @@ pub fn (checker_self: Checker) assign_emit_names {
         shown = "${mod_emit_prefix(owner_mod)}__${owner}"
       }
       sanitized = emit_op_name(name)
+      mbase = checker_self.method_emit_base(sig, "${shown}__${sanitized}")
       if n <= 1 {
-        sig.node.emit_name = "${shown}__${sanitized}"
+        sig.node.emit_name = mbase
       } else {
-        sig.node.emit_name = sig_mangle("${shown}__${sanitized}", sig.params)
+        sig.node.emit_name = sig_mangle(mbase, sig.params)
       }
     }
   }
@@ -846,12 +847,19 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   }
   for existing in checker_self.methods {
     if existing.owner == owner_key && existing.node.owner_mod == fnn.owner_mod && existing.name == fnn.name {
+      if !checker_self.methods_meet(existing.node, fnn) {
+        continue
+      }
+      where = ""
+      if existing.node.mod_name != fnn.mod_name {
+        where = " in module ${existing.node.mod_name}"
+      }
       if existing.node.type_method != fnn.type_method {
-        checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined")
+        checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined${where}")
         return
       }
       if params_same(existing.params, params) {
-        checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined")
+        checker_self.fail(fnn.loc, "method ${owner_key}.${fnn.name} is already defined${where}")
         return
       }
     }
@@ -870,6 +878,22 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
     checker_self.assign_one_method_emit(sig)
     checker_self.pending.push(fnn)
   }
+}
+
+// Whether two methods of one owner and name, declared in modules a and
+// b, are declared against each other. In one module, always. A builtin
+// type's external methods are seen as functions are, so two modules may
+// each declare one and only a call that sees both is ambiguous. A
+// program type's method is part of that type, seen wherever the type is
+// when pub: two modules' methods meet unless both are private.
+pub fn (checker_self: Checker) methods_meet(a: Function, b: Function): Bool {
+  if a.mod_name == b.mod_name {
+    return true
+  }
+  if a.owner == "String" || a.owner == "Bytes" || a.owner == "Buf" {
+    return false
+  }
+  a.vis || b.vis || a.name == "initialize"
 }
 
 pub fn (checker_self: Checker) adopt_one_struct(sdef: StructDef) {
@@ -967,6 +991,20 @@ pub fn (checker_self: Checker) adopt_new_types {
   checker_self.in_adopt = false
 }
 
+// The emit name's stem for a method: base, or base after the declaring
+// module's prefix when another module declares a method of the same
+// owner, name and parameter types (two modules may each add one, seen
+// each in its own module).
+pub fn (checker_self: Checker) method_emit_base(sig: FuncSig, base: String): String {
+  for other in checker_self.method_indices_named(sig.name) {
+    o = checker_self.methods[other]
+    if !o.node.generic && o.owner == sig.owner && o.node.owner_mod == sig.node.owner_mod && o.node.mod_name != sig.node.mod_name && o.node.type_method == sig.node.type_method && params_same(o.params, sig.params) {
+      return "${mod_emit_prefix(sig.node.mod_name)}__${base}"
+    }
+  }
+  base
+}
+
 pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
   name = sig.name
   owner = sig.owner
@@ -989,10 +1027,11 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
   }
   for other in checker_self.methods {
     if !other.node.generic && other.owner == owner && other.node.owner_mod == sig.node.owner_mod && other.name == name {
+      obase = checker_self.method_emit_base(other, "${shown}__${sanitized}")
       if n <= 1 {
-        other.node.emit_name = "${shown}__${sanitized}"
+        other.node.emit_name = obase
       } else {
-        other.node.emit_name = sig_mangle("${shown}__${sanitized}", other.params)
+        other.node.emit_name = sig_mangle(obase, other.params)
       }
     }
   }

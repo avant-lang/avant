@@ -15,6 +15,16 @@ import backends
 //   - An external method of String, Bytes or Buf is seen as a function
 //     is: in its module and, when pub, in the modules that import it. A
 //     private one used to be seen by every importer.
+//   - Two modules may each add a method of one name to String, Bytes or
+//     Buf: each module's calls reach the one it sees, and a call that sees
+//     both (the two imported, or one imported and one of its own module)
+//     is ambiguous, naming the modules. It used to be refused where the
+//     second was declared.
+//   - A pub method of a type the program declares is part of that type,
+//     seen wherever the type is, so two modules' pub methods of one name
+//     and parameters on it are refused where the second is declared,
+//     naming the first's module; two private ones, each seen only in its
+//     own module, are allowed (they were refused).
 
 class MCase {
   pub tag: String = ""
@@ -54,6 +64,22 @@ fn builtin_cases: Array(MCase) {
   xs.push(refused("ext-private-imported", ["main", "import ext\n\nfn main {\n  puts(\"x\".quiet())\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n\npub fn (s: String) loud: String {\n  \"L\"\n}\n"], "method String.quiet of module ext is private to its module; mark it pub", "main.av:4:11"))
   xs.push(refused("ext-private-field-form", ["main", "import ext\n\nfn main {\n  puts(\"x\".quiet)\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n"], "method String.quiet of module ext is private to its module; mark it pub", "main.av:4:11"))
   xs.push(accepted("ext-pub-imported", ["main", "import ext\n\nfn main {\n  puts(\"x\".loud)\n  puts(ext.go())\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n\npub fn (s: String) loud: String {\n  \"L\${s.quiet}\"\n}\n\npub fn go: String {\n  \"y\".quiet\n}\n"], "Lq\nq\n"))
+  xs
+}
+
+fn twin_cases: Array(MCase) {
+  xs: Array(MCase) = []
+  ma = "pub fn (s: String) shout: String {\n  \"ma \${s}\"\n}\n\npub fn go: String {\n  \"a\".shout\n}\n"
+  mb = "pub fn (s: String) shout: String {\n  \"mb \${s}\"\n}\n\npub fn go: String {\n  \"b\".shout()\n}\n"
+  xs.push(accepted("twin-builtin-each-own", ["main", "import ma\nimport mb\n\nfn main {\n  puts(ma.go())\n  puts(mb.go())\n}\n", "ma", ma, "mb", mb], "ma a\nmb b\n"))
+  xs.push(accepted("twin-builtin-one-imported", ["main", "import ma\nimport mid\n\nfn main {\n  puts(\"x\".shout)\n  puts(mid.go())\n}\n", "ma", ma, "mb", mb, "mid", "import mb\n\npub fn go: String {\n  \"m\".shout\n}\n"], "ma x\nmb m\n"))
+  xs.push(refused("twin-builtin-both-imported", ["main", "import ma\nimport mb\n\nfn main {\n  puts(\"x\".shout)\n}\n", "ma", ma, "mb", mb], "ambiguous call to String.shout: the methods of modules ma and mb both match, and a method call cannot name its module; call it from a module that imports only one of them", "main.av:5:11"))
+  xs.push(refused("twin-builtin-own-and-imported", ["main", "import ma\n\nfn (s: String) shout: String {\n  s\n}\n\nfn main {\n  puts(\"x\".shout())\n}\n", "ma", ma], "the methods of modules ma and main both match", "main.av:8:11"))
+  xs.push(accepted("twin-builtin-private", ["main", "import ext\n\nfn (s: String) quiet: String {\n  \"own\"\n}\n\nfn main {\n  puts(\"x\".quiet)\n  puts(ext.go())\n}\n", "ext", "fn (s: String) quiet: String {\n  \"q\"\n}\n\npub fn go: String {\n  \"y\".quiet\n}\n"], "own\nq\n"))
+  pt = "pub class Point {\n  pub x: Int = 1\n}\n"
+  xs.push(refused("twin-type-pub", ["main", "import pa\nimport pb\n\nfn main {\n  puts(1)\n}\n", "p", pt, "pa", "import p\n\npub fn (q: Point) norm: Int {\n  q.x + 10\n}\n", "pb", "import p\n\npub fn (q: Point) norm: Int {\n  q.x + 20\n}\n"], "method Point.norm is already defined in module pa", "pb.av:3:5"))
+  xs.push(refused("twin-type-pub-and-private", ["main", "import pa\nimport pb\n\nfn main {\n  puts(1)\n}\n", "p", pt, "pa", "import p\n\npub fn (q: Point) norm: Int {\n  q.x + 10\n}\n", "pb", "import p\n\nfn (q: Point) norm: Int {\n  q.x + 20\n}\n"], "method Point.norm is already defined in module pa", "pb.av:3:1"))
+  xs.push(accepted("twin-type-private", ["main", "import p\nimport pa\nimport pb\n\nfn main {\n  puts(pa.ta())\n  puts(pb.tb())\n}\n", "p", pt, "pa", "import p\n\nfn (q: Point) norm: Int {\n  q.x + 10\n}\n\npub fn ta: Int {\n  Point.new.norm\n}\n", "pb", "import p\n\nfn (q: Point) norm: Int {\n  q.x + 20\n}\n\npub fn tb: Int {\n  Point.new.norm()\n}\n"], "11\n21\n"))
   xs
 }
 
@@ -102,6 +128,9 @@ fn test_main(c: Checks) {
   c.suite("tests/cases/test_external_methods.av")
   if compiler = env_get("AVANT_COMPILER") {
     all = builtin_cases()
+    for t in twin_cases() {
+      all.push(t)
+    }
     run_cases(c, compiler, scratch_dir(), all)
   } else {
     c.expect(false, "AVANT_COMPILER")

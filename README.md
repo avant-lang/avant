@@ -1535,6 +1535,7 @@ This is how a module adds methods to a type it does not own, the builtin `String
 
 - A builtin type keeps its own methods and fields: `fn (s: String) to_s` or `fn (b: Bytes) size` is refused where it is declared, so a builtin is never replaced and a method is never silently left uncalled.
 - An external method of `String`, `Bytes` or `Buf` is seen like a function: in its own module and, when `pub`, in the modules that import it. A `pub` external method of a type declared in the program is part of that type, seen wherever the type is.
+- Two modules may each add a method of one name to `String`, `Bytes` or `Buf`. Each module's calls reach the one it sees; a call that sees both (two imports, or an import and the module's own) is an error that names the two modules, since a method call cannot name its module: call it from a module that imports only one of them. On a type declared in the program, two modules' methods of one name and parameter types meet wherever the type is, so the second is refused where it is declared, naming the first's module, unless both are private.
 
 ### Type-level functions
 

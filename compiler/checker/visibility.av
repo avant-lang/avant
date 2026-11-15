@@ -313,6 +313,35 @@ pub fn (checker_self: Checker) both_word(n: Int): String {
 // A method call two or more methods of one type match equally (O346):
 // each signature.
 pub fn (checker_self: Checker) fail_ambiguous_method(loc: Location, shown: String, cands: Array(FuncSig)) {
+  // Two modules' external methods of a builtin type, both seen here.
+  mods: Array(String) = []
+  for sig in cands {
+    seen = false
+    for m in mods {
+      if m == sig.node.mod_name {
+        seen = true
+      }
+    }
+    if !seen {
+      mods.push(sig.node.mod_name)
+    }
+  }
+  if mods.size > 1 {
+    mods.sort { |a, b| str_lt(a, b) }
+    defs = buf_new()
+    for k in 0..mods.size {
+      if k > 0 {
+        if k == mods.size - 1 {
+          defs.push_str(" and ")
+        } else {
+          defs.push_str(", ")
+        }
+      }
+      defs.push_str(mods[k])
+    }
+    checker_self.fail(loc, "ambiguous call to ${shown}: the methods of modules ${defs.to_s} ${checker_self.both_word(mods.size)} match, and a method call cannot name its module; call it from a module that imports only one of them")
+    return
+  }
   checker_self.fail(loc, "ambiguous call to ${shown}: ${checker_self.sigs_text(shown, cands)} ${checker_self.both_word(cands.size)} match")
 }
 
