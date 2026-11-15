@@ -1302,6 +1302,14 @@ typedef struct GcHeap {
   Block **verify_holes;
   uint32_t verify_holes_n;
   uint32_t verify_holes_cap;
+  /* Each held block's swept line range, [lo, hi) (one entry per
+   * verify_holes entry): its freed lines hold GC_POISON until it is
+   * released (gc_verify_held_lines). */
+  uint8_t (*verify_holes_range)[2];
+  uint32_t verify_holes_range_cap;
+  /* young_sweep_checked's last block's swept range, read by its caller. */
+  uint8_t swept_lo;
+  uint8_t swept_hi;
   /* S+: whether the running young collection may copy (always, today);
    * the block copies go to; copied_bytes when it began. splus_age: the
    * collection copies first survivors into survivor blocks (YOUNG_AGE 2,
@@ -1847,6 +1855,11 @@ void gc_hdr_and(AvantHeader *h, uint16_t bits);
  * use has its marks zeroed, and only a collection marks lines), so that
  * collection does not read its line marks to learn it. */
 #define SPLUS_FRESH 10
+/* Under AVANT_GC_VERIFY=1, between a young collection and the next: a
+ * block whose freed lines the young sweep poisoned and holds back
+ * (gc_heap.verify_holes); no allocation takes its lines until the next
+ * collection begins (gc_verify_held_lines). */
+#define VERIFY_HELD 12
 #ifndef SPLUS_AGED_SPARSE_LINES
 #define SPLUS_AGED_SPARSE_LINES 64
 #endif
@@ -1921,6 +1934,7 @@ void gc_verify_starts_end(void);
 extern int gc_verify_rebase;
 int gc_quarantine_block(Block *b);
 void gc_quarantine_release(void);
+void gc_verify_held_lines(void);
 void gc_quarantine_seal(void);
 int gc_quarantine_run(AvantHeader *h);
 void gc_quarantine_drop_seal(AvantHeader *h, int drop);

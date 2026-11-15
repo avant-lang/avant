@@ -1505,14 +1505,19 @@ static __attribute__((noinline)) int young_sweep_checked(Block *b, uint32_t i, i
     live = sweep_lines(b, lo, fr);
     gc_heap.ctr.sticky.freed_lines += (uint64_t)(hi - fr);
   }
-  if (stress) {
-    /* Freed young lines are poisoned (Stage 28 W16a). */
+  if (stress | verify) {
+    /* Freed young lines are poisoned under the stress mode; under the verifier
+     * too, and a block it holds back must still hold the poison in them
+     * when it is released (gc_verify_held_lines): a write through a
+     * reference to an object that died here shows then. */
     for (l = lo; l < fr; l++) {
       if (!line_live(b, l)) {
-        gc_poison(b->base + (size_t)l * LINE_SIZE, LINE_SIZE);
+        memset(b->base + (size_t)l * LINE_SIZE, GC_POISON, LINE_SIZE);
       }
     }
   }
+  gc_heap.swept_lo = (uint8_t)lo;
+  gc_heap.swept_hi = (uint8_t)fr;
   return live;
 }
 
@@ -1665,6 +1670,14 @@ void gc_sticky_collect(int tenure, int evac_mixed) {
          * here still names freed memory there, where the lost-reference
          * check (avant_gc_verify.c) sees it. */
         if (verify) {
+          if (gc_heap.verify_holes_n == gc_heap.verify_holes_range_cap) {
+            gc_heap.verify_holes_range_cap = gc_heap.verify_holes_range_cap ? gc_heap.verify_holes_range_cap * 2 : 64;
+            gc_heap.verify_holes_range =
+                gc_xrealloc(gc_heap.verify_holes_range, (size_t)gc_heap.verify_holes_range_cap * 2);
+          }
+          gc_heap.verify_holes_range[gc_heap.verify_holes_n][0] = gc_heap.swept_lo;
+          gc_heap.verify_holes_range[gc_heap.verify_holes_n][1] = gc_heap.swept_hi;
+          b->kept = VERIFY_HELD;
           gc_sticky_push(&gc_heap.verify_holes, &gc_heap.verify_holes_n, &gc_heap.verify_holes_cap, b);
         } else {
           gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap, b);
@@ -1756,7 +1769,9 @@ void gc_sticky_full_begin(void) {
   }
   gc_heap.young_blocks_n = 0;
   gc_heap.part_blocks_n = 0;
-  gc_heap.verify_holes_n = 0;
+  /* The blocks the verifier held back become ordinary mature blocks,
+   * their poisoned lines checked first. */
+  gc_verify_held_lines();
 }
 
 void gc_sticky_full_end(void) {

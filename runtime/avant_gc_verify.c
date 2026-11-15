@@ -805,7 +805,10 @@ static int sd_probe(void) {
   return ok;
 }
 
+static void gc_verify_held_check(void);
+
 static void verify_at_exit_check(void) {
+  gc_verify_held_check();
   gc_verify_begin(1);
   gc_verify_remembered();
   /* The proof's oracle once more: the log, every old object that
@@ -1983,6 +1986,53 @@ void gc_quarantine_seal(void) {
   }
 }
 
+/* The lines the last young sweep freed in the blocks it held back
+ * (gc_heap.verify_holes, AVANT_GC_VERIFY=1): each was filled with
+ * GC_POISON by the sweep and nothing may take it before the next
+ * collection begins, so a byte that is not the poison is a write to an
+ * object that died at that collection, through a reference kept where
+ * no collection saw it (a C local, a register, a frame slot left out of
+ * its record). A freed block is held PROT_NONE and faults at such a
+ * write; a freed line in a block with live lines cannot be, so it is
+ * read here. Stops the program at the first such line. */
+static void gc_verify_held_check(void) {
+  uint32_t i;
+  for (i = 0; i < gc_heap.verify_holes_n; i++) {
+    const Block *b = gc_heap.verify_holes[i];
+    int l;
+    for (l = gc_heap.verify_holes_range[i][0]; l < gc_heap.verify_holes_range[i][1]; l++) {
+      const uint64_t *w = (const uint64_t *)(b->base + (size_t)l * LINE_SIZE);
+      size_t k;
+      if (line_live(b, l)) {
+        continue;
+      }
+      for (k = 0; k < LINE_SIZE / sizeof(uint64_t); k++) {
+        if (w[k] != GC_POISON_WORD) {
+          fprintf(stderr,
+                  "avant gc verify: lost reference: a write at %p to a line freed at coll=%llu "
+                  "(a reference kept outside the roots across a collection)\n",
+                  (const void *)(w + k), (unsigned long long)avant_g_stats.collections);
+          gc_die("avant gc verify: a freed young line was written after the collection that freed it");
+        }
+      }
+    }
+  }
+}
+
+/* The held blocks checked (gc_verify_held_check) and let go: each is an
+ * ordinary block again, the young allocator's hole source from the next
+ * gc_quarantine_release on, or a full collection's to sweep. */
+void gc_verify_held_lines(void) {
+  uint32_t i;
+  gc_verify_held_check();
+  for (i = 0; i < gc_heap.verify_holes_n; i++) {
+    if (gc_heap.verify_holes[i]->kept == VERIFY_HELD) {
+      gc_heap.verify_holes[i]->kept = 0;
+    }
+  }
+  gc_heap.verify_holes_n = 0;
+}
+
 /* At the start of a collection: every held block is opened and freed,
  * and the blocks with lines the last young sweep freed become the young
  * allocator's holes (avant_gc_sticky.c holds them back under
@@ -1990,11 +2040,12 @@ void gc_quarantine_seal(void) {
 void gc_quarantine_release(void) {
   Block *b = gc_heap.quarantine;
   uint32_t i;
-  for (i = 0; i < gc_heap.verify_holes_n; i++) {
+  uint32_t n = gc_heap.verify_holes_n;
+  gc_verify_held_lines();
+  for (i = 0; i < n; i++) {
     gc_sticky_push(&gc_heap.part_blocks, &gc_heap.part_blocks_n, &gc_heap.part_blocks_cap,
                    gc_heap.verify_holes[i]);
   }
-  gc_heap.verify_holes_n = 0;
   for (i = 0; i < gc_heap.held_runs_n; i++) {
     struct GcHeldRun *r = &gc_heap.held_runs[i];
     if (r->state == QUARANTINED) {

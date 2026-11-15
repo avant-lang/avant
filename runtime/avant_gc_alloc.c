@@ -1064,7 +1064,9 @@ static AvantHeader *place(size_t total, uint8_t space, int tried_gc) {
     gc_mature_normalize();
     b = cur ? cur->next : gc_heap.space[space].list;
     for (; b; b = b->next) {
-      if (b->young_hi) {
+      /* A young block, and a block the verifier holds back with poisoned
+       * free lines until the next collection (VERIFY_HELD). */
+      if (b->young_hi || b->kept == VERIFY_HELD) {
         continue;
       }
       if (try_bump(b, total)) {
