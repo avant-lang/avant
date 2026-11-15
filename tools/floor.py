@@ -30,7 +30,7 @@ input has no combined table, 2 on a usage error.
 
 Replaces the `floor.py` that each measurement used to copy from the one
 before, and reproduces their `floor-final.txt`, `floor-base.txt`,
-`floor-table.txt` and `floor.md` tables byte for byte.
+`floor-table.txt` and floor tables byte for byte.
 """
 import csv
 import os

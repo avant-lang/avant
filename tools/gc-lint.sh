@@ -1,6 +1,5 @@
 #!/bin/sh
-# The runtime-C rooting lint (gc-design.md section 4.2
-# check 3; the contract RC1-RC4 is in runtime/avant_gc.h).
+# The runtime-C rooting lint (the contract RC1-RC4 is in runtime/avant_gc.h).
 #
 # Over the runtime units outside the collector (runtime/avant_*.c except
 # avant_gc_*.c and avant_rt_traps.c), a function is *allocating* when its

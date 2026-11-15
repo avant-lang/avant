@@ -197,8 +197,8 @@ snap() {
 echo "gate: root=$root seed=$seed out=$out reuse=${REUSE:-no} suite-env=${SUITE_ENV:-none} gc-env=${GC_ENV:-none}" | tee "$out/summary.txt"
 echo "gate: private /tmp: $private_tmp" | tee -a "$out/summary.txt"
 
-# The runtime-C rooting lint (gc-design.md section 4.2
-# check 3; runtime/avant_gc.h's RC1-RC4).
+# The runtime-C rooting lint (runtime/avant_gc.h's RC1-RC4: a runtime C
+# function that allocates opens a GC scope or a no-GC region).
 if sh tools/gc-lint.sh > "$out/gc-lint.txt" 2>&1 < /dev/null; then
   echo "gate: $(tail -1 "$out/gc-lint.txt")" | tee -a "$out/summary.txt"
 else

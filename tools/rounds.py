@@ -2,8 +2,8 @@
 """Median-of-N rounds with rotation: the one timing loop.
 
 FOR MILESTONES AND PUBLICATION, NEVER PER GATE: a gate's LangArena evidence
-stays the single run of `measure.cr -- prod` and `tools/lr-table.sh avant`
-(operating.md, "Measuring"); this mode costs N + 1 runs of every task.
+stays the single run of `measure.cr -- prod` and `tools/lr-table.sh avant`;
+this mode costs N + 1 runs of every task.
 
   python3 tools/rounds.py langarena --rounds N --run-js RUN_JS --out DIR
           [--side NAME=BIN_DIR]... [--pin CPU] [--short SECONDS]
