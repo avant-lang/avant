@@ -1018,7 +1018,7 @@ static void *str_array_new(int32_t n) {
 static void str_array_put(AvantArray *a, char *p) {
   char **slot = &((char **)a->buf)[a->size++];
   /* The barrier before the store (RC5). */
-  avant_barrier_slot(a->buf, slot);
+  avant_barrier_slot_young(a->buf, slot);
   *slot = p;
 }
 

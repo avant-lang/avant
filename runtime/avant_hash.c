@@ -474,7 +474,7 @@ static void store_str_key(AvantHash *h, int32_t e, const char *key, uint32_t hv)
   /* A mature key buffer is not walked from the roots: the slot about to
    * be stored may name a young string. The barrier before the store
    * (RC5). */
-  avant_barrier_slot(h->keys, &((void **)h->keys)[e]);
+  avant_barrier_slot_young(h->keys, &((void **)h->keys)[e]);
   ((const char **)h->keys)[e] = key;
   hashes_of(h)[e] = hv;
 }
@@ -499,14 +499,14 @@ static void move_entry(AvantHash *dst, const AvantHash *src, void *okeys, void *
   }
   int32_t ne = claim(dst, i, st);
   if (key_is_str(src)) {
-    avant_barrier_slot(dst->keys, &((void **)dst->keys)[ne]);
+    avant_barrier_slot_young(dst->keys, &((void **)dst->keys)[ne]);
     ((void **)dst->keys)[ne] = ((void **)okeys)[e];
     hashes_of(dst)[ne] = hv;
   } else {
     ikey_put(src, dst->keys, ne, ikey_at(src, okeys, e));
   }
   if (val_is_ref(src)) {
-    avant_barrier_slot(dst->vals, (void **)val_at(src, dst->vals, ne));
+    avant_barrier_slot_young(dst->vals, (void **)val_at(src, dst->vals, ne));
   }
   cp_w(val_at(src, dst->vals, ne), val_at(src, ovals, e), vw_of(src));
 }
@@ -600,12 +600,15 @@ static void erase(AvantHash *h, int32_t e) {
   int32_t mask = h->cap - 1;
   int str = key_is_str(h);
   /* The entry's references are cleared and, in the open layout, the
-   * entries after it move back in the key and value buffers (RC5). */
-  if (str) {
-    avant_gc_overwrite(h->keys);
-  }
-  if (val_is_ref(h)) {
-    avant_gc_overwrite(h->vals);
+   * entries after it move back in the key and value buffers (RC5). One
+   * test for both buffers while nothing is logged. */
+  if (__builtin_expect(avant_gc_proof_logging, 0)) {
+    if (str) {
+      avant_gc_overwrite(h->keys);
+    }
+    if (val_is_ref(h)) {
+      avant_gc_overwrite(h->vals);
+    }
   }
   h->size -= 1;
   if (is_compact(h)) {
@@ -933,7 +936,7 @@ void avant_hash_set_ref_ik(void *hp, avant_int key, void *val) {
   void **slot = (void **)put_ik(h, key, NULL, 1);
   /* The barrier before the store (RC5). */
   if (h) {
-    avant_barrier_slot(h->vals, slot);
+    avant_barrier_slot_young(h->vals, slot);
   }
   *slot = val;
 }
@@ -947,7 +950,7 @@ void avant_hash_set_ref_sk(void *hp, const char *key, void *val) {
   void **slot = (void **)put_sk(h, key, NULL, 1);
   /* The barrier before the store (RC5). */
   if (h) {
-    avant_barrier_slot(h->vals, slot);
+    avant_barrier_slot_young(h->vals, slot);
   }
   *slot = val;
 }

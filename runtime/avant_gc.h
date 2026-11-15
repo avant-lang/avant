@@ -394,9 +394,35 @@ __attribute__((visibility("hidden"))) int avant_gc_large_trim(void *payload, uin
  * collecting call. Hidden. */
 __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int drop);
 
+/* avant_barrier_slot with its first test in line: a store into SLOT of
+ * OBJ, a heap object's start (not null), needs nothing while OBJ is young
+ * (a young object is scanned whole), which is the usual state of a buffer
+ * being filled; only an object that is not young makes the call. For
+ * the runtime's element stores, which make the barrier call before the
+ * store (RC5): with the call skipped for a young buffer the store's
+ * operands need not be kept across it. */
+static inline void avant_barrier_slot_young(void *obj, void *slot) {
+  if (!(avant_header(obj)->flags & AVANT_FLAG_YOUNG)) {
+    avant_barrier_slot(obj, slot);
+  }
+}
+
 /* RC5: references among OBJ's words are about to be removed or moved
- * (nothing is stored that OBJ does not hold). Never collects. */
-__attribute__((visibility("hidden"))) void avant_gc_overwrite(void *obj);
+ * (nothing is stored that OBJ does not hold). Never collects. The call
+ * is made only for an object that is not young while the collector logs
+ * stores (avant_gc_proof_logging: one byte, set from a full collection's
+ * end while the proof that the old heap is unchanged may still hold, and
+ * under AVANT_GC_VERIFY=1), so before a program's first full collection
+ * and between two full collections of a program that promotes, the usual
+ * states, it costs a load and a test. */
+extern __attribute__((visibility("hidden"))) uint8_t avant_gc_proof_logging;
+__attribute__((visibility("hidden"))) void avant_gc_overwrite_slow(void *obj);
+static inline void avant_gc_overwrite(void *obj) {
+  if (__builtin_expect(avant_gc_proof_logging, 0) && obj &&
+      (avant_header(obj)->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG)) == AVANT_FLAG_HEAP) {
+    avant_gc_overwrite_slow(obj);
+  }
+}
 /* AVANT_GC_VERIFY=1's own pages for a Buf's storage (Stage 28 W18C,
  * O145; avant_gc_alloc.c): NBYTES of scalar storage on its own page run
  * (a large Bytes object at any size), so that a growth that replaces it

@@ -38,8 +38,8 @@
 #   a call of a function marked "gc-lint: a store helper" (it stores the
 #     word for its callers, which make the barrier call).
 # The first such line of a function must come after a line that calls
-# avant_barrier, avant_barrier_slot, avant_barrier_at or
-# avant_gc_overwrite, or the function carries "gc-lint: stores into its
+# avant_barrier, avant_barrier_slot (or its inline form
+# avant_barrier_slot_young), avant_barrier_at or avant_gc_overwrite, or the function carries "gc-lint: stores into its
 # own allocation" or "gc-lint: no reference word" (with its reason), in
 # its body or on the lines just above it. A violation prints
 # "file:line: function stores a reference word with no barrier before it"
@@ -216,7 +216,7 @@ FNR == 1 { flush(); incom = 0; pending_ok = 0; pending_helper = 0
   }
   if (fn == "" && out ~ /[^ \t]/ && !isok && !ishelper) { pending_ok = 0; pending_helper = 0 }
   if (fn != "") {
-    if (!bar && out ~ /avant_barrier(_slot|_at)?[ \t]*\(|avant_gc_overwrite[ \t]*\(/) { bar = FNR }
+    if (!bar && out ~ /avant_barrier(_slot|_slot_young|_at)?[ \t]*\(|avant_gc_overwrite[ \t]*\(/) { bar = FNR }
     if (!store) {
       st = 0
       if (out ~ /\(\((const )?(void|char) \*\*\)[^;]*\)\[[^;]*\][ \t]*=[^=]/) st = 1

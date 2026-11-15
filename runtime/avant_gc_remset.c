@@ -281,17 +281,19 @@ void avant_barrier(void *obj) {
       if (h->flags & AVANT_FLAG_YOUNG) {
         return;
       }
-      /* Already in the remembered set (an object in it was logged when it
-       * was remembered, below, unless a collection remembered it: the
-       * proof's log is asked all the same, one test). */
+      /* Already in the remembered set. (The proof's log is not asked: an
+       * old object in the set was logged when the call below remembered
+       * it, or it names a young object a collection left young, and the
+       * store that put that reference there was logged.) */
       if (h->flags & AVANT_FLAG_REM) {
-        gc_proof_store(obj, h);
         return;
       }
       /* A carded object named without its slot (Stage 28 W16t): every
        * card counts as marked until the next young collection. */
       if (gc_carded(h) && gc_is_heap_payload(obj, NULL, NULL)) {
-        gc_proof_store(obj, h);
+        if (!(h->flags & AVANT_FLAG_REMC)) {
+          gc_proof_store(obj, h);
+        }
         gc_hdr_or(h, AVANT_FLAG_CARD_ALL);
         rem_add_bit(obj, AVANT_FLAG_REMC);
         return;
@@ -326,16 +328,18 @@ void avant_barrier_slot(void *obj, void *slot) {
       (uint64_t)((uintptr_t)obj - (uintptr_t)gc_heap.base) < gc_heap.committed) {
     h = avant_header(obj);
     if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_YOUNG)) == AVANT_FLAG_HEAP && gc_carded(h)) {
-      /* The proof's log: a carded buffer is above the size it
-       * logs, so its first store since the last full collection breaks
-       * the proof (PROOF_BIG, avant_gc_proof.c). */
-      gc_proof_store(obj, h);
       if ((uint8_t *)slot >= (uint8_t *)obj && (uint8_t *)slot < (uint8_t *)obj + h->size) {
         gc_heap.cards[gc_card_index(slot)] = 1;
       } else {
         gc_hdr_or(h, AVANT_FLAG_CARD_ALL);
       }
       if (!(h->flags & AVANT_FLAG_REMC)) {
+        /* The first store since a collection emptied the set: the proof's
+         * log is asked here, where the set is (a carded buffer is above
+         * the size the log takes, so this breaks the proof: PROOF_BIG,
+         * avant_gc_proof.c), and a store into a buffer already in the set
+         * pays nothing for it. */
+        gc_proof_store(obj, h);
         rem_add_bit(obj, AVANT_FLAG_REMC);
       }
       return;

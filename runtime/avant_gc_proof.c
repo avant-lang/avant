@@ -77,6 +77,13 @@ const char *gc_proof_why_name(GcProofWhy why) {
   return proof_why_names[(unsigned)why < PROOF_WHYS ? (unsigned)why : PROOF_WHYS - 1];
 }
 
+/* The barrier's slow call logs (avant_gc.h): from a full collection's
+ * end, while the proof is intact or the verifier is on (its oracle reads
+ * the log whatever the proof says), in a program with one thread and a
+ * young generation. Before the first full collection no object is old
+ * and nothing is logged. */
+__attribute__((visibility("hidden"))) uint8_t avant_gc_proof_logging;
+
 static void proof_push(void ***v, uint32_t *n, uint32_t *cap, void *a, void *b) {
   if (*n + 2 > *cap) {
     *cap = *cap ? *cap * 2 : 64;
@@ -94,7 +101,9 @@ void gc_proof_break(GcProofWhy why) {
   if (gc_heap.proof.broken == PROOF_INTACT || (why >= PROOF_THREADS && why <= PROOF_OFF)) {
     gc_heap.proof.broken = (uint8_t)why;
   }
-  gc_heap.proof.logging = (uint8_t)(gc_heap.set.verify && gc_heap.proof.broken < PROOF_THREADS);
+  /* Under the verifier the log goes on (its oracle reads it), once a
+   * full collection has given it old objects to check. */
+  avant_gc_proof_logging = (uint8_t)(avant_gc_proof_logging && gc_heap.set.verify && gc_heap.proof.broken < PROOF_THREADS);
 }
 
 /* The first barrier's slow call on OBJ (header H: in the heap, not young,
@@ -145,9 +154,10 @@ __attribute__((noinline)) void gc_proof_log(void *obj, AvantHeader *h) {
  * OBJ, an object it did not allocate in this call, and stores no
  * reference OBJ does not already hold (so nothing is remembered: that is
  * avant_barrier's): the proof's part of the barrier alone (avant_gc.h,
- * RC5). OBJ is an object's start, a static object's or null. Never
+ * RC5; avant_gc_overwrite there makes the call only while something is
+ * logged). OBJ is an object's start, a static object's or null. Never
  * collects. */
-__attribute__((visibility("hidden"))) void avant_gc_overwrite(void *obj) {
+__attribute__((visibility("hidden"))) void avant_gc_overwrite_slow(void *obj) {
   uintptr_t off = (uintptr_t)obj - (uintptr_t)gc_heap.base - sizeof(AvantHeader);
   AvantHeader *h;
   if (off >= gc_heap.committed || gc_thread.collecting) {
@@ -225,7 +235,7 @@ void gc_proof_full_end(void) {
   } else if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
     p->broken = PROOF_THREADS;
   }
-  p->logging = (uint8_t)(p->broken == PROOF_INTACT || (gc_heap.set.verify && p->broken < PROOF_THREADS));
+  avant_gc_proof_logging = (uint8_t)(p->broken == PROOF_INTACT || (gc_heap.set.verify && p->broken < PROOF_THREADS));
   if (p->broken == PROOF_INTACT) {
     gc_proof_each_root(proof_save_root, NULL);
     gc_heap.ctr.proof.roots = (uint64_t)p->roots_n / 2;

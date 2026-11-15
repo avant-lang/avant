@@ -54,7 +54,7 @@ static void io_array_buf(AvantArray **ap, int32_t n) {
 static void io_array_put(AvantArray *a, char *p) {
   char **slot = &((char **)a->buf)[a->size++];
   /* The barrier before the store (RC5). */
-  avant_barrier_slot(a->buf, slot);
+  avant_barrier_slot_young(a->buf, slot);
   *slot = p;
 }
 

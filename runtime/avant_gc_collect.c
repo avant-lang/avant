@@ -641,10 +641,10 @@ void gc_init_slow(void) {
   if (gc_heap.set.verify) {
     gc_verify_init();
   }
-  /* The proof holds from the program's start (no object is old) and the
-   * barrier's slow call logs; with no young generation no complete
-   * collection is a young one. */
-  gc_heap.proof.logging = 1;
+  /* The proof holds from the program's start (no object is old, so the
+   * barrier's slow call has nothing to log until the first full
+   * collection ends); with no young generation no complete collection is
+   * a young one. */
   if (gc_heap.set.nursery_off) {
     gc_proof_break(PROOF_NURSERY);
   }

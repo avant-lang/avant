@@ -169,7 +169,7 @@ void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id)
     slot = (uint8_t *)a->buf + (size_t)a->size * (size_t)elem_size;
     a->size += 1;
     if (a->buf) {
-      avant_barrier_slot(a->buf, slot);
+      avant_barrier_slot_young(a->buf, slot);
     }
     return slot;
   }
@@ -185,7 +185,7 @@ void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id)
     slot = (uint8_t *)a->buf + (size_t)a->size * (size_t)elem_size;
     a->size += 1;
     if (a->buf) {
-      avant_barrier_slot(a->buf, slot);
+      avant_barrier_slot_young(a->buf, slot);
     }
   }
   return slot;
@@ -200,7 +200,7 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
   if (a->buf && a->size < a->cap) {
     slot = (uint8_t *)a->buf + (size_t)a->size * sizeof(void *);
     /* The barrier before the store (RC5). */
-    avant_barrier_slot(a->buf, slot);
+    avant_barrier_slot_young(a->buf, slot);
     memcpy(slot, &elem, sizeof(void *));
     a->size += 1;
     return;
@@ -228,7 +228,7 @@ void avant_array_set_ptr(void *arr, avant_int i, void *elem) {
   AvantArray *a = (AvantArray *)arr;
   if (a && a->buf) {
     /* The barrier before the store (RC5). */
-    avant_barrier_slot(a->buf, &((void **)a->buf)[i]);
+    avant_barrier_slot_young(a->buf, &((void **)a->buf)[i]);
     ((void **)a->buf)[i] = elem;
   }
 }

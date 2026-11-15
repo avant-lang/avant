@@ -1066,12 +1066,6 @@ typedef enum GcProofWhy {
 typedef struct GcProof {
   /* A GcProofWhy: PROOF_INTACT while the proof may still hold. */
   uint8_t broken;
-  /* The barrier's slow call logs: the proof is intact, or the verifier
-   * is on (its oracle reads the log whatever the proof says) in a program
-   * with one thread and a young generation. One byte, so the slow call
-   * of a program whose proof is broken, the usual state between two full
-   * collections, pays one load and one test. */
-  uint8_t logging;
   /* The bytes the last full collection found live: the old objects'. */
   uint64_t old_live;
   /* The log: pairs of words, a reference word's address and the
@@ -1928,9 +1922,9 @@ const char *gc_proof_why_name(GcProofWhy why);
  * heap and not young, before the store it precedes: the first one since
  * the last full collection logs OBJ's references (gc_proof_log). Nothing
  * is logged once the proof is broken, except under AVANT_GC_VERIFY=1
- * (GcProof.logging). */
+ * (avant_gc_proof_logging, avant_gc.h). */
 static inline void gc_proof_store(void *obj, AvantHeader *h) {
-  if (__builtin_expect(gc_heap.proof.logging, 0) && !(h->flags & AVANT_FLAG_LOGGED)) {
+  if (__builtin_expect(avant_gc_proof_logging, 0) && !(h->flags & AVANT_FLAG_LOGGED)) {
     gc_proof_log(obj, h);
   }
 }
