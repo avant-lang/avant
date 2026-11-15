@@ -37,6 +37,11 @@ pub fn (lw: MirLower) lower_body(body: Array(Stmt)) {
         lw.lower_stmt(st)
         return
       }
+      if e = st.expr, ast_is_exit_call(e) {
+        // exit ends the program: a statement, and nothing is returned.
+        lw.lower_stmt(st)
+        return
+      }
       if e = st.expr {
         lw.cov_stmt(st)
         v = lw.lower_ret_value(e)
@@ -660,7 +665,7 @@ pub fn (lw: MirLower) lower_arm(body: Array(Stmt), dest: Int, sw: Expr) {
       return
     }
     st = body[i]
-    if i == body.size - 1 && st.kind == st_expr() {
+    if i == body.size - 1 && st.kind == st_expr() && !ast_stmt_exits(st) {
       if e = st.expr {
         v = lw.lower_expr(e)
         if t = e.ty, want = sw.ty {

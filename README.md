@@ -1987,7 +1987,7 @@ _ = parse_age("12")     // computed, then dropped: visibly
 
 ### Reading the error itself
 
-`?`, `??` and a plain `else` tell you *that* something failed. To reach the error value, to print its message or read its fields, name it with `else e`. After an assignment, `else e { ... }` is a guard: its block runs on a failure with `e` holding it, and it must leave (`return`, `break` or `continue`), so after it the variable holds the success and the code goes on without nesting. After an if-assign, `else e` names the failure for the `else` block, which need not leave.
+`?`, `??` and a plain `else` tell you *that* something failed. To reach the error value, to print its message or read its fields, name it with `else e`. After an assignment, `else e { ... }` is a guard: its block runs on a failure with `e` holding it, and it must leave (`return`, `break`, `continue` or [`exit`](#output)), so after it the variable holds the success and the code goes on without nesting. After an if-assign, `else e` names the failure for the `else` block, which need not leave.
 
 <!-- check: run pre=parse_error_decl -->
 ```avant
@@ -3216,7 +3216,7 @@ fn main {
 
 - `x` is anything interpolation prints, and the writers print exactly what `"${x}"` prints ([Printing](#printing)): a number, a `Bool`, a `String` (every byte of it, a NUL included), a type with its own `to_s`, an enum, an error, a union of those. An optional is opened first: `puts(x)` of an `Int?` is a compile error that names the ways to open it.
 - stdout is buffered and written in large pieces; stderr is not. A write to stderr first sends what stdout holds, so the two keep their order when they go to one place (a terminal, `2>&1`). A failed write to either stops the program with a message, status 1.
-- `exit(status)` writes what stdout still holds, removes the program's temporary directory and ends the process, whichever task calls it. The status is an `Int` from 0 to 255; any other value traps at the call (`exit status 256 out of range (0..255)`). Without it, the exit status is `main`'s result.
+- `exit(status)` writes what stdout still holds, removes the program's temporary directory and ends the process, whichever task calls it. The status is an `Int` from 0 to 255; any other value traps at the call (`exit status 256 out of range (0..255)`). `exit` never returns, so a block that ends with it leaves, as one that ends with `return`: it may end an [`else e` guard](#reading-the-error-itself), a function with a result, or an arm of a `switch` that gives a value. Without it, the exit status is `main`'s result.
 - `puts_u(n)` prints an integer as the unsigned number its bits spell.
 
 ### Input

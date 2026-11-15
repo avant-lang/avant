@@ -959,6 +959,29 @@ pub fn ast_is_ctor_call(e: Expr): Bool {
   e.callee == "new"
 }
 
+// Whether e is a call of the builtin exit(status), which never returns:
+// a block whose last statement it is leaves, as one ending in return.
+// A local function value named exit is called indirectly and is not it.
+pub fn ast_is_exit_call(e: Expr): Bool {
+  if e.kind != ex_call() || e.callee != "exit" || e.indirect || e.args.size != 1 {
+    return false
+  }
+  if r = e.receiver {
+    return false
+  }
+  true
+}
+
+// Whether the statement is an exit(status) call (ast_is_exit_call).
+pub fn ast_stmt_exits(st: Stmt): Bool {
+  if st.kind == st_expr() {
+    if e = st.expr {
+      return ast_is_exit_call(e)
+    }
+  }
+  false
+}
+
 pub fn clone_expr(e: Expr): Expr {
   out = Expr.new(e.kind, e.loc)
   out.ident = e.ident

@@ -39,7 +39,7 @@ fn accepted(tag: String, src: String, out: String): RCase {
 fn cases: Array(RCase) {
   xs: Array(RCase) = []
   pre = "class Bad: Error {\n  pub message: String = \"bad\"\n}\nclass Worse: Error {\n  pub message: String = \"worse\"\n}\nfn f(s: String): Int | Bad {\n  n = s.to_i ?? return Bad.new\n  n\n}\nfn g(s: String): Int | Bad | Worse | Nil {\n  if s == \"w\" {\n    return Worse.new\n  }\n  if s == \"\" {\n    return nil\n  }\n  f(s)\n}\n"
-  xs.push(refused("guard-must-leave", pre + "fn main {\n  n = f(\"a\") else e {\n    puts(e.message)\n  }\n  puts(n)\n}\n", "the block of else e must leave (return, break or continue)", "21:14"))
+  xs.push(refused("guard-must-leave", pre + "fn main {\n  n = f(\"a\") else e {\n    puts(e.message)\n  }\n  puts(n)\n}\n", "the block of else e must leave (return, break, continue or exit)", "21:14"))
   xs.push(refused("guard-leaves-one-branch", pre + "fn main {\n  for s in [\"1\"] {\n    n = f(s) else e {\n      if e.message == \"bad\" {\n        continue\n      }\n    }\n    puts(n)\n  }\n}\n", "the block of else e must leave", "22:14"))
   xs.push(refused("guard-not-union", pre + "fn main {\n  n = 5 else e {\n    return\n  }\n  puts(n)\n}\n", "else e needs a value that can fail (T? or T | E with E marked Error), got Int", "21:9"))
   xs.push(refused("guard-no-failure", pre + "fn h(x: Int | String): Int {\n  n = x else e {\n    return 0\n  }\n  n\n}\nfn main {\n  puts(h(1))\n}\n", "else e on Int | String: it has no failure member", "21:9"))

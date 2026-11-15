@@ -110,6 +110,18 @@ fn exit_cases(xs: Array(IoCase)) {
   xs.push(with_status(accepted("exit-in-callee", "fn work(n: Int): Int {\n  if n == 3 {\n    exit(9)\n  }\n  n\n}\nfn main {\n  for i in 0..5 {\n    puts(work(i))\n  }\n}\n", "0\n1\n2\n"), 9))
 }
 
+// A block that ends with exit leaves: an else guard, a function's end,
+// an if/else at a function's end, a switch arm.
+fn leave_cases(xs: Array(IoCase)) {
+  bad = "class Bad: Error {\n  pub message: String = \"bad\"\n}\nfn f(s: String): Int | Bad {\n  if n = s.to_i {\n    return n\n  }\n  Bad.new\n}\n"
+  xs.push(with_status(with_err(accepted("exit-guard", bad + "fn main {\n  for s in [\"4\", \"x\", \"5\"] {\n    n = f(s) else e {\n      eputs(\"stop: \${e.message}\")\n      exit(2)\n    }\n    puts(n)\n  }\n}\n", "4\n"), "stop: bad\n"), 2))
+  xs.push(with_status(with_err(accepted("exit-fn-end", "fn die(why: String): Int {\n  eputs(why)\n  exit(4)\n}\nfn main {\n  puts(1)\n  puts(die(\"gone\"))\n}\n", "1\n"), "gone\n"), 4))
+  xs.push(with_status(accepted("exit-if-end", "fn pick(n: Int): Int {\n  if n > 0 {\n    return n\n  } else {\n    exit(6)\n  }\n}\nfn main {\n  puts(pick(2))\n  puts(pick(0))\n}\n", "2\n"), 6))
+  xs.push(with_status(accepted("exit-switch-arm", "enum Tok { a, b }\nfn code(t: Tok): Int {\n  switch t {\n    case a { 10 }\n    case b { exit(7) }\n  }\n}\nfn main {\n  puts(code(Tok.a))\n  puts(code(Tok.b))\n}\n", "10\n"), 7))
+  xs.push(refused("exit-guard-other-call", bad + "fn main {\n  n = f(\"x\") else e {\n    puts(e.message)\n  }\n  puts(n)\n}\n", "the block of else e must leave", "11:14"))
+  xs.push(refused("exit-local-fn-value", bad + "fn main {\n  exit = { |c: Int| puts(c) }\n  n = f(\"x\") else e {\n    exit(1)\n  }\n  puts(n)\n}\n", "the block of else e must leave", "12:14"))
+}
+
 fn input_cases(xs: Array(IoCase)) {
   loop = "fn main {\n  while true {\n    line = read_line() else e {\n      if err = e {\n        eputs(err.message)\n        exit(1)\n      }\n      break\n    }\n    puts(\"[\${line}]\")\n  }\n  puts(\"end\")\n}\n"
   xs.push(with_input(accepted("read-while", "fn main {\n  n = 0\n  while line = read_line() {\n    n += 1\n    print(line)\n  }\n  puts(n)\n}\n", "abc3\n"), "a\nb\nc\n"))
@@ -132,6 +144,7 @@ fn cases: Array(IoCase) {
   writer_cases(xs)
   empty_line_cases(xs)
   exit_cases(xs)
+  leave_cases(xs)
   input_cases(xs)
   xs
 }

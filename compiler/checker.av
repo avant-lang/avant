@@ -727,7 +727,7 @@ pub class Checker {
       return true
     }
     last = body[body.size - 1]
-    if last.kind == st_return() {
+    if last.kind == st_return() || ast_stmt_exits(last) {
       return false
     }
     if last.kind == st_hold() || last.kind == st_pin() {
@@ -1059,6 +1059,8 @@ pub class Checker {
           } else if got.is_void && tail_switch && block_leaves([stmt]) {
             // Every arm leaves (O715): the switch gives no value and
             // needs none.
+          } else if got.is_void && ast_is_exit_call(expr) {
+            // exit never returns: nothing follows it, so no value does.
           } else {
             if !ty_assignable(got, expected) {
               fail(stmt.loc, "last expression is ${got.show}, expected ${expected.show}")
@@ -1881,7 +1883,7 @@ pub class Checker {
       check_body(guard.else_body, self.return_type, false)
       self.pop_scope
       if !self.has_err && !block_leaves(guard.else_body) {
-        fail(guard.loc, "the block of else ${guard.ident} must leave (return, break or continue): after the guard the value is the success, so a failure cannot go on")
+        fail(guard.loc, "the block of else ${guard.ident} must leave (return, break, continue or exit): after the guard the value is the success, so a failure cannot go on")
       }
     }
     guard.ty = payload
@@ -1889,7 +1891,8 @@ pub class Checker {
   }
 
   // Whether a block always leaves its function or loop iteration: its
-  // last statement is return, break or continue, an if/else whose two
+  // last statement is return, break, continue or exit(status) (which
+  // ends the program, ast_is_exit_call), an if/else whose two
   // branches leave, a gc.hold or pin block that leaves, or a switch
   // statement whose every arm leaves (with an else, or over an enum or
   // a union, whose switch without else the checker has made cover every
@@ -1900,7 +1903,7 @@ pub class Checker {
     }
     last = body[body.size - 1]
     k = last.kind
-    if k == st_return() || k == st_break() || k == st_continue() {
+    if k == st_return() || k == st_break() || k == st_continue() || ast_stmt_exits(last) {
       return true
     }
     if k == st_hold() || k == st_pin() {
@@ -6044,7 +6047,7 @@ pub class Checker {
     while i < body.size {
       stmt = body[i]
       if i == body.size - 1 {
-        if stmt.kind == st_expr() {
+        if stmt.kind == st_expr() && !ast_stmt_exits(stmt) {
           if e = stmt.expr {
             use_want = false
             use_ty = t_int()
@@ -6232,13 +6235,14 @@ pub fn clayout_holds_ref(t: Ty): Bool {
   false
 }
 
-// Whether a block's last statement leaves it (return, break, continue).
+// Whether a block's last statement leaves it (return, break, continue,
+// exit).
 pub fn arm_leaves(body: Array(Stmt)): Bool {
   if body.size == 0 {
     return false
   }
   k = body[body.size - 1].kind
-  k == st_return() || k == st_break() || k == st_continue()
+  k == st_return() || k == st_break() || k == st_continue() || ast_stmt_exits(body[body.size - 1])
 }
 
 pub fn lead_spelling(lead: Int): String {
