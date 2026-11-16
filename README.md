@@ -2166,15 +2166,15 @@ fn main {
 ```
 
 - `fn(): Int` takes nothing; `fn(Int, String): Bool` takes two arguments; `fn(Int)` returns nothing.
-- A function's name followed by a block is a call with that block as its only argument, bare or qualified: `twice { |n| n + 1 }` is `twice() { |n| n + 1 }`, as `util.twice { |n| n + 1 }` is. The block starts on the line where the call ends: a lambda on the next line is a value of its own. In the head of an `if`, `while` or `switch` a block after the condition is taken as the call's only when it starts with its parameters (`{ |n|`).
-- A bare function name in a value position is that function (`f: fn(Int): Int = double`). A function of another module is named as at a call, qualified: `f = util.double`. When a name means several functions (overloads, or two imported modules' functions of one name), the expected `fn` type picks one, or the module's name does.
+- A function's name followed by a block, bare or qualified, is a call with that block as its only argument: `twice { |n| n + 1 }` is `twice() { |n| n + 1 }`; so is `util.twice { |n| n + 1 }`. The block starts on the line where the call ends: a lambda on the next line is a value of its own. In the head of an `if`, `while` or `switch`, a block after the condition is the call's only when it starts with its parameters (`{ |n|`).
+- A bare function name in a value position is that function (`f: fn(Int): Int = double`); another module's is qualified, as at a call (`f = util.double`). When a name means several functions (overloads, or two imported modules' of one name), the expected `fn` type or the module's name picks one.
 - The type is invariant: `fn(Int): Int` is not `fn(Int): Int?`.
-- An optional function value takes grouping parentheses: `(fn(Int): Int)?` is a function or `nil`, where `fn(Int): Int?` returns an `Int?`. It is opened like any optional (`if f = cb { f(1) }`, `cb ?? double`), and it is the function value itself, `nil` a null code word: no tag and no more room than a function value.
+- An optional function value takes grouping parentheses: `(fn(Int): Int)?` is a function or `nil`, where `fn(Int): Int?` returns an `Int?`. It is opened like any optional (`if f = cb { f(1) }`, `cb ?? double`) and takes no more room than a function value (`nil` is a null code word).
 - There is no `==` on function values, and methods are not values.
 
 ### Lambdas
 
-`{ |x| x + 1 }` is a lambda; its last expression is its result, a final `if`/`else` whose branches end in values included, whether the result type is expected or inferred (`apply(2) { |x| if x > 1 { x * 10 } else { 0 } }`); branches that end in statements keep the `if` a statement. A parameter's type may be written inside the pipes (`{ |a: Int, b: Int| a * 10 + b }`) and is optional when the expected `fn` type already gives it; a lambda whose parameter type is still unknown is an error.
+`{ |x| x + 1 }` is a lambda; its last expression is its result, a final `if`/`else` whose branches end in values included, whether the result type is expected or inferred (`apply(2) { |x| if x > 1 { x * 10 } else { 0 } }`); branches ending in statements keep the `if` a statement. A parameter's type may be written in the pipes (`{ |a: Int, b: Int| a * 10 + b }`), optional when the expected `fn` type gives it; a parameter type left unknown is an error.
 
 A lambda with no parameters is `{ || 1 }`.
 
@@ -2208,7 +2208,7 @@ fn main {
 
 ### Capture
 
-A lambda captures the variables it uses by reference: the variable lives in a cell both sides share, so an assignment on either side is visible to the other.
+A lambda captures the variables it uses by reference, in a cell both sides share: an assignment on either side is seen by the other.
 
 ```avant
 fn counter(start: Int): fn(): Int {
@@ -2232,8 +2232,8 @@ fn main {
 }
 ```
 
-- A lambda created in a `for` loop sees the loop's one variable, not a copy per iteration: three lambdas made in `for i in 0..3` all read 3 afterwards. Copy the variable into a new name inside the body to keep the value (`k = i`, then capture `k`); a name first assigned inside a loop body is new at each iteration. A per-iteration loop variable is decided and not built.
-- A lambda inside a method may use `self`, and so its fields and methods bare. The receiver is captured by value, because `self` is never reassigned: a class receiver is its reference (the lambda sees later changes to the object); a struct receiver is a copy, and a write through `self` inside such a lambda is an error, since it would change only the copy.
+- A lambda made in a `for` loop sees the loop's one variable, not a per-iteration copy: three lambdas made in `for i in 0..3` all read 3 afterwards. To keep the value, copy it into a new name in the body (`k = i`, then capture `k`): a name first assigned in a loop body is new at each iteration. A per-iteration loop variable is decided, not built.
+- A lambda in a method may use `self`, and so its fields and methods bare. The receiver is captured by value (`self` is never reassigned): a class receiver is its reference, so the lambda sees later changes to the object; a struct receiver is a copy, and a write through `self` in such a lambda is an error.
 
 ```avant
 class Scale {
@@ -2254,7 +2254,7 @@ fn main {
 
 ### Builtin blocks are loops
 
-The blocks of the builtins (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `spawn`, `Mutex.with`, `Array(T).new(n) { ... }`) are not function values: the compiler inlines them. The difference shows in what `return` and `break` mean.
+The builtins' blocks (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `spawn`, `Mutex.with`, `Array(T).new(n) { ... }`) are not function values but inlined, which changes what `return` and `break` mean.
 
 | Inside | `return` | `break` |
 | --- | --- | --- |
@@ -2290,7 +2290,7 @@ fn main {
 }
 ```
 
-`return x` inside a builtin's block leaves the enclosing function with `x`, checked against that function's result type, as it would be outside the block. A block whose value is used (`any`, `all`, `sort`, `Array(T).new(n) { ... }`) may end with an `if` with an `else`, whose branches give the value:
+`return x` in a builtin's block leaves the enclosing function with `x`, checked against its result type, as outside the block. A block whose value is used (`any`, `all`, `sort`, `Array(T).new(n) { ... }`) may end with an `if`/`else` whose branches give the value:
 
 ```avant
 fn main {
@@ -2308,7 +2308,7 @@ fn main {
 
 ## Generics
 
-A function or a type can take type parameters. Each use with concrete types is compiled as its own specialized code: no boxing, no dispatch at run time.
+A function or type can take type parameters; each use with concrete types compiles to its own specialized code, with no boxing and no run-time dispatch.
 
 ```avant
 struct Pair(A, B) {
@@ -2346,7 +2346,7 @@ fn main {
 
 Any other unknown name is an error, so a misspelt type is caught where it is written: `fn f(x: Strng)` reports ``unknown type Strng (did you mean `String`?)``.
 
-A type parameter may be a member of a union: `fn first_ok(xs: Array(T | ParseError)): T?` takes an `Array(Int | ParseError)` with `T` as `Int`, and `T?` takes an `Int?`. The one parameter left unbound takes the argument's other members. Two of them in one union (`r: T | E`) split `Int | ParseError` in two ways; a bound (`r: T | E: Error`: `E` takes the members marked `Error`, [Bounds](#bounds)), another argument (`fn or_else(r: T | E, d: T): T`) or a declared result (`e: ParseError? = failure(r)`) fixes one, and otherwise the call says it cannot infer them.
+A type parameter may be a union member: `fn first_ok(xs: Array(T | ParseError)): T?` takes an `Array(Int | ParseError)` with `T` as `Int` (and `T?` takes an `Int?`); the one unbound parameter takes the argument's other members. Two in one union (`r: T | E`) could split `Int | ParseError` two ways: a bound (`r: T | E: Error`, `E` taking the members marked `Error`: [Bounds](#bounds)), another argument (`fn or_else(r: T | E, d: T): T`) or a declared result (`e: ParseError? = failure(r)`) fixes one; otherwise the call says it cannot infer them.
 
 ### Generic types
 
@@ -2388,11 +2388,11 @@ fn main {
 - A parameter may take a [bound](#bounds), as a function's does: `class Top(T: Ranked)` can only be used with a type that opted into `Ranked`, and `Top(Int)` is an error where it is written, not in a method far away.
 - A generic class may name itself (`next: Link(T)?`): a class is a pointer. A struct is copied inline, so a struct that contains itself, generic or not, is an error.
 - `Array`, `Hash`, `Ptr` and `JoinHandle` are built in; they are not generic types you could declare.
-- A generic type or function imported from another module takes the types of the module that uses it, `pub` or private: with `Box` imported, `Box(Point)` and `Box.new(Point { ... })` work for a `Point` declared here. A type argument is a name like any other where it is written: a private type of another module is unknown there, also as an element type (`Array(Hidden)`) or inside a union or a function type.
+- An imported generic type or function takes the using module's types, `pub` or private: with `Box` imported, `Box(Point)` and `Box.new(Point { ... })` work for a `Point` declared here. A type argument is a name like any other where written: another module's private type is unknown there, also as an element type (`Array(Hidden)`) or inside a union or function type.
 
 ## Interfaces
 
-An `interface` is a set of method signatures, without bodies, that a type opts into by name. A generic function can then require it. An interface is a compile-time contract, not a value: there is no `Array(Show)`, no vtable, no dynamic dispatch.
+An `interface` is a set of method signatures without bodies, which a type opts into by name and a generic function can require. It is a compile-time contract, not a value: no `Array(Show)`, no vtable, no dynamic dispatch.
 
 ```avant
 interface Show {
@@ -2437,7 +2437,7 @@ A struct, a class, or a `Ptr` to a C layout opts in by name; conformance is neve
 
 ### Bounds
 
-`T: Show` in a signature is a bound: the call compiles only for a type that opted in. The compiler copies the function for that concrete type and emits an ordinary method call. Two bounds are written `T: Show + Eq(T)`; an interface may take type parameters (`interface Eq(T)`).
+`T: Show` in a signature is a bound: the call compiles only for a type that opted in, and the function is copied for that type with an ordinary method call. Two bounds are written `T: Show + Eq(T)`; an interface may take type parameters (`interface Eq(T)`).
 
 - The bound is written where the parameter is: after a parameter's type (`v: T: Show`), inside another type (`xs: Array(T: Ranked)`), or on a generic type's parameters (`class Top(T: Ranked)`). After a union it bounds the last member: `r: T | E: Error`.
 - `Error` is a bound too: `E: Error` takes a type marked `Error`. In a union it settles the split: `fn failure(r: T | E: Error): E?` called with an `Int | ParseError` takes `E` as `ParseError` and `T` as `Int`, with no declared result.
@@ -2508,7 +2508,7 @@ fn main {
 }
 ```
 
-The compiler takes one root file (`avant run main.av`) and follows its imports; everything compiles as one program. There is no `module` line, no header, no build file.
+The compiler takes one root file (`avant run main.av`) and follows its imports, compiling one program. There is no `module` line, header or build file.
 
 ### Import paths
 
@@ -2521,20 +2521,20 @@ The compiler looks for the file, in order:
 3. under the nearest `avant.toml` above that file (so a file in `tests/math/` can import the project's modules);
 4. in each fetched dependency ([Packages](#packages)).
 
-The same path found in two of those places is one file; two *different* files for one import are an error, and so is an import cycle, across directories included. The first segment `std` is reserved for the [standard library](#standard-library): `import std.json` loads the bundled module, and a project file cannot take that name.
+The same path found in two places is one file; two *different* files for one import are an error, as is an import cycle, across directories too. The first segment `std` is reserved for the [standard library](#standard-library): `import std.json` loads the bundled module; a project file cannot take that name.
 
 ### Visibility
 
 Names are private to their module unless marked `pub`: functions, types, constants, **methods and fields** alike.
 
-- Outside its module a private field cannot be read, written, or named in a literal. A type with private fields is therefore built by a function of its own module, which keeps its invariants; a read-only view is a `pub fn`, which reads like a field (`account.balance`).
+- Outside its module a private field cannot be read, written or named in a literal, so a type with private fields is built by a function of its module, which keeps its invariants; a read-only view is a `pub fn` (`account.balance()`).
 - A test or another module sees `pub` names only.
 - `fn main` is the entry point and needs no `pub`.
-- The fields of a C layout are C's, and stay visible wherever the layout is. A [field walk](#the-field-walk) written in another module than the type's sees only its `pub` fields.
+- A C layout's fields are C's, visible wherever the layout is. A [field walk](#the-field-walk) in another module than the type's sees only its `pub` fields.
 
 ### Name clashes
 
-Names belong to their module, so two modules may publish the same name. Only a *use* that could mean either is an error, reported at that use, and qualifying it with the module name says which.
+Two modules may publish the same name. Only a *use* that could mean either is an error, reported there; qualify it with the module name.
 
 <!-- check: file project=clash file=alpha.av -->
 ```avant
@@ -2563,11 +2563,11 @@ fn main {
 }
 ```
 
-A bare use that could mean either is refused, and nothing wins silently, not even the module's own name over an imported one:
+Nothing wins silently, not even the module's own name over an imported one:
 
 - **The same function in two modules.** A bare `value()` reports `ambiguous call to value: alpha.value and beta.value both match; write alpha.value() or beta.value()`.
 - **A type in one module, a function of the same name in another.** A bare `Value` where a type is expected reports `Value is a type of alpha and a function of beta: write alpha.Value or beta.Value`.
-- **The same type in two modules.** A bare `Token` reports `Token is a type of both alpha and beta: write alpha.Token or beta.Token`. A module that sees only one of them (it imports one) names it bare. Generic types follow the same rule: two modules may each declare `Cell(T)`, with methods of the same names, and `alpha.Cell(Int)` names one of them.
+- **The same type in two modules.** A bare `Token` reports `Token is a type of both alpha and beta: write alpha.Token or beta.Token`; a module importing only one names it bare. Generic types alike: two modules may each declare `Cell(T)` with same-named methods, and `alpha.Cell(Int)` names one.
 - **The same constant in two modules.** A bare `width` reports `width is a constant of both alpha and beta: write alpha.width or beta.width`.
 
 Three more rules:
@@ -2578,7 +2578,7 @@ Three more rules:
 
 ## Packages
 
-A package is a git repository of `.av` files. A project lists its dependencies in `avant.toml`, and `avant fetch` downloads them into `deps/`. There is no central registry: a dependency is its git URL, and `avant.lock` records the exact commit.
+A package is a git repository of `.av` files. A project lists its dependencies in `avant.toml`; `avant fetch` downloads them into `deps/`. There is no central registry: a dependency is its git URL, and `avant.lock` records the exact commit.
 
 <!-- check: file project=pkg file=avant.toml -->
 ```toml
@@ -2619,11 +2619,11 @@ fn main {
 }
 ```
 
-The manifest is tooling only. Compilation still starts at one root file and follows `import`, and a dependency is source that compiles together with your program.
+The manifest is tooling only: compilation starts at one root file and follows `import`, and a dependency is source compiled with your program.
 
 ### The manifest
 
-`avant.toml` sits beside your root file. `[package]` names your project; `[dependencies]` names what to fetch. Each dependency gives a `git` URL (anything `git clone` can read, a local path included) and a `rev`: a full commit SHA, a tag, or a branch. Pinning a SHA or a tag is the reproducible choice. A dependency may also be its own section:
+`avant.toml` sits beside your root file. `[package]` names the project, `[dependencies]` what to fetch: each a `git` URL (anything `git clone` reads, a local path included) and a `rev`, a full commit SHA, a tag or a branch (a SHA or tag is reproducible). A dependency may also be its own section:
 
 ```toml
 [dependencies.greeter]
@@ -2631,7 +2631,7 @@ git = "https://github.com/example/greeter.git"
 rev = "v1.0.0"
 ```
 
-A dependency with no `git`, a duplicate dependency, or an unknown key is an error with the file and line named. So is a bare version string (`greeter = "1.0"`): there is no registry to resolve it against.
+A dependency with no `git`, a duplicate, an unknown key, or a bare version string (`greeter = "1.0"`: no registry resolves it) is an error naming the file and line.
 
 ### Fetch and lock
 
@@ -2661,16 +2661,16 @@ name = "greeter"
 source = "git+https://github.com/example/greeter.git#58a9ab1a2db9803a031edf34adb9e16c74f9d126"
 ```
 
-- **Commit** `avant.toml` and `avant.lock`. **Do not commit** `deps/`: the lockfile already records exactly what belongs there, and a fresh clone is built with `avant fetch`, then `avant run main.av`.
-- A plain `avant fetch` is reproducible: when the lockfile records a commit for a dependency, fetch checks out that commit again, even if the branch or tag has since moved.
-- If any dependency cannot be cloned or checked out, fetch prints git's output, exits non-zero and writes no lockfile, so a failed fetch never leaves a half-recorded set of versions.
+- **Commit** `avant.toml` and `avant.lock`; **do not commit** `deps/`, which the lockfile records: a fresh clone builds with `avant fetch`, then `avant run main.av`.
+- A plain `avant fetch` is reproducible: a dependency whose commit the lockfile records gets that commit, even if its branch or tag moved.
+- If any dependency cannot be cloned or checked out, fetch prints git's output, exits non-zero and writes no lockfile.
 - `avant fetch` needs `git` (it looks in `/usr/bin`, `/usr/local/bin`, then `/bin`), at fetch time only. Compiling afterwards works offline.
 
 ### Importing a dependency
 
-You import a module by its path from the dependency's repository root, not by the package's name: `greeter.av` at the root of the checkout is `import greeter`, and `http/server.av` in it is `import http.server`, with no package prefix.
+A module is imported by its path from the dependency's repository root, with no package prefix: `greeter.av` at the checkout's root is `import greeter`, `http/server.av` in it `import http.server`.
 
-A file inside a dependency uses its own checkout as its root: it may import its own modules and those of other fetched dependencies, and it never looks back into your program. Visibility is the same as for your own files. If a module cannot be found and the project has a manifest, the error says what to run:
+A file in a dependency uses its own checkout as root: it imports its own modules and other fetched dependencies', never your program's. Visibility is as for your files. When a module is not found and the project has a manifest, the error says what to run:
 
 ```text
 error[E5000]: cannot find greeter.av next to main.av or in fetched deps (run: avant fetch .)
@@ -2685,11 +2685,11 @@ error[E5000]: cannot find greeter.av next to main.av or in fetched deps (run: av
 | remove a package | delete its entry from `avant.toml`, delete `deps/NAME`, then `avant fetch` |
 | patch a package | clone it, commit the change on a branch, set its `git` to the clone and its `rev` to the branch, then `avant fetch` (a checkout fetched from another source is cloned again) |
 
-Commit the new `avant.lock` afterwards, so everyone fetches the same code. Removing the manifest entry alone is not enough: until its checkout is deleted, the compiler still finds its modules under `deps/`.
+Commit the new `avant.lock` afterwards. Removing a manifest entry alone is not enough: until its checkout is deleted, the compiler still finds its modules under `deps/`.
 
 ### Publishing a package
 
-A package is an ordinary git repository with its modules laid out from the repository root (the root is what imports resolve against) and an `avant.toml` naming it. Its own dependencies are declared the same way and fetched for its consumers. Mark the public surface `pub`; everything else stays private to the package.
+A package is an ordinary git repository, its modules laid out from the root (what imports resolve against), with an `avant.toml` naming it. Its own dependencies are declared the same way and fetched for its consumers. Mark the public surface `pub`; the rest stays private.
 
 ```toml
 [package]
@@ -2705,14 +2705,14 @@ git tag v1.0.0
 git push origin main v1.0.0
 ```
 
-Publishing is pushing to any git host. A new version is a new tag or commit; existing consumers keep the commit their lockfile records until they update.
+Publishing is pushing to any git host. A new version is a new tag or commit; consumers keep their locked commit until they update.
 
 ### Package conflicts
 
 Each clash is reported, never silently resolved.
 
-- **Two places provide the same module file.** Importing that name is a compile error that lists the files (`error[E5000]: import shared is ambiguous: ./deps/a/shared.av ./deps/b/shared.av`). There is no priority order, between dependencies or between a dependency and your own tree: a `shared.av` beside your root file clashes with a fetched one the same way, so a local copy cannot shadow a dependency. Rename one module, or stop fetching one package; to change a dependency's code, patch a clone of it ([Updating and removing](#updating-and-removing)).
-- **One dependency name reaches two commits**, for example your manifest pins one and a dependency of a dependency asks for another. Fetch stops: `avant fetch: dependency greeter resolves to two different commits (...)`. Align your manifest's pin and fetch again. One name is one version in a project.
+- **Two places provide the same module file.** Importing it is a compile error listing the files (`error[E5000]: import shared is ambiguous: ./deps/a/shared.av ./deps/b/shared.av`). There is no priority, between dependencies or with your own tree: a `shared.av` beside your root file clashes with a fetched one, so a local copy cannot shadow a dependency. Rename one module or stop fetching one package; to change a dependency's code, patch a clone ([Updating and removing](#updating-and-removing)).
+- **One dependency name reaches two commits** (your manifest pins one, a dependency of a dependency asks for another): fetch stops with `avant fetch: dependency greeter resolves to two different commits (...)`. Align your pin and fetch again: one name is one version in a project.
 - **Two modules publish the same name.** The ordinary [name clash](#name-clashes): qualify the use.
 
 ### Package limits
@@ -3217,7 +3217,7 @@ lib add {
 
 ## Macros
 
-Avant's macros are deliberately small: `quote` pastes code, `#()` splices a value into it, and one compile-time loop walks a type's fields. There is no general compile-time interpreter.
+Macros are deliberately small: `quote` pastes code, `#()` splices a value into it, and one compile-time loop walks a type's fields. There is no general compile-time interpreter.
 
 ```avant
 struct Point {
@@ -3264,11 +3264,11 @@ Names a quote introduces are hygienic: they do not capture names at the paste si
 
 ### The field walk
 
-`comptime { for f in Type.fields { quote { ... } } }` runs its quote once per field, with `f.name` and `f.type` to splice. `Type` must be a concrete, non-generic name: `for f in Box.fields` on a generic type is an error. Written in another module than the type's, the walk sees only `pub` fields, the ones its generated code could name. It is the one compile-time loop; the run-time [`for`](#for) is a different statement.
+`comptime { for f in Type.fields { quote { ... } } }` runs its quote once per field, with `f.name` and `f.type` to splice. `Type` must be a concrete, non-generic name (`for f in Box.fields` on a generic type is an error). In another module than the type's, the walk sees only `pub` fields. It is the one compile-time loop, distinct from the run-time [`for`](#for).
 
 ## Builtins
 
-The prelude is the set of names every program can use without an import. The types and their methods are covered above ([Strings](#strings), [Arrays](#arrays), [Hashes](#hashes), [Bytes and Buf](#bytes-and-buf)); what remains is a small set of free functions.
+The prelude is what every program uses without an import: the types and methods above ([Strings](#strings), [Arrays](#arrays), [Hashes](#hashes), [Bytes and Buf](#bytes-and-buf)) and a small set of free functions.
 
 | Area | Names |
 | --- | --- |
@@ -3279,7 +3279,7 @@ The prelude is the set of names every program can use without an import. The typ
 | Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
 | Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `bytes_to_str`, `buf_new` ([String operations](#string-operations)) |
 
-Runnable programs that use them live in [examples/](examples): in the repository, and in the release archive beside `avant`.
+Runnable programs using them are in [examples/](examples), in the repository and in the release archive beside `avant`.
 
 ### Output
 
@@ -3303,14 +3303,14 @@ fn main {
 }
 ```
 
-- `x` is anything interpolation prints, and the writers print exactly what `"${x}"` prints ([Printing](#printing)): a number, a `Bool`, a `String` (every byte of it, a NUL included), a type with its own `to_s`, an enum, an error, a union of those. An optional is opened first: `puts(x)` of an `Int?` is a compile error that names the ways to open it.
-- stdout is buffered and written in large pieces; stderr is not. A write to stderr first sends what stdout holds, so the two keep their order when they go to one place (a terminal, `2>&1`). A failed write to either stops the program with a message, status 1.
-- `exit(status)` writes what stdout still holds, removes the program's temporary directory and ends the process, whichever task calls it. The status is an `Int` from 0 to 255; any other value traps at the call (`exit status 256 out of range (0..255)`). `exit` never returns, so a block that ends with it leaves, as one that ends with `return`: it may end an [`else e` guard](#reading-the-error-itself), a function with a result, or an arm of a `switch` that gives a value. Without it, the exit status is `main`'s result.
+- `x` is anything interpolation prints, written exactly as `"${x}"` ([Printing](#printing)): a number, a `Bool`, a `String` (every byte, a NUL included), a type with its own `to_s`, an enum, an error, a union of those. An optional is opened first: `puts(x)` of an `Int?` is a compile error naming the ways to open it.
+- stdout is buffered, stderr is not; a write to stderr first flushes stdout, so the two keep their order in one place (a terminal, `2>&1`). A failed write to either stops the program with a message, status 1.
+- `exit(status)` flushes stdout, removes the program's temporary directory and ends the process, from whichever task. The status is an `Int` from 0 to 255; any other traps at the call (`exit status 256 out of range (0..255)`). `exit` never returns, so a block ending with it leaves, like `return`: it may end an [`else e` guard](#reading-the-error-itself), a function with a result, or a value-giving `switch` arm. Without it, the exit status is `main`'s result.
 - `puts_u(n)` prints an integer as the unsigned number its bits spell.
 
 ### Input
 
-`read_line()` reads one line of standard input: a `String` without its newline (a `\r` before the newline goes too), `nil` at the end of the input, or an `IoError` if the read fails. A last line without a newline is a line. `while line = read_line() { ... }` walks the lines and stops at the end or at an error; to tell the two apart, read the failure with a guard: it is `nil` at the end.
+`read_line()` reads one line of standard input: a `String` without its newline (nor a `\r` before it), `nil` at the end, or an `IoError` if the read fails; a last line without a newline is a line. `while line = read_line() { ... }` stops at the end or an error; a guard tells them apart (the failure is `nil` at the end).
 
 ```avant
 fn main {
@@ -3329,7 +3329,7 @@ fn main {
 }
 ```
 
-Run with an empty standard input, as here, it prints 0. `read_line() ?? ""` reads one answer and takes the end of the input as an empty one. When stdout is a terminal, `read_line` first writes what stdout holds, so a prompt printed with `print` shows before the program waits. `file_read("/dev/stdin")` reads the whole of standard input at once.
+With an empty standard input, as here, it prints 0. `read_line() ?? ""` reads one answer, the end of input as an empty one. When stdout is a terminal, `read_line` first flushes it, so a `print` prompt shows before the wait. `file_read("/dev/stdin")` reads all of standard input at once.
 
 ### Files and directories
 
@@ -3364,7 +3364,7 @@ fn main {
 }
 ```
 
-A `FileReader` reads its file a line at a time, as [`read_line`](#input) reads standard input: `r.read_line()` gives the next line without its newline, `nil` after the last one, or an `IoError`. The reader closes its file when it reaches the end or meets an error; `r.close()` stops it early (a reader dropped before its end keeps its file open until the program ends).
+A `FileReader` reads its file a line at a time, as [`read_line`](#input) reads standard input: `r.read_line()` gives the next line without its newline, `nil` after the last, or an `IoError`. It closes its file at the end or on an error; `r.close()` stops it early (a reader dropped before its end keeps its file open until the program ends).
 
 ```avant
 fn longest(path: String): Int | IoError {
@@ -3385,9 +3385,7 @@ fn main {
 }
 ```
 
-`file_read` returns the whole file; `file_open` reads it line by line without holding it all.
-
-The file system's basics make a tool's directory walk and its housekeeping:
+`file_read` returns the whole file; `file_open` reads it line by line without holding it all. A directory walk and housekeeping:
 
 ```avant
 fn remove(path: String) {
@@ -3442,7 +3440,7 @@ fn main {
 }
 ```
 
-A program name without `/` is looked up on `PATH`. `process_run` gives the child the program's own stdin, stdout and stderr; `process_output` gives it `input` and then the end of its input, and reads its stdout and stderr as they come, so neither can fill and stall it (a child that stops reading its input early is not an error). **A non-zero exit status is not an error**: it is the `Int`. A `ProcessError` is a program that could not start (`errno`, and `output` when it is the output file that could not be opened) or that a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`.
+A program name without `/` is looked up on `PATH`. `process_run` gives the child the program's own stdin, stdout and stderr; `process_output` gives it `input`, then end of input, and reads its stdout and stderr as they come, so neither fills and stalls it (a child that stops reading its input early is not an error). **A non-zero exit status is not an error**: it is the `Int`. A `ProcessError` is a program that could not start (`errno`, and `output` when the output file could not be opened) or that a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`.
 
 ### Time, hashing and math
 
@@ -3455,7 +3453,7 @@ fn main {
 }
 ```
 
-- `now_ms()` and `now_us()` read a monotonic clock as `Int` milliseconds and microseconds; they do not wrap. They measure intervals; they are not the time of day. The prelude has no time-of-day call and no `sleep` yet; C's `usleep` is one `lib` block away (`lib c { fun usleep(us: UInt32): Int32 }`).
+- `now_ms()` and `now_us()` read a monotonic clock as `Int` milliseconds and microseconds, without wrapping: intervals, not the time of day. There is no time-of-day call or `sleep` yet; C's `usleep` is one `lib` block away (`lib c { fun usleep(us: UInt32): Int32 }`).
 - `sha256(s)` is the SHA-256 of a string, as 64 hexadecimal characters.
 - `sqrt(x)`, `exp(x)` and `fmt_float(x, digits)` are in [Floats](#floats).
 - These names are also taken (they serve the benchmark programs): `checksum_str`, `checksum_f64`, `crc32_bytes`, `sha256_word0` (each an `Int32`), `wide_op`, `wide_hi` and `hash_last_key`.
