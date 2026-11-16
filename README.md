@@ -314,9 +314,9 @@ fn main: Int {
 }
 ```
 
-A status outside `0..255` traps (`avant runtime: exit status 256 out of range (0..255)`, status 1) instead of reaching the OS cut to its low byte, where 256 failures would read as success.
+A status outside `0..255` traps (`avant runtime: exit status 256 out of range (0..255)`, status 1) rather than reach the OS cut to its low byte, where 256 failures would read as success.
 
-An entry point may also fail: declared `fn main: Void | E` or `fn main: Int | E`, with every `E` marked `Error` ([Errors](#errors)), a failure it returns (or passes up with `?`) prints its text, `"${e}"`, and a newline to stderr after everything written to stdout, and the process exits with status 1. Success exits 0, or with the `Int`.
+An entry point may also fail: declared `fn main: Void | E` or `fn main: Int | E`, every `E` marked `Error` ([Errors](#errors)), a failure it returns (or passes up with `?`) prints its text, `"${e}"`, and a newline to stderr after all stdout, and exits with status 1. Success exits 0, or with the `Int`.
 
 <!-- check: run status=1 -->
 ```avant
@@ -362,11 +362,11 @@ fn main {
 - A declaration may state its type: `xs: Array(Int) = []`, `small: Int32 = 5`. It must when the value alone does not say it, as an empty `[]` does not; an argument `[]` takes its parameter's type (`count([])` with `xs: Array(Int)`).
 - `name : Type` is accepted; the [formatter](#formatter) prints `name: Type`.
 - `_ = expr` computes a value and drops it on purpose; `_` binds nothing and cannot be read.
-- A module has no variables, on purpose: state lives in a function's locals and is passed in values, so no two tasks can share a global by accident. A value that never changes is a [constant](#constants); `count = 0` at module level is a compile error that says so.
+- A module has no variables: state lives in locals and is passed in values, so no two tasks share a global by accident. A value that never changes is a [constant](#constants); `count = 0` at module level is a compile error that says so.
 
 ### Constants
 
-`const` names a value at module level; `pub const` exports it, as `pub fn` does. The name is snake_case, as a function's (a capital means a type). The value is a scalar (an integer, a `Float64`, a `Bool` or a [character literal](#literals)), computed when the program compiles from literals, other constants and operators, and each use is that value written in place, so a constant takes its type from where it stands, as a literal does.
+`const` names a value at module level; `pub const` exports it, as `pub fn` does. The name is snake_case, like a function's (a capital means a type). The value is a scalar (an integer, a `Float64`, a `Bool` or a [character literal](#literals)) computed at compile time from literals, other constants and operators; each use is that value written in place, so it takes its type from where it stands, as a literal does.
 
 ```avant
 const max_depth = 64
@@ -387,15 +387,18 @@ fn main {
 }
 ```
 
-- An overflow, a division by zero or a shift outside the width while computing a constant is a compile error at the constant, and so is a value that is not a scalar: a `String`, an array or a call (constant strings and tables are not built yet). A constant used where its value does not fit is the literal's error, naming the constant (`the constant big = 3000000000 does not fit in Int32`).
+- An overflow, a division by zero or a shift outside the width while computing a constant is a compile error at the constant, and so is a non-scalar value: a `String`, an array or a call (constant strings and tables are not built yet). A constant used where its value does not fit gets the literal's error, naming the constant (`the constant big = 3000000000 does not fit in Int32`).
 - Constants may use each other in any order; one that refers to itself is an error.
-- A constant may label a `switch` arm, or bound a range label, as its value written there would (`case max_depth`, `case lo..=hi`); a name that is not a constant is an error there, since a label is never a variable.
+- A constant may label a `switch` arm or bound a range label (`case max_depth`, `case lo..=hi`); any other name there is an error, since a label is never a variable.
 - A constant cannot be assigned (`max_depth = 3`, `max_depth += 1` and `for max_depth in ...` are compile errors), and there is no `const` inside a function: a local is `name = value`. A parameter or a binding (`if v = ...`, `case n: Int`, a block's `|x|`) may take a constant's name inside its body.
 - A bare name is, in order: a local or parameter, a field of the receiver, a method of the receiver, a constant, a function. Another module's `pub const` is reached bare or as `module.name`; two constants of one name that a module sees (its own included) are ambiguous: qualify the one you mean ([Name clashes](#name-clashes)).
 
 ### Functions
 
-`fn name(params): Result { body }`. An omitted result type means the function returns nothing (`Void`); result types are never inferred. A function without parameters is declared without parentheses, in one spelling (`fn answer: Int`; `fn answer(): Int` is refused with that hint), and so is a C function in a `lib` block (`fun avant_gc_collect`). It is still called with them (`answer()`): a bare `answer` is the function as a value. **Every method call takes parentheses too**, a method without arguments and a builtin one included (`q.sum()`, `s.strip()`, `xs.sort()`, `Point.new()`): a name without them after a dot is a field, or one of the two builtin read-only properties, `size` (of a `String`, `Bytes`, `Buf`, `Array` or `Hash`) and `bytes` (of a `String`, the same bytes seen as `Bytes`), which take none. `xs.sort()` says `a method call takes parentheses: write sort()`, and `s.size()` says `size is read without parentheses: write .size`, so a mutation never hides behind what reads as a field. `avant format --calls FILE...` writes the parentheses into a program written without them ([Formatter](#formatter)).
+`fn name(params): Result { body }`. An omitted result type means the function returns nothing (`Void`); result types are never inferred.
+
+- A function without parameters is declared without parentheses, in one spelling (`fn answer: Int`; `fn answer(): Int` is refused with that hint), and so is a C function in a `lib` block (`fun avant_gc_collect`). It is called with them (`answer()`): a bare `answer` is the function as a value.
+- **Every method call takes parentheses**, argumentless and builtin ones included (`q.sum()`, `s.strip()`, `xs.sort()`, `Point.new()`). A name without them after a dot is a field, or one of the two builtin read-only properties, which take none: `size` (of a `String`, `Bytes`, `Buf`, `Array` or `Hash`) and `bytes` (a `String`'s bytes as `Bytes`). `xs.sort` says `a method call takes parentheses: write sort()`, `s.size()` says `size is read without parentheses: write .size`: a mutation never hides behind what reads as a field. `avant format --calls FILE...` adds the parentheses to a program written without them ([Formatter](#formatter)).
 
 ```avant
 fn area(w: Int, h: Int): Int {
@@ -425,7 +428,7 @@ fn main {
 ```
 
 - The last expression is the result, a final `if`/`else` or `switch` included; `return` leaves early.
-- In a function that returns nothing, the value of a call at the end is dropped, as it is anywhere else in the body. (An error is never dropped silently: [Errors cannot be dropped](#errors-cannot-be-dropped).) A line that only computes a value, with no call in it (`x + 1`, a name, a literal, a field read), is an error anywhere, since nothing uses it; at the end of a function with no result type the error says to declare one (`fn two { 2 }` is refused: write `fn two: Int { 2 }`). `_ = x + 1` drops a value on purpose.
+- In a function that returns nothing, a call's value at the end is dropped, as anywhere in the body (an error never silently: [Errors cannot be dropped](#errors-cannot-be-dropped)). A line that only computes a value, with no call (`x + 1`, a name, a literal, a field read), is an error anywhere; at the end of a function with no result type the error says to declare one (`fn two { 2 }` is refused: write `fn two: Int { 2 }`). `_ = x + 1` drops a value on purpose.
 - Parameters may have trailing defaults (`times: Int = 1`); functions may be [overloaded](#overloads-and-defaults) and [generic](#generic-functions).
 - A parameter with a default may be named at the call, after the positional arguments: `pad("ab", fill: "*")` ([Overloads and defaults](#overloads-and-defaults)).
 - There are no variadics and no multiple results; return a struct.
@@ -477,7 +480,7 @@ As in Go and Rust, and unlike C, `&`, `^` and `|` bind tighter than comparisons:
 
 ### Equality and order
 
-`==` and `!=` compare two values of one type; values of different types do not compare (a compile error), an integer and a `Float64` included: write the conversion (`n.to_f() == x`, or `n == x.to_i()`, which truncates), so no precision is lost silently above 2^53. A literal takes the other side's type (`x == 2`).
+`==` and `!=` compare two values of one type; different types do not compare (a compile error), an integer and a `Float64` included: write the conversion (`n.to_f() == x`, or `n == x.to_i()`, which truncates), so no precision is lost silently above 2^53. A literal takes the other side's type (`x == 2`).
 
 - Numbers, `Bool`, `String`, `Bytes` and enums compare by value; a `Float64` by IEEE, so NaN equals nothing, itself included.
 - A struct compares its fields in order, each with its own `==`, unless it defines `fn ==`. A struct with a field that has no `==` (a `Hash`, a function) has none either: the error names the field.
@@ -519,7 +522,7 @@ fn main {
 
 ### Printing
 
-Every scalar has one text, the same in `puts`, in interpolation and from `to_s`: integers in decimal, a `Float64` as the shortest text that reads back as the same number ([Floats](#floats)), `true` and `false`, a `String` as itself. An enum prints its member's name, an error its text (its message and its cause), and a union its member; an optional is opened first. A struct, class or enum that defines `fn to_s: String` prints that text in interpolation (a type marked `Error` cannot: its text is its message). For every type that prints, `x.to_s` is exactly `"${x}"`. `puts(x)`, like every [writer](#output), prints exactly what `"${x}"` prints.
+Every scalar has one text, in `puts`, in interpolation and from `to_s`: integers in decimal, a `Float64` as the shortest text that reads back as the same number ([Floats](#floats)), `true` and `false`, a `String` as itself. An enum prints its member's name, an error its text (message and cause), a union its member; an optional is opened first. A struct, class or enum that defines `fn to_s: String` prints that text (a type marked `Error` cannot: its text is its message). For every type that prints, `x.to_s` and `puts(x)`, like every [writer](#output), give exactly `"${x}"`.
 
 ```avant
 fn size_or_word(n: Int): Int | String {
@@ -563,13 +566,13 @@ fn main {
 }
 ```
 
-A line whose first token is `[`, `-` or `+` always begins a new statement: it never continues the line before as an index or a binary operation. An expression left dangling by that rule (`t = a` followed by a line `- b`, a line `[a, b]` whose value nobody uses, a line starting with `+`) is a compile error that says how to continue the line.
+A line whose first token is `[`, `-` or `+` always begins a new statement, never an index or a binary operation on the line before. An expression left dangling by that rule (`t = a` then a line `- b`, an unused line `[a, b]`, a line starting with `+`) is a compile error that says how to continue the line.
 
 ### Comments
 
 `//` runs to the end of the line. There is no `/* */`.
 
-One comment form is reserved: a comment that starts `// file: ` changes the path and line that diagnostics report. It is not an import. Do not start a comment that way.
+One form is reserved: a comment starting `// file: ` changes the path and line diagnostics report (it is not an import); do not start a comment that way.
 
 ## Control flow
 
@@ -618,11 +621,11 @@ fn main {
 }
 ```
 
-A final `if`/`else` in a function with a result is that function's value, as in `classify` above. An `if` without `else` is a statement. Conditions are `Bool`: there is no truthiness, so `if n` on an `Int` is a compile error. A struct literal directly in a condition needs parentheses around it (`if p == (Point { x: 1, y: 2 }) { ... }`), so the `{` that opens the block is never taken for a literal's.
+A final `if`/`else` in a function with a result is the function's value, as in `classify` above; an `if` without `else` is a statement. Conditions are `Bool`, with no truthiness: `if n` on an `Int` is a compile error. A struct literal directly in a condition needs parentheses (`if p == (Point { x: 1, y: 2 }) { ... }`), so the block's `{` is never taken for a literal's.
 
 ### Conditions that bind
 
-A condition may bind a name: `if v = expr { ... }` runs the block when `expr` gives a value (not `nil`, not an error) and names that value `v` inside it. This is how optional results are opened, where other languages write `if x != null`.
+A condition may bind a name: `if v = expr { ... }` runs the block when `expr` gives a value (not `nil`, not an error), named `v` inside it. This is how optional results are opened.
 
 ```avant
 fn main {
@@ -643,7 +646,7 @@ fn main {
 
 - The bound name exists only in the then-block: not in the `else`, not after the `if`. With one binding, `else e { ... }` names the failure for the `else` block ([Reading the error itself](#reading-the-error-itself)).
 - An `if` that binds is an expression like any other: `width = if v = cfg.get("width") { v } else { 80 }`.
-- A condition may be a comma list of bindings and `Bool` tests, evaluated left to right and stopping at the first that fails. Each bound name is in scope for the conditions after it. The `else` runs when any of them fails, and sees none of the names.
+- A condition may be a comma list of bindings and `Bool` tests, evaluated left to right up to the first that fails; each bound name is in scope for the conditions after it. The `else` runs when any fails, and sees none of the names.
 - `while` takes the same conditions ([While](#while)).
 
 ### While
@@ -658,7 +661,7 @@ fn main {
 }
 ```
 
-`while v = x { ... }` runs its body while `x` gives a value, evaluating it again before each iteration; `v` exists in the body only. It is the loop for walking a chain or draining a source:
+`while v = x { ... }` runs its body while `x`, evaluated before each iteration, gives a value; `v` exists in the body only. It walks a chain or drains a source:
 
 ```avant
 class Node {
@@ -704,9 +707,9 @@ fn main {
 }
 ```
 
-- **`..` excludes its end**, unlike Crystal's, Ruby's and Kotlin's: `for i in 1..n` never reaches `n`. **`..=` includes it**, as Rust's: `for i in 1..=n` ends with `n`, even when `n` is the largest `Int` (the loop stops after its last value instead of computing the next one).
-- The bounds are evaluated once. The loop variable is a new name that exists only inside the loop (when a variable of that name already exists outside, the loop uses it, and it keeps its last value afterwards: pick a fresh name). `break`, `continue` and `return` behave as they do in `while`.
-- **The loop variable cannot be assigned.** It is a copy of the range's counter or of the array's element, made again at each step, so `i = 5`, `x += 1` and a field of a struct element (`p.x = 1`) are compile errors: the write would be lost, or would change the iteration. To change the array, store through an index: `xs[i] = v`, or `xs[i].x = v` for one field of a struct element. For a range that skips or repeats steps, use `while` with a counter of your own. A field of a *class* element is assignable: `c.x = 1` changes the object.
+- **`..` excludes its end**, unlike Crystal's, Ruby's and Kotlin's: `for i in 1..n` never reaches `n`. **`..=` includes it**, as Rust's: `for i in 1..=n` ends with `n`, even the largest `Int` (the loop stops after its last value, never computing the next).
+- The bounds are evaluated once. The loop variable is a new name, only inside the loop (if a variable of that name exists outside, the loop uses it and leaves its last value there: pick a fresh name). `break`, `continue` and `return` behave as in `while`.
+- **The loop variable cannot be assigned**: it is a fresh copy of the counter or element at each step, so `i = 5`, `x += 1` and a struct element's field (`p.x = 1`) are compile errors. To change the array, store through an index: `xs[i] = v`, or `xs[i].x = v`. For a range that skips or repeats steps, use `while` with your own counter. A *class* element's field is assignable: `c.x = 1` changes the object.
 - A range is only a `for` form: it is not a value you can store.
 - Arrays and hashes also have `each` ([Array operations](#array-operations), [Hash operations](#hash-operations)).
 - A struct literal in a `for`'s range or array needs parentheses, brackets or a call around it, as in a [condition](#if): `for p in [Point { x: 1, y: 2 }]`.
@@ -804,14 +807,14 @@ fn main {
 ```
 
 - The value is an integer of any width, `Int`, `Int32`, `UInt32` or `UInt64` (labels: integer literals, character literals included, or [constants](#constants), each taking the value's type: `case 3000000000` over an `Int32` is `case label 3000000000 does not fit in Int32`), an enum (labels: its members, bare: `case eof`, not `case Tok.eof`), a `String` (labels: string literals, not interpolated) or a union (labels: its member types, with or without a binding, and `nil`; a binding is the arm's only label). Over a `Bool`, the labels are `true` and `false` (`case 1` is refused with the hint `case true`).
-- A label may appear once, and no two labels share a value: `case 5` beside `case 0..=9` is `case 5 overlaps case 0..=9`; an empty range (`case 5..5`) is an error. A range is tested with two comparisons before the switch, as the `if` chain it replaces (one case per value ran 5% to 9% slower: LLVM built tables).
-- Over an enum, a union or a `Bool`, a switch without `else` names every member (`true` and `false` for a `Bool`), as a statement and as a value (`switch over Tok does not cover name, number: name them or add else`), and an `else` beside every member is refused. Over the other types, a switch used as a value needs `else`, so every input produces a result; used as a statement, a value no arm names does nothing.
+- A label appears once, and no two labels share a value: `case 5` beside `case 0..=9` is `case 5 overlaps case 0..=9`; an empty range (`case 5..5`) is an error. A range is tested with two comparisons before the switch, like the `if` chain it replaces.
+- Over an enum, a union or a `Bool`, a switch without `else` names every member (`true` and `false` for a `Bool`), as a statement and as a value (`switch over Tok does not cover name, number: name them or add else`); an `else` beside every member is refused. Over other types, a switch used as a value needs `else`; as a statement, a value no arm names does nothing.
 - An arm may leave instead of giving a value (`return`, `break`, `continue`); it still counts as naming its members.
 - A switch used as a statement treats its arms as statements, as an `if` does: an arm may end with a value, which is dropped, unless it can be an error ([Errors cannot be dropped](#errors-cannot-be-dropped)).
 
 ## Enums
 
-An `enum` is a type whose values are a fixed list of names. Each member has a number, written or counted (C's rule: the first is 0, each next one the previous plus one), and the members are written in lower case.
+An `enum` is a type whose values are a fixed list of lower-case names. Each member has a number, written or counted by C's rule (the first 0, each next the previous plus one).
 
 ```avant
 enum Tok {
@@ -861,12 +864,12 @@ fn main {
 }
 ```
 
-- An enum is stored in one byte when its values are within `0..255` or `-128..127`, in two within `0..65535` or `-32768..32767`, else in four; an enum crossing to C is C's `int`. A program pays for the members' names only if it prints an enum, reads `name`, or calls `from_name`.
+- An enum takes one byte when its values fit `0..255` or `-128..127`, two within `0..65535` or `-32768..32767`, else four; crossing to C it is C's `int`. The members' names cost only a program that prints an enum, reads `name` or calls `from_name`.
 - An enum marked `: Error` is a failure type ([An enum as an error](#an-enum-as-an-error)); one inside a `lib` block is a C enum ([avant bind](#avant-bind)). An enum has no payload: a member that carries data is a [union](#unions) member.
 
 ## Nil and unions
 
-`T?` is "a `T`, or `nil`". Absence is in the type, so the compiler makes you look before you use the value, and there is no null pointer error to meet at run time (a C pointer, [`Ptr(T)`](#layouts-and-ptr), is the one exception: it is C's).
+`T?` is "a `T`, or `nil`". Absence is in the type, so the compiler makes you look before using the value, and there is no null pointer error at run time (except a C pointer, [`Ptr(T)`](#layouts-and-ptr)).
 
 ```avant
 fn find(names: Array(String), wanted: String): Int? {
@@ -917,7 +920,7 @@ fn main {
 }
 ```
 
-`x?` compiles only in a function whose result can carry the `nil` (here `Int?`); otherwise the compiler says what would be returned and where it cannot go. `x.expect("why")` is the one way to assert a value is there: on `nil` it traps as an index out of bounds does (`avant runtime: why at main.av:7:12`, status 1; in a spawned block it ends the task: [When a task traps](#when-a-task-traps)), its message evaluated only then; it opens an optional only, since a result that can fail with an error says what failed and is read with the forms above. There is no `?.` chaining, no `!` or `!!` to force a value out and no `x == nil`: open it. To test for absence without using the value, write `if _ = x { ... } else { ... }`.
+`x?` compiles only in a function whose result can carry the `nil` (here `Int?`); otherwise the compiler says what would be returned and where it cannot go. `x.expect("why")` is the one assertion that a value is there: on `nil` it traps like an index out of bounds (`avant runtime: why at main.av:7:12`, status 1; in a spawned block it ends the task: [When a task traps](#when-a-task-traps)), its message evaluated only then. It opens only an optional: a result that can fail says what failed, read with the forms above. There is no `?.` chaining, no `!` or `!!`, and no `x == nil`: open it. To test absence without the value, write `if _ = x { ... } else { ... }`.
 
 ### Unions
 
@@ -956,7 +959,7 @@ fn main {
 
 ### Type aliases
 
-`type Name = T` gives a type a name: every use of the name is that type, the same type and the same code, not a new one. It names a union above all, written once instead of at every use; the classes of the union may hold the name in their fields, so a recursive type (a tree, a JSON value, a type checker's types) reads as declared.
+`type Name = T` names a type: every use is that same type and code, not a new one. It names a union above all, written once; the union's classes may hold the name in their fields, so a recursive type (a tree, a JSON value, a type checker's types) reads as declared.
 
 ```avant
 type Expr = Num | Add
@@ -999,7 +1002,7 @@ fn main {
 
 ### What an optional costs
 
-An optional reference costs nothing over the reference: `T?` where `T` is a class, `String`, `Bytes`, `Array`, `Hash` or `Buf` is one pointer, and `nil` is the null pointer, whether in a field, a local, an array element, a parameter or a result (`left: Node?` is 8 bytes). An optional function value, `(fn(Int): Int)?`, is the function value's two words, `nil` a null code word. Any other union holds a small tag and one slot per member that is not `nil`.
+An optional reference costs nothing over the reference: `T?` for a class, `String`, `Bytes`, `Array`, `Hash` or `Buf` is one pointer, `nil` the null pointer, in a field, local, element, parameter or result (`left: Node?` is 8 bytes). An optional function value, `(fn(Int): Int)?`, is the function value's two words, `nil` a null code word. Any other union holds a small tag and one slot per non-`nil` member.
 
 A `T?` that nothing assigned is `nil`, whatever `T` is: an optional field without a default reads as absent.
 
@@ -1031,11 +1034,11 @@ fn main {
 | `UInt32` | 32-bit unsigned | 0 to 4,294,967,295 | dense storage; C's `unsigned int` |
 | `UInt64` | 64-bit unsigned | 0 to 18,446,744,073,709,551,615 | bit patterns, hashes, C's 64-bit unsigned values |
 
-`Int` is 64-bit because arithmetic traps on overflow: with a 32-bit default, an ordinary counter of milliseconds, bytes or ids would crash at 2.1 billion. Reach for `Int32` only when you store many of them. An index, a size and a `for` range are always `Int`, so `xs[i]` with an `Int32` index is written `xs[i.to_i()]` (the conversion is free). Five narrower names (`Int8`, `Int16`, `UInt8`, `UInt16`, `Float32`) exist only at the C boundary ([C types](#c-types)).
+`Int` is 64-bit because arithmetic traps on overflow: a 32-bit counter of milliseconds, bytes or ids would crash at 2.1 billion. Use `Int32` only to store many. An index, a size and a `for` range are always `Int`: with an `Int32` index write `xs[i.to_i()]` (the conversion is free). Five narrower names (`Int8`, `Int16`, `UInt8`, `UInt16`, `Float32`) exist only at the C boundary ([C types](#c-types)).
 
 ### Literals
 
-An integer literal is an `Int` unless its context gives it another number type: a declared type, a parameter (of any function or method, generic or an operator's included), a field, a function's result, or the other operand of an operator, on either side. An expression made only of literals takes its type the same way (`(2 - 1) + y`, `u: UInt64 = ~0`, `(1 << 63) | u`), and so does a literal argument above `Int`'s range when its parameter is a `UInt64`. The context may be a `Float64` too: with a float `f`, `f * 2` and `2 * f` are float arithmetic.
+An integer literal is an `Int` unless its context gives another number type: a declared type, a parameter (of any function or method, generic or an operator's included), a field, a function's result, or an operator's other operand, on either side. So does an expression made only of literals (`(2 - 1) + y`, `u: UInt64 = ~0`, `(1 << 63) | u`), and a literal argument above `Int`'s range for a `UInt64` parameter. The context may be a `Float64`: with a float `f`, `f * 2` and `2 * f` are float arithmetic.
 
 ```avant
 fn half(n: Int32): Int32 {
@@ -1063,12 +1066,12 @@ fn main {
 
 - `0x`, `0b` and `0o` begin hexadecimal, binary and octal literals (the prefix in lower case; `0X` also works). A number does not start with 0 otherwise: `017` is a compile error that suggests `0o17` or `17`, since C reads it as octal.
 - `_` may stand between two digits of any literal, a float's included (`1_000.000_5`), and nowhere else: not first, last, doubled, after a prefix or before a suffix.
-- A **character literal** is the `Int` value of one byte: `'a'` is 97, and it adopts its context's type as any integer literal does. It takes the escapes of a string (below), with `\'` for the quote. A character that is more than one byte in UTF-8 (`'é'`, `'\u{e9}'`) is a compile error: write it in a `String`. There is no `Char` type.
-- A literal outside its type's range is a compile error (`integer literal does not fit in Int32`) at every integer width and wherever the type comes from (a declaration, an argument, a result, a field, an array, the other operand); above `UInt64` it is `integer literal does not fit in UInt64, the widest integer type`. A float literal too large for `Float64` (`1e400`) is an error too. Float literals need a digit on each side of the point (`0.5`, `2.0`, `1e3`, `1.5e-7`).
+- A **character literal** is the `Int` value of one byte (`'a'` is 97), taking its context's type like any integer literal. It takes a string's escapes (below), with `\'` for the quote. A character of more than one UTF-8 byte (`'é'`, `'\u{e9}'`) is a compile error: write it in a `String`. There is no `Char` type.
+- A literal outside its type's range is a compile error (`integer literal does not fit in Int32`) at every width, wherever the type comes from (a declaration, an argument, a result, a field, an array, the other operand); above `UInt64` it is `integer literal does not fit in UInt64, the widest integer type`. A float literal too large for `Float64` (`1e400`) is an error too. Float literals need a digit on each side of the point (`0.5`, `2.0`, `1e3`, `1.5e-7`).
 
 ### Conversions
 
-Values of different number types do not mix: `x + y` with an `Int32` and an `Int`, or an `Int` and a `Float64`, is a compile error (`binary operator expects matching types, got Int32 and Int`), and the operator converts neither side. Only literals adapt. Convert explicitly, and choose what happens when the value does not fit.
+Values of different number types do not mix: `x + y` with an `Int32` and an `Int`, or an `Int` and a `Float64`, is a compile error (`binary operator expects matching types, got Int32 and Int`); only literals adapt. Convert explicitly, choosing what happens when the value does not fit.
 
 | To | Keep the number, or trap | Reinterpret the bits, never trap |
 | --- | --- | --- |
@@ -1078,9 +1081,9 @@ Values of different number types do not mix: `x + y` with an `Int32` and an `Int
 | `UInt64` | `to_u64` | `wrap_u64` |
 | `Float64` | `to_f` (rounds to the nearest float) | |
 
-A `Bool` is a number only when converted: `to_i`, `to_i32`, `to_u32` and `to_u64` give 1 for `true` and 0 for `false`, so `alive += cell.to_i()` counts without a branch.
+A `Bool` is a number only when converted: `to_i`, `to_i32`, `to_u32` and `to_u64` give 1 for `true`, 0 for `false` (`alive += cell.to_i()` counts without a branch).
 
-Use `to_*` by default: the result is the same number, or the program stops and says why (`avant runtime: to_i32 of Int 5000000000 out of range for Int32 at main.av:3:11`). Use `wrap_*` when you mean the two's-complement bits, as in hashing or binary formats.
+`to_*` (the default) gives the same number or stops the program saying why (`avant runtime: to_i32 of Int 5000000000 out of range for Int32 at main.av:3:11`); `wrap_*` gives the two's-complement bits, for hashing or binary formats.
 
 ```avant
 fn main {
@@ -1094,7 +1097,7 @@ fn main {
 }
 ```
 
-`Float64.to_i` truncates toward zero, and traps on NaN, an infinity, or a value outside `Int` (`avant runtime: to_i of Float64 30000000000000000000.0 out of range for Int`). From text, `"42".to_i()` returns an optional ([Parsing numbers](#parsing-numbers)). To text, interpolate (`"${n}"`) or call `to_s`, the same text ([Printing](#printing)), or use `fmt_float(x, digits)` for a fixed number of decimals.
+`Float64.to_i` truncates toward zero and traps on NaN, an infinity, or a value outside `Int` (`avant runtime: to_i of Float64 30000000000000000000.0 out of range for Int`). From text, `"42".to_i()` returns an optional ([Parsing numbers](#parsing-numbers)). To text: interpolate (`"${n}"`) or `to_s`, the same text ([Printing](#printing)), or `fmt_float(x, digits)` for fixed decimals.
 
 ### Arithmetic and overflow
 
@@ -1102,11 +1105,11 @@ The rule: an operation gives the mathematically correct value when one exists, a
 
 - `+`, `-`, `*` trap on overflow at the operands' width; `/` and `%` trap on division by zero. `abs` of the minimum value, a `sum` that overflows and a `Hash` `inc` that overflows trap the same way.
 - `/` truncates toward zero and `%` takes the sign of the dividend (`-7 / 2` is `-3`, `-7 % 2` is `-1`): C's, Go's and Rust's rule, not Python's or Ruby's. `MIN % -1` is `0`; only `MIN / -1` overflows.
-- `&+`, `&-`, `&*` wrap on overflow. Wrapping is always spelled, never implied: an unsigned value has no unary minus (`-u` with `u: UInt64` is a compile error, as `-1u64` is), and its two's complement is `0u64 &- u`.
-- `<<` and `>>` take an amount in `0..63` for `Int` and `UInt64`, `0..31` for `Int32` and `UInt32`. Any other amount, a negative one included, traps (`avant runtime: shift amount 64 out of range for Int (0..63)`); a literal amount out of range is a compile error. The amount is an `Int` or the shifted value's own type.
-- Integers have `abs` (unsigned types do not: it would be the value itself) and `to_f`.
+- `&+`, `&-`, `&*` wrap on overflow. Wrapping is always spelled: an unsigned value has no unary minus (`-u` with `u: UInt64` is a compile error, as `-1u64` is); its two's complement is `0u64 &- u`.
+- `<<` and `>>` take an amount in `0..63` for `Int` and `UInt64`, `0..31` for `Int32` and `UInt32`, an `Int` or the shifted value's type. Any other amount, negative included, traps (`avant runtime: shift amount 64 out of range for Int (0..63)`); a literal one is a compile error.
+- Integers have `abs` (not unsigned types) and `to_f`.
 
-A check costs a compare and a never-taken branch, and the compiler drops the ones it can prove: a literal index into a literal, a loop variable under its bound, a loop whose whole index range is validated once on entry. What a trap looks like is in [Traps](#traps).
+A check costs a compare and a never-taken branch, and the compiler drops those it can prove: a literal index into a literal, a loop variable under its bound, a loop whose index range is validated once on entry. Traps look as in [Traps](#traps).
 
 ### Floats
 
@@ -1126,7 +1129,7 @@ fn main {
 }
 ```
 
-`puts` and interpolation print a float as the shortest text that reads back as the same number, with `.0` on a whole value: `0.30000000000000004`, `2.0`, `1e21`, `1.5e-7`, `-0.0`, `nan`, `inf`, `-inf`. JSON output uses the same text (with `null` for NaN and the infinities). For a fixed number of decimals, `fmt_float(x, digits)` returns a `String` and `buf.push_fmt_f(x, digits)` appends to a buffer; `digits` is 0 to 64, and anything else traps.
+`puts` and interpolation print a float as the shortest text that reads back as the same number, with `.0` on a whole value: `0.30000000000000004`, `2.0`, `1e21`, `1.5e-7`, `-0.0`, `nan`, `inf`, `-inf`. JSON uses the same text (`null` for NaN and the infinities). For fixed decimals, `fmt_float(x, digits)` returns a `String` and `buf.push_fmt_f(x, digits)` appends to a buffer; `digits` outside 0 to 64 traps.
 
 ```avant
 fn main {
@@ -1156,13 +1159,13 @@ fn main {
 ### String literals
 
 - `"${expr}"` interpolates integers, floats, `Bool`s, strings, enums, [errors](#declaring-an-error) and unions of them ([Printing](#printing)). A `$` that is not followed by `{` is a dollar sign: `"it costs $5"`.
-- Escapes: `\n`, `\t`, `\r`, `\\`, `\"`, `\$`, `\0`, `\xNN` (one byte, two hex digits, which may make a string that is not UTF-8, as bytes from a file can) and `\u{N}` (a Unicode code point, one to six hex digits, stored as its UTF-8 bytes: `"caf\u{e9}"`). Any other escape is a compile error (there is no `\e`: write `\x1b`).
+- Escapes: `\n`, `\t`, `\r`, `\\`, `\"`, `\$`, `\0`, `\xNN` (one byte, two hex digits; may make a string that is not UTF-8) and `\u{N}` (a code point, one to six hex digits, stored as UTF-8: `"caf\u{e9}"`). Any other escape is a compile error (no `\e`: write `\x1b`).
 - A raw string `r"..."` has no escapes and no interpolation, for paths and patterns: in `r"C:\tmp"` the backslash is a character.
-- A literal is one line. There are no multi-line or backtick strings. A byte is a [character literal](#literals), `'A'`, or its number, `65`.
+- A literal is one line: no multi-line or backtick strings. A byte is a [character literal](#literals), `'A'`, or its number, `65`.
 
 ### Bytes, not characters
 
-`size` is the byte length (at most 2,147,483,647: [Size limits](#size-limits)), and `s[i]` is the byte at `i` as an `Int`. Nothing checks that a string is UTF-8 until you ask for characters: `s.chars()` returns one `String` per Unicode code point and traps on bytes that are not valid UTF-8 (`avant runtime: String.chars needs valid UTF-8`), and `String.from_utf8(bytes)` returns `nil` for them. This is Go's model: cheap, predictable indexing, and text handled deliberately.
+`size` is the byte length (at most 2,147,483,647: [Size limits](#size-limits)), and `s[i]` is the byte at `i` as an `Int`. Nothing checks UTF-8 until you ask for characters: `s.chars()` returns one `String` per code point and traps on invalid UTF-8 (`avant runtime: String.chars needs valid UTF-8`); `String.from_utf8(bytes)` returns `nil` for it. This is Go's model.
 
 ```avant
 fn main {
@@ -1200,7 +1203,7 @@ fn main {
 
 ### Parsing numbers
 
-`s.to_i()`, `s.to_u64()` and `s.to_f()` read the *whole* string as a number and return `Int?`, `UInt64?` and `Float64?`. Anything else is `nil`, so the fallback is yours to state.
+`s.to_i()`, `s.to_u64()` and `s.to_f()` read the *whole* string as a number and return `Int?`, `UInt64?` and `Float64?`; anything else is `nil`.
 
 ```avant
 fn main {
@@ -1221,7 +1224,7 @@ fn main {
 
 ### Bytes and Buf
 
-`Bytes` is the immutable binary counterpart of `String`, and `Buf` is a growable byte buffer: the way to build a large string or a binary payload without allocating a new string for every piece.
+`Bytes` is the immutable binary counterpart of `String`; `Buf` is a growable byte buffer, to build a large string or binary payload without a new string per piece.
 
 ```avant
 fn main {
@@ -1267,7 +1270,7 @@ fn main {
 | `clear` | empty it, keeping the storage |
 | `to_s`, `to_bytes` | a `String` or `Bytes` of the contents |
 
-A byte stored by `push_byte`, `buf[i] = n`, `chr`, `repeat_byte` or `bytes_to_str` must be in `0..255` (`avant runtime: byte 300 out of range (0..255)`); write `n & 255` to keep the low byte on purpose. Many library calls have an `_into(buf)` twin that writes into a buffer you own instead of allocating a result ([Standard library](#standard-library)).
+A byte stored by `push_byte`, `buf[i] = n`, `chr`, `repeat_byte` or `bytes_to_str` must be in `0..255` (`avant runtime: byte 300 out of range (0..255)`); `n & 255` keeps the low byte on purpose. Many library calls have an `_into(buf)` twin writing into your buffer instead of allocating ([Standard library](#standard-library)).
 
 ## Arrays
 
@@ -1315,8 +1318,8 @@ fn main {
 ```
 
 - `Array(T).new(n)` makes `n` elements, each the element type's zero: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a struct of such fields.
-- `Array(T).new(n, value)` makes `n` copies of `value`, for a `T` whose copies are independent: a number, a `Bool`, a `String`, `Bytes`, a struct of those, and `nil` for any `T?`. When `T` is, or holds, a reference to an object that can change (a class, an `Array`, a `Hash`, a `Buf`, a struct or an optional holding one) it is a compile error: every element would be the same object, and a change through one would show in all.
-- `Array(T).new(n) { |i| ... }` builds each element: the block runs once per index, `0` to `n - 1` in order, and its value is that element. It is the form for a `T` with no zero (`Array(Node).new(n)` alone is a compile error that names the ways out) and for a grid, whose rows must each be their own array. `return` inside the block returns from the enclosing function, as in `each`; `break` and `continue` are compile errors, since every index gets a value. To put one shared object in every element on purpose, say so: `Array(Node).new(n) { |i| shared }`.
+- `Array(T).new(n, value)` makes `n` copies of `value`, for a `T` whose copies are independent: a number, a `Bool`, a `String`, `Bytes`, a struct of those, and `nil` for any `T?`. A `T` that is or holds a reference to a mutable object (a class, an `Array`, a `Hash`, a `Buf`, a struct or optional holding one) is a compile error: every element would be the same object.
+- `Array(T).new(n) { |i| ... }` builds each element: the block runs once per index, `0` to `n - 1` in order, its value the element. It is the form for a `T` with no zero (`Array(Node).new(n)` alone is a compile error naming the ways out) and for a grid, whose rows must be separate arrays. `return` in the block returns from the enclosing function, as in `each`; `break` and `continue` are compile errors. One shared object in every element is written on purpose: `Array(Node).new(n) { |i| shared }`.
 - A negative `n` traps (`avant runtime: Array size -5 is negative`).
 
 ### Indexing and bounds
@@ -1358,7 +1361,7 @@ There are no negative indexes and no slices of arrays yet.
 | `xs.parallel { \|x\| ... }` | a new array, computed [in parallel](#parallel) |
 
 - The element order used by `sort`, `min` and `max` exists for integers, `Float64` (NaN after every number), `String` and `Bytes` (byte order) and `Bool`. Any other element type sorts with a comparator block. On floats, `min` is the smallest number (NaN only when every element is NaN) and `max` is NaN when any element is.
-- There is no `map`, `select`, `reduce` or `join` built in yet; a loop, or a three-line generic function of your own ([Trailing blocks](#trailing-blocks)), does it.
+- No `map`, `select`, `reduce` or `join` is built in yet: write a loop, or a three-line generic function ([Trailing blocks](#trailing-blocks)).
 - The blocks of `each`, `any`, `all`, `sort` and `parallel` are inlined loops, not function values ([Builtin blocks are loops](#builtin-blocks-are-loops)).
 
 ```avant
@@ -1374,11 +1377,11 @@ fn main {
 
 ### Size limits
 
-A `String`, `Bytes` or `Buf` holds at most 2,147,483,647 bytes and an `Array` at most 2,147,483,647 elements (the runtime keeps 32-bit sizes); a `Hash` holds at most 1,073,741,824 slots. Growing past a limit traps before anything is written (`avant runtime: Buf would exceed 2147483647 bytes`, `Hash would exceed 1073741824 slots`), and `file_read` of a larger file is an `IoError` (`File too large`).
+A `String`, `Bytes` or `Buf` holds at most 2,147,483,647 bytes, an `Array` 2,147,483,647 elements (32-bit sizes), a `Hash` 1,073,741,824 slots. Growing past a limit traps before anything is written (`avant runtime: Buf would exceed 2147483647 bytes`, `Hash would exceed 1073741824 slots`); `file_read` of a larger file is an `IoError` (`File too large`).
 
 ## Hashes
 
-`Hash(K, V)` maps keys to values. A lookup returns `V?`: a missing key is `nil`, never a default value and never a crash. A key is an integer of any width, a `Bool`, an enum or a `String`; a value is any of those or a `Float64` ([Key and value types](#key-and-value-types)).
+`Hash(K, V)` maps keys to values. A lookup returns `V?`: a missing key is `nil`, never a default or a crash. A key is an integer of any width, a `Bool`, an enum or a `String`; a value any of those or a `Float64` ([Key and value types](#key-and-value-types)).
 
 ```avant
 fn main {
@@ -1428,13 +1431,13 @@ fn main {
 }
 ```
 
-- **Iteration order is unspecified.** It is stable for one program but arbitrary: do not rely on it, and sort the keys when order matters. Insertion order is decided and not built.
+- **Iteration order is unspecified**: stable for one program but arbitrary; sort the keys when order matters. Insertion order is decided, not built.
 - A key the block of `each` deletes before the walk reaches it is not visited.
 - Three calls look a key up without building it first: `h.inc_slice(s, start, stop)` and `h.get_slice(s, start, stop)` use a slice of `s` as the key, and `h.get_concat(a, b)` uses `a + b`.
 
 ### Key and value types
 
-A key is an integer of any width (`Int`, `Int32`, `UInt32`, `UInt64`), a `Bool`, an enum or a `String`. A value is any of those or a `Float64`. Keys and values are stored at their own width, not boxed: a `Hash(Int32, Int32)` holds 8 bytes an entry where a `Hash(Int, Int)` holds 16, so a narrow type is the cheaper table when its values fit.
+A key is an integer of any width (`Int`, `Int32`, `UInt32`, `UInt64`), a `Bool`, an enum or a `String`; a value any of those or a `Float64`. Both are stored at their own width, unboxed: a `Hash(Int32, Int32)` entry is 8 bytes, a `Hash(Int, Int)` one 16.
 
 ```avant
 enum Suit { clubs, hearts }
@@ -1454,8 +1457,8 @@ fn main {
 }
 ```
 
-- A `Float64` key is a compile error: `==` on `Float64` follows IEEE 754 (`NaN` is not equal to itself, `-0.0` equals `0.0`), so no hash agrees with it. Key by an integer instead.
-- Struct keys and class, array, hash or struct values are not built yet ([Not built yet](#not-built-yet)); a hash from the key to an index into an array does the same.
+- A `Float64` key is a compile error: IEEE `==` (`NaN` unequal to itself, `-0.0` equal to `0.0`) agrees with no hash. Key by an integer.
+- Struct keys and class, array, hash or struct values are not built yet ([Not built yet](#not-built-yet)); map the key to an index into an array instead.
 
 ## Structs and classes
 
