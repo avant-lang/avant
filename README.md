@@ -3947,7 +3947,7 @@ Several processes of one instrumented binary add into one shared map, and `avant
 
 ## Formatter
 
-`avant format` (or `avant f`) prints a file in the canonical style: two-space indent, `name: Type` with no space before the colon and one after, runs of blank lines collapsed to one. Your comments and your line breaks stay.
+`avant format` (or `avant f`) prints a file in the canonical style: two-space indent, `name: Type` (no space before the colon, one after), runs of blank lines collapsed to one. Comments and line breaks stay.
 
 ```sh
 avant format main.av            # print the canonical text
@@ -3957,9 +3957,9 @@ avant format . --check          # CI: list files that would change, exit 1 if an
 
 - A path is a `.av` file or a directory, walked like `avant test` walks `tests/` (names starting with `.` and directories named `deps` are skipped).
 - With one file and no flag, the text goes to stdout. `--check` writes nothing, prints `would change PATH` per file (`canonical` when none would), and exits 1 if any would.
-- The formatter works on tokens: it does not parse, typecheck or follow imports, so it formats a file that does not compile yet. It runs as its own command, never as part of a build, so a formatting bug cannot change what a program means.
+- The formatter works on tokens: it does not parse, typecheck or follow imports, so it formats a file that does not compile yet. It is never part of a build, so a formatting bug cannot change what a program means.
 - A file that does not lex is reported and left alone (status 1); the others are still formatted. A usage error (no path, an unknown flag, `--check` with `--write`, several files without either) exits 1.
-- `avant format --calls FILE...` is the one mode that typechecks: each FILE is checked as a program's root, and every method call written without parentheses in it and in the files it imports (`x.sum`, a bare `sum` on the receiver, `Point.new`) gets its `()`, the fields and the read-only properties (`size`, `bytes`) left as they are. It prints each changed file with its count; a second run changes nothing. It rewrites only code the checker reaches: a generic function's body is checked for the instances the program makes. A program with errors is rewritten where it was checked, and the status is then 1.
+- `avant format --calls FILE...`, the one mode that typechecks, checks each FILE as a program's root and gives `()` to every method call written without them in it and its imports (`x.sum`, a bare `sum` on the receiver, `Point.new`), leaving fields and the read-only properties (`size`, `bytes`) alone. It prints each changed file with its count; a second run changes nothing. It rewrites only code the checker reaches (a generic body, for the instances the program makes); a program with errors is rewritten where it was checked, with status 1.
 
 ## Command line
 
@@ -4007,10 +4007,10 @@ Options may sit before or after the file, up to `--`.
 | Compiles | fastest | fast | slowest |
 | Use it for | the edit-and-run loop | a binary to keep around | **anything you measure, and anything you ship** |
 
-- **Time a program only with `--release`.** `avant run` builds at `-O0`; a first benchmark run that way measures the debug build, not Avant. The [Benchmarks](#benchmarks) use `--release --cpu=v3`.
-- An explicit flag always wins over the verb's default. No environment variable selects the mode.
-- The language is the same in every mode: bounds, overflow and conversion checks are never turned off, and the collector's bookkeeping is precise in all three.
-- `--cpu`: `compile` targets `v2` by default, a level every x86-64 processor of the last decade supports, so the binary runs elsewhere. `run` and `test` target the highest level of the machine they run on. For a binary that will only run on recent hardware, `--cpu=v3` (AVX2) is worth trying; `native` is this machine exactly.
+- **Time a program only with `--release`**: `avant run` builds at `-O0`, so it measures the debug build. The [Benchmarks](#benchmarks) use `--release --cpu=v3`.
+- An explicit flag wins over the verb's default; no environment variable selects the mode.
+- The language is the same in every mode: bounds, overflow and conversion checks are never off, and the collector is precise in all three.
+- `--cpu`: `compile` targets `v2` by default (every x86-64 processor of the last decade), so the binary runs elsewhere; `run` and `test` target the highest level of the machine. For recent hardware only, try `--cpu=v3` (AVX2); `native` is this machine exactly.
 
 ### Program arguments
 
@@ -4053,10 +4053,10 @@ error[E4001]: unknown name cuont (did you mean `count`?)
   |        ^
 ```
 
-- The compiler recovers and keeps going, per statement: one run reports every independent mistake it can find, in every function and imported file, up to 20 errors. With several, the run ends with `error: aborting due to N previous errors`, and past the cap with `error: and M more errors (limit 20)`.
-- A mistake is reported once. What reads a value whose type already failed (an operator, a call, a condition, a later use of a name bound to it) adds no error of its own; where an operand does not fit, the message is its reader's: `px = pa + pn` with an `Int32` and an `Int` says `binary operator expects matching types, got Int32 and Int`, and `n: UInt32 = -1` says `a negative literal does not fit in UInt32`.
-- A syntax error names what the parser expected and what it found, in source terms: ``error[E2004]: expected `{`, found a string``.
-- A name the compiler cannot find gets at most one suggestion, and only one that is in scope there: a local, a field, a method, a constant, a function, a type, an enum member or a builtin method, the nearest by spelling (at most a third of the name's letters changed, two swapped letters counting as one change and a letter's case as half, and never the whole name; a tie goes to the name the compiler would find first, a local before a field, a method, a constant or a function, then to the first alphabetically). A wrong count of a call's arguments is not a misspelling: it is the next point.
+- The compiler recovers per statement: one run reports every independent mistake, in every function and imported file, up to 20 errors. With several, it ends with `error: aborting due to N previous errors`, past the cap with `error: and M more errors (limit 20)`.
+- A mistake is reported once: what reads a value whose type already failed (an operator, a call, a condition, a later use of its name) adds no error. Where an operand does not fit, the message is its reader's: `px = pa + pn` with an `Int32` and an `Int` says `binary operator expects matching types, got Int32 and Int`; `n: UInt32 = -1` says `a negative literal does not fit in UInt32`.
+- A syntax error names what the parser expected and found, in source terms: ``error[E2004]: expected `{`, found a string``.
+- An unknown name gets at most one suggestion, in scope there (a local, field, method, constant, function, type, enum member or builtin method), the nearest by spelling: at most a third of the letters changed (a swap counts as one change, a case change as half), never the whole name; a tie goes to what the compiler would find first (a local, then a field, a method, a constant, a function), then alphabetically. A wrong argument count is not a misspelling (next point).
 - A call whose arguments fit no function of that name says what it takes: `add takes 2 arguments, given 1: add(a: Int, b: Int): Int`; with several, each signature. Two that fit equally are named both: ``ambiguous call to f: f(a: Int, b: Int?): Int and f(a: Int?, b: Int): Int both match``.
 - A use of an optional as its value, and `x == nil`, say how to open it: ``cannot read field size on String?; open it with `if v = s`, `s ?? fallback` or `s?` ``.
 - The code's first digit names the phase: `E1xxx` lexer, `E2xxx` parser, `E3xxx` type resolution, `E4xxx` checker, `E5xxx` module loader, `E6xxx` macro expansion.
@@ -4065,7 +4065,7 @@ Run-time failures are [traps](#traps).
 
 ### Temporary files
 
-`compile`, `run`, `test`, `fetch` and `bind` keep every intermediate file (IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp`). It is removed when the command exits, on an error, Ctrl-C, `SIGTERM`, `SIGHUP`, a closed pipe (`SIGPIPE`, as in `avant test | head`) or a crash included (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`): the process still dies by the signal. Only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs that `run` and `test` start see that directory as their `TMPDIR`, so their temporaries go with it.
+`compile`, `run`, `test`, `fetch` and `bind` keep every intermediate file (IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp`), removed when the command exits: on an error, Ctrl-C, `SIGTERM`, `SIGHUP`, a closed pipe (`SIGPIPE`, as in `avant test | head`) or a crash (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`) too, the process still dying by the signal. Only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs `run` and `test` start get it as their `TMPDIR`, so their temporaries go with it.
 
 `--keep-tmp` keeps the directory for debugging and prints its path. A program run on its own keeps its directory with `AVANT_KEEP_TMP=1`.
 
@@ -4085,7 +4085,7 @@ Run-time failures are [traps](#traps).
 
 ## Coming from another language
 
-Avant will look familiar from almost anywhere, and it differs on purpose in a handful of places. This section is the list, so the differences reach you here and not in a debugger.
+Avant looks familiar from almost anywhere; here are the places where it differs on purpose.
 
 ### The deliberate differences
 
@@ -4123,7 +4123,7 @@ Avant will look familiar from almost anywhere, and it differs on purpose in a ha
 
 ## Not built yet
 
-What is missing, said in one place, and repeated beside each feature it limits. **Decided**: the design is settled and it will be built. **Planned**: wanted; the design is open. **Not started**: no work yet.
+What is missing, also said beside each feature it limits. **Decided**: designed, to be built. **Planned**: wanted, design open. **Not started**: no work yet.
 
 | Missing | Status | Today |
 | --- | --- | --- |
@@ -4347,7 +4347,7 @@ bash install.sh v0.41.0             # a specific version
 bash install.sh --no-modify-path    # do not edit shell configuration
 ```
 
-The script downloads the release archive, checks its SHA-256, installs it into `~/.avant`, adds that directory to `PATH` in your shell's configuration, and compiles and runs a hello program to prove the install works.
+The script downloads the release archive, checks its SHA-256, installs it into `~/.avant`, adds it to `PATH` in your shell's configuration, and compiles and runs a hello program to prove the install.
 
 | Option | Effect |
 | --- | --- |
@@ -4355,11 +4355,11 @@ The script downloads the release archive, checks its SHA-256, installs it into `
 | `--no-modify-path` | leave shell configuration alone and print the `PATH` line to add |
 | `AVANT_INSTALL` | install into another directory than `~/.avant` |
 
-Running it again updates the install in place. It refuses, with a message, on anything but Linux x86-64 with glibc (musl systems included), and it needs `curl`, `tar`, and `sha256sum` or `shasum`.
+Running it again updates in place. It refuses, with a message, anything but Linux x86-64 with glibc (musl included), and needs `curl`, `tar`, and `sha256sum` or `shasum`.
 
 ### Manual install
 
-Download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases), extract it anywhere, and put the extracted `avant-linux-x86_64` directory on your `PATH`. Keep its files together: the compiler finds `re2c`, the standard library and the runtime beside itself. `avant version` prints the release and the commit it was built from, read from the archive's `versions.txt`.
+Download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-lang/avant/releases), extract it anywhere, and put the `avant-linux-x86_64` directory on your `PATH`. Keep its files together: the compiler finds `re2c`, the standard library and the runtime beside itself. `avant version` prints the release and commit, from the archive's `versions.txt`.
 
 ### Requirements
 
@@ -4370,11 +4370,11 @@ Download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-la
 | `git` | `avant fetch` only | |
 | libclang 20 | `avant bind` only | `sudo apt install libclang1-20` |
 
-Nothing else. The archive carries `avant` with LLVM 22 linked in (there is no separate backend program), `re2c`, `avant-bind`, the standard library, and the runtime with PCRE2, zlib and the other C libraries inside; beside them, `examples/` (the runnable programs this page points to), `versions.txt` (the release and its commit, which `avant version` prints), Avant's `LICENSE`, and `third_party/` with the notices and licenses of those C libraries. No environment variable needs to be set: the compiler turns a program into machine code with the LLVM it carries, and links it with `cc`.
+Nothing else, and no environment variable: the compiler generates machine code with the LLVM it carries and links with `cc`. The archive carries `avant` with LLVM 22 linked in (no separate backend program), `re2c`, `avant-bind`, the standard library, and the runtime with PCRE2, zlib and the other C libraries inside; beside them, `examples/` (the runnable programs this page points to), `versions.txt` (what `avant version` prints), Avant's `LICENSE`, and `third_party/` with those C libraries' notices and licenses.
 
 ## Contributing
 
-Everything below is for people working on Avant itself, not for writing Avant programs.
+For working on Avant itself.
 
 ### How the compiler works
 
@@ -4384,13 +4384,18 @@ The compiler is self-hosted: it is written in Avant (`compiler/*.av`) and compil
 .av  →  parser and checker (compiler/*.av)  →  MIR  →  LLVM IR  →  in-process LLVM  →  object  →  cc  →  binary
 ```
 
-This is the only back end. The earlier one, which emitted [myc](https://github.com/kostya/myc) IR for an external `myc-llvm` process, was retired once every program it ran had been frozen as a golden (`tests/goldens/runs/`). The collector is `runtime/avant_gc_*.c`, one file per concern (`runtime/avant_gc_internal.h` lists them; `runtime/avant_gc.h` documents its settings). The compiler's own sources obey the language's rules like any program, field privacy included: no build is exempt.
+This is the only back end; the earlier one, emitting [myc](https://github.com/kostya/myc) IR for an external `myc-llvm` process, was retired after every program it ran was frozen as a golden (`tests/goldens/runs/`). The collector is `runtime/avant_gc_*.c`, one file per concern (listed in `runtime/avant_gc_internal.h`; settings documented in `runtime/avant_gc.h`). The compiler's sources obey the language's rules, field privacy included: no build is exempt.
 
 ### Building the compiler
 
-You need a C compiler, the C library's development files and binutils (`ld`, `objcopy`); LLVM 22.1.8's static archives (`sh tools/install-llvm.sh` installs LLVM's official release, checked by sha256, into `/opt/llvm-22.1.8`; another LLVM 22 through `LLVM_CONFIG`) and `libzstd-dev`, which `runtime/build.sh` merges into `runtime/build/avant_llvm.o` (through `tools/build-llvm.sh`) and only the compiler links; `re2c` for regex literals (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`); and, for the `bind` helper, `llvm-config` and libclang 20 (without them the build skips it with a notice).
+You need:
 
-The published releases and CI build on `ubuntu-26.04` runners with the toolchain the benchmark numbers are measured with, at its exact versions: gcc 15.2 and libclang 20 (for the `bind` helper) from a fixed snapshot of Ubuntu's archive (`.github/install-toolchain.sh`), and LLVM's official 22.1.8 (`tools/install-llvm.sh`). The archive still runs on glibc 2.38 and later, and CI installs it on an `ubuntu-24.04` runner before a release is published. LLVM 22 replaced 20.1.8 for its compile times, measured on that machine over rotated rounds: the compiler's own release build is 18% faster, the release compiler compiling itself 19.5% faster, and the 50 LangArena tasks' release compiles 11.8% faster. A debug build of the compiler is 6.7% slower (about 1 s). The programs it builds run as fast as before (LangArena's geometric mean 0.993, within the run-to-run spread, with the same memory), and the release archive is 4.7% larger. LLVM 20, 21 and 23 still build the compiler (`LLVM_CONFIG` names their `llvm-config`).
+- a C compiler, the C library's development files and binutils (`ld`, `objcopy`);
+- LLVM 22.1.8's static archives (`sh tools/install-llvm.sh` installs LLVM's official release, checked by sha256, into `/opt/llvm-22.1.8`; another LLVM 22 through `LLVM_CONFIG`) and `libzstd-dev`, which `runtime/build.sh` merges into `runtime/build/avant_llvm.o` (through `tools/build-llvm.sh`), linked only by the compiler;
+- `re2c` for regex literals (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`);
+- for the `bind` helper, `llvm-config` and libclang 20 (without them the build skips it with a notice).
+
+Releases and CI build on `ubuntu-26.04` runners with the benchmarks' exact toolchain: gcc 15.2 and libclang 20 (for `bind`) from a fixed snapshot of Ubuntu's archive (`.github/install-toolchain.sh`), and LLVM's official 22.1.8 (`tools/install-llvm.sh`). The archive still runs on glibc 2.38 and later; CI installs it on an `ubuntu-24.04` runner before a release is published. LLVM 22 replaced 20.1.8 for compile times (on that machine: the compiler's release build 18% faster, the release compiler compiling itself 19.5%, the 50 LangArena tasks' release compiles 11.8%; a debug build of the compiler 6.7%, about 1 s, slower), with the programs as fast (LangArena geometric mean 0.993, within the spread, same memory) and the archive 4.7% larger. LLVM 20, 21 and 23 still build the compiler (`LLVM_CONFIG` names their `llvm-config`).
 
 The compiler is built by a published release, the seed: **v0.44.0 or later**, unpacked at `bin/v0.45.0` (or wherever `LETTERS_SEED` points). An older release cannot build this tree: the code v0.43.0 and earlier releases emit calls three runtime functions this runtime no longer exports (`avant_gc_fast_ok`, `avant_gc_block`, `avant_inline_allocs`), and the runtime has one ABI.
 
@@ -4401,13 +4406,13 @@ sh runtime/build.sh
 ./bin/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o   # rebuild with itself
 ```
 
-`AVANT_ROOT` overrides where a compiler looks for `runtime/build` and `lib/std`; without it, a compiler built by `tools/letters.sh` reads the `lib/` its `OUT.versions.txt` names, and any other (a release, a bare copy) the nearest `lib/` in its own directory or one above it. `avant dump FILE.av` prints a program's MIR. `tools/bind.c` is the `avant bind` translator, built by `runtime/build.sh` into `runtime/build/avant-bind`; in a checkout the compiler runs that one, elsewhere the `avant-bind` beside itself.
+`AVANT_ROOT` overrides where a compiler looks for `runtime/build` and `lib/std`; without it, a compiler built by `tools/letters.sh` reads the `lib/` its `OUT.versions.txt` names, any other (a release, a bare copy) the nearest `lib/` in its directory or one above. `avant dump FILE.av` prints a program's MIR. `tools/bind.c` is the `avant bind` translator, built by `runtime/build.sh` into `runtime/build/avant-bind`; a compiler in a checkout runs that one, elsewhere the `avant-bind` beside itself.
 
 ### The gate and the suite
 
 | Command | What it proves |
 | --- | --- |
-| `sh tools/letters.sh` | builds the runtime, B (`bin/avant-b`, built by the seed) and C′ (`bin/avant-c-llvm`, built by B). `sh tools/letters.sh b`, `c-llvm`, `d-llvm` (D′, built by C′) or `c-release` (the `--release` compiler a release ships) builds one. Beside each compiler it writes `OUT.versions.txt`, the build's record that `avant version` prints (the compiler itself carries no version, so it stays byte-identical across commits that do not change it); its `lib:` line names the checkout's `lib/`, which that compiler reads its standard library from when `AVANT_ROOT` is not set, wherever the compiler is copied, and a compiler whose recorded library is gone says so instead of reading another |
+| `sh tools/letters.sh` | builds the runtime, B (`bin/avant-b`, built by the seed) and C′ (`bin/avant-c-llvm`, built by B); `b`, `c-llvm`, `d-llvm` (D′, built by C′) or `c-release` (the `--release` compiler a release ships) builds one. Beside each compiler it writes `OUT.versions.txt`, which `avant version` prints (the compiler carries no version, so it stays byte-identical across commits that do not change it); its `lib:` line names the checkout's `lib/`, read when `AVANT_ROOT` is unset, wherever the compiler is copied; if that library is gone, the compiler says so instead of reading another |
 | `sh tools/gate.sh` | the full gate: B, C′, the suite on both, D′, and the fixed point (C′ and D′ emit the same LLVM IR for the compiler and are byte-identical) |
 | `sh tools/run-goldens.sh` | compiles and runs every example, runnable fixture and LangArena task and compares stdout, stderr and exit status with its golden (`GOLDEN_MODE=--release`, or empty, for the other modes) |
 
@@ -4418,17 +4423,17 @@ AVANT_COMPILER=./bin/avant-b ./bin/avant-b test
 AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm test
 ```
 
-`tests/cases/test_probe_matrix.av` checks seven of the checker's rules, each shown by a pair of programs (an unsafe one the compiler must refuse, a safe twin it must accept) under every statement and expression wrapper of the language, against the table `tests/probe/matrix.txt`; `AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm run tests/probe_matrix.av` writes the table again, to be committed only after its diff is read.
+`tests/cases/test_probe_matrix.av` checks seven checker rules, each a pair of programs (an unsafe one to refuse, a safe twin to accept) under every statement and expression wrapper, against `tests/probe/matrix.txt`; `AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm run tests/probe_matrix.av` rewrites the table, committed only after its diff is read.
 
 - Each `tests/cases/test_*.av` is one program; helpers shared by several live in `tests/cases/harness.av`. Run one file with `avant test tests/cases/test_ffi.av`, or one slice with `--shard 2/4`.
-- The files listed in `[test] exclusive` (they probe the collector, rewrite `PATH`, use git, or write a coverage report of their own) run alone, in a command without `--shard`; a shard that would include one needs `--skip-exclusive`. `test_fixed_point.av`, which compiles the compiler, is listed in `[test] first` so it starts before the rest.
+- The `[test] exclusive` files (they probe the collector, rewrite `PATH`, use git, or write their own coverage report) run alone, in a command without `--shard`; a shard that would include one needs `--skip-exclusive`. `test_fixed_point.av`, which compiles the compiler, is in `[test] first` so it starts first.
 - For the compiler's suite, `--junit PATH` writes one case per check, with durations (its checks record them, as `std.testing`'s do); output is printed per file as each finishes, and the summary totals the run.
-- The compiler's own coverage report is the hit file of an instrumented compiler build, written once after the processes that update it have finished. It is not `avant test --coverage`, which reports the tests.
+- The compiler's own coverage report is an instrumented compiler build's hit file, written once after the processes updating it finish; it is not `avant test --coverage`, which reports the tests.
 - Goldens live in `tests/goldens/`.
 
 ### Checking this README
 
-Every `avant` block in this file is compiled, and run, by `sh tools/readme-check.sh`, and what the file says a program prints is compared with what it prints; `sh tools/readme-links.sh` checks every anchor and link. Run both after any change here.
+`sh tools/readme-check.sh` compiles and runs every `avant` block in this file and compares what it prints with what the file says; `sh tools/readme-links.sh` checks every anchor and link. Run both after any change here.
 
 - A block with `fn main` is a complete program: compiled, run, and expected to exit 0.
 - A trailing `// => text` says the program prints that line there; a `text` block marked `output` or `stderr` states a whole output or a diagnostic.
