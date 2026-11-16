@@ -303,7 +303,7 @@ pub class LlEmit {
         ty = self.ts.layouts[mt.layout].fields[pr.field]
         if pend == 2 {
           region = 2 + pr.field
-        } else if region != 1 {
+        } else if region > 1 {
           region = -1
         }
         pend = 0
@@ -322,7 +322,7 @@ pub class LlEmit {
         ty = et
         if pend == 1 {
           region = 1
-        } else if region != 1 {
+        } else if region > 1 {
           region = -1
         }
         pend = 0
@@ -415,25 +415,32 @@ pub fn ll_type_text(ts: MTypes, ty: Int): String {
   "ptr"
 }
 
-// Type-based alias tags. Three kinds of memory are told apart: an
-// element of an element buffer (any element type, reached through a
-// buffer reference: `(*data)[i]` and its fields), an Array or Buf
-// header's buffer reference, and its size. A header never shares bytes
-// with an element buffer, and its two fields never share bytes with each
-// other, so LLVM may keep a buffer reference or a size in a register
-// across an element store: the reload a loop otherwise does after every
-// store. Every other access is untagged and may alias anything. The
-// capacity stays untagged: it also holds the count of tasks that hold the
-// array, which other threads update. A collection moves a buffer and
-// rewrites the header only inside a call (a collecting call, the poll, a
-// native region), and a buffer grows only inside the runtime's calls:
-// LLVM assumes any such call may write any of this memory, whatever the
-// tags say, so no tag lets a buffer reference outlive a move.
-pub fn ll_tbaa_last: Int { 7 }
+// Type-based alias tags. Four kinds of memory are told apart: a local
+// (an alloca: a collector's slot among them, whose address the frame
+// hands to the runtime), an element of an element buffer (any element
+// type, reached through a buffer reference: `(*data)[i]` and its fields),
+// an Array or Buf header's buffer reference, and its size. Heap memory
+// never shares bytes with a local (no heap reference points into a
+// frame), a header never shares bytes with an element buffer, and its two
+// fields never share bytes with each other. So LLVM may keep a slot's
+// value, a buffer reference or a size in a register across an element
+// store: the reloads a loop otherwise does after every store. Every
+// other access (an object's field, a Hash's, a raw pointer's, a local's
+// through its address) is untagged and may alias anything. The capacity
+// stays untagged: it also holds the count of tasks that hold the array,
+// which other threads update. A collection moves a buffer and rewrites
+// the header and the slots only inside a call (a collecting call, the
+// poll, a native region), and a buffer grows only inside the runtime's
+// calls: LLVM assumes any such call may write any of this memory,
+// whatever the tags say, so no tag lets a reference outlive a move.
+pub fn ll_tbaa_last: Int { 9 }
 
-// The tag of an access to region (place_ptr): 1 an element, 2 a header's
-// buffer reference, 3 its size; "" for any other.
+// The tag of an access to region (place_ptr): 0 a local, 1 an element, 2
+// a header's buffer reference, 3 its size; "" for any other.
 pub fn ll_tbaa_tag(region: Int): String {
+  if region == 0 {
+    return ", !tbaa !9"
+  }
   if region == 1 {
     return ", !tbaa !3"
   }
@@ -447,7 +454,7 @@ pub fn ll_tbaa_tag(region: Int): String {
 }
 
 pub fn ll_tbaa_nodes: String {
-  "!1 = !{!\"avant alias\"}\n!2 = !{!\"element\", !1, i64 0}\n!3 = !{!2, !2, i64 0}\n!4 = !{!\"buffer reference\", !1, i64 0}\n!5 = !{!4, !4, i64 0}\n!6 = !{!\"size\", !1, i64 0}\n!7 = !{!6, !6, i64 0}\n"
+  "!1 = !{!\"avant alias\"}\n!2 = !{!\"element\", !1, i64 0}\n!3 = !{!2, !2, i64 0}\n!4 = !{!\"buffer reference\", !1, i64 0}\n!5 = !{!4, !4, i64 0}\n!6 = !{!\"size\", !1, i64 0}\n!7 = !{!6, !6, i64 0}\n!8 = !{!\"local\", !1, i64 0}\n!9 = !{!8, !8, i64 0}\n"
 }
 
 pub fn mir_loc0: MLoc {

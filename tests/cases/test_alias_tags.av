@@ -2,9 +2,9 @@ import harness
 
 // The type-based alias tags of the LLVM emitter (compiler/llvm/emit_core.av,
 // ll_tbaa_tag): an element access carries the element tag, an Array or Buf
-// header's buffer reference and size their own tags, and nothing else is
-// tagged (locals, object fields, Hash fields, an array's capacity, raw
-// pointers). Then the program that stores elements while calls move their
+// header's buffer reference and size their own tags, a local (an alloca,
+// a collector's slot among them) its own, and nothing else is tagged
+// (object fields, Hash fields, an array's capacity, raw pointers). Then the program that stores elements while calls move their
 // buffers (tests/fixtures/heap/alias_moves.av) is built with --release, the
 // mode whose optimizer uses the tags, and run under each collector mode:
 // its output must be its run golden's.
@@ -55,12 +55,14 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
     c.expect(str_has(text, "!3 = !{!2, !2, i64 0}"), "the element tag")
     c.expect(str_has(text, "!5 = !{!4, !4, i64 0}"), "the buffer reference tag")
     c.expect(str_has(text, "!7 = !{!6, !6, i64 0}"), "the size tag")
+    c.expect(str_has(text, "!9 = !{!8, !8, i64 0}"), "the local tag")
     c.expect(tags_count(lines, "store i1 false, ptr %t", ", !tbaa !3") >= 1, "an element store carries the element tag")
     c.expect(tags_count(lines, "load i1, ptr %t", ", !tbaa !3") >= 1, "an element load carries the element tag")
     c.expect(tags_count(lines, "load ptr, ptr %t", ", !tbaa !5") >= 2, "the buffer reference's loads carry its tag")
     c.expect(tags_count(lines, "store ptr %t", ", !tbaa !5") >= 1, "the new array's buffer reference store carries its tag")
     c.expect(tags_count(lines, "load i32, ptr %t", ", !tbaa !7") >= 1, "the size's loads carry its tag")
-    c.eq_int(tags_count(lines, "ptr %_", "!tbaa"), 0, "no access to a local is tagged")
+    c.expect(tags_count(lines, "ptr %_", ", !tbaa !9") >= 4, "a local's accesses carry the local tag")
+    c.eq_int(tags_count(lines, "ptr %_", "!tbaa") - tags_count(lines, "ptr %_", ", !tbaa !9"), 0, "a local's accesses carry no other tag")
     cap_reads = 0
     cap_tagged = 0
     for i in 0..lines.size - 1 {
@@ -82,8 +84,20 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
   c.wrote(file_write(src2, tags_other_src()), "write the object and hash probe")
   c.eq_int(emit_ll(compiler, src2, ll2, log2), 0, "the object and hash probe's .ll")
   if text2 = file_read(ll2) {
-    c.expect(!str_has(text2, "!tbaa"), "object fields, Hash fields and locals are untagged")
-    c.expect(!str_has(text2, "avant alias"), "no alias nodes without a tag")
+    lines2 = tags_lines(text2)
+    fields = 0
+    tagged = 0
+    for i in 0..lines2.size - 1 {
+      if str_has(lines2[i], ".Box\", ptr %t") {
+        fields += 1
+        if str_has(lines2[i + 1], "!tbaa") {
+          tagged += 1
+        }
+      }
+    }
+    c.expect(fields >= 2, "the probe reaches an object's field")
+    c.eq_int(tagged, 0, "an object's field is not tagged")
+    c.eq_int(tags_count(lines2, "!tbaa", "") - tags_count(lines2, ", !tbaa !9", ""), 0, "only locals are tagged without an array")
   } else {
     c.expect(false, "read the object and hash probe's .ll")
   }
