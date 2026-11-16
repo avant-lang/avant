@@ -39,8 +39,8 @@ command -v "$llvm_config" > /dev/null 2>&1 || {
 }
 version=$("$llvm_config" --version)
 case "$version" in
-  20.* | 23.*) ;;
-  *) echo "tools/build-llvm.sh: LLVM 20 (the default) or 23 (the probe) is required; $llvm_config is $version" >&2; exit 1 ;;
+  20.* | 21.* | 22.* | 23.*) ;;
+  *) echo "tools/build-llvm.sh: LLVM 20 (the default), 21, 22 or 23 is required; $llvm_config is $version" >&2; exit 1 ;;
 esac
 want="llvm $version
 glue $(sha256sum "$src" | cut -d' ' -f1)
