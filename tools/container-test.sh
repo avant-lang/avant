@@ -56,7 +56,7 @@ elif command -v apk > /dev/null; then
   apk add -q bash curl tar
 fi
 echo "container: $(. /etc/os-release && echo "$PRETTY_NAME"), $(getconf GNU_LIBC_VERSION 2>/dev/null || echo 'no glibc')"
-for tool in llvm-config-20 llvm-config re2c pcre2-config myc-llvm; do
+for tool in llvm-config-22 llvm-config-20 llvm-config re2c pcre2-config myc-llvm; do
   if command -v $tool > /dev/null; then
     echo "container: $tool is present, the image is not clean" >&2
     exit 1

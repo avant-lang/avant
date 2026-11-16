@@ -2,8 +2,8 @@
  * in, an object file out, through the stable LLVM C API only.
  *
  * Linked into the compiler only, never into a user program:
- * tools/build-llvm.sh compiles this file against llvm-config-20 (or, with
- * LLVM_CONFIG=llvm-config-23, against LLVM 23, a probe) and merges
+ * tools/build-llvm.sh compiles this file against LLVM 22.1.8 (or, with
+ * LLVM_CONFIG naming another, against LLVM 20, 21 or 23) and merges
  * it with the LLVM members it needs (and libstdc++, zlib, zstd) into one
  * relocatable object, runtime/build/avant_llvm.o, whose only global
  * definitions are the avant_llvm_* functions below. The compiler binds
@@ -107,7 +107,7 @@ int64_t avant_llvm_init(void) {
      * to 64 (place_functions below), a loop's offset within its 64-byte
      * line no longer depends on the code before it, and a short loop
      * (up to 32 bytes) never straddles a line: Etc::Sieve's 30-byte inner
-     * loop cost 13% when it did. LLVM 20 offers no per-target-machine
+     * loop cost 13% when it did. LLVM (20 to 23) offers no per-target-machine
      * setting for it in the C API (llc's -align-loops lives in its own
      * flags library), so it is this X86 option, set once per process;
      * the compiler compiles nothing else with this LLVM. */
@@ -352,7 +352,7 @@ char *avant_llvm_error(void) {
   return avant_string(g_error ? g_error : "");
 }
 
-/* The linked LLVM's version, "20.1.8" (or "23.1.6" built against LLVM 23). */
+/* The linked LLVM's version, "22.1.8" (or that of the LLVM_CONFIG it was built against). */
 char *avant_llvm_version(void) {
   unsigned major = 0, minor = 0, patch = 0;
   char buf[48];

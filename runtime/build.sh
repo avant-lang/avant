@@ -172,13 +172,13 @@ compile "$us/eventing/epoll_kqueue.c" "$root/build/us_epoll_kqueue.o"
 # runtime/build/avant-bind. `avant bind` runs it and builds nothing itself;
 # the release ships it beside avant. Without llvm-config or libclang it is
 # skipped with a notice, and `avant bind` says how to build it.
-# BIND_LLVM_CONFIG names the llvm-config whose libclang it links (default:
-# LLVM_CONFIG, else llvm-config), so the helper can stay on a distribution
-# libclang while the compiler's in-process LLVM comes from elsewhere (the
-# libclang of LLVM's official binaries finds no resource headers when
+# BIND_LLVM_CONFIG names the llvm-config whose libclang it links (default
+# llvm-config-20: the helper stays on the distribution's libclang 20, the
+# one `avant bind` asks its users to install, while the compiler links
+# LLVM's official 22.1.8, whose libclang finds no resource headers when
 # loaded by avant-bind, so `avant bind` of a header that includes
-# <stdbool.h> fails).
-llvm_config=${BIND_LLVM_CONFIG:-${LLVM_CONFIG:-llvm-config}}
+# <stdbool.h> would fail with it).
+llvm_config=${BIND_LLVM_CONFIG:-llvm-config-20}
 bind_src="$root/../tools/bind.c"
 bind_out="$root/build/avant-bind"
 if command -v "$llvm_config" > /dev/null 2>&1 && [ -f "$bind_src" ]; then
@@ -199,10 +199,12 @@ fi
 # The compiler's in-process LLVM: tools/build-llvm.sh writes
 # runtime/build/avant_llvm.o, which only the compiler links (tools/
 # letters.sh). It rebuilds only when LLVM or the glue changed, so a cached
-# run costs a few sha256 sums. Without llvm-config-20 it is skipped with a
+# run costs a few sha256 sums. Without its llvm-config it is skipped with a
 # notice, like avant-bind; building the compiler then stops and says why.
-if command -v "${LLVM_CONFIG:-llvm-config-20}" > /dev/null 2>&1; then
+llvm_default=/opt/llvm-22.1.8/bin/llvm-config
+[ -x "$llvm_default" ] || llvm_default=llvm-config-22
+if command -v "${LLVM_CONFIG:-$llvm_default}" > /dev/null 2>&1; then
   sh "$root/../tools/build-llvm.sh"
 else
-  echo "runtime/build.sh: skipped avant_llvm.o: ${LLVM_CONFIG:-llvm-config-20} not found (the compiler needs llvm-20-dev; see tools/build-llvm.sh)" >&2
+  echo "runtime/build.sh: skipped avant_llvm.o: ${LLVM_CONFIG:-$llvm_default} not found (the compiler needs LLVM 22: sh tools/install-llvm.sh; see tools/build-llvm.sh)" >&2
 fi

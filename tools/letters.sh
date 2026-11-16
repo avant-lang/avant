@@ -107,7 +107,7 @@ done
 
 need_llvm() {
   [ -f "$COMPILER_LINK" ] && return 0
-  echo "letters: $COMPILER_LINK is missing: run sh runtime/build.sh (it needs llvm-20-dev: llvm-config-20 and the static LLVM archives)" >&2
+  echo "letters: $COMPILER_LINK is missing: run sh runtime/build.sh (it needs LLVM 22: sh tools/install-llvm.sh)" >&2
   exit 1
 }
 
