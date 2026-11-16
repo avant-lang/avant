@@ -3456,7 +3456,7 @@ fn main {
 
 ## Standard library
 
-The standard library is imported module by module, and importing links the C library behind it: a program that never imports `std.regex` does not carry PCRE2.
+Each module is imported on its own and links only its own C library: a program that never imports `std.regex` does not carry PCRE2.
 
 | Module | Gives you | Stands on |
 | --- | --- | --- |
@@ -3468,9 +3468,7 @@ The standard library is imported module by module, and importing links the C lib
 | `std.gc` | `gc.hold { }`, `gc.collect()` | the collector ([Collection hints](#collection-hints)) |
 | `std.testing` | `Test`, the checks of a test file | — ([Testing](#testing)) |
 
-Their speed is the C libraries' merit, reached through Avant's bindings ([Reading these numbers](#reading-these-numbers)). The libraries are compiled into the runtime: nothing to install. A module's file is its import name: `std.regex` is `lib/std/regex.av`.
-
-Two conventions: a failure is an error value (`Json.parse` returns `Json | JsonError`), and a call that allocates its result usually has an `_into(buf)` twin writing into a `Buf` you own.
+The libraries are compiled into the runtime, nothing to install; their speed is theirs ([Reading these numbers](#reading-these-numbers)). A module's file is its import name: `std.regex` is `lib/std/regex.av`. A failure is an error value (`Json.parse` returns `Json | JsonError`); a call that allocates its result usually has an `_into(buf)` twin writing into your `Buf`.
 
 ### std.json
 
@@ -3497,7 +3495,7 @@ fn main {
 }
 ```
 
-**Reading.** `Json.parse(text)` returns `Json | JsonError`. A `Json` is a position in the parsed document, which owns its values and text; there is nothing to close.
+**Reading.** `Json.parse(text)` returns `Json | JsonError`. A `Json` is a position in the parsed document, which owns its values and text: nothing to close.
 
 | On a `Json` | Gives |
 | --- | --- |
@@ -3511,7 +3509,7 @@ fn main {
 | `text` | the value written back as JSON text |
 | `to_value` | a plain `JsonValue` tree (an Avant class) that outlives the document |
 
-`int` is a JSON integer (no fraction, no exponent) within `Int`, and `nil` for anything else: a real such as `3.7` or `3.0`, an integer beyond `Int`, a non-number. `f64` reads any number.
+`int` is `nil` for anything but a JSON integer (no fraction, no exponent) within `Int`: `3.7`, `3.0`, an integer beyond `Int`, a non-number. `f64` reads any number.
 
 **Errors.** A `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset` (`-1` when there is none).
 
@@ -3525,7 +3523,7 @@ fn main {
 | `end` | closes the innermost open object or array |
 | `to_s` | the text |
 
-`v` is an `Int`, `Float64`, `String`, `Bool`, `Json` or another `JsonBuilder`. Floats are written in the language's one float text (`1.5e-7`, `2.0`), NaN and the infinities as `null`. A builder used against its shape traps, saying how: `end` with nothing open (`avant runtime: JsonBuilder.end: nothing open`), `key` outside an object, `to_s` with containers open (`JsonBuilder.to_s: 2 containers still open`).
+`v` is an `Int`, `Float64`, `String`, `Bool`, `Json` or another `JsonBuilder`. Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities are `null`. A builder used against its shape traps, saying how: `end` with nothing open (`avant runtime: JsonBuilder.end: nothing open`), `key` outside an object, `to_s` with containers open (`JsonBuilder.to_s: 2 containers still open`).
 
 ### std.regex
 
@@ -3546,7 +3544,7 @@ fn main {
 }
 ```
 
-Compiling this program prints one note on stderr, `re2c: pattern stays on PCRE2 (...)`: see "Two engines" below.
+Compiling it prints `re2c: pattern stays on PCRE2 (...)` on stderr (**Two engines**, below).
 
 | Call | Gives |
 | --- | --- |
@@ -3564,15 +3562,15 @@ Compiling this program prints one note on stderr, `re2c: pattern stays on PCRE2 
 - A `Match` is a value: there are no global match cursors.
 - In a replacement, `$1` to `$9`, `${1}` and `${name}` insert a group (nothing when it did not take part) and `$$` is a dollar sign.
 - A pattern that does not compile is a `RegexError` with PCRE2's reason and the offset it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`).
-- A compiled pattern is a handle shared by every copy of the `Regex`: `re.close()` through any copy closes them all. Any operation on a closed `Regex` traps (`avant runtime: Regex used after close`), never a "no match"; so do a `Match`'s named groups and groups past the third, which are read from the pattern. Compiling the same pattern again is cheap: a bounded cache keeps compiled patterns.
-- **At PCRE2's limits a match traps, never "no match".** A search past PCRE2's match limit (ten million backtracking steps), or its depth or memory limits, ends the program with the operation and PCRE2's reason: `avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`. No limit can be set and the failure cannot be a value yet, so bound an outside pattern or text (length, shape) before matching.
-- A match that only nests deeply (a group repeated many thousands of times) is not a failure: it is answered on a larger stack, then by PCRE2's interpreter, with memory growing with the text. A pattern may have any number of groups PCRE2 accepts.
+- Every copy of a `Regex` shares one compiled pattern: `re.close()` through any copy closes all. Any operation on a closed `Regex` traps (`avant runtime: Regex used after close`), never "no match", as do a `Match`'s named groups and groups past the third (read from the pattern). A bounded cache makes compiling a pattern again cheap.
+- **At PCRE2's limits a match traps, never "no match"**: past the match limit (ten million backtracking steps), or the depth or memory limit, the program ends with the operation and PCRE2's reason (`avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`). The limits cannot be set and the failure is not a value: bound an outside pattern or text (length, shape) before matching.
+- Deep nesting alone (a group repeated many thousands of times) is not a failure: a larger stack, then PCRE2's interpreter, answers it, memory growing with the text. A pattern may have any number of groups PCRE2 accepts.
 
-**Two engines.** A string-literal pattern with at most one capture group and no named groups is compiled by re2c to a native scanner. Any other pattern runs on PCRE2 with its JIT; when it (and its `caseless` argument, if given) is a literal, the compiler says so on stderr, so `avant run`'s stdout is only the program's. Both are inside the release: neither library is needed on the machine. (With no `re2c` binary, literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary.) PCRE2 backtracks, which can be catastrophic on adversarial patterns and texts.
+**Two engines.** re2c compiles a string-literal pattern with at most one capture group and no named groups to a native scanner. Any other pattern runs on PCRE2's JIT; a literal one (with a literal `caseless`, if given) gets a note on stderr, so `avant run`'s stdout stays the program's. Both ship inside the release. Without a `re2c` binary literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary. PCRE2 backtracks: adversarial patterns and texts can be catastrophic.
 
 ### std.http
 
-Cleartext HTTP/1.1 and WebSockets: a server, a blocking HTTP client and a blocking WebSocket client. **There is no TLS yet**: `https` and `wss` URLs are an `HttpError`, never a silent downgrade.
+Cleartext HTTP/1.1 and WebSockets: a server, a blocking HTTP client and a blocking WebSocket client. **No TLS** ([Not built yet](#not-built-yet)): `https` and `wss` URLs are an `HttpError`, never a silent downgrade.
 
 ```avant
 import std.http
@@ -3599,7 +3597,7 @@ fn main {
 
 #### HTTP server
 
-`Http.listen(port)` binds at once and returns `Server | HttpError`, so a bad port fails there. Register routes, then `serve`, which runs until `close` is called.
+`Http.listen(port)` binds at once (a bad port fails there), returning `Server | HttpError`; register routes, then `serve` runs until `close`.
 
 <!-- check: compile -->
 ```avant
@@ -3622,15 +3620,15 @@ fn main {
 ```
 
 - **Listening**: `Http.listen(port, host = "127.0.0.1", max_body = 1048576, loops = 0, max_message = 1048576)`. `server.port()` is the bound port.
-- **Routes** are exact paths: `get`, `post`, `put`, `delete`, `patch`, or `route(method, path)`. There is no pattern router, middleware or streaming. Register every route before `serve` (the loop threads read routes without a lock): a route method, WebSocket ones too, called from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`, status 1).
-- **A handler** gets a `Request` (`method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes`) and returns a `Response`, built only as `Response.text(body, status = 200)` or `Response.bytes(body, status = 200)`, then `.header(name, value)`. A `status` outside 100 to 599 traps when the answer is written (`avant runtime: a response's status 99 is not 100 to 599 (RFC 9110)`). `Content-Length` and `Connection` are the server's to set. A header name must be a token (letters, digits and RFC 9110's punctuation), and its value may hold no control character but tab; anything else traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`), since a CR or LF would split the response. Check request text before putting it in a header.
+- **Routes** are exact paths (`get`, `post`, `put`, `delete`, `patch`, `route(method, path)`); no pattern router, middleware or streaming. Register every route, WebSocket ones too, before `serve`: one registered from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`, status 1).
+- **A handler** gets a `Request` (`method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes`) and returns a `Response`, built only as `Response.text(body, status = 200)` or `Response.bytes(body, status = 200)`, then `.header(name, value)`. A `status` outside 100 to 599 traps when written (`avant runtime: a response's status 99 is not 100 to 599 (RFC 9110)`). The server sets `Content-Length` and `Connection`. A header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`): check request text before putting it in a header.
 - **Headers** (`req.headers`, `resp.headers`): `get(name)` (`String?`), `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)`.
-- **Bodies** are buffered up to `max_body` (1 MiB by default). Answered and then closed: 413 for a larger body, 411 for a chunked request body, 400 for a malformed request, more than one `Content-Length` value (two lines, or a list in one, even agreeing), an HTTP/1.1 request without `Host`, two `Host` lines, or a `Host` that is not `host[:port]` (RFC 3986's host, a name or an address, then an optional port).
-- **Connections** are kept alive; pipelined requests are answered in order, each with its own write for now. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on one port.
+- **Bodies** are buffered up to `max_body` (1 MiB by default). Answered, then closed: 413 for a larger body, 411 for a chunked request body, 400 for a malformed request, more than one `Content-Length` value (two lines, or a list in one, even agreeing), an HTTP/1.1 request without `Host`, two `Host` lines, or a `Host` that is not `host[:port]` (RFC 3986's host, a name or an address, then an optional port).
+- **Connections** are kept alive; pipelined requests are answered in order, each with its own write. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on one port.
 - **Handlers must not block the loop**: hand slow work to `spawn`.
-- **An idle HTTP connection is closed** after about 30 seconds with no request bytes in and no answer bytes out. WebSocket connections have no such timeout.
+- **An idle HTTP connection is closed** after about 30 seconds with no bytes in or out; WebSocket connections never time out.
 - **A trap in a handler ends the server**, like any [trap](#traps): run it under a supervisor, and read request data with the non-trapping forms.
-- `close` stops the server and lets `serve` return. An unclosed server keeps its socket until the process exits; there is no finalizer.
+- `close` stops the server and lets `serve` return. An unclosed server keeps its socket until the process exits (no finalizer).
 
 #### HTTP client
 
@@ -3654,9 +3652,9 @@ fn main {
 
 `Http.get(url, follow = true, timeout_ms = 10000)`, `Http.post(url, body, ...)` with a `String` body, and `Http.request(method, url, body, headers, ...)` with `body` as `Bytes` and `headers` an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`) return `Response | HttpError`.
 
-- A request is sent only when its method and header names are tokens, its header values hold no control character but tab (`Response.header`'s rules), and its URL no space or control character; otherwise the call sends nothing and returns an `HttpError` naming the part and byte (`invalid request header value of X-A (byte 13 at 1): …`). `Content-Length` and `Connection` are the client's to set: a caller's are skipped.
-- A call blocks its thread until the response is complete: from a server handler, `spawn` first. Complete is when the framing says so (the `Content-Length`, a chunked body's last chunk, or the head alone for HEAD, 204 and 304), whether or not the server then closes; with neither length nor chunks, when the server closes. Interim answers (`100 Continue`, `103 Early Hints`) are read past. More than one `Content-Length` value (identical or not, as the server refuses for requests), or a non-number, is an `HttpError` (`invalid HTTP response body from …`).
-- `timeout_ms` is a deadline, kept within a few milliseconds, for the whole call: connection, request, complete response and every redirect followed. When it passes, the call returns an `HttpError` (`request to 127.0.0.1:8080 timed out`) whatever had arrived; a slowly sending server does not extend it. Zero or less means the default, 10000.
+- A request is sent only when its method and header names are tokens, its header values hold no control character but tab (`Response.header`'s rules), and its URL no space or control character; otherwise the call sends nothing and returns an `HttpError` naming the part and byte (`invalid request header value of X-A (byte 13 at 1): …`). The client sets `Content-Length` and `Connection`, skipping a caller's.
+- A call blocks its thread until the response is complete (from a server handler, `spawn` first): as the framing says (the `Content-Length`, a chunked body's last chunk, or the head alone for HEAD, 204 and 304), or, with neither length nor chunks, when the server closes. Interim answers (`100 Continue`, `103 Early Hints`) are skipped. More than one `Content-Length` value (even identical) or a non-number is an `HttpError` (`invalid HTTP response body from …`).
+- `timeout_ms` is one deadline, kept within a few milliseconds, for the whole call (connection, request, response, every redirect); a slow server does not extend it. Past it the call returns an `HttpError` (`request to 127.0.0.1:8080 timed out`) whatever had arrived. Zero or less means the default, 10000.
 
 #### WebSocket server
 
@@ -3683,7 +3681,7 @@ fn main {
 - On a connection: `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")`, each returning `Bool`: `false` when the connection is closed or its send queue is full (a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole). A `WsConn` kept after its connection closed, or after `serve` returned, answers `false` to all four.
 - `websocket_open(path) { |conn| ... }` and `websocket_close(path) { |conn, code, reason| ... }` run once per connection (code 1006 when it dropped without a close frame).
 - Ping, the close handshake and fragmentation are handled for you. A message over `max_message` (1 MiB by default) closes the connection with code 1009 and never reaches the handler. `server.close()` sends code 1001 to open connections.
-- A connection stays on its loop thread. To answer from a `spawn` block, capture `conn.sender` and send through that.
+- A connection stays on its loop thread: to answer from a `spawn` block, capture `conn.sender` and send through it.
 
 #### WebSocket client
 
@@ -3702,7 +3700,7 @@ fn main {
 }
 ```
 
-`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError` (an `HttpError` without connecting for a URL with a space or a control character); `timeout_ms` covers the connection and its handshake. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Both timeouts run on the monotonic clock, unmoved by setting the system clock. Never call `recv` from a server handler. An unclosed connection keeps its thread until the process exits.
+`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError` (an `HttpError` without connecting for a URL with a space or a control character); `timeout_ms` covers the connection and its handshake. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Both timeouts use the monotonic clock. Never call `recv` from a server handler. An unclosed connection keeps its thread until the process exits.
 
 After `close`, every copy of the connection answers as closed, whatever opens later: `send_text` and `send_bytes` return `false`, `recv` `nil`, `close_code` 1006, and another `close` does nothing. A `spawn` block may capture a `WsConnection`, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return `nil`.
 
@@ -3739,7 +3737,7 @@ Encoding never fails (`to_base64` returns a `String`); `from_base64` returns `By
 
 ## Testing
 
-A test file is an ordinary program: it imports `std.testing`, checks what it cares about, and returns `t.finish()` from `fn main: Int`. `avant test` finds the files, runs them in parallel and reports.
+A test file is a program that imports `std.testing` and returns `t.finish()` from `fn main: Int`; `avant test` finds the files, runs them in parallel and reports.
 
 ```avant
 import std.testing
@@ -3763,9 +3761,9 @@ PASS greet handles empty
 0 failed, 2 passed
 ```
 
-Save it as `tests/test_greet.av` and run `avant test`. A failing check prints `FAIL` and its name, then the run continues, so one file reports every failure.
+Save it as `tests/test_greet.av` and run `avant test`. A failing check prints `FAIL` and its name and the file goes on, reporting every failure.
 
-The process status is the verdict: `0` when every check passed, `1` when any failed, whatever `main` returns (a void `main`, or one that never calls `finish`, included). The runner reads the status, not the words `PASS` and `FAIL`.
+The verdict is the process status, not the words `PASS` and `FAIL`: `0` when every check passed, `1` when any failed, whatever `main` returns (a void `main`, or one that never calls `finish`, included).
 
 Put the code under test in its own module and `import` it; a test sees its `pub` names only.
 
@@ -3790,13 +3788,13 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 | `--skip-exclusive` | leave out the files listed in `[test] exclusive` (required when `--shard` would include one) |
 | `-h`, `--help` | print the flags and exit 0 |
 
-`--jobs=N`, `--shard=I/N`, `--junit=PATH` and `--name=PATTERN` are the same flags. An unknown flag is an error. `avant test` does not pass arguments to the test programs, and a `--` on the command is an error.
+`--jobs=N`, `--shard=I/N`, `--junit=PATH` and `--name=PATTERN` work too. An unknown flag, or a `--`, is an error: test programs get no arguments.
 
 For each file the runner prints its output in source order, then `ok tests/test_greet.av`, or `FAIL tests/test_greet.av:` and how its process ended (`the test process exited with status 1`, `the test process killed by signal 13 (Broken pipe)`, `the compile exited with status 1`, `the parallel test "other" killed by signal 11 (Segmentation fault)`); at the end, a total (`0 failed, 1 passed`). Its status is 1 when a file failed, nothing was selected, or the command was refused. Ctrl-C or `SIGTERM` stops every test process it started and removes its temporary files.
 
 ### Checks
 
-`Test.new()` makes the value the checks hang on. Every check takes a name: name it after the case, so a `FAIL` line alone says what broke.
+`Test.new()` holds the checks. Name each check after its case, so a `FAIL` line alone says what broke.
 
 | Method | Passes when |
 | --- | --- |
@@ -3810,7 +3808,7 @@ For each file the runner prints its output in source order, then `ok tests/test_
 
 For a `Float64`, `check_eq` is IEEE's `==` (NaN equals nothing): compare with a tolerance in a `check` when that is what equality means.
 
-Several cases over one function read better as a table: inputs and expected values in two arrays, checked in one loop.
+Cases as a table: inputs and expected values in two arrays, checked in one loop.
 
 ```avant
 import std.testing
@@ -3830,7 +3828,7 @@ fn main: Int {
 }
 ```
 
-`t.temp_dir` returns a new directory at each call, inside the test's private temporary directory, which is removed when it exits: a test never cleans up.
+`t.temp_dir` returns a new directory at each call, inside the test's private temporary directory, removed at exit: a test never cleans up.
 
 ```avant
 import std.testing
@@ -3845,7 +3843,7 @@ fn main: Int {
 
 ### Golden files
 
-`golden` and `run_golden` compare against saved files, byte for byte, a trailing newline included. A missing file fails the check, and nothing rewrites one: update it by hand, after reading the new output.
+`golden` and `run_golden` compare against saved files byte for byte, trailing newline included. A missing file fails; nothing rewrites one: update it by hand after reading the new output.
 
 <!-- check: skip needs want.txt, hello.av, hello.want and bad.av beside it; exercised by tests/cases/test_testing_docs.av -->
 ```avant
@@ -3882,17 +3880,17 @@ fn main: Int {
 }
 ```
 
-In each of those processes, serial checks and `t.test` bodies are skipped and only that parallel body runs; code in `main` outside the bodies runs in every process. Only `avant test` starts them: `avant run` on the file, or the compiled program, runs every body once in one process, in source order, without the overlap.
+Each such process runs only its parallel body and `main`'s code outside the bodies. Only `avant test` starts them: `avant run`, or the compiled program, runs every body once, in one process, in source order.
 
 ### Choosing by name
 
-`avant test tests/test_greet.av --name empty` runs only what has `empty` in its name: a check, or a `t.test` or `t.parallel` body, which then runs whole. A body whose name lacks it does not run, so a check inside a body is chosen by the body's name. The pattern is plain text, matched case-sensitively anywhere in the name. Code in `main` outside the bodies still runs. The JUnit report lists only the checks that ran.
+`avant test tests/test_greet.av --name empty` runs only the checks and the `t.test` or `t.parallel` bodies (whole) whose names contain `empty`, as plain case-sensitive text; a check inside a body goes by the body's name, and `main`'s code outside the bodies still runs. The JUnit report lists only the checks that ran.
 
-Over several files, a file where nothing matches is left out of the report and the total. A pattern that matches nothing in any selected file is an error that names the pattern and the files: `--name nothing matches no check, test or parallel test in tests/test_greet.av`.
+A file where nothing matches is left out of the report and the total; a pattern that matches nothing in any selected file is an error: `--name nothing matches no check, test or parallel test in tests/test_greet.av`.
 
 ### Test settings
 
-An optional `[test]` section in `avant.toml` adjusts the walk. Paths are relative to the manifest.
+An optional `[test]` section of `avant.toml` adjusts the walk; paths are relative to the manifest.
 
 ```toml
 [test]
@@ -3909,14 +3907,14 @@ first = ["tests/test_slow.av"]
 | `first` | files that start before the others, in the listed order. A string or a list |
 
 - A path on the command overrides `dir` and `entry`. There is no `jobs` key and no command string.
-- `exclusive` is for a benchmark that needs a quiet machine. `first` is for the slowest files, so a long file does not start last (a file runs as soon as it has compiled).
+- `exclusive` suits a benchmark that needs a quiet machine; `first`, the slowest files, so they do not start last (a file runs once compiled).
 - The lists do not discover files: on a command with no path, every listed file must be one of the discovered tests.
 - `--shard` is an error when the selection contains an exclusive file, unless `--skip-exclusive` is passed; it picks its slice before `first` is applied, so `first` never moves a file between shards.
-- With `--jobs 1` every file is already alone, and `exclusive` changes nothing.
+- With `--jobs 1`, `exclusive` changes nothing.
 
 ### Reports
 
-**JUnit** (`--junit PATH`, off unless asked) is for test analytics. A file that uses `std.testing` gives one `<testcase>` per check, named by the check; any other file one case, named by its path. A file that failed without a failed case (killed by a signal, or a failing status with no failed check) adds a case named by its path, whose failure message says how the process ended; a failed case named by its path carries the file's output. A byte XML cannot hold, in that output or a check's name (a control character such as a colour escape, or non-UTF-8), is written `\xNN` (`\x1b`), so the report always parses.
+**JUnit** (`--junit PATH`, off unless asked): a file that uses `std.testing` gives one `<testcase>` per check, named by the check; any other file one case, named by its path. A file that failed without a failed case (a signal, or a failing status with no failed check) adds a case named by its path whose failure message says how the process ended; a failed case named by its path carries the file's output. A byte XML cannot hold, there or in a check's name (a control character such as a colour escape, or non-UTF-8), is written `\xNN` (`\x1b`), so the report always parses.
 
 **Coverage** (`--coverage`) compiles each selected file with counters, runs them, prints one table after the summary and writes `coverage/lcov.info` in the current directory (overwritten by each run). Without the flag nothing is instrumented or written.
 
@@ -3930,11 +3928,11 @@ exclude = ["tests", "deps"]
 
 `include` and `exclude` are directories relative to the manifest (a string or a list; no globs), walked recursively for `*.av`, skipping names that start with `.`. A file under `exclude` is left out, test files too when `exclude` names `tests`. A file no test loaded has no branch map.
 
-The runner sets what instrumented programs need; these variables are for a program instrumented on its own:
+For a program instrumented on its own (the runner sets these itself):
 
 | Variable | Read by | Effect |
 | --- | --- | --- |
-| `AVANT_COVERAGE=1` | the compiler | emit hit counters for this compilation (`0` turns it off). The test runner sets it; a person rarely does |
+| `AVANT_COVERAGE=1` | the compiler | emit hit counters for this compilation (`0` turns it off) |
 | `AVANT_COVERAGE_MAP` | the compiler | the path of the coverage map baked into the binary. Unset, `compile` writes it beside the binary as `OUT.covmap` (the program adds `OUT.covmap.hits` when it runs); `run` and `dump` keep it in their temporary directory |
 | `AVANT_COVERAGE_LCOV` | the program | where it writes the LCOV report; `0` writes none. Unset: `coverage/lcov.info` |
 | `AVANT_COVERAGE_REPORT` | the program | `0` hides the text table, `1` prints it. Unset, a program prints the table and the compiler's command line does not |
@@ -3954,9 +3952,9 @@ avant format . --check          # CI: list files that would change, exit 1 if an
 
 - A path is a `.av` file or a directory, walked like `avant test` walks `tests/` (names starting with `.` and directories named `deps` are skipped).
 - With one file and no flag, the text goes to stdout. `--check` writes nothing, prints `would change PATH` per file (`canonical` when none would), and exits 1 if any would.
-- The formatter works on tokens: it does not parse, typecheck or follow imports, so it formats a file that does not compile yet. It is never part of a build, so a formatting bug cannot change what a program means.
+- The formatter works on tokens (no parsing, typechecking or imports), so it formats a file that does not compile yet; it is never part of a build.
 - A file that does not lex is reported and left alone (status 1); the others are still formatted. A usage error (no path, an unknown flag, `--check` with `--write`, several files without either) exits 1.
-- `avant format --calls FILE...`, the one mode that typechecks, checks each FILE as a program's root and gives `()` to every method call written without them in it and its imports (`x.sum`, a bare `sum` on the receiver, `Point.new`), leaving fields and the read-only properties (`size`, `bytes`) alone. It prints each changed file with its count; a second run changes nothing. It rewrites only code the checker reaches (a generic body, for the instances the program makes); a program with errors is rewritten where it was checked, with status 1.
+- `avant format --calls FILE...`, the one mode that typechecks, checks each FILE as a program's root and gives `()` to every method call written without them in it and its imports (`x.sum`, a bare `sum` on the receiver, `Point.new`), leaving fields and the read-only properties (`size`, `bytes`) alone. It prints each changed file with its count; a second run changes nothing. It rewrites only what the checker reaches (a generic body, for the instances the program makes); a program with errors is rewritten where it was checked, with status 1.
 
 ## Command line
 
@@ -4004,10 +4002,10 @@ Options may sit before or after the file, up to `--`.
 | Compiles | fastest | fast | slowest |
 | Use it for | the edit-and-run loop | a binary to keep around | **anything you measure, and anything you ship** |
 
-- **Time a program only with `--release`**: `avant run` builds at `-O0`, so it measures the debug build. The [Benchmarks](#benchmarks) use `--release --cpu=v3`.
+- **Time a program only with `--release`** (`avant run` builds at `-O0`); the [Benchmarks](#benchmarks) use `--release --cpu=v3`.
 - An explicit flag wins over the verb's default; no environment variable selects the mode.
 - The language is the same in every mode: bounds, overflow and conversion checks are never off, and the collector is precise in all three.
-- `--cpu`: `compile` targets `v2` by default (every x86-64 processor of the last decade), so the binary runs elsewhere; `run` and `test` target the highest level of the machine. For recent hardware only, try `--cpu=v3` (AVX2); `native` is this machine exactly.
+- `--cpu`: `compile` targets `v2` by default (every x86-64 processor of the last decade); `run` and `test`, the machine's highest level. `--cpu=v3` (AVX2) is for recent hardware only; `native` is this machine exactly.
 
 ### Program arguments
 
@@ -4053,7 +4051,7 @@ error[E4001]: unknown name cuont (did you mean `count`?)
 - The compiler recovers per statement: one run reports every independent mistake, in every function and imported file, up to 20 errors. With several, it ends with `error: aborting due to N previous errors`, past the cap with `error: and M more errors (limit 20)`.
 - A mistake is reported once: what reads a value whose type already failed (an operator, a call, a condition, a later use of its name) adds no error. Where an operand does not fit, the message is its reader's: `px = pa + pn` with an `Int32` and an `Int` says `binary operator expects matching types, got Int32 and Int`; `n: UInt32 = -1` says `a negative literal does not fit in UInt32`.
 - A syntax error names what the parser expected and found, in source terms: ``error[E2004]: expected `{`, found a string``.
-- An unknown name gets at most one suggestion, in scope there (a local, field, method, constant, function, type, enum member or builtin method), the nearest by spelling: at most a third of the letters changed (a swap counts as one change, a case change as half), never the whole name; a tie goes to what the compiler would find first (a local, then a field, a method, a constant, a function), then alphabetically. A wrong argument count is not a misspelling (next point).
+- An unknown name gets at most one suggestion, in scope there (a local, field, method, constant, function, type, enum member or builtin method), the nearest by spelling: at most a third of the letters changed (a swap counts as one change, a case change as half), never the whole name; a tie goes to what the compiler would find first (a local, then a field, a method, a constant, a function), then alphabetically. A wrong argument count gets no suggestion.
 - A call whose arguments fit no function of that name says what it takes: `add takes 2 arguments, given 1: add(a: Int, b: Int): Int`; with several, each signature. Two that fit equally are named both: ``ambiguous call to f: f(a: Int, b: Int?): Int and f(a: Int?, b: Int): Int both match``.
 - A use of an optional as its value, and `x == nil`, say how to open it: ``cannot read field size on String?; open it with `if v = s`, `s ?? fallback` or `s?` ``.
 - The code's first digit names the phase: `E1xxx` lexer, `E2xxx` parser, `E3xxx` type resolution, `E4xxx` checker, `E5xxx` module loader, `E6xxx` macro expansion.
@@ -4062,13 +4060,13 @@ Run-time failures are [traps](#traps).
 
 ### Temporary files
 
-`compile`, `run`, `test`, `fetch` and `bind` keep every intermediate file (IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp`), removed when the command exits: on an error, Ctrl-C, `SIGTERM`, `SIGHUP`, a closed pipe (`SIGPIPE`, as in `avant test | head`) or a crash (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`) too, the process still dying by the signal. Only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs `run` and `test` start get it as their `TMPDIR`, so their temporaries go with it.
+`compile`, `run`, `test`, `fetch` and `bind` keep every intermediate file (IR, objects, logs, test binaries) in one private directory, `avant-XXXXXX` under `$TMPDIR` (or `/tmp`), removed when the command exits, also on an error, Ctrl-C, `SIGTERM`, `SIGHUP`, a closed pipe (`SIGPIPE`, as in `avant test | head`) or a crash (`SIGSEGV`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGABRT`), the process still dying by the signal; only `kill -9` or a stack overflow leaves it behind. The tools the compiler runs (`cc`, `re2c`, `git`) and the programs `run` and `test` start get it as their `TMPDIR`.
 
 `--keep-tmp` keeps the directory for debugging and prints its path. A program run on its own keeps its directory with `AVANT_KEEP_TMP=1`.
 
 ### Environment variables
 
-**None needs to be set.** For the record:
+**None needs to be set.**
 
 | Variable | Effect |
 | --- | --- |
