@@ -733,9 +733,29 @@ pub fn push_indent(buf: Buf, depth: Int) {
   }
 }
 
+// Whether k opens a bracket: `{`, `(` or `[`.
+pub fn opens_bracket(k: Int): Bool {
+  k == tk_l_brace() || k == tk_l_paren() || k == tk_l_bracket()
+}
+
+// Whether k closes one.
+pub fn closes_bracket(k: Int): Bool {
+  k == tk_r_brace() || k == tk_r_paren() || k == tk_r_bracket()
+}
+
+// The canonical text of the tokens. A line's indent: one level more than
+// the line that opened the innermost bracket still open at its start
+// (`{`, `(` or `[`), so a block's statements and the elements, arguments
+// and fields of a bracket that spans lines sit one level in; a line that
+// starts with a closing bracket sits at the indent of the line that
+// opened it. Brackets opened on one line give the lines inside one level
+// together (`f(Box {` and its fields, closed by `})`).
 pub fn reprint(tokens: Array(Token)): String {
   buf = buf_new()
-  depth = 0
+  // The indent of the line each open bracket was opened on, innermost
+  // last, and the current line's own.
+  opened: Array(Int) = []
+  line_indent = 0
   at_start = true
   prev = -1
   prev2 = -1
@@ -764,16 +784,18 @@ pub fn reprint(tokens: Array(Token)): String {
       prev = tk_newline()
     }
     started = at_start
-    dedented = false
     if started {
-      if k == tk_r_brace() && depth > 0 {
-        depth -= 1
-        dedented = true
+      line_indent = 0
+      if opened.size > 0 {
+        line_indent = opened[opened.size - 1] + 1
+        if closes_bracket(k) {
+          line_indent = opened[opened.size - 1]
+        }
       }
       if k == tk_file_line() {
         buf.push_str(t.value)
       } else {
-        push_indent(buf, depth)
+        push_indent(buf, line_indent)
         push_token(buf, t)
       }
       at_start = false
@@ -794,10 +816,14 @@ pub fn reprint(tokens: Array(Token)): String {
         push_token(buf, t)
       }
     }
+    if opens_bracket(k) {
+      opened.push(line_indent)
+    } else if closes_bracket(k) && opened.size > 0 {
+      opened.pop()
+    }
     if k == tk_comment() {
     } else if k == tk_file_line() {
     } else if k == tk_l_brace() {
-      depth += 1
       if brace_starts_lambda(tokens, i) {
         lambda_state = 1
       } else {
@@ -805,10 +831,6 @@ pub fn reprint(tokens: Array(Token)): String {
       }
       after_tight = false
     } else if k == tk_r_brace() {
-      if dedented {
-      } else if depth > 0 {
-        depth -= 1
-      }
       after_tight = false
       lambda_state = 0
     } else if lambda_state == 1 {
