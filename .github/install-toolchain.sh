@@ -17,7 +17,17 @@
 # tools/install-llvm.sh (sha256 and signature checked) and cache it.
 # python3 (re2c's configure), xz-utils and gnupg (tools/install-llvm.sh)
 # and GNU time (the suite) are installed too, though runners have them.
-# Prints every installed version at the end.
+#
+# The plain amd64 packages, never an architecture variant: GitHub's
+# ubuntu-26.04 image sets apt to Ubuntu's amd64v3 variant, whose gcc emits
+# x86-64-v3 code (AVX2, BMI) by default and whose static libraries
+# (libstdc++.a, libc's start files, libzstd.a) hold such code, so the
+# archive's runtime objects and compiler would not run on an older x86-64.
+# The variant setting is cleared, and every installed variant package that
+# ships a compiler, a static library or an object file is installed again
+# from amd64; the script fails if one is left or if gcc's default is not
+# the baseline x86-64 (tools/isa-check.sh checks the archive itself).
+# Prints every installed version, with its variant, at the end.
 set -Eeuo pipefail
 
 readonly SNAPSHOT=20261116T000000Z
@@ -50,9 +60,36 @@ readonly PACKAGES=(
   time
 )
 
-install_pins() {
-  sudo apt-get install -y --no-install-recommends --allow-downgrades "${PACKAGES[@]}"
+readonly NO_VARIANT=/etc/apt/apt.conf.d/99zz-avant-no-variant
+
+# Installed packages of an architecture variant (dpkg records the variant
+# a package came from) that ship a compiler or what a link takes in.
+variant_build_packages() {
+  dpkg-query -W -f '${db:Status-Abbrev}\t${Package}=${Version}\t${Architecture-Variant}\n' |
+    awk -F'\t' '$1 ~ /^ii/ && $3 != "" { print $2 }' |
+    while read -r pv; do
+      if dpkg -L "${pv%%=*}" 2> /dev/null | grep -qE '\.(a|o)$|^/usr/(lib|libexec)/gcc/'; then
+        echo "$pv"
+      fi
+    done
 }
+
+install_pins() {
+  sudo apt-get install -y --no-install-recommends --allow-downgrades "${PACKAGES[@]}" || return 1
+  local again
+  mapfile -t again < <(variant_build_packages)
+  if ((${#again[@]})); then
+    echo "install-toolchain: installing again from amd64 (they came from an architecture variant): ${again[*]}"
+    sudo apt-get install -y --no-install-recommends --allow-downgrades --reinstall "${again[@]}" || return 1
+  fi
+}
+
+echo "install-toolchain: apt's architecture variants before: $(apt-config dump | sed -n 's/^APT::Architecture-Variants[: ]*//p' | tr '\n' ' ')"
+echo '#clear APT::Architecture-Variants;' | sudo tee "$NO_VARIANT" > /dev/null
+if apt-config dump | grep -E '^APT::Architecture-Variants' | grep -vqE '^APT::Architecture-Variants "";$'; then
+  echo "install-toolchain: apt still selects an architecture variant after $NO_VARIANT: $(apt-config dump | grep -E '^APT::Architecture-Variants')" >&2
+  exit 1
+fi
 
 # The runner's own archive first (through the mirrors), which carries these
 # versions while they are current; the snapshot only when one is gone
@@ -71,8 +108,22 @@ SOURCES
   install_pins
 fi
 
+left=$(variant_build_packages)
+if [[ -n "$left" ]]; then
+  echo "install-toolchain: still from an architecture variant: $left" >&2
+  exit 1
+fi
+march=$(cc -Q --help=target | awk '$1 == "-march=" { print $2 }')
+if [[ "$march" != "x86-64" ]]; then
+  echo "install-toolchain: cc targets $march by default, not the baseline x86-64" >&2
+  exit 1
+fi
+
 echo "toolchain:"
-dpkg-query -W gcc-15 binutils libclang-20-dev libzstd-dev libc6-dev linux-libc-dev zlib1g-dev | sed 's/^/  /'
+dpkg-query -W -f '${Package}\t${Version}\t${Architecture}\t${Architecture-Variant}\n' \
+  gcc-15 gcc-15-x86-64-linux-gnu libgcc-15-dev libstdc++-15-dev binutils libclang-20-dev libzstd-dev libc6-dev linux-libc-dev zlib1g-dev |
+  awk -F'\t' '{ printf "  %s\t%s\t%s, variant %s\n", $1, $2, $3, ($4 == "" ? "none" : $4) }'
+echo "  variant: none (plain amd64; apt: $NO_VARIANT); cc's default -march=$march"
 echo "  cc: $(cc --version | head -n 1)"
 echo "  ld: $(ld --version | head -n 1)"
 echo "  glibc: $(getconf GNU_LIBC_VERSION)"

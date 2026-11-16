@@ -194,6 +194,19 @@ jobs:
             echo '```'
           } > dist/notes.md
 
+      # The baseline x86-64: tools/package.sh refused an archive whose
+      # binaries or runtime objects need a newer x86-64 (tools/isa-check.sh);
+      # here the packaged compiler and three programs it compiles at the
+      # default --cpu run on an emulated Nehalem (x86-64-v2: no AVX, no BMI),
+      # since the runner itself has every newer instruction. qemu loads the
+      # plain amd64 C library, not the runner's (.github/baseline-sysroot.sh).
+      - name: Run the archive on an older x86-64 (qemu)
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends qemu-user
+          bash .github/baseline-sysroot.sh "$RUNNER_TEMP/baseline-root"
+          QEMU_LD_PREFIX="$RUNNER_TEMP/baseline-root" sh tools/isa-check.sh --run dist/avant-linux-x86_64
+
       - name: Upload the release files
         uses: actions/upload-artifact@v7
         with:
