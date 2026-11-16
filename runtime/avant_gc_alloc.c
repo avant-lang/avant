@@ -54,23 +54,13 @@ __asm__(".tls_common avant_gc_bump, 8, 8\n\t"
         ".tls_common avant_gc_base, 8, 8\n\t"
         ".tls_common avant_gc_starts, 8, 8");
 
-/* The inline path's state as code generated before the path's rework
- * reads it (a seed compiler's output: the compiler B of tools/letters.sh,
- * while its seed is a release from before the rework, as v0.42.0 is, tests
- * avant_gc_fast_ok before it bumps, stores its cursor through
- * avant_gc_block and keeps the counters itself). Never set: such
- * code always calls avant_alloc, which is correct for it and slower; the
- * new path has its own limit and no flag. To delete, with their lines in
- * avant_rt.exports, when a release with the rework is the seed. */
-__thread uint32_t avant_gc_fast_ok;
-__thread void *avant_gc_block;
-
 uint64_t avant_since_gc;
 
 /* Allocations generated code made without a call: counted only when
  * AVANT_GC_STATS (or a check mode) is set, by reading the headers of
  * each inline run when it is counted (inline_walk); 0 otherwise. Before
- * the path's rework it incremented it at every allocation. */
+ * the path's rework generated code incremented it at every allocation;
+ * now only the runtime reads it, so it is not exported. */
 uint64_t avant_inline_allocs;
 
 /* The first line of B at or after FROM that is live (LIVE 1) or free
