@@ -4149,6 +4149,8 @@ Each table names the machine and the day it measured: LangArena on a server (an 
 
 [LangArena](https://github.com/kostya/LangArena) runs the same tasks in many languages. Seconds, lower is better; **bold** is the best of the five. One process per task, timed by its wall clock, with its peak memory (`ru_maxrss`, what `/usr/bin/time` reports): the other languages through LangArena's harness under `/usr/bin/time`, Avant by a spawner that reads the same two numbers without a wrapper's start-up. Avant measured on the server on 2026-11-15 (release 0.44.0, `--release --cpu=v3`, the median of 5 rounds, the machine otherwise idle, all 50 task checksums correct); the other languages measured on the same server on 2026-11-14. The server: an AMD EPYC 7351P (Zen 1, 16 cores, 32 threads), boost off at a fixed 2.4 GHz, governor `performance`.
 
+**Which build these Avant numbers are.** The Avant column is release 0.44.0's source built on that server (its runtime compiled by gcc 15.2, the compiler linking LLVM 20.1.8), not the archive a user downloads. The published v0.44.0 archive, built by the release job on Ubuntu 24.04 (gcc 13.3, LLVM 20.1.2), measured on the same server against the same v0.43.0 base, takes 0.992 of its time (within the run-to-run spread; the server build reads 0.983) with the same 3.5% less peak memory. The difference is the C compiler of the runtime the archive carries, not LLVM: both LLVM versions build the same task binaries byte for byte, and gcc 13.3's runtime makes `Hash::CRC32`, whose loop is the runtime's C, 12% slower than gcc 15.2's (in the published v0.43.0 too) and `Calculator::Ast` about 8% slower.
+
 | Language | 50 tasks (s) | Average peak memory |
 | --- | ---: | ---: |
 | Avant | **103.636** | **19.3 MB** |

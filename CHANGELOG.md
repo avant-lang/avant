@@ -1,5 +1,11 @@
 # Avant Language changelog
 
+## Unreleased
+
+### Fixed
+
+* The README's benchmark section says which build its Avant numbers are (a server build, not the published archive) and gives the published v0.44.0's own reading beside them: 0.8% less time than v0.43.0, within the spread, against the 1.7% the 0.44.0 notes give for the server build, and the same 3.5% less memory; the gap is the runtime's C compiler in the release build, not LLVM.
+
 ## 0.44.0 - 2026-11-15
 
 ### Added
