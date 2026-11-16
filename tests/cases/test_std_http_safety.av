@@ -28,7 +28,8 @@ import std.http
 // literal and a status outside 100-599; a response with
 // two Content-Length values; interim 1xx answers; a
 // Host value that is not host[:port]; the write paths
-// past the piece.
+// past the piece. And a client sending a request head, a
+// body or reading an answer slowly.
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -577,6 +578,23 @@ fn route_serving_cases(c: Checks, root: String) {
       text = file_read(log) ?? ""
       c.eq_int(status, 1, "Server.${kinds[i]} while serving: status 1")
       c.eq_str(text, "avant runtime: ${whats[i]} registered while the server is serving: register every route before serve\n", "Server.${kinds[i]} while serving: the trap's line, the request unanswered")
+    }
+    // A limit is set before serving, like a route; a negative one traps.
+    limits = ["head_timeout", "min_rate", "limit-negative", "rate-negative"]
+    lines = [
+      "avant runtime: Server.head_timeout called while the server is serving: set every limit before serve\n",
+      "avant runtime: Server.min_rate called while the server is serving: set every limit before serve\n",
+      "avant runtime: Server.head_timeout(-1): a limit is 0 (off) to 2147483647\n",
+      "avant runtime: Server.min_rate(240, -5): a limit is 0 (off) to 2147483647\n"
+    ]
+    for i in 0..limits.size {
+      log = "${scratch()}/http-route-serving-${stamp}-${limits[i]}.log"
+      args: Array(String) = []
+      args.push(limits[i])
+      status = process_run_out(bin, args, log) ?? -1
+      text = file_read(log) ?? ""
+      c.eq_int(status, 1, "Server ${limits[i]}: status 1")
+      c.eq_str(text, lines[i], "Server ${limits[i]}: the trap's line")
     }
   } else {
     c.expect(false, "AVANT_COMPILER is set for the route-while-serving test")
@@ -1152,6 +1170,64 @@ fn ws_deadline_cases(c: Checks, root: String) {
   }
 }
 
+fn deadline_round(port: Int, out: Channel(String), root: String, stamp: Int): Int {
+  out.send(raw_client(port, root, stamp, "trickle_head", ""))
+  out.send(raw_client(port, root, stamp, "slow_body", ""))
+  out.send(raw_client(port, root, stamp, "fast_body", ""))
+  out.send(raw_client(port, root, stamp, "slow_read", ""))
+  stop(port)
+  0
+}
+
+// The idle timeout was the only deadline, and it started again at every
+// byte: a client sending a byte now and then held a connection for
+// good, and so did one sending a body or reading an answer as slowly.
+// A request head has a time from its first byte (head_timeout), and a
+// body and an answer's queued tail a minimum rate once a grace has
+// passed (min_rate). The server here has a head timeout of 1 s and a
+// rate of 1000 bytes a second after 0.5 s, so each round takes about
+// that long; a body fast enough is answered although it takes longer
+// than the grace.
+fn deadline_cases(c: Checks, root: String) {
+  stamp = now_ms()
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened.head_timeout(1000).min_rate(1000, 500)
+    huge = buf_new()
+    for i in 0..33554432 {
+      huge.push_byte(97 + i % 26)
+    }
+    huge_bytes = huge.to_s().bytes
+    server.get("/ping") { |req|
+      Response.text("pong")
+    }
+    server.post("/len") { |req|
+      Response.text("${req.body.size} bytes")
+    }
+    server.get("/huge") { |req|
+      Response.bytes(huge_bytes)
+    }
+    server.get("/__stop") { |req|
+      server.close()
+      Response.text("bye")
+    }
+    port = server.port()
+    out = Channel(String).new(8)
+    task = spawn {
+      deadline_round(port, out, root, stamp)
+    }
+    server.serve()
+    c.eq_int(task.join() ?? -1, 0, "deadline task")
+    want: Array(String) = []
+    want.push("trickle_head=408 in time")
+    want.push("slow_body=408 in time")
+    want.push("fast_body=answered 200: 40000 bytes")
+    want.push("slow_read=cut")
+    expect_lines(c, out, want, "a slow head, body or reader meets its deadline:")
+  } else {
+    c.expect(false, "listen for the deadline test")
+  }
+}
+
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
   i = 0
   while i < want.size {
@@ -1358,6 +1434,7 @@ fn main: Int {
   client_interim_cases(c, avant_test_root())
   ws_big_cases(c, avant_test_root())
   write_piece_cases(c)
+  deadline_cases(c, avant_test_root())
   ws_handshake_cases(c, avant_test_root())
   ws_deadline_cases(c, avant_test_root())
   c.finish()

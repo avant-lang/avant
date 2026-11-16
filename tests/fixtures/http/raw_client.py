@@ -3,6 +3,7 @@
 # requests in one write, a close with answers unread, a reader that
 # stalls, repeated headers). Usage: raw_client.py PORT MODE [ARG]
 # Prints one line, MODE=RESULT; the test compares it.
+import select
 import socket
 import sys
 import time
@@ -475,6 +476,110 @@ def ws_big(size):
     return "whole,then %s" % payload.decode("latin1")
 
 
+def until_closed(s, limit):
+    """Reads until the server ends the connection; returns what came and
+    the seconds that took (None when it was still open after `limit`)."""
+    s.settimeout(0.05)
+    start = time.time()
+    data = b""
+    while time.time() - start < limit:
+        try:
+            chunk = s.recv(65536)
+        except socket.timeout:
+            continue
+        except OSError:
+            return data, time.time() - start
+        if not chunk:
+            return data, time.time() - start
+        data += chunk
+    return data, None
+
+
+def trickle_head():
+    # A request head sent a byte every 0.1 s, never finished. The idle
+    # timeout started again at every byte, so such a client held the
+    # connection for good; the test's server gives a head 1 s: it is
+    # answered 408 and closed then.
+    s = connect()
+    head = b"GET /ping HTTP/1.1\r\nHost: x\r\nX-Pad: " + b"a" * 200
+    s.settimeout(0.1)
+    start = time.time()
+    data = b""
+    for i in range(len(head)):
+        try:
+            s.send(head[i:i + 1])
+            chunk = s.recv(4096)
+        except socket.timeout:
+            continue
+        except OSError:
+            break
+        if not chunk:
+            break
+        data += chunk
+        break
+    rest, _ = until_closed(s, 5)
+    took = time.time() - start
+    data += rest
+    s.close()
+    if not data.startswith(b"HTTP/1.1 408 "):
+        return "no 408 after %.1f s: %r" % (took, data[:40])
+    return "408 in time" if 0.9 <= took < 3.0 else "408 after %.1f s" % took
+
+
+def body_at(rate_per_tenth, total):
+    """POSTs a body of `total` bytes at `rate_per_tenth` bytes every
+    0.1 s; returns (status, seconds) of the answer, status 0 if none."""
+    s = connect()
+    s.sendall(b"POST /len HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n" % total)
+    start = time.time()
+    sent = 0
+    try:
+        while sent < total:
+            n = min(rate_per_tenth, total - sent)
+            s.sendall(b"a" * n)
+            sent += n
+            # An answer before the body is complete ends the sending.
+            if select.select([s], [], [], 0.1)[0]:
+                break
+    except OSError:
+        pass
+    got = read_answers(s, 1)
+    took = time.time() - start
+    s.close()
+    return (got[0][0] if got else 0), took, (got[0][1] if got else b"")
+
+
+def slow_body():
+    # A body sent at 200 bytes a second: the test's server wants 1000
+    # a second once 0.5 s has passed, so it is answered 408 soon after.
+    status, took, _ = body_at(20, 100000)
+    if status != 408:
+        return "answered %d after %.1f s" % (status, took)
+    return "408 in time" if took < 3.0 else "408 after %.1f s" % took
+
+
+def fast_body():
+    # A body at 40000 bytes a second takes a second, past the grace,
+    # and is answered whole.
+    status, took, body = body_at(4000, 40000)
+    return "answered %d: %s" % (status, body.decode("latin1"))
+
+
+def slow_read():
+    # A 32 MiB answer (more than the kernel's buffers hold, so the
+    # server queues a tail) the client does not read for 2 s: the tail
+    # leaves under the test's rate (1000 bytes a second after 0.5 s), so
+    # the server closes the connection; what reaches the client is cut.
+    s = small_rcvbuf()
+    s.sendall(get("/huge"))
+    time.sleep(2)
+    data, took = until_closed(s, 10)
+    s.close()
+    if took is None:
+        return "still open"
+    return "cut" if len(data) < 4 * BIG else "whole"
+
+
 try:
     if mode == "close_unread":
         result = close_unread(int(arg))
@@ -496,6 +601,14 @@ try:
         result = hosts()
     elif mode == "header_split":
         result = header_split(arg)
+    elif mode == "trickle_head":
+        result = trickle_head()
+    elif mode == "slow_body":
+        result = slow_body()
+    elif mode == "fast_body":
+        result = fast_body()
+    elif mode == "slow_read":
+        result = slow_read()
     elif mode == "ws_big":
         result = ws_big(int(arg))
     else:

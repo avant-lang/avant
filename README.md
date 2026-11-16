@@ -3642,9 +3642,31 @@ fn main {
 | a chunked request body | 411 |
 | a malformed request; more than one `Content-Length` value (two lines, or a list in one, even agreeing); an HTTP/1.1 request without `Host`, two `Host` lines, or a `Host` that is not `host[:port]` (RFC 3986's host, a name or an address, then an optional port) | 400 |
 
+**Limits** are on by default and set like routes, before `serve` (one set while serving traps: `avant runtime: Server.head_timeout called while the server is serving: set every limit before serve`); each setter returns the `Server`, 0 turns its limit off, and a negative value traps:
+
+| Limit | Default | When it is passed |
+| --- | --- | --- |
+| `head_timeout(ms)`: the time a request head may take from its first byte | 10000 ms | 408, closed |
+| `min_rate(bytes_per_second, grace_ms = 5000)`: the rate a request body must arrive at, and an answer the client reads must leave at, over each `grace_ms` from when it began to wait | 240 bytes a second over 5000 ms | a body: 408, closed; an answer: the connection is closed |
+
+<!-- check: compile -->
+```avant
+import std.http
+
+fn main {
+  if opened = Http.listen(8080) {
+    server = opened.head_timeout(5000).min_rate(1000, 2000)
+    server.get("/") { |req|
+      Response.text("hello")
+    }
+    server.serve()
+  }
+}
+```
+
 - **Connections** are kept alive; pipelined requests are answered in order, each with its own write. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on one port.
 - **Handlers must not block the loop**: hand slow work to `spawn`.
-- **An idle HTTP connection is closed** after about 30 seconds with no bytes in or out; WebSocket connections never time out.
+- **An idle HTTP connection is closed** after about 30 seconds with no bytes in or out (a request in parts has the limits above too); WebSocket connections never time out.
 - **A trap in a handler ends the server**, like any [trap](#traps): run it under a supervisor, and read request data with the non-trapping forms.
 
 #### HTTP client

@@ -15,6 +15,8 @@ lib httpc {
   fun avant_http_serve(srv: Ptr(Void), state: HttpState, cb: fn(HttpState, Ptr(Void)), ws_cb: fn(HttpState, Ptr(Void))): Int
   fun avant_http_close(srv: Ptr(Void)): Int
   fun avant_http_route_while_serving(what: String)
+  fun avant_http_limit_while_serving(name: String)
+  fun avant_http_set_limit(srv: Ptr(Void), name: String, which: Int, a: Int, b: Int)
   fun avant_http_header_check(name: String, value: String)
   fun avant_http_token_bad(s: String): Int
   fun avant_http_value_bad(s: String): Int
@@ -603,6 +605,41 @@ pub struct Server {
   // without a close frame). Runs once per connection.
   pub fn websocket_close(path: String, handler: fn(WsConn, Int, String)): Server {
     self.state.add_ws_close(path, handler)
+    self
+  }
+
+  // The server's limits: each is on by default, set like a route
+  // before `serve` (one set while serving traps), and 0 turns it off.
+  // A negative value traps.
+  //
+  // A request head must be complete within `ms` milliseconds of its
+  // first byte (10000 by default); a later one is answered 408 and the
+  // connection closed. Without it a client sending a byte now and then
+  // held a connection for good: the idle timeout starts again at every
+  // byte.
+  pub fn head_timeout(ms: Int): Server {
+    self.set_limit("head_timeout", 1, ms, 0)
+  }
+
+  // A request body waiting for its bytes must receive them at
+  // `bytes_per_second` on average over each `grace_ms` from when it
+  // began to wait, else the request is answered 408 and the connection
+  // closed; an answer the client is slow to read must leave at the same
+  // rate, else its connection is closed (240 bytes a second over 5000
+  // ms by default). 0 bytes a second turns it off.
+  pub fn min_rate(bytes_per_second: Int, grace_ms: Int = 5000): Server {
+    self.set_limit("min_rate", 2, bytes_per_second, grace_ms)
+  }
+
+  fn set_limit(name: String, which: Int, a: Int, b: Int): Server {
+    if self.state.serving {
+      httpc.avant_http_limit_while_serving(name)
+    }
+    // A closed server's C record is gone (close released it, or serve
+    // did when it returned): nothing is left to limit.
+    if !self.state.closed {
+      httpc.avant_http_set_limit(self.handle, name, which, a, b)
+    }
     self
   }
 

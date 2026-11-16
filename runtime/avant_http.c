@@ -15,6 +15,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -314,6 +315,19 @@ typedef struct Conn {
   size_t out_cap;
   int close_after_flush;
   int peer_ended;
+  /* The deadlines' clocks (http_now_ms readings, 0 when not running):
+   * head_at since the first byte of a request head that is not complete
+   * yet; body_at since the start of the current rate window of a body
+   * waiting for bytes (body_from: conn->len then); out_at likewise for
+   * an answer's queued tail (out_from: out_off then). A connection with
+   * one running is on its loop's watch list, which the loop's sweep
+   * reads (loop_sweep). A request that arrives whole and an answer the
+   * socket takes whole start none. */
+  int64_t head_at;
+  int64_t body_at;
+  size_t body_from;
+  int64_t out_at;
+  size_t out_from;
 } Conn;
 
 /* One event loop per loop thread, all binding the same port through
@@ -326,6 +340,8 @@ struct HttpLoop {
   struct us_socket_context_t *ctx;
   struct us_listen_socket_t *listen;
   struct ConnNode *conns_head;
+  struct ConnNode *watch; /* the connections with a deadline running */
+  struct us_timer_t *sweep;
   pthread_t thread;
   int spawned;
 };
@@ -343,14 +359,38 @@ struct AvantHttpServer {
   int32_t max_message;
   unsigned int idle_timeout;
   size_t ws_write_chunk; /* the most a WebSocket write hands the socket */
+  /* The limits (Server's setters before serve; 0 is off):
+   * head_ms, the time a request head may take from its first byte;
+   * rate, the bytes per second a request body must arrive at and an
+   * answer's queued tail must leave at, on average over each window of
+   * grace_ms from when it began to wait. */
+  uint32_t head_ms;
+  uint32_t rate;
+  uint32_t grace_ms;
   AvantWsConn *ws_all;
 };
 
+/* conn comes first: a Conn's address is its node's. */
 typedef struct ConnNode {
   Conn conn;
   struct us_socket_t *sock;
   struct ConnNode *next;
+  struct ConnNode *wprev;
+  struct ConnNode *wnext;
+  int watched;
 } ConnNode;
+
+#define HTTP_HEAD_TIMEOUT_MS 10000
+#define HTTP_MIN_RATE 240
+#define HTTP_RATE_GRACE_MS 5000
+
+/* A coarse monotonic clock in milliseconds (the vDSO's, a few ms of
+ * resolution): read only when a deadline starts and by the sweep. */
+static int64_t http_now_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+  return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000 + 1;
+}
 
 /* An HTTP connection is closed when nothing has happened on it for this
  * long: no request bytes received and no queued answer bytes sent
@@ -405,6 +445,53 @@ static HttpLoop *loop_of_socket(struct us_socket_t *s) {
   return *(HttpLoop **)us_socket_context_ext(0, ctx);
 }
 
+/* The watch list: the connections of a loop with a deadline running
+ * (Conn's head_at, body_at, out_at), which the loop's sweep reads. A
+ * request that arrives whole and an answer the socket takes whole never
+ * enter it, so the hot path pays only the test of the two clocks. */
+static void conn_watch(Conn *conn, struct us_socket_t *s) {
+  ConnNode *node = (ConnNode *)conn;
+  HttpLoop *hl;
+  if (node->watched) {
+    return;
+  }
+  hl = loop_of_socket(s);
+  node->watched = 1;
+  node->wprev = NULL;
+  node->wnext = hl->watch;
+  if (hl->watch) {
+    hl->watch->wprev = node;
+  }
+  hl->watch = node;
+}
+
+static void conn_unwatch(Conn *conn, struct us_socket_t *s) {
+  ConnNode *node = (ConnNode *)conn;
+  if (!node->watched) {
+    return;
+  }
+  node->watched = 0;
+  if (node->wprev) {
+    node->wprev->wnext = node->wnext;
+  } else {
+    loop_of_socket(s)->watch = node->wnext;
+  }
+  if (node->wnext) {
+    node->wnext->wprev = node->wprev;
+  }
+  node->wprev = NULL;
+  node->wnext = NULL;
+}
+
+/* A request's deadlines end: it is complete, answered or refused. */
+static void conn_wait_end(Conn *conn, struct us_socket_t *s) {
+  conn->head_at = 0;
+  conn->body_at = 0;
+  if (!conn->out_at) {
+    conn_unwatch(conn, s);
+  }
+}
+
 static const char *reason_phrase(int32_t status) {
   switch (status) {
     case 200: return "OK";
@@ -419,6 +506,7 @@ static const char *reason_phrase(int32_t status) {
     case 400: return "Bad Request";
     case 404: return "Not Found";
     case 405: return "Method Not Allowed";
+    case 408: return "Request Timeout";
     case 411: return "Length Required";
     case 413: return "Content Too Large";
     case 431: return "Request Header Fields Too Large";
@@ -577,6 +665,12 @@ static void conn_send(Conn *conn, struct us_socket_t *s, const char *a,
     us_socket_close(0, s, 0, NULL);
     return;
   }
+  if (!conn->out_at) {
+    /* The tail must leave at the minimum rate (loop_sweep). */
+    conn->out_at = http_now_ms();
+    conn->out_from = conn->out_off;
+    conn_watch(conn, s);
+  }
   conn_poll(s, LIBUS_SOCKET_WRITABLE);
 }
 
@@ -652,6 +746,7 @@ static void write_response(Conn *conn, struct us_socket_t *s, int32_t status,
 
 static void send_error(Conn *conn, struct us_socket_t *s, int32_t status) {
   const char *phrase = reason_phrase(status);
+  conn_wait_end(conn, s);
   write_response(conn, s, status, "Content-Type: text/plain\r\n", phrase,
                  "close");
   conn_finish(conn, s);
@@ -1890,6 +1985,12 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     if (pret == -2) {
       if (conn->len > HTTP_MAX_HEADER_BLOCK) {
         send_error(conn, s, 400);
+      } else if (!conn->head_at) {
+        /* A head in parts: it has the head timeout from now (the
+         * idle timeout restarted at every byte, so a client sending a
+         * byte now and then held the connection for good). */
+        conn->head_at = http_now_ms();
+        conn_watch(conn, s);
       }
       return;
     }
@@ -1959,6 +2060,14 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     }
     total = (size_t)pret + (size_t)(has_cl ? content_length : 0);
     if (conn->len < total) {
+      /* The head is complete; the body waits for bytes, which must
+       * come at the minimum rate once its grace has passed. */
+      conn->head_at = 0;
+      if (!conn->body_at) {
+        conn->body_at = http_now_ms();
+        conn->body_from = conn->len;
+        conn_watch(conn, s);
+      }
       if (find_header(headers, num_headers, "Expect", &value, &value_len) &&
           ascii_ieq(value, value_len, "100-continue", 12) &&
           !conn->sent_continue) {
@@ -1967,6 +2076,9 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
         conn->sent_continue = 1;
       }
       return;
+    }
+    if (conn->head_at | conn->body_at) {
+      conn_wait_end(conn, s);
     }
     keep_alive = minor_version == 1;
     if (find_header(headers, num_headers, "Connection", &value, &value_len)) {
@@ -2098,6 +2210,10 @@ static void conn_flush(Conn *conn, struct us_socket_t *s) {
   conn->out_len = 0;
   conn->out_off = 0;
   conn->out_cap = 0;
+  conn->out_at = 0;
+  if (!conn->head_at && !conn->body_at) {
+    conn_unwatch(conn, s);
+  }
   conn_poll(s, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   if (conn->close_after_flush) {
     us_socket_shutdown(0, s);
@@ -2116,6 +2232,83 @@ static void conn_flush(Conn *conn, struct us_socket_t *s) {
     us_socket_shutdown(0, s);
     us_socket_close(0, s, 0, NULL);
   }
+}
+
+/* Whether `got` bytes in `ms` milliseconds is under `rate` bytes a second. */
+static int http_too_slow(size_t got, int64_t ms, uint32_t rate) {
+  return (uint64_t)got * 1000u < (uint64_t)rate * (uint64_t)ms;
+}
+
+/* A request past its deadline: 408 and close. The socket is closed at
+ * the next timeout tick (at most 4 s) whatever the peer does: the
+ * answer has its chance to leave, and a peer that neither reads nor
+ * closes holds nothing for long. */
+static void conn_request_timeout(Conn *conn, struct us_socket_t *s) {
+  send_error(conn, s, 408);
+  if (!us_socket_is_closed(0, s)) {
+    us_socket_timeout(0, s, 1);
+  }
+}
+
+/* The loop's sweep, every sweep_ms (at most a second): each watched
+ * connection's deadlines. A head past head_ms is answered 408. A body
+ * waiting for bytes, and an answer's queued tail, are measured over
+ * windows of grace_ms: when one has passed, the bytes that came (or
+ * left) in it must be the minimum rate's, else the request is answered
+ * 408 (a body) or the connection closed (a client that does not read:
+ * nothing more can be said to it); then a new window begins. An average
+ * since the start would not do: the kernel takes megabytes of an answer
+ * at once, and that burst would cover a client that then reads nothing
+ * for hours. */
+static void loop_sweep(struct us_timer_t *t) {
+  HttpLoop *hl = *(HttpLoop **)us_timer_ext(t);
+  AvantHttpServer *srv = hl->srv;
+  int64_t now = http_now_ms();
+  ConnNode *node = hl->watch;
+  while (node) {
+    ConnNode *next = node->wnext;
+    Conn *conn = &node->conn;
+    struct us_socket_t *s = node->sock;
+    if (conn->answered && !conn->out_at) {
+      conn_wait_end(conn, s);
+    } else if (conn->head_at && srv->head_ms &&
+               now - conn->head_at >= (int64_t)srv->head_ms) {
+      conn_request_timeout(conn, s);
+    } else if (conn->body_at && srv->rate &&
+               now - conn->body_at >= (int64_t)srv->grace_ms) {
+      if (http_too_slow(conn->len - conn->body_from, now - conn->body_at,
+                        srv->rate)) {
+        conn_request_timeout(conn, s);
+      } else {
+        conn->body_at = now;
+        conn->body_from = conn->len;
+      }
+    } else if (conn->out_at && srv->rate &&
+               now - conn->out_at >= (int64_t)srv->grace_ms) {
+      if (http_too_slow(conn->out_off - conn->out_from, now - conn->out_at,
+                        srv->rate)) {
+        us_socket_close(0, s, 0, NULL);
+      } else {
+        conn->out_at = now;
+        conn->out_from = conn->out_off;
+      }
+    }
+    node = next;
+  }
+}
+
+/* The sweep's period: a second, or a quarter of the shortest deadline
+ * it watches when that is shorter, so a deadline is kept to within a
+ * quarter of itself; never under 25 ms. */
+static int sweep_interval(const AvantHttpServer *srv) {
+  uint32_t iv = 1000;
+  if (srv->head_ms && srv->head_ms / 4 < iv) {
+    iv = srv->head_ms / 4;
+  }
+  if (srv->rate && srv->grace_ms / 4 < iv) {
+    iv = srv->grace_ms / 4;
+  }
+  return iv < 25 ? 25 : (int)iv;
 }
 
 static struct us_socket_t *srv_on_open(struct us_socket_t *s, int is_client,
@@ -2208,6 +2401,7 @@ static struct us_socket_t *srv_on_close(struct us_socket_t *s, int code,
     pthread_mutex_unlock(&g_ws_mu);
     ws_record_release(ws);
   }
+  conn_unwatch(&node->conn, s);
   free(node->conn.buf);
   node->conn.buf = NULL;
   node->conn.len = 0;
@@ -2390,6 +2584,10 @@ static void listen_reg_remove(AvantHttpServer *srv) {
 }
 
 static void loop_teardown(HttpLoop *hl) {
+  if (hl->sweep) {
+    us_timer_close(hl->sweep);
+    hl->sweep = NULL;
+  }
   if (hl->listen) {
     us_listen_socket_close(0, hl->listen);
     hl->listen = NULL;
@@ -2465,6 +2663,13 @@ static int loop_create(AvantHttpServer *srv, HttpLoop *hl, const char *host,
   if (!hl->listen) {
     return 1;
   }
+  /* The deadlines' sweep (started by serve), a timer that does not keep
+   * the loop running: the loop drains as before. */
+  hl->sweep = us_create_timer(hl->loop, 1, (unsigned int)sizeof(HttpLoop *));
+  if (!hl->sweep) {
+    return 1;
+  }
+  *(HttpLoop **)us_timer_ext(hl->sweep) = hl;
   return 0;
 }
 
@@ -2532,6 +2737,9 @@ void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
   srv->max_message = max_message > 0 ? (int32_t)max_message : 1048576;
   srv->idle_timeout = http_idle_timeout();
   srv->ws_write_chunk = http_ws_write_chunk();
+  srv->head_ms = HTTP_HEAD_TIMEOUT_MS;
+  srv->rate = HTTP_MIN_RATE;
+  srv->grace_ms = HTTP_RATE_GRACE_MS;
   srv->loops = (HttpLoop *)calloc((size_t)n, sizeof(HttpLoop));
   if (!srv->loops) {
     free(srv);
@@ -2603,6 +2811,12 @@ avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
   srv->dispatch = (AvantHttpDispatch)cb;
   srv->ws_dispatch = (AvantHttpDispatch)ws_cb;
   srv->running = 1;
+  {
+    int iv = sweep_interval(srv);
+    for (i = 0; i < srv->nloops; i++) {
+      us_timer_set(srv->loops[i].sweep, loop_sweep, iv, iv);
+    }
+  }
   for (i = 1; i < srv->nloops; i++) {
     if (pthread_create(&srv->loops[i].thread, NULL, loop_thread_main,
                        &srv->loops[i]) == 0) {
@@ -2638,6 +2852,49 @@ __attribute__((noreturn, cold)) void avant_http_route_while_serving(const char *
   fflush(stdout);
   fprintf(stderr, "avant runtime: %s registered while the server is serving: register every route before serve\n", what);
   exit(1);
+}
+
+/* A limit set while the server serves: the loops read the limits with
+ * no lock, as they read the routes, so it is refused like a route. A
+ * trap of the language. */
+__attribute__((noreturn, cold)) void avant_http_limit_while_serving(const char *name) {
+  char msg[160];
+  snprintf(msg, sizeof msg, "Server.%s called while the server is serving: set every limit before serve", name);
+  avant_trap_text(msg);
+}
+
+/* A limit of Server's setters (std.http), set before serve: which is
+ * 1 head_timeout (a, ms), 2 min_rate (a bytes a second, b the grace in
+ * ms). 0 turns a limit off. A negative value or one past a C int is the
+ * program's error: a trap of the language (in a handler, a trap that
+ * fails its request). */
+void avant_http_set_limit(void *srvp, const char *name, avant_int which,
+                          avant_int a, avant_int b) {
+  AvantHttpServer *srv = (AvantHttpServer *)srvp;
+  if (a < 0 || b < 0 || a > INT32_MAX || b > INT32_MAX) {
+    char msg[200];
+    if (which == 2) {
+      snprintf(msg, sizeof msg, "Server.%s(%lld, %lld): a limit is 0 (off) to %d", name, (long long)a,
+               (long long)b, INT32_MAX);
+    } else {
+      snprintf(msg, sizeof msg, "Server.%s(%lld): a limit is 0 (off) to %d", name, (long long)a, INT32_MAX);
+    }
+    avant_trap_text(msg);
+  }
+  if (!srv) {
+    return;
+  }
+  switch (which) {
+    case 1:
+      srv->head_ms = (uint32_t)a;
+      break;
+    case 2:
+      srv->rate = (uint32_t)a;
+      srv->grace_ms = (uint32_t)b;
+      break;
+    default:
+      break;
+  }
 }
 
 /* Writes at most 64 bytes of p to stderr, a byte that is not printable
