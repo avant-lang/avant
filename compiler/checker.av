@@ -4633,6 +4633,8 @@ pub class Checker {
     pre: Array(Ty) = []
     if init = template_initialize(cdef) {
       self.resolver.set_tparams(params)
+      saved_scope = self.resolver.scope_mod
+      self.resolver.scope_mod = cdef.mod_name
       pats: Array(Ty) = []
       i = 0
       while i < init.params.size {
@@ -4640,6 +4642,7 @@ pub class Checker {
         self.pull_resolve()
         i += 1
       }
+      self.resolver.scope_mod = saved_scope
       self.resolver.clear_tparams()
       i = 0
       while i < expr.args.size {

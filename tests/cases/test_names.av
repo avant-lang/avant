@@ -101,6 +101,16 @@ fn cases: Array(NCase) {
   xs.push(with_mods(only("clash-generic-new", "import ga\nimport gb\nfn main {\n  b = Box(Int).new(1)\n  puts(b.v)\n}\n", gclash, "4:7"), gens))
   xs.push(with_mods(only("clash-generic-param", "import ga\nimport gb\nfn f(b: Box(Int)): Int {\n  b.v\n}\nfn main {\n  puts(1)\n}\n", gclash, "3:9"), gens))
   xs.push(with_mods(only("clash-generic-field", "import ga\nimport gb\nclass K {\n  b: Box(Int)? = nil\n}\nfn main {\n  puts(1)\n}\n", gclash, "4:6"), gens))
+  // A generic type two modules declare is the one the use's module sees:
+  // an import's pub one (a template of a module it does not import, or
+  // a private one, does not count), in a generic class's field, a
+  // generic function's parameter, a constructor and a local.
+  use_src = "class W(T) {\n  pub b: Box(T)\n\n  fn initialize(b: Box(T)) {\n    self.b = b\n  }\n}\n\nfn get(b: Box(T)): T {\n  b.v\n}\n\nfn main {\n  w = W(Int).new(Box(Int).new(1))\n  puts(w.b.v)\n  puts(get(Box(Int).new(2)))\n  x: Box(Int)? = nil\n  if _ = x {\n    puts(0)\n  } else {\n    puts(9)\n  }\n"
+  xs.push(with_mods(accepted("template-seen-import", "import ga\nimport tmh\n\n" + use_src + "  puts(tmh.hm())\n}\n", "1\n2\n9\n5\n"), ["ga", gen, "gb", gen, "tmh", "import gb\n\npub fn hm: Int {\n  gb.Box(Int).new(5).v\n}\n"]))
+  xs.push(with_mods(accepted("template-seen-private", "import ga\nimport gp\n\n" + use_src + "  puts(gp.n())\n}\n", "1\n2\n9\n7\n"), ["ga", gen, "gp", "class Box(T) {\n  pub v: T\n  fn initialize(v: T) {\n    self.v = v\n  }\n}\n\npub fn n: Int {\n  Box(Int).new(7).v\n}\n"]))
+  // Its own and an import's pub one are two: the name is ambiguous there,
+  // as for a type that is not generic.
+  xs.push(with_mods(only("template-seen-own-and-import", "import ga\n\nclass Box(T) {\n  pub v: T\n  fn initialize(v: T) {\n    self.v = v + v\n  }\n}\n\nfn main {\n  puts(Box(Int).new(1).v)\n  puts(ga.Box(Int).new(3).v)\n}\n", "Box is a type of both ga and main: write ga.Box or main.Box", "11:8"), ["ga", gen]))
   hidden: Array(String) = ["ga", gen, "gb", gen, "hmid", "import ga\nimport gb\npub fn hmid: Int {\n  1\n}\n", "lexa", ta, "lexb", tb, "tmid", "import lexa\nimport lexb\npub fn tmid: Int {\n  2\n}\n"]
   xs.push(with_mods(only("clash-field-unseen", "import hmid\nclass K {\n  b: Box(Int)? = nil\n}\nfn main {\n  puts(hmid())\n}\n", "unknown type Box", "3:6"), hidden))
   xs.push(with_mods(only("clash-field-unseen-plain", "import tmid\nclass K {\n  t: Token? = nil\n}\nfn main {\n  puts(tmid())\n}\n", "unknown type Token", "3:6"), hidden))

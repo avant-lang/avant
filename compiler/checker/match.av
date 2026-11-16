@@ -680,6 +680,10 @@ pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(T
   inst.inst_args = ia
   checker_self.alloc_ol(inst)
   checker_self.resolver.clear_tparams()
+  // The instance's types name what its generic's module sees (a generic
+  // type two modules declare is the one that module sees).
+  saved_scope = checker_self.resolver.scope_mod
+  checker_self.resolver.scope_mod = inst.mod_name
   params: Array(Ty) = []
   i = 0
   while i < inst.params.size {
@@ -692,6 +696,7 @@ pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(T
     ret = checker_self.resolver.resolve(t)
     checker_self.pull_resolve()
   }
+  checker_self.resolver.scope_mod = saved_scope
   checker_self.program.functions.push(inst)
   nsig = FuncSig.new(inst.name, inst, params, ret)
   checker_self.functions.push(nsig)
@@ -744,6 +749,10 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
   inst.owner = sig.owner
   checker_self.alloc_ol(inst)
   checker_self.resolver.clear_tparams()
+  // The instance's types name what its generic's module sees (a generic
+  // type two modules declare is the one that module sees).
+  saved_scope = checker_self.resolver.scope_mod
+  checker_self.resolver.scope_mod = inst.mod_name
   params: Array(Ty) = []
   i = 0
   while i < inst.params.size {
@@ -764,6 +773,7 @@ pub fn (checker_self: Checker) instantiate_method(sig: FuncSig, subst: Array(Ty)
       inst.owner = rty.name
     }
   }
+  checker_self.resolver.scope_mod = saved_scope
   checker_self.attach_method_fn(inst)
   nsig = FuncSig.new(inst.name, inst, params, ret)
   nsig.owner = inst.owner

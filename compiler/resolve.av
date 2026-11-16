@@ -243,26 +243,7 @@ pub class TypeResolver {
     if flag = self.collide.get(tn.name) {
       owners = seen_owners(tn.name, mod_name)
       if owners.size > 1 {
-        what = buf_new()
-        spell = buf_new()
-        for i in 0..owners.size {
-          if i > 0 {
-            if i == owners.size - 1 {
-              what.push_str(" and ")
-              spell.push_str(" or ")
-            } else {
-              what.push_str(", ")
-              spell.push_str(", ")
-            }
-          }
-          what.push_str(owners[i])
-          spell.push_str("${owners[i]}.${tn.name}")
-        }
-        both = "both "
-        if owners.size > 2 {
-          both = ""
-        }
-        fail(tn.loc, "${tn.name} is a type of ${both}${what.to_s()}: write ${spell.to_s()}")
+        fail(tn.loc, owners_clash_text(tn.name, owners))
       }
       if owners.size == 0 {
         // Declared only by modules this one does not see: reported once,
@@ -282,6 +263,80 @@ pub class TypeResolver {
         tn.mod_name = owners[0]
       }
     }
+  }
+
+  // A type name that several of the modules a use sees declare: each
+  // module, and the qualified spellings that pick one.
+  pub fn owners_clash_text(name: String, owners: Array(String)): String {
+    what = buf_new()
+    spell = buf_new()
+    for i in 0..owners.size {
+      if i > 0 {
+        if i == owners.size - 1 {
+          what.push_str(" and ")
+          spell.push_str(" or ")
+        } else {
+          what.push_str(", ")
+          spell.push_str(", ")
+        }
+      }
+      what.push_str(owners[i])
+      spell.push_str("${owners[i]}.${name}")
+    }
+    both = "both "
+    if owners.size > 2 {
+      both = ""
+    }
+    "${name} is a type of ${both}${what.to_s()}: write ${spell.to_s()}"
+  }
+
+  // The modules whose generic type name the current scope (scope_mod)
+  // sees: its own, then each import that declares it pub, in import
+  // order; with no scope, every module that declares one. A template
+  // two modules declare resolves to the one the use's module sees, as
+  // a non-generic type does (seen_owners); before, every module's
+  // templates were counted, seen or not, and a valid program was refused.
+  pub fn template_owners(name: String): Array(String) {
+    out: Array(String) = []
+    if p = self.program {
+      if self.scope_mod.size == 0 {
+        for info in p.mods {
+          if template_in(info.name, name) {
+            out.push(info.name)
+          }
+        }
+        return out
+      }
+      if template_in(self.scope_mod, name) {
+        out.push(self.scope_mod)
+      }
+      for info in p.mods {
+        if info.name == self.scope_mod {
+          for imp in info.imports {
+            if imp != self.scope_mod && template_in(imp, name) && type_is_pub(p, imp, name) {
+              out.push(imp)
+            }
+          }
+        }
+      }
+    }
+    out
+  }
+
+  pub fn template_in(mod_name: String, name: String): Bool {
+    if p = self.program {
+      for sdef in p.structs {
+        if sdef.name == name && sdef.type_params.size > 0 && sdef.mod_name == mod_name {
+          return true
+        }
+      }
+      for cdef in p.classes {
+        if cdef.name == name && cdef.type_params.size > 0 && cdef.mod_name == mod_name {
+          return true
+        }
+      }
+    }
+    false
   }
 
   // The modules whose type name mod_name sees: its own, then each import
@@ -506,7 +561,17 @@ pub class TypeResolver {
     ntmpl = template_count(tn.name)
     if ntmpl > 0 {
       if tn.mod_name.size == 0 && ntmpl > 1 {
-        fail(tn.loc, "ambiguous name ${tn.name}; qualify it")
+        owners = template_owners(tn.name)
+        if owners.size == 1 {
+          use = clone_type_name(tn)
+          use.mod_name = owners[0]
+          return instantiate_template(use)
+        }
+        if owners.size == 0 {
+          fail(tn.loc, "unknown type ${tn.name}")
+        } else {
+          fail(tn.loc, owners_clash_text(tn.name, owners))
+        }
         return self.t_int
       }
       return instantiate_template(tn)
@@ -841,7 +906,13 @@ pub class TypeResolver {
         return
       }
       seen[field.name] = 1
-      tf = TyField.new(field.name, resolve_value(field.type))
+      // A field's type names the types its template's module sees (the
+      // type arguments are pinned where the instance is made).
+      saved_scope = self.scope_mod
+      self.scope_mod = ty.mod_name
+      fty = resolve_value(field.type)
+      self.scope_mod = saved_scope
+      tf = TyField.new(field.name, fty)
       tf.vis = field.vis
       if d = field.default {
         tf.defaulted = true
@@ -882,6 +953,14 @@ pub class TypeResolver {
       return
     }
     if template_count(tn.name) > 0 {
+      if tn.mod_name.size == 0 && template_count(tn.name) > 1 {
+        owners = template_owners(tn.name)
+        if owners.size == 1 {
+          tn.mod_name = owners[0]
+          tn.pinned = true
+        }
+        return
+      }
       if sdef = find_struct_template(tn.name, tn.mod_name) {
         tn.mod_name = sdef.mod_name
         tn.pinned = true
