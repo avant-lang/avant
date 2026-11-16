@@ -1,8 +1,8 @@
 # Avant
 
-Avant is a compiled, garbage-collected programming language that aims for the density of Crystal, with the braces of C and speed in the neighbourhood of C and Rust. You write short, type-inferred code; `avant` compiles it ahead of time, through LLVM, to a native binary; a generational Immix collector manages memory. No borrow checker, no manual `free`, no interpreter, no exceptions.
+Avant is a compiled, garbage-collected language aiming for Crystal's density, C's braces and speed near C and Rust. `avant` compiles short, type-inferred code ahead of time, through LLVM, to a native binary; a generational Immix collector manages memory. No borrow checker, no manual `free`, no interpreter, no exceptions.
 
-For a long time a programmer picked one pair: simplicity and productivity, or performance and efficiency. Avant's bet is that you no longer have to choose, and its rule is to show the evidence, the losses included: [Benchmarks](#benchmarks) prints the rows where Avant is behind beside the rows where it leads.
+Avant's bet is that you need not choose between productivity and speed, and its rule is to show the evidence: [Benchmarks](#benchmarks) prints the rows where Avant is behind beside those where it leads.
 
 ## A taste
 
@@ -54,12 +54,12 @@ skipped: bad quantity: one
 
 What you just read:
 
-- **No ceremony.** No semicolons, no parentheses around conditions, no `let`. Types appear where they name a fact (a field, a parameter, a result) and are inferred everywhere else.
-- **Errors are values.** `parse` returns `Item | BadLine`. `??` supplies a fallback or leaves the function; `item = parse(line) else e { ... }` reads the failure in a block that must leave, and after it `item` is the success. Nothing unwinds, and an error cannot be dropped by accident.
-- **Values and objects.** A `struct` is a value with methods. A `class` (not shown here) is a reference. You choose per type.
+- **No ceremony.** No semicolons, no parentheses around conditions, no `let`; types are written on fields, parameters and results, inferred elsewhere.
+- **Errors are values.** `parse` returns `Item | BadLine`; `??` gives a fallback or leaves the function; `item = parse(line) else e { ... }` handles the failure in a block that must leave, after which `item` is the success. Nothing unwinds; an error cannot be dropped by accident.
+- **Values and objects.** A `struct` is a value with methods, a `class` (not shown) a reference; you choose per type.
 - **Concurrency is built in.** `.parallel` runs the block on a pool of OS threads and returns the results in input order.
 
-And because backend work is home ground, a web server is seven lines:
+A web server is seven lines:
 
 <!-- check: compile -->
 ```avant
@@ -73,7 +73,7 @@ fn main {
 }
 ```
 
-It is a real one: keep-alive connections, one event loop per processor, WebSockets on the same port. It is [measured here](#http-and-websocket-servers), with its method.
+It has keep-alive connections, one event loop per processor and WebSockets on the same port ([measured here](#http-and-websocket-servers)).
 
 ## Install
 
@@ -83,7 +83,7 @@ On Linux x86-64 with glibc 2.38 or newer (Ubuntu 24.04, Debian 13, Fedora 39, or
 curl -fsSL https://github.com/avant-lang/avant/releases/latest/download/install.sh | bash
 ```
 
-The one prerequisite is a C compiler, which Avant uses to link: `sudo apt install gcc libc6-dev` on Debian and Ubuntu, `sudo dnf install gcc glibc-devel` on Fedora. The installer tells you if it is missing, and ends by compiling and running a hello program to prove the install works. Options, manual install and what the archive contains are in [Installation in depth](#installation-in-depth).
+The one prerequisite is a C compiler, to link: `sudo apt install gcc libc6-dev` on Debian and Ubuntu, `sudo dnf install gcc glibc-devel` on Fedora. The installer says if it is missing and ends by compiling and running a hello program. Options, manual install and the archive's contents: [Installation in depth](#installation-in-depth).
 
 Save this as `hello.av`:
 
@@ -101,7 +101,7 @@ avant compile hello.av --release   # the optimized build: use it whenever you me
 
 The three build modes are compared in [Build modes](#build-modes).
 
-Avant is pre-1.0 and young: the language still changes between releases ([CHANGELOG](CHANGELOG.md)), and what is decided but not built is listed in [Not built yet](#not-built-yet) and said again beside each feature it limits.
+Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.md)); what is decided but not built is in [Not built yet](#not-built-yet) and beside each feature it limits.
 
 ## Contents
 
@@ -4080,7 +4080,7 @@ Run-time failures are [traps](#traps).
 
 ## Coming from another language
 
-Avant looks familiar from almost anywhere; here are the places where it differs on purpose.
+Where Avant differs on purpose:
 
 ### The deliberate differences
 
@@ -4102,7 +4102,7 @@ Avant looks familiar from almost anywhere; here are the places where it differs 
 | `let`, `var`; a `const` inside a function; global variables | `=` declares or assigns; `const` is a module's named value, and a module has no variables ([Names and scope](#names-and-scope), [Constants](#constants)) | no state shared by accident |
 | `Array<Int>`, `[]int`, `Vec<i32>` | `Array(Int)`; a single capital letter in a signature is a type parameter ([Generics](#generics)) | |
 | `return` inside a block returning from the block | in a builtin's block (`each`), `return` leaves the function; in a lambda, the lambda ([Builtin blocks are loops](#builtin-blocks-are-loops)) | |
-| a panic caught per request by the server | a trap ends the process: run servers under a supervisor ([Traps](#traps)) | no unwinding machinery; Erlang's "let it crash", at the one granularity Avant has today, the process |
+| a panic caught per request by the server | a trap ends the process: run servers under a supervisor ([Traps](#traps)) | no unwinding machinery |
 | one optimized build (Go) | three modes: time programs only with `--release` ([Build modes](#build-modes)) | a fast edit-and-run loop |
 | a power operator `**` | none; multiply, or declare C's `pow` in a `lib` block ([Floats](#floats)) | |
 | `async`/`await` | OS threads and blocking calls: `spawn`, `.parallel`, channels ([Concurrency](#concurrency)) | no function coloring |
@@ -4140,13 +4140,13 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 
 ## Benchmarks
 
-Each table names its machine and day: LangArena on a server (AMD EPYC 7351P), the HTTP servers on a desktop (AMD Ryzen 7 5700G); the two are never compared. Every language is an optimized build, and losses are printed as plainly as wins. Read [Reading these numbers](#reading-these-numbers) before quoting any of them.
+Each table names its machine and day (LangArena on a server, AMD EPYC 7351P; the HTTP servers on a desktop, AMD Ryzen 7 5700G; never compared). Every language is an optimized build; losses are printed as plainly as wins. Read [Reading these numbers](#reading-these-numbers) before quoting any.
 
 ### LangArena
 
-[LangArena](https://github.com/kostya/LangArena) runs the same tasks in many languages. Seconds, lower is better; **bold** is the best of the five. Each task is one process, timed by wall clock, with its peak memory (`ru_maxrss`, as `/usr/bin/time` reports): the other languages through LangArena's harness under `/usr/bin/time`, Avant through a spawner that reads the same two numbers without a wrapper's start-up. The server: AMD EPYC 7351P (Zen 1, 16 cores, 32 threads), boost off at a fixed 2.4 GHz, governor `performance`. Avant: 2026-11-16, release 0.45.0, `--release --cpu=v3`, the median of 5 rounds on an idle machine, all 50 checksums correct; the other languages: 2026-11-14.
+[LangArena](https://github.com/kostya/LangArena) runs the same tasks in many languages. Seconds, lower is better; **bold** is the best of the five. Each task is one process: wall-clock time and peak memory (`ru_maxrss`), read by `/usr/bin/time` under LangArena's harness for the others, by a spawner without a wrapper's start-up for Avant. The server: AMD EPYC 7351P (Zen 1, 16 cores, 32 threads), boost off at a fixed 2.4 GHz, governor `performance`. Avant: 2026-11-16, release 0.45.0, `--release --cpu=v3`, the median of 5 rounds on an idle machine, all 50 checksums correct; the others: 2026-11-14.
 
-**The Avant build** is release 0.45.0 as downloaded: the release job builds it on Ubuntu 26.04 with gcc 15.2 (runtime) and LLVM 22.1.8 (compiler) for baseline x86-64, and the server's build of the same source, which was measured, gives byte-identical task binaries. In the same rounds it took 0.994 of release 0.44.0's time (0.988 of the published v0.44.0 archive's) at the same peak memory.
+**The Avant build** is release 0.45.0 as downloaded (the release job's build on Ubuntu 26.04: gcc 15.2 for the runtime, LLVM 22.1.8 for the compiler, baseline x86-64); the measured server build of the same source gives byte-identical task binaries. In the same rounds it took 0.994 of release 0.44.0's time (0.988 of the published v0.44.0 archive's) at the same peak memory.
 
 | Language | 50 tasks (s) | Average peak memory |
 | --- | ---: | ---: |
@@ -4213,7 +4213,7 @@ Each table names its machine and day: LangArena on a server (AMD EPYC 7351P), th
 
 ### Where Avant loses
 
-Avant is the fastest of these five on 28 of the 50 tasks. Against the best of *every* language measured on this machine (a wider field: C under both GCC and Clang), it is at or ahead of the best on 28 tasks, its median task is 0.96× the best, and four tasks are more than 1.5× behind. The worst by time:
+Avant is the fastest of these five on 28 of 50 tasks. Against the best of *every* language measured on this machine (C under both GCC and Clang included): at or ahead on 28 tasks, the median task 0.96× the best, four tasks more than 1.5× behind. The worst by time:
 
 | Task | Avant (s) | Best (s) | Behind by |
 | --- | ---: | ---: | ---: |
@@ -4226,7 +4226,7 @@ Avant is the fastest of these five on 28 of the 50 tasks. Against the best of *e
 | `Etc::GameOfLife` | 3.488 | 2.488 (Go) | 1.40× |
 | `Brainfuck::Recursion` | 5.633 | 4.378 (C, GCC) | 1.29× |
 
-`Etc::Sieve` has two speeds with the same binary, from one process to the next: most runs take 8.3 s, a few 2.9 s (1 run in 20 for this release); the table shows the median. The slow speed runs at about a third of C's instructions per cycle; its cause is being worked on.
+`Etc::Sieve` has two speeds with the same binary: most processes take 8.3 s, 1 in 20 takes 2.9 s; the table shows the median. The slow speed runs at about a third of C's instructions per cycle; its cause is being worked on.
 
 By peak memory: at or below the best on 33 tasks, the median task at 0.88×, five tasks more than 1.5× above. The worst:
 
@@ -4238,7 +4238,7 @@ By peak memory: at or below the best on 33 tasks, the median task at 0.88×, fiv
 | `Sort::Self` | 11.6 | 7.3 (C, Clang) | 1.59× |
 | `Etc::GameOfLife` | 45.6 | 29.5 (Go) | 1.55× |
 
-Crystal and Go are compiled and garbage-collected like Avant, so Avant should never trail either on any task, in time or memory. It trails on fifteen, each a defect until fixed:
+Crystal and Go are compiled and garbage-collected too, so trailing either on any task, in time or memory, is a defect. Avant trails on fifteen:
 
 | Task | Behind |
 | --- | --- |
@@ -4260,7 +4260,7 @@ Crystal and Go are compiled and garbage-collected like Avant, so Avant should ne
 
 Avant's numbers are the median of five rounds, the others' one run: ratios within a few percent may be noise.
 
-The tables understate allocation-heavy code: `Binarytrees::Arena`, the heaviest allocator, trails in time and memory, and the two rows that would be worse are fast only because they are hinted. [What allocation costs today](#what-allocation-costs-today) says what to expect and do.
+The tables understate allocation-heavy code: `Binarytrees::Arena`, the heaviest allocator, trails in time and memory, and the two rows that would be worse are fast because they are hinted ([What allocation costs today](#what-allocation-costs-today)).
 
 ### HTTP and WebSocket servers
 
@@ -4279,9 +4279,9 @@ The most basic server in each language: `GET /` answered with `hello` over keep-
 
 **Method.** `wrk -t4 -c64 -d10s --latency`, the load generator on the server's machine, no pipelining; one server at a time, three runs each after a warm-up, the median shown (AMD Ryzen 7 5700G, 2026-11-12).
 
-**The fastest rows are not ranked**: for five of the eight (Avant, h2o, both Rust servers, Valk) `wrk`'s four threads are the limit, so their numbers are level. The table shows that none of them is the bottleneck at 64 connections, and what each costs in memory.
+**The fastest rows are not ranked**: for five of the eight (Avant, h2o, both Rust servers, Valk) `wrk`'s four threads are the limit, so the table shows only that none of them is the bottleneck at 64 connections, and what each costs in memory.
 
-Pipelined loads (many requests in one write) are not shown: Avant's server answers each pipelined request with its own write, slower than servers that batch them into one; this is being worked on.
+Pipelined loads (many requests in one write) are not shown: Avant's server answers each with its own write, slower than servers that batch them; this is being worked on.
 
 The WebSocket echo comes from earlier sessions, kept apart: messages per second over 8 connections for 10 seconds; Avant the median of three runs (2026-11-10), the others one run each (2026-11-04).
 
@@ -4302,8 +4302,8 @@ These notes are about [LangArena](#langarena).
 - **Compiled-in task sizes.** Avant compiles the task configuration in as constants, the others read `run.js` at run time, so LLVM can specialize Avant's loops on the sizes.
 - **Rows that are not comparable programs.** `Matmul` (four tasks): Avant sums with eight independent accumulators, which vectorizes; the references use one. `Hash::CRC32`: Avant calls a C runtime builtin with slice-by-4 tables; every reference is the bitwise loop. `Compress::LZWEncode` and `LZWDecode`: Avant keys the dictionary by integer, C by string. These seven rows are 13.9 of the 35.2 seconds between Avant's total and C's.
 - **Rows that measure C, not Avant.** `Hash::SHA256` and `Hash::CRC32` call runtime builtins that do the whole task in C, where the references implement it; the Burrows-Wheeler transform in `Compress::BWTEncode` and `BWTDecode` is runtime C too.
-- **Rows that carry collection hints.** `Binarytrees::Obj` and `Calculator::Ast` call `gc.hold` and `gc.collect()` ([Collection hints](#collection-hints)): the references' algorithm, with the programmer telling the collector when not to run and when everything is dead; no reference has an equivalent, so read them as hinted programs. Unhinted, `Binarytrees::Obj` takes 2.922 s (level with Crystal's 2.925 s, the table's fastest) at 1.72× C's memory, and `Calculator::Ast` 1.513 s, 1.14× Crystal's time ([What allocation costs today](#what-allocation-costs-today)).
-- **Library-leaning rows**, whose speed is the library's, reached through Avant's bindings: `Json::ParseDom` and `ParseMapping` (yyjson in Avant and C, simdjson in C++, serde in Rust), `Base64::Encode` and `Decode` (the aklomp codec in Avant and C), `Template::Regex` and `Etc::LogParser` (PCRE2 in Avant and C, RE2 in C++, the `regex` crate in Rust). `Sort::Self` is each language's library sort, by the task's definition. In `CSV::Parse` Rust and C++ use CSV libraries; in `Json::Generate` C and C++ use JSON libraries, Avant its own buffer.
+- **Rows that carry collection hints.** `Binarytrees::Obj` and `Calculator::Ast` call `gc.hold` and `gc.collect()` ([Collection hints](#collection-hints)), telling the collector when not to run and when everything is dead; no reference has an equivalent. Unhinted, `Binarytrees::Obj` takes 2.922 s (level with Crystal's 2.925 s, the table's fastest) at 1.72× C's memory, and `Calculator::Ast` 1.513 s, 1.14× Crystal's time ([What allocation costs today](#what-allocation-costs-today)).
+- **Library-leaning rows** (the library's speed, through Avant's bindings): `Json::ParseDom` and `ParseMapping` (yyjson in Avant and C, simdjson in C++, serde in Rust), `Base64::Encode` and `Decode` (the aklomp codec in Avant and C), `Template::Regex` and `Etc::LogParser` (PCRE2 in Avant and C, RE2 in C++, the `regex` crate in Rust). `Sort::Self` is each language's library sort, by the task's definition. In `CSV::Parse` Rust and C++ use CSV libraries; in `Json::Generate` C and C++ use JSON libraries, Avant its own buffer.
 - **Scope.** All 50 tasks; `Etc::TextRaytracer` times its whole render.
 - **Equivalent programs is the rule**: Avant's tasks follow the C and Rust references' algorithms and data widths; a row that does not is named above until rewritten.
 
@@ -4324,15 +4324,13 @@ The bars are measurable, and [LangArena](#langarena) is the public scoreboard:
 
 Where Avant stands, each gap a defect until fixed:
 
-- **LangArena** (2026-11-16): the median task at 0.96× the best language's time and 0.88× its memory; four tasks beyond the 1.5× bar in time, five in memory; fifteen behind Crystal or Go ([Where Avant loses](#where-avant-loses)). Allocation-heavy code is the weakest area ([What allocation costs today](#what-allocation-costs-today)).
+- **LangArena** (2026-11-16): the median task 0.96× the best's time, 0.88× its memory; beyond 1.5×, four tasks in time and five in memory; fifteen behind Crystal or Go ([Where Avant loses](#where-avant-loses)); allocation-heavy code is the weakest ([What allocation costs today](#what-allocation-costs-today)).
 - **HTTP**: level with the fastest servers at 64 connections without pipelining, slower than servers that batch writes when requests are pipelined ([HTTP and WebSocket servers](#http-and-websocket-servers)).
 - **Expressiveness**: Avant's LangArena sources are 5,482 lines to Crystal's 4,220 (30% more, 18% compressed), not Crystal's density yet; the forms that close the gap are in [Not built yet](#not-built-yet).
 
-Avant is not a better TypeScript, a borrow-checker language, a dynamic language with types bolted on, or a research language. It does not try to please everyone.
+Avant is not a better TypeScript, a borrow-checker language, a dynamic language with types bolted on, or a research language.
 
 ## Installation in depth
-
-[Install](#install) is one command. This section is everything behind it.
 
 ### Installer options
 
@@ -4365,7 +4363,7 @@ Download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-la
 | `git` | `avant fetch` only | |
 | libclang 20 | `avant bind` only | `sudo apt install libclang1-20` |
 
-Nothing else, and no environment variable: the compiler generates machine code with the LLVM it carries and links with `cc`. The archive carries `avant` with LLVM 22 linked in (no separate backend program), `re2c`, `avant-bind`, the standard library, and the runtime with PCRE2, zlib and the other C libraries inside; beside them, `examples/` (the runnable programs this page points to), `versions.txt` (what `avant version` prints), Avant's `LICENSE`, and `third_party/` with those C libraries' notices and licenses.
+Nothing else, and no environment variable. The archive holds `avant` with LLVM 22 linked in (it links with `cc`), `re2c`, `avant-bind`, the standard library, the runtime with PCRE2, zlib and the other C libraries inside, `examples/` (the runnable programs this page points to), `versions.txt` (what `avant version` prints), Avant's `LICENSE`, and `third_party/` with those C libraries' notices and licenses.
 
 ## Contributing
 
@@ -4373,13 +4371,13 @@ For working on Avant itself.
 
 ### How the compiler works
 
-The compiler is self-hosted: it is written in Avant (`compiler/*.av`) and compiles itself. It lowers the checked program to its own mid-level IR (MIR, `compiler/mir/`), emits LLVM IR from it (`compiler/llvm/`), and compiles that with the LLVM 22 linked into the compiler (`runtime/avant_llvm.c`); `cc` links the object with the runtime (`runtime/`, C).
+The compiler is written in Avant (`compiler/*.av`) and compiles itself. It lowers the checked program to its mid-level IR (MIR, `compiler/mir/`), then to LLVM IR (`compiler/llvm/`), compiled by the LLVM 22 linked in (`runtime/avant_llvm.c`); `cc` links the object with the runtime (`runtime/`, C).
 
 ```text
 .av  →  parser and checker (compiler/*.av)  →  MIR  →  LLVM IR  →  in-process LLVM  →  object  →  cc  →  binary
 ```
 
-This is the only back end; the earlier one, emitting [myc](https://github.com/kostya/myc) IR for an external `myc-llvm` process, was retired after every program it ran was frozen as a golden (`tests/goldens/runs/`). The collector is `runtime/avant_gc_*.c`, one file per concern (listed in `runtime/avant_gc_internal.h`; settings documented in `runtime/avant_gc.h`). The compiler's sources obey the language's rules, field privacy included: no build is exempt.
+`tests/goldens/runs/` freezes every program the retired back end (emitting [myc](https://github.com/kostya/myc) IR for a `myc-llvm` process) ran. The collector is `runtime/avant_gc_*.c`, one file per concern (listed in `runtime/avant_gc_internal.h`; settings in `runtime/avant_gc.h`). The compiler's sources obey the language's rules, field privacy included.
 
 ### Building the compiler
 
@@ -4390,9 +4388,9 @@ You need:
 - `re2c` for regex literals (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`);
 - for the `bind` helper, `llvm-config` and libclang 20 (without them the build skips it with a notice).
 
-Releases and CI build on `ubuntu-26.04` runners with the benchmarks' exact toolchain: gcc 15.2 and libclang 20 (for `bind`) from a fixed snapshot of Ubuntu's archive (`.github/install-toolchain.sh`), and LLVM's official 22.1.8 (`tools/install-llvm.sh`). The archive still runs on glibc 2.38 and later; CI installs it on an `ubuntu-24.04` runner before a release is published. LLVM 22 replaced 20.1.8 for compile times (on that machine: the compiler's release build 18% faster, the release compiler compiling itself 19.5%, the 50 LangArena tasks' release compiles 11.8%; a debug build of the compiler 6.7%, about 1 s, slower), with the programs as fast (LangArena geometric mean 0.993, within the spread, same memory) and the archive 4.7% larger. LLVM 20, 21 and 23 still build the compiler (`LLVM_CONFIG` names their `llvm-config`).
+Releases and CI build on `ubuntu-26.04` runners with the benchmarks' exact toolchain: gcc 15.2 and libclang 20 (for `bind`) from a fixed snapshot of Ubuntu's archive (`.github/install-toolchain.sh`), and LLVM's official 22.1.8 (`tools/install-llvm.sh`). The archive runs on glibc 2.38 and later; CI installs it on an `ubuntu-24.04` runner before each release. LLVM 22 is used over 20.1.8 for compile speed (the compiler's release build 18% faster, its self-compile 19.5%, the 50 LangArena tasks' release compiles 11.8%; a debug build of the compiler 6.7%, about 1 s, slower), with programs as fast (LangArena geometric mean 0.993, same memory) and the archive 4.7% larger; LLVM 20, 21 and 23 also build the compiler (`LLVM_CONFIG` names their `llvm-config`).
 
-The compiler is built by a published release, the seed: **v0.44.0 or later**, unpacked at `bin/v0.45.0` (or wherever `LETTERS_SEED` points). An older release cannot build this tree: the code v0.43.0 and earlier releases emit calls three runtime functions this runtime no longer exports (`avant_gc_fast_ok`, `avant_gc_block`, `avant_inline_allocs`), and the runtime has one ABI.
+The compiler is built by a published release, the seed: **v0.44.0 or later**, unpacked at `bin/v0.45.0` (or wherever `LETTERS_SEED` points); v0.43.0 and older emit calls to runtime functions this runtime no longer exports (`avant_gc_fast_ok`, `avant_gc_block`, `avant_inline_allocs`).
 
 ```sh
 sh runtime/build.sh
@@ -4401,13 +4399,13 @@ sh runtime/build.sh
 ./bin/avant compile compiler/main.av bin/avant --debug runtime/build/avant_llvm.o   # rebuild with itself
 ```
 
-`AVANT_ROOT` overrides where a compiler looks for `runtime/build` and `lib/std`; without it, a compiler built by `tools/letters.sh` reads the `lib/` its `OUT.versions.txt` names, any other (a release, a bare copy) the nearest `lib/` in its directory or one above. `avant dump FILE.av` prints a program's MIR. `tools/bind.c` is the `avant bind` translator, built by `runtime/build.sh` into `runtime/build/avant-bind`; a compiler in a checkout runs that one, elsewhere the `avant-bind` beside itself.
+`AVANT_ROOT` overrides where a compiler looks for `runtime/build` and `lib/std`; without it, a compiler built by `tools/letters.sh` reads the `lib/` its `OUT.versions.txt` names, wherever it is copied (if that library is gone, it says so instead of reading another), and any other (a release, a bare copy) the nearest `lib/` in its directory or one above. `avant dump FILE.av` prints a program's MIR. `tools/bind.c` is the `avant bind` translator, built by `runtime/build.sh` into `runtime/build/avant-bind`; a compiler in a checkout runs that one, elsewhere the `avant-bind` beside itself.
 
 ### The gate and the suite
 
 | Command | What it proves |
 | --- | --- |
-| `sh tools/letters.sh` | builds the runtime, B (`bin/avant-b`, built by the seed) and C′ (`bin/avant-c-llvm`, built by B); `b`, `c-llvm`, `d-llvm` (D′, built by C′) or `c-release` (the `--release` compiler a release ships) builds one. Beside each compiler it writes `OUT.versions.txt`, which `avant version` prints (the compiler carries no version, so it stays byte-identical across commits that do not change it); its `lib:` line names the checkout's `lib/`, read when `AVANT_ROOT` is unset, wherever the compiler is copied; if that library is gone, the compiler says so instead of reading another |
+| `sh tools/letters.sh` | builds the runtime, B (`bin/avant-b`, built by the seed) and C′ (`bin/avant-c-llvm`, built by B); `b`, `c-llvm`, `d-llvm` (D′, built by C′) or `c-release` (the `--release` compiler a release ships) builds one. Beside each compiler it writes `OUT.versions.txt`, which `avant version` prints (the compiler carries no version, so it stays byte-identical across commits that do not change it); its `lib:` line names the `lib/` the compiler reads ([Building the compiler](#building-the-compiler)) |
 | `sh tools/gate.sh` | the full gate: B, C′, the suite on both, D′, and the fixed point (C′ and D′ emit the same LLVM IR for the compiler and are byte-identical) |
 | `sh tools/run-goldens.sh` | compiles and runs every example, runnable fixture and LangArena task and compares stdout, stderr and exit status with its golden (`GOLDEN_MODE=--release`, or empty, for the other modes) |
 
@@ -4422,7 +4420,7 @@ AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm test
 
 - Each `tests/cases/test_*.av` is one program; helpers shared by several live in `tests/cases/harness.av`. Run one file with `avant test tests/cases/test_ffi.av`, or one slice with `--shard 2/4`.
 - The `[test] exclusive` files (they probe the collector, rewrite `PATH`, use git, or write their own coverage report) run alone, in a command without `--shard`; a shard that would include one needs `--skip-exclusive`. `test_fixed_point.av`, which compiles the compiler, is in `[test] first` so it starts first.
-- For the compiler's suite, `--junit PATH` writes one case per check, with durations (its checks record them, as `std.testing`'s do); output is printed per file as each finishes, and the summary totals the run.
+- For the compiler's suite, `--junit PATH` writes one case per check, with durations; output is printed per file as each finishes, and the summary totals the run.
 - The compiler's own coverage report is an instrumented compiler build's hit file, written once after the processes updating it finish; it is not `avant test --coverage`, which reports the tests.
 - Goldens live in `tests/goldens/`.
 
