@@ -3277,17 +3277,18 @@ The prelude, used without an import, is the types and methods above ([Strings](#
 | Hashing and math | `sha256`, `sqrt`, `exp`, `fmt_float` |
 | Strings and buffers | `str_slice`, `str_to_f_slice`, `chr`, `repeat_byte`, `bytes_to_str`, `buf_new` ([String operations](#string-operations)) |
 
-Runnable programs using them are in [examples/](examples), in the repository and in the release archive beside `avant`.
+Runnable programs using them are in [examples/](examples), in the repository and in the release archive beside `avant`. In the tables below, a dash means there is nothing to say: no parameter, no result, or no failure.
 
 ### Output
 
-| Call | Writes |
-| --- | --- |
-| `puts(x)` | `x` and a newline to stdout; `puts()` an empty line |
-| `print(x)` | `x` alone to stdout |
-| `eputs(x)` | `x` and a newline to stderr; `eputs()` an empty line |
-| `eprint(x)` | `x` alone to stderr |
-| `exit(status)` | nothing: it ends the program with that exit status |
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `puts(x)` | `x`, any printable value; none for `puts()` | — | a failed write stops the program with a message, status 1 | writes `x` and a newline to stdout; `puts()` an empty line |
+| `print(x)` | `x` | — | as `puts` | writes `x` alone to stdout |
+| `eputs(x)` | `x`, or none | — | as `puts` | writes `x` and a newline to stderr; `eputs()` an empty line |
+| `eprint(x)` | `x` | — | as `puts` | writes `x` alone to stderr |
+| `puts_u(n)` | `n`, an integer | — | as `puts` | prints an integer as the unsigned number its bits spell |
+| `exit(status)` | `status`, 0 to 255 | never returns | a status outside 0 to 255 traps at the call (`exit status 256 out of range (0..255)`) | writes nothing: flushes stdout, removes the program's temporary directory and ends the process with that exit status, from any task |
 
 ```avant
 enum Level { low, high }
@@ -3301,14 +3302,16 @@ fn main {
 }
 ```
 
-- `x` is written exactly as `"${x}"` ([Printing](#printing)): a number, a `Bool`, a `String` (every byte, a NUL included), a type with its own `to_s`, an enum, an error, or a union of those; `puts(x)` of an `Int?` is a compile error naming the ways to open it.
-- stdout is buffered, stderr is not; a write to stderr first flushes stdout, so both keep their order (a terminal, `2>&1`). A failed write to either stops the program with a message, status 1.
-- `exit(status)` flushes stdout, removes the program's temporary directory and ends the process, from any task; a status outside 0 to 255 traps at the call (`exit status 256 out of range (0..255)`). It never returns, so like `return` it may end an [`else e` guard](#reading-the-error-itself), a function with a result, or a value-giving `switch` arm. Without it, the exit status is `main`'s result.
-- `puts_u(n)` prints an integer as the unsigned number its bits spell.
+`x` is written exactly as `"${x}"` ([Printing](#printing)): a number, a `Bool`, a `String` (every byte, a NUL included), a type with its own `to_s`, an enum, an error, or a union of those; `puts(x)` of an `Int?` is a compile error naming the ways to open it. stdout is buffered, stderr is not; a write to stderr first flushes stdout, so both keep their order (a terminal, `2>&1`). As `exit` never returns, like `return` it may end an [`else e` guard](#reading-the-error-itself), a function with a result, or a value-giving `switch` arm. Without it, the exit status is `main`'s result.
 
 ### Input
 
-`read_line()` gives the next line of standard input without its newline (or a `\r` before it), an unterminated last line included; `nil` at the end; an `IoError` if the read fails. `while line = read_line() { ... }` stops at either; a guard tells them apart (the failure is `nil` at the end).
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `read_line()` | — | `String \| IoError \| Nil`: the next line of standard input without its newline (or a `\r` before it), an unterminated last line included | `nil` at the end; an `IoError` if the read fails | when stdout is a terminal, `read_line` flushes it first, so a `print` prompt shows |
+| `file_read("/dev/stdin")` | — | `String \| IoError` | as [`file_read`](#files-and-directories) | reads all of standard input |
+
+`while line = read_line() { ... }` stops at either; a guard tells them apart (the failure is `nil` at the end).
 
 ```avant
 fn main {
@@ -3327,22 +3330,26 @@ fn main {
 }
 ```
 
-With an empty input it prints 0. `read_line() ?? ""` reads one answer, the end as empty. When stdout is a terminal, `read_line` flushes it first, so a `print` prompt shows. `file_read("/dev/stdin")` reads all of standard input.
+With an empty input it prints 0. `read_line() ?? ""` reads one answer, the end as empty.
 
 ### Files and directories
 
-| Call | Result |
-| --- | --- |
-| `file_read(path)` | `String \| IoError`: the whole file |
-| `file_write(path, body)` | `Int \| IoError`: the bytes written; the file is created or replaced |
-| `file_open(path)` | `FileReader \| IoError`: the file, to read line by line |
-| `file_size(path)` | `Int \| IoError`: its size in bytes |
-| `file_delete(path)` | `Void \| IoError`: nothing when the file is removed (a directory is an error) |
-| `file_exists(path)` | `Bool`: a file or a directory is there |
-| `dir_list(path)` | `Array(String) \| IoError`: the names, sorted, without `.` and `..` |
-| `dir_walk(path)` | `Array(String) \| IoError`: every name below it, as a path relative to it |
-| `dir_make(path)` | `Void \| IoError`: nothing when the directory and its missing parents are made; one that is there already is fine |
-| `dir_exists(path)` | `Bool`: a directory is there |
+Every `path` is a `String`.
+
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `file_read(path)` | `path` | `String \| IoError`: the whole file | an `IoError` | |
+| `file_write(path, body)` | `path`, `body: String` | `Int \| IoError`: the bytes written | an `IoError` | the file is created or replaced |
+| `file_open(path)` | `path` | `FileReader \| IoError`: the file, to read line by line | an `IoError` | `file_open` never holds the whole file |
+| `r.read_line()` | — | `String \| IoError \| Nil` | as [`read_line`](#input) | a `FileReader`'s `r.read_line()` is [`read_line`](#input) on its file |
+| `r.close()` | — | — | — | closes the file; it also closes at the end, or on an error; a reader dropped earlier keeps it open until the program ends |
+| `file_size(path)` | `path` | `Int \| IoError`: its size in bytes | an `IoError` | |
+| `file_delete(path)` | `path` | `Void \| IoError`: nothing when the file is removed | an `IoError`; a directory is an error | |
+| `file_exists(path)` | `path` | `Bool`: a file or a directory is there | — | |
+| `dir_list(path)` | `path` | `Array(String) \| IoError`: the names, sorted, without `.` and `..` | an `IoError` | |
+| `dir_walk(path)` | `path` | `Array(String) \| IoError`: every name below it, as a path relative to it | an `IoError` | `dir_walk` lists a directory before what it holds and the names of each directory sorted; a link to a directory is listed and not followed |
+| `dir_make(path)` | `path` | `Void \| IoError`: nothing when the directory and its missing parents are made | an `IoError` | one that is there already is fine |
+| `dir_exists(path)` | `path` | `Bool`: a directory is there | — | |
 
 ```avant
 fn copy(from: String, to: String): Int | IoError {
@@ -3359,8 +3366,6 @@ fn main {
   puts(names.contains("copy.txt"))                // => true
 }
 ```
-
-A `FileReader`'s `r.read_line()` is [`read_line`](#input) on its file. The file closes at the end, on an error, or at `r.close()`; a reader dropped earlier keeps it open until the program ends.
 
 ```avant
 fn longest(path: String): Int | IoError {
@@ -3381,7 +3386,7 @@ fn main {
 }
 ```
 
-`file_open` never holds the whole file. A directory walk and housekeeping:
+A directory walk and housekeeping:
 
 ```avant
 fn remove(path: String) {
@@ -3406,19 +3411,19 @@ fn main {
 }
 ```
 
-- `dir_walk` lists a directory before what it holds and the names of each directory sorted; a link to a directory is listed and not followed.
-- An `IoError` has `op` (`"read"`, `"write"`, `"list"`, `"open"`, `"stat"`, `"delete"` or `"make"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`.
-- The names `IoError`, `ProcessError`, `FileReader` and `ProcessOutput` are taken only in a program that calls these functions.
+An `IoError` has `op` (`"read"`, `"write"`, `"list"`, `"open"`, `"stat"`, `"delete"` or `"make"`), `path` and `errno` (the OS error number); its message reads `cannot read notes.txt: No such file or directory`. The names `IoError`, `ProcessError`, `FileReader` and `ProcessOutput` are taken only in a program that calls these functions.
 
 ### Processes and environment
 
-| Call | Result |
-| --- | --- |
-| `argv()` | `Array(String)`: the program's name, then its arguments ([Program arguments](#program-arguments)) |
-| `env_get(name)` | `String?`: `nil` when the variable is not set |
-| `process_run(program, args)` | `Int \| ProcessError`: runs the program, waits, and gives its exit status |
-| `process_run_out(program, args, out)` | the same, with stdout and stderr written to the file `out` |
-| `process_output(program, args, input)` | `ProcessOutput \| ProcessError`: runs the program with `input` on its stdin (`""` when left out), waits, and gives its `status`, `stdout` and `stderr` |
+A `program` is a `String` and `args` an `Array(String)`; a program name without `/` is looked up on `PATH`.
+
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `argv()` | — | `Array(String)`: the program's name, then its arguments ([Program arguments](#program-arguments)) | — | |
+| `env_get(name)` | `name: String` | `String?` | `nil` when the variable is not set | |
+| `process_run(program, args)` | `program`, `args` | `Int \| ProcessError`: its exit status | a `ProcessError` (below) | runs the program and waits; `process_run`'s child shares the program's stdin, stdout and stderr |
+| `process_run_out(program, args, out)` | `program`, `args`, `out: String` | the same | the same, with `output` when the output file could not be opened | the same, with stdout and stderr written to the file `out` |
+| `process_output(program, args, input)` | `program`, `args`, `input: String` (`""` when left out) | `ProcessOutput \| ProcessError`: its `status`, `stdout` and `stderr` | a `ProcessError` | runs the program with `input` on its stdin, then end of input, waits, and reads its stdout and stderr as they come, so it never stalls (a child that stops reading early is not an error) |
 
 ```avant
 fn main {
@@ -3436,9 +3441,17 @@ fn main {
 }
 ```
 
-A program name without `/` is looked up on `PATH`. `process_run`'s child shares the program's stdin, stdout and stderr; `process_output` feeds it `input`, then end of input, and reads its stdout and stderr as they come, so it never stalls (a child that stops reading early is not an error). **A non-zero exit status is not an error**, only the `Int`. A `ProcessError` is a program that could not start (`errno`; `output` when the output file could not be opened) or a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`.
+**A non-zero exit status is not an error**, only the `Int`. A `ProcessError` is a program that could not start (`errno`; `output` when the output file could not be opened) or a signal killed (`signal`): `cannot run ls: No such file or directory`, `sh killed by signal 9 (Killed)`.
 
 ### Time, hashing and math
+
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `now_ms()`, `now_us()` | — | `Int` milliseconds, microseconds | — | a monotonic clock, without wrapping: intervals, not the time of day |
+| `sha256(s)` | `s: String` | `String`: 64 hexadecimal characters | — | the SHA-256 of a string |
+| `sqrt(x)`, `exp(x)`, `fmt_float(x, digits)` | | | | in [Floats](#floats) |
+| `checksum_str`, `checksum_f64`, `crc32_bytes`, `sha256_word0` | | each an `Int32` | | also taken, for the benchmark programs |
+| `wide_op`, `wide_hi` and `hash_last_key` | | | | also taken, for the benchmark programs |
 
 ```avant
 fn main {
@@ -3449,10 +3462,7 @@ fn main {
 }
 ```
 
-- `now_ms()` and `now_us()` read a monotonic clock in `Int` milliseconds and microseconds, without wrapping: intervals, not the time of day. No time-of-day call or `sleep` yet; bind C's `usleep` (`lib c { fun usleep(us: UInt32): Int32 }`).
-- `sha256(s)` is the SHA-256 of a string, as 64 hexadecimal characters.
-- `sqrt(x)`, `exp(x)` and `fmt_float(x, digits)` are in [Floats](#floats).
-- Also taken, for the benchmark programs: `checksum_str`, `checksum_f64`, `crc32_bytes`, `sha256_word0` (each an `Int32`), `wide_op`, `wide_hi` and `hash_last_key`.
+No time-of-day call or `sleep` yet; bind C's `usleep` (`lib c { fun usleep(us: UInt32): Int32 }`).
 
 ## Standard library
 
@@ -3495,35 +3505,35 @@ fn main {
 }
 ```
 
-**Reading.** `Json.parse(text)` returns `Json | JsonError`. A `Json` is a position in the parsed document, which owns its values and text: nothing to close.
+**Reading.** A `Json` is a position in the parsed document, which owns its values and text: nothing to close.
 
-| On a `Json` | Gives |
-| --- | --- |
-| `get(key)`, `at(index)`, `first` | `Json?`: a member, an element |
-| `len`, `key_at(index)` | the number of members or elements; a member's key (`String?`) |
-| `iter`, then `next` on it | each element in turn (`Json?`; `while v = it.next { ... }`) |
-| `int`, `f64`, `str`, `bool` | this value as that type, or `nil` when it is another type |
-| `int(key)`, `f64(key)`, `str(key)`, `bool(key)` | the same, for a member |
-| `is_null`, `is_bool`, `is_int`, `is_float`, `is_str`, `is_arr`, `is_obj` | `Bool` |
-| `f64s(key)` | `Array(Float64)?`: the numeric member `key` of every element of an array of objects |
-| `text` | the value written back as JSON text |
-| `to_value` | a plain `JsonValue` tree (an Avant class) that outlives the document |
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `Json.parse(text)` | `text: String` | `Json \| JsonError` | a `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset` (`-1` when there is none) | |
+| `get(key)`, `at(index)`, `first` | `key: String`, `index: Int` | `Json?`: a member, an element | `nil` when there is none | |
+| `len` | — | `Int`: the number of members or elements | — | |
+| `key_at(index)` | `index: Int` | `String?`: a member's key | `nil` when there is none | |
+| `iter`, then `next` on it | — | each element in turn (`Json?`) | `nil` after the last | `while v = it.next { ... }` |
+| `int`, `f64`, `str`, `bool` | — | this value as that type | `nil` when it is another type | `int` is `nil` for anything but a JSON integer (no fraction, no exponent) within `Int`: `3.7`, `3.0`, an integer beyond `Int`, a non-number. `f64` reads any number |
+| `int(key)`, `f64(key)`, `str(key)`, `bool(key)` | `key: String` | the same, for a member | the same | |
+| `is_null`, `is_bool`, `is_int`, `is_float`, `is_str`, `is_arr`, `is_obj` | — | `Bool` | — | |
+| `f64s(key)` | `key: String` | `Array(Float64)?`: the numeric member `key` of every element of an array of objects | `nil` otherwise | |
+| `text` | — | `String`: the value written back as JSON text | — | |
+| `to_value` | — | a plain `JsonValue` tree (an Avant class) | — | it outlives the document |
 
-`int` is `nil` for anything but a JSON integer (no fraction, no exponent) within `Int`: `3.7`, `3.0`, an integer beyond `Int`, a non-number. `f64` reads any number.
+**Writing.** Each call on a `JsonBuilder` but `to_s` returns the builder, so calls chain.
 
-**Errors.** A `JsonError` says what yyjson found and where: `invalid JSON at byte 7: trailing comma is not allowed`, with the byte offset in `e.offset` (`-1` when there is none).
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `Json.obj`, `Json.arr` | — | a `JsonBuilder` | — | start a `JsonBuilder` with an object, an array open |
+| `JsonBuilder.into(buf)` | `buf: Buf` | a `JsonBuilder` | — | starts one that writes into your `Buf` |
+| `set(name, v)`, `set_null(name)` | `name: String`, `v` (below) | the builder | — | a member of the open object |
+| `add(v)`, `null` | `v` (below) | the builder | — | an element of the open array |
+| `key(name)`, then `obj`, `arr` or `value(v)` | `name: String`, `v` (below) | the builder | `key` outside an object traps | a member that is itself a container or a value |
+| `end` | — | the builder | `end` with nothing open traps (`avant runtime: JsonBuilder.end: nothing open`) | closes the innermost open object or array |
+| `to_s` | — | `String`: the text | `to_s` with containers open traps (`JsonBuilder.to_s: 2 containers still open`) | |
 
-**Writing.** `Json.obj` and `Json.arr` start a `JsonBuilder`; `JsonBuilder.into(buf)` starts one that writes into your `Buf`.
-
-| On a `JsonBuilder` | Does |
-| --- | --- |
-| `set(name, v)`, `set_null(name)` | a member of the open object |
-| `add(v)`, `null` | an element of the open array |
-| `key(name)`, then `obj`, `arr` or `value(v)` | a member that is itself a container or a value |
-| `end` | closes the innermost open object or array |
-| `to_s` | the text |
-
-`v` is an `Int`, `Float64`, `String`, `Bool`, `Json` or another `JsonBuilder`. Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities are `null`. A builder used against its shape traps, saying how: `end` with nothing open (`avant runtime: JsonBuilder.end: nothing open`), `key` outside an object, `to_s` with containers open (`JsonBuilder.to_s: 2 containers still open`).
+`v` is an `Int`, `Float64`, `String`, `Bool`, `Json` or another `JsonBuilder`. Floats use the language's float text (`1.5e-7`, `2.0`); NaN and the infinities are `null`. A builder used against its shape traps, saying how (the Errors column).
 
 ### std.regex
 
@@ -3546,25 +3556,22 @@ fn main {
 
 Compiling it prints `re2c: pattern stays on PCRE2 (...)` on stderr (**Two engines**, below).
 
-| Call | Gives |
-| --- | --- |
-| `Regex.compile(pattern, caseless = false)` | `Regex \| RegexError` |
-| `re.find(text, from = 0)` | `Match?`: the first match at or after byte `from` |
-| `m.start`, `m.end` | the match's bounds, in bytes |
-| `m.group(i)`, `m.group("name")` | `String?`: a group's text, `nil` when it did not take part |
-| `m.span(i)`, `m.group_count()` | a group's bounds (`Span?` with `lo` and `hi`); the number of groups |
-| `re.count(text)` | the number of non-overlapping matches |
-| `re.matches(text)`, then `next` on it | each match in turn (`Match?`) |
-| `re.replace(text, repl)` | a new string with every match replaced; `re.replace_into(buf, text, repl)` appends it to a `Buf` |
-| `re.split(text)` | `Array(String)`: the pieces between matches, empty pieces kept |
-| `re.close()`, `re.is_closed()`, `re.scoped { \|r\| ... }` | release the pattern; ask; run a block and close on exit |
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `Regex.compile(pattern, caseless = false)` | `pattern: String`, `caseless: Bool` | `Regex \| RegexError` | a pattern that does not compile is a `RegexError` with PCRE2's reason and the offset it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`) | every copy of a `Regex` shares one compiled pattern; a bounded cache makes compiling a pattern again cheap |
+| `re.find(text, from = 0)` | `text: String`, `from: Int` | `Match?`: the first match at or after byte `from` | `nil` when there is none | |
+| `m.start`, `m.end` | — | `Int`: the match's bounds, in bytes | — | a `Match` is a value: there are no global match cursors |
+| `m.group(i)`, `m.group("name")` | `i: Int`, or a group's name | `String?`: a group's text | `nil` when it did not take part | |
+| `m.span(i)`, `m.group_count()` | `i: Int` | a group's bounds (`Span?` with `lo` and `hi`); the number of groups | — | |
+| `re.count(text)` | `text: String` | `Int`: the number of non-overlapping matches | — | |
+| `re.matches(text)`, then `next` on it | `text: String` | each match in turn (`Match?`) | `nil` after the last | |
+| `re.replace(text, repl)` | `text`, `repl: String` | a new string with every match replaced | — | `re.replace_into(buf, text, repl)` appends it to a `Buf`. In a replacement, `$1` to `$9`, `${1}` and `${name}` insert a group (nothing when it did not take part) and `$$` is a dollar sign |
+| `re.split(text)` | `text: String` | `Array(String)`: the pieces between matches, empty pieces kept | — | |
+| `re.close()`, `re.is_closed()`, `re.scoped { \|r\| ... }` | a block for `scoped` | `is_closed` a `Bool` | — | release the pattern; ask; run a block and close on exit. `re.close()` through any copy closes all |
 
-- A `Match` is a value: there are no global match cursors.
-- In a replacement, `$1` to `$9`, `${1}` and `${name}` insert a group (nothing when it did not take part) and `$$` is a dollar sign.
-- A pattern that does not compile is a `RegexError` with PCRE2's reason and the offset it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`).
-- Every copy of a `Regex` shares one compiled pattern: `re.close()` through any copy closes all. Any operation on a closed `Regex` traps (`avant runtime: Regex used after close`), never "no match", as do a `Match`'s named groups and groups past the third (read from the pattern). A bounded cache makes compiling a pattern again cheap.
-- **At PCRE2's limits a match traps, never "no match"**: past the match limit (ten million backtracking steps), or the depth or memory limit, the program ends with the operation and PCRE2's reason (`avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`). The limits cannot be set and the failure is not a value: bound an outside pattern or text (length, shape) before matching.
-- Deep nesting alone (a group repeated many thousands of times) is not a failure: a larger stack, then PCRE2's interpreter, answers it, memory growing with the text. A pattern may have any number of groups PCRE2 accepts.
+**After close.** Any operation on a closed `Regex` traps (`avant runtime: Regex used after close`), never "no match", as do a `Match`'s named groups and groups past the third (read from the pattern).
+
+**At PCRE2's limits a match traps, never "no match"**: past the match limit (ten million backtracking steps), or the depth or memory limit, the program ends with the operation and PCRE2's reason (`avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`). The limits cannot be set and the failure is not a value: bound an outside pattern or text (length, shape) before matching. Deep nesting alone (a group repeated many thousands of times) is not a failure: a larger stack, then PCRE2's interpreter, answers it, memory growing with the text. A pattern may have any number of groups PCRE2 accepts.
 
 **Two engines.** re2c compiles a string-literal pattern with at most one capture group and no named groups to a native scanner. Any other pattern runs on PCRE2's JIT; a literal one (with a literal `caseless`, if given) gets a note on stderr, so `avant run`'s stdout stays the program's. Both ship inside the release. Without a `re2c` binary literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary. PCRE2 backtracks: adversarial patterns and texts can be catastrophic.
 
@@ -3597,7 +3604,7 @@ fn main {
 
 #### HTTP server
 
-`Http.listen(port)` binds at once (a bad port fails there), returning `Server | HttpError`; register routes, then `serve` runs until `close`.
+`Http.listen(port)` binds at once (a bad port fails there); register routes, then `serve` runs until `close`.
 
 <!-- check: compile -->
 ```avant
@@ -3619,16 +3626,30 @@ fn main {
 }
 ```
 
-- **Listening**: `Http.listen(port, host = "127.0.0.1", max_body = 1048576, loops = 0, max_message = 1048576)`. `server.port()` is the bound port.
-- **Routes** are exact paths (`get`, `post`, `put`, `delete`, `patch`, `route(method, path)`); no pattern router, middleware or streaming. Register every route, WebSocket ones too, before `serve`: one registered from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`, status 1).
-- **A handler** gets a `Request` (`method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes`) and returns a `Response`, built only as `Response.text(body, status = 200)` or `Response.bytes(body, status = 200)`, then `.header(name, value)`. A `status` outside 100 to 599 traps when written (`avant runtime: a response's status 99 is not 100 to 599 (RFC 9110)`). The server sets `Content-Length` and `Connection`. A header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`): check request text before putting it in a header.
-- **Headers** (`req.headers`, `resp.headers`): `get(name)` (`String?`), `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)`.
-- **Bodies** are buffered up to `max_body` (1 MiB by default). Answered, then closed: 413 for a larger body, 411 for a chunked request body, 400 for a malformed request, more than one `Content-Length` value (two lines, or a list in one, even agreeing), an HTTP/1.1 request without `Host`, two `Host` lines, or a `Host` that is not `host[:port]` (RFC 3986's host, a name or an address, then an optional port).
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `Http.listen(port, host = "127.0.0.1", max_body = 1048576, loops = 0, max_message = 1048576)` | `port: Int`, `host: String`; `max_body`, `loops` and `max_message` are `Int`s | `Server \| HttpError` | an `HttpError` when it cannot bind | `max_body` bounds a request body; `loops` overrides the event-loop count; `max_message` bounds a WebSocket message |
+| `server.port()` | — | `Int`: the bound port | — | |
+| `get`, `post`, `put`, `delete`, `patch`, `route(method, path)` | `path: String` (and `method: String`), then the handler block | the `Server` | one registered from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`, status 1) | **routes** are exact paths; no pattern router, middleware or streaming. Register every route, WebSocket ones too, before `serve` |
+| a handler, `{ \|req\| ... }` | a `Request` | a `Response` | — | gets `method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes` |
+| `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)` | `body`: a `String`, `Bytes`; `status: Int` | a `Response` | a `status` outside 100 to 599 traps when written (`avant runtime: a response's status 99 is not 100 to 599 (RFC 9110)`) | the only ways to build one; the server sets `Content-Length` and `Connection` |
+| `.header(name, value)` | `name`, `value: String` | the `Response` | a header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`) | check request text before putting it in a header |
+| `get(name)`, `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)` | `name: String`, `i: Int` | `String?`, `Bool`, `Array(String)`, `Int`, `String?`, `String?` | — | **headers**, on `req.headers` and `resp.headers` |
+| `serve` | — | — | — | runs until `close` |
+| `close` | — | — | — | stops the server and lets `serve` return. An unclosed server keeps its socket until the process exits (no finalizer) |
+
+**Bodies** are buffered up to `max_body` (1 MiB by default). Answered, then closed:
+
+| Request | Answer |
+| --- | --- |
+| a larger body | 413 |
+| a chunked request body | 411 |
+| a malformed request; more than one `Content-Length` value (two lines, or a list in one, even agreeing); an HTTP/1.1 request without `Host`, two `Host` lines, or a `Host` that is not `host[:port]` (RFC 3986's host, a name or an address, then an optional port) | 400 |
+
 - **Connections** are kept alive; pipelined requests are answered in order, each with its own write. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on one port.
 - **Handlers must not block the loop**: hand slow work to `spawn`.
 - **An idle HTTP connection is closed** after about 30 seconds with no bytes in or out; WebSocket connections never time out.
 - **A trap in a handler ends the server**, like any [trap](#traps): run it under a supervisor, and read request data with the non-trapping forms.
-- `close` stops the server and lets `serve` return. An unclosed server keeps its socket until the process exits (no finalizer).
 
 #### HTTP client
 
@@ -3650,11 +3671,21 @@ fn main {
 }
 ```
 
-`Http.get(url, follow = true, timeout_ms = 10000)`, `Http.post(url, body, ...)` with a `String` body, and `Http.request(method, url, body, headers, ...)` with `body` as `Bytes` and `headers` an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`) return `Response | HttpError`.
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `Http.get(url, follow = true, timeout_ms = 10000)` | `url: String`, `follow: Bool`, `timeout_ms: Int` | `Response \| HttpError` | below | |
+| `Http.post(url, body, ...)` | `body`, a `String`; then as `get` | `Response \| HttpError` | below | |
+| `Http.request(method, url, body, headers, ...)` | `method: String`, `body` as `Bytes` and `headers` an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`); then as `get` | `Response \| HttpError` | below | |
 
-- A request is sent only when its method and header names are tokens, its header values hold no control character but tab (`Response.header`'s rules), and its URL no space or control character; otherwise the call sends nothing and returns an `HttpError` naming the part and byte (`invalid request header value of X-A (byte 13 at 1): …`). The client sets `Content-Length` and `Connection`, skipping a caller's.
-- A call blocks its thread until the response is complete (from a server handler, `spawn` first): as the framing says (the `Content-Length`, a chunked body's last chunk, or the head alone for HEAD, 204 and 304), or, with neither length nor chunks, when the server closes. Interim answers (`100 Continue`, `103 Early Hints`) are skipped. More than one `Content-Length` value (even identical) or a non-number is an `HttpError` (`invalid HTTP response body from …`).
-- `timeout_ms` is one deadline, kept within a few milliseconds, for the whole call (connection, request, response, every redirect); a slow server does not extend it. Past it the call returns an `HttpError` (`request to 127.0.0.1:8080 timed out`) whatever had arrived. Zero or less means the default, 10000.
+| The call returns an `HttpError` when | Message |
+| --- | --- |
+| its method and header names are not tokens, a header value holds a control character but tab (`Response.header`'s rules), or its URL a space or control character: the call sends nothing | naming the part and byte (`invalid request header value of X-A (byte 13 at 1): …`) |
+| the response has more than one `Content-Length` value (even identical) or a non-number | `invalid HTTP response body from …` |
+| `timeout_ms` passed, whatever had arrived | `request to 127.0.0.1:8080 timed out` |
+
+- The client sets `Content-Length` and `Connection`, skipping a caller's.
+- A call blocks its thread until the response is complete (from a server handler, `spawn` first): as the framing says (the `Content-Length`, a chunked body's last chunk, or the head alone for HEAD, 204 and 304), or, with neither length nor chunks, when the server closes. Interim answers (`100 Continue`, `103 Early Hints`) are skipped.
+- `timeout_ms` is one deadline, kept within a few milliseconds, for the whole call (connection, request, response, every redirect); a slow server does not extend it. Zero or less means the default, 10000.
 
 #### WebSocket server
 
@@ -3677,11 +3708,16 @@ fn main {
 }
 ```
 
-- A message is text (`msg.text` is its `String`, `msg.is_text`) or binary (`msg.body`, `msg.is_binary`). `msg.body` is always the payload.
-- On a connection: `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")`, each returning `Bool`: `false` when the connection is closed or its send queue is full (a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole). A `WsConn` kept after its connection closed, or after `serve` returned, answers `false` to all four.
-- `websocket_open(path) { |conn| ... }` and `websocket_close(path) { |conn, code, reason| ... }` run once per connection (code 1006 when it dropped without a close frame).
-- Ping, the close handshake and fragmentation are handled for you. A message over `max_message` (1 MiB by default) closes the connection with code 1009 and never reaches the handler. `server.close()` sends code 1001 to open connections.
-- A connection stays on its loop thread: to answer from a `spawn` block, capture `conn.sender` and send through it.
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `websocket(path) { \|conn, msg\| ... }` | `path: String`, a block | the `Server` | a message over `max_message` (1 MiB by default) closes the connection with code 1009 and never reaches the handler | runs once per complete message |
+| `websocket_open(path) { \|conn\| ... }`, `websocket_close(path) { \|conn, code, reason\| ... }` | `path: String`, a block | the `Server` | — | run once per connection (code 1006 when it dropped without a close frame) |
+| `msg.text`, `msg.is_text` | — | its `String`; `Bool` | — | a text message |
+| `msg.body`, `msg.is_binary` | — | `Bytes`; `Bool` | — | `msg.body` is always the payload |
+| `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")` | the text, `Bytes` or message; `code: Int`, `reason: String` | `Bool` | `false` when the connection is closed or its send queue is full | a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole |
+| `conn.sender` | — | a sender with the same four calls | — | a connection stays on its loop thread: to answer from a `spawn` block, capture `conn.sender` and send through it |
+
+A `WsConn` kept after its connection closed, or after `serve` returned, answers `false` to all four. Ping, the close handshake and fragmentation are handled for you. `server.close()` sends code 1001 to open connections.
 
 #### WebSocket client
 
@@ -3700,9 +3736,15 @@ fn main {
 }
 ```
 
-`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError` (an `HttpError` without connecting for a URL with a space or a control character); `timeout_ms` covers the connection and its handshake. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Both timeouts use the monotonic clock. Never call `recv` from a server handler. An unclosed connection keeps its thread until the process exits.
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `Ws.connect(url, timeout_ms = 10000)` | `url: String`, `timeout_ms: Int` | `WsConnection \| HttpError` | an `HttpError` without connecting for a URL with a space or a control character | `timeout_ms` covers the connection and its handshake |
+| `recv(timeout_ms = -1)` | `timeout_ms: Int` | `WsMessage?` | `nil` when the connection closed or the timeout passed, and `close_code` says which | blocks. Never call `recv` from a server handler |
+| `close_code` | — | `Int` | — | 1006 until a close frame arrives |
+| `send_text`, `send_bytes` | a `String`, `Bytes` | `Bool` | `false` after `close` | |
+| `close` | — | — | — | after `close`, every copy of the connection answers as closed, whatever opens later: `send_text` and `send_bytes` return `false`, `recv` `nil`, `close_code` 1006, and another `close` does nothing |
 
-After `close`, every copy of the connection answers as closed, whatever opens later: `send_text` and `send_bytes` return `false`, `recv` `nil`, `close_code` 1006, and another `close` does nothing. A `spawn` block may capture a `WsConnection`, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return `nil`.
+Both timeouts use the monotonic clock. An unclosed connection keeps its thread until the process exits. A `spawn` block may capture a `WsConnection`, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return `nil`.
 
 ### std.zlib
 
@@ -3717,7 +3759,11 @@ fn main {
 }
 ```
 
-`bytes.compress` returns `Bytes`; `bytes.uncompress` returns `Bytes | ZlibError`. `compress_into(buf)` and `uncompress_into(buf)` write into a `Buf` and return `ZlibError?`.
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `bytes.compress` | — | `Bytes` | — | |
+| `bytes.uncompress` | — | `Bytes \| ZlibError` | a `ZlibError` | |
+| `compress_into(buf)`, `uncompress_into(buf)` | `buf: Buf` | `ZlibError?` | a `ZlibError` | write into a `Buf` |
 
 ### std.base64
 
@@ -3733,7 +3779,11 @@ fn main {
 }
 ```
 
-Encoding never fails (`to_base64` returns a `String`); `from_base64` returns `Bytes | Base64Error` on malformed input. `to_base64_into(buf)` and `from_base64_into(buf)` are the `Buf` twins.
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `to_base64` | — | a `String` | — | encoding never fails |
+| `from_base64` | — | `Bytes \| Base64Error` | a `Base64Error` on malformed input | |
+| `to_base64_into(buf)`, `from_base64_into(buf)` | `buf: Buf` | `Base64Error?` | as above | the `Buf` twins |
 
 ## Testing
 
