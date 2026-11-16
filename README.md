@@ -2736,7 +2736,7 @@ fn main {
 
 ### Spawn
 
-`spawn { ... }` runs the block as a task and returns a `JoinHandle(Int)` at once; `.join` waits for the task and gives the block's value, an `Int` for now, or the `TaskError` of a trap that ended the task: its type is `Int | TaskError` ([When a task traps](#when-a-task-traps)), read with `??`, `?`, an if-assign or `else e` like any failure. Handles are ordinary values: keep them in an array to wait for many.
+`spawn { ... }` runs the block as a task and returns a `JoinHandle(Int)` at once. `.join` waits and gives the block's value (an `Int` for now) or the `TaskError` of a trap that ended the task: its type is `Int | TaskError` ([When a task traps](#when-a-task-traps)), read like any failure (`??`, `?`, an if-assign, `else e`). Handles are ordinary values: keep them in an array to wait for many.
 
 ```avant
 fn work(id: Int): Int {
@@ -2758,12 +2758,12 @@ fn main {
 ```
 
 - A value the block captures is copied when the task is sent ([What may cross a task](#what-may-cross-a-task)); the block cannot assign a captured variable.
-- A captured `Array` is shared for reading: the block may not change it, and the sender may not change it until the task ends. Written through the captured name, either change is a compile error. Through any other path to the same array (another name for it, a function it is passed to, a field that holds it) the change stops the program at run time: `avant runtime: push on an array a running task reads: …`, status 1, naming the operation (`push`, `pop`, `clear`, `fill`, `sort`, `reverse`, `reserve` or an element store). The array is frozen from the `spawn` until the task ends (not until the join, so a dropped handle does not keep it frozen), at every level of an array of arrays; `.parallel`'s input and the arrays its block captures are frozen while its bodies run. A program that never spawns or uses `.parallel` keeps its code; in one that does, an element store and `clear` cost one compare more, and the runtime's mutators test the array once a call (a `push` with room only when it must grow).
-- Calling `.join` or `.parallel` from inside a pool worker is refused: at compile time when it is written in the block; at run time, reached through a call, it traps (`.parallel called from a pool worker: …`), which ends the task. A nested `spawn` from a worker is allowed.
+- A captured `Array` is shared for reading: neither the block nor the sender may change it until the task ends. Through the captured name, the change is a compile error; through another path to the same array (another name, a function it is passed to, a field holding it), it stops the program: `avant runtime: push on an array a running task reads: …`, status 1, naming the operation (`push`, `pop`, `clear`, `fill`, `sort`, `reverse`, `reserve` or an element store). The array is frozen from the `spawn` until the task ends (not the join: a dropped handle does not keep it frozen), at every level of an array of arrays; `.parallel`'s input and its block's captured arrays are frozen while its bodies run. Cost: none in a program that never spawns or uses `.parallel`; otherwise one compare more per element store and `clear`, and one test per runtime mutator call (a `push` with room tests only when it must grow).
+- `.join` or `.parallel` inside a pool worker is refused: a compile error when written in the block; reached through a call, a trap (`.parallel called from a pool worker: …`) that ends the task. A nested `spawn` from a worker is allowed.
 
 ### When a task traps
 
-A trap inside a spawned block (an index out of bounds, an overflow, a division by zero, an `expect` on `nil`, a change to a frozen array, …) ends that task, not the program. The trap is printed to standard error when it happens, as a trap that ends the program is (`avant runtime: index 7 out of bounds …`), whether or not the task is ever joined. The task's stack is dropped where it stands (no unwinding: nothing needs to run, the collector frees what the task left), and its `join` gives a `TaskError` whose `what` is the trap's text and `site` its `FILE:LINE:COL` (empty when the trap names its function instead); `"${e}"` prints both. The program and the pool go on.
+A trap in a spawned block (an index out of bounds, an overflow, a division by zero, an `expect` on `nil`, a change to a frozen array, …) ends that task, not the program. It is printed to standard error when it happens, as a program-ending trap is (`avant runtime: index 7 out of bounds …`), joined or not. The task's stack is dropped without unwinding (the collector frees what it left), and its `join` gives a `TaskError`: `what` is the trap's text, `site` its `FILE:LINE:COL` (empty when the trap names its function instead), and `"${e}"` prints both. The program and the pool go on.
 
 ```avant
 fn main {
@@ -2781,11 +2781,11 @@ fn main {
 
 What the task shared is left safe:
 
-- A `Mutex` the task held in `with` when it trapped is **poisoned**: its value may be half-changed, so every later `with` on it stops with `Mutex.with on a poisoned mutex: …` (in a task, that ends the task in turn; on the main thread, the program). `m.poisoned()` tells, and `m.try_with { |x| … }` is the form for code that recovers: it gives the block's value, or a `MutexError` without running the block, so its type is `T | MutexError` (`Void | MutexError` when the block ends without a value). A mutex heals when it knows how ([Channel and Mutex](#channel-and-mutex)): `Mutex(T).new(v, recover: f)` rebuilds the value with `f` when a lock meets the poison, `m.recover(v)` replaces it and `m.clear_poison()` keeps it as it is.
+- A `Mutex` the task held in `with` is **poisoned**, its value maybe half-changed: every later `with` on it stops with `Mutex.with on a poisoned mutex: …` (ending that task, or the program on the main thread). `m.poisoned()` tells; `m.try_with { |x| … }` gives the block's value, or a `MutexError` without running the block (type `T | MutexError`, or `Void | MutexError` when the block ends without a value). It heals by `recover: f`, `m.recover(v)` or `m.clear_poison()` ([Channel and Mutex](#channel-and-mutex)).
 - Each `Channel` the block captured is closed, so a task waiting in `recv` or `send` on it is not left waiting for ever.
 - Each `Array` the block captured is thawed, as at the task's normal end.
 
-Some traps still end the program: one in a `.parallel` body (the caller waits for every body), one inside a C callback (the jump would skip C's frames), one on the main thread or an HTTP handler's thread, and the runtime's own stops (the heap limit, the collector's checks). Tasks already share no mutable objects (only immutable `String`s, frozen arrays, `Channel`s and `Mutex`es cross), as Erlang's processes share nothing; a trap that ends only its task is the task-level half of "let it crash".
+Some traps still end the program: one in a `.parallel` body (the caller waits for every body), inside a C callback (the jump would skip C's frames), on the main thread or an HTTP handler's thread, and the runtime's own stops (the heap limit, the collector's checks).
 
 ### Parallel
 
@@ -2827,12 +2827,12 @@ fn main {
 }
 ```
 
-- `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` holds the lock while the block runs; `x` names the guarded value, and assigning `x` changes it. Used as a value, the call gives the block's last expression; used as a statement, the block simply ends. `return`, `break`, `continue` and `?` leave the block as they leave any block, and the lock is released on every way out.
-- **Leaving early leaves the value as it is.** A `return`, `break`, `continue` or `?` that leaves the block releases the lock and keeps every change made before it: only a trap poisons the mutex, because only a trap stops a block where its code did not choose to stop. So leave the block only where the guarded value is whole again: finish the update first, or leave before starting it (`if q.size == 0 { return nil }`, then the change). The compiler does not refuse an exit after a change, since it cannot tell a finished update (`n += 1`, then `return`) from half of one.
-- **A poisoned mutex heals.** A task that traps inside `with` poisons the mutex ([When a task traps](#when-a-task-traps)); three operations clear the poison, each under the lock:
-  - `Mutex(T).new(value, recover: f)` gives the mutex a function that rebuilds its value: a `with` or a `try_with` that meets the poison calls `f()`, makes its result the guarded value, clears the poison and runs the block as usual, on whichever task met it. `f` is a named function or a lambda that captures nothing (`recover: { || Stats.new() }`), since it runs on another task and its result becomes the guarded value. A trap inside `f` is a trap like any other (it ends its task, or the program on the main thread) and leaves the mutex poisoned. A mutex without `recover:` traps as before; a recover function is read only after a lock meets the poison, so the lock costs the same.
-  - `m.recover(value)` replaces the value and clears the poison; `value` is given to the mutex as `Mutex(T).new(value)` takes it (a new value or a local variable it consumes).
-  - `m.clear_poison()` keeps the value as the trapped task left it and clears the poison: for a value whose every state is valid.
+- `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` runs the block under the lock; `x` names the guarded value, and assigning `x` changes it. Used as a value, the call gives the block's last expression. `return`, `break`, `continue` and `?` leave the block as they leave any block, and every way out releases the lock.
+- **Leaving early keeps the changes made so far**: only a trap poisons the mutex. So leave only where the guarded value is whole: finish the update first, or leave before starting it (`if q.size == 0 { return nil }`, then the change). The compiler cannot tell a finished update (`n += 1`, then `return`) from half of one, so it refuses neither.
+- **A poisoned mutex heals** ([When a task traps](#when-a-task-traps)) by one of three operations, each under the lock:
+  - `Mutex(T).new(value, recover: f)`: a `with` or `try_with` that meets the poison calls `f()`, makes its result the guarded value, clears the poison and runs the block, on whichever task met it. `f` is a named function or a lambda that captures nothing (`recover: { || Stats.new() }`), since it runs on another task. A trap inside `f` is an ordinary trap (it ends its task, or the program on the main thread) and leaves the mutex poisoned. `f` is read only once a lock meets the poison, so the lock costs the same; without `recover:`, a poisoned lock traps.
+  - `m.recover(value)` replaces the value and clears the poison; it takes `value` as `Mutex(T).new(value)` does (a new value, or a local variable it consumes).
+  - `m.clear_poison()` keeps the value as the trapped task left it: for a value whose every state is valid.
 
 ```avant
 import std.sync
@@ -2858,10 +2858,10 @@ fn main {
 }
 ```
 
-- **Nothing the lock guards leaves the block.** Inside it, the guarded value and every reference reached from it (a field, an element, a name bound to one) may only be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand whose result is a plain value (`b.n`, `b.items.size`, `"${b}"`): never an argument, a stored value or a captured name, which would outlive the lock. Two stores keep it under the lock and are allowed: into the guarded value itself (`b.root = b.root.left`), and into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which then follows the same rule. A plain value (a number, a `Bool`, a `String`, `Bytes`, a struct or an optional of those, a `Channel` or a `Mutex`) is a copy and goes anywhere; the block's value, when it is used, must be one. To take a copy out, fill an array declared before the block with plain values (`b.items.each { |it| sizes.push(it.n) }`).
-- **What a `Mutex` may guard.** A method of the guarded class runs under the lock too, and the block may call it, or a method of any class the guarded value holds (`b.inner.add(c)`), with values from outside. So `Mutex(T)` is accepted only when no method of `T`, nor of any class or struct a `T` holds through its fields, elements and members, keeps a reference from outside or hands out its own: a parameter that can hold a reference is never stored (into a field, an element, a hash or an array by `push` or `fill`, also through a new object it is put in), never passed to a function or a method of another type, and never the method's result; `self` and what is reached from it are stored only into the object itself (`self.root = self.root.left`, `self.head = Node.new(v, self.head)`) and passed only to the methods of those same classes. A method may still read its parameters (`self.n == other.n`) and build new values. The error names the mutex, the class, the method and the store: `Mutex(Box) (at app.av:16:17): Box.add stores a parameter's reference (or a value reached from one) into an array (push); …`. `initialize` is not read: its object is new, and what is given to a constructor is checked where it is called.
-- **Nothing from outside comes in either.** A value stored into the guarded value (`b.child = c`, `b.items.push(c)`) must be new (a constructor call or a literal, whose parts are new or plain), reached from the guarded value already, or plain: a reference the code outside keeps would reach it without the lock.
-- **`Mutex(T).new(v)` consumes `v`.** When `T` can hold a reference (it is not plain), the value given to the mutex is its own from then on: give it a new value (`Mutex(Box).new(Box.new())`, `Mutex(Array(Int)).new([])`), or a local variable, whose name cannot be used after the call. Before the call that variable is used as the guarded value is inside `with` (a receiver or a plain operand: `b.n = 5`, `b.items.push(Item.new())`), every value it holds is new, and the call is not in a loop the variable was declared outside of; so no other reference to the value exists when the mutex takes it. A field, an element, a parameter or a call's result is refused as the argument: another reference may reach it. The rule follows the order of the source, not its paths: a use after the call in the other branch of an `if` is refused too.
+- **Nothing the lock guards leaves the block.** The guarded value and every reference reached from it (a field, an element, a name bound to one) may only be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand with a plain result (`b.n`, `b.items.size`, `"${b}"`), never an argument, a stored value or a captured name, which would outlive the lock. Two stores are allowed: into the guarded value itself (`b.root = b.root.left`), and into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which then follows the same rule. A plain value (a number, `Bool`, `String`, `Bytes`, a struct or optional of those, a `Channel` or `Mutex`) is a copy and goes anywhere; the block's value, when used, must be one. To take a copy out, push plain values into an array declared before the block (`b.items.each { |it| sizes.push(it.n) }`).
+- **What a `Mutex` may guard.** The block may call methods of the guarded class, or of any class it holds (`b.inner.add(c)`), with outside values, and they run under the lock. So `Mutex(T)` is accepted only when no method of `T`, or of any class or struct `T` holds through fields, elements and members, keeps an outside reference or hands out its own: a parameter that can hold a reference is never stored (into a field, an element, a hash, an array by `push` or `fill`, or a new object), passed to a function or another type's method, or returned; `self` and what it reaches are stored only into the object itself (`self.root = self.root.left`, `self.head = Node.new(v, self.head)`) and passed only to those same classes' methods. A method may still read its parameters (`self.n == other.n`) and build new values. `initialize` is not read: its object is new, and a constructor's arguments are checked at the call. The error names the mutex, class, method and store: `Mutex(Box) (at app.av:16:17): Box.add stores a parameter's reference (or a value reached from one) into an array (push); …`.
+- **Nothing from outside comes in.** A value stored into the guarded value (`b.child = c`, `b.items.push(c)`) must be new (a constructor call or literal whose parts are new or plain), already reached from the guarded value, or plain.
+- **`Mutex(T).new(v)` consumes `v`** when `T` can hold a reference (is not plain): pass a new value (`Mutex(Box).new(Box.new())`, `Mutex(Array(Int)).new([])`) or a local variable, whose name cannot be used after the call. Before the call, that local is used only as the guarded value is inside `with` (a receiver or plain operand: `b.n = 5`, `b.items.push(Item.new())`), every value it holds is new, and the call is not in a loop the variable was declared outside of: so no other reference exists. A field, an element, a parameter or a call's result is refused as the argument. The rule follows source order, not paths: a use after the call in the other branch of an `if` is refused too.
 
 A channel hands values from one task to another:
 
@@ -2886,10 +2886,10 @@ fn main {
 }
 ```
 
-- `Channel(T).new()` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` sends and returns whether the value went into the channel, `recv()` returns `T?` (`nil` once the channel is closed and empty, so `while v = ch.recv() { ... }` drains it), `close` closes.
-- A `send` on a closed channel returns `false` at once, buffered or not, full or not; a send waiting for room or for its receiver returns `false` when the channel closes, and its value is not received. The values sent before the close stay for the receivers to drain. A program that only closes after its last send can ignore the result (`ch.send(v)` as a statement).
-- What a `send` carries crosses to another task, by the same rule as a `spawn` capture ([What may cross a task](#what-may-cross-a-task)): a class instance, a `Hash` or a struct holding one is a compile error. An `Array` is copied at the send, at every level of an array of arrays, so the receiver owns its own array and the sender may go on changing its one; its elements must cross in turn (`Array(Box)` is refused). `T` may be any type, so a channel can carry other channels (a reply channel per request) or mutexes.
-- A `Channel` and a `Mutex` hold no memory outside the object: the program can make as many as it likes.
+- `Channel(T).new()` is a rendezvous channel (a send waits for its receive); `Channel(T).new(n)` buffers `n` values. `send(value)` returns whether the value went in; `recv()` returns `T?`, `nil` once the channel is closed and empty (so `while v = ch.recv() { ... }` drains it); `close` closes.
+- A `send` on a closed channel returns `false` at once, buffered or not, full or not; a send waiting for room or a receiver returns `false` when the channel closes, its value not received. Values sent before the close stay to be drained. A program that closes only after its last send can ignore the result (`ch.send(v)` as a statement).
+- A `send` crosses tasks by the `spawn` capture rule ([What may cross a task](#what-may-cross-a-task)): a class instance, a `Hash` or a struct holding one is a compile error. An `Array` is copied at the send, at every level, so each side owns its own; its elements must cross in turn (`Array(Box)` is refused). `T` may be any type, so a channel can carry channels (a reply channel per request) or mutexes.
+- A `Channel` or `Mutex` holds no memory outside the object: make as many as you like.
 
 ### Choosing a tool
 
@@ -2918,29 +2918,29 @@ A mutable object reaches another task only inside a `Mutex`, or as the results o
 
 ### The thread pool
 
-The pool runs at most one task per CPU the process may use at once (its affinity: all online processors, or those `taskset`, `numactl` or a container's cpuset leave it; a cgroup's CPU quota is not read), a number counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number; the runtime removes the flag before `argv()` sees it (it is to become `--avant-threads=N`, leaving `--threads` to programs: [Not built yet](#not-built-yet)). Tasks beyond it wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
+The pool runs at once at most one task per CPU the process may use (its affinity: all online processors, or those `taskset`, `numactl` or a container's cpuset leave it; a cgroup's CPU quota is not read), counted once when the pool starts. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number, and the runtime removes the flag before `argv()` sees it (it is to become `--avant-threads=N`: [Not built yet](#not-built-yet)). Further tasks wait in a queue. `std.http`'s event loops take the same count ([HTTP server](#http-server)).
 
-A task that waits (in a channel's `recv` or `send`, or for a `Mutex`) stops counting as running while it waits, so a queued task may start meanwhile: on a free pool thread, or on a new one when every thread holds a task, up to 1,024 threads (or `N`, if larger). So two consumers waiting in `recv` with `--threads 2` do not keep a producer spawned after them from starting. When the wait ends, the task goes on as soon as fewer than `N` tasks run. Past the thread limit, the runtime says so once on standard error (`avant runtime: tasks are queued while the pool's 1024 threads are all taken, …`) and the queued tasks wait for a thread to be free.
+A task waiting in a channel's `recv` or `send`, or for a `Mutex`, stops counting as running, so a queued task may start: on a free pool thread, or on a new one when all are taken, up to 1,024 threads (or `N`, if larger). So two consumers waiting in `recv` with `--threads 2` do not keep a producer spawned after them from starting. A task whose wait ends goes on once fewer than `N` tasks run. Past the thread limit, the runtime says so once on standard error (`avant runtime: tasks are queued while the pool's 1024 threads are all taken, …`) and queued tasks wait for a free thread.
 
 ## Memory
 
-Memory is managed for you: allocate with `Type.new()`, literals and `push`, and nothing is freed by hand. No program needs a setting from this section. What is worth knowing is where the collector costs time today.
+Memory is managed for you: allocate with `Type.new()`, literals and `push`; nothing is freed by hand, and no program needs a setting from this section. Worth knowing is where the collector costs time today.
 
 ### The collector
 
-The collector is a precise, generational Immix: new objects are allocated in a young generation that is collected by copying the survivors; what survives moves to a mature space of Immix blocks, collected less often and defragmented during full collections. "Precise" means the collector knows exactly which values are references, in every build mode, so nothing is kept alive by accident. Objects may move; the only code that can observe it is C ([Strings in C memory](#strings-in-c-memory)).
+The collector is a precise, generational Immix: new objects go to a young generation collected by copying the survivors, which move to a mature space of Immix blocks, collected less often and defragmented during full collections. Precise: in every build mode it knows exactly which values are references, so nothing is kept alive by accident. Objects may move; only C can observe it ([Strings in C memory](#strings-in-c-memory)).
 
-Structs live inline in their holder and optional references are plain pointers ([What an optional costs](#what-an-optional-costs)), so idiomatic code allocates less than its class-only equivalent would.
+Structs live inline in their holder and optional references are plain pointers ([What an optional costs](#what-an-optional-costs)), so idiomatic code allocates less than a class-only equivalent.
 
 ### What allocation costs today
 
 Allocation-heavy code is where Avant is weakest today, and it is being worked on.
 
-- **Many small objects.** A class instance is allocated by an inline sequence (a compare, a store, the header and the zeroing), and a young collection touches only what survives; a program that keeps many small objects alive still costs more time and memory than C's arena: `Binarytrees::Arena` is at 1.24× the best time and 1.93× the best memory.
-- **A large structure that all stays alive** (a big tree, a long list, a graph built once). A program with one thread no longer traces or copies such a structure while it builds: after two young collections in a row that keep nearly everything, the collector promotes each full young budget where it lies. With several threads the collector still traces it while it builds (its dense young blocks are aged where they lie, not copied), and either way it takes more memory than a hinted build. [Collection hints](#collection-hints) exist for this shape.
-- **A large live heap.** A full collection traces everything that is alive, so its cost grows with the live data, not with the garbage.
+- **Many small objects.** A class instance is allocated inline (a compare, a store, the header, the zeroing), and a young collection touches only survivors; still, keeping many small objects alive costs more time and memory than C's arena: `Binarytrees::Arena` is at 1.24× the best time and 1.93× the best memory.
+- **A large structure that all stays alive** (a big tree, a long list, a graph built once). With one thread, the collector does not trace or copy it while it builds: after two young collections in a row that keep nearly everything, it promotes each full young budget where it lies. With several threads it still traces it (dense young blocks are aged in place, not copied). Either way it takes more memory than a hinted build; [Collection hints](#collection-hints) are for this shape.
+- **A large live heap.** A full collection traces everything alive: its cost grows with the live data, not the garbage.
 
-LangArena's `Binarytrees::Obj` and `Calculator::Ast` carry hints in their Avant source ([Reading these numbers](#reading-these-numbers)). The same two programs with the hints removed and nothing else (`bench/valk-gc/trees/`), measured on the LangArena server on 2026-11-15 (`--release --cpu=v3`, the median of 5 rounds; the other languages' rows are the LangArena table's, measured there on 2026-11-14), with release 0.43.0 built from its source on the same machine beside them:
+`Binarytrees::Obj` and `Calculator::Ast` carry hints in their LangArena source ([Reading these numbers](#reading-these-numbers)). Here they are with the hints removed and nothing else (`bench/valk-gc/trees/`), on the LangArena server on 2026-11-15 (`--release --cpu=v3`, median of 5 rounds), beside release 0.43.0 built there from source; the other languages' rows are the LangArena table's (2026-11-14):
 
 | Program | Avant 0.44.0 | Avant 0.43.0 | Fastest other | Smallest other |
 | --- | ---: | ---: | ---: | ---: |
@@ -2949,7 +2949,7 @@ LangArena's `Binarytrees::Obj` and `Calculator::Ast` carry hints in their Avant 
 | `Calculator::Ast` with hints | 1.161 s, 8.1 MB | 1.275 s, 7.9 MB | 1.333 s (Crystal) | 10.5 MB (C, GCC) |
 | `Calculator::Ast` without hints | 1.513 s, 17.2 MB | 1.644 s, 18.6 MB | 1.333 s (Crystal) | 10.5 MB (C, GCC) |
 
-Without its hints, `Binarytrees::Obj` runs level with Crystal, the fastest language here on this task (2.922 s against 2.925 s), and 2.1 to 2.3 times faster than C, Rust and Go (6.05 to 6.85 s), but it takes 1.72× the smallest memory (C's) and is above Go's (104.7 MB) by 1.09×, though below Crystal's (117.9 MB). Without its hints, `Calculator::Ast` is 1.14× Crystal's time (Rust 1.640 s, Go 2.132 s and C 2.739 s are slower) and 1.64× the smallest memory, below Rust's, Crystal's and Go's (19.1 to 25.8 MB). Both are behind Crystal or Go, so both count as defects, as the rows in [Where Avant loses](#where-avant-loses) do.
+Unhinted, `Binarytrees::Obj` is level with Crystal, the fastest here (2.922 s to 2.925 s), and 2.1 to 2.3× faster than C, Rust and Go (6.05 to 6.85 s), at 1.72× C's (the smallest) memory: 1.09× Go's 104.7 MB, below Crystal's 117.9 MB. Unhinted, `Calculator::Ast` is 1.14× Crystal's time (Rust 1.640 s, Go 2.132 s, C 2.739 s are slower) at 1.64× the smallest memory, below Rust, Crystal and Go (19.1 to 25.8 MB). Both trail Crystal or Go, so both are defects, like the rows in [Where Avant loses](#where-avant-loses).
 
 Until this improves:
 
@@ -2960,7 +2960,7 @@ Until this improves:
 
 ### Collection hints
 
-`std.gc` holds two hints for a program that knows something the collector cannot: it builds a large structure that stays alive while it is built, then drops it whole. That is the shape the collector handles worst today, so the hints are worth their two lines there.
+`std.gc` holds two hints for a program that builds a large structure that stays alive while it is built, then drops it whole: the shape the collector handles worst today.
 
 ```avant
 import std.gc
@@ -2996,8 +2996,8 @@ fn main {
 }
 ```
 
-- **`gc.hold { ... }`** is a statement: no collection that this thread would start runs while the block runs. Its allocations still count: a collection that falls due inside runs when the block ends, and a hold whose own allocations pass `AVANT_HEAP_MAX_MB` stops the program with `heap limit in a gc.hold block: its own allocations passed AVANT_HEAP_MAX_MB (in MODULE/FUNCTION)`, naming the function the block is in. The hold ends on every way out of the block (its end, `return`, `break`, `continue`, a `?` that returns). Holds nest as one. Other threads still collect while one holds, so a hold never makes another thread wait.
-- **`gc.collect()`** is a complete collection: when it returns, every object nothing reaches has been freed, whether it was allocated a moment ago or long ago. It costs a young collection when the collector can prove that no old object died since its last full collection (no reference to an old object was removed from an object or from a local, and nothing became old), and a full collection, which traces everything alive, otherwise. So it is cheap after work whose objects are short-lived and already dead, and costs as much as the live data after a long-lived structure was dropped or changed. Inside a hold it runs when the hold ends. With `AVANT_NURSERY=0` or with more than one thread it is always a full collection.
+- **`gc.hold { ... }`** is a statement: no collection this thread would start runs during the block. Its allocations still count: a collection that falls due inside runs when the block ends, and a hold whose own allocations pass `AVANT_HEAP_MAX_MB` stops the program with `heap limit in a gc.hold block: its own allocations passed AVANT_HEAP_MAX_MB (in MODULE/FUNCTION)`, naming the function the block is in. The hold ends on every way out (the block's end, `return`, `break`, `continue`, a `?` that returns). Holds nest as one. Other threads still collect, so a hold never makes another thread wait.
+- **`gc.collect()`** is a complete collection: when it returns, every object nothing reaches is freed, however young or old. It is a young collection when the collector can prove no old object died since its last full collection (no reference to an old object was removed from an object or a local, and nothing became old), and a full one, tracing everything alive, otherwise: cheap after short-lived work, as costly as the live data after a long-lived structure was dropped or changed. Inside a hold it runs when the hold ends. With `AVANT_NURSERY=0` or more than one thread it is always full.
 - Put the end of a hold where the structure is dead, and `gc.collect()` where it dies.
 - `gc` names these two forms in a module that imports `std.gc`, unless a local or a field takes the name; without the import, `gc.hold` is an error. Under `AVANT_GC_STRESS=1` a hold is inactive, so a stress run checks the code inside it like any other.
 
@@ -3005,7 +3005,7 @@ There is no arena or bump allocator in the language: `T.new()` is the one way to
 
 ### Collector settings
 
-No setting is needed. Every one is an environment variable read once when the program starts; a switch is on for `1` and off for `0`, a size is a whole number, and any other value is reported on stderr and ignored.
+No setting is needed. Each is an environment variable read once at start: a switch is `1` (on) or `0` (off), a size a whole number; any other value is reported on stderr and ignored.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
@@ -3019,7 +3019,7 @@ No setting is needed. Every one is an environment variable read once when the pr
 | `AVANT_GC_VERIFY` | `0` | `1` runs the collector's self-checks (slow; for debugging the runtime) |
 | `AVANT_GC_STRESS` | `0` | `1` collects before every allocation (very slow; for testing) |
 
-The two a user is likely to meet are `AVANT_HEAP_MAX_MB`, to cap a service, and `AVANT_GC_STATS`, to see what the collector did.
+The two a user is likely to meet: `AVANT_HEAP_MAX_MB` to cap a service, `AVANT_GC_STATS` to see what the collector did.
 
 ## C interop
 
@@ -3039,11 +3039,11 @@ fn main {
 
 ### Declaring C functions
 
-A `lib NAME { ... }` block holds `fun` declarations: `fun` for a C function, `fn` for an Avant one, so a C declaration is always visible as one. Calls go through the lib's name (`c.abs`). Hand-written and generated bindings ([avant bind](#avant-bind)) are the same grammar; there is no `extern`.
+A `lib NAME { ... }` block holds `fun` declarations: `fun` for a C function, `fn` for an Avant one. Calls go through the lib's name (`c.abs`). Hand-written and generated bindings ([avant bind](#avant-bind)) share the grammar; there is no `extern`.
 
 - A `String` argument is passed as a `char *`.
 - A result declared `String?` is a `char *` that may be NULL: NULL reads as `nil`, and passing `nil` passes NULL. A result declared `String` is a promise that the string is there: a NULL traps, naming the function (`avant runtime: C function c.getenv returned NULL for String (declare String?)`).
-- The only unions a `fun` signature may use are the optional references, each one pointer with `nil` as NULL: `String?`, `Bytes?`, and an array, a hash, a `Buf` or a class with `?`. Any other union (`Int?`, `Int | String`, `Ptr(T)?`) is a compile error there: C has one word in that place, and such a union is a tag and a payload.
+- The only unions a `fun` signature may use are optional references, one pointer with `nil` as NULL: `String?`, `Bytes?`, and an array, a hash, a `Buf` or a class with `?`. Any other union (`Int?`, `Int | String`, `Ptr(T)?`) is a compile error there: it is a tag and a payload, where C has one word.
 - C++ is reached only through `extern "C"` functions.
 
 ### C types
@@ -3075,7 +3075,7 @@ lib img {
 
 ### Layouts and Ptr
 
-A `struct` inside a `lib` block is a C layout: C's size, alignment and field offsets. It is not an Avant value and is never built with `{ }`; you read and write its fields through a `Ptr(T)`, and give it methods with a `Ptr(T)` receiver.
+A `struct` inside a `lib` block is a C layout (C's size, alignment and field offsets), not an Avant value: it is never built with `{ }`; its fields are read and written through a `Ptr(T)`, and its methods take a `Ptr(T)` receiver.
 
 ```avant
 lib c {
@@ -3100,17 +3100,17 @@ fn main {
 }
 ```
 
-`Ptr(T)` is for a layout `T`, and `Ptr(Void)` for a pointer you only pass around. A `Ptr` of anything else (`Ptr(Int)`) has no fields to read and cannot be given methods. Memory you got from C is C's: the collector neither moves nor frees it. There is no `sizeof` yet: the size passed to `malloc` is yours to state.
+`Ptr(T)` is for a layout `T`, `Ptr(Void)` for a pointer you only pass around; a `Ptr` of anything else (`Ptr(Int)`) has no fields and takes no methods. Memory from C is C's: the collector neither moves nor frees it. There is no `sizeof` yet: you state the size passed to `malloc`.
 
-A `Ptr` can be NULL (an unchecked `malloc`), and Avant has no test for that yet. A field read or written through a NULL `Ptr` is a segmentation fault, as in C: the program ends with no Avant message, and what it had printed without flushing is lost. Check in C before handing the pointer over. A `fun` signature cannot say `Ptr(T)?` to get a test: it is refused, because `Ptr(T)?` is not a nullable pointer today (it would be read as a tag and a pointer). A `String` field that C left NULL (or that `release` made null) reads as `""`.
+A `Ptr` can be NULL (an unchecked `malloc`), and Avant has no test for it yet: a field read or written through a NULL `Ptr` is a segmentation fault, as in C, with no Avant message and unflushed output lost. Check in C before handing the pointer over. `Ptr(T)?` in a `fun` signature is refused: it is not a nullable pointer today (it would be a tag and a pointer). A `String` field that C left NULL (or `release` made null) reads as `""`.
 
 ### Strings in C memory
 
 The collector moves objects, so a heap value handed to C must stay put while C can see it.
 
 - **For a call's duration**, nothing is needed: arguments are safe while the C function runs.
-- **For a bounded time longer than a call**, pin the value for exactly that span: `pin(value) { ... }`. It stays put for the block and is unpinned on every way out. Pins are counted, so nested pins compose.
-- **Stored into a C field** (`h.name = s`), a `String` is pinned until you say C is done with that field, with `release`. Overwriting the field keeps the old value pinned too, because C may still hold it.
+- **For a bounded time longer than a call**, pin it for that span: `pin(value) { ... }` keeps it put for the block and unpins it on every way out. Pins are counted, so nested pins compose.
+- **Stored into a C field** (`h.name = s`), a `String` stays pinned until `release` says C is done with that field. Overwriting the field keeps the old value pinned too, since C may still hold it.
 
 <!-- check: fragment needs C functions of its own; the tested twin is tests/fixtures/ffi/release.av -->
 ```avant
@@ -3136,15 +3136,15 @@ fn main {
 }
 ```
 
-- `release(h.name)` gives back the pin of every value Avant stored into that field, the current one and every overwritten one. If the field still holds a value Avant stored, it becomes null, so C never sees a pointer the collector may free or move.
-- `release(h.at)` does the same for every `String` field of a nested layout, and `release(h)` for every field of the struct `h` points to. Write `release(h)` before C frees the struct.
-- Releasing twice, or releasing a field Avant never stored, does nothing. A value C stored itself is left in place. A pin taken by `pin(x) { }`, or by a store of the same value into another field, stays.
-- `release` is a statement. It takes a C-layout field that holds a `String` (directly or in a nested layout) or a `Ptr` to such a layout; anything else is a compile error.
-- **Forgetting a release costs memory, never correctness** (the value stays pinned for the rest of the process). **Releasing too early is a dangling C pointer**: the next collection may move or free the value, and C then reads memory that is no longer that string. Neither the compiler nor `AVANT_GC_VERIFY=1` can see C's reads.
+- `release(h.name)` gives back the pin of every value Avant stored into that field, current and overwritten. If the field still holds a value Avant stored, it becomes null, so C never sees a pointer the collector may free or move.
+- `release(h.at)` does the same for every `String` field of a nested layout, `release(h)` for every field of the struct `h` points to: write it before C frees the struct.
+- Releasing twice, or a field Avant never stored, does nothing. A value C stored itself is left in place. A pin taken by `pin(x) { }`, or by storing the same value into another field, stays.
+- `release` is a statement taking a C-layout field that holds a `String` (directly or in a nested layout) or a `Ptr` to such a layout; anything else is a compile error.
+- **Forgetting a release costs memory, never correctness** (the value stays pinned until exit). **Releasing too early is a dangling C pointer**: the next collection may move or free the value under C. Neither the compiler nor `AVANT_GC_VERIFY=1` can see C's reads.
 
 ### Callbacks
 
-A `fun` parameter may be an Avant `fn` type: that declares a C callback. Pass a function name, or a lambda that captures nothing, and C calls it with exactly the declared arguments.
+A `fun` parameter of an Avant `fn` type declares a C callback: pass a function name or a lambda that captures nothing, and C calls it with exactly the declared arguments.
 
 ```avant
 lib c {
@@ -3172,7 +3172,7 @@ fn main {
 }
 ```
 
-A capturing lambda, a `fn` value held in a variable, and a C function that returns a function pointer do not compile. A callback's own parameters and result use the everyday types (`Int32`, `Float64`, `Bool`, `Ptr`), not the five narrow names, for now.
+A capturing lambda, a `fn` value held in a variable, and a C function returning a function pointer do not compile. A callback's parameters and result use the everyday types (`Int32`, `Float64`, `Bool`, `Ptr`), not the five narrow names, for now.
 
 ### Linking C code
 
@@ -3182,11 +3182,11 @@ avant compile app.av --cc helper.c      # compile and link a C file (or link a .
 avant run app.av --lib z
 ```
 
-The C library and the math library need no flag. The C libraries the standard library stands on (yyjson, PCRE2, zlib, a Base64 codec, uSockets, picohttpparser) are compiled into the runtime that ships with `avant`: a program that uses them needs nothing installed.
+The C and math libraries need no flag. The C libraries under the standard library (yyjson, PCRE2, zlib, a Base64 codec, uSockets, picohttpparser) are compiled into the runtime that ships with `avant`: nothing to install.
 
 ### avant bind
 
-`avant bind HEADER.h` reads a C header with libclang and prints a `lib` block for you to keep and edit. It builds nothing and writes nothing into your project. Given this header,
+`avant bind HEADER.h` reads a C header with libclang and prints a `lib` block to keep and edit; it builds and writes nothing. Given this header,
 
 ```c
 int avant_add(int a, int b);
@@ -3208,7 +3208,7 @@ lib add {
 
 - Each C scalar type maps to its exact name (`unsigned char` and `uint8_t` to `UInt8`, `short` to `Int16`, `int` to `Int32`, `unsigned int` to `UInt32`, `float` to `Float32`). A type with no Avant name (`long double`) fails the bind with a message.
 - A `char *` result is bound as `String?`, since C returns NULL for "absent" or "failed"; a `char *` parameter is `String`.
-- A named C enum of four bytes becomes an `enum` inside the `lib` block: the name in CamelCase without a trailing `_t` (`enum http_method` is `HttpMethod`, `color_t` is `Color`), the constants lower-cased with their values (`HTTP_GET = 0` is `http_get = 0`). Functions and C layout fields of that type use it. An enum declared in a `lib` block keeps C's `int` wherever it is stored, and every value C gives (a result, a field, a callback's argument) is checked: one that is no member traps, naming the enum and the number. An alias (a second constant with the same value) is dropped and named in a comment; an anonymous enum, a value outside `Int32`, a constant that is no Avant member name and two constants that are equal after lower-casing leave the enum out with a comment, and its functions take `Int32`.
+- A named four-byte C enum becomes an `enum` in the `lib` block, used by the functions and layout fields of that type: the name in CamelCase without a trailing `_t` (`enum http_method` is `HttpMethod`, `color_t` is `Color`), the constants lower-cased with their values (`HTTP_GET = 0` is `http_get = 0`). A `lib` enum keeps C's `int` wherever stored, and every value C gives (a result, a field, a callback's argument) is checked: a non-member traps, naming the enum and the number. An alias (a second constant with the same value) is dropped, named in a comment; an anonymous enum, a value outside `Int32`, a constant that is not a valid Avant member name, or two constants equal after lower-casing leave the enum out with a comment, its functions taking `Int32`.
 - `--lib NAME` names the block.
 - It needs libclang 20 on the machine (`sudo apt install libclang1-20`); a release ships the `avant-bind` helper beside `avant`.
 
