@@ -3459,7 +3459,7 @@ fn main {
 
 ## Standard library
 
-The standard library is imported module by module, and importing is what links the C library behind a module: a program that never imports `std.regex` does not carry PCRE2.
+The standard library is imported module by module, and importing links the C library behind it: a program that never imports `std.regex` does not carry PCRE2.
 
 | Module | Gives you | Stands on |
 | --- | --- | --- |
@@ -3471,9 +3471,9 @@ The standard library is imported module by module, and importing is what links t
 | `std.gc` | `gc.hold { }`, `gc.collect()` | the collector ([Collection hints](#collection-hints)) |
 | `std.testing` | `Test`, the checks of a test file | — ([Testing](#testing)) |
 
-These modules are fast because of the C libraries under them: that speed is the libraries' merit, reached through Avant's bindings, and the benchmark notes say so ([Reading these numbers](#reading-these-numbers)). The libraries are compiled into the runtime, so nothing needs installing. A module's file is its import name: `std.regex` is `lib/std/regex.av`.
+Their speed is the C libraries' merit, reached through Avant's bindings ([Reading these numbers](#reading-these-numbers)). The libraries are compiled into the runtime: nothing to install. A module's file is its import name: `std.regex` is `lib/std/regex.av`.
 
-Two conventions run through the library: a failure is an error value (`Json.parse` returns `Json | JsonError`), and a call that allocates its result usually has an `_into(buf)` twin that writes into a `Buf` you own.
+Two conventions: a failure is an error value (`Json.parse` returns `Json | JsonError`), and a call that allocates its result usually has an `_into(buf)` twin writing into a `Buf` you own.
 
 ### std.json
 
@@ -3500,7 +3500,7 @@ fn main {
 }
 ```
 
-**Reading.** `Json.parse(text)` returns `Json | JsonError`. A `Json` is a position in the parsed document; the document owns its values and its text, and there is nothing to close.
+**Reading.** `Json.parse(text)` returns `Json | JsonError`. A `Json` is a position in the parsed document, which owns its values and text; there is nothing to close.
 
 | On a `Json` | Gives |
 | --- | --- |
@@ -3528,7 +3528,7 @@ fn main {
 | `end` | closes the innermost open object or array |
 | `to_s` | the text |
 
-`v` is an `Int`, a `Float64`, a `String`, a `Bool`, a `Json` or another `JsonBuilder`. Floats are written in the language's one float text (`1.5e-7`, `2.0`), and NaN and the infinities as `null`. A builder used against its shape traps and says how: `end` with nothing open (`avant runtime: JsonBuilder.end: nothing open`), `key` outside an object, `to_s` with containers still open (`JsonBuilder.to_s: 2 containers still open`).
+`v` is an `Int`, `Float64`, `String`, `Bool`, `Json` or another `JsonBuilder`. Floats are written in the language's one float text (`1.5e-7`, `2.0`), NaN and the infinities as `null`. A builder used against its shape traps, saying how: `end` with nothing open (`avant runtime: JsonBuilder.end: nothing open`), `key` outside an object, `to_s` with containers open (`JsonBuilder.to_s: 2 containers still open`).
 
 ### std.regex
 
@@ -3567,11 +3567,11 @@ Compiling this program prints one note on stderr, `re2c: pattern stays on PCRE2 
 - A `Match` is a value: there are no global match cursors.
 - In a replacement, `$1` to `$9`, `${1}` and `${name}` insert a group (nothing when it did not take part) and `$$` is a dollar sign.
 - A pattern that does not compile is a `RegexError` with PCRE2's reason and the offset it points at (`invalid regular expression at offset 9: missing closing parenthesis`, `e.offset`).
-- A compiled pattern is a handle, and copies of a `Regex` are the same handle: `re.close()` through any of them releases it and closes them all. An operation on a closed `Regex` traps (`avant runtime: Regex used after close`), because a use after close is a program error, not a "no match"; so do a `Match`'s named groups and its groups past the third, which are read from the pattern. Compiling the same pattern again is cheap: a bounded cache keeps compiled patterns.
-- **At PCRE2's limits a match traps; it is never read as "no match".** A search that backtracks past PCRE2's match limit (ten million steps), or runs into its depth or memory limits, ends the program with the operation and PCRE2's reason: `avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`. There is no way yet to set a limit or to get the failure as a value, so a pattern or a text that comes from outside is yours to bound (its length, its shape) before matching.
-- A match that only nests deeply (a group repeated many thousands of times) is not a failure: it is answered, on a larger stack and then by PCRE2's interpreter, at a cost in memory that grows with the text. A pattern may have any number of groups PCRE2 accepts.
+- A compiled pattern is a handle shared by every copy of the `Regex`: `re.close()` through any copy closes them all. Any operation on a closed `Regex` traps (`avant runtime: Regex used after close`), never a "no match"; so do a `Match`'s named groups and groups past the third, which are read from the pattern. Compiling the same pattern again is cheap: a bounded cache keeps compiled patterns.
+- **At PCRE2's limits a match traps, never "no match".** A search past PCRE2's match limit (ten million backtracking steps), or its depth or memory limits, ends the program with the operation and PCRE2's reason: `avant runtime: Regex.replace: match limit exceeded (PCRE2 error -47)`. No limit can be set and the failure cannot be a value yet, so bound an outside pattern or text (length, shape) before matching.
+- A match that only nests deeply (a group repeated many thousands of times) is not a failure: it is answered on a larger stack, then by PCRE2's interpreter, with memory growing with the text. A pattern may have any number of groups PCRE2 accepts.
 
-**Two engines.** A string-literal pattern that needs at most one capture group and no named groups is compiled to a native scanner at compile time, by re2c. Any other pattern runs on PCRE2 with its JIT; when the pattern (and its `caseless` argument, if given) is a literal, the compiler says so on stderr as it compiles your program, so `avant run` prints only the program's own output on stdout. Both are inside the release: a program needs neither library on the machine. (Without any `re2c` binary, literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary.) PCRE2 backtracks, and backtracking can be catastrophic on adversarial patterns and texts.
+**Two engines.** A string-literal pattern with at most one capture group and no named groups is compiled by re2c to a native scanner. Any other pattern runs on PCRE2 with its JIT; when it (and its `caseless` argument, if given) is a literal, the compiler says so on stderr, so `avant run`'s stdout is only the program's. Both are inside the release: neither library is needed on the machine. (With no `re2c` binary, literal patterns run on PCRE2 too; `AVANT_RE2C` names another binary.) PCRE2 backtracks, which can be catastrophic on adversarial patterns and texts.
 
 ### std.http
 
@@ -3625,15 +3625,15 @@ fn main {
 ```
 
 - **Listening**: `Http.listen(port, host = "127.0.0.1", max_body = 1048576, loops = 0, max_message = 1048576)`. `server.port()` is the bound port.
-- **Routes** are exact paths: `get`, `post`, `put`, `delete`, `patch`, or `route(method, path)`. There is no pattern router, no middleware and no streaming. Register every route before `serve`: the loop threads read the routes without a lock, so a route method (the WebSocket ones too) called while the server serves, from a handler, traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`, status 1).
-- **A handler** gets a `Request` (`method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes`) and returns a `Response`: `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)`, then `.header(name, value)`; a response is built only this way. Its `status` must be 100 to 599: another traps when the answer is written (`avant runtime: a response's status 99 is not 100 to 599 (RFC 9110)`). `Content-Length` and `Connection` are the server's to set. A header's name must be a token (letters, digits and the punctuation RFC 9110 allows) and its value may hold no control character but tab: anything else traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`), because a CR or LF there would add header lines or a second answer (response splitting). Check text taken from a request before putting it in a header.
+- **Routes** are exact paths: `get`, `post`, `put`, `delete`, `patch`, or `route(method, path)`. There is no pattern router, middleware or streaming. Register every route before `serve` (the loop threads read routes without a lock): a route method, WebSocket ones too, called from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`, status 1).
+- **A handler** gets a `Request` (`method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes`) and returns a `Response`, built only as `Response.text(body, status = 200)` or `Response.bytes(body, status = 200)`, then `.header(name, value)`. A `status` outside 100 to 599 traps when the answer is written (`avant runtime: a response's status 99 is not 100 to 599 (RFC 9110)`). `Content-Length` and `Connection` are the server's to set. A header name must be a token (letters, digits and RFC 9110's punctuation), and its value may hold no control character but tab; anything else traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`), since a CR or LF would split the response. Check request text before putting it in a header.
 - **Headers** (`req.headers`, `resp.headers`): `get(name)` (`String?`), `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)`.
-- **Bodies** are buffered up to `max_body` (1 MiB by default): a larger one is answered 413, a chunked request body 411, a malformed request 400, and so is one with more than one `Content-Length` value (two lines or a list in one, even when they agree), an HTTP/1.1 request without `Host`, a request with two `Host` lines, and one whose `Host` is not `host[:port]` (RFC 3986's host, a name or an address, then an optional port); each of these closes the connection.
-- **Connections** are kept alive, and pipelined requests are answered in order, each with its own write for now. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on the same port.
-- **Handlers must not block the loop.** Hand slow work to `spawn`.
-- **An idle connection is closed**: an HTTP connection on which nothing has happened for about 30 seconds (no request bytes arrived, no answer bytes left). A WebSocket connection has no such timeout.
-- **A trap in a handler ends the server**, like any [trap](#traps). Run it under a supervisor, and read request data with the non-trapping forms.
-- `close` stops the server and lets `serve` return. A server that is never closed keeps its socket until the process exits; there is no finalizer.
+- **Bodies** are buffered up to `max_body` (1 MiB by default). Answered and then closed: 413 for a larger body, 411 for a chunked request body, 400 for a malformed request, more than one `Content-Length` value (two lines, or a list in one, even agreeing), an HTTP/1.1 request without `Host`, two `Host` lines, or a `Host` that is not `host[:port]` (RFC 3986's host, a name or an address, then an optional port).
+- **Connections** are kept alive; pipelined requests are answered in order, each with its own write for now. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on one port.
+- **Handlers must not block the loop**: hand slow work to `spawn`.
+- **An idle HTTP connection is closed** after about 30 seconds with no request bytes in and no answer bytes out. WebSocket connections have no such timeout.
+- **A trap in a handler ends the server**, like any [trap](#traps): run it under a supervisor, and read request data with the non-trapping forms.
+- `close` stops the server and lets `serve` return. An unclosed server keeps its socket until the process exits; there is no finalizer.
 
 #### HTTP client
 
@@ -3655,9 +3655,11 @@ fn main {
 }
 ```
 
-`Http.get(url, follow = true, timeout_ms = 10000)`, `Http.post(url, body, ...)` with a `String` body, and `Http.request(method, url, body, headers, ...)` with `body` as `Bytes` and `headers` as an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`), return `Response | HttpError`. A request is sent only when its method and every header name are tokens, every header value holds no control character but tab (the rules of `Response.header`), and the URL holds no space or control character; otherwise the call returns an `HttpError` naming the part and the byte (`invalid request header value of X-A (byte 13 at 1): …`) and sends nothing, because a CR or LF there would add request lines or a second request. `Content-Length` and `Connection` are the client's to set: a caller's are skipped. A call blocks its thread until the response is complete, so do not make one from a server handler: `spawn` first. The response is complete when its framing says so (its `Content-Length`, the last chunk of a chunked body, or the head alone for a HEAD request, a 204 and a 304), whether or not the server then closes the connection; a response with neither length nor chunks ends when the server closes. Interim answers (`100 Continue`, `103 Early Hints`) are read past: the response is the final answer after them. A response with more than one `Content-Length` value (identical or not, as the server refuses for requests) or one that is not a number is an `HttpError` (`invalid HTTP response body from …`).
+`Http.get(url, follow = true, timeout_ms = 10000)`, `Http.post(url, body, ...)` with a `String` body, and `Http.request(method, url, body, headers, ...)` with `body` as `Bytes` and `headers` an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`) return `Response | HttpError`.
 
-`timeout_ms` is a deadline for the whole call: the connection, the request, the complete response, and every redirect the call follows. When it passes first, the call returns an `HttpError` (`request to 127.0.0.1:8080 timed out`), whatever part of a response had arrived; a server that keeps sending slowly does not extend it. The deadline is kept within a few milliseconds. Zero or less means the default, 10000.
+- A request is sent only when its method and header names are tokens, its header values hold no control character but tab (`Response.header`'s rules), and its URL no space or control character; otherwise the call sends nothing and returns an `HttpError` naming the part and byte (`invalid request header value of X-A (byte 13 at 1): …`). `Content-Length` and `Connection` are the client's to set: a caller's are skipped.
+- A call blocks its thread until the response is complete: from a server handler, `spawn` first. Complete is when the framing says so (the `Content-Length`, a chunked body's last chunk, or the head alone for HEAD, 204 and 304), whether or not the server then closes; with neither length nor chunks, when the server closes. Interim answers (`100 Continue`, `103 Early Hints`) are read past. More than one `Content-Length` value (identical or not, as the server refuses for requests), or a non-number, is an `HttpError` (`invalid HTTP response body from …`).
+- `timeout_ms` is a deadline, kept within a few milliseconds, for the whole call: connection, request, complete response and every redirect followed. When it passes, the call returns an `HttpError` (`request to 127.0.0.1:8080 timed out`) whatever had arrived; a slowly sending server does not extend it. Zero or less means the default, 10000.
 
 #### WebSocket server
 
@@ -3681,7 +3683,7 @@ fn main {
 ```
 
 - A message is text (`msg.text` is its `String`, `msg.is_text`) or binary (`msg.body`, `msg.is_binary`). `msg.body` is always the payload.
-- On a connection: `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")`; each returns `Bool`: `false` when the connection is closed or its send queue is full (a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole). A `WsConn` kept after its connection closed, or after `serve` returned, answers `false` to all four.
+- On a connection: `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")`, each returning `Bool`: `false` when the connection is closed or its send queue is full (a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole). A `WsConn` kept after its connection closed, or after `serve` returned, answers `false` to all four.
 - `websocket_open(path) { |conn| ... }` and `websocket_close(path) { |conn, code, reason| ... }` run once per connection (code 1006 when it dropped without a close frame).
 - Ping, the close handshake and fragmentation are handled for you. A message over `max_message` (1 MiB by default) closes the connection with code 1009 and never reaches the handler. `server.close()` sends code 1001 to open connections.
 - A connection stays on its loop thread. To answer from a `spawn` block, capture `conn.sender` and send through that.
@@ -3703,9 +3705,9 @@ fn main {
 }
 ```
 
-`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError` (an `HttpError` without connecting for a URL with a space or a control character); its `timeout_ms` is the deadline for the connection and its handshake. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Both timeouts are kept on the monotonic clock: setting the system's clock during the wait does not move them. Never call `recv` from a server handler. A connection that is never closed keeps its thread until the process exits.
+`Ws.connect(url, timeout_ms = 10000)` returns `WsConnection | HttpError` (an `HttpError` without connecting for a URL with a space or a control character); `timeout_ms` covers the connection and its handshake. `recv(timeout_ms = -1)` blocks and returns `WsMessage?`: `nil` when the connection closed or the timeout passed, and `close_code` says which (1006 until a close frame arrives). Both timeouts run on the monotonic clock, unmoved by setting the system clock. Never call `recv` from a server handler. An unclosed connection keeps its thread until the process exits.
 
-After `close`, every copy of the connection answers as closed, whatever connections are opened later: `send_text` and `send_bytes` return `false`, `recv` returns `nil`, `close_code` is 1006, and another `close` does nothing. A `WsConnection` may be captured by a `spawn` block, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return `nil`.
+After `close`, every copy of the connection answers as closed, whatever opens later: `send_text` and `send_bytes` return `false`, `recv` `nil`, `close_code` 1006, and another `close` does nothing. A `spawn` block may capture a `WsConnection`, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return `nil`.
 
 ### std.zlib
 
@@ -3766,7 +3768,7 @@ PASS greet handles empty
 
 Save it as `tests/test_greet.av` and run `avant test`. A failing check prints `FAIL` and its name, then the run continues, so one file reports every failure.
 
-The process status is the verdict: `0` when every check passed, `1` when any failed. A failed check fails the process whatever `main` returns, even from a void `main` or one that never calls `finish`. The runner trusts the status; it does not read the words `PASS` and `FAIL`.
+The process status is the verdict: `0` when every check passed, `1` when any failed, whatever `main` returns (a void `main`, or one that never calls `finish`, included). The runner reads the status, not the words `PASS` and `FAIL`.
 
 Put the code under test in its own module and `import` it; a test sees its `pub` names only.
 
@@ -3793,7 +3795,7 @@ With no path, `tests/` is relative to the nearest `avant.toml`, or to the curren
 
 `--jobs=N`, `--shard=I/N`, `--junit=PATH` and `--name=PATTERN` are the same flags. An unknown flag is an error. `avant test` does not pass arguments to the test programs, and a `--` on the command is an error.
 
-For each file the runner prints its output, in source order, then `ok tests/test_greet.av`, or `FAIL tests/test_greet.av:` and how its process ended (`the test process exited with status 1`, `the test process killed by signal 13 (Broken pipe)`, `the compile exited with status 1`, `the parallel test "other" killed by signal 11 (Segmentation fault)`), and a total at the end (`0 failed, 1 passed`). Its own status is 1 when any file failed, when nothing was selected, or when the command was refused. Ctrl-C or `SIGTERM` stops every test process it started and removes its temporary files.
+For each file the runner prints its output in source order, then `ok tests/test_greet.av`, or `FAIL tests/test_greet.av:` and how its process ended (`the test process exited with status 1`, `the test process killed by signal 13 (Broken pipe)`, `the compile exited with status 1`, `the parallel test "other" killed by signal 11 (Segmentation fault)`); at the end, a total (`0 failed, 1 passed`). Its status is 1 when a file failed, nothing was selected, or the command was refused. Ctrl-C or `SIGTERM` stops every test process it started and removes its temporary files.
 
 ### Checks
 
@@ -3831,7 +3833,7 @@ fn main: Int {
 }
 ```
 
-`t.temp_dir` returns a new directory at each call. They live in the test's private temporary directory and are removed when it exits, so a test never cleans up after itself.
+`t.temp_dir` returns a new directory at each call, inside the test's private temporary directory, which is removed when it exits: a test never cleans up.
 
 ```avant
 import std.testing
@@ -3846,7 +3848,7 @@ fn main: Int {
 
 ### Golden files
 
-`golden` and `run_golden` compare against saved files, byte for byte, a trailing newline included. A missing file fails the check, and nothing ever rewrites one: update a saved file by hand, after reading the new output.
+`golden` and `run_golden` compare against saved files, byte for byte, a trailing newline included. A missing file fails the check, and nothing rewrites one: update it by hand, after reading the new output.
 
 <!-- check: skip needs want.txt, hello.av, hello.want and bad.av beside it; exercised by tests/cases/test_testing_docs.av -->
 ```avant
@@ -3861,7 +3863,7 @@ fn main: Int {
 }
 ```
 
-`run_golden` and `rejects` compile a program, so they need the environment variable `AVANT_COMPILER` set to the compiler under test. A project that only calls `check` does not.
+`run_golden` and `rejects` compile a program, so they need `AVANT_COMPILER` set to the compiler under test; `check` alone does not.
 
 ### Serial and parallel tests
 
@@ -3883,11 +3885,11 @@ fn main: Int {
 }
 ```
 
-In each of those processes the file runs again, but serial checks and `t.test` bodies are skipped and only that one parallel body runs; code in `main` outside those bodies runs in every process. Only `avant test` starts those processes. `avant run` on the file, or the compiled file run as a program, runs it once with every body in that one process, in source order: the same checks, without the overlap.
+In each of those processes, serial checks and `t.test` bodies are skipped and only that parallel body runs; code in `main` outside the bodies runs in every process. Only `avant test` starts them: `avant run` on the file, or the compiled program, runs every body once in one process, in source order, without the overlap.
 
 ### Choosing by name
 
-`avant test tests/test_greet.av --name empty` runs only what is named with `empty` in it: a check whose name contains the pattern, and a `t.test` or `t.parallel` body whose name contains it, which then runs whole, every check inside it included. A body whose name does not contain the pattern does not run, so a check inside a body is chosen by the body's name. The pattern is plain text, matched case for case anywhere in the name. Code in `main` outside the bodies still runs, as it does in a parallel test's process. The JUnit report lists only the checks that ran.
+`avant test tests/test_greet.av --name empty` runs only what has `empty` in its name: a check, or a `t.test` or `t.parallel` body, which then runs whole. A body whose name lacks it does not run, so a check inside a body is chosen by the body's name. The pattern is plain text, matched case-sensitively anywhere in the name. Code in `main` outside the bodies still runs. The JUnit report lists only the checks that ran.
 
 Over several files, a file where nothing matches is left out of the report and the total. A pattern that matches nothing in any selected file is an error that names the pattern and the files: `--name nothing matches no check, test or parallel test in tests/test_greet.av`.
 
@@ -3917,9 +3919,9 @@ first = ["tests/test_slow.av"]
 
 ### Reports
 
-**JUnit** (`--junit PATH`) is for test analytics. A test file that uses `std.testing` contributes one `<testcase>` per check, named by the check; any other test file contributes one case, named by its path. A file that failed without a failed case (its process killed by a signal, or exiting with a status and no failed check) adds one case named by its path, whose failure message says how the process ended; a failed case named by its path carries the file's output. A byte XML cannot hold, in that output or in a check's name (a control character such as a terminal colour's escape, or a byte that is not UTF-8), is written as `\xNN` (`\x1b`), so the report always parses. It is off unless you ask; a project does not gain a `junit.xml` by surprise.
+**JUnit** (`--junit PATH`, off unless asked) is for test analytics. A file that uses `std.testing` gives one `<testcase>` per check, named by the check; any other file one case, named by its path. A file that failed without a failed case (killed by a signal, or a failing status with no failed check) adds a case named by its path, whose failure message says how the process ended; a failed case named by its path carries the file's output. A byte XML cannot hold, in that output or a check's name (a control character such as a colour escape, or non-UTF-8), is written `\xNN` (`\x1b`), so the report always parses.
 
-**Coverage** (`--coverage`) compiles each selected file with counters, runs them, prints one table after the summary and writes `coverage/lcov.info` in the current directory (one file, overwritten by each run). Without the flag nothing is instrumented and nothing is written.
+**Coverage** (`--coverage`) compiles each selected file with counters, runs them, prints one table after the summary and writes `coverage/lcov.info` in the current directory (overwritten by each run). Without the flag nothing is instrumented or written.
 
 By default the report covers each test file and what it imports. An optional `[coverage]` section widens that to whole directories, so a file no test loaded is listed at 0%:
 
@@ -3929,9 +3931,9 @@ include = ["src"]
 exclude = ["tests", "deps"]
 ```
 
-`include` and `exclude` are directories relative to the manifest (a string or a list; no globs), walked recursively for `*.av`, skipping directories whose name starts with `.`. A file under `exclude` is left out, a test file included when `exclude` names `tests`. A file no test loaded has no branch map.
+`include` and `exclude` are directories relative to the manifest (a string or a list; no globs), walked recursively for `*.av`, skipping names that start with `.`. A file under `exclude` is left out, test files too when `exclude` names `tests`. A file no test loaded has no branch map.
 
-The runner sets what the instrumented programs need. These variables exist for a program instrumented on its own:
+The runner sets what instrumented programs need; these variables are for a program instrumented on its own:
 
 | Variable | Read by | Effect |
 | --- | --- | --- |
