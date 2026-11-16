@@ -147,6 +147,13 @@ typedef struct AvantRecover {
   int holds;
   char *what;
   char *site;
+  /* The light jump buffer of a handler's recovery point
+   * (avant_task_recover_call): __builtin_setjmp keeps the frame, the
+   * stack pointer and the return address only (the function that sets
+   * it saves the rest in its frame), about 20 instructions fewer a
+   * request than _setjmp's full buffer with its pointer mangling. */
+  void *light[5];
+  int is_light;
 } AvantRecover;
 
 static __thread AvantRecover *g_recover;
@@ -245,6 +252,9 @@ void avant_task_trapped(const char *what, const char *site) {
   r->site = dup_text(site ? site : "");
   /* The block's frames are left: the chain is the entry's again. */
   avant_gc_top = r->top;
+  if (r->is_light) {
+    __builtin_longjmp(r->light, 1);
+  }
   longjmp(r->jb, 1);
 }
 
@@ -474,6 +484,64 @@ static void ensure_pool(void) {
   }
 }
 
+/* After a trap returned to a recovery point: every gate the code below
+ * it still held is poisoned and given up, and its pins and holds end
+ * (the collector's state is the entry's again); a hold's end may
+ * collect: the frames are the entry's, and nothing of the code below is
+ * held. */
+static void recover_end(AvantRecover *rec) {
+  int i;
+  for (i = g_held_n; i > rec->held; i--) {
+    gate_dead(g_held[i - 1]);
+  }
+  g_held_n = rec->held;
+  while (g_pin_n > rec->pins) {
+    g_pin_n--;
+    avant_unpin(g_pins[g_pin_n]);
+  }
+  while (g_hold_n > rec->holds) {
+    avant_task_hold_end();
+  }
+}
+
+/* A recovery point around one call C makes of an Avant function through
+ * its callback thunk, on any thread: std.http's server runs each
+ * handler's dispatch in one, so a trap in a handler fails that request
+ * and the server goes on. fn's thunk brackets its own call as a C
+ * callback (in a program that imports std.http, as in one that spawns:
+ * lower_ffi.av), so the depth the trap must find is one more than here;
+ * a trap inside a C callback the handler made finds a deeper one and
+ * stays the process's, as do the runtime's own stops. A recovery point
+ * already set (a server serving inside a spawned task) is kept and set
+ * back. Returns 0 when fn returned, 1 when it trapped: the trap is told
+ * on stderr, as a task's is, and what it held is given back as at a
+ * task's end (recover_end). The normal path pays the light jump buffer's
+ * save and a few thread-local stores. */
+int avant_task_recover_call(int32_t (*fn)(void *, void *), void *a, void *b) {
+  AvantRecover rec;
+  AvantRecover *outer = g_recover;
+  rec.top = avant_gc_top;
+  rec.held = g_held_n;
+  rec.cb = g_cb_depth + 1;
+  rec.pins = g_pin_n;
+  rec.holds = g_hold_n;
+  rec.what = NULL;
+  rec.site = NULL;
+  rec.is_light = 1;
+  g_recover = &rec;
+  if (__builtin_setjmp(rec.light) == 0) {
+    (void)fn(a, b);
+    g_recover = outer;
+    return 0;
+  }
+  g_recover = outer;
+  recover_end(&rec);
+  g_cb_depth = rec.cb - 1;
+  free(rec.what);
+  free(rec.site);
+  return 1;
+}
+
 /* A worker is native between jobs (rule 2): it returns to
  * running (a safepoint while a collection is in progress) before it reads
  * the job's heap argument and calls into Avant, and is native again once
@@ -494,29 +562,16 @@ static void run_job(Job *job) {
     rec.holds = g_hold_n;
     rec.what = NULL;
     rec.site = NULL;
+    rec.is_light = 0;
     g_recover = &rec;
     if (_setjmp(rec.jb) == 0) {
       t->result = t->fn(t->arg ? t->root.obj : NULL);
       g_recover = NULL;
     } else {
       /* The block trapped (avant_task_trapped): the task ends here. */
-      int i;
       g_recover = NULL;
-      for (i = g_held_n; i > rec.held; i--) {
-        gate_dead(g_held[i - 1]);
-      }
-      g_held_n = rec.held;
+      recover_end(&rec);
       g_cb_depth = rec.cb;
-      /* The block's pins and holds end (the collector's state is the
-       * entry's again); a hold's end may collect: the frames are the
-       * entry's, and nothing of the block is held. */
-      while (g_pin_n > rec.pins) {
-        g_pin_n--;
-        avant_unpin(g_pins[g_pin_n]);
-      }
-      while (g_hold_n > rec.holds) {
-        avant_task_hold_end();
-      }
       t->result = 0;
       t->what = rec.what;
       t->site = rec.site;

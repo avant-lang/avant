@@ -2117,7 +2117,7 @@ The second row has no position so that hot loops stay fast.
 | `chars` on invalid UTF-8 | `String.from_utf8`, which returns `String?` |
 | growing past a [size limit](#size-limits) | |
 
-**A trap ends the whole process** (except in a spawned task: [When a task traps](#when-a-task-traps)): one bad index in an `std.http` handler closes every connection, so run servers under a supervisor (systemd's `Restart=`, a container restart policy) and read request data with `.get(i)`, `??` and the optional parsers. A trap that ends only its request, and a pre-forked server mode, are decided, not built.
+**A trap ends the whole process**, except in a spawned task ([When a task traps](#when-a-task-traps)) and in an `std.http` handler, where it fails only its request ([HTTP server](#http-server)). The exceptions keep their own limits (a trap inside a C callback, and the runtime's own stops, still end the process), so run servers under a supervisor too (systemd's `Restart=`, a container restart policy). A pre-forked server mode is decided, not built.
 
 **A failed write to standard output stops the program** like a trap (`avant runtime: cannot write to standard output: No space left on device` on a full disk or `/dev/full`, status 1), checked at every `puts`. A closed pipe (`prog | head`) kills it by `SIGPIPE` (status 141 in a shell), reset to the default before `main` even if the parent ignored or blocked it (a CI runner, a shell's `trap '' PIPE`).
 
@@ -2783,7 +2783,7 @@ What the task shared is left safe:
 - Each `Channel` the block captured is closed, which wakes a task waiting on it in `recv` or `send`.
 - Each `Array` the block captured is thawed, as at the task's normal end.
 
-These traps still end the program: one in a `.parallel` body, inside a C callback, on the main thread or an HTTP handler's thread, and the runtime's own stops (the heap limit, the collector's checks).
+These traps still end the program: one in a `.parallel` body, inside a C callback, on the main thread outside an `std.http` handler (a handler's trap fails its request: [HTTP server](#http-server)), and the runtime's own stops (the heap limit, the collector's checks).
 
 ### Parallel
 
@@ -3626,7 +3626,7 @@ fn main {
 | --- | --- | --- | --- | --- |
 | `Http.listen(port, host = "127.0.0.1", max_body = 1048576, loops = 0, max_message = 1048576)` | `port: Int`, `host: String`; `max_body`, `loops` and `max_message` are `Int`s | `Server \| HttpError` | an `HttpError` when it cannot bind | `max_body` bounds a request body; `loops` overrides the event-loop count; `max_message` bounds a WebSocket message |
 | `server.port()` | — | `Int`: the bound port | — | |
-| `get`, `post`, `put`, `delete`, `patch`, `route(method, path)` | `path: String` (and `method: String`), then the handler block | the `Server` | one registered from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`, status 1) | **routes** are exact paths; no pattern router, middleware or streaming. Register every route, WebSocket ones too, before `serve` |
+| `get`, `post`, `put`, `delete`, `patch`, `route(method, path)` | `path: String` (and `method: String`), then the handler block | the `Server` | one registered from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`; the handler's request fails, answered 500) | **routes** are exact paths; no pattern router, middleware or streaming. Register every route, WebSocket ones too, before `serve` |
 | a handler, `{ \|req\| ... }` | a `Request` | a `Response` | — | gets `method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes` |
 | `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)` | `body`: a `String`, `Bytes`; `status: Int` | a `Response` | a `status` outside 100 to 599 traps when written (`avant runtime: a response's status 99 is not 100 to 599 (RFC 9110)`) | the only ways to build one; the server sets `Content-Length` and `Connection` |
 | `.header(name, value)` | `name`, `value: String` | the `Response` | a header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`) | check request text before putting it in a header |
@@ -3667,7 +3667,7 @@ fn main {
 - **Connections** are kept alive; pipelined requests are answered in order, each with its own write. One event loop runs per thread of the [pool's count](#the-thread-pool) (`loops` overrides it), all on one port.
 - **Handlers must not block the loop**: hand slow work to `spawn`.
 - **An idle HTTP connection is closed** after about 30 seconds with no bytes in or out (a request in parts has the limits above too); WebSocket connections never time out.
-- **A trap in a handler ends the server**, like any [trap](#traps): run it under a supervisor, and read request data with the non-trapping forms.
+- **A trap in a handler fails its request, not the server**: it is printed to standard error when it happens (`avant runtime: index 7 out of bounds …`), the handler's stack is dropped without unwinding, and the request is answered 500 (the connection kept or closed as any answer's would be); the next request is served. A trap in a WebSocket handler closes that connection with 1011. What the handler held is given back as for a [task that traps](#when-a-task-traps): a `Mutex` it held in `with` is poisoned, its `pin` blocks and `gc.hold`s end. A trap inside a C callback the handler made, and the runtime's own stops, still end the program.
 
 #### HTTP client
 

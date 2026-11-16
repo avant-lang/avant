@@ -336,11 +336,14 @@ pub fn (lw: MirLower) lower_cb_thunks {
       }
       j += 1
     }
-    // A trap inside a callback ends the process, also in a task: the
-    // task's recovery point would skip the C frames between (runtime/avant_task.c). Only a program that spawns has
-    // tasks: any other program's thunk is as before.
+    // A trap inside a callback ends the process, also in a task or an
+    // HTTP handler: their recovery points would skip the C frames
+    // between (runtime/avant_task.c). Only a program that spawns or
+    // serves HTTP has recovery points: any other program's thunk is as
+    // before.
     none: Array(MOperand) = []
-    if lw.lw_m.shared {
+    recovers = lw.recovers()
+    if recovers {
       b.call(-1, "avant_task_cb_enter", none)
     }
     if ret == mt_void() {
@@ -354,7 +357,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
       b.call(d, cb.target, args)
       b.assign(b.pl(0), b.rv_use(b.copy_local(d)))
     }
-    if lw.lw_m.shared {
+    if recovers {
       b.call(-1, "avant_task_cb_leave", none)
     }
     b.ret()
@@ -620,12 +623,28 @@ pub fn (lw: MirLower) unpin(h: Int) {
   lw.lw_b.call(-1, lw.task_name("avant_unpin"), args)
 }
 
-// A `pin` block's and a `gc.hold`'s runtime entry: in a program that
-// spawns, the task pool's form (runtime/avant_task.c), which keeps what a
-// task holds so that a trap ending the task gives it back; the
-// collector's own otherwise.
+// Whether the program has recovery points (runtime/avant_task.c): it
+// spawns (a trap in a task ends the task), or it imports std.http (a
+// trap in a handler fails its request). Its C callbacks' thunks and its
+// `pin` blocks and holds then go through the task pool's entries.
+pub fn (lw: MirLower) recovers: Bool {
+  if lw.lw_m.shared {
+    return true
+  }
+  for m in lw.lw_prog.mods {
+    if m.name == "std.http" {
+      return true
+    }
+  }
+  false
+}
+
+// A `pin` block's and a `gc.hold`'s runtime entry: in a program with
+// recovery points, the task pool's form (runtime/avant_task.c), which
+// keeps what a task or a handler holds so that a trap ending it gives it
+// back; the collector's own otherwise.
 pub fn (lw: MirLower) task_name(name: String): String {
-  if !lw.lw_m.shared {
+  if !lw.recovers() {
     return name
   }
   if name == "avant_pin" {

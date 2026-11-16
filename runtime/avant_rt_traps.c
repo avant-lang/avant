@@ -169,7 +169,7 @@ void avant_trap_frozen_at(int32_t op, int32_t site) {
  * on it. */
 void avant_trap_poisoned(void) {
   trap_head();
-  trap_out("Mutex.with on a poisoned mutex: a task trapped while it held this mutex, so its value may be half-changed");
+  trap_out("Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed");
   trap_tail();
 }
 

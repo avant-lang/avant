@@ -29,7 +29,7 @@ import std.http
 // two Content-Length values; interim 1xx answers; a
 // Host value that is not host[:port]; the write paths
 // past the piece. And a client sending a request head, a
-// body or reading an answer slowly.
+// body or reading an answer slowly. And a handler that traps.
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -559,8 +559,9 @@ fn ws_route_cases(c: Checks) {
 // A route registered while the server serves:
 // the route tables are read by the loop threads with no lock, so every
 // route method traps once `serve` runs. The fixture registers the route
-// from a handler, on a loop thread, with each method in turn; each run
-// must end with status 1 and the trap's line, its request unanswered.
+// from a handler, on a loop thread, with each method in turn; each trap
+// prints its line and fails its request (answered 500), and the server
+// goes on to its stop.
 fn route_serving_cases(c: Checks, root: String) {
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
@@ -576,14 +577,16 @@ fn route_serving_cases(c: Checks, root: String) {
       args.push(kinds[i])
       status = process_run_out(bin, args, log) ?? -1
       text = file_read(log) ?? ""
-      c.eq_int(status, 1, "Server.${kinds[i]} while serving: status 1")
-      c.eq_str(text, "avant runtime: ${whats[i]} registered while the server is serving: register every route before serve\n", "Server.${kinds[i]} while serving: the trap's line, the request unanswered")
+      c.eq_int(status, 0, "Server.${kinds[i]} while serving: the server goes on, status 0")
+      c.eq_str(text, "avant runtime: ${whats[i]} registered while the server is serving: register every route before serve\nanswered 500\n", "Server.${kinds[i]} while serving: the trap's line, the request answered 500")
     }
-    // A limit is set before serving, like a route; a negative one traps.
+    // A limit is set before serving, like a route (from a handler, a
+    // trap that fails its request); a negative one traps, before serving
+    // a trap that ends the program.
     limits = ["head_timeout", "min_rate", "limit-negative", "rate-negative"]
     lines = [
-      "avant runtime: Server.head_timeout called while the server is serving: set every limit before serve\n",
-      "avant runtime: Server.min_rate called while the server is serving: set every limit before serve\n",
+      "avant runtime: Server.head_timeout called while the server is serving: set every limit before serve\nanswered 500\n",
+      "avant runtime: Server.min_rate called while the server is serving: set every limit before serve\nanswered 500\n",
       "avant runtime: Server.head_timeout(-1): a limit is 0 (off) to 2147483647\n",
       "avant runtime: Server.min_rate(240, -5): a limit is 0 (off) to 2147483647\n"
     ]
@@ -593,7 +596,11 @@ fn route_serving_cases(c: Checks, root: String) {
       args.push(limits[i])
       status = process_run_out(bin, args, log) ?? -1
       text = file_read(log) ?? ""
-      c.eq_int(status, 1, "Server ${limits[i]}: status 1")
+      want_status = 1
+      if i < 2 {
+        want_status = 0
+      }
+      c.eq_int(status, want_status, "Server ${limits[i]}: status ${want_status}")
       c.eq_str(text, lines[i], "Server ${limits[i]}: the trap's line")
     }
   } else {
@@ -605,9 +612,10 @@ fn route_serving_cases(c: Checks, root: String) {
 // a token: appended as it came, it added header lines or a second
 // answer (response splitting). `header` traps now. The fixture's
 // handler sets the header its argument names, and a raw client
-// reads what reaches the wire: nothing, since the process stops
-// at the trap before the answer is written. The valid case (a
-// tab, a quote and bytes over 127 in the value, the token's
+// reads what reaches the wire: the trap fails the request before
+// any of its answer is written, so the answer is the 500 the server
+// gives a handler that trapped, with none of the header. The valid
+// case (a tab, a quote and bytes over 127 in the value, the token's
 // punctuation in the name) is answered with the header as given.
 fn header_split_cases(c: Checks, root: String) {
   if compiler = env_get("AVANT_COMPILER") {
@@ -661,19 +669,19 @@ fn header_split_cases(c: Checks, root: String) {
       text = file_read(log) ?? ""
       if kind == "ok" {
         c.eq_int(status, 0, "Response.header ${kind}: answered, status 0")
-        c.eq_str(wire, "header_split=1 answer(s) Content-Type: text/plain; charset=utf-8|X-Ok!#$%&'*+-.^_`|~: a\\tb \"c\" \\xc3\\xa9|Content-Length: 1|Connection: close", "Response.header ${kind}: the header on the wire as given")
+        c.eq_str(wire, "header_split=1 answer(s) 200 Content-Type: text/plain; charset=utf-8|X-Ok!#$%&'*+-.^_`|~: a\\tb \"c\" \\xc3\\xa9|Content-Length: 1|Connection: close", "Response.header ${kind}: the header on the wire as given")
       } else if kind == "status-100" || kind == "status-599" {
         // The ends of the range are answered.
         c.eq_int(status, 0, "a response's ${kind}: answered, status 0")
-        c.eq_str(wire, "header_split=1 answer(s) Content-Type: text/plain; charset=utf-8|Content-Length: 1|Connection: close", "a response's ${kind}: on the wire")
+        c.eq_str(wire, "header_split=1 answer(s) ${str_slice(kind, 7, kind.size)} Content-Type: text/plain; charset=utf-8|Content-Length: 1|Connection: close", "a response's ${kind}: on the wire")
       } else {
         what = "Response.header ${kind}"
         if kind.size > 7 && str_slice(kind, 0, 7) == "status-" {
           what = "a response's ${kind}"
         }
-        c.eq_int(status, 1, "${what}: status 1")
+        c.eq_int(status, 0, "${what}: the server goes on, status 0")
         c.eq_str(text, lines[i], "${what}: the trap's line")
-        c.eq_str(wire, "header_split=nothing", "${what}: nothing on the wire")
+        c.eq_str(wire, "header_split=1 answer(s) 500 Content-Type: text/plain|Content-Length: 21|Connection: close", "${what}: answered 500, none of the header on the wire")
       }
     }
   } else {
@@ -1228,6 +1236,73 @@ fn deadline_cases(c: Checks, root: String) {
   }
 }
 
+// A trap in a handler ended the server; it fails its request now. The
+// fixture's routes each trap their own way (tests/fixtures/http/
+// handler_trap.av; the program spawns nothing, so its recovery points
+// come from std.http alone); a raw client asks each on one kept-alive
+// connection and then asks again: 500, then the next answer. Each trap
+// is printed when it happens, in order. A trap inside a C callback the
+// handler made still ends the program, its request unanswered.
+fn handler_trap_cases(c: Checks, root: String) {
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    bin = "${scratch()}/http-handler-trap-${stamp}.bin"
+    clog = "${scratch()}/http-handler-trap-${stamp}.clog"
+    code = compile_av(compiler, "${root}/tests/fixtures/http/handler_trap.av", bin, clog)
+    c.eq_int(code, 0, "the handler-trap fixture compiles")
+    modes = ["handler_trap", "callback_trap"]
+    for mode in modes {
+      log = "${scratch()}/http-handler-trap-${stamp}-${mode}.log"
+      port_file = "${scratch()}/http-handler-trap-${stamp}-${mode}.port"
+      server = spawn {
+        args: Array(String) = []
+        args.push(port_file)
+        process_run_out(bin, args, log) ?? -1
+      }
+      wlog = "${scratch()}/http-handler-trap-${stamp}-${mode}.wire"
+      pargs: Array(String) = []
+      pargs.push("${root}/tests/fixtures/http/raw_client.py")
+      pargs.push("0")
+      pargs.push(mode)
+      pargs.push(port_file)
+      _ = process_run_out("/usr/bin/python3", pargs, wlog)
+      wire = nth_line(file_read(wlog) ?? "", 0)
+      status = server.join() ?? -1
+      text = file_read(log) ?? ""
+      if mode == "handler_trap" {
+        c.eq_int(status, 0, "a handler's trap: the server goes on to its stop, status 0")
+        c.eq_str(wire, "handler_trap=bounds:500,ok:200 ok,divide:500,ok:200 ok,status:500,ok:200 ok,header:500,ok:200 ok,route:500,ok:200 ok,late:404,mutex:500,mutex-again:500,mutex-state:200 poisoned true: the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed,pin:500,pins:200 pins left 0, 188890,close:500 closed,1.0:500 closed,ws:1 hi,ws-trap:8 1011,ws-after:1 again,stop:200", "a handler's trap answers 500 and the server goes on")
+        whats = [
+          "index 7 out of bounds (size 3)",
+          "division by zero",
+          "a response's status 99 is not 100 to 599 (RFC 9110)",
+          "Response.header value of X-A holds a control character (byte 13 at 1)",
+          "route GET /late registered while the server is serving",
+          "index 9 out of bounds (size 3)",
+          "Mutex.with on a poisoned mutex",
+          "index 8 out of bounds (size 3)",
+          "index 7 out of bounds (size 3)",
+          "index 7 out of bounds (size 3)",
+          "index 5 out of bounds (size 3)"
+        ]
+        lines = text.split("\n")
+        c.eq_int(lines.size, whats.size + 2, "one line per trap, then served (${text})")
+        for i in 0..whats.size {
+          line = lines.get(i) ?? ""
+          c.expect(str_has(line, "avant runtime: ${whats[i]}"), "trap ${i} printed in order: ${line}")
+        }
+        c.eq_str(lines.get(whats.size) ?? "", "served", "serve returned")
+      } else {
+        c.eq_int(status, 1, "a trap in a C callback inside a handler ends the program, status 1")
+        c.eq_str(wire, "callback_trap=0 closed", "a trap in a C callback: the request unanswered")
+        c.expect(str_has(text, "avant runtime: division by zero"), "a trap in a C callback: its line (${text})")
+      }
+    }
+  } else {
+    c.expect(false, "AVANT_COMPILER is set for the handler-trap test")
+  }
+}
+
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
   i = 0
   while i < want.size {
@@ -1427,6 +1502,7 @@ fn main: Int {
   ws_route_cases(c)
   route_serving_cases(c, avant_test_root())
   header_split_cases(c, avant_test_root())
+  handler_trap_cases(c, avant_test_root())
   response_literal_cases(c)
   client_framing_cases(c, avant_test_root())
   client_request_cases(c, avant_test_root())

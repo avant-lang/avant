@@ -794,14 +794,18 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
   out = -1
   done = -1
   heal = ""
-  if lw.lw_m.shared {
+  // A program with recovery points (it spawns, or serves HTTP: a trap
+  // in a task or a handler poisons the mutexes it held) locks through
+  // the form that reports the poison.
+  recovers = lw.recovers()
+  if recovers {
     heal = lw.mutex_heal_sym(rt)
     if heal.size == 0 {
       lw.refuse(e.loc, "Mutex.with without std.sync's __avant_heal (internal)")
       return zero
     }
   }
-  if is_try && lw.lw_m.shared {
+  if is_try && recovers {
     p0 = b.temp(mt_i32())
     b.call(p0, "avant_gate_lock_with", lw.gate_args(h, gi))
     bad0 = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(p0), b.c_i32(0)))
@@ -833,8 +837,8 @@ pub fn (lw: MirLower) lower_mutex_with(e: Expr, recv: Expr, rt: Ty, bl: Block): 
     lw.at(e.loc)
   } else if is_try {
     b.call(-1, "avant_gate_lock", lw.gate_args(h, gi))
-  } else if lw.lw_m.shared {
-    // A task that trapped while it held the mutex poisoned it:
+  } else if recovers {
+    // A task (or a handler) that trapped while it held the mutex poisoned it:
     // the lock says so, and the block does not run on the value the
     // task may have left half-changed.
     // A recover function rebuilds it first (under the lock); without

@@ -770,6 +770,7 @@ typedef struct AvantHttpReq {
   int minor_version;
   int is_ws;
   int upgraded;
+  int responded;
   char ws_key[128];
   AvantWsConn *ws_conn;
 } AvantHttpReq;
@@ -813,12 +814,12 @@ char *avant_http_req_headers(void *reqp) {
 /* A response's status outside 100-599:
  * written as it came, 99999 or -1 gave a status line no client can read
  * (RFC 9110 15: a status code is three digits, its first 1 to 5). The
- * program's error, trapped in the runtime's form before any byte of the
- * answer is written. */
+ * program's error, a trap of the language before any byte of the answer
+ * is written (in a handler: the request is answered 500). */
 __attribute__((noreturn, cold)) static void http_status_trap(avant_int status) {
-  fflush(stdout);
-  fprintf(stderr, "avant runtime: a response's status %lld is not 100 to 599 (RFC 9110)\n", (long long)status);
-  exit(1);
+  char msg[120];
+  snprintf(msg, sizeof msg, "a response's status %lld is not 100 to 599 (RFC 9110)", (long long)status);
+  avant_trap_text(msg);
 }
 
 void avant_http_req_respond(void *reqp, avant_int status, const char *head,
@@ -828,6 +829,7 @@ void avant_http_req_respond(void *reqp, avant_int status, const char *head,
   if (__builtin_expect(status < 100 || status > 599, 0)) {
     http_status_trap(status);
   }
+  req->responded = 1;
   /* The head and body pointers name Avant heap objects held only in
    * C registers here; nothing below is a safepoint (no allocation, no
    * native wait), so no collection runs on any thread while the response
@@ -1406,10 +1408,13 @@ static void leave_avant(void) {
   }
 }
 
+static void ws_fail(AvantWsConn *ws, int code);
+
 static void ws_dispatch_event(AvantWsConn *ws, int32_t kind, int32_t is_text,
                               const char *data, size_t len, int32_t code,
                               const char *reason, size_t reason_len) {
   AvantWsEvent ev;
+  int trapped;
   if (!ws->srv->ws_dispatch || !ws->srv->state) { return; }
   memset(&ev, 0, sizeof(ev));
   ev.srv = ws->srv;
@@ -1421,9 +1426,15 @@ static void ws_dispatch_event(AvantWsConn *ws, int32_t kind, int32_t is_text,
   ev.code = code;
   ev.reason = reason;
   ev.reason_len = reason_len;
+  /* A trap in a message handler closes the connection with 1011 (an
+   * unexpected condition, RFC 6455 7.4.1) and the server goes on; one in
+   * a close handler has nothing left to close. */
   enter_avant();
-  ws->srv->ws_dispatch(ws->srv->state, &ev);
+  trapped = avant_task_recover_call(ws->srv->ws_dispatch, ws->srv->state, &ev);
   leave_avant();
+  if (trapped && kind == 1) {
+    ws_fail(ws, 1011);
+  }
 }
 
 avant_int avant_ws_event_kind(void *evp) {
@@ -1976,6 +1987,7 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     long content_length = 0;
     int has_cl = 0;
     int keep_alive;
+    int trapped;
     size_t total;
     AvantHttpReq req;
 
@@ -2147,13 +2159,30 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     req.body_len = (size_t)(has_cl ? content_length : 0);
     req.keep_alive = keep_alive;
     req.minor_version = minor_version;
+    /* The dispatch runs in a recovery point: a trap in the handler (or
+     * in std.http's code for this request) returns here, the handler's
+     * frames dropped, and the request is answered 500, with the
+     * connection kept or closed as an answer's would be; the server
+     * goes on. A trap after the upgrade, in a websocket_open handler,
+     * closes the new WebSocket with 1011. */
     enter_avant();
-    srv->dispatch(srv->state, &req);
+    trapped = avant_task_recover_call(srv->dispatch, srv->state, &req);
     leave_avant();
     if (us_socket_is_closed(0, s)) {
       /* The answer could not be queued (conn_send closed the socket);
        * srv_on_close has freed the buffers. */
       return;
+    }
+    if (trapped && req.upgraded) {
+      conn->len = 0;
+      ws_fail(conn->ws, 1011);
+      return;
+    }
+    if (trapped && !req.responded) {
+      write_response(conn, s, 500, "Content-Type: text/plain\r\n",
+                     "Internal Server Error",
+                     !keep_alive ? "close"
+                                 : minor_version == 0 ? "keep-alive" : NULL);
     }
     if (req.upgraded) {
       /* The 101 is written and the connection is a WebSocket now. Any
@@ -2842,16 +2871,15 @@ avant_int avant_http_serve(void *srvp, void *state, void *cb, void *ws_cb) {
   return 0;
 }
 
-/* A route method of std.http called while its server serves: the loop threads
- * read the route tables with no lock,
- * so the route is refused. The trap's form is the runtime's (trap_head
- * and trap_tail in avant_rt_traps.c, as avant_regex_closed has it): the
- * program's stdout flushed, one line on stderr, status 1. what names
- * the route ("route GET /x", "websocket route /x"). */
+/* A route method of std.http called while its server serves: the loop
+ * threads read the route tables with no lock, so the route is refused.
+ * A trap of the language (from a handler, the usual place, a trap that
+ * fails its request). what names the route ("route GET /x",
+ * "websocket route /x"). */
 __attribute__((noreturn, cold)) void avant_http_route_while_serving(const char *what) {
-  fflush(stdout);
-  fprintf(stderr, "avant runtime: %s registered while the server is serving: register every route before serve\n", what);
-  exit(1);
+  char msg[400];
+  snprintf(msg, sizeof msg, "%s registered while the server is serving: register every route before serve", what);
+  avant_trap_text(msg);
 }
 
 /* A limit set while the server serves: the loops read the limits with
@@ -2897,27 +2925,30 @@ void avant_http_set_limit(void *srvp, const char *name, avant_int which,
   }
 }
 
-/* Writes at most 64 bytes of p to stderr, a byte that is not printable
- * ASCII (or is a quote or a backslash) as \r, \n, \t or \xNN. */
-static void put_escaped(const char *p, size_t n) {
+/* At most 64 bytes of p into out (room for 4 bytes each and "..."), a
+ * byte that is not printable ASCII (or is a quote or a backslash) as
+ * \r, \n, \t or \xNN. */
+static void escape_into(char *out, const char *p, size_t n) {
   size_t i;
+  size_t k = 0;
   for (i = 0; i < n && i < 64; i++) {
     unsigned char ch = (unsigned char)p[i];
     if (ch == '\r') {
-      fputs("\\r", stderr);
+      k += (size_t)sprintf(out + k, "\\r");
     } else if (ch == '\n') {
-      fputs("\\n", stderr);
+      k += (size_t)sprintf(out + k, "\\n");
     } else if (ch == '\t') {
-      fputs("\\t", stderr);
+      k += (size_t)sprintf(out + k, "\\t");
     } else if (ch < 0x20 || ch >= 0x7f || ch == '"' || ch == '\\') {
-      fprintf(stderr, "\\x%02x", ch);
+      k += (size_t)sprintf(out + k, "\\x%02x", ch);
     } else {
-      fputc(ch, stderr);
+      out[k++] = (char)ch;
     }
   }
   if (n > 64) {
-    fputs("...", stderr);
+    k += (size_t)sprintf(out + k, "...");
   }
+  out[k] = 0;
 }
 
 /* RFC 9110 5.6.2: tchar, the bytes of a token (a field name). */
@@ -2958,26 +2989,28 @@ static size_t http_value_end(const char *s, size_t n) {
  * follow: response splitting. A name must be a token (RFC 9110 5.1) and
  * a value may hold no control character but tab (5.5: CR, LF and NUL
  * are refused, and the other controls with them); anything else is the
- * program's error, and it traps in the runtime's form (the program's
- * stdout flushed, one line on stderr, status 1), naming the rule. */
+ * program's error, and it is a trap of the language naming the rule (in
+ * a handler, a trap that fails its request: answered 500). */
 void avant_http_header_check(const char *name, const char *value) {
   size_t nn = avant_str_n(name);
   size_t vn = avant_str_n(value);
   size_t i;
+  char esc[300];
+  char msg[600];
   if (nn == 0 || http_token_end(name, nn) < nn) {
-    fflush(stdout);
-    fputs("avant runtime: Response.header name \"", stderr);
-    put_escaped(name, nn);
-    fputs("\" is not a token: a header name is letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)\n", stderr);
-    exit(1);
+    escape_into(esc, name, nn);
+    snprintf(msg, sizeof msg,
+             "Response.header name \"%s\" is not a token: a header name is letters, digits and !#$%%&'*+-.^_`|~ (RFC 9110)",
+             esc);
+    avant_trap_text(msg);
   }
   i = http_value_end(value, vn);
   if (i < vn) {
-    fflush(stdout);
-    fputs("avant runtime: Response.header value of ", stderr);
-    put_escaped(name, nn);
-    fprintf(stderr, " holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)\n", (unsigned)(unsigned char)value[i], i);
-    exit(1);
+    escape_into(esc, name, nn);
+    snprintf(msg, sizeof msg,
+             "Response.header value of %s holds a control character (byte %u at %zu): a header value holds no CR, LF or other control character but tab (RFC 9110)",
+             esc, (unsigned)(unsigned char)value[i], i);
+    avant_trap_text(msg);
   }
 }
 

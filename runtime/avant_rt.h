@@ -603,6 +603,9 @@ int32_t avant_gate_poisoned(void *obj, uint64_t off);
 __attribute__((visibility("hidden"))) int avant_task_can_recover(void);
 __attribute__((visibility("hidden"), noreturn)) void avant_task_trapped(const char *what, const char *site);
 __attribute__((visibility("hidden"), noreturn)) void avant_trap_text(const char *what);
+/* A recovery point around one call of an Avant function from C
+ * (std.http's handlers): 0 when fn returned, 1 when it trapped. */
+int avant_task_recover_call(int32_t (*fn)(void *, void *), void *a, void *b);
 void avant_parallel_for(avant_int n, void *fn, void *ctx);
 uint64_t avant_gate_new(void);
 /* The gate functions take the object holding the gate word and the word's

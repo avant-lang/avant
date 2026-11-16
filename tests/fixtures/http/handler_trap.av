@@ -1,0 +1,143 @@
+import std.http
+import std.sync
+import std.gc
+
+// A trap in a handler fails its request, not the server: the request
+// is answered 500 (the connection kept or closed as an answer's would
+// be), the trap is told on stderr, and the next request is served. Each
+// route traps its own way: an index out of bounds, a division by zero,
+// a status std.http refuses, a header std.http refuses, a route
+// registered while serving, a trap inside a mutex's `with` (the mutex
+// is poisoned: the next `with` on it traps too, and `try_with` reads
+// it), a trap inside `pin` and `gc.hold` (both given back), and a trap
+// in a WebSocket message handler (the connection is closed 1011). A trap
+// in a C callback the handler made still ends the program (GET
+// /callback). The program spawns nothing. With an argument (a path) it
+// writes its port there and waits for tests/fixtures/http/raw_client.py
+// (mode handler_trap, run by tests/cases/test_std_http_safety.av);
+// without one (the run goldens) it asks itself nothing and stops.
+
+lib gc_rt {
+  fun avant_pin_count: Int
+}
+
+lib libc {
+  struct CInt {
+    v: Int32
+  }
+  fun calloc(n: Int, size: Int): Ptr(CInt)
+  fun qsort(base: Ptr(CInt), nmemb: Int, size: Int, compar: fn(Ptr(CInt), Ptr(CInt)): Int32)
+}
+
+class Acc {
+  pub n: Int = 0
+}
+
+fn at(xs: Array(Int), i: Int): Int {
+  xs[i]
+}
+
+fn divide(a: Int, b: Int): Int {
+  a / b
+}
+
+fn cmp_trap(a: Ptr(CInt), b: Ptr(CInt)): Int32 {
+  x = a.v.to_i()
+  (x / (x - x)).to_i32()
+}
+
+fn main: Int {
+  a = argv()
+  xs = [1, 2, 3]
+  m = Mutex(Acc).new(Acc.new())
+  mark = Acc.new()
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened
+    server.get("/ok") { |req|
+      Response.text("ok")
+    }
+    server.get("/bounds") { |req|
+      Response.text("${at(xs, 7)}")
+    }
+    server.get("/divide") { |req|
+      Response.text("${divide(7, xs.size - 3)}")
+    }
+    server.get("/status") { |req|
+      Response.text("x", 99)
+    }
+    server.get("/header") { |req|
+      Response.text("x").header("X-A", "1\r\nX-B: 2")
+    }
+    server.get("/route") { |req|
+      server.get("/late") { |r| Response.text("late") }
+      Response.text("added")
+    }
+    server.get("/mutex") { |req|
+      m.with { |acc|
+        acc.n = 5
+        acc.n = at(xs, 9)
+      }
+      Response.text("unreached")
+    }
+    server.get("/mutex-again") { |req|
+      m.with { |acc| acc.n += 1 }
+      Response.text("unreached")
+    }
+    server.get("/mutex-state") { |req|
+      res = m.try_with { |acc| acc.n }
+      if v = res {
+        return Response.text("value ${v}")
+      } else e {
+        return Response.text("poisoned ${m.poisoned()}: ${e.message()}")
+      }
+    }
+    server.get("/pin") { |req|
+      mark.n = gc_rt.avant_pin_count()
+      word = "pinned ${req.path}"
+      n = 0
+      gc.hold {
+        pin(word) {
+          n = at(xs, 8)
+        }
+      }
+      Response.text("${n}")
+    }
+    server.get("/pins") { |req|
+      // The pins the trap above left (none), after the loop thread
+      // allocates again.
+      t = 0
+      for j in 0..20000 {
+        t += "${j}${req.path}".size
+      }
+      Response.text("pins left ${gc_rt.avant_pin_count() - mark.n}, ${t}")
+    }
+    server.get("/callback") { |req|
+      buf = libc.calloc(4, 4)
+      buf.v = 3
+      libc.qsort(buf, 2, 4, cmp_trap)
+      Response.text("unreached")
+    }
+    server.websocket("/ws") { |conn, msg|
+      if (msg.text() ?? "") == "trap" {
+        _ = at(xs, 5)
+      }
+      _ = conn.send_message(msg)
+    }
+    server.get("/__stop") { |req|
+      server.close()
+      Response.text("bye")
+    }
+    if a.size > 1 {
+      if wrote = file_write(a[1], "${server.port()}\n") {
+      }
+      server.serve()
+      puts("served")
+      return 0
+    }
+    server.close()
+    puts("closed")
+    return 0
+  }
+  puts("listen failed")
+  1
+}

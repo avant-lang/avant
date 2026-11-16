@@ -359,8 +359,8 @@ def hosts():
 def header_split(port_file):
     # tests/fixtures/http/header_split.av writes its port to
     # port_file and answers GET /h with a header its handler sets. What
-    # reaches the wire: "nothing" when the server sent no byte (it
-    # trapped), else the answers' count and their header lines.
+    # reaches the wire: "nothing" when the server sent no byte, else the
+    # answers' count, the first one's status and its header lines.
     global port
     deadline = time.time() + 20
     while time.time() < deadline:
@@ -390,7 +390,9 @@ def header_split(port_file):
     if not data:
         return "nothing"
     answers = data.count(b"HTTP/1.1 ")
-    head = data.split(b"\r\n\r\n", 1)[0].split(b"\r\n")[1:]
+    lines = data.split(b"\r\n\r\n", 1)[0].split(b"\r\n")
+    status = lines[0].split(b" ")[1].decode("latin1") if b" " in lines[0] else "?"
+    head = lines[1:]
     try:
         s = connect()
         s.sendall(get("/__stop"))
@@ -399,7 +401,7 @@ def header_split(port_file):
     except OSError:
         pass
     # Each header line with a byte that is not printable ASCII escaped.
-    return "%d answer(s) %s" % (answers, "|".join(h.decode("latin1").encode("unicode_escape").decode("ascii") for h in head))
+    return "%d answer(s) %s %s" % (answers, status, "|".join(h.decode("latin1").encode("unicode_escape").decode("ascii") for h in head))
 
 
 def ws_frame(s, op, payload):
@@ -438,6 +440,103 @@ def ws_read_frame(s, buf):
         n, off = struct.unpack("!Q", buf[2:10])[0], 10
     need(off + n)
     return op, buf[off:off + n], buf[off + n:]
+
+
+def wait_port(port_file):
+    """Reads the port a fixture server wrote to port_file (20 s at most)."""
+    global port
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        try:
+            text = open(port_file).read()
+            if text.endswith("\n"):
+                port = int(text)
+                return True
+        except OSError:
+            pass
+        time.sleep(0.02)
+    return False
+
+
+def ws_open(path):
+    """A WebSocket connection to path: (socket, bytes after the 101)."""
+    s = connect()
+    s.sendall(b"GET %s HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n" % path.encode())
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            raise EOFError("no handshake")
+        buf += chunk
+    head, buf = buf.split(b"\r\n\r\n", 1)
+    if b" 101 " not in head.split(b"\r\n")[0]:
+        raise EOFError("handshake %r" % head.split(b"\r\n")[0])
+    return s, buf
+
+
+def handler_trap(port_file):
+    # tests/fixtures/http/handler_trap.av: each route traps its own way.
+    # Each trap is answered 500 on a kept-alive connection, and the next
+    # request on it is answered; a trap in a request that closes (or an
+    # HTTP/1.0 one) is answered 500 and closed; a trap in a WebSocket
+    # message handler closes that connection with 1011, and a new one
+    # echoes. Then the server is stopped.
+    if not wait_port(port_file):
+        return "no port"
+    out = []
+    s = connect()
+    s.settimeout(5)
+
+    def ask(path):
+        s.sendall(get(path))
+        got = read_answers(s, 1)
+        return (got[0][0], got[0][1].decode("latin1")) if got else (0, "")
+
+    for name in ["bounds", "divide", "status", "header", "route"]:
+        st, _ = ask("/" + name)
+        st2, body = ask("/ok")
+        out.append("%s:%d,ok:%d %s" % (name, st, st2, body))
+    out.append("late:%d" % ask("/late")[0])
+    out.append("mutex:%d" % ask("/mutex")[0])
+    out.append("mutex-again:%d" % ask("/mutex-again")[0])
+    out.append("mutex-state:%d %s" % ask("/mutex-state"))
+    out.append("pin:%d" % ask("/pin")[0])
+    out.append("pins:%d %s" % ask("/pins"))
+    s.close()
+    for name, raw in [("close", get("/bounds", "Connection: close\r\n")),
+                      ("1.0", b"GET /bounds HTTP/1.0\r\n\r\n")]:
+        status, data, closed = exchange(raw)
+        if data.startswith(b"HTTP/1.0 "):
+            status = int(data.split(b" ", 2)[1])
+        out.append("%s:%d %s" % (name, status, "closed" if closed else "open"))
+    w, buf = ws_open("/ws")
+    w.settimeout(5)
+    ws_frame(w, 1, b"hi")
+    op, payload, buf = ws_read_frame(w, buf)
+    out.append("ws:%d %s" % (op, payload.decode("latin1")))
+    ws_frame(w, 1, b"trap")
+    op, payload, buf = ws_read_frame(w, buf)
+    code = (payload[0] << 8 | payload[1]) if op == 8 and len(payload) >= 2 else -1
+    out.append("ws-trap:%d %d" % (op, code))
+    w.close()
+    w, buf = ws_open("/ws")
+    w.settimeout(5)
+    ws_frame(w, 1, b"again")
+    op, payload, buf = ws_read_frame(w, buf)
+    out.append("ws-after:%d %s" % (op, payload.decode("latin1")))
+    w.close()
+    status, data, closed = exchange(get("/__stop"))
+    out.append("stop:%d" % status)
+    return ",".join(out)
+
+
+def callback_trap(port_file):
+    # A trap in a C callback the handler made ends the program: the
+    # request is never answered.
+    if not wait_port(port_file):
+        return "no port"
+    status, data, closed = exchange(get("/callback"))
+    return "%d %s" % (status, "closed" if closed else "open")
 
 
 def ws_big(size):
@@ -609,6 +708,10 @@ try:
         result = fast_body()
     elif mode == "slow_read":
         result = slow_read()
+    elif mode == "handler_trap":
+        result = handler_trap(arg)
+    elif mode == "callback_trap":
+        result = callback_trap(arg)
     elif mode == "ws_big":
         result = ws_big(int(arg))
     else:
