@@ -1,0 +1,152 @@
+import harness
+
+// The type-based alias tags of the LLVM emitter (compiler/llvm/emit_core.av,
+// ll_tbaa_tag): an element access carries the element tag, an Array or Buf
+// header's buffer reference and size their own tags, and nothing else is
+// tagged (locals, object fields, Hash fields, an array's capacity, raw
+// pointers). Then the program that stores elements while calls move their
+// buffers (tests/fixtures/heap/alias_moves.av) is built with --release, the
+// mode whose optimizer uses the tags, and run under each collector mode:
+// its output must be its run golden's.
+
+fn tags_lines(text: String): Array(String) {
+  out: Array(String) = []
+  start = 0
+  for i in 0..text.size {
+    if text[i] == 10 {
+      out.push(str_slice(text, start, i))
+      start = i + 1
+    }
+  }
+  if start < text.size {
+    out.push(str_slice(text, start, text.size))
+  }
+  out
+}
+
+// The number of lines holding both a and b.
+fn tags_count(lines: Array(String), a: String, b: String): Int {
+  n = 0
+  for l in lines {
+    if str_has(l, a) && str_has(l, b) {
+      n += 1
+    }
+  }
+  n
+}
+
+fn tags_array_src: String {
+  "fn main {\n  flags = Array(Bool).new(100)\n  flags.fill(true)\n  k = 4\n  while k < flags.size {\n    flags[k] = false\n    k += 2\n  }\n  n = 0\n  for i in 0..flags.size {\n    if flags[i] {\n      n += 1\n    }\n  }\n  xs: Array(Int) = []\n  xs.push(n)\n  puts(xs[0])\n}\n"
+}
+
+fn tags_other_src: String {
+  "class Box {\n  v: Int\n\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn main {\n  b = Box.new(1)\n  h: Hash(Int, Int) = Hash(Int, Int).new()\n  i = 0\n  while i < 10 {\n    b.v = b.v + i\n    h[i] = b.v\n    i += 1\n  }\n  puts(b.v + (h[3] ?? 0))\n}\n"
+}
+
+fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
+  src = "${scratch()}/alias-tags-${stamp}-array.av"
+  ll = "${scratch()}/alias-tags-${stamp}-array.ll"
+  log = "${scratch()}/alias-tags-${stamp}-array.log"
+  c.wrote(file_write(src, tags_array_src()), "write the array probe")
+  c.eq_int(emit_ll(compiler, src, ll, log), 0, "the array probe's .ll")
+  if text = file_read(ll) {
+    lines = tags_lines(text)
+    c.expect(str_has(text, "!1 = !{!\"avant alias\"}"), "the alias root")
+    c.expect(str_has(text, "!3 = !{!2, !2, i64 0}"), "the element tag")
+    c.expect(str_has(text, "!5 = !{!4, !4, i64 0}"), "the buffer reference tag")
+    c.expect(str_has(text, "!7 = !{!6, !6, i64 0}"), "the size tag")
+    c.expect(tags_count(lines, "store i1 false, ptr %t", ", !tbaa !3") >= 1, "an element store carries the element tag")
+    c.expect(tags_count(lines, "load i1, ptr %t", ", !tbaa !3") >= 1, "an element load carries the element tag")
+    c.expect(tags_count(lines, "load ptr, ptr %t", ", !tbaa !5") >= 2, "the buffer reference's loads carry its tag")
+    c.expect(tags_count(lines, "store ptr %t", ", !tbaa !5") >= 1, "the new array's buffer reference store carries its tag")
+    c.expect(tags_count(lines, "load i32, ptr %t", ", !tbaa !7") >= 1, "the size's loads carry its tag")
+    c.eq_int(tags_count(lines, "ptr %_", "!tbaa"), 0, "no access to a local is tagged")
+    cap_reads = 0
+    cap_tagged = 0
+    for i in 0..lines.size - 1 {
+      if str_has(lines[i], "getelementptr inbounds %\"Array(") && str_has(lines[i], ", i32 0, i32 2") {
+        cap_reads += 1
+        if str_has(lines[i + 1], "!tbaa") {
+          cap_tagged += 1
+        }
+      }
+    }
+    c.expect(cap_reads >= 1, "the probe reaches the capacity")
+    c.eq_int(cap_tagged, 0, "the capacity is not tagged")
+  } else {
+    c.expect(false, "read the array probe's .ll")
+  }
+  src2 = "${scratch()}/alias-tags-${stamp}-other.av"
+  ll2 = "${scratch()}/alias-tags-${stamp}-other.ll"
+  log2 = "${scratch()}/alias-tags-${stamp}-other.log"
+  c.wrote(file_write(src2, tags_other_src()), "write the object and hash probe")
+  c.eq_int(emit_ll(compiler, src2, ll2, log2), 0, "the object and hash probe's .ll")
+  if text2 = file_read(ll2) {
+    c.expect(!str_has(text2, "!tbaa"), "object fields, Hash fields and locals are untagged")
+    c.expect(!str_has(text2, "avant alias"), "no alias nodes without a tag")
+  } else {
+    c.expect(false, "read the object and hash probe's .ll")
+  }
+}
+
+fn test_alias_tags_moves(c: Checks, compiler: String, stamp: Int) {
+  root = avant_test_root()
+  src = "${root}/tests/fixtures/heap/alias_moves.av"
+  bin = "${scratch()}/alias-tags-${stamp}-moves"
+  clog = "${scratch()}/alias-tags-${stamp}-moves.clog"
+  want = file_read("${root}/tests/goldens/runs/fixtures/heap/alias_moves.out") ?? ""
+  c.expect(want.size > 0, "the moves' run golden")
+  flags: Array(String) = []
+  flags.push("--release")
+  c.eq_int(compile_av_flags(compiler, src, bin, clog, flags), 0, "the moves compile with --release")
+  if !file_exists(bin) {
+    c.expect(false, "the moves' binary")
+    return
+  }
+  chmod_x(bin)
+  envs = ["", "AVANT_GC_STRESS=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1", "AVANT_NURSERY=0", "AVANT_YOUNG_MB=1 AVANT_GC_VERIFY=1"]
+  for j in 0..envs.size {
+    args: Array(String) = []
+    words = envs[j]
+    start = 0
+    for i in 0..words.size {
+      if words[i] == 32 {
+        args.push(str_slice(words, start, i))
+        start = i + 1
+      }
+    }
+    if start < words.size {
+      args.push(str_slice(words, start, words.size))
+    }
+    args.push(bin)
+    rlog = "${scratch()}/alias-tags-${stamp}-moves-${j}.out"
+    name = envs[j]
+    if name.size == 0 {
+      name = "the outer environment"
+    }
+    code = process_run_out("/usr/bin/env", args, rlog) ?? -1
+    c.eq_int(code, 0, "the moves exit 0 under ${name}")
+    c.eq_str(file_read(rlog) ?? "", want, "the moves' output under ${name}")
+  }
+}
+
+fn test_alias_tags(c: Checks) {
+  c.suite("tests/cases/test_alias_tags.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    test_alias_tags_ll(c, compiler, stamp)
+    test_alias_tags_moves(c, compiler, stamp)
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_alias_tags(c)
+  c.finish()
+}

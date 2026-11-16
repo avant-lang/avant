@@ -1,0 +1,194 @@
+// Element stores beside the moves of their buffer. The emitter tags an
+// element access and an Array header's buffer reference and size with
+// type-based alias tags, so LLVM may keep a buffer reference in a
+// register across element stores. That is right only because a buffer
+// moves (a collection evacuates it, a push grows it) inside a call, which
+// LLVM must assume writes the header. Each function here stores elements
+// in a loop whose calls move the buffer: a push that grows it, an
+// allocation whose collection evacuates it (a young buffer under a young
+// or a tenured header), an element store of a reference followed by a
+// read of the new element's header, and tasks whose collections move one
+// another's buffers at their polls while they read a shared array. A
+// buffer reference kept across one of those calls would store into the
+// old buffer or read freed memory, and the checksums would differ (in
+// --release, and under AVANT_GC_STRESS=1, AVANT_YOUNG_MB=1,
+// AVANT_GC_VERIFY=1 and AVANT_NURSERY=0).
+
+class Box {
+  v: Int
+
+  fn initialize(v: Int) {
+    self.v = v
+  }
+}
+
+fn sum_ints(xs: Array(Int)): Int {
+  acc = 0
+  for k in 0..xs.size {
+    acc = acc &* 31 &+ xs[k]
+  }
+  acc
+}
+
+// Element stores and growth in one loop: a push that grows moves the
+// buffer, and the stores after it must reach the new one.
+fn grow_mix(n: Int): Int {
+  xs: Array(Int) = [0]
+  i = 0
+  while i < n {
+    xs[xs.size - 1] = i * 3
+    xs.push(i)
+    xs[i] = xs[i] + 1
+    i += 1
+  }
+  sum_ints(xs)
+}
+
+// Byte stores with an allocation between them: a collection there moves
+// the young buffer, and the next store must reach its new place.
+fn move_bytes(n: Int, rounds: Int): Int {
+  flags = Array(Bool).new(n)
+  keep: Array(Box) = []
+  acc = 0
+  for r in 0..rounds {
+    flags.fill(true)
+    k = r % 3
+    while k < n {
+      flags[k] = false
+      b = Box.new(k)
+      if k % 7 == 0 {
+        keep.push(b)
+      }
+      k += 3
+    }
+    for j in 0..n {
+      if flags[j] {
+        acc += j
+      }
+    }
+    if keep.size > 50 {
+      acc += keep[keep.size - 1].v
+      keep.clear()
+    }
+  }
+  acc
+}
+
+// Integer stores with string building between them, and a read of the
+// size each time.
+fn move_ints(n: Int, rounds: Int): Int {
+  xs = Array(Int).new(n)
+  acc = 0
+  for r in 0..rounds {
+    i = 0
+    while i < xs.size {
+      xs[i] = xs[i] + i + r
+      s = "v${xs[i]}"
+      acc = acc &+ s.size
+      i += 1
+    }
+  }
+  acc &+ sum_ints(xs)
+}
+
+// An array of arrays: element stores of references, inner growth, and
+// the inner headers read after each store.
+fn nested(n: Int): Int {
+  rows: Array(Array(Int)) = []
+  for i in 0..8 {
+    rows.push([i])
+  }
+  acc = 0
+  i = 0
+  while i < n {
+    r = i % 8
+    row = rows[r]
+    row.push(i)
+    rows[r] = row
+    acc = acc &+ rows[r].size &+ rows[r][rows[r].size - 1]
+    if i % 64 == 0 {
+      rows[r] = [i, i + 1]
+    }
+    i += 1
+  }
+  for row in rows {
+    acc = acc &* 7 &+ sum_ints(row)
+  }
+  acc
+}
+
+// A header that has survived collections, with a buffer born after them:
+// a young collection inside the loop moves the buffer and leaves the
+// header where it is.
+fn tenured_header(n: Int): Int {
+  xs: Array(Int) = []
+  junk: Array(String) = []
+  for i in 0..200000 {
+    junk.push("j${i}")
+    if junk.size > 100 {
+      junk.clear()
+    }
+  }
+  for i in 0..n {
+    xs.push(i)
+  }
+  acc = 0
+  for r in 0..10 {
+    i = 0
+    while i < xs.size {
+      xs[i] = xs[i] * 3 + r
+      t = "t${i}"
+      acc = acc &+ t.size
+      i += 1
+    }
+  }
+  acc &+ sum_ints(xs)
+}
+
+// Tasks each write their own young arrays while the others allocate, so
+// a collection one of them starts moves another's buffer at its poll; a
+// shared array built before them is read throughout.
+fn task_work(shared: Array(Int), id: Int, n: Int): Int {
+  own = Array(Int).new(n)
+  acc = 0
+  for r in 0..40 {
+    i = 0
+    while i < n {
+      own[i] = own[i] + shared[(i + id) % shared.size]
+      b = Box.new(i + r)
+      acc = acc &+ b.v
+      i += 1
+    }
+    if r % 10 == 0 {
+      own.push(r)
+    }
+  }
+  acc &+ sum_ints(own)
+}
+
+fn main {
+  puts(grow_mix(3000))
+  puts(move_bytes(997, 30))
+  puts(move_ints(500, 20))
+  puts(nested(2000))
+  puts(tenured_header(700))
+  shared: Array(Int) = []
+  for i in 0..300 {
+    shared.push(i * i)
+  }
+  hs: Array(JoinHandle(Int)) = []
+  for id in 0..4 {
+    hs.push(spawn { task_work(shared, id, 400) })
+  }
+  mine: Array(String) = []
+  for i in 0..2000 {
+    mine.push("m${i}")
+    if mine.size > 64 {
+      mine.clear()
+    }
+  }
+  total = 0
+  hs.each { |h| total = total &+ (h.join() ?? -1) }
+  puts(total)
+  puts(mine.size)
+}
