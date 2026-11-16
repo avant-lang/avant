@@ -377,7 +377,7 @@ static void promote_young_large(AvantHeader *h) {
   gc_heap.ctr.prom.large += (uint64_t)bytes;
   gc_heap.promoted_since_full += (uint64_t)bytes;
   /* An object old from now on that no full collection marked. */
-  gc_proof_break(PROOF_PROMOTED);
+  gc_proof_grow(PROOF_PROMOTED);
   h->flags = (uint16_t)(h->flags & (uint16_t)~(AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED));
   if (gc_heap.young_large >= bytes) {
     gc_heap.young_large -= bytes;
@@ -539,7 +539,7 @@ void *gc_los_alloc(size_t payload, uint32_t type_id) {
   } else {
     gc_heap.mature_since_full += bytes;
     /* A large object born old. */
-    gc_proof_break(PROOF_MATURE);
+    gc_proof_grow(PROOF_MATURE);
   }
   gc_note_peak();
   return payload_of(h);

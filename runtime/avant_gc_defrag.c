@@ -49,7 +49,7 @@
  * gc_heap.marks lines up with Block.start. A dead object (its start bit
  * stays while its line is live) costs nothing (every walk of a block here
  * used to read every start bit's object and ask its mark). */
-static inline const uint64_t *block_marks(const Block *b) {
+static inline uint64_t *block_marks(const Block *b) {
   return &gc_heap.marks[((uint64_t)(b->base - gc_heap.base) >> BLOCK_SHIFT) * START_WORDS];
 }
 
@@ -575,6 +575,10 @@ void gc_defrag_evacuate(uint64_t live_lines_this) {
         AvantHeader *h = (AvantHeader *)(stopped_block->base + ((size_t)w * 64 + (size_t)bit) * 8);
         if (h->flags & AVANT_FLAG_FORWARDED) {
           stopped_block->start[w] &= ~(1ULL << bit);
+          /* Its side mark too: between two full collections a side mark
+           * is an old object's (avant_gc_proof.c, the sticky full
+           * collection). */
+          block_marks(stopped_block)[w] &= ~(1ULL << bit);
         }
         bits &= bits - 1;
       }
@@ -595,6 +599,18 @@ void gc_defrag_release(void) {
   size_t i;
   for (i = 0; i < gc_heap.def_release.n; i++) {
     mature_unlink(gc_heap.def_release.v[i]);
+    /* Its side marks and line marks go (its objects were marked, then
+     * moved): between two full collections a side mark is an old
+     * object's and nothing else's, and a line the full collection's end
+     * saves as live is a live block's (the sticky full collection reads
+     * both, avant_gc_proof.c). No other block leaves use with a side mark
+     * or a live line: a full collection's sweep frees only blocks with no
+     * live line, so no marked object, and a young collection only blocks
+     * that held young objects, which carry no side mark (after a trace
+     * that left the young generation young they do, and the next full
+     * collection is not the sticky one: it clears every mark first). */
+    memset(block_marks(gc_heap.def_release.v[i]), 0, START_WORDS * sizeof(uint64_t));
+    memset(gc_heap.def_release.v[i]->line_mark, 0, LINES_PER_BLOCK);
     /* AVANT_GC_STRESS=1: an evacuated block is poisoned. */
     gc_poison(gc_heap.def_release.v[i]->base, BLOCK_SIZE);
     gc_cache_or_free_block(gc_heap.def_release.v[i]);

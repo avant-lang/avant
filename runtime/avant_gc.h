@@ -414,9 +414,9 @@ static inline void avant_barrier_slot_young(void *obj, void *slot) {
  * is made only for an object that is not young while the collector logs
  * stores (avant_gc_proof_logging: one byte, set from a full collection's
  * end while the proof that the old heap is unchanged may still hold, and
- * under AVANT_GC_VERIFY=1), so before a program's first full collection
- * and between two full collections of a program that promotes, the usual
- * states, it costs a load and a test. */
+ * under AVANT_GC_VERIFY=1), so before a program's first full collection,
+ * and after the log broke (a store into a large holder, a full log), it
+ * costs a load and a test. */
 extern __attribute__((visibility("hidden"))) uint8_t avant_gc_proof_logging;
 __attribute__((visibility("hidden"))) void avant_gc_overwrite_slow(void *obj);
 static inline void avant_gc_overwrite(void *obj) {

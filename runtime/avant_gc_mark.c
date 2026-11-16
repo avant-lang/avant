@@ -325,14 +325,82 @@ static __attribute__((noinline)) void drain_keep(void) {
   drain(0, 1);
 }
 
+/* The sticky full collection's second set of roots (avant_gc_proof.c):
+ * every word of every holder the log took since the last full
+ * collection, as the word is now. A logged holder is old (the log takes
+ * no other), so its own mark is F's and the mark does not scan it. */
+void gc_mark_sticky_holders(void) {
+  const GcProof *p = &gc_heap.proof;
+  uint32_t i;
+  for (i = 0; i < p->holders_n; i++) {
+    void *obj = p->holders[i];
+    EACH_REF_SLOT(obj, slot, { mark(*slot); });
+  }
+  gc_heap.ctr.sticky.sticky_holders += p->holders_n;
+}
+
 static void mark_tls_slot(void **slot) {
   if (slot) {
     mark(*slot);
   }
 }
 
+/* A root's referent in an ordinary trace (gc_mark_roots): when it is not
+ * marked yet, it is marked and everything it reaches is marked before the
+ * next root, and it is an anchor (gc_proof_anchor): no root marked before
+ * it reaches it. A referent already marked is reached from the roots
+ * marked before it, through objects this trace marks. The proof reads
+ * that (avant_gc_proof.c, "Anchors"). */
+static void mark_anchor(void *p) {
+  Block *b = NULL;
+  AvantHeader *ol = NULL;
+  void *start = gc_object_payload(p, &b, &ol);
+  AvantHeader *h;
+  if (!start) {
+    return;
+  }
+  h = avant_header(start);
+  if (full_marked(h)) {
+    return;
+  }
+  full_set_mark(h);
+  mark_object(start, h, b);
+  gc_proof_anchor(start);
+  if (gc_heap.mark_bits) {
+    drain_bits();
+  } else {
+    drain_plain();
+  }
+}
+
+static void mark_anchor_slot(void **slot) {
+  if (slot) {
+    mark_anchor(*slot);
+  }
+}
+
 void gc_mark_roots(void) {
   ThreadReg *t;
+  /* (Before the roots: the anchors' marks drain at once.) */
+  gc_heap.mark_bits = (uint8_t)(avant_nursery_held * 8 > gc_heap.proof.old_live);
+  gc_proof_anchors_begin();
+  if (!gc_heap.keep_young && !gc_heap.sticky) {
+    /* An ordinary trace: each root's referent with what it reaches, in
+     * the order the proof walks the roots (gc_proof_each_root), and the
+     * anchors noted. */
+    pthread_mutex_lock(&gc_heap.threads_mu);
+    for (t = gc_heap.threads; t; t = t->next) {
+      EACH_FRAME_SLOT(gc_thread_frames(t), slot, { mark_anchor(*slot); });
+    }
+    pthread_mutex_unlock(&gc_heap.threads_mu);
+    for (PinEnt *p = gc_heap.pins; p; p = p->next) {
+      mark_anchor(p->payload);
+    }
+    EACH_TASK_ROOT(slot, mark_anchor(*slot));
+    gc_each_runtime_root(mark_anchor_slot);
+    gc_proof_anchors_end();
+    return;
+  }
   pthread_mutex_lock(&gc_heap.threads_mu);
   for (t = gc_heap.threads; t; t = t->next) {
     EACH_FRAME_SLOT(gc_thread_frames(t), slot, { mark(*slot); });
@@ -343,6 +411,9 @@ void gc_mark_roots(void) {
   }
   EACH_TASK_ROOT(slot, mark(*slot));
   gc_each_runtime_root(mark_tls_slot);
+  if (gc_heap.sticky) {
+    gc_mark_sticky_holders();
+  }
   /* The late start bits of the young objects the mark promotes, one of
    * two ways. Set in the loop (drain_bits), each costs the promoted
    * object a few instructions and every object marked one (the heap's
@@ -354,7 +425,6 @@ void gc_mark_roots(void) {
    * collection found live (an eighth: mostly old objects will be marked),
    * and the loop's own bit otherwise (a heap that is mostly young, a
    * program's first full collection). */
-  gc_heap.mark_bits = (uint8_t)(avant_nursery_held * 8 > gc_heap.proof.old_live);
   if (gc_heap.keep_young) {
     /* The trace that leaves the young generation young (gc_collect):
      * nothing it marks is promoted, so no start bit is set in its loop.
