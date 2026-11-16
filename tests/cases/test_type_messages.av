@@ -18,6 +18,8 @@ class TCase {
   pub pos: String = ""
   pub single: Bool = false
   pub absent: String = ""
+  // A second message the program must give too (an independent mistake).
+  pub also: String = ""
   pub ok: Bool = false
   // Other modules beside main.av: name, body, name, body, ...
   pub mods: Array(String) = []
@@ -44,6 +46,20 @@ fn first(tag: String, src: String, needle: String, pos: String): TCase {
 // The program's one error, without the words absent.
 fn without(tag: String, src: String, needle: String, pos: String, absent: String): TCase {
   f = only(tag, src, needle, pos)
+  f.absent = absent
+  f
+}
+
+// The words at pos, and the words also, a second error of the same
+// statement that does not follow from the first.
+fn both(tag: String, src: String, needle: String, pos: String, also: String): TCase {
+  f = first(tag, src, needle, pos)
+  f.also = also
+  f
+}
+
+// f, which must not say absent either.
+fn absent_too(f: TCase, absent: String): TCase {
   f.absent = absent
   f
 }
@@ -125,6 +141,16 @@ fn cases: Array(TCase) {
   // one error: the call is not checked on as the function's.
   xs.push(with_mods(only("bare-both-one-error", "import tm\n\nclass C {\n  n: Int = 0\n\n  fn f(x: String): Bool {\n    x.size > 1\n  }\n\n  fn g(s: String): Int {\n    if n == 0 && !f(s) {\n      return 1\n    }\n    0\n  }\n}\n\nfn main {\n  puts(C.new().g(\"a\"))\n}\n", "f is both a method of C and a function; write self.f(...) for the method, or qualify the function (module.f(...))", "11:19"), ["tm", "pub fn f(x: Int): Bool {\n  x > 0\n}\n"]))
   xs.push(with_mods(only("bare-both-one-error-external", "import tm\n\nclass C {\n  n: Int = 0\n\n  fn f(x: String): Bool {\n    x.size > 1\n  }\n}\n\nfn (cs: C) g(s: String): Int {\n  if cs.n == 0 && !f(s) {\n    return 1\n  }\n  0\n}\n\nfn main {\n  puts(C.new().g(\"a\"))\n}\n", "f is both a method of C and a function; write cs.f(...) for the method, or qualify the function (module.f(...))", "12:20"), ["tm", "pub fn f(x: Int): Bool {\n  x > 0\n}\n"]))
+  // An error that makes no type fail (a private field: the field still
+  // has its type, the literal is still of its type) poisons nothing: a
+  // second, independent mistake in the statement is reported too.
+  iface = ["priv", "pub interface Show {\n  fn to_s: String\n}\n\npub struct Hide {\n  n: Int\n\n  fn to_s: String {\n    \"p\"\n  }\n}\n\npub Hide: Show\n"]
+  xs.push(with_mods(both("indep-private-literal-iface", "import priv\n\nfn show(v: T: Show): String {\n  v.to_s()\n}\n\nfn main {\n  puts(show(Hide { n: 1 }))\n}\n", "field n of Hide is private to module priv; mark it pub", "8:23", "Hide does not implement Show"), iface))
+  xs.push(with_mods(both("indep-private-read-then-type", "import priv\n\nfn main {\n  h = priv.make()\n  s: String = h.n\n  puts(s)\n}\n", "field n of Hide is private to module priv; mark it pub", "5:16", "cannot assign Int to String"), ["priv", "pub struct Hide {\n  n: Int\n}\n\npub fn make: Hide {\n  Hide { n: 1 }\n}\n"]))
+  xs.push(with_mods(both("indep-private-two-fields", "import priv\n\nfn main {\n  h = priv.make()\n  puts(h.n + h.m)\n}\n", "field n of Hide is private to module priv; mark it pub", "5:9", "field m of Hide is private to module priv; mark it pub"), ["priv", "pub struct Hide {\n  n: Int\n  m: Int\n}\n\npub fn make: Hide {\n  Hide { n: 1, m: 2 }\n}\n"]))
+  xs.push(with_mods(only("indep-private-literal-once", "import priv\n\nfn main {\n  h = Hide { k: 3 }\n  puts(h.k)\n}\n", "Hide has private fields (n); a literal outside module priv cannot build it", "4:7"), ["priv", "pub struct Hide {\n  n: Int = 1\n  m: Int = 2\n  pub k: Int\n}\n"]))
+  // A failed type still silences what reads it, beside a private field.
+  xs.push(with_mods(absent_too(both("indep-private-then-cascade", "import priv\n\nfn main {\n  h = priv.make()\n  puts(h.n + nosuch())\n}\n", "field n of Hide is private to module priv; mark it pub", "5:9", "unknown function nosuch"), "binary operator"), ["priv", "pub struct Hide {\n  n: Int\n}\n\npub fn make: Hide {\n  Hide { n: 1 }\n}\n"]))
   xs
 }
 
@@ -173,6 +199,9 @@ fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(TCase)) {
     c.expect(str_has(log, "${file}:${f2.pos}\n"), "${f2.tag}: at ${f2.pos}")
     if f2.single {
       c.expect(!str_has(log, "aborting due to"), "${f2.tag}: one error")
+    }
+    if f2.also.size > 0 {
+      c.expect(str_has(log, f2.also), "${f2.tag}: also says ${f2.also}")
     }
     if f2.absent.size > 0 {
       c.expect(!str_has(log, f2.absent), "${f2.tag}: does not say ${f2.absent}")

@@ -398,6 +398,21 @@ pub class Checker {
     self.errors.push(e)
   }
 
+  // An error that makes no type fail: the checker goes on with the type
+  // it has (a field that is private still has its type, and a literal
+  // with a private field is still of its type). It poisons nothing, so a
+  // second, independent mistake in the same statement is reported too,
+  // and it is reported in a statement that already failed (it reads no
+  // failed type, as an unknown name reads none).
+  pub fn fail_alone(loc: Location, message: String) {
+    e = CompileError.new(loc, diag_code(4, message), message)
+    if self.errors.count() == 0 {
+      self.err = e
+    }
+    self.failed = true
+    self.errors.push(e)
+  }
+
   // An error with a hint after it (" (did you mean `x`?)"): the
   // code is the message's, whatever the hint says.
   pub fn fail_hint(loc: Location, message: String, hint: String) {
@@ -3139,10 +3154,15 @@ pub class Checker {
       }
       i += 1
     }
+    // Once per literal: the first private field it leaves out.
+    private_said = false
     for f in ty.fields {
       if prev = seen.get(f.name) {
       } else if field_hidden(ty, f.name) {
-        fail(expr.loc, "${ty.show()} has private fields (${f.name}); a literal outside module ${ty.mod_name} cannot build it")
+        if !private_said {
+          fail_alone(expr.loc, "${ty.show()} has private fields (${f.name}); a literal outside module ${ty.mod_name} cannot build it")
+          private_said = true
+        }
       } else if f.defaulted {
         splice_struct_default(expr, ty, f)
       } else {
@@ -3419,10 +3439,15 @@ pub class Checker {
           }
         }
       }
+      // Once per literal: the first private field it leaves out.
+      private_said = false
       for f in ty.fields {
         if prev = seen.get(f.name) {
         } else if field_hidden(ty, f.name) {
-          fail(expr.loc, "${ty.show()} has private fields (${f.name}); a literal outside module ${ty.mod_name} cannot build it")
+          if !private_said {
+            fail_alone(expr.loc, "${ty.show()} has private fields (${f.name}); a literal outside module ${ty.mod_name} cannot build it")
+            private_said = true
+          }
         } else if f.defaulted {
           splice_struct_default(expr, ty, f)
         } else {
