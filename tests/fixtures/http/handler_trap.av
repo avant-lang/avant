@@ -15,7 +15,9 @@ import std.gc
 // /callback). The program spawns nothing. With an argument (a path) it
 // writes its port there and waits for tests/fixtures/http/raw_client.py
 // (mode handler_trap, run by tests/cases/test_std_http_safety.av);
-// without one (the run goldens) it asks itself nothing and stops.
+// without one (the run goldens) it asks itself nothing and stops. With
+// a second argument `ceiling` its memory ceiling is 1 byte, so every
+// request is answered 503 (mode ceiling); the test ends it by a timeout.
 
 lib gc_rt {
   fun avant_pin_count: Int
@@ -53,6 +55,9 @@ fn main: Int {
   mark = Acc.new()
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened
+    if a.size > 2 && a[2] == "ceiling" {
+      _ = server.memory_ceiling(1)
+    }
     server.get("/ok") { |req|
       Response.text("ok")
     }

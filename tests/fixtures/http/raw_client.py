@@ -442,6 +442,100 @@ def ws_read_frame(s, buf):
     return op, buf[off:off + n], buf[off + n:]
 
 
+def budget():
+    # The test's server has a body budget of 1000 bytes. A body of 600
+    # waiting for its bytes holds 600 of it; a second one of 600 is
+    # answered 503 and closed; once the first is complete (200) a third
+    # of 600 fits again.
+    post = b"POST /len HTTP/1.1\r\nHost: x\r\nContent-Length: 600\r\n\r\n"
+    first = connect()
+    first.sendall(post + b"a" * 100)
+    time.sleep(0.2)
+    status, data, closed = exchange(post + b"b" * 100)
+    second = "%d %s" % (status, "closed" if closed else "open")
+    first.sendall(b"a" * 500)
+    got = read_answers(first, 1)
+    first.close()
+    third = connect()
+    third.sendall(post)
+    time.sleep(0.2)
+    third.sendall(b"c" * 600)
+    got3 = read_answers(third, 1)
+    third.close()
+    return "second:%s,first:%s,third:%s" % (
+        second, got[0][0] if got else 0, got3[0][0] if got3 else 0)
+
+
+def ceiling(port_file):
+    # tests/fixtures/http/handler_trap.av with a memory ceiling of 1
+    # byte: once its sweep has read the memory (within a second), every
+    # new request is answered 503 and closed.
+    if not wait_port(port_file):
+        return "no port"
+    time.sleep(1.5)
+    status, data, closed = exchange(get("/ping"))
+    return "%d %s" % (status, "closed" if closed else "open")
+
+
+def conn_limit():
+    # The test's server keeps 3 connections. a, b and c each have an
+    # answer and wait idle; a fourth, d, closes the longest idle (a,
+    # the oldest of equals) and is answered, as b and c still are.
+    # Then b, c and d each hold half a head (busy, not idle): a fifth is
+    # closed at once.
+    def one(sock):
+        sock.sendall(get("/ping"))
+        got = read_answers(sock, 1)
+        return got == [(200, b"pong")]
+    conns = []
+    for _ in range(3):
+        c = connect()
+        if not one(c):
+            return "no answer"
+        conns.append(c)
+        time.sleep(0.05)
+    d = connect()
+    d_ok = one(d)
+    a_closed = wait_closed(conns[0], 2)
+    b_ok, c_ok = one(conns[1]), one(conns[2])
+    for c in (conns[1], conns[2], d):
+        c.sendall(b"GET /ping HTTP/1.1\r\n")
+    time.sleep(0.1)
+    e = connect()
+    e_closed = wait_closed(e, 2)
+    return "d:%s,a closed:%s,b:%s,c:%s,e closed:%s" % (d_ok, a_closed, b_ok, c_ok, e_closed)
+
+
+def ws_silent():
+    # A WebSocket client that never answers the server's close frame and
+    # never closes its end: the server's close waits for it until its
+    # shutdown deadline. It reads until the server's end, then holds the
+    # socket 3 s more.
+    s, buf = ws_open("/ws")
+    s.settimeout(10)
+    start = time.time()
+    ended = False
+    try:
+        while not ended and time.time() - start < 10:
+            ended = not s.recv(4096)
+    except OSError:
+        ended = True
+    if not ended:
+        return "still open"
+    time.sleep(3)
+    s.close()
+    return "the server ended its side"
+
+
+def ws_silent_probe(port_file):
+    # ws_silent against a fixture that wrote its port to port_file, with
+    # the wall clock of the server's end printed (a probe's mode).
+    if not wait_port(port_file):
+        return "no port"
+    r = ws_silent()
+    return "%s at %d" % (r, int(time.time() * 1000))
+
+
 def wait_port(port_file):
     """Reads the port a fixture server wrote to port_file (20 s at most)."""
     global port
@@ -708,6 +802,16 @@ try:
         result = fast_body()
     elif mode == "slow_read":
         result = slow_read()
+    elif mode == "budget":
+        result = budget()
+    elif mode == "ceiling":
+        result = ceiling(arg)
+    elif mode == "conn_limit":
+        result = conn_limit()
+    elif mode == "ws_silent":
+        result = ws_silent()
+    elif mode == "ws_silent_probe":
+        result = ws_silent_probe(arg)
     elif mode == "handler_trap":
         result = handler_trap(arg)
     elif mode == "callback_trap":

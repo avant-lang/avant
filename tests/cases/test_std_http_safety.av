@@ -30,6 +30,8 @@ import std.http
 // Host value that is not host[:port]; the write paths
 // past the piece. And a client sending a request head, a
 // body or reading an answer slowly. And a handler that traps.
+// And the body budget, the connection limit, the shutdown
+// deadline and the memory ceiling.
 
 lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
@@ -1303,6 +1305,130 @@ fn handler_trap_cases(c: Checks, root: String) {
   }
 }
 
+fn limit_round(port: Int, out: Channel(String), root: String, stamp: Int, mode: String): Int {
+  out.send(raw_client(port, root, stamp, mode, ""))
+  stop(port)
+  0
+}
+
+// The production limits beside the deadlines: a server-wide budget for
+// the bodies waiting for their bytes (503 past it), a connection limit
+// that closes the longest idle connection (or the new one, with none
+// idle), a memory ceiling past which requests are answered 503, and a
+// shutdown deadline after which `close` closes what it left to finish.
+fn limit_cases(c: Checks, root: String) {
+  stamp = now_ms()
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened.body_budget(1000)
+    server.post("/len") { |req|
+      Response.text("${req.body.size} bytes")
+    }
+    server.get("/__stop") { |req|
+      server.close()
+      Response.text("bye")
+    }
+    port = server.port()
+    out = Channel(String).new(2)
+    task = spawn {
+      limit_round(port, out, root, stamp, "budget")
+    }
+    server.serve()
+    c.eq_int(task.join() ?? -1, 0, "budget task")
+    want: Array(String) = []
+    want.push("budget=second:503 closed,first:200,third:200")
+    expect_lines(c, out, want, "the body budget answers 503 past it and is given back:")
+  } else {
+    c.expect(false, "listen for the body budget test")
+  }
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened.max_connections(3)
+    server.get("/ping") { |req|
+      Response.text("pong")
+    }
+    server.get("/__stop") { |req|
+      server.close()
+      Response.text("bye")
+    }
+    port = server.port()
+    out = Channel(String).new(2)
+    task = spawn {
+      limit_round(port, out, root, stamp, "conn_limit")
+    }
+    server.serve()
+    c.eq_int(task.join() ?? -1, 0, "connection limit task")
+    want: Array(String) = []
+    want.push("conn_limit=d:True,a closed:True,b:True,c:True,e closed:True")
+    expect_lines(c, out, want, "the connection limit closes the longest idle connection, or the new one:")
+  } else {
+    c.expect(false, "listen for the connection limit test")
+  }
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened.shutdown_timeout(500)
+    opened_ws = Channel(Int).new(1)
+    server.websocket("/ws") { |conn, msg|
+      _ = conn.send_message(msg)
+    }
+    server.websocket_open("/ws") { |conn|
+      _ = opened_ws.send(1)
+    }
+    server.get("/__stop") { |req|
+      server.close()
+      Response.text("bye")
+    }
+    port = server.port()
+    asked = Channel(Int).new(1)
+    out = Channel(String).new(2)
+    silent = spawn {
+      out.send(raw_client(port, root, stamp, "ws_silent", ""))
+      0
+    }
+    stopper = spawn {
+      _ = opened_ws.recv()
+      asked.send(now_ms())
+      stop(port)
+      0
+    }
+    server.serve()
+    returned = now_ms()
+    t_ask = asked.recv() ?? 0
+    c.eq_int(stopper.join() ?? -1, 0, "shutdown stopper task")
+    c.eq_int(silent.join() ?? -1, 0, "shutdown client task")
+    took = returned - t_ask
+    c.expect(took >= 400 && took < 3000, "serve returns at the shutdown deadline with a WebSocket client that never closes (${took} ms)")
+    line = out.recv() ?? ""
+    c.eq_str(line, "ws_silent=the server ended its side", "the silent client was sent the server's end")
+  } else {
+    c.expect(false, "listen for the shutdown deadline test")
+  }
+  if compiler = env_get("AVANT_COMPILER") {
+    bin = "${scratch()}/http-ceiling-${stamp}.bin"
+    clog = "${scratch()}/http-ceiling-${stamp}.clog"
+    code = compile_av(compiler, "${root}/tests/fixtures/http/handler_trap.av", bin, clog)
+    c.eq_int(code, 0, "the memory-ceiling fixture compiles")
+    log = "${scratch()}/http-ceiling-${stamp}.log"
+    port_file = "${scratch()}/http-ceiling-${stamp}.port"
+    ceiling_server = spawn {
+      args: Array(String) = []
+      args.push("4")
+      args.push(bin)
+      args.push(port_file)
+      args.push("ceiling")
+      process_run_out("/usr/bin/timeout", args, log) ?? -1
+    }
+    wlog = "${scratch()}/http-ceiling-${stamp}.wire"
+    pargs: Array(String) = []
+    pargs.push("${root}/tests/fixtures/http/raw_client.py")
+    pargs.push("0")
+    pargs.push("ceiling")
+    pargs.push(port_file)
+    _ = process_run_out("/usr/bin/python3", pargs, wlog)
+    c.eq_str(nth_line(file_read(wlog) ?? "", 0), "ceiling=503 closed", "past the memory ceiling a request is answered 503")
+    c.eq_int(ceiling_server.join() ?? -1, 124, "the memory-ceiling server ends by its timeout")
+  } else {
+    c.expect(false, "AVANT_COMPILER is set for the memory-ceiling test")
+  }
+}
+
 fn expect_lines(c: Checks, out: Channel(String), want: Array(String), what: String) {
   i = 0
   while i < want.size {
@@ -1511,6 +1637,7 @@ fn main: Int {
   ws_big_cases(c, avant_test_root())
   write_piece_cases(c)
   deadline_cases(c, avant_test_root())
+  limit_cases(c, avant_test_root())
   ws_handshake_cases(c, avant_test_root())
   ws_deadline_cases(c, avant_test_root())
   c.finish()

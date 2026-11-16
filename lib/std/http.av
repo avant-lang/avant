@@ -631,6 +631,36 @@ pub struct Server {
     self.set_limit("min_rate", 2, bytes_per_second, grace_ms)
   }
 
+  // The bytes the bodies of all requests waiting for theirs may hold
+  // together, each its Content-Length (268435456, 256 MiB, by default);
+  // a body that would pass it is answered 503 and its connection
+  // closed. A body that arrives with its head takes none.
+  pub fn body_budget(bytes: Int): Server {
+    self.set_limit("body_budget", 3, bytes, 0)
+  }
+
+  // The process's resident memory past which new requests are answered
+  // 503 and their connections closed, read about once a second. By
+  // default 90% of the container's memory limit (cgroup), or off when
+  // the process runs under none.
+  pub fn memory_ceiling(bytes: Int): Server {
+    self.set_limit("memory_ceiling", 4, bytes, 0)
+  }
+
+  // The open connections (10000 by default, at most the file-descriptor
+  // limit less a reserve): a connection past it closes the loop's
+  // longest idle one, or, with none idle, is closed itself.
+  pub fn max_connections(n: Int): Server {
+    self.set_limit("max_connections", 5, n, 0)
+  }
+
+  // How long `close` waits for the connections it leaves to finish (an
+  // answer being sent, a WebSocket's closing handshake) before it closes
+  // them, so `serve` returns by then (30000 ms by default).
+  pub fn shutdown_timeout(ms: Int): Server {
+    self.set_limit("shutdown_timeout", 6, ms, 0)
+  }
+
   fn set_limit(name: String, which: Int, a: Int, b: Int): Server {
     if self.state.serving {
       httpc.avant_http_limit_while_serving(name)

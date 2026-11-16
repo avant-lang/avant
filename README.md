@@ -3632,7 +3632,7 @@ fn main {
 | `.header(name, value)` | `name`, `value: String` | the `Response` | a header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`) | check request text before putting it in a header |
 | `get(name)`, `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)` | `name: String`, `i: Int` | `String?`, `Bool`, `Array(String)`, `Int`, `String?`, `String?` | — | **headers**, on `req.headers` and `resp.headers` |
 | `serve` | — | — | — | runs until `close` |
-| `close` | — | — | — | stops the server and lets `serve` return. An unclosed server keeps its socket until the process exits (no finalizer) |
+| `close` | — | — | — | stops the server and lets `serve` return, at the latest at the shutdown deadline (below). An unclosed server keeps its socket until the process exits (no finalizer) |
 
 **Bodies** are buffered up to `max_body` (1 MiB by default). Answered, then closed:
 
@@ -3648,6 +3648,10 @@ fn main {
 | --- | --- | --- |
 | `head_timeout(ms)`: the time a request head may take from its first byte | 10000 ms | 408, closed |
 | `min_rate(bytes_per_second, grace_ms = 5000)`: the rate a request body must arrive at, and an answer the client reads must leave at, over each `grace_ms` from when it began to wait | 240 bytes a second over 5000 ms | a body: 408, closed; an answer: the connection is closed |
+| `body_budget(bytes)`: what the bodies of all requests waiting for theirs may hold together (each its `Content-Length`; a body that arrives with its head holds none) | 268435456 (256 MiB) | 503, closed |
+| `memory_ceiling(bytes)`: the process's resident memory, read about once a second | 90% of the container's memory limit (cgroup); off when there is none | new requests: 503, closed |
+| `max_connections(n)`: the open connections | 10000, at most the file-descriptor limit less 64 and 8 a loop | the loop's longest idle connection is closed; with none idle, the new one |
+| `shutdown_timeout(ms)`: how long `close` waits for what it left to finish (an answer being sent, a WebSocket's closing handshake) | 30000 ms | those connections are closed and `serve` returns |
 
 <!-- check: compile -->
 ```avant
@@ -3655,7 +3659,7 @@ import std.http
 
 fn main {
   if opened = Http.listen(8080) {
-    server = opened.head_timeout(5000).min_rate(1000, 2000)
+    server = opened.head_timeout(5000).min_rate(1000, 2000).max_connections(50000)
     server.get("/") { |req|
       Response.text("hello")
     }
