@@ -133,7 +133,15 @@ fn cases: Array(NCase) {
   xs.push(only("mean-fn-value", "fn helper(n: Int): Int {\n  n\n}\nfn main {\n  f: fn(Int): Int = helpr\n  puts(f(1))\n}\n", "unknown function helpr (did you mean `helper`?)", "5:21"))
   xs.push(only("mean-call", add + "fn main {\n  puts(ad(1, 2))\n}\n", "unknown function ad (did you mean `add`?)", "5:8"))
   xs.push(only("mean-builtin-fn", "fn main {\n  put(1)\n}\n", "unknown function put (did you mean `puts`?)", "2:3"))
-  xs.push(with_mods(only("mean-qualified", "import qm\nfn main {\n  puts(qm.doubel(2))\n}\n", "unknown function qm.doubel (did you mean `double`?)", "3:10"), ["qm", "pub fn double(n: Int): Int {\n  n * 2\n}\nfn doubles(n: Int): Int {\n  n\n}\n"]))
+  xs.push(with_mods(only("mean-qualified", "import qm\nfn main {\n  puts(qm.doubel(2))\n}\n", "unknown function qm.doubel (did you mean `qm.double`?)", "3:10"), ["qm", "pub fn double(n: Int): Int {\n  n * 2\n}\nfn doubles(n: Int): Int {\n  n\n}\n"]))
+  // A qualified name that is no function, constant or type of its module
+  // is an unknown name (it read as a field of the module value), with
+  // the nearest of the module's pub names.
+  xs.push(with_mods(only("module-unknown-name", "import mm\nfn main {\n  puts(mm.nothing)\n}\n", "unknown name mm.nothing\n", "3:10"), ["mm", "pub fn nothing_here: Int {\n  1\n}\n\nfn hidden_one: Int {\n  2\n}\n\npub const limit_max = 4\n"]))
+  xs.push(with_mods(only("module-unknown-name-near", "import mm\nfn main {\n  x = mm.nothing_her\n  puts(x)\n}\n", "unknown name mm.nothing_her (did you mean `mm.nothing_here`?)", "3:9"), ["mm", "pub fn nothing_here: Int {\n  1\n}\n\nfn hidden_one: Int {\n  2\n}\n\npub const limit_max = 4\n"]))
+  xs.push(with_mods(only("module-unknown-name-const", "import mm\nfn main {\n  puts(mm.limit_mx)\n}\n", "unknown name mm.limit_mx (did you mean `mm.limit_max`?)", "3:10"), ["mm", "pub fn nothing_here: Int {\n  1\n}\n\nfn hidden_one: Int {\n  2\n}\n\npub const limit_max = 4\n"]))
+  xs.push(with_mods(only("module-unknown-name-private", "import mm\nfn main {\n  puts(mm.hidden_on)\n}\n", "unknown name mm.hidden_on\n", "3:10"), ["mm", "pub fn nothing_here: Int {\n  1\n}\n\nfn hidden_one: Int {\n  2\n}\n\npub const limit_max = 4\n"]))
+  xs.push(with_mods(only("module-unknown-call-near", "import mm\nfn main {\n  puts(mm.nothing_her())\n}\n", "unknown function mm.nothing_her (did you mean `mm.nothing_here`?)", "3:10"), ["mm", "pub fn nothing_here: Int {\n  1\n}\n\nfn hidden_one: Int {\n  2\n}\n\npub const limit_max = 4\n"]))
   xs.push(only("mean-type-capital", "struct Point {\n  x: Int\n}\nfn main {\n  p = Pont { x: 1 }\n  puts(1)\n}\n", "unknown type Pont (did you mean `Point`?)", "5:7"))
   xs.push(without("mean-none", "fn main {\n  count = 3\n  puts(zzzz)\n}\n", "unknown name zzzz", "3:8", "did you mean"))
   xs.push(without("mean-other-fn-local", "fn a {\n  counter = 1\n  puts(counter)\n}\nfn main {\n  a()\n  puts(countr)\n}\n", "unknown name countr", "7:8", "did you mean"))

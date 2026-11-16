@@ -2688,6 +2688,12 @@ pub class Checker {
       if object.is_clayout() {
         return check_clayout_member(expr, object)
       }
+      if object.is_module() {
+        // A qualified name that is no function, constant or type of the
+        // module (it read as a field of the module).
+        fail_hint(expr.loc, "unknown name ${object.name}.${expr.ident}", module_name_hint(object.name, expr.ident))
+        return t_int()
+      }
       fail_hint(expr.loc, "cannot read field ${expr.ident} on ${object.show()}", open_hint(obj, object))
       return t_int()
     }
