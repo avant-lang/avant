@@ -42,7 +42,7 @@
 # a user program never does.
 #
 # Environment:
-#   LETTERS_SEED      seed directory with avant (default bin/v0.44.0, the
+#   LETTERS_SEED      seed directory with avant (default bin/v0.45.0, the
 #                     release; a seed must emit the runtime call table, so
 #                     v0.35.0 and v0.36.0 no longer build a correct B since
 #                     the C-stack scans retired); relative to the checkout.
@@ -52,7 +52,10 @@
 #                     A seed must also have the 64-bit `Int` (v0.41.0 or
 #                     later): the runtime has one ABI, and a
 #                     32-bit-`Int` seed's B would call it with the wrong
-#                     widths.
+#                     widths. And it must be v0.44.0 or later: the code
+#                     older seeds emit calls avant_gc_fast_ok,
+#                     avant_gc_block and avant_inline_allocs, which the
+#                     runtime no longer exports, so B does not link.
 #   LETTERS_TIME_DIR  when set, each build's `/usr/bin/time -p` goes to
 #                     LETTERS_TIME_DIR/time-build-<step>.txt (b, c-llvm,
 #                     d-llvm, c-release)
@@ -75,16 +78,16 @@ fi
 
 COMPILER_LINK="runtime/build/avant_llvm.o"
 
-# The default seed (a release since v0.37.0): bin/v0.44.0, the release
+# The default seed (a release since v0.37.0): bin/v0.45.0, the release
 # archive unpacked (CI pins the same asset). The v0.36.0 release predates the runtime call table: the code it
 # emits holds references in registers across runtime helpers that now
 # collect, which only the conservative C-stack pin scan made safe, and the
 # scan is retired, so a B it builds is wrong (the local seed
 # bin/seeds/s28-w16b bridged that gap until v0.37.0). This is the one place
 # the default is computed; tools/gate.sh asks --print-seed.
-default_seed=bin/v0.44.0
+default_seed=bin/v0.45.0
 if [ -z "${LETTERS_SEED:-}" ] && [ ! -x "$default_seed/avant" ]; then
-  echo "letters: the default seed $default_seed is missing: unpack the v0.44.0 release archive there, or set LETTERS_SEED to a seed that emits the runtime call table (v0.36.0's B needs the retired C-stack scan)" >&2
+  echo "letters: the default seed $default_seed is missing: unpack the v0.45.0 release archive there, or set LETTERS_SEED to a seed that emits the runtime call table (v0.36.0's B needs the retired C-stack scan)" >&2
   exit 2
 fi
 seed=$(realpath -m "${LETTERS_SEED:-$default_seed}")

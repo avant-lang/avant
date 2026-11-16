@@ -4386,7 +4386,7 @@ You need a C compiler, the C library's development files and binutils (`ld`, `ob
 
 The published releases and CI build on `ubuntu-26.04` runners with the toolchain the benchmark numbers are measured with, at its exact versions: gcc 15.2 and libclang 20 (for the `bind` helper) from a fixed snapshot of Ubuntu's archive (`.github/install-toolchain.sh`), and LLVM's official 22.1.8 (`tools/install-llvm.sh`). The archive still runs on glibc 2.38 and later, and CI installs it on an `ubuntu-24.04` runner before a release is published. LLVM 22 replaced 20.1.8 for its compile times, measured on that machine over rotated rounds: the compiler's own release build is 18% faster, the release compiler compiling itself 19.5% faster, and the 50 LangArena tasks' release compiles 11.8% faster. A debug build of the compiler is 6.7% slower (about 1 s). The programs it builds run as fast as before (LangArena's geometric mean 0.993, within the run-to-run spread, with the same memory), and the release archive is 4.7% larger. LLVM 20, 21 and 23 still build the compiler (`LLVM_CONFIG` names their `llvm-config`).
 
-The compiler is built by a published release, the seed: **v0.41.0 or later**, unpacked at `bin/v0.44.0` (or wherever `LETTERS_SEED` points). An older release cannot build this tree: `Int` became 64-bit in v0.41.0, and the runtime has one ABI.
+The compiler is built by a published release, the seed: **v0.44.0 or later**, unpacked at `bin/v0.45.0` (or wherever `LETTERS_SEED` points). An older release cannot build this tree: the code v0.43.0 and earlier releases emit calls three runtime functions this runtime no longer exports (`avant_gc_fast_ok`, `avant_gc_block`, `avant_inline_allocs`), and the runtime has one ABI.
 
 ```sh
 sh runtime/build.sh
