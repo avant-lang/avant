@@ -23,10 +23,13 @@
 # x86-64-v3 code (AVX2, BMI) by default and whose static libraries
 # (libstdc++.a, libc's start files, libzstd.a) hold such code, so the
 # archive's runtime objects and compiler would not run on an older x86-64.
-# The variant setting is cleared, and every installed variant package that
-# ships a compiler, a static library or an object file is installed again
-# from amd64; the script fails if one is left or if gcc's default is not
-# the baseline x86-64 (tools/isa-check.sh checks the archive itself).
+# The variant setting is cleared, and every package the build uses (the
+# owners of the files the installed toolchain runs and links, build_files
+# below) that came from a variant is installed again from amd64; the
+# script fails if one is left or if gcc's default is not the baseline
+# x86-64. Other preinstalled variant packages (libmysqlclient-dev and the
+# like) are not used by the build and are listed as ignored
+# (tools/isa-check.sh checks the archive itself).
 # Prints every installed version, with its variant, at the end.
 set -Eeuo pipefail
 
@@ -62,25 +65,63 @@ readonly PACKAGES=(
 
 readonly NO_VARIANT=/etc/apt/apt.conf.d/99zz-avant-no-variant
 
-# Installed packages of an architecture variant (dpkg records the variant
-# a package came from) that ship a compiler or what a link takes in.
-variant_build_packages() {
-  dpkg-query -W -f '${db:Status-Abbrev}\t${Package}=${Version}\t${Architecture-Variant}\n' |
-    awk -F'\t' '$1 ~ /^ii/ && $3 != "" { print $2 }' |
-    while read -r pv; do
-      if dpkg -L "${pv%%=*}" 2> /dev/null | grep -qE '\.(a|o)$|^/usr/(lib|libexec)/gcc/'; then
-        echo "$pv"
-      fi
-    done
+# The files Avant's build runs or takes into its output, asked of the
+# installed toolchain itself: the compiler driver and its passes, the
+# assembler and linker (runtime/build.sh, tools/build-re2c.sh, every
+# program's link), the start files and static libraries a link takes in
+# (re2c links statically; tools/build-llvm.sh merges libstdc++.a, libz.a
+# and libzstd.a into the compiler), and the libclang the bind helper links.
+# Shared libraries the tools merely load (the runner's libc6 among them)
+# add no code to what the build writes, so they are not listed.
+build_files() {
+  local t f p
+  for t in cc gcc g++ c++ cpp as ld ld.bfd ar ranlib nm objcopy strip llvm-config-20; do
+    p=$(command -v "$t" 2> /dev/null) && readlink -f "$p"
+  done
+  for t in cc1 cc1plus collect2 lto-wrapper lto1; do
+    p=$(g++ -print-prog-name="$t" 2> /dev/null) && [ -f "$p" ] && readlink -f "$p"
+  done
+  for f in liblto_plugin.so crt1.o Scrt1.o rcrt1.o crti.o crtn.o crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o \
+      libgcc.a libgcc_eh.a libc.a libc_nonshared.a libm.a libmvec.a libpthread.a libdl.a librt.a \
+      libstdc++.a libsupc++.a libz.a libzstd.a; do
+    p=$(g++ -print-file-name="$f" 2> /dev/null) && [ "$p" != "$f" ] && [ -f "$p" ] && readlink -f "$p"
+  done
+  if p=$(llvm-config-20 --libdir 2> /dev/null); then
+    for f in "$p"/libclang-20.so* "$p"/libclang.so*; do [ -f "$f" ] && readlink -f "$f"; done
+  fi
+  return 0
+}
+
+# The installed packages that own those files (dpkg -S), as NAME=VERSION.
+build_packages() {
+  build_files | sort -u | while read -r f; do
+    dpkg -S "$f" 2> /dev/null | sed 's/: .*//; s/, /\n/g'
+  done | sed 's/:amd64$//' | sort -u | while read -r pkg; do
+    dpkg-query -W -f '${Package}=${Version}\n' "$pkg"
+  done
+}
+
+# Of the given NAME=VERSION, those from an architecture variant (dpkg
+# records the variant a package came from).
+from_variant() {
+  local pv
+  for pv in "$@"; do
+    [ -n "$(dpkg-query -W -f '${Architecture-Variant}' "${pv%%=*}")" ] && echo "$pv"
+  done
+  return 0
 }
 
 install_pins() {
   sudo apt-get install -y --no-install-recommends --allow-downgrades "${PACKAGES[@]}" || return 1
-  local again
-  mapfile -t again < <(variant_build_packages)
+  local used again
+  mapfile -t used < <(build_packages)
+  mapfile -t again < <(from_variant "${used[@]}")
   if ((${#again[@]})); then
-    echo "install-toolchain: installing again from amd64 (they came from an architecture variant): ${again[*]}"
-    sudo apt-get install -y --no-install-recommends --allow-downgrades --reinstall "${again[@]}" || return 1
+    echo "install-toolchain: installing again from amd64 (the build uses them; they came from an architecture variant): ${again[*]}"
+    # Not fatal here: the check after the install decides, naming what is
+    # left.
+    sudo apt-get install -y --no-install-recommends --allow-downgrades --reinstall "${again[@]}" ||
+      echo "install-toolchain: installing them again failed; the check below names what is left"
   fi
 }
 
@@ -108,11 +149,16 @@ SOURCES
   install_pins
 fi
 
-left=$(variant_build_packages)
+mapfile -t used < <(build_packages)
+echo "install-toolchain: the packages the build uses (owners of $(build_files | sort -u | wc -l) files): ${used[*]}"
+left=$(from_variant "${used[@]}")
 if [[ -n "$left" ]]; then
-  echo "install-toolchain: still from an architecture variant: $left" >&2
+  echo "install-toolchain: still from an architecture variant, and the build uses them: $left" >&2
   exit 1
 fi
+others=$(dpkg-query -W -f '${db:Status-Abbrev}\t${Package}\t${Architecture-Variant}\n' |
+  awk -F'\t' '$1 ~ /^ii/ && $3 != "" { print $2 }' | grep -vxF -f <(printf '%s\n' "${used[@]%%=*}") | tr '\n' ' ' || true)
+echo "install-toolchain: from an architecture variant, ignored, not used by the build (none of their files is a compiler pass, the assembler or the linker, or linked into what the build writes): ${others:-none}"
 march=$(cc -Q --help=target | awk '$1 == "-march=" { print $2 }')
 if [[ "$march" != "x86-64" ]]; then
   echo "install-toolchain: cc targets $march by default, not the baseline x86-64" >&2
