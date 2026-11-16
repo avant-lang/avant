@@ -121,6 +121,10 @@ fn cases: Array(TCase) {
   xs.push(only("no-fit-wide-literal-u64", "fn f(a: Int) {\n  puts(a)\n}\n\nfn f(a: String) {\n  puts(a)\n}\n\nfn main {\n  f(18446744073709551615u64)\n}\n", "no overload of f takes (UInt64): f(a: Int), f(a: String)", "10:3"))
   xs.push(only("no-fit-empty-array-method", "class C {\n  fn g(a: Int, b: Int) {\n    puts(a)\n  }\n\n  fn g(a: String, b: Int) {\n    puts(a)\n  }\n}\n\nfn main {\n  C.new().g([], 1)\n}\n", "no overload of C.g takes ([], Int)", "12:10"))
   xs.push(only("empty-array-not-array", "fn h(a: Int) {\n  puts(a)\n}\n\nfn main {\n  h([])\n}\n", "[] is an array, expected Int", "6:5"))
+  // A bare call refused as both the receiver's method and a function is
+  // one error: the call is not checked on as the function's.
+  xs.push(with_mods(only("bare-both-one-error", "import tm\n\nclass C {\n  n: Int = 0\n\n  fn f(x: String): Bool {\n    x.size > 1\n  }\n\n  fn g(s: String): Int {\n    if n == 0 && !f(s) {\n      return 1\n    }\n    0\n  }\n}\n\nfn main {\n  puts(C.new().g(\"a\"))\n}\n", "f is both a method of C and a function; write self.f(...) for the method, or qualify the function (module.f(...))", "11:19"), ["tm", "pub fn f(x: Int): Bool {\n  x > 0\n}\n"]))
+  xs.push(with_mods(only("bare-both-one-error-external", "import tm\n\nclass C {\n  n: Int = 0\n\n  fn f(x: String): Bool {\n    x.size > 1\n  }\n}\n\nfn (cs: C) g(s: String): Int {\n  if cs.n == 0 && !f(s) {\n    return 1\n  }\n  0\n}\n\nfn main {\n  puts(C.new().g(\"a\"))\n}\n", "f is both a method of C and a function; write cs.f(...) for the method, or qualify the function (module.f(...))", "12:20"), ["tm", "pub fn f(x: Int): Bool {\n  x > 0\n}\n"]))
   xs
 }
 
