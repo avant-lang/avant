@@ -1795,17 +1795,36 @@ pub fn arity_text(fnn: Function): String {
   "takes ${req} to ${most} arguments"
 }
 
-pub fn arg_types_text(arg_tys: Array(Ty)): String {
+pub fn (checker_self: Checker) arg_types_text(arg_tys: Array(Ty)): String {
   b = buf_new()
   b.push_str("(")
   for i in 0..arg_tys.size {
     if i > 0 {
       b.push_str(", ")
     }
-    b.push_str(arg_tys[i].show())
+    b.push_str(checker_self.arg_shown(i, arg_tys[i]))
   }
   b.push_str(")")
   b.to_s()
+}
+
+// Argument k of the call being matched, of type t, as a message shows it:
+// its type, except for the two arguments whose type is a stand-in until
+// a parameter takes them: a `[]` (an array of Void, which no value has)
+// reads `[]`, and an integer literal above Int's range (typed UInt64
+// until its parameter decides) reads as written.
+pub fn (checker_self: Checker) arg_shown(k: Int, t: Ty): String {
+  if checker_self.is_empty_array_ty(t) {
+    return "[]"
+  }
+  args = checker_self.args_now
+  if k < args.size {
+    e = args[k]
+    if e.kind == ex_int() && e.int_suffix.size == 0 && e.int_bits > 9223372036854775807u64 && t.show() == "UInt64" {
+      return "${e.int_bits}"
+    }
+  }
+  t.show()
 }
 
 // A call of shown whose arguments fit none of sigs, the functions (or
@@ -1835,11 +1854,11 @@ pub fn (checker_self: Checker) fail_no_fit(loc: Location, shown: String, sigs: A
     for k in 0..argc {
       if k < sig.params.size && !ty_assignable(arg_tys[k], sig.params[k]) {
         n = k + 1
-        checker_self.fail(loc, "argument ${n} of ${shown} is ${arg_tys[k].show()}, expected ${sig.params[k].show()}: ${checker_self.sig_text(shown, sig)}")
+        checker_self.fail(loc, "argument ${n} of ${shown} is ${checker_self.arg_shown(k, arg_tys[k])}, expected ${sig.params[k].show()}: ${checker_self.sig_text(shown, sig)}")
         return
       }
     }
-    checker_self.fail(loc, "${shown} does not take ${arg_types_text(arg_tys)}: ${checker_self.sig_text(shown, sig)}")
+    checker_self.fail(loc, "${shown} does not take ${checker_self.arg_types_text(arg_tys)}: ${checker_self.sig_text(shown, sig)}")
     return
   }
   any_count = false
@@ -1871,5 +1890,5 @@ pub fn (checker_self: Checker) fail_no_fit(loc: Location, shown: String, sigs: A
     checker_self.fail(loc, "no overload of ${shown} takes ${argc} ${word}: ${list.to_s()}")
     return
   }
-  checker_self.fail(loc, "no overload of ${shown} takes ${arg_types_text(arg_tys)}: ${list.to_s()}")
+  checker_self.fail(loc, "no overload of ${shown} takes ${checker_self.arg_types_text(arg_tys)}: ${list.to_s()}")
 }

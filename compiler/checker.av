@@ -181,6 +181,9 @@ pub class Checker {
   // The names of the named arguments of the call being matched
   // (check_call), for fail_no_fit's message.
   pub named_now: Array(String) = []
+  // The arguments of that call, so fail_no_fit shows a `[]` or a wide
+  // integer literal as written, not as its stand-in type.
+  pub args_now: Array(Expr) = []
   // The class whose field defaults are being checked: a bare name of
   // one of its fields gets its own message.
   pub default_owner: Ty? = nil
@@ -4226,7 +4229,15 @@ pub class Checker {
   }
 
   pub fn check_call(expr: Expr, has_want: Bool, want: Ty): Ty {
+    saved_args = self.args_now
+    got = check_call_named(expr, has_want, want)
+    self.args_now = saved_args
+    got
+  }
+
+  pub fn check_call_named(expr: Expr, has_want: Bool, want: Ty): Ty {
     split_named_args(expr)
+    self.args_now = expr.args
     if expr.field_exprs.size == 0 {
       return check_call_parts(expr, has_want, want)
     }
@@ -4484,6 +4495,10 @@ pub class Checker {
       // `[]` takes the parameter's array type.
       if want.is_array() && !type.ty_has_var(want) && !is_empty_array_ty(want) {
         return check_expr_as(expr, want)
+      }
+      if !want.is_array() && !type.ty_has_var(want) {
+        fail(expr.loc, "[] is an array, expected ${want.show()}")
+        return want
       }
       fail(expr.loc, "empty array needs a type, e.g. xs: Array(Int) = []")
       return want
