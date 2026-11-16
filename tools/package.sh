@@ -190,6 +190,12 @@ done | sed 's/^GLIBC_//' | sort -uV | tail -n 1)
 echo "glibc-floor: $floor" >> "$dir/versions.txt"
 echo "package: glibc floor $floor"
 
+# The ISA: the shipped binaries, the runtime objects and the floor program
+# need no more than the baseline x86-64 (tools/isa-check.sh: a C toolchain
+# that defaults to a newer level would otherwise ship code older
+# processors cannot run, unnoticed on the machine that built it).
+sh "$root/tools/isa-check.sh" "$dir" "$floor_dir/all" || fail "the archive needs a newer x86-64 than the baseline (tools/isa-check.sh above)"
+
 # The archive: see the epoch above.
 tar -C "$out" --sort=name --owner=0 --group=0 --numeric-owner --mode='u+rwX,go+rX,go-w' \
   --mtime="@$epoch" --format=gnu -cf "$out/$name.tar" "$name"

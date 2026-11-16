@@ -905,8 +905,15 @@ pub fn token_shown(t: Token): String {
 // that starts with `[`, `-` or `+` begins a new statement. Before,
 // format_source returned the reprint unchecked. A difference is a
 // formatter bug: the file is left as it is and the error names the
-// first token that would change.
+// first token that would change. A canonical text equal to the source
+// byte for byte is the same program without lexing either (the lexer
+// reads nothing but the text and the path): the corpus's files are
+// mostly canonical already, and a second pass formats only canonical
+// texts, so this skips two of every three lexes there.
 pub fn self_check(path: String, before: String, after: String): String? {
+  if before == after {
+    return nil
+  }
   la = Lexer.new(Source.new(path, before))
   ta = la.tokenize()
   lb = Lexer.new(Source.new(path, after))

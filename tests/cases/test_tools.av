@@ -67,6 +67,11 @@ fn test_tools(c: Checks) {
     jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/package-repro.sh", compiler, re2c, w], "${w}.log"))
     whats.push("package.sh")
     names.push(["packaged", "same-sha256", "same-bytes", "sha256-file", "commit-time", "source-date-epoch", "epoch-changes-sha256", "bad-epoch"])
+    // A layout that needs a newer x86-64 than the baseline is refused.
+    iw = "${scratch_dir()}/isa-check"
+    jobs.push(HJob.new("/bin/sh", ["${root}/tests/tools/isa-check.sh", compiler, iw], "${iw}.log"))
+    whats.push("isa-check.sh")
+    names.push(["baseline-passes", "vex-fails", "vex-named", "bmi-fails", "note-fails", "codec-allowed"])
   } else {
     c.expect(false, "package: AVANT_COMPILER names the compiler under test")
   }

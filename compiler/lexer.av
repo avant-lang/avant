@@ -102,6 +102,12 @@ pub fn utf8_len(c: Int): Int {
 
 pub class Lexer {
   source: Source
+  // The source's text and its size, read once: every byte the lexer
+  // looks at was a call for the text's size before (at_end, and the
+  // bounds check of the index), two or three per byte in bump. The text
+  // never changes while it is lexed.
+  src_text: String = ""
+  text_n: Int = 0
   path: String = ""
   pos: Int = 0
   line: Int = 1
@@ -121,6 +127,8 @@ pub class Lexer {
 
   fn initialize(source: Source) {
     self.source = source
+    self.src_text = source.text
+    self.text_n = source.text.size
     self.path = source.path
     self.pos = 0
     self.line = 1
@@ -151,7 +159,7 @@ pub class Lexer {
   }
 
   pub fn at_end: Bool {
-    self.pos >= self.source.text.size
+    self.pos >= self.text_n
   }
 
   pub fn here: Location {
@@ -159,18 +167,18 @@ pub class Lexer {
   }
 
   pub fn peek: Int {
-    if self.at_end() {
+    if self.pos >= self.text_n {
       return 0
     }
-    self.source.text[self.pos]
+    self.src_text[self.pos]
   }
 
   pub fn peek_at(n: Int): Int {
     p = self.pos + n
-    if p >= self.source.text.size {
+    if p >= self.text_n {
       return 0
     }
-    self.source.text[p]
+    self.src_text[p]
   }
 
   pub fn peek_next: Int {
@@ -178,10 +186,10 @@ pub class Lexer {
   }
 
   pub fn bump {
-    c = self.peek()
-    if self.at_end() {
+    if self.pos >= self.text_n {
       return
     }
+    c = self.src_text[self.pos]
     self.pos += 1
     if c == 10 {
       self.line += 1

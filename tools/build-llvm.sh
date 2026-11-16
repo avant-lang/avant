@@ -5,9 +5,9 @@
 # it into B unchanged:
 #
 #   runtime/avant_llvm.c (the glue over the LLVM C API)
-#   + the LLVM static members it needs (llvm-config --libfiles: LLVM 20 by
-#     default; LLVM 23 when LLVM_CONFIG names its llvm-config, a probe of
-#     the next LLVM)
+#   + the LLVM static members it needs (llvm-config --libfiles: LLVM
+#     22.1.8, LLVM's official release, by default; LLVM 20, 21 or 23 when
+#     LLVM_CONFIG names its llvm-config)
 #   + libstdc++.a, libz.a, libzstd.a (so the compiler loads only glibc and
 #     libgcc_s)
 #
@@ -21,26 +21,30 @@
 # Rebuilds only when the stamp beside the object (runtime/build/
 # avant_llvm.stamp: the LLVM version, and the sha256 of the glue, of
 # runtime/avant_rt.h, and of this script) differs; a cached run is a few
-# sha256 sums. LLVM_CONFIG names llvm-config (default llvm-config-20;
-# llvm-config-23 builds the same object against LLVM 23, a probe only: the
-# default stays 20, the distribution's llvm-20-dev, here and on CI).
+# sha256 sums. LLVM_CONFIG names llvm-config (default
+# /opt/llvm-22.1.8/bin/llvm-config, which tools/install-llvm.sh installs and
+# CI's workflows install and cache; without it, llvm-config-22, a
+# distribution's LLVM 22). Another builds the same object against LLVM 20,
+# 21 or 23.
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cc=${CC:-cc}
-llvm_config=${LLVM_CONFIG:-llvm-config-20}
+default_llvm_config=/opt/llvm-22.1.8/bin/llvm-config
+[ -x "$default_llvm_config" ] || default_llvm_config=llvm-config-22
+llvm_config=${LLVM_CONFIG:-$default_llvm_config}
 src="$root/runtime/avant_llvm.c"
 out_dir="$root/runtime/build"
 obj="$out_dir/avant_llvm.o"
 stamp="$out_dir/avant_llvm.stamp"
 
 command -v "$llvm_config" > /dev/null 2>&1 || {
-  echo "tools/build-llvm.sh: $llvm_config not found (install llvm-20-dev, or set LLVM_CONFIG)" >&2
+  echo "tools/build-llvm.sh: $llvm_config not found (run sh tools/install-llvm.sh, or set LLVM_CONFIG)" >&2
   exit 1
 }
 version=$("$llvm_config" --version)
 case "$version" in
-  20.* | 23.*) ;;
-  *) echo "tools/build-llvm.sh: LLVM 20 (the default) or 23 (the probe) is required; $llvm_config is $version" >&2; exit 1 ;;
+  20.* | 21.* | 22.* | 23.*) ;;
+  *) echo "tools/build-llvm.sh: LLVM 22 (the default), 20, 21 or 23 is required; $llvm_config is $version" >&2; exit 1 ;;
 esac
 want="llvm $version
 glue $(sha256sum "$src" | cut -d' ' -f1)

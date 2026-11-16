@@ -426,6 +426,25 @@ fn first_error(log: String): String {
   str_slice(log, at, e)
 }
 
+// The dumps of the rows n (1-based) with n % parts == part: each row's
+// exit status goes to p<n>.code beside its log. The rows are
+// independent programs, so `parts` tasks run them at once (the pool
+// runs as many as the process has CPUs); main reads every row back in
+// order, so the table is the same as one serial pass.
+fn dump_part(compiler: String, dir: String, total: Int, parts: Int, part: Int): Int {
+  done = 0
+  for n in 1..total + 1 {
+    if n % parts == part {
+      src = "${dir}/p${n}.av"
+      log = "${dir}/p${n}.log"
+      code = process_run_out(compiler, ["dump", src], log) ?? -1
+      _ = file_write("${dir}/p${n}.code", "${code}")
+      done += 1
+    }
+  }
+  done
+}
+
 fn main: Int {
   compiler = env_get("AVANT_COMPILER") ?? ""
   if compiler.size == 0 {
@@ -440,9 +459,10 @@ fn main: Int {
   }
   dir = probe_rt.avant_tmp_dir()
   _ = file_write("${dir}/probe_mod.av", probe_mod_src())
-  table = buf_new()
-  table.push_str("# The probe matrix (tests/probe_matrix.av writes it; tests/cases/test_probe_matrix.av compares it).\n")
-  table.push_str("# rule wrapper variant verdict class | first error line\n")
+  // Every program first, with what its row prints.
+  names: Array(String) = []
+  needles: Array(String) = []
+  safes: Array(Bool) = []
   n = 0
   for r in rules() {
     ws = stmt_wrappers()
@@ -457,32 +477,56 @@ fn main: Int {
           variant = "safe"
         }
         n += 1
-        src = "${dir}/p${n}.av"
-        log = "${dir}/p${n}.log"
-        _ = file_write(src, program(r, w, safe))
-        code = process_run_out(compiler, ["dump", src], log) ?? -1
-        text = file_read(log) ?? ""
-        err = first_error(text)
-        verdict = "accepted"
-        if code != 0 {
-          verdict = "refused"
-        }
-        cls = "ok"
-        if safe && code != 0 {
-          cls = "refused"
-        } else if !safe && code == 0 {
-          cls = "hole"
-        } else if !safe && find_at(text, r.needle, 0) < 0 {
-          cls = "other"
-        }
-        if code != 0 && code != 1 {
-          verdict = "status-${code}"
-        }
-        table.push_str("${r.name} ${w} ${variant} ${verdict} ${cls} | ${err}\n")
-        if code == 0 {
-          _ = file_write(log, "")
-        }
+        _ = file_write("${dir}/p${n}.av", program(r, w, safe))
+        names.push("${r.name} ${w} ${variant}")
+        needles.push(r.needle)
+        safes.push(safe)
       }
+    }
+  }
+  total = n
+  parts = 8
+  hs: Array(JoinHandle(Int)) = []
+  for k in 0..parts {
+    part = k
+    hs.push(spawn { dump_part(compiler, dir, total, parts, part) })
+  }
+  ran = 0
+  for h in hs {
+    ran += h.join() ?? 0
+  }
+  if ran != total {
+    puts("tests/probe_matrix.av: ${ran} of ${total} programs were checked")
+    return 1
+  }
+  table = buf_new()
+  table.push_str("# The probe matrix (tests/probe_matrix.av writes it; tests/cases/test_probe_matrix.av compares it).\n")
+  table.push_str("# rule wrapper variant verdict class | first error line\n")
+  for i in 0..total {
+    m = i + 1
+    log = "${dir}/p${m}.log"
+    code = file_read("${dir}/p${m}.code") ?? "-1"
+    text = file_read(log) ?? ""
+    err = first_error(text)
+    safe = safes[i]
+    verdict = "accepted"
+    if code != "0" {
+      verdict = "refused"
+    }
+    cls = "ok"
+    if safe && code != "0" {
+      cls = "refused"
+    } else if !safe && code == "0" {
+      cls = "hole"
+    } else if !safe && find_at(text, needles[i], 0) < 0 {
+      cls = "other"
+    }
+    if code != "0" && code != "1" {
+      verdict = "status-${code}"
+    }
+    table.push_str("${names[i]} ${verdict} ${cls} | ${err}\n")
+    if code == "0" {
+      _ = file_write(log, "")
     }
   }
   if r = file_write(out_path, table.to_s()) {

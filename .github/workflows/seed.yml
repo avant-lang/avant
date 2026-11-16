@@ -25,8 +25,8 @@
 name: seed
 
 env:
-  AVANT_SEED_VERSION: v0.43.0
-  AVANT_SEED_SHA256: 57725e637efcaba9413375f609a47e84f831424881354510e308a7b945284516
+  AVANT_SEED_VERSION: v0.44.0
+  AVANT_SEED_SHA256: dcc76bf2e7560e6bd85c1e005de1807aa6e281362bca15f76f721eb6c113c22b
 
 "on":
   push:
@@ -43,10 +43,10 @@ concurrency:
 
 jobs:
   seed:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     env:
-      LLVM_CONFIG: llvm-config-20
+      LLVM_CONFIG: /opt/llvm-22.1.8/bin/llvm-config
       AVANT_ROOT: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v7
@@ -54,23 +54,39 @@ jobs:
       - name: Prefer non-Azure Ubuntu mirrors
         run: bash .github/setup-apt-mirrors.sh
 
-      # libclang (with llvm-config, from llvm-20) is for the bind
-      # helper that runtime/build.sh builds and the release ships; zlib1g-dev
-      # is for examples/zlib.av, which binds the system zlib itself.
-      # llvm-20-dev (static LLVM archives) and libzstd-dev are for
-      # tools/build-llvm.sh, which runtime/build.sh runs: it merges LLVM 20
-      # with libstdc++, zlib, and zstd into runtime/build/avant_llvm.o, the
-      # in-process LLVM only the compiler links.
-      - name: Install the C toolchain and libclang
+      # The measuring server's toolchain at its exact versions
+      # (.github/install-toolchain.sh): gcc 15.2.0-16ubuntu1 for the
+      # runtime, binutils 2.46, libclang 20 for the bind helper and the
+      # static zstd tools/build-llvm.sh merges, from a fixed
+      # snapshot.ubuntu.com date; zlib1g-dev is also for examples/zlib.av,
+      # which binds the system zlib itself.
+      - name: Install the toolchain
+        run: bash .github/install-toolchain.sh
+
+      # LLVM 22.1.8, the compiler's in-process LLVM, is LLVM's official
+      # release (Ubuntu's archive has 22.1.2): tools/install-llvm.sh checks
+      # its sha256 and signature, and the job caches the 350 MB it keeps.
+      # tools/build-llvm.sh merges it with libstdc++, zlib, and zstd into
+      # runtime/build/avant_llvm.o, which only the compiler links.
+      - name: Prepare the LLVM directory
+        run: sudo install -d -o "$(id -u)" -g "$(id -g)" /opt/llvm-22.1.8
+
+      - name: Cache LLVM 22.1.8
+        id: llvm
+        uses: actions/cache@v4
+        with:
+          path: /opt/llvm-22.1.8
+          key: llvm-22.1.8-linux-x64-${{ hashFiles('tools/install-llvm.sh') }}
+
+      - name: Install LLVM 22.1.8
+        if: steps.llvm.outputs.cache-hit != 'true'
+        run: sh tools/install-llvm.sh /opt/llvm-22.1.8
+
+      - name: Toolchain versions
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            llvm-20 \
-            llvm-20-dev \
-            libclang-20-dev \
-            zlib1g-dev \
-            libzstd-dev
+          echo "llvm: $("$LLVM_CONFIG" --version) ($LLVM_CONFIG)"
+          echo "libclang (bind): $(llvm-config-20 --version)"
+          echo "cc: $(cc --version | head -n 1)"
 
       - name: Build runtime objects
         run: sh runtime/build.sh
@@ -106,12 +122,59 @@ jobs:
           set -euo pipefail
           ./bin/avant-c-llvm test
 
-      # The release layout (no myc-llvm), installed by
-      # install.sh into a clean container (only gcc and libc6-dev; no LLVM,
-      # PCRE2, zlib headers, re2c, or myc-llvm) and smoke-tested outside
-      # any checkout. C' links LLVM statically.
-      - name: Install the release layout in a clean container
+      # The release layout (no myc-llvm), packaged here and installed by
+      # the install-check job on an ubuntu-24.04 runner. C' links LLVM
+      # statically.
+      - name: Package the release layout
         run: |
           set -euo pipefail
-          sh tools/package.sh /tmp/dist bin/avant-c-llvm bin/re2c
-          sh tools/container-test.sh ubuntu:24.04 /tmp/dist
+          sh tools/package.sh dist bin/avant-c-llvm bin/re2c
+          # The glibc floor: every symbol the shipped binaries need exists
+          # in glibc 2.38 (tools/package.sh measures it).
+          grep -qx 'glibc-floor: 2.38' dist/avant-linux-x86_64/versions.txt || { echo "glibc floor is not 2.38: $(grep glibc-floor dist/avant-linux-x86_64/versions.txt)" >&2; exit 1; }
+
+      # The baseline x86-64: tools/package.sh refused an archive whose
+      # binaries or runtime objects need a newer x86-64 (tools/isa-check.sh);
+      # here the packaged compiler and three programs it compiles at the
+      # default --cpu run on an emulated Nehalem (x86-64-v2: no AVX, no BMI),
+      # since the runner itself has every newer instruction. qemu loads the
+      # plain amd64 C library, not the runner's (.github/baseline-sysroot.sh).
+      - name: Run the archive on an older x86-64 (qemu)
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends qemu-user
+          bash .github/baseline-sysroot.sh "$RUNNER_TEMP/baseline-root"
+          QEMU_LD_PREFIX="$RUNNER_TEMP/baseline-root" sh tools/isa-check.sh --run dist/avant-linux-x86_64
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: seed-archive
+          path: |
+            dist/avant-linux-x86_64.tar.gz
+            dist/avant-linux-x86_64.tar.gz.sha256
+
+  # The archive installed on a real ubuntu-24.04 runner (glibc 2.39, the
+  # oldest supported runner): install.sh from the built archive, then the
+  # out-of-checkout smoke test on the installed compiler.
+  install-check:
+    needs: seed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download the archive
+        uses: actions/download-artifact@v7
+        with:
+          name: seed-archive
+          path: dist
+
+      - name: Install and smoke-test the archive
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c avant-linux-x86_64.tar.gz.sha256)
+          echo "runner: $(. /etc/os-release && echo "$PRETTY_NAME"), $(getconf GNU_LIBC_VERSION)"
+          SHELL=/bin/bash AVANT_INTERNAL_DOWNLOAD_BASE="file://$PWD/dist" bash install.sh < /dev/null
+          grep -q '^# avant$' ~/.bashrc
+          sh tools/smoke.sh ~/.avant
