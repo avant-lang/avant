@@ -59,10 +59,10 @@ concurrency:
 
 jobs:
   binary:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     env:
-      LLVM_CONFIG: llvm-config-20
+      LLVM_CONFIG: /opt/llvm-22.1.8/bin/llvm-config
       AVANT_ROOT: ${{ github.workspace }}
       TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
@@ -87,23 +87,39 @@ jobs:
       - name: Prefer non-Azure Ubuntu mirrors
         run: bash .github/setup-apt-mirrors.sh
 
-      # libclang (with llvm-config, from llvm-20) is for the bind
-      # helper that runtime/build.sh builds and the release ships; zlib1g-dev
-      # is for examples/zlib.av, which binds the system zlib itself.
-      # llvm-20-dev (static LLVM archives) and libzstd-dev are for
-      # tools/build-llvm.sh, which runtime/build.sh runs: it merges LLVM 20
-      # with libstdc++, zlib, and zstd into runtime/build/avant_llvm.o, the
-      # in-process LLVM only the compiler links.
-      - name: Install the C toolchain and libclang
+      # The measuring server's toolchain at its exact versions
+      # (.github/install-toolchain.sh): gcc 15.2.0-16ubuntu1 for the
+      # runtime, binutils 2.46, libclang 20 for the bind helper and the
+      # static zstd tools/build-llvm.sh merges, from a fixed
+      # snapshot.ubuntu.com date; zlib1g-dev is also for examples/zlib.av,
+      # which binds the system zlib itself.
+      - name: Install the toolchain
+        run: bash .github/install-toolchain.sh
+
+      # LLVM 22.1.8, the compiler's in-process LLVM, is LLVM's official
+      # release (Ubuntu's archive has 22.1.2): tools/install-llvm.sh checks
+      # its sha256 and signature, and the job caches the 350 MB it keeps.
+      # tools/build-llvm.sh merges it with libstdc++, zlib, and zstd into
+      # runtime/build/avant_llvm.o, which only the compiler links.
+      - name: Prepare the LLVM directory
+        run: sudo install -d -o "$(id -u)" -g "$(id -g)" /opt/llvm-22.1.8
+
+      - name: Cache LLVM 22.1.8
+        id: llvm
+        uses: actions/cache@v4
+        with:
+          path: /opt/llvm-22.1.8
+          key: llvm-22.1.8-linux-x64-${{ hashFiles('tools/install-llvm.sh') }}
+
+      - name: Install LLVM 22.1.8
+        if: steps.llvm.outputs.cache-hit != 'true'
+        run: sh tools/install-llvm.sh /opt/llvm-22.1.8
+
+      - name: Toolchain versions
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            llvm-20 \
-            llvm-20-dev \
-            libclang-20-dev \
-            zlib1g-dev \
-            libzstd-dev
+          echo "llvm: $("$LLVM_CONFIG" --version) ($LLVM_CONFIG)"
+          echo "libclang (bind): $(llvm-config-20 --version)"
+          echo "cc: $(cc --version | head -n 1)"
 
       - name: Build runtime objects
         run: sh runtime/build.sh
@@ -146,10 +162,10 @@ jobs:
           {
             echo "tag: ${TAG_NAME}"
             echo "avant: $(git rev-parse HEAD)"
-            echo "llvm: $(llvm-config-20 --version)"
-            echo "runner: ubuntu-24.04 linux-x86_64"
+            echo "llvm: $("$LLVM_CONFIG" --version) (LLVM's official release, tools/install-llvm.sh)"
+            echo "runner: ubuntu-26.04 linux-x86_64, $(cc --version | head -n 1)"
             echo "built-by: B (the ${AVANT_SEED_VERSION} seed's build of this tree), on the in-process LLVM back end, --release"
-            echo "backend: in-process LLVM $(llvm-config-20 --version), linked into avant (runtime/avant_llvm.c, tools/build-llvm.sh); no myc-llvm"
+            echo "backend: in-process LLVM $("$LLVM_CONFIG" --version), linked into avant (runtime/avant_llvm.c, tools/build-llvm.sh); no myc-llvm"
             echo "seed: yes"
             echo "binary: avant"
             echo "bundled: avant-bind (tools/bind.c, libclang $(llvm-config-20 --version)) beside avant"
@@ -158,7 +174,9 @@ jobs:
           # The layout is tools/package.sh's, the same script local proofs use.
           sh tools/package.sh dist bin/avant-c-release bin/re2c dist/versions.txt
           cat dist/avant-linux-x86_64.tar.gz.sha256
-          sh tools/container-test.sh ubuntu:24.04 dist
+          # The glibc floor: every symbol the shipped binaries need exists
+          # in glibc 2.38 (tools/package.sh measures it).
+          grep -qx 'glibc-floor: 2.38' dist/avant-linux-x86_64/versions.txt || { echo "glibc floor is not 2.38: $(grep glibc-floor dist/avant-linux-x86_64/versions.txt)" >&2; exit 1; }
           cp install.sh dist/install.sh
           {
             echo "linux-x86_64 compiler \`avant\`."
@@ -175,6 +193,62 @@ jobs:
             cat dist/avant-linux-x86_64.tar.gz.sha256
             echo '```'
           } > dist/notes.md
+
+      - name: Upload the release files
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-archive
+          path: |
+            dist/avant-linux-x86_64.tar.gz
+            dist/avant-linux-x86_64.tar.gz.sha256
+            dist/install.sh
+            dist/notes.md
+
+  # The archive installed on a real ubuntu-24.04 runner (glibc 2.39, the
+  # oldest supported runner): install.sh from the built archive, then the
+  # out-of-checkout smoke test on the installed compiler.
+  install-check:
+    needs: binary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Download the archive
+        uses: actions/download-artifact@v7
+        with:
+          name: release-archive
+          path: dist
+
+      - name: Install and smoke-test the archive
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c avant-linux-x86_64.tar.gz.sha256)
+          echo "runner: $(. /etc/os-release && echo "$PRETTY_NAME"), $(getconf GNU_LIBC_VERSION)"
+          SHELL=/bin/bash AVANT_INTERNAL_DOWNLOAD_BASE="file://$PWD/dist" bash install.sh < /dev/null
+          grep -q '^# avant$' ~/.bashrc
+          sh tools/smoke.sh ~/.avant
+
+  # Attached only once the archive installed and passed its smoke test on
+  # ubuntu-24.04.
+  publish:
+    needs: [binary, install-check]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    env:
+      TAG_NAME: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Download the release files
+        uses: actions/download-artifact@v7
+        with:
+          name: release-archive
+          path: dist
 
       - name: Attach to GitHub Release for the tag
         env:

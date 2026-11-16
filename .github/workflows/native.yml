@@ -65,10 +65,10 @@ concurrency:
 
 jobs:
   native:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 90
     env:
-      LLVM_CONFIG: llvm-config-20
+      LLVM_CONFIG: /opt/llvm-22.1.8/bin/llvm-config
       AVANT_ROOT: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v7
@@ -76,23 +76,39 @@ jobs:
       - name: Prefer non-Azure Ubuntu mirrors
         run: bash .github/setup-apt-mirrors.sh
 
-      # libclang (with llvm-config, from llvm-20) is for the bind
-      # helper that runtime/build.sh builds and the release ships; zlib1g-dev
-      # is for examples/zlib.av, which binds the system zlib itself.
-      # llvm-20-dev (static LLVM archives) and libzstd-dev are for
-      # tools/build-llvm.sh, which runtime/build.sh runs: it merges LLVM 20
-      # with libstdc++, zlib, and zstd into runtime/build/avant_llvm.o, the
-      # in-process LLVM only the compiler links.
-      - name: Install the C toolchain and libclang
+      # The measuring server's toolchain at its exact versions
+      # (.github/install-toolchain.sh): gcc 15.2.0-16ubuntu1 for the
+      # runtime, binutils 2.46, libclang 20 for the bind helper and the
+      # static zstd tools/build-llvm.sh merges, from a fixed
+      # snapshot.ubuntu.com date; zlib1g-dev is also for examples/zlib.av,
+      # which binds the system zlib itself.
+      - name: Install the toolchain
+        run: bash .github/install-toolchain.sh
+
+      # LLVM 22.1.8, the compiler's in-process LLVM, is LLVM's official
+      # release (Ubuntu's archive has 22.1.2): tools/install-llvm.sh checks
+      # its sha256 and signature, and the job caches the 350 MB it keeps.
+      # tools/build-llvm.sh merges it with libstdc++, zlib, and zstd into
+      # runtime/build/avant_llvm.o, which only the compiler links.
+      - name: Prepare the LLVM directory
+        run: sudo install -d -o "$(id -u)" -g "$(id -g)" /opt/llvm-22.1.8
+
+      - name: Cache LLVM 22.1.8
+        id: llvm
+        uses: actions/cache@v4
+        with:
+          path: /opt/llvm-22.1.8
+          key: llvm-22.1.8-linux-x64-${{ hashFiles('tools/install-llvm.sh') }}
+
+      - name: Install LLVM 22.1.8
+        if: steps.llvm.outputs.cache-hit != 'true'
+        run: sh tools/install-llvm.sh /opt/llvm-22.1.8
+
+      - name: Toolchain versions
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            llvm-20 \
-            llvm-20-dev \
-            libclang-20-dev \
-            zlib1g-dev \
-            libzstd-dev
+          echo "llvm: $("$LLVM_CONFIG" --version) ($LLVM_CONFIG)"
+          echo "libclang (bind): $(llvm-config-20 --version)"
+          echo "cc: $(cc --version | head -n 1)"
 
       - name: Build runtime objects
         run: sh runtime/build.sh

@@ -4365,7 +4365,7 @@ Download `avant-linux-x86_64.tar.gz` from [Releases](https://github.com/avant-la
 | `git` | `avant fetch` only | |
 | libclang 20 | `avant bind` only | `sudo apt install libclang1-20` |
 
-Nothing else. The archive carries `avant` with LLVM 20 linked in (there is no separate backend program), `re2c`, `avant-bind`, the standard library, and the runtime with PCRE2, zlib and the other C libraries inside; beside them, `examples/` (the runnable programs this page points to), `versions.txt` (the release and its commit, which `avant version` prints), Avant's `LICENSE`, and `third_party/` with the notices and licenses of those C libraries. No environment variable needs to be set: the compiler turns a program into machine code with the LLVM it carries, and links it with `cc`.
+Nothing else. The archive carries `avant` with LLVM 22 linked in (there is no separate backend program), `re2c`, `avant-bind`, the standard library, and the runtime with PCRE2, zlib and the other C libraries inside; beside them, `examples/` (the runnable programs this page points to), `versions.txt` (the release and its commit, which `avant version` prints), Avant's `LICENSE`, and `third_party/` with the notices and licenses of those C libraries. No environment variable needs to be set: the compiler turns a program into machine code with the LLVM it carries, and links it with `cc`.
 
 ## Contributing
 
@@ -4373,7 +4373,7 @@ Everything below is for people working on Avant itself, not for writing Avant pr
 
 ### How the compiler works
 
-The compiler is self-hosted: it is written in Avant (`compiler/*.av`) and compiles itself. It lowers the checked program to its own mid-level IR (MIR, `compiler/mir/`), emits LLVM IR from it (`compiler/llvm/`), and compiles that with the LLVM 20 linked into the compiler (`runtime/avant_llvm.c`); `cc` links the object with the runtime (`runtime/`, C).
+The compiler is self-hosted: it is written in Avant (`compiler/*.av`) and compiles itself. It lowers the checked program to its own mid-level IR (MIR, `compiler/mir/`), emits LLVM IR from it (`compiler/llvm/`), and compiles that with the LLVM 22 linked into the compiler (`runtime/avant_llvm.c`); `cc` links the object with the runtime (`runtime/`, C).
 
 ```text
 .av  →  parser and checker (compiler/*.av)  →  MIR  →  LLVM IR  →  in-process LLVM  →  object  →  cc  →  binary
@@ -4383,7 +4383,9 @@ This is the only back end. The earlier one, which emitted [myc](https://github.c
 
 ### Building the compiler
 
-You need a C compiler, the C library's development files and binutils (`ld`, `objcopy`); LLVM 20's static archives (Debian and Ubuntu: `llvm-20-dev`, `libzstd-dev`), which `runtime/build.sh` merges into `runtime/build/avant_llvm.o` (through `tools/build-llvm.sh`) and only the compiler links; `re2c` for regex literals (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`); and, for the `bind` helper, `llvm-config` and libclang 20 (without them the build skips it with a notice).
+You need a C compiler, the C library's development files and binutils (`ld`, `objcopy`); LLVM 22.1.8's static archives (`sh tools/install-llvm.sh` installs LLVM's official release, checked by sha256, into `/opt/llvm-22.1.8`; another LLVM 22 through `LLVM_CONFIG`) and `libzstd-dev`, which `runtime/build.sh` merges into `runtime/build/avant_llvm.o` (through `tools/build-llvm.sh`) and only the compiler links; `re2c` for regex literals (on `PATH`, or the pinned static build: `sh tools/build-re2c.sh bin/re2c`); and, for the `bind` helper, `llvm-config` and libclang 20 (without them the build skips it with a notice).
+
+The published releases and CI build on `ubuntu-26.04` runners with the toolchain the benchmark numbers are measured with, at its exact versions: gcc 15.2 and libclang 20 (for the `bind` helper) from a fixed snapshot of Ubuntu's archive (`.github/install-toolchain.sh`), and LLVM's official 22.1.8 (`tools/install-llvm.sh`). The archive still runs on glibc 2.38 and later, and CI installs it on an `ubuntu-24.04` runner before a release is published. LLVM 22 replaced 20.1.8 for its compile times, measured on that machine over rotated rounds: the compiler's own release build is 18% faster, the release compiler compiling itself 19.5% faster, and the 50 LangArena tasks' release compiles 11.8% faster. A debug build of the compiler is 6.7% slower (about 1 s). The programs it builds run as fast as before (LangArena's geometric mean 0.993, within the run-to-run spread, with the same memory), and the release archive is 4.7% larger. LLVM 20, 21 and 23 still build the compiler (`LLVM_CONFIG` names their `llvm-config`).
 
 The compiler is built by a published release, the seed: **v0.41.0 or later**, unpacked at `bin/v0.44.0` (or wherever `LETTERS_SEED` points). An older release cannot build this tree: `Int` became 64-bit in v0.41.0, and the runtime has one ABI.
 

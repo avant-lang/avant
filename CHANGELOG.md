@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+* The compiler links LLVM 22.1.8 instead of 20.1.8: `--release` compiles are 12 to 20% faster, with programs as fast as before; the archive is 4.7% larger.
+* The release archive is built on Ubuntu 26.04 with gcc 15.2 and LLVM 22.1.8 at the versions the benchmarks are measured with, so the published binary is the measured one (the runtime's gcc 13 had cost `Hash::CRC32` 12%). It still needs only glibc 2.38.
+
 ### Fixed
 
 * The README's benchmark section says which build its Avant numbers are (a server build, not the published archive) and gives the published v0.44.0's own reading beside them: 0.8% less time than v0.43.0, within the spread, against the 1.7% the 0.44.0 notes give for the server build, and the same 3.5% less memory; the gap is the runtime's C compiler in the release build, not LLVM.

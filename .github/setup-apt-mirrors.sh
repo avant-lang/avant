@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GitHub-hosted Ubuntu 24.04 runners list azure.archive.ubuntu.com first.
+# GitHub-hosted Ubuntu runners list azure.archive.ubuntu.com first.
 # That host has been slow or unavailable from Actions. This script rewrites
 # the local mirror list before any apt-get update, so a sick Azure mirror
 # cannot block the rewrite itself.
@@ -51,10 +51,16 @@ if [[ "${ID:-}" != "ubuntu" ]]; then
   exit 1
 fi
 
-if [[ "${VERSION_ID:-}" != "24.04" ]]; then
-  error "This script currently supports Ubuntu 24.04 only; detected VERSION_ID=${VERSION_ID:-unknown}"
-  exit 1
-fi
+# 26.04 (the build jobs) and 24.04 (the install check). Every mirror
+# below carries both suites (noble and resolute, checked 2026-11-16 for
+# resolute, -updates and -security).
+case "${VERSION_ID:-}" in
+  24.04 | 26.04) ;;
+  *)
+    error "This script supports Ubuntu 24.04 and 26.04; detected VERSION_ID=${VERSION_ID:-unknown}"
+    exit 1
+    ;;
+esac
 
 if ! command -v apt-get >/dev/null 2>&1; then
   error "apt-get is not available"
@@ -69,7 +75,7 @@ fi
 arch="$(dpkg --print-architecture)"
 
 if [[ "$arch" != "amd64" ]]; then
-  error "This script targets Ubuntu 24.04 amd64 runners; detected architecture=$arch"
+  error "This script targets Ubuntu amd64 runners; detected architecture=$arch"
   exit 1
 fi
 
