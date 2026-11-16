@@ -3708,7 +3708,7 @@ fn main {
 | --- | --- | --- | --- | --- |
 | `websocket(path) { \|conn, msg\| ... }` | `path: String`, a block | the `Server` | a message over `max_message` (1 MiB by default) closes the connection with code 1009 and never reaches the handler | runs once per complete message |
 | `websocket_open(path) { \|conn\| ... }`, `websocket_close(path) { \|conn, code, reason\| ... }` | `path: String`, a block | the `Server` | — | run once per connection (code 1006 when it dropped without a close frame) |
-| `msg.text`, `msg.is_text` | — | its `String`; `Bool` | — | a text message |
+| `msg.text()`, `msg.is_text` | — | `String?`: the text, `nil` for a binary message or bytes that are not valid UTF-8; `Bool` | — | a text message |
 | `msg.body`, `msg.is_binary` | — | `Bytes`; `Bool` | — | `msg.body` is always the payload |
 | `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")` | the text, `Bytes` or message; `code: Int`, `reason: String` | `Bool` | `false` when the connection is closed or its send queue is full | a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole |
 | `conn.sender` | — | a sender with the same four calls | — | a connection stays on its loop thread: to answer from a `spawn` block, capture `conn.sender` and send through it |
