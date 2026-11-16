@@ -10,6 +10,9 @@
 #include <string.h>
 #include <time.h>
 #include <dlfcn.h>
+#include <elf.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 /* The collection driver and its policy (moved from
  * avant_rt.c): initialization from the environment (the settings,
@@ -877,15 +880,74 @@ void avant_gc_heap_goal_collect(void) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
+/* The name of the function that holds ADDR, from the executable's own
+ * symbol table: a static executable exports no symbol, so dladdr names
+ * none, but its .symtab (kept unless the file was stripped) names every
+ * function, an Avant function as av.MODULE/NAME. Writes the name to OUT
+ * and returns 1, or returns 0. Read only on the way to gc_die. */
+static int exe_function_name(void *addr, const Dl_info *info, char *out, size_t cap) {
+  Elf64_Ehdr eh;
+  Elf64_Shdr sym, str;
+  int fd, found = 0;
+  uint64_t key, i, n;
+  if (!info->dli_fbase || cap < 2) {
+    return 0;
+  }
+  fd = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return 0;
+  }
+  if (pread(fd, &eh, sizeof eh, 0) != (ssize_t)sizeof eh || memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0 ||
+      eh.e_ident[EI_CLASS] != ELFCLASS64 || eh.e_shentsize != sizeof(Elf64_Shdr)) {
+    close(fd);
+    return 0;
+  }
+  /* A position-independent executable's symbols are offsets from its load
+   * address; a fixed one's are addresses. */
+  key = eh.e_type == ET_DYN ? (uint64_t)((uintptr_t)addr - (uintptr_t)info->dli_fbase) : (uint64_t)(uintptr_t)addr;
+  for (i = 0; i < eh.e_shnum && !found; i++) {
+    if (pread(fd, &sym, sizeof sym, (off_t)(eh.e_shoff + i * sizeof sym)) != (ssize_t)sizeof sym) {
+      break;
+    }
+    if (sym.sh_type != SHT_SYMTAB || sym.sh_entsize != sizeof(Elf64_Sym) || sym.sh_link >= eh.e_shnum ||
+        pread(fd, &str, sizeof str, (off_t)(eh.e_shoff + sym.sh_link * sizeof str)) != (ssize_t)sizeof str) {
+      continue;
+    }
+    n = sym.sh_size / sizeof(Elf64_Sym);
+    for (uint64_t k = 0; k < n; k++) {
+      Elf64_Sym s;
+      if (pread(fd, &s, sizeof s, (off_t)(sym.sh_offset + k * sizeof s)) != (ssize_t)sizeof s) {
+        break;
+      }
+      if (ELF64_ST_TYPE(s.st_info) != STT_FUNC || key < s.st_value || key >= s.st_value + s.st_size ||
+          s.st_name >= str.sh_size) {
+        continue;
+      }
+      ssize_t got = pread(fd, out, cap - 1, (off_t)(str.sh_offset + s.st_name));
+      if (got > 0) {
+        out[got] = 0;
+        found = out[0] != 0;
+      }
+      break;
+    }
+  }
+  close(fd);
+  return found;
+}
+
 /* The function a no-GC region was entered from, for a message WHAT: its
- * symbol when the image exports one, else the call site's offset in its
- * image (addr2line resolves it). */
+ * exported symbol, else its name in the executable's symbol table (an
+ * Avant function shown as MODULE/NAME), else the call site's offset in
+ * its image (addr2line resolves it). */
 static __attribute__((noreturn)) void region_die_at(const char *what, void *site) {
   char msg[512];
+  char name[256];
   Dl_info info;
   memset(&info, 0, sizeof info);
   if (site && dladdr(site, &info) && info.dli_sname) {
-    snprintf(msg, sizeof msg, "%s (%s)", what, info.dli_sname);
+    snprintf(msg, sizeof msg, "%s (in %s)", what, info.dli_sname);
+  } else if (site && info.dli_fbase && exe_function_name(site, &info, name, sizeof name)) {
+    snprintf(msg, sizeof msg, "%s (in %s)", what, strncmp(name, "av.", 3) == 0 ? name + 3 : name);
   } else if (site && info.dli_fname && info.dli_fbase) {
     const char *base = strrchr(info.dli_fname, '/');
     snprintf(msg, sizeof msg, "%s (%s+0x%lx)", what, base ? base + 1 : info.dli_fname,
@@ -912,7 +974,7 @@ void gc_region_limit_check(uint64_t bytes) {
    * allocations (its inline ones included: the count since its entry). */
   if (gc_heap.set.heap_max && gc_thread.hold &&
       avant_g_stats.allocated_bytes - gc_thread.hold_base + bytes > gc_heap.set.heap_max) {
-    region_die_at("heap limit in a no-GC region", gc_thread.hold_site);
+    region_die_at("heap limit in a gc.hold block: its own allocations passed AVANT_HEAP_MAX_MB", gc_thread.hold_site);
   }
 }
 
