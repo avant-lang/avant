@@ -124,6 +124,12 @@ pub class Lexer {
   keep_comments: Bool = false
   // Set by read_escape when the escape was \u{N} (a code point, not a byte).
   esc_code: Bool = false
+  // How many string interpolations are being lexed around the current
+  // token. A string that opens an interpolation inside another one is
+  // refused where it opens, before its own interpolation is lexed: lexing
+  // into it first made each level one more recursion, and thousands of
+  // nested levels overflowed the compiler's stack before the refusal.
+  interp_depth: Int = 0
 
   fn initialize(source: Source) {
     self.source = source
@@ -144,6 +150,7 @@ pub class Lexer {
     self.str_kind = 0
     self.str_frag = ""
     self.keep_comments = false
+    self.interp_depth = 0
   }
 
   pub fn has_err: Bool {
@@ -207,6 +214,14 @@ pub class Lexer {
       } else {
         break
       }
+    }
+  }
+
+  // After a refusal inside a string: the rest of the line is not lexed,
+  // so a line of nested strings gives one error, not one per level.
+  pub fn skip_to_line_end {
+    while !self.at_end() && self.peek() != 10 {
+      self.bump()
     }
   }
 
@@ -792,9 +807,6 @@ pub class Lexer {
         }
         depth -= 1
         tokens.push(tok)
-      } else if tok.kind == tk_interp_open() {
-        fail_tok(tok.loc, "nested string interpolation is not supported: give the inner string a name first (inner = \"...\${x}...\"), then interpolate the name")
-        return tokens
       } else {
         tokens.push(tok)
       }
@@ -810,6 +822,9 @@ pub class Lexer {
         return tokens
       }
       expr = self.lex_interp_expr()
+      if new_err_since(mark0) {
+        return tokens
+      }
       self.read_string_body()
       if new_err_since(mark0) {
         return tokens
@@ -849,8 +864,15 @@ pub class Lexer {
       return Token.new(tk_string(), loc, intern_str(self.str_frag))
     }
     if self.str_kind == 1 {
+      if self.interp_depth > 0 {
+        self.skip_to_line_end()
+        fail_tok(loc, "nested string interpolation is not supported: give the inner string a name first (inner = \"...\${x}...\"), then interpolate the name")
+        return Token.new(tk_eof(), loc, "")
+      }
       first_frag = self.str_frag
+      self.interp_depth += 1
       rest = self.lex_interpolation()
+      self.interp_depth -= 1
       first = Token.new(tk_interp_open(), loc, intern_str(first_frag))
       i = 0
       while i < rest.size {
@@ -1264,8 +1286,15 @@ pub class Lexer {
       return Token.new(tk_string(), loc, raw)
     }
     if self.str_kind == 1 {
+      if self.interp_depth > 0 {
+        self.skip_to_line_end()
+        fail_tok(loc, "nested string interpolation is not supported: give the inner string a name first (inner = \"...\${x}...\"), then interpolate the name")
+        return Token.new(tk_eof(), loc, "")
+      }
       raw_open = str_slice(self.source.text, open_pos, self.pos)
+      self.interp_depth += 1
       rest = self.lex_interpolation_format()
+      self.interp_depth -= 1
       if self.has_err() {
         return Token.new(tk_eof(), loc, "")
       }
@@ -1315,9 +1344,6 @@ pub class Lexer {
         }
         depth -= 1
         tokens.push(tok)
-      } else if tok.kind == tk_interp_open() {
-        fail_tok(tok.loc, "nested string interpolation is not supported: give the inner string a name first (inner = \"...\${x}...\"), then interpolate the name")
-        return tokens
       } else {
         tokens.push(tok)
       }
