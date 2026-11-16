@@ -2188,7 +2188,7 @@ fn main {
 
 ### Trailing blocks
 
-A block after a call fills the last parameter when that parameter is a `fn` and the written arguments are one short. This is how you write your own `map`:
+A block after a call fills the last parameter when that parameter is a `fn` and the written arguments are one short; an operator after the block takes the call as its operand (`first(xs) { |x| x > 2 } ?? 0`). This is how you write your own `map`:
 
 ```avant
 fn map(xs: Array(T), f: fn(T): U): Array(U) {
