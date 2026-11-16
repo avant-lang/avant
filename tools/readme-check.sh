@@ -4,6 +4,8 @@
 #   sh tools/readme-check.sh [FILE.md]        (default: README.md)
 #   sh tools/readme-check.sh --plan [FILE.md] (extract and plan only: no compiler)
 #
+# The gate runs it on README.md and on CONTRIBUTING.md.
+#
 # Every ```avant block of the document is compiled, and run, with the
 # compiler under test, and what the document says a program prints is
 # compared with what it prints. The last line is `README CHECK PASS` or
