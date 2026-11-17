@@ -179,6 +179,13 @@ void avant_trap_frozen_at(int32_t op, int32_t site) {
   avant_trap_frozen(op);
 }
 
+void avant_trap_frozen_hash(int32_t op) {
+  static const char *names[] = {"a store", "delete", "clear"};
+  trap_head();
+  trap_out("%s on a hash a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends; join the task first", op >= 0 && op <= 2 ? names[op] : "a change");
+  trap_tail();
+}
+
 /* `m.with { }` on a mutex a task held when it trapped: the value may be half-changed, so the block does not run
  * on it. */
 void avant_trap_poisoned(void) {

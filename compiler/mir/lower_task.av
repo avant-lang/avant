@@ -190,7 +190,7 @@ pub fn (lw: MirLower) store_captures(e: Expr, c: Int, base: Int) {
 }
 
 // The freeze of a task's captured arrays (lower_arr.av "the freeze"):
-// each Array capture in the record in _c (from field base on) is
+// each Array or Hash capture in the record in _c (from field base on) is
 // frozen before the task starts, at every level of an array of arrays,
 // and thawed when the task ends, so no path (an alias, a call, a
 // field) changes it while the task reads it.
@@ -214,7 +214,7 @@ pub fn (lw: MirLower) each_array_capture(e: Expr, c: Int, base: Int, freeze: Boo
   i = 0
   while i < e.cap_names.size && !lw.failed() {
     t = e.cap_tys[i]
-    if t.is_array() {
+    if mir_freezes(t) {
       lw.at(e.loc)
       v = lw.tmp(ts.layouts[l].fields[base + i], b.rv_use(b.copy(b.field(b.deref(b.pl(c)), base + i))))
       if freeze {
@@ -309,7 +309,7 @@ pub fn (lw: MirLower) lower_spawn(e: Expr): MOperand {
 // task's channels end). A spawn without either needs no `#fail` thunk.
 pub fn (lw: MirLower) task_fails(e: Expr): Bool {
   for t in e.cap_tys {
-    if t.is_array() || mir_is_channel(t) {
+    if mir_freezes(t) || mir_is_channel(t) {
       return true
     }
   }

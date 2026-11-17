@@ -146,6 +146,12 @@ fn rules: Array(PRule) {
   // A `.parallel` block's messages name `.parallel`, not spawn.
   xs.push(rule("parallel-assign-capture", "stmt", "", tsite, "", "pk = 1\npys = [1, 2].parallel { |x|\n  pk = x\n  pk\n}\nputs(pys.size)", "pk = 1\npys = [1, 2].parallel { |x|\n  pj = x\n  pj + pk\n}\nputs(pys.size)", ".parallel cannot assign to pk: each body has its own copy"))
   xs.push(rule("parallel-array-mutate", "stmt", "", tsite, "", "pxs = [1, 2]\npys = [1, 2].parallel { |x|\n  pxs.push(x)\n  pxs.size\n}\nputs(pys.size)", "pxs = [1, 2]\npys = [1, 2].parallel { |x|\n  pxs.size + x\n}\nputs(pys.size)", ".parallel cannot mutate captured Array pxs; it is read-only while the bodies run"))
+  // A captured Hash is shared and read-only as a captured Array is, and
+  // its values cross in turn.
+  xs.push(rule("spawn-hash-mutate", "stmt", "", tsite, "", "phh = [\"a\": 1]\nph = spawn {\n  phh[\"b\"] = 2\n  phh.size\n}\nputs(ph.join() ?? -1)", "phh = [\"a\": 1]\nph = spawn {\n  (phh[\"a\"] ?? 0) + phh.size\n}\nputs(ph.join() ?? -1)", "spawn cannot mutate captured Hash phh"))
+  xs.push(rule("spawn-hash-sender-mutate", "stmt", "", tsite, "", "phh = [\"a\": 1]\nph = spawn { phh.size }\nphh.delete(\"a\")\nputs(ph.join() ?? -1)", "phh = [\"a\": 1]\nph = spawn { phh.size }\nputs(ph.join() ?? -1)\nphh.delete(\"a\")", "cannot mutate phh while a spawn using it is running"))
+  xs.push(rule("parallel-hash-mutate", "stmt", "", tsite, "", "phh = [\"a\": 1]\npys = [1, 2].parallel { |x|\n  phh.clear()\n  x\n}\nputs(pys.size)", "phh = [\"a\": 1]\npys = [1, 2].parallel { |x|\n  x + (phh[\"a\"] ?? 0)\n}\nputs(pys.size)", ".parallel cannot mutate captured Hash phh; it is read-only while the bodies run"))
+  xs.push(rule("spawn-capture-hash-class", "stmt", "", tsite, "", "phh = [\"a\": pb]\nph = spawn { phh.size }\nputs(ph.join() ?? -1)", "phh = [\"a\": pb.n]\nph = spawn { phh.size }\nputs(ph.join() ?? -1)", "its keys or values (PBox) cannot cross to another task"))
   // README "Channel and Mutex": the value of `with`, when it is used, is
   // a plain value.
   xs.push(rule("mutex-with-value", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  m = Mutex(PBox).new(PBox.new())\n@\n}\n", "", "pv = m.with { |b| b }\nputs(pv.n)", "pv = m.with { |b| b.n }\nputs(pv)", "Mutex.with's value cannot be PBox"))

@@ -476,6 +476,23 @@ void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size);
 #define AVANT_FROZEN_REVERSE 5
 #define AVANT_FROZEN_RESERVE 6
 #define AVANT_FROZEN_STORE 7
+/* The freeze of a captured value that holds a hash: a Hash, or an Array
+ * or Hash of them at any level (a value of arrays only takes
+ * avant_array_freeze). depth counts the levels from the outermost, each
+ * an Array or a Hash, and bit i of hashes is set when level i is a
+ * Hash. A frozen array keeps its count in its cap word, a frozen hash in
+ * its own count (avant_hash.c); every operation that changes a frozen
+ * hash (a store, `inc`, `delete`, `clear`, a Set's `add`) traps
+ * (avant_trap_frozen_hash). A thaw writes back an array level's
+ * capacity, elem_size being the innermost level's element size when that
+ * level is an Array. */
+void avant_value_freeze(void *v, int32_t depth, uint32_t hashes);
+void avant_value_thaw(void *v, int32_t depth, uint32_t hashes, uint64_t elem_size);
+/* What a frozen hash refuses: the operation avant_trap_frozen_hash
+ * names. */
+#define AVANT_FROZEN_HASH_STORE 0
+#define AVANT_FROZEN_HASH_DELETE 1
+#define AVANT_FROZEN_HASH_CLEAR 2
 void avant_array_sort_i32(void *arr);
 void avant_array_sort_u32(void *arr);
 void avant_array_sort_i64(void *arr);
@@ -535,6 +552,7 @@ __attribute__((noreturn, cold)) void avant_trap_empty_at(int32_t what, int32_t s
 __attribute__((noreturn, cold)) void avant_trap_walk_at(int32_t what, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_frozen(int32_t op);
 __attribute__((noreturn, cold)) void avant_trap_frozen_at(int32_t op, int32_t site);
+__attribute__((noreturn, cold)) void avant_trap_frozen_hash(int32_t op);
 /* `with` on a poisoned mutex. */
 __attribute__((noreturn, cold)) void avant_trap_poisoned(void);
 __attribute__((noreturn, cold)) void avant_trap_poisoned_at(int32_t site);

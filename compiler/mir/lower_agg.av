@@ -718,7 +718,7 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
         ci = 0
         while ci < a.cap_names.size && !lw.failed() {
           ct = a.cap_tys[ci]
-          if ct.is_array() {
+          if ct.is_array() || ct.is_hash() {
             v = lw.capture_value(a.cap_names[ci], ct, a.loc)
             lw.freeze_array(v, ct, a.loc)
           }
@@ -1103,15 +1103,15 @@ pub fn mir_handler_method(name: String): Bool {
   name == "get" || name == "post" || name == "put" || name == "delete" || name == "patch" || name == "route" || name == "websocket" || name == "websocket_open" || name == "websocket_close"
 }
 
-// Whether a route call registers a handler that captures an Array: the
-// array is frozen there, so the program's element stores check the
+// Whether a route call registers a handler that captures an Array or a
+// Hash: it is frozen there, so the program's element stores check the
 // freeze (its module is shared, as a program that spawns is).
 pub fn mir_handler_freezes(e: Expr): Bool {
   if recv = e.receiver, rt = recv.ty, mir_is_http_server(rt) && mir_handler_method(e.callee) {
     for a in e.args {
       if a.kind == ex_lambda() {
         for ct in a.cap_tys {
-          if ct.is_array() {
+          if ct.is_array() || ct.is_hash() {
             return true
           }
         }

@@ -1,0 +1,169 @@
+// A Hash a running task reads is shared and frozen as an Array is: a
+// spawn and a .parallel read a captured hash (a Set, a hash of arrays,
+// an array of hashes) with no copy, and until the task ends any change
+// through another path (a function it is passed to, an alias) stops the
+// program with a trap naming the operation; in the task the trap ends
+// the task, its join gives the TaskError, and the hash is thawed. The
+// argument names the case; without one it is read. Run by
+// tests/cases/test_safety.av.
+//
+// In the sender's cases the task waits on a channel that is never sent
+// to, so it is still running when the sender makes its change.
+
+import std.sync
+
+fn put(h: Hash(String, Int), k: String) {
+  h[k] = 9
+}
+
+fn change(kind: String, h: Hash(String, Int)) {
+  if kind == "store" {
+    h["z"] = 1
+  } else if kind == "store-old" {
+    h["a"] = 5
+  } else if kind == "delete" {
+    h.delete("a")
+  } else if kind == "delete-absent" {
+    h.delete("nothing")
+  } else if kind == "clear" {
+    h.clear()
+  } else if kind == "inc" {
+    h.inc("a")
+  }
+}
+
+fn add(s: Set(Int)) {
+  s.add(4)
+}
+
+fn push_value(h: Hash(String, Array(Int))) {
+  if xs = h["a"] {
+    xs.push(3)
+  }
+}
+
+fn store_inner(hs: Array(Hash(Int, Int))) {
+  hs[0][7] = 7
+}
+
+fn look(h: Hash(String, Int), k: String): Int {
+  h[k] ?? -1
+}
+
+fn main: Int {
+  a = argv()
+  kind = "read"
+  if a.size > 1 {
+    kind = a[a.size - 1]
+  }
+  puts("before")
+  gate = Channel(Int).new()
+  h = ["a": 1, "b": 2]
+  if kind == "read" {
+    // Read by spawn and by .parallel, at every level; after the join
+    // every path changes the hash again.
+    t = spawn { (h["a"] ?? 0) + (h["b"] ?? 0) + h.size }
+    puts(t.join() ?? -1)
+    keys = ["a", "b", "c"]
+    vs = keys.parallel { |k| look(h, k) + (h[k] ?? 0) }
+    puts("${vs[0]} ${vs[1]} ${vs[2]}")
+    s: Set(Int) = [1, 2, 3]
+    t2 = spawn {
+      n = 0
+      if s.has(2) {
+        n = 1
+      }
+      n
+    }
+    puts(t2.join() ?? -1)
+    ha = ["a": [1, 2], "b": [3]]
+    t3 = spawn {
+      n = 0
+      if xs = ha["a"] {
+        n = xs.sum()
+      }
+      n
+    }
+    puts(t3.join() ?? -1)
+    hs = [[1: 10], [2: 20]]
+    ws = hs.parallel { |m| m.size + (m[1] ?? 0) }
+    puts("${ws[0]} ${ws[1]}")
+    put(h, "c")
+    h.delete("a")
+    s.add(4)
+    push_value(ha)
+    store_inner(hs)
+    puts("${h.size} ${s.size} ${hs[0].size}")
+    if xs = ha["a"] {
+      puts(xs.size)
+    }
+    return 0
+  }
+  if kind == "task-call" {
+    // The task changes what it captured through a call: the trap ends
+    // the task, the join gives it, and the hash is usable after.
+    t = spawn {
+      put(h, "c")
+      h.size
+    }
+    v = t.join() else e {
+      puts("trapped: ${e.what}")
+      put(h, "c")
+      puts("after: ${h.size}")
+      return 0
+    }
+    puts(v)
+    return 0
+  }
+  if kind == "parallel" {
+    rs = [1, 2].parallel { |i|
+      if i == 2 {
+        put(h, "p")
+      }
+      h.size
+    }
+    puts(rs[0])
+    return 0
+  }
+  if kind == "set-add" {
+    s: Set(Int) = [1, 2]
+    t = spawn {
+      _ = gate.recv()
+      s.size
+    }
+    add(s)
+    gate.send(1)
+    puts(t.join() ?? -1)
+    return 0
+  }
+  if kind == "value-push" {
+    ha = ["a": [1, 2]]
+    t = spawn {
+      _ = gate.recv()
+      ha.size
+    }
+    push_value(ha)
+    gate.send(1)
+    puts(t.join() ?? -1)
+    return 0
+  }
+  if kind == "inner-store" {
+    hs = [[1: 10], [2: 20]]
+    t = spawn {
+      _ = gate.recv()
+      hs.size
+    }
+    store_inner(hs)
+    gate.send(1)
+    puts(t.join() ?? -1)
+    return 0
+  }
+  t = spawn {
+    _ = gate.recv()
+    h.size
+  }
+  change(kind, h)
+  gate.send(1)
+  puts(t.join() ?? -1)
+  0
+}

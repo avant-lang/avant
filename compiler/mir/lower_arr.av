@@ -548,16 +548,87 @@ pub fn mir_array_innermost(t: Ty): Ty {
   x
 }
 
-// `avant_array_freeze(a, depth)` of the Array value v of type t.
+// A captured Hash is frozen as an Array is, and an Array or Hash of
+// either at every level (a Hash(String, Array(Int)), an
+// Array(Hash(String, Int))): the levels of such a type, outermost first,
+// each an Array or a Hash (the value type of a Hash, the element type of
+// an Array, until neither), and which of them are hashes, bit i for
+// level i.
+pub fn mir_freeze_levels(t: Ty): Array(Ty) {
+  out: Array(Ty) = []
+  x = t
+  while x.is_array() || x.is_hash() {
+    out.push(x)
+    nx: Ty? = nil
+    if x.is_array() {
+      nx = x.inner
+    } else {
+      nx = x.val
+    }
+    if n = nx {
+      x = n
+    } else {
+      break
+    }
+  }
+  out
+}
+
+pub fn mir_freeze_hashes(t: Ty): Int {
+  bits = 0
+  bit = 1
+  for lv in mir_freeze_levels(t) {
+    if lv.is_hash() {
+      bits = bits | bit
+    }
+    bit = bit << 1
+  }
+  bits
+}
+
+// Whether a captured value of type t is frozen while its task runs.
+pub fn mir_freezes(t: Ty): Bool {
+  t.is_array() || t.is_hash()
+}
+
+// `avant_array_freeze(a, depth)` of the Array value v of type t, or
+// `avant_value_freeze(v, depth, hashes)` when a level of t is a Hash.
 pub fn (lw: MirLower) freeze_array(v: MOperand, t: Ty, loc: Location) {
   b = lw.lw_b
   lw.at(loc)
+  hashes = mir_freeze_hashes(t)
+  if hashes != 0 {
+    depth = mir_freeze_levels(t).size
+    b.call(-1, "avant_value_freeze", lw.three(v, b.c_i32(depth), b.c_u32(hashes)))
+    return
+  }
   b.call(-1, "avant_array_freeze", lw.two(v, b.c_i32(mir_array_depth(t))))
 }
 
-// `avant_array_thaw(a, depth, elem_size)` of the Array value v of type t.
+// `avant_array_thaw(a, depth, elem_size)` of the Array value v of type t,
+// or `avant_value_thaw(v, depth, hashes, elem_size)` when a level of t is
+// a Hash (elem_size the innermost level's elements', 0 when that level is
+// a Hash).
 pub fn (lw: MirLower) thaw_array(v: MOperand, t: Ty, loc: Location) {
   b = lw.lw_b
+  hashes = mir_freeze_hashes(t)
+  if hashes != 0 {
+    levels = mir_freeze_levels(t)
+    last = levels[levels.size - 1]
+    es = b.c_u64(0)
+    if last.is_array() {
+      aty = lw.ty_at(last, loc, "a captured Array")
+      if lw.failed() {
+        return
+      }
+      es = lw.elem_size(aty)
+    }
+    lw.at(loc)
+    ops = lw.three(v, b.c_i32(levels.size), b.c_u32(hashes))
+    ops.push(es)
+    b.call(-1, "avant_value_thaw", ops)
+    return
+  }
   inner = lw.ty_at(mir_array_innermost(t), loc, "a captured Array")
   if lw.failed() {
     return

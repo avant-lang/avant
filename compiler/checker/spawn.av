@@ -35,7 +35,62 @@ pub fn (checker_self: Checker) copyable_for_spawn(ty: Ty): Bool {
     }
     return false
   }
+  // A captured Hash (a Set too) is shared and frozen as an Array is: its
+  // keys are plain values, and its values cross in turn.
+  if ty.is_hash() {
+    if k = ty.key, v = ty.val {
+      return checker_self.copyable_bits(k) && checker_self.copyable_for_spawn(v)
+    }
+    return false
+  }
   checker_self.copyable_bits(ty)
+}
+
+// The part of a type spawn's rule refuses that names it best: an
+// Array's elements or a Hash's keys or values, at any level, else ty.
+pub fn (checker_self: Checker) cross_leaf(ty: Ty): Ty {
+  if ty.is_array() {
+    if e = ty.inner, !checker_self.copyable_for_spawn(e) {
+      return checker_self.cross_leaf(e)
+    }
+  }
+  if ty.is_hash() {
+    if k = ty.key, !checker_self.copyable_bits(k) {
+      return k
+    }
+    if v = ty.val, !checker_self.copyable_for_spawn(v) {
+      return checker_self.cross_leaf(v)
+    }
+  }
+  ty
+}
+
+// Whether a type holds a Hash at some level of Arrays and Hashes: a send
+// copies an Array, not a Hash, so such a value does not cross by send.
+pub fn holds_hash(ty: Ty): Bool {
+  if ty.is_hash() {
+    return true
+  }
+  if ty.is_array() {
+    if e = ty.inner {
+      return holds_hash(e)
+    }
+  }
+  false
+}
+
+// "Array", "Hash" or "Set": what the captured name root holds, for a
+// message.
+pub fn (checker_self: Checker) frozen_kind(root: String): String {
+  if ty = checker_self.lookup(root) {
+    if ty.is_set() {
+      return "Set"
+    }
+    if ty.is_hash() {
+      return "Hash"
+    }
+  }
+  "Array"
 }
 
 pub fn (checker_self: Checker) copyable_bits(ty: Ty): Bool {
@@ -195,7 +250,7 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
         }
       } else if checker_self.spawn_array_frozen(target) {
         root = checker_self.expr_root_name(target)
-        checker_self.fail(target.loc, "${task_word(node)} cannot mutate captured Array ${root}; it is ${frozen_until(node)}")
+        checker_self.fail(target.loc, "${task_word(node)} cannot mutate captured ${checker_self.frozen_kind(root)} ${root}; it is ${frozen_until(node)}")
         checker_self.walk_spawn_expr(target, node, seen)
       } else {
         checker_self.walk_spawn_expr(target, node, seen)
@@ -239,9 +294,9 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
       checker_self.note_spawn_capture(name, node, seen)
     }
     if recv = expr.receiver {
-      if checker_self.array_mutator(expr.callee) && checker_self.spawn_array_frozen(recv) {
+      if checker_self.changes_frozen(expr.callee, recv) && checker_self.spawn_array_frozen(recv) {
         root = checker_self.expr_root_name(recv)
-        checker_self.fail(expr.loc, "${task_word(node)} cannot mutate captured Array ${root}; it is ${frozen_until(node)}")
+        checker_self.fail(expr.loc, "${task_word(node)} cannot mutate captured ${checker_self.frozen_kind(root)} ${root}; it is ${frozen_until(node)}")
       }
       if checker_self.spawn_array_frozen(recv) && rw_element_place(recv) {
         // A method on an element (`xs[0].bump`): refused once the
@@ -277,7 +332,7 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     if obj = expr.object {
       if checker_self.field_mutates_array(expr) && checker_self.spawn_array_frozen(obj) {
         root = checker_self.expr_root_name(obj)
-        checker_self.fail(expr.loc, "${task_word(node)} cannot mutate captured Array ${root}; it is ${frozen_until(node)}")
+        checker_self.fail(expr.loc, "${task_word(node)} cannot mutate captured ${checker_self.frozen_kind(root)} ${root}; it is ${frozen_until(node)}")
       }
       if expr.method_call && checker_self.spawn_array_frozen(obj) && rw_element_place(obj) {
         checker_self.note_element_call(expr, obj, task_side(node))
@@ -416,6 +471,61 @@ pub fn (checker_self: Checker) array_mutator(name: String): Bool {
   name == "reserve"
 }
 
+// The methods that change a Hash or a Set: `delete`, `clear`, `inc`,
+// `inc_slice`, and a Set's `add` (a store `h[k] = v` is an assignment).
+pub fn hash_mutator(name: String): Bool {
+  name == "delete" || name == "clear" || name == "inc" || name == "inc_slice" || name == "add"
+}
+
+// The type of a name, or of an element or value reached from one by
+// indexing (`xs`, `xs[0]`, `h["a"]`, `h["a"][0]`), as the scope declares
+// it; nil for any other expression (a field, a call) and for a name the
+// block declares.
+pub fn (checker_self: Checker) place_ty(expr: Expr): Ty? {
+  if expr.kind == ex_name() {
+    if checker_self.spawn_skip_has(expr.ident) {
+      return nil
+    }
+    return checker_self.lookup(expr.ident)
+  }
+  if expr.kind == ex_index() {
+    if l = expr.left, lt = checker_self.place_ty(l) {
+      if lt.is_array() {
+        return lt.inner
+      }
+      if lt.is_hash() {
+        return lt.val
+      }
+    }
+  }
+  nil
+}
+
+// Whether calling the method name on recv changes what the freeze
+// covers: a Hash mutator on a hash, an Array mutator on an array or on
+// anything else an array holds (as before); on a hash's value that is
+// neither (a String's `reverse`) or on what a hash's method gives
+// (`h.keys`), nothing.
+pub fn (checker_self: Checker) changes_frozen(name: String, recv: Expr): Bool {
+  // A hash has no fields: `h.keys` is a new array.
+  if recv.kind == ex_field() {
+    if obj = recv.object, ot = checker_self.place_ty(obj), ot.is_hash() {
+      return false
+    }
+  }
+  if t = checker_self.place_ty(recv) {
+    if t.is_hash() {
+      return hash_mutator(name)
+    }
+    if !t.is_array() && recv.kind == ex_index() {
+      if l = recv.left, lt = checker_self.place_ty(l), lt.is_hash() {
+        return false
+      }
+    }
+  }
+  checker_self.array_mutator(name)
+}
+
 // The type of an Array name or of an element reached from one by
 // indexing (`xs`, `xs[0]`), as the scope declares it; nil for any other
 // expression. A zero-argument mutator written without parentheses
@@ -449,10 +559,16 @@ pub fn (checker_self: Checker) indexed_array_ty(expr: Expr): Ty? {
 
 // Whether a field node is an Array mutator written without parentheses.
 pub fn (checker_self: Checker) field_mutates_array(expr: Expr): Bool {
-  if expr.kind != ex_field() || !checker_self.array_mutator(expr.ident) {
+  if expr.kind != ex_field() {
     return false
   }
   if obj = expr.object {
+    if t = checker_self.place_ty(obj), t.is_hash() {
+      return hash_mutator(expr.ident)
+    }
+    if !checker_self.array_mutator(expr.ident) {
+      return false
+    }
     if at = checker_self.indexed_array_ty(obj) {
       return true
     }
@@ -469,7 +585,7 @@ pub fn (checker_self: Checker) spawn_array_frozen(expr: Expr): Bool {
     return false
   }
   if ty = checker_self.lookup(root) {
-    return ty.is_array()
+    return ty.is_array() || ty.is_hash()
   }
   false
 }
@@ -557,6 +673,7 @@ pub fn (checker_self: Checker) pending_by_handler(name: String): Bool {
 
 pub fn (checker_self: Checker) pending_mutate_msg(root: String): String {
   if checker_self.pending_by_handler(root) {
+    // A Hash, as an Array: frozen from the registration on.
     return "cannot mutate ${root}: an HTTP handler registered above reads it on each of the server's loop threads, and it is read-only from the registration on"
   }
   "cannot mutate ${root} while a spawn using it is running; join first"
@@ -599,7 +716,7 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
         checker_self.pending_join(recv.ident)
       }
     }
-    if recv = expr.receiver, checker_self.array_mutator(expr.callee) {
+    if recv = expr.receiver, checker_self.changes_frozen(expr.callee, recv) {
       root = checker_self.expr_root_name(recv)
       if root.size > 0 && checker_self.pending_has_array(root) {
         checker_self.fail(expr.loc, checker_self.pending_mutate_msg(root))
@@ -716,7 +833,7 @@ pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
         handle = t.ident
       }
       for i in 0..v.cap_names.size {
-        if v.cap_tys[i].is_array() {
+        if v.cap_tys[i].is_array() || v.cap_tys[i].is_hash() {
           checker_self.pending_handles.push(handle)
           checker_self.pending_arrays.push(v.cap_names[i])
         }
@@ -726,7 +843,7 @@ pub fn (checker_self: Checker) register_spawn_pending(stmt: Stmt) {
   }
   if e = stmt.expr, e.kind == ex_call(), e.callee == "spawn" {
     for i in 0..e.cap_names.size {
-      if e.cap_tys[i].is_array() {
+      if e.cap_tys[i].is_array() || e.cap_tys[i].is_hash() {
         checker_self.pending_handles.push("")
         checker_self.pending_arrays.push(e.cap_names[i])
       }
@@ -751,23 +868,21 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
       return
     }
     if ty.is_array() && !checker_self.copyable_for_spawn(ty) {
-      leaf = ty
-      while leaf.is_array() {
-        if e = leaf.inner {
-          leaf = e
-        } else {
-          break
-        }
-      }
+      leaf = checker_self.cross_leaf(ty)
       checker_self.fail(expr.loc, "${task_word(node)} cannot capture ${expr.ident}: an ${ty.show()} is shared with the ${task_whom(node)}, and its elements (${leaf.show()}) cannot cross to another ${task_unit(node)}: a mutable object reaches another ${task_unit(node)} only inside a Mutex")
+      return
+    }
+    if ty.is_hash() && !checker_self.copyable_for_spawn(ty) {
+      leaf = checker_self.cross_leaf(ty)
+      checker_self.fail(expr.loc, "${task_word(node)} cannot capture ${expr.ident}: a ${ty.show()} is shared with the task, and its keys or values (${leaf.show()}) cannot cross to another task: a key must be a plain value, and a mutable object reaches another task only inside a Mutex")
       return
     }
     if !checker_self.copyable_for_spawn(ty) {
       if node.kind == ex_lambda() {
-        checker_self.fail(expr.loc, "an HTTP handler cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another thread, and the server runs every handler on each of its loop threads at once; numbers, Bool, String, Bytes, enums, structs of them, Arrays of those (frozen once the handler is registered), a Channel, a Mutex and the Server can, and state the handlers change belongs in a Mutex")
+        checker_self.fail(expr.loc, "an HTTP handler cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another thread, and the server runs every handler on each of its loop threads at once; numbers, Bool, String, Bytes, enums, structs of them, Arrays and Hashes of those (frozen once the handler is registered), a Channel, a Mutex and the Server can, and state the handlers change belongs in a Mutex")
         return
       }
-      checker_self.fail(expr.loc, "${task_word(node)} cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another task; numbers, Bool, String, enums, structs of them and Arrays of those can, and a mutable object reaches another task only inside a Mutex")
+      checker_self.fail(expr.loc, "${task_word(node)} cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another task; numbers, Bool, String, enums, structs of them and Arrays and Hashes of those can, and a mutable object reaches another task only inside a Mutex")
       return
     }
     if prev = seen.get(expr.ident) {
@@ -923,7 +1038,7 @@ pub fn (checker_self: Checker) check_handler_lambda(lam: Expr) {
     }
   }
   for i in 0..node.cap_names.size {
-    if node.cap_tys[i].is_array() {
+    if node.cap_tys[i].is_array() || node.cap_tys[i].is_hash() {
       checker_self.pending_handles.push(handler_pending())
       checker_self.pending_arrays.push(node.cap_names[i])
     }

@@ -2,6 +2,7 @@
 #include "avant_gc.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,9 +90,31 @@ typedef struct {
    * tenth field of its %Hash layout (compiler/mir/lower_arr.av), at the
    * offset asserted below. */
   uint32_t adds;
+  /* The running tasks that read this hash (avant_rt.h, the freeze of a
+   * value holding a hash): 0 when none, and then every operation that
+   * changes the hash may run; otherwise each traps
+   * (avant_trap_frozen_hash). It takes the four bytes of padding after
+   * adds, so a hash is no larger for it. */
+  int32_t frozen;
 } AvantHash;
 
 _Static_assert(offsetof(AvantHash, adds) == 48, "the generated code reads a hash's count of added keys at byte 48");
+_Static_assert(sizeof(AvantHash) == 56, "the freeze count takes the hash's padding: a hash is still 56 bytes");
+
+/* The freeze test of every operation that changes a hash: one load and
+ * a compare. The count is read and changed atomically, as an array's
+ * cap word is (avant_array.c): a task's end lowers it from its own
+ * thread while the owner may read it before joining. */
+static inline int32_t hash_frozen(const AvantHash *h) {
+  return __atomic_load_n(&h->frozen, __ATOMIC_RELAXED);
+}
+
+#define HASH_FROZEN_TRAP(h, op)                                  \
+  do {                                                           \
+    if (__builtin_expect(hash_frozen(h) != 0, 0)) {              \
+      avant_trap_frozen_hash(op);                                \
+    }                                                            \
+  } while (0)
 
 /* A hash made by avant_hash_create_typed: the hash, then what its
  * struct key or value needs. Its type is AVANT_TYPE_HASH too: the
@@ -1016,7 +1039,11 @@ avant_int avant_hash_size(void *hp) {
 void avant_hash_clear(void *hp) {
   AvantHash *h = (AvantHash *)hp;
   int32_t end;
-  if (!h || !h->cap) {
+  if (!h) {
+    return;
+  }
+  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_CLEAR);
+  if (!h->cap) {
     return;
   }
   end = walk_end(h);
@@ -1116,6 +1143,7 @@ static void *put_ik(AvantHash *h, avant_int key, int32_t *found, int grow_first)
     g_hash_scratch[1] = 0;
     return g_hash_scratch;
   }
+  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_STORE);
   uint32_t hv = hash_int(key, h->seed);
   int grow = needs_grow(h);
   if (!(grow_first && grow)) {
@@ -1180,6 +1208,7 @@ static void *put_sk(AvantHash *h, const char *key, int32_t *found, int grow_firs
     g_hash_scratch[1] = 0;
     return g_hash_scratch;
   }
+  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_STORE);
   size_t n = avant_str_n(key);
   uint32_t hv = hash_bytes(key, n, h->seed);
   int grow = needs_grow(h);
@@ -1361,6 +1390,7 @@ static void *put_xk(AvantHash *h, const char *k, int32_t *found, int grow_first)
   if (!h) {
     avant_trap_text("a Hash with a struct key was used before it was created");
   }
+  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_STORE);
   uint32_t hv = xkey_hash(h, k);
   if (!(grow_first && needs_grow(h))) {
     if (find_struct(h, k, hv, &e, &pos)) {
@@ -1553,6 +1583,9 @@ void *avant_hash_take_ik(void *hp, avant_int key, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t e = 0;
   int32_t pos = 0;
+  if (h) {
+    HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_DELETE);
+  }
   if (!h || !find_int(h, key, hash_int(key, h->seed), &e, &pos)) {
     *found = 0;
     return (void *)g_hash_none;
@@ -1564,6 +1597,9 @@ void *avant_hash_take_sk(void *hp, const char *key, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t e = 0;
   int32_t pos = 0;
+  if (h) {
+    HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_DELETE);
+  }
   size_t n;
   key = avant_str_bytes(key, &n);
   if (!h || !find_bytes(h, key, n, hash_bytes(key, n, h->seed), &e, &pos)) {
@@ -1577,6 +1613,9 @@ void *avant_hash_take_xk(void *hp, const void *key, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t e = 0;
   int32_t pos = 0;
+  if (h) {
+    HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_DELETE);
+  }
   if (!h || !find_struct(h, (const char *)key, xkey_hash(h, (const char *)key), &e, &pos)) {
     *found = 0;
     return (void *)g_hash_none;
@@ -1694,6 +1733,7 @@ static void *put_uk(AvantHash *h, const char *k, int32_t *found, int grow_first)
   if (!h) {
     avant_trap_text("a Hash with a struct key was used before it was created");
   }
+  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_STORE);
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &h);
   uint32_t hv = ukey_hash(&h, k);
@@ -1777,6 +1817,7 @@ void *avant_hash_take_uk(void *hp, const void *key, int32_t *found) {
     *found = 0;
     return (void *)g_hash_none;
   }
+  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_DELETE);
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &h);
   if (!find_user(&h, (const char *)key, ukey_hash(&h, key), &e, &pos)) {
@@ -1890,6 +1931,7 @@ avant_int avant_hash_inc_slice(void *hp, const char *s, avant_int start, avant_i
   if (!h || !is_str_int(h)) {
     return 0;
   }
+  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_STORE);
   const char *p = NULL;
   size_t n = 0;
   if (!s) {
@@ -2052,4 +2094,90 @@ void avant_hash_del(void *hp, const char *key) {
 
 void avant_hash_del_i32k(void *hp, avant_int key) {
   avant_hash_del_ik(hp, key);
+}
+
+/* ---- the freeze of a value holding a hash (avant_rt.h) ---- */
+
+/* One more (up) or one fewer task reads h. A thaw of a hash that is not
+ * frozen is the compiler's error. */
+static void hash_count(AvantHash *h, int up) {
+  int32_t c = hash_frozen(h);
+  int32_t n;
+  do {
+    if (up) {
+      if (c == 0x7fffffff) {
+        fflush(stdout);
+        fputs("avant runtime: a hash is captured by more than 2147483646 running tasks\n", stderr);
+        exit(1);
+      }
+      n = c + 1;
+    } else {
+      if (c <= 0) {
+        fflush(stdout);
+        fputs("avant runtime: internal error: a thaw of a hash that is not frozen\n", stderr);
+        abort();
+      }
+      n = c - 1;
+    }
+  } while (!__atomic_compare_exchange_n(&h->frozen, &c, n, 1, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
+}
+
+/* The next level's values that level v holds (depth > 1): an array's
+ * elements, a hash's live values, each a reference. Frozen (thaw 0) or
+ * thawed; v is frozen meanwhile, so they do not change. */
+static void each_inner(void *v, int32_t depth, uint32_t hashes, int thaw, uint64_t elem_size) {
+  int32_t i;
+  if (hashes & 1u) {
+    AvantHash *h = (AvantHash *)v;
+    int32_t end = h->cap ? walk_end(h) : 0;
+    for (i = 0; i < end; i++) {
+      if (!ent_live(h, i)) {
+        continue;
+      }
+      void *x = *(void **)val_at(h, h->vals, i);
+      if (thaw) {
+        avant_value_thaw(x, depth - 1, hashes >> 1, elem_size);
+      } else {
+        avant_value_freeze(x, depth - 1, hashes >> 1);
+      }
+    }
+    return;
+  }
+  AvantArrayBox *a = (AvantArrayBox *)v;
+  for (i = 0; a->buf && i < a->size; i++) {
+    void *x = ((void **)a->buf)[i];
+    if (thaw) {
+      avant_value_thaw(x, depth - 1, hashes >> 1, elem_size);
+    } else {
+      avant_value_freeze(x, depth - 1, hashes >> 1);
+    }
+  }
+}
+
+void avant_value_freeze(void *v, int32_t depth, uint32_t hashes) {
+  if (!v) {
+    return;
+  }
+  if (hashes & 1u) {
+    hash_count((AvantHash *)v, 1);
+  } else {
+    avant_array_freeze(v, 1);
+  }
+  if (depth > 1) {
+    each_inner(v, depth, hashes, 0, 0);
+  }
+}
+
+void avant_value_thaw(void *v, int32_t depth, uint32_t hashes, uint64_t elem_size) {
+  if (!v) {
+    return;
+  }
+  if (depth > 1) {
+    each_inner(v, depth, hashes, 1, elem_size);
+  }
+  if (hashes & 1u) {
+    hash_count((AvantHash *)v, 0);
+  } else {
+    avant_array_thaw(v, 1, depth > 1 ? sizeof(void *) : elem_size);
+  }
 }

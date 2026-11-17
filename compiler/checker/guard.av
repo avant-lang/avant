@@ -999,10 +999,11 @@ pub fn (checker_self: Checker) guard_consume_at(w: GuardWalk, e: Expr) {
 // is refused. An Array is copied at the send (mir/lower_agg.av
 // send_copy), so the receiver owns an independent array; its elements
 // cross in turn, and an array of arrays is copied at every level.
-// Spawn's rule asks the same of a captured Array's elements, so the two
-// rules are one.
+// Spawn's rule asks the same of a captured Array's elements. A Hash
+// crosses a spawn shared and frozen until the task ends; a send has no
+// such end and copies no hash, so a value holding one is refused.
 pub fn (checker_self: Checker) send_crosses(t: Ty): Bool {
-  checker_self.copyable_for_spawn(t)
+  checker_self.copyable_for_spawn(t) && !holds_hash(t)
 }
 
 pub fn (checker_self: Checker) check_send(expr: Expr) {
