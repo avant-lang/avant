@@ -117,8 +117,9 @@ void avant_gc_root(void *slot);
  * slot address into the returned array at its fixed index, and the
  * collector scans the first count entries. avant_gc_root (one slot per
  * call) and avant_gc_reload (a slot read after a collecting call) are
- * the old myc back end's ABI: the current compiler emits neither, and
- * they stay as deprecated entries until a release note retires them. */
+ * a retired back end's ABI: the compiler emits neither (its call table
+ * has no row for them), and they stay as deprecated entries for user C
+ * until a release note retires them. */
 void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
 /* Frames in the caller's stack: generated code keeps
