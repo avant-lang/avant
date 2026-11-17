@@ -143,6 +143,20 @@ void avant_trap_empty_at(int32_t what, int32_t site) {
   trap_tail();
 }
 
+/* A key added to a Hash, or an element to a Set, during its own walk
+ * (h.each, s.each): the walk visits the keys it started with, so the new
+ * one would be missed. what: 0 a Hash, 1 a Set. */
+void avant_trap_walk_at(int32_t what, int32_t site) {
+  g_trap_loc = site_text(site);
+  trap_head();
+  if (what == 1) {
+    trap_out("an element was added to a Set during its walk, which would miss it: collect the new elements and add them after the walk");
+  } else {
+    trap_out("a key was added to a Hash during its walk, which would miss it: collect the new entries and add them after the walk");
+  }
+  trap_tail();
+}
+
 /* A change to an Array a running task reads (avant_rt.h,
  * AVANT_ARRAY_FROZEN): op names the operation
  * (AVANT_FROZEN_*). The checks inside the runtime's own functions (push's

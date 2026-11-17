@@ -390,6 +390,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       if e = array.inner {
         saved_for = checker_self.for_names.size
         saved_places = checker_self.place_names.size
+        saved_walks = checker_self.walk_texts.size
         checker_self.loop_depth += 1
         checker_self.push_scope()
         checker_self.bind_walk_param(expr, b, array, e)
@@ -397,6 +398,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         checker_self.pop_scope()
         checker_self.loop_depth -= 1
         checker_self.end_places(saved_places)
+        checker_self.end_plain_walks(saved_walks)
         checker_self.end_for_vars(saved_for)
       }
       return checker_self.t_void()
@@ -416,9 +418,9 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       }
       if e = array.inner {
         saved_for = checker_self.for_names.size
+        checker_self.refuse_block_param_outer(b, expr.callee)
         checker_self.push_scope()
         checker_self.bind(b.params[0], e)
-        checker_self.refuse_block_param_outer(b, expr.callee)
         checker_self.bind(b.params[1], e)
         checker_self.note_for_var(b.params[0], 7)
         checker_self.note_for_var(b.params[1], 7)
@@ -456,9 +458,9 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       }
       if e = array.inner {
         saved_for = checker_self.for_names.size
+        checker_self.refuse_block_param_outer(b, expr.callee)
         checker_self.push_scope()
         checker_self.bind(b.params[0], e)
-        checker_self.refuse_block_param_outer(b, expr.callee)
         checker_self.bind(b.params[1], e)
         checker_self.note_for_var(b.params[0], 7)
         checker_self.note_for_var(b.params[1], 7)
@@ -522,6 +524,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
       if e = array.inner {
         saved_for = checker_self.for_names.size
         saved_places = checker_self.place_names.size
+        saved_walks = checker_self.walk_texts.size
         checker_self.push_scope()
         checker_self.bind_walk_param(expr, b, array, e)
         checker_self.loop_depth += 1
@@ -529,6 +532,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         checker_self.loop_depth -= 1
         checker_self.pop_scope()
         checker_self.end_places(saved_places)
+        checker_self.end_plain_walks(saved_walks)
         checker_self.end_for_vars(saved_for)
         if !bt.is_bool() {
           checker_self.fail(b.loc, "${pred_name} predicate must return Bool")
@@ -735,11 +739,11 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
         return ty_array(checker_self.t_int())
       }
       saved_for = checker_self.for_names.size
+      checker_self.refuse_block_param_outer(b, "parallel")
       checker_self.push_scope()
       checker_self.bind(b.params[0], e)
       checker_self.note_for_var(b.params[0], 9)
       checker_self.in_task += 1
-      checker_self.refuse_block_param_outer(b, "parallel")
       saved_loops = checker_self.loop_depth
       checker_self.loop_depth = 0
       saved_try = checker_self.try_in
@@ -806,11 +810,11 @@ pub fn (checker_self: Checker) check_set_method(expr: Expr, set: Ty): Ty {
         checker_self.fail(b.loc, "each { |v| ... } takes one block parameter")
         return checker_self.t_void()
       }
+      checker_self.refuse_block_param_outer(b, "each")
       checker_self.push_scope()
       checker_self.bind(b.params[0], elem)
       checker_self.loop_depth += 1
       checker_self.check_body(b.body, checker_self.return_type, false)
-      checker_self.refuse_block_param_outer(b, "each")
       checker_self.loop_depth -= 1
       checker_self.pop_scope()
       return checker_self.t_void()
@@ -948,11 +952,11 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       }
       if k = hash.key, v = hash.val {
         saved_for = checker_self.for_names.size
+        checker_self.refuse_block_param_outer(b, "each")
         checker_self.push_scope()
         checker_self.bind(b.params[0], k)
         checker_self.bind(b.params[1], v)
         checker_self.note_for_var(b.params[0], 8)
-        checker_self.refuse_block_param_outer(b, "each")
         checker_self.note_for_var(b.params[1], 8)
         checker_self.loop_depth += 1
         checker_self.check_body(b.body, checker_self.return_type, false)

@@ -253,6 +253,10 @@ pub class Checker {
   pub place_lams: Array(Int) = []
   pub place_tasks: Array(Int) = []
   pub place_count: Int = 0
+  // The arrays walked here whose element is not a place (a `for` or an
+  // `each`, `any` or `all` over plain values), as written: a sort or a
+  // reverse of one through its own name inside its walk is refused.
+  pub walk_texts: Array(String) = []
   // A walk's hidden array by name, and the name of the array it holds
   // (its root): the task rules read a write through the place as one
   // through that name.
@@ -672,6 +676,7 @@ pub class Checker {
     self.for_scopes = []
     self.for_kinds = []
     self.clear_places()
+    self.walk_texts = []
     self.push_scope()
     if fn_is_method(fnn) && !fnn.type_method {
       got_owner = false
@@ -979,12 +984,12 @@ pub class Checker {
       has_pre = stmt.pre.size > 0
       saved_for = self.for_names.size
       if has_pre {
+        refuse_for_outer_name(stmt)
         self.push_scope()
         pi = 0
         while pi < stmt.pre.size {
           annotate_vstep(stmt.pre[pi], stmt)
           self.clear_poison()
-        refuse_for_outer_name(stmt)
           check_stmt(stmt.pre[pi], t_void(), false)
           if stmt.for_kind == 2 && pi == 0 {
             set_for_operand(stmt.pre[0])
@@ -1013,8 +1018,10 @@ pub class Checker {
         }
       }
       saved_places = self.place_names.size
+      saved_walks = self.walk_texts.size
       if stmt.for_kind == 2 && !self.has_err() {
         begin_for_place(stmt)
+        begin_plain_walk(stmt)
       }
       saved_facts = self.facts.fact_var.size
       if cond = stmt.cond {
@@ -1049,6 +1056,7 @@ pub class Checker {
         self.for_kinds.pop()
       }
       end_places(saved_places)
+      end_plain_walks(saved_walks)
       if has_pre {
         self.pop_scope()
       }
@@ -3099,6 +3107,7 @@ pub class Checker {
         fail(b.loc, "Array(T).new(n) { |i| ... } takes one block parameter, the index")
         return ty_array(elem)
       }
+      refuse_block_param_outer(b, "Array.new")
       self.push_scope()
       bind(b.params[0], t_int())
       saved_loops = self.loop_depth
@@ -3107,7 +3116,6 @@ pub class Checker {
       self.in_build += 1
       bt = check_block_value_as(b, true, elem)
       self.in_build = saved_build
-      refuse_block_param_outer(b, "Array.new")
       self.loop_depth = saved_loops
       self.pop_scope()
       if !self.has_err() && !ty_assignable(bt, elem) {
@@ -6321,6 +6329,7 @@ pub class Checker {
           return t_void()
         }
       }
+      refuse_block_param_outer(b, expr.callee)
       self.push_scope()
       bind(b.params[0], t)
       // `return`, `break`, `continue` and `?` leave the block as they
@@ -6329,7 +6338,6 @@ pub class Checker {
       // Used as a statement, the block ends without a value; used as a
       // value, its last expression is the value.
       result = check_with_body(b, !dropped)
-      refuse_block_param_outer(b, expr.callee)
       self.pop_scope()
       // The block's value leaves the lock: it may not be, or hold, a
       // reference to mutable state (two tasks raced on a class handed out

@@ -35,7 +35,11 @@ pub fn (lw: MirLower) container_ty(t: Ty, loc: Location): Int {
   ts = lw.lw_m.types
   if t.is_hash() {
     fields: Array(Int) = []
-    names = ["keys", "vals", "meta", "size", "cap", "desc", "seed"]
+    // runtime/avant_hash.c's AvantHash: the three buffers (its only
+    // references), the size and capacity, the descriptor and the seed,
+    // the compact layout's used entries, four bytes of decoded widths,
+    // and the count of added keys a walk reads (field 9, byte 48).
+    names = ["keys", "vals", "meta", "size", "cap", "desc", "seed", "used", "widths", "adds"]
     fields.push(mt_ref())
     fields.push(mt_ref())
     fields.push(mt_ref())
@@ -43,6 +47,9 @@ pub fn (lw: MirLower) container_ty(t: Ty, loc: Location): Int {
     fields.push(mt_i32())
     fields.push(mt_i32())
     fields.push(mt_i32())
+    fields.push(mt_i32())
+    fields.push(mt_i32())
+    fields.push(mt_u32())
     return ts.ref_to(lw.lw_b.note_layout("Hash", mlk_hash(), fields, names))
   }
   if t.is_buf() {

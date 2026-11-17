@@ -82,7 +82,16 @@ typedef struct {
   uint8_t vw;
   uint8_t vshift;
   uint8_t compact;
+  /* The keys added so far (a wrapping count; a growth's moves are not
+   * additions): a walk of the hash (h.each, a Set's) reads it before its
+   * first step and again after each step, and traps when a key was
+   * added, which the walk would miss. The generated code reads it as the
+   * tenth field of its %Hash layout (compiler/mir/lower_arr.av), at the
+   * offset asserted below. */
+  uint32_t adds;
 } AvantHash;
+
+_Static_assert(offsetof(AvantHash, adds) == 48, "the generated code reads a hash's count of added keys at byte 48");
 
 /* A hash made by avant_hash_create_typed: the hash, then what its
  * struct key or value needs. Its type is AVANT_TYPE_HASH too: the
@@ -623,6 +632,9 @@ static int32_t claim(AvantHash *h, int32_t pos, uint8_t st) {
   }
   states_of(h)[e] = st;
   h->size += 1;
+  /* A growth claims into a copy of the hash whose count is not written
+   * back, so only a new key counts. */
+  h->adds += 1;
   return e;
 }
 

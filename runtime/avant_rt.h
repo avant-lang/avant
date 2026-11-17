@@ -518,6 +518,7 @@ __attribute__((noreturn, cold)) void avant_trap_overflow_in(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_div_zero_in(int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_bounds_in(avant_int index, avant_int size, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_empty_at(int32_t what, int32_t site);
+__attribute__((noreturn, cold)) void avant_trap_walk_at(int32_t what, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_frozen(int32_t op);
 __attribute__((noreturn, cold)) void avant_trap_frozen_at(int32_t op, int32_t site);
 /* `with` on a poisoned mutex. */

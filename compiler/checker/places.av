@@ -204,6 +204,26 @@ pub fn (checker_self: Checker) bind_walk_param(expr: Expr, b: Block, array: Ty, 
   }
   checker_self.bind(b.params[0], elem)
   checker_self.note_for_var(b.params[0], 6)
+  if recv = expr.receiver {
+    checker_self.walk_texts.push(checker_self.walked_text(recv))
+  }
+}
+
+// A `for` over an Array whose element is not a place (begin_for_place
+// left the element's store as a copy): its array, as written.
+pub fn (checker_self: Checker) begin_plain_walk(stmt: Stmt) {
+  if stmt.body.size == 0 || stmt.body[0].for_kind != 4 {
+    return
+  }
+  if v = stmt.pre[0].value {
+    checker_self.walk_texts.push(checker_self.walked_text(v))
+  }
+}
+
+pub fn (checker_self: Checker) end_plain_walks(saved: Int) {
+  while checker_self.walk_texts.size > saved {
+    checker_self.walk_texts.pop()
+  }
 }
 
 pub fn (checker_self: Checker) end_for_vars(saved: Int) {
@@ -249,7 +269,7 @@ pub fn (checker_self: Checker) place_use(expr: Expr, has_want: Bool, want: Ty): 
 // A change of the walked array's size or order through its own name,
 // inside the walk: refused. True when it failed.
 pub fn (checker_self: Checker) refuse_walk_change(expr: Expr, recv: Expr): Bool {
-  if checker_self.place_names.size == 0 {
+  if checker_self.place_names.size == 0 && checker_self.walk_texts.size == 0 {
     return false
   }
   c = expr.callee
@@ -262,6 +282,18 @@ pub fn (checker_self: Checker) refuse_walk_change(expr: Expr, recv: Expr): Bool 
   text = checker_self.walked_text(recv)
   if text.size == 0 {
     return false
+  }
+  // A walk over plain values reads each element by its position when it
+  // gets there: a growth or a shrink moves no element the walk has yet
+  // to read (it reads the size again), but a sort or a reverse would
+  // make it read some elements twice and miss others.
+  if c == "sort" || c == "reverse" {
+    for w in checker_self.walk_texts {
+      if w == text {
+        checker_self.fail(expr.loc, "cannot ${c} ${text} while walking it: the walk reads the elements by their positions, so it would read some twice and miss others; ${c} it before or after the loop")
+        return true
+      }
+    }
   }
   i = checker_self.place_names.size - 1
   while i >= 0 {

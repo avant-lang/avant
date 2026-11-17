@@ -711,6 +711,7 @@ fn main {
 - The bounds are evaluated once. The loop variable is a new name, only inside the loop: a name that already exists there (a local, a parameter, an outer loop's variable) is a compile error, since the loop would otherwise assign it at every step and leave its last value behind; give the loop's variable a name of its own. Two loops one after the other may use the same name. `break`, `continue` and `return` work as in `while`.
 - **Over an array of structs the loop variable is the element itself**, in place: `p.x = 1`, `p.pos.x += 1` and a method that changes its receiver (`p.step()`) change the element in the array, as a *class* element's field changes its object. A copy is still a copy (`q = p`, an argument, `ys.push(p)`). While the loop runs, the array's size and order cannot change through its own name (`xs.push`, `pop`, `clear`, `reserve`, `sort` and `reverse` there are compile errors; collect the changes and apply them after the loop); a change through another name that removes the element stops the program at the variable's next use, as a bad index does. `p = other` replaces the element in the array, as `xs[i] = other` does. The variable cannot be captured by a lambda or a task (copy it first: `q = p`). The parameter of `each`, `any` and `all` over an array of structs is the same place.
 - **Any other loop variable cannot be assigned** (it is a fresh copy at each step): `i = 5` and `x += 1` are compile errors. Store through an index (`xs[i] = v`), or use `while` for a range that skips or repeats steps.
+- A walk over an array of plain values (numbers, strings, classes; `for`, `each`, `any`, `all`) reads each element when it reaches it, and reads the size again at each step: an element pushed during the walk is visited, and a `pop` or `clear` ends the walk sooner. A `sort` or `reverse` of the walked array through its own name inside the walk is a compile error (the walk would read some elements twice and miss others); sort before or after the loop.
 
 ```avant
 struct Ball {
@@ -1463,7 +1464,7 @@ fn main {
 ```
 
 - **Iteration order is unspecified** (stable for one program); sort the keys when order matters. Insertion order is decided, not built.
-- A key the block of `each` deletes before the walk reaches it is not visited.
+- **Changing a hash during its walk:** assigning an existing key's value, deleting a key (the one being visited or another) and `clear()` are allowed, and a key deleted before the walk reaches it is not visited. Adding a key, through the walked name or any other, would be missed by the walk, so it stops the program after that step (`avant runtime: a key was added to a Hash during its walk, …`); collect the new entries and add them after the walk.
 - Without building the key, `h.inc_slice(s, start, stop)` and `h.get_slice(s, start, stop)` look up a slice of `s`, and `h.get_concat(a, b)` looks up `a + b`.
 
 ### Key and value types
@@ -1575,7 +1576,7 @@ fn main {
 | `s.delete(v)` | take `v` out; `true` when it was there |
 | `s.size`, `s.clear()` | number of elements; remove all |
 | `s.values()` | the elements as an array, in unspecified order |
-| `s.each { \|v\| ... }`, `for v in s` | walk every element (over the array `values()` makes when the walk starts) |
+| `s.each { \|v\| ... }`, `for v in s` | walk every element (over the array `values()` makes when the walk starts); an element added during the walk stops the program after that step, as in a hash's walk |
 
 - A set is stored as a `Hash` whose values are one byte nobody reads, and costs what that hash costs; a set is shared as a hash is.
 - **Iteration order is unspecified**, as a hash's; sort `values()` when order matters.
@@ -2410,9 +2411,9 @@ The builtins' blocks (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `spawn
 | a builtin's block (`xs.each { ... }`) | leaves the enclosing function | leaves the loop |
 | a lambda, a trailing block of your own function | returns from the lambda | a compile error |
 
-```avant
 A builtin block's parameters are new names, as a `for` variable is: a parameter named like a variable that already exists there (`x = 1`, then `xs.each { |x| ... }`) is a compile error, since the block would otherwise assign that variable at every step and leave its last value behind. A lambda's parameters are a function's, and may take any name.
 
+```avant
 fn first_big(xs: Array(Int)): Int {
   found = -1
   xs.each { |x|

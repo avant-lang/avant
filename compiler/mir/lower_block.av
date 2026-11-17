@@ -443,7 +443,11 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
 // `h.each { |k, v| ... }` (emit_hash_method, builtins.av:346-441): the
 // hash once, its keys as an array, then for each key the value read back
 // through the hash (a checked lookup: a key the body deleted is skipped),
-// both bound, the body (a Set's: its element only).
+// both bound, the body (a Set's: its element only). A key added during
+// the walk (through any name) would be missed: the hash's count of added
+// keys is read before the first step and again after each, and a change
+// traps (avant_trap_walk). Deleting and assigning an existing key's value
+// stay defined.
 pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -467,6 +471,7 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
     return zero
   }
   lw.at(e.loc)
+  adds0 = lw.hash_adds(h)
   keys = b.temp(aty)
   b.call(keys, "avant_hash_keys", lw.one(b.copy_local(h)))
   i = b.temp(mt_i32())
@@ -499,7 +504,32 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   lw.goto_if_open(step, e.loc)
   b.at(step)
   lw.at(e.loc)
+  what = 0
+  if bl.params.size == 1 {
+    what = 1
+  }
+  lw.walk_added_trap(h, adds0, what, e.loc)
   lw.block_step(i, head)
   b.at(exit)
   zero
+}
+
+// The trap of a key added to the hash in _h during its walk: its count of
+// added keys read again and compared with the walk's start (_adds0); what
+// is 0 for a Hash, 1 for a Set (avant_trap_walk_at's words).
+pub fn (lw: MirLower) walk_added_trap(h: Int, adds0: Int, what: Int, loc: Location) {
+  b = lw.lw_b
+  adds = lw.hash_adds(h)
+  added = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(adds), b.copy_local(adds0)))
+  ok = lw.trap_open(added, true)
+  lw.trap_close(ok, "avant_trap_walk", lw.one(b.c_i32(what)), loc)
+}
+
+// The count of keys added to the hash in _h (AvantHash.adds, field 9 of
+// %Hash), into a new local.
+pub fn (lw: MirLower) hash_adds(h: Int): Int {
+  b = lw.lw_b
+  a = b.temp(mt_u32())
+  b.assign(b.pl(a), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 9))))
+  a
 }
