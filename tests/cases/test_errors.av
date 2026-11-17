@@ -232,6 +232,8 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "lib-fn-bare", "lib math {\n  fn\n}\nfn main {\n  puts(1)\n}\n", "inside lib, write fun, not fn")
     expect_err(c, compiler, stamp, "reserved-hash-del", "lib c {\n  fun avant_hash_del_ik(h: Ptr(Void), key: Int)\n}\nfn main {\n  puts(1)\n}\n", "C function avant_hash_del_ik is reserved")
     expect_err(c, compiler, stamp, "reserved-str-cat", "lib c {\n  fun avant_str_cat_int(s: String, n: Int): String\n}\nfn main {\n  puts(1)\n}\n", "C function avant_str_cat_int is reserved")
+    expect_err(c, compiler, stamp, "reserved-c-str", "lib c {\n  fun avant_c_str(s: Int): Int\n}\nfn main {\n  puts(1)\n}\n", "C function avant_c_str is reserved: the runtime defines it and the compiler calls it with its own signature")
+    expect_err(c, compiler, stamp, "reserved-alloc-slow", "lib c {\n  fun avant_alloc_slow(n: Int): Ptr(Void)\n}\nfn main {\n  puts(1)\n}\n", "C function avant_alloc_slow is reserved")
     expect_err(c, compiler, stamp, "hash-float-key", "fn main {\n  h = Hash(Float64, Int).new()\n  puts(h.size)\n}\n", "a Hash key cannot be a Float64: its == follows IEEE 754")
     expect_err(c, compiler, stamp, "hash-float-key-type", "fn f(h: Hash(Float64, Int)): Int {\n  h.size\n}\nfn main {\n  puts(1)\n}\n", "a Hash key cannot be a Float64")
     expect_err(c, compiler, stamp, "hash-array-key", "fn main {\n  h = Hash(Array(Int), Int).new()\n  puts(h.size)\n}\n", "a Hash key is an integer, a Bool, an enum, a String or a struct of those, not Array(Int): key by a String or a struct made from its contents, or its index in an Array(Array(Int))")
