@@ -240,6 +240,11 @@ fi
 # each compiler build 900 s; stdin /dev/null).
 letters() { LETTERS_SEED=$seed LETTERS_TIME_DIR=$out sh tools/letters.sh "$@" < /dev/null; }
 letters runtime > "$out/build-runtime.log" 2>&1 || { fail "runtime build failed (rc=$?)"; finish; }
+# The bind helper is part of the runtime's build, and the suite tests
+# `avant bind`: runtime/build.sh skips it with a notice when llvm-config or
+# libclang is missing, so the gate stops here with that reason rather
+# than in the suite.
+[ -x runtime/build/avant-bind ] || { fail "avant-bind was not built: $(grep 'skipped avant-bind' "$out/build-runtime.log" | tail -n 1 | sed 's/^runtime\/build.sh: //') (build-runtime.log)"; finish; }
 letters b > "$out/build-b.log" 2>&1 || { fail "B build failed (rc=$?)"; finish; }
 
 build_c() {
