@@ -1177,7 +1177,7 @@ static void account_alloc(size_t total, int nursery) {
   } else {
     gc_heap.mature_since_full += total;
     /* An object born old (no full collection marked it). */
-    gc_proof_break(PROOF_MATURE);
+    gc_proof_grow(PROOF_MATURE);
   }
   gc_note_peak();
 }

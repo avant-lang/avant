@@ -65,6 +65,30 @@ fn test_nesting(c: Checks) {
         c.eq_int(count_of(err, "error["), 1, "${kind}: ${n} levels: one error")
       }
     }
+    // A string interpolation inside another one is refused where the
+    // inner string opens: the lexers (compile's and format's) used to
+    // lex into each inner string before refusing it, one recursion a
+    // level, and 5,000 levels killed both with SIGSEGV. Now any depth is
+    // one error, at the second string, and the lexer never recurses.
+    for n in [2, 100000] {
+      src = "${scratch()}/nesting-${stamp}-interp-${n}.av"
+      c.wrote(file_write(src, "fn main {\n  x = 1\n  puts(${rep("\"\${", n)}x${rep("}\"", n)})\n}\n"), "write interpolation ${n}")
+      for cmd in ["compile", "format"] {
+        log = "${scratch()}/nesting-${stamp}-interp-${n}-${cmd}.log"
+        args = [cmd, src]
+        if cmd == "compile" {
+          args.push("${scratch()}/nesting-${stamp}-interp-${n}.bin")
+        }
+        code = process_run_out(compiler, args, log) ?? -1
+        c.eq_int(code, 1, "interpolation ${n} levels: ${cmd} refuses it (status 1), not a crash")
+        err = read_text(log)
+        c.eq_int(count_of(err, "nested string interpolation is not supported: give the inner string a name first"), 1, "interpolation ${n} levels: ${cmd} gives one error")
+        c.expect(str_has(err, "${src}:3:11"), "interpolation ${n} levels: ${cmd} points at the inner string")
+        if cmd == "compile" {
+          c.eq_int(count_of(err, "error["), 1, "interpolation ${n} levels: no other error follows")
+        }
+      }
+    }
     // The place: the first token of the 1,001st level. `main`'s block is
     // the first level and the assignment's value the second, so the
     // 999th `(` opens the 1,001st, which starts at the 1,000th `(`

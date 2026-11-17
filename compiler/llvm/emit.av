@@ -363,7 +363,7 @@ fn ll_stmt(e: LlEmit, st: MStmt) {
       pt = e.place_type(p)
       val = ll_rvalue(e, rv, pt)
       ptr = e.place_ptr(p)
-      e.store(pt, val, ptr, e.pa_vol)
+      e.store_tagged(pt, val, ptr, e.pa_vol, e.pa_tbaa)
     }
   } else if k == msk_call() {
     ll_call(e, st)
@@ -609,12 +609,21 @@ fn ll_cold_md(e: LlEmit, t: MTerm): String {
   ", !llvm.loop !${e.loop_md_n}"
 }
 
+// The metadata: !0 the loops' unroll hint, !1 to !7 the alias tags
+// (ll_tbaa_nodes), then one node per cold loop.
 fn ll_loop_md(e: LlEmit, out: Buf) {
-  if e.loop_md_n == 0 {
+  first = ll_tbaa_last() + 1
+  if e.loop_md_n < first && !e.used_tbaa {
     return
   }
-  out.push_str("\n!0 = !{!\"llvm.loop.unroll.disable\"}\n")
-  i = 1
+  out.push_str("\n")
+  if e.loop_md_n >= first {
+    out.push_str("!0 = !{!\"llvm.loop.unroll.disable\"}\n")
+  }
+  if e.used_tbaa {
+    out.push_str(ll_tbaa_nodes())
+  }
+  i = first
   while i <= e.loop_md_n {
     out.push_str("!${i} = distinct !{!${i}, !0}\n")
     i += 1
@@ -817,18 +826,27 @@ fn ll_cmp(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
 }
 
 // add.chk sub.chk mul.chk: the with.overflow intrinsic and a
-// branch to the function's overflow trap.
+// branch to the function's overflow trap. Past the branch the operation
+// is known not to wrap, so the result used is the plain operation with
+// that flag (nsw signed, nuw unsigned): LLVM reads the flag where it
+// cannot see through the intrinsic and the trap's call (an induction
+// variable's range, a sign extension of an index, a loop's trip count),
+// and folds the two into the one add or multiply and its jump.
 fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   lt = e.llt(ty)
   pair = "{ ${lt}, i1 }"
   e.need_intrinsic("declare ${pair} @llvm.${name}.with.overflow.${lt}(${lt}, ${lt})")
   r = e.tmp()
   e.line("${r} = call ${pair} @llvm.${name}.with.overflow.${lt}(${lt} ${x}, ${lt} ${y})")
-  v = e.tmp()
-  e.line("${v} = extractvalue ${pair} ${r}, 0")
   o = e.tmp()
   e.line("${o} = extractvalue ${pair} ${r}, 1")
   ll_arith_trap(e, o, false)
+  flag = "nsw"
+  if str_starts(name, "u") {
+    flag = "nuw"
+  }
+  v = e.tmp()
+  e.line("${v} = ${str_slice(name, 1, name.size)} ${flag} ${lt} ${x}, ${y}")
   v
 }
 

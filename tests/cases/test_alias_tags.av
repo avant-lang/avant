@@ -1,0 +1,250 @@
+import harness
+
+// What the LLVM emitter tells LLVM about memory and arithmetic
+// (compiler/llvm/emit_core.av, ll_tbaa_tag; compiler/llvm/emit.av,
+// ll_overflow). The type-based alias tags: an element access carries the
+// element tag, an Array or Buf header's buffer reference and size their
+// own tags, a local (an alloca, a collector's slot among them) its own,
+// a class's or record's field its own, and nothing else is tagged (Hash
+// fields, an array's capacity, which is read atomically, raw pointers).
+// A size's loads carry its range, a checked add's result is an add
+// without signed wrap, and a wrapping operation keeps no such flag. Then
+// the programs that store elements and fields
+// while calls move their buffers and objects
+// (tests/fixtures/heap/alias_moves.av, alias_fields.av) are built with
+// --release, the mode whose optimizer uses these facts, and run under
+// each collector mode: each output must be its run golden's.
+
+fn tags_lines(text: String): Array(String) {
+  out: Array(String) = []
+  start = 0
+  for i in 0..text.size {
+    if text[i] == 10 {
+      out.push(str_slice(text, start, i))
+      start = i + 1
+    }
+  }
+  if start < text.size {
+    out.push(str_slice(text, start, text.size))
+  }
+  out
+}
+
+// The number of lines holding both a and b.
+fn tags_count(lines: Array(String), a: String, b: String): Int {
+  n = 0
+  for l in lines {
+    if str_has(l, a) && str_has(l, b) {
+      n += 1
+    }
+  }
+  n
+}
+
+fn tags_array_src: String {
+  "fn main {\n  flags = Array(Bool).new(100)\n  flags.fill(true)\n  k = 4\n  while k < flags.size {\n    flags[k] = false\n    k += 2\n  }\n  n = 0\n  for i in 0..flags.size {\n    if flags[i] {\n      n += 1\n    }\n  }\n  xs: Array(Int) = []\n  xs.push(n)\n  puts(xs[0])\n}\n"
+}
+
+fn tags_other_src: String {
+  "class Box {\n  v: Int\n\n  fn initialize(v: Int) {\n    self.v = v\n  }\n}\n\nfn main {\n  b = Box.new(1)\n  h: Hash(Int, Int) = Hash(Int, Int).new()\n  i = 0\n  while i < 10 {\n    b.v = b.v + i\n    h[i] = b.v\n    i += 1\n  }\n  puts(b.v + (h[3] ?? 0))\n}\n"
+}
+
+// A program that spawns (its module is shared), so an element store
+// through another name tests the capacity word first (the frozen check).
+fn tags_shared_src: String {
+  "fn total(xs: Array(Int)): Int {\n  s = 0\n  for x in xs {\n    s += x\n  }\n  s\n}\n\nfn fill(ys: Array(Int), n: Int) {\n  for i in 0..n {\n    ys[i] = i\n  }\n}\n\nfn main {\n  xs = [1, 2, 3, 4]\n  h = spawn { total(xs) }\n  puts(h.join() ?? -1)\n  fill(xs, 4)\n  puts(total(xs))\n}\n"
+}
+
+// The frozen check reads an Array's capacity word with an atomic
+// (monotonic) load and no tag: a task's end changes the word from
+// another thread.
+fn test_alias_tags_cap(c: Checks, compiler: String, stamp: Int) {
+  src = "${scratch()}/alias-tags-${stamp}-shared.av"
+  ll = "${scratch()}/alias-tags-${stamp}-shared.ll"
+  log = "${scratch()}/alias-tags-${stamp}-shared.log"
+  c.wrote(file_write(src, tags_shared_src()), "write the shared probe")
+  c.eq_int(emit_ll(compiler, src, ll, log), 0, "the shared probe's .ll")
+  if text = file_read(ll) {
+    lines = tags_lines(text)
+    reads = 0
+    atomic = 0
+    tagged = 0
+    for i in 0..lines.size - 1 {
+      if str_has(lines[i], "getelementptr inbounds %\"Array(") && str_has(lines[i], ", i32 0, i32 2") && str_has(lines[i + 1], " = load") {
+        reads += 1
+        if str_has(lines[i + 1], "load atomic i32, ptr %t") && str_has(lines[i + 1], " monotonic, align 4") {
+          atomic += 1
+        }
+        if str_has(lines[i + 1], "!tbaa") {
+          tagged += 1
+        }
+      }
+    }
+    c.expect(reads >= 1, "the frozen check reads the capacity")
+    c.eq_int(atomic, reads, "every capacity read is an atomic monotonic load")
+    c.eq_int(tagged, 0, "a capacity read carries no tag")
+  } else {
+    c.expect(false, "read the shared probe's .ll")
+  }
+}
+
+fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
+  src = "${scratch()}/alias-tags-${stamp}-array.av"
+  ll = "${scratch()}/alias-tags-${stamp}-array.ll"
+  log = "${scratch()}/alias-tags-${stamp}-array.log"
+  c.wrote(file_write(src, tags_array_src()), "write the array probe")
+  c.eq_int(emit_ll(compiler, src, ll, log), 0, "the array probe's .ll")
+  if text = file_read(ll) {
+    lines = tags_lines(text)
+    c.expect(str_has(text, "!1 = !{!\"avant alias\"}"), "the alias root")
+    c.expect(str_has(text, "!3 = !{!2, !2, i64 0}"), "the element tag")
+    c.expect(str_has(text, "!5 = !{!4, !4, i64 0}"), "the buffer reference tag")
+    c.expect(str_has(text, "!7 = !{!6, !6, i64 0}"), "the size tag")
+    c.expect(str_has(text, "!9 = !{!8, !8, i64 0}"), "the local tag")
+    c.expect(tags_count(lines, "store i1 false, ptr %t", ", !tbaa !3") >= 1, "an element store carries the element tag")
+    c.expect(tags_count(lines, "load i1, ptr %t", ", !tbaa !3") >= 1, "an element load carries the element tag")
+    c.expect(tags_count(lines, "load ptr, ptr %t", ", !tbaa !5") >= 2, "the buffer reference's loads carry its tag")
+    c.expect(tags_count(lines, "store ptr %t", ", !tbaa !5") >= 1, "the new array's buffer reference store carries its tag")
+    c.expect(tags_count(lines, "load i32, ptr %t", ", !tbaa !7") >= 1, "the size's loads carry its tag")
+    c.eq_int(tags_count(lines, "load i32, ptr %t", ", !tbaa !7, !range !12"), tags_count(lines, "load i32, ptr %t", ", !tbaa !7"), "every size load carries the size's range")
+    c.expect(str_has(text, "!12 = !{i32 0, i32 -2147483648}"), "the size's range is [0, 2^31)")
+    c.expect(tags_count(lines, "ptr %_", ", !tbaa !9") >= 4, "a local's accesses carry the local tag")
+    c.eq_int(tags_count(lines, "ptr %_", "!tbaa") - tags_count(lines, "ptr %_", ", !tbaa !9"), 0, "a local's accesses carry no other tag")
+    // A checked add's result is the plain add with no signed wrap, after
+    // the overflow branch.
+    c.expect(tags_count(lines, " = add nsw i64 %t", "") >= 1, "a checked add's result is an add nsw")
+    c.eq_int(tags_count(lines, "extractvalue { i64, i1 } %t", ", 0"), 0, "no checked add's result is the intrinsic's value")
+    cap_reads = 0
+    cap_tagged = 0
+    for i in 0..lines.size - 1 {
+      if str_has(lines[i], "getelementptr inbounds %\"Array(") && str_has(lines[i], ", i32 0, i32 2") {
+        cap_reads += 1
+        if str_has(lines[i + 1], "!tbaa") {
+          cap_tagged += 1
+        }
+      }
+    }
+    c.expect(cap_reads >= 1, "the probe reaches the capacity")
+    c.eq_int(cap_tagged, 0, "the capacity is not tagged")
+  } else {
+    c.expect(false, "read the array probe's .ll")
+  }
+  src2 = "${scratch()}/alias-tags-${stamp}-other.av"
+  ll2 = "${scratch()}/alias-tags-${stamp}-other.ll"
+  log2 = "${scratch()}/alias-tags-${stamp}-other.log"
+  c.wrote(file_write(src2, tags_other_src()), "write the object and hash probe")
+  c.eq_int(emit_ll(compiler, src2, ll2, log2), 0, "the object and hash probe's .ll")
+  if text2 = file_read(ll2) {
+    lines2 = tags_lines(text2)
+    fields = 0
+    tagged = 0
+    for i in 0..lines2.size - 1 {
+      if str_has(lines2[i], ".Box\", ptr %t") {
+        fields += 1
+        if str_has(lines2[i + 1], ", !tbaa !11") {
+          tagged += 1
+        }
+      }
+    }
+    c.expect(fields >= 2, "the probe reaches an object's field")
+    c.eq_int(tagged, fields, "an object's field carries the object field tag")
+    c.expect(str_has(text2, "!11 = !{!10, !10, i64 0}"), "the object field tag")
+    c.eq_int(tags_count(lines2, "!tbaa", "") - tags_count(lines2, ", !tbaa !9", "") - tags_count(lines2, ", !tbaa !11", ""), 0, "only locals and object fields are tagged without an array")
+  } else {
+    c.expect(false, "read the object and hash probe's .ll")
+  }
+}
+
+// Wrapping operations keep no flag: an add, subtract and multiply that
+// wrap, with operands LLVM cannot fold, compared with an operand
+// afterwards. A wrongly flagged one (nsw on `&+`) lets LLVM fold each
+// compare to "no wrap".
+fn tags_wrap_src: String {
+  "fn main: Int {\n  n = argv().size\n  x = 9223372036854775807 - n + 1\n  y = x &+ 1\n  if y > x {\n    puts(\"add: no wrap\")\n  } else {\n    puts(\"add: wrap\")\n  }\n  m = 4611686018427387904 + n - 1\n  z = m &* 4\n  if z > m {\n    puts(\"mul: no wrap\")\n  } else {\n    puts(\"mul: wrap\")\n  }\n  s = -9223372036854775807 - n\n  w = s &- 1\n  if w < s {\n    puts(\"sub: no wrap\")\n  } else {\n    puts(\"sub: wrap\")\n  }\n  0\n}\n"
+}
+
+fn test_alias_tags_wrap(c: Checks, compiler: String, stamp: Int) {
+  src = "${scratch()}/alias-tags-${stamp}-wrap.av"
+  bin = "${scratch()}/alias-tags-${stamp}-wrap"
+  clog = "${scratch()}/alias-tags-${stamp}-wrap.clog"
+  rlog = "${scratch()}/alias-tags-${stamp}-wrap.out"
+  c.wrote(file_write(src, tags_wrap_src()), "write the wrapping probe")
+  flags: Array(String) = []
+  flags.push("--release")
+  c.eq_int(compile_av_flags(compiler, src, bin, clog, flags), 0, "the wrapping probe compiles with --release")
+  if !file_exists(bin) {
+    c.expect(false, "the wrapping probe's binary")
+    return
+  }
+  chmod_x(bin)
+  args: Array(String) = []
+  code = process_run_out(bin, args, rlog) ?? -1
+  c.eq_int(code, 0, "the wrapping probe exits 0")
+  c.eq_str(file_read(rlog) ?? "", "add: wrap\nmul: wrap\nsub: wrap\n", "a wrapping add, multiply and subtract wrap in --release")
+}
+
+// name: alias_moves (elements) or alias_fields (object fields).
+fn test_alias_tags_moves(c: Checks, compiler: String, stamp: Int, name: String) {
+  root = avant_test_root()
+  src = "${root}/tests/fixtures/heap/${name}.av"
+  bin = "${scratch()}/alias-tags-${stamp}-${name}"
+  clog = "${scratch()}/alias-tags-${stamp}-${name}.clog"
+  want = file_read("${root}/tests/goldens/runs/fixtures/heap/${name}.out") ?? ""
+  c.expect(want.size > 0, "${name}'s run golden")
+  flags: Array(String) = []
+  flags.push("--release")
+  c.eq_int(compile_av_flags(compiler, src, bin, clog, flags), 0, "${name} compiles with --release")
+  if !file_exists(bin) {
+    c.expect(false, "${name}'s binary")
+    return
+  }
+  chmod_x(bin)
+  envs = ["", "AVANT_GC_STRESS=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1", "AVANT_NURSERY=0", "AVANT_YOUNG_MB=1 AVANT_GC_VERIFY=1"]
+  for j in 0..envs.size {
+    args: Array(String) = []
+    words = envs[j]
+    start = 0
+    for i in 0..words.size {
+      if words[i] == 32 {
+        args.push(str_slice(words, start, i))
+        start = i + 1
+      }
+    }
+    if start < words.size {
+      args.push(str_slice(words, start, words.size))
+    }
+    args.push(bin)
+    rlog = "${scratch()}/alias-tags-${stamp}-${name}-${j}.out"
+    mode = envs[j]
+    if mode.size == 0 {
+      mode = "the outer environment"
+    }
+    code = process_run_out("/usr/bin/env", args, rlog) ?? -1
+    c.eq_int(code, 0, "${name} exits 0 under ${mode}")
+    c.eq_str(file_read(rlog) ?? "", want, "${name}'s output under ${mode}")
+  }
+}
+
+fn test_alias_tags(c: Checks) {
+  c.suite("tests/cases/test_alias_tags.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    test_alias_tags_ll(c, compiler, stamp)
+    test_alias_tags_cap(c, compiler, stamp)
+    test_alias_tags_wrap(c, compiler, stamp)
+    test_alias_tags_moves(c, compiler, stamp, "alias_moves")
+    test_alias_tags_moves(c, compiler, stamp, "alias_fields")
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_alias_tags(c)
+  c.finish()
+}

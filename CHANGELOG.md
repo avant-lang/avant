@@ -1,5 +1,25 @@
 # Avant Language changelog
 
+## 0.46.0 - 2026-11-17
+
+### Changed
+
+* Generated code tells the optimizer which memory accesses cannot overlap (an array's elements, its buffer reference and size, a function's locals), so loops keep them in registers across element stores: `Etc::Sieve` 8.3 s to 2.9 s in every run (it ran at either speed from one process to the next), `CLBG::Fannkuchredux` 28% faster, `Graph::AStar` 33%, `Sort::Merge` 15%.
+* Generated code gives LLVM more facts: an object's fields never overlap an array's elements, its header or a local; an array's size is never negative; a checked addition, subtraction or multiplication past its overflow check does not wrap. Loops keep more values in registers: `Etc::GameOfLife` 21% faster, `Sort::Merge` 13%, `Graph::AStar` and `Etc::NeuralNet` 10%. LangArena takes 8% less time than v0.45.0 (geometric mean of the 50 tasks, on one server) at the same peak memory.
+* The collector: a full collection when no old object can have died marks only what became old since the last one and what is young (the collector benchmark's churn beside a large live set counts 12.5% fewer instructions), and a growing structure whose end a local follows no longer forces a full trace.
+* `avant format` indents the contents of a bracket that spans lines by one level, the closing bracket at the opening line's indent.
+* Clearer errors: `unknown name m.x` with the nearest public name of the module; a `.parallel` block's capture errors name it and say what may cross to a task; a call that fits no function shows `[]` and out-of-range integer literals as written; a private field's error no longer hides a second error; a `gc.hold` block's heap-limit error names its function.
+* The README gives the builtins and the standard library as reference tables, and the contributor material is in `CONTRIBUTING.md`.
+* The compiler is built from v0.45.0; v0.44.0 is the oldest release that builds it (v0.41.0 was named).
+
+### Fixed
+
+* A string interpolation nested thousands of levels deep crashed `avant compile` and `avant format`; a nested interpolation is now refused where it opens.
+* A generic type that two modules declare resolves to the one the using module sees; valid programs were refused with `ambiguous name`.
+* A binary operator after a call's trailing block parses (`m.try_with { |n| n += 1 } ?? return`).
+* The README's WebSocket table: `msg.text()` is a `String?`.
+* Generated code reads an array's capacity atomically where a task's end can change it from another thread (a push or a frozen check raced with it).
+
 ## 0.45.0 - 2026-11-16
 
 ### Changed

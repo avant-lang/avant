@@ -13,7 +13,8 @@
 # compiler/main.av, `avant __emit-ll`, from C' and from D', byte for byte)
 # and C' = D' byte for byte. Between the default suites and the GC passes
 # it runs the README checks on C' (tools/readme-check.sh, every ```avant
-# block compiled and run, and tools/readme-links.sh), and `avant format
+# block compiled and run, and tools/readme-links.sh), on README.md and on
+# CONTRIBUTING.md, and `avant format
 # --check` over every tracked source
 # (tools/format-check.sh): a red one fails the
 # gate. Before the builds it runs the runtime-C rooting lint
@@ -26,7 +27,7 @@
 #
 # Environment:
 #   GATE_SEED       seed directory holding avant (default: tools/letters.sh's,
-#                   bin/v0.44.0; `sh tools/letters.sh --print-seed`)
+#                   bin/v0.45.0; `sh tools/letters.sh --print-seed`)
 #   GATE_OUT        output directory (default results/gate-YYYYmmdd-HHMMSS);
 #                   keep it under results/ or outside the repository, since the
 #                   repository snapshot excludes only .git/ and results/
@@ -127,7 +128,8 @@
 # build-runtime.log,
 # build-L.log and time-build-L.txt; suite-L.log, junit-L.xml, time-L.txt;
 # {before,after}-L.{tmp,repo} snapshots and the new-/gone- differences;
-# readme-check.log, readme-links.log and their litter-readme.{tmp,repo};
+# readme-check.log, readme-links.log, contributing-check.log,
+# contributing-links.log and their litter-readme.{tmp,repo};
 # format-check.log, time-format-check.txt;
 # build-d-llvm.log, time-build-d-llvm.txt, emit-{c,d}-llvm.log,
 # time-emit-{c,d}-llvm.txt;
@@ -291,9 +293,9 @@ for L in b $C; do
   suite_pass "$L" "$L" "$keep $SUITE_ENV"
 done
 
-# The README's programs and links, on C' and
+# The programs and links of README.md and CONTRIBUTING.md, on C' and
 # alone (a few seconds): every ```avant block compiled and run against
-# what the README says it prints (tools/readme-check.sh), and every
+# what the file says it prints (tools/readme-check.sh), and every
 # heading, anchor and relative link (tools/readme-links.sh). A red check
 # fails the gate; the repository and /tmp are snapshotted around them.
 readme_checks() {
@@ -304,6 +306,12 @@ readme_checks() {
   timeout -k 10 300 sh tools/readme-links.sh > "$out/readme-links.log" 2>&1 < /dev/null
   rc=$?
   [ $rc -eq 0 ] || fail "README links: $(tail -1 "$out/readme-links.log") (rc=$rc, readme-links.log)"
+  env -u AVANT_BACKEND AVANT_COMPILER="$root/bin/avant-$C" timeout -k 10 900 sh tools/readme-check.sh CONTRIBUTING.md > "$out/contributing-check.log" 2>&1 < /dev/null
+  rc=$?
+  [ $rc -eq 0 ] || fail "CONTRIBUTING check: $(tail -1 "$out/contributing-check.log") (rc=$rc, contributing-check.log)"
+  timeout -k 10 300 sh tools/readme-links.sh CONTRIBUTING.md > "$out/contributing-links.log" 2>&1 < /dev/null
+  rc=$?
+  [ $rc -eq 0 ] || fail "CONTRIBUTING links: $(tail -1 "$out/contributing-links.log") (rc=$rc, contributing-links.log)"
   snap "$out/after-readme"
   LC_ALL=C comm -3 "$out/before-readme.tmp" "$out/after-readme.tmp" > "$out/litter-readme.tmp"
   LC_ALL=C comm -3 "$out/before-readme.repo" "$out/after-readme.repo" > "$out/litter-readme.repo"
@@ -474,6 +482,7 @@ ptimes() { [ -f "$1" ] && grep -E '^(real|user|sys) ' "$1" | tr '\n' ' '; }
   done
   echo "format: $(tail -n 1 "$out/format-check.log" 2>/dev/null) $(ptimes "$out/time-format-check.txt")"
   echo "readme: $(tail -n 2 "$out/readme-check.log" 2>/dev/null | tr '\n' ' ')| $(tail -n 2 "$out/readme-links.log" 2>/dev/null | tr '\n' ' ')"
+  echo "contributing: $(tail -n 2 "$out/contributing-check.log" 2>/dev/null | tr '\n' ' ')| $(tail -n 2 "$out/contributing-links.log" 2>/dev/null | tr '\n' ' ')"
   cat "$out/fixed-point.txt"
   [ -f "$out/identity.txt" ] && cat "$out/identity.txt"
   [ -f "$out/reuse.txt" ] && cat "$out/reuse.txt"

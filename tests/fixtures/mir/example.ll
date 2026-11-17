@@ -33,7 +33,7 @@ alloca:
   br label %bb0
 
 bb0:
-  %t0 = load ptr, ptr %_1.self, align 8
+  %t0 = load ptr, ptr %_1.self, align 8, !tbaa !9
   %t1 = icmp eq ptr %t0, null
   br i1 %t1, label %bb0.s0.cont, label %bb0.s0.test
 
@@ -49,10 +49,10 @@ bb0.s0.call:
   br label %bb0.s0.cont
 
 bb0.s0.cont:
-  %t6 = load ptr, ptr %_2.name, align 8
-  %t7 = load ptr, ptr %_1.self, align 8
+  %t6 = load ptr, ptr %_2.name, align 8, !tbaa !9
+  %t7 = load ptr, ptr %_1.self, align 8, !tbaa !9
   %t8 = getelementptr inbounds %"main.Box", ptr %t7, i32 0, i32 0
-  store ptr %t6, ptr %t8, align 8
+  store ptr %t6, ptr %t8, align 8, !tbaa !11
   ret void
 }
 
@@ -65,7 +65,7 @@ alloca:
   br label %bb0
 
 bb0:
-  store ptr null, ptr %_0, align 8
+  store ptr null, ptr %_0, align 8, !tbaa !9
   %t0 = getelementptr inbounds i8, ptr %gcf, i64 32
   %t1 = getelementptr inbounds i8, ptr %gcf, i64 8
   store ptr %t0, ptr %t1, align 8
@@ -102,8 +102,8 @@ bb0.s3.slow:
 bb0.s3.cont:
   %t15 = phi ptr [ %t13, %bb0.s3.fast ], [ %t14, %bb0.s3.slow ]
   store ptr %t15, ptr %_0, align 8
-  %t16 = load ptr, ptr %_0, align 8
-  %t17 = load ptr, ptr %_1.name, align 8
+  %t16 = load ptr, ptr %_0, align 8, !tbaa !9
+  %t17 = load ptr, ptr %_1.name, align 8, !tbaa !9
   call void @"av.main/Box.initialize"(ptr %t16, ptr %t17)
   call void @__avant_frame_pop(ptr %gcf)
   %t18 = load ptr, ptr %_0, align 8
@@ -122,9 +122,9 @@ alloca:
   br label %bb0
 
 bb0:
-  store ptr null, ptr %_0, align 8
-  store ptr null, ptr %_2.b, align 8
-  store ptr null, ptr %_4, align 8
+  store ptr null, ptr %_0, align 8, !tbaa !9
+  store ptr null, ptr %_2.b, align 8, !tbaa !9
+  store ptr null, ptr %_4, align 8, !tbaa !9
   %t0 = getelementptr inbounds i8, ptr %gcf, i64 32
   %t1 = getelementptr inbounds i8, ptr %gcf, i64 8
   store ptr %t0, ptr %t1, align 8
@@ -142,17 +142,17 @@ bb0:
   call void @__avant_frame_push(ptr %gcf)
   %t7 = call ptr @"av.main/Box.new"(ptr @str.0)
   store ptr %t7, ptr %_2.b, align 8
-  %t8 = load i64, ptr %_1.n, align 8
+  %t8 = load i64, ptr %_1.n, align 8, !tbaa !9
   %t9 = icmp sgt i64 %t8, 9
-  store i1 %t9, ptr %_3, align 1
-  %t10 = load i1, ptr %_3, align 1
+  store i1 %t9, ptr %_3, align 1, !tbaa !9
+  %t10 = load i1, ptr %_3, align 1, !tbaa !9
   br i1 %t10, label %bb1, label %bb2
 
 bb1:
-  %t11 = load i64, ptr %_1.n, align 8
+  %t11 = load i64, ptr %_1.n, align 8, !tbaa !9
   %t12 = call ptr @avant_str_from_int(i64 %t11)
   store ptr %t12, ptr %_4, align 8
-  %t13 = load ptr, ptr %_2.b, align 8
+  %t13 = load ptr, ptr %_2.b, align 8, !tbaa !9
   %t14 = icmp eq ptr %t13, null
   br i1 %t14, label %bb1.s1.cont, label %bb1.s1.test
 
@@ -168,17 +168,17 @@ bb1.s1.call:
   br label %bb1.s1.cont
 
 bb1.s1.cont:
-  %t19 = load ptr, ptr %_4, align 8
-  %t20 = load ptr, ptr %_2.b, align 8
+  %t19 = load ptr, ptr %_4, align 8, !tbaa !9
+  %t20 = load ptr, ptr %_2.b, align 8, !tbaa !9
   %t21 = getelementptr inbounds %"main.Box", ptr %t20, i32 0, i32 0
-  store ptr %t19, ptr %t21, align 8
+  store ptr %t19, ptr %t21, align 8, !tbaa !11
   br label %bb2
 
 bb2:
-  %t22 = load ptr, ptr %_2.b, align 8
+  %t22 = load ptr, ptr %_2.b, align 8, !tbaa !9
   %t23 = getelementptr inbounds %"main.Box", ptr %t22, i32 0, i32 0
-  %t24 = load ptr, ptr %t23, align 8
-  store ptr %t24, ptr %_0, align 8
+  %t24 = load ptr, ptr %t23, align 8, !tbaa !11
+  store ptr %t24, ptr %_0, align 8, !tbaa !9
   call void @__avant_frame_pop(ptr %gcf)
   %t25 = load ptr, ptr %_0, align 8
   ret ptr %t25
@@ -199,8 +199,8 @@ alloca:
   br label %bb0
 
 bb0:
-  store ptr null, ptr %_3.last, align 8
-  store ptr null, ptr %_6, align 8
+  store ptr null, ptr %_3.last, align 8, !tbaa !9
+  store ptr null, ptr %_6, align 8, !tbaa !9
   %t0 = getelementptr inbounds i8, ptr %gcf, i64 32
   %t1 = getelementptr inbounds i8, ptr %gcf, i64 8
   store ptr %t0, ptr %t1, align 8
@@ -217,38 +217,38 @@ bb0:
   store ptr %_6, ptr %t6, align 8
   call void @__avant_frame_push(ptr %gcf)
   call void @__avant_type_maps()
-  %t7 = load i32, ptr %_1.argc, align 4
-  %t8 = load ptr, ptr %_2.argv, align 8
+  %t7 = load i32, ptr %_1.argc, align 4, !tbaa !9
+  %t8 = load ptr, ptr %_2.argv, align 8, !tbaa !9
   call void @avant_io_init_argv(i32 %t7, ptr %t8)
   %t9 = call ptr @"av.main/tag"(i64 0)
   store ptr %t9, ptr %_3.last, align 8
-  store i64 0, ptr %_4.i, align 8
+  store i64 0, ptr %_4.i, align 8, !tbaa !9
   br label %bb1
 
 bb1:
-  %t10 = load i64, ptr %_4.i, align 8
+  %t10 = load i64, ptr %_4.i, align 8, !tbaa !9
   %t11 = icmp slt i64 %t10, 200000
-  store i1 %t11, ptr %_5, align 1
-  %t12 = load i1, ptr %_5, align 1
+  store i1 %t11, ptr %_5, align 1, !tbaa !9
+  %t12 = load i1, ptr %_5, align 1, !tbaa !9
   br i1 %t12, label %bb2, label %bb3
 
 bb2:
-  %t13 = load i64, ptr %_4.i, align 8
+  %t13 = load i64, ptr %_4.i, align 8, !tbaa !9
   %t14 = call ptr @"av.main/tag"(i64 %t13)
   store ptr %t14, ptr %_3.last, align 8
-  %t15 = load i64, ptr %_4.i, align 8
+  %t15 = load i64, ptr %_4.i, align 8, !tbaa !9
   %t16 = add i64 %t15, 1
-  store i64 %t16, ptr %_4.i, align 8
+  store i64 %t16, ptr %_4.i, align 8, !tbaa !9
   br label %bb1
 
 bb3:
-  %t17 = load ptr, ptr %_3.last, align 8
+  %t17 = load ptr, ptr %_3.last, align 8, !tbaa !9
   %t18 = call i32 (ptr, ...) @printf(ptr @str.1, ptr %t17)
   %t19 = call ptr @"av.main/tag"(i64 3)
   store ptr %t19, ptr %_6, align 8
-  %t20 = load ptr, ptr %_6, align 8
+  %t20 = load ptr, ptr %_6, align 8, !tbaa !9
   %t21 = call i32 (ptr, ...) @printf(ptr @str.1, ptr %t20)
-  store i32 0, ptr %_0, align 4
+  store i32 0, ptr %_0, align 4, !tbaa !9
   call void @__avant_frame_pop(ptr %gcf)
   %t22 = load i32, ptr %_0, align 4
   ret i32 %t22
@@ -325,3 +325,16 @@ redo:
 }
 
 attributes #0 = { nounwind "frame-pointer"="all" "probe-stack"="inline-asm" }
+
+!1 = !{!"avant alias"}
+!2 = !{!"element", !1, i64 0}
+!3 = !{!2, !2, i64 0}
+!4 = !{!"buffer reference", !1, i64 0}
+!5 = !{!4, !4, i64 0}
+!6 = !{!"size", !1, i64 0}
+!7 = !{!6, !6, i64 0}
+!8 = !{!"local", !1, i64 0}
+!9 = !{!8, !8, i64 0}
+!10 = !{!"object field", !1, i64 0}
+!11 = !{!10, !10, i64 0}
+!12 = !{i32 0, i32 -2147483648}

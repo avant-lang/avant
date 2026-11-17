@@ -2179,9 +2179,11 @@ pub class Parser {
       at = self.bump().loc
       tr = Expr.new(ex_try(), at)
       tr.inner = got
-      return tr
+      return parse_infix_after(tr)
     }
-    got
+    // A binary operator after the block takes the call as its left
+    // operand (`xs.map { |v| v } ?? fallback`).
+    parse_infix_after(got)
   }
 
   pub fn if_assign_ahead: Bool {
@@ -2849,7 +2851,39 @@ pub class Parser {
     }
     outer_peak = self.peak
     self.peak = self.depth
-    left = parse_postfix(self.parse_prefix())
+    left = parse_infix_rest(parse_postfix(self.parse_prefix()), min_prec)
+    if outer_peak > self.peak {
+      self.peak = outer_peak
+    }
+    nest_leave()
+    left
+  }
+
+  // An operand already parsed, a call with its trailing block, continued
+  // by the operators after it as parse_expr_min continues its first
+  // operand (`m.try_with { |n| n += 1 } ?? return`): the block is
+  // attached after the call's expression, which stops at the `{`.
+  pub fn parse_infix_after(left: Expr): Expr {
+    if self.current().kind != tk_newline() && infix_prec(self.current().kind) < 0 {
+      return left
+    }
+    if !nest_enter(self.current().loc) {
+      return left
+    }
+    outer_peak = self.peak
+    self.peak = self.depth
+    got = parse_infix_rest(left, 0)
+    if outer_peak > self.peak {
+      self.peak = outer_peak
+    }
+    nest_leave()
+    got
+  }
+
+  // The operators after left, each with its right operand, by precedence
+  // from min_prec.
+  pub fn parse_infix_rest(left0: Expr, min_prec: Int): Expr {
+    left = left0
     while true {
       self.skip_newlines_if_continuing()
       prec = infix_prec(self.current().kind)
@@ -2894,10 +2928,6 @@ pub class Parser {
         break
       }
     }
-    if outer_peak > self.peak {
-      self.peak = outer_peak
-    }
-    nest_leave()
     left
   }
 

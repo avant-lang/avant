@@ -1,0 +1,58 @@
+// An Array's capacity word counts the tasks that hold the array, and
+// threads change it at once: eight tasks over one captured array end
+// together, each thawing it from its own thread, while the owner waits
+// in their joins. After each round's joins the owner changes the array
+// through an alias, a call and a field: the count must be back to zero
+// (no trap), the capacity the buffer's (the pushes into the reserved
+// room take the fast path, which reads the word), and every task must
+// have read the elements it was given.
+
+import std.sync
+
+class Holder {
+  pub xs: Array(Int) = []
+}
+
+fn total(xs: Array(Int)): Int {
+  s = 0
+  for x in xs {
+    s += x
+  }
+  s
+}
+
+fn grow(a: Array(Int), v: Int) {
+  a.push(v)
+}
+
+// A task's work: long enough that the tasks' ends overlap.
+fn work(xs: Array(Int), k: Int): Int {
+  s = 0
+  for i in 0..200 {
+    s += total(xs) + i * k
+  }
+  s
+}
+
+fn main {
+  xs = [1, 2, 3]
+  xs.reserve(4000)
+  sum = 0
+  for round in 0..200 {
+    hs: Array(JoinHandle(Int)) = []
+    for k in 0..8 {
+      hs.push(spawn { work(xs, k) })
+    }
+    for h in hs {
+      sum += h.join() ?? -1000000
+    }
+    ys = xs
+    ys.push(round)
+    grow(xs, 1)
+    ho = Holder.new()
+    ho.xs = xs
+    ho.xs[0] += 1
+  }
+  puts(sum)
+  puts("${xs.size} ${xs[0]} ${total(xs)}")
+}

@@ -1973,7 +1973,7 @@ void gc_sticky_retire(void) {
   gc_heap.young_carried = 0;
   gc_heap.aged_now = 0;
   if (bytes) {
-    gc_proof_break(PROOF_PROMOTED);
+    gc_proof_grow(PROOF_PROMOTED);
   }
 }
 

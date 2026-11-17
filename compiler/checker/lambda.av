@@ -442,7 +442,7 @@ pub fn (checker_self: Checker) dispatch_deferred_q(expr: Expr, expected: Ty?, qu
           } else if deferred[k] == 1 {
             given.push_str("a lambda")
           } else {
-            given.push_str(ctypes[k].show())
+            given.push_str(checker_self.arg_shown(k, ctypes[k]))
           }
         }
         checker_self.fail(expr.loc, "no overload of ${shown} takes (${given.to_s()}): ${list.to_s()}")
@@ -1445,6 +1445,8 @@ pub fn (checker_self: Checker) load_iface_method(idef: InterfaceDef, method: Fun
     i += 1
   }
   checker_self.resolver.set_tparams(both)
+  saved_scope = checker_self.resolver.scope_mod
+  checker_self.resolver.scope_mod = idef.mod_name
   params: Array(Ty) = []
   i = 0
   while i < cloned.params.size {
@@ -1452,6 +1454,7 @@ pub fn (checker_self: Checker) load_iface_method(idef: InterfaceDef, method: Fun
     checker_self.pull_resolve()
     if checker_self.has_err() {
       checker_self.resolver.clear_tparams()
+      checker_self.resolver.scope_mod = saved_scope
       return false
     }
     i += 1
@@ -1462,9 +1465,11 @@ pub fn (checker_self: Checker) load_iface_method(idef: InterfaceDef, method: Fun
     checker_self.pull_resolve()
     if checker_self.has_err() {
       checker_self.resolver.clear_tparams()
+      checker_self.resolver.scope_mod = saved_scope
       return false
     }
   }
+  checker_self.resolver.scope_mod = saved_scope
   checker_self.resolver.clear_tparams()
   checker_self.sig_params = params
   checker_self.sig_ret = ret

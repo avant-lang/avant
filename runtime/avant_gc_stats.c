@@ -208,6 +208,10 @@ static void print_sticky(StatsLine *l) {
   }
   /* Only in a program that had a trace that left the young generation
    * young (or tried to). */
+  if (c->stickies) {
+    line_add(l, " full_sticky=%llu full_sticky_bytes=%llu full_sticky_holders=%llu", u(c->stickies), u(c->sticky_bytes),
+             u(c->sticky_holders));
+  }
   if (c->keeps || c->keep_fell) {
     line_add(l, " full_kept_young=%llu full_kept_young_bytes=%llu full_kept_young_fell=%llu", u(c->keeps),
              u(c->keep_bytes), u(c->keep_fell));

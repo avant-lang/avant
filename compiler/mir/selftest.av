@@ -318,7 +318,7 @@ fn st_rejecting(out: Buf) {
   st_fn(b, "f", st_tys(box_ref, mt_str()), vd, mfk_unset())
   b.assign_fresh(b.field(b.deref(b.pl(1)), 0), b.rv_use(b.copy_local(2)))
   b.ret()
-  st_case(out, "v14_holder_not_alloc", lo, b.module)
+  st_case(out, "v14_holder_param", lo, b.module)
 
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
@@ -327,19 +327,25 @@ fn st_rejecting(out: Buf) {
   b.call(lh, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
   b.assign_fresh(b.field(b.deref(b.pl(lh)), 0), b.rv_use(b.copy_local(1)))
   b.ret()
-  st_case(out, "v14_no_closing_barrier", lo, b.module)
+  st_case(out, "v14_holder_not_fresh_alloc", lo, b.module)
 
-  // The holder is reallocated before the first fill's closing barrier.
+  // The closed-fill form (an allocation not marked fresh, a fresh store
+  // through it, one barrier after the fill, the holder a slot) is not
+  // accepted: the holder is not open at the store.
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
-  st_fn(b, "f", st_tys(mt_str(), -1), vd, mfk_unset())
-  lh = b.local(box_ref, "")
-  b.call(lh, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
-  b.assign_fresh(b.field(b.deref(b.pl(lh)), 0), b.rv_use(b.copy_local(1)))
-  b.call(lh, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
-  b.barrier(lh)
+  st_fn(b, "f", st_tys(mt_str(), -1), box_ref, mfk_frame())
+  b.set_slot(0)
+  b.set_slot(1)
+  b.assign(b.pl(0), b.rv_zero())
+  b.gc_enter()
+  b.gc_roots(st_ints(0, 1))
+  b.call(0, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
+  b.assign_fresh(b.field(b.deref(b.pl(0)), 0), b.rv_use(b.copy_local(1)))
+  b.barrier(0)
+  b.gc_leave()
   b.ret()
-  st_case(out, "v14_redefined_before_barrier", lo, b.module)
+  st_case(out, "v14_closed_fill", fi, b.module)
 
   b = st_base(false)
   st_fn(b, "f", st_tys(-1, -1), vd, mfk_leaf())
@@ -437,7 +443,6 @@ pub fn mir_selftest_finals: Array(String) {
   xs: Array(String) = []
   xs.push("ok_base")
   xs.push("ok_ref_across_nocollect")
-  xs.push("ok_fresh_fill_closed")
   xs.push("ok_addr_in_slot")
   xs
 }
@@ -454,20 +459,6 @@ pub fn st_ok_module(name: String): MModule {
     b.call(l1, "av.t/mk", st_none())
     b.call(-1, "avant_str_size", st_one(b.copy_local(l1)))
     b.call(-1, "printf", st_two(b.str_const("%s\n"), b.copy_local(l1)))
-    b.gc_leave()
-    b.ret()
-  } else if name == "ok_fresh_fill_closed" {
-    // A fresh fill held in a slot, closed by its barrier.
-    box_ref = b.ref_to(st_box(b))
-    st_fn(b, "f", st_tys(mt_str(), -1), box_ref, mfk_frame())
-    b.set_slot(0)
-    b.set_slot(1)
-    b.assign(b.pl(0), b.rv_zero())
-    b.gc_enter()
-    b.gc_roots(st_ints(0, 1))
-    b.call(0, "avant_alloc", st_two(b.c_u64(8), b.c_u32(1)))
-    b.assign_fresh(b.field(b.deref(b.pl(0)), 0), b.rv_use(b.copy_local(1)))
-    b.barrier(0)
     b.gc_leave()
     b.ret()
   } else if name == "ok_addr_in_slot" {
@@ -503,7 +494,6 @@ fn st_accepting(out: Buf) {
   st_case(out, "ok_defined_on_all_paths", lo, b.module)
 
   st_both(out, "ok_ref_across_nocollect", st_ok_module("ok_ref_across_nocollect"))
-  st_both(out, "ok_fresh_fill_closed", st_ok_module("ok_fresh_fill_closed"))
   st_both(out, "ok_addr_in_slot", st_ok_module("ok_addr_in_slot"))
 
   // A frame function with no slot and no frame statement: it collects,
@@ -924,8 +914,8 @@ fn st_wide(out: Buf) {
   b.ret()
   st_case(out, "v3_missing_local", lo, b.module)
 
-  // V14 past the first word: the fresh fill through _70 is not closed
-  // before the return (lowered), and at final _70 is not a slot.
+  // V14 past the first word: the fresh store through _70 follows an
+  // allocation not marked fresh, so _70 is not open (lowered and final).
   b = st_base(false)
   box_ref = b.ref_to(st_box(b))
   st_fn(b, "f", st_tys(mt_str(), -1), vd, un)

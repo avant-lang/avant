@@ -906,6 +906,11 @@ typedef struct GcStickyCounters {
   uint64_t keeps;
   uint64_t keep_fell;
   uint64_t keep_bytes;
+  /* The sticky full collections, the bytes they marked (what is not
+   * old) and the logged holders they scanned. */
+  uint64_t stickies;
+  uint64_t sticky_bytes;
+  uint64_t sticky_holders;
 } GcStickyCounters;
 
 /* proof: the complete collection (GcProof below). asked: the full
@@ -1008,25 +1013,30 @@ typedef struct GcSettings {
  *   - an old object a root named at F is named by no root (roots: the
  *     referents of every frame slot, pin, task root and runtime-held slot
  *     at F's end; the check walks the roots again);
- *   - an object became old or was born old (a young collection promoted
- *     one; an allocation in mature space), an old object was freed
- *     outside a collection, an old holder too large to log was stored
- *     into, the log grew past its limit, the program has more than one
- *     thread or no young generation (broken, a GcProofWhy: it stays until
- *     the next full collection ends).
+ *   - an old object was freed outside a collection, an old holder too
+ *     large to log was stored into, the log grew past its limit, the
+ *     program has more than one thread or no young generation (broken, a
+ *     GcProofWhy: it stays until the next full collection ends).
  * Then every path F followed to every old object is intact, so every old
- * object is still reachable, and every object that is not reachable is
+ * object is still reachable. If moreover no object became old or was
+ * born old since F (grown: a young collection promoted one, an
+ * allocation in mature space), every object that is not reachable is
  * young: a young collection frees exactly those, and is a complete
- * collection. A wrong proof frees nothing wrongly (the young collection
+ * collection. If some did, the old objects are still all reachable, and
+ * the sticky full collection (avant_gc_proof.c, "The sticky full
+ * collection") traces only what is not old, from the roots and the
+ * logged holders: it is complete too. A wrong proof frees nothing wrongly (the young collection
  * is the ordinary one); it would leave an unreachable old object in the
  * heap. Under AVANT_GC_VERIFY=1 the oracle (avant_gc_verify.c,
  * gc_verify_proof) checks the bookkeeping at every collection and the
  * conclusion wherever the proof holds. */
 typedef enum GcProofWhy {
   PROOF_INTACT = 0,
-  /* Sticky until the next full collection ends (GcProof.broken). */
+  /* Objects became old (GcProof.grown, gc_proof_grow): the old objects
+   * are still all reachable; a full collection is the sticky one. */
   PROOF_PROMOTED,  /* a young collection promoted an object */
   PROOF_MATURE,    /* an object was born in mature space */
+  /* Sticky until the next full collection ends (GcProof.broken). */
   PROOF_FREED,     /* an old object was freed outside a collection */
   PROOF_BIG,       /* a store into an old holder too large to log */
   PROOF_LOG_FULL,  /* the log passed PROOF_LOG_MAX words */
@@ -1059,6 +1069,20 @@ typedef enum GcProofWhy {
 #define PROOF_YOUNG_PER_OLD 8
 #endif
 
+/* A complete collection whose proof holds is the sticky full collection
+ * (avant_gc_proof.c), not a young one, when the young generation holds
+ * more than the old live bytes / PROOF_STICKY_YOUNG_DIV (and at most
+ * PROOF_YOUNG_PER_OLD times them, where the trace runs): a young
+ * collection copies a survivor (about 160 instructions a node where all
+ * survive) and the next copies or promotes it again, the sticky mark
+ * marks it once (about 50) and its fixed cost is a pass over the line
+ * marks and the blocks. The collector benchmark's stable heap alone:
+ * the forced collection after its 500,000-node chain was two young
+ * collections of 3.7 MB, then a trace. */
+#ifndef PROOF_STICKY_YOUNG_DIV
+#define PROOF_STICKY_YOUNG_DIV 8
+#endif
+
 /* A trace the program asks for leaves the young generation young only
  * when the young bytes are at most the old live bytes / KEEP_YOUNG_DIV
  * (gc_collect): its young collection first copies what survives of them
@@ -1088,6 +1112,22 @@ typedef enum GcProofWhy {
 typedef struct GcProof {
   /* A GcProofWhy: PROOF_INTACT while the proof may still hold. */
   uint8_t broken;
+  /* PROOF_PROMOTED or PROOF_MATURE, the first way an object became old
+   * since F (gc_proof_grow); PROOF_INTACT while none did. */
+  uint8_t grown;
+  /* F's end left a side mark that is not an old object's (a trace that
+   * left the young generation young marks young objects): the next full
+   * collection cannot be the sticky one. */
+  uint8_t no_sticky;
+  /* F's end saved the line marks (lines_f). */
+  uint8_t lines_saved;
+  /* The anchors (avant_gc_proof.c, "Anchors"): the root referents F's mark
+   * reached from no root marked before them, sorted at F's end; valid
+   * (anchors_ok) only after an ordinary trace. */
+  uint8_t anchors_ok;
+  void **anchors;
+  uint32_t anchors_n;
+  uint32_t anchors_cap;
   /* The bytes the last full collection found live: the old objects'. */
   uint64_t old_live;
   /* The log: pairs of words, a reference word's address and the
@@ -1100,6 +1140,7 @@ typedef struct GcProof {
   void **holders;
   uint32_t holders_n;
   uint32_t holders_cap;
+
   /* The roots at F's end, in the order gc_proof walks them: pairs of
    * words, the root's word and the start of the object it names (NULL:
    * none). */
@@ -1531,6 +1572,17 @@ typedef struct GcHeap {
   uint8_t keep_young;
   uint8_t keep_yold;
   uint64_t keep_young_live;
+  /* The sticky full collection (avant_gc_proof.c): this full collection
+   * marks from the roots and the logged holders and stops at every old
+   * object (gc_collect sets it, gc_mark_roots reads it). lines_f: the
+   * line marks as the last full collection left them (one byte a line,
+   * as lines; reserved at the first save, gc_proof_lines_save). */
+  uint8_t sticky;
+  uint8_t *lines_f;
+  /* The save that wrote each block's slice of lines_f (one word a block
+   * of the reservation): a slice is F's when its word is lines_f_gen. */
+  uint32_t *lines_f_block;
+  uint32_t lines_f_gen;
   /* This young collection evacuates blocks with mature lines too: the
    * stress mode, and a complete collection (gc_sticky_collect). */
   uint8_t evac_mixed;
@@ -2027,6 +2079,15 @@ void gc_large_give_held(AvantHeader *h);
 /* avant_gc_proof.c */
 void gc_proof_log(void *obj, AvantHeader *h);
 void gc_proof_break(GcProofWhy why);
+void gc_proof_grow(GcProofWhy why);
+void gc_proof_anchors_begin(void);
+void gc_proof_anchor(void *start);
+void gc_proof_anchors_end(void);
+void gc_proof_anchors_forward(void);
+void gc_proof_lines_save(void);
+void gc_proof_lines_restore(void);
+void gc_mark_sticky_holders(void);
+void gc_verify_sticky_mark(void);
 void gc_proof_full_begin(void);
 void gc_proof_full_end(void);
 GcProofWhy gc_proof_check(void);

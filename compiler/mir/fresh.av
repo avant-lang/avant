@@ -31,8 +31,7 @@
 // marked `fresh` (barriered at birth). An initialize whose receiver's
 // openness serves no store asks nothing of its callers (mir_fresh_pass). V14 (verify_gc.av)
 // checks the result independently: a fresh store's holder is open by the
-// same rule, counting only allocations marked `fresh`, or the store is
-// justified by the older form (a closing barrier, a slot).
+// same rule, counting only allocations marked `fresh`.
 //
 // So `T.new(a, b)` with `initialize` setting two reference fields stores
 // both with no barrier test (scenario 7's Tree.new), while a store after a
@@ -133,9 +132,9 @@ fn mir_fresh_block(m: MModule, f: MFunc, b: Int, open: Array(UInt64), edit: Bool
         mir_bit_on(open, 0, h)
       }
     } else {
-      // A fill's store already marked fresh (an array literal's element)
-      // through an open holder relies on the openness from here on: its
-      // closing barrier goes, so the allocation is barriered at birth.
+      // A store already marked fresh through an open holder relies on
+      // the openness from here on, so the allocation is barriered at
+      // birth.
       if st.fresh && st.kind == msk_assign() {
         if p = st.place, p.local >= 0 && p.local < n && mir_bit(open, 0, p.local) {
           mir_bit_on(removed, 0, p.local)

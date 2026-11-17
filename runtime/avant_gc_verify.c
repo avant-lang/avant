@@ -811,7 +811,7 @@ static void verify_at_exit_check(void) {
   gc_verify_remembered();
   /* The proof's oracle once more: the log, every old object that
    * is not logged, and the conclusion when the proof holds here. */
-  gc_verify_proof(1, gc_proof_check() == PROOF_INTACT);
+  gc_verify_proof(1, gc_proof_check() != PROOF_INTACT ? 0 : gc_heap.proof.grown == PROOF_INTACT ? 1 : 2);
 }
 
 static void verify_at_exit(void) {
@@ -2308,6 +2308,10 @@ static size_t vp_shadow_len;
 /* The holders and the log words the log check has read. */
 static uint32_t vp_holders_seen;
 static uint32_t vp_log_seen;
+/* The proof holds for the old objects while objects became old since the
+ * last full collection (the sticky full collection's start): those are
+ * expected. */
+static int vp_grown;
 
 static inline int vp_bit(const uint64_t *bits, const AvantHeader *h) {
   uint64_t g = granule_of(h);
@@ -2495,7 +2499,7 @@ static void vp_reach(AvantHeader *h, Block *b) {
   if (!(h->flags & AVANT_FLAG_HEAP) || (h->flags & AVANT_FLAG_YOUNG)) {
     return;
   }
-  if (!vp_bit(vp_all, h)) {
+  if (!vp_grown && !vp_bit(vp_all, h)) {
     fprintf(stderr, "avant gc verify: proof: the proof holds and an object that is not young was not in the heap at "
                     "the last full collection, before coll=%llu\n",
             (unsigned long long)avant_g_stats.collections);
@@ -2562,9 +2566,12 @@ void gc_verify_proof_logging(void *hp) {
 }
 
 /* At a collection's start (FULL: a full one, or the program's exit),
- * with HOLDS the proof's verdict there (gc_proof_check). */
+ * with HOLDS the proof's verdict there (gc_proof_check): 1, it holds; 2,
+ * it holds for the old objects and objects became old since the last
+ * full collection (the sticky full collection); 0, it does not. */
 void gc_verify_proof(int full, int holds) {
   const GcProof *p = &gc_heap.proof;
+  vp_grown = holds == 2;
   if (p->broken >= PROOF_THREADS) {
     return;
   }
@@ -2588,4 +2595,60 @@ void gc_verify_proof(int full, int holds) {
     vp_each_object(vp_reach);
     verify_clear_traced();
   }
+}
+
+/* The sticky full collection's mark is done (gc_collect, after the late
+ * start bits): it must have marked exactly what a trace would. The
+ * verifier traces from the roots alone; every object it reaches must be
+ * marked (an old object by the last full collection, any other by this
+ * mark: "missed a reachable object"), and every marked object it does
+ * not reach must not exist ("kept an unreachable object": the proof held
+ * for the old objects, and the mark starts only from reachable ones). */
+static void vs_unreached(AvantHeader *h, Block *b) {
+  void *p = payload_of(h);
+  if (!(h->flags & AVANT_FLAG_HEAP) || (h->flags & AVANT_FLAG_YOUNG) || !full_marked(h)) {
+    return;
+  }
+  if (!vb_test(vb_seen, p, AVANT_FLAG_VSEEN)) {
+    fprintf(stderr, "avant gc verify: sticky: a marked object is unreachable, coll=%llu\n",
+            (unsigned long long)avant_g_stats.collections);
+    vp_describe("object", p);
+    gc_die("avant gc verify: sticky: the sticky full collection kept an unreachable object");
+  }
+  /* Its lines are live (an old object's from the line marks put back, any
+   * other's from this mark), or the sweep would free them under it. */
+  if (b) {
+    size_t off = (size_t)((uint8_t *)h - b->base);
+    size_t total = align_up(sizeof(AvantHeader) + (size_t)h->size);
+    size_t l;
+    for (l = off >> LINE_SHIFT; l <= (off + total - 1) >> LINE_SHIFT; l++) {
+      if (b->line_mark[l] != gc_heap.line_epoch) {
+        fprintf(stderr, "avant gc verify: sticky: a marked object's line %zu is not live, coll=%llu\n", l,
+                (unsigned long long)avant_g_stats.collections);
+        vp_describe("object", p);
+        gc_die("avant gc verify: sticky: the sticky full collection would free a live object's line");
+      }
+    }
+  }
+}
+
+void gc_verify_sticky_mark(void) {
+  size_t i;
+  vb_ensure();
+  verify_each_root(verify_tls_slot, 0);
+  while (gc_heap.work_n) {
+    void *o = verify_pop();
+    EACH_REF_SLOT_WALK(o, slot, { verify_trace(*slot); });
+  }
+  for (i = 0; i < gc_heap.vnoted_n; i++) {
+    void *o = gc_heap.vnoted[i];
+    if (!full_marked(avant_header(o))) {
+      fprintf(stderr, "avant gc verify: sticky: a reachable object is not marked, coll=%llu\n",
+              (unsigned long long)avant_g_stats.collections);
+      vp_describe("object", o);
+      gc_die("avant gc verify: sticky: the sticky full collection missed a reachable object");
+    }
+  }
+  vp_each_object(vs_unreached);
+  verify_clear_traced();
 }

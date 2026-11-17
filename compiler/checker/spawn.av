@@ -103,6 +103,24 @@ pub fn (checker_self: Checker) leaves_mutex_with(ty: Ty): Bool {
   checker_self.copyable_bits(ty)
 }
 
+// The construct a capture message names: the user wrote a spawn block
+// or an Array's `.parallel` block, and both are checked by the walk
+// below (node is the spawn or the `.parallel` call).
+pub fn task_word(node: Expr): String {
+  if node.kind == ex_call() && node.callee == "parallel" {
+    return ".parallel"
+  }
+  "spawn"
+}
+
+// Until when a captured Array is read-only, in node's words.
+pub fn frozen_until(node: Expr): String {
+  if node.kind == ex_call() && node.callee == "parallel" {
+    return "read-only while the bodies run"
+  }
+  "read-only until join"
+}
+
 pub fn (checker_self: Checker) collect_spawn_captures(expr: Expr, body: Array(Stmt)) {
   seen = Hash(String, Int).new()
   checker_self.walk_spawn_stmts(body, expr, seen)
@@ -145,11 +163,15 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
     if target = stmt.target {
       if target.kind == ex_name() {
         if ty = checker_self.lookup(target.ident) {
-          checker_self.fail(target.loc, "spawn cannot assign to ${target.ident}; copy at send is read-only")
+          if task_word(node) == "spawn" {
+            checker_self.fail(target.loc, "spawn cannot assign to ${target.ident}: the task has its own copy, made when it starts, and the copy is read-only; give the new value as the block's value and read it from join")
+          } else {
+            checker_self.fail(target.loc, ".parallel cannot assign to ${target.ident}: each body has its own copy, and the copy is read-only; give the new value as the body's value, which .parallel returns in its array")
+          }
         }
       } else if checker_self.spawn_array_frozen(target) {
         root = checker_self.expr_root_name(target)
-        checker_self.fail(target.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join")
+        checker_self.fail(target.loc, "${task_word(node)} cannot mutate captured Array ${root}; it is ${frozen_until(node)}")
         checker_self.walk_spawn_expr(target, node, seen)
       } else {
         checker_self.walk_spawn_expr(target, node, seen)
@@ -195,12 +217,12 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     if recv = expr.receiver {
       if checker_self.array_mutator(expr.callee) && checker_self.spawn_array_frozen(recv) {
         root = checker_self.expr_root_name(recv)
-        checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join")
+        checker_self.fail(expr.loc, "${task_word(node)} cannot mutate captured Array ${root}; it is ${frozen_until(node)}")
       }
       if checker_self.spawn_array_frozen(recv) && rw_element_place(recv) {
         // A method on an element (`xs[0].bump`): refused once the
         // program is checked if it changes its receiver.
-        checker_self.note_element_call(expr, recv, 1)
+        checker_self.note_element_call(expr, recv, task_side(node))
       }
       checker_self.walk_spawn_expr(recv, node, seen)
     }
@@ -231,10 +253,10 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
     if obj = expr.object {
       if checker_self.field_mutates_array(expr) && checker_self.spawn_array_frozen(obj) {
         root = checker_self.expr_root_name(obj)
-        checker_self.fail(expr.loc, "spawn cannot mutate captured Array ${root}; it is read-only until join")
+        checker_self.fail(expr.loc, "${task_word(node)} cannot mutate captured Array ${root}; it is ${frozen_until(node)}")
       }
       if expr.method_call && checker_self.spawn_array_frozen(obj) && rw_element_place(obj) {
-        checker_self.note_element_call(expr, obj, 1)
+        checker_self.note_element_call(expr, obj, task_side(node))
       }
       checker_self.walk_spawn_expr(obj, node, seen)
     }
@@ -641,11 +663,11 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
           break
         }
       }
-      checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: an ${ty.show()} is shared with the task, and its elements (${leaf.show()}) cannot cross to another task: a mutable object reaches another task only inside a Mutex")
+      checker_self.fail(expr.loc, "${task_word(node)} cannot capture ${expr.ident}: an ${ty.show()} is shared with the task, and its elements (${leaf.show()}) cannot cross to another task: a mutable object reaches another task only inside a Mutex")
       return
     }
     if !checker_self.copyable_for_spawn(ty) {
-      checker_self.fail(expr.loc, "spawn cannot capture ${expr.ident}: ${ty.show()} is not copied at send")
+      checker_self.fail(expr.loc, "${task_word(node)} cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another task; numbers, Bool, String, enums, structs of them and Arrays of those can, and a mutable object reaches another task only inside a Mutex")
       return
     }
     if prev = seen.get(expr.ident) {
@@ -670,6 +692,14 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
 // fields, or such a call on one, at any depth). A call through any other
 // path traps at run time (the freeze, mir/lower_agg.av
 // lower_method_call).
+// The side note_element_call records for a call inside node's block.
+pub fn task_side(node: Expr): Int {
+  if task_word(node) == "spawn" {
+    return 1
+  }
+  3
+}
+
 pub fn (checker_self: Checker) note_element_call(expr: Expr, recv: Expr, side: Int) {
   checker_self.elem_calls.push(expr)
   checker_self.elem_roots.push(checker_self.expr_root_name(recv))
@@ -707,6 +737,8 @@ pub fn (checker_self: Checker) check_element_writes {
         }
         if side == 1 {
           checker_self.fail(e.loc, "spawn cannot mutate captured Array ${root}: ${rt.show()}.${name} changes its receiver, an element of ${root}; it is read-only until join")
+        } else if side == 3 {
+          checker_self.fail(e.loc, ".parallel cannot mutate captured Array ${root}: ${rt.show()}.${name} changes its receiver, an element of ${root}; it is read-only while the bodies run")
         } else {
           checker_self.fail(e.loc, "cannot mutate ${root} while a spawn using it is running: ${rt.show()}.${name} changes its receiver, an element of ${root}; join first")
         }

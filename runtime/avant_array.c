@@ -20,7 +20,12 @@ typedef struct {
  * cap word is read with a relaxed atomic load, a plain load on x86, and
  * changed only by compare-and-swap while a task may hold the array, so
  * spawns that capture one array from several threads (a task that
- * spawns) and tasks ending at once keep the count exact. */
+ * spawns) and tasks ending at once keep the count exact. Every read that
+ * can meet a frozen word is atomic, the push fast paths' included (as
+ * the generated code's frozen check is): a task's end swaps the word from
+ * its own thread while the owner may read it before joining. A read
+ * after the frozen test passed meets no other writer: only a thread that
+ * holds the array unfrozen can freeze it. */
 static inline int32_t arr_cap_word(AvantArray *a) {
   return __atomic_load_n(&a->cap, __ATOMIC_RELAXED);
 }
@@ -166,7 +171,7 @@ void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id)
   if (!a) {
     return NULL;
   }
-  if (a->buf && a->size < a->cap) {
+  if (a->buf && a->size < arr_cap_word(a)) {
     slot = (uint8_t *)a->buf + (size_t)a->size * (size_t)elem_size;
     a->size += 1;
     if (a->buf) {
@@ -198,7 +203,7 @@ void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id) {
   if (!a) {
     return;
   }
-  if (a->buf && a->size < a->cap) {
+  if (a->buf && a->size < arr_cap_word(a)) {
     slot = (uint8_t *)a->buf + (size_t)a->size * sizeof(void *);
     /* The barrier before the store (RC5). */
     avant_barrier_slot_young(a->buf, slot);
@@ -267,7 +272,7 @@ void avant_array_push_i32(void *arr, int32_t v) {
   if (!a) {
     return;
   }
-  if (a->buf && a->size < a->cap) {
+  if (a->buf && a->size < arr_cap_word(a)) {
     ((int32_t *)a->buf)[a->size] = v;
     a->size += 1;
     return;
@@ -291,7 +296,7 @@ void avant_array_push_i64(void *arr, int64_t v) {
   if (!a) {
     return;
   }
-  if (a->buf && a->size < a->cap) {
+  if (a->buf && a->size < arr_cap_word(a)) {
     ((int64_t *)a->buf)[a->size] = v;
     a->size += 1;
     return;

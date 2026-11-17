@@ -134,7 +134,22 @@ fn empty_array_cases: Array(ECase) {
   xs: Array(ECase) = []
   xs.push(accepted("empty-arg", "class Node {\n  pub kids: Array(Node)\n  fn initialize(kids: Array(Node)) {\n    self.kids = kids\n  }\n  fn add(more: Array(Int)): Int {\n    more.size\n  }\n  fn self.leaf(tags: Array(String)): Node {\n    Node.new([])\n  }\n}\nfn count(xs: Array(Int)): Int {\n  xs.size\n}\nfn main {\n  n = Node.new([])\n  puts(n.kids.size)\n  puts(count([]))\n  puts(n.add([]))\n  puts(Node.leaf([]).kids.size)\n  puts(Node.new([n]).kids.size)\n}\n", "0\n0\n0\n0\n1\n"))
   xs.push(refused("empty-arg-generic", "fn first(xs: Array(T)): Int {\n  xs.size\n}\nfn main {\n  puts(first([]))\n}\n", "cannot infer type argument", "5:8"))
-  xs.push(refused("empty-arg-not-array", "fn count(n: Int): Int {\n  n\n}\nfn main {\n  puts(count([]))\n}\n", "empty array needs a type", "5:14"))
+  xs.push(refused("empty-arg-not-array", "fn count(n: Int): Int {\n  n\n}\nfn main {\n  puts(count([]))\n}\n", "[] is an array, expected Int", "5:14"))
+  xs
+}
+
+// A binary operator after a call's trailing block takes the call as its
+// left operand, as after any call: the block is attached after the
+// call's expression, which stops at the `{`, and the operators go on
+// from there (they did not parse).
+fn trailing_block_cases: Array(ECase) {
+  xs: Array(ECase) = []
+  pre = "fn twice(f: fn(Int): Int): Int {\n  f(f(1))\n}\n\nfn find(f: fn(Int): Bool): Int? {\n  if f(3) {\n    return 3\n  }\n  nil\n}\n\n"
+  xs.push(accepted("block-then-coalesce", pre + "fn main {\n  a = find { |x| x > 2 } ?? 0\n  b = find { |x| x > 5 } ?? -1\n  puts(a)\n  puts(b)\n}\n", "3\n-1\n"))
+  xs.push(accepted("block-then-arith", pre + "fn main {\n  n = twice { |x| x + 1 } * 10 + 1\n  puts(n)\n  puts(twice { |x| x * 3 } == 9)\n}\n", "31\ntrue\n"))
+  xs.push(accepted("block-then-coalesce-return", pre + "fn pick: Int {\n  v = find { |x| x > 5 } ?? return 7\n  v\n}\n\nfn main {\n  puts(pick())\n}\n", "7\n"))
+  xs.push(accepted("block-then-continued-line", pre + "fn main {\n  a = find { |x| x > 5 }\n    ?? 4\n  puts(a)\n}\n", "4\n"))
+  xs.push(accepted("block-then-arg", pre + "fn add(a: Int, b: Int): Int {\n  a + b\n}\n\nfn main {\n  puts(add(find { |x| x > 5 } ?? 2, 3))\n}\n", "5\n"))
   xs
 }
 
@@ -191,6 +206,9 @@ fn test_main(c: Checks) {
       all.push(x)
     }
     for x in empty_array_cases() {
+      all.push(x)
+    }
+    for x in trailing_block_cases() {
       all.push(x)
     }
     run_cases(c, compiler, dir, all)

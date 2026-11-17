@@ -84,6 +84,34 @@ pub fn (checker_self: Checker) offer_functions(sg: Suggest, rank: Int) {
   }
 }
 
+// `m.name` where the module m has no function or constant of that name
+// (a value, or a call): m's pub functions and constants, shown as
+// m.NAME, since the qualified name is what the program writes.
+pub fn (checker_self: Checker) module_name_hint(mod: String, name: String): String {
+  if !checker_self.hints_wanted() {
+    return ""
+  }
+  sg = Suggest.new(name)
+  for i in 1..checker_self.functions.size {
+    sig = checker_self.functions[i]
+    if sg.could(sig.name) && sig.node.mod_name == mod && sig.node.vis && !checker_self.sig_is_instance(sig) {
+      sg.offer(sig.name, 0)
+    }
+  }
+  for cv in checker_self.const_list {
+    if d = cv.def {
+      if d.mod_name == mod && d.vis {
+        sg.offer(d.name, 0)
+      }
+    }
+  }
+  found = sg.found()
+  if found.size == 0 {
+    return ""
+  }
+  " (did you mean `${mod}.${found}`?)"
+}
+
 // The module constants the current module may name bare: its own, and
 // an import's pub ones.
 pub fn (checker_self: Checker) offer_consts(sg: Suggest, rank: Int) {

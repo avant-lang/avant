@@ -195,6 +195,43 @@ fn test_keep_young(c: Checks, compiler: String, root: String, dir: String) {
   c.expect(stat_value(err, "full_kept_young_fell") >= 1, "keep_young.av: the trace that met a young object naming an old one went back to an ordinary trace (full_kept_young_fell ${stat_value(err, "full_kept_young_fell")})")
 }
 
+// ffi/sticky_full.av: the sticky full collection (runtime/avant_gc_proof.c).
+// When no old object can have died since the last full collection and
+// young collections promoted objects since, a forced collection marks
+// only what is not old, from the roots and the logged holders: a chain
+// grown from an old head through a moving tail is whole after it, and a
+// chain an old holder took and let go after its promotion is freed. An
+// old chain named only by a returned function's local, and one an old
+// holder's word moved away from, are freed by a trace. In every
+// environment with the oracle silent (under the verifier it also checks
+// the sticky collection's marks against a trace); in the default one the
+// statistics line counts the sticky collections.
+fn test_sticky_full(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/sticky_full.av", "${dir}/sticky_full", "${dir}/sticky_full.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "sticky_full.av: compiles")
+  want = "grow: 30000\ngarbage: freed 1\nanchor: freed 1\nmoved: freed 1\nchain: 50000\n"
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  runs: Array(HJob) = []
+  for e in 0..envs.size {
+    runs.push(run_job_env(dir, "sticky_full", "sticky_full.g${e}", envs[e]))
+  }
+  runs.push(run_job_env(dir, "sticky_full", "sticky_full.show", "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS STICKY_SHOW=1 AVANT_GC_STATS=1"))
+  run_waves(runs)
+  for e in 0..envs.size {
+    what = "plain"
+    if envs[e].size > 0 {
+      what = "under ${envs[e]}"
+    }
+    c.eq_int(runs[e].code, 0, "sticky_full.av ${what}: exit 0")
+    c.eq_str(log_text("${dir}/sticky_full.g${e}.out"), want, "sticky_full.av ${what}: the chain whole, every victim freed")
+    c.eq_str(log_text("${dir}/sticky_full.g${e}.err"), "", "sticky_full.av ${what}: no stderr (the oracle is silent)")
+  }
+  err = log_text("${dir}/sticky_full.show.err")
+  c.expect(stat_value(err, "full_sticky") >= 2, "sticky_full.av: the grown chain's and the let-go chain's collections are sticky ones (full_sticky ${stat_value(err, "full_sticky")})")
+}
+
 // The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
 fn stat_value(text: String, key: String): Int {
   parts = text.split(" ")
@@ -213,6 +250,7 @@ fn test_main(c: Checks) {
     test_complete(c, compiler, avant_test_root(), scratch_dir())
     test_scope_binding(c, compiler, avant_test_root(), scratch_dir())
     test_keep_young(c, compiler, avant_test_root(), scratch_dir())
+    test_sticky_full(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

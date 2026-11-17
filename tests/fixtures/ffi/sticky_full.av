@@ -1,0 +1,219 @@
+// The sticky full collection. When no old object can have died since the
+// last full collection but objects became old since (young collections
+// promoted them), a full collection marks only what is not old: it keeps
+// the last full collection's marks, starts from the roots and from every
+// old holder a store logged, and frees what became old and died. Four
+// parts:
+//
+//   grow     a chain grows from an old head through a moving tail while
+//            young collections promote its nodes; the forced collection
+//            after it is the sticky one (the tail a local named at the
+//            last full collection is reached from the head, a root
+//            before it), and the whole chain is still there
+//   garbage  an old holder takes a fresh chain, young collections
+//            promote it, the holder lets it go: the sticky collection
+//            frees it (young garbage first, so that the forced collection
+//            is not the trace that leaves a small young generation young)
+//   anchor   an old chain named only by a local of a function that has
+//            returned: the next forced collection must trace, and frees
+//            it, though objects became old since
+//   moved    an old holder's word moves from one old chain to another:
+//            the collection traces and frees the first
+//
+// The bytes the collector found live must show each victim freed in
+// every environment, the chain must be whole, and the verifier's oracle
+// (which checks the sticky collection's marks against a trace) is
+// silent. With STICKY_SHOW=1 the program says how many full collections
+// each part made. Built with `--cc tests/fixtures/ffi/ffi.c` (the
+// collector's counters).
+class Node {
+  next: Node?
+  v: Int
+}
+
+class Holder {
+  sink: Node?
+  keep: Node?
+  other: Node?
+}
+
+lib cc {
+  fun ffi_gc_count(which: Int): Int
+  fun avant_gc_collect
+  fun avant_gc_collect_young
+}
+
+fn live: Int {
+  cc.ffi_gc_count(2)
+}
+
+fn fulls: Int {
+  cc.ffi_gc_count(0)
+}
+
+fn collect {
+  cc.avant_gc_collect()
+}
+
+// Everything alive is old after it (the third collection is a full one).
+fn settle {
+  collect()
+  collect()
+  collect()
+}
+
+// Young collections enough that what is young now becomes old.
+fn promote {
+  cc.avant_gc_collect_young()
+  cc.avant_gc_collect_young()
+  cc.avant_gc_collect_young()
+}
+
+fn chain(n: Int): Node {
+  head = Node.new()
+  i = 1
+  while i < n {
+    x = Node.new()
+    x.v = i
+    x.next = head
+    head = x
+    i += 1
+  }
+  head
+}
+
+fn length(n: Node): Int {
+  k = 0
+  p: Node? = n
+  while x = p {
+    k += 1
+    p = x.next
+  }
+  k
+}
+
+fn fresh(v: Int): Node {
+  n = Node.new()
+  n.v = v
+  n
+}
+
+// Each victim is a chain of 20,000 nodes (about 640 KB), made in a
+// function of its own, so that no frame of the caller names it.
+fn make_victim(h: Holder) {
+  h.sink = chain(20000)
+}
+
+fn make_other(h: Holder) {
+  h.other = chain(20000)
+}
+
+fn part_grow(h: Holder, show: Bool): Int {
+  head = Node.new()
+  h.keep = head
+  tail = head
+  settle()
+  f = fulls()
+  i = 1
+  while i < 30000 {
+    x = Node.new()
+    x.v = i
+    tail.next = x
+    tail = x
+    if i % 5000 == 0 {
+      promote()
+    }
+    i += 1
+  }
+  collect()
+  if show {
+    puts("grow: ${fulls() - f} full")
+  }
+  length(head)
+}
+
+// Young objects that die, more than a sixty-fourth of the old ones: a
+// forced collection then promotes what it marks (a smaller young
+// generation it would leave young, and trace).
+fn young_garbage {
+  k = 0
+  while k < 4 {
+    chain(10000)
+    k += 1
+  }
+}
+
+fn part_garbage(h: Holder, show: Bool): Int {
+  settle()
+  b = live()
+  f = fulls()
+  make_victim(h)
+  promote()
+  h.sink = nil
+  young_garbage()
+  collect()
+  if show {
+    puts("garbage: ${fulls() - f} full, live ${b} then ${live()}")
+  }
+  if live() - b < 300000 {
+    return 1
+  }
+  0
+}
+
+// The chain is named by this frame's local only; after the return no
+// root names it.
+fn hold_anchor: Int {
+  v = chain(20000)
+  settle()
+  length(v)
+}
+
+fn part_anchor(h: Holder, show: Bool): Int {
+  n = hold_anchor()
+  b = live()
+  f = fulls()
+  h.sink = fresh(n)
+  promote()
+  collect()
+  if show {
+    puts("anchor: ${fulls() - f} full, live ${b} then ${live()}")
+  }
+  if b - live() >= 300000 {
+    return 1
+  }
+  0
+}
+
+fn part_moved(h: Holder, show: Bool): Int {
+  make_other(h)
+  make_victim(h)
+  settle()
+  b = live()
+  f = fulls()
+  h.sink = h.other
+  h.other = fresh(1)
+  promote()
+  collect()
+  if show {
+    puts("moved: ${fulls() - f} full, live ${b} then ${live()}")
+  }
+  if b - live() >= 300000 {
+    return 1
+  }
+  0
+}
+
+fn main {
+  show = false
+  if v = env_get("STICKY_SHOW"), v == "1" {
+    show = true
+  }
+  h = Holder.new()
+  keepalive = chain(50000)
+  puts("grow: ${part_grow(h, show)}")
+  puts("garbage: freed ${part_garbage(h, show)}")
+  puts("anchor: freed ${part_anchor(h, show)}")
+  puts("moved: freed ${part_moved(h, show)}")
+  puts("chain: ${length(keepalive)}")
+}

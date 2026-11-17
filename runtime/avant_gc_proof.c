@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 
 /* The proof that the old heap is unchanged (the statement is GcProof's
  * comment in avant_gc_internal.h).
@@ -49,14 +50,17 @@
  *   What the log cannot carry breaks the proof until the next full
  *   collection (gc_proof_break): a holder over PROOF_HOLDER_MAX bytes, a
  *   log over PROOF_LOG_MAX words, a program with threads (the log is the
- *   single mutator's), no young generation.
+ *   single mutator's), no young generation. A free of an old object
+ *   outside a collection breaks it too.
  *
- * So when the proof holds every old object is reachable. What is not
- * reachable is then young, provided no object became old since F without
- * being marked: a young collection that promoted, an allocation in mature
- * space and a free of an old object outside a collection break the proof
- * too. A young collection frees every young object that neither a root
- * nor a remembered holder reaches, and every remembered holder is an old
+ * So when the proof holds every old object is reachable (and, with the
+ * anchors below, a root's referent needs no root when a root before it
+ * reaches it). What is not reachable is then young, provided no object
+ * became old since F: a young collection that promoted and an allocation
+ * in mature space are noted (gc_proof_grow), and then a full collection
+ * is the sticky one (at the end of this file) instead of a young one. A
+ * young collection frees every young object that neither a root nor a
+ * remembered holder reaches, and every remembered holder is an old
  * object, so reachable: it frees exactly the unreachable objects.
  *
  * Old objects do not move between F's end and the check (a young
@@ -66,8 +70,10 @@
  * saved roots stay true.
  *
  * Before the first full collection F is the program's start: no object is
- * old, the log and the saved roots are empty, and the proof holds until
- * something is promoted or born old. */
+ * old, the log and the saved roots are empty, and the proof holds (with
+ * nothing old to log). */
+
+static int proof_ptr_cmp(const void *a, const void *b);
 
 static const char *const proof_why_names[PROOF_WHYS] = {
     "intact",  "promoted", "mature", "freed",    "big",       "log_full",    "threads",
@@ -106,6 +112,17 @@ void gc_proof_break(GcProofWhy why) {
   avant_gc_proof_logging = (uint8_t)(avant_gc_proof_logging && gc_heap.set.verify && gc_heap.proof.broken < PROOF_THREADS);
 }
 
+/* An object became old that no full collection marked (a promotion, a
+ * birth in mature space): the old objects are still all reachable while
+ * nothing below breaks the proof, but no longer every object that is not
+ * young, so a full collection is the sticky one (below), not a young
+ * collection. The log goes on. */
+void gc_proof_grow(GcProofWhy why) {
+  if (gc_heap.proof.grown == PROOF_INTACT) {
+    gc_heap.proof.grown = (uint8_t)why;
+  }
+}
+
 /* The first barrier's slow call on OBJ (header H: in the heap, not young,
  * not LOGGED) since the last full collection, before the store: its
  * reference words that name objects that are not young, logged with their
@@ -117,7 +134,11 @@ void gc_proof_break(GcProofWhy why) {
 __attribute__((noinline)) void gc_proof_log(void *obj, AvantHeader *h) {
   GcProof *p = &gc_heap.proof;
   uint32_t n0 = p->log_n;
-  if (p->broken >= PROOF_THREADS || h->type_id == AVANT_TYPE_BYTES) {
+  /* Only an old object is logged: one that became old since F breaks no
+   * path of F (its words are not F's references) and the sticky full
+   * collection traces it when it is reachable. The side mark says which
+   * (F left it on every old object and on nothing else, below). */
+  if (p->broken >= PROOF_THREADS || h->type_id == AVANT_TYPE_BYTES || !full_marked(h)) {
     return;
   }
   if (gc_heap.set.verify) {
@@ -140,7 +161,8 @@ __attribute__((noinline)) void gc_proof_log(void *obj, AvantHeader *h) {
     void *v = *slot;
     Block *vb;
     AvantHeader *vl;
-    if (gc_field_object(v, &vb, &vl) && !(avant_header(v)->flags & AVANT_FLAG_YOUNG)) {
+    if (gc_field_object(v, &vb, &vl) && !(avant_header(v)->flags & AVANT_FLAG_YOUNG) &&
+        full_marked(avant_header(v))) {
       proof_push(&p->log, &p->log_n, &p->log_cap, (void *)slot, v);
     }
   });
@@ -227,6 +249,12 @@ void gc_proof_full_end(void) {
   GcProof *p = &gc_heap.proof;
   p->roots_n = 0;
   p->broken = PROOF_INTACT;
+  p->grown = PROOF_INTACT;
+  /* A young object a trace that left the young generation young marked
+   * keeps its side mark, and may become old later: the next full
+   * collection cannot take the marks for the old objects. */
+  p->no_sticky = gc_heap.keep_young;
+  gc_proof_lines_save();
   /* The old objects' bytes: a trace that left the young generation young
    * marked young objects too (gc_heap.keep_young_live). */
   p->old_live = gc_heap.live - gc_heap.keep_young_live;
@@ -238,6 +266,9 @@ void gc_proof_full_end(void) {
     p->broken = PROOF_THREADS;
   }
   avant_gc_proof_logging = (uint8_t)(p->broken == PROOF_INTACT || (gc_heap.set.verify && p->broken < PROOF_THREADS));
+  if (p->anchors_ok) {
+    qsort(p->anchors, p->anchors_n, sizeof(void *), proof_ptr_cmp);
+  }
   if (p->broken == PROOF_INTACT) {
     gc_proof_each_root(proof_save_root, NULL);
     gc_heap.ctr.proof.roots = (uint64_t)p->roots_n / 2;
@@ -341,9 +372,160 @@ GcProofWhy gc_proof_check(void) {
   }
   qsort(p->cur, p->cur_n, sizeof(void *), proof_ptr_cmp);
   for (i = 0; i < p->miss_n; i++) {
-    if (!bsearch(&p->miss[i], p->cur, p->cur_n, sizeof(void *), proof_ptr_cmp)) {
+    if (!bsearch(&p->miss[i], p->cur, p->cur_n, sizeof(void *), proof_ptr_cmp) &&
+        (!p->anchors_ok || bsearch(&p->miss[i], p->anchors, p->anchors_n, sizeof(void *), proof_ptr_cmp))) {
       return PROOF_ROOT_LOST;
     }
   }
   return PROOF_INTACT;
+}
+
+/* Anchors.
+ *
+ * An ordinary trace marks the roots' referents one at a time, in the
+ * order gc_proof_each_root walks them, each with everything it reaches
+ * before the next (gc_mark_roots). A referent the marks of the roots
+ * before it already reached is not an anchor: some path of F leads to it
+ * from a root marked before it. A referent that is an anchor is noted.
+ *
+ * So the root check needs no root for a referent that is not an anchor.
+ * Take the roots in that order and suppose every logged word holds its
+ * logged reference (else the check failed already): every path of F is
+ * intact. A root's referent is still reachable when a root names it; an
+ * anchor that no root names fails the check; a referent that is not an
+ * anchor is reached by an intact path of F from a referent of a root
+ * before it, reachable by the same argument, one root earlier. Every old
+ * object is reached by a path of F from some root's referent, so every
+ * old object is reachable.
+ *
+ * Only an ordinary trace notes anchors: a trace that left the young
+ * generation young marks no old object through a young one, and the
+ * sticky full collection marks none through an old one, so neither knows
+ * what each root reaches; after them every referent counts as an anchor
+ * (anchors_ok is 0). A program's chain whose tail a local names is the
+ * case: the tail moves on at each node, and the node a root named at F
+ * is reached from the chain's head, a root before it. */
+void gc_proof_anchors_begin(void) {
+  gc_heap.proof.anchors_n = 0;
+  gc_heap.proof.anchors_ok = 0;
+}
+
+void gc_proof_anchor(void *start) {
+  GcProof *p = &gc_heap.proof;
+  if (p->anchors_n == p->anchors_cap) {
+    p->anchors_cap = p->anchors_cap ? p->anchors_cap * 2 : 64;
+    p->anchors = gc_xrealloc(p->anchors, (size_t)p->anchors_cap * sizeof(void *));
+  }
+  p->anchors[p->anchors_n++] = start;
+}
+
+void gc_proof_anchors_end(void) {
+  gc_heap.proof.anchors_ok = 1;
+}
+
+/* The defragmenter moved objects (before it frees their blocks): an
+ * anchor it moved is noted at its new place. */
+void gc_proof_anchors_forward(void) {
+  GcProof *p = &gc_heap.proof;
+  uint32_t i;
+  for (i = 0; i < p->anchors_n; i++) {
+    AvantHeader *h = avant_header(p->anchors[i]);
+    if (h->flags & AVANT_FLAG_FORWARDED) {
+      p->anchors[i] = gc_forward_of(h);
+    }
+  }
+}
+
+/* The sticky full collection.
+ *
+ * When the proof holds for the old objects but some object became old
+ * since F (gc_proof_grow: a promotion, a birth in mature space), every
+ * old object is still reachable (the argument above), and what may be
+ * unreachable is what is not old: the young objects and the ones that
+ * became old since F. A full collection then marks only those: it keeps
+ * F's side marks, which are on every old object and on nothing else
+ * (below), so the mark stops at an old object as at one it already
+ * marked, and it starts from the roots and from every logged holder's
+ * words (gc_mark_sticky_holders).
+ *
+ * That marks every reachable object that is not old. Take a path from a
+ * root to such an object X, and the last old object A on it (if there is
+ * none, the mark follows the whole path from the root). A's word that
+ * names the next object of the path names an object that is not old; at
+ * F every word of A named an old object or nothing (F marked what A named
+ * and promoted it), so the word was stored into since F, and A's first
+ * store since F was logged (the barrier before the store): A is a logged
+ * holder, the mark reads its words as they are now, and follows the rest
+ * of the path, which has no old object. (After a trace that left the
+ * young generation young an old object may name a young one; then F's
+ * marks are on young objects too and this collection does not run:
+ * GcProof.no_sticky.) And it marks nothing unreachable: the logged
+ * holders it starts from are old, so reachable.
+ *
+ * The line marks are F's, saved at F's end (gc_proof_lines_save) and put
+ * back before the mark (gc_proof_lines_restore): an old object's lines
+ * are live, and the lines of everything that became old since F are
+ * marked again only when the mark reaches it. The sweep then frees what
+ * a trace would have freed. Nothing is evacuated (an evacuation rewrites
+ * every reference to what it moves, a walk of the whole heap). At its end
+ * the collection is a full collection's end like any other: every object
+ * is old and marked, or freed.
+ *
+ * F's side marks are only on old objects: a full collection clears them
+ * all before it marks, a block the defragmenter evacuated has its marks
+ * (and line marks) cleared when it is freed (gc_defrag_release), an
+ * object the defragmenter moved out of a block that stays has its mark
+ * cleared, no other block leaves use with a marked object, and nothing
+ * else sets one between two full collections. */
+
+/* A full collection ended (its sweep done): the line marks of every
+ * block in use are saved, each block's stamped with the save's number (a
+ * block that is not in use at F holds no line of an old object: its
+ * stamp is older). The copy is an anonymous mapping as large as the
+ * heap's whole line table, and the stamps one word a block of the
+ * reservation, taken at the first save; only the pages written become
+ * memory. */
+void gc_proof_lines_save(void) {
+  gc_heap.proof.lines_saved = 0;
+  if (gc_heap.proof.broken >= PROOF_THREADS || gc_heap.proof.no_sticky) {
+    return;
+  }
+  if (!gc_heap.lines_f) {
+    uint64_t blocks = gc_heap.reserved >> BLOCK_SHIFT;
+    void *m = mmap(NULL, (size_t)(blocks * LINES_PER_BLOCK), PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    void *g = mmap(NULL, (size_t)(blocks * sizeof(uint32_t)), PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (m == MAP_FAILED || g == MAP_FAILED) {
+      if (m != MAP_FAILED) {
+        munmap(m, (size_t)(blocks * LINES_PER_BLOCK));
+      }
+      if (g != MAP_FAILED) {
+        munmap(g, (size_t)(blocks * sizeof(uint32_t)));
+      }
+      return;
+    }
+    gc_heap.lines_f = m;
+    gc_heap.lines_f_block = g;
+  }
+  gc_heap.lines_f_gen++;
+  EACH_MATURE_BLOCK(b, {
+    uint64_t k = (uint64_t)(b->base - gc_heap.base) >> BLOCK_SHIFT;
+    memcpy(&gc_heap.lines_f[k * LINES_PER_BLOCK], b->line_mark, LINES_PER_BLOCK);
+    gc_heap.lines_f_block[k] = gc_heap.lines_f_gen;
+  });
+  gc_heap.proof.lines_saved = 1;
+}
+
+/* The sticky full collection's start: the line marks of every block in
+ * use are F's again; a block that was not in use at F has none live. */
+void gc_proof_lines_restore(void) {
+  EACH_MATURE_BLOCK(b, {
+    uint64_t k = (uint64_t)(b->base - gc_heap.base) >> BLOCK_SHIFT;
+    if (gc_heap.lines_f_block[k] == gc_heap.lines_f_gen) {
+      memcpy(b->line_mark, &gc_heap.lines_f[k * LINES_PER_BLOCK], LINES_PER_BLOCK);
+    } else {
+      memset(b->line_mark, 0, LINES_PER_BLOCK);
+    }
+  });
 }

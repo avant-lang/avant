@@ -53,6 +53,10 @@ pub class LlEmit {
   intr_seen: Hash(String, Int)
   pa_ty: Int = 0
   pub pa_vol: Bool = false
+  pub pa_tbaa: String = ""
+  pub pa_atomic: Bool = false
+  pub pa_size: Bool = false
+  pub used_tbaa: Bool = false
   pub loop_md: Hash(String, Int)
   pub loop_md_n: Int = 0
   pub ov_ty: Int = 0
@@ -69,6 +73,7 @@ pub class LlEmit {
     self.intrinsics = []
     self.intr_seen = Hash(String, Int).new()
     self.loop_md = Hash(String, Int).new()
+    self.loop_md_n = ll_tbaa_last()
     self.tlocs = []
     self.tloc_seen = Hash(String, Int).new()
   }
@@ -239,28 +244,64 @@ pub class LlEmit {
   }
 
   pub fn load(ty: Int, ptr: String, volatile: Bool): String {
+    load_tagged(ty, ptr, volatile, "")
+  }
+
+  // A load with an alias tag (", !tbaa !N", or "" for none).
+  pub fn load_tagged(ty: Int, ptr: String, volatile: Bool, tag: String): String {
+    if tag.size > 0 {
+      self.used_tbaa = true
+    }
     t = self.tmp()
-    line("${t} = load${vol(volatile)} ${llt(ty)}, ptr ${ptr}, align ${align(ty)}")
+    line("${t} = load${vol(volatile)} ${llt(ty)}, ptr ${ptr}, align ${align(ty)}${tag}")
     t
   }
 
   pub fn store(ty: Int, val: String, ptr: String, volatile: Bool) {
-    line("store${vol(volatile)} ${llt(ty)} ${val}, ptr ${ptr}, align ${align(ty)}")
+    store_tagged(ty, val, ptr, volatile, "")
+  }
+
+  pub fn store_tagged(ty: Int, val: String, ptr: String, volatile: Bool, tag: String) {
+    line("store${vol(volatile)} ${llt(ty)} ${val}, ptr ${ptr}, align ${align(ty)}${tag}")
   }
 
   // The address of a place (E5), emitting the loads and GEPs it needs.
-  // Sets pa_ty (the place's type) and pa_vol (E2: no deref and the local
-  // is a slot). An index operand is evaluated where its projection is.
+  // Sets pa_ty (the place's type), pa_vol (E2: no deref and the local
+  // is a slot), pa_tbaa (the access's alias tag, ll_tbaa_tag) and
+  // pa_atomic (an Array header's capacity word, whose loads are atomic:
+  // see ll_tbaa_last). An index operand is evaluated where its projection
+  // is.
   pub fn place_ptr(p: MPlace): String {
     ptr = local_name(p.local)
     ty = self.f.locals[p.local].ty
     volatile = slot_vol(p.local)
+    // The memory the place is in, from its last deref: 0 a local, 1 an
+    // element of an element buffer, 2 + f field f of an Array or Buf
+    // header, 5 a field of a class or record object (and anything inside
+    // that field), -1 anything else (untagged). pend: what the last
+    // deref reached (1 an element buffer, 2 an Array or Buf header, 3 a
+    // class or record object, -1 other), decided by the projection that
+    // follows it.
+    region = 0
+    pend = 0
+    arr = false
     for pr in p.proj {
       mt = self.ts.get(ty)
       if pr.kind == mpk_deref() {
-        ptr = load(mt_ptr(), ptr, volatile)
+        ptr = load_tagged(mt_ptr(), ptr, volatile, ll_tbaa_tag(region))
         volatile = false
+        region = -1
+        pend = -1
         if self.ts.is_refkind(ty) && mt.layout >= 0 {
+          lk = self.ts.layouts[mt.layout].kind
+          arr = lk == mlk_array()
+          if lk == mlk_elems() {
+            pend = 1
+          } else if lk == mlk_array() || lk == mlk_buf() {
+            pend = 2
+          } else if lk == mlk_class() || lk == mlk_record() {
+            pend = 3
+          }
           ty = self.ts.agg(mt.layout)
         } else {
           ty = mt.pointee
@@ -270,6 +311,14 @@ pub class LlEmit {
         line("${t} = getelementptr inbounds ${llt(ty)}, ptr ${ptr}, i32 0, i32 ${pr.field}")
         ptr = t
         ty = self.ts.layouts[mt.layout].fields[pr.field]
+        if pend == 2 {
+          region = 2 + pr.field
+        } else if pend == 3 {
+          region = 5
+        } else if region > 1 && region != 5 {
+          region = -1
+        }
+        pend = 0
       } else {
         et = ty
         if mt.kind == mk_agg() && self.ts.layouts[mt.layout].kind == mlk_elems() {
@@ -283,10 +332,22 @@ pub class LlEmit {
         line("${t} = getelementptr inbounds ${llt(et)}, ptr ${ptr}, i64 ${idx}")
         ptr = t
         ty = et
+        if pend == 1 {
+          region = 1
+        } else if region > 1 && region != 5 {
+          region = -1
+        }
+        pend = 0
       }
     }
     self.pa_ty = ty
     self.pa_vol = volatile
+    self.pa_atomic = region == 4 && arr
+    self.pa_size = region == 3
+    self.pa_tbaa = ll_tbaa_tag(region)
+    if self.pa_tbaa.size > 0 {
+      self.used_tbaa = true
+    }
     ptr
   }
 
@@ -317,7 +378,17 @@ pub class LlEmit {
     if p = o.place {
       ptr = place_ptr(p)
       ty = self.pa_ty
-      x = load(ty, ptr, self.pa_vol)
+      if self.pa_atomic {
+        x = self.tmp()
+        line("${x} = load atomic ${llt(ty)}, ptr ${ptr} monotonic, align ${align(ty)}")
+        self.ov_ty = ty
+        return x
+      }
+      tag = self.pa_tbaa
+      if self.pa_size {
+        tag = tag + ll_size_range()
+      }
+      x = load_tagged(ty, ptr, self.pa_vol, tag)
       self.ov_ty = ty
       return x
     }
@@ -366,6 +437,81 @@ pub fn ll_type_text(ts: MTypes, ty: Int): String {
     return ll_type_name(ts.layouts[ts.get(ty).layout].name)
   }
   "ptr"
+}
+
+// Type-based alias tags. Five kinds of memory are told apart: a local
+// (an alloca: a collector's slot among them, whose address the frame
+// hands to the runtime), an element of an element buffer (any element
+// type, reached through a buffer reference: `(*data)[i]` and its fields),
+// an Array or Buf header's buffer reference, its size, and a field of a
+// class or record object (an object, a captured variable's box, a
+// closure's environment, a task's record; with whatever lies inside the
+// field: a struct's fields, a union's parts). Heap memory never shares
+// bytes with a local (no heap reference points into a frame), an object,
+// a header and an element buffer are distinct allocations (no object or
+// header is laid out inside another allocation), and a header's two
+// fields never share bytes with each other. So LLVM may keep a slot's
+// value, a buffer reference, a size or an object's field in a register
+// across a store to another kind: the reloads a loop otherwise does after
+// every store. One tag serves every object layout, so a parent's and a
+// child's view of one object, or a generic one, always may alias. Every
+// other access (a Hash's or a String's header, which only the runtime's
+// calls read; a raw pointer's; a local's or a field's through its
+// address) is untagged and may alias anything. The capacity stays
+// untagged: it also holds the count of tasks that hold the array, which
+// other threads update. A collection moves a buffer or an object and
+// rewrites the header, the fields and the slots only inside a call (a
+// collecting call, the poll, a native region), and a buffer grows only
+// inside the runtime's calls: LLVM assumes any such call may write any of
+// this memory, whatever the tags say, so no tag lets a reference outlive
+// a move.
+//
+// An Array's capacity word is read with an atomic (monotonic) load, a
+// plain mov on x86: while tasks hold the array it holds their count, and
+// a task's end changes it with a compare-and-swap from that task's
+// thread (avant_array_thaw). The thread that owns the array reads it in
+// the frozen check before a change it makes through another name; when
+// that read is not ordered after the task's end (no join yet) it races
+// with the swap, and a plain load that races with a store is undefined
+// in LLVM's model. Reading it atomically makes the race a choice between
+// two defined values (the program traps, or the change goes ahead after
+// the task ended) and keeps every later fact about other memory from
+// letting LLVM merge or hoist the read. Stores stay plain: generated code
+// writes the word only into a new array, before any task can hold it.
+pub fn ll_tbaa_last: Int { 12 }
+
+// An Array's or Buf's size is never negative (at most the runtime's
+// ceiling, 2^31 - 1, avant_size_check), so its loads carry the range
+// [0, 2^31): LLVM may then drop a sign extension's cost, prove an index
+// below the size non-negative and fold bounds checks against it.
+pub fn ll_size_range: String {
+  ", !range !12"
+}
+
+// The tag of an access to region (place_ptr): 0 a local, 1 an element, 2
+// a header's buffer reference, 3 its size, 5 an object's field; "" for
+// any other.
+pub fn ll_tbaa_tag(region: Int): String {
+  if region == 5 {
+    return ", !tbaa !11"
+  }
+  if region == 0 {
+    return ", !tbaa !9"
+  }
+  if region == 1 {
+    return ", !tbaa !3"
+  }
+  if region == 2 {
+    return ", !tbaa !5"
+  }
+  if region == 3 {
+    return ", !tbaa !7"
+  }
+  ""
+}
+
+pub fn ll_tbaa_nodes: String {
+  "!1 = !{!\"avant alias\"}\n!2 = !{!\"element\", !1, i64 0}\n!3 = !{!2, !2, i64 0}\n!4 = !{!\"buffer reference\", !1, i64 0}\n!5 = !{!4, !4, i64 0}\n!6 = !{!\"size\", !1, i64 0}\n!7 = !{!6, !6, i64 0}\n!8 = !{!\"local\", !1, i64 0}\n!9 = !{!8, !8, i64 0}\n!10 = !{!\"object field\", !1, i64 0}\n!11 = !{!10, !10, i64 0}\n!12 = !{i32 0, i32 -2147483648}\n"
 }
 
 pub fn mir_loc0: MLoc {

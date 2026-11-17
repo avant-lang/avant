@@ -10,6 +10,9 @@
 #include <string.h>
 #include <time.h>
 #include <dlfcn.h>
+#include <elf.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 /* The collection driver and its policy (moved from
  * avant_rt.c): initialization from the environment (the settings,
@@ -388,7 +391,36 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     if (why == GC_WHY_EXPLICIT) {
       gc_heap.ctr.proof.forced++;
     }
-    if (proof != PROOF_INTACT) {
+    if (proof == PROOF_INTACT && gc_heap.proof.grown != PROOF_INTACT) {
+      /* The old objects are all reachable, and some object became old
+       * since the last full collection: the sticky full collection marks
+       * what is not old (avant_gc_proof.c), when the last full
+       * collection's marks and line marks are only the old objects'. */
+      int keepable = why == GC_WHY_EXPLICIT && !gc_heap.set.young_fixed && avant_nursery_held &&
+                     avant_nursery_held * KEEP_YOUNG_DIV <= gc_heap.proof.old_live;
+      /* Except a collection the program asks for whose young generation
+       * the trace below would leave young: the sticky one promotes what it
+       * marks, and a program that stores a fresh object before each forced
+       * collection would make the next store remove the last reference to
+       * an old object (the collector benchmark's stable heap alone: the
+       * sticky collection, then a trace, for one trace). */
+      if (gc_heap.proof.lines_saved && !gc_heap.proof.no_sticky && !keepable) {
+        gc_heap.sticky = 1;
+      } else {
+        proof = (GcProofWhy)gc_heap.proof.grown;
+      }
+    } else if (proof == PROOF_INTACT && gc_heap.proof.lines_saved && !gc_heap.proof.no_sticky &&
+               avant_nursery_held * PROOF_STICKY_YOUNG_DIV > gc_heap.proof.old_live &&
+               avant_nursery_held <= PROOF_YOUNG_PER_OLD * gc_heap.proof.old_live) {
+      /* It holds, and the young generation is large beside the old heap:
+       * the sticky full collection marks each young survivor once and
+       * promotes it, where the young collection would copy it, and copy or
+       * promote it again at the next (PROOF_STICKY_YOUNG_DIV). */
+      gc_heap.sticky = 1;
+    }
+    if (gc_heap.sticky) {
+      /* (A trace: counted with the full collections, below.) */
+    } else if (proof != PROOF_INTACT) {
       gc_heap.ctr.proof.fell[proof]++;
       /* A trace the program asked for, when what broke the proof is
        * undone by a full collection's end (not threads, no young
@@ -458,12 +490,16 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     if (!complete && !full) {
       proof = gc_proof_check();
     }
-    gc_verify_proof(full || complete, proof == PROOF_INTACT);
+    /* The sticky full collection's proof holds for the old objects
+     * (2: objects became old since, which the oracle then expects). */
+    gc_verify_proof(full || complete,
+                    proof != PROOF_INTACT ? 0 : gc_heap.proof.grown == PROOF_INTACT ? 1 : gc_heap.sticky ? 2 : 0);
     gc_verify_starts_resume();
   }
-  if (full) {
+  if (full && !gc_heap.sticky) {
     /* The log is emptied: this collection's end is what the next proof
-     * starts from. */
+     * starts from. (The sticky full collection marks from the logged
+     * holders first, then empties it.) */
     gc_proof_full_begin();
   }
   gc_heap.young_clock += avant_nursery_held > gc_heap.young_carried
@@ -513,7 +549,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
      * object's promotion says so itself, promote_young_large). An aged
      * copy stays young. */
     if (gc_heap.ctr.sticky.inplace != inplace0 || gc_heap.ctr.prom.copied != prom0) {
-      gc_proof_break(PROOF_PROMOTED);
+      gc_proof_grow(PROOF_PROMOTED);
     }
     if (complete) {
       /* What a complete collection found live: the old objects, all of
@@ -556,12 +592,25 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_los_spare_drop();
     gc_clear_alloc_cur(SPACE_MATURE);
     gc_sticky_full_begin();
-    /* The marks: one memset per chunk of the side bitmap; no header is
-     * touched (no young mark outlives its collection). */
-    gc_clear_side_marks();
-    /* The line marks: the epoch advances (no walk zeroing them). */
-    gc_line_epoch_advance();
-    gc_mark_roots();
+    if (gc_heap.sticky) {
+      /* The sticky full collection (avant_gc_proof.c): the last full
+       * collection's side marks stay (the old objects'), its line marks
+       * come back, and the mark starts from the roots and the logged
+       * holders. The old objects are all live. */
+      gc_proof_lines_restore();
+      gc_mark_roots();
+      gc_heap.ctr.sticky.stickies++;
+      gc_heap.ctr.sticky.sticky_bytes += gc_heap.live;
+      gc_heap.live += gc_heap.proof.old_live;
+      gc_proof_full_begin();
+    } else {
+      /* The marks: one memset per chunk of the side bitmap; no header is
+       * touched (no young mark outlives its collection). */
+      gc_clear_side_marks();
+      /* The line marks: the epoch advances (no walk zeroing them). */
+      gc_line_epoch_advance();
+      gc_mark_roots();
+    }
     /* Late start bits: when the mark's loop set none (gc_mark_roots), the
      * runs of every block it left a live line in are built now
      * (gc_lazy_build_live); either way every object the mark reached has
@@ -570,6 +619,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     gc_lazy_build_live();
     if (gc_heap.set.verify) {
       gc_verify_starts_end();
+      if (gc_heap.sticky) {
+        gc_verify_sticky_mark();
+      }
     }
     gc_lazy_drop();
     frag_note();
@@ -587,8 +639,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
           gc_heap.ctr.def.wasted += (uint64_t)(LINES_PER_BLOCK - live) * LINE_SIZE;
         }
       }
-      if (allow_move && gc_heap.set.defrag) {
+      if (allow_move && gc_heap.set.defrag && !gc_heap.sticky) {
         gc_defrag_evacuate(live_lines_this);
+        gc_proof_anchors_forward();
       }
       if (gc_heap.set.verify && gc_heap.def_release.n) {
         gc_verify_defrag();
@@ -620,6 +673,7 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     /* What the next proof starts from: the roots as they are now,
      * an empty log. After everything this collection moves or frees. */
     gc_proof_full_end();
+    gc_heap.sticky = 0;
     gc_heap.keep_young = 0;
     gc_heap.keep_young_live = 0;
   }
@@ -826,15 +880,74 @@ void avant_gc_heap_goal_collect(void) {
   pthread_mutex_unlock(&gc_heap.world);
 }
 
+/* The name of the function that holds ADDR, from the executable's own
+ * symbol table: a static executable exports no symbol, so dladdr names
+ * none, but its .symtab (kept unless the file was stripped) names every
+ * function, an Avant function as av.MODULE/NAME. Writes the name to OUT
+ * and returns 1, or returns 0. Read only on the way to gc_die. */
+static int exe_function_name(void *addr, const Dl_info *info, char *out, size_t cap) {
+  Elf64_Ehdr eh;
+  Elf64_Shdr sym, str;
+  int fd, found = 0;
+  uint64_t key, i, n;
+  if (!info->dli_fbase || cap < 2) {
+    return 0;
+  }
+  fd = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return 0;
+  }
+  if (pread(fd, &eh, sizeof eh, 0) != (ssize_t)sizeof eh || memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0 ||
+      eh.e_ident[EI_CLASS] != ELFCLASS64 || eh.e_shentsize != sizeof(Elf64_Shdr)) {
+    close(fd);
+    return 0;
+  }
+  /* A position-independent executable's symbols are offsets from its load
+   * address; a fixed one's are addresses. */
+  key = eh.e_type == ET_DYN ? (uint64_t)((uintptr_t)addr - (uintptr_t)info->dli_fbase) : (uint64_t)(uintptr_t)addr;
+  for (i = 0; i < eh.e_shnum && !found; i++) {
+    if (pread(fd, &sym, sizeof sym, (off_t)(eh.e_shoff + i * sizeof sym)) != (ssize_t)sizeof sym) {
+      break;
+    }
+    if (sym.sh_type != SHT_SYMTAB || sym.sh_entsize != sizeof(Elf64_Sym) || sym.sh_link >= eh.e_shnum ||
+        pread(fd, &str, sizeof str, (off_t)(eh.e_shoff + sym.sh_link * sizeof str)) != (ssize_t)sizeof str) {
+      continue;
+    }
+    n = sym.sh_size / sizeof(Elf64_Sym);
+    for (uint64_t k = 0; k < n; k++) {
+      Elf64_Sym s;
+      if (pread(fd, &s, sizeof s, (off_t)(sym.sh_offset + k * sizeof s)) != (ssize_t)sizeof s) {
+        break;
+      }
+      if (ELF64_ST_TYPE(s.st_info) != STT_FUNC || key < s.st_value || key >= s.st_value + s.st_size ||
+          s.st_name >= str.sh_size) {
+        continue;
+      }
+      ssize_t got = pread(fd, out, cap - 1, (off_t)(str.sh_offset + s.st_name));
+      if (got > 0) {
+        out[got] = 0;
+        found = out[0] != 0;
+      }
+      break;
+    }
+  }
+  close(fd);
+  return found;
+}
+
 /* The function a no-GC region was entered from, for a message WHAT: its
- * symbol when the image exports one, else the call site's offset in its
- * image (addr2line resolves it). */
+ * exported symbol, else its name in the executable's symbol table (an
+ * Avant function shown as MODULE/NAME), else the call site's offset in
+ * its image (addr2line resolves it). */
 static __attribute__((noreturn)) void region_die_at(const char *what, void *site) {
   char msg[512];
+  char name[256];
   Dl_info info;
   memset(&info, 0, sizeof info);
   if (site && dladdr(site, &info) && info.dli_sname) {
-    snprintf(msg, sizeof msg, "%s (%s)", what, info.dli_sname);
+    snprintf(msg, sizeof msg, "%s (in %s)", what, info.dli_sname);
+  } else if (site && info.dli_fbase && exe_function_name(site, &info, name, sizeof name)) {
+    snprintf(msg, sizeof msg, "%s (in %s)", what, strncmp(name, "av.", 3) == 0 ? name + 3 : name);
   } else if (site && info.dli_fname && info.dli_fbase) {
     const char *base = strrchr(info.dli_fname, '/');
     snprintf(msg, sizeof msg, "%s (%s+0x%lx)", what, base ? base + 1 : info.dli_fname,
@@ -861,7 +974,7 @@ void gc_region_limit_check(uint64_t bytes) {
    * allocations (its inline ones included: the count since its entry). */
   if (gc_heap.set.heap_max && gc_thread.hold &&
       avant_g_stats.allocated_bytes - gc_thread.hold_base + bytes > gc_heap.set.heap_max) {
-    region_die_at("heap limit in a no-GC region", gc_thread.hold_site);
+    region_die_at("heap limit in a gc.hold block: its own allocations passed AVANT_HEAP_MAX_MB", gc_thread.hold_site);
   }
 }
 
