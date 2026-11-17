@@ -1069,11 +1069,12 @@ fn handler_trap_cases(c: Checks, root: String) {
       text = file_read(log) ?? ""
       if mode == "handler_trap" {
         c.eq_int(status, 0, "a handler's trap: the server goes on to its stop, status 0")
-        c.eq_str(wire, "handler_trap=bounds:500,ok:200 ok,divide:500,ok:200 ok,grow:500,ok:200 ok,status:500,ok:200 ok,header:500,ok:200 ok,route:500,ok:200 ok,late:404,mutex:500,mutex-again:500,mutex-state:200 poisoned true: the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed,pin:500,pins:200 pins left 0, 188890,close:500 closed,1.0:500 closed,ws:1 hi,ws-trap:8 1011,ws-after:1 again,stop:200", "a handler's trap answers 500 and the server goes on")
+        c.eq_str(wire, "handler_trap=bounds:500,ok:200 ok,divide:500,ok:200 ok,grow:500,ok:200 ok,grow-hash:500,ok:200 ok,status:500,ok:200 ok,header:500,ok:200 ok,route:500,ok:200 ok,late:404,mutex:500,mutex-again:500,mutex-state:200 poisoned true: the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed,pin:500,pins:200 pins left 0, 188890,close:500 closed,1.0:500 closed,ws:1 hi,ws-trap:8 1011,ws-after:1 again,stop:200", "a handler's trap answers 500 and the server goes on")
         whats = [
           "index 7 out of bounds (size 3)",
           "division by zero",
           "push on an array a running task reads",
+          "a store on a hash a running task reads",
           "a response's status 99 is not 200 to 599",
           "Response.header value of X-A holds a control character (byte 13 at 1)",
           "route GET /late registered while the server is serving",

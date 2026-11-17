@@ -586,7 +586,7 @@ def handler_trap(port_file):
         got = read_answers(s, 1)
         return (got[0][0], got[0][1].decode("latin1")) if got else (0, "")
 
-    for name in ["bounds", "divide", "grow", "status", "header", "route"]:
+    for name in ["bounds", "divide", "grow", "grow-hash", "status", "header", "route"]:
         st, _ = ask("/" + name)
         st2, body = ask("/ok")
         out.append("%s:%d,ok:%d %s" % (name, st, st2, body))

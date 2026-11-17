@@ -46,6 +46,11 @@ fn grow(xs: Array(Int)) {
   xs.push(4)
 }
 
+// The same for a Hash the handlers captured.
+fn note(seen: Hash(String, Int)) {
+  seen["b"] = 2
+}
+
 fn divide(a: Int, b: Int): Int {
   a / b
 }
@@ -60,6 +65,8 @@ fn main: Int {
   xs = [1, 2, 3]
   m = Mutex(Acc).new(Acc.new())
   mark = Mutex(Acc).new(Acc.new())
+  seen = Hash(String, Int).new()
+  seen["a"] = 1
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened
     if a.size > 2 && a[2] == "ceiling" {
@@ -83,6 +90,10 @@ fn main: Int {
     server.get("/grow") { |req|
       grow(xs)
       Response.text("unreached")
+    }
+    server.get("/grow-hash") { |req|
+      note(seen)
+      Response.text("unreached ${seen.size}")
     }
     server.get("/route") { |req|
       server.get("/late") { |r| Response.text("late") }
