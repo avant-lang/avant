@@ -25,6 +25,7 @@ const str.13 = "left"
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1020 %String view stride 0 bits [0x1]
 typemap 1 %methods.Acc stride 0 bits [0x0]
 
 extern __avant_type_maps() -> void never
@@ -39,6 +40,7 @@ extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_int(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_data(ref str) -> ptr u8 never
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
 
@@ -100,7 +102,7 @@ fn av.methods/Bytes.second(_1: ref str) -> i64 leaf @methods.av:21:1 {
 bb0:
   _2 = call avant_str_size(copy _1) nocollect   @22:4
   check.bounds const i64 1, copy _2   @22:4
-  _3 = cast copy _1 to ptr u8   @22:4
+  _3 = call avant_str_data(copy _1) nocollect   @22:4
   _4 = copy (*_3)[const i64 1]   @22:4
   _5 = cast copy _4 to i64   @22:4
   _0 = copy _5   @22:4

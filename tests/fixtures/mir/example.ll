@@ -251,6 +251,7 @@ entry:
   call void @avant_type_map(i32 1022, i64 1)
   call void @avant_type_map(i32 1021, i64 1)
   call void @avant_type_map(i32 1023, i64 7)
+  call void @avant_type_map(i32 1020, i64 1)
   call void @avant_type_map(i32 1, i64 1)
   ret void
 }

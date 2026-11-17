@@ -495,7 +495,13 @@ void avant_trap_enum_at(int64_t value, const char *name, int32_t site) {
 void avant_trap_expect_at(const char *why, int32_t site) {
   g_trap_loc = site_text(site);
   trap_head();
-  trap_out("%s", why ? why : "");
+  {
+    /* The program's text: its bytes by length (a view has no
+     * terminator of its own). */
+    size_t n;
+    const char *d = avant_str_bytes(why, &n);
+    trap_out("%.*s", (int)n, d);
+  }
   trap_tail();
 }
 

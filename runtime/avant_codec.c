@@ -43,8 +43,9 @@ int32_t avant_crc32_bytes(const char *s) {
   int32_t n = 0;
   const uint8_t *src = (const uint8_t *)"";
   if (s) {
-    n = (int32_t)avant_str_n(s);
-    src = (const uint8_t *)s;
+    size_t sn;
+    src = (const uint8_t *)avant_str_bytes(s, &sn);
+    n = (int32_t)sn;
   }
   /* Slicing by 4: the same CRC recurrence applied to four bytes at
    * once through the derived tables; the result is bit-identical. */
@@ -124,8 +125,8 @@ char *avant_sha256(const char *s) {
       0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u,
   };
   uint8_t block[64];
-  size_t n = avant_str_n(s);
-  const uint8_t *p = (const uint8_t *)(s ? s : "");
+  size_t n;
+  const uint8_t *p = (const uint8_t *)avant_str_bytes(s, &n);
   uint64_t bit_len = (uint64_t)n * 8u;
   size_t off = 0;
   int i;
@@ -181,8 +182,9 @@ int32_t avant_sha256_word0(const char *s) {
   int32_t n = 0;
   const uint8_t *src = (const uint8_t *)"";
   if (s) {
-    n = (int32_t)avant_str_n(s);
-    src = (const uint8_t *)s;
+    size_t sn;
+    src = (const uint8_t *)avant_str_bytes(s, &sn);
+    n = (int32_t)sn;
   }
   /* Eight independent chains (index i & 7): eight steps at a time keep
    * the same per-element arithmetic and the same result. With SSE2 the

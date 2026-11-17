@@ -29,6 +29,7 @@ const str.17 = "!"
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1020 %String view stride 0 bits [0x1]
 typemap 1 %layout.Owner stride 0 bits [0x2]
 
 extern __avant_type_maps() -> void never
@@ -44,8 +45,10 @@ extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_int(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_flat(ref str) -> ref str collects
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
+extern avant_str_view_test(ref str) -> i32 never
 extern avant_trap_c_null(ref str) -> void never noreturn
 extern avant_trap_convert(i64, i32) -> void never noreturn
 extern avant_trap_expect(ref str) -> void never noreturn
@@ -356,65 +359,75 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @layout.av:85:1 {
   let _57: ref str
   let _58 (name): ref str
   let _59: bool
-  let _60: ptr
-  let _61: i64
-  let _62: i64
-  let _63: i64
-  let _64: ref str slot
-  let _65: bool
-  let _66: ref str
-  let _67: i32
-  let _68: i64
+  let _60: ref str
+  let _61: i32
+  let _62: bool
+  let _63: ref str slot
+  let _64: ptr
+  let _65: i64
+  let _66: i64
+  let _67: i64
+  let _68: ref str slot
   let _69: bool
   let _70: ref str
-  let _71: ref str
-  let _72: bool
-  let _73: ref str slot
+  let _71: i32
+  let _72: i64
+  let _73: bool
   let _74: ref str
-  let _75 (i): i64
+  let _75: ref str
   let _76: bool
   let _77: ref str slot
   let _78: ref str
-  let _79: bool
-  let _80: ptr
-  let _81: i64
-  let _82: i64
-  let _83: i64
-  let _84: i64
-  let _85: ref str slot
+  let _79 (i): i64
+  let _80: bool
+  let _81: ref str slot
+  let _82: ref str
+  let _83: bool
+  let _84: ref str
+  let _85: i32
   let _86: bool
-  let _87: ref str
+  let _87: ref str slot
   let _88: ptr
-  let _89: bool
-  let _90: bool
-  let _91: ptr slot
-  let _92: i32
-  let _93: i64
-  let _94: ref str slot
-  let _95: ref %layout.Owner
-  let _96 (o): ref %layout.Owner slot
-  let _97: i64
-  let _98: ptr %layout.Rec
-  let _99: bool
+  let _89: i64
+  let _90: i64
+  let _91: i64
+  let _92: i64
+  let _93: ref str slot
+  let _94: bool
+  let _95: ref str
+  let _96: ptr
+  let _97: bool
+  let _98: bool
+  let _99: ptr slot
   let _100: i32
   let _101: i64
-  let _102: ptr %layout.Rec
-  let _103: bool
-  let _104: i32
+  let _102: ref str slot
+  let _103: ref %layout.Owner
+  let _104 (o): ref %layout.Owner slot
   let _105: i64
-  let _106: ref str
+  let _106: ptr %layout.Rec
+  let _107: bool
+  let _108: i32
+  let _109: i64
+  let _110: ptr %layout.Rec
+  let _111: bool
+  let _112: i32
+  let _113: i64
+  let _114: ref str
 
 bb0:
   _16 = zero   @85:1
-  _64 = zero   @85:1
-  _73 = zero   @85:1
+  _63 = zero   @85:1
+  _68 = zero   @85:1
   _77 = zero   @85:1
-  _85 = zero   @85:1
-  _91 = zero   @85:1
-  _94 = zero   @85:1
-  _96 = zero   @85:1
+  _81 = zero   @85:1
+  _87 = zero   @85:1
+  _93 = zero   @85:1
+  _99 = zero   @85:1
+  _102 = zero   @85:1
+  _104 = zero   @85:1
   gc.enter   @85:1
-  gc.roots _2, _16, _64, _73, _77, _85, _91, _94, _96   @85:1
+  gc.roots _2, _16, _63, _68, _77, _81, _87, _93, _99, _102, _104   @85:1
   call __avant_type_maps() nocollect   @85:1
   call avant_io_init_argv(copy _1, copy _2) collects   @85:1
   _3 = call ffi_rec_off_name() collects   @86:11
@@ -607,146 +620,168 @@ bb29:
   unreachable   @117:4
 
 bb30:
-  _60 = addr (*_16).1   @117:10
-  call avant_pin_field(copy _60, copy _58) nocollect   @117:10
-  (*_16).1 = copy _58   @117:10
-  _61 = call avant_pin_count() collects   @118:11
-  _62 = sub.chk copy _61, copy _56   @118:30
-  call avant_puts_i64(copy _62) nocollect   @118:3
-  _63 = call av.layout/churn(const i64 30000) collects   @119:8
-  call avant_puts_i64(copy _63) nocollect   @119:3
-  _64 = call ffi_rec_name(copy _16) collects   @120:11
-  _65 = eq copy _64, const ref str null   @120:11
-  branch copy _65, bb31, bb32   @120:11
+  _60 = copy _58   @117:10
+  _61 = call avant_str_view_test(copy _58) nocollect   @117:10
+  _62 = ne copy _61, const i32 0   @117:10
+  branch copy _62, bb31, bb32   @117:10
 
 bb31:
+  _63 = copy _58   @117:10
+  _60 = call avant_str_flat(copy _63) collects   @117:10
+  goto bb32   @117:10
+
+bb32:
+  _64 = addr (*_16).1   @117:10
+  call avant_pin_field(copy _64, copy _60) nocollect   @117:10
+  (*_16).1 = copy _60   @117:10
+  _65 = call avant_pin_count() collects   @118:11
+  _66 = sub.chk copy _65, copy _56   @118:30
+  call avant_puts_i64(copy _66) nocollect   @118:3
+  _67 = call av.layout/churn(const i64 30000) collects   @119:8
+  call avant_puts_i64(copy _67) nocollect   @119:3
+  _68 = call ffi_rec_name(copy _16) collects   @120:11
+  _69 = eq copy _68, const ref str null   @120:11
+  branch copy _69, bb33, bb34   @120:11
+
+bb33:
   call avant_trap_c_null(const str.11) nocollect   @120:11
   unreachable   @120:11
 
-bb32:
-  _66 = call avant_c_str(copy _64) collects   @120:11
-  call avant_puts_str(copy _66) nocollect   @120:3
-  _67 = call ffi_rec_name_len(copy _16) collects   @121:11
-  _68 = cast copy _67 to i64   @121:3
-  call avant_puts_i64(copy _68) nocollect   @121:3
-  _69 = eq copy _16, const ptr %layout.Rec null   @122:9
-  branch copy _69, bb33, bb34   @122:9
+bb34:
+  _70 = call avant_c_str(copy _68) collects   @120:11
+  call avant_puts_str(copy _70) nocollect   @120:3
+  _71 = call ffi_rec_name_len(copy _16) collects   @121:11
+  _72 = cast copy _71 to i64   @121:3
+  call avant_puts_i64(copy _72) nocollect   @121:3
+  _73 = eq copy _16, const ptr %layout.Rec null   @122:9
+  branch copy _73, bb35, bb36   @122:9
 
-bb33:
+bb35:
   call avant_trap_expect(const str.10) nocollect   @122:9
   unreachable   @122:9
 
-bb34:
-  _70 = copy (*_16).1   @122:9
-  _71 = copy _70   @122:9
-  _72 = eq copy _71, const ref str null   @122:9
-  branch copy _72, bb35, bb36   @122:9
+bb36:
+  _74 = copy (*_16).1   @122:9
+  _75 = copy _74   @122:9
+  _76 = eq copy _75, const ref str null   @122:9
+  branch copy _76, bb37, bb38   @122:9
 
-bb35:
+bb37:
   call avant_trap_expect(const str.12) nocollect   @122:9
   unreachable   @122:9
 
-bb36:
-  _73 = copy _71   @122:9
-  _74 = call avant_c_str(copy _73) collects   @122:9
-  call avant_puts_str(copy _74) nocollect   @122:3
-  _75 = const i64 0   @123:5
-  goto bb37   @124:3
-
-bb37:
-  _76 = lt copy _75, const i64 40   @124:11
-  branch copy _76, bb38, bb39   @124:3
-
 bb38:
-  _77 = call avant_str_cat_int(const str.13, copy _75) collects   @125:14
-  _78 = call avant_str_concat(copy _77, const str.14) collects   @125:27
-  _79 = eq copy _16, const ptr %layout.Rec null   @125:6
-  branch copy _79, bb40, bb41   @125:6
+  _77 = copy _75   @122:9
+  _78 = call avant_c_str(copy _77) collects   @122:9
+  call avant_puts_str(copy _78) nocollect   @122:3
+  _79 = const i64 0   @123:5
+  goto bb39   @124:3
 
 bb39:
-  _82 = call avant_pin_count() collects   @128:11
-  _83 = sub.chk copy _82, copy _56   @128:30
-  call avant_puts_i64(copy _83) nocollect   @128:3
-  _84 = call av.layout/churn(const i64 30000) collects   @129:8
-  call avant_puts_i64(copy _84) nocollect   @129:3
-  _85 = call ffi_rec_name(copy _16) collects   @130:11
-  _86 = eq copy _85, const ref str null   @130:11
-  branch copy _86, bb42, bb43   @130:11
+  _80 = lt copy _79, const i64 40   @124:11
+  branch copy _80, bb40, bb41   @124:3
 
 bb40:
+  _81 = call avant_str_cat_int(const str.13, copy _79) collects   @125:14
+  _82 = call avant_str_concat(copy _81, const str.14) collects   @125:27
+  _83 = eq copy _16, const ptr %layout.Rec null   @125:6
+  branch copy _83, bb42, bb43   @125:6
+
+bb41:
+  _90 = call avant_pin_count() collects   @128:11
+  _91 = sub.chk copy _90, copy _56   @128:30
+  call avant_puts_i64(copy _91) nocollect   @128:3
+  _92 = call av.layout/churn(const i64 30000) collects   @129:8
+  call avant_puts_i64(copy _92) nocollect   @129:3
+  _93 = call ffi_rec_name(copy _16) collects   @130:11
+  _94 = eq copy _93, const ref str null   @130:11
+  branch copy _94, bb46, bb47   @130:11
+
+bb42:
   call avant_trap_expect(const str.10) nocollect   @125:6
   unreachable   @125:6
 
-bb41:
-  _80 = addr (*_16).1   @125:12
-  call avant_pin_field(copy _80, copy _78) nocollect   @125:12
-  (*_16).1 = copy _78   @125:12
-  _81 = add copy _75, const i64 1   @126:11
-  _75 = copy _81   @126:7
-  goto bb37   @124:3
+bb43:
+  _84 = copy _82   @125:12
+  _85 = call avant_str_view_test(copy _82) nocollect   @125:12
+  _86 = ne copy _85, const i32 0   @125:12
+  branch copy _86, bb44, bb45   @125:12
 
-bb42:
+bb44:
+  _87 = copy _82   @125:12
+  _84 = call avant_str_flat(copy _87) collects   @125:12
+  goto bb45   @125:12
+
+bb45:
+  _88 = addr (*_16).1   @125:12
+  call avant_pin_field(copy _88, copy _84) nocollect   @125:12
+  (*_16).1 = copy _84   @125:12
+  _89 = add copy _79, const i64 1   @126:11
+  _79 = copy _89   @126:7
+  goto bb39   @124:3
+
+bb46:
   call avant_trap_c_null(const str.11) nocollect   @130:11
   unreachable   @130:11
 
-bb43:
-  _87 = call avant_c_str(copy _85) collects   @130:11
-  call avant_puts_str(copy _87) nocollect   @130:3
-  _88 = call ffi_cell_new(const i32 99) collects   @131:15
-  _89 = eq copy _16, const ptr %layout.Rec null   @131:4
-  branch copy _89, bb44, bb45   @131:4
+bb47:
+  _95 = call avant_c_str(copy _93) collects   @130:11
+  call avant_puts_str(copy _95) nocollect   @130:3
+  _96 = call ffi_cell_new(const i32 99) collects   @131:15
+  _97 = eq copy _16, const ptr %layout.Rec null   @131:4
+  branch copy _97, bb48, bb49   @131:4
 
-bb44:
+bb48:
   call avant_trap_expect(const str.15) nocollect   @131:4
   unreachable   @131:4
 
-bb45:
-  (*_16).5 = copy _88   @131:10
-  _90 = eq copy _16, const ptr %layout.Rec null   @132:26
-  branch copy _90, bb46, bb47   @132:26
+bb49:
+  (*_16).5 = copy _96   @131:10
+  _98 = eq copy _16, const ptr %layout.Rec null   @132:26
+  branch copy _98, bb50, bb51   @132:26
 
-bb46:
+bb50:
   call avant_trap_expect(const str.15) nocollect   @132:26
   unreachable   @132:26
 
-bb47:
-  _91 = copy (*_16).5   @132:26
-  _92 = call ffi_cell_get(copy _91) collects   @132:11
-  _93 = cast copy _92 to i64   @132:3
-  call avant_puts_i64(copy _93) nocollect   @132:3
-  _94 = call avant_str_concat(const str.16, const str.17) collects   @133:28
-  _95 = call avant_alloc(const u64 16, const u32 1) collects fresh   @133:12
-  call av.layout/Owner.initialize(copy _95, copy _16, copy _94) nocollect   @133:12
-  _96 = copy _95   @133:5
-  _97 = call av.layout/churn(const i64 10000) collects   @134:8
-  call avant_puts_i64(copy _97) nocollect   @134:3
-  _98 = copy (*_96).0   @135:9
-  _99 = eq copy _98, const ptr %layout.Rec null   @135:13
-  branch copy _99, bb48, bb49   @135:13
+bb51:
+  _99 = copy (*_16).5   @132:26
+  _100 = call ffi_cell_get(copy _99) collects   @132:11
+  _101 = cast copy _100 to i64   @132:3
+  call avant_puts_i64(copy _101) nocollect   @132:3
+  _102 = call avant_str_concat(const str.16, const str.17) collects   @133:28
+  _103 = call avant_alloc(const u64 16, const u32 1) collects fresh   @133:12
+  call av.layout/Owner.initialize(copy _103, copy _16, copy _102) nocollect   @133:12
+  _104 = copy _103   @133:5
+  _105 = call av.layout/churn(const i64 10000) collects   @134:8
+  call avant_puts_i64(copy _105) nocollect   @134:3
+  _106 = copy (*_104).0   @135:9
+  _107 = eq copy _106, const ptr %layout.Rec null   @135:13
+  branch copy _107, bb52, bb53   @135:13
 
-bb48:
+bb52:
   call avant_trap_expect(const str.1) nocollect   @135:13
   unreachable   @135:13
 
-bb49:
-  _100 = copy (*_98).0   @135:13
-  _101 = cast copy _100 to i64   @135:3
-  call avant_puts_i64(copy _101) nocollect   @135:3
-  _102 = copy (*_96).0   @136:4
-  _103 = eq copy _102, const ptr %layout.Rec null   @136:8
-  branch copy _103, bb50, bb51   @136:8
+bb53:
+  _108 = copy (*_106).0   @135:13
+  _109 = cast copy _108 to i64   @135:3
+  call avant_puts_i64(copy _109) nocollect   @135:3
+  _110 = copy (*_104).0   @136:4
+  _111 = eq copy _110, const ptr %layout.Rec null   @136:8
+  branch copy _111, bb54, bb55   @136:8
 
-bb50:
+bb54:
   call avant_trap_expect(const str.1) nocollect   @136:8
   unreachable   @136:8
 
-bb51:
-  (*_102).0 = const i32 7   @136:12
-  _104 = call ffi_rec_id(copy _16) collects   @137:11
-  _105 = cast copy _104 to i64   @137:3
-  call avant_puts_i64(copy _105) nocollect   @137:3
-  _106 = copy (*_96).1   @138:9
-  call avant_puts_str(copy _106) nocollect   @138:3
+bb55:
+  (*_110).0 = const i32 7   @136:12
+  _112 = call ffi_rec_id(copy _16) collects   @137:11
+  _113 = cast copy _112 to i64   @137:3
+  call avant_puts_i64(copy _113) nocollect   @137:3
+  _114 = copy (*_104).1   @138:9
+  call avant_puts_str(copy _114) nocollect   @138:3
   call ffi_rec_free(copy _16) collects   @139:6
   _0 = const i32 0   @85:1
   gc.leave   @85:1

@@ -981,3 +981,15 @@ void cs_call(cs_cb f) {
   f(cs_buf);
   snprintf(cs_buf, sizeof cs_buf, "cb-changed");
 }
+
+/* c_views.av: what C sees of a string view. */
+int64_t cv_len(const char *s) { return (int64_t)strlen(s); }
+int64_t cv_before(const char *s) { return (int64_t)(unsigned char)s[-1]; }
+typedef struct CvPair { int64_t n; const char *s; } CvPair;
+int64_t cv_pair_len(CvPair p) { return (int64_t)strlen(p.s) + p.n; }
+typedef struct CvHold { const char *name; int64_t id; } CvHold;
+static CvHold cv_hold;
+CvHold *cv_holder(void) { return &cv_hold; }
+int64_t cv_held_len(void) { return cv_hold.name ? (int64_t)strlen(cv_hold.name) : -1; }
+typedef const char *(*cv_give_t)(void);
+int64_t cv_take(cv_give_t f) { return (int64_t)strlen(f()); }

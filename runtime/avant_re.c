@@ -536,6 +536,49 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from);
 _Static_assert(AVANT_SIZE_MAX <= INT32_MAX,
                "regex offsets are int32_t: widen them with String sizes");
 
+/* The text a compiled pattern scans (std.regex's find, span and count take
+ * the program's String as it is: these calls never collect). PCRE2 reads
+ * the bytes and their count, a view's in place. A pattern compiled into
+ * the program (re2c) reads a string object to its terminator: a flat
+ * string is passed as it is, and a view as a terminated copy in C memory
+ * with a string header (RE_TEXT_FREE gives it back), so nothing here
+ * allocates on the heap. */
+typedef struct {
+  const char *bytes;
+  size_t n;
+  char *own;
+} ReText;
+
+static int re_text(ReText *t, const char *s) {
+  t->own = NULL;
+  t->bytes = avant_str_bytes(s, &t->n);
+  if (avant_str_is_view(s)) {
+    AvantHeader *h = (AvantHeader *)malloc(sizeof(AvantHeader) + t->n + 1);
+    if (!h) {
+      return 0;
+    }
+    h->size = (uint32_t)(t->n + 1);
+    h->type_id = AVANT_TYPE_BYTES;
+    h->flags = AVANT_FLAG_STRMETA;
+    t->own = (char *)(h + 1);
+    memcpy(t->own, t->bytes, t->n);
+    t->own[t->n] = 0;
+  }
+  return 1;
+}
+
+/* The string the compiled pattern reads: S itself, or the copy. */
+static const char *re_text_obj(const ReText *t, const char *s) {
+  return t->own ? t->own : s;
+}
+
+static void re_text_free(ReText *t) {
+  if (t->own) {
+    free((AvantHeader *)(void *)t->own - 1);
+    t->own = NULL;
+  }
+}
+
 /* Span pairs of this thread's most recent avant_regex_find, copied
  * out of the PCRE2 ovector before any later match can overwrite it.
  * The Avant side reads the pairs it needs into the Match value at
@@ -663,6 +706,7 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
   int32_t pairs;
   int32_t i;
   int32_t *spans;
+  ReText txt;
   g_last_pairs = 0;
   if (!handle) {
     return -1;
@@ -673,12 +717,19 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
   if (avant_re2c_owns(handle)) {
     int32_t local[4];
     int32_t groups = avant_re2c_groups((int32_t)(uintptr_t)handle);
+    int32_t found;
     local[0] = local[1] = local[2] = local[3] = -1;
     /* A start past the text finds nothing; within it, it is a position. */
     if (from > (avant_int)avant_str_n(s)) {
       return -1;
     }
-    if (!avant_re2c_find_into(handle, s, from < 0 ? 0 : (int32_t)from, local, 2)) {
+    if (!re_text(&txt, s)) {
+      g_re_match_err = PCRE2_ERROR_NOMEMORY;
+      return -2;
+    }
+    found = avant_re2c_find_into(handle, re_text_obj(&txt, s), from < 0 ? 0 : (int32_t)from, local, 2);
+    re_text_free(&txt);
+    if (!found) {
       return -1;
     }
     pairs = groups + 1;
@@ -695,7 +746,8 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
     return avant_regex_span_pair(0);
   }
   e = (ReEntry *)handle;
-  n = avant_str_n(s);
+  /* PCRE2 reads the bytes by their count: a view's in place. */
+  s = avant_str_bytes(s, &n);
   if (from < 0) {
     from = 0;
   }
@@ -764,10 +816,18 @@ avant_int avant_regex_count(void *handle, const char *s) {
     s = AVANT_STR_EMPTY;
   }
   if (avant_re2c_owns(handle)) {
-    return avant_re2c_count((int32_t)(uintptr_t)handle, s);
+    ReText txt;
+    int32_t got;
+    if (!re_text(&txt, s)) {
+      re_trap("Regex.count", PCRE2_ERROR_NOMEMORY);
+    }
+    got = avant_re2c_count((int32_t)(uintptr_t)handle, re_text_obj(&txt, s));
+    re_text_free(&txt);
+    return got;
   }
   e = (ReEntry *)handle;
-  slen = avant_str_n(s);
+  /* PCRE2 reads the bytes by their count: a view's in place. */
+  s = avant_str_bytes(s, &slen);
   md = md_for(e->code);
   if (!md) {
     return 0;

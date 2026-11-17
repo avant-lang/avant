@@ -559,22 +559,29 @@ pub fn ll_str_header(n: Int): Int {
   (0x4000 << 48) + n + 1
 }
 
-// _d = call avant_str_size(_s): a string's size is its header's, the
-// bytes and the terminator (every String and Bytes value is a string
-// object: a heap one, or a literal, ll_str_header). A null string, which
-// the runtime reads as empty, reads the header of the static empty
-// string @str.nil instead (a select, no branch). A live string's header
-// never changes, so the load is invariant: LLVM may hoist it out of a
-// loop and merge two of the same string. The call form when inline fast
-// paths are off.
+// _d = call avant_str_size(_s): a string's size, read from its object
+// (runtime/avant_rt.h, AvantStrView): a flat string's header size less
+// its terminator, or a view's length field (a view's header type id is
+// 1020; a rare branch). A null string, which the runtime reads as empty,
+// reads the header of the static empty string @str.nil instead (a
+// select). A live string object never changes, so its loads are
+// invariant: LLVM may hoist them out of a loop and merge two of the same
+// string. The call form when inline fast paths are off.
 pub fn ll_str_size(e: LlEmit, args: Array(MOperand)): String {
   e.used_str_nil = true
   e.used_tbaa = true
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
   s = e.value(args[0])
   isn = e.tmp()
   e.line("${isn} = icmp eq ptr ${s}, null")
   q = e.tmp()
   e.line("${q} = select i1 ${isn}, ptr getelementptr inbounds (i8, ptr @str.nil, i64 8), ptr ${s}")
+  isv = ll_str_is_view(e, q)
+  flat = e.part("strflat")
+  view = e.part("strview")
+  done = e.part("strsize")
+  e.line("br i1 ${isv}, label %${view}, label %${flat}")
+  e.block(flat)
   h = e.tmp()
   e.line("${h} = getelementptr inbounds i8, ptr ${q}, i64 -8")
   sz = e.tmp()
@@ -583,7 +590,112 @@ pub fn ll_str_size(e: LlEmit, args: Array(MOperand)): String {
   e.line("${w} = zext i32 ${sz} to i64")
   n = e.tmp()
   e.line("${n} = sub nuw nsw i64 ${w}, 1")
-  n
+  e.line("br label %${done}")
+  e.block(view)
+  lp = e.tmp()
+  e.line("${lp} = getelementptr inbounds i8, ptr ${q}, i64 12")
+  lv = e.tmp()
+  e.line("${lv} = load i32, ptr ${lp}, align 4, !invariant.load !13, !range !12")
+  lw = e.tmp()
+  e.line("${lw} = zext i32 ${lv} to i64")
+  e.line("br label %${done}")
+  e.block(done)
+  r = e.tmp()
+  e.line("${r} = phi i64 [ ${n}, %${flat} ], [ ${lw}, %${view} ]")
+  r
+}
+
+// Whether the string object at Q (not null) is a view: its header's type
+// id (the 16 bits at Q - 4) is 1020; expected false.
+fn ll_str_is_view(e: LlEmit, q: String): String {
+  tp = e.tmp()
+  e.line("${tp} = getelementptr inbounds i8, ptr ${q}, i64 -4")
+  ty = e.tmp()
+  e.line("${ty} = load i16, ptr ${tp}, align 4, !invariant.load !13")
+  c = e.tmp()
+  e.line("${c} = icmp eq i16 ${ty}, 1020")
+  x = e.tmp()
+  e.line("${x} = call i1 @llvm.expect.i1(i1 ${c}, i1 false)")
+  x
+}
+
+// _d = call avant_str_flat(_s) or avant_str_c_arg(_s): a string that is
+// not a view is passed on as it is (null too), with no call; a view goes
+// to the runtime (lower_ffi.av c_string_arg). The call form when inline
+// fast paths are off.
+pub fn ll_str_unview(e: LlEmit, name: String, args: Array(MOperand)): String {
+  e.used_str_nil = true
+  e.used_tbaa = true
+  e.need(name)
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  s = e.value(args[0])
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${s}, null")
+  q = e.tmp()
+  e.line("${q} = select i1 ${isn}, ptr getelementptr inbounds (i8, ptr @str.nil, i64 8), ptr ${s}")
+  isv = ll_str_is_view(e, q)
+  head = e.label
+  view = e.part("strview")
+  done = e.part("strflat")
+  e.line("br i1 ${isv}, label %${view}, label %${done}")
+  e.block(view)
+  r = e.tmp()
+  e.line("${r} = call ptr @${name}(ptr ${s})")
+  e.line("br label %${done}")
+  e.block(done)
+  p = e.tmp()
+  e.line("${p} = phi ptr [ ${s}, %${head} ], [ ${r}, %${view} ]")
+  p
+}
+
+// _d = call avant_str_view_test(_s): 1 when the string is a view, else 0
+// (null reads the static empty string's header). The call form when
+// inline fast paths are off.
+pub fn ll_str_view_test(e: LlEmit, args: Array(MOperand)): String {
+  e.used_str_nil = true
+  e.used_tbaa = true
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  s = e.value(args[0])
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${s}, null")
+  q = e.tmp()
+  e.line("${q} = select i1 ${isn}, ptr getelementptr inbounds (i8, ptr @str.nil, i64 8), ptr ${s}")
+  isv = ll_str_is_view(e, q)
+  r = e.tmp()
+  e.line("${r} = zext i1 ${isv} to i32")
+  r
+}
+
+// _d = call avant_str_data(_s): the address of a string's bytes, used at
+// once (as a `ref` to `ptr u8` cast was): a flat string's own address, or
+// a view's base plus its offset. The string is not null (its size was
+// read, or the index proven inside it). The call form when inline fast
+// paths are off.
+pub fn ll_str_data(e: LlEmit, args: Array(MOperand)): String {
+  e.used_tbaa = true
+  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+  s = e.value(args[0])
+  isv = ll_str_is_view(e, s)
+  head = e.label
+  view = e.part("strview")
+  done = e.part("strdata")
+  e.line("br i1 ${isv}, label %${view}, label %${done}")
+  e.block(view)
+  bp = e.tmp()
+  e.line("${bp} = load ptr, ptr ${s}, align 8, !invariant.load !13")
+  op = e.tmp()
+  e.line("${op} = getelementptr inbounds i8, ptr ${s}, i64 8")
+  ov = e.tmp()
+  e.line("${ov} = load i32, ptr ${op}, align 8, !invariant.load !13")
+  oz = e.tmp()
+  e.line("${oz} = zext i32 ${ov} to i64")
+  d = e.tmp()
+  e.line("${d} = getelementptr inbounds i8, ptr ${bp}, i64 ${oz}")
+  e.line("br label %${done}")
+  e.block(done)
+  r = e.tmp()
+  e.line("${r} = phi ptr [ ${s}, %${head} ], [ ${d}, %${view} ]")
+  r
 }
 
 // The safepoint poll at a loop head of a shared module: a volatile load

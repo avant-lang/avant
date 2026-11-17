@@ -6,10 +6,12 @@ const str.0 = "A"
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1020 %String view stride 0 bits [0x1]
 
 extern __avant_type_maps() -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_i64(i64) -> void never
+extern avant_str_data(ref str) -> ptr u8 never
 extern avant_str_size(ref str) -> i64 never
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @index.av:1:1 {
@@ -30,7 +32,7 @@ bb0:
   _3 = const str.0   @2:5
   _4 = call avant_str_size(copy _3) nocollect   @3:9
   check.bounds const i64 0, copy _4   @3:9
-  _5 = cast copy _3 to ptr u8   @3:9
+  _5 = call avant_str_data(copy _3) nocollect   @3:9
   _6 = copy (*_5)[const i64 0]   @3:9
   _7 = cast copy _6 to i64   @3:9
   call avant_puts_i64(copy _7) nocollect   @3:3

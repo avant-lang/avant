@@ -7,6 +7,7 @@ const str.1 = "not reached"
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1020 %String view stride 0 bits [0x1]
 
 extern __avant_type_maps() -> void never
 extern avant_clock_us() -> i64 never
@@ -14,6 +15,7 @@ extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_int(ref str, i64) -> ref str collects
+extern avant_str_data(ref str) -> ptr u8 never
 extern avant_str_size(ref str) -> i64 never
 
 fn av.trap_index/opaque(_1: i64) -> i64 leaf @trap_index.av:5:1 {
@@ -73,14 +75,14 @@ bb0:
   _5 = copy _4   @15:5
   _6 = call avant_str_size(copy _5) nocollect   @16:9
   check.bounds const i64 2, copy _6   @16:9
-  _7 = cast copy _5 to ptr u8   @16:9
+  _7 = call avant_str_data(copy _5) nocollect   @16:9
   _8 = copy (*_7)[const i64 2]   @16:9
   _9 = cast copy _8 to i64   @16:9
   call avant_puts_i64(copy _9) nocollect   @16:3
   _10 = call av.trap_index/opaque(const i64 5) nocollect   @17:10
   _11 = call avant_str_size(copy _5) nocollect   @17:9
   check.bounds copy _10, copy _11   @17:9
-  _12 = cast copy _5 to ptr u8   @17:9
+  _12 = call avant_str_data(copy _5) nocollect   @17:9
   _13 = copy (*_12)[copy _10]   @17:9
   _14 = cast copy _13 to i64   @17:9
   call avant_puts_i64(copy _14) nocollect   @17:3

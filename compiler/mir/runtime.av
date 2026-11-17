@@ -170,9 +170,12 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_array_freeze", "ref, i32", "void", n, "")
   t.row("avant_array_thaw", "ref, i32, u64", "void", n, "")
   t.row("avant_str_size", "ref str", "i64", n, "")
+  // The address of a string's bytes (a view's are its base's), used at
+  // once; the emitter inlines it.
+  t.row("avant_str_data", "ref str", "ptr u8", n, "")
   // libc's memcmp for a String switch's labels: never collects; LLVM
   // expands it at a constant size.
-  t.row("memcmp", "ref str, ref str, i64", "i32", n, "")
+  t.row("memcmp", "ptr u8, ref str, i64", "i32", n, "")
   t.row("avant_str_byte", "ref str, i64", "i64", n, "")
   t.row("avant_str_eq", "ref str, ref str", "i32", n, "")
   t.row("avant_str_cmp", "ref str, ref str", "i32", n, "")
@@ -362,6 +365,15 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_str_concat", "ref str, ref str", "ref str", c, "")
   // A `fun`'s `String` result (lower_ffi.av).
   t.row("avant_c_str", "ref str", "ref str", c, "")
+  // A string as C or the runtime's own C functions read it (a view's
+  // bytes copied, or for a `fun` the address of a view's bytes when they
+  // end its base's): lower_ffi.av c_string_arg; the emitter inlines the
+  // test of the header.
+  t.row("avant_str_flat", "ref str", "ref str", c, "")
+  // 1 when a string is a view (null is not): the test before a copy that
+  // only a view's path makes (lower_ffi.av str_flat_if_view); inlined.
+  t.row("avant_str_view_test", "ref str", "i32", n, "")
+  t.row("avant_str_c_arg", "ref str", "ref str", c, "")
   t.row("avant_str_slice", "ref str, i64, i64", "ref str", c, "")
   // collects: the string rows the lowering calls.
   t.row("avant_str_cat_int", "ref str, i64", "ref str", c, "")
@@ -483,6 +495,10 @@ fn mir_rt_attrs(t: MRtTable) {
   str_reader = "nounwind willreturn nofree nosync memory(read)"
   // avant_str_size: avant_str_n.
   t.set_attrs("avant_str_size", str_reader)
+  // avant_str_data: the header and a view's two fields.
+  t.set_attrs("avant_str_data", str_reader)
+  // avant_str_view_test: the header.
+  t.set_attrs("avant_str_view_test", str_reader)
   // avant_str_eq: avant_str_n twice, memcmp.
   t.set_attrs("avant_str_eq", str_reader)
   // avant_str.c avant_str_cmp: avant_str_n twice, memcmp.

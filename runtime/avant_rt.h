@@ -33,6 +33,9 @@ typedef int64_t avant_int;
 
 #define AVANT_TYPE_BYTES 0
 #define AVANT_TYPE_PTRS 65535u
+/* A string view (AvantStrView, below): a String or Bytes value that is a
+ * run of another string's bytes. */
+#define AVANT_TYPE_STRVIEW 1020u
 #define AVANT_TYPE_BUF 1021u
 #define AVANT_TYPE_ARRAY_OBJ 1022u
 #define AVANT_TYPE_HASH 1023u
@@ -781,6 +784,78 @@ static inline char *avant_str_static_empty(void) {
   return (char *)empty.bytes;
 }
 #define AVANT_STR_EMPTY (avant_str_static_empty())
+
+/* A String or Bytes value is the address of a string object, one of two
+ * kinds the header's type id tells apart:
+ *  - flat (AVANT_TYPE_BYTES): the bytes themselves, then a terminator;
+ *    the header size is the bytes and the terminator. A heap string, or
+ *    a literal the compiler emitted with the same header.
+ *  - a view (AVANT_TYPE_STRVIEW): LEN bytes of a flat string BASE from
+ *    OFF on, with no terminator of their own (BASE's terminator ends the
+ *    view only when OFF + LEN is BASE's size). BASE is always the start of
+ *    a flat string object (a view of a view names the first view's base),
+ *    so the view's one reference field follows the field rule and keeps
+ *    the parent alive; the collector traces it by the type map the
+ *    generated code registers for the type id, and a moving collection
+ *    updates it like any field. A view is made only where it is worth an
+ *    object (AVANT_VIEW_MIN bytes or more) and where it cannot hold a much
+ *    larger parent alive (at least 1 / AVANT_VIEW_SHARE of its bytes);
+ *    any other slice is a copy.
+ * The previous release's compiler (avant_str_headered 0) makes neither: its
+ * code passes literals without a header, and no view is made for it. */
+typedef struct AvantStrView {
+  char *base;
+  uint32_t off;
+  uint32_t len;
+} AvantStrView;
+#define AVANT_VIEW_MIN 64u
+#define AVANT_VIEW_SHARE 4u
+extern int32_t avant_str_headered;
+size_t avant_str_n(const char *s);
+
+/* The bytes of a String or Bytes value S and their count in *N: a flat
+ * string's own, or the run of its base a view names (no terminator
+ * there); null is empty. The address lies inside an object that may
+ * move: form it again after any call that may collect. */
+static inline const char *avant_str_bytes(const char *s, size_t *n) {
+  const AvantHeader *h;
+  if (!s) {
+    *n = 0;
+    return AVANT_STR_EMPTY;
+  }
+  if (__builtin_expect(!avant_str_headered, 0)) {
+    *n = avant_str_n(s);
+    return s;
+  }
+  h = avant_header((void *)s);
+  if (__builtin_expect(h->type_id == AVANT_TYPE_STRVIEW, 0)) {
+    const AvantStrView *v = (const AvantStrView *)(const void *)s;
+    *n = v->len;
+    return v->base + v->off;
+  }
+  *n = (size_t)h->size - 1;
+  return s;
+}
+
+/* Whether S is a view (never under the previous compiler's code). */
+static inline int avant_str_is_view(const char *s) {
+  return s && avant_str_headered && avant_header((void *)s)->type_id == AVANT_TYPE_STRVIEW;
+}
+
+/* S as a flat string: itself, or a fresh copy of a view's bytes (a
+ * collecting call then). For the runtime's own C functions and for a
+ * store into C memory, which read a String as a terminated string with
+ * its length in the header. */
+char *avant_str_flat(const char *s);
+/* The address of S's bytes (avant_str_bytes), for generated code. */
+const char *avant_str_data(const char *s);
+/* 1 when S is a view, for generated code. */
+int32_t avant_str_view_test(const char *s);
+/* S as a `fun` argument (C's `char *`, terminated): a flat string
+ * itself; a view that ends its base's bytes, the address of its bytes
+ * (the base's terminator ends them, and the call keeps the base where it
+ * is); any other view, a fresh terminated copy (a collecting call then). */
+char *avant_str_c_arg(const char *s);
 
 static inline void avant_str_tag(void *payload) {
   if (payload) {

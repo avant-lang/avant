@@ -843,8 +843,10 @@ pub fn (lw: MirLower) lower_str_switch(e: Expr, cv: MOperand, rty: Int): MOperan
         b.goto(target)
         open = false
       } else {
+        // The scrutinee's bytes (a view's are its base's), used at once.
+        sd = lw.str_data(b.copy_local(s))
         margs: Array(MOperand) = []
-        margs.push(b.copy_local(s))
+        margs.push(b.copy_local(sd))
         margs.push(b.str_const(lab_text[q]))
         margs.push(b.c_i64(sizes[k]))
         qv = lw.call_to(mt_i32(), "memcmp", margs)

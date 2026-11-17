@@ -1051,7 +1051,11 @@ void *avant_hash_find_sk(void *hp, const char *key, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t e = 0;
   int32_t pos = 0;
-  size_t n = avant_str_n(key);
+  size_t n;
+  /* The key's bytes: a view's are its base's (a lookup only reads them;
+   * a key the table keeps is always flat, the compiler's store calls see
+   * to it). */
+  key = avant_str_bytes(key, &n);
   if (!h || !find_bytes(h, key, n, hash_bytes(key, n, h->seed), &e, &pos)) {
     *found = 0;
     return (void *)g_hash_none;
@@ -1259,7 +1263,9 @@ static uint32_t xkey_hash(const AvantHash *h, const char *k) {
       if ((f & 0xffu) == XK_STR) {
         const char *str;
         memcpy(&str, p, sizeof(str));
-        a = xk_mix(a, hash_bytes(str, avant_str_n(str), h->seed));
+        size_t sn;
+        const char *sd = avant_str_bytes(str, &sn);
+        a = xk_mix(a, hash_bytes(sd, sn, h->seed));
       } else {
         a = xk_mix(a, xk_int_at(p, f & 0xffu));
       }
@@ -1285,7 +1291,11 @@ static int xkey_eq(const AvantHash *h, const char *a, const char *b) {
       const char *sb;
       memcpy(&sa, a + off, sizeof(sa));
       memcpy(&sb, b + off, sizeof(sb));
-      if (sa != sb && !bytes_eq(sa, avant_str_n(sa), sb, avant_str_n(sb))) {
+      size_t na;
+      size_t nb;
+      const char *da = avant_str_bytes(sa, &na);
+      const char *db = avant_str_bytes(sb, &nb);
+      if (sa != sb && !bytes_eq(da, na, db, nb)) {
         return 0;
       }
     } else if (memcmp(a + off, b + off, f & 0xffu) != 0) {
@@ -1443,6 +1453,7 @@ void *avant_hash_slot_sk(void *hp, const char *key) {
   slot_hash(h);
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &h);
+  key = avant_str_flat(key);
   void *slot = put_sk(h, key, NULL, 1);
   return slot_after(h, slot);
 }
@@ -1462,7 +1473,20 @@ void *avant_hash_put_ik(void *hp, avant_int key) {
   return put_ik((AvantHash *)hp, key, NULL, 1);
 }
 
+/* A key the table keeps is flat (its probes read a key's bytes at its
+ * address): a view key is copied first, the hash a handle across the
+ * copy. */
+static void *put_sk_view(AvantHash *h, const char *key, int32_t *found, int grow_first) {
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &h);
+  key = avant_str_flat(key);
+  return put_sk(h, key, found, grow_first);
+}
+
 void *avant_hash_put_sk(void *hp, const char *key) {
+  if (__builtin_expect(avant_str_is_view(key), 0)) {
+    return put_sk_view((AvantHash *)hp, key, NULL, 1);
+  }
   return put_sk((AvantHash *)hp, key, NULL, 1);
 }
 
@@ -1473,6 +1497,9 @@ void *avant_hash_upsert_ik(void *hp, avant_int key, int32_t *found) {
 }
 
 void *avant_hash_upsert_sk(void *hp, const char *key, int32_t *found) {
+  if (__builtin_expect(avant_str_is_view(key), 0)) {
+    return put_sk_view((AvantHash *)hp, key, found, 0);
+  }
   return put_sk((AvantHash *)hp, key, found, 0);
 }
 
@@ -1498,6 +1525,7 @@ void avant_hash_set_ref_sk(void *hp, const char *key, void *val) {
   AVANT_GC_ROOT(0, &h);
   AVANT_GC_ROOT(1, &key);
   AVANT_GC_ROOT(2, &val);
+  key = avant_str_flat(key);
   void **slot = (void **)put_sk(h, key, NULL, 1);
   /* The barrier before the store (RC5). */
   if (h) {
@@ -1536,7 +1564,8 @@ void *avant_hash_take_sk(void *hp, const char *key, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
   int32_t e = 0;
   int32_t pos = 0;
-  size_t n = avant_str_n(key);
+  size_t n;
+  key = avant_str_bytes(key, &n);
   if (!h || !find_bytes(h, key, n, hash_bytes(key, n, h->seed), &e, &pos)) {
     *found = 0;
     return (void *)g_hash_none;
@@ -1815,11 +1844,12 @@ void *avant_hash_values(void *hp) {
 
 /* A key slice traps like avant_str_slice. */
 static void check_slice(const char *s, avant_int start, avant_int stop, const char **out, size_t *n) {
-  size_t len = avant_str_n(s);
+  size_t len;
+  const char *d = avant_str_bytes(s, &len);
   if (start < 0 || stop < start || (size_t)stop > len) {
     avant_trap_slice(start, stop, (avant_int)len);
   }
-  *out = (s ? s : "") + start;
+  *out = d + start;
   *n = (size_t)(stop - start);
 }
 
@@ -1863,7 +1893,8 @@ avant_int avant_hash_inc_slice(void *hp, const char *s, avant_int start, avant_i
     s = AVANT_STR_EMPTY;
   }
   check_slice(s, start, stop, &p, &n);
-  size_t off = (size_t)(p - s);
+  size_t off = (size_t)start;
+  size_t sn;
   uint32_t hv = hash_bytes(p, n, h->seed);
   int32_t e = 0;
   int32_t pos = 0;
@@ -1878,10 +1909,12 @@ avant_int avant_hash_inc_slice(void *hp, const char *s, avant_int start, avant_i
     return c;
   }
   ensure_cap(h);
-  p = s + off;
+  /* RC2: the text's bytes (a view's too) are formed again after each
+   * call that may collect. */
+  p = avant_str_bytes(s, &sn) + off;
   (void)find_bytes(h, p, n, hv, &e, &pos);
   char *key = avant_str_alloc((uint64_t)n);
-  p = s + off;
+  p = avant_str_bytes(s, &sn) + off;
   if (n) {
     memcpy(key, p, n);
   }
@@ -1967,8 +2000,10 @@ static int bytes_eq_concat(const char *slot, size_t ns, const char *a, size_t na
 
 avant_int avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t *found) {
   AvantHash *h = (AvantHash *)hp;
-  size_t na = avant_str_n(a);
-  size_t nb = avant_str_n(b);
+  size_t na;
+  size_t nb;
+  a = avant_str_bytes(a, &na);
+  b = avant_str_bytes(b, &nb);
   int32_t mask;
   int32_t i;
   int32_t n;

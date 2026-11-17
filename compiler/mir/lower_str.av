@@ -250,8 +250,9 @@ pub fn (lw: MirLower) lower_str_binary(e: Expr, l: Expr, r: Expr): MOperand {
 // s[i] on String or Bytes (loops.av:4631-4656): the index first, then the
 // string; unless the checker proved it in range, avant_str_size and the
 // bounds check (avant_trap_bounds(i, n)); then the byte, zero-extended.
-// The byte is read through a `ptr u8` view of the string (a `ref` to
-// `ptr` cast) used at once.
+// The byte is read through the address of the string's bytes
+// (avant_str_data: the string itself, or a view's base and offset), a
+// `ptr u8` used at once.
 pub fn (lw: MirLower) lower_str_index(e: Expr, arr: Expr, ix: Expr): MOperand {
   b = lw.lw_b
   i = lw.snap(lw.lower_expr(ix), arr)
@@ -264,11 +265,21 @@ pub fn (lw: MirLower) lower_str_index(e: Expr, arr: Expr, ix: Expr): MOperand {
     n = lw.int_call1("avant_str_size", lw.dup(s))
     b.check_bounds(lw.dup(i), n)
   }
-  pu8 = b.ptr_to(mt_u8())
-  pv = b.temp(pu8)
-  b.assign(b.pl(pv), b.rv_cast(s, pu8))
+  pv = lw.str_data(s)
   byte = lw.tmp(mt_u8(), b.rv_use(b.copy(b.index(b.deref(b.pl(pv)), i))))
   lw.tmp(mt_int(), b.rv_cast(byte, mt_int()))
+}
+
+// The address of string s's bytes as a `ptr u8` local, used at once (no
+// call that may collect before its use): avant_str_data, which the
+// emitter inlines (llvm/emit_gc.av ll_str_data).
+pub fn (lw: MirLower) str_data(s: MOperand): Int {
+  b = lw.lw_b
+  pv = b.temp(b.ptr_to(mt_u8()))
+  args: Array(MOperand) = []
+  args.push(s)
+  b.call(pv, "avant_str_data", args)
+  pv
 }
 
 // The members of String and Bytes in both forms (`s.size`, `s.to_i`,

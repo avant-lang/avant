@@ -1,0 +1,56 @@
+// What C sees of a string view (a long slice: its base, an offset and a
+// length). C reads a `String` as a terminated `char *`: a view that ends
+// its base's bytes is passed as the address of its bytes, in place (the
+// byte before it is the base's); any other view is passed as a fresh
+// terminated copy. A view stored into C memory, or inside a struct passed
+// by value, is a flat copy; a callback's view result is passed as a
+// `fun` argument is.
+
+struct CvPair {
+  n: Int
+  s: String
+}
+
+lib cv {
+  struct CvHold {
+    name: String
+    id: Int
+  }
+  fun cv_len(s: String): Int
+  fun cv_before(s: String): Int
+  fun cv_pair_len(p: CvPair): Int
+  fun cv_holder: Ptr(CvHold)
+  fun cv_held_len: Int
+  fun cv_take(f: fn(): String): Int
+}
+
+fn text(n: Int): String {
+  out = Buf.new()
+  i = 0
+  while i < n {
+    out.push_byte(97 + i % 26)
+    i += 1
+  }
+  out.to_s()
+}
+
+fn give: String {
+  str_slice(text(200), 20, 120)
+}
+
+fn main {
+  big = text(200)
+  tail = str_slice(big, 100, 200)
+  mid = str_slice(big, 100, 180)
+  puts("tail ${cv.cv_len(tail)} ${cv.cv_before(tail) == big[99]}")
+  puts("mid ${cv.cv_len(mid)} ${cv.cv_before(mid) == big[99]}")
+  puts("pair ${cv.cv_pair_len(CvPair { n: 1, s: mid })}")
+  h = cv.cv_holder()
+  h.name = mid
+  puts("held ${cv.cv_held_len()} ${h.name.size}")
+  release(h.name)
+  puts("callback ${cv.cv_take(give)}")
+  pin(tail) {
+    puts("pinned ${cv.cv_len(tail)} ${tail.size}")
+  }
+}

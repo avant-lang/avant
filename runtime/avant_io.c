@@ -313,7 +313,10 @@ avant_int avant_sys_write(const char *path, const char *body) {
  * with a newline, after what the program wrote to stdout; the result, 1,
  * is the exit status the generated main returns. */
 avant_int avant_main_fail(const char *text) {
-  size_t n = text ? avant_str_n(text) : 0;
+  /* A `fun` of the program's own entry lib: the text arrives as C reads a
+   * String (terminated; the bytes of a slice in place), so its length is
+   * its terminator's. */
+  size_t n = text ? strlen(text) : 0;
   fflush(stdout);
   if (n) {
     fwrite(text, 1, n, stderr);
@@ -348,7 +351,9 @@ static void out_bytes(const char *p, size_t n, int32_t how) {
 }
 
 void avant_out_str(const char *s, int32_t how) {
-  out_bytes(s ? s : "", s ? avant_str_n(s) : 0, how);
+  size_t n;
+  s = avant_str_bytes(s, &n);
+  out_bytes(s, n, how);
 }
 
 void avant_out_i64(int64_t v, int32_t how) {
@@ -457,8 +462,14 @@ static char **build_argv(const char *path, void *args) {
     return NULL;
   }
   for (i = 0; i < extra_n; i++) {
-    const char *s = extra_buf && extra_buf[i] ? extra_buf[i] : "";
-    argv[i + 1] = cstr_dup(s);
+    /* An element is an Avant String (a view's bytes are its base's). */
+    size_t n = 0;
+    const char *s = avant_str_bytes(extra_buf ? extra_buf[i] : NULL, &n);
+    argv[i + 1] = (char *)malloc(n + 1);
+    if (argv[i + 1]) {
+      memcpy(argv[i + 1], s, n);
+      argv[i + 1][n] = 0;
+    }
     if (!argv[i + 1]) {
       free_argv(argv);
       return NULL;
@@ -939,6 +950,8 @@ char *avant_env_get(const char *name, int32_t *ok) {
   if (!name) {
     return NULL;
   }
+  /* A terminated name (avant_file_exists). */
+  name = avant_str_flat(name);
   const char *s = getenv(name);
   if (!s) {
     return NULL;
@@ -951,10 +964,14 @@ char *avant_env_get(const char *name, int32_t *ok) {
   return heap;
 }
 
+/* gc-lint: holds nothing (the flat copy is its first call; only it is read after). */
 int32_t avant_file_exists(const char *path) {
   if (!path) {
     return 0;
   }
+  /* A terminated path: a view's bytes are copied first (it allocates;
+   * nothing else is held). */
+  path = avant_str_flat(path);
   return access(path, F_OK) == 0 ? 1 : 0;
 }
 

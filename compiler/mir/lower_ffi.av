@@ -149,6 +149,17 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
         if cs.params[i].is_enum() {
           o = lw.enum_to_c(o, cs.params[i])
         }
+        if lw.c_ret_string(cs.params[i]) && !(cs.runtime && b.module.rt.class_of(e.callee) == mcc_never()) {
+          o = lw.c_string_arg(o, ps[i], cs.runtime)
+        } else if cs.params[i].is_struct() && lw.has_c_strings(cs.params[i], 0) {
+          // A struct by value: its strings as C reads them, in a copy.
+          lw.at(a.loc)
+          sv = lw.hold(o, ps[i])
+          cp = b.temp(ps[i])
+          b.assign(b.pl(cp), b.rv_use(b.copy_local(sv)))
+          lw.c_strings_out_in(b.pl(cp), cs.params[i], cs.runtime, a.loc, 0)
+          o = b.copy_local(cp)
+        }
         // A reference the C function holds, or an aggregate the emitter
         // passes by the C ABI (its C ABI lowering), is a bare local of the call.
         k = b.types.kind(ps[i])
@@ -251,6 +262,93 @@ pub fn (lw: MirLower) c_strings_owned_in(p: MPlace, t: Ty, loc: Location, depth:
       b.assign(b.field(p, k), b.rv_use(lw.c_string_owned(v)))
     } else if ft.is_struct() {
       lw.c_strings_owned_in(fp, ft, loc, depth + 1)
+    }
+    k += 1
+  }
+}
+
+// A `String` or `Bytes` argument of a `fun` as C reads it: a terminated
+// `char *` with its bytes in place. A flat string is passed as it is;
+// a view (runtime/avant_rt.h, AvantStrView) becomes the address of its
+// bytes when it ends its base's bytes (the base's terminator ends them,
+// and nothing moves during the call), else a fresh terminated copy
+// (avant_str_c_arg). The runtime's own C functions read a string's
+// length from its header, so a view becomes a flat copy for them
+// (avant_str_flat). Both are collecting calls the emitter inlines down to
+// a test of the header when the string is not a view. A runtime function
+// the call table says never collects (std.regex's find, span and count)
+// takes the string as it is and reads a view's bytes itself, so its call
+// stays one that never collects.
+pub fn (lw: MirLower) c_string_arg(o: MOperand, ty: Int, runtime: Bool): MOperand {
+  f = "avant_str_c_arg"
+  if runtime {
+    f = "avant_str_flat"
+  }
+  args: Array(MOperand) = []
+  args.push(o)
+  lw.call_to(ty, f, args)
+}
+
+// String operand val as a flat string, in a new local: itself, or, when
+// it is a view (avant_str_view_test, which never collects), a flat copy
+// (avant_str_flat). Only the view's path calls the collecting copy, and
+// with its own local as the argument, so no root slot of the common path
+// keeps the value alive afterwards (a slot holds what it was given until
+// the function returns: tests/fixtures/ffi/complete.av frees the value a
+// `release` gives back in the same function).
+pub fn (lw: MirLower) str_flat_if_view(val: MOperand, ty: Int): Int {
+  b = lw.lw_b
+  v0 = lw.hold(val, ty)
+  res = b.temp(ty)
+  b.assign(b.pl(res), b.rv_use(b.copy_local(v0)))
+  t = lw.call_to(mt_i32(), "avant_str_view_test", lw.one(b.copy_local(v0)))
+  isv = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), t, b.c_i32(0)))
+  bv = b.block()
+  join = b.block()
+  b.branch(isv, bv, join)
+  b.at(bv)
+  v1 = b.temp(ty)
+  b.assign(b.pl(v1), b.rv_use(b.copy_local(v0)))
+  b.call(res, "avant_str_flat", lw.one(b.copy_local(v1)))
+  b.goto(join)
+  b.at(join)
+  res
+}
+
+// Whether struct t holds a `String` or `Bytes`, directly or in a nested
+// struct.
+pub fn (lw: MirLower) has_c_strings(t: Ty, depth: Int): Bool {
+  if depth > 16 {
+    return false
+  }
+  for f in t.fields {
+    if lw.c_ret_string(f.ty) {
+      return true
+    }
+    if f.ty.is_struct() && lw.has_c_strings(f.ty, depth + 1) {
+      return true
+    }
+  }
+  false
+}
+
+// The `String` fields of a struct the program passes to C by value,
+// through nested structs, each as c_string_arg makes it, in place.
+pub fn (lw: MirLower) c_strings_out_in(p: MPlace, t: Ty, runtime: Bool, loc: Location, depth: Int) {
+  b = lw.lw_b
+  if depth > 16 {
+    return
+  }
+  k = 0
+  while k < t.fields.size {
+    ft = t.fields[k].ty
+    if lw.c_ret_string(ft) {
+      fty = lw.ty_at(ft, loc, "a C argument's field")
+      v = b.temp(fty)
+      b.assign(b.pl(v), b.rv_use(b.copy(b.field(p, k))))
+      b.assign(b.field(p, k), b.rv_use(lw.c_string_arg(b.copy_local(v), fty, runtime)))
+    } else if ft.is_struct() {
+      lw.c_strings_out_in(b.field(p, k), ft, runtime, loc, depth + 1)
     }
     k += 1
   }
@@ -407,6 +505,12 @@ pub fn (lw: MirLower) lower_cb_thunks {
       d1 = b.temp(mir_c_view_mty(rt2.c_scalar))
       b.call(d1, cb.target, args)
       b.assign(b.pl(0), b.rv_use(lw.to_c_scalar(b.copy_local(d1), rt2.c_scalar, cb.loc)))
+    } else if rt3 = cb.fty.inner, lw.c_ret_string(rt3) {
+      // A string the callback gives C: as a `fun` argument is
+      // (c_string_arg).
+      d2 = b.temp(ret)
+      b.call(d2, cb.target, args)
+      b.assign(b.pl(0), b.rv_use(lw.c_string_arg(b.copy_local(d2), ret, false)))
     } else {
       d = b.temp(ret)
       b.call(d, cb.target, args)
@@ -613,7 +717,13 @@ pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
 // traced, so no barrier (V13 third form).
 pub fn (lw: MirLower) pinned_store(p: MPlace, ty: Int, val: MOperand) {
   b = lw.lw_b
-  v = lw.hold(val, ty)
+  sv = val
+  if ty == mt_str() {
+    // C reads the field as a terminated string with its bytes in
+    // place: a view is stored as a flat copy (str_flat_if_view).
+    sv = b.copy_local(lw.str_flat_if_view(val, ty))
+  }
+  v = lw.hold(sv, ty)
   a = b.temp(mt_ptr())
   b.assign(b.pl(a), b.rv_addr(p))
   args: Array(MOperand) = []
@@ -680,6 +790,18 @@ pub fn (lw: MirLower) lower_pin(st: Stmt) {
         return
       }
       lw.at(st.loc)
+      if mir_is_str_ty(et) && e.kind == ex_name() && !e.fn_ref && !e.implicit_field && !lw.name_in_box(e.ident) && lw.mutex_index(e.ident) < 0 {
+        // A pinned string local is flat for the block: a view is
+        // replaced by a flat copy (avant_str_flat; the same text), so the
+        // address C gets from it is the pinned object's own.
+        k = lw.var_find(e.ident, ty)
+        if k >= 0 {
+          fv = b.temp(ty)
+          b.call(fv, "avant_str_flat", lw.one(v))
+          b.assign(b.pl(k), b.rv_use(b.copy_local(fv)))
+          v = b.copy_local(k)
+        }
+      }
       h = b.temp(ty)
       b.assign(b.pl(h), b.rv_use(v))
       if et.is_fn() {

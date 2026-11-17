@@ -653,10 +653,12 @@ static int cmp_f64(const void *a, const void *b) {
 }
 
 static int str_cmp_raw(const char *a, const char *b) {
-  size_t na = avant_str_n(a);
-  size_t nb = avant_str_n(b);
+  size_t na;
+  size_t nb;
+  a = avant_str_bytes(a, &na);
+  b = avant_str_bytes(b, &nb);
   size_t n = na < nb ? na : nb;
-  int c = n ? memcmp(a ? a : "", b ? b : "", n) : 0;
+  int c = n ? memcmp(a, b, n) : 0;
   if (c != 0) {
     return c;
   }

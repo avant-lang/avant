@@ -33,6 +33,7 @@ const str.6 = "worker"
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1020 %String view stride 0 bits [0x1]
 typemap 1 %std.sync.MutexError stride 0 bits [0x0]
 typemap 2 %task.TaskError stride 0 bits [0x3]
 typemap 3 %std.sync.Channel(Int) stride 0 bits [0x1]
@@ -64,6 +65,7 @@ extern avant_puts_str(ref str) -> void never
 extern avant_spawn_f(ptr, ref, ptr) -> ref collects
 extern avant_str_cat_int(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_data(ref str) -> ptr u8 never
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
 extern avant_trap_frozen(i32) -> void never noreturn
@@ -701,12 +703,12 @@ bb55:
 bb56:
   _149 = call avant_str_size(copy _139) nocollect   @78:75
   check.bounds const i64 6, copy _149   @78:75
-  _150 = cast copy _139 to ptr u8   @78:75
+  _150 = call avant_str_data(copy _139) nocollect   @78:75
   _151 = copy (*_150)[const i64 6]   @78:75
   _152 = cast copy _151 to i64   @78:75
   _153 = call avant_str_size(copy _140) nocollect   @78:82
   check.bounds const i64 6, copy _153   @78:82
-  _154 = cast copy _140 to ptr u8   @78:82
+  _154 = call avant_str_data(copy _140) nocollect   @78:82
   _155 = copy (*_154)[const i64 6]   @78:82
   _156 = cast copy _155 to i64   @78:82
   _157 = lt copy _152, copy _156   @78:79

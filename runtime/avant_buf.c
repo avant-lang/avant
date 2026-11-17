@@ -130,7 +130,7 @@ void avant_buf_push_str(void *buf, const char *s) {
   if (!b) {
     return;
   }
-  n = avant_str_n(s);
+  s = avant_str_bytes(s, &n);
   if (!n) {
     return;
   }
@@ -149,7 +149,10 @@ void avant_buf_push_slice(void *buf, const char *s, avant_int start, avant_int s
   int32_t i;
   int32_t end;
   int32_t len;
-  n = s ? avant_str_n(s) : 0;
+  s = s ? avant_str_bytes(s, &n) : NULL;
+  if (!s) {
+    n = 0;
+  }
   /* 0 <= start <= stop <= size, else a trap. */
   if (start < 0 || stop < start || (size_t)stop > n) {
     avant_trap_slice(start, stop, (avant_int)n);
@@ -265,7 +268,8 @@ void *avant_bytes_to_buf(const char *s) {
   avant_size_check(n, AVANT_SIZE_BUF);
   buf = avant_buf_new(n > 0 ? (int32_t)n : 16);
   if (n > 0) {
-    avant_buf_append(buf, s, (int32_t)n);
+    /* RC2: the bytes are formed after the allocation. */
+    avant_buf_append(buf, avant_str_bytes(s, &n), (int32_t)n);
   }
   return buf;
 }
@@ -494,7 +498,8 @@ int32_t avant_buf_starts(void *buf, const char *s) {
   if (!s) {
     s = AVANT_STR_EMPTY;
   }
-  size_t n = avant_str_n(s);
+  size_t n;
+  s = avant_str_bytes(s, &n);
   if (n == 0) {
     return 1;
   }

@@ -1209,6 +1209,8 @@ fn main {
 }
 ```
 
+A string knows its length (`size` is a read, never a scan), and a long slice shares its string's bytes instead of copying them: `str_slice(s, start, stop)` of 64 bytes or more that is at least a quarter of `s` keeps `s` alive as long as the slice lives; a shorter slice is a copy.
+
 ### String operations
 
 | Operation | Result |
@@ -3203,7 +3205,8 @@ fn main {
 
 A `lib NAME { ... }` block holds `fun` declarations (`fun` for a C function, `fn` for an Avant one), called through the lib's name (`c.abs`). Hand-written and generated bindings ([avant bind](#avant-bind)) share the grammar; there is no `extern`.
 
-- A `String` argument is passed as a `char *`.
+- A `String` argument is passed as a `char *` to its bytes, terminated: a long slice that ends its string's bytes is passed in place, any other slice as a copy for the call.
+- A string C gives the program (a `String` result, a `String` field of C memory or of a struct C returns, a callback's `String` argument) is copied on the way in: C may change or free its memory afterwards.
 - A `String?` result is a `char *` that may be NULL, read as `nil` (passing `nil` passes NULL); a `String` result that is NULL traps, naming the function (`avant runtime: C function c.getenv returned NULL for String (declare String?)`).
 - A `fun` signature's only unions are optional references, one pointer with `nil` as NULL: `String?`, `Bytes?`, `Ptr(T)?` (the nullable C pointer, [Layouts and Ptr](#layouts-and-ptr)), and an array, a hash, a `Buf` or a class with `?`. Any other union (`Int?`, `Int | String`, a tag and a payload where C has one word) is a compile error there.
 - An `Array` (or a `Hash`, a `Buf`) passed to C is the value itself, not a copy: C may change it, except an array a running task reads ([What may cross a task](#what-may-cross-a-task)), which C must leave as it is; the runtime's own C functions that write an array trap on such an array, as Avant code does.
@@ -3304,7 +3307,7 @@ The collector moves objects, so a heap value handed to C must stay put while C c
 
 - **For a call**, nothing is needed: arguments stay put while the C function runs.
 - **For a bounded span longer than a call**, `pin(value) { ... }` keeps it put for the block and unpins it on every way out; pins are counted, so nested pins compose.
-- **Stored into a C field** (`h.name = s`), a `String` stays pinned until `release` says C is done with that field; overwriting the field keeps the old value pinned too.
+- **Stored into a C field** (`h.name = s`), a `String` stays pinned until `release` says C is done with that field; overwriting the field keeps the old value pinned too. A slice that shares its string's bytes is stored as a copy of its own.
 
 <!-- check: fragment needs C functions of its own; the tested twin is tests/fixtures/ffi/release.av -->
 ```avant

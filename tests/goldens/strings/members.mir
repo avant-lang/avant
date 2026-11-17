@@ -31,6 +31,7 @@ const str.22 = "12"
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1020 %String view stride 0 bits [0x1]
 
 extern __avant_type_maps() -> void never
 extern avant_checksum_str(ref str) -> i32 never
@@ -41,6 +42,7 @@ extern avant_puts_f64(f64) -> void never
 extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_str_concat(ref str, ref str) -> ref str collects
+extern avant_str_data(ref str) -> ptr u8 never
 extern avant_str_eq(ref str, ref str) -> i32 never
 extern avant_str_fmt_float(f64, i64) -> ref str collects
 extern avant_str_from_byte(i64) -> ref str collects
@@ -120,7 +122,7 @@ bb1:
   branch copy _6, bb2, bb3   @27:3
 
 bb2:
-  _7 = cast copy _1 to ptr u8   @28:9
+  _7 = call avant_str_data(copy _1) nocollect   @28:9
   _8 = copy (*_7)[copy _4]   @28:9
   _9 = cast copy _8 to i64   @28:9
   _10 = eq copy _9, copy _2   @28:13
@@ -305,14 +307,14 @@ bb0:
   call avant_puts_i64(copy _4) nocollect   @38:3
   _5 = call avant_str_size(copy _3) nocollect   @39:9
   check.bounds const i64 0, copy _5   @39:9
-  _6 = cast copy _3 to ptr u8   @39:9
+  _6 = call avant_str_data(copy _3) nocollect   @39:9
   _7 = copy (*_6)[const i64 0]   @39:9
   _8 = cast copy _7 to i64   @39:9
   call avant_puts_i64(copy _8) nocollect   @39:3
   _9 = call av.members/opaque(const i64 11) nocollect   @40:10
   _10 = call avant_str_size(copy _3) nocollect   @40:9
   check.bounds copy _9, copy _10   @40:9
-  _11 = cast copy _3 to ptr u8   @40:9
+  _11 = call avant_str_data(copy _3) nocollect   @40:9
   _12 = copy (*_11)[copy _9]   @40:9
   _13 = cast copy _12 to i64   @40:9
   call avant_puts_i64(copy _13) nocollect   @40:3
@@ -328,7 +330,7 @@ bb0:
   call avant_puts_i64(copy _19) nocollect   @45:3
   _20 = call avant_str_size(copy _18) nocollect   @46:10
   check.bounds const i64 4, copy _20   @46:10
-  _21 = cast copy _18 to ptr u8   @46:10
+  _21 = call avant_str_data(copy _18) nocollect   @46:10
   _22 = copy (*_21)[const i64 4]   @46:10
   _23 = cast copy _22 to i64   @46:10
   call avant_puts_i64(copy _23) nocollect   @46:3

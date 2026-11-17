@@ -3,6 +3,7 @@
 #include "yyjson.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -458,5 +459,12 @@ int64_t avant_json_error_offset(void) {
  * a task or an HTTP handler it fails that task or request alone; anywhere
  * else stdout is flushed first, then the message, status 1. */
 void avant_json_misuse(const char *what) {
-  avant_trap_text(what);
+  /* The program's String as it is (this call never collects): its bytes
+   * by length, terminated in a buffer as long as a trap's text, then the
+   * trap path. */
+  char text[1024];
+  size_t n;
+  const char *d = avant_str_bytes(what, &n);
+  snprintf(text, sizeof text, "%.*s", (int)(n < sizeof text ? n : sizeof text - 1), d);
+  avant_trap_text(text);
 }
