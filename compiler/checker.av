@@ -4301,6 +4301,19 @@ pub class Checker {
       }
       return empty_array_ty()
     }
+    if e.kind == ex_array() && e.elems.size > 0 {
+      // `[1, 2]` may still become the Set its parameter asks for: its
+      // type is marked as a literal's until the call picks its function.
+      got = check_expr(e)
+      if got.is_array() {
+        if elem = got.inner {
+          t = ty_array(elem)
+          t.lit_arr = true
+          return t
+        }
+      }
+      return got
+    }
     if e.kind != ex_int() {
       return check_expr(e)
     }
@@ -5095,7 +5108,50 @@ pub class Checker {
     return dispatch_call(expr, expected)
   }
 
+  // Whether an array literal's argument type t (check_call_arg) fits the
+  // Set parameter p: its elements fit p's element type.
+  pub fn lit_set_fits(t: Ty, p: Ty): Bool {
+    if !t.lit_arr || !p.is_set() || type.ty_has_var(p) {
+      return false
+    }
+    if e = t.inner, k = p.key {
+      return ty_assignable(e, k) || (e.is_integer() && k.is_integer())
+    }
+    false
+  }
+
+  // A non-empty array literal given to a Set parameter becomes that Set,
+  // as `s: Set(Int) = [1, 2]` does: its elements were checked as the
+  // call's argument; an integer literal among them takes the element type.
+  pub fn adopt_set_literal(expr: Expr, want: Ty): Ty {
+    if elem = want.key {
+      key_fns(elem, expr.loc)
+      for el in expr.elems {
+        got = t_int()
+        if t = el.ty {
+          got = t
+        }
+        if !ty_assignable(got, elem) && is_lit_expr(el) {
+          got = check_expr_as(el, elem)
+        }
+        if !ty_assignable(got, elem) {
+          fail(el.loc, "set element is ${got.show()}, expected ${elem.show()}")
+        }
+      }
+    }
+    expr.ty = want
+    want
+  }
+
   pub fn fit_call_arg(expr: Expr, got: Ty, want: Ty): Ty {
+    if got.lit_arr && expr.kind == ex_array() {
+      if lit_set_fits(got, want) {
+        return adopt_set_literal(expr, want)
+      }
+      if t = expr.ty {
+        return t
+      }
+    }
     if is_empty_array(expr) && is_empty_array_ty(got) {
       // `[]` takes the parameter's array type, `[:]` its hash type.
       if empty_fits(got, want) && !type.ty_has_var(want) && !is_empty_array_ty(want) {

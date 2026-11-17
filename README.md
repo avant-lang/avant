@@ -1586,7 +1586,7 @@ fn main {
 
 - A set is stored as a `Hash` whose values are one byte nobody reads, and costs what that hash costs; a set is shared as a hash is.
 - **Iteration order is unspecified**, as a hash's; sort `values()` when order matters.
-- A non-empty array literal passed straight to a `Set` parameter stays an array: give it a name with a declared type first.
+- An array literal passed to a `Set` parameter is that set (`count([1, 2, 2])` with `fn count(s: Set(Int))`); where an overload takes an `Array` in that place, the literal is the array.
 - Not built yet: `==` on sets, and union, intersection and difference (a loop over `for` does them).
 
 ## Structs and classes

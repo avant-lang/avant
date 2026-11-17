@@ -358,7 +358,7 @@ pub fn (checker_self: Checker) container_subst(sig: FuncSig, recv: Ty, arg_tys: 
         return nil
       }
       for k in 0..arg_tys.size {
-        if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && checker_self.empty_fits(arg_tys[k], sig.params[k])) {
+        if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && checker_self.empty_fits(arg_tys[k], sig.params[k])) && !checker_self.lit_set_fits(arg_tys[k], sig.params[k]) {
           return nil
         }
       }
@@ -837,6 +837,12 @@ pub fn (checker_self: Checker) lit_fit_tys(params: Array(Ty), arg_tys: Array(Ty)
     if k < params.size && checker_self.is_empty_array_ty(a) && checker_self.empty_fits(a, params[k]) && !type.ty_has_var(params[k]) {
       a = params[k]
     }
+    if k < params.size && a.lit_arr && params[k].is_set() {
+      // An array literal meeting a Set parameter is inferred as that Set.
+      if elem = a.inner {
+        a = ty_set(elem, checker_self.t_bool())
+      }
+    }
     out.push(a)
   }
   out
@@ -865,7 +871,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
         } else {
           ok = true
           for k in 0..arg_tys.size {
-            if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && checker_self.empty_fits(arg_tys[k], sig.params[k])) {
+            if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && checker_self.empty_fits(arg_tys[k], sig.params[k])) && !checker_self.lit_set_fits(arg_tys[k], sig.params[k]) {
               ok = false
             }
           }
@@ -919,6 +925,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
     }
     return nil
   }
+  cands = checker_self.prefer_array_literals(cands, arg_tys)
   if cands.size > 1 {
     checker_self.fail_ambiguous_call(loc, name, cands, "ambiguous call to ${name}")
     return nil
@@ -1004,7 +1011,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
             } else {
               ok = true
               for k in 0..arg_tys.size {
-                if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && checker_self.empty_fits(arg_tys[k], sig.params[k])) {
+                if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && checker_self.empty_fits(arg_tys[k], sig.params[k])) && !checker_self.lit_set_fits(arg_tys[k], sig.params[k]) {
                   ok = false
                 }
               }
@@ -1075,6 +1082,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
       }
       x += 1
     }
+    cands = checker_self.prefer_array_literals(cands, arg_tys)
     if cands.size > 1 {
       checker_self.fail_ambiguous_method(loc, "${shown}.${name}", cands)
       return nil
@@ -1128,6 +1136,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
     }
     return nil
   }
+  cands = checker_self.prefer_array_literals(cands, arg_tys)
   if cands.size > 1 {
     checker_self.fail_ambiguous_method(loc, "${shown}.${name}", cands)
     return nil
@@ -1425,7 +1434,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
           } else if arity_ok(sig.node, arg_tys.size) {
             ok = true
             for k in 0..arg_tys.size {
-              if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_lit_expr(expr.args[k]) && arg_tys[k].is_numeric() && sig.params[k].is_numeric()) && !(checker_self.is_empty_array_ty(arg_tys[k]) && checker_self.empty_fits(arg_tys[k], sig.params[k])) {
+              if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_lit_expr(expr.args[k]) && arg_tys[k].is_numeric() && sig.params[k].is_numeric()) && !(checker_self.is_empty_array_ty(arg_tys[k]) && checker_self.empty_fits(arg_tys[k], sig.params[k])) && !checker_self.lit_set_fits(arg_tys[k], sig.params[k]) {
                 ok = false
               }
             }
@@ -1459,6 +1468,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
     }
     return checker_self.t_int()
   }
+  cands = checker_self.prefer_array_literals(cands, arg_tys)
   if cands.size > 1 {
     checker_self.fail_ambiguous_method(expr.loc, "${ty.show()}.${expr.callee}", cands)
     return checker_self.t_int()
@@ -1834,6 +1844,7 @@ pub fn (checker_self: Checker) dispatch_method_of(expr: Expr, object: Ty, expect
       return checker_self.t_int()
     }
     cands = checker_self.collect_method_deferred(expr, owner, deferred, ctypes)
+    cands = checker_self.prefer_array_literals(cands, ctypes)
     if cands.size > 1 {
       checker_self.fail_ambiguous_method(expr.loc, "${shown}.${expr.callee}", cands)
       return checker_self.t_int()
@@ -2036,4 +2047,29 @@ pub fn (checker_self: Checker) fail_no_fit(loc: Location, shown: String, sigs: A
     return
   }
   checker_self.fail(loc, "no overload of ${shown} takes ${checker_self.arg_types_text(arg_tys)}: ${list.to_s()}")
+}
+
+// Candidates that take an array literal as the array it is, when another
+// candidate would make it a Set (`f(a: Array(Int))` and `f(s: Set(Int))`
+// given `[1, 2]`): a literal is an array where an array fits.
+pub fn (checker_self: Checker) prefer_array_literals(cands: Array(FuncSig), arg_tys: Array(Ty)): Array(FuncSig) {
+  if cands.size < 2 {
+    return cands
+  }
+  plain: Array(FuncSig) = []
+  for sig in cands {
+    adopts = false
+    for k in 0..arg_tys.size {
+      if k < sig.params.size && arg_tys[k].lit_arr && sig.params[k].is_set() {
+        adopts = true
+      }
+    }
+    if !adopts {
+      plain.push(sig)
+    }
+  }
+  if plain.size > 0 {
+    return plain
+  }
+  cands
 }
