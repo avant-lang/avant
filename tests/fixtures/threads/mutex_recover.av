@@ -139,6 +139,28 @@ fn main {
     report_bump(m, "cleared")
     n = m.with (acc) { acc.n }
     puts("with: ${n}")
+  } else if kind == "heal-captures" {
+    // A recover function captures plain values, copied when the mutex is
+    // made: the assignments after the call do not reach the rebuild.
+    base = 30
+    label = "rebuilt"
+    m = Mutex(Acc).new(Acc { n: 0 }, recover: { || Acc { n: base + label.size } })
+    base = 100
+    label = "changed later"
+    poison(m)
+    n = m.with { |acc| acc.n }
+    puts("with: ${n}")
+    ms: Array(Mutex(Acc)) = []
+    for i in 0..3 {
+      ms.push(Mutex(Acc).new(Acc { n: 0 }, recover: { || Acc { n: base + i } }))
+    }
+    base = 0
+    got: Array(Int) = []
+    for mi in ms {
+      poison(mi)
+      got.push(mi.with { |acc| acc.n })
+    }
+    puts("each: ${got[0]} ${got[1]} ${got[2]}")
   } else if kind == "heal-main-traps" {
     // On the main thread a trap in the recover function ends the program.
     m = Mutex(Acc).new(Acc { n: 0 }, recover: bad_acc)

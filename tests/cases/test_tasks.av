@@ -179,8 +179,8 @@ fn mutex_recover_cases(c: Checks, compiler: String, stamp: Int) {
   code = compile_av(compiler, "${avant_test_root()}/tests/fixtures/threads/mutex_recover.av", bin, clog)
   c.eq_int(code, 0, "the mutex-recover fixture compiles")
   trapped = "trapped: index 4 out of bounds (size 3) in at (mutex_recover.av:15:1)\n"
-  kinds = ["heal", "heal-lambda", "heal-task", "heal-traps", "recover", "clear", "try-void", "heal-main-traps"]
-  statuses = [0, 0, 0, 0, 0, 0, 0, 1]
+  kinds = ["heal", "heal-lambda", "heal-task", "heal-traps", "recover", "clear", "try-void", "heal-captures", "heal-main-traps"]
+  statuses = [0, 0, 0, 0, 0, 0, 0, 0, 1]
   wants = [
     "${trapped}poisoned: true\nwith: 42\npoisoned: false\nafter\n",
     "${trapped}try_with: 14\nafter\n",
@@ -189,12 +189,13 @@ fn mutex_recover_cases(c: Checks, compiler: String, stamp: Int) {
     "${trapped}poisoned: false\nwith: 11\nafter\n",
     "${trapped}poisoned: false\nwith: 5\nafter\n",
     "${trapped}statement: the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed\npoisoned: the mutex is poisoned: a task or an HTTP handler trapped while it held it, so its value may be half-changed\nstatement: ok\ncleared: ok\nwith: 7\nafter\n",
+    "${trapped}with: 37\n${trapped}${trapped}${trapped}each: 100 101 102\nafter\n",
     trapped]
   // Every case's trap lines, on stderr, read apart from stdout: a task's
   // trap line may come at any point of the main thread's output.
   first = "avant runtime: index 4 out of bounds (size 3) in at (mutex_recover.av:15:1)\n"
   second = "avant runtime: index 3 out of bounds (size 1) in at (mutex_recover.av:15:1)\n"
-  wants_err = [first, first, first, "${first}${second}", first, first, first, "${first}${second}"]
+  wants_err = [first, first, first, "${first}${second}", first, first, first, "${first}${first}${first}${first}", "${first}${second}"]
   i = 0
   while i < kinds.size {
     kind = kinds[i]

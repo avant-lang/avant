@@ -600,12 +600,37 @@ pub fn (lw: MirLower) lower_lambda(e: Expr): MOperand {
       }
     }
     p = lw.capture_box(name, e.cap_tys[i], e.loc)
+    if e.copy_caps {
+      // A recover function's capture: a fresh cell holding the value
+      // now, so a later assignment to the name does not reach it.
+      p = lw.box_copy(p, e.loc)
+    }
     lw.at(e.loc)
     b.barrier(env)
     b.assign(b.field(b.deref(b.pl(env)), i), b.rv_use(b.copy_local(p)))
     i += 1
   }
   lw.tmp(fty, b.rv_fnval(l, b.copy_local(env), b.c_fn(sym)))
+}
+
+// A new box holding the value the box in local p holds now (the
+// recover function's copied capture, checker/guard.av
+// check_mutex_recover): the local holding the new box.
+pub fn (lw: MirLower) box_copy(p: Int, loc: Location): Int {
+  b = lw.lw_b
+  bt = b.func.locals[p].ty
+  bl = b.types.layout_of(bt)
+  ft = b.types.layouts[bl].fields[0]
+  lw.at(loc)
+  v = b.temp(ft)
+  b.assign(b.pl(v), b.rv_use(b.copy(b.field(b.deref(b.pl(p)), 0))))
+  q = b.temp(bt)
+  args: Array(MOperand) = []
+  args.push(b.c_u64(b.types.layouts[bl].size.to_i()))
+  args.push(b.c_u32(b.type_id(bl)))
+  b.call(q, "avant_alloc", args)
+  lw.store_place(b.field(b.deref(b.pl(q)), 0), ft, b.copy_local(v))
+  q
 }
 
 // The box a lambda captures name with: a capture's box from the

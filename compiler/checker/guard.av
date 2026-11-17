@@ -846,26 +846,71 @@ pub fn (checker_self: Checker) check_mutex_value(expr: Expr, ty: Ty, verb: Strin
 
 // `Mutex(T).new(v, recover: f)`: f rebuilds the guarded value on a
 // poisoned mutex, on whichever task meets the poison, and its result
-// becomes the guarded value. So f is a named function or a lambda that
-// captures nothing: a captured name is shared with the code that made the
-// lambda, so it could reach the rebuilt value without the lock, or be
-// read by another task while it changes. (Without captures and with no
-// mutable state outside a function, what f returns is new or plain.)
+// becomes the guarded value. So f is a named function or a lambda written
+// here whose captures are plain values (recover_capture_ok), copied when
+// the mutex is made: the lowering gives this lambda fresh cells holding
+// the captured values at the call (mir/lower_fn.av lower_lambda), as a
+// spawn copies its captures, so no later assignment to a captured name
+// reaches the rebuild and no other task reads a cell that changes. A
+// reference captured (a class, an Array, a Hash, a fn) would be shared
+// with the code that made the lambda, which could reach the rebuilt value
+// without the lock. A function value from a variable is refused: what it
+// captures is not known here.
 pub fn (checker_self: Checker) check_mutex_recover(arg: Expr, ty: Ty) {
   k = arg.kind
   if k == ex_nil() {
     return
   }
   if k == ex_lambda() {
+    i = 0
+    while i < arg.cap_names.size && i < arg.cap_tys.size {
+      ct = arg.cap_tys[i]
+      if !checker_self.recover_capture_ok(ct) {
+        checker_self.fail(arg.loc, "${ty.show()}.new's recover function cannot capture ${arg.cap_names[i]} (${ct.show()}): it runs on whichever task meets the poison and its result becomes the guarded value, so it captures only plain values (a number, a Bool, a String, an enum, or a struct, optional or union of those), copied when the mutex is made; a reference would be shared with the code around, which could reach the rebuilt value without the lock. Build the value from literals, calls and plain captures, or name a function")
+        return
+      }
+      i += 1
+    }
     if arg.cap_names.size > 0 {
-      checker_self.fail(arg.loc, "${ty.show()}.new's recover function cannot capture ${arg.cap_names[0]}: it runs on whichever task meets the poison and its result becomes the guarded value, so it captures nothing: build the value from literals and calls, or name a function")
+      arg.copy_caps = true
     }
     return
   }
   if k == ex_name() && arg.fn_ref {
     return
   }
-  checker_self.fail(arg.loc, "${ty.show()}.new's recover function must be a named function or a lambda written here that captures nothing: a function value may capture names shared with other code, which could reach the rebuilt value without the lock")
+  checker_self.fail(arg.loc, "${ty.show()}.new's recover function must be a named function or a lambda written here: a function value may capture names shared with other code, which could reach the rebuilt value without the lock")
+}
+
+// What a recover function may capture: a value that holds no reference
+// to mutable state and is copied with its cell (leaves_mutex_with's
+// plain values without the share types: a captured Mutex or Channel
+// would let the rebuild, which runs under this mutex's lock, wait on
+// another lock or a channel; nothing asks for it).
+pub fn (checker_self: Checker) recover_capture_ok(t: Ty): Bool {
+  if checker_self.is_share_ty(t) {
+    return false
+  }
+  if t.is_nil() || t.is_bytes() {
+    return true
+  }
+  if t.is_union() {
+    for m in t.members {
+      if !checker_self.recover_capture_ok(m) {
+        return false
+      }
+    }
+    return true
+  }
+  if t.is_struct() {
+    for field in t.fields {
+      if !checker_self.recover_capture_ok(field.ty) {
+        return false
+      }
+    }
+    return true
+  }
+  checker_self.copyable_bits(t)
 }
 
 // The function walks for the consuming calls check_mutex_new recorded.
