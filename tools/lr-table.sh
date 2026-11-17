@@ -10,7 +10,8 @@
 # Usage:
 #   lr-table.sh ref LABEL DIR OUT.tsv RUN_JS CMD...
 #       Run CMD RUN_JS <Task> from DIR for every task in RUN_JS (a LangArena
-#       reference binary). Writes OUT.tsv.
+#       reference binary). Writes OUT.tsv, and machine.txt beside it when
+#       there is none (the CPU and thread count wave-final.sh checks).
 #   lr-table.sh avant BIN_DIR RUN_JS OUT.tsv
 #       Re-measure the harness-built Avant binaries (BIN_DIR/<slug>, as left by
 #       `measure.cr -- prod` in langarena/tmp). Put OUT.tsv in the harness
@@ -41,8 +42,20 @@
 #   tools/lr-table.sh avant langarena/tmp ../LangArena/run.js $R/lr-avant.tsv
 #   tools/lr-table.sh table REFERENCE_DIR $R > table.md
 #
-# TSV columns: task status wall_s rss_kb inprog_s exit  (status ok|err|fail)
-# Each tsv starts with "# key: value" lines (label, governor, date).
+# TSV columns: task status wall_s rss_kb inprog_s exit  (status ok|err|fail),
+# then (since the counters) user_s sys_s nvcsw nivcsw outside_cpus attempts
+# undisturbed: `ref` and `avant` start each process under tools/rounds.py's
+# spawner, inside the same timeout and GNU time (the wall and the peak RSS
+# are read as before; the spawner adds about 0.3 ms and 1.4 MB, under every
+# task's own), for the process's user and system CPU time, its voluntary
+# and involuntary context switches, and the CPUs' worth of work outside it
+# on the CPUs it may run on. A run the undisturbed rule (`python3
+# tools/rounds.py rule`) calls disturbed is run again at once, at most
+# LR_RETRIES times (default 3), every attempt kept in OUT.tsv.raw as
+# SLUG.N.*; the row is the first undisturbed attempt, else the last one
+# with `undisturbed` "no: REASON", which `table` names in the Notes column.
+# Each tsv starts with "# key: value" lines (label, governor, date, method,
+# rule).
 #
 # Every input is checked before anything is written:
 # a RUN_JS that does not exist or lists no task, a BIN_DIR or DIR that is
@@ -81,52 +94,99 @@ header() { # LABEL
   echo "# label: $1"
   echo "# governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)"
   echo "# date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo "# method: process wall (date +%s%N) + /usr/bin/time %M"
-  printf 'task\tstatus\twall_s\trss_kb\tinprog_s\texit\n'
+  echo "# method: process wall (date +%s%N) + /usr/bin/time %M; the task under tools/rounds.py's spawner for its counters"
+  echo "# rule: $(python3 -I "$here/rounds.py" rule)"
+  printf 'task\tstatus\twall_s\trss_kb\tinprog_s\texit\tuser_s\tsys_s\tnvcsw\tnivcsw\toutside_cpus\tattempts\tundisturbed\n'
 }
 
+# timed DIR RAW SLUG CMD...: one measured run of CMD from DIR, run again at
+# once while the undisturbed rule calls it disturbed (tools/rounds.py
+# judge; at most RETRIES more times). Each attempt's files are kept as
+# RAW/SLUG.N.{out,err,time,res}; RAW/SLUG.{out,err,time} are the counted
+# attempt's (the first undisturbed one, else the last). Sets rc, w (wall
+# seconds), rss (KB), counters (the judge's fields: user_s sys_s nvcsw
+# nivcsw outside_cpus), attempts and und (yes, or no: REASON).
+timed() {
+  t_dir=$1 t_raw=$2 t_slug=$3; shift 3
+  attempts=0
+  while :; do
+    attempts=$((attempts + 1)); t_b=$t_raw/$t_slug.$attempts
+    t0=$(date +%s%N)
+    (cd "$t_dir" && timeout -k 10 900 /usr/bin/time -f '%M' -o "$t_b.time" "$spawn" "$t_b.res" "$@" </dev/null >"$t_b.out" 2>"$t_b.err")
+    rc=$?; t1=$(date +%s%N)
+    w=$(awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.4f", (b - a) / 1e9 }')
+    rss=$(tail -n 1 "$t_b.time" 2>/dev/null | tr -cd '0-9'); [ -n "$rss" ] || rss=0
+    if [ -s "$t_b.res" ]; then
+      j=$(python3 -I "$here/rounds.py" judge "$t_b.res")
+      # the spawner's own status is 0; the task's is in its result
+      [ $rc -eq 0 ] && rc=$(awk '{ s = $5; if (s % 256 == 0) print int(s / 256) % 256; else print 128 + s % 128 }' "$t_b.res")
+    else
+      j=$(printf -- '-\t-\t-\t-\t-\tno: no counters (the spawner did not finish)')
+    fi
+    counters=$(printf '%s' "$j" | cut -f1-5)
+    und=$(printf '%s' "$j" | cut -f6)
+    if [ "$und" = yes ] || [ $rc -ne 0 ] || [ $attempts -gt "$retries" ]; then break; fi
+    echo "  disturbed ($und): run again" >&2
+  done
+  for t_x in out err time; do cp "$t_b.$t_x" "$t_raw/$t_slug.$t_x" 2>/dev/null; done
+}
+
+here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+retries=${LR_RETRIES:-3}
 cmd=${1:-}; [ $# -gt 0 ] && shift
+spawner() { # RAW: compiles the spawner into RAW once
+  spawn=$(python3 -I "$here/rounds.py" spawner "$1") || die "cannot build the spawner (tools/rounds.py spawner)"
+}
 case "$cmd" in
 ref)
   [ $# -ge 5 ] || die "ref needs LABEL DIR OUT.tsv RUN_JS CMD..."
   label=$1 dir=$2 out=$3 runjs=$4; shift 4
   need_dir DIR "$dir"; need_runjs "$runjs"
   raw="$out.raw"; mkdir -p "$raw"
+  # the machine a reference is measured on, beside it once (tools/wave-final.sh
+  # refuses a reference whose machine.txt names another CPU or thread count)
+  m=$(dirname "$out")/machine.txt
+  [ -f "$m" ] || {
+    echo "date: $(date -u +%Y-%m-%d)"
+    echo "cpu: $(sed -n 's/^model name[[:space:]]*: *//p' /proc/cpuinfo | head -n 1)"
+    echo "threads: $(getconf _NPROCESSORS_ONLN)"
+    echo "governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)"
+    echo "boost: $(cat /sys/devices/system/cpu/cpufreq/boost 2>/dev/null)"
+    echo "kernel: $(uname -r)"
+  } > "$m"
+  spawner "$raw"
+  # the command's path as the spawner execs it (no PATH search)
+  c=$1; shift
+  case "$c" in /*) ;; */*) c=$(cd "$dir" && realpath "$c") ;; *) c=$(command -v "$c") || die "CMD $c: not found" ;; esac
+  set -- "$c" "$@"
   header "$label" >"$out"
   tasks "$runjs" | while IFS="$(printf '\t')" read -r name sum; do
     slug=$(echo "$name" | tr 'A-Z' 'a-z' | sed 's/::/_/g')
-    t0=$(date +%s%N)
-    (cd "$dir" && timeout -k 10 900 /usr/bin/time -f '%M' -o "$raw/$slug.time" "$@" "$runjs" "$name" </dev/null >"$raw/$slug.out" 2>"$raw/$slug.err")
-    rc=$?; t1=$(date +%s%N)
-    w=$(awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.4f", (b - a) / 1e9 }')
-    rss=$(tail -n 1 "$raw/$slug.time" 2>/dev/null | tr -cd '0-9'); [ -n "$rss" ] || rss=0
+    timed "$dir" "$raw" "$slug" "$@" "$runjs" "$name"
     line=$(grep -F "$name: " "$raw/$slug.out" | head -n 1)
     ip=$(echo "$line" | sed -n 's/.* in \([0-9.]*\)s$/\1/p'); [ -n "$ip" ] || ip=-
     case "$line" in *": OK "*) st=ok ;; *ERR*) st=err ;; *) st=fail ;; esac
     [ $rc -ne 0 ] && st=fail
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$st" "$w" "$rss" "$ip" "$rc" >>"$out"
-    echo "$label $name $st $w s $rss KB" >&2
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$st" "$w" "$rss" "$ip" "$rc" "$counters" "$attempts" "$und" >>"$out"
+    echo "$label $name $st $w s $rss KB ($und)" >&2
   done ;;
 avant)
   [ $# -eq 3 ] || die "avant needs BIN_DIR RUN_JS OUT.tsv"
   bindir=$1 runjs=$2 out=$3
   need_dir BIN_DIR "$bindir"; need_runjs "$runjs"
   raw="$out.raw"; mkdir -p "$raw"
+  spawner "$raw"
   header "Avant" >"$out"
   tasks "$runjs" | while IFS="$(printf '\t')" read -r name sum; do
     slug=$(echo "$name" | tr 'A-Z' 'a-z' | sed 's/::/_/g')
     if [ ! -x "$bindir/$slug" ]; then
       printf '%s\tfail\t-\t-\t-\t-\n' "$name" >>"$out"; continue
     fi
-    t0=$(date +%s%N)
-    (cd "$bindir" && timeout -k 10 900 /usr/bin/time -f '%M' -o "$raw/$slug.time" "./$slug" </dev/null >"$raw/$slug.out" 2>"$raw/$slug.err")
-    rc=$?; t1=$(date +%s%N)
-    w=$(awk -v a="$t0" -v b="$t1" 'BEGIN { printf "%.4f", (b - a) / 1e9 }')
-    rss=$(tail -n 1 "$raw/$slug.time" 2>/dev/null | tr -cd '0-9'); [ -n "$rss" ] || rss=0
+    timed "$bindir" "$raw" "$slug" "./$slug"
     got=$(head -n 1 "$raw/$slug.out" | tr -d ' \r')
     if [ $rc -ne 0 ]; then st=fail; elif [ "$got" = "$sum" ]; then st=ok; else st=err; fi
-    printf '%s\t%s\t%s\t%s\t-\t%s\n' "$name" "$st" "$w" "$rss" "$rc" >>"$out"
-    echo "Avant $name $st $w s $rss KB" >&2
+    printf '%s\t%s\t%s\t%s\t-\t%s\t%s\t%s\t%s\n' "$name" "$st" "$w" "$rss" "$rc" "$counters" "$attempts" "$und" >>"$out"
+    echo "Avant $name $st $w s $rss KB ($und)" >&2
   done ;;
 table)
   [ $# -ge 2 ] && [ $# -le 3 ] || die "table needs REF_DIR AVANT [PUBLISHED.js]"
@@ -175,8 +235,8 @@ table)
   FILENAME == pubtsv { if ($1 == "t") pt[$2, $3] = $4; else pm[$2, $3] = $4; next }
   FILENAME == notesfile { if ($1 != "" && $1 !~ /^#/) note[$1] = $2; next }
   FILENAME == runsfile { if ($0 ~ / prod$/) { sub(/ prod$/, ""); prod[$0] = 1 }; next }
-  file == 1 { order[++n] = $1; ast[$1] = $2; aw[$1] = $3; ar[$1] = $4; next }
-  { lang = fname; langs[lang] = 1; st[lang, $1] = $2; w[lang, $1] = $3; r[lang, $1] = $4 }
+  file == 1 { order[++n] = $1; ast[$1] = $2; aw[$1] = $3; ar[$1] = $4; if ($13 ~ /^no/) dist[$1] = dist[$1] " Avant: disturbed (" $12 " attempts);"; next }
+  { lang = fname; langs[lang] = 1; st[lang, $1] = $2; w[lang, $1] = $3; r[lang, $1] = $4; if ($13 ~ /^no/) dist[$1] = dist[$1] " " lang ": disturbed;" }
   END {
     for (i = 1; i <= n; i++) {
       t = order[i]; bt[t] = ""; br[t] = ""; miss[t] = ""
@@ -202,6 +262,7 @@ table)
       }
       if (ast[t] != "ok") miss[t] = miss[t] " Avant: " ast[t] ";"
       if (t in note) miss[t] = miss[t] " " note[t]
+      if (t in dist) miss[t] = miss[t] dist[t]
     }
     printf "Avant source: %s. Multiplier = Avant / best measured here; best excludes failed runs. Crystal and Go columns are Avant/Crystal and Avant/Go as time / memory.\n\n", (avsrc == "lr" ? "lr-avant.tsv (one wrapper for all)" : "harness runtime.tsv (its own wrapper; peak RSS by GNU time; not the same method as the references)")
     sec("Combined (worse of the two multipliers)", "both")
