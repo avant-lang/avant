@@ -368,8 +368,8 @@ pub fn mir_lv_loops(f: MFunc): LvLoops {
   changed = true
   while changed {
     changed = false
-    for i in 1..rpo.size {
-      b = rpo[i]
+    for i2 in 1..rpo.size {
+      b = rpo[i2]
       nd = -1
       k = 0
       while k < preds[b].size {
@@ -433,9 +433,9 @@ pub fn mir_lv_loops(f: MFunc): LvLoops {
     i += 1
   }
   for bd in lp.bodies {
-    for i in 0..n {
-      if bd[i] {
-        lp.depth[i] += 1
+    for ix in 0..n {
+      if bd[ix] {
+        lp.depth[ix] += 1
       }
     }
   }
@@ -1354,35 +1354,35 @@ fn lv_version(lp: LvLoop, terms: LvTerms): Int {
       xp = xl
     }
   }
-  for i in 0..terms.lo_bk.size {
+  for i2 in 0..terms.lo_bk.size {
     bo: Array(Int) = [0]
-    if terms.lo_bk[i] == 1 {
+    if terms.lo_bk[i2] == 1 {
       blk = lv_widen_in(f, loc, blk, lp.ind, hdr, bo)
     } else {
-      blk = lv_widen_in(f, loc, blk, terms.lo_bv[i], hdr, bo)
+      blk = lv_widen_in(f, loc, blk, terms.lo_bv[i2], hdr, bo)
     }
     base = bo[0]
     s = lv_new_local(f, mt_i64())
-    blk.stmts.push(lv_assign(loc, s, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(base), lv_c_i64(terms.lo_off[i]))))
+    blk.stmts.push(lv_assign(loc, s, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(base), lv_c_i64(terms.lo_off[i2]))))
     g = lv_new_local(f, mt_bool())
     blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_ge(), lv_copy_local(s), lv_c_i64(0))))
     blk = lv_test(f, loc, blk, g, hdr)
   }
-  for i in 0..terms.up_h.size {
-    a = lv_c_i64(terms.up_off[i])
-    if terms.up_bk[i] != 3 {
+  for ix in 0..terms.up_h.size {
+    a = lv_c_i64(terms.up_off[ix])
+    if terms.up_bk[ix] != 3 {
       base = xp
-      if terms.up_bk[i] == 2 {
+      if terms.up_bk[ix] == 2 {
         uo: Array(Int) = [0]
-        blk = lv_widen_in(f, loc, blk, terms.up_bv[i], hdr, uo)
+        blk = lv_widen_in(f, loc, blk, terms.up_bv[ix], hdr, uo)
         base = uo[0]
       }
       s = lv_new_local(f, mt_i64())
-      blk.stmts.push(lv_assign(loc, s, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(base), lv_c_i64(terms.up_off[i]))))
+      blk.stmts.push(lv_assign(loc, s, lv_rv2(mrk_binary(), mop_add(), lv_copy_local(base), lv_c_i64(terms.up_off[ix]))))
       a = lv_copy_local(s)
     }
     g = lv_new_local(f, mt_bool())
-    blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_lt(), a, lv_copy_local(sizes[terms.up_h[i]]))))
+    blk.stmts.push(lv_assign(loc, g, lv_rv2(mrk_cmp(), mop_lt(), a, lv_copy_local(sizes[terms.up_h[ix]]))))
     blk = lv_test(f, loc, blk, g, hdr)
   }
   last = blk
@@ -1581,9 +1581,9 @@ fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int): Bool {
     loc = t0.loc
   }
   n0 = f.blocks.size
-  for b in 0..n0 {
-    if body[b] {
-      blk = f.blocks[b]
+  for bx in 0..n0 {
+    if body[bx] {
+      blk = f.blocks[bx]
       j = 0
       while j < blk.stmts.size {
         st = blk.stmts[j]
