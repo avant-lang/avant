@@ -461,61 +461,38 @@ static inline void **gc_frame_words(const Frame *f) {
   return (void **)((uintptr_t)f + 2 * sizeof(void *));
 }
 
-/* A cursor over one record's root slots: an inline map's remaining bits,
- * a map's remaining word indices, or a slot array's remaining entries. */
-typedef struct SlotCursor {
-  void **words;
-  uint64_t bits;
-  const uint32_t *idx;
-  void ***slots;
-  uint32_t i;
-  uint32_t n;
-} SlotCursor;
-
-static inline void gc_slot_cursor(SlotCursor *c, const Frame *f) {
-  uintptr_t d = gc_frame_desc(f);
-  c->words = gc_frame_words(f);
-  c->bits = 0;
-  c->idx = NULL;
-  c->slots = NULL;
-  c->i = 0;
-  c->n = 0;
-  if (d & AVANT_GC_FRAME_INPLACE) {
-    c->bits = (uint64_t)d >> 1;
-  } else if (d & AVANT_GC_FRAME_MAPPED) {
-    const AvantGcFrameMap *m = (const AvantGcFrameMap *)(d - AVANT_GC_FRAME_MAPPED);
-    c->idx = m->word;
-    c->n = (uint32_t)m->n;
-  } else {
-    c->slots = f->slots;
-    c->n = f->n;
-  }
-}
-
-/* The next root slot's address into *slot; 0 when the record has no
- * more (a slot array's entry is passed on as it is, null included). */
-static inline int gc_slot_next(SlotCursor *c, void ***slot) {
-  if (c->bits) {
-    unsigned b = (unsigned)__builtin_ctzll(c->bits);
-    c->bits &= c->bits - 1;
-    *slot = c->words + b;
-    return 1;
-  }
-  if (c->i < c->n) {
-    uint32_t i = c->i++;
-    *slot = c->idx ? c->words + c->idx[i] : c->slots[i];
-    return 1;
-  }
-  return 0;
-}
-
+/* EACH_SLOT_OF: an in-place record with an inline map walks its map's
+ * bits (the common record, a loop the compiler keeps in registers);
+ * any other record walks n entries, a map's word indices or a slot
+ * array's slot addresses (an entry of the array is passed on as it is,
+ * null included). BODY appears twice in the expansion; `break` and
+ * `continue` act on the slot loop in both. */
 #define EACH_SLOT_OF(F, SLOT, BODY)                                                 \
   do {                                                                              \
-    SlotCursor eso_c_;                                                              \
-    void **SLOT;                                                                    \
-    gc_slot_cursor(&eso_c_, (F));                                                   \
-    while (gc_slot_next(&eso_c_, &SLOT)) {                                          \
-      BODY                                                                          \
+    const Frame *eso_f_ = (F);                                                      \
+    uintptr_t eso_d_ = gc_frame_desc(eso_f_);                                       \
+    if (eso_d_ & AVANT_GC_FRAME_INPLACE) {                                          \
+      void **eso_w_ = gc_frame_words(eso_f_);                                       \
+      uint64_t eso_b_;                                                              \
+      for (eso_b_ = (uint64_t)eso_d_ >> 1; eso_b_; eso_b_ &= eso_b_ - 1) {          \
+        void **SLOT = eso_w_ + __builtin_ctzll(eso_b_);                             \
+        BODY                                                                        \
+      }                                                                             \
+    } else {                                                                        \
+      const uint32_t *eso_x_ = NULL;                                                \
+      void ***eso_s_ = eso_f_->slots;                                               \
+      uint32_t eso_n_ = 0, eso_i_;                                                  \
+      if (eso_d_ & AVANT_GC_FRAME_MAPPED) {                                         \
+        const AvantGcFrameMap *eso_m_ = (const AvantGcFrameMap *)(eso_d_ - AVANT_GC_FRAME_MAPPED); \
+        eso_x_ = eso_m_->word;                                                      \
+        eso_n_ = (uint32_t)eso_m_->n;                                               \
+      } else {                                                                      \
+        eso_n_ = eso_f_->n;                                                         \
+      }                                                                             \
+      for (eso_i_ = 0; eso_i_ < eso_n_; eso_i_++) {                                 \
+        void **SLOT = eso_x_ ? gc_frame_words(eso_f_) + eso_x_[eso_i_] : eso_s_[eso_i_]; \
+        BODY                                                                        \
+      }                                                                             \
     }                                                                               \
   } while (0)
 

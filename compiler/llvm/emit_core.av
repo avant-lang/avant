@@ -229,6 +229,22 @@ pub class LlEmit {
     ll_local("_${n}.${name}")
   }
 
+  // The address of local n where it is used: its alloca, or, for a slot
+  // local, its place in the frame record (emit_gc.av), a GEP of %gcf
+  // emitted here, in the using block. At --debug FastISel folds such a GEP
+  // into the access's frame address; one GEP made in the entry block
+  // would be a value spilled there and reloaded at every use in another
+  // block (the compiler compiling itself --debug took 2.5% more
+  // instructions so). -O3 merges the repeated GEPs.
+  pub fn local_addr(n: Int): String {
+    if self.frame_words >= 0 && n < self.frame_at.size && self.frame_at[n] >= 0 {
+      t = tmp()
+      line("${t} = getelementptr inbounds i8, ptr %gcf, i64 ${self.frame_at[n]}")
+      return t
+    }
+    local_name(n)
+  }
+
   // Rule E2: no slot access is volatile. A collection reads and rewrites
   // a thread's slots only while that thread is stopped at a safepoint (a
   // collecting call, the poll) or native (inside a call), in a shared
@@ -279,7 +295,7 @@ pub class LlEmit {
   // see ll_tbaa_last). An index operand is evaluated where its projection
   // is.
   pub fn place_ptr(p: MPlace): String {
-    ptr = local_name(p.local)
+    ptr = local_addr(p.local)
     ty = self.f.locals[p.local].ty
     volatile = slot_vol(p.local)
     // The memory the place is in, from its last deref: 0 a local, 1 an

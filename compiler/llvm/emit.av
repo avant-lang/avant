@@ -332,16 +332,16 @@ fn ll_function(e: LlEmit, f: MFunc) {
   for i in 0..f.locals.size {
     if f.valid_local(i) {
       ty = f.locals[i].ty
-      if e.frame_words >= 0 && e.frame_at[i] >= 0 {
-        e.line("${e.local_name(i)} = getelementptr inbounds i8, ptr %gcf, i64 ${e.frame_at[i]}")
-      } else {
+      // A slot local has no alloca: its address is its place in the
+      // record, computed where it is used (local_addr).
+      if e.frame_words < 0 || e.frame_at[i] < 0 {
         e.line("${e.local_name(i)} = alloca ${e.llt(ty)}, align ${e.align(ty)}")
       }
     }
   }
   i = 1
   while i <= f.nparams {
-    e.store(f.locals[i].ty, "%a${i}", e.local_name(i), e.slot_vol(i))
+    e.store(f.locals[i].ty, "%a${i}", e.local_addr(i), e.slot_vol(i))
     i += 1
   }
   e.line("br label %bb0")
@@ -490,7 +490,7 @@ fn ll_call(e: LlEmit, st: MStmt) {
   }
   if st.dest >= 0 {
     d = st.dest
-    e.store(e.f.locals[d].ty, result, e.local_name(d), e.slot_vol(d))
+    e.store(e.f.locals[d].ty, result, e.local_addr(d), e.slot_vol(d))
   }
 }
 
@@ -670,7 +670,7 @@ fn ll_term(e: LlEmit, t: MTerm) {
   } else if k == mtk_return() {
     if e.f.has_ret() {
       ty = e.f.locals[0].ty
-      x = e.load(ty, e.local_name(0), e.slot_vol(0))
+      x = e.load(ty, e.local_addr(0), e.slot_vol(0))
       e.line("ret ${e.llt(ty)} ${x}")
     } else {
       e.line("ret void")

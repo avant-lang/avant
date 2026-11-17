@@ -260,7 +260,7 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
   plan = ll_cabi_plan(ts, sig)
   args: Array(String) = []
   if plan.ret.kind == cabi_memory() {
-    args.push("ptr sret(${e.llt(plan.ret.ty)}) align ${e.align(plan.ret.ty)} ${e.local_name(st.dest)}")
+    args.push("ptr sret(${e.llt(plan.ret.ty)}) align ${e.align(plan.ret.ty)} ${e.local_addr(st.dest)}")
   }
   i = 0
   while i < plan.args.size && i < st.args.size {
@@ -316,7 +316,7 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
   d = st.dest
   slot = e.slot_vol(d)
   if rv.kind == cabi_direct() {
-    e.store(rv.ty, r, e.local_name(d), slot)
+    e.store(rv.ty, r, e.local_addr(d), slot)
     return
   }
   for j in 0..rv.parts.size {
@@ -326,7 +326,7 @@ pub fn ll_cabi_call(e: LlEmit, st: MStmt, name: String, sig: Int) {
       e.line("${x} = extractvalue ${rtext} ${r}, ${j}")
     }
     g = e.tmp()
-    e.line("${g} = getelementptr inbounds i8, ptr ${e.local_name(d)}, i64 ${rv.offs[j]}")
+    e.line("${g} = getelementptr inbounds i8, ptr ${e.local_addr(d)}, i64 ${rv.offs[j]}")
     e.line("store${e.vol(slot)} ${rv.parts[j]} ${x}, ptr ${g}, align ${e.align(rv.ty)}")
   }
 }
