@@ -163,8 +163,27 @@ fn format_usage_error(message: String) {
 // read or formatted is reported and the status is 1; the other files are
 // still done. Usage errors exit 1.
 pub fn driver_format(args: Array(String)) {
-  if args.size > 0 && args[0] == "--calls" {
-    driver_format_calls(argv_drop_first(args))
+  // --calls rewrites the files in place, so --write beside it (before or
+  // after, in any order) asks for what it does anyway; --check is refused,
+  // and so is any other flag, before a file is read
+  calls = false
+  for a in args {
+    if a == "--calls" {
+      calls = true
+    }
+  }
+  if calls {
+    files: Array(String) = []
+    for a in args {
+      if a == "--check" {
+        format_usage_error("format --calls writes the files it changes; it takes no --check")
+      } else if a != "--calls" && a != "--write" && str_starts(a, "-") {
+        format_usage_error("unknown format argument ${a}")
+      } else if a != "--calls" && a != "--write" {
+        files.push(a)
+      }
+    }
+    driver_format_calls(files)
     return
   }
   check = false

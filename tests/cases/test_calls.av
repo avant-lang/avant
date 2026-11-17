@@ -191,6 +191,38 @@ fn check_format_calls(c: Checks, compiler: String, dir: String) {
   c.eq_int(code2, 0, "format --calls again: exits 0")
   c.eq_str(log_text(src), after, "format --calls again: changes nothing")
   c.eq_int(compile_av(compiler, src, "${dir}/calls-format.bin", "${dir}/calls-format.clog"), 0, "format --calls: the result compiles")
+  // --write beside --calls (either side) asks for what --calls does: the
+  // file is rewritten and nothing reads the flag as a file
+  _ = file_write(src, before)
+  wargs: Array(String) = []
+  wargs.push("format")
+  wargs.push("--calls")
+  wargs.push("--write")
+  wargs.push(src)
+  code3 = process_run_out(compiler, wargs, "${dir}/calls-format3.log") ?? -1
+  c.eq_int(code3, 0, "format --calls --write: exits 0")
+  c.eq_str(log_text(src), after, "format --calls --write: the parentheses written")
+  c.eq_str(log_text("${dir}/calls-format3.log"), "${src}: 7\n", "format --calls --write: names the file and the count, no error")
+  _ = file_write(src, before)
+  vargs: Array(String) = []
+  vargs.push("format")
+  vargs.push("--write")
+  vargs.push("--calls")
+  vargs.push(src)
+  c.eq_int(process_run_out(compiler, vargs, "${dir}/calls-format4.log") ?? -1, 0, "format --write --calls: exits 0")
+  c.eq_str(log_text(src), after, "format --write --calls: the parentheses written")
+  // --check and an unknown flag are refused before any file is written
+  _ = file_write(src, before)
+  for bad in ["--check", "--quiet"] {
+    bargs: Array(String) = []
+    bargs.push("format")
+    bargs.push("--calls")
+    bargs.push(bad)
+    bargs.push(src)
+    c.eq_int(process_run_out(compiler, bargs, "${dir}/calls-format-bad.log") ?? -1, 1, "format --calls ${bad}: exits 1")
+    c.expect(str_has(log_text("${dir}/calls-format-bad.log"), bad), "format --calls ${bad}: the message names the flag")
+    c.eq_str(log_text(src), before, "format --calls ${bad}: the file is left as it was")
+  }
 }
 
 fn test_main(c: Checks) {
