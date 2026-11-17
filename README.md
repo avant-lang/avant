@@ -99,7 +99,7 @@ avant compile hello.av             # build ./hello
 avant compile hello.av --release   # the optimized build: use it whenever you measure
 ```
 
-The three build modes are compared in [Build modes](#build-modes).
+The two build modes are compared in [Build modes](#build-modes).
 
 Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.md)); what is decided but not built is in [Not built yet](#not-built-yet) and beside each feature it limits.
 
@@ -4120,16 +4120,17 @@ Options may sit before or after the file, up to `--`.
 
 ### Build modes
 
-| | `--debug` | (no flag on `compile`) | `--release` |
-| --- | --- | --- | --- |
-| Chosen by default for | `avant run`, `avant test` | `avant compile` | nothing: ask for it |
-| Optimization | none (LLVM `-O0`, its fast instruction selector) | a short pass list | full (`-O3`) |
-| Compiles | fastest | fast | slowest |
-| Use it for | the edit-and-run loop | a binary to keep around | **anything you measure, and anything you ship** |
+| | `--debug` | `--release` |
+| --- | --- | --- |
+| Chosen by default for | `avant run`, `avant test` | `avant compile` |
+| Optimization | none (LLVM `-O0`, its fast instruction selector) | full (`-O3`) |
+| Compiles | fastest | about 1.5 times `--debug` on a small program, three and a half times on a very large one |
+| Use it for | the edit-and-run loop | **anything you keep, measure or ship** |
 
-- **Time a program only with `--release`** (`avant run` builds at `-O0`); the [Benchmarks](#benchmarks) use `--release --cpu=v3`.
+- **Time a program only with `--release`** (`avant run` builds at `-O0`; `avant compile` builds `--release`); the [Benchmarks](#benchmarks) use `--release --cpu=v3`.
 - An explicit flag wins over the verb's default; no environment variable selects the mode.
-- The language is the same in every mode: bounds, overflow and conversion checks are never off, and the collector is precise in all three.
+- Every option that takes a value takes it either way: `--cpu=v3` or `--cpu v3`, `--jobs=4` or `--jobs 4`.
+- The language is the same in every mode: bounds, overflow and conversion checks are never off, and the collector is precise in both.
 - `--cpu`: `compile` targets `v2` by default (every x86-64 processor of the last decade); `run` and `test`, the machine's highest level. `--cpu=v3` (AVX2) is for recent hardware only; `native` is this machine exactly.
 
 ### Program arguments
@@ -4228,7 +4229,7 @@ Where Avant differs on purpose:
 | `Array<Int>`, `[]int`, `Vec<i32>` | `Array(Int)`; a single capital letter in a signature is a type parameter ([Generics](#generics)) | |
 | `return` inside a block returning from the block | in a builtin's block (`each`), `return` leaves the function; in a lambda, the lambda ([Builtin blocks are loops](#builtin-blocks-are-loops)) | |
 | a panic caught per request by the server | a trap ends the process: run servers under a supervisor ([Traps](#traps)) | no unwinding machinery |
-| one optimized build (Go) | three modes: time programs only with `--release` ([Build modes](#build-modes)) | a fast edit-and-run loop |
+| one optimized build (Go) | two modes: `--debug` for the edit-and-run loop, `--release` for the rest, and only it is timed ([Build modes](#build-modes)) | a fast edit-and-run loop |
 | a power operator `**` | none; multiply, or declare C's `pow` in a `lib` block ([Floats](#floats)) | |
 | `async`/`await` | OS threads and blocking calls: `spawn`, `.parallel`, channels ([Concurrency](#concurrency)) | no function coloring |
 

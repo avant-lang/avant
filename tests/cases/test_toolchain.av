@@ -2,11 +2,12 @@ import harness
 
 // The codegen mode each verb selects (moved off
 // the old back end's argument log): `run` compiles --debug, a bare
-// `compile` uses the default mode, `--release` and its alias `--final`
-// the full optimization. The builds are deterministic, so the mode shows
+// `compile` uses --release (there are two modes), and `--final` is an
+// alias of `--release`. The builds are deterministic, so the mode shows
 // in the bytes: run's binary (kept with --keep-tmp) is compile --debug's,
-// --final's is --release's, and debug, default, and release are three
-// different programs. The fixture's helper is inlined only by --release.
+// a bare compile's and --final's are --release's, and debug and release
+// are two different programs. The fixture's helper is inlined only by
+// --release.
 
 fn tc_compile(compiler: String, src: String, bin: String, mode: String, log: String): Int {
   args: Array(String) = []
@@ -92,11 +93,10 @@ fn test_toolchain(c: Checks) {
     bare = "${base}-bare.bin"
     optimized = "${base}-release.bin"
     c.expect(!tc_same(bare, debug), "bare compile does not use --debug codegen")
-    c.expect(!tc_same(bare, optimized), "bare compile does not use --release codegen")
+    c.expect(tc_same(bare, optimized), "bare compile is --release")
     c.expect(!tc_same(debug, optimized), "--debug and --release are different codegen")
     c.expect(tc_same("${base}-final.bin", optimized), "compile --final is --release")
     c.expect(tc_fn(debug, "helper_twice"), "--debug keeps the helper")
-    c.expect(tc_fn(bare, "helper_twice"), "the default mode does not inline the helper")
     c.expect(!tc_fn(optimized, "helper_twice"), "--release inlines the helper")
 
     // The CPU level: an artifact defaults to v2

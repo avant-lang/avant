@@ -20,16 +20,13 @@ lib avant_llvm {
 }
 
 // The codegen modes, one table: the new-pass-manager pipeline and the
-// codegen optimization level (0 None, which lets LLVM pick FastISel; 2
-// Default; 3 Aggressive). The keys are the compiler's codegen names
-// (verb_codegen): "debug" (--debug), "default" (compile's bare mode),
-// "release" (--release).
+// codegen optimization level (0 None, which lets LLVM pick FastISel; 3
+// Aggressive). The keys are the compiler's codegen names (verb_codegen):
+// "debug" (--debug, run's and test's default) and "release" (--release,
+// compile's default).
 pub fn llvm_mode_passes(codegen: String): String {
   if codegen == "release" {
     return "default<O3>"
-  }
-  if codegen == "default" {
-    return "mem2reg,sccp,dce,simplifycfg"
   }
   "default<O0>"
 }
@@ -37,9 +34,6 @@ pub fn llvm_mode_passes(codegen: String): String {
 pub fn llvm_mode_level(codegen: String): Int {
   if codegen == "release" {
     return 3
-  }
-  if codegen == "default" {
-    return 2
   }
   0
 }

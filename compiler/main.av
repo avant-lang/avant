@@ -70,7 +70,7 @@ pub fn show_usage {
   puts("")
   puts("FILE.av is the program root. import name loads name.av beside it.")
   puts("Programs are compiled by the LLVM built into avant (no backend process) and linked with cc.")
-  puts("With no flag, run uses --debug (fast) and compile uses the default optimization (kept artifacts).")
+  puts("With no flag, run and test use --debug (fast) and compile uses --release (full optimization).")
   puts("--release (or --final) is the scored mode (full optimization). --debug is the fast mode.")
   puts("--cpu=baseline|v2|v3|v4|native: the x86-64 level of the code. compile defaults to v2; run and test use this machine's highest level.")
   puts("Run options may sit before or after FILE.av. Arguments after -- belong to the program.")
@@ -696,9 +696,9 @@ pub fn driver_fetch(args: Array(String)) {
 // Internal, not in the usage text: compiles a textual LLVM IR file to an
 // object with the in-process LLVM (compiler/llvm/glue.av).
 //   avant __llvm-obj IN.ll OUT.o [--debug|--release]
-// No flag is compile's bare mode. Exit 0, or 1 with the message on stderr.
+// No flag is --release, compile's default. Exit 0, or 1 with the message on stderr.
 fn driver_llvm_obj(args: Array(String)) {
-  codegen = "default"
+  codegen = "release"
   files: Array(String) = []
   for a in args {
     if a == "--debug" {
@@ -730,12 +730,12 @@ fn driver_llvm_obj(args: Array(String)) {
 //   avant __mir-build NAME OUT [--debug|--release] [--emit-ll FILE]
 //                    [--object] [--call-forms] [--time]
 //   avant __mir-build --list
-// No flag is compile's bare mode. --object stops at the object (OUT); a
+// No flag is --release, compile's default. --object stops at the object (OUT); a
 // module without `main` needs it. --call-forms emits allocation and the
 // barrier as calls. --time prints the phases' microseconds on stderr.
 // Exit 0, or 1 with the message on stderr.
 fn driver_mir_build(args: Array(String)) {
-  job = LlvmJob.new("default")
+  job = LlvmJob.new("release")
   files: Array(String) = []
   object = false
   timed = false
