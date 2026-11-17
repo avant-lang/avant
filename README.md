@@ -3983,7 +3983,7 @@ fn main: Int {
 }
 ```
 
-`run_golden` and `rejects` compile a program, so they need `AVANT_COMPILER` set to the compiler under test; `check` alone does not.
+`run_golden` and `rejects` compile a program, so they need `AVANT_COMPILER` set to the compiler under test; `check` alone does not. Under `avant test` it is set for you: to the value you exported, else to the path of the `avant` running the tests.
 
 ### Serial and parallel tests
 
@@ -4197,7 +4197,7 @@ Run-time failures are [traps](#traps).
 | --- | --- |
 | `TMPDIR` | where the private temporary directory is created |
 | `AVANT_KEEP_TMP=1` | a program keeps its temporary directory (`--keep-tmp` sets it for the processes a command starts) |
-| `AVANT_COMPILER` | the compiler that `run_golden` and `rejects` use in tests ([Golden files](#golden-files)) |
+| `AVANT_COMPILER` | the compiler that `run_golden` and `rejects` use in tests ([Golden files](#golden-files)); `avant test` passes a value you exported to the tests as it is, and its own path when there is none |
 | `AVANT_ROOT` | another place to find the runtime and the standard library, instead of beside the `avant` binary |
 | `AVANT_RE2C` | another `re2c` binary for regex literals |
 | `AVANT_HEAP_MAX_MB`, `AVANT_GC_STATS`, ... | the collector, read by your program ([Collector settings](#collector-settings)) |

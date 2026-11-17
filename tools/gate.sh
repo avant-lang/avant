@@ -255,7 +255,7 @@ suite_pass() {
   rm -f "$out/junit-$1.xml" "$out/time-$1.txt"
   snap "$out/before-$1"
   # shellcheck disable=SC2086 # $3 holds VAR=value words
-  env -u AVANT_BACKEND $3 timeout -k 10 900 /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$2 test --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
+  env -u AVANT_BACKEND -u AVANT_COMPILER $3 timeout -k 10 900 /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$2 test --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
   rc=$?
   echo "rc=$rc" >> "$out/suite-$1.log"
   [ $rc -eq 0 ] || fail "suite on $1 failed (rc=$rc)"
@@ -366,7 +366,7 @@ gc_pass() {
   : > "$out/fails-$1.txt"
   find . -path ./.git -prune -o -path ./results -prune -o -print | LC_ALL=C sort > "$out/before-$1.repo"
   # shellcheck disable=SC2086 # $2 holds VAR=value words
-  env -u AVANT_BACKEND TMPDIR="$t" $2 timeout -k 10 900 /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$C test --jobs "$3" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
+  env -u AVANT_BACKEND -u AVANT_COMPILER TMPDIR="$t" $2 timeout -k 10 900 /usr/bin/time -p -o "$out/time-$1.txt" ./bin/avant-$C test --jobs "$3" --junit "$out/junit-$1.xml" > "$out/suite-$1.log" 2>&1 < /dev/null
   rc=$?
   echo "rc=$rc" >> "$out/suite-$1.log"
   [ $rc -eq 0 ] || echo "suite on $1 failed (rc=$rc)" >> "$out/fails-$1.txt"

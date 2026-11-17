@@ -167,7 +167,12 @@ pub class JobSched {
 }
 
 pub class TestHost {
+  // the runner's own path: it compiles every test file
   compiler: String = ""
+  // the tests' AVANT_COMPILER: the user's when exported (not empty), else
+  // the runner's own path; a relative one made absolute from the runner's
+  // directory, since a test may run it from another
+  tests_compiler: String = ""
   seq: Int = 0
   jobs: Int = 1
   coverage: Bool = false
@@ -179,6 +184,12 @@ pub class TestHost {
 
   fn initialize(compiler: String, jobs: Int) {
     self.compiler = compiler
+    self.tests_compiler = absolute_tool(compiler)
+    if given = env_get("AVANT_COMPILER") {
+      if given.size > 0 {
+        self.tests_compiler = absolute_tool(given)
+      }
+    }
     self.jobs = jobs
     self.cov = CovReport.new("")
   }
@@ -208,6 +219,27 @@ fn parse_u(s: String): Int {
 
 fn read_cwd: String {
   cwd_physical()
+}
+
+// A relative path with a directory part made absolute from this
+// directory (a test may run it from another, or run `avant test` there,
+// which passes it on); an absolute path, or a bare name looked up on PATH,
+// as it is.
+fn absolute_tool(path: String): String {
+  if path.size > 0 && path[0] != 47 && has_slash(path) {
+    return abs_join(cwd_physical(), path)
+  }
+  path
+}
+
+// Whether path names a directory part (a bare name is looked up on PATH).
+fn has_slash(path: String): Bool {
+  for i in 0..path.size {
+    if path[i] == 47 {
+      return true
+    }
+  }
+  false
 }
 
 fn abs_join(dir: String, rel: String): String {
@@ -441,7 +473,7 @@ fn queue_run(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
   if host.filter.size > 0 {
     matches = "${base}.matches"
   }
-  args = env_run(host.compiler, names, "", host.coverage, frag, host.filter, matches)
+  args = env_run(host.tests_compiler, names, "", host.coverage, frag, host.filter, matches)
   args.push(f.bin)
   run = JobCmd.new(args, "${base}.log", 1, at)
   run.names = names
@@ -457,7 +489,7 @@ fn queue_parallels(host: TestHost, sched: JobSched, f: FileRun, at: Int) {
       frag = "${host.fresh()}.junit"
       f.frags.push(frag)
     }
-    args = env_run(host.compiler, "", name, host.coverage, frag, "", "")
+    args = env_run(host.tests_compiler, "", name, host.coverage, frag, "", "")
     args.push(f.bin)
     cmd = JobCmd.new(args, "${host.fresh()}.log", 2, at)
     cmd.what = "the parallel test \"${name}\""
@@ -524,7 +556,7 @@ fn run_many(host: TestHost, files: Array(FileRun)) {
     if host.coverage {
       f.map = "${host.fresh()}.map"
     }
-    args = env_plain(host.compiler, host.coverage, f.map)
+    args = env_plain(host.tests_compiler, host.coverage, f.map)
     args.push(host.compiler)
     args.push("compile")
     args.push(f.abs)
