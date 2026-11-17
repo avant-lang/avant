@@ -73,6 +73,22 @@ fn test_errors(c: Checks) {
     // The lowering's L0001 guard, reached only by a C
     // callback that takes a struct by value (the SysV callback side of structs by value).
     expect_err(c, compiler, stamp, "l0001-guard", "struct Pair {\n  a: Int\n  b: Int\n}\nlib c {\n  fun malloc(n: Int): Ptr(Void)\n  fun qsort(p: Ptr(Void), n: Int, s: Int, f: fn(Pair): Int)\n}\nfn pick(p: Pair): Int {\n  p.a\n}\nfn main {\n  c.qsort(c.malloc(8), 0, 8, pick)\n}\n", "error[L0001]: not yet supported by the llvm back end: a C callback with a value of type %")
+    // Three forms the lowering once refused as "not yet supported" are
+    // refused by the checker first, or lowered before that point: the
+    // lowering's lines are internal errors now, and none is reachable.
+    expect_err(c, compiler, stamp, "hash-member-block", "fn main {\n  h = Hash(String, Int).new()\n  xs = h.keys() { |k|\n    puts(k)\n  }\n}\n", "error[E4003]: keys takes no arguments")
+    expect_err(c, compiler, stamp, "hash-field", "fn main {\n  h = Hash(String, Int).new()\n  m = h.count\n  puts(m)\n}\n", "error[E4000]: no method count on Hash")
+    expect_err(c, compiler, stamp, "buf-field", "fn main {\n  b = buf_new()\n  x = b.nosuch\n  puts(x)\n}\n", "error[E4000]: no method nosuch on Buf")
+    for tag in ["hash-member-block", "hash-field", "buf-field"] {
+      log_text = file_read("${scratch()}/errors-${stamp}-${tag}.log") ?? ""
+      c.expect(!str_has(log_text, "back end") && !str_has(log_text, "internal error"), "${tag}: refused by the checker, not the lowering")
+    }
+    each_src = "${scratch()}/errors-${stamp}-hash-each.av"
+    _ = file_write(each_src, "fn main {\n  h = Hash(String, Int).new()\n  h[\"a\"] = 1\n  h.each { |k, v|\n    puts(k)\n    puts(v)\n  }\n}\n")
+    c.eq_int(compile_av(compiler, each_src, "${scratch()}/errors-${stamp}-hash-each.bin", "${scratch()}/errors-${stamp}-hash-each.log"), 0, "Hash.each with a block is lowered before the member path")
+    no_args: Array(String) = []
+    c.eq_int(process_run_out("${scratch()}/errors-${stamp}-hash-each.bin", no_args, "${scratch()}/errors-${stamp}-hash-each.out") ?? -1, 0, "Hash.each runs")
+    c.eq_str(file_read("${scratch()}/errors-${stamp}-hash-each.out") ?? "", "a\n1\n", "Hash.each visits the entry")
     expect_err(c, compiler, stamp, "unknown-generic-type", "fn main {\n  c = Channel(Int).new(1)\n}\n", "unknown type Channel")
     // The bump constructor and nursery_reclaim are
     // gone; `T.bump(...)` is an ordinary (here undefined) type-level call.

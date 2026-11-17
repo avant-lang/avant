@@ -247,6 +247,20 @@ pub class MirLower {
     self.lw_err = r
   }
 
+  // A form the checker refuses, or the lowering handles before this
+  // point, reached all the same: a compiler bug, not a feature to come.
+  // An internal error at loc naming what; the first failure wins.
+  pub fn internal(loc: Location, what: String) {
+    if self.lw_err.size > 0 {
+      return
+    }
+    r = CompileError.new(loc, "L0002", "internal error: the llvm back end's lowering reached ${what}, which the checker refuses").render()
+    if r.size > 0 && r[r.size - 1] == 10 {
+      r = str_slice(r, 0, r.size - 1)
+    }
+    self.lw_err = r
+  }
+
   // A failure that is not a refusal of a construct (a file the build
   // needs could not be written): the message as given. The first failure
   // wins, as with refuse.
