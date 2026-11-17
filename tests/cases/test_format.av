@@ -353,10 +353,17 @@ fn test_format(c: Checks) {
     _ = file_write("${many}/deps/c.av", "fn main{\n}\n")
     _ = file_write("${many}/.hidden/d.av", "fn main{\n}\n")
     _ = file_write("${many}/sub/e.av", "fn main{\n}\n")
+    // Symbolic links to directories are not followed: one leads out of
+    // the tree, one back into it (a cycle the walk must not enter).
+    outside = "${scratch()}/format-${stamp}-outside"
+    mkdir_p(outside)
+    _ = file_write("${outside}/x.av", "fn main{\n}\n")
+    _ = process_run("/bin/ln", ["-s", outside, "${many}/linked"])
+    _ = process_run("/bin/ln", ["-s", many, "${many}/sub/loop"])
     dir_log = "${scratch()}/format-${stamp}-dir.log"
     dir_code = run_format(compiler, "format", many, dir_log, check_flags)
     c.eq_int(dir_code, 1, "a directory with drift: --check exits 1")
-    c.eq_str(read_or_empty(dir_log), "would change ${many}/sub/b.av\nwould change ${many}/sub/e.av\n", "a directory is walked in order, skipping deps and dot names")
+    c.eq_str(read_or_empty(dir_log), "would change ${many}/sub/b.av\nwould change ${many}/sub/e.av\n", "a directory is walked in order, skipping deps, dot names and links to directories")
     pair_log = "${scratch()}/format-${stamp}-pair.log"
     pair_flags: Array(String) = []
     pair_flags.push("${many}/sub/b.av")
@@ -371,6 +378,7 @@ fn test_format(c: Checks) {
     c.eq_int(mw_code, 0, "a directory: --write exits 0")
     c.eq_str(read_or_empty("${many}/sub/b.av"), "fn main {\n}\n", "--write rewrites a walked file")
     c.eq_str(read_or_empty("${many}/deps/c.av"), "fn main{\n}\n", "--write skips deps")
+    c.eq_str(read_or_empty("${outside}/x.av"), "fn main{\n}\n", "--write does not follow a link to a directory")
     mc_log = "${scratch()}/format-${stamp}-many-clean.log"
     mc_code = run_format(compiler, "format", many, mc_log, check_flags)
     c.eq_int(mc_code, 0, "a canonical directory: --check exits 0")

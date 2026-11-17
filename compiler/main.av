@@ -114,7 +114,8 @@ fn spawns_children(command: String): Bool {
 
 // The .av files under dir (format's directory argument), walked like
 // `avant test` walks tests/: a name that starts with `.` and a directory
-// named `deps` are skipped.
+// named `deps` are skipped, and a symbolic link to a directory is not
+// followed (a link to a file is formatted as the file).
 fn format_walk(dir: String, into: Array(String)) {
   names = dir_list(dir) ?? []
   i = 0
@@ -130,7 +131,7 @@ fn format_walk(dir: String, into: Array(String)) {
     }
     if str_ends(name, ".av") {
       into.push(path)
-    } else if file_exists("${path}/.") {
+    } else if file_exists("${path}/.") && !path_is_link(path) {
       format_walk(path, into)
     }
   }

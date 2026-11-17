@@ -33,6 +33,16 @@ pub fn self_exe_path: String {
   ""
 }
 
+// Whether path is a symbolic link itself (readlink succeeds only on a
+// link). The directory walks of `format`, `test` and the coverage report
+// do not follow a link to a directory: a link can lead out of the tree
+// (a bundled compiler's own sources) or back into it (a cycle).
+pub fn path_is_link(path: String): Bool {
+  one = buf_new()
+  one.push_byte(0)
+  oslink.readlink(path, one.to_s(), 1) >= 0
+}
+
 pub fn path_basename(path: String): String {
   i = path.size - 1
   while i >= 0 {

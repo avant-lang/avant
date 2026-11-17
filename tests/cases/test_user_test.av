@@ -235,6 +235,21 @@ fn test_user_test(c: Checks) {
       c.expect(ut_has(d_xml, "failures=\"1\""), "failed check: the JUnit report counts tests/test_${nm}.av as a failure")
       i += 1
     }
+    // The test walk does not follow a symbolic link to a directory: one
+    // leading out of the tree (its test would fail) and one back into it
+    // (a cycle) are skipped, and the run ends with the one real file.
+    mkdir_p("${root}/links/tests/sub")
+    mkdir_p("${root}/links-outside")
+    _ = file_write("${root}/links/avant.toml", "[package]\nname = \"links\"\nversion = \"0.1.0\"\n")
+    _ = file_write("${root}/links/tests/sub/test_real.av", "fn main: Int {\n  0\n}\n")
+    _ = file_write("${root}/links-outside/test_outside.av", "fn main: Int {\n  1\n}\n")
+    _ = process_run("/bin/ln", ["-s", "${root}/links-outside", "${root}/links/tests/out"])
+    _ = process_run("/bin/ln", ["-s", "${root}/links/tests", "${root}/links/tests/sub/loop"])
+    lk_rc = "${root}/links.rc"
+    lk_sh = "#!/bin/sh\ncd ${ut_quote(root)}/links && ${ut_quote(compiler)} test > ${ut_quote(root)}/links.log 2>&1; echo $? > ${ut_quote(lk_rc)}\n"
+    c.eq_int(ut_sh(lk_sh, lk_rc), 0, "test walk: links to directories are skipped, so the run passes")
+    lk_text = file_read("${root}/links.log") ?? ""
+    c.expect(ut_has(lk_text, "0 failed, 1 passed"), "test walk: the one real test file runs (${lk_text.size} bytes of log)")
     dp_rc = "${root}/failcheck-pass.rc"
     dp_sh = "#!/bin/sh\ncd ${ut_quote(root)}/failcheck && ${ut_quote(compiler)} test tests/test_pass.av > ${ut_quote(root)}/failcheck-pass.log 2>&1; echo $? > ${ut_quote(dp_rc)}\n"
     c.eq_int(ut_sh(dp_sh, dp_rc), 0, "failed check: a void main whose checks pass still passes")

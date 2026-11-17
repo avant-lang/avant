@@ -4075,11 +4075,11 @@ avant format src --write        # rewrite every file that changes
 avant format . --check          # CI: list files that would change, exit 1 if any
 ```
 
-- A path is a `.av` file or a directory, walked like `avant test` walks `tests/` (names starting with `.` and directories named `deps` are skipped).
+- A path is a `.av` file or a directory, walked like `avant test` walks `tests/` (names starting with `.` and directories named `deps` are skipped, and a symbolic link to a directory is not followed).
 - With one file and no flag, the text goes to stdout. `--check` writes nothing, prints `would change PATH` per file (`canonical` when none would), and exits 1 if any would.
 - The formatter works on tokens (no parsing, typechecking or imports), so it formats a file that does not compile yet; it is never part of a build.
 - A file that does not lex is reported and left alone (status 1); the others are still formatted. A usage error (no path, an unknown flag, `--check` with `--write`, several files without either) exits 1.
-- `avant format --calls FILE...`, the one mode that typechecks, checks each FILE as a program's root and gives `()` to every method call written without them in it and its imports (`x.sum`, a bare `sum` on the receiver, `Point.new`), leaving fields and the read-only properties (`size`, `bytes`) alone. It prints each changed file with its count; a second run changes nothing. It rewrites only what the checker reaches (a generic body, for the instances the program makes); a program with errors is rewritten where it was checked, with status 1.
+- `avant format --calls FILE...`, the one mode that typechecks, checks each FILE as a program's root and gives `()` to every method call written without them in it and its imports (`x.sum`, a bare `sum` on the receiver, `Point.new`), leaving fields and the read-only properties (`size`, `bytes`) alone. It prints each changed file with its count; a second run changes nothing. It rewrites only what the checker reaches (a generic body, for the instances the program makes); a program with errors is rewritten where it was checked, with status 1. It writes the files itself, so `--write` beside it changes nothing; `--check` is refused.
 
 ## Command line
 
