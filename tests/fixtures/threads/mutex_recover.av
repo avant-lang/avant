@@ -144,21 +144,21 @@ fn main {
     // made: the assignments after the call do not reach the rebuild.
     base = 30
     label = "rebuilt"
-    m = Mutex(Acc).new(Acc { n: 0 }, recover: { || Acc { n: base + label.size } })
+    m = Mutex(Acc).new(Acc { n: 0 }, recover: () { Acc { n: base + label.size } })
     base = 100
     label = "changed later"
     poison(m)
-    n = m.with { |acc| acc.n }
+    n = m.with (acc) { acc.n }
     puts("with: ${n}")
     ms: Array(Mutex(Acc)) = []
     for i in 0..3 {
-      ms.push(Mutex(Acc).new(Acc { n: 0 }, recover: { || Acc { n: base + i } }))
+      ms.push(Mutex(Acc).new(Acc { n: 0 }, recover: () { Acc { n: base + i } }))
     }
     base = 0
     got: Array(Int) = []
     for mi in ms {
       poison(mi)
-      got.push(mi.with { |acc| acc.n })
+      got.push(mi.with (acc) { acc.n })
     }
     puts("each: ${got[0]} ${got[1]} ${got[2]}")
   } else if kind == "heal-main-traps" {

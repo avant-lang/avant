@@ -66,7 +66,7 @@ fn psum(xs: Array(Int), depth: Int): Int {
   if depth == 0 {
     return xs.sum()
   }
-  parts = [0, 1].parallel { |k| psum(xs, depth - 1) + k }
+  parts = [0, 1].parallel (k) { psum(xs, depth - 1) + k }
   parts[0] + parts[1]
 }
 
@@ -119,13 +119,13 @@ fn value_cases(c: Checks) {
   // A dropped handle: the task still runs to its end.
   m = Mutex(Int).new(0)
   for i in 0..8 {
-    _ = spawn { m.with { |x| x += 1 } }
+    _ = spawn { m.with (x) { x += 1 } }
   }
   hv = spawn {
-    m.with { |x| x += 100 }
+    m.with (x) { x += 100 }
   }
   c.expect(void_ok(hv), "a Void value: the join")
-  c.expect(m.with { |x| x } >= 100, "a Void value")
+  c.expect(m.with (x) { x } >= 100, "a Void value")
 }
 
 fn try_cases(c: Checks) {
@@ -147,11 +147,11 @@ fn try_cases(c: Checks) {
   c.eq_int(h4.join() ?? -1, 12, "? with a value")
 
   // ? in a .parallel body: that element is the failure.
-  rs = [1, 5, 2].parallel { |k| check(k)? + 1 }
+  rs = [1, 5, 2].parallel (k) { check(k)? + 1 }
   c.eq_int(rs[0] ?? -1, 11, ".parallel ? 0")
   c.eq_int(rs[1] ?? -1, -1, ".parallel ? 1")
   c.eq_int(rs[2] ?? -1, 21, ".parallel ? 2")
-  ws = ["2", "x", "4"].parallel { |w| w.to_i()? * 2 }
+  ws = ["2", "x", "4"].parallel (w) { w.to_i()? * 2 }
   c.eq_int((ws[0] ?? -1) + (ws[1] ?? -1) + (ws[2] ?? -1), 11, ".parallel ? with nil")
 
   // ? inside a Mutex's with, in a spawn block: the lock is released.
@@ -163,7 +163,7 @@ fn try_cases(c: Checks) {
     }
   }
   c.eq_int(h5.join() ?? -1, -1, "? leaves with")
-  c.eq_int(m.with { |x| x }, 5, "the mutex is free and unchanged")
+  c.eq_int(m.with (x) { x }, 5, "the mutex is free and unchanged")
 }
 
 fn structured_cases(c: Checks) {

@@ -3163,7 +3163,7 @@ fn main {
     set_pool_size(args[2].to_i() ?? 1)
   }
   puts(pool_size())                        // => 2
-  squares = [1, 2, 3, 4].parallel { |x| x * x }
+  squares = [1, 2, 3, 4].parallel (x) { x * x }
   puts(squares[3])                         // => 16
 }
 ```
