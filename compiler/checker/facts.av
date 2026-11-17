@@ -2664,3 +2664,14 @@ pub fn (checker_self: Checker) facts_name(name: String): Bool {
   f = checker_self.facts
   f.fact_var.contains(name) || f.fact_cont.contains(name) || f.nn_var.contains(name) || f.cap_var.contains(name) || f.sv_var.contains(name) || f.sv_cont.contains(name) || f.bv_var.contains(name) || f.bv_cont.contains(name) || f.cs_var.contains(name) || f.cs_cont.contains(name) || f.gcap_var.contains(name) || f.gnn_var.contains(name) || f.gpos_var.contains(name) || f.gne_var.contains(name)
 }
+
+// An assignment's target, in a walker that does not call fact_after_stmt
+// (a switch arm, a value block, a value branch, an else guard's body): its
+// facts end, as they would there, and none is made.
+pub fn (checker_self: Checker) forget_assigned(s: Stmt) {
+  if s.kind == st_assign() {
+    if t = s.target, t.kind == ex_name() {
+      checker_self.forget_facts(t.ident)
+    }
+  }
+}

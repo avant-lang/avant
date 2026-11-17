@@ -621,6 +621,8 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
 // blocks and of a `with` body, and a binding chain's elements, were not
 // scanned).
 pub fn (checker_self: Checker) check_block_stmt(stmt: Stmt, expected: Ty, last: Bool) {
+  follows = checker_self.facts.after_follows
+  checker_self.facts.after_follows = false
   checker_self.scan_pending_stmt(stmt)
   mark = checker_self.facts.use_cont.size
   lw_mark = checker_self.facts.lam_written.size
@@ -634,6 +636,11 @@ pub fn (checker_self: Checker) check_block_stmt(stmt: Stmt, expected: Ty, last: 
         fresh.push(checker_self.facts.lam_written[i])
       }
       checker_self.sweep_proofs(stmt, fresh)
+    }
+    if !follows {
+      // A switch arm's, a value block's or a value branch's statement:
+      // no fact_after_stmt follows, so what it assigns keeps no fact.
+      checker_self.forget_assigned(stmt)
     }
   }
 }

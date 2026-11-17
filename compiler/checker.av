@@ -71,6 +71,9 @@ pub class FlowFacts {
   pub kill_cont: Array(String) = []
   // The names a lambda of this function assigns (checker/facts.av lw_has).
   pub lam_written: Array(String) = []
+  // Set by a walker that calls fact_after_stmt after the statement it
+  // hands to check_block_stmt (checker/spawn.av), which reads and clears it.
+  pub after_follows: Bool = false
   // ty_reaches's answers by the two types' mangled names, kept from one
   // function's facts to the next.
   pub reach_memo: Hash(String, Bool) = Hash(String, Bool).new()
@@ -794,6 +797,7 @@ pub class Checker {
         annotate_vstep(body[i - 1], body[i])
       }
       self.clear_poison()
+      self.facts.after_follows = true
       check_block_stmt(body[i], expected, last)
       if !self.has_err() {
         fact_after_stmt(body[i])
@@ -6240,6 +6244,7 @@ pub class Checker {
         annotate_vstep(b.body[i - 1], st)
       }
       self.clear_poison()
+      self.facts.after_follows = true
       check_block_stmt(st, self.return_type, false)
       if self.has_err() {
         return t_void()
