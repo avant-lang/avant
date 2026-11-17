@@ -571,11 +571,35 @@ pub fn (lw: MirLower) hash_inc(e: Expr, ht: Ty, ops: Array(MOperand), vty: Int):
   n
 }
 
+// `s: Set(T) = [a, b]`: the set Set(T).new() makes, then each element
+// added in the written order (the upsert: an element already there is
+// left as it is).
+pub fn (lw: MirLower) lower_set_lit(e: Expr, st: Ty): MOperand {
+  b = lw.lw_b
+  h = lw.lower_hash_new(e)
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  for el in e.elems {
+    v = lw.lower_expr(el)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(el.loc)
+    up: Array(MOperand) = []
+    up.push(h)
+    up.push(lw.hash_key_arg(st, v, el.loc))
+    up.push(b.c_null(mt_ptr()))
+    dummy = lw.call_to(mt_ptr(), lw.hash_op(st, "upsert", el.loc), up)
+  }
+  h
+}
+
 // The members of Set(T), a hash of T to Bool: `add` is the upsert
 // (one probe; an absent element is inserted, its Bool zero) and gives
 // whether it was absent; `contains` the find's found flag; `delete` the
 // take's (as a statement it is the hash's plain delete,
-// hash_delete_stmt); `to_a` the keys; `size`, `clear` and `each` the
+// hash_delete_stmt); `values` the keys; `size`, `clear` and `each` the
 // hash's.
 pub fn (lw: MirLower) set_member(e: Expr, recv: Expr, ht: Ty, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b
@@ -592,7 +616,7 @@ pub fn (lw: MirLower) set_member(e: Expr, recv: Expr, ht: Ty, name: String, args
   if lw.failed() {
     return zero
   }
-  if name == "to_a" && args.size == 0 {
+  if name == "values" && args.size == 0 {
     ops0 = lw.args_then_recv(args, recv)
     if lw.failed() {
       return zero

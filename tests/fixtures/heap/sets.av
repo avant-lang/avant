@@ -1,6 +1,6 @@
 // Set(T): add says whether the element was new, contains whether it is
 // there, delete whether it was (as a statement and as a value), size,
-// clear, each and to_a; elements of every kind a Hash key takes (Int,
+// clear, each, values and `for`; elements of every kind a Hash key takes (Int,
 // Int32, String, an enum, a small and a wide struct). A set grows past
 // several resizes and loses elements by delete; a set of fresh Strings
 // is built while the collector runs (the fixture runs under the
@@ -57,7 +57,7 @@ fn ints {
   check("ints deleted", !s.contains(1) && !s.contains(3) && s.contains(2))
   t = 0
   s.each { |v| t += v }
-  xs = s.to_a()
+  xs = s.values()
   xs.sort()
   puts("ints ${fresh} ${gone} ${s.size} ${t} ${xs[0]} ${xs[xs.size - 1]}")
 }
@@ -135,7 +135,45 @@ fn shared {
   puts("cleared ${(by["odd"] ?? Set(Int).new()).size}")
 }
 
+// A set from an array literal where the type says Set, `[]` the empty
+// one, `for` over a set, and a set returned and passed.
+fn evens(n: Int): Set(Int) {
+  s: Set(Int) = []
+  for i in 0..n {
+    s.add(i * 2)
+  }
+  s
+}
+
+fn count_in(s: Set(String), words: Array(String)): Int {
+  n = 0
+  for w in words {
+    if s.contains(w) {
+      n += 1
+    }
+  }
+  n
+}
+
+fn literals {
+  primes: Set(Int) = [2, 3, 5, 7, 5, 3]
+  t = 0
+  for p in primes {
+    t += p
+  }
+  names: Set(String) = ["ann", "bo", "${"ann"}"]
+  e = evens(50)
+  sum = 0
+  for v in e {
+    if v % 4 == 0 {
+      sum += v
+    }
+  }
+  puts("literals ${primes.size} ${t} ${names.size} ${count_in(names, ["bo", "cy", "ann"])} ${count_in([], ["bo"])} ${e.size} ${sum}")
+}
+
 fn main {
+  literals()
   ints()
   narrow()
   words()

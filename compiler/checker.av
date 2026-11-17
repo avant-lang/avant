@@ -985,6 +985,9 @@ pub class Checker {
           annotate_vstep(stmt.pre[pi], stmt)
           self.clear_poison()
           check_stmt(stmt.pre[pi], t_void(), false)
+          if stmt.for_kind == 2 && pi == 0 {
+            set_for_operand(stmt.pre[0])
+          }
           if !self.has_err() {
             fact_after_stmt(stmt.pre[pi])
           }
@@ -3113,6 +3116,9 @@ pub class Checker {
   }
 
   pub fn check_array_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if has_want && want.is_set() && !type.ty_has_var(want) {
+      return check_set_literal(expr, want)
+    }
     if expr.elems.size == 0 {
       if has_want && want.is_array() {
         return want
@@ -3191,6 +3197,38 @@ pub class Checker {
       i += 2
     }
     ty_hash(key, val)
+  }
+
+  // `for v in s` over a Set walks `s.values()`, an array of its elements
+  // made once before the loop (as `s.each` walks its keys): once the
+  // for's hidden array is checked and found a Set, its value becomes that
+  // call and the hidden name the array (the operand is checked once more
+  // only then, so a failed operand reports once).
+  pub fn set_for_operand(pre: Stmt) {
+    if v = pre.value, t = pre.target, st = lookup(t.ident), st.is_set() {
+      call = Expr.new(ex_call(), v.loc)
+      call.callee = "values"
+      call.receiver = v
+      pre.value = call
+      arr = check_expr(call)
+      t.ty = arr
+      bind(t.ident, arr)
+    }
+  }
+
+  // An array literal where a Set(T) is wanted (`s: Set(Int) = [1, 2]`,
+  // `[]` with a declared type): each element is a T, and the literal makes
+  // the set (lowered as Set(T).new() and an add of each element).
+  pub fn check_set_literal(expr: Expr, want: Ty): Ty {
+    if elem = want.key {
+      for el in expr.elems {
+        got = check_expr_as(el, elem)
+        if !ty_assignable(got, elem) {
+          fail(el.loc, "set element is ${got.show()}, expected ${elem.show()}")
+        }
+      }
+    }
+    want
   }
 
   pub fn check_hash_new(expr: Expr): Ty {
@@ -3871,9 +3909,9 @@ pub class Checker {
   }
 
   // Whether a `[]` or `[:]` argument (its stand-in t) fits a parameter of
-  // type p: an array parameter takes `[]`, a hash parameter `[:]`.
+  // type p: an array or a Set parameter takes `[]`, a hash parameter `[:]`.
   pub fn empty_fits(t: Ty, p: Ty): Bool {
-    (t.is_array() && p.is_array()) || (t.is_hash() && p.is_hash())
+    (t.is_array() && (p.is_array() || p.is_set())) || (t.is_hash() && p.is_hash() && !p.is_set())
   }
 
   // The stand-in type of a `[]` argument before its parameter is known

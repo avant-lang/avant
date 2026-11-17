@@ -759,8 +759,8 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
 
 // The members of Set(T): add, contains and delete take one element (add
 // says whether it was new, delete whether it was there), each walks the
-// elements, to_a gives them as an array, clear empties the set; size is
-// read without parentheses (check_field).
+// elements, values gives them as an array, clear empties the set; size
+// is read without parentheses (check_field).
 pub fn (checker_self: Checker) check_set_method(expr: Expr, set: Ty): Ty {
   elem = checker_self.t_int()
   if k = set.key {
@@ -782,7 +782,7 @@ pub fn (checker_self: Checker) check_set_method(expr: Expr, set: Ty): Ty {
     }
     return checker_self.t_bool()
   }
-  if c == "to_a" || c == "clear" {
+  if c == "values" || c == "clear" {
     if expr.args.size != 0 {
       checker_self.fail(expr.loc, "${c} takes no arguments")
     } else if b = expr.block {
@@ -825,8 +825,8 @@ pub fn (checker_self: Checker) check_set_method(expr: Expr, set: Ty): Ty {
     hint = " (write `s.add(v)`)"
   } else if c == "remove" {
     hint = " (write `s.delete(v)`)"
-  } else if c == "keys" || c == "values" {
-    hint = " (write `s.to_a()`)"
+  } else if c == "keys" || c == "to_a" {
+    hint = " (write `s.values()`)"
   }
   checker_self.fail_hint(expr.loc, "no method ${c} on ${set.show()}", hint)
   checker_self.t_int()

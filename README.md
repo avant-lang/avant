@@ -1528,25 +1528,33 @@ fn main {
   puts(seen.size)                // => 4
   puts(seen.contains("cat"))     // => true
   puts(seen.delete("cat"))       // => true
-  words = seen.to_a()
+  words = seen.values()
   words.sort()
   puts(words[0])                 // => and
+
+  primes: Set(Int) = [2, 3, 5, 7, 5]
+  total = 0
+  for p in primes {
+    total += p
+  }
+  puts(total)                    // => 17
 }
 ```
 
 | Operation | What it does |
 | --- | --- |
-| `Set(T).new()` | an empty set |
+| `Set(T).new()`, `[]` | an empty set; `[]` and an array literal make a set where the type says `Set(T)` (`s: Set(Int) = [1, 2, 3]`, a `Set` parameter, a result) |
 | `s.add(v)` | put `v` in; `true` when it was not there |
 | `s.contains(v)` | `Bool` |
 | `s.delete(v)` | take `v` out; `true` when it was there |
 | `s.size`, `s.clear()` | number of elements; remove all |
-| `s.to_a()` | the elements as an array, in unspecified order |
-| `s.each { \|v\| ... }` | walk every element |
+| `s.values()` | the elements as an array, in unspecified order |
+| `s.each { \|v\| ... }`, `for v in s` | walk every element (over the array `values()` makes when the walk starts) |
 
 - A set is stored as a `Hash` whose values are one byte nobody reads, and costs what that hash costs; a set is shared as a hash is.
-- **Iteration order is unspecified**, as a hash's; sort `to_a()` when order matters.
-- Not built yet: a set literal, `for v in s`, `==` on sets, and union, intersection and difference (a loop over `each` does them).
+- **Iteration order is unspecified**, as a hash's; sort `values()` when order matters.
+- A non-empty array literal passed straight to a `Set` parameter stays an array: give it a name with a declared type first.
+- Not built yet: `==` on sets, and union, intersection and difference (a loop over `for` does them).
 
 ## Structs and classes
 
