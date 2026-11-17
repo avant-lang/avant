@@ -198,6 +198,9 @@ pub fn (checker_self: Checker) sv_get(v: String): String {
 }
 
 pub fn (checker_self: Checker) sv_remove_var(v: String) {
+  if !checker_self.facts.sv_var.contains(v) {
+    return
+  }
   kept_v: Array(String) = []
   kept_c: Array(String) = []
   kept_s: Array(Int) = []
@@ -313,6 +316,9 @@ pub fn (checker_self: Checker) bv_delta_of(v: String): Int {
 }
 
 pub fn (checker_self: Checker) bv_remove_var(v: String) {
+  if !checker_self.facts.bv_var.contains(v) {
+    return
+  }
   kept_v: Array(String) = []
   kept_c: Array(String) = []
   kept_d: Array(Int) = []
@@ -418,6 +424,9 @@ pub fn (checker_self: Checker) cs_stamp_of_var(v: String): Int {
 // The size relations that name v as the size (cs: `xs = Array(T).new(v)`),
 // dropped when v is assigned anew.
 pub fn (checker_self: Checker) cs_remove_var(v: String) {
+  if !checker_self.facts.cs_var.contains(v) {
+    return
+  }
   kept_c: Array(String) = []
   kept_v: Array(String) = []
   kept_d: Array(Int) = []
@@ -440,6 +449,9 @@ pub fn (checker_self: Checker) cs_remove_var(v: String) {
 // changed, so `n == cont.size` (sv, bv) and `cont.size == n` (cs) no
 // longer hold.
 pub fn (checker_self: Checker) remove_relations_of(cont: String) {
+  if !checker_self.facts.sv_cont.contains(cont) && !checker_self.facts.bv_cont.contains(cont) && !checker_self.facts.cs_cont.contains(cont) {
+    return
+  }
   sv_v: Array(String) = []
   sv_c: Array(String) = []
   sv_s: Array(Int) = []
@@ -1999,6 +2011,9 @@ pub fn (checker_self: Checker) ty_reaches(t: Ty, cty: Ty, seen: Array(String)): 
 // ty_reaches from the top, remembered across the program's functions:
 // the same argument types meet the same containers again and again.
 pub fn (checker_self: Checker) reaches(t: Ty, cty: Ty): Bool {
+  if t.is_integer() || t.is_float() || t.is_bool() || t.is_string() || t.is_bytes() || t.is_void() || t.is_nil() || t.is_enum() {
+    return false
+  }
   key = "${mangle_ty(t)} ${mangle_ty(cty)}"
   if got = checker_self.facts.reach_memo.get(key) {
     return got
@@ -2288,6 +2303,18 @@ pub fn (checker_self: Checker) add_cand(names: Array(String), tys: Array(Ty), c:
 // each container whose size s's own parts may change loses its facts and
 // relations, and the proofs s made from them.
 pub fn (checker_self: Checker) shrinks_after_stmt(s: Stmt, mark: Int) {
+  f = checker_self.facts
+  if f.use_cont.size == mark && f.sv_cont.size == 0 && f.bv_cont.size == 0 && f.cs_cont.size == 0 {
+    live = false
+    for i in 0..f.fact_var.size {
+      if f.fact_live[i] == 1 && f.fact_cont[i].size > 0 {
+        live = true
+      }
+    }
+    if !live {
+      return
+    }
+  }
   names: Array(String) = []
   tys: Array(Ty) = []
   for i in mark..checker_self.facts.use_cont.size {
