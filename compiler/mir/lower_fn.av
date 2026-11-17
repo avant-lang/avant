@@ -29,6 +29,7 @@ import mir.lower_stmt
 import mir.lower_agg
 import mir.lower_union
 import mir.lower_cov
+import receiver_writes
 
 // ---- types
 
@@ -198,6 +199,7 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
     // (the checker boxes their locals there).
     if recv = e.receiver {
       lw.prewalk_expr(recv, encl)
+      lw.prewalk_hold(e, recv)
       if rt = recv.ty, rt.is_array() && e.callee == "parallel" && mir_has_block(e) {
         lw.prewalk_par(e, encl)
       }
@@ -218,6 +220,11 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
     lw.prewalk_opt(e.right, encl)
   } else if k == ex_field() {
     lw.prewalk_opt(e.object, encl)
+    if e.method_call {
+      if obj = e.object {
+        lw.prewalk_hold(e, obj)
+      }
+    }
   } else if k == ex_struct() {
     lw.prewalk_list(e.field_exprs, encl)
   } else if k == ex_array() || k == ex_hash_lit() {
@@ -831,5 +838,39 @@ pub fn (lw: MirLower) lower_trampolines(fns: Array(Function)) {
       }
     }
     i += 1
+  }
+}
+
+// Whether the call e of a struct method on recv freezes the Array that
+// holds its receiver: the method changes its receiver (receiver_writes.av),
+// the receiver is an Array's element, and an argument or the receiver's
+// own type may lead to that Array (a function value, a type variable or
+// an interface may lead anywhere). While it runs, any change to the
+// Array's size or order traps; an element store stays allowed.
+pub fn (lw: MirLower) prewalk_hold(e: Expr, recv: Expr) {
+  if e.resolved.size == 0 {
+    return
+  }
+  if rt = recv.ty, rt.is_struct(), at = rw_element_array(recv) {
+    if !lw.method_writes(e.resolved) {
+      return
+    }
+    seen: Array(String) = []
+    reach = ty_may_reach(rt, at, seen)
+    for a in e.args {
+      if reach {
+        break
+      }
+      if t = a.ty {
+        seen2: Array(String) = []
+        reach = ty_may_reach(t, at, seen2)
+      } else {
+        reach = true
+      }
+    }
+    if reach {
+      e.elem_hold = true
+      lw.lw_m.elem_holds = true
+    }
   }
 }

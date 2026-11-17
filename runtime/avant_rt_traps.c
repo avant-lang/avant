@@ -174,6 +174,16 @@ void avant_trap_frozen(int32_t op) {
   trap_tail();
 }
 
+/* A change to an array while a method call changes one of its elements
+ * (avant_array.c, the freeze of a method call): the call's name and
+ * site; the trap is told at the call. */
+void avant_trap_frozen_call(int32_t op, const char *name, const char *site) {
+  g_trap_loc = site;
+  trap_head();
+  trap_out("%s on an array while %s, called on one of its elements, runs: the method changes its receiver, so the array's size and order cannot change until it returns; copy the element, call the method on the copy and store it back", frozen_op(op), name ? name : "a method");
+  trap_tail();
+}
+
 void avant_trap_frozen_at(int32_t op, int32_t site) {
   g_trap_loc = site_text(site);
   avant_trap_frozen(op);

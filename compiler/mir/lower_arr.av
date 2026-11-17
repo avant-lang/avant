@@ -508,14 +508,30 @@ pub fn mir_frozen_store: Int {
 // spawns or uses .parallel (its module is shared: the pre-walk of every
 // function sets it before any is lowered, lower_task.av) can freeze an
 // array, so any other program's code is the same as without the freeze.
+//
+// A program with a call that freezes the Array holding its receiver
+// (Expr.elem_hold, lower_agg.av held_method_call) tests `clear` and a
+// sort with a block too, whether it spawns or not; there the cold block
+// asks the runtime (`avant_array_frozen`), which names the method call
+// when this thread's call froze the Array, and lets an element store
+// through when only such calls did (they freeze the size and the order,
+// not the elements).
 pub fn (lw: MirLower) frozen_check(h: Int, op: Int, loc: Location) {
-  if !lw.lw_m.shared {
+  holds = lw.lw_m.elem_holds
+  if !lw.lw_m.shared && (!holds || op == mir_frozen_store()) {
     return
   }
   b = lw.lw_b
   w = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 2))))
   frozen = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), w, b.c_i32(0)))
   ok = lw.trap_open(frozen, true)
+  if holds {
+    b.call(-1, "avant_array_frozen", lw.two(b.copy_local(h), b.c_i32(op)))
+    b.goto(ok)
+    b.at(ok)
+    lw.at(loc)
+    return
+  }
   lw.trap_close(ok, "avant_trap_frozen", lw.one(b.c_i32(op)), loc)
 }
 
@@ -645,6 +661,8 @@ pub fn (lw: MirLower) index_place(e: Expr): MPlace {
   b = lw.lw_b
   store = lw.lw_task.store_check
   lw.lw_task.store_check = false
+  want_hold = lw.lw_task.hold_req
+  lw.lw_task.hold_req = false
   if arr = e.left, ix = e.right {
     aty = lw.ety(arr)
     i = lw.snap(lw.lower_expr(ix), arr)
@@ -654,6 +672,11 @@ pub fn (lw: MirLower) index_place(e: Expr): MPlace {
     }
     lw.at(e.loc)
     h = lw.hold(a, aty)
+    if want_hold {
+      if at0 = arr.ty, at0.is_array() {
+        lw.lw_task.hold_arr = h
+      }
+    }
     if store && lw.lw_m.shared {
       if at = arr.ty, at.is_array() {
         lw.seq_bounds(h, i, e.proven)

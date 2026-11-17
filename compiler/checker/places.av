@@ -10,8 +10,12 @@
 // does not move the walk) and the loop's counter. The index keeps its
 // bounds check: a change of the array's size through another name than
 // the walked one meets it at the place's next use, so the place never
-// reads past the elements. A growth through another name is harmless
-// (each use reads the buffer again).
+// reads past the elements. A growth through another name does not
+// move a use that reads or writes the place (each use reads the buffer
+// again); a method that changes its receiver gets the element's address
+// once for the whole call, so while it runs the array is frozen when
+// the call may reach it (mir/lower_agg.av held_method_call): a change of
+// its size or order through any path then traps.
 //
 // What the place refuses, with what works instead:
 // - the walked array's size or order changed through its own name inside

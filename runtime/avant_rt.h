@@ -467,6 +467,13 @@ void *avant_array_pop_slot(void *arr, uint64_t elem_size);
 #define AVANT_ARRAY_FROZEN ((int32_t)0x80000000)
 void avant_array_freeze(void *arr, int32_t depth);
 void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size);
+/* The freeze of a method call on an element (avant_array.c): slot is the
+ * caller's slot holding the array; frozen tests a change to a frozen
+ * array (op, AVANT_FROZEN_*), trapping unless it is an element store or
+ * a fill and only this thread's method calls froze it. */
+void avant_array_hold(void **slot, uint64_t elem_size, const char *name, const char *site);
+void avant_array_unhold(void **slot);
+void avant_array_frozen(void *arr, int32_t op);
 /* What a frozen array refuses: the operation avant_trap_frozen names. */
 #define AVANT_FROZEN_PUSH 0
 #define AVANT_FROZEN_POP 1
@@ -552,6 +559,7 @@ __attribute__((noreturn, cold)) void avant_trap_empty_at(int32_t what, int32_t s
 __attribute__((noreturn, cold)) void avant_trap_walk_at(int32_t what, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_frozen(int32_t op);
 __attribute__((noreturn, cold)) void avant_trap_frozen_at(int32_t op, int32_t site);
+__attribute__((noreturn, cold)) void avant_trap_frozen_call(int32_t op, const char *name, const char *site);
 __attribute__((noreturn, cold)) void avant_trap_frozen_hash(int32_t op);
 /* `with` on a poisoned mutex. */
 __attribute__((noreturn, cold)) void avant_trap_poisoned(void);

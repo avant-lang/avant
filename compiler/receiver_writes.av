@@ -255,3 +255,72 @@ pub fn rw_element_place(e: Expr): Bool {
   }
   false
 }
+
+// The Array whose buffer holds the element place e (`xs[i]`,
+// `xs[i].pos`, `a.bs[0].cs[j]`: the innermost index), or nil.
+pub fn rw_element_array(e: Expr): Ty? {
+  x = e
+  while x.kind == ex_field() && !x.method_call {
+    if o = x.object, ot = o.ty, ot.is_struct() {
+      x = o
+    } else {
+      return nil
+    }
+  }
+  if x.kind == ex_index() {
+    if l = x.left, lt = l.ty, lt.is_array() {
+      return lt
+    }
+  }
+  nil
+}
+
+// Whether a value of type t may be, or lead to, an object of type cty
+// through fields, elements, members and keys. A function value, a type
+// variable and an interface may lead anywhere; a number, a Bool, a
+// String, Bytes, an enum and an opaque C handle lead nowhere (C memory
+// holds no reference the collector would keep), a C pointer or layout to
+// what its type says. seen holds the mangled names of the structs and
+// classes already followed.
+pub fn ty_may_reach(t: Ty, cty: Ty, seen: Array(String)): Bool {
+  if t.same_as(cty) {
+    return true
+  }
+  if t.is_integer() || t.is_float() || t.is_bool() || t.is_string() || t.is_bytes() || t.is_void() || t.is_nil() || t.is_enum() || t.is_module() || t.is_buf() || t.is_opaque() {
+    return false
+  }
+  if t.is_array() || t.is_join() || t.is_ptr() {
+    if i = t.inner {
+      return ty_may_reach(i, cty, seen)
+    }
+    return true
+  }
+  if t.is_hash() {
+    if k = t.key, v = t.val {
+      return ty_may_reach(k, cty, seen) || ty_may_reach(v, cty, seen)
+    }
+    return true
+  }
+  if t.is_union() {
+    for m in t.members {
+      if ty_may_reach(m, cty, seen) {
+        return true
+      }
+    }
+    return false
+  }
+  if t.is_struct() || t.is_class() || t.is_clayout() {
+    key = mangle_ty(t)
+    if seen.contains(key) {
+      return false
+    }
+    seen.push(key)
+    for f in t.fields {
+      if ty_may_reach(f.ty, cty, seen) {
+        return true
+      }
+    }
+    return false
+  }
+  true
+}

@@ -30,7 +30,23 @@ static inline int32_t arr_cap_word(AvantArray *a) {
   return __atomic_load_n(&a->cap, __ATOMIC_RELAXED);
 }
 
+/* A change to a frozen array traps, naming the method call of this
+ * thread that froze it, else as a task's freeze (arr_frozen_trap). */
+static __attribute__((noreturn, cold, noinline)) void arr_frozen_trap(void *arr, int32_t op);
+
 #define ARR_FROZEN_TRAP(a, op)                                   \
+  do {                                                           \
+    if (__builtin_expect(arr_cap_word(a) < 0, 0)) {              \
+      arr_frozen_trap((a), (op));                                \
+    }                                                            \
+  } while (0)
+
+/* The same for the runtime's own element stores and fills, which are of
+ * arrays of numbers: no method call freezes one (only an array of
+ * structs holds a method's receiver), so only a task's freeze can meet
+ * them, and the trap is the task's (the shorter call keeps the hot
+ * loops around it, avant_bwt_inverse's, as they were). */
+#define ARR_FROZEN_TRAP_NUM(a, op)                               \
   do {                                                           \
     if (__builtin_expect(arr_cap_word(a) < 0, 0)) {              \
       avant_trap_frozen(op);                                     \
@@ -122,6 +138,111 @@ void avant_array_thaw(void *arr, int32_t depth, uint64_t elem_size) {
       n = c - 1;
     }
   } while (!__atomic_compare_exchange_n(&a->cap, &c, n, 1, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED));
+}
+
+/* The freeze of a method call on an element. A call of a method that
+ * changes its struct receiver, an element of an array, freezes that
+ * array for the call when the call may reach it (the compiler decides:
+ * compiler/mir/lower_agg.av held_method_call): the receiver is the
+ * element's address, so a growth that moved the buffer, or a removal or
+ * reorder, would leave the method writing an old buffer, a slot past the
+ * size or another element. The freeze is the task's (one more count in
+ * the cap word), so every change of the size or order traps as for a
+ * task; an element store or a fill does not (they change values, not
+ * places), which avant_array_frozen tells by this thread's holds.
+ *
+ * The holds are a stack per thread, innermost last: each names the
+ * caller's frame slot that holds the array (a collection that moves the
+ * array rewrites the slot), the element size the last thaw needs, and
+ * the call's name and site for the trap's text. A trap that ends a task
+ * or an HTTP handler thaws the holds the code below its recovery point
+ * took (avant_array_hold_drop, from avant_task_trapped, while those
+ * frames are still intact). */
+typedef struct ArrHold {
+  void **slot;
+  uint64_t elem_size;
+  const char *name;
+  const char *site;
+} ArrHold;
+
+static __thread ArrHold *g_arr_holds;
+static __thread int g_arr_hold_n;
+static __thread int g_arr_hold_cap;
+
+void avant_array_hold(void **slot, uint64_t elem_size, const char *name, const char *site) {
+  if (g_arr_hold_n == g_arr_hold_cap) {
+    int cap = g_arr_hold_cap ? g_arr_hold_cap * 2 : 16;
+    ArrHold *h = (ArrHold *)realloc(g_arr_holds, (size_t)cap * sizeof(ArrHold));
+    if (!h) {
+      fflush(stdout);
+      fputs("avant runtime: out of memory for a method call's freeze\n", stderr);
+      exit(1);
+    }
+    g_arr_holds = h;
+    g_arr_hold_cap = cap;
+  }
+  g_arr_holds[g_arr_hold_n].slot = slot;
+  g_arr_holds[g_arr_hold_n].elem_size = elem_size;
+  g_arr_holds[g_arr_hold_n].name = name;
+  g_arr_holds[g_arr_hold_n].site = site;
+  g_arr_hold_n++;
+  avant_array_freeze(*slot, 1);
+}
+
+void avant_array_unhold(void **slot) {
+  ArrHold *h;
+  if (g_arr_hold_n <= 0 || g_arr_holds[g_arr_hold_n - 1].slot != slot) {
+    fflush(stdout);
+    fputs("avant runtime: internal error: a method call's thaw that is not the innermost freeze\n", stderr);
+    abort();
+  }
+  h = &g_arr_holds[--g_arr_hold_n];
+  avant_array_thaw(*h->slot, 1, h->elem_size);
+}
+
+__attribute__((visibility("hidden"))) int avant_array_hold_depth(void) {
+  return g_arr_hold_n;
+}
+
+__attribute__((visibility("hidden"))) void avant_array_hold_drop(int n) {
+  while (g_arr_hold_n > n) {
+    ArrHold *h = &g_arr_holds[--g_arr_hold_n];
+    avant_array_thaw(*h->slot, 1, h->elem_size);
+  }
+}
+
+/* A change (op, AVANT_FROZEN_*) to the frozen array arr, from generated
+ * code. An element store or a fill passes when this thread's method
+ * calls hold every count of the freeze; anything else traps, naming the
+ * innermost method call of this thread that froze arr, else as a task's
+ * freeze. */
+void avant_array_frozen(void *arr, int32_t op) {
+  AvantArray *a = (AvantArray *)arr;
+  int32_t c = arr_cap_word(a);
+  int32_t mine = 0;
+  int i;
+  if (c >= 0) {
+    return;
+  }
+  for (i = g_arr_hold_n - 1; i >= 0; i--) {
+    if (*g_arr_holds[i].slot == arr) {
+      mine++;
+    }
+  }
+  if ((op == AVANT_FROZEN_STORE || op == AVANT_FROZEN_FILL) && mine == (c & 0x7fffffff)) {
+    return;
+  }
+  arr_frozen_trap(arr, op);
+}
+
+static void arr_frozen_trap(void *arr, int32_t op) {
+  int i;
+  for (i = g_arr_hold_n - 1; i >= 0; i--) {
+    if (*g_arr_holds[i].slot == arr) {
+      avant_trap_frozen_call(op, g_arr_holds[i].name, g_arr_holds[i].site);
+    }
+  }
+  avant_trap_frozen(op);
 }
 
 /* min_cap is checked against the ceiling here, before anything is
@@ -1120,7 +1241,7 @@ double avant_array_sum_f64(void *arr) {
 void avant_array_fill_u8(void *arr, int32_t v) {
   AvantArray *a = (AvantArray *)arr;
   if (a) {
-    ARR_FROZEN_TRAP(a, AVANT_FROZEN_FILL);
+    ARR_FROZEN_TRAP_NUM(a, AVANT_FROZEN_FILL);
   }
   if (!a || !a->buf || a->size <= 0) {
     return;
@@ -1134,7 +1255,7 @@ void avant_array_fill_i64(void *arr, int64_t v) {
   int32_t i;
   int64_t *p;
   if (a) {
-    ARR_FROZEN_TRAP(a, AVANT_FROZEN_FILL);
+    ARR_FROZEN_TRAP_NUM(a, AVANT_FROZEN_FILL);
   }
   if (!a || !a->buf || a->size <= 0) {
     return;
@@ -1173,7 +1294,7 @@ void avant_array_fill_i32(void *arr, int32_t v) {
   int32_t i;
   int32_t *p;
   if (a) {
-    ARR_FROZEN_TRAP(a, AVANT_FROZEN_FILL);
+    ARR_FROZEN_TRAP_NUM(a, AVANT_FROZEN_FILL);
   }
   if (!a || !a->buf || a->size <= 0) {
     return;
@@ -1230,7 +1351,7 @@ static avant_int *bwt_ix(void *arr, int32_t need) {
     return NULL;
   }
   /* The array is written: one a running task reads cannot change. */
-  ARR_FROZEN_TRAP(a, AVANT_FROZEN_STORE);
+  ARR_FROZEN_TRAP_NUM(a, AVANT_FROZEN_STORE);
   return (avant_int *)a->buf;
 }
 
@@ -1240,7 +1361,7 @@ static int32_t *bwt_i32(void *arr, int32_t need) {
     return NULL;
   }
   /* The array is written: one a running task reads cannot change. */
-  ARR_FROZEN_TRAP(a, AVANT_FROZEN_STORE);
+  ARR_FROZEN_TRAP_NUM(a, AVANT_FROZEN_STORE);
   return (int32_t *)a->buf;
 }
 
