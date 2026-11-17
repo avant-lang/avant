@@ -18,7 +18,7 @@ fn test_tasks(c: Checks) {
   c.eq_int(hp.join() ?? -1, 7, "struct spawn")
 
   xs = [1, 2, 3, 4]
-  ys = xs.parallel { |item| item * 10 }
+  ys = xs.parallel (item) { item * 10 }
   c.eq_int(ys.size, 4, "parallel size")
   c.eq_int(ys[0], 10, "parallel 0")
   c.eq_int(ys[1], 20, "parallel 1")
@@ -26,16 +26,16 @@ fn test_tasks(c: Checks) {
   c.eq_int(ys[3], 40, "parallel 3")
 
   add = 7
-  zs = xs.parallel { |item| item + add }
+  zs = xs.parallel (item) { item + add }
   c.eq_int(zs[0], 8, "parallel capture")
   c.eq_int(zs[3], 11, "parallel capture last")
 
   empty = Array(Int).new(0)
-  none = empty.parallel { |item| item + 1 }
+  none = empty.parallel (item) { item + 1 }
   c.eq_int(none.size, 0, "parallel empty")
 
   words = ["a", "bb", "ccc"]
-  lens = words.parallel { |item| item.size }
+  lens = words.parallel (item) { item.size }
   c.eq_int(lens[0], 1, "parallel string 0")
   c.eq_int(lens[1], 2, "parallel string 1")
   c.eq_int(lens[2], 3, "parallel string 2")
@@ -130,23 +130,23 @@ fn test_tasks(c: Checks) {
   c.eq_int(hcs.join() ?? -1, 1, "channel string join")
 
   mu = Mutex(Int).new(1)
-  bumped = mu.with { |x|
+  bumped = mu.with (x) {
     x += 1
     x
   }
   c.eq_int(bumped, 2, "mutex with")
-  again = mu.with { |x| x }
+  again = mu.with (x) { x }
   c.eq_int(again, 2, "mutex read")
 
   box = Mutex(Held).new(Held.new(1))
-  bn = box.with { |x|
+  bn = box.with (x) {
     x.n += 1
     x.n
   }
   c.eq_int(bn, 2, "mutex class")
 
   cell = Mutex(Cell).new(Cell { n: 1 })
-  cn = cell.with { |x|
+  cn = cell.with (x) {
     x.n += 4
     x.n
   }
@@ -154,13 +154,13 @@ fn test_tasks(c: Checks) {
 
   shared = Mutex(Int).new(1)
   hm = spawn {
-    shared.with { |x|
+    shared.with (x) {
       x += 10
       1
     }
   }
   c.eq_int(hm.join() ?? -1, 1, "mutex spawn")
-  after = shared.with { |x| x }
+  after = shared.with (x) { x }
   c.eq_int(after, 11, "mutex after spawn")
 
   if compiler = env_get("AVANT_COMPILER") {
@@ -334,11 +334,11 @@ fn task_trap_cases(c: Checks, compiler: String, stamp: Int) {
     "avant runtime: index ",
     "",
     "avant runtime: index 8 out of bounds (size 3) in at (task_trap.av:29:1)\n",
-    "avant runtime: Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed at task_trap.av:145:16\n",
+    "avant runtime: Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed at task_trap.av:145:10\n",
     "avant runtime: index 4 out of bounds (size 3) in at (task_trap.av:29:1)\n",
     "avant runtime: .parallel called from a pool worker",
     "avant runtime: index 6 out of bounds (size 3) in at (task_trap.av:29:1)\n",
-    "avant runtime: Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed at task_trap.av:168:18",
+    "avant runtime: Mutex.with on a poisoned mutex: a task or an HTTP handler trapped while it held this mutex, so its value may be half-changed at task_trap.av:168:12",
     "avant runtime: division by zero in cmp_trap",
     "avant runtime: index",
     "avant runtime: heap limit"]
