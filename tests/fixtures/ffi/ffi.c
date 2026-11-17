@@ -993,3 +993,43 @@ CvHold *cv_holder(void) { return &cv_hold; }
 int64_t cv_held_len(void) { return cv_hold.name ? (int64_t)strlen(cv_hold.name) : -1; }
 typedef const char *(*cv_give_t)(void);
 int64_t cv_take(cv_give_t f) { return (int64_t)strlen(f()); }
+
+/* pointers.av: C arrays read and written through a pointer, p[i]. */
+static int32_t pt_ints[4] = { 10, -20, 30, -40 };
+int32_t *pt_ints_at(void) { return pt_ints; }
+int64_t pt_ints_sum(const int32_t *p, int n) {
+  int64_t s = 0;
+  for (int i = 0; i < n; i++) {
+    s += p[i];
+  }
+  return s;
+}
+static int64_t pt_longs[2] = { 1LL << 40, -7 };
+int64_t *pt_longs_at(void) { return pt_longs; }
+static uint8_t pt_bytes[5] = { 0, 1, 127, 128, 255 };
+uint8_t *pt_bytes_at(void) { return pt_bytes; }
+int pt_bytes_sum(const uint8_t *p, int n) {
+  int s = 0;
+  for (int i = 0; i < n; i++) {
+    s += p[i];
+  }
+  return s;
+}
+static int8_t pt_sbytes[3] = { -128, 0, 127 };
+int8_t *pt_sbytes_at(void) { return pt_sbytes; }
+static uint16_t pt_shorts[2] = { 65535, 7 };
+uint16_t *pt_shorts_at(void) { return pt_shorts; }
+static float pt_floats[2] = { 1.5f, -0.25f };
+float *pt_floats_at(void) { return pt_floats; }
+static double pt_doubles[2] = { 2.5, 1e10 };
+double *pt_doubles_at(void) { return pt_doubles; }
+static uint64_t pt_wide[1] = { 18446744073709551615ULL };
+uint64_t *pt_wide_at(void) { return pt_wide; }
+static bool pt_flags[2] = { true, false };
+bool *pt_flags_at(void) { return pt_flags; }
+typedef struct PtPair { int32_t a; int32_t b; } PtPair;
+static PtPair pt_p0 = { 1, 2 };
+static PtPair pt_p1 = { 3, 4 };
+static PtPair *pt_pairs[3] = { &pt_p0, NULL, &pt_p1 };
+PtPair **pt_pairs_at(void) { return pt_pairs; }
+int pt_pair_null(int i) { return pt_pairs[i] == NULL; }

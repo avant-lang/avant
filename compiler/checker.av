@@ -3134,6 +3134,29 @@ pub class Checker {
     t_int()
   }
 
+  // `p[i]` through a Ptr to a C scalar or a pointer: element i of the C
+  // array at p, of the element's Avant type (a narrow C scalar reads as
+  // its view). C gives no length, so i is not checked; a NULL p traps.
+  pub fn check_ptr_index(expr: Expr, container: Ty, ix: Expr): Ty {
+    got = check_expr_as(ix, t_int())
+    if !got.is_int() {
+      fail(ix.loc, "a Ptr's index must be Int, got ${got.show()}")
+    }
+    if inner = container.inner {
+      if ptr_elem_ok(inner) {
+        return ty_c_view(inner)
+      }
+      if inner.is_clayout() {
+        fail(expr.loc, "cannot index ${container.show()}: p[i] reads C scalars and pointers; a layout's fields are read through the pointer (p.x)")
+        return t_int()
+      }
+      fail(expr.loc, "cannot index ${container.show()}: it points to no elements Avant knows (a Ptr(Void) is only passed around)")
+      return t_int()
+    }
+    fail(expr.loc, "cannot index ${container.show()}")
+    t_int()
+  }
+
   pub fn check_index(expr: Expr): Ty {
     if arr = expr.left, ix = expr.right {
       if arr.kind == ex_name() && !arr.implicit_field {
@@ -3218,6 +3241,9 @@ pub class Checker {
       if container.is_agg() {
         fail(expr.loc, "cannot index ${container.show()}: define fn [](index) on it")
         return t_int()
+      }
+      if container.is_ptr() {
+        return check_ptr_index(expr, container, ix)
       }
       fail(expr.loc, "cannot index ${container.show()}")
       return t_int()

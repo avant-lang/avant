@@ -610,7 +610,19 @@ pub class TypeResolver {
         reject_args(inner)
         return ty_ptr(self.t_void)
       }
-      return ty_ptr(no_hasher(resolve_uninline(inner), inner, "a Ptr"))
+      // A Ptr points to C memory: its pointee may be a C scalar of any
+      // width (Ptr(UInt8) is C's uint8_t *, read with p[i]) wherever the
+      // Ptr is written, since the narrow name is the pointer's, not a
+      // value's.
+      saved = self.c_scalar_ok
+      self.c_scalar_ok = true
+      pt = no_hasher(resolve_uninline(inner), inner, "a Ptr")
+      self.c_scalar_ok = saved
+      if !ptr_pointee_ok(pt) {
+        fail(inner.loc, "Ptr(${pt.show()}) points to nothing C lays out: a Ptr's type is a C layout, an opaque C type, Void, a C scalar (Int32, UInt8, Float64, ...) or a Ptr")
+        return ty_ptr(self.t_void)
+      }
+      return ty_ptr(pt)
     }
     if id = self.tparams.get(tn.name), tn.args.size == 0 {
       return ty_var(tn.name)
@@ -1452,17 +1464,8 @@ pub fn c_field_ok(ty: Ty): Bool {
     return c_field_ok(r)
   }
   if ty.is_ptr() {
-    if inner = ty.inner {
-      if inner.is_void() {
-        return true
-      }
-      if inner.is_opaque() {
-        return true
-      }
-      if inner.is_clayout() {
-        return true
-      }
-    }
+    // Every Ptr the resolver gives points to C memory (ptr_pointee_ok).
+    return true
   }
   false
 }

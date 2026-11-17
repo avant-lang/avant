@@ -3311,9 +3311,9 @@ Every C scalar type has an exact name at the boundary.
 | `unsigned char`, `uint8_t`; `unsigned short`, `uint16_t` | `UInt8`; `UInt16` | `Int` |
 | `float` | `Float32` | `Float64` |
 | `char *` | `String` or `String?` | the same |
-| a pointer | `Ptr(Layout)` or `Ptr(Void)`; `Ptr(Layout)?` or `Ptr(Void)?` where C may give NULL | the same |
+| a pointer | `Ptr(Layout)`, `Ptr(Void)`, or a pointer to a scalar or a pointer (`int *` is `Ptr(Int32)`, `uint8_t *` is `Ptr(UInt8)`, `T **` is `Ptr(Ptr(T)?)`); `Ptr(T)?` where C may give NULL | the same |
 
-The five narrow names (`Int8`, `Int16`, `UInt8`, `UInt16`, `Float32`) are written only in a `fun` signature and a C layout's field. A value from C converts exactly. A value to C keeps its value or traps (`avant runtime: 256 out of range for the C type UInt8 (0..255)`); a `Float64` rounds to the nearest `Float32`.
+The five narrow names (`Int8`, `Int16`, `UInt8`, `UInt16`, `Float32`) are written only in a `fun` signature, a C layout's field and a `Ptr`'s type (`Ptr(UInt8)` anywhere). A value from C converts exactly. A value to C keeps its value or traps (`avant runtime: 256 out of range for the C type UInt8 (0..255)`); a `Float64` rounds to the nearest `Float32`.
 
 <!-- check: fragment needs a C library of its own; the tested twin is tests/fixtures/ffi/cscalars.av -->
 ```avant
@@ -3349,7 +3349,26 @@ fn main {
 }
 ```
 
-`Ptr(T)` is for a layout `T`, `Ptr(Void)` for a pointer you only pass around; a `Ptr` of anything else (`Ptr(Int)`) has no fields and takes no methods. Memory from C is C's: the collector neither moves nor frees it. There is no `sizeof`: you state the size passed to `malloc`.
+`Ptr(T)` is for a layout `T`, a C scalar or a pointer (the elements of a C array), `Ptr(Void)` for a pointer you only pass around; a `Ptr` of an Avant type (`Ptr(String)`, `Ptr(Array(Int))`) is a compile error. Memory from C is C's: the collector neither moves nor frees it. There is no `sizeof`: you state the size passed to `malloc`.
+
+`p[i]` reads element `i` of the C array a `Ptr` points to (`p[0]` its one value): `Ptr(UInt8)`, `Ptr(Int32)`, `Ptr(Ptr(Reply)?)` and the rest; `p[i] = v` writes it. A narrow element reads as its Avant type and is range-checked when written, as a layout's field. C gave no length, so nothing checks `i`: the count comes from C (`elements`, `len`) and stays your code's to respect. A NULL `p` traps.
+
+```avant
+lib c {
+  fun calloc(n: Int, size: Int): Ptr(Int32)
+  fun free(p: Ptr(Int32))
+}
+
+fn main {
+  xs = c.calloc(3, 4)       // C's int[3]
+  for i in 0..3 {
+    xs[i] = (i * 10).to_i32()
+  }
+  xs[2] += 1
+  puts(xs[1] + xs[2])       // => 31
+  c.free(xs)
+}
+```
 
 `Ptr(T)?` is the nullable pointer: one word, `nil` is C's NULL, in a `fun` result or parameter, a layout's field, and anywhere in Avant code. Declare it where C may give NULL (a failed `malloc`, the end of a list) and test it as any optional:
 

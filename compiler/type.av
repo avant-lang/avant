@@ -274,7 +274,9 @@ pub class Ty {
     }
     if k == tyk_ptr() {
       if a = self.inner, b = other.inner {
-        return a.same_as(b)
+        // Ptr(UInt8) and Ptr(Int) point to elements of other widths,
+        // though both read as Int.
+        return a.c_scalar == b.c_scalar && a.same_as(b)
       }
       return false
     }
@@ -759,6 +761,9 @@ pub fn ty_has_var(ty: Ty): Bool {
 }
 
 pub fn mangle_ty(ty: Ty): String {
+  if ty.c_scalar > 0 {
+    return c_scalar_name(ty.c_scalar)
+  }
   k = ty.kind
   if k == tyk_int() {
     return "Int"
@@ -1225,6 +1230,41 @@ pub fn ty_opt_ref(t: Ty): Ty? {
     }
   }
   nil
+}
+
+// What a Ptr may point to: C memory Avant can describe (a C layout, an
+// opaque C type, Void), a C scalar (an element of a C array, read and
+// written with p[i]), or a pointer (`T **`: Ptr(Ptr(T)?)). A type
+// variable stands for one of them until it is instantiated.
+pub fn ptr_pointee_ok(t: Ty): Bool {
+  if t.is_void() || t.is_opaque() || t.is_clayout() || t.is_var() {
+    return true
+  }
+  if t.is_integer() || t.is_uint64() || t.is_bool() || t.is_float() {
+    return true
+  }
+  if t.is_ptr() {
+    return true
+  }
+  if r = ty_opt_ref(t), r.is_ptr() {
+    return true
+  }
+  false
+}
+
+// Whether p[i] reads and writes through a Ptr to t: a C scalar or a
+// pointer (the elements C laid out one after another).
+pub fn ptr_elem_ok(t: Ty): Bool {
+  if t.is_integer() || t.is_uint64() || t.is_bool() || t.is_float() {
+    return true
+  }
+  if t.is_ptr() {
+    return true
+  }
+  if r = ty_opt_ref(t), r.is_ptr() {
+    return true
+  }
+  false
 }
 
 pub fn ty_without_nil(ty: Ty): Ty {

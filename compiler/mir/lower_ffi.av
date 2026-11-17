@@ -45,7 +45,24 @@ pub fn (lw: MirLower) ptr_ty(t: Ty, loc: Location): Int {
     }
     return lw.lw_m.types.ptr_to(lw.lw_m.types.agg(l))
   }
+  if inner2 = t.inner, ptr_elem_ok(inner2) {
+    // A C scalar (its C width) or a pointer: the element p[i] reads.
+    return lw.lw_m.types.ptr_to(lw.c_elem_mty(inner2, loc))
+  }
   mt_ptr()
+}
+
+// The MIR type of a C element (a layout field's or a Ptr's pointee): a
+// narrow C scalar at its C width, an enum as C's int, else the type's
+// own.
+pub fn (lw: MirLower) c_elem_mty(t: Ty, loc: Location): Int {
+  if t.c_scalar > 0 {
+    return lw.c_scalar_mty(t.c_scalar)
+  }
+  if t.is_enum() {
+    return mt_i32()
+  }
+  lw.field_mty(t, loc)
 }
 
 // A C layout: the C fields in declaration order by the C rule, as
@@ -601,6 +618,15 @@ pub fn (lw: MirLower) to_c_scalar(v: MOperand, k: Int, loc: Location): MOperand 
 // The C scalar kind of a C layout's field that e names (directly or
 // through a Ptr), else 0.
 pub fn (lw: MirLower) c_field_scalar(e: Expr): Int {
+  if e.kind == ex_index() {
+    // An element through a Ptr: its pointee's kind.
+    if l = e.left, lt = l.ty, lt.is_ptr() {
+      if inner = lt.inner {
+        return inner.c_scalar
+      }
+    }
+    return 0
+  }
   if e.kind == ex_field() && !e.method_call {
     if obj = e.object, ot = obj.ty {
       lay = ot
@@ -706,6 +732,55 @@ pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
   }
   lw.refuse(e.loc, "the field .${e.ident} of ${ot.show()}")
   b.pl(0)
+}
+
+// The place of `p[i]`, p a Ptr to a C scalar or a pointer: p and i
+// each in a local, a NULL p trapping before the access (one compare and
+// a cold block), then `(*_h)[_i]`, element i of the C array at p. C
+// gave no length, so i is not checked.
+pub fn (lw: MirLower) ptr_index_place(e: Expr): MPlace {
+  b = lw.lw_b
+  if arr = e.left, ix = e.right, at = arr.ty {
+    o = lw.lower_expr(arr)
+    if lw.failed() {
+      return b.pl(0)
+    }
+    lw.at(e.loc)
+    pt = lw.ety(arr)
+    h = lw.hold(o, pt)
+    i = lw.lower_expr(ix)
+    if lw.failed() {
+      return b.pl(0)
+    }
+    lw.at(e.loc)
+    k = lw.hold(i, mt_int())
+    isnull = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(h), b.c_null(pt)))
+    ok = lw.trap_open(isnull, true)
+    targs: Array(MOperand) = []
+    targs.push(b.str_const("an element read or written through a NULL ${at.show()} (a pointer C may leave NULL is declared ${at.show()}? and tested: if p = ...)"))
+    lw.trap_close(ok, "avant_trap_expect", targs, e.loc)
+    return b.index(b.deref(b.pl(h)), b.copy_local(k))
+  }
+  lw.refuse(e.loc, "this element of a Ptr")
+  b.pl(0)
+}
+
+// `p[i]` read: the element, a narrow C scalar converted to its Avant
+// view.
+pub fn (lw: MirLower) lower_ptr_index_read(e: Expr): MOperand {
+  b = lw.lw_b
+  ck = lw.c_field_scalar(e)
+  ty = lw.ety(e)
+  p = lw.ptr_index_place(e)
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  if ck > 0 {
+    raw = lw.tmp(lw.c_scalar_mty(ck), b.rv_use(b.copy(p)))
+    return lw.from_c_scalar(raw, ck)
+  }
+  lw.tmp(ty, b.rv_use(b.copy(p)))
 }
 
 // A reference-carrying value stored into a C-layout field (the old

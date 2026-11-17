@@ -339,7 +339,14 @@ fn test_errors(c: Checks) {
     // compiled, and C read a tag or a payload as the value. The
     // optional references stay (tests/fixtures/ffi/opt_refs.av).
     expect_err(c, compiler, stamp, "clayout-opt-int", "lib c {\n  struct Pair {\n    a: Int32?\n  }\n}\nfn main {\n  puts(1)\n}\n", "C layout fields must be C types, not Int32?")
-    expect_err(c, compiler, stamp, "clayout-opt-ptr-int", "lib c {\n  struct Pair {\n    a: Ptr(Int)?\n  }\n}\nfn main {\n  puts(1)\n}\n", "C layout fields must be C types, not Ptr(Int)?")
+    expect_err(c, compiler, stamp, "clayout-opt-ptr-string", "lib c {\n  struct Pair {\n    a: Ptr(String)?\n  }\n}\nfn main {\n  puts(1)\n}\n", "Ptr(String) points to nothing C lays out")
+    expect_err(c, compiler, stamp, "ptr-of-array", "fn f(p: Ptr(Array(Int))): Int {\n  1\n}\nfn main {\n  puts(1)\n}\n", "Ptr(Array(Int)) points to nothing C lays out: a Ptr's type is a C layout, an opaque C type, Void, a C scalar (Int32, UInt8, Float64, ...) or a Ptr")
+    expect_err(c, compiler, stamp, "ptr-of-struct", "struct S {\n  a: Int\n}\nlib c {\n  fun malloc(n: Int): Ptr(S)\n}\nfn main {\n  puts(1)\n}\n", "Ptr(S) points to nothing C lays out")
+    expect_err(c, compiler, stamp, "ptr-index-layout", "lib c {\n  struct Pair {\n    a: Int32\n  }\n  fun malloc(n: Int): Ptr(Pair)\n}\nfn main {\n  p = c.malloc(8)\n  puts(p[0])\n}\n", "cannot index Ptr(Pair): p[i] reads C scalars and pointers; a layout's fields are read through the pointer (p.x)")
+    expect_err(c, compiler, stamp, "ptr-index-void", "lib c {\n  fun malloc(n: Int): Ptr(Void)\n}\nfn main {\n  p = c.malloc(8)\n  puts(p[0])\n}\n", "cannot index Ptr(Void)")
+    expect_err(c, compiler, stamp, "ptr-index-type", "lib c {\n  fun malloc(n: Int): Ptr(Int32)\n}\nfn main {\n  p = c.malloc(8)\n  puts(p[\"a\"])\n}\n", "a Ptr's index must be Int, got String")
+    expect_err(c, compiler, stamp, "ptr-index-value", "lib c {\n  fun malloc(n: Int): Ptr(Int32)\n}\nfn main {\n  p = c.malloc(8)\n  p[0] = \"a\"\n}\n", "cannot assign String to Int32")
+    expect_err(c, compiler, stamp, "ptr-width", "lib c {\n  fun malloc(n: Int): Ptr(UInt8)\n  fun take(p: Ptr(Int))\n}\nfn main {\n  p = c.malloc(8)\n  c.take(p)\n}\n", "Ptr(UInt8)")
     expect_err(c, compiler, stamp, "fun-optint", "lib c {\n  fun labs(n: Int?): Int\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int?: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL")
     expect_err(c, compiler, stamp, "fun-union-ret", "lib c {\n  fun labs(n: Int): Int | String\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int | String: C has one word there")
     expect_err(c, compiler, stamp, "fun-optfloat", "lib c {\n  fun fabs(x: Float64): Float64?\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Float64?: C has one word there")

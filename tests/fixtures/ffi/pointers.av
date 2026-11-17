@@ -1,0 +1,84 @@
+// C arrays through a pointer: `p[i]` reads element i of the C array a
+// `Ptr` points to and `p[i] = v` writes it, for every C scalar (the narrow
+// ones read as their Avant view and are range-checked on the way back) and
+// for pointers (`T **`: `Ptr(Ptr(T)?)`, each element tested for NULL).
+// C gives no length, so the counts below are the arrays' own.
+
+lib pt {
+  struct Pair {
+    a: Int32
+    b: Int32
+  }
+  fun pt_ints_at: Ptr(Int32)
+  fun pt_ints_sum(p: Ptr(Int32), n: Int32): Int
+  fun pt_longs_at: Ptr(Int)
+  fun pt_bytes_at: Ptr(UInt8)
+  fun pt_bytes_sum(p: Ptr(UInt8), n: Int32): Int32
+  fun pt_sbytes_at: Ptr(Int8)
+  fun pt_shorts_at: Ptr(UInt16)
+  fun pt_floats_at: Ptr(Float32)
+  fun pt_doubles_at: Ptr(Float64)
+  fun pt_wide_at: Ptr(UInt64)
+  fun pt_flags_at: Ptr(Bool)
+  fun pt_pairs_at: Ptr(Ptr(Pair)?)
+  fun pt_pair_null(i: Int32): Int32
+}
+
+fn show_pairs(pairs: Ptr(Ptr(Pair)?)) {
+  for i in 0..3 {
+    if q = pairs[i] {
+      puts("pair ${q.a} ${q.b}")
+    } else {
+      puts("nil")
+    }
+  }
+}
+
+fn main {
+  ints = pt.pt_ints_at()
+  puts("${ints[0]} ${ints[1]} ${ints[2]} ${ints[3]}")
+  ints[1] = 21
+  ints[3] += 1
+  k = 2
+  ints[k] = ints[k] * 2
+  puts(pt.pt_ints_sum(ints, 4))
+  longs = pt.pt_longs_at()
+  longs[1] -= 1
+  puts("${longs[0]} ${longs[1]}")
+  bytes = pt.pt_bytes_at()
+  total = 0
+  for i in 0..5 {
+    total += bytes[i]
+  }
+  puts(total)
+  bytes[0] = 200
+  bytes[4] -= 5
+  puts(pt.pt_bytes_sum(bytes, 5))
+  sb = pt.pt_sbytes_at()
+  puts("${sb[0]} ${sb[1]} ${sb[2]}")
+  sb[1] = -1
+  puts(sb[1] + sb[2])
+  sh = pt.pt_shorts_at()
+  puts(sh[0] + sh[1])
+  fl = pt.pt_floats_at()
+  fl[1] = fl[0] * 3.0
+  puts("${fl[0]} ${fl[1]}")
+  db = pt.pt_doubles_at()
+  puts(db[0] + db[1])
+  wide = pt.pt_wide_at()
+  puts(wide[0])
+  flags = pt.pt_flags_at()
+  puts("${flags[0]} ${flags[1]}")
+  flags[1] = true
+  puts(flags[1])
+  pairs = pt.pt_pairs_at()
+  show_pairs(pairs)
+  pairs[1] = pairs[2]
+  pairs[0] = nil
+  show_pairs(pairs)
+  puts(pt.pt_pair_null(0))
+  if q = pairs[1] {
+    q.a = 30
+  }
+  show_pairs(pairs)
+}
