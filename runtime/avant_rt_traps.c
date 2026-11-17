@@ -160,12 +160,13 @@ void avant_trap_walk_at(int32_t what, int32_t site) {
 /* A change to an Array a running task reads (avant_rt.h,
  * AVANT_ARRAY_FROZEN): op names the operation
  * (AVANT_FROZEN_*). The checks inside the runtime's own functions (push's
- * growth, pop, fill, sort, reverse, reserve) print no site; generated
- * code's (an element store, clear, a sort with a block, delete_if, a
- * fill of other elements) call the _at form. */
+ * growth, pop, fill, sort, reverse, reserve, insert, concat) print no
+ * site; generated code's (an element store, clear, a sort with a block,
+ * delete_if, delete_at, shuffle, a fill of other elements) call the _at
+ * form. */
 static const char *frozen_op(int32_t op) {
-  static const char *names[] = {"push", "pop", "clear", "fill", "sort", "reverse", "reserve", "an element store", "delete_if"};
-  return op >= 0 && op <= 8 ? names[op] : "a change";
+  static const char *names[] = {"push", "pop", "clear", "fill", "sort", "reverse", "reserve", "an element store", "delete_if", "insert", "delete_at", "concat", "shuffle"};
+  return op >= 0 && op <= 12 ? names[op] : "a change";
 }
 
 void avant_trap_frozen(int32_t op) {
@@ -288,6 +289,13 @@ void avant_trap_byte(avant_int value) {
 void avant_trap_slice(avant_int start, avant_int stop, avant_int size) {
   trap_head();
   trap_out("slice %lld..%lld out of range (size %lld)", (long long)start, (long long)stop, (long long)size);
+  trap_tail();
+}
+
+/* xs.insert(i, v) at a position outside 0..size. */
+void avant_trap_insert(avant_int index, avant_int size) {
+  trap_head();
+  trap_out("insert at %lld out of range (size %lld)", (long long)index, (long long)size);
   trap_tail();
 }
 

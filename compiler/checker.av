@@ -4827,6 +4827,13 @@ pub class Checker {
         return t_bool()
       }
     }
+    if op == tk_plus() && left.is_array() && right.is_array() {
+      if left.same_as(right) {
+        return array_join(expr, l, r, left)
+      }
+      fail(expr.loc, "cannot join ${left.show()} and ${right.show()}: + joins two arrays of one element type")
+      return left
+    }
     hint = open_hint(l, left)
     if hint.size == 0 {
       hint = open_hint(r, right)

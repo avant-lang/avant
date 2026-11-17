@@ -1811,6 +1811,15 @@ pub fn (checker_self: Checker) absorb_lambda_arg(expr: Expr, object: Ty) {
     return
   }
   last = expr.args[expr.args.size - 1]
+  if last.kind == ex_name() && object.is_array() && c != "parallel" {
+    // A function value or a function's name (`xs.each(show)`): the
+    // same loop, its body one call of the function per element.
+    if fb = checker_self.fn_arg_block(expr, last, c) {
+      expr.block = fb
+      expr.args.pop()
+    }
+    return
+  }
   if last.kind != ex_lambda() {
     return
   }
@@ -1818,6 +1827,42 @@ pub fn (checker_self: Checker) absorb_lambda_arg(expr: Expr, object: Ty) {
     expr.block = lb
     expr.args.pop()
   }
+}
+
+// The lambda `(a) { f(a) }` (two parameters for a comparator) standing
+// for the function named f given to the array builtin c, when f is a
+// variable of a function type or, with no variable of that name, a
+// declared function; nil otherwise (`xs.index_of(v)` keeps its value).
+// The parameters are hidden names of their own, so the lambda reuses
+// no name of the function around it.
+pub fn (checker_self: Checker) fn_arg_block(expr: Expr, f: Expr, c: String): Block? {
+  if expr.args.size != 1 {
+    return nil
+  }
+  if t = checker_self.lookup(f.ident) {
+    if !t.is_fn() {
+      return nil
+    }
+  } else if checker_self.fn_indices_named(f.ident).size == 0 {
+    return nil
+  }
+  n = 1
+  if c == "sort" || c == "sorted" {
+    n = 2
+  }
+  b = Block.new(f.loc)
+  b.paren = true
+  call = Expr.new(ex_call(), f.loc)
+  call.callee = f.ident
+  for k in 0..n {
+    p = "__avant_arg_${f.loc.line()}_${f.loc.column()}_${k}"
+    b.params.push(p)
+    a = Expr.new(ex_name(), f.loc)
+    a.ident = p
+    call.args.push(a)
+  }
+  b.body.push(stmt_expr(f.loc, call))
+  b
 }
 
 // The body of an inlined walk (`each`): a loop body for a block in

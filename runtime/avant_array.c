@@ -1006,6 +1006,99 @@ void *avant_array_slice(void *arr, avant_int start, avant_int stop, uint64_t ele
   return r;
 }
 
+/* The slots lo up to hi of a pointer-carrying buffer, each barriered
+ * before a move puts a reference there (RC5, as a push barriers its
+ * slot). */
+static void arr_barrier_slots(AvantArray *a, avant_int lo, avant_int hi, uint64_t elem_size, uint32_t buf_type_id) {
+  if (buf_type_id == AVANT_TYPE_BYTES || !a->buf) {
+    return;
+  }
+  for (avant_int k = lo; k < hi; k++) {
+    avant_barrier_slot_young(a->buf, (uint8_t *)a->buf + (size_t)k * (size_t)elem_size);
+  }
+}
+
+/* xs.insert(i, v): room for one element at i, the elements from i on
+ * moved up one; the slot at i is returned for the caller's store, as
+ * avant_array_push_slot's is. Traps unless 0 <= i <= size. */
+void *avant_array_insert_slot(void *arr, avant_int i, uint64_t elem_size, uint32_t buf_type_id) {
+  AvantArray *a = (AvantArray *)arr;
+  avant_int n = a ? a->size : 0;
+  if (i < 0 || i > n) {
+    avant_trap_insert(i, n);
+  }
+  if (!a) {
+    return NULL;
+  }
+  ARR_FROZEN_TRAP(a, AVANT_FROZEN_INSERT);
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &a);
+  (void)avant_array_push_slot(a, elem_size, buf_type_id);
+  /* a->buf is read after the push's growth (RC2). */
+  uint8_t *at = (uint8_t *)a->buf + (size_t)i * (size_t)elem_size;
+  if (n > i) {
+    /* References move to other words of the buffer (RC5). */
+    avant_gc_overwrite(a->buf);
+    arr_barrier_slots(a, i + 1, n + 1, elem_size, buf_type_id);
+    memmove(at + elem_size, at, (size_t)(n - i) * (size_t)elem_size);
+  }
+  if (buf_type_id != AVANT_TYPE_BYTES) {
+    avant_barrier_slot_young(a->buf, at);
+  }
+  return at;
+}
+
+/* xs.delete_at(i), after the caller read the element at i (its bounds
+ * checked there): the elements after i moved down one, the last slot
+ * cleared so it keeps nothing alive, the size one less. */
+void avant_array_delete_at(void *arr, avant_int i, uint64_t elem_size, uint32_t buf_type_id) {
+  AvantArray *a = (AvantArray *)arr;
+  if (!a || !a->buf || i < 0 || i >= a->size) {
+    return;
+  }
+  ARR_FROZEN_TRAP(a, AVANT_FROZEN_DELETE_AT);
+  avant_int n = a->size;
+  uint8_t *at = (uint8_t *)a->buf + (size_t)i * (size_t)elem_size;
+  /* References are removed and move to other words of the buffer (RC5). */
+  avant_gc_overwrite(a->buf);
+  if (n - 1 > i) {
+    arr_barrier_slots(a, i, n - 1, elem_size, buf_type_id);
+    memmove(at, at + elem_size, (size_t)(n - 1 - i) * (size_t)elem_size);
+  }
+  memset((uint8_t *)a->buf + (size_t)(n - 1) * (size_t)elem_size, 0, (size_t)elem_size);
+  a->size = (int32_t)(n - 1);
+}
+
+/* xs.concat(ys): ys's elements appended to xs, in order (ys may be xs:
+ * its size is read first, its buffer after the growth). A frozen xs
+ * traps also when ys is empty, as every other change does. */
+void avant_array_concat(void *dst, void *src, uint64_t elem_size, uint32_t buf_type_id) {
+  AvantArray *a = (AvantArray *)dst;
+  AvantArray *b = (AvantArray *)src;
+  if (!a) {
+    return;
+  }
+  ARR_FROZEN_TRAP(a, AVANT_FROZEN_CONCAT);
+  if (!b || b->size <= 0) {
+    return;
+  }
+  avant_int m = b->size;
+  avant_int n = a->size;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &a);
+  AVANT_GC_ROOT(1, &b);
+  if (n + m > a->cap) {
+    array_grow(a, n + m, elem_size, buf_type_id);
+  }
+  /* Both buffers are read after the growth (RC2); a bulk copy barriers
+   * the buffer first (RC5). */
+  if (buf_type_id != AVANT_TYPE_BYTES) {
+    avant_barrier(a->buf);
+  }
+  memcpy((uint8_t *)a->buf + (size_t)n * (size_t)elem_size, b->buf, (size_t)m * (size_t)elem_size);
+  a->size = (int32_t)(n + m);
+}
+
 int32_t avant_array_contains_i32(void *arr, int32_t v) { return avant_array_index_i32(arr, v) >= 0 ? 1 : 0; }
 int32_t avant_array_contains_i64(void *arr, int64_t v) { return avant_array_index_i64(arr, v) >= 0 ? 1 : 0; }
 int32_t avant_array_contains_u64(void *arr, uint64_t v) { return avant_array_index_u64(arr, v) >= 0 ? 1 : 0; }

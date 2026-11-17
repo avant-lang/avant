@@ -694,6 +694,14 @@ pub fn (checker_self: Checker) guard_captured_body(w: GuardWalk, b: Block) {
   w.floor = saved
 }
 
+// The array builtins that store their arguments into the array: `push`,
+// `insert` (the position is plain), `fill`, and `concat`, which stores
+// the elements of its argument (so the argument array must be new,
+// plain or reached as a stored value would be).
+pub fn array_stores_arg(callee: String): Bool {
+  callee == "push" || callee == "insert" || callee == "fill" || callee == "concat"
+}
+
 pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
   if inner = e.inner {
     checker_self.guard_expr(w, inner)
@@ -724,15 +732,16 @@ pub fn (checker_self: Checker) guard_call(w: GuardWalk, e: Expr) {
     checker_self.guard_expr(w, recv)
     recv_bad = checker_self.guard_bad(w, recv)
   }
-  stores = recv_bad && (e.callee == "push" || e.callee == "fill")
+  stores = recv_bad && array_stores_arg(e.callee)
   for arg in e.args {
     checker_self.guard_use(w, arg, "this argument")
     if checker_self.has_err() {
       return
     }
     if stores {
-      // `push` and `fill` store their argument into a reached array:
-      // what comes in must not stay reachable from outside.
+      // `push`, `insert`, `fill` and `concat` store their argument (or
+      // its elements) into a reached array: what comes in must not stay
+      // reachable from outside.
       checker_self.guard_inward(w, arg)
       if checker_self.has_err() {
         return
@@ -1051,7 +1060,7 @@ pub fn (checker_self: Checker) check_send(expr: Expr) {
 // over the whole method. Then:
 //
 //   - a P value is stored nowhere (a field, an element, a hash entry,
-//     `push` or `fill`): it would keep its caller's reference;
+//     `push`, `insert`, `fill` or `concat`): it would keep its caller's reference;
 //   - an S value is stored only into a place rooted at self (S into S
 //     stays under the lock: `self.root = self.root.left`), or into a
 //     name of the method, which becomes rooted at self;
@@ -1449,7 +1458,7 @@ pub fn (checker_self: Checker) cw_alias_stmt(w: ClassWalk, st: Stmt) {
 
 pub fn (checker_self: Checker) cw_alias_expr(w: ClassWalk, e: Expr) {
   if e.kind == ex_call() {
-    if recv = e.receiver, e.callee == "push" || e.callee == "fill" {
+    if recv = e.receiver, array_stores_arg(e.callee) {
       base = checker_self.cw_local_base(w, recv)
       if base.size > 0 {
         for a in e.args {
@@ -1659,7 +1668,7 @@ pub fn (checker_self: Checker) cw_call(w: ClassWalk, e: Expr) {
   if checker_self.any_err() {
     return
   }
-  if recv2 = e.receiver, e.resolved.size == 0 && (e.callee == "push" || e.callee == "fill") {
+  if recv2 = e.receiver, e.resolved.size == 0 && array_stores_arg(e.callee) {
     tb = checker_self.cw_root_place(w, recv2)
     for a in e.args {
       checker_self.cw_store(w, tb, a, "an array (${e.callee})")

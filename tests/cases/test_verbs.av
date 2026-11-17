@@ -4,7 +4,7 @@ import backends
 // The refusals of the sequence and array verbs: slices (`xs[a..b]`, the
 // open and inclusive forms, `slice`, `try_slice`), the verbs that take a
 // lambda (`find`, `index_of`, `min_by`, `max_by`, `delete_if`), `fill`,
-// `unique`, `first`, and `push_str`'s argument. What they compute is in
+// `unique`, `first`, `push_str`'s argument; a function given by name, `insert`, `concat`, `a + b`, `shuffle`'s generator, `try_shl`, and the names with one spelling (`retain`, `remove`). What they compute is in
 // the run goldens of tests/fixtures/heap/slices.av, verbs.av and
 // trap_slice.av. Each program is compiled in parallel; a refused one must
 // leave no binary, say the expected words and point at the expected line
@@ -41,6 +41,14 @@ fn cases: Array(LCase) {
   xs.push(refused("unique-eq", "fn main {\n  bs = [Buf.new()]\n  puts(bs.unique().size)\n}\n", "unique compares the elements with ==: Buf has no ==", "3:10"))
   xs.push(refused("first-arguments", "fn main {\n  xs = [1, 2]\n  puts(xs.first(1) ?? 0)\n}\n", "first takes no arguments", "3:10"))
   xs.push(refused("push-str-type", "fn main {\n  b = Buf.new()\n  b.push_str(5)\n}\n", "push_str expects String, Bytes or Buf, got Int", "3:14"))
+  xs.push(refused("each-function-type", "fn shout(s: String) {\n  puts(s)\n}\n\nfn main {\n  xs = [1, 2]\n  xs.each(shout)\n}\n", "argument 1 of shout is Int, expected String", "7:11"))
+  xs.push(refused("shuffle-random", "fn main {\n  xs = [1, 2]\n  xs.shuffle(7)\n}\n", "shuffle takes a Random (import std.random; Random.new(seed)), got Int", "3:14"))
+  xs.push(refused("concat-type", "fn main {\n  xs = [1, 2]\n  xs.concat([\"a\"])\n}\n", "array element is String, expected Int", "3:14"))
+  xs.push(refused("remove-hint", "fn main {\n  xs = [1, 2]\n  xs.remove(0)\n}\n", "no method remove on Array(Int) (write `xs.delete_at(i)`", "3:5"))
+  xs.push(refused("retain-hint", "fn main {\n  xs = [1]\n  xs.retain((x) { x > 0 })\n}\n", "no method retain on Array(Int) (write `xs.delete_if (x) { ... }` with the test turned around)", "3:5"))
+  xs.push(refused("try-shl-float", "fn main {\n  x = 1.5\n  puts(x.try_shl(1) ?? 0.0)\n}\n", "no method try_shl on Float64", "3:9"))
+  xs.push(refused("insert-type", "fn main {\n  xs = [1, 2]\n  xs.insert(0, \"a\")\n}\n", "insert expects Int, got String", "3:16"))
+  xs.push(refused("join-types", "fn main {\n  xs = [1, 2]\n  ys = [\"a\"]\n  puts((xs + ys).size)\n}\n", "cannot join Array(Int) and Array(String)", "4:12"))
   xs
 }
 

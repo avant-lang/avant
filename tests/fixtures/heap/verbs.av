@@ -1,6 +1,10 @@
 // The array verbs: has, first, last, is_empty, reversed, find, index_of
 // with a function, min_by, max_by, delete_if, unique, fill of any
-// element type; is_empty on every collection.
+// element type; is_empty on every collection; insert, delete_at,
+// try_delete_at, concat and a + b; a function given to the builtins by
+// its name or as a value; shuffle with a seeded Random; try_shl, try_shr.
+
+import std.random
 
 struct P {
   x: Int
@@ -108,7 +112,116 @@ fn empties {
   puts("is_empty ${h.is_empty()} ${st.is_empty()} ${b.is_empty()} ${"".is_empty()} ${"x".is_empty()} ${"".bytes.is_empty()} ${e.is_empty()} ${[1].is_empty()}")
 }
 
+fn show(x: Int) {
+  puts("item ${x}")
+}
+
+fn is_big(x: Int): Bool {
+  x > 4
+}
+
+fn before(a: P, b: P): Bool {
+  a.x < b.x
+}
+
+fn functions {
+  xs = [5, 3, 8, 1]
+  xs.each(show)
+  small: fn(Int): Bool = (x) { x < 3 }
+  puts("fns ${xs.any(is_big)} ${xs.all(is_big)} ${xs.find(is_big) ?? -1} ${xs.index_of(small) ?? -1} ${xs.index_of(8) ?? -1}")
+  ps = [P { x: 2, name: "b" }, P { x: 1, name: "a" }, P { x: 2, name: "c" }]
+  ps.sort(before)
+  qs = ps.sorted(before)
+  puts("sorted ${ps[0].name}${ps[1].name}${ps[2].name} ${qs[2].name}")
+  ns = [1, 2, 3, 4, 5, 6]
+  ns.delete_if(is_big)
+  puts("deleted ${ns.size}")
+}
+
+fn positions {
+  xs = [1, 2, 3]
+  xs.insert(0, 0)
+  xs.insert(4, 4)
+  xs.insert(2, 9)
+  puts("insert ${xs.size} ${xs[0]} ${xs[2]} ${xs[3]} ${xs[5]}")
+  d = xs.delete_at(2)
+  puts("delete_at ${d} ${xs.size} ${xs[2]} ${xs.try_delete_at(5) ?? -1} ${xs.try_delete_at(-1) ?? -1} ${xs.try_delete_at(4) ?? -1} ${xs.size}")
+  bs: Array(Box) = []
+  i = 0
+  while i < 300 {
+    bs.insert(bs.size / 2, Box.new(i))
+    i += 1
+  }
+  junk = 0
+  k = 0
+  while k < 20000 {
+    junk += "${k}".size
+    k += 1
+  }
+  gone = bs.delete_at(0)
+  puts("boxes ${bs.size} ${bs[0].n} ${bs[149].n} ${bs[298].n} ${gone.n} ${junk}")
+  ps = [P { x: 1, name: "a" }]
+  ps.insert(0, P { x: 2, name: "b" })
+  ps.insert(2, P { x: 3, name: "c" })
+  q = ps.delete_at(1)
+  puts("structs ${ps[0].name}${ps[1].name} ${q.name}")
+}
+
+fn joins {
+  a = [1, 2]
+  b = [3]
+  c = a + b
+  a.concat(b)
+  a.concat([4, 5])
+  a.concat(a)
+  puts("concat ${c.size} ${c[2]} ${a.size} ${a[9]} ${b.size}")
+  ws = ["x"] + ["y", "z"]
+  puts("strings ${ws.size} ${ws[2]}")
+  big: Array(Box) = []
+  r = 0
+  while r < 50 {
+    row = [Box.new(r), Box.new(r + 1000)]
+    big.concat(row)
+    junk = "${r}${r}"
+    r += 1
+  }
+  all = big + big
+  puts("boxes ${big.size} ${big[99].n} ${all.size} ${all[100].n}")
+}
+
+fn shuffles {
+  a = [1, 2, 3, 4, 5, 6, 7, 8]
+  a.shuffle(Random.new(7))
+  b = [1, 2, 3, 4, 5, 6, 7, 8].shuffled(Random.new(7))
+  total = 0
+  for v in a {
+    total += v
+  }
+  rng = Random.new(1)
+  counts = [0, 0, 0]
+  n = 0
+  while n < 3000 {
+    counts[rng.int(3)] += 1
+    n += 1
+  }
+  even = counts[0] > 900 && counts[1] > 900 && counts[2] > 900
+  f = rng.float()
+  puts("shuffle ${a == b} ${total} ${a.size} ${even} ${f >= 0.0 && f < 1.0}")
+}
+
+fn shifts {
+  x = 1
+  y: Int32 = 256
+  u: UInt64 = 1u64
+  puts("shifts ${x.try_shl(3) ?? -1} ${x.try_shl(64) ?? -1} ${x.try_shr(-1) ?? -1} ${y.try_shr(4) ?? 0} ${y.try_shl(32) ?? 0} ${u.try_shl(63) ?? 0u64}")
+}
+
 fn main {
+  functions()
+  positions()
+  joins()
+  shuffles()
+  shifts()
   lookups()
   orders()
   removals()

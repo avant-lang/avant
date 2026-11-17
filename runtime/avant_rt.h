@@ -488,6 +488,10 @@ void avant_array_frozen(void *arr, int32_t op);
 #define AVANT_FROZEN_RESERVE 6
 #define AVANT_FROZEN_STORE 7
 #define AVANT_FROZEN_DELETE_IF 8
+#define AVANT_FROZEN_INSERT 9
+#define AVANT_FROZEN_DELETE_AT 10
+#define AVANT_FROZEN_CONCAT 11
+#define AVANT_FROZEN_SHUFFLE 12
 /* The freeze of a captured value that holds a hash: a Hash, or an Array
  * or Hash of them at any level (a value of arrays only takes
  * avant_array_freeze). depth counts the levels from the outermost, each
@@ -515,6 +519,9 @@ void avant_array_sort_bool(void *arr);
 void avant_array_reverse(void *arr, uint64_t elem_size);
 void *avant_array_copy(void *arr, uint64_t elem_size, uint32_t buf_type_id);
 void *avant_array_slice(void *arr, avant_int start, avant_int stop, uint64_t elem_size, uint32_t buf_type_id);
+void *avant_array_insert_slot(void *arr, avant_int i, uint64_t elem_size, uint32_t buf_type_id);
+void avant_array_delete_at(void *arr, avant_int i, uint64_t elem_size, uint32_t buf_type_id);
+void avant_array_concat(void *dst, void *src, uint64_t elem_size, uint32_t buf_type_id);
 int32_t avant_array_contains_i32(void *arr, int32_t v);
 int32_t avant_array_contains_i64(void *arr, int64_t v);
 int32_t avant_array_contains_u64(void *arr, uint64_t v);
@@ -584,6 +591,7 @@ __attribute__((noreturn, cold)) void avant_trap_c_range(int64_t value, int32_t k
 __attribute__((noreturn, cold)) void avant_trap_byte(avant_int value);
 __attribute__((noreturn, cold)) void avant_trap_precision(avant_int prec);
 __attribute__((noreturn, cold)) void avant_trap_slice(avant_int start, avant_int stop, avant_int size);
+__attribute__((noreturn, cold)) void avant_trap_insert(avant_int index, avant_int size);
 __attribute__((noreturn, cold)) void avant_trap_negative(avant_int n, int32_t what);
 __attribute__((noreturn, cold)) void avant_trap_exit_status_at(avant_int status, int32_t site);
 __attribute__((noreturn, cold)) void avant_trap_c_null_at(const char *name, int32_t site);

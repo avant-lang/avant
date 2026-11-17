@@ -1,0 +1,44 @@
+// std.random: a seeded generator of pseudo-random numbers (SplitMix64:
+// a 64-bit state, a fixed sequence per seed). A program makes one and
+// passes it where randomness is used (`xs.shuffle(rng)`), so a test can
+// fix the seed and the order; nothing is random behind a program's back.
+// Not for secrets: the sequence follows from the seed.
+
+pub class Random {
+  state: UInt64 = 0u64
+
+  fn initialize(seed: Int) {
+    self.state = seed.wrap_u64()
+  }
+
+  // The next 64 random bits.
+  pub fn u64: UInt64 {
+    self.state = self.state &+ 11400714819323198485u64
+    z = self.state
+    z = (z ^ (z >> 30)) &* 13787848793156543929u64
+    z = (z ^ (z >> 27)) &* 10723151780598845931u64
+    z ^ (z >> 31)
+  }
+
+  // An Int in 0..n (0 up to n - 1), each equally likely; n must be
+  // positive.
+  pub fn int(n: Int): Int {
+    if n <= 0 {
+      none: Int? = nil
+      return none.expect("Random.int(n) needs n > 0, got ${n}")
+    }
+    bound = n.wrap_u64()
+    // Draws below the threshold would make the low results likelier.
+    threshold = (~bound &+ 1u64) % bound
+    r = u64()
+    while r < threshold {
+      r = u64()
+    }
+    (r % bound).wrap_i()
+  }
+
+  // A Float64 in [0, 1), 53 random bits.
+  pub fn float: Float64 {
+    (u64() >> 11).to_f() / 9007199254740992.0
+  }
+}

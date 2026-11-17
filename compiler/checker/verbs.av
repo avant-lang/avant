@@ -38,6 +38,29 @@ pub fn (checker_self: Checker) check_shared_verb(expr: Expr, object: Ty): Ty? {
     checker_self.call_verb_template(expr, "__avant_is_empty", object)
     return checker_self.t_bool()
   }
+  if (c == "try_shl" || c == "try_shr") && object.is_integer() {
+    res = ty_nilable(object)
+    if b = expr.block {
+      checker_self.fail(expr.loc, "${c} does not take a block")
+      return res
+    }
+    if expr.args.size != 1 {
+      checker_self.fail(expr.loc, "${c} takes one Int, the shift amount")
+      return res
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if !got.is_int() {
+      checker_self.fail(expr.args[0].loc, "the shift amount is an Int, got ${got.show()}")
+      return res
+    }
+    // The width, an argument of the template: 64 or 32.
+    w = Expr.new(ex_int(), expr.loc)
+    w.int_bits = object.int_width().to_u64()
+    w.ty = checker_self.t_int()
+    expr.args.push(w)
+    checker_self.call_verb_template(expr, "__avant_${c}", object)
+    return res
+  }
   if (c == "slice" || c == "try_slice") && seq {
     res = object
     if c == "try_slice" {
@@ -75,6 +98,21 @@ pub fn (checker_self: Checker) check_shared_verb(expr: Expr, object: Ty): Ty? {
 // another name.
 pub fn (checker_self: Checker) check_array_verb(expr: Expr, array: Ty, e: Ty): Ty? {
   c = expr.callee
+  if c == "insert" || c == "delete_at" || c == "try_delete_at" || c == "concat" || c == "shuffle" || c == "shuffled" {
+    return checker_self.check_array_change(expr, array, e)
+  }
+  if c == "retain" || c == "remove" || c == "remove_at" || c == "remove_duplicates" || c == "extend" || c == "append" {
+    hint = " (write `xs.delete_if (x) { ... }` with the test turned around)"
+    if c == "remove" || c == "remove_at" {
+      hint = " (write `xs.delete_at(i)`, or `xs.delete_if (x) { x == v }` for a value)"
+    } else if c == "remove_duplicates" {
+      hint = " (write `xs = xs.unique()`)"
+    } else if c == "extend" || c == "append" {
+      hint = " (write `xs.concat(ys)`)"
+    }
+    checker_self.fail_hint(expr.loc, "no method ${c} on ${array.show()}", hint)
+    return checker_self.t_void()
+  }
   if !(c == "dup" || c == "reversed" || c == "first" || c == "last" || c == "unique") {
     return nil
   }
@@ -112,6 +150,97 @@ pub fn (checker_self: Checker) check_array_verb(expr: Expr, array: Ty, e: Ty): T
   res
 }
 
+// The array's changes at a position and of its order: `insert(i, v)`,
+// `delete_at(i)` (the element; traps as xs[i] does), `try_delete_at(i)`
+// (nil outside), `concat(ys)` (ys appended in place), `shuffle(rng)` and
+// `shuffled(rng)` (std.random's Random, passed in).
+pub fn (checker_self: Checker) check_array_change(expr: Expr, array: Ty, e: Ty): Ty {
+  c = expr.callee
+  res = checker_self.t_void()
+  if c == "delete_at" {
+    res = e
+  } else if c == "try_delete_at" {
+    res = ty_nilable(e)
+  } else if c == "shuffled" {
+    res = ty_array(e)
+  }
+  if b = expr.block {
+    checker_self.fail(expr.loc, "${c} does not take a block")
+    return res
+  }
+  want = 1
+  if c == "insert" {
+    want = 2
+  }
+  if expr.args.size != want {
+    shape = "one argument"
+    if c == "insert" {
+      shape = "a position and a value, insert(i, v)"
+    } else if c == "concat" {
+      shape = "one array, concat(ys)"
+    } else if c == "shuffle" || c == "shuffled" {
+      shape = "a Random (import std.random)"
+    } else {
+      shape = "one Int, the position"
+    }
+    checker_self.fail(expr.loc, "${c} takes ${shape}")
+    return res
+  }
+  if c == "insert" || c == "delete_at" || c == "try_delete_at" {
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_int())
+    if !got.is_int() {
+      checker_self.fail(expr.args[0].loc, "the position is an Int, got ${got.show()}")
+      return res
+    }
+  }
+  if c == "insert" {
+    v = checker_self.check_expr_as(expr.args[1], e)
+    if !ty_assignable(v, e) {
+      checker_self.fail(expr.args[1].loc, "insert expects ${e.show()}, got ${v.show()}")
+    }
+    return res
+  }
+  if c == "try_delete_at" {
+    checker_self.call_verb_template(expr, "__avant_try_delete_at", e)
+    return res
+  }
+  if c == "concat" {
+    got = checker_self.check_expr_as(expr.args[0], array)
+    if !got.same_as(array) {
+      checker_self.fail(expr.args[0].loc, "concat expects ${array.show()}, got ${got.show()}")
+    }
+    return res
+  }
+  if c == "shuffle" || c == "shuffled" {
+    r = checker_self.check_expr(expr.args[0])
+    if !(r.is_class() && r.name == "Random") {
+      checker_self.fail(expr.args[0].loc, "${c} takes a Random (import std.random; Random.new(seed)), got ${r.show()}")
+      return res
+    }
+    tys: Array(Ty) = []
+    tys.push(e)
+    tys.push(r)
+    checker_self.call_verb_template_of(expr, "__avant_${c}", tys)
+  }
+  res
+}
+
+// `a + b` of two arrays of one type: a new array, a's elements then b's.
+pub fn (checker_self: Checker) array_join(expr: Expr, l: Expr, r: Expr, t: Ty): Ty {
+  if e = t.inner {
+    args: Array(Expr) = []
+    args.push(r)
+    expr.kind = ex_call()
+    expr.receiver = l
+    expr.args = args
+    expr.left = nil
+    expr.right = nil
+    expr.op = 0
+    checker_self.call_verb_template(expr, "__avant_join", e)
+  }
+  t
+}
+
 // `xs.fill(v)` of an element type the runtime does not fill (a float, a
 // String, a struct, an optional): every element set to v, by the rule of
 // `Array(T).new(n, value)` (a value that is or holds a mutable object
@@ -134,9 +263,14 @@ pub fn (checker_self: Checker) check_fill_any(expr: Expr, e: Ty) {
 // argument and the call's own arguments after it. false when the
 // template is not found or not instantiated (an error is reported).
 pub fn (checker_self: Checker) call_verb_template(expr: Expr, name: String, t: Ty): Bool {
+  subst: Array(Ty) = []
+  subst.push(t)
+  checker_self.call_verb_template_of(expr, name, subst)
+}
+
+// The same with the template's type arguments in order.
+pub fn (checker_self: Checker) call_verb_template_of(expr: Expr, name: String, subst: Array(Ty)): Bool {
   if recv = expr.receiver, sig = checker_self.verb_template(name) {
-    subst: Array(Ty) = []
-    subst.push(t)
     if inst = checker_self.instantiate_function(sig, subst, expr.loc) {
       args: Array(Expr) = []
       args.push(recv)
@@ -212,6 +346,25 @@ pub fn verb_template_source(name: String): String {
   }
   if name == "__avant_fill" {
     return "fn __avant_fill(xs: Array(T), v: T) {\n  i = 0\n  while i < xs.size {\n    xs[i] = v\n    i += 1\n  }\n}\n"
+  }
+  if name == "__avant_try_delete_at" {
+    return "fn __avant_try_delete_at(xs: Array(T), i: Int): T? {\n  if i < 0 || i >= xs.size {\n    return nil\n  }\n  xs.delete_at(i)\n}\n"
+  }
+  if name == "__avant_join" {
+    return "fn __avant_join(a: Array(T), b: Array(T)): Array(T) {\n  c = a.dup()\n  c.concat(b)\n  c\n}\n"
+  }
+  if name == "__avant_shuffle" {
+    return "fn __avant_shuffle(xs: Array(T), rng: R) {\n  i = xs.size - 1\n  while i > 0 {\n    j = rng.int(i + 1)\n    t = xs[i]\n    xs[i] = xs[j]\n    xs[j] = t\n    i -= 1\n  }\n}\n"
+  }
+  if name == "__avant_shuffled" {
+    return "fn __avant_shuffled(xs: Array(T), rng: R): Array(T) {\n  ys = xs.dup()\n  ys.shuffle(rng)\n  ys\n}\n"
+  }
+  if name == "__avant_try_shl" || name == "__avant_try_shr" {
+    op = "<<"
+    if name == "__avant_try_shr" {
+      op = ">>"
+    }
+    return "fn ${name}(x: T, n: Int, width: Int): T? {\n  if n < 0 || n >= width {\n    return nil\n  }\n  x ${op} n\n}\n"
   }
   ""
 }

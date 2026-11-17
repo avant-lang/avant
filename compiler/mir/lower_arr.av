@@ -490,9 +490,9 @@ pub fn (lw: MirLower) seq_place(h: Int, aty: Int, i: MOperand, proven: Bool): MP
 // growth path, which a frozen array always takes), and the mutations
 // generated code makes itself test it here: an element store
 // (`xs[i] = v`, `xs[i] += v`, `xs[i].f = v`), `clear`, a sort with a
-// block, `delete_if`, and a `fill` of elements other than numbers (a
-// generic function's loop, checked at its call). The ops are
-// avant_rt.h's AVANT_FROZEN_*.
+// block, `delete_if`, `delete_at`, and a `fill` of elements other than
+// numbers, a `shuffle` and a `try_delete_at` (generic functions' loops,
+// checked at their call). The ops are avant_rt.h's AVANT_FROZEN_*.
 pub fn mir_frozen_clear: Int {
   2
 }
@@ -503,6 +503,14 @@ pub fn mir_frozen_fill: Int {
 
 pub fn mir_frozen_delete_if: Int {
   8
+}
+
+pub fn mir_frozen_delete_at: Int {
+  10
+}
+
+pub fn mir_frozen_shuffle: Int {
+  12
 }
 
 pub fn mir_frozen_sort: Int {
@@ -553,6 +561,12 @@ pub fn (lw: MirLower) frozen_check(h: Int, op: Int, loc: Location) {
 pub fn mir_verb_frozen_op(callee: String): Int {
   if callee == "__avant_fill" {
     return mir_frozen_fill()
+  }
+  if callee == "__avant_shuffle" {
+    return mir_frozen_shuffle()
+  }
+  if callee == "__avant_try_delete_at" {
+    return mir_frozen_delete_at()
   }
   -1
 }
@@ -957,6 +971,61 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     }
     r = lw.call_to(mt_i32(), cf, lw.two(b.copy_local(h), v))
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
+  }
+  if name == "insert" && args.size == 2 {
+    // The value, the position, then the receiver; the runtime opens the
+    // slot at the position (moving the rest up) and the value is stored
+    // through it, as a push's.
+    v = lw.snap(lw.snap(lw.lower_coerced(args[1], et, want), args[0]), recv)
+    ip = lw.snap(lw.lower_expr(args[0]), recv)
+    a = lw.lower_expr(recv)
+    if lw.failed() {
+      return zero
+    }
+    lw.at(e.loc)
+    hi = lw.hold(a, aty)
+    four = lw.two(b.copy_local(hi), ip)
+    four.push(lw.elem_size(aty))
+    four.push(lw.buf_tid(aty))
+    s = b.temp(b.types.addr_of(et))
+    b.call(s, "avant_array_insert_slot", four)
+    b.assign(b.deref(b.pl(s)), b.rv_use(v))
+    return zero
+  }
+  if name == "delete_at" && args.size == 1 {
+    // The position, then the receiver; the element read as xs[i] (its
+    // bounds checked), then removed.
+    ip = lw.snap(lw.lower_expr(args[0]), recv)
+    a = lw.lower_expr(recv)
+    if lw.failed() {
+      return zero
+    }
+    lw.at(e.loc)
+    hd = lw.hold(a, aty)
+    k = lw.hold(ip, mt_int())
+    lw.frozen_check(hd, mir_frozen_delete_at(), e.loc)
+    pl = lw.seq_place(hd, aty, b.copy_local(k), false)
+    got = lw.tmp(et, b.rv_use(b.copy(pl)))
+    four = lw.two(b.copy_local(hd), b.copy_local(k))
+    four.push(lw.elem_size(aty))
+    four.push(lw.buf_tid(aty))
+    b.call(-1, "avant_array_delete_at", four)
+    return got
+  }
+  if name == "concat" && args.size == 1 {
+    // The other array, then the receiver.
+    o = lw.snap(lw.lower_expr(args[0]), recv)
+    a = lw.lower_expr(recv)
+    if lw.failed() {
+      return zero
+    }
+    lw.at(e.loc)
+    hc = lw.hold(a, aty)
+    four = lw.two(b.copy_local(hc), o)
+    four.push(lw.elem_size(aty))
+    four.push(lw.buf_tid(aty))
+    b.call(-1, "avant_array_concat", four)
+    return zero
   }
   if name == "slice" && (args.size == 1 || args.size == 2) {
     // A new array of the elements start up to stop (the size when there
