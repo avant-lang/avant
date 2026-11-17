@@ -984,6 +984,7 @@ pub class Checker {
         while pi < stmt.pre.size {
           annotate_vstep(stmt.pre[pi], stmt)
           self.clear_poison()
+        refuse_for_outer_name(stmt)
           check_stmt(stmt.pre[pi], t_void(), false)
           if stmt.for_kind == 2 && pi == 0 {
             set_for_operand(stmt.pre[0])
@@ -3106,6 +3107,7 @@ pub class Checker {
       self.in_build += 1
       bt = check_block_value_as(b, true, elem)
       self.in_build = saved_build
+      refuse_block_param_outer(b, "Array.new")
       self.loop_depth = saved_loops
       self.pop_scope()
       if !self.has_err() && !ty_assignable(bt, elem) {
@@ -6327,6 +6329,7 @@ pub class Checker {
       // Used as a statement, the block ends without a value; used as a
       // value, its last expression is the value.
       result = check_with_body(b, !dropped)
+      refuse_block_param_outer(b, expr.callee)
       self.pop_scope()
       // The block's value leaves the lock: it may not be, or hold, a
       // reference to mutable state (two tasks raced on a class handed out

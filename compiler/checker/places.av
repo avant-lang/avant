@@ -19,9 +19,8 @@
 //   the place would then name another element, or none;
 // - the place captured by a lambda or a task: the lambda would outlive
 //   the step, and a task would share the element unguarded;
-// - the variable named like one that already exists (a range's or a
-//   class array's `for` reuses an outer variable and leaves its last
-//   value there; a place cannot be left behind);
+// - the variable named like one that already exists (every `for`
+//   refuses it: refuse_for_outer_name);
 //
 // The parameters of the blocks that are not walks (a comparator's, a
 // Hash walk's, a `.parallel` body's) are copies: a write to one would be
@@ -95,6 +94,48 @@ pub fn (checker_self: Checker) end_places(saved: Int) {
   }
 }
 
+// A `for` loop's variable is the loop's own: it exists from the loop's
+// first step to its end, and a name that already exists here (a local,
+// a parameter, an outer loop's variable) is refused. Reusing one would
+// make the loop assign that variable at each step and leave its last
+// value there (and an inner loop of the same name would move the outer
+// loop's counter); Avant has no shadowing for a loop to fall back on (a
+// declaration of an existing name is refused too). A field's name is
+// refused by the loop's store, which names `self.field`.
+pub fn (checker_self: Checker) refuse_for_outer_name(stmt: Stmt) {
+  name = ""
+  if stmt.for_kind == 1 && stmt.pre.size > 0 {
+    if t = stmt.pre[0].target {
+      name = t.ident
+    }
+  }
+  if stmt.for_kind == 2 && stmt.body.size > 0 && (stmt.body[0].for_kind == 4 || stmt.body[0].for_kind == 5) {
+    if t = stmt.body[0].target {
+      name = t.ident
+    }
+  }
+  if name.size == 0 {
+    return
+  }
+  if old = checker_self.lookup(name) {
+    checker_self.fail(stmt.loc, "for ${name} in ...: ${name} already names a variable here; a loop's variable is the loop's own and ends with the loop (reusing ${name} would assign it at every step and leave the last value there): give the loop's variable a name of its own")
+  }
+}
+
+// A builtin block's parameters (`each`, `any`, `all`, a comparator, a
+// Hash's or a Set's `each`, `Array(T).new(n) { |i| }`, `Mutex.with`,
+// `.parallel`) are the block's own, as a `for` variable is the loop's: a
+// name that already exists here is refused (an inlined block's parameter
+// would otherwise be that variable, assigned at every step and left with
+// the last value).
+pub fn (checker_self: Checker) refuse_block_param_outer(b: Block, what: String) {
+  for name in b.params {
+    if old = checker_self.lookup(name) {
+      checker_self.fail(b.loc, "|${name}|: ${name} already names a variable here; a parameter of ${what}'s block is the block's own and ends with it (reusing ${name} would assign it at every step and leave the last value there): give the parameter a name of its own")
+    }
+  }
+}
+
 // A `for` over an Array of structs (the parser's loop of for_kind 2: the
 // array's and the counter's stores in pre, the element's store first in
 // the body): once the array is checked, its variable becomes the place.
@@ -109,7 +150,7 @@ pub fn (checker_self: Checker) begin_for_place(stmt: Stmt) {
   if t = setup.target, pa = stmt.pre[0].target, pi = stmt.pre[1].target, at = checker_self.lookup(pa.ident), at.is_array() {
     if inner = at.inner, inner.is_struct() {
       if old = checker_self.lookup(t.ident) {
-        checker_self.fail(setup.loc, "for ${t.ident} in ...: ${t.ident} already names a variable here; over an Array of structs the loop's variable is the element itself, in place, and is not left behind after the loop: give it a name of its own")
+        // Refused already (refuse_for_outer_name).
         return
       }
       setup.for_kind = 5
@@ -154,6 +195,7 @@ pub fn (checker_self: Checker) begin_block_place(b: Block, recv: Expr, array: Ty
 // caller pushed: the place over an Array of structs, else a copy that
 // cannot be assigned.
 pub fn (checker_self: Checker) bind_walk_param(expr: Expr, b: Block, array: Ty, elem: Ty) {
+  checker_self.refuse_block_param_outer(b, expr.callee)
   if elem.is_struct() {
     if recv = expr.receiver {
       checker_self.begin_block_place(b, recv, array, elem)

@@ -708,8 +708,8 @@ fn main {
 ```
 
 - **`..` excludes its end** (`for i in 1..n` never reaches `n`); **`..=` includes it** (`for i in 1..=n` ends with `n`, even the largest `Int`, without overflow).
-- The bounds are evaluated once. The loop variable is a new name, only inside the loop, unless a variable of that name exists outside: the loop then uses it and leaves its last value there (not over an array of structs, below). `break`, `continue` and `return` work as in `while`.
-- **Over an array of structs the loop variable is the element itself**, in place: `p.x = 1`, `p.pos.x += 1` and a method that changes its receiver (`p.step()`) change the element in the array, as a *class* element's field changes its object. A copy is still a copy (`q = p`, an argument, `ys.push(p)`). While the loop runs, the array's size and order cannot change through its own name (`xs.push`, `pop`, `clear`, `reserve`, `sort` and `reverse` there are compile errors; collect the changes and apply them after the loop); a change through another name that removes the element stops the program at the variable's next use, as a bad index does. `p = other` replaces the element in the array, as `xs[i] = other` does. The variable cannot be captured by a lambda or a task (copy it first: `q = p`), and needs a name of its own. The parameter of `each`, `any` and `all` over an array of structs is the same place.
+- The bounds are evaluated once. The loop variable is a new name, only inside the loop: a name that already exists there (a local, a parameter, an outer loop's variable) is a compile error, since the loop would otherwise assign it at every step and leave its last value behind; give the loop's variable a name of its own. Two loops one after the other may use the same name. `break`, `continue` and `return` work as in `while`.
+- **Over an array of structs the loop variable is the element itself**, in place: `p.x = 1`, `p.pos.x += 1` and a method that changes its receiver (`p.step()`) change the element in the array, as a *class* element's field changes its object. A copy is still a copy (`q = p`, an argument, `ys.push(p)`). While the loop runs, the array's size and order cannot change through its own name (`xs.push`, `pop`, `clear`, `reserve`, `sort` and `reverse` there are compile errors; collect the changes and apply them after the loop); a change through another name that removes the element stops the program at the variable's next use, as a bad index does. `p = other` replaces the element in the array, as `xs[i] = other` does. The variable cannot be captured by a lambda or a task (copy it first: `q = p`). The parameter of `each`, `any` and `all` over an array of structs is the same place.
 - **Any other loop variable cannot be assigned** (it is a fresh copy at each step): `i = 5` and `x += 1` are compile errors. Store through an index (`xs[i] = v`), or use `while` for a range that skips or repeats steps.
 
 ```avant
@@ -2411,6 +2411,8 @@ The builtins' blocks (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `spawn
 | a lambda, a trailing block of your own function | returns from the lambda | a compile error |
 
 ```avant
+A builtin block's parameters are new names, as a `for` variable is: a parameter named like a variable that already exists there (`x = 1`, then `xs.each { |x| ... }`) is a compile error, since the block would otherwise assign that variable at every step and leave its last value behind. A lambda's parameters are a function's, and may take any name.
+
 fn first_big(xs: Array(Int)): Int {
   found = -1
   xs.each { |x|

@@ -26,7 +26,8 @@ import backends
 //     own name (push, pop, clear, reserve, sort, reverse; a field path
 //     too); a write through the place to an array a task reads, in the
 //     task or beside it, as a write through the array's name is; the place captured by a lambda or a task (an assignment in a
-//     lambda too); a loop variable that reuses an outer name; a parameter
+//     lambda too); a loop variable that reuses an outer name (every
+//     loop refuses it); a parameter
 //     of each, any or all over plain values assigned; the parameters
 //     that are copies (a comparator's, a Hash walk's, a .parallel
 //     body's) written or given to a method that changes its receiver.
@@ -110,7 +111,7 @@ fn cases: Array(PCase) {
   xs.push(refused("place-assigned-in-lambda", "struct Pos {\n  x: Int\n  y: Int\n\n  fn scale(k: Int) {\n    self.x *= k\n    self.y *= k\n  }\n\n  fn sum: Int {\n    self.x + self.y\n  }\n}\n\nfn main {\n  xs = [Pos { x: 1, y: 2 }]\n  for p in xs {\n    f = { || p = Pos { x: 0, y: 0 } }\n    f()\n  }\n}\n", "a lambda cannot capture p", "18:14"))
   xs.push(refused("each-copy-assigned", "fn main {\n  ns = [1, 2]\n  ns.each { |n| n = 3 }\n}\n", "cannot assign to n: a block parameter of each, any or all is a copy of the element, so the array would not change; store through an index (for i in 0..xs.size { xs[i] = ... })", "3:19"))
   xs.push(refused("any-copy-compound", "fn main {\n  ns = [1, 2]\n  hit = ns.any { |n|\n    n += 1\n    n > 2\n  }\n  puts(hit)\n}\n", "cannot assign to n: a block parameter of each, any or all is a copy", "4:7"))
-  xs.push(refused("for-place-outer-name", "struct Pos {\n  x: Int\n  y: Int\n\n  fn scale(k: Int) {\n    self.x *= k\n    self.y *= k\n  }\n\n  fn sum: Int {\n    self.x + self.y\n  }\n}\n\nfn main {\n  xs = [Pos { x: 1, y: 2 }]\n  p = Pos { x: 0, y: 0 }\n  for p in xs {\n    puts(p.x)\n  }\n}\n", "for p in ...: p already names a variable here; over an Array of structs the loop's variable is the element itself, in place, and is not left behind after the loop: give it a name of its own", "18:3"))
+  xs.push(refused("for-place-outer-name", "struct Pos {\n  x: Int\n  y: Int\n\n  fn scale(k: Int) {\n    self.x *= k\n    self.y *= k\n  }\n\n  fn sum: Int {\n    self.x + self.y\n  }\n}\n\nfn main {\n  xs = [Pos { x: 1, y: 2 }]\n  p = Pos { x: 0, y: 0 }\n  for p in xs {\n    puts(p.x)\n  }\n}\n", "for p in ...: p already names a variable here; a loop's variable is the loop's own and ends with the loop", "18:3"))
   xs.push(refused("comparator-field", "struct Pos {\n  x: Int\n  y: Int\n\n  fn scale(k: Int) {\n    self.x *= k\n    self.y *= k\n  }\n\n  fn sum: Int {\n    self.x + self.y\n  }\n}\n\nfn main {\n  xs = [Pos { x: 1, y: 2 }, Pos { x: 3, y: 4 }]\n  xs.sort { |a, b|\n    a.x = 0\n    a.x < b.x\n  }\n}\n", "cannot assign to a.x: a is a comparator's parameter, a copy of an element being compared: a comparator only compares", "18:9"))
   xs.push(refused("comparator-method", "struct Pos {\n  x: Int\n  y: Int\n\n  fn scale(k: Int) {\n    self.x *= k\n    self.y *= k\n  }\n\n  fn sum: Int {\n    self.x + self.y\n  }\n}\n\nfn main {\n  xs = [Pos { x: 1, y: 2 }, Pos { x: 3, y: 4 }]\n  ys = xs.sorted { |a, b|\n    a.scale(2)\n    a.x < b.x\n  }\n  puts(ys.size)\n}\n", "this call changes a copy: scale changes its receiver, and a is a comparator's parameter, a copy of an element being compared: a comparator only compares", "18:6"))
   xs.push(refused("comparator-assigned", "fn main {\n  ns = [2, 1]\n  ns.sort { |a, b|\n    a = 0\n    a < b\n  }\n}\n", "cannot assign to a: a is a comparator's parameter, a copy of an element being compared: a comparator only compares", "4:7"))

@@ -1,0 +1,132 @@
+import harness
+import backends
+
+// Walks: a loop's own variable, and a collection changed during its walk.
+// Each program is compiled in parallel; an accepted one must print what
+// it should, a refused one must leave no binary, say the expected words
+// and point at the expected line and column, and one that traps must
+// compile, end with a failure and say why.
+//   - a `for` variable is the loop's own: a name that already exists (a
+//     local, a parameter, an outer loop's variable, over a range, an Int
+//     array or a class array) is refused; two loops one after the other
+//     may share a name, and the name is gone after the loop; a field's
+//     name is refused by the loop's store. A builtin block's parameter
+//     (`each`, `any`, `all`, a comparator, a Hash's or a Set's `each`,
+//     `Array(T).new(n) { |i| }`) that names an existing variable is
+//     refused the same way; blocks one after the other may share names.
+
+class PCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  // 1 accepted, 2 refused, 3 compiles and traps.
+  pub kind: Int = 0
+}
+
+fn accepted(tag: String, src: String, out: String): PCase {
+  f = PCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.kind = 1
+  f
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): PCase {
+  f = PCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f.kind = 2
+  f
+}
+
+fn traps(tag: String, src: String, needle: String): PCase {
+  f = PCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.kind = 3
+  f
+}
+
+fn cases: Array(PCase) {
+  xs: Array(PCase) = []
+  xs.push(refused("for-range-outer-local", "fn main {\n  i = 100\n  for i in 0..3 {\n    puts(i)\n  }\n  puts(i)\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "3:3"))
+  xs.push(refused("for-array-outer-local", "fn main {\n  x = 100\n  for x in [1, 2, 3] {\n    puts(x)\n  }\n  puts(x)\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "3:3"))
+  xs.push(refused("for-class-outer-local", "class C {\n  pub x: Int = 0\n}\n\nfn main {\n  c = C.new()\n  c.x = 42\n  for c in [C.new(), C.new()] {\n    puts(c.x)\n  }\n  puts(c.x)\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "8:3"))
+  xs.push(refused("for-nested-same-name", "fn main {\n  n = 0\n  for i in 0..3 {\n    for i in 0..2 {\n      n += 1\n    }\n  }\n  puts(n)\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "4:5"))
+  xs.push(refused("for-parameter-name", "fn f(i: Int): Int {\n  for i in 0..3 {\n    puts(i)\n  }\n  i\n}\n\nfn main {\n  puts(f(7))\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "2:3"))
+  xs.push(refused("for-inclusive-outer-local", "fn main {\n  k = 0\n  for k in 1..=3 {\n    puts(k)\n  }\n  puts(k)\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "3:3"))
+  xs.push(refused("for-in-lambda-outer-local", "fn main {\n  i = 5\n  f = { |n: Int|\n    for i in 0..n {\n      puts(i)\n    }\n  }\n  f(2)\n  puts(i)\n}\n", "already names a variable here; a loop's variable is the loop's own and ends with the loop", "4:5"))
+  xs.push(refused("for-name-gone-after", "fn main {\n  for i in 0..3 {\n    puts(i)\n  }\n  puts(i)\n}\n", "unknown name i", "5:8"))
+  xs.push(refused("for-field-name", "class K {\n  pub i: Int = 5\n\n  fn run {\n    for i in 0..3 {\n      puts(i)\n    }\n    puts(self.i)\n  }\n}\n\nfn main {\n  K.new().run()\n}\n", "i is a field of K", "5:5"))
+  xs.push(accepted("for-same-name-in-sequence", "fn main {\n  t = 0\n  for i in 0..3 {\n    t += i\n  }\n  for i in 0..2 {\n    t += i\n  }\n  for x in [10, 20] {\n    t += x\n  }\n  for x in [100] {\n    t += x\n  }\n  puts(t)\n}\n", "134\n"))
+  xs.push(accepted("for-sibling-functions", "fn a: Int {\n  s = 0\n  for i in 0..4 {\n    s += i\n  }\n  s\n}\n\nfn b(i: Int): Int {\n  t = 0\n  for j in 0..i {\n    t += j\n  }\n  t\n}\n\nfn main {\n  puts(a() + b(5))\n}\n", "16\n"))
+  xs.push(refused("each-param-outer-local", "fn main {\n  x = 100\n  [1, 2, 3].each { |x| puts(x) }\n  puts(x)\n}\n", "|x|: x already names a variable here; a parameter of each's block is the block's own", "3:18"))
+  xs.push(refused("any-param-outer-local", "fn main {\n  x = 100\n  found = [1, 2, 3].any { |x| x == 2 }\n  puts(\"\${found} \${x}\")\n}\n", "|x|: x already names a variable here; a parameter of any's block", "3:25"))
+  xs.push(refused("sort-param-outer-local", "fn main {\n  a = 1\n  xs = [3, 1, 2]\n  xs.sort { |a, b| a < b }\n  puts(a)\n}\n", "|a|: a already names a variable here; a parameter of sort's block", "4:11"))
+  xs.push(refused("hash-each-param-outer-local", "fn main {\n  k = \"none\"\n  h = [\"a\": 1]\n  h.each { |k, v| puts(v) }\n  puts(k)\n}\n", "|k|: k already names a variable here; a parameter of each's block", "4:10"))
+  xs.push(refused("set-each-param-outer-local", "fn main {\n  v = 0\n  s: Set(Int) = [1, 2]\n  s.each { |v| puts(v) }\n  puts(v)\n}\n", "|v|: v already names a variable here; a parameter of each's block", "4:10"))
+  xs.push(refused("build-param-outer-local", "fn main {\n  i = 9\n  xs = Array(Int).new(3) { |i| i * 2 }\n  puts(\"\${xs[2]} \${i}\")\n}\n", "|i|: i already names a variable here; a parameter of Array.new's block", "3:26"))
+  xs.push(accepted("each-params-own-names", "fn main {\n  t = 0\n  [1, 2, 3].each { |x| t += x }\n  [4].each { |x| t += x }\n  h = [\"a\": 10]\n  h.each { |k, v| t += v }\n  xs = [3, 1, 2]\n  xs.sort { |a, b| a < b }\n  puts(\"\${t} \${xs[0]}\")\n}\n", "20 1\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(PCase)) {
+  jobs: Array(HJob) = []
+  for f in cases {
+    src = "${dir}/wk-${f.tag}.av"
+    _ = file_write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/wk-${f.tag}.bin", "${dir}/wk-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in cases {
+    if f2.kind != 2 {
+      runs.push(run_job(dir, "wk-${f2.tag}.bin", "wk-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..cases.size {
+    f3 = cases[i]
+    log = log_text("${dir}/wk-${f3.tag}.log")
+    if f3.kind == 1 {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      c.eq_str(log_text("${dir}/wk-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      k += 1
+    } else if f3.kind == 3 {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.expect(runs[k].code != 0, "${f3.tag}: fails")
+      c.expect(str_has(log_text("${dir}/wk-${f3.tag}.run.err"), f3.want), "${f3.tag}: says ${f3.want}")
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !file_exists("${dir}/wk-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(str_has(log, f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(str_has(log, "wk-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_walks.av")
+  if compiler = env_get("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}
