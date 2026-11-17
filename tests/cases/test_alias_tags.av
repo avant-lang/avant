@@ -1,16 +1,17 @@
 import harness
 
-// The type-based alias tags of the LLVM emitter (compiler/llvm/emit_core.av,
-// ll_tbaa_tag): an element access carries the element tag, an Array or Buf
-// header's buffer reference and size their own tags, a local (an alloca,
-// a collector's slot among them) its own, a class's or record's field
-// its own, and nothing else is tagged (Hash fields, an array's
-// capacity, which is read atomically, raw pointers). Then the program
-// that stores elements and fields while calls move their
-// buffers and objects (tests/fixtures/heap/alias_moves.av) is built with
-// --release, the
-// mode whose optimizer uses the tags, and run under each collector mode:
-// its output must be its run golden's.
+// What the LLVM emitter tells LLVM about memory and arithmetic
+// (compiler/llvm/emit_core.av, ll_tbaa_tag; compiler/llvm/emit.av,
+// ll_overflow). The type-based alias tags: an element access carries the
+// element tag, an Array or Buf header's buffer reference and size their
+// own tags, a local (an alloca, a collector's slot among them) its own,
+// a class's or record's field its own, and nothing else is tagged (Hash
+// fields, an array's capacity, which is read atomically, raw pointers).
+// A size's loads carry its range. Then the programs that store elements and fields
+// while calls move their buffers and objects
+// (tests/fixtures/heap/alias_moves.av, alias_fields.av) are built with
+// --release, the mode whose optimizer uses these facts, and run under
+// each collector mode: each output must be its run golden's.
 
 fn tags_lines(text: String): Array(String) {
   out: Array(String) = []
@@ -103,6 +104,8 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
     c.expect(tags_count(lines, "load ptr, ptr %t", ", !tbaa !5") >= 2, "the buffer reference's loads carry its tag")
     c.expect(tags_count(lines, "store ptr %t", ", !tbaa !5") >= 1, "the new array's buffer reference store carries its tag")
     c.expect(tags_count(lines, "load i32, ptr %t", ", !tbaa !7") >= 1, "the size's loads carry its tag")
+    c.eq_int(tags_count(lines, "load i32, ptr %t", ", !tbaa !7, !range !12"), tags_count(lines, "load i32, ptr %t", ", !tbaa !7"), "every size load carries the size's range")
+    c.expect(str_has(text, "!12 = !{i32 0, i32 -2147483648}"), "the size's range is [0, 2^31)")
     c.expect(tags_count(lines, "ptr %_", ", !tbaa !9") >= 4, "a local's accesses carry the local tag")
     c.eq_int(tags_count(lines, "ptr %_", "!tbaa") - tags_count(lines, "ptr %_", ", !tbaa !9"), 0, "a local's accesses carry no other tag")
     cap_reads = 0

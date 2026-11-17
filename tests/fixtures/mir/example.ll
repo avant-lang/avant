@@ -337,3 +337,4 @@ attributes #0 = { nounwind "frame-pointer"="all" "probe-stack"="inline-asm" }
 !9 = !{!8, !8, i64 0}
 !10 = !{!"object field", !1, i64 0}
 !11 = !{!10, !10, i64 0}
+!12 = !{i32 0, i32 -2147483648}

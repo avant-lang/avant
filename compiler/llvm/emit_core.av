@@ -55,6 +55,7 @@ pub class LlEmit {
   pub pa_vol: Bool = false
   pub pa_tbaa: String = ""
   pub pa_atomic: Bool = false
+  pub pa_size: Bool = false
   pub used_tbaa: Bool = false
   pub loop_md: Hash(String, Int)
   pub loop_md_n: Int = 0
@@ -342,6 +343,7 @@ pub class LlEmit {
     self.pa_ty = ty
     self.pa_vol = volatile
     self.pa_atomic = region == 4 && arr
+    self.pa_size = region == 3
     self.pa_tbaa = ll_tbaa_tag(region)
     if self.pa_tbaa.size > 0 {
       self.used_tbaa = true
@@ -382,7 +384,11 @@ pub class LlEmit {
         self.ov_ty = ty
         return x
       }
-      x = load_tagged(ty, ptr, self.pa_vol, self.pa_tbaa)
+      tag = self.pa_tbaa
+      if self.pa_size {
+        tag = tag + ll_size_range()
+      }
+      x = load_tagged(ty, ptr, self.pa_vol, tag)
       self.ov_ty = ty
       return x
     }
@@ -472,7 +478,15 @@ pub fn ll_type_text(ts: MTypes, ty: Int): String {
 // the task ended) and keeps every later fact about other memory from
 // letting LLVM merge or hoist the read. Stores stay plain: generated code
 // writes the word only into a new array, before any task can hold it.
-pub fn ll_tbaa_last: Int { 11 }
+pub fn ll_tbaa_last: Int { 12 }
+
+// An Array's or Buf's size is never negative (at most the runtime's
+// ceiling, 2^31 - 1, avant_size_check), so its loads carry the range
+// [0, 2^31): LLVM may then drop a sign extension's cost, prove an index
+// below the size non-negative and fold bounds checks against it.
+pub fn ll_size_range: String {
+  ", !range !12"
+}
 
 // The tag of an access to region (place_ptr): 0 a local, 1 an element, 2
 // a header's buffer reference, 3 its size, 5 an object's field; "" for
@@ -497,7 +511,7 @@ pub fn ll_tbaa_tag(region: Int): String {
 }
 
 pub fn ll_tbaa_nodes: String {
-  "!1 = !{!\"avant alias\"}\n!2 = !{!\"element\", !1, i64 0}\n!3 = !{!2, !2, i64 0}\n!4 = !{!\"buffer reference\", !1, i64 0}\n!5 = !{!4, !4, i64 0}\n!6 = !{!\"size\", !1, i64 0}\n!7 = !{!6, !6, i64 0}\n!8 = !{!\"local\", !1, i64 0}\n!9 = !{!8, !8, i64 0}\n!10 = !{!\"object field\", !1, i64 0}\n!11 = !{!10, !10, i64 0}\n"
+  "!1 = !{!\"avant alias\"}\n!2 = !{!\"element\", !1, i64 0}\n!3 = !{!2, !2, i64 0}\n!4 = !{!\"buffer reference\", !1, i64 0}\n!5 = !{!4, !4, i64 0}\n!6 = !{!\"size\", !1, i64 0}\n!7 = !{!6, !6, i64 0}\n!8 = !{!\"local\", !1, i64 0}\n!9 = !{!8, !8, i64 0}\n!10 = !{!\"object field\", !1, i64 0}\n!11 = !{!10, !10, i64 0}\n!12 = !{i32 0, i32 -2147483648}\n"
 }
 
 pub fn mir_loc0: MLoc {
