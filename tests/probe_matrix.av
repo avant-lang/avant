@@ -246,6 +246,13 @@ fn rules: Array(PRule) {
   xs.push(rule("pop-is-optional", "stmt", "", csite, "", "pn: Int = pxs.pop()\nputs(pn)", "pn: Int = pxs.pop() ?? 0\nputs(pn)", "cannot assign Int? to Int"))
   xs.push(rule("negate-unsigned", "stmt", "", csite, "", "pu = 3u64\nputs(-pu)", "pu = 3u64\nputs(0u64 &- pu)", "unary minus of an unsigned value"))
   xs.push(rule("property-no-parens", "expr", "Int", csite, "", "ps.size()", "ps.size", "size is read without parentheses: write .size"))
+  // README "Key and value types": a struct key's hash comes from its
+  // fields, so a Float64 field and the struct's own == are refused; a
+  // value is not optional.
+  hsite = "struct PKf {\n  x: Float64\n}\n\nstruct PKe {\n  x: Int\n\n  fn ==(o: PKe): Bool {\n    true\n  }\n}\n\nstruct PKi {\n  x: Int\n}\n\nfn main {\n@\n}\n"
+  xs.push(rule("hash-key-float-field", "stmt", "", hsite, "", "ph = Hash(PKf, Int).new()\nputs(ph.size)", "ph = Hash(PKi, Int).new()\nputs(ph.size)", "a Hash key cannot hold a Float64"))
+  xs.push(rule("hash-key-own-eq", "stmt", "", hsite, "", "ph = Hash(PKe, Int).new()\nputs(ph.size)", "ph = Hash(PKi, Int).new()\nputs(ph.size)", "defines its own ==, so it cannot be a Hash key"))
+  xs.push(rule("hash-value-optional", "stmt", "", hsite, "", "ph = Hash(Int, String?).new()\nputs(ph.size)", "ph = Hash(Int, String).new()\nputs(ph.size)", "a Hash value cannot be optional"))
   xs
 }
 

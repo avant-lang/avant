@@ -1439,10 +1439,23 @@ fn main {
 
 ### Key and value types
 
-A key is an integer of any width (`Int`, `Int32`, `UInt32`, `UInt64`), a `Bool`, an enum or a `String`; a value any of those or a `Float64`. Both are stored at their own width, unboxed: a `Hash(Int32, Int32)` entry is 8 bytes, a `Hash(Int, Int)` one 16.
+A key is an integer of any width (`Int`, `Int32`, `UInt32`, `UInt64`), a `Bool`, an enum, a `String`, or a struct whose fields are all of those (or such structs); a value any of those, a `Float64`, a class, an `Array`, a `Hash`, `Bytes`, a `Buf` or any struct. Numbers are stored at their own width, unboxed: a `Hash(Int32, Int32)` entry is 8 bytes, a `Hash(Int, Int)` one 16.
 
 ```avant
 enum Suit { clubs, hearts }
+
+struct Cell {
+  x: Int
+  y: Int
+}
+
+class Room {
+  pub name: String
+
+  fn initialize(name: String) {
+    self.name = name
+  }
+}
 
 fn main {
   seen = Hash(Int32, Int32).new()
@@ -1456,11 +1469,22 @@ fn main {
   score = Hash(Suit, Float64).new()
   score[Suit.hearts] = 2.5
   puts(score[Suit.hearts] ?? 0.0)         // => 2.5
+  walls = Hash(Cell, Bool).new()
+  walls[Cell { x: 1, y: 2 }] = true
+  puts(walls.has_key(Cell { x: 1, y: 2 })) // => true
+  rooms = Hash(String, Room).new()
+  rooms["hall"] = Room.new("Hall")
+  if r = rooms["hall"] {
+    puts(r.name)                          // => Hall
+  }
 }
 ```
 
-- A `Float64` key is a compile error, since IEEE `==` (`NaN` unequal to itself, `-0.0` equal to `0.0`) agrees with no hash: key by an integer.
-- Struct keys and class, array, hash or struct values are not built yet ([Not built yet](#not-built-yet)); map the key to an index into an array instead.
+- A struct key's hash and `==` come from its fields, as the struct's own `==` does when it defines none: each field in turn, a `String` by its bytes. A struct that defines its own `==` cannot be a key, since a hash derived from its fields could disagree with it; key by the fields it compares.
+- A `Float64` key, or a struct key that holds one, is a compile error, since IEEE `==` (`NaN` unequal to itself, `-0.0` equal to `0.0`) agrees with no hash: key by an integer.
+- A struct key of integers, `Bool`s and enums whose size is 1, 2, 4 or 8 bytes (two `Int32` fields, say) is kept as one integer, so it costs what a combined integer key costs.
+- A class, an `Array` or a `Hash` value is shared with the table, as a variable would share it; a struct value is a copy, as in an `Array`.
+- A value cannot be optional (`Hash(Int, String?)` is refused): `h[k]` is already `nil` for a missing key, so a stored `nil` could not be told from it.
 
 ## Structs and classes
 
@@ -3515,7 +3539,7 @@ fn main {
 | `is_null`, `is_bool`, `is_int`, `is_float`, `is_str`, `is_arr`, `is_obj` | — | `Bool` | — | |
 | `f64s(key)` | `key: String` | `Array(Float64)?`: the numeric member `key` of every element of an array of objects | `nil` otherwise | |
 | `text` | — | `String`: the value written back as JSON text | — | |
-| `to_value` | — | a plain `JsonValue` tree (an Avant class) | — | it outlives the document |
+| `to_value` | — | a plain `JsonValue` tree (an Avant class) | — | it outlives the document; an object's members are in `members`, a `Hash` by name (a repeated name keeps its first value), and their names in `keys`, in the document's order |
 
 **Writing.** Each call on a `JsonBuilder` but `to_s` returns the builder, so calls chain.
 
@@ -4195,7 +4219,7 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 | Missing | Status | Today |
 | --- | --- | --- |
 | Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
-| `Hash` with struct keys, or with class, array, hash or struct values; insertion order | decided | [key and value types](#key-and-value-types): a hash from the key to an index into an array; sort the keys |
+| `Hash` insertion order | decided | sort the keys ([hash operations](#hash-operations)) |
 | `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion; slices of strings and arrays | planned | `str_slice`, loops, [`std.regex`](#stdregex) |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#trailing-blocks) |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
