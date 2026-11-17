@@ -39,6 +39,7 @@ const str.8 = "t"
 typemap 1022 %Array(*) stride 0 bits [0x1]
 typemap 1021 %Buf stride 0 bits [0x1]
 typemap 1023 %Hash stride 0 bits [0x7]
+typemap 1020 %String view stride 0 bits [0x1]
 typemap 1 %std.sync.MutexError stride 0 bits [0x0]
 typemap 2 %fresh.Held stride 0 bits [0x2]
 typemap 3 %task.TaskError stride 0 bits [0x3]
@@ -59,6 +60,7 @@ extern avant_array_get_ptr(ref, i64) -> ref never
 extern avant_array_push_ptr(ref, ref, u32) -> void collects
 extern avant_array_set_ptr(ref, i64, ref) -> void never
 extern avant_array_thaw(ref, i32, u64) -> void never
+extern avant_c_str(ref str) -> ref str collects
 extern avant_chosen_threads() -> i64 collects
 extern avant_exit(i32) -> void never noreturn
 extern avant_gate_clear_poison(ref, u64) -> void never
@@ -217,31 +219,34 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @fresh.av:25:1 {
   let _102: ref slot
   let _103: i64
   let _104: i64
-  let _105: ref str
+  let _105: ref str slot
   let _106: %(Int|task.TaskError)
   let _107: bool
   let _108: %(Int|task.TaskError)
-  let _109: ref str
-  let _110: %(Int|task.TaskError)
-  let _111: i64
-  let _112: i32
-  let _113: bool
+  let _109: ref str slot
+  let _110: ref str
+  let _111: ref str slot
+  let _112: ref str
+  let _113: %(Int|task.TaskError)
   let _114: i64
-  let _115: i64
+  let _115: i32
   let _116: bool
-  let _117: i32
-  let _118: ref %std.sync.Mutex(fresh.Held) slot
-  let _119: i32
-  let _120: bool
-  let _121: bool
-  let _122: ref %fresh.Held
-  let _123: i64
-  let _124: ref str slot
+  let _117: i64
+  let _118: i64
+  let _119: bool
+  let _120: i32
+  let _121: ref %std.sync.Mutex(fresh.Held) slot
+  let _122: i32
+  let _123: bool
+  let _124: bool
   let _125: ref %fresh.Held
-  let _126: ref str slot
+  let _126: i64
   let _127: ref str slot
-  let _128: ref str
-  let _129: ref str
+  let _128: ref %fresh.Held
+  let _129: ref str slot
+  let _130: ref str slot
+  let _131: ref str
+  let _132: ref str
 
 bb0:
   _4 = zero   @25:1
@@ -278,12 +283,15 @@ bb0:
   _92 = zero   @25:1
   _95 = zero   @25:1
   _102 = zero   @25:1
-  _118 = zero   @25:1
-  _124 = zero   @25:1
-  _126 = zero   @25:1
+  _105 = zero   @25:1
+  _109 = zero   @25:1
+  _111 = zero   @25:1
+  _121 = zero   @25:1
   _127 = zero   @25:1
+  _129 = zero   @25:1
+  _130 = zero   @25:1
   gc.enter   @25:1
-  gc.roots _2, _4, _6, _8, _9, _13, _15, _16, _23, _28, _33, _38, _43, _44, _45, _46, _47, _48, _50, _53, _57, _59, _60, _70, _74, _78, _79, _80, _81, _86, _88, _91, _92, _95, _102, _118, _124, _126, _127   @25:1
+  gc.roots _2, _4, _6, _8, _9, _13, _15, _16, _23, _28, _33, _38, _43, _44, _45, _46, _47, _48, _50, _53, _57, _59, _60, _70, _74, _78, _79, _80, _81, _86, _88, _91, _92, _95, _102, _105, _109, _111, _121, _127, _129, _130   @25:1
   call __avant_type_maps() nocollect   @25:1
   call avant_io_init_argv(copy _1, copy _2) collects   @25:1
   _3 = zero   @25:1
@@ -470,13 +478,13 @@ bb10:
   goto bb8   @53:11
 
 bb11:
-  _116 = gt copy _94, const i64 0   @54:12
-  _117 = cast copy _116 to i32   @54:3
-  call avant_puts_bool(copy _117) nocollect   @54:3
-  _118 = copy _86   @55:18
-  _119 = call avant_gate_lock_with(copy _118, const u64 8) collects   @55:18
-  _120 = ne copy _119, const i32 0   @55:18
-  branch copy _120, bb19, bb18   @55:18
+  _119 = gt copy _94, const i64 0   @54:12
+  _120 = cast copy _119 to i32   @54:3
+  call avant_puts_bool(copy _120) nocollect   @54:3
+  _121 = copy _86   @55:18
+  _122 = call avant_gate_lock_with(copy _121, const u64 8) collects   @55:18
+  _123 = ne copy _122, const i32 0   @55:18
+  branch copy _123, bb19, bb18   @55:18
 
 bb12:
   _108 = union %(Int|task.TaskError) tag 0 (copy _104)   @53:31
@@ -485,47 +493,50 @@ bb12:
 
 bb13:
   _109 = call avant_join_site(copy _102) nocollect   @53:31
-  _110 = call av.task/__avant_join_result(copy _104, copy _105, copy _109) collects   @53:31
-  _106 = copy _110   @53:31
+  _110 = call avant_c_str(copy _105) collects   @53:31
+  _111 = copy _110   @53:31
+  _112 = call avant_c_str(copy _109) collects   @53:31
+  _113 = call av.task/__avant_join_result(copy _104, copy _111, copy _112) collects   @53:31
+  _106 = copy _113   @53:31
   goto bb14   @53:31
 
 bb14:
-  _112 = copy _106.0   @53:39
-  _113 = eq copy _112, const i32 1   @53:39
-  branch copy _113, bb15, bb16   @53:39
+  _115 = copy _106.0   @53:39
+  _116 = eq copy _115, const i32 1   @53:39
+  branch copy _116, bb15, bb16   @53:39
 
 bb15:
-  _111 = const i64 -1   @53:39
+  _114 = const i64 -1   @53:39
   goto bb17   @53:39
 
 bb16:
-  _114 = copy _106.1   @53:39
-  _111 = copy _114   @53:39
+  _117 = copy _106.1   @53:39
+  _114 = copy _117   @53:39
   goto bb17   @53:39
 
 bb17:
-  _115 = add.chk copy _94, copy _111   @53:27
-  _94 = copy _115   @53:21
+  _118 = add.chk copy _94, copy _114   @53:27
+  _94 = copy _118   @53:21
   goto bb10   @53:11
 
 bb18:
-  _122 = copy (*_118).0   @55:27
-  _123 = copy (*_122).0   @55:28
-  _124 = call avant_str_from_int(copy _123) collects   @55:28
-  _125 = copy (*_118).0   @55:34
-  _126 = copy (*_125).1   @55:35
-  _127 = call avant_str_concat(copy _124, const str.0) collects   @55:24
-  _128 = call avant_str_concat(copy _127, copy _126) collects   @55:24
-  _129 = copy _128   @55:18
-  call avant_gate_unlock(copy _118, const u64 8) nocollect   @55:18
-  call avant_puts_str(copy _129) nocollect   @55:3
+  _125 = copy (*_121).0   @55:27
+  _126 = copy (*_125).0   @55:28
+  _127 = call avant_str_from_int(copy _126) collects   @55:28
+  _128 = copy (*_121).0   @55:34
+  _129 = copy (*_128).1   @55:35
+  _130 = call avant_str_concat(copy _127, const str.0) collects   @55:24
+  _131 = call avant_str_concat(copy _130, copy _129) collects   @55:24
+  _132 = copy _131   @55:18
+  call avant_gate_unlock(copy _121, const u64 8) nocollect   @55:18
+  call avant_puts_str(copy _132) nocollect   @55:3
   _0 = const i32 0   @25:1
   call avant_exit(copy _0) nocollect   @25:1
   unreachable   @25:1
 
 bb19:
-  _121 = call av.std.sync/Mutex(fresh.Held).__avant_heal(copy _118) collects   @55:18
-  branch copy _121, bb21, bb20   @55:18
+  _124 = call av.std.sync/Mutex(fresh.Held).__avant_heal(copy _121) collects   @55:18
+  branch copy _124, bb21, bb20   @55:18
 
 bb20:
   call avant_trap_poisoned() nocollect   @55:18
