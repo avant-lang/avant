@@ -383,6 +383,15 @@ pub fn (checker_self: Checker) open_text(e: Expr): String {
 // The hint for a use of a value of type ty as its value: "; open it ..."
 // when ty is an optional, else "".
 pub fn (checker_self: Checker) open_hint(e: Expr, ty: Ty): String {
+  if ty.is_nilable() && e.kind == ex_index() {
+    if h = e.left, ht = h.ty, ht.is_hash() {
+      if v = ht.val, v.is_struct() {
+        // `h[k].x = 1`, `h[k].move(2)`: the read is nil when the key is
+        // absent, and its value a copy of the stored struct.
+        return "; h[k] is nil when the key is absent, else a copy of the stored ${v.show()}: open it with `if v = h[k]`, and to change the stored value change v and store it back (h[k] = v)"
+      }
+    }
+  }
   if ty.is_nilable() {
     return "; ${checker_self.open_text(e)}"
   }
