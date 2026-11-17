@@ -3,7 +3,8 @@
 // A `for` loop's variable over an Array of structs, and the parameter of
 // an inlined block over one (`each`, `any`, `all`), is the element
 // itself: `p.x = 1` and `p.move(2)` change the element in the array, as
-// they would change a class element's object. Each use of the name is
+// they would change a class element's object, and `p = q` stores the
+// whole element (as `xs[i] = q`). Each use of the name is
 // written, here, as an index of two hidden names: the walked array (held
 // once before the loop, so a later assignment to the array's variable
 // does not move the walk) and the loop's counter. The index keeps its
@@ -21,9 +22,6 @@
 // - the variable named like one that already exists (a range's or a
 //   class array's `for` reuses an outer variable and leaves its last
 //   value there; a place cannot be left behind);
-// - the variable assigned (`p = q`): the variable is the element, and a
-//   whole-element store through it is not part of the language
-//   (store through an index, `xs[i] = q`).
 //
 // The parameters of the blocks that are not walks (a comparator's, a
 // Hash walk's, a `.parallel` body's) are copies: a write to one would be
@@ -44,6 +42,7 @@ import checker.receiver
 import receiver_writes
 
 pub fn (checker_self: Checker) clear_places {
+  checker_self.place_roots = Hash(String, String).new()
   checker_self.place_names = []
   checker_self.place_scopes = []
   checker_self.place_arrs = []
@@ -119,9 +118,17 @@ pub fn (checker_self: Checker) begin_for_place(stmt: Stmt) {
       walked = ""
       if v = stmt.pre[0].value {
         walked = checker_self.walked_text(v)
+        checker_self.note_place_root(pa.ident, v)
       }
       checker_self.add_place(t.ident, pa.ident, pi.ident, walked)
     }
+  }
+}
+
+pub fn (checker_self: Checker) note_place_root(hidden: String, walked: Expr) {
+  root = checker_self.expr_root_name(walked)
+  if root.size > 0 {
+    checker_self.place_roots[hidden] = root
   }
 }
 
@@ -136,6 +143,7 @@ pub fn (checker_self: Checker) begin_block_place(b: Block, recv: Expr, array: Ty
     b.place_idx = "__place${checker_self.place_count}_i"
   }
   checker_self.bind(b.place_arr, array)
+  checker_self.note_place_root(b.place_arr, recv)
   checker_self.bind(b.place_idx, checker_self.t_int())
   checker_self.bind(b.params[0], elem)
   checker_self.note_for_var(b.params[0], 6)

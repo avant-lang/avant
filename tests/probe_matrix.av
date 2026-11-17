@@ -104,11 +104,10 @@ fn rules: Array(PRule) {
   xs.push(rule("for-variable-assign", "stmt", "", "fn main {\n  for i in 0..3 {\n@\n  }\n}\n", "", "i = 5", "puts(i)", "cannot assign to i"))
   // README "for": over an Array of structs the loop variable is the
   // element itself; the walked array keeps its size and order through its
-  // own name, the place is not captured and not replaced as a whole.
+  // own name, and the place is not captured.
   xs.push(rule("place-walk-change", "stmt", "", "struct PP {\n  x: Int\n  y: Int\n}\n\nfn main {\n  xs = [PP { x: 1, y: 2 }]\n  ys: Array(PP) = []\n  for p in xs {\n@\n  }\n  puts(xs[0].x + ys.size)\n}\n", "", "xs.push(p)", "ys.push(p)", "cannot push xs while walking it"))
   xs.push(rule("place-each-walk-change", "stmt", "", "struct PP {\n  x: Int\n  y: Int\n}\n\nfn main {\n  xs = [PP { x: 1, y: 2 }]\n  ys: Array(PP) = []\n  xs.each { |p|\n@\n  }\n  puts(xs[0].x + ys.size)\n}\n", "", "xs.push(p)", "ys.push(p)", "cannot push xs while walking it"))
   xs.push(rule("place-capture", "stmt", "", "struct PP {\n  x: Int\n  y: Int\n}\n\nfn main {\n  xs = [PP { x: 1, y: 2 }]\n  ys: Array(PP) = []\n  for p in xs {\n@\n  }\n  puts(xs[0].x + ys.size)\n}\n", "", "f = { || p.x }\nputs(f())", "w = p\nf = { || w.x }\nputs(f())", "a lambda cannot capture p"))
-  xs.push(rule("place-assign", "stmt", "", "struct PP {\n  x: Int\n  y: Int\n}\n\nfn main {\n  xs = [PP { x: 1, y: 2 }]\n  ys: Array(PP) = []\n  for p in xs {\n@\n  }\n  puts(xs[0].x + ys.size)\n}\n", "", "p = PP { x: 0, y: 0 }", "p.x = 0", "cannot assign to p: p is the element itself"))
   // README "Visibility": a field without pub is private to its module.
   xs.push(rule("private-field", "expr", "Int", "import probe_mod\n\nfn main {\n  pb = PBox.new()\n@\n}\n", "", "pb.secret", "pb.open", "is private to module probe_mod"))
   // README "Numbers": values of different number types do not mix.

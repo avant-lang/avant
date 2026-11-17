@@ -249,6 +249,10 @@ pub class Checker {
   pub place_lams: Array(Int) = []
   pub place_tasks: Array(Int) = []
   pub place_count: Int = 0
+  // A walk's hidden array by name, and the name of the array it holds
+  // (its root): the task rules read a write through the place as one
+  // through that name.
+  pub place_roots: Hash(String, String) = Hash(String, String).new()
   // Calls of a struct method on a copy that would be lost (a comparator's
   // parameter, a Hash walk's value, a .parallel body's element), and what
   // each parameter is: refused once every method is checked when the
@@ -1503,6 +1507,15 @@ pub class Checker {
         note_for_var(t1.ident, stmt.for_kind)
       }
       return
+    }
+    if t2 = stmt.target, t2.kind == ex_name() && self.place_names.size > 0 && place_at(t2.ident) >= 0 {
+      // `p = other` on the element itself: a whole-element store, the
+      // index of the walk taking the value (checker/places.av).
+      mark = self.err_count()
+      pt = place_use(t2, false, t_int())
+      if new_err_since(mark) {
+        return
+      }
     }
     if refuse_for_assign(stmt) {
       return

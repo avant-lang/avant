@@ -344,6 +344,17 @@ pub fn (checker_self: Checker) spawn_skip_has(name: String): Bool {
 pub fn (checker_self: Checker) expr_root_name(expr: Expr): String {
   k = expr.kind
   if k == ex_name() {
+    // A walk's hidden array (checker/places.av) is the array it holds,
+    // and a place, the element itself, is reached from it.
+    if root = checker_self.place_roots.get(expr.ident) {
+      return root
+    }
+    pi = checker_self.place_at(expr.ident)
+    if pi >= 0 {
+      if root2 = checker_self.place_roots.get(checker_self.place_arrs[pi]) {
+        return root2
+      }
+    }
     return expr.ident
   }
   if k == ex_field() {
@@ -499,6 +510,11 @@ pub fn (checker_self: Checker) scan_pending_target(target: Expr) {
   checker_self.scan_pending_expr(target)
 }
 
+// A walk's place (checker/places.av), named: an element of the array.
+pub fn (checker_self: Checker) is_place_name(e: Expr): Bool {
+  e.kind == ex_name() && checker_self.place_at(e.ident) >= 0
+}
+
 pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
   k = expr.kind
   if k == ex_field() && checker_self.field_mutates_array(expr) {
@@ -512,7 +528,7 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
   if k == ex_field() {
     // A method on an element of a pending array (`xs[0].bump`), told
     // from a field read once the program is checked.
-    if obj = expr.object, obj.kind == ex_index() || obj.kind == ex_field() {
+    if obj = expr.object, obj.kind == ex_index() || obj.kind == ex_field() || checker_self.is_place_name(obj) {
       root = checker_self.expr_root_name(obj)
       if root.size > 0 && checker_self.pending_has_array(root) {
         checker_self.note_element_call(expr, obj, 2)
@@ -537,7 +553,7 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
         checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first")
       }
     }
-    if recv = expr.receiver, recv.kind == ex_index() || recv.kind == ex_field() {
+    if recv = expr.receiver, recv.kind == ex_index() || recv.kind == ex_field() || checker_self.is_place_name(recv) {
       root = checker_self.expr_root_name(recv)
       if root.size > 0 && checker_self.pending_has_array(root) {
         checker_self.note_element_call(expr, recv, 2)
