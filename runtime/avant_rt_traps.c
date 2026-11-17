@@ -170,7 +170,7 @@ static const char *frozen_op(int32_t op) {
 
 void avant_trap_frozen(int32_t op) {
   trap_head();
-  trap_out("%s on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends; join the task first", frozen_op(op));
+  trap_out("%s on an array a running task reads: a spawn or .parallel that captured it keeps it unchanged until the task ends, and an HTTP handler from its registration on; join the task, or the task that spawned it, before changing the array", frozen_op(op));
   trap_tail();
 }
 

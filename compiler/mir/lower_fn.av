@@ -201,6 +201,9 @@ pub fn (lw: MirLower) prewalk_expr(e: Expr, encl: String) {
       if rt = recv.ty, rt.is_array() && e.callee == "parallel" && mir_has_block(e) {
         lw.prewalk_par(e, encl)
       }
+      if mir_handler_freezes(e) {
+        lw.lw_m.shared = true
+      }
     } else if e.callee == "spawn" && mir_has_block(e) {
       lw.prewalk_spawn(e, encl)
     }

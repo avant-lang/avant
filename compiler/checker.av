@@ -5406,6 +5406,13 @@ pub class Checker {
         note_copy_call(expr, r0)
       }
     }
+    if !self.has_err() && handler_method(expr.callee) {
+      if r = expr.receiver, rt = r.ty, is_http_server(rt) {
+        // The server runs a handler on each of its loop threads at once
+        // (checker/spawn.av).
+        check_handler_args(expr)
+      }
+    }
     if !self.has_err() && expr.callee == "recover" && expr.args.size == 1 {
       if r = expr.receiver, rt = r.ty, is_mutex_ty(rt) {
         // `m.recover(v)` gives the mutex v as `Mutex(T).new(v)` does: the

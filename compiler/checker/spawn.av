@@ -110,13 +110,35 @@ pub fn task_word(node: Expr): String {
   if node.kind == ex_call() && node.callee == "parallel" {
     return ".parallel"
   }
+  if node.kind == ex_lambda() {
+    return "an HTTP handler"
+  }
   "spawn"
+}
+
+// Who shares a captured Array with the code around node, and what a
+// mutable object must not reach, in node's words.
+pub fn task_whom(node: Expr): String {
+  if node.kind == ex_lambda() {
+    return "server's loop threads"
+  }
+  "task"
+}
+
+pub fn task_unit(node: Expr): String {
+  if node.kind == ex_lambda() {
+    return "thread"
+  }
+  "task"
 }
 
 // Until when a captured Array is read-only, in node's words.
 pub fn frozen_until(node: Expr): String {
   if node.kind == ex_call() && node.callee == "parallel" {
     return "read-only while the bodies run"
+  }
+  if node.kind == ex_lambda() {
+    return "read-only once the handler is registered, since the server runs the handler on each of its loop threads at once"
   }
   "read-only until join"
 }
@@ -163,7 +185,9 @@ pub fn (checker_self: Checker) walk_spawn_stmt(stmt: Stmt, node: Expr, seen: Has
     if target = stmt.target {
       if target.kind == ex_name() {
         if ty = checker_self.lookup(target.ident) {
-          if task_word(node) == "spawn" {
+          if node.kind == ex_lambda() {
+            checker_self.fail(target.loc, "an HTTP handler cannot assign to ${target.ident}: the server runs the handler on each of its loop threads at once, so the captured variable would be written by several threads; keep a value the handlers change in a Mutex")
+          } else if task_word(node) == "spawn" {
             checker_self.fail(target.loc, "spawn cannot assign to ${target.ident}: the task has its own copy, made when it starts, and the copy is read-only; give the new value as the block's value and read it from join")
           } else {
             checker_self.fail(target.loc, ".parallel cannot assign to ${target.ident}: each body has its own copy, and the copy is read-only; give the new value as the body's value, which .parallel returns in its array")
@@ -501,13 +525,41 @@ pub fn (checker_self: Checker) scan_pending_stmt(stmt: Stmt) {
 
 pub fn (checker_self: Checker) scan_pending_target(target: Expr) {
   if target.kind == ex_name() {
+    if checker_self.pending_by_handler(target.ident) {
+      // A lambda captures the variable itself: a new array assigned
+      // here would reach the handler unfrozen.
+      checker_self.fail(target.loc, "cannot assign ${target.ident}: an HTTP handler registered above captures it and reads it on each of the server's loop threads; the array it holds is read-only from the registration on, and a new one would not be")
+    }
     return
   }
   root = checker_self.expr_root_name(target)
   if root.size > 0 && checker_self.pending_has_array(root) {
-    checker_self.fail(target.loc, "cannot mutate ${root} while a spawn using it is running; join first")
+    checker_self.fail(target.loc, checker_self.pending_mutate_msg(root))
   }
   checker_self.scan_pending_expr(target)
+}
+
+// The handle an HTTP handler's captured Array is pending under: no
+// name, so no join ends it; the array stays frozen from the handler's
+// registration on.
+pub fn handler_pending: String {
+  "#http"
+}
+
+pub fn (checker_self: Checker) pending_by_handler(name: String): Bool {
+  for i in 0..checker_self.pending_arrays.size {
+    if checker_self.pending_arrays[i] == name && checker_self.pending_handles[i] == handler_pending() {
+      return true
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) pending_mutate_msg(root: String): String {
+  if checker_self.pending_by_handler(root) {
+    return "cannot mutate ${root}: an HTTP handler registered above reads it on each of the server's loop threads, and it is read-only from the registration on"
+  }
+  "cannot mutate ${root} while a spawn using it is running; join first"
 }
 
 // A walk's place (checker/places.av), named: an element of the array.
@@ -521,7 +573,7 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
     if obj = expr.object {
       root = checker_self.expr_root_name(obj)
       if root.size > 0 && checker_self.pending_has_array(root) {
-        checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first")
+        checker_self.fail(expr.loc, checker_self.pending_mutate_msg(root))
       }
     }
   }
@@ -550,7 +602,7 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
     if recv = expr.receiver, checker_self.array_mutator(expr.callee) {
       root = checker_self.expr_root_name(recv)
       if root.size > 0 && checker_self.pending_has_array(root) {
-        checker_self.fail(expr.loc, "cannot mutate ${root} while a spawn using it is running; join first")
+        checker_self.fail(expr.loc, checker_self.pending_mutate_msg(root))
       }
     }
     if recv = expr.receiver, recv.kind == ex_index() || recv.kind == ex_field() || checker_self.is_place_name(recv) {
@@ -687,6 +739,17 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
     return
   }
   if ty = checker_self.lookup(expr.ident) {
+    if node.kind == ex_lambda() && checker_self.handler_shares(ty) {
+      if ty.is_array() {
+        if prev = seen.get(expr.ident) {
+          return
+        }
+        seen[expr.ident] = 1
+        node.cap_names.push(expr.ident)
+        node.cap_tys.push(ty)
+      }
+      return
+    }
     if ty.is_array() && !checker_self.copyable_for_spawn(ty) {
       leaf = ty
       while leaf.is_array() {
@@ -696,10 +759,14 @@ pub fn (checker_self: Checker) note_spawn_capture(expr: Expr, node: Expr, seen: 
           break
         }
       }
-      checker_self.fail(expr.loc, "${task_word(node)} cannot capture ${expr.ident}: an ${ty.show()} is shared with the task, and its elements (${leaf.show()}) cannot cross to another task: a mutable object reaches another task only inside a Mutex")
+      checker_self.fail(expr.loc, "${task_word(node)} cannot capture ${expr.ident}: an ${ty.show()} is shared with the ${task_whom(node)}, and its elements (${leaf.show()}) cannot cross to another ${task_unit(node)}: a mutable object reaches another ${task_unit(node)} only inside a Mutex")
       return
     }
     if !checker_self.copyable_for_spawn(ty) {
+      if node.kind == ex_lambda() {
+        checker_self.fail(expr.loc, "an HTTP handler cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another thread, and the server runs every handler on each of its loop threads at once; numbers, Bool, String, Bytes, enums, structs of them, Arrays of those (frozen once the handler is registered), a Channel, a Mutex and the Server can, and state the handlers change belongs in a Mutex")
+        return
+      }
       checker_self.fail(expr.loc, "${task_word(node)} cannot capture ${expr.ident}: its type, ${ty.show()}, cannot cross to another task; numbers, Bool, String, enums, structs of them and Arrays of those can, and a mutable object reaches another task only inside a Mutex")
       return
     }
@@ -777,6 +844,88 @@ pub fn (checker_self: Checker) check_element_writes {
         }
         return
       }
+    }
+  }
+}
+
+// ---- What an HTTP handler captures.
+//
+// std.http runs one event loop per pool thread and calls the same
+// handler closures from each, so a handler's captures are shared by
+// several threads at once, as a task's are. A lambda given to a route
+// method of std.http's Server is checked by spawn's rule: what it
+// captures must cross (numbers, Bool, String, enums, structs of them, a
+// Channel, a Mutex, Arrays of those), it cannot assign a captured
+// variable, and it cannot change a captured Array, which is frozen when
+// the handler is registered (mir/lower_agg.av) and stays so. The Server
+// itself may be captured (a handler that stops or inspects it). A
+// handler given as a function value is refused: what that value captures
+// was never checked; a named function captures nothing.
+// What a handler may capture beyond spawn's rule: the Server itself,
+// and `Bytes` (immutable, as a String is), alone or in an Array.
+pub fn (checker_self: Checker) handler_shares(ty: Ty): Bool {
+  if checker_self.is_http_server(ty) || ty.is_bytes() {
+    return true
+  }
+  if ty.is_array() {
+    if e = ty.inner {
+      return e.is_bytes()
+    }
+  }
+  false
+}
+
+pub fn (checker_self: Checker) is_http_server(ty: Ty): Bool {
+  ty.is_struct() && ty.mod_name == "std.http" && ty.name == "Server"
+}
+
+pub fn (checker_self: Checker) handler_method(name: String): Bool {
+  name == "get" || name == "post" || name == "put" || name == "delete" || name == "patch" || name == "route" || name == "websocket" || name == "websocket_open" || name == "websocket_close"
+}
+
+pub fn (checker_self: Checker) check_handler_args(expr: Expr) {
+  for arg in expr.args {
+    if checker_self.has_err() {
+      return
+    }
+    if arg.kind == ex_lambda() {
+      checker_self.check_handler_lambda(arg)
+    } else if at = arg.ty, at.is_fn() {
+      if arg.kind == ex_name() && arg.fn_ref {
+        continue
+      }
+      checker_self.fail(arg.loc, "an HTTP handler must be a lambda written at the call or a named function: the server runs it on each of its loop threads at once, and what a function value captures is not checked")
+    }
+  }
+}
+
+pub fn (checker_self: Checker) check_handler_lambda(lam: Expr) {
+  node = Expr.new(ex_lambda(), lam.loc)
+  seen = Hash(String, Int).new()
+  if b = lam.block {
+    mark = checker_self.spawn_skip.size
+    for param in b.params {
+      checker_self.spawn_skip.push(param)
+    }
+    checker_self.walk_spawn_stmts(b.body, node, seen)
+    while checker_self.spawn_skip.size > mark {
+      dropped = checker_self.spawn_skip.pop()
+    }
+  }
+  if checker_self.has_err() {
+    return
+  }
+  // A lambda in a method captures `self` without naming it.
+  for i in 0..lam.cap_names.size {
+    if lam.cap_names[i] == "self" && !checker_self.copyable_for_spawn(lam.cap_tys[i]) {
+      checker_self.fail(lam.loc, "an HTTP handler cannot capture self: its type, ${lam.cap_tys[i].show()}, cannot cross to another thread, and the server runs every handler on each of its loop threads at once; state the handlers change belongs in a Mutex")
+      return
+    }
+  }
+  for i in 0..node.cap_names.size {
+    if node.cap_tys[i].is_array() {
+      checker_self.pending_handles.push(handler_pending())
+      checker_self.pending_arrays.push(node.cap_names[i])
     }
   }
 }

@@ -6,6 +6,7 @@ import std.gc
 // is answered 500 (the connection kept or closed as an answer's would
 // be), the trap is told on stderr, and the next request is served. Each
 // route traps its own way: an index out of bounds, a division by zero,
+// a push on an Array the handlers captured (frozen at registration),
 // a status std.http refuses, a header std.http refuses, a route
 // registered while serving, a trap inside a mutex's `with` (the mutex
 // is poisoned: the next `with` on it traps too, and `try_with` reads
@@ -39,6 +40,12 @@ fn at(xs: Array(Int), i: Int): Int {
   xs[i]
 }
 
+// A change to an Array a handler captured: frozen since the handler's
+// registration, so the push traps and the request fails.
+fn grow(xs: Array(Int)) {
+  xs.push(4)
+}
+
 fn divide(a: Int, b: Int): Int {
   a / b
 }
@@ -52,52 +59,57 @@ fn main: Int {
   a = argv()
   xs = [1, 2, 3]
   m = Mutex(Acc).new(Acc.new())
-  mark = Acc.new()
+  mark = Mutex(Acc).new(Acc.new())
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened
     if a.size > 2 && a[2] == "ceiling" {
       _ = server.memory_ceiling(1)
     }
-    server.get("/ok", (req) {
+    server.get("/ok") { |req|
       Response.text("ok")
-    })
-    server.get("/bounds", (req) {
+    }
+    server.get("/bounds") { |req|
       Response.text("${at(xs, 7)}")
-    })
-    server.get("/divide", (req) {
+    }
+    server.get("/divide") { |req|
       Response.text("${divide(7, xs.size - 3)}")
-    })
-    server.get("/status", (req) {
+    }
+    server.get("/status") { |req|
       Response.text("x", 99)
-    })
-    server.get("/header", (req) {
+    }
+    server.get("/header") { |req|
       Response.text("x").header("X-A", "1\r\nX-B: 2")
-    })
-    server.get("/route", (req) {
-      server.get("/late", (r) { Response.text("late") })
+    }
+    server.get("/grow") { |req|
+      grow(xs)
+      Response.text("unreached")
+    }
+    server.get("/route") { |req|
+      server.get("/late") { |r| Response.text("late") }
       Response.text("added")
-    })
-    server.get("/mutex", (req) {
-      m.with (acc) {
+    }
+    server.get("/mutex") { |req|
+      m.with { |acc|
         acc.n = 5
         acc.n = at(xs, 9)
       }
       Response.text("unreached")
-    })
-    server.get("/mutex-again", (req) {
-      m.with (acc) { acc.n += 1 }
+    }
+    server.get("/mutex-again") { |req|
+      m.with { |acc| acc.n += 1 }
       Response.text("unreached")
-    })
-    server.get("/mutex-state", (req) {
-      res = m.try_with (acc) { acc.n }
+    }
+    server.get("/mutex-state") { |req|
+      res = m.try_with { |acc| acc.n }
       if v = res {
         return Response.text("value ${v}")
       } else e {
         return Response.text("poisoned ${m.poisoned()}: ${e.message()}")
       }
-    })
-    server.get("/pin", (req) {
-      mark.n = gc_rt.avant_pin_count()
+    }
+    server.get("/pin") { |req|
+      before = gc_rt.avant_pin_count()
+      mark.with { |acc| acc.n = before }
       word = "pinned ${req.path}"
       n = 0
       gc.hold {
@@ -106,32 +118,33 @@ fn main: Int {
         }
       }
       Response.text("${n}")
-    })
-    server.get("/pins", (req) {
+    }
+    server.get("/pins") { |req|
       // The pins the trap above left (none), after the loop thread
       // allocates again.
       t = 0
       for j in 0..20000 {
         t += "${j}${req.path}".size
       }
-      Response.text("pins left ${gc_rt.avant_pin_count() - mark.n}, ${t}")
-    })
-    server.get("/callback", (req) {
+      before = mark.with { |acc| acc.n }
+      Response.text("pins left ${gc_rt.avant_pin_count() - before}, ${t}")
+    }
+    server.get("/callback") { |req|
       buf = libc.calloc(4, 4)
       buf.v = 3
       libc.qsort(buf, 2, 4, cmp_trap)
       Response.text("unreached")
-    })
-    server.websocket("/ws", (conn, msg) {
+    }
+    server.websocket("/ws") { |conn, msg|
       if (msg.text() ?? "") == "trap" {
         _ = at(xs, 5)
       }
       _ = conn.send_message(msg)
-    })
-    server.get("/__stop", (req) {
+    }
+    server.get("/__stop") { |req|
       server.close()
       Response.text("bye")
-    })
+    }
     if a.size > 1 {
       if wrote = file_write(a[1], "${server.port()}\n") {
       }

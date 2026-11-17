@@ -657,6 +657,28 @@ pub fn (lw: MirLower) lower_method_call(e: Expr, recv: Expr, rt: Ty, sym: String
       ops[0] = lw.send_copy(ops[0], lw.ety(args[0]), at)
     }
   }
+  if rt.is_struct() && mir_is_http_server(rt) && mir_handler_method(e.callee) {
+    // A handler runs on each of the server's loop threads at once: an
+    // Array it captures is frozen from its registration on, so a change
+    // through any path traps (the checker refuses one through the
+    // captured name).
+    for a in args {
+      if a.kind == ex_lambda() {
+        ci = 0
+        while ci < a.cap_names.size && !lw.failed() {
+          ct = a.cap_tys[ci]
+          if ct.is_array() {
+            v = lw.capture_value(a.cap_names[ci], ct, a.loc)
+            lw.freeze_array(v, ct, a.loc)
+          }
+          ci += 1
+        }
+      }
+    }
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+  }
   r = b.c_i32(0)
   if !rt.is_struct() {
     r = lw.lower_expr(recv)
@@ -1018,4 +1040,32 @@ pub fn mir_bare_copy(o: MOperand): Int {
     return p.local
   }
   -1
+}
+
+// std.http's Server, and its methods that register a handler (the
+// checker's rule for what a handler captures: checker/spawn.av).
+pub fn mir_is_http_server(t: Ty): Bool {
+  t.is_struct() && t.mod_name == "std.http" && t.name == "Server"
+}
+
+pub fn mir_handler_method(name: String): Bool {
+  name == "get" || name == "post" || name == "put" || name == "delete" || name == "patch" || name == "route" || name == "websocket" || name == "websocket_open" || name == "websocket_close"
+}
+
+// Whether a route call registers a handler that captures an Array: the
+// array is frozen there, so the program's element stores check the
+// freeze (its module is shared, as a program that spawns is).
+pub fn mir_handler_freezes(e: Expr): Bool {
+  if recv = e.receiver, rt = recv.ty, mir_is_http_server(rt) && mir_handler_method(e.callee) {
+    for a in e.args {
+      if a.kind == ex_lambda() {
+        for ct in a.cap_tys {
+          if ct.is_array() {
+            return true
+          }
+        }
+      }
+    }
+  }
+  false
 }
