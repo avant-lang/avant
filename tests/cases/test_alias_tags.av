@@ -7,7 +7,9 @@ import harness
 // own tags, a local (an alloca, a collector's slot among them) its own,
 // a class's or record's field its own, and nothing else is tagged (Hash
 // fields, an array's capacity, which is read atomically, raw pointers).
-// A size's loads carry its range. Then the programs that store elements and fields
+// A size's loads carry its range, a checked add's result is an add
+// without signed wrap, and a wrapping operation keeps no such flag. Then
+// the programs that store elements and fields
 // while calls move their buffers and objects
 // (tests/fixtures/heap/alias_moves.av, alias_fields.av) are built with
 // --release, the mode whose optimizer uses these facts, and run under
@@ -108,6 +110,10 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
     c.expect(str_has(text, "!12 = !{i32 0, i32 -2147483648}"), "the size's range is [0, 2^31)")
     c.expect(tags_count(lines, "ptr %_", ", !tbaa !9") >= 4, "a local's accesses carry the local tag")
     c.eq_int(tags_count(lines, "ptr %_", "!tbaa") - tags_count(lines, "ptr %_", ", !tbaa !9"), 0, "a local's accesses carry no other tag")
+    // A checked add's result is the plain add with no signed wrap, after
+    // the overflow branch.
+    c.expect(tags_count(lines, " = add nsw i64 %t", "") >= 1, "a checked add's result is an add nsw")
+    c.eq_int(tags_count(lines, "extractvalue { i64, i1 } %t", ", 0"), 0, "no checked add's result is the intrinsic's value")
     cap_reads = 0
     cap_tagged = 0
     for i in 0..lines.size - 1 {
@@ -147,6 +153,34 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
   } else {
     c.expect(false, "read the object and hash probe's .ll")
   }
+}
+
+// Wrapping operations keep no flag: an add, subtract and multiply that
+// wrap, with operands LLVM cannot fold, compared with an operand
+// afterwards. A wrongly flagged one (nsw on `&+`) lets LLVM fold each
+// compare to "no wrap".
+fn tags_wrap_src: String {
+  "fn main: Int {\n  n = argv().size\n  x = 9223372036854775807 - n + 1\n  y = x &+ 1\n  if y > x {\n    puts(\"add: no wrap\")\n  } else {\n    puts(\"add: wrap\")\n  }\n  m = 4611686018427387904 + n - 1\n  z = m &* 4\n  if z > m {\n    puts(\"mul: no wrap\")\n  } else {\n    puts(\"mul: wrap\")\n  }\n  s = -9223372036854775807 - n\n  w = s &- 1\n  if w < s {\n    puts(\"sub: no wrap\")\n  } else {\n    puts(\"sub: wrap\")\n  }\n  0\n}\n"
+}
+
+fn test_alias_tags_wrap(c: Checks, compiler: String, stamp: Int) {
+  src = "${scratch()}/alias-tags-${stamp}-wrap.av"
+  bin = "${scratch()}/alias-tags-${stamp}-wrap"
+  clog = "${scratch()}/alias-tags-${stamp}-wrap.clog"
+  rlog = "${scratch()}/alias-tags-${stamp}-wrap.out"
+  c.wrote(file_write(src, tags_wrap_src()), "write the wrapping probe")
+  flags: Array(String) = []
+  flags.push("--release")
+  c.eq_int(compile_av_flags(compiler, src, bin, clog, flags), 0, "the wrapping probe compiles with --release")
+  if !file_exists(bin) {
+    c.expect(false, "the wrapping probe's binary")
+    return
+  }
+  chmod_x(bin)
+  args: Array(String) = []
+  code = process_run_out(bin, args, rlog) ?? -1
+  c.eq_int(code, 0, "the wrapping probe exits 0")
+  c.eq_str(file_read(rlog) ?? "", "add: wrap\nmul: wrap\nsub: wrap\n", "a wrapping add, multiply and subtract wrap in --release")
 }
 
 // name: alias_moves (elements) or alias_fields (object fields).
@@ -197,6 +231,7 @@ fn test_alias_tags(c: Checks) {
     stamp = now_ms()
     test_alias_tags_ll(c, compiler, stamp)
     test_alias_tags_cap(c, compiler, stamp)
+    test_alias_tags_wrap(c, compiler, stamp)
     test_alias_tags_moves(c, compiler, stamp, "alias_moves")
     test_alias_tags_moves(c, compiler, stamp, "alias_fields")
   } else {

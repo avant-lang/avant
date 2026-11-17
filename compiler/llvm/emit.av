@@ -826,18 +826,27 @@ fn ll_cmp(e: LlEmit, op: Int, ty: Int, x: String, y: String): String {
 }
 
 // add.chk sub.chk mul.chk: the with.overflow intrinsic and a
-// branch to the function's overflow trap.
+// branch to the function's overflow trap. Past the branch the operation
+// is known not to wrap, so the result used is the plain operation with
+// that flag (nsw signed, nuw unsigned): LLVM reads the flag where it
+// cannot see through the intrinsic and the trap's call (an induction
+// variable's range, a sign extension of an index, a loop's trip count),
+// and folds the two into the one add or multiply and its jump.
 fn ll_overflow(e: LlEmit, name: String, ty: Int, x: String, y: String): String {
   lt = e.llt(ty)
   pair = "{ ${lt}, i1 }"
   e.need_intrinsic("declare ${pair} @llvm.${name}.with.overflow.${lt}(${lt}, ${lt})")
   r = e.tmp()
   e.line("${r} = call ${pair} @llvm.${name}.with.overflow.${lt}(${lt} ${x}, ${lt} ${y})")
-  v = e.tmp()
-  e.line("${v} = extractvalue ${pair} ${r}, 0")
   o = e.tmp()
   e.line("${o} = extractvalue ${pair} ${r}, 1")
   ll_arith_trap(e, o, false)
+  flag = "nsw"
+  if str_starts(name, "u") {
+    flag = "nuw"
+  }
+  v = e.tmp()
+  e.line("${v} = ${str_slice(name, 1, name.size)} ${flag} ${lt} ${x}, ${y}")
   v
 }
 
