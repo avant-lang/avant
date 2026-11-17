@@ -73,6 +73,25 @@ fn test_null_traps(c: Checks, compiler: String) {
   null_trap(c, compiler, stamp, "task", "  t = spawn {\n    q = e.malloc(1 << 62)\n    q.a.to_i()\n  }\n  if v = t.join() {\n    puts(v)\n  } else err {\n    puts(\"task: \${err.what}\")\n  }\n  puts(\"after\")\n", 0, "task: the field a read or written through a NULL Ptr(Pair) (a pointer C may leave NULL is declared Ptr(Pair)? and tested: if p = ...)\nafter\n")
 }
 
+// C given an array a running task reads: the runtime's own C function that
+// writes arrays (the BWT transform LangArena's compress tasks bind) traps
+// as an Avant element store does. Before, it wrote the frozen array.
+fn test_frozen_to_c(c: Checks, compiler: String) {
+  stamp = now_ms()
+  src = "${scratch()}/c_layout-${stamp}-frozen.av"
+  _ = file_write(src, "import std.sync\nlib fast {\n  fun avant_bwt_transform(input: Buf, sa: Array(Int), rank: Array(Int32), tmp: Array(Int), count: Array(Int32), out: Buf): Int\n  fun avant_buf_set_size(buf: Buf, n: Int)\n}\nfn sized(n: Int): Buf {\n  b = Buf.new(n)\n  fast.avant_buf_set_size(b, n)\n  b\n}\nfn main {\n  n = 6\n  sa = Array(Int).new(n)\n  go = Channel(Int).new()\n  h = spawn {\n    _ = go.recv()\n    sa.size\n  }\n  input = sized(n)\n  for i in 0..n {\n    input[i] = 98\n  }\n  puts(\"before\")\n  idx = fast.avant_bwt_transform(input, sa, Array(Int32).new(n), Array(Int).new(n), Array(Int32).new(n + 1), sized(n))\n  puts(idx)\n}\n")
+  bin = "${scratch()}/c_layout-${stamp}-frozen.bin"
+  c.eq_int(compile_av(compiler, src, bin, "${scratch()}/c_layout-${stamp}-frozen.clog"), 0, "frozen to C: compiles")
+  if file_exists(bin) {
+    log = "${scratch()}/c_layout-${stamp}-frozen.run"
+    c.eq_int(run_av_bin(bin, log), 1, "frozen to C: the write traps")
+    got = file_read(log) ?? ""
+    c.expect(str_has(got, "before\navant runtime: an element store on an array a running task reads"), "frozen to C: names the store (${got})")
+  } else {
+    c.expect(false, "frozen to C: runs")
+  }
+}
+
 fn test_c_layout(c: Checks) {
   c.suite("tests/cases/test_c_layout.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -106,6 +125,7 @@ fn test_c_layout(c: Checks) {
     }
     test_release_errors(c, compiler)
     test_null_traps(c, compiler)
+    test_frozen_to_c(c, compiler)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

@@ -1227,6 +1227,8 @@ static avant_int *bwt_ix(void *arr, int32_t need) {
   if (!a || !a->buf || a->size < need || need < 0) {
     return NULL;
   }
+  /* The array is written: one a running task reads cannot change. */
+  ARR_FROZEN_TRAP(a, AVANT_FROZEN_STORE);
   return (avant_int *)a->buf;
 }
 
@@ -1235,6 +1237,8 @@ static int32_t *bwt_i32(void *arr, int32_t need) {
   if (!a || !a->buf || a->size < need || need < 0) {
     return NULL;
   }
+  /* The array is written: one a running task reads cannot change. */
+  ARR_FROZEN_TRAP(a, AVANT_FROZEN_STORE);
   return (int32_t *)a->buf;
 }
 

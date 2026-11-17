@@ -3206,6 +3206,7 @@ A `lib NAME { ... }` block holds `fun` declarations (`fun` for a C function, `fn
 - A `String` argument is passed as a `char *`.
 - A `String?` result is a `char *` that may be NULL, read as `nil` (passing `nil` passes NULL); a `String` result that is NULL traps, naming the function (`avant runtime: C function c.getenv returned NULL for String (declare String?)`).
 - A `fun` signature's only unions are optional references, one pointer with `nil` as NULL: `String?`, `Bytes?`, `Ptr(T)?` (the nullable C pointer, [Layouts and Ptr](#layouts-and-ptr)), and an array, a hash, a `Buf` or a class with `?`. Any other union (`Int?`, `Int | String`, a tag and a payload where C has one word) is a compile error there.
+- An `Array` (or a `Hash`, a `Buf`) passed to C is the value itself, not a copy: C may change it, except an array a running task reads ([What may cross a task](#what-may-cross-a-task)), which C must leave as it is; the runtime's own C functions that write an array trap on such an array, as Avant code does.
 - The runtime's own C functions (`avant_c_str`, `avant_alloc_slow`, every entry the compiler calls) are reserved: a `fun` of that name is a compile error (`C function avant_c_str is reserved: ...`).
 - C++ is reached only through `extern "C"` functions.
 
