@@ -745,10 +745,14 @@ static void print_report(void) {
   free(files);
 }
 
+/* At exit the counts are already in MAP.hits: every hit is an atomic add
+ * on the file's shared mapping, which the page cache keeps coherent for
+ * every process and for the reader that writes the LCOV file. No msync:
+ * a synchronous write-back of the whole file at every process's exit cost
+ * an instrumented suite 2.5% of its wall and made no count more exact
+ * (counting in each process and adding once at exit was 1.5% faster
+ * still, but loses the counts of a process a signal kills). */
 static void avant_cov_exit(void) {
-  if (g_hits && g_hits != MAP_FAILED) {
-    msync(g_hits, g_hits_bytes, MS_SYNC);
-  }
   write_lcov();
   if (should_report()) {
     print_report();
