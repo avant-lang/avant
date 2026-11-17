@@ -40,9 +40,10 @@ extern avant_puts_i64(i64) -> void never
 extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_int(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
-extern avant_str_data(ref str) -> ptr u8 never
+extern avant_str_data(ref str, i32) -> ptr u8 never
 extern avant_str_from_int(i64) -> ref str collects
 extern avant_str_size(ref str) -> i64 never
+extern avant_str_view_test(ref str) -> i32 never
 
 fn av.methods/String.shout(_1: ref str) -> ref str frame @methods.av:9:1 {
   let _0: ref str
@@ -95,17 +96,19 @@ fn av.methods/Bytes.second(_1: ref str) -> i64 leaf @methods.av:21:1 {
   let _0: i64
   let _1 (b): ref str
   let _2: i64
-  let _3: ptr u8
-  let _4: u8
-  let _5: i64
+  let _3: i32
+  let _4: ptr u8
+  let _5: u8
+  let _6: i64
 
 bb0:
   _2 = call avant_str_size(copy _1) nocollect   @22:4
   check.bounds const i64 1, copy _2   @22:4
-  _3 = call avant_str_data(copy _1) nocollect   @22:4
-  _4 = copy (*_3)[const i64 1]   @22:4
-  _5 = cast copy _4 to i64   @22:4
-  _0 = copy _5   @22:4
+  _3 = call avant_str_view_test(copy _1) nocollect   @22:4
+  _4 = call avant_str_data(copy _1, copy _3) nocollect   @22:4
+  _5 = copy (*_4)[const i64 1]   @22:4
+  _6 = cast copy _5 to i64   @22:4
+  _0 = copy _6   @22:4
   return   @22:4
 }
 

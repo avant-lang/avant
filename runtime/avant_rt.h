@@ -852,8 +852,9 @@ static inline int avant_str_is_view(const char *s) {
  * store into C memory, which read a String as a terminated string with
  * its length in the header. */
 char *avant_str_flat(const char *s);
-/* The address of S's bytes (avant_str_bytes), for generated code. */
-const char *avant_str_data(const char *s);
+/* The address of S's bytes (avant_str_bytes), for generated code; IS_VIEW
+ * is the generated code's view test of S (the call form reads it again). */
+const char *avant_str_data(const char *s, int32_t is_view);
 /* 1 when S is a view, for generated code. */
 int32_t avant_str_view_test(const char *s);
 /* S as a `fun` argument (C's `char *`, terminated): a flat string

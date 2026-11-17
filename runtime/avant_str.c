@@ -251,8 +251,9 @@ static char *str_part(const char *s, size_t off, size_t n) {
 
 /* The call form of the generated code's inline read of a string's bytes
  * (compiler/llvm/emit_gc.av, ll_str_data). */
-const char *avant_str_data(const char *s) {
+const char *avant_str_data(const char *s, int32_t is_view) {
   size_t n;
+  (void)is_view;
   return avant_str_bytes(s, &n);
 }
 

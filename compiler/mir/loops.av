@@ -1548,16 +1548,23 @@ fn lv_func(m: MModule, f: MFunc, keep: Array(Bool)) {
 
 // String sizes out of loops: `avant_str_size(_s)` of a string local the
 // loop never writes is the same every time (strings are immutable), so a
-// preheader computes it once and the loop copies the value. The call
-// cannot be left to LLVM: its length cache makes it write memory, so its
-// honest attributes (runtime.av mir_rt_attrs) do not let LLVM hoist it.
-// The call has no other effect, never traps (null has size 0), and does
-// not collect, so computing it where the loop might not run is harmless.
+// preheader computes it once and the loop copies the value. The same for
+// the view test, `avant_str_view_test(_s)`: a string object never changes
+// kind. The address of the bytes, `avant_str_data(_s, _t)`, changes when
+// the object moves, which happens only in a collection: it is formed once
+// only for a loop with no call that may collect, in a program with one
+// thread. None of these is left to LLVM: the emitter inlines them as
+// loads LLVM may only hoist where they surely run. None has another
+// effect, traps (null has size 0 and is no view) or collects, so
+// computing one where the loop might not run is harmless.
 // Loops are taken innermost first, so a size moves out of every loop the
 // string is invariant in.
-fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int): Bool {
+fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int, shared: Bool): Bool {
   addr = lv_addr_taken(f)
   def_in = mir_bools(f.locals.size, false)
+  // A loop with no call that may collect, in a program with one thread:
+  // no object moves while it runs.
+  quiet = !shared
   b = 0
   while b < f.blocks.size {
     if body[b] {
@@ -1568,12 +1575,16 @@ fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int): Bool {
         if d >= 0 {
           def_in[d] = true
         }
+        if blk.stmts[j].kind == msk_call() && blk.stmts[j].collects {
+          quiet = false
+        }
         j += 1
       }
     }
     b += 1
   }
   strs: Array(Int) = []
+  kinds: Array(String) = []
   held: Array(Int) = []
   pre = MBlock.new(f.blocks.size)
   loc = f.loc
@@ -1587,22 +1598,43 @@ fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int): Bool {
       j = 0
       while j < blk.stmts.size {
         st = blk.stmts[j]
-        if st.kind == msk_call() && st.callee == "avant_str_size" && st.args.size == 1 && st.dest >= 0 {
+        data = st.kind == msk_call() && st.callee == "avant_str_data" && st.args.size == 2 && st.dest >= 0 && quiet
+        if data || (st.kind == msk_call() && (st.callee == "avant_str_size" || st.callee == "avant_str_view_test") && st.args.size == 1 && st.dest >= 0) {
           v = lv_local(st.args[0])
           if v >= 0 && !def_in[v] && !addr[v] && f.locals[v].ty == mt_str() {
             k = 0
-            while k < strs.size && strs[k] != v {
+            while k < strs.size && !(strs[k] == v && kinds[k] == st.callee) {
               k += 1
             }
             if k == strs.size {
               strs.push(v)
-              h = lv_new_local(f, mt_i64())
+              kinds.push(st.callee)
+              rt = mt_i64()
+              if st.callee == "avant_str_view_test" {
+                rt = mt_i32()
+              }
+              if data {
+                rt = f.locals[st.dest].ty
+              }
+              h = lv_new_local(f, rt)
               held.push(h)
               call = MStmt.new(msk_call(), loc)
               call.dest = h
-              call.callee = "avant_str_size"
+              call.callee = st.callee
               call.args.push(lv_copy_local(v))
               call.collects = false
+              if data {
+                // The address of the bytes, formed once: its view test
+                // first, in the preheader too.
+                vt = lv_new_local(f, mt_i32())
+                tc = MStmt.new(msk_call(), loc)
+                tc.dest = vt
+                tc.callee = "avant_str_view_test"
+                tc.args.push(lv_copy_local(v))
+                tc.collects = false
+                pre.stmts.push(tc)
+                call.args.push(lv_copy_local(vt))
+              }
               pre.stmts.push(call)
             }
             r = MRvalue.new(mrk_use())
@@ -1637,7 +1669,7 @@ fn lv_hoist_one(f: MFunc, body: Array(Bool), hdr: Int): Bool {
   true
 }
 
-fn lv_hoist_sizes(f: MFunc) {
+fn lv_hoist_sizes(f: MFunc, shared: Bool) {
   rounds = 0
   progress = true
   while progress && rounds < 256 {
@@ -1645,7 +1677,7 @@ fn lv_hoist_sizes(f: MFunc) {
     lps = mir_lv_loops(f)
     li = lps.headers.size - 1
     while li >= 0 && !progress {
-      if lps.headers[li] != 0 && lv_hoist_one(f, lps.bodies[li], lps.headers[li]) {
+      if lps.headers[li] != 0 && lv_hoist_one(f, lps.bodies[li], lps.headers[li], shared) {
         progress = true
       }
       li -= 1
@@ -1661,7 +1693,7 @@ pub fn mir_loop_pass(m: MModule) {
   for f in m.funcs {
     if f.kind == mfk_unset() && f.blocks.size > 1 {
       lv_func(m, f, keep)
-      lv_hoist_sizes(f)
+      lv_hoist_sizes(f, m.shared)
     }
   }
 }

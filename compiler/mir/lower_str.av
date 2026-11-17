@@ -271,13 +271,19 @@ pub fn (lw: MirLower) lower_str_index(e: Expr, arr: Expr, ix: Expr): MOperand {
 }
 
 // The address of string s's bytes as a `ptr u8` local, used at once (no
-// call that may collect before its use): avant_str_data, which the
-// emitter inlines (llvm/emit_gc.av ll_str_data).
+// call that may collect before its use): the view test
+// (avant_str_view_test, a scalar the loop pass computes once before a
+// loop the string is invariant in, as it does the size: a string object
+// never changes kind), then avant_str_data with it, which the emitter
+// inlines (llvm/emit_gc.av ll_str_data): the string itself, or a view's
+// base and offset.
 pub fn (lw: MirLower) str_data(s: MOperand): Int {
   b = lw.lw_b
+  t = lw.call_to(mt_i32(), "avant_str_view_test", lw.one(lw.dup(s)))
   pv = b.temp(b.ptr_to(mt_u8()))
   args: Array(MOperand) = []
   args.push(s)
+  args.push(t)
   b.call(pv, "avant_str_data", args)
   pv
 }

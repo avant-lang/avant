@@ -11,8 +11,9 @@ typemap 1020 %String view stride 0 bits [0x1]
 extern __avant_type_maps() -> void never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_i64(i64) -> void never
-extern avant_str_data(ref str) -> ptr u8 never
+extern avant_str_data(ref str, i32) -> ptr u8 never
 extern avant_str_size(ref str) -> i64 never
+extern avant_str_view_test(ref str) -> i32 never
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @index.av:1:1 {
   let _0: i32
@@ -20,9 +21,10 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @index.av:1:1 {
   let _2 (argv): ptr slot
   let _3 (s): ref str
   let _4: i64
-  let _5: ptr u8
-  let _6: u8
-  let _7: i64
+  let _5: i32
+  let _6: ptr u8
+  let _7: u8
+  let _8: i64
 
 bb0:
   gc.enter   @1:1
@@ -32,10 +34,11 @@ bb0:
   _3 = const str.0   @2:5
   _4 = call avant_str_size(copy _3) nocollect   @3:9
   check.bounds const i64 0, copy _4   @3:9
-  _5 = call avant_str_data(copy _3) nocollect   @3:9
-  _6 = copy (*_5)[const i64 0]   @3:9
-  _7 = cast copy _6 to i64   @3:9
-  call avant_puts_i64(copy _7) nocollect   @3:3
+  _5 = call avant_str_view_test(copy _3) nocollect   @3:9
+  _6 = call avant_str_data(copy _3, copy _5) nocollect   @3:9
+  _7 = copy (*_6)[const i64 0]   @3:9
+  _8 = cast copy _7 to i64   @3:9
+  call avant_puts_i64(copy _8) nocollect   @3:3
   _0 = const i32 0   @1:1
   gc.leave   @1:1
   return   @1:1
