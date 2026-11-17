@@ -197,14 +197,14 @@ fn client_cases(c: Checks) {
   set_env("AVANT_HTTP_IDLE_TIMEOUT_S", "")
   if opened = listened {
     server = opened
-    server.post("/raw") { |req|
+    server.post("/raw", (req) {
       sum = 0
       for i in 0..req.body.size {
         sum = sum * 7 + req.body[i]
       }
       Response.text("${req.body.size} bytes, sum ${sum}")
-    }
-    server.post("/len") { |req|
+    })
+    server.post("/len", (req) {
       body = req.body
       bad = 0
       for i in 0..body.size {
@@ -213,11 +213,11 @@ fn client_cases(c: Checks) {
         }
       }
       Response.text("${body.size} bytes, ${bad} out of place")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(2)
     task = spawn {
@@ -386,14 +386,14 @@ fn ws_cases(c: Checks) {
   n = 6
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened
-    server.websocket("/keep") { |conn, msg|
+    server.websocket("/keep", (conn, msg) {
       kept.conns.push(conn)
       _ = conn.send_message(msg)
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(4)
     task = spawn {
@@ -415,13 +415,13 @@ fn ws_cases(c: Checks) {
   }
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened
-    server.websocket("/probe") { |conn, msg|
+    server.websocket("/probe", (conn, msg) {
       _ = conn.send_text("operations through the first server's WsConn values that did not answer closed: ${stale_answers(kept)}")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(4)
     task = spawn {
@@ -510,19 +510,19 @@ fn ws_route_cases(c: Checks) {
   rounds = 200
   if opened = Http.listen(0, "127.0.0.1", 1048576, 8) {
     server = opened
-    server.websocket("/b") { |conn, msg|
+    server.websocket("/b", (conn, msg) {
       _ = conn.send_text("b1 ${msg.text() ?? "?"}")
-    }
-    server.websocket("/a") { |conn, msg|
+    })
+    server.websocket("/a", (conn, msg) {
       _ = conn.send_text("a ${msg.text() ?? "?"}")
-    }
-    server.websocket("/b") { |conn, msg|
+    })
+    server.websocket("/b", (conn, msg) {
       _ = conn.send_text("b2 ${msg.text() ?? "?"}")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     done = Channel(Int).new(tasks)
     wrongs = Channel(String).new(tasks)
@@ -974,7 +974,7 @@ fn ws_big_round(c: Checks, root: String, chunk: String, size: Int) {
   if opened = listened {
     server = opened
     big = BigSent.new()
-    server.websocket("/ws-big") { |conn, msg|
+    server.websocket("/ws-big", (conn, msg) {
       text = msg.text() ?? ""
       if text.size > 4 && str_slice(text, 0, 4) == "big " {
         n = str_slice(text, 4, text.size).to_i() ?? 0
@@ -986,11 +986,11 @@ fn ws_big_round(c: Checks, root: String, chunk: String, size: Int) {
       } else {
         _ = conn.send_text("the big send returned ${big.sent}")
       }
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     stamp = now_ms()
     out = Channel(String).new(2)
@@ -1040,19 +1040,19 @@ fn write_piece_cases(c: Checks) {
   listened = Http.listen(0, "127.0.0.1", 4194304, 1, 4194304)
   if opened = listened {
     server = opened
-    server.get("/big") { |req|
+    server.get("/big", (req) {
       Response.text(big)
-    }
-    server.post("/size") { |req|
+    })
+    server.post("/size", (req) {
       Response.text("${req.body.size} ${(String.from_utf8(req.body) ?? "?") == big}")
-    }
-    server.websocket("/ws") { |conn, msg|
+    })
+    server.websocket("/ws", (conn, msg) {
       _ = conn.send_text("${msg.body.size} ${(msg.text() ?? "") == big}")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(4)
     task = spawn {
@@ -1221,19 +1221,19 @@ fn deadline_cases(c: Checks, root: String) {
       huge.push_byte(97 + i % 26)
     }
     huge_bytes = huge.to_s().bytes
-    server.get("/ping") { |req|
+    server.get("/ping", (req) {
       Response.text("pong")
-    }
-    server.post("/len") { |req|
+    })
+    server.post("/len", (req) {
       Response.text("${req.body.size} bytes")
-    }
-    server.get("/huge") { |req|
+    })
+    server.get("/huge", (req) {
       Response.bytes(huge_bytes)
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(8)
     task = spawn {
@@ -1334,13 +1334,13 @@ fn limit_cases(c: Checks, root: String) {
   stamp = now_ms()
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened.body_budget(1000)
-    server.post("/len") { |req|
+    server.post("/len", (req) {
       Response.text("${req.body.size} bytes")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(2)
     task = spawn {
@@ -1356,13 +1356,13 @@ fn limit_cases(c: Checks, root: String) {
   }
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened.max_connections(3)
-    server.get("/ping") { |req|
+    server.get("/ping", (req) {
       Response.text("pong")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(2)
     task = spawn {
@@ -1379,16 +1379,16 @@ fn limit_cases(c: Checks, root: String) {
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened.shutdown_timeout(500)
     opened_ws = Channel(Int).new(1)
-    server.websocket("/ws") { |conn, msg|
+    server.websocket("/ws", (conn, msg) {
       _ = conn.send_message(msg)
-    }
-    server.websocket_open("/ws") { |conn|
+    })
+    server.websocket_open("/ws", (conn) {
       _ = opened_ws.send(1)
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     asked = Channel(Int).new(1)
     out = Channel(String).new(2)
@@ -1466,19 +1466,19 @@ fn test_std_http_safety(c: Checks, root: String) {
   // answer of the connection is written by the same thread, in order.
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened
-    server.get("/ping") { |req|
+    server.get("/ping", (req) {
       Response.text("pong")
-    }
-    server.post("/echo") { |req|
+    })
+    server.post("/echo", (req) {
       Response.bytes(req.body)
-    }
-    server.get("/hidden") { |req|
+    })
+    server.get("/hidden", (req) {
       Response.text("smuggled")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(8)
     handle = spawn {
@@ -1543,24 +1543,24 @@ fn test_std_http_safety(c: Checks, root: String) {
       digits.push(b.to_s().bytes)
     }
     flood_hits = Hits.new()
-    server.get("/big") { |req|
+    server.get("/big", (req) {
       Response.bytes(big_bytes)
-    }
-    server.get("/n") { |req|
+    })
+    server.get("/n", (req) {
       k = (req.query ?? "0").to_i() ?? 0
       Response.bytes(digits[k % 10])
-    }
-    server.get("/f") { |req|
+    })
+    server.get("/f", (req) {
       flood_hits.n += 1
       Response.bytes(digits[1])
-    }
-    server.get("/ping") { |req|
+    })
+    server.get("/ping", (req) {
       Response.text("pong")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     out = Channel(String).new(8)
     idle_out = Channel(String).new(2)

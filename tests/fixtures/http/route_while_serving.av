@@ -26,36 +26,36 @@ fn main: Int {
     } else if kind == "rate-negative" {
       _ = server.min_rate(240, -5)
     }
-    server.get("/add") { |req|
+    server.get("/add", (req) {
       if kind == "get" {
-        server.get("/x") { |r| Response.text("x") }
+        server.get("/x", (r) { Response.text("x") })
       } else if kind == "post" {
-        server.post("/x") { |r| Response.text("x") }
+        server.post("/x", (r) { Response.text("x") })
       } else if kind == "put" {
-        server.put("/x") { |r| Response.text("x") }
+        server.put("/x", (r) { Response.text("x") })
       } else if kind == "delete" {
-        server.delete("/x") { |r| Response.text("x") }
+        server.delete("/x", (r) { Response.text("x") })
       } else if kind == "patch" {
-        server.patch("/x") { |r| Response.text("x") }
+        server.patch("/x", (r) { Response.text("x") })
       } else if kind == "route" {
-        server.route("OPTIONS", "/x") { |r| Response.text("x") }
+        server.route("OPTIONS", "/x", (r) { Response.text("x") })
       } else if kind == "websocket" {
-        server.websocket("/w") { |conn, msg| }
+        server.websocket("/w", (conn, msg) { })
       } else if kind == "websocket_open" {
-        server.websocket_open("/w") { |conn| }
+        server.websocket_open("/w", (conn) { })
       } else if kind == "websocket_close" {
-        server.websocket_close("/w") { |conn, code, reason| }
+        server.websocket_close("/w", (conn, code, reason) { })
       } else if kind == "head_timeout" {
         _ = server.head_timeout(5000)
       } else if kind == "min_rate" {
         _ = server.min_rate(100, 1000)
       }
       Response.text("added")
-    }
-    server.get("/__stop") { |req|
+    })
+    server.get("/__stop", (req) {
       server.close()
       Response.text("bye")
-    }
+    })
     port = server.port()
     client = spawn {
       if resp = Http.get("http://127.0.0.1:${port}/add", true, 5000) {

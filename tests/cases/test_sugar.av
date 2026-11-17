@@ -51,25 +51,25 @@ fn test_sugar(c: Checks) {
   c.eq_str(bch[1], "é", "Bytes chars multibyte")
 
   xs: Array(Int) = [1, 2, 3]
-  c.expect(xs.any { |x| x > 2 }, "any hit")
-  c.expect(!xs.any { |x| x > 9 }, "any miss")
-  c.expect(xs.all { |x| x > 0 }, "all hit")
-  c.expect(!xs.all { |x| x > 1 }, "all miss")
+  c.expect(xs.any (x) { x > 2 }, "any hit")
+  c.expect(!xs.any (x) { x > 9 }, "any miss")
+  c.expect(xs.all (x) { x > 0 }, "all hit")
+  c.expect(!xs.all (x) { x > 1 }, "all miss")
   empty_xs: Array(Int) = []
-  c.expect(!empty_xs.any { |x| true }, "any empty false")
-  c.expect(empty_xs.all { |x| false }, "all empty true")
+  c.expect(!empty_xs.any (x) { true }, "any empty false")
+  c.expect(empty_xs.all (x) { false }, "all empty true")
   seen = 0
-  short_any = xs.any { |x| seen = seen + 1
+  short_any = xs.any (x) { seen = seen + 1
     x == 1 }
   c.expect(short_any, "any short-circuit value")
   c.eq_int(seen, 1, "any short-circuits")
   seen_all = 0
-  short_all = xs.all { |x| seen_all = seen_all + 1
+  short_all = xs.all (x) { seen_all = seen_all + 1
     x > 1 }
   c.expect(!short_all, "all short-circuit value")
   c.eq_int(seen_all, 1, "all short-circuits")
 
-  if xs.any { |x| x > 2 } {
+  if xs.any((x) { x > 2 }) {
     c.expect(true, "any in if condition")
   } else {
     c.expect(false, "any in if condition")

@@ -41,7 +41,7 @@ fn cmp_trap(a: Ptr(CInt), b: Ptr(CInt)): Int32 {
 }
 
 fn doubled(xs: Array(Int)): Int {
-  ys = xs.parallel { |x| x * 2 }
+  ys = xs.parallel (x) { x * 2 }
   ys[0]
 }
 
@@ -132,7 +132,7 @@ fn main: Int {
   } else if kind == "mutex" || kind == "mutex-main" || kind == "mutex-try" {
     m = Mutex(Acc).new(Acc { n: 0 })
     h = spawn {
-      m.with { |acc|
+      m.with (acc) {
         acc.n = 5
         acc.n = at(xs, 4)
       }
@@ -142,14 +142,14 @@ fn main: Int {
     if kind == "mutex" {
       // Another task's lock of the poisoned mutex ends that task too.
       h2 = spawn {
-        m.with { |acc| acc.n }
+        m.with (acc) { acc.n }
       }
       _ = show(h2)
     } else if kind == "mutex-try" {
       // The state reads, and try_with gives a MutexError for it; a
       // mutex no task poisoned gives its value.
       puts("poisoned: ${m.poisoned()}")
-      res = m.try_with { |acc| acc.n }
+      res = m.try_with (acc) { acc.n }
       if r = res {
         puts("r: ${r}")
       } else e {
@@ -157,7 +157,7 @@ fn main: Int {
       }
       fresh = Mutex(Acc).new(Acc { n: 3 })
       puts("fresh poisoned: ${fresh.poisoned()}")
-      res2 = fresh.try_with { |acc| acc.n + 1 }
+      res2 = fresh.try_with (acc) { acc.n + 1 }
       if v = res2 {
         puts("fresh: ${v}")
       } else e {
@@ -165,7 +165,7 @@ fn main: Int {
       }
     } else {
       // The main thread's lock ends the program.
-      n = m.with { |acc| acc.n }
+      n = m.with (acc) { acc.n }
       puts("never ${n}")
     }
   } else if kind == "pin-hold" {
@@ -217,7 +217,7 @@ fn main: Int {
     }
     _ = show(h)
   } else if kind == "parallel" {
-    rs = xs.parallel { |x| at(xs, x + 5) }
+    rs = xs.parallel (x) { at(xs, x + 5) }
     puts(rs.size)
   } else if kind == "worker-parallel" {
     h = spawn { doubled(xs) }

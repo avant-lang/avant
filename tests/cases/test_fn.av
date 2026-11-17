@@ -30,14 +30,14 @@ fn make_payload: Payload | PayloadError {
 
 fn map(xs: Array(T), f: fn(T): U): Array(U) {
   ys: Array(U) = []
-  xs.each { |x|
+  xs.each (x) {
     ys.push(f(x))
   }
   ys
 }
 
 fn add(n: Int): fn(Int): Int {
-  { |x| x + n }
+  (x) { x + n }
 }
 
 fn pick(n: Int): Int {
@@ -58,7 +58,7 @@ fn take_str(f: fn(String): Int): Int {
 
 class Box {
   // A field default may be any expression.
-  f: fn(): Int = { || 0 }
+  f: fn(): Int = () { 0 }
 
   fn initialize {
   }
@@ -67,7 +67,7 @@ class Box {
 fn each_sum: Int {
   xs = [1, 2, 3]
   sum = 0
-  xs.each { |i|
+  xs.each (i) {
     sum += i
   }
   sum
@@ -82,8 +82,8 @@ pub fn exported(f: fn(Int): Int): Int {
 }
 
 fn outer(n: Int): fn(): fn(): Int {
-  { ||
-    { || n }
+  () {
+    () { n }
   }
 }
 
@@ -92,7 +92,7 @@ fn go(f: fn()) {
 }
 
 fn ret_lam(n: Int): fn(Int): Int {
-  return { |x| x + n }
+  return (x) { x + n }
 }
 
 fn return_nil: Nil {
@@ -109,7 +109,7 @@ struct Meth {
 
   fn off(x: Int): fn(Int): Int {
     b = base
-    { |y| y + x + b }
+    (y) { y + x + b }
   }
 }
 
@@ -134,7 +134,7 @@ fn nilish(n: Int?): Int {
 
 quote {
   fn quoted(n: Int): fn(Int): Int {
-    { |x: Int| x + n + #(1) }
+    (x: Int) { x + n + #(1) }
   }
 }
 
@@ -142,9 +142,9 @@ fn test_fn(c: Checks) {
   c.suite("tests/cases/test_fn.av")
   f: fn(Int): Int = inc
   c.eq_int(f(2), 3, "named fn value")
-  g: fn(Int): Int = { |n| n + 1 }
+  g: fn(Int): Int = (n) { n + 1 }
   c.eq_int(g(4), 5, "captureless lambda")
-  ys = map([1, 2, 3]) { |n| n + 1 }
+  ys = map([1, 2, 3], (n) { n + 1 })
   c.eq_int(ys.size, 3, "map size")
   c.eq_int(ys[0], 2, "map 0")
   c.eq_int(ys[1], 3, "map 1")
@@ -153,11 +153,11 @@ fn test_fn(c: Checks) {
   c.eq_int(mapped[2], 4, "map named fn")
   c.eq_int(add(1)(2), 3, "capturing call")
   n = 1
-  see: fn(): Int = { || n }
+  see: fn(): Int = () { n }
   n = 7
   c.eq_int(see(), 7, "assign after create")
   m = 1
-  bump: fn(): Int = { ||
+  bump: fn(): Int = () {
     m += 1
     m
   }
@@ -169,7 +169,7 @@ fn test_fn(c: Checks) {
   c.eq_int(take_int(pick), 11, "overload from fn type")
   c.eq_int(take_str(pick), 4, "overload string")
   k = 0
-  rec: fn(): Int = { ||
+  rec: fn(): Int = () {
     if k > 2 {
       return k
     }
@@ -179,17 +179,17 @@ fn test_fn(c: Checks) {
   c.eq_int(rec(), 3, "recursive lambda")
   box = Box.new()
   c.eq_int((box.f)(), 0, "fn field default")
-  box.f = { || 9 }
+  box.f = () { 9 }
   c.eq_int((box.f)(), 9, "fn field")
   fs: Array(fn(): Int) = []
-  fs.push({ || 8 })
+  fs.push(() { 8 })
   c.eq_int((fs[0])(), 8, "fn array element")
   msg = "ke" + "pt"
-  read: fn(): String = { || msg }
+  read: fn(): String = () { msg }
   c.eq_str(read(), "kept", "capture string")
   if p = make_payload() {
     stored: Array(fn(): Int) = []
-    stored.push({ ||
+    stored.push(() {
       p.bump()
       p.doubled()
     })
@@ -200,42 +200,42 @@ fn test_fn(c: Checks) {
   }
   bare = inc
   c.eq_int(bare(2), 3, "bare fn value")
-  ann = { |n: Int| n + 1 }
+  ann = (n: Int) { n + 1 }
   c.eq_int(ann(4), 5, "annotated lambda")
   both_a = 2
   both_b = 3
-  both: fn(): Int = { || both_a + both_b }
+  both: fn(): Int = () { both_a + both_b }
   both_a = 4
   c.eq_int(both(), 7, "two captures")
   paired: fn(Int, Int): Int = pair
   c.eq_int(paired(4, 2), 42, "two-arg named")
-  paired_l = { |a: Int, b: Int| a * 10 + b }
+  paired_l = (a: Int, b: Int) { a * 10 + b }
   c.eq_int(paired_l(4, 2), 42, "two-arg lambda")
   c.eq_int(outer(4)()(), 4, "nested capture")
   nest_k = 1
-  nest_wrap: fn(): fn(): Int = { ||
+  nest_wrap: fn(): fn(): Int = () {
     nest_k += 1
-    { || nest_k }
+    () { nest_k }
   }
   nest_inner = nest_wrap()
   nest_k = 9
   c.eq_int(nest_inner(), 9, "nested sees assign")
-  deep: fn(): fn(): fn(): Int = { ||
+  deep: fn(): fn(): fn(): Int = () {
     cell = 1
-    mid = { ||
-      { || cell }
+    mid = () {
+      () { cell }
     }
     cell = 6
     mid
   }
   c.eq_int(deep()()(), 6, "threaded lambda local")
-  hold = Hold { f: { |n| n + 1 } }
+  hold = Hold { f: (n) { n + 1 } }
   hold2 = hold
   c.eq_int((hold2.f)(6), 7, "struct fn field")
   c.eq_int(quoted(1)(2), 4, "quoted lambda")
   outer_q = 1
   quote {
-    seen: fn(): Int = { ||
+    seen: fn(): Int = () {
       outer_q = 9
       outer_q
     }
@@ -244,27 +244,27 @@ fn test_fn(c: Checks) {
   c.eq_int(outer_q, 1, "quoted lambda stayed inside")
   c.eq_int(exported(inc), 2, "pub fn param")
   gone = 0
-  go() { || gone = gone + 1 }
+  go () { gone = gone + 1 }
   c.eq_int(gone, 1, "void fn value")
-  returned = map([1]) { |n|
+  returned = map([1], (n) {
     return n + 1
-  }
+  })
   c.eq_int(returned[0], 2, "inferred return")
   cell = 1
-  cell_read: fn(): Int = { || cell }
-  cell_bump: fn(): Int = { ||
+  cell_read: fn(): Int = () { cell }
+  cell_bump: fn(): Int = () {
     cell += 1
     cell
   }
   c.eq_int(cell_bump(), 2, "second lambda bumps")
   c.eq_int(cell_read(), 2, "first lambda sees it")
-  held: fn(Int): Int = { |k| k + 1 }
-  call_held: fn(): Int = { || held(4) }
+  held: fn(Int): Int = (k) { k + 1 }
+  call_held: fn(): Int = () { held(4) }
   c.eq_int(call_held(), 5, "capture fn")
-  held = { |k| k + 10 }
+  held = (k) { k + 10 }
   c.eq_int(call_held(), 14, "capture fn assign")
   flag = true
-  see_b: fn(): Bool = { || flag }
+  see_b: fn(): Bool = () { flag }
   flag = false
   shown = 1
   if see_b() {
@@ -272,36 +272,36 @@ fn test_fn(c: Checks) {
   }
   c.eq_int(shown, 1, "capture bool")
   flt = 1.5
-  see_f: fn(): Float64 = { || flt }
+  see_f: fn(): Float64 = () { flt }
   flt = 2.5
   c.expect(see_f() == 2.5, "capture float")
   wide: Int32 = 5
-  see_wide: fn(): Int32 = { || wide }
+  see_wide: fn(): Int32 = () { wide }
   wide = 8
   c.eq_int(see_wide().to_i(), 8, "capture int32")
   c.eq_int(ret_lam(3)(4), 7, "return lambda")
-  nil_l: fn(): Nil = { || nil }
+  nil_l: fn(): Nil = () { nil }
   c.eq_int(take_nil(return_nil), 1, "nil return")
   c.eq_int(take_nil(nil_l), 1, "nil lambda")
   meth = Meth { base: 10 }
   c.eq_int(meth.off(1)(2), 13, "method captures param")
   map_extra = 10
-  map_got = map([1, 2]) { |x| x + map_extra }
+  map_got = map([1, 2], (x) { x + map_extra })
   c.eq_int(map_got[0], 11, "map captures")
   c.eq_int(map_got[1], 12, "map captures 1")
   box_n = 4
-  box_see: fn(): Int = { || box_n }
+  box_see: fn(): Int = () { box_n }
   box_h = spawn { box_n + 1 }
   c.eq_int(box_h.join() ?? -1, 5, "spawn copies boxed int")
   box_n = 9
   c.eq_int(box_see(), 9, "box survives spawn")
-  go() { || }
+  go () { }
   c.expect(true, "empty void lambda")
-  nest = Nest.new(Hold { f: { |n| n } })
+  nest = Nest.new(Hold { f: (n) { n } })
   nest.inner = Hold { f: inc }
   c.eq_int((nest.inner.f)(6), 7, "fn in nested struct")
   outer_n = 4
-  run_spawn: fn(): Int = { ||
+  run_spawn: fn(): Int = () {
     run_h = spawn { outer_n + 1 }
     run_h.join() ?? -1
   }
@@ -309,13 +309,13 @@ fn test_fn(c: Checks) {
   c.eq_int(run_spawn(), 11, "spawn inside lambda")
   cap_n = 3
   lam_h = spawn {
-    lam_f: fn(): Int = { || cap_n + 1 }
+    lam_f: fn(): Int = () { cap_n + 1 }
     lam_f()
   }
   cap_n = 9
   c.eq_int(lam_h.join() ?? -1, 4, "lambda inside spawn")
   box_flag = true
-  see_box_flag: fn(): Bool = { || box_flag }
+  see_box_flag: fn(): Bool = () { box_flag }
   box_h = spawn {
     box_bit = 0
     if box_flag {
@@ -331,20 +331,20 @@ fn test_fn(c: Checks) {
   }
   c.eq_int(box_shown, 0, "bool box survives spawn")
   i32: Int32 = 5
-  see_i32: fn(): Int32 = { || i32 }
+  see_i32: fn(): Int32 = () { i32 }
   i32_h = spawn { i32.to_i() }
   c.eq_int(i32_h.join() ?? -1, 5, "spawn copies boxed int32")
   i32 = 9
   c.eq_int(see_i32().to_i(), 9, "int32 box survives spawn")
   u64: UInt64 = 8
-  see_u64: fn(): UInt64 = { || u64 }
+  see_u64: fn(): UInt64 = () { u64 }
   u64_h = spawn { u64.to_i() }
   c.eq_int(u64_h.join() ?? -1, 8, "spawn copies boxed uint64")
   u64 = 12
   c.eq_int(see_u64().to_i(), 12, "uint64 box survives spawn")
   c.eq_int(nilish(4), 4, "nilable param")
   c.eq_int(nilish(nil), 0, "nilable nil")
-  nil_f: fn(Int?): Int = { |n: Int?|
+  nil_f: fn(Int?): Int = (n: Int?) {
     if v = n {
       return v
     }

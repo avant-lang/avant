@@ -38,18 +38,18 @@ fn sum_nodes(ns: Array(Node)): Int {
 
 // A large buffer (born mature), small garbage per element.
 fn many(n: Int): Array(Node) {
-  Array(Node).new(n) { |i|
+  Array(Node).new(n, (i) {
     g = garbage(8)
     Node.new(i + g - 8)
-  }
+  })
 }
 
 // A small buffer (young, promoted mid-fill), much garbage per element.
 fn few(n: Int): Array(Node) {
-  Array(Node).new(n) { |i|
+  Array(Node).new(n, (i) {
     g = garbage(4096)
     Node.new(i + g - 4096)
-  }
+  })
 }
 
 // The block can return: a barrier at each store.
@@ -67,19 +67,19 @@ fn until(n: Int, stop: Int) {
 }
 
 fn recs(n: Int): Array(Rec) {
-  Array(Rec).new(n) { |i|
+  Array(Rec).new(n, (i) {
     _ = garbage(256)
     Rec { n: i, name: "r${i}", node: Node.new(i) }
-  }
+  })
 }
 
 fn grid(h: Int, w: Int): Array(Array(Node)) {
-  Array(Array(Node)).new(h) { |y|
-    Array(Node).new(w) { |x|
+  Array(Array(Node)).new(h, (y) {
+    Array(Node).new(w, (x) {
       _ = garbage(64)
       Node.new(y * 1000 + x)
-    }
-  }
+    })
+  })
 }
 
 fn main {
@@ -105,16 +105,16 @@ fn main {
     t2 += sum_nodes(row)
   }
   puts(t2)
-  ss = Array(String).new(2000) { |i| "s${i}" }
+  ss = Array(String).new(2000, (i) { "s${i}" })
   _ = garbage(200000)
   puts("${ss[0]} ${ss[1999]} ${ss.size}")
-  os = Array(Node?).new(1000) { |i|
+  os = Array(Node?).new(1000, (i) {
     o: Node? = nil
     if i % 3 != 0 {
       o = Node.new(i)
     }
     o
-  }
+  })
   _ = garbage(200000)
   some = 0
   for i in 0..os.size {

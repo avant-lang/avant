@@ -24,8 +24,8 @@ class Junk {
 }
 
 class Slot {
-  f: fn(): String = { || "" }
-  g: fn(Int): Int = { |k| k }
+  f: fn(): String = () { "" }
+  g: fn(Int): Int = (k) { k }
 
   fn initialize {
   }
@@ -37,8 +37,8 @@ struct Pair {
 }
 
 class Cell {
-  set: fn(Int) = { |n| }
-  get: fn(): String = { || "" }
+  set: fn(Int) =(n) { }
+  get: fn(): String = () { "" }
 
   fn initialize {
   }
@@ -50,8 +50,8 @@ class Cell {
 fn make_cell: Cell {
   v = "init"
   c = Cell.new()
-  c.set = { |n| v = "v${n}" }
-  c.get = { || v }
+  c.set = (n) { v = "v${n}" }
+  c.get = () { v }
   c
 }
 
@@ -68,7 +68,7 @@ class Root {
     self.slots = []
     self.fs = []
     self.words = []
-    self.pair = Pair { a: { || 0 }, b: { || "" } }
+    self.pair = Pair { a: () { 0 }, b: () { "" } }
     self.cell = make_cell()
   }
 }
@@ -89,35 +89,35 @@ fn main {
   i = 0
   while i < 8 {
     sl = Slot.new()
-    sl.f = { || "init" }
-    sl.g = { |k| k }
+    sl.f = () { "init" }
+    sl.g = (k) { k }
     root.slots.push(sl)
-    root.fs.push({ || 0 })
+    root.fs.push(() { 0 })
     root.words.push("w${i}")
     i = i + 1
   }
-  root.holder.f = { || "start" }
-  root.holder.g = { |k| k }
+  root.holder.f = () { "start" }
+  root.holder.g = (k) { k }
   acc = "acc"
-  get_acc: fn(): String = { || acc }
-  nested: fn(): fn(): String = { || { || acc + "+" } }
+  get_acc: fn(): String = () { acc }
+  nested: fn(): fn(): String = () { () { acc + "+" } }
   dummy = junk(20000, 0)
   sum = 0
   r = 0
   while r < 300 {
     s = "r${r}"
     cnt = r
-    root.holder.f = { || s + "!" }
-    root.slots[r % 8].g = { |k| k + cnt }
-    root.fs[r % 8] = { || cnt * 2 }
-    root.pair = Pair { a: { || cnt + 1 }, b: { || s + s } }
+    root.holder.f = () { s + "!" }
+    root.slots[r % 8].g = (k) { k + cnt }
+    root.fs[r % 8] = () { cnt * 2 }
+    root.pair = Pair { a: () { cnt + 1 }, b: () { s + s } }
     acc = "a${r}"
     shared = r
-    bump: fn(): Int = { ||
+    bump: fn(): Int = () {
       shared = shared + 1
       shared
     }
-    peek: fn(): fn(): Int = { || { || shared } }
+    peek: fn(): fn(): Int = () { () { shared } }
     inner = peek()
     (root.cell.set)(r)
     sum = sum + junk(5000, r)
@@ -132,7 +132,7 @@ fn main {
     sum = sum + get_acc().size + nested()().size
     sum = sum + inner()
     root.words[r % 8] = "v${r * 7 % 13}"
-    root.words.sort { |p, q|
+    root.words.sort (p, q) {
       dummy3 = junk(40, r)
       p + "" != q && (p + "z").size < (q + "z").size
     }

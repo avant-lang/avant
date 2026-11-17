@@ -58,7 +58,7 @@ fn main {
   m = Mutex(Int).new(0)
   gate = Channel(Int).new()
   holder = spawn {
-    m.with { |x|
+    m.with (x) {
       x += gate.recv() ?? 0
     }
     0
@@ -67,7 +67,7 @@ fn main {
   lockers: Array(JoinHandle(Int)) = []
   for i in 0..n {
     lockers.push(spawn {
-      m.with { |x| x += 1 }
+      m.with (x) { x += 1 }
       0
     })
   }
@@ -81,6 +81,6 @@ fn main {
   for l in lockers {
     _ = l.join()
   }
-  final = m.with { |x| x }
+  final = m.with (x) { x }
   puts(final == 100 + n)
 }

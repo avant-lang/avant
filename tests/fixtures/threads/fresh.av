@@ -25,14 +25,14 @@ class Held {
 fn main {
   xs = [1, 2, 3, 4]
   base = 100
-  lam = xs.parallel { |x|
-    f: fn(Int): Int = { |y| y * x + base }
+  lam = xs.parallel (x) {
+    f: fn(Int): Int = (y) { y * x + base }
     f(2)
   }
   puts("${lam[0]} ${lam[1]} ${lam[2]} ${lam[3]}")
   words = ["a", "bb", "ccc"]
-  twice = words.parallel { |w|
-    g: fn(): String = { || "${w}${w}" }
+  twice = words.parallel (w) {
+    g: fn(): String = () { "${w}${w}" }
     g()
   }
   puts("${twice[0]} ${twice[1]} ${twice[2]}")
@@ -41,7 +41,7 @@ fn main {
   i = 0
   while i < 4 {
     hs.push(spawn {
-      held.with { |h|
+      held.with (h) {
         h.n = h.n + 1
         h.log = "${h.log}t"
         h.n
@@ -50,7 +50,7 @@ fn main {
     i = i + 1
   }
   sum = 0
-  hs.each { |h| sum = sum + (h.join() ?? -1) }
+  hs.each (h) { sum = sum + (h.join() ?? -1) }
   puts(sum > 0)
-  puts(held.with { |h| "${h.n} ${h.log}" })
+  puts(held.with (h) { "${h.n} ${h.log}" })
 }

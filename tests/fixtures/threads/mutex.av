@@ -26,7 +26,7 @@ struct Cell {
 fn bump(m: Mutex(Int), times: Int): Int {
   i = 0
   while i < times {
-    m.with { |x|
+    m.with (x) {
       x = x + 1
     }
     i = i + 1
@@ -43,18 +43,18 @@ fn main {
     i = i + 1
   }
   ran = 0
-  hs.each { |h| ran = ran + (h.join() ?? -1) }
+  hs.each (h) { ran = ran + (h.join() ?? -1) }
   puts(ran)
-  puts(count.with { |x| x })
+  puts(count.with (x) { x })
   held = Mutex(Held).new(Held.new(5))
   hh = spawn {
-    held.with { |h|
+    held.with (h) {
       h.n = h.n + 10
       h.n
     }
   }
   puts(hh.join() ?? -1)
-  after = held.with { |h|
+  after = held.with (h) {
     h.n = h.n * 2
     h.n
   }
@@ -63,7 +63,7 @@ fn main {
   hc = spawn {
     j = 0
     while j < 100 {
-      cell.with { |c|
+      cell.with (c) {
         c.n = c.n + 2
         c.name = "c${c.n}"
       }
@@ -72,7 +72,7 @@ fn main {
     1
   }
   puts(hc.join() ?? -1)
-  puts(cell.with { |c| c.name })
+  puts(cell.with (c) { c.name })
   text = Mutex(String).new("")
   ts: Array(JoinHandle(Int)) = []
   i = 0
@@ -80,7 +80,7 @@ fn main {
     ts.push(spawn {
       k = 0
       while k < 50 {
-        text.with { |s|
+        text.with (s) {
           s = s + "x"
         }
         k = k + 1
@@ -90,12 +90,12 @@ fn main {
     i = i + 1
   }
   sum = 0
-  ts.each { |t| sum = sum + (t.join() ?? -1) }
+  ts.each (t) { sum = sum + (t.join() ?? -1) }
   puts(sum)
-  puts(text.with { |s| s.size })
+  puts(text.with (s) { s.size })
   plain = Mutex(Int).new(3)
-  plain.with { |x|
+  plain.with (x) {
     x += 4
   }
-  puts(plain.with { |x| x * 2 })
+  puts(plain.with (x) { x * 2 })
 }
