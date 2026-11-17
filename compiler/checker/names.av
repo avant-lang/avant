@@ -323,6 +323,13 @@ pub fn ty_to_type_name(ty: Ty, loc: Location): TypeName {
     }
     return tn
   }
+  if k == tyk_hash() && ty.is_set() {
+    tn = TypeName.new(loc, "Set")
+    if ke = ty.key {
+      tn.args.push(ty_to_type_name(ke, loc))
+    }
+    return tn
+  }
   if k == tyk_hash() {
     tn = TypeName.new(loc, "Hash")
     if ke = ty.key {
@@ -459,6 +466,9 @@ pub fn ty_eq_sig(a: Ty, b: Ty, ap: Array(String), bp: Array(String)): Bool {
     return false
   }
   if a.is_hash() {
+    if a.is_set() != b.is_set() {
+      return false
+    }
     if ak = a.key, av = a.val, bk = b.key, bv = b.val, ty_eq_sig(ak, bk, ap, bp) {
       return ty_eq_sig(av, bv, ap, bp)
     }

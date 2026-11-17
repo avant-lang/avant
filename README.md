@@ -155,6 +155,7 @@ Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.m
 - [Hashes](#hashes):
   - [hash operations](#hash-operations)
   - [key and value types](#key-and-value-types)
+- [Sets](#sets)
 - [Structs and classes](#structs-and-classes):
   - [struct or class](#struct-or-class)
   - [structs](#structs)
@@ -440,6 +441,7 @@ fn main {
 | `Bytes`, `Buf` | immutable bytes; a growable byte buffer | [Bytes and Buf](#bytes-and-buf) |
 | `Array(T)` | growable array | [Arrays](#arrays) |
 | `Hash(K, V)` | hash table | [Hashes](#hashes) |
+| `Set(T)` | a set of distinct values | [Sets](#sets) |
 | `T?` | `T` or `nil` | [Nil and unions](#nil-and-unions) |
 | `A \| B` | one of several types; with an `Error` member, a result that can fail | [Unions](#unions), [Errors](#errors) |
 | `type Ty = A \| B` | a name for a type, a union above all | [Type aliases](#type-aliases) |
@@ -1510,6 +1512,41 @@ fn main {
 - A struct key of integers, `Bool`s and enums whose size is 1, 2, 4 or 8 bytes (two `Int32` fields, say) is kept as one integer, so it costs what a combined integer key costs.
 - A class, an `Array` or a `Hash` value is shared with the table, as a variable would share it; a struct value is a copy, as in an `Array`.
 - A value cannot be optional (`Hash(Int, String?)` is refused): `h[k]` is already `nil` for a missing key, so a stored `nil` could not be told from it.
+
+## Sets
+
+`Set(T)` holds distinct values, each at most once. Its elements are what a `Hash` takes as keys ([Key and value types](#key-and-value-types)), by the same rules: a `Float64`, a class or a struct with its own `==` is refused with the reason.
+
+```avant
+fn main {
+  seen = Set(String).new()
+  for w in "the cat and the hat".split(" ") {
+    if !seen.add(w) {
+      puts("again: ${w}")        // => again: the
+    }
+  }
+  puts(seen.size)                // => 4
+  puts(seen.contains("cat"))     // => true
+  puts(seen.delete("cat"))       // => true
+  words = seen.to_a()
+  words.sort()
+  puts(words[0])                 // => and
+}
+```
+
+| Operation | What it does |
+| --- | --- |
+| `Set(T).new()` | an empty set |
+| `s.add(v)` | put `v` in; `true` when it was not there |
+| `s.contains(v)` | `Bool` |
+| `s.delete(v)` | take `v` out; `true` when it was there |
+| `s.size`, `s.clear()` | number of elements; remove all |
+| `s.to_a()` | the elements as an array, in unspecified order |
+| `s.each { \|v\| ... }` | walk every element |
+
+- A set is stored as a `Hash` whose values are one byte nobody reads, and costs what that hash costs; a set is shared as a hash is.
+- **Iteration order is unspecified**, as a hash's; sort `to_a()` when order matters.
+- Not built yet: a set literal, `for v in s`, `==` on sets, and union, intersection and difference (a loop over `each` does them).
 
 ## Structs and classes
 
@@ -3311,7 +3348,7 @@ Names a quote introduces are hygienic: they do not capture names at the paste si
 
 ## Builtins
 
-The prelude, used without an import, is the types and methods above ([Strings](#strings), [Arrays](#arrays), [Hashes](#hashes), [Bytes and Buf](#bytes-and-buf)) and these free functions:
+The prelude, used without an import, is the types and methods above ([Strings](#strings), [Arrays](#arrays), [Hashes](#hashes), [Sets](#sets), [Bytes and Buf](#bytes-and-buf)) and these free functions:
 
 | Area | Names |
 | --- | --- |

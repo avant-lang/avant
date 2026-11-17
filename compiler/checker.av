@@ -1630,6 +1630,10 @@ pub class Checker {
             fail(target.elems[0].loc, "${container.show()} takes one index; several (g[x, y]) are for a type that defines fn []= with as many parameters and the value")
             return
           }
+          if container.is_set() {
+            fail(stmt.loc, "a Set has no [ ]=: s.add(v) puts v in it, s.delete(v) takes it out")
+            return
+          }
           if container.is_hash() {
             if k = container.key {
               key = check_expr_as(ix, k)
@@ -2392,6 +2396,9 @@ pub class Checker {
     if object.is_array() {
       return check_array_method(expr, object)
     }
+    if object.is_set() {
+      return check_set_method(expr, object)
+    }
     if object.is_hash() {
       return check_hash_method(expr, object)
     }
@@ -2631,7 +2638,7 @@ pub class Checker {
         if expr.ident == "size" {
           return t_int()
         }
-        if expr.ident == "keys" {
+        if expr.ident == "keys" && !object.is_set() {
           expr.method_call = true
           if k = object.key {
             return ty_array(k)
@@ -2982,6 +2989,10 @@ pub class Checker {
         }
         return t_int()
       }
+      if container.is_set() {
+        fail(expr.loc, "a Set has no [ ]: s.contains(v) says whether v is in it")
+        return t_bool()
+      }
       if container.is_hash() {
         if k = container.key {
           key = check_expr_as(ix, k)
@@ -3179,6 +3190,9 @@ pub class Checker {
   }
 
   pub fn check_hash_new(expr: Expr): Ty {
+    if expr.ident == "Set" {
+      return check_set_new(expr)
+    }
     key = t_int()
     val = t_int()
     if kn = expr.key_type {
@@ -3199,6 +3213,25 @@ pub class Checker {
       return t_int()
     }
     ty_hash(key, val)
+  }
+
+  // `Set(T).new()`: an empty Set(T), T one of a Hash key's types.
+  pub fn check_set_new(expr: Expr): Ty {
+    elem = t_int()
+    if kn = expr.key_type {
+      elem = resolve_value_in_module(kn)
+      self.pull_resolve()
+    }
+    why = set_type_problem(elem)
+    if why.size == 0 && elem.is_struct() {
+      seen: Array(String) = []
+      why = key_problem(elem, seen, "", "a Set element")
+    }
+    if why.size > 0 {
+      fail(expr.loc, why)
+      return t_int()
+    }
+    ty_set(elem, t_bool())
   }
 
   pub fn check_struct_literal(expr: Expr, has_want: Bool, want: Ty): Ty {

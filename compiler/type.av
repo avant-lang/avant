@@ -143,6 +143,9 @@ pub class Ty {
   pub fn no_payload: Bool { self.kind == tyk_nil() || self.kind == tyk_void() }
   pub fn is_union: Bool { self.kind == tyk_union() }
   pub fn is_hash: Bool { self.kind == tyk_hash() }
+  // A Set(T): a hash of T to Bool named "Set" (ty_set), whose members
+  // are the set's (add, contains, delete, ...), not the hash's.
+  pub fn is_set: Bool { self.kind == tyk_hash() && self.name == "Set" }
   pub fn is_buf: Bool { self.kind == tyk_buf() }
   pub fn is_bytes: Bool { self.kind == tyk_bytes() }
   pub fn is_join: Bool { self.kind == tyk_join() }
@@ -274,6 +277,9 @@ pub class Ty {
       return false
     }
     if k == tyk_hash() {
+      if self.name != other.name {
+        return false
+      }
       if ak = self.key, av = self.val, bk = other.key, bv = other.val, ak.same_as(bk) {
         return av.same_as(bv)
       }
@@ -493,6 +499,12 @@ pub class Ty {
       }
       buf.push_str(")")
       return buf.to_s()
+    }
+    if k == tyk_hash() && self.name == "Set" {
+      if ke = self.key {
+        return "Set(${ke.show()})"
+      }
+      return "Set"
     }
     if k == tyk_hash() {
       buf = buf_new()
@@ -768,6 +780,12 @@ pub fn mangle_ty(ty: Ty): String {
     }
     return "JoinHandle"
   }
+  if k == tyk_hash() && ty.name == "Set" {
+    if ke = ty.key {
+      return "Set_${mangle_ty(ke)}"
+    }
+    return "Set"
+  }
   if k == tyk_hash() {
     buf = buf_new()
     buf.push_str("Hash")
@@ -880,6 +898,15 @@ pub fn ty_hash(key: Ty, val: Ty): Ty {
   t
 }
 
+// Set(T): stored as a hash from T to Bool (a value of one byte nobody
+// reads), so every layout, the runtime's entries and the collector's
+// tracing are the hash's; the name keeps it a type of its own.
+pub fn ty_set(elem: Ty, bool_ty: Ty): Ty {
+  t = ty_hash(elem, bool_ty)
+  t.name = "Set"
+  t
+}
+
 // Why Hash(K, V) is not built for this key and value, or "" when it is.
 // A key is an integer of any width, a Bool, an enum, a String or a
 // struct of those: a value whose `==` a hash can agree with (a struct's
@@ -893,7 +920,7 @@ pub fn hash_type_problem(k: Ty, v: Ty): String {
     return "a Hash key cannot be a Float64: its == follows IEEE 754 (NaN is not equal to itself, -0.0 equals 0.0), so no hash agrees with it; use an integer key (a fixed-point value, or an index)"
   }
   if !(k.is_integer() || k.is_bool() || k.is_enum() || k.is_string() || k.is_struct() || k.is_var()) {
-    return "a Hash key is an integer, a Bool, an enum, a String or a struct of those, not ${k.show()}: ${hash_key_way(k)}"
+    return "a Hash key is an integer, a Bool, an enum, a String or a struct of those, not ${k.show()}: ${hash_key_way(k, "key by")}"
   }
   if v.is_nilable() {
     return "a Hash value cannot be optional (${v.show()}): h[k] is already nil for a missing key, so a stored nil could not be told from it; store ${ty_without_nil(v).show()}, and delete the key for nil"
@@ -905,18 +932,31 @@ pub fn hash_type_problem(k: Ty, v: Ty): String {
 }
 
 // What to key by instead of a type no hash can take (the way forward of
-// hash_type_problem's and hash_key_problem's refusals).
-pub fn hash_key_way(k: Ty): String {
+// hash_type_problem's and set_type_problem's refusals): by is "key by"
+// for a Hash, "store" for a Set.
+pub fn hash_key_way(k: Ty, by: String): String {
   if k.is_nilable() {
-    return "key by ${ty_without_nil(k).show()} and keep the nil case beside the hash"
+    return "${by} ${ty_without_nil(k).show()} and keep the nil case beside it"
   }
   if k.is_class() {
-    return "a class compares by identity, which no hash can follow while the collector moves objects; key by a value the object holds (an id or a name), or by its index in an Array(${k.show()})"
+    return "a class compares by identity, which no hash can follow while the collector moves objects; ${by} a value the object holds (an id or a name), or its index in an Array(${k.show()})"
   }
   if k.is_array() || k.is_bytes() || k.is_buf() {
-    return "key by a String or a struct made from its contents, or by its index in an Array(${k.show()})"
+    return "${by} a String or a struct made from its contents, or its index in an Array(${k.show()})"
   }
-  "key by an index into an Array(${k.show()}) that holds them"
+  "${by} an index into an Array(${k.show()}) that holds them"
+}
+
+// Why Set(T) is not built for this element, or "": its elements are a
+// Hash's keys (hash_type_problem), checked by the same rule.
+pub fn set_type_problem(e: Ty): String {
+  if e.is_float() {
+    return "a Set element cannot be a Float64: its == follows IEEE 754 (NaN is not equal to itself, -0.0 equals 0.0), so no hash agrees with it; store an integer (a fixed-point value, or an index)"
+  }
+  if !(e.is_integer() || e.is_bool() || e.is_enum() || e.is_string() || e.is_struct() || e.is_var()) {
+    return "a Set element is an integer, a Bool, an enum, a String or a struct of those, not ${e.show()}: ${hash_key_way(e, "store")}"
+  }
+  ""
 }
 
 pub fn ty_named(kind: Int, name: String): Ty {
@@ -1006,6 +1046,14 @@ pub fn ty_qual_key(ty: Ty): String {
     if r = ty.inner {
       buf.push_str(ty_qual_key(r))
     }
+    return buf.to_s()
+  }
+  if k == tyk_hash() && ty.name == "Set" {
+    buf.push_str("Set(")
+    if ke = ty.key {
+      buf.push_str(ty_qual_key(ke))
+    }
+    buf.push_str(")")
     return buf.to_s()
   }
   if k == tyk_hash() {
@@ -1254,6 +1302,9 @@ pub fn type_is_builtin(name: String): Bool {
     return true
   }
   if name == "Hash" {
+    return true
+  }
+  if name == "Set" {
     return true
   }
   if name == "Buf" {

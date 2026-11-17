@@ -55,6 +55,9 @@ pub fn (lw: MirLower) lower_block_call(e: Expr): MOperand? {
     if rt.is_hash() && c == "each" && e.args.size == 0 && bl.params.size == 2 {
       return lw.hash_each(e, recv, rt, bl)
     }
+    if rt.is_set() && c == "each" && e.args.size == 0 && bl.params.size == 1 {
+      return lw.hash_each(e, recv, rt, bl)
+    }
   }
   nil
 }
@@ -440,7 +443,7 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
 // `h.each { |k, v| ... }` (emit_hash_method, builtins.av:346-441): the
 // hash once, its keys as an array, then for each key the value read back
 // through the hash (a checked lookup: a key the body deleted is skipped),
-// both bound, the body.
+// both bound, the body (a Set's: its element only).
 pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -487,8 +490,11 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   hit = b.block()
   b.branch(lw.found_is(fl), hit, step)
   b.at(hit)
-  val = lw.tmp(vty, b.rv_use(raw))
-  lw.bind_name(bl.params[1], vt, vty, val, bl.loc, true)
+  // A Set's walk binds the element only (its Bool is nobody's).
+  if bl.params.size > 1 {
+    val = lw.tmp(vty, b.rv_use(raw))
+    lw.bind_name(bl.params[1], vt, vty, val, bl.loc, true)
+  }
   lw.block_body(bl.body, step, exit)
   lw.goto_if_open(step, e.loc)
   b.at(step)

@@ -571,6 +571,64 @@ pub fn (lw: MirLower) hash_inc(e: Expr, ht: Ty, ops: Array(MOperand), vty: Int):
   n
 }
 
+// The members of Set(T), a hash of T to Bool: `add` is the upsert
+// (one probe; an absent element is inserted, its Bool zero) and gives
+// whether it was absent; `contains` the find's found flag; `delete` the
+// take's (as a statement it is the hash's plain delete,
+// hash_delete_stmt); `to_a` the keys; `size`, `clear` and `each` the
+// hash's.
+pub fn (lw: MirLower) set_member(e: Expr, recv: Expr, ht: Ty, name: String, args: Array(Expr)): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  if name == "each" {
+    lw.refuse(e.loc, "Set.each")
+    return zero
+  }
+  if name == "size" || name == "clear" {
+    return lw.hash_member(e, recv, ht, name, args)
+  }
+  ty = lw.ety(e)
+  vty = lw.ty_at(mir_hash_val(ht), e.loc, "a set's value")
+  if lw.failed() {
+    return zero
+  }
+  if name == "to_a" && args.size == 0 {
+    ops0 = lw.args_then_recv(args, recv)
+    if lw.failed() {
+      return zero
+    }
+    lw.at(e.loc)
+    return lw.call_to(ty, "avant_hash_keys", ops0)
+  }
+  op = ""
+  if name == "add" {
+    op = "upsert"
+  } else if name == "contains" {
+    op = "find"
+  } else if name == "delete" {
+    op = "take"
+  }
+  if op.size == 0 || args.size != 1 {
+    lw.refuse(e.loc, "the member .${name} of ${ht.show()}")
+    return zero
+  }
+  ops = lw.args_then_recv(args, recv)
+  if lw.failed() {
+    return zero
+  }
+  lw.at(e.loc)
+  fl = lw.found_local()
+  fops: Array(MOperand) = []
+  fops.push(ops[0])
+  fops.push(lw.hash_key_arg(ht, ops[1], e.loc))
+  fops.push(lw.found_ptr(fl))
+  dummy = lw.call_to(mt_ptr(), lw.hash_op(ht, op, e.loc), fops)
+  if name == "add" {
+    return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(fl), b.c_i32(0)))
+  }
+  lw.found_is(fl)
+}
+
 // The members of Hash.
 pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b

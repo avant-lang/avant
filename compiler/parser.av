@@ -3327,6 +3327,11 @@ pub class Parser {
         return parse_hash_new(tok)
       }
     }
+    if tok.value == "Set" {
+      if self.current().kind == tk_l_paren() {
+        return parse_set_new(tok)
+      }
+    }
     if self.current().kind == tk_l_paren() {
       if app = parse_maybe_type_app(tok, "") {
         return app
@@ -3372,6 +3377,35 @@ pub class Parser {
       self.skip_newlines()
     }
     expect(tk_r_paren())
+    e
+  }
+
+  // `Set(T).new()`: the hash-new node with the element as its key type
+  // and no value type, ident "Set".
+  pub fn parse_set_new(tok: Token): Expr {
+    expect(tk_l_paren())
+    self.skip_newlines()
+    elem = self.parse_type_name()
+    self.skip_newlines()
+    expect(tk_r_paren())
+    self.skip_newlines()
+    expect(tk_dot())
+    self.skip_newlines()
+    meth = self.take_name_after_dot()
+    if meth.value != "new" {
+      fail(meth.loc, "Set(T) only supports .new")
+    }
+    bare: Location? = meth.loc
+    if self.current().kind == tk_l_paren() {
+      self.bump()
+      self.skip_newlines()
+      expect(tk_r_paren())
+      bare = nil
+    }
+    e = Expr.new(ex_hash_new(), tok.loc)
+    e.ident = "Set"
+    e.key_type = elem
+    e.bare_name = bare
     e
   }
 

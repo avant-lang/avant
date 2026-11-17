@@ -31,6 +31,8 @@ pub class HashKeyUse {
   pub loc: Location
   pub key: Ty
   pub mod_name: String = ""
+  // "a Hash key", or "a Set element" for a Set(T).
+  pub what: String = "a Hash key"
 
   fn initialize(loc: Location, key: Ty) {
     self.loc = loc
@@ -552,6 +554,23 @@ pub class TypeResolver {
         self.hash_key_uses.push(use)
       }
       return ty_hash(hk, hv)
+    }
+    if tn.name == "Set" {
+      if tn.args.size != 1 {
+        fail(tn.loc, "Set takes one type argument")
+        return self.t_int
+      }
+      se = resolve_value_uninline(tn.args[0])
+      why = set_type_problem(se)
+      if why.size > 0 {
+        fail(tn.loc, why)
+      } else if se.is_struct() {
+        use = HashKeyUse.new(tn.loc, se)
+        use.mod_name = self.scope_mod
+        use.what = "a Set element"
+        self.hash_key_uses.push(use)
+      }
+      return ty_set(se, self.t_bool)
     }
     if tn.name == "JoinHandle" {
       if tn.args.size != 1 {

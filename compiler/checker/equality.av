@@ -41,24 +41,29 @@ import checker.match
 // could disagree with (two equal keys hashed apart are an entry that
 // cannot be found). seen holds the structs being looked into.
 pub fn (checker_self: Checker) hash_key_problem(ty: Ty, seen: Array(String), path: String): String {
+  return checker_self.key_problem(ty, seen, path, "a Hash key")
+}
+
+// The same for a Set's element (what is "a Set element") or a Hash's key.
+pub fn (checker_self: Checker) key_problem(ty: Ty, seen: Array(String), path: String, what: String): String {
   if ty.is_integer() || ty.is_bool() || ty.is_enum() || ty.is_string() || ty.is_var() {
     return ""
   }
   if ty.is_float() {
-    return "a Hash key cannot hold a Float64 (${path}): its == follows IEEE 754 (NaN is not equal to itself, -0.0 equals 0.0), so no hash agrees with it; key by an integer (a fixed-point value, or an index)"
+    return "${what} cannot hold a Float64 (${path}): its == follows IEEE 754 (NaN is not equal to itself, -0.0 equals 0.0), so no hash agrees with it; key by an integer (a fixed-point value, or an index)"
   }
   if !ty.is_struct() {
-    return "a Hash key's fields are integers, Bools, enums, Strings or structs of those, not ${ty.show()} (${path}): key by a struct of the other fields, or keep this one out of the key (a value beside it)"
+    return "${what}'s fields are integers, Bools, enums, Strings or structs of those, not ${ty.show()} (${path}): key by a struct of the other fields, or keep this one out of the key (a value beside it)"
   }
   if checker_self.user_op(ty, "==") {
-    return "${ty.show()} defines its own ==, so it cannot be a Hash key: the key's hash is derived from its fields and could disagree with that == (equal keys hashed apart); key by a struct that compares its fields, or by the fields its == reads"
+    return "${ty.show()} defines its own ==, so it cannot be ${what}: the hash is derived from its fields and could disagree with that == (equal values hashed apart); use a struct that compares its fields, or the fields its == reads"
   }
   if seen.contains(ty.name) {
     return ""
   }
   seen.push(ty.name)
   for f in ty.fields {
-    m = checker_self.hash_key_problem(f.ty, seen, "the field ${ty.show()}.${f.name}")
+    m = checker_self.key_problem(f.ty, seen, "the field ${ty.show()}.${f.name}", what)
     if m.size > 0 {
       return m
     }
@@ -77,7 +82,7 @@ pub fn (checker_self: Checker) check_hash_key_uses {
       checker_self.current_module = use.mod_name
     }
     seen: Array(String) = []
-    why = checker_self.hash_key_problem(use.key, seen, "")
+    why = checker_self.key_problem(use.key, seen, "", use.what)
     if why.size > 0 {
       checker_self.fail(use.loc, why)
     }

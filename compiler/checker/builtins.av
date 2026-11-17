@@ -753,6 +753,77 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
   ty_array(checker_self.t_int())
 }
 
+// The members of Set(T): add, contains and delete take one element (add
+// says whether it was new, delete whether it was there), each walks the
+// elements, to_a gives them as an array, clear empties the set; size is
+// read without parentheses (check_field).
+pub fn (checker_self: Checker) check_set_method(expr: Expr, set: Ty): Ty {
+  elem = checker_self.t_int()
+  if k = set.key {
+    elem = k
+  }
+  c = expr.callee
+  if c == "add" || c == "contains" || c == "delete" {
+    if expr.args.size != 1 {
+      checker_self.fail(expr.loc, "${c} takes one element")
+      return checker_self.t_bool()
+    }
+    if b = expr.block {
+      checker_self.fail(expr.loc, "${c} takes one element")
+      return checker_self.t_bool()
+    }
+    got = checker_self.check_expr_as(expr.args[0], elem)
+    if !ty_assignable(got, elem) {
+      checker_self.fail(expr.args[0].loc, "the element must be ${elem.show()}, got ${got.show()}")
+    }
+    return checker_self.t_bool()
+  }
+  if c == "to_a" || c == "clear" {
+    if expr.args.size != 0 {
+      checker_self.fail(expr.loc, "${c} takes no arguments")
+    } else if b = expr.block {
+      checker_self.fail(expr.loc, "${c} takes no arguments")
+    }
+    if c == "clear" {
+      return checker_self.t_void()
+    }
+    return ty_array(elem)
+  }
+  if c == "each" {
+    if b = expr.block {
+      if expr.args.size != 0 {
+        checker_self.fail(expr.loc, "each takes a block, not arguments")
+        return checker_self.t_void()
+      }
+      if b.params.size != 1 {
+        checker_self.fail(b.loc, "each { |v| ... } takes one block parameter")
+        return checker_self.t_void()
+      }
+      checker_self.push_scope()
+      checker_self.bind(b.params[0], elem)
+      checker_self.loop_depth += 1
+      checker_self.check_body(b.body, checker_self.return_type, false)
+      checker_self.loop_depth -= 1
+      checker_self.pop_scope()
+      return checker_self.t_void()
+    }
+    checker_self.fail(expr.loc, "each needs a block")
+    return checker_self.t_void()
+  }
+  hint = checker_self.builtin_hint(set, c)
+  if c == "has_key" || c == "has" || c == "includes" {
+    hint = " (write `s.contains(v)`)"
+  } else if c == "push" || c == "insert" || c == "put" {
+    hint = " (write `s.add(v)`)"
+  } else if c == "remove" {
+    hint = " (write `s.delete(v)`)"
+  } else if c == "keys" || c == "values" {
+    hint = " (write `s.to_a()`)"
+  }
+  checker_self.fail_hint(expr.loc, "no method ${c} on ${set.show()}", hint)
+  checker_self.t_int()
+}
+
 pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
   if expr.callee == "keys" {
     if expr.args.size == 0 {
