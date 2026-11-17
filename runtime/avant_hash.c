@@ -990,12 +990,12 @@ void *avant_hash_take_sk(void *hp, const char *key, int32_t *found) {
 }
 
 /* delete as a statement, whose value nobody reads. */
-void avant_hash_del(void *hp, const char *key) {
+void avant_hash_del_sk(void *hp, const char *key) {
   int32_t found = 0;
   (void)avant_hash_take_sk(hp, key, &found);
 }
 
-void avant_hash_del_i32k(void *hp, avant_int key) {
+void avant_hash_del_ik(void *hp, avant_int key) {
   int32_t found = 0;
   (void)avant_hash_take_ik(hp, key, &found);
 }
@@ -1242,183 +1242,16 @@ avant_int avant_hash_get_concat(void *hp, const char *a, const char *b, int32_t 
   return 0;
 }
 
-/* ---- the entries of the previous compiler ----
+/* ---- the names the seed's compiler calls ----
  *
- * The compiler B, built by the seed release, emits the three key and
- * value combinations' entries of that release: a String or Int key, an
- * Int or String value. They stay, on the general table, until a release
- * that emits the entries above is the seed. */
+ * The compiler B, built by the seed release, deletes through these two
+ * names, and links this runtime. They go when a release that emits
+ * avant_hash_del_sk and avant_hash_del_ik is the seed. */
 
-static uint32_t old_desc(int32_t key_kind, int32_t val_kind) {
-  uint32_t d = key_kind == AVANT_HASH_KEY_STR ? (AVANT_HASH_K_STR | 8u) : (AVANT_HASH_K_SIGNED | 8u);
-  if (val_kind == AVANT_HASH_VAL_STR) {
-    d |= AVANT_HASH_V_REF;
-  }
-  return d | (8u << AVANT_HASH_V_SHIFT);
+void avant_hash_del(void *hp, const char *key) {
+  avant_hash_del_sk(hp, key);
 }
 
-/* gc-lint: holds nothing (its inputs are integers). */
-void *avant_hash_new(int32_t key_kind, int32_t val_kind) {
-  return avant_hash_create(old_desc(key_kind, val_kind));
-}
-
-/* gc-lint: holds nothing (it keeps no heap pointer across the call, and
- * uses the address the call returns before any other call). */
-void avant_hash_set_i32(void *hp, const char *key, avant_int val) {
-  *(avant_int *)avant_hash_put_sk(hp, key) = val;
-}
-
-/* gc-lint: holds nothing (it keeps no heap pointer across the call, and
- * uses the address the call returns before any other call). */
-void avant_hash_set_str(void *hp, const char *key, const char *val) {
-  avant_hash_set_ref_sk(hp, key, (void *)val);
-}
-
-/* gc-lint: holds nothing (it keeps no heap pointer across the call, and
- * uses the address the call returns before any other call). */
-void avant_hash_set_i32k_i32(void *hp, avant_int key, avant_int val) {
-  *(avant_int *)avant_hash_put_ik(hp, key) = val;
-}
-
-avant_int avant_hash_get_i32(void *hp, const char *key, int32_t *found) {
-  int32_t f = 0;
-  avant_int v = *(avant_int *)avant_hash_find_sk(hp, key, &f);
-  if (found) {
-    *found = f;
-  }
-  return v;
-}
-
-const char *avant_hash_get_str(void *hp, const char *key, int32_t *found) {
-  int32_t f = 0;
-  const char *v = *(const char **)avant_hash_find_sk(hp, key, &f);
-  if (found) {
-    *found = f;
-  }
-  return f ? v : "";
-}
-
-avant_int avant_hash_get_i32k_i32(void *hp, avant_int key, int32_t *found) {
-  int32_t f = 0;
-  avant_int v = *(avant_int *)avant_hash_find_ik(hp, key, &f);
-  if (found) {
-    *found = f;
-  }
-  return v;
-}
-
-avant_int avant_hash_take_i32(void *hp, const char *key, int32_t *found) {
-  return *(avant_int *)avant_hash_take_sk(hp, key, found);
-}
-
-char *avant_hash_take_str(void *hp, const char *key, int32_t *found) {
-  return *(char **)avant_hash_take_sk(hp, key, found);
-}
-
-avant_int avant_hash_take_i32k_i32(void *hp, avant_int key, int32_t *found) {
-  return *(avant_int *)avant_hash_take_ik(hp, key, found);
-}
-
-int32_t avant_hash_has_str(void *hp, const char *key) {
-  int32_t f = 0;
-  (void)avant_hash_find_sk(hp, key, &f);
-  return f;
-}
-
-int32_t avant_hash_has_i32k(void *hp, avant_int key) {
-  int32_t f = 0;
-  (void)avant_hash_find_ik(hp, key, &f);
-  return f;
-}
-
-/* gc-lint: holds nothing (it keeps no heap pointer across the call, and
- * uses the address the call returns before any other call). */
-avant_int avant_hash_inc_str(void *hp, const char *key, avant_int by) {
-  avant_int c;
-  if (!hp) {
-    return 0;
-  }
-  avant_int *v = (avant_int *)avant_hash_upsert_sk(hp, key, NULL);
-  if (__builtin_add_overflow(*v, by, &c)) {
-    avant_trap_overflow();
-  }
-  *v = c;
-  return c;
-}
-
-/* gc-lint: holds nothing (it keeps no heap pointer across the call, and
- * uses the address the call returns before any other call). */
-avant_int avant_hash_inc_i32k(void *hp, avant_int key, avant_int by) {
-  avant_int c;
-  if (!hp) {
-    return 0;
-  }
-  avant_int *v = (avant_int *)avant_hash_upsert_ik(hp, key, NULL);
-  if (__builtin_add_overflow(*v, by, &c)) {
-    avant_trap_overflow();
-  }
-  *v = c;
-  return c;
-}
-
-/* gc-lint: holds nothing (it keeps no heap pointer across the call, and
- * uses the address the call returns before any other call). */
-avant_int *avant_hash_upsert_i32k(void *hp, avant_int key, avant_int init, int32_t *found) {
-  int32_t f = 0;
-  avant_int *v = (avant_int *)avant_hash_upsert_ik(hp, key, &f);
-  if (!f) {
-    *v = init;
-  }
-  if (found) {
-    *found = f;
-  }
-  return v;
-}
-
-/* gc-lint: holds nothing (it keeps no heap pointer across the call, and
- * uses the address the call returns before any other call). */
-avant_int *avant_hash_upsert_i32(void *hp, const char *key, avant_int init, int32_t *found) {
-  int32_t f = 0;
-  avant_int *v = (avant_int *)avant_hash_upsert_sk(hp, key, &f);
-  if (!f) {
-    *v = init;
-  }
-  if (found) {
-    *found = f;
-  }
-  return v;
-}
-
-avant_int avant_hash_get_or_i32(void *hp, const char *key, avant_int fallback) {
-  int32_t f = 0;
-  avant_int v = avant_hash_get_i32(hp, key, &f);
-  return f ? v : fallback;
-}
-
-const char *avant_hash_get_or_str(void *hp, const char *key, const char *fallback) {
-  int32_t f = 0;
-  const char *v = avant_hash_get_str(hp, key, &f);
-  return f ? v : (fallback ? fallback : "");
-}
-
-avant_int avant_hash_get_or_i32k_i32(void *hp, avant_int key, avant_int fallback) {
-  int32_t f = 0;
-  avant_int v = avant_hash_get_i32k_i32(hp, key, &f);
-  return f ? v : fallback;
-}
-
-void *avant_hash_keys_str(void *hp) {
-  return avant_hash_keys(hp);
-}
-
-void *avant_hash_keys_i32(void *hp) {
-  return avant_hash_keys(hp);
-}
-
-void *avant_hash_vals_str(void *hp) {
-  return avant_hash_values(hp);
-}
-
-void *avant_hash_vals_i32(void *hp) {
-  return avant_hash_values(hp);
+void avant_hash_del_i32k(void *hp, avant_int key) {
+  avant_hash_del_ik(hp, key);
 }

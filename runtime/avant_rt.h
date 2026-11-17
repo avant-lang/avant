@@ -256,6 +256,9 @@ char *avant_c_str(char *s);
  * inside (compiler/llvm/emit_gc.av, ll_c_str). */
 extern uint64_t avant_gc_heap_lo;
 extern uint64_t avant_gc_heap_len;
+char *avant_str_cat_int(const char *prefix, avant_int n);
+char *avant_str_from_int_bytes(void *arr);
+/* The names the seed's compiler calls (avant_str.c). */
 char *avant_str_cat_i32(const char *prefix, avant_int n);
 char *avant_str_from_i32_bytes(void *arr);
 char *avant_str_repeat_byte(avant_int b, avant_int n);
@@ -378,38 +381,17 @@ void *avant_hash_take_ik(void *h, avant_int key, int32_t *found);
 void *avant_hash_take_sk(void *h, const char *key, int32_t *found);
 void *avant_hash_keys(void *h);
 void *avant_hash_values(void *h);
-/* The previous compiler's entries (avant_hash.c, the last section). */
-void *avant_hash_new(int32_t key_kind, int32_t val_kind);
 avant_int avant_hash_size(void *h);
 void avant_hash_clear(void *h);
-void avant_hash_set_i32(void *h, const char *key, avant_int val);
-void avant_hash_set_str(void *h, const char *key, const char *val);
-void avant_hash_set_i32k_i32(void *h, avant_int key, avant_int val);
-avant_int avant_hash_get_i32(void *h, const char *key, int32_t *found);
-const char *avant_hash_get_str(void *h, const char *key, int32_t *found);
-avant_int avant_hash_get_i32k_i32(void *h, avant_int key, int32_t *found);
-avant_int avant_hash_take_i32(void *h, const char *key, int32_t *found);
-char *avant_hash_take_str(void *h, const char *key, int32_t *found);
-avant_int avant_hash_take_i32k_i32(void *h, avant_int key, int32_t *found);
-void avant_hash_del(void *h, const char *key);
-void avant_hash_del_i32k(void *h, avant_int key);
+void avant_hash_del_sk(void *h, const char *key);
+void avant_hash_del_ik(void *h, avant_int key);
 avant_int avant_hash_inc_slice(void *h, const char *s, avant_int start, avant_int stop);
 const char *avant_hash_last_key(void);
 const char *avant_hash_get_str_slice(void *h, const char *s, avant_int start, avant_int stop, int32_t *found);
 avant_int avant_hash_get_concat(void *h, const char *a, const char *b, int32_t *found);
-int32_t avant_hash_has_str(void *h, const char *key);
-int32_t avant_hash_has_i32k(void *h, avant_int key);
-avant_int avant_hash_inc_str(void *h, const char *key, avant_int by);
-avant_int avant_hash_inc_i32k(void *h, avant_int key, avant_int by);
-avant_int *avant_hash_upsert_i32k(void *h, avant_int key, avant_int init, int32_t *found);
-avant_int *avant_hash_upsert_i32(void *h, const char *key, avant_int init, int32_t *found);
-avant_int avant_hash_get_or_i32(void *h, const char *key, avant_int fallback);
-const char *avant_hash_get_or_str(void *h, const char *key, const char *fallback);
-avant_int avant_hash_get_or_i32k_i32(void *h, avant_int key, avant_int fallback);
-void *avant_hash_keys_str(void *h);
-void *avant_hash_keys_i32(void *h);
-void *avant_hash_vals_str(void *h);
-void *avant_hash_vals_i32(void *h);
+/* The names the seed's compiler calls (avant_hash.c, the last section). */
+void avant_hash_del(void *h, const char *key);
+void avant_hash_del_i32k(void *h, avant_int key);
 
 void *avant_array_push_slot(void *arr, uint64_t elem_size, uint32_t buf_type_id);
 void avant_array_push_ptr(void *arr, void *elem, uint32_t buf_type_id);
@@ -731,11 +713,6 @@ char *avant_http_fetch(const char *host, avant_int port, const char *request,
 avant_int avant_http_resp_status(const char *raw);
 char *avant_http_resp_headers(const char *raw);
 char *avant_http_resp_body(const char *raw);
-
-#define AVANT_HASH_KEY_I32 0
-#define AVANT_HASH_KEY_STR 1
-#define AVANT_HASH_VAL_I32 0
-#define AVANT_HASH_VAL_STR 1
 
 static inline AvantHeader *avant_header(void *payload) {
   return ((AvantHeader *)payload) - 1;

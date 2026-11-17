@@ -180,11 +180,11 @@
  *   row converted; "C" converted to RC1-RC3, "N" nothing
  *   held, or a no-GC region kept, with its reason):
  *     row (unit)                                   verdict
- *     avant_str_concat, _cat_i32, _from_i32_bytes  C (operands, array)
+ *     avant_str_concat, _cat_int, _from_int_bytes  C (operands, array)
  *     dup_bytes_at, slice, strip (avant_str.c)     C (text + offset, RC2)
  *     avant_str_split, _fields, chars_build        C (array filled in
  *                                                  place, str_array_new)
- *     avant_str_repeat_byte, avant_hash_new        N (integer inputs)
+ *     avant_str_repeat_byte, avant_hash_create     N (integer inputs)
  *     array push_slot/_ptr/_i32, reserve,
  *       array_grow                                 C (scope on growth)
  *     avant_array_copy                             C
@@ -192,7 +192,7 @@
  *     avant_buf_new, _to_str, _ensure,
  *       avant_bytes_to_buf                         C
  *     hash grow, setters, inc_slice                C
- *     inc_str, inc_i32k                            C
+ *     put, upsert (their growth)                   C
  *     keys/vals (hash_collect; was items[])        C (array first, RC2)
  *     avant_json_parse                             C (yyjson allocates
  *                                                  from its own pool)

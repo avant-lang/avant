@@ -216,7 +216,7 @@ char *avant_str_concat(const char *a, const char *b) {
 }
 
 /* bytes_to_str: the bytes are an Array(Int)'s elements (avant_int). */
-char *avant_str_from_i32_bytes(void *arr) {
+char *avant_str_from_int_bytes(void *arr) {
   AvantArray *a = (AvantArray *)arr;
   int32_t n = 0;
   const avant_int *src = NULL;
@@ -560,7 +560,7 @@ char *avant_str_from_byte(avant_int b) {
   return p;
 }
 
-char *avant_str_cat_i32(const char *prefix, avant_int n) {
+char *avant_str_cat_int(const char *prefix, avant_int n) {
   char digs[24];
   int nd = 0;
   uint64_t u;
@@ -1298,4 +1298,15 @@ void *avant_str_chars(const char *s) {
 
 void *avant_bytes_chars(const char *s) {
   return chars_build(s, "Bytes");
+}
+
+/* The names the seed's compiler calls: the compiler B, built by the seed
+ * release, links this runtime. They go when a release that emits
+ * avant_str_cat_int and avant_str_from_int_bytes is the seed. */
+char *avant_str_cat_i32(const char *prefix, avant_int n) {
+  return avant_str_cat_int(prefix, n);
+}
+
+char *avant_str_from_i32_bytes(void *arr) {
+  return avant_str_from_int_bytes(arr);
 }
