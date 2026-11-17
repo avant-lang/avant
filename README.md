@@ -3293,7 +3293,20 @@ A `lib NAME { ... }` block holds `fun` declarations (`fun` for a C function, `fn
 - A `fun` signature's only unions are optional references, one pointer with `nil` as NULL: `String?`, `Bytes?`, `Ptr(T)?` (the nullable C pointer, [Layouts and Ptr](#layouts-and-ptr)), and an array, a hash, a `Buf` or a class with `?`. Any other union (`Int?`, `Int | String`, a tag and a payload where C has one word) is a compile error there.
 - An `Array` (or a `Hash`, a `Buf`) passed to C is the value itself, not a copy: C may change it, except an array or a hash a running task reads ([What may cross a task](#what-may-cross-a-task)), which C must leave as it is; the runtime's own C functions that write an array or a hash trap on such a value, as Avant code does.
 - The runtime's own C functions (`avant_c_str`, `avant_alloc_slow`, every entry the compiler calls) are reserved: a `fun` of that name is a compile error (`C function avant_c_str is reserved: ...`).
+- A C function that answers through a pointer (`int *out`, `natsMsg **msg`) takes `&x`, the address of a local: C writes it during the call, and afterwards `x` holds what C wrote (`msg: Ptr(Msg)? = nil`, then `nats.natsMsg_Create(&msg, ...)`). `x` is a local whose type is the parameter's pointee (`Int32` for `Ptr(Int32)`, `Ptr(Msg)?` for `Ptr(Ptr(Msg)?)`; a narrow pointee such as `Ptr(UInt8)` takes an `Int`, range-checked on the way in); `&x` is only a `fun` argument, never a field, an element or a value, so C never holds the address of anything the collector moves.
 - C++ is reached only through `extern "C"` functions.
+
+```avant
+lib m {
+  fun frexp(x: Float64, exp: Ptr(Int32)): Float64
+}
+
+fn main {
+  e: Int32 = 0
+  f = m.frexp(48.0, &e)
+  puts("${f} ${e}")     // => 0.75 6
+}
+```
 
 ### C types
 
@@ -3506,6 +3519,7 @@ lib add {
 
 - Each C scalar type maps to its exact name ([C types](#c-types)); a type with no Avant name (`long double`) fails the bind with a message.
 - A `char *` result is bound as `String?` (C returns NULL for "absent" or "failed"), a `char *` parameter as `String`.
+- Any other pointer is bound as `Ptr` of its pointee: `int *` as `Ptr(Int32)`, `unsigned char *` as `Ptr(UInt8)`, a pointer to a pointer as `Ptr(Ptr(T)?)` (`char **` is `Ptr(Ptr(Int8)?)`, `void **` is `Ptr(Ptr(Void)?)`), in a function and in a layout's field.
 - A named four-byte C enum becomes an `enum` in the `lib` block, used by the functions and layout fields of that type: the name in CamelCase without a trailing `_t` (`enum http_method` is `HttpMethod`, `color_t` is `Color`), the constants lower-cased with their values (`HTTP_GET = 0` is `http_get = 0`). It is stored as C's `int`, and every value C gives (a result, a field, a callback's argument) is checked: a non-member traps, naming the enum and the number. An alias (a second constant with the same value) is dropped, named in a comment; a value outside `Int32`, a constant that is not a valid Avant member name, or two constants equal after lower-casing leave the enum out with a comment, its functions taking `Int32`.
 - An anonymous enum (`enum { FLAG_A = 1, FLAG_B = 2 };`, how C spells constants) becomes [module constants](#constants) after the `lib` block, lower-cased, with C's values (`pub const flag_a = 1`); a name that is no Avant name, or one an earlier constant took after lower-casing, is left out with a comment.
 - `--lib NAME` names the block. It needs libclang 20 (`sudo apt install libclang1-20`); a release ships the `avant-bind` helper beside `avant`.

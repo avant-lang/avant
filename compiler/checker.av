@@ -4235,6 +4235,15 @@ pub class Checker {
   }
 
   pub fn check_unary(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if expr.op == tk_amp() {
+      // `&x` was checked with the C call it is an argument of
+      // (check_out_args); anywhere else it is refused.
+      if t = expr.ty, expr.proven {
+        return t
+      }
+      fail(expr.loc, "&x is only an argument of a C function (a fun of a lib block), which writes the local x through the pointer")
+      return t_int()
+    }
     if inner = expr.inner {
       if inner.kind == ex_name() || inner.kind == ex_field() {
         _ = inline_const(inner)
@@ -5244,6 +5253,60 @@ pub class Checker {
     ty
   }
 
+  // The `&x` arguments of a C call: x a local whose type is the
+  // parameter's pointee (a C scalar as its Avant type, or a pointer), so
+  // C's write through the pointer lands in x when the call returns. Only
+  // a local: a field, an element or a heap value would give C an address
+  // the collector may move. Each is marked checked with the parameter's
+  // type; false after an error.
+  pub fn check_out_args(expr: Expr, params: Array(Ty), what: String): Bool {
+    for i in 0..expr.args.size {
+      arg = expr.args[i]
+      if arg.kind == ex_unary() && arg.op == tk_amp() {
+        if i >= params.size {
+          return true
+        }
+        p = params[i]
+        pointee = t_int()
+        ok = false
+        if p.is_ptr() {
+          if inner = p.inner, ptr_elem_ok(inner) {
+            pointee = inner
+            ok = true
+          }
+        }
+        if !ok {
+          fail(arg.loc, "&x passes the address of a local to a parameter Ptr(T), T a C scalar or a pointer; ${what}'s parameter ${i + 1} is ${p.show()}")
+          return false
+        }
+        if x = arg.inner {
+          if x.kind != ex_name() || x.implicit_field || x.ident == "self" {
+            fail(x.loc, "&x takes a local, not a field, an element or a value: copy it into a local, pass &local, then store it back")
+            return false
+          }
+          if refuse_const_write(x) {
+            return false
+          }
+          if lt = lookup(x.ident) {
+            view = ty_c_view(pointee)
+            if !lt.same_as(view) {
+              fail(x.loc, "&${x.ident} passes ${x.ident} to ${p.show()}: ${x.ident} must be ${view.show()}, not ${lt.show()}")
+              return false
+            }
+            note_capture(x.ident, lt, x.loc)
+            x.ty = lt
+            arg.ty = p
+            arg.proven = true
+          } else {
+            fail(x.loc, "&${x.ident} needs a local ${x.ident} declared before the call (${x.ident}: ${ty_c_view(pointee).show()} = ...)")
+            return false
+          }
+        }
+      }
+    }
+    true
+  }
+
   pub fn check_lib_call(expr: Expr, lib_name: String): Ty {
     key = "${lib_name}.${expr.callee}"
     if id = self.cfun_index.get(key) {
@@ -5253,6 +5316,9 @@ pub class Checker {
       params: Array(Ty) = []
       for p in sig.params {
         params.push(ty_cb_view(p))
+      }
+      if !check_out_args(expr, sig.params, "${lib_name}.${expr.callee}") {
+        return ty_c_view(sig.ret)
       }
       check_args(expr, params, "${lib_name}.${expr.callee}")
       if self.has_err() {

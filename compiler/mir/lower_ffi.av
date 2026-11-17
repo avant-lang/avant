@@ -15,6 +15,7 @@ import location
 import source
 import type
 import ast
+import token
 import typed_ir
 import mir.types
 import mir.ir
@@ -25,6 +26,7 @@ import mir.lower
 import mir.lower_expr
 import mir.lower_agg
 import mir.lower_union
+import mir.lower_fn
 import re2c_pat
 
 // ---- types
@@ -146,12 +148,33 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
       return zero
     }
     args: Array(MOperand) = []
+    // The `&x` arguments: a cell in the frame per argument, read back
+    // into x after the call.
+    cells: Array(Int) = []
+    outs: Array(Expr) = []
+    out_ks: Array(Int) = []
     i = 0
     while i < e.args.size && i < ps.size {
       a = e.args[i]
       o = zero
       if cs.params[i].is_fn() {
         o = lw.cb_pointer(a, cs.params[i])
+      } else if a.kind == ex_unary() && a.op == tk_amp() {
+        cell = lw.out_cell(a, cs.params[i], ps[i])
+        if lw.failed() {
+          return zero
+        }
+        if x = a.inner {
+          cells.push(cell)
+          outs.push(x)
+          ck = 0
+          if inner = cs.params[i].inner {
+            ck = inner.c_scalar
+          }
+          out_ks.push(ck)
+        }
+        lw.at(a.loc)
+        o = lw.tmp(ps[i], b.rv_addr_raw(b.pl(cell)))
       } else {
         o = lw.lower_expr(a)
         if t = a.ty {
@@ -208,6 +231,9 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
     if b.module.externs[x].sig != sig {
       st.sig = sig
     }
+    for k in 0..cells.size {
+      lw.out_back(cells[k], outs[k], out_ks[k], e.loc)
+    }
     if dest < 0 {
       return zero
     }
@@ -230,6 +256,59 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
   }
   lw.refuse(e.loc, "the C function ${e.lib_name}.${e.callee} (no checked signature)")
   zero
+}
+
+// `&x` passed to a C function's parameter of type pt (MIR type pty, a
+// `ptr` to the element): a cell in the frame holding x's value at C's
+// width (a narrow C scalar converted, out of range trapping), whose
+// address C gets. The cell is no heap value and holds no reference the
+// collector traces, so C may write it during the call.
+pub fn (lw: MirLower) out_cell(a: Expr, pt: Ty, pty: Int): Int {
+  b = lw.lw_b
+  et = lw.lw_m.types.pointee(pty)
+  if x = a.inner {
+    v = lw.lower_expr(x)
+    if lw.failed() {
+      return 0
+    }
+    lw.at(a.loc)
+    if inner = pt.inner, inner.c_scalar > 0 {
+      v = lw.to_c_scalar(v, inner.c_scalar, a.loc)
+    }
+    cell = b.temp(et)
+    b.assign(b.pl(cell), b.rv_use(v))
+    return cell
+  }
+  lw.refuse(a.loc, "&x without a local")
+  0
+}
+
+// After the call: what C wrote into the cell, back into the local x (a
+// narrow C scalar converted to its Avant view).
+pub fn (lw: MirLower) out_back(cell: Int, x: Expr, ck: Int, loc: Location) {
+  b = lw.lw_b
+  if xt = x.ty {
+    ty = lw.ety(x)
+    if lw.failed() {
+      return
+    }
+    lw.at(loc)
+    v = b.copy_local(cell)
+    if ck > 0 {
+      v = lw.from_c_scalar(v, ck)
+    }
+    if lw.name_in_box(x.ident) {
+      if mir_name_index(lw.lw_cl.caps, x.ident) < 0 {
+        lw.ensure_box(x.ident, xt, loc)
+      }
+      lw.box_store(x.ident, xt, v, loc)
+      return
+    }
+    k = lw.var_get(x.ident, ty)
+    b.assign(b.pl(k), b.rv_use(v))
+    return
+  }
+  lw.refuse(loc, "&x without a type")
 }
 
 // A `String` or `Bytes` (or one of them optional) that comes from C: a

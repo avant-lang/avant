@@ -1045,3 +1045,20 @@ int64_t pt_sizeof(int which) {
   default: return (int64_t)sizeof(PtRefs);
   }
 }
+/* pointers.av: out-parameters C writes through (&x). */
+int pt_out_int(int32_t *out) {
+  *out = *out + 41;
+  return 1;
+}
+int pt_out_pair(PtPair **out, int which) {
+  *out = which ? &pt_p1 : NULL;
+  return which;
+}
+void pt_out_u8(uint8_t *b) { *b = (uint8_t)(*b * 2); }
+void pt_out_f32(float *f) { *f = *f / 2; }
+int64_t pt_out_two(int64_t *a, double *d) {
+  *a = 7;
+  *d = 0.5;
+  return 3;
+}
+int pt_names(char **argv, void **slots) { return argv != NULL && slots != NULL; }

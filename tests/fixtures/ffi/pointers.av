@@ -40,6 +40,11 @@ lib pt {
   }
   fun pt_sizeof(which: Int32): Int
   fun calloc(n: Int, size: Int): Ptr(Pair)
+  fun pt_out_int(out: Ptr(Int32)): Int32
+  fun pt_out_pair(out: Ptr(Ptr(Pair)?), which: Int32): Int32
+  fun pt_out_u8(b: Ptr(UInt8))
+  fun pt_out_f32(f: Ptr(Float32))
+  fun pt_out_two(a: Ptr(Int), d: Ptr(Float64)): Int
   fun free(p: Ptr(Pair))
 }
 
@@ -109,4 +114,31 @@ fn main {
   two = pt.calloc(2, Pair.size)
   two.b = 5
   pt.free(two)
+  n: Int32 = 1
+  _ = pt.pt_out_int(&n)
+  puts(n)
+  found: Ptr(Pair)? = nil
+  if pt.pt_out_pair(&found, 1) == 1, q = found {
+    puts("out ${q.a} ${q.b}")
+  }
+  _ = pt.pt_out_pair(&found, 0)
+  if q2 = found {
+    puts("out ${q2.a}")
+  } else {
+    puts("out nil")
+  }
+  b = 100
+  pt.pt_out_u8(&b)
+  puts(b)
+  f = 3.0
+  pt.pt_out_f32(&f)
+  puts(f)
+  a = 0
+  d = 0.0
+  puts(pt.pt_out_two(&a, &d))
+  puts("${a} ${d}")
+  boxed: Int32 = 5
+  see: fn(): Int32 = () { boxed }
+  _ = pt.pt_out_int(&boxed)
+  puts("${boxed} ${see()}")
 }

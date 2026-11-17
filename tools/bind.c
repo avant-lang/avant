@@ -145,19 +145,33 @@ static void emit_type(Emit *e, CXType t);
 static const char *bind_enum_name(Bind *b, CXType t);
 static const char *bind_enum_scalar(Bind *b, CXType t);
 
+/* A pointer that is not a C string: Ptr(Void), Ptr(T), and a pointer to
+ * a pointer as Ptr(Ptr(T)?), since C may leave the inner one NULL (an
+ * out-parameter C writes, an array of pointers); char ** is
+ * Ptr(Ptr(Int8)?). */
+static void emit_ptr_plain(Emit *e, CXType pointee) {
+  pointee = unwrap(pointee);
+  if (pointee.kind == CXType_Void) {
+    fputs("Ptr(Void)", e->out);
+    return;
+  }
+  fputs("Ptr(", e->out);
+  if (pointee.kind == CXType_Pointer) {
+    emit_ptr_plain(e, clang_getPointeeType(pointee));
+    fputs("?", e->out);
+  } else {
+    emit_type(e, pointee);
+  }
+  fputs(")", e->out);
+}
+
 static void emit_ptr(Emit *e, CXType pointee) {
   pointee = unwrap(pointee);
   if (is_char_type(pointee)) {
     fputs("String", e->out);
     return;
   }
-  if (pointee.kind == CXType_Void) {
-    fputs("Ptr(Void)", e->out);
-    return;
-  }
-  fputs("Ptr(", e->out);
-  emit_type(e, pointee);
-  fputs(")", e->out);
+  emit_ptr_plain(e, pointee);
 }
 
 static void emit_type(Emit *e, CXType t) {
@@ -1003,6 +1017,37 @@ static int cursor_has(CXCursor cursor, enum CXCursorKind kind) {
   return seek.found;
 }
 
+/* A layout field's pointer that is no C string, no Ptr(Void) and no
+ * pointer to a record: a pointer to a C scalar (Ptr(Int32), Ptr(UInt8)),
+ * or to a pointer (Ptr(Ptr(T)?), T a scalar, Void or a layout); 0 when
+ * the pointee has no Avant name. */
+static int field_ptr_text(Bind *b, CXType pointee, char *out, size_t n) {
+  char inner[MAX_NAME];
+  const char *name;
+  pointee = unwrap(pointee);
+  if (pointee.kind == CXType_Void) {
+    return snprintf(out, n, "Ptr(Void)") < (int)n;
+  }
+  if (pointee.kind == CXType_Pointer) {
+    if (!field_ptr_text(b, clang_getPointeeType(pointee), inner, sizeof(inner))) {
+      return 0;
+    }
+    return snprintf(out, n, "Ptr(%s?)", inner) < (int)n;
+  }
+  if (pointee.kind == CXType_Record && is_struct_record(pointee)) {
+    RecInfo *rec = find_rec(b, clang_getCanonicalType(pointee));
+    if (!rec || !rec->avant[0]) {
+      return 0;
+    }
+    return snprintf(out, n, "Ptr(%s)", rec->avant) < (int)n;
+  }
+  name = pointee.kind == CXType_Bool ? "Bool" : scalar_name(pointee);
+  if (!name) {
+    return 0;
+  }
+  return snprintf(out, n, "Ptr(%s)", name) < (int)n;
+}
+
 static int map_field_type(Bind *b, CXType t, char *avant, size_t avant_n, int *size, int *align, char *reason, size_t reason_n) {
   CXString spelling;
   const char *raw;
@@ -1055,10 +1100,6 @@ static int map_field_type(Bind *b, CXType t, char *avant, size_t avant_n, int *s
       *align = 8;
       return 1;
     }
-    if (pointee.kind == CXType_UChar) {
-      snprintf(reason, reason_n, "unsigned char* is not String; skipped");
-      return 0;
-    }
     if (pointee.kind == CXType_Void) {
       copy_name(avant, avant_n, "Ptr(Void)");
       *size = 8;
@@ -1076,6 +1117,11 @@ static int map_field_type(Bind *b, CXType t, char *avant, size_t avant_n, int *s
         return 0;
       }
       snprintf(avant, avant_n, "Ptr(%s)", inner->avant);
+      *size = 8;
+      *align = 8;
+      return 1;
+    }
+    if (field_ptr_text(b, pointee, avant, avant_n)) {
       *size = 8;
       *align = 8;
       return 1;

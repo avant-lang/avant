@@ -196,9 +196,10 @@ fn test_bind(c: Checks) {
     raw_code = invoke(compiler, "bind", raw_log, raw_flags)
     c.eq_int(raw_code, 0, "unsigned char exits 0")
     raw_txt = read(raw_log)
-    c.expect(str_has(raw_txt, "unsigned char*"), "unsigned char* diagnostic")
+    // An `unsigned char *` field is bytes, not a C string: Ptr(UInt8),
+    // read with p[i] (before, the record was skipped).
+    c.expect(str_has(raw_txt, "struct Raw {\n    p: Ptr(UInt8)\n  }"), "unsigned char* field maps to Ptr(UInt8)")
     c.expect(str_has(raw_txt, "fun raw_f: Int"), "unsigned char function stays")
-    c.expect(!str_has(raw_txt, "struct Raw"), "unsigned char record is skipped")
 
     by_log = "${scratch()}/bind-${stamp}-by.log"
     by_flags: Array(String) = []
@@ -290,6 +291,38 @@ fn test_bind(c: Checks) {
     c.expect(str_has(sc_txt, "struct CsPix {\n    r: UInt8\n    g: UInt8\n    w: UInt16\n    h: Int16\n    tag: Int8\n    id: UInt32\n    gain: Float32\n  }"), "C scalar fields map to their exact types")
     c.expect(str_has(sc_txt, "fun cs_sum(a: Int8, b: UInt8, c: Int16, d: UInt16, e: UInt32, f: Float32): Float64"), "C scalar parameters map to their exact types")
     c.expect(str_has(sc_txt, "fun cs_half_f32(x: Float32): Float32"), "float maps to Float32")
+    // Pointers: `int *` is Ptr(Int32), `T **` Ptr(Ptr(T)?) (an
+    // out-parameter or an array of pointers C may leave NULL), in a
+    // function and in a layout's field; the bound text compiles and runs
+    // with &x and p[i].
+    mkdir_p("${scratch()}/bind-${stamp}-pt")
+    pt_h = "${scratch()}/bind-${stamp}-pt/hdr_pt.h"
+    _ = file_write(pt_h, "#include <stdint.h>\ntypedef struct PtPair { int a; int b; } PtPair;\ntypedef struct PtWrap { int *count; PtPair **items; char **names; unsigned char *bytes; void **slots; } PtWrap;\nint pt_out_int(int *out);\nint pt_out_pair(PtPair **out, int which);\nvoid pt_out_u8(unsigned char *b);\nint32_t *pt_ints_at(void);\nint pt_names(char **argv, void **slots);\n")
+    pt_log = "${scratch()}/bind-${stamp}-pt.log"
+    pt_flags: Array(String) = []
+    pt_flags.push(pt_h)
+    c.eq_int(invoke(compiler, "bind", pt_log, pt_flags), 0, "pointers: bind exits 0")
+    pt_txt = read(pt_log)
+    c.expect(str_has(pt_txt, "struct PtWrap {\n    count: Ptr(Int32)\n    items: Ptr(Ptr(PtPair)?)\n    names: Ptr(Ptr(Int8)?)\n    bytes: Ptr(UInt8)\n    slots: Ptr(Ptr(Void)?)\n  }"), "pointer fields map to Ptr of their pointee (${pt_txt})")
+    c.expect(str_has(pt_txt, "fun pt_out_int(out: Ptr(Int32)): Int32"), "int * maps to Ptr(Int32)")
+    c.expect(str_has(pt_txt, "fun pt_out_pair(out: Ptr(Ptr(PtPair)?), which: Int32): Int32"), "T ** maps to Ptr(Ptr(T)?)")
+    c.expect(str_has(pt_txt, "fun pt_out_u8(b: Ptr(UInt8))"), "unsigned char * maps to Ptr(UInt8)")
+    c.expect(str_has(pt_txt, "fun pt_names(argv: Ptr(Ptr(Int8)?), slots: Ptr(Ptr(Void)?)): Int32"), "char ** and void ** map to Ptr(Ptr(Int8)?) and Ptr(Ptr(Void)?)")
+    pt_src = "${scratch()}/bind-${stamp}-pt.av"
+    _ = file_write(pt_src, "${pt_txt}\nfn main {\n  n: Int32 = 1\n  _ = hdr_pt.pt_out_int(&n)\n  found: Ptr(PtPair)? = nil\n  _ = hdr_pt.pt_out_pair(&found, 1)\n  if q = found {\n    puts(\"\${n} \${q.b}\")\n  }\n  b = 21\n  hdr_pt.pt_out_u8(&b)\n  xs = hdr_pt.pt_ints_at()\n  puts(\"\${b} \${xs[0]}\")\n}\n")
+    pt_bin = "${scratch()}/bind-${stamp}-pt.bin"
+    pt_cc: Array(String) = []
+    pt_cc.push("--cc")
+    pt_cc.push("${root}/tests/fixtures/ffi/ffi.c")
+    c.eq_int(compile_av_flags(compiler, pt_src, pt_bin, "${scratch()}/bind-${stamp}-pt-cc.log", pt_cc), 0, "the bound pointer header compiles")
+    if file_exists(pt_bin) {
+      chmod_x(pt_bin)
+      pt_rlog = "${scratch()}/bind-${stamp}-pt-run.log"
+      c.eq_int(run_av_bin(pt_bin, pt_rlog), 0, "the bound pointer program runs")
+      c.eq_str(read(pt_rlog), "42 4\n42 10\n", "the bound pointer program reads what C wrote")
+    } else {
+      c.expect(false, "the bound pointer program runs")
+    }
     ld_h = "${scratch()}/avant_bind_${stamp}_ld.h"
     _ = file_write(ld_h, "long double half(long double x);\n")
     ld_log = "${scratch()}/bind-${stamp}-ld.log"

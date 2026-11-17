@@ -3193,6 +3193,16 @@ pub class Parser {
       e.inner = inner
       return e
     }
+    if k == tk_amp() {
+      // `&x`: the address of a local, only as a C function's argument
+      // (the checker says where it may stand).
+      self.bump()
+      inner = parse_expr_min(11)
+      e = Expr.new(ex_unary(), tok.loc)
+      e.op = tk_amp()
+      e.inner = inner
+      return e
+    }
     if k == tk_l_paren() && self.paren_lambda_ahead() {
       return self.parse_paren_lambda()
     }
