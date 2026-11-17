@@ -14,7 +14,10 @@
 # stopped by its outer `timeout` firing. A stopped run must leave no
 # process: neither a recorded PID nor any process whose working directory
 # is the fake checkout, at the moment the outer `timeout` returns (when
-# `ledger run` would release the machine lock). Prints one line per check,
+# `ledger run` would release the machine lock). A fourth run goes through
+# WAVE_RUNNER, a stub runner that runs its command in its place (as a
+# runner that does not stop its own tree): stopped by a TERM to its outer
+# `timeout`, it must leave nothing either. Prints one line per check,
 # `ok: NAME` or `FAIL: NAME: why`; test_tools.av expects each NAME.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/wave-final-stop.sh WORK" >&2; exit 2; }
@@ -120,4 +123,22 @@ l=$(left "$w/expire.stub" | tr '\n' ' ')
 grep -q '^stopped: SIGTERM during goldens debug' "$w/expire.out/SUMMARY.txt"
 say expire-summary $? "$(tail -1 "$w/expire.out/SUMMARY.txt" 2>/dev/null)"
 reap "$w/expire.stub"
+
+# 4. Through a runner, a TERM to the outer timeout during the goldens step.
+printf '#!/bin/sh\nwhile [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n' > "$w/runner"
+start runner 300 WAVE_RUNNER="sh $w/runner"
+if started runner; then
+  t0=$(date +%s)
+  kill -TERM $tp
+  wait $tp
+  t1=$(date +%s)
+  l=$(left "$w/runner.stub" | tr '\n' ' ')
+  [ -z "$l" ] && [ $((t1 - t0)) -lt 10 ]; say runner-term-leaves-nothing $? "left: $l; $((t1 - t0)) s"
+  grep -q '^stopped: SIGTERM during goldens debug; every process of the step stopped$' "$w/runner.out/SUMMARY.txt"
+  say runner-term-summary $? "$(tail -1 "$w/runner.out/SUMMARY.txt" 2>/dev/null)"
+else
+  kill -TERM $tp; wait $tp
+  say runner-term-leaves-nothing 1 "the stub step did not start"
+fi
+reap "$w/runner.stub"
 echo done

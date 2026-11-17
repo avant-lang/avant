@@ -7,6 +7,7 @@ For working on Avant itself: the compiler, the runtime, the suite and the docume
 - [How the compiler works](#how-the-compiler-works)
 - [Building the compiler](#building-the-compiler)
 - [The gate and the suite](#the-gate-and-the-suite)
+- [Checking a change](#checking-a-change)
 - [Checking the documentation](#checking-the-documentation)
 
 ## How the compiler works
@@ -63,6 +64,19 @@ AVANT_COMPILER=./bin/avant-c-llvm ./bin/avant-c-llvm test
 - For the compiler's suite, `--junit PATH` writes one case per check, with durations; output is printed per file as each finishes, and the summary totals the run.
 - The compiler's own coverage report is an instrumented compiler build's hit file, written once after the processes updating it finish; it is not `avant test --coverage`, which reports the tests.
 - Goldens live in `tests/goldens/`.
+
+## Checking a change
+
+These tools compare a change with its base on a machine shared by several checkouts. Each reads its usage from its header (`sed -n '2,/^set -u/p' tools/NAME.sh`).
+
+| Command | What it gives |
+| --- | --- |
+| `sh tools/base-cache.sh REV` | the base cache's entry of `REV`'s tree, built once on the machine and read by every checkout after: the tree checked out with its runtime, B and C′ built, every corpus program's `__emit-ll` digest and the GC-statistics set (`tools/gcstats.sh`); `--la REV` adds its LangArena part: the 50 programs stitched by the harness, their compile arguments, digests and instruction counts. Keyed by the tree id, so never read for another tree; built under a lock file beside the entry, so two checkouts do not build it twice; complete only when its `COMPLETE` file exists (a stopped build is built again, never read). The cache's directory is `BASE_CACHE`, else the one named in `~/.config/avant/base-cache`, else `~/.cache/avant/base-cache` |
+| `sh tools/change-check.sh BASE HEAD OUT` | one line per commit of `BASE..HEAD`, each against the commit before it: the test files its changed files touch (by name, path or import), run by its C′; the corpus programs and LangArena programs whose `__emit-ll` moved, named and counted; the instruction counts of the LangArena programs whose code moved (all of them after a runtime change), as ratios, with their output checked. C′ is rebuilt only when `compiler/`, `lib/` or `runtime/` changed; the commit before the first is read from the base cache. Minutes, not a gate: `OUT/table.md` is the change's record of its own impact |
+| `sh tools/neutral.sh BASE NEW OUT` | the neutrality: every corpus program and the 50 stitched LangArena programs through both compilers' `__emit-ll`, the `.ll` compared. `BASE` is a checkout with C′ built, or a base cache entry (only `NEW`'s C′ then runs); `NEUTRAL_CHANGED` names the change's own files, read apart |
+| `sh tools/wave-final.sh OUT [BASE_STATS]` | the final evidence: the gate, the letters' sha256 and exports, the goldens in every mode, the GC statistics, the smoke test of the packed C′, the neutrality against the base cache (`WAVE_BASE`) and, with `WAVE_LA=1`, the LangArena timing and its table; one line per step in `OUT/SUMMARY.txt` |
+
+**The machine lock.** Instruction counts, builds, suites and the gate give the same verdict on a busy machine, so they run beside other work; only a timing needs the machine to itself. `wave-final.sh` with `WAVE_RUNNER` (the lock runner's command words) runs every step on the lock's shared side but the LangArena prod pass and its re-measure, which alone hold the whole machine; its `lock:` and `langarena:` lines say so and how long the machine was held. Without `WAVE_RUNNER`, the steps run under whatever lock the run was started with. Run `change-check.sh` and `base-cache.sh` on the shared side too.
 
 ## Checking the documentation
 

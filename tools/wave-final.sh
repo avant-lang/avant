@@ -5,6 +5,20 @@
 #
 #   sh tools/wave-final.sh OUT [BASE_STATS]      (from the checkout root)
 #
+# The machine lock: with WAVE_RUNNER (the runner's command words, such as
+# `python3 -I PATH/ledger run`), each step that builds or runs a program
+# goes through it, every one on the lock's shared side but the LangArena
+# timing (step 6's prod pass and LR re-measure), the only one that holds
+# the whole machine (`--timed`): the gate, the goldens, the statistics,
+# the smoke test and the neutrality are verdicts that do not depend on
+# time, so they run beside other work. Each run is named `final: STEP`
+# (the runner's --step) with WAVE_RUN_KIND as its --kind (default new);
+# the runner's log and wave come from its own environment. Started this
+# way the script itself is not run under the runner. Without WAVE_RUNNER
+# every step runs as it is: the caller holds the lock (the whole run under
+# one `--timed` run, as before). SUMMARY.txt's `lock:` line says which,
+# and the LangArena line how long the whole machine was held.
+#
 # OUT is a new directory under results/ or outside the repository. Steps, in
 # order, each logged under OUT; a red step is reported and the later steps
 # still run, so one run gives the whole picture:
@@ -22,11 +36,21 @@
 #      named avant, LangArena/ is its sibling and the untracked langarena/
 #      harness is copied in (create a worktree as SCRATCH/side/avant beside
 #      SCRATCH/side/LangArena), or the 50 LangArena goldens are skipped
-#   5. the GC-statistics set (the three churn fixtures in three modes, under
-#      the default environment, AVANT_NURSERY=0, AVANT_GC_VERIFY=1 and
-#      AVANT_YOUNG_MB=1, AVANT_GC_STATS=1: 36 .out and 36 .err files):
-#      OUT/gcstats; with BASE_STATS (an earlier run's OUT/gcstats), stats.txt
-#      compares every file with the pause_*_ns fields removed
+#   5. the GC-statistics set (tools/gcstats.sh: the three churn fixtures
+#      in three modes, under the default environment, AVANT_NURSERY=0,
+#      AVANT_GC_VERIFY=1 and AVANT_YOUNG_MB=1, AVANT_GC_STATS=1: 36 .out
+#      and 36 .err files): OUT/gcstats; with BASE_STATS (an earlier run's
+#      OUT/gcstats), else the base cache's set when WAVE_BASE is given,
+#      stats.txt compares every file with the pause_*_ns fields removed
+#   5b. the smoke test: tools/package.sh packs C' (bin/avant-c-llvm, with
+#      bin/re2c) into OUT/smoke, tools/smoke.sh runs the tarball's cases:
+#      smoke.log; red on a failed case
+#   5c. only with WAVE_BASE (a revision, such as the branch the wave starts
+#      from): the neutrality, tools/neutral.sh with the base cache's entry
+#      of WAVE_BASE's tree (tools/base-cache.sh, built when missing) as the
+#      base, the files changed since WAVE_BASE (`git diff --name-only`) as
+#      NEUTRAL_CHANGED: OUT/neutral; a program outside them that moved is
+#      named in the line (a difference is explained in the record, not red)
 #   6. only with WAVE_LA=1: LangArena prod once with C' (the harness binary
 #      of tools/la-harness.sh, built once per checkout), then the LR table
 #      (tools/lr-table.sh), OUT/la; needs WAVE_LA_SIDE (a directory holding
@@ -47,9 +71,10 @@
 #      an entry another program removed meanwhile is listed in
 #      tmp-gone.txt, not red), and SUMMARY.txt: one line per step
 #
-# Timed steps (the gate's suites, LangArena) assume nothing else runs and the
-# governor is `performance` (governor.txt records it; the script does not
-# stop on it). Every child runs under timeout with stdin from /dev/null.
+# The timed step (LangArena) assumes nothing else runs and the governor is
+# `performance` (governor.txt records it; the script does not stop on it).
+# The gate's wall time is recorded, and compared only when it ran alone.
+# Every child runs under timeout with stdin from /dev/null.
 #
 # Stopping it: a TERM, INT or HUP (the outer
 # `timeout -k 10 N` firing, or a signal by hand) stops the running step and
@@ -62,7 +87,9 @@
 # only after its foreground command ends: so each step runs in the
 # background, the script waits for it, and the trap stops its whole tree
 # (frozen with SIGSTOP while it is listed, then TERM; KILL after 5 s for
-# whatever is left, within the outer timeout's 10 s).
+# whatever is left, within the outer timeout's 10 s). A step started
+# through WAVE_RUNNER is first sent the signal alone, for the runner to
+# stop its own tree and free the lock (up to 5 s), then treated the same.
 # Exit status: 0 when every step is green, 1 otherwise, 2 on a usage error.
 set -u
 
@@ -86,6 +113,19 @@ cur=""; curname=""
 # and SIGQUIT; env --default-signal gives the step the dispositions it had
 # in the foreground (a test that sends SIGINT to a child expects it to act).
 run() { env --default-signal=INT,QUIT "$@" & cur=$!; wait "$cur"; rc_run=$?; cur=""; return $rc_run; }
+# lk shared|timed STEP CMD...: run CMD through WAVE_RUNNER on that side of
+# the machine lock, as `final: STEP`; without WAVE_RUNNER, run it as it is.
+runner=${WAVE_RUNNER:-}
+via=""
+lk() {
+  l_side=$1 l_step=$2; shift 2
+  if [ -n "$runner" ]; then
+    via=1
+    # shellcheck disable=SC2086
+    run $runner --"$l_side" --step "final: $l_step" --kind "${WAVE_RUN_KIND:-new}" -- "$@"
+  else run "$@"; fi
+  l_rc=$?; via=""; return $l_rc
+}
 # PID and every descendant, parents first.
 tree() {
   echo "$1"
@@ -95,11 +135,23 @@ tree() {
 alive() { t_st=$(ps -o stat= -p "$1" 2>/dev/null) || return 1; case "$t_st" in Z*|"") return 1 ;; esac; return 0; }
 stop_step() {
   [ -n "$cur" ] || return 0
+  t_roots=$cur
+  if [ -n "$via" ]; then
+    # The runner stops its own tree and frees the lock: give it 5 s, then
+    # stop whatever of the tree it had then is left.
+    t_list=$(tree "$cur" | tr '\n' ' ')
+    kill -TERM "$cur" 2>/dev/null
+    t_i=0
+    while alive "$cur" && [ $t_i -lt 50 ]; do sleep 0.1; t_i=$((t_i + 1)); done
+    t_roots=""
+    for t_p in $t_list; do alive "$t_p" && t_roots="$t_roots $t_p"; done
+    if [ -z "$t_roots" ]; then wait "$cur" 2>/dev/null; cur=""; return 0; fi
+  fi
   # Freeze the tree until a listing finds nothing new: a stopped process
   # neither forks nor dies, so none of the tree is reparented away from it.
   t_all=""
   while :; do
-    t_now=$(tree "$cur" | LC_ALL=C sort -n | tr '\n' ' ')
+    t_now=$(for t_r in $t_roots; do tree "$t_r"; done | LC_ALL=C sort -nu | tr '\n' ' ')
     # shellcheck disable=SC2086
     kill -STOP $t_now 2>/dev/null
     [ "$t_now" = "$t_all" ] && break
@@ -152,10 +204,12 @@ else
   if [ -s "$out/status.txt" ]; then step "head: red (the tree is not clean)"; else step "head: $head_rev clean (tree $(git rev-parse 'HEAD^{tree}'))"; fi
 fi
 rm -f "$out/status.txt"
+if [ -n "$runner" ]; then step "lock: through WAVE_RUNNER ($runner): shared for every step but the LangArena timing, the whole machine for that"
+else step "lock: the caller's (WAVE_RUNNER unset: every step runs under the lock the run was started with)"; fi
 
 # 2. the gate
 t0=$(now); curname=gate
-run env GATE_OUT="$out/gate" GATE_GC_ENV='AVANT_GC_STRESS=1;AVANT_YOUNG_MB=1;AVANT_GC_VERIFY=1;AVANT_NURSERY=0' \
+lk shared gate env GATE_OUT="$out/gate" GATE_GC_ENV='AVANT_GC_STRESS=1;AVANT_YOUNG_MB=1;AVANT_GC_VERIFY=1;AVANT_NURSERY=0' \
   timeout -k 10 3600 sh tools/gate.sh < /dev/null > "$out/gate.out" 2>&1
 rc=$?; t1=$(now); echo "wall $(wall "$t0" "$t1") s" > "$out/gate-wall.txt"
 if [ $rc -eq 0 ] && grep -q '^GATE PASS' "$out/gate.out"; then step "gate: pass, $(cat "$out/gate-wall.txt")"; else step "gate: red (rc=$rc; $(tail -1 "$out/gate.out"))"; fi
@@ -169,7 +223,7 @@ if cmp -s "$out/nm.txt" "$out/exports.txt"; then step "nm: equals runtime/avant_
 # 4. the run goldens
 golden() { # NAME MODE ENV
   t0=$(now); curname="goldens $1"
-  run env GOLDEN_COMPILER=bin/avant-c-llvm GOLDEN_ENV="$3" GOLDEN_MODE="$2" GOLDEN_OUT="$out/goldens-$1" \
+  lk shared "goldens $1" env GOLDEN_COMPILER=bin/avant-c-llvm GOLDEN_ENV="$3" GOLDEN_MODE="$2" GOLDEN_OUT="$out/goldens-$1" \
     timeout -k 10 3600 sh tools/run-goldens.sh < /dev/null > "$out/goldens-$1.log" 2>&1
   rc=$?; t1=$(now)
   line=$(grep -iE 'same|different|skipped' "$out/goldens-$1.log" | tail -1)
@@ -192,24 +246,20 @@ golden stress --debug "AVANT_GC_STRESS=1"
 if [ $red_goldens -eq 0 ]; then step "goldens: green ($(tr '\n' ';' < "$out/goldens.txt"))"; else step "goldens: red ($(tr '\n' ';' < "$out/goldens.txt"))"; fi
 
 # 5. the GC-statistics set
-g="$out/gcstats"; mkdir -p "$g/bin"; cfail=0; curname=gcstats
-for f in heap/churn closures/churn objects/churn; do
-  n=$(echo "$f" | tr / _)
-  for m in debug bare release; do
-    fl=--$m; [ $m = bare ] && fl=
-    run timeout -k 10 120 bin/avant-c-llvm compile "tests/fixtures/$f.av" "$g/bin/$n.$m" $fl < /dev/null > "$g/bin/$n.$m.compile.log" 2>&1 || cfail=1
-  done
-done
-for b in "$g"/bin/*.debug "$g"/bin/*.bare "$g"/bin/*.release; do
-  [ -x "$b" ] || continue
-  n=$(basename "$b")
-  for e in default AVANT_NURSERY=0 AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1; do
-    ee=$e; [ $e = default ] && ee=
-    run env $ee AVANT_GC_STATS=1 timeout -k 10 120 "$b" < /dev/null > "$g/$n.$e.out" 2> "$g/$n.$e.err"
-    echo "rc=$?" >> "$g/$n.$e.out"
-  done
-done
-rm -rf "$g/bin"/*.debug "$g/bin"/*.bare "$g/bin"/*.release
+g="$out/gcstats"; curname=gcstats
+# The base cache's entry of WAVE_BASE's tree (built when missing), for the
+# statistics' base and the neutrality.
+entry=""; entry_why=""
+if [ -n "${WAVE_BASE:-}" ]; then
+  curname="base cache"
+  if lk shared "base cache" sh -c 'sh tools/base-cache.sh "$1" > "$2/base-cache.txt" 2> "$2/base-cache.log" < /dev/null' base-cache "$WAVE_BASE" "$out"; then
+    entry=$(cat "$out/base-cache.txt")
+  else entry_why="tools/base-cache.sh $WAVE_BASE failed (base-cache.log)"; fi
+  curname=gcstats
+fi
+[ -z "$base" ] && [ -n "$entry" ] && base=$entry/gcstats
+lk shared gcstats timeout -k 10 1800 sh tools/gcstats.sh . "$g" < /dev/null > "$out/gcstats.log" 2>&1
+cfail=$?
 files=$(ls "$g"/*.out "$g"/*.err 2>/dev/null | wc -l)
 if [ $cfail -ne 0 ]; then step "gcstats: red (a fixture did not compile; logs in gcstats/bin)"
 elif [ -n "$base" ]; then
@@ -222,6 +272,38 @@ elif [ -n "$base" ]; then
   echo "same=$same differ=$differ" >> "$out/stats.txt"
   step "gcstats: $files files; against $base: same=$same differ=$differ (stats.txt; a difference is explained in the record, not red)"
 else step "gcstats: $files files (no base given)"; fi
+
+# 5b. the smoke test: the head's C' packed, the tarball's cases run.
+curname=smoke
+# shellcheck disable=SC2016
+lk shared smoke sh -c 'sh tools/package.sh "$1/smoke" bin/avant-c-llvm bin/re2c < /dev/null > "$1/package.log" 2>&1 || exit 3
+  t=$(sed -n "s/^package: \(.*\.tar\.gz\)\$/\1/p" "$1/package.log" | tail -n 1)
+  [ -n "$t" ] || exit 4
+  timeout -k 10 1200 sh tools/smoke.sh "$t" < /dev/null > "$1/smoke.log" 2>&1' smoke "$out"
+src=$?
+rm -rf "$out/smoke"
+sp=$(grep -c '^ok ' "$out/smoke.log" 2>/dev/null); sf=$(grep -c '^FAIL' "$out/smoke.log" 2>/dev/null)
+case $src in
+  0) step "smoke: ${sp:-0} passed, ${sf:-0} failed (smoke.log)" ;;
+  3|4) step "smoke: red (tools/package.sh failed: package.log)" ;;
+  *) step "smoke: red (rc=$src; ${sp:-0} passed, ${sf:-0} failed: smoke.log)" ;;
+esac
+
+# 5c. the neutrality against the base cache (WAVE_BASE).
+if [ -n "${WAVE_BASE:-}" ]; then
+  if [ -z "$entry" ]; then step "neutral: red ($entry_why)"
+  else
+    curname=neutral
+    git diff --name-only "$WAVE_BASE" HEAD > "$out/changed.txt" 2>/dev/null
+    lk shared neutral env NEUTRAL_CHANGED="$out/changed.txt" timeout -k 10 1800 sh tools/neutral.sh "$entry" . "$out/neutral" < /dev/null > "$out/neutral.log" 2>&1
+    nrc=$?
+    if [ ! -f "$out/neutral/summary.txt" ]; then step "neutral: red (rc=$nrc, no summary: neutral.log)"
+    else
+      moved=$(grep -h '^\(LL-DIFF\|STATUS\|refused-msg\)' "$out/neutral/result.txt" "$out/neutral/la-result.txt" 2>/dev/null | awk '{ print $NF }' | head -n 5 | tr '\n' ' ')
+      step "neutral: against $WAVE_BASE ($entry): $(tr '\n' ';' < "$out/neutral/summary.txt")${moved:+ outside the change: $moved}(neutral/; a difference is explained in the record, not red)"
+    fi
+  fi
+else step "neutral: skipped (WAVE_BASE unset)"; fi
 
 # 6. LangArena (optional)
 # This machine's LR reference: WAVE_LR_REFERENCE, else the directory named
@@ -259,18 +341,29 @@ if [ "${WAVE_LA:-0}" = 1 ]; then
   else
     echo "$ref$ref_from" > "$out/lr-reference.txt"
     la="$out/la"; mkdir -p "$la"
-    t0=$(now); curname=langarena
-    # The harness binary of that checkout, built once (tools/la-harness.sh).
+    curname=langarena
+    # The harness binary of that checkout, built once (tools/la-harness.sh):
+    # a build, on the shared side.
     # shellcheck disable=SC2016
-    run sh -c 'cd "$1" && h=$(sh tools/la-harness.sh 2> "$2/harness-build.log" < /dev/null) && echo "harness: $h" > "$2/la-prod.log" \
-      && AVANT_COMPILER="$3/bin/avant-c-llvm" AVANT_CODEGEN=release AVANT_RESULTS_DIR="$2" \
-        timeout -k 10 2700 "$h" prod < /dev/null >> "$2/la-prod.log" 2>&1' la-prod "$side/avant" "$la" "$root"
-    rc=$?; t1=$(now)
+    lk shared "langarena harness" sh -c 'cd "$1" && h=$(sh tools/la-harness.sh 2> "$2/harness-build.log" < /dev/null) && echo "$h" > "$2/harness.txt"' la-harness "$side/avant" "$la"
+    # The timing alone holds the whole machine: the prod pass, then the LR
+    # re-measure of its binaries. Its own start and end (timed.txt) give the
+    # time it held the machine, the lock's wait left out.
     # shellcheck disable=SC2016
-    run sh -c 'cd "$1" && sh tools/lr-table.sh avant "$4/langarena/tmp" "$5/LangArena/run.js" "$2/lr-avant.tsv" < /dev/null > "$2/lr-avant.log" 2>&1 \
-      && sh tools/lr-table.sh table "$3" "$2" "$5/LangArena/results/2026-10-21-kostya-ms7c37.js" < /dev/null > "$2/table.md" 2> "$2/table.log"' lr-table "$side/avant" "$la" "$ref" "$root" "$side"
+    lk timed langarena sh -c 'date +%s.%N > "$2/timed.txt"; h=$(cat "$2/harness.txt" 2>/dev/null) || exit 3; echo "harness: $h" > "$2/la-prod.log"
+      t0=$(date +%s.%N)
+      cd "$1" && AVANT_COMPILER="$3/bin/avant-c-llvm" AVANT_CODEGEN=release AVANT_RESULTS_DIR="$2" \
+        timeout -k 10 2700 "$h" prod < /dev/null >> "$2/la-prod.log" 2>&1
+      echo "prod $? $t0 $(date +%s.%N)" > "$2/prod.txt"
+      sh tools/lr-table.sh avant "$4/langarena/tmp" "$5/LangArena/run.js" "$2/lr-avant.tsv" < /dev/null > "$2/lr-avant.log" 2>&1 \
+        && sh tools/lr-table.sh table "$6" "$2" "$5/LangArena/results/2026-10-21-kostya-ms7c37.js" < /dev/null > "$2/table.md" 2> "$2/table.log"
+      lrc=$?; date +%s.%N >> "$2/timed.txt"; exit $lrc' la-timed "$side/avant" "$la" "$root" "$root" "$side" "$ref"
     lrc=$?; curname=floor
-    if [ $rc -eq 0 ] && [ $lrc -eq 0 ]; then step "langarena: prod rc=0 wall=$(wall "$t0" "$t1") s; LR table la/table.md against $ref$ref_from$(la_disturbed)"; else step "langarena: red (prod rc=$rc, LR table rc=$lrc)"; fi
+    rc=$(awk '{ print $2 }' "$la/prod.txt" 2>/dev/null); [ -n "$rc" ] || rc=none
+    pw=$(awk '{ printf "%.1f", $4 - $3 }' "$la/prod.txt" 2>/dev/null)
+    if [ -n "$runner" ]; then held_what="the whole machine held"; else held_what="the timed part took"; fi
+    held=$(awk 'NR == 1 { a = $1 } NR == 2 { printf "%.1f", $1 - a }' "$la/timed.txt" 2>/dev/null)
+    if [ "$rc" = 0 ] && [ $lrc -eq 0 ]; then step "langarena: prod rc=0 wall=$pw s; LR table la/table.md against $ref$ref_from$(la_disturbed); $held_what ${held:-?} s"; else step "langarena: red (prod rc=$rc, LR table rc=$lrc)"; fi
     # The floor: tools/floor.py on la/table.md, beside the base's.
     fbase=${WAVE_FLOOR_BASE:-}
     [ -z "$fbase" ] && [ -n "$base" ] && [ -f "$(dirname "$base")/la/table.md" ] && fbase=$(dirname "$base")/la/table.md

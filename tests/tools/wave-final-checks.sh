@@ -17,7 +17,12 @@
 #     refused; ref-no-machine: one without machine.txt is refused;
 #   ref-default: with WAVE_LR_REFERENCE unset, the directory named in
 #     WAVE_LR_DEFAULT is used (and checked); ref-none: no reference at all
-#     is red and says how to give one.
+#     is red and says how to give one;
+#   runner-sides: with WAVE_RUNNER (a stub that logs its arguments and runs
+#     the command), only the LangArena timing goes through it `--timed`,
+#     every other step `--shared`, each named `final: STEP`;
+#   runner-lock-line: SUMMARY.txt says so; runner-none: without
+#     WAVE_RUNNER its `lock:` line says the caller holds the lock.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/wave-final-checks.sh WORK" >&2; exit 2; }
@@ -110,4 +115,29 @@ final "$f" "$w/ref-unset.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$side" 
 s=$w/ref-unset.out/SUMMARY.txt
 has "^langarena: red (no LR reference: set WAVE_LR_REFERENCE, or write this machine's reference directory into $w/no-such-file)" "$s"
 say ref-none $? "$(line langarena: "$s")"
+
+# 5. The machine lock through WAVE_RUNNER: a stub runner logs its side and
+# step, then runs the command after `--`.
+cat > "$w/runner" <<'EOF'
+#!/bin/sh
+echo "$1 $3" >> "$WF_RUNLOG"
+while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done
+shift
+exec "$@"
+EOF
+final "$f" "$w/runner.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$side" WAVE_LR_DEFAULT="$w/default" WAVE_RUNNER="sh $w/runner" WF_RUNLOG="$w/runner.log"
+r=$w/runner.log
+sides() {
+  [ "$(grep -c '^--timed ' "$r" 2>/dev/null)" = 1 ] && grep -q '^--timed final: langarena$' "$r" || return 1
+  [ "$(grep -c -v '^--\(timed\|shared\) final: ' "$r")" = 0 ] || return 1
+  for t in gate 'goldens debug' 'goldens bare' 'goldens release' 'goldens stress' gcstats smoke 'langarena harness'; do
+    grep -q "^--shared final: $t\$" "$r" || return 1
+  done
+}
+sides; say runner-sides $? "$(tr '\n' ';' < "$r" 2>/dev/null)"
+s=$w/runner.out/SUMMARY.txt
+has '^lock: through WAVE_RUNNER (sh .*runner): shared for every step but the LangArena timing, the whole machine for that$' "$s"
+say runner-lock-line $? "$(line lock: "$s")"
+s=$w/ref-default.out/SUMMARY.txt
+has "^lock: the caller's (WAVE_RUNNER unset" "$s"; say runner-none $? "$(line lock: "$s")"
 echo done
