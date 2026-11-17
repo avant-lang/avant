@@ -257,8 +257,9 @@ pub fn (checker_self: Checker) kill_facts_for(v: String) {
       checker_self.facts.fact_live[i] = 0
     }
   }
-  // v names another container now: a loop around this assignment reads
-  // the new one with the old bound.
+  // v names another container now: no size relation about it holds, and
+  // a loop around this assignment reads the new one with the old bound.
+  checker_self.remove_relations_of(v)
   if t = checker_self.lookup(v), t.is_array() || t.is_buf() {
     checker_self.facts.kill_cont.push(v)
   }
@@ -395,6 +396,27 @@ pub fn (checker_self: Checker) cs_stamp_of_var(v: String): Int {
     }
   }
   0
+}
+
+// The size relations that name v as the size (cs: `xs = Array(T).new(v)`),
+// dropped when v is assigned anew.
+pub fn (checker_self: Checker) cs_remove_var(v: String) {
+  kept_c: Array(String) = []
+  kept_v: Array(String) = []
+  kept_d: Array(Int) = []
+  kept_s: Array(Int) = []
+  for i in 0..checker_self.facts.cs_var.size {
+    if checker_self.facts.cs_var[i] != v {
+      kept_c.push(checker_self.facts.cs_cont[i])
+      kept_v.push(checker_self.facts.cs_var[i])
+      kept_d.push(checker_self.facts.cs_delta[i])
+      kept_s.push(checker_self.facts.cs_stamp[i])
+    }
+  }
+  checker_self.facts.cs_cont = kept_c
+  checker_self.facts.cs_var = kept_v
+  checker_self.facts.cs_delta = kept_d
+  checker_self.facts.cs_stamp = kept_s
 }
 
 // Every size relation about the container cont: its size may have
@@ -603,9 +625,7 @@ pub fn (checker_self: Checker) value_is_nonneg(val: Expr, selfname: String): Boo
           }
         }
         if val.op == tk_minus() {
-          if r.kind == ex_int() {
-            return lok
-          }
+          // `n - 3` is negative for n below 3.
           return false
         }
         if lok {
@@ -622,7 +642,24 @@ pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
     if t = stmt.target, t.kind == ex_name() {
       v = t.ident
       checker_self.kill_facts_for(v)
-      if val = stmt.value {
+      if stmt.op != tk_eq() {
+        // `v += e` and the other updates: v's new value is not e, so no
+        // relation of v's survives; v stays non-negative only through an
+        // operator that traps instead of wrapping, from a non-negative v
+        // and e.
+        if val = stmt.value {
+          keeps = stmt.op == tk_plus_eq() || stmt.op == tk_star_eq() || stmt.op == tk_slash_eq() || stmt.op == tk_percent_eq()
+          if keeps && checker_self.nn_has(v) && checker_self.value_is_nonneg(val, v) {
+            checker_self.nn_add(v)
+          } else {
+            checker_self.nn_remove(v)
+          }
+          checker_self.sv_remove_var(v)
+          checker_self.bv_remove_var(v)
+          checker_self.cs_remove_var(v)
+          checker_self.cap_after_assign(v, stmt.op, val)
+        }
+      } else if val = stmt.value {
         if checker_self.value_is_nonneg(val, v) {
           checker_self.nn_add(v)
         } else {
@@ -671,6 +708,8 @@ pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
         } else {
           checker_self.bv_remove_var(v)
         }
+        // A relation `xs.size == v + d` is about v's old value.
+        checker_self.cs_remove_var(v)
         checker_self.cap_after_assign(v, stmt.op, val)
       }
     }
