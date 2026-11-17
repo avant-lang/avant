@@ -704,15 +704,25 @@ pub fn (lw: MirLower) unpin_all {
 
 // ---- literal regex patterns
 
-// `Regex.compile("<literal>", <literal flags>)` whose pattern re2c
-// compiled at build time (pipeline.av re2c_plan; calls.av emit_call,
-// re2c_call_id): `regex_from_re2c(id, groups, pattern, caseless)` in
-// std.regex, as the old back end; nil when the call is not one.
+// `Regex.compile("<literal>", <literal flags>, <limits>)` whose pattern
+// re2c compiled at build time (pipeline.av re2c_plan; calls.av emit_call,
+// re2c_call_id): `regex_from_re2c(id, groups, pattern, caseless,
+// match_limit, depth_limit, heap_limit)` in std.regex, as the old back
+// end; nil when the call is not one. The limits are lowered in the
+// parameters' order, so a call whose named arguments are evaluated in
+// another order stays an ordinary call unless they are literals.
 pub fn (lw: MirLower) lower_re2c_compile(e: Expr): MOperand? {
   pat = e.args[0]
   flags = e.args[1]
-  if pat.kind != ex_string() {
+  if pat.kind != ex_string() || e.args.size != 5 {
     return nil
+  }
+  if order = e.arg_order {
+    for k in 2..5 {
+      if e.args[k].kind != ex_int() {
+        return nil
+      }
+    }
   }
   fv = -1
   if flags.kind == ex_int() && flags.int_bits <= 2147483647u64 {
@@ -748,6 +758,9 @@ pub fn (lw: MirLower) lower_re2c_compile(e: Expr): MOperand? {
     args.push(b.c_i64(groups.to_i()))
     args.push(lw.lower_expr(pat))
     args.push(lw.lower_expr(flags))
+    for k in 2..5 {
+      args.push(lw.lower_expr(e.args[k]))
+    }
     if lw.failed() {
       return b.c_i32(0)
     }

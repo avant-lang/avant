@@ -116,6 +116,10 @@ rm -rf "$zl_out" "$root/build/avant_zlib_own.o"
 # object the compiler's std.regex row names, so a program needs no libpcre2.
 # Its symbols are made local after the merge: nothing outside avant_re.c
 # calls PCRE2, and a program that binds a system PCRE2 itself cannot clash.
+# HEAP_LIMIT (KiB) is the runtime's own default, 256 MiB, in place of
+# PCRE2's 20 GB; with PCRE2's match and depth limits (ten million) it is
+# what std.regex's Regex.compile defaults to, so a Regex with the default
+# limits matches with no match context (avant_re.c, cache entries).
 pcre="$root/third_party/pcre2"
 pcre_out="$root/build/pcre2"
 rm -rf "$pcre_out"
@@ -125,7 +129,7 @@ for f in auto_possess chkdint chartables compile compile_cgroup compile_class co
   pattern_info script_run serialize string_utils study substitute substring tables ucd valid_utf xclass
 do
   "$cc" -c -O2 -pthread -fno-omit-frame-pointer -DHAVE_CONFIG_H -DPCRE2_CODE_UNIT_WIDTH=8 \
-    -I"$pcre/src" -o "$pcre_out/pcre2_$f.o" "$pcre/src/pcre2_$f.c"
+    -DHEAP_LIMIT=262144 -I"$pcre/src" -o "$pcre_out/pcre2_$f.o" "$pcre/src/pcre2_$f.c"
 done
 "$cc" -c $cflags -DPCRE2_STATIC -I"$pcre/src" -o "$root/build/avant_re_own.o" "$root/avant_re.c"
 ld -r -o "$root/build/avant_re.o" "$root/build/avant_re_own.o" "$pcre_out"/*.o

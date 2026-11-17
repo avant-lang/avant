@@ -1,5 +1,5 @@
 lib rec {
-  fun avant_regex_compile(pat: String, flags: Int): Ptr(Void)
+  fun avant_regex_compile(pat: String, flags: Int, match_limit: Int, depth_limit: Int, heap_limit: Int): Ptr(Void)
   fun avant_regex_take_status: Int
   fun avant_regex_release(code: Ptr(Void))
   fun avant_regex_groups(code: Ptr(Void)): Int
@@ -13,19 +13,38 @@ lib rec {
   fun avant_regex_error_offset: Int
   fun avant_regex_closed
   fun avant_regex_failed(op: Int)
+  fun avant_regex_failure_kind: Int
+  fun avant_regex_failure_text: String
+}
+
+// Why a RegexError is: a pattern that does not compile, a match that
+// reached one of its Regex's limits, or ran out of memory; `failed` is
+// any other failure PCRE2 reports. The values are the runtime's codes
+// (avant_regex_failure_kind).
+pub enum RegexErrorKind {
+  pattern = 1
+  memory
+  match_limit
+  depth_limit
+  heap_limit
+  failed
 }
 
 // A pattern that does not compile: the message is PCRE2's, with
 // the pattern offset it points at ("invalid regular expression at
 // offset 3: missing closing parenthesis"); offset is -1 when there
-// is none.
+// is none. A match that failed (try_find): the operation and PCRE2's
+// reason ("Regex.try_find: match limit exceeded (PCRE2 error -47)"),
+// offset -1. kind says which.
 pub class RegexError: Error {
   pub message: String
   pub offset: Int = -1
+  pub kind: RegexErrorKind = RegexErrorKind.pattern
 
-  fn initialize(message: String, offset: Int = -1) {
+  fn initialize(message: String, offset: Int = -1, kind: RegexErrorKind = RegexErrorKind.pattern) {
     self.message = message
     self.offset = offset
+    self.kind = kind
   }
 }
 
@@ -34,7 +53,13 @@ fn regex_error(status: Int): RegexError {
     off = rec.avant_regex_error_offset()
     return RegexError.new("invalid regular expression at offset ${off}: ${rec.avant_regex_error_text()}", off)
   }
-  RegexError.new("regular expression compile ran out of memory")
+  RegexError.new("regular expression compile ran out of memory", -1, RegexErrorKind.memory)
+}
+
+// The last match's failure on this thread, as a value.
+fn match_error: RegexError {
+  kind = RegexErrorKind.from_i(rec.avant_regex_failure_kind()) ?? RegexErrorKind.failed
+  RegexError.new(rec.avant_regex_failure_text(), -1, kind)
 }
 
 // Every operation on a closed Regex traps: a use after close is a
@@ -239,16 +264,20 @@ pub struct Regex {
   // exposes group 0 and group 1 only and has no named groups, so a
   // literal with named groups or more than one group stays on PCRE2.
   // PCRE2 backtracking can be catastrophic on adversarial patterns and
-  // texts: a match that reaches PCRE2's match, depth or heap limit
-  // traps, naming the operation (it is never read as "no match"), and
-  // there is no limit parameter yet, so what comes from outside is the
-  // caller's to bound.
-  pub fn self.compile(pattern: String, caseless: Bool = false): Regex | RegexError {
+  // texts; the limits bound what one match may take: match_limit the
+  // backtracking steps, depth_limit the interpreter's backtracking depth,
+  // heap_limit the bytes of a deep match (the JIT's larger stack, the
+  // interpreter's frames). A match that reaches one traps in find,
+  // count, replace, split and matches, naming the operation (it is
+  // never read as "no match"), and is a RegexError from try_find. A
+  // limit below 1 traps. A scanner never backtracks: the limits bind
+  // what runs on PCRE2.
+  pub fn self.compile(pattern: String, caseless: Bool = false, match_limit: Int = 10000000, depth_limit: Int = 10000000, heap_limit: Int = 268435456): Regex | RegexError {
     flags = 0
     if caseless {
       flags = 1
     }
-    code = rec.avant_regex_compile(pattern, flags)
+    code = rec.avant_regex_compile(pattern, flags, match_limit, depth_limit, heap_limit)
     status = rec.avant_regex_take_status()
     if status != 0 {
       return regex_error(status)
@@ -282,7 +311,9 @@ pub struct Regex {
 
   // A PCRE2 failure that is not "no match" (its match, depth or heap
   // limit, no memory) traps, naming the operation in progress; it is
-  // never nil.
+  // never nil. try_find gives it as a value. find builds its Match
+  // itself rather than through found: through the helper Template::Regex
+  // ran 4.4% more instructions.
   pub fn find(text: String, from: Int = 0): Match? {
     if self.state.closed {
       regex_closed()
@@ -295,6 +326,56 @@ pub struct Regex {
       }
       return nil
     }
+    p1 = -1
+    p2 = -1
+    p3 = -1
+    if self.ngroups >= 1 {
+      p1 = rec.avant_regex_span_pair(1)
+    }
+    if self.ngroups >= 2 {
+      p2 = rec.avant_regex_span_pair(2)
+    }
+    if self.ngroups >= 3 {
+      p3 = rec.avant_regex_span_pair(3)
+    }
+    Match {
+      text: text,
+      code: self.code,
+      state: self.state,
+      ngroups: self.ngroups,
+      at: from,
+      start: pair_lo(p0),
+      end: pair_hi(p0),
+      g1lo: pair_lo(p1),
+      g1hi: pair_hi(p1),
+      g2lo: pair_lo(p2),
+      g2hi: pair_hi(p2),
+      g3lo: pair_lo(p3),
+      g3hi: pair_hi(p3)
+    }
+  }
+
+  // find, with a failure as a RegexError (its kind the limit reached)
+  // instead of a trap: for a pattern or a text from outside, where one
+  // request must not end the program. nil is no match.
+  pub fn try_find(text: String, from: Int = 0): Match? | RegexError {
+    if self.state.closed {
+      regex_closed()
+      return nil
+    }
+    p0 = rec.avant_regex_find(self.scan, text, from)
+    if p0 < 0 {
+      if p0 != -1 {
+        return match_error()
+      }
+      return nil
+    }
+    found(text, from, p0)
+  }
+
+  // The Match of a find that succeeded: p0 is its packed whole span, the
+  // groups are read from this thread's last match.
+  fn found(text: String, from: Int, p0: Int): Match {
     p1 = -1
     p2 = -1
     p3 = -1
@@ -442,12 +523,12 @@ pub class MatchIter {
   }
 }
 
-fn regex_from_re2c(id: Int, groups: Int, pattern: String, caseless: Bool): Regex | RegexError {
+fn regex_from_re2c(id: Int, groups: Int, pattern: String, caseless: Bool, match_limit: Int, depth_limit: Int, heap_limit: Int): Regex | RegexError {
   flags = 0
   if caseless {
     flags = 1
   }
-  code = rec.avant_regex_compile(pattern, flags)
+  code = rec.avant_regex_compile(pattern, flags, match_limit, depth_limit, heap_limit)
   status = rec.avant_regex_take_status()
   if status != 0 {
     return regex_error(status)
