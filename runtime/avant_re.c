@@ -103,17 +103,18 @@ static int re_interp(pcre2_code *code, const char *s, size_t n, size_t from,
  * match limit, the depth limit, the heap limit, no memory, an internal
  * error. It used to read as "no match": find gave nil, count stopped
  * early, replace left the rest of the text as it was. It is a trap now,
- * naming the operation and PCRE2's own words for the failure (stdout
- * first, status 1, as avant_regex_closed). */
-static void re_trap(const char *op, int rc) {
+ * naming the operation and PCRE2's own words for the failure. A trap:
+ * inside a task or an HTTP handler it fails that task or request alone;
+ * anywhere else stdout is flushed first, then the message, status 1. No
+ * caller holds the cache's lock or a match data of its own here. */
+static __attribute__((noreturn)) void re_trap(const char *op, int rc) {
   PCRE2_UCHAR buf[160];
+  char text[320];
   if (pcre2_get_error_message(rc, buf, sizeof buf) < 0) {
     memcpy(buf, "unknown error", 14);
   }
-  fflush(stdout);
-  fprintf(stderr, "avant runtime: %s: %s (PCRE2 error %d)\n", op,
-          (const char *)buf, rc);
-  exit(1);
+  snprintf(text, sizeof text, "%s: %s (PCRE2 error %d)", op, (const char *)buf, rc);
+  avant_trap_text(text);
 }
 
 /* The JIT's machine stack is 32 KiB unless one is assigned, and a match
@@ -357,10 +358,9 @@ avant_int avant_regex_cache_holds(const char *pat, avant_int flags) {
  * the parameter); past PCRE2's 32-bit field it is the largest it holds. */
 static uint32_t re_limit(const char *name, avant_int v) {
   if (v < 1) {
-    fflush(stdout);
-    fprintf(stderr, "avant runtime: Regex.compile: %s must be at least 1 (got %lld)\n",
-            name, (long long)v);
-    exit(1);
+    char text[160];
+    snprintf(text, sizeof text, "Regex.compile: %s must be at least 1 (got %lld)", name, (long long)v);
+    avant_trap_text(text);
   }
   return v > (avant_int)UINT32_MAX ? UINT32_MAX : (uint32_t)v;
 }
@@ -806,6 +806,10 @@ avant_int avant_regex_count(void *handle, const char *s) {
     }
     if (rc < 0) {
       if (rc != PCRE2_ERROR_NOMATCH) {
+        /* The trap may end only this task: the match data goes first. */
+        if (own) {
+          pcre2_match_data_free(own);
+        }
         re_trap("Regex.count", rc);
       }
       break;
@@ -845,10 +849,8 @@ avant_int avant_regex_error_offset(void) {
   return g_re_off;
 }
 
-/* A Regex used after close: a program error,
- * not an honest "no match". Printed as a trap (stdout first, status 1). */
+/* A Regex used after close: a program error, not an honest "no match".
+ * A trap (re_trap's path). */
 void avant_regex_closed(void) {
-  fflush(stdout);
-  fputs("avant runtime: Regex used after close\n", stderr);
-  exit(1);
+  avant_trap_text("Regex used after close");
 }

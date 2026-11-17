@@ -454,10 +454,9 @@ int64_t avant_json_error_offset(void) {
   return g_json_err_pos;
 }
 
-/* A JsonBuilder used against its contract:
- * what says how. Printed as a trap (stdout first, status 1). */
+/* A JsonBuilder used against its contract: what says how. A trap: inside
+ * a task or an HTTP handler it fails that task or request alone; anywhere
+ * else stdout is flushed first, then the message, status 1. */
 void avant_json_misuse(const char *what) {
-  fflush(stdout);
-  fprintf(stderr, "avant runtime: %s\n", what);
-  exit(1);
+  avant_trap_text(what);
 }

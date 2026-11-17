@@ -165,6 +165,7 @@ fn test_tasks(c: Checks) {
 
   if compiler = env_get("AVANT_COMPILER") {
     task_trap_cases(c, compiler, now_ms())
+    lib_trap_cases(c, compiler, now_ms())
     task_exit_cases(c, compiler, now_ms())
     mutex_recover_cases(c, compiler, now_ms())
   }
@@ -258,6 +259,37 @@ fn task_exit_cases(c: Checks, compiler: String, stamp: Int) {
       c.expect(str_has(out, "before\n") && !str_has(out, "before\nbefore") && !str_has(out, "after"), "task exit ${kind}: the output once, and nothing after the exit: ${out}")
       i += 1
     }
+  }
+}
+
+// The standard library's own traps end the task (tests/fixtures/threads/
+// lib_trap.av): each case's status, stdout and stderr.
+fn lib_trap_cases(c: Checks, compiler: String, stamp: Int) {
+  bin = "${scratch()}/tasks-libtrap-${stamp}.bin"
+  code = compile_av(compiler, "${avant_test_root()}/tests/fixtures/threads/lib_trap.av", bin, "${scratch()}/tasks-libtrap-${stamp}.clog")
+  c.eq_int(code, 0, "the lib-trap fixture compiles")
+  kinds = ["json", "regex-limit", "regex-closed", "main"]
+  statuses = [0, 0, 0, 1]
+  texts = ["JsonBuilder.end: nothing open", "Regex.compile: match_limit must be at least 1 (got 0)", "Regex used after close", "JsonBuilder.key: not inside an object"]
+  i = 0
+  while i < kinds.size {
+    kind = kinds[i]
+    log = "${scratch()}/tasks-libtrap-${stamp}-${kind}.log"
+    elog = "${scratch()}/tasks-libtrap-${stamp}-${kind}.err"
+    args: Array(String) = []
+    args.push("-c")
+    args.push("${bin} ${kind} 2> ${elog}")
+    status = process_run_out("/bin/sh", args, log) ?? -1
+    out = file_read(log) ?? ""
+    err = file_read(elog) ?? ""
+    c.eq_int(status, statuses[i], "lib trap ${kind}: status")
+    if statuses[i] == 0 {
+      c.eq_str(out, "before\ntrapped: ${texts[i]}\nafter\n", "lib trap ${kind}: the task alone ends")
+    } else {
+      c.eq_str(out, "before\n", "lib trap ${kind}: the output before the trap")
+    }
+    c.eq_str(err, "avant runtime: ${texts[i]}\n", "lib trap ${kind}: the trap is printed")
+    i += 1
   }
 }
 
