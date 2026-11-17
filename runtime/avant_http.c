@@ -846,14 +846,19 @@ char *avant_http_req_headers(void *reqp) {
                               raw_len);
 }
 
-/* A response's status outside 100-599:
+/* A handler's status outside 200-599:
  * written as it came, 99999 or -1 gave a status line no client can read
- * (RFC 9110 15: a status code is three digits, its first 1 to 5). The
- * program's error, a trap of the language before any byte of the answer
- * is written (in a handler: the request is answered 500). */
+ * (RFC 9110 15: a status code is three digits, its first 1 to 5), and a
+ * 1xx is an interim answer (15.2), which a client reads past to wait for
+ * the final one that never comes. The program's error, a trap of the
+ * language before any byte of the answer is written (in a handler: the
+ * request is answered 500). The WebSocket upgrade's 101 is the server's
+ * own. */
 __attribute__((noreturn, cold)) static void http_status_trap(avant_int status) {
-  char msg[120];
-  snprintf(msg, sizeof msg, "a response's status %lld is not 100 to 599 (RFC 9110)", (long long)status);
+  char msg[160];
+  snprintf(msg, sizeof msg,
+           "a response's status %lld is not 200 to 599: a handler gives the final answer, never an interim 1xx (RFC 9110)",
+           (long long)status);
   avant_trap_text(msg);
 }
 
@@ -861,7 +866,7 @@ void avant_http_req_respond(void *reqp, avant_int status, const char *head,
                             const char *body) {
   AvantHttpReq *req = (AvantHttpReq *)reqp;
   const char *conn_header = NULL;
-  if (__builtin_expect(status < 100 || status > 599, 0)) {
+  if (__builtin_expect(status < 200 || status > 599, 0)) {
     http_status_trap(status);
   }
   req->responded = 1;

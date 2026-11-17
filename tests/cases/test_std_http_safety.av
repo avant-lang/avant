@@ -25,7 +25,7 @@ import std.http
 // bytes, and one the socket takes in part. And the
 // WebSocket client's deadlines under a step of the wall
 // clock. And the client's request checks; a response
-// literal and a status outside 100-599; a response with
+// literal and a status outside 200-599; a response with
 // two Content-Length values; interim 1xx answers; a
 // Host value that is not host[:port]; the write paths
 // past the piece. And a client sending a request head, a
@@ -628,8 +628,8 @@ fn header_split_cases(c: Checks, root: String) {
     c.eq_int(code, 0, "the header-split fixture compiles")
     value_rule = "a header value holds no CR, LF or other control character but tab (RFC 9110)"
     name_rule = "is not a token: a header name is letters, digits and !#$%&'*+-.^_`|~ (RFC 9110)"
-    status_rule = "is not 100 to 599 (RFC 9110)"
-    kinds = ["crlf", "lf", "cr", "answer", "nul", "del", "name-crlf", "name-space", "name-colon", "name-empty", "status-99", "status-600", "status-neg", "status-big", "ok", "status-100", "status-599"]
+    status_rule = "is not 200 to 599: a handler gives the final answer, never an interim 1xx (RFC 9110)"
+    kinds = ["crlf", "lf", "cr", "answer", "nul", "del", "name-crlf", "name-space", "name-colon", "name-empty", "status-99", "status-600", "status-neg", "status-big", "status-100", "status-101", "status-199", "ok", "status-200", "status-599"]
     lines = [
       "avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): ${value_rule}\n",
       "avant runtime: Response.header value of X-A holds a control character (byte 10 at 1): ${value_rule}\n",
@@ -645,6 +645,9 @@ fn header_split_cases(c: Checks, root: String) {
       "avant runtime: a response's status 600 ${status_rule}\n",
       "avant runtime: a response's status -200 ${status_rule}\n",
       "avant runtime: a response's status 99999999999 ${status_rule}\n",
+      "avant runtime: a response's status 100 ${status_rule}\n",
+      "avant runtime: a response's status 101 ${status_rule}\n",
+      "avant runtime: a response's status 199 ${status_rule}\n",
       "",
       "",
       ""
@@ -672,7 +675,7 @@ fn header_split_cases(c: Checks, root: String) {
       if kind == "ok" {
         c.eq_int(status, 0, "Response.header ${kind}: answered, status 0")
         c.eq_str(wire, "header_split=1 answer(s) 200 Content-Type: text/plain; charset=utf-8|X-Ok!#$%&'*+-.^_`|~: a\\tb \"c\" \\xc3\\xa9|Content-Length: 1|Connection: close", "Response.header ${kind}: the header on the wire as given")
-      } else if kind == "status-100" || kind == "status-599" {
+      } else if kind == "status-200" || kind == "status-599" {
         // The ends of the range are answered.
         c.eq_int(status, 0, "a response's ${kind}: answered, status 0")
         c.eq_str(wire, "header_split=1 answer(s) ${str_slice(kind, 7, kind.size)} Content-Type: text/plain; charset=utf-8|Content-Length: 1|Connection: close", "a response's ${kind}: on the wire")
@@ -1288,7 +1291,7 @@ fn handler_trap_cases(c: Checks, root: String) {
         whats = [
           "index 7 out of bounds (size 3)",
           "division by zero",
-          "a response's status 99 is not 100 to 599 (RFC 9110)",
+          "a response's status 99 is not 200 to 599",
           "Response.header value of X-A holds a control character (byte 13 at 1)",
           "route GET /late registered while the server is serving",
           "index 9 out of bounds (size 3)",
