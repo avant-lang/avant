@@ -33,7 +33,9 @@
 #     run, only those two are read so, not the entries there throughout;
 #   private-tmp: without WAVE_TMP the run is in a private /tmp: an entry
 #     its step leaves in /tmp is red, named, and not in the real /tmp
-#     afterwards (`skip:` where the machine refuses the namespace).
+#     afterwards (`skip:` where the machine refuses the namespace);
+#     private-tmp-paths: a checkout and OUT under /tmp (as inside the
+#     gate's private /tmp) are bound into the run's own.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/wave-final-checks.sh WORK" >&2; exit 2; }
@@ -182,5 +184,13 @@ if unshare --user --map-current-user --mount --keep-caps sh -c 'mount -t tmpfs t
   has "^tmp: red (1 new in /tmp, tmp-new.txt: $lit ; a tmpfs in a mount namespace of its own)" "$s" && [ ! -e "$lit" ]
   say private-tmp $? "$(line tmp: "$s"); real: $(ls -d "$lit" 2>/dev/null)"
   rmdir "$lit" 2>/dev/null
-else echo "skip: private-tmp: this machine refuses the mount namespace"; fi
+  # The checkout and OUT under /tmp (as in the gate's own private /tmp):
+  # bound into the run's private one, OUT made before it.
+  d=$(mktemp -d /tmp/wave-final-checks.XXXXXX)
+  cp -r "$w/nogit" "$d/"
+  final "$d/nogit/side/avant" "$d/out"
+  has '^tmp: unchanged (a tmpfs in a mount namespace of its own)' "$d/out/SUMMARY.txt"
+  say private-tmp-paths $? "$(line tmp: "$d/out/SUMMARY.txt"); $(tail -n 2 "$d/out.log" 2>/dev/null | tr '\n' ';')"
+  rm -rf "$d"
+else echo "skip: private-tmp: this machine refuses the mount namespace"; echo "skip: private-tmp-paths: this machine refuses the mount namespace"; fi
 echo done

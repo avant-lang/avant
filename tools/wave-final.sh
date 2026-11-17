@@ -101,14 +101,18 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 2
 out=$(realpath -m "$1")
 base=${2:+$(realpath -m "$2")}
-[ -e "$out" ] && { echo "wave-final: $out exists" >&2; exit 2; }
+# (OUT is made before the private /tmp, to be bound into it: the run inside
+# finds it made.)
+[ "${WAVE_IN_PRIVATE_TMP:-}" != 1 ] && [ -e "$out" ] && { echo "wave-final: $out exists" >&2; exit 2; }
 case "$out/" in "$root"/results/*) ;; "$root"/*) echo "wave-final: OUT must be under results/ or outside the repository" >&2; exit 2 ;; esac
 # The private /tmp (WAVE_PRIVATE_TMP, default 1; not with WAVE_TMP): the
 # script runs itself again in a mount namespace of its own, on a tmpfs
 # /tmp, as tools/gate.sh does, so the litter check sees what this run
 # leaves and nothing another lane does beside its shared steps. The
-# checkout, OUT and WAVE_LA_SIDE, when under /tmp, are bound into it at
-# the same paths. A machine that refuses the namespace snapshots the real
+# checkout, OUT, BASE_STATS, WAVE_LA_SIDE, WAVE_LR_REFERENCE and
+# WAVE_FLOOR_BASE's directory, when under /tmp, are bound into it at the
+# same paths; any other path under /tmp the steps are given is not seen
+# from outside (WAVE_PRIVATE_TMP=0 for that). A machine that refuses the namespace snapshots the real
 # /tmp, said in the `tmp:` line (another lane's entry can then read red);
 # `require` stops there instead. 0 snapshots the real /tmp.
 pt_mode=${WAVE_PRIVATE_TMP_MODE:-}
@@ -118,18 +122,20 @@ if [ -z "${WAVE_TMP:-}" ] && [ "${WAVE_IN_PRIVATE_TMP:-}" != 1 ]; then
     1|require)
       if pt_why=$(unshare --user --map-current-user --mount --keep-caps sh -c 'mount -t tmpfs tmpfs /tmp' < /dev/null 2>&1); then
         # shellcheck disable=SC2016 # expanded by the inner shell
-        export WF_ROOT="$root" WF_OUT="$out"
+        mkdir -p "$out" || exit 2
+        export WF_ROOT="$root" WF_OUT="$out" WF_BASE="$base" WF_FLOOR="${WAVE_FLOOR_BASE:+$(dirname "$WAVE_FLOOR_BASE")}"
         exec unshare --user --map-current-user --mount --keep-caps sh -c '
           self=$1; shift
           exec 9< /tmp
           mount -t tmpfs tmpfs /tmp || exit 2
-          for p in "$WF_ROOT" "$WF_OUT" "${WAVE_LA_SIDE:-}"; do
+          for p in "$WF_ROOT" "$WF_OUT" "$WF_BASE" "${WAVE_LA_SIDE:-}" "${WAVE_LR_REFERENCE:-}" "$WF_FLOOR"; do
             case "$p" in
-              /tmp/*) mkdir -p "$p" && mount --no-canonicalize --rbind "/proc/self/fd/9${p#/tmp}" "$p" || exit 2 ;;
+              /tmp/*) [ -d "/proc/self/fd/9${p#/tmp}" ] || continue
+                mkdir -p "$p" && mount --no-canonicalize --rbind "/proc/self/fd/9${p#/tmp}" "$p" || exit 2 ;;
             esac
           done
           exec 9<&-
-          exec setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all env -u WF_ROOT -u WF_OUT WAVE_IN_PRIVATE_TMP=1 \
+          exec setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all env -u WF_ROOT -u WF_OUT -u WF_BASE -u WF_FLOOR WAVE_IN_PRIVATE_TMP=1 \
             WAVE_PRIVATE_TMP_MODE="a tmpfs in a mount namespace of its own" sh "$self" "$@"
         ' wave-final "$root/tools/wave-final.sh" "$@" < /dev/null
       fi
