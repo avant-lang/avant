@@ -71,6 +71,7 @@ fn cases: Array(LCase) {
   xs.push(accepted("for-capture-shared-body", "fn main {\n  fs: Array(fn(): Int) = []\n  n = 0\n  for i in 0..3 {\n    k = i * 2\n    fs.push(() { k + n })\n  }\n  n = 1\n  for f in fs {\n    puts(f())\n  }\n}\n", "1\n3\n5\n"))
   xs.push(refused("default-assigns", "fn count(a: Int, f: fn(): Int = () {\n  a = a + 1\n  a\n}): Int {\n  f() + a\n}\n\nfn main {\n  puts(count(5))\n}\n", "the default of f assigns to the earlier parameter a: a default only reads the parameters before it", "1:33"))
   xs.push(accepted("default-reads", "fn count(a: Int, f: fn(): Int = () { a + 1 }): Int {\n  f() + a\n}\n\nfn main {\n  puts(count(5))\n}\n", "11\n"))
+  xs.push(accepted("rebound-captured", "class Server {\n  pub n: Int = 7\n}\n\nfn main {\n  if argv().size < 5 {\n    server = Server.new()\n    f = () { server.n }\n    puts(f())\n  }\n  if argv().size < 6 {\n    server = \"text\"\n    puts(server)\n  }\n  if argv().size < 7 {\n    server = 3\n    g = () { server + 1 }\n    puts(g())\n  }\n}\n", "7\ntext\n4\n"))
   xs.push(accepted("pipes-transition", "fn first_big(xs: Array(Int)): Int {\n  found = -1\n  xs.each { |x|\n    if x > 10 {\n      found = x\n      break\n    }\n  }\n  found\n}\n\nfn report(xs: Array(Int)) {\n  xs.each { |x|\n    if x < 0 {\n      puts(\"negative: \${x}\")\n      return\n    }\n  }\n  puts(\"all good\")\n}\n\nfn main {\n  puts(first_big([3, 12, 40]))\n  report([1, -2, 3])\n  report([1, 2])\n  f = { |a: Int, b: Int| a + b }\n  puts(f(1, 2))\n}\n", "12\nnegative: -2\nall good\n3\n"))
   xs
 }

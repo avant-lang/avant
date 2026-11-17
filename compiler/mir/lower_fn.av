@@ -309,7 +309,7 @@ pub fn (lw: MirLower) name_in_box(name: String): Bool {
 // The local holding name's box in this frame, created (not allocated)
 // on first mention.
 pub fn (lw: MirLower) box_local_of(name: String, t: Ty, loc: Location): Int {
-  if got = lw.lw_cl.box_local.get(name) {
+  if got = lw.lw_cl.box_local.get(mir_box_key(name, t)) {
     return got
   }
   bl = lw.box_layout(t, loc)
@@ -317,8 +317,17 @@ pub fn (lw: MirLower) box_local_of(name: String, t: Ty, loc: Location): Int {
     return 0
   }
   k = lw.lw_b.local(lw.lw_m.types.ref_to(bl), name)
-  lw.lw_cl.box_local[name] = k
+  lw.lw_cl.box_local[mir_box_key(name, t)] = k
   k
+}
+
+// A box by its name and its value's type: two variables of one name and
+// two types in one frame (a captured `server` in one block, another
+// `server` in a sibling block) are two boxes, as their locals are two
+// (lower.av var_key; before, the second stored into the first's box and
+// stopped the MIR verifier).
+pub fn mir_box_key(name: String, t: Ty): String {
+  "${name}|${t.show()}"
 }
 
 // ensure_box (calls.av:1740-1754): the box of a boxed variable of this
@@ -326,7 +335,7 @@ pub fn (lw: MirLower) box_local_of(name: String, t: Ty, loc: Location): Int {
 // the old back end's explicit zero store).
 pub fn (lw: MirLower) ensure_box(name: String, t: Ty, loc: Location): Int {
   k = lw.box_local_of(name, t, loc)
-  if lw.failed() || lw.lw_cl.box_ready.has_key(name) {
+  if lw.failed() || lw.lw_cl.box_ready.has_key(mir_box_key(name, t)) {
     return k
   }
   b = lw.lw_b
@@ -336,7 +345,7 @@ pub fn (lw: MirLower) ensure_box(name: String, t: Ty, loc: Location): Int {
   args.push(b.c_u64(b.types.layouts[bl].size.to_i()))
   args.push(b.c_u32(b.type_id(bl)))
   b.call(k, "avant_alloc", args)
-  lw.lw_cl.box_ready[name] = 1
+  lw.lw_cl.box_ready[mir_box_key(name, t)] = 1
   k
 }
 
@@ -387,7 +396,7 @@ pub fn (lw: MirLower) bind_name(name: String, t: Ty, ty: Int, v: MOperand, loc: 
   if lw.name_in_box(name) {
     if mir_name_index(lw.lw_cl.caps, name) < 0 {
       if fresh {
-        lw.lw_cl.box_ready = mir_without_key(lw.lw_cl.box_ready, name)
+        lw.lw_cl.box_ready = mir_without_key(lw.lw_cl.box_ready, mir_box_key(name, t))
       }
       lw.ensure_box(name, t, loc)
     }
