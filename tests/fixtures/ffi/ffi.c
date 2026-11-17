@@ -946,3 +946,38 @@ int64_t fl_inline_bottom(void) {
   avant_gc_top = saved;
   return 1;
 }
+
+/* c_strings.av: strings C hands to the program. A static buffer C writes
+ * again on the next call, a buffer C frees, a struct with a string
+ * returned by value, a C field and a callback's argument. */
+static char cs_buf[32];
+const char *cs_next(int n) {
+  snprintf(cs_buf, sizeof cs_buf, "call-%d", n);
+  return cs_buf;
+}
+static char *cs_owned;
+const char *cs_fresh(void) {
+  cs_owned = strdup("freed-by-C-later");
+  return cs_owned;
+}
+void cs_free(void) {
+  memset(cs_owned, 'x', strlen(cs_owned));
+  free(cs_owned);
+  cs_owned = NULL;
+}
+typedef struct CsPair { int n; const char *s; } CsPair;
+CsPair cs_pair(void) {
+  CsPair p = { 5, cs_buf };
+  snprintf(cs_buf, sizeof cs_buf, "pair-text");
+  return p;
+}
+typedef struct CsHold { const char *name; int64_t id; } CsHold;
+static CsHold cs_hold = { "held-name", 9 };
+CsHold *cs_holder(void) { return &cs_hold; }
+void cs_rename(const char *s) { cs_hold.name = s; }
+typedef void (*cs_cb)(const char *);
+void cs_call(cs_cb f) {
+  snprintf(cs_buf, sizeof cs_buf, "cb-arg");
+  f(cs_buf);
+  snprintf(cs_buf, sizeof cs_buf, "cb-changed");
+}

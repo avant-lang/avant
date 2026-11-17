@@ -472,29 +472,24 @@ fn mir_rt_fill(t: MRtTable) {
   t.row("avant_task_hold_end", "", "void", c, "")
 }
 
-// The declarations' attributes, each read from the C body at refactor/llvm
-// 053c726. Only `never` rows: a call that cannot collect may let LLVM keep
-// values across it. The string readers end in avant_str_n
-// (runtime/avant_str.c:118-127), which reads the string's header and bytes
-// (its argument), the GC's block, large and side tables through
-// avant_is_heap (runtime/avant_gc_heap.c, gc_is_heap_payload: reads only
-// when its out-parameters are NULL), and g_avant_str_gen (an acquire load,
-// avant_rt.h:70-72: not nosync); it writes only its per-thread length
-// cache (g_len_slots and g_len_victim, static __thread in
-// avant_str.c:77-89, memory no module code can name: inaccessiblemem), and
-// it keeps the pointer in that cache (so no nocapture). It allocates,
-// frees, and unwinds nothing and always returns.
+// The declarations' attributes, each read from the C body. Only `never`
+// rows: a call that cannot collect may let LLVM keep values across it.
+// The string readers end in avant_str_n (runtime/avant_str.c), which reads
+// the string's header (every string carries its length there), and
+// memcmp or a loop over the bytes: they read memory and write none, keep
+// no pointer, take no lock, allocate, free and unwind nothing, and always
+// return.
 fn mir_rt_attrs(t: MRtTable) {
-  str_reader = "nounwind willreturn nofree memory(read, inaccessiblemem: readwrite)"
-  // avant_str.c:524-526: avant_str_n.
+  str_reader = "nounwind willreturn nofree nosync memory(read)"
+  // avant_str_size: avant_str_n.
   t.set_attrs("avant_str_size", str_reader)
-  // avant_str.c:509-522: avant_str_n twice, memcmp.
+  // avant_str_eq: avant_str_n twice, memcmp.
   t.set_attrs("avant_str_eq", str_reader)
   // avant_str.c avant_str_cmp: avant_str_n twice, memcmp.
   t.set_attrs("avant_str_cmp", str_reader)
-  // avant_str.c:539-550: avant_str_n, a byte loop.
+  // avant_checksum_str: avant_str_n, a byte loop.
   t.set_attrs("avant_checksum_str", str_reader)
-  // avant_buf.c:349-362: avant_str_n, field reads of the Buf, memcmp.
+  // avant_buf_starts: avant_str_n, field reads of the Buf, memcmp.
   t.set_attrs("avant_buf_starts", str_reader)
   // avant_buf.c:192-195: one field read of its argument.
   t.set_attrs("avant_buf_size", "nounwind willreturn nofree nosync memory(argmem: read)")

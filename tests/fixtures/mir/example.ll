@@ -4,8 +4,10 @@ target triple = "x86_64-pc-linux-gnu"
 
 %"main.Box" = type { ptr }
 
-@str.0 = private constant [6 x i8] c"small\00", align 1
-@str.1 = private constant [4 x i8] c"%s\0A\00", align 1
+@str.0 = private constant { i64, [6 x i8] } { i64 4611686018427387910, [6 x i8] c"small\00" }, align 8
+@str.1 = private constant { i64, [4 x i8] } { i64 4611686018427387908, [4 x i8] c"%s\0A\00" }, align 8
+
+@avant_str_headered = constant i32 1, align 4
 
 @avant_gc_bump = external thread_local(localexec) global ptr
 @avant_gc_limit = external thread_local(localexec) global ptr
@@ -127,7 +129,7 @@ bb0:
   %t4 = load ptr, ptr @avant_gc_top, align 8
   store ptr %t4, ptr %gcf, align 8
   store volatile ptr %gcf, ptr @avant_gc_top, align 8
-  %t5 = call ptr @"av.main/Box.new"(ptr @str.0)
+  %t5 = call ptr @"av.main/Box.new"(ptr getelementptr inbounds (i8, ptr @str.0, i64 8))
   %t6 = getelementptr inbounds i8, ptr %gcf, i64 24
   store ptr %t5, ptr %t6, align 8
   %t7 = load i64, ptr %_1.n, align 8, !tbaa !9
@@ -231,13 +233,13 @@ bb2:
 bb3:
   %t17 = getelementptr inbounds i8, ptr %gcf, i64 24
   %t18 = load ptr, ptr %t17, align 8, !tbaa !9
-  %t19 = call i32 (ptr, ...) @printf(ptr @str.1, ptr %t18)
+  %t19 = call i32 (ptr, ...) @printf(ptr getelementptr inbounds (i8, ptr @str.1, i64 8), ptr %t18)
   %t20 = call ptr @"av.main/tag"(i64 3)
   %t21 = getelementptr inbounds i8, ptr %gcf, i64 32
   store ptr %t20, ptr %t21, align 8
   %t22 = getelementptr inbounds i8, ptr %gcf, i64 32
   %t23 = load ptr, ptr %t22, align 8, !tbaa !9
-  %t24 = call i32 (ptr, ...) @printf(ptr @str.1, ptr %t23)
+  %t24 = call i32 (ptr, ...) @printf(ptr getelementptr inbounds (i8, ptr @str.1, i64 8), ptr %t23)
   store i32 0, ptr %_0, align 4, !tbaa !9
   call void @__avant_frame_pop(ptr %gcf)
   %t25 = load i32, ptr %_0, align 4
@@ -328,3 +330,5 @@ attributes #0 = { nounwind "frame-pointer"="all" "probe-stack"="inline-asm" }
 !10 = !{!"object field", !1, i64 0}
 !11 = !{!10, !10, i64 0}
 !12 = !{i32 0, i32 -2147483648}
+!13 = !{}
+!14 = !{i32 1, i32 -2147483647}

@@ -768,6 +768,20 @@ static inline char *avant_str_alloc(uint64_t n) {
   return (char *)avant_alloc(n + 1, AVANT_TYPE_BYTES);
 }
 
+/* A static empty string: a string object outside the heap with the
+ * header a literal has (its size the terminator alone, the string tag),
+ * for the runtime's entries that give the program an empty String
+ * without allocating (one per object file; no symbol). */
+typedef struct AvantStaticStr {
+  AvantHeader h;
+  char bytes[8];
+} AvantStaticStr;
+static inline char *avant_str_static_empty(void) {
+  static const AvantStaticStr empty = {{1u, AVANT_TYPE_BYTES, AVANT_FLAG_STRMETA}, {0}};
+  return (char *)empty.bytes;
+}
+#define AVANT_STR_EMPTY (avant_str_static_empty())
+
 static inline void avant_str_tag(void *payload) {
   if (payload) {
     avant_header(payload)->flags =

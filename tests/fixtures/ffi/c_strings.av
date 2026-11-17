@@ -1,0 +1,45 @@
+// Strings C hands to the program are the program's own: each one is
+// copied on the way in (a `fun` result, a `String` field of a struct C
+// returns by value, a `String` field of C memory, a C callback's
+// argument), so its length is its own header's and C may write or free
+// its memory afterwards. Before, the program held C's address: the
+// string changed when C wrote the buffer again, and read freed memory
+// after C freed it.
+
+struct CsPair {
+  n: Int32
+  s: String
+}
+
+lib cs {
+  struct CsHold {
+    name: String
+    id: Int
+  }
+  fun cs_next(n: Int32): String
+  fun cs_fresh: String
+  fun cs_free
+  fun cs_pair: CsPair
+  fun cs_holder: Ptr(CsHold)
+  fun cs_call(f: fn(String))
+}
+
+fn main {
+  a = cs.cs_next(1)
+  b = cs.cs_next(2)
+  puts("${a} ${b} ${a.size}")
+  f = cs.cs_fresh()
+  cs.cs_free()
+  puts("${f} ${f.size}")
+  p = cs.cs_pair()
+  cs.cs_next(3)
+  puts("${p.s} ${p.s.size} ${p.n}")
+  h = cs.cs_holder()
+  name = h.name
+  puts("${name} ${name.size} ${h.id}")
+  cs.cs_call({ |s| puts("callback ${s} ${s.size}") })
+  // A literal with a NUL byte has its whole size in every operation.
+  z = "a\0b"
+  w = z + "c"
+  puts("${z.size} ${w.size} ${w[1]} ${w[3]}")
+}

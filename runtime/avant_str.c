@@ -22,6 +22,34 @@ static char *g_empty;
 
 static char *empty_str(void);
 
+/* A string's length is its header's: every String and Bytes value a
+ * program holds is a string object (a heap one, or a literal the
+ * compiler emitted with the same header), whose header size is the bytes
+ * and the terminator. A C function's result, a C field's string and a C
+ * callback's string argument are copied into the heap on the way in
+ * (avant_c_str), so no bare C pointer is ever a String.
+ *
+ * The program says so by defining avant_str_headered as 1 (the compiler
+ * emits it beside `main`). This weak 0 is what the previous release's
+ * compiler gets, whose code still passes literals without a header and
+ * C strings as they are: the bootstrap's B is that code, and for it the
+ * length is read as before (str_n_compat, below). */
+__attribute__((weak)) int32_t avant_str_headered = 0;
+
+static size_t str_n_compat(const char *s);
+
+size_t avant_str_n(const char *s) {
+  if (!s) {
+    return 0;
+  }
+  if (__builtin_expect(avant_str_headered != 0, 1)) {
+    return (size_t)avant_header((void *)s)->size - 1;
+  }
+  return str_n_compat(s);
+}
+
+/* ---- the previous compiler's strings (avant_str_headered 0) ---- */
+
 /* Short tagged strings keep the length in the header. The NUL check stays
  * inside the same page, so a lookalike header cannot fault. Longer strings
  * and raw C pointers still take the block walk or strlen. */
@@ -122,11 +150,8 @@ static size_t str_n_long(const char *s) {
   return n;
 }
 
-size_t avant_str_n(const char *s) {
+static size_t str_n_compat(const char *s) {
   size_t meta = 0;
-  if (!s) {
-    return 0;
-  }
   if (str_meta_len(s, &meta)) {
     return meta;
   }
@@ -166,23 +191,31 @@ static char *empty_str(void) {
   return g_empty;
 }
 
-/* A C function's `String` result (compiler/mir/lower_ffi.av passes every
- * one through here). C may return
- * an address inside a heap object (`strchr` of a heap string): a root
- * slot may hold one, a reference-typed field may not (the field rule,
- * avant_gc_internal.h: a trace reads the eight bytes before a field's
- * word as a header), and the program may store the result in either. An
- * address outside the collected heap (C's own memory, a literal), null
- * and the exact start of a heap string are returned as they are; an
- * address inside the heap that is not an object's start is returned as a
- * fresh copy of the C string there (to its terminator). The copy
- * allocates, so this is a collecting call: S is a handle across it
- * (dup_bytes_at: a root slot keeps the object S lies in and follows it
- * when it moves). */
+/* A string that came from C: a C function's `String` result, a `String`
+ * field of C memory or of a struct C returned, a C callback's `String`
+ * argument (compiler/mir/lower_ffi.av passes each one through here).
+ * Every String the program holds carries its length in its header, and
+ * an address C hands back has none unless it is the exact start of a
+ * heap string (one the program passed to C, or the runtime's own result:
+ * a heap object of bytes whose header size ends at its terminator): that
+ * one comes back as it is, and null too. Anything else (C's own
+ * memory, a literal of C, the inside of a heap object, which a
+ * reference-typed field may not hold either: avant_gc_internal.h) comes
+ * back as a fresh heap copy of the C string there, to its terminator, so
+ * C may free or change its memory afterwards. The copy allocates, so
+ * this is a collecting call: S is a handle across it (dup_bytes_at: a
+ * root slot keeps the object S lies in and follows it when it moves, and
+ * leaves C's memory alone). */
 char *avant_c_str(char *s) {
   size_t n;
-  if (!avant_gc_interior(s)) {
+  if (!s) {
     return s;
+  }
+  if (((uintptr_t)s & 7u) == 0 && avant_is_heap(s)) {
+    AvantHeader *h = avant_header(s);
+    if (h->type_id == AVANT_TYPE_BYTES && h->size > 0 && s[h->size - 1] == 0) {
+      return s;
+    }
   }
   n = strlen(s);
   avant_size_check(n, AVANT_SIZE_STRING);
@@ -191,10 +224,10 @@ char *avant_c_str(char *s) {
 
 char *avant_str_concat(const char *a, const char *b) {
   if (!a) {
-    a = "";
+    a = AVANT_STR_EMPTY;
   }
   if (!b) {
-    b = "";
+    b = AVANT_STR_EMPTY;
   }
   size_t na = avant_str_n(a);
   size_t nb = avant_str_n(b);
@@ -279,7 +312,7 @@ static void check_range(size_t n, avant_int start, avant_int stop, size_t *out_i
 char *avant_str_slice(const char *s, avant_int start, avant_int stop) {
   char *r;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
   size_t i = 0;
   size_t len = 0;
@@ -582,7 +615,7 @@ char *avant_str_cat_int(const char *prefix, avant_int n) {
     }
   }
   if (!prefix) {
-    prefix = "";
+    prefix = AVANT_STR_EMPTY;
   }
   size_t np = avant_str_n(prefix);
   size_t neg = n < 0 ? 1u : 0u;
@@ -904,10 +937,10 @@ char *avant_str_fmt_float(double v, avant_int prec) {
 
 int32_t avant_str_eq(const char *a, const char *b) {
   if (!a) {
-    a = "";
+    a = AVANT_STR_EMPTY;
   }
   if (!b) {
-    b = "";
+    b = AVANT_STR_EMPTY;
   }
   size_t na = avant_str_n(a);
   size_t nb = avant_str_n(b);
@@ -921,10 +954,10 @@ int32_t avant_str_eq(const char *a, const char *b) {
  * first, as sort orders Strings (avant_array.c str_cmp_raw); -1, 0 or 1. */
 int32_t avant_str_cmp(const char *a, const char *b) {
   if (!a) {
-    a = "";
+    a = AVANT_STR_EMPTY;
   }
   if (!b) {
-    b = "";
+    b = AVANT_STR_EMPTY;
   }
   size_t na = avant_str_n(a);
   size_t nb = avant_str_n(b);
@@ -966,8 +999,19 @@ int32_t avant_checksum_str(const char *s) {
 
 int32_t avant_checksum_f64(double v) {
   char buf[32];
-  snprintf(buf, sizeof(buf), "%.7f", v);
-  return avant_checksum_str(buf);
+  uint32_t hash = 5381u;
+  int k = snprintf(buf, sizeof(buf), "%.7f", v);
+  int i;
+  if (k < 0) {
+    k = 0;
+  }
+  if ((size_t)k >= sizeof(buf)) {
+    k = (int)sizeof(buf) - 1;
+  }
+  for (i = 0; i < k; i++) {
+    hash = ((hash << 5) + hash) + (unsigned char)buf[i];
+  }
+  return (int32_t)hash;
 }
 
 static int is_ascii_space(unsigned char c) {
@@ -979,7 +1023,7 @@ char *avant_str_strip(const char *s, int32_t mode) {
   size_t i = 0;
   size_t len;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
   len = avant_str_n(s);
   if (mode == 0 || mode == 1) {
@@ -1040,10 +1084,10 @@ void *avant_str_split(const char *s, const char *sep) {
   int32_t count = 1;
   AvantArray *a = NULL;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
   if (!sep) {
-    sep = "";
+    sep = AVANT_STR_EMPTY;
   }
   n = avant_str_n(s);
   m = avant_str_n(sep);
@@ -1087,7 +1131,7 @@ void *avant_str_fields(const char *s) {
   int32_t count = 0;
   AvantArray *a = NULL;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
   n = avant_str_n(s);
   while (i < n) {
@@ -1188,7 +1232,7 @@ static int utf8_valid(const unsigned char *s, size_t n) {
 char *avant_str_from_utf8(const char *s, int32_t *found) {
   size_t n;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
   n = avant_str_n(s);
   if (!utf8_valid((const unsigned char *)s, n)) {
@@ -1261,7 +1305,7 @@ static void *chars_build(const char *s, const char *type) {
   int32_t count = 0;
   AvantArray *a = NULL;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
   n = avant_str_n(s);
   if (!utf8_valid((const unsigned char *)s, n)) {

@@ -492,7 +492,7 @@ uint8_t *avant_buf_bytes(void *buf) {
 int32_t avant_buf_starts(void *buf, const char *s) {
   AvantBuf *b = (AvantBuf *)buf;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
   size_t n = avant_str_n(s);
   if (n == 0) {

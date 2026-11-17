@@ -436,10 +436,26 @@ pub fn (lw: MirLower) lower_field(e: Expr): MOperand {
       raw2 = lw.tmp(mt_i32(), lw.lw_b.rv_use(lw.lw_b.copy(p2)))
       return lw.enum_from_c(raw2, et, e.loc)
     }
+    // A field declared a plain `String` traps on a NULL first
+    // (c_field_string_read); `String?` reads NULL as nil.
+    got: MOperand = lw.lw_b.c_i32(0)
     if fname = lw.c_field_string(e) {
-      return lw.c_field_string_read(e, fname)
+      got = lw.c_field_string_read(e, fname)
+    } else {
+      got = lw.lower_place_read(e)
     }
-    return lw.lower_place_read(e)
+    if ft = e.ty, lw.c_ret_string(ft) {
+      // A `String` field of C memory: through avant_c_str, so the
+      // program keeps a string with its length (lower_ffi.av
+      // c_string_owned).
+      if lw.failed() {
+        return got
+      }
+      v = lw.lw_b.temp(lw.ety(e))
+      lw.lw_b.assign(lw.lw_b.pl(v), lw.lw_b.rv_use(got))
+      return lw.c_string_owned(v)
+    }
+    return got
   }
   lw.internal(e.loc, "the field .${e.ident}")
   lw.lw_b.c_i32(0)

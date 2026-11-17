@@ -74,6 +74,7 @@ static char *make_bytes(const char *p, size_t n) {
     memcpy(out, p, n);
   }
   out[n] = 0;
+  avant_str_tag(out);
   return out;
 }
 
@@ -107,6 +108,7 @@ static char *build_packed_headers(struct phr_header *headers, size_t count,
     memcpy(out + 4 + count * 16, raw, raw_len);
   }
   out[total] = 0;
+  avant_str_tag(out);
   return out;
 }
 
@@ -724,10 +726,11 @@ static void conn_finish(Conn *conn, struct us_socket_t *s) {
  * The prefix is assembled by hand: a hello-world response costs two
  * snprintf calls per request otherwise, which profiling put at about
  * a seventh of the loop thread's user time. */
+/* BODY is BODY_LEN bytes: the program's Bytes (its header's length) or
+ * a C text of the runtime's own (a reason phrase, its strlen). */
 static void write_response(Conn *conn, struct us_socket_t *s, int32_t status,
-                           const char *head, const char *body,
+                           const char *head, const char *body, size_t body_len,
                            const char *conn_header) {
-  size_t body_len = avant_str_n(body);
   size_t head_len = head ? strlen(head) : 0;
   char prefix[4096];
   size_t n = 0;
@@ -783,7 +786,7 @@ static void send_error(Conn *conn, struct us_socket_t *s, int32_t status) {
   const char *phrase = reason_phrase(status);
   conn_wait_end(conn, s);
   write_response(conn, s, status, "Content-Type: text/plain\r\n", phrase,
-                 "close");
+                 strlen(phrase), "close");
   conn_finish(conn, s);
 }
 
@@ -881,7 +884,7 @@ void avant_http_req_respond(void *reqp, avant_int status, const char *head,
     conn_header = "keep-alive";
   }
   write_response(req->conn, req->sock, (int32_t)status, head, body,
-                 conn_header);
+                 avant_str_n(body), conn_header);
 }
 
 static int ascii_ieq_contains(const char *p, size_t n, const char *needle) {
@@ -2236,7 +2239,7 @@ static void conn_process(Conn *conn, struct us_socket_t *s) {
     }
     if (trapped && !req.responded) {
       write_response(conn, s, 500, "Content-Type: text/plain\r\n",
-                     "Internal Server Error",
+                     "Internal Server Error", strlen("Internal Server Error"),
                      !keep_alive ? "close"
                                  : minor_version == 0 ? "keep-alive" : NULL);
     }

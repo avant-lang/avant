@@ -551,44 +551,39 @@ fn ll_alloc_birth(e: LlEmit, r: String, birth: Bool): String {
   r
 }
 
-// _d = call avant_c_str(_s): a C function's `String` result (the Valk
-// stage; mir/lower_ffi.av c_string_owned). Only an address inside the
-// collected heap can need the runtime (it may name the inside of an
-// object, which a field may not hold), so the range test is here: the
-// address less the heap's first byte, compared with the heap's reserved
-// size (two globals the runtime sets once, when it reserves the heap;
-// both zero before, and then no address passes). C's own memory, a
-// literal and null pay the subtraction and the compare, and never the
-// call. The call form when inline fast paths are off.
-pub fn ll_c_str(e: LlEmit, args: Array(MOperand)): String {
-  e.used_heap_globals = true
-  e.need("avant_c_str")
-  e.need_intrinsic("declare i1 @llvm.expect.i1(i1, i1)")
+// A static string's header word (runtime/avant_rt.h, AvantHeader): the
+// size, N bytes and the terminator, in the low 32 bits; the type id of
+// bytes (0); and the string tag (AVANT_FLAG_STRMETA, 0x4000) in the top
+// 16 bits, without the heap flag.
+pub fn ll_str_header(n: Int): Int {
+  (0x4000 << 48) + n + 1
+}
+
+// _d = call avant_str_size(_s): a string's size is its header's, the
+// bytes and the terminator (every String and Bytes value is a string
+// object: a heap one, or a literal, ll_str_header). A null string, which
+// the runtime reads as empty, reads the header of the static empty
+// string @str.nil instead (a select, no branch). A live string's header
+// never changes, so the load is invariant: LLVM may hoist it out of a
+// loop and merge two of the same string. The call form when inline fast
+// paths are off.
+pub fn ll_str_size(e: LlEmit, args: Array(MOperand)): String {
+  e.used_str_nil = true
+  e.used_tbaa = true
   s = e.value(args[0])
-  lo = e.tmp()
-  e.line("${lo} = load i64, ptr @avant_gc_heap_lo, align 8")
-  si = e.tmp()
-  e.line("${si} = ptrtoint ptr ${s} to i64")
-  off = e.tmp()
-  e.line("${off} = sub i64 ${si}, ${lo}")
-  len = e.tmp()
-  e.line("${len} = load i64, ptr @avant_gc_heap_len, align 8")
-  inh = e.tmp()
-  e.line("${inh} = icmp ult i64 ${off}, ${len}")
-  x = e.tmp()
-  e.line("${x} = call i1 @llvm.expect.i1(i1 ${inh}, i1 false)")
-  head = e.label
-  own = e.part("cstr")
-  cont = e.part("cstrd")
-  e.line("br i1 ${x}, label %${own}, label %${cont}")
-  e.block(own)
-  r = e.tmp()
-  e.line("${r} = call ptr @avant_c_str(ptr ${s})")
-  e.line("br label %${cont}")
-  e.block(cont)
-  p = e.tmp()
-  e.line("${p} = phi ptr [ ${s}, %${head} ], [ ${r}, %${own} ]")
-  p
+  isn = e.tmp()
+  e.line("${isn} = icmp eq ptr ${s}, null")
+  q = e.tmp()
+  e.line("${q} = select i1 ${isn}, ptr getelementptr inbounds (i8, ptr @str.nil, i64 8), ptr ${s}")
+  h = e.tmp()
+  e.line("${h} = getelementptr inbounds i8, ptr ${q}, i64 -8")
+  sz = e.tmp()
+  e.line("${sz} = load i32, ptr ${h}, align 8, !invariant.load !13, !range !14")
+  w = e.tmp()
+  e.line("${w} = zext i32 ${sz} to i64")
+  n = e.tmp()
+  e.line("${n} = sub nuw nsw i64 ${w}, 1")
+  n
 }
 
 // The safepoint poll at a loop head of a shared module: a volatile load

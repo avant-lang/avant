@@ -143,7 +143,7 @@ static void last_key_reset(void) {
     g_last_key_rooted = 1;
     avant_gc_add_root((void **)&g_last_key);
   }
-  g_last_key = "";
+  g_last_key = AVANT_STR_EMPTY;
 }
 
 /* What a lookup of an absent key points at: zeros, read by the generated
@@ -250,11 +250,11 @@ static uint32_t hash_int(int64_t k, uint32_t seed) {
 
 static int bytes_eq(const char *a, size_t na, const char *b, size_t nb) {
   if (!a) {
-    a = "";
+    a = AVANT_STR_EMPTY;
     na = 0;
   }
   if (!b) {
-    b = "";
+    b = AVANT_STR_EMPTY;
     nb = 0;
   }
   return na == nb && memcmp(a, b, na) == 0;
@@ -1860,7 +1860,7 @@ avant_int avant_hash_inc_slice(void *hp, const char *s, avant_int start, avant_i
   const char *p = NULL;
   size_t n = 0;
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
   check_slice(s, start, stop, &p, &n);
   size_t off = (size_t)(p - s);
@@ -1895,7 +1895,7 @@ avant_int avant_hash_inc_slice(void *hp, const char *s, avant_int start, avant_i
 }
 
 const char *avant_hash_last_key(void) {
-  return g_last_key ? g_last_key : "";
+  return g_last_key ? g_last_key : AVANT_STR_EMPTY;
 }
 
 const char *avant_hash_get_str_slice(void *hp, const char *s, avant_int start, avant_int stop, int32_t *found) {
@@ -1904,7 +1904,7 @@ const char *avant_hash_get_str_slice(void *hp, const char *s, avant_int start, a
     *found = 0;
   }
   if (!h || !is_str_str(h)) {
-    return "";
+    return AVANT_STR_EMPTY;
   }
   const char *p = NULL;
   size_t n = 0;
@@ -1913,7 +1913,7 @@ const char *avant_hash_get_str_slice(void *hp, const char *s, avant_int start, a
   int32_t e = 0;
   int32_t pos = 0;
   if (!find_bytes(h, p, n, hash_bytes(p, n, h->seed), &e, &pos)) {
-    return "";
+    return AVANT_STR_EMPTY;
   }
   if (found) {
     *found = 1;
@@ -1943,14 +1943,14 @@ static uint32_t hash_concat_bytes(const char *a, size_t na, const char *b, size_
 
 static int bytes_eq_concat(const char *slot, size_t ns, const char *a, size_t na, const char *b, size_t nb) {
   if (!slot) {
-    slot = "";
+    slot = AVANT_STR_EMPTY;
   }
   if (!a) {
-    a = "";
+    a = AVANT_STR_EMPTY;
     na = 0;
   }
   if (!b) {
-    b = "";
+    b = AVANT_STR_EMPTY;
     nb = 0;
   }
   if (ns != na + nb) {

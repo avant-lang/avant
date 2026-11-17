@@ -347,8 +347,15 @@ pub fn (lw: MirLower) lower_join(e: Expr, recv: Expr): MOperand {
   b.assign(b.pl(out), b.rv_use(v))
   b.goto(done)
   b.at(bad)
-  st = lw.call_to(mt_str(), "avant_join_site", lw.one(b.copy_local(h)))
-  v2 = lw.call_to(ety, sym, lw.three(b.copy_local(rl), b.copy_local(w), st))
+  // The trap's text and site are C memory the runtime kept: copied into
+  // strings that carry their length (lower_ffi.av c_string_owned).
+  st = b.temp(mt_str())
+  b.call(st, "avant_join_site", lw.one(b.copy_local(h)))
+  wt = lw.c_string_owned(w)
+  wl = b.temp(mt_str())
+  b.assign(b.pl(wl), b.rv_use(wt))
+  sv = lw.c_string_owned(st)
+  v2 = lw.call_to(ety, sym, lw.three(b.copy_local(rl), b.copy_local(wl), sv))
   b.assign(b.pl(out), b.rv_use(v2))
   b.goto(done)
   b.at(done)

@@ -985,7 +985,7 @@ const char *avant_array_min_str(void *arr, int32_t *found) {
   int32_t i;
   const char *best;
   if (found) { *found = 0; }
-  if (!a || !a->buf || a->size <= 0) { return ""; }
+  if (!a || !a->buf || a->size <= 0) { return AVANT_STR_EMPTY; }
   best = ((char **)a->buf)[0];
   for (i = 1; i < a->size; i++) { const char *v = ((char **)a->buf)[i]; if (str_cmp_raw(v, best) < 0) { best = v; } }
   if (found) { *found = 1; }
@@ -1059,7 +1059,7 @@ const char *avant_array_max_str(void *arr, int32_t *found) {
   int32_t i;
   const char *best;
   if (found) { *found = 0; }
-  if (!a || !a->buf || a->size <= 0) { return ""; }
+  if (!a || !a->buf || a->size <= 0) { return AVANT_STR_EMPTY; }
   best = ((char **)a->buf)[0];
   for (i = 1; i < a->size; i++) { const char *v = ((char **)a->buf)[i]; if (str_cmp_raw(v, best) > 0) { best = v; } }
   if (found) { *found = 1; }

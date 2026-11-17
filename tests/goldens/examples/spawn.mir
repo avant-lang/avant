@@ -15,6 +15,7 @@ typemap 1 %task.TaskError stride 0 bits [0x3]
 
 extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
+extern avant_c_str(ref str) -> ref str collects
 extern avant_exit(i32) -> void never noreturn
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_join(ref) -> i64 collects
@@ -45,25 +46,31 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @spawn.av:5:1 {
   let _5: ref slot
   let _6: i64
   let _7: i64
-  let _8: ref str
+  let _8: ref str slot
   let _9: %(Int|task.TaskError)
   let _10: bool
   let _11: %(Int|task.TaskError)
-  let _12: ref str
-  let _13: %(Int|task.TaskError)
-  let _14: i64
-  let _15: i32
-  let _16: bool
-  let _17: ref %task.TaskError
-  let _18 (e): ref %task.TaskError
-  let _19: ref str
-  let _20: i64
-  let _21 (v): i64
+  let _12: ref str slot
+  let _13: ref str
+  let _14: ref str slot
+  let _15: ref str
+  let _16: %(Int|task.TaskError)
+  let _17: i64
+  let _18: i32
+  let _19: bool
+  let _20: ref %task.TaskError
+  let _21 (e): ref %task.TaskError
+  let _22: ref str
+  let _23: i64
+  let _24 (v): i64
 
 bb0:
   _5 = zero   @5:1
+  _8 = zero   @5:1
+  _12 = zero   @5:1
+  _14 = zero   @5:1
   gc.enter   @5:1
-  gc.roots _2, _5   @5:1
+  gc.roots _2, _5, _8, _12, _14   @5:1
   call __avant_type_maps() nocollect   @5:1
   call avant_io_init_argv(copy _1, copy _2) collects   @5:1
   _3 = call avant_spawn(const fn av.spawn/main#spawn1, const ref null) collects   @6:7
@@ -82,32 +89,35 @@ bb1:
 
 bb2:
   _12 = call avant_join_site(copy _5) nocollect   @9:8
-  _13 = call av.task/__avant_join_result(copy _7, copy _8, copy _12) collects   @9:8
-  _9 = copy _13   @9:8
+  _13 = call avant_c_str(copy _8) collects   @9:8
+  _14 = copy _13   @9:8
+  _15 = call avant_c_str(copy _12) collects   @9:8
+  _16 = call av.task/__avant_join_result(copy _7, copy _14, copy _15) collects   @9:8
+  _9 = copy _16   @9:8
   goto bb3   @9:8
 
 bb3:
-  _15 = copy _9.0   @9:16
-  _16 = eq copy _15, const i32 1   @9:16
-  branch copy _16, bb4, bb5   @9:16
+  _18 = copy _9.0   @9:16
+  _19 = eq copy _18, const i32 1   @9:16
+  branch copy _19, bb4, bb5   @9:16
 
 bb4:
-  _17 = copy _9.2   @9:16
-  _18 = copy _17   @9:16
-  _19 = call av.task/TaskError.__avant_error_text(copy _18) collects   @10:13
-  call avant_puts_str(copy _19) nocollect   @10:5
+  _20 = copy _9.2   @9:16
+  _21 = copy _20   @9:16
+  _22 = call av.task/TaskError.__avant_error_text(copy _21) collects   @10:13
+  call avant_puts_str(copy _22) nocollect   @10:5
   _0 = const i32 0   @11:5
   call avant_exit(copy _0) nocollect   @11:5
   unreachable   @11:5
 
 bb5:
-  _20 = copy _9.1   @11:5
-  _14 = copy _20   @11:5
+  _23 = copy _9.1   @11:5
+  _17 = copy _23   @11:5
   goto bb6   @11:5
 
 bb6:
-  _21 = copy _14   @9:5
-  call avant_puts_i64(copy _21) nocollect   @13:3
+  _24 = copy _17   @9:5
+  call avant_puts_i64(copy _24) nocollect   @13:3
   _0 = const i32 0   @5:1
   call avant_exit(copy _0) nocollect   @5:1
   unreachable   @5:1

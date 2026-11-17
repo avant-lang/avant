@@ -388,7 +388,7 @@ void *avant_regex_compile(const char *pat, avant_int flags,
   char *copy;
   ReLimits lim;
   if (!pat) {
-    pat = "";
+    pat = AVANT_STR_EMPTY;
   }
   int32_t fl = flags ? 1 : 0;
   lim.match = re_limit("match_limit", match_limit);
@@ -668,7 +668,7 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
     return -1;
   }
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
   if (avant_re2c_owns(handle)) {
     int32_t local[4];
@@ -761,7 +761,7 @@ avant_int avant_regex_count(void *handle, const char *s) {
     return 0;
   }
   if (!s) {
-    s = "";
+    s = AVANT_STR_EMPTY;
   }
   if (avant_re2c_owns(handle)) {
     return avant_re2c_count((int32_t)(uintptr_t)handle, s);

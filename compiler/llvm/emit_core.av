@@ -35,9 +35,9 @@ pub class LlEmit {
   pub used_alloc_globals: Bool = false
   pub used_alloc_slow: Bool = false
   pub used_poll_global: Bool = false
-  pub used_heap_globals: Bool = false
   pub used_frame_global: Bool = false
   pub used_frame_helpers: Bool = false
+  pub used_str_nil: Bool = false
   pub frame_words: Int = -1
   pub frame_at: Array(Int)
   pub frame_align: Int = 8
@@ -427,7 +427,7 @@ pub class LlEmit {
       return "null"
     }
     if k == mok_str() {
-      return "@str.${o.sid}"
+      return "getelementptr inbounds (i8, ptr @str.${o.sid}, i64 8)"
     }
     ll_sym(o.text)
   }
@@ -501,7 +501,7 @@ pub fn ll_type_text(ts: MTypes, ty: Int): String {
 // the task ended) and keeps every later fact about other memory from
 // letting LLVM merge or hoist the read. Stores stay plain: generated code
 // writes the word only into a new array, before any task can hold it.
-pub fn ll_tbaa_last: Int { 12 }
+pub fn ll_tbaa_last: Int { 14 }
 
 // An Array's or Buf's size is never negative (at most the runtime's
 // ceiling, 2^31 - 1, avant_size_check), so its loads carry the range
@@ -534,7 +534,7 @@ pub fn ll_tbaa_tag(region: Int): String {
 }
 
 pub fn ll_tbaa_nodes: String {
-  "!1 = !{!\"avant alias\"}\n!2 = !{!\"element\", !1, i64 0}\n!3 = !{!2, !2, i64 0}\n!4 = !{!\"buffer reference\", !1, i64 0}\n!5 = !{!4, !4, i64 0}\n!6 = !{!\"size\", !1, i64 0}\n!7 = !{!6, !6, i64 0}\n!8 = !{!\"local\", !1, i64 0}\n!9 = !{!8, !8, i64 0}\n!10 = !{!\"object field\", !1, i64 0}\n!11 = !{!10, !10, i64 0}\n!12 = !{i32 0, i32 -2147483648}\n"
+  "!1 = !{!\"avant alias\"}\n!2 = !{!\"element\", !1, i64 0}\n!3 = !{!2, !2, i64 0}\n!4 = !{!\"buffer reference\", !1, i64 0}\n!5 = !{!4, !4, i64 0}\n!6 = !{!\"size\", !1, i64 0}\n!7 = !{!6, !6, i64 0}\n!8 = !{!\"local\", !1, i64 0}\n!9 = !{!8, !8, i64 0}\n!10 = !{!\"object field\", !1, i64 0}\n!11 = !{!10, !10, i64 0}\n!12 = !{i32 0, i32 -2147483648}\n!13 = !{}\n!14 = !{i32 1, i32 -2147483647}\n"
 }
 
 pub fn mir_loc0: MLoc {
