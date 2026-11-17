@@ -974,7 +974,16 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     buf.push_str(" ")
     buf.push_str(p.target)
     buf.push_str(" HTTP/1.1\r\nHost: ")
-    buf.push_str(p.authority)
+    // A caller's Host replaces the URL's (it reaches a virtual host by
+    // address); its value was checked as any header's. Sent beside the
+    // URL's, it made two Host lines, which a server refuses.
+    host_value = p.authority
+    for h in headers {
+      if name_is(h.name, "host") {
+        host_value = h.value
+      }
+    }
+    buf.push_str(host_value)
     buf.push_str("\r\n")
     i = 0
     // Content-Length and Connection are the client's (the request's
@@ -982,7 +991,7 @@ fn http_fetch_once(method: String, url: String, body: Bytes, headers: Array(Head
     // Content-Length line from the caller was a second reading of where
     // the body ends, as Response.header skips them.
     while i < headers.size {
-      if !is_managed_header(headers[i].name) {
+      if !is_managed_header(headers[i].name) && !name_is(headers[i].name, "host") {
         buf.push_str(headers[i].name)
         buf.push_str(": ")
         buf.push_str(headers[i].value)

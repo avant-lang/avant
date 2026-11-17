@@ -872,6 +872,17 @@ fn client_request_cases(c: Checks, root: String) {
   ok.push(Header { name: "Connection", value: "keep-alive" })
   c.eq_str(outcome(Http.request("POST", "${base}/echo", "abc".bytes, ok, false, 4000)), "200 POST /echo HTTP/1.1|Host: 127.0.0.1:${port}|X-Ok!#$%&'*+-.^_`|~: a\tb \"c\" ${chr(195)}${chr(169)}|Content-Length: 3|Connection: close", "a valid request is sent as given, without the caller's Content-Length and Connection")
   c.eq_str(outcome(Http.get("${base}/echo?q=%41~", false, 4000)), "200 GET /echo?q=%41~ HTTP/1.1|Host: 127.0.0.1:${port}|Content-Length: 0|Connection: close", "a valid target is sent as given")
+  // A caller's Host was sent beside the URL's: two Host lines, which a
+  // server refuses. It replaces the URL's, in any case of its name.
+  for name in ["Host", "host", "HOST"] {
+    vh: Array(Header) = []
+    vh.push(Header { name: "X-A", value: "1" })
+    vh.push(Header { name: name, value: "example.test:8080" })
+    c.eq_str(outcome(Http.request("GET", "${base}/echo", "".bytes, vh, false, 4000)), "200 GET /echo HTTP/1.1|Host: example.test:8080|X-A: 1|Content-Length: 0|Connection: close", "a caller's ${name} replaces the URL's: one Host line")
+  }
+  bad_host: Array(Header) = []
+  bad_host.push(Header { name: "Host", value: "a\r\nX-Injected: 1" })
+  c.eq_str(outcome(Http.request("GET", "${base}/echo", "".bytes, bad_host, false, 4000)), "invalid request header value of Host (byte 13 at 1): ${value_rule}", "a caller's Host is checked as any value")
   if resp = Http.get("${base}/__stop", true, 4000) {
   }
   c.eq_int(server.join() ?? -1, 0, "the echo server ends")
