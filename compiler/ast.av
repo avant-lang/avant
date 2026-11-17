@@ -337,6 +337,11 @@ pub class Stmt {
   // struct, a place: the checker writes each use as an index and the
   // store is not made.
   pub for_kind: Int = 0
+  // A range `for`'s step of its counter (`i = i + 1`): when a lambda
+  // captures the counter, the step binds a new cell, so each iteration's
+  // lambdas keep that iteration's value (the element's store, for_kind 4,
+  // does the same).
+  pub step: Bool = false
   pub declared: TypeName? = nil
   pub lead: Int = 0
   // An `if` with an else at a function's tail whose branches end in
@@ -1190,6 +1195,7 @@ pub fn clone_stmt(s: Stmt): Stmt {
     i += 1
   }
   out.for_kind = s.for_kind
+  out.step = s.step
   out.lead = s.lead
   if t = s.declared {
     out.declared = clone_type_name(t)

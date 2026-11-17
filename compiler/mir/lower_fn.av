@@ -478,6 +478,13 @@ pub fn (lw: MirLower) box_assign(st: Stmt, t: Expr, tt: Ty, ty: Int) {
       if lw.failed() {
         return
       }
+      if st.for_kind == 4 || st.step {
+        // A `for` variable a lambda captures: each iteration binds a new
+        // cell (the value computed from the old one first), so a lambda
+        // made in one iteration keeps that iteration's value.
+        lw.bind_name(t.ident, tt, ty, val, st.loc, true)
+        return
+      }
       lw.box_store(t.ident, tt, val, st.loc)
       return
     }
