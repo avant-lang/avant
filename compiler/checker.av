@@ -100,6 +100,9 @@ pub class Checker {
   pub bounds_ready: Bool = false
   pub bound_done: Int = 0
   pub in_bounds: Bool = false
+  // The resolver's Hash types with a struct key (checker/equality.av
+  // check_hash_key_uses), read up to hash_key_done once bounds_ready.
+  pub hash_key_done: Int = 0
   // The type parameters of the function being inferred that are bounded
   // by Error (`E: Error`): in a union they take the members marked Error.
   pub infer_err_params: Array(String) = []
@@ -454,7 +457,7 @@ pub class Checker {
       self.resolver_pushes = self.resolver.errors.pushes
     }
     self.resolver_kept = self.resolver_pulled
-    if self.bounds_ready && !self.in_bounds && self.bound_done < self.resolver.bound_uses.size {
+    if self.bounds_ready && !self.in_bounds && (self.bound_done < self.resolver.bound_uses.size || self.hash_key_done < self.resolver.hash_key_uses.size) {
       check_bound_uses()
     }
     if self.ready_adopt && !self.in_adopt {
@@ -3086,6 +3089,10 @@ pub class Checker {
       self.pull_resolve()
     }
     why = hash_type_problem(key, val)
+    if why.size == 0 && key.is_struct() {
+      seen: Array(String) = []
+      why = hash_key_problem(key, seen, "")
+    }
     if why.size > 0 {
       fail(expr.loc, why)
       return t_int()

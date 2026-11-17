@@ -881,15 +881,17 @@ pub fn ty_hash(key: Ty, val: Ty): Ty {
 }
 
 // Why Hash(K, V) is not built for this key and value, or "" when it is.
-// A key is an integer of any width, a Bool, an enum or a String: a value
-// whose `==` a hash can agree with. A value is any of those or a Float64.
+// A key is an integer of any width, a Bool, an enum, a String or a
+// struct of those: a value whose `==` a hash can agree with (a struct's
+// fields and its own == are the checker's, hash_key_problem, once its
+// fields and methods are known). A value is any of those or a Float64.
 // A type parameter is checked where it is bound.
 pub fn hash_type_problem(k: Ty, v: Ty): String {
   if k.is_float() {
     return "a Hash key cannot be a Float64: its == follows IEEE 754 (NaN is not equal to itself, -0.0 equals 0.0), so no hash agrees with it; use an integer key (a fixed-point value, or an index)"
   }
-  if !(k.is_integer() || k.is_bool() || k.is_enum() || k.is_string() || k.is_var()) {
-    return "a Hash key is an integer, a Bool, an enum or a String, not ${k.show()}"
+  if !(k.is_integer() || k.is_bool() || k.is_enum() || k.is_string() || k.is_struct() || k.is_var()) {
+    return "a Hash key is an integer, a Bool, an enum, a String or a struct of those, not ${k.show()}"
   }
   if !(v.is_integer() || v.is_bool() || v.is_float() || v.is_enum() || v.is_string() || v.is_var()) {
     return "Hash values of type ${v.show()} are not built yet: a value is a number, a Bool, an enum or a String; a Hash from the key to an index into an Array(${v.show()}) does the same"

@@ -361,14 +361,27 @@ avant_int avant_wide_hi(void);
 
 /* Hash(K, V) (avant_hash.c). The descriptor avant_hash_create takes: the
  * key's width in bytes (AVANT_HASH_K_WIDTH: 1, 2, 4 or 8), whether an
- * integer key is signed, whether the key is a String; the value's width
- * (shifted by AVANT_HASH_V_SHIFT) and whether it is a reference. */
+ * integer key is signed, whether the key is a String or a struct the
+ * generated code passes by address (AVANT_HASH_K_STRUCT); the value's
+ * width (shifted by AVANT_HASH_V_SHIFT) and whether it is a reference.
+ * avant_hash_create_typed also takes a struct key's fields (KLAYOUT, its
+ * text below avant_hash.c's header), the key's and the value's sizes in
+ * bytes and the type ids of the key and value buffers. */
 #define AVANT_HASH_K_WIDTH 0xfu
 #define AVANT_HASH_K_SIGNED 0x10u
 #define AVANT_HASH_K_STR 0x20u
+#define AVANT_HASH_K_STRUCT 0x40u
 #define AVANT_HASH_V_SHIFT 8
 #define AVANT_HASH_V_REF 0x1000u
 void *avant_hash_create(uint32_t desc);
+void *avant_hash_create_typed(uint32_t desc, const char *klayout, uint32_t kw, uint32_t vw, uint32_t ktid,
+                              uint32_t vtid);
+void *avant_hash_find_xk(void *h, const void *key, int32_t *found);
+void *avant_hash_put_xk(void *h, const void *key);
+void *avant_hash_upsert_xk(void *h, const void *key, int32_t *found);
+void avant_hash_set_ref_xk(void *h, const void *key, void *val);
+void *avant_hash_take_xk(void *h, const void *key, int32_t *found);
+void avant_hash_del_xk(void *h, const void *key);
 void *avant_hash_find_ik(void *h, avant_int key, int32_t *found);
 void *avant_hash_find_sk(void *h, const char *key, int32_t *found);
 void *avant_hash_put_ik(void *h, avant_int key);

@@ -45,6 +45,25 @@
  * The seed. Every hash function takes the hash's seed (h->seed), set at
  * creation from g_hash_seed. It is 0 today, which hashes exactly as the
  * unseeded functions did; a per-process random seed is one assignment.
+ *
+ * Struct keys. A struct whose fields are all integers, Bools and enums
+ * and whose size is 1, 2, 4 or 8 bytes is an integer key: the generated
+ * code builds the integer from its fields, so its padding is zero, and
+ * it takes the integer entries. Every other struct key is passed by
+ * address (the _xk entries) and stored as its bytes, kw of them, with a
+ * uint32 hash per entry in meta as a String key's: such a hash is an
+ * AvantHashX (avant_hash_create_typed), which carries the key's fields
+ * as the compiler gave them, the text "W@OFF,..." where W is the width
+ * of an integer field (1, 2, 4 or 8; a Bool and an enum are integers)
+ * or s for a String, and OFF its byte offset; a nested struct's fields
+ * are listed in place. The key's hash and equality read those fields
+ * only, so padding never enters either, and they agree with the
+ * struct's ==, which compares the same fields (an integer by its bits,
+ * a String by its bytes). A key with no String and no padding (flat) is
+ * hashed by its words and compared with memcmp. The key's address is
+ * the caller's: the generated code keeps the key in a local that its
+ * frame roots, so a collection inside an entry updates the key's String
+ * fields there, and the entry reads them after its last allocation.
  */
 
 typedef struct {
@@ -64,6 +83,32 @@ typedef struct {
   uint8_t vshift;
   uint8_t compact;
 } AvantHash;
+
+/* A hash made by avant_hash_create_typed: the hash, then what its
+ * struct key or value needs. Its type is AVANT_TYPE_HASH too: the
+ * collector traces the first three words only. */
+typedef struct {
+  AvantHash h;
+  /* The key's and the value's sizes in bytes, and the type ids of their
+   * buffers (AVANT_TYPE_BYTES, AVANT_TYPE_PTRS or the element type's). */
+  uint32_t kw;
+  uint32_t vw;
+  uint32_t ktid;
+  uint32_t vtid;
+  /* A struct key: its fields, each (offset << 8) | kind, kind the width
+   * of an integer field or XK_STR; flat when they cover every byte and
+   * none is a String; krefs when one is a String. */
+  uint16_t nf;
+  uint8_t flat;
+  uint8_t krefs;
+  uint32_t field[];
+} AvantHashX;
+
+#define XK_STR 0x80u
+
+static inline AvantHashX *hx(const AvantHash *h) {
+  return (AvantHashX *)h;
+}
 
 static uint32_t g_hash_seed = 0;
 
@@ -100,6 +145,27 @@ static inline unsigned vw_of(const AvantHash *h) {
 
 static int key_is_str(const AvantHash *h) {
   return (h->desc & AVANT_HASH_K_STR) != 0;
+}
+
+/* A struct key passed by address (an AvantHashX). */
+static inline int key_is_struct(const AvantHash *h) {
+  return (h->desc & AVANT_HASH_K_STRUCT) != 0;
+}
+
+/* A key whose hash is kept per entry in meta: a String or a struct. */
+static inline int key_hashed(const AvantHash *h) {
+  return (h->desc & (AVANT_HASH_K_STR | AVANT_HASH_K_STRUCT)) != 0;
+}
+
+/* The key buffer holds references: String keys, or struct keys with a
+ * String field. */
+static inline int key_refs(const AvantHash *h) {
+  return key_is_str(h) || (key_is_struct(h) && hx(h)->krefs);
+}
+
+/* A key's size in its buffer. */
+static inline size_t key_bytes(const AvantHash *h) {
+  return key_is_struct(h) ? hx(h)->kw : kw_of(h);
 }
 
 static int val_is_ref(const AvantHash *h) {
@@ -201,6 +267,15 @@ static inline __attribute__((always_inline)) void cp_w(void *d, const void *s, u
   }
 }
 
+/* W bytes of any width: cp_w's switch for 1, 2, 4 and 8, memcpy else. */
+static inline void cp_n(void *d, const void *s, size_t w) {
+  if (w == 1 || w == 2 || w == 4 || w == 8) {
+    cp_w(d, s, (unsigned)w);
+  } else {
+    memcpy(d, s, w);
+  }
+}
+
 static inline __attribute__((always_inline)) void zero_w(void *d, unsigned w) {
   switch (w) {
   case 1:
@@ -275,8 +350,8 @@ static int32_t fill_max(int32_t cap) {
 }
 
 /* Compact meta: uint32 index[cap], uint8 state[fill_max(cap)], then (String
- * keys) uint32 hash[fill_max(cap)] at the next 4-byte boundary. Open meta:
- * uint8 state[cap], then (String keys) uint32 hash[cap]. */
+ * and struct keys) uint32 hash[fill_max(cap)] at the next 4-byte boundary.
+ * Open meta: uint8 state[cap], then (String keys) uint32 hash[cap]. */
 static inline size_t meta_hash_off(const AvantHash *h, int32_t cap) {
   if (!is_compact(h)) {
     return (size_t)cap;
@@ -290,7 +365,7 @@ static uint64_t meta_bytes(const AvantHash *h, int32_t cap) {
   if (!cap) {
     return 0;
   }
-  if (key_is_str(h)) {
+  if (key_hashed(h)) {
     return (uint64_t)meta_hash_off(h, cap) + (uint64_t)ne * 4;
   }
   return is_compact(h) ? (uint64_t)cap * 4 + (uint64_t)ne : (uint64_t)cap;
@@ -330,7 +405,7 @@ static inline int32_t pos_entry(const AvantHash *h, int32_t i) {
 }
 
 static inline uint32_t ent_hash(const AvantHash *h, int32_t e) {
-  if (key_is_str(h)) {
+  if (key_hashed(h)) {
     return hashes_of(h)[e];
   }
   return hash_int(ikey_at(h, h->keys, e), h->seed);
@@ -480,7 +555,22 @@ static void store_str_key(AvantHash *h, int32_t e, const char *key, uint32_t hv)
 }
 
 static uint32_t key_type_id(const AvantHash *h) {
+  if (key_is_struct(h)) {
+    return hx(h)->ktid;
+  }
   return key_is_str(h) ? AVANT_TYPE_PTRS : AVANT_TYPE_BYTES;
+}
+
+/* A struct key's String fields in the entry SLOT of the buffer KEYS get
+ * the slot barrier before the entry is stored (RC5). */
+static void xkey_barrier(const AvantHash *h, void *keys, char *slot) {
+  const AvantHashX *x = hx(h);
+  uint32_t i;
+  for (i = 0; i < x->nf; i++) {
+    if ((x->field[i] & 0xffu) == XK_STR) {
+      avant_barrier_slot_young(keys, slot + (x->field[i] >> 8));
+    }
+  }
 }
 
 static uint32_t val_type_id(const AvantHash *h) {
@@ -501,6 +591,14 @@ static void move_entry(AvantHash *dst, const AvantHash *src, void *okeys, void *
   if (key_is_str(src)) {
     avant_barrier_slot_young(dst->keys, &((void **)dst->keys)[ne]);
     ((void **)dst->keys)[ne] = ((void **)okeys)[e];
+    hashes_of(dst)[ne] = hv;
+  } else if (key_is_struct(src)) {
+    size_t kw = hx(src)->kw;
+    char *slot = (char *)dst->keys + (size_t)ne * kw;
+    if (hx(src)->krefs) {
+      xkey_barrier(src, dst->keys, slot);
+    }
+    memcpy(slot, (char *)okeys + (size_t)e * kw, kw);
     hashes_of(dst)[ne] = hv;
   } else {
     ikey_put(src, dst->keys, ne, ikey_at(src, okeys, e));
@@ -536,7 +634,7 @@ static void grow(AvantHash *h) {
   AVANT_GC_ROOT(0, &h);
   AVANT_GC_ROOT(1, &nkeys);
   AVANT_GC_ROOT(2, &nmeta);
-  nkeys = avant_alloc((uint64_t)necap * kw_of(h), key_type_id(h));
+  nkeys = avant_alloc((uint64_t)necap * key_bytes(h), key_type_id(h));
   nmeta = avant_alloc(meta_bytes(h, ncap), AVANT_TYPE_BYTES);
   nvals = avant_alloc((uint64_t)necap * vw_of(h), val_type_id(h));
 
@@ -603,7 +701,7 @@ static void erase(AvantHash *h, int32_t e) {
    * entries after it move back in the key and value buffers (RC5). One
    * test for both buffers while nothing is logged. */
   if (__builtin_expect(avant_gc_proof_logging, 0)) {
-    if (str) {
+    if (key_refs(h)) {
       avant_gc_overwrite(h->keys);
     }
     if (val_is_ref(h)) {
@@ -630,6 +728,8 @@ static void erase_compact(AvantHash *h, int32_t e, int32_t mask, int str) {
   states_of(h)[e] = 0;
   if (str) {
     ((void **)h->keys)[e] = NULL;
+  } else if (key_is_struct(h) && hx(h)->krefs) {
+    memset((char *)h->keys + (size_t)e * hx(h)->kw, 0, hx(h)->kw);
   }
   if (val_is_ref(h)) {
     ((void **)h->vals)[e] = NULL;
@@ -705,7 +805,79 @@ void *avant_hash_create(uint32_t desc) {
   h->kw = (uint8_t)(desc & AVANT_HASH_K_WIDTH);
   h->vw = (uint8_t)((desc >> AVANT_HASH_V_SHIFT) & AVANT_HASH_K_WIDTH);
   h->vshift = (uint8_t)__builtin_ctz(h->vw);
-  h->compact = (desc & AVANT_HASH_K_STR) != 0;
+  h->compact = (desc & (AVANT_HASH_K_STR | AVANT_HASH_K_STRUCT)) != 0;
+  return h;
+}
+
+/* A struct key's field list from its text (the header above): the
+ * number of fields, and each written to FIELD when it is not NULL. */
+static uint32_t xk_parse(const char *t, uint32_t *field) {
+  uint32_t n = 0;
+  while (t && *t) {
+    uint32_t kind = *t == 's' ? XK_STR : (uint32_t)(*t - '0');
+    uint32_t off = 0;
+    t++;
+    if (*t == '@') {
+      t++;
+    }
+    while (*t >= '0' && *t <= '9') {
+      off = off * 10 + (uint32_t)(*t - '0');
+      t++;
+    }
+    if (field) {
+      field[n] = (off << 8) | kind;
+    }
+    n++;
+    if (*t == ',') {
+      t++;
+    }
+  }
+  return n;
+}
+
+/* A hash with a struct key (desc has AVANT_HASH_K_STRUCT, klayout its
+ * fields) or a value the plain descriptor cannot describe: the sizes and
+ * the buffers' type ids beside the descriptor.
+ * gc-lint: holds nothing (klayout is a constant of the program, read
+ * before the allocation). */
+void *avant_hash_create_typed(uint32_t desc, const char *klayout, uint32_t kw, uint32_t vw, uint32_t ktid,
+                              uint32_t vtid) {
+  uint32_t nf = xk_parse(klayout, NULL);
+  uint32_t field[nf ? nf : 1];
+  uint32_t i;
+  uint32_t covered = 0;
+  int flat = 1;
+  int krefs = 0;
+  (void)xk_parse(klayout, field);
+  for (i = 0; i < nf; i++) {
+    if ((field[i] & 0xffu) == XK_STR) {
+      krefs = 1;
+      flat = 0;
+    } else {
+      covered += field[i] & 0xffu;
+    }
+  }
+  if (covered != kw) {
+    flat = 0;
+  }
+  AvantHashX *x = (AvantHashX *)avant_alloc(sizeof(AvantHashX) + (uint64_t)nf * sizeof(uint32_t), AVANT_TYPE_HASH);
+  AvantHash *h = &x->h;
+  h->desc = desc;
+  h->seed = g_hash_seed;
+  h->kw = (uint8_t)(desc & AVANT_HASH_K_WIDTH);
+  h->vw = (uint8_t)((desc >> AVANT_HASH_V_SHIFT) & AVANT_HASH_K_WIDTH);
+  h->vshift = (uint8_t)__builtin_ctz(h->vw ? h->vw : 8);
+  h->compact = (desc & (AVANT_HASH_K_STR | AVANT_HASH_K_STRUCT)) != 0;
+  x->kw = kw;
+  x->vw = vw;
+  x->ktid = ktid;
+  x->vtid = vtid;
+  x->nf = (uint16_t)nf;
+  x->flat = (uint8_t)flat;
+  x->krefs = (uint8_t)krefs;
+  for (i = 0; i < nf; i++) {
+    x->field[i] = field[i];
+  }
   return h;
 }
 
@@ -722,9 +894,9 @@ void avant_hash_clear(void *hp) {
   }
   end = walk_end(h);
   /* Every key and value reference leaves its buffer (RC5). */
-  if (key_is_str(h)) {
+  if (key_refs(h)) {
     avant_gc_overwrite(h->keys);
-    memset(h->keys, 0, (size_t)end * sizeof(void *));
+    memset(h->keys, 0, (size_t)end * key_bytes(h));
   }
   if (val_is_ref(h)) {
     avant_gc_overwrite(h->vals);
@@ -905,6 +1077,217 @@ static void *put_sk(AvantHash *h, const char *key, int32_t *found, int grow_firs
   return put_sk_slow(h, key, n, hv, found, grow_first);
 }
 
+/* ---- struct keys (the _xk entries) ---- */
+
+static inline uint64_t xk_mix(uint64_t h, uint64_t v) {
+  h ^= v;
+  h *= 0x9e3779b97f4a7c15ull;
+  return h ^ (h >> 29);
+}
+
+static inline uint64_t xk_int_at(const char *p, uint32_t w) {
+  switch (w) {
+  case 1:
+    return *(const uint8_t *)p;
+  case 2: {
+    uint16_t v;
+    memcpy(&v, p, 2);
+    return v;
+  }
+  case 4: {
+    uint32_t v;
+    memcpy(&v, p, 4);
+    return v;
+  }
+  default: {
+    uint64_t v;
+    memcpy(&v, p, 8);
+    return v;
+  }
+  }
+}
+
+/* The hash of the struct key at K: each field, an integer by its bits and
+ * a String by its bytes (hash_bytes), mixed in order with the seed; a flat
+ * key by its 8-byte words (the last one zero-filled). */
+static uint32_t xkey_hash(const AvantHash *h, const char *k) {
+  const AvantHashX *x = hx(h);
+  uint64_t a = (uint64_t)h->seed ^ 0x2545f4914f6cdd1dull;
+  uint32_t i;
+  if (x->flat) {
+    uint32_t off = 0;
+    while (off + 8 <= x->kw) {
+      a = xk_mix(a, xk_int_at(k + off, 8));
+      off += 8;
+    }
+    if (off < x->kw) {
+      uint64_t v = 0;
+      memcpy(&v, k + off, x->kw - off);
+      a = xk_mix(a, v);
+    }
+  } else {
+    for (i = 0; i < x->nf; i++) {
+      uint32_t f = x->field[i];
+      const char *p = k + (f >> 8);
+      if ((f & 0xffu) == XK_STR) {
+        const char *str;
+        memcpy(&str, p, sizeof(str));
+        a = xk_mix(a, hash_bytes(str, avant_str_n(str), h->seed));
+      } else {
+        a = xk_mix(a, xk_int_at(p, f & 0xffu));
+      }
+    }
+  }
+  return hash_i32((int32_t)(uint32_t)(a ^ (a >> 32)));
+}
+
+/* Whether the struct keys at A and B are equal, as the struct's ==
+ * compares them: every field, an integer by its bits, a String by its
+ * bytes. */
+static int xkey_eq(const AvantHash *h, const char *a, const char *b) {
+  const AvantHashX *x = hx(h);
+  uint32_t i;
+  if (x->flat) {
+    return memcmp(a, b, x->kw) == 0;
+  }
+  for (i = 0; i < x->nf; i++) {
+    uint32_t f = x->field[i];
+    uint32_t off = f >> 8;
+    if ((f & 0xffu) == XK_STR) {
+      const char *sa;
+      const char *sb;
+      memcpy(&sa, a + off, sizeof(sa));
+      memcpy(&sb, b + off, sizeof(sb));
+      if (sa != sb && !bytes_eq(sa, avant_str_n(sa), sb, avant_str_n(sb))) {
+        return 0;
+      }
+    } else if (memcmp(a + off, b + off, f & 0xffu) != 0) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+/* A lookup of the struct key at K whose hash is HV, in the compact layout
+ * (every struct-keyed hash is compact): as find_bytes. */
+static int find_struct(const AvantHash *h, const char *k, uint32_t hv, int32_t *ent, int32_t *pos) {
+  int32_t cap = h->cap;
+  int32_t n;
+  if (!cap) {
+    *pos = 0;
+    return 0;
+  }
+  int32_t mask = cap - 1;
+  int32_t i = (int32_t)(hv & (uint32_t)mask);
+  const uint32_t *hs = hashes_of(h);
+  const uint32_t *ix = index_of(h);
+  const char *keys = (const char *)h->keys;
+  size_t kw = hx(h)->kw;
+  for (n = 0; n < cap; n++) {
+    int32_t e = (int32_t)ix[i] - 1;
+    if (e < 0) {
+      *pos = i;
+      return 0;
+    }
+    if (hs[e] == hv && xkey_eq(h, keys + (size_t)e * kw, k)) {
+      *ent = e;
+      return 1;
+    }
+    i = (i + 1) & mask;
+  }
+  *pos = 0;
+  return 0;
+}
+
+/* A new entry for the struct key at K (its String fields barriered
+ * first, RC5), its hash HV. */
+static void store_xkey(AvantHash *h, int32_t e, const char *k, uint32_t hv) {
+  const AvantHashX *x = hx(h);
+  size_t kw = x->kw;
+  char *slot = (char *)h->keys + (size_t)e * kw;
+  uint32_t i;
+  for (i = 0; x->krefs && i < x->nf; i++) {
+    if ((x->field[i] & 0xffu) == XK_STR) {
+      avant_barrier_slot_young(h->keys, slot + (x->field[i] >> 8));
+    }
+  }
+  memcpy(slot, k, kw);
+  hashes_of(h)[e] = hv;
+}
+
+/* As put_ik for a struct key at K. K is in the caller's frame, rooted
+ * there: a growth's collection updates its String fields in place, and
+ * the key is read from K after it (its hash, of the same bytes, holds). */
+static void *put_xk(AvantHash *h, const char *k, int32_t *found, int grow_first) {
+  int32_t e = 0;
+  int32_t pos = 0;
+  if (!h) {
+    avant_trap_text("a Hash with a struct key was used before it was created");
+  }
+  uint32_t hv = xkey_hash(h, k);
+  if (!(grow_first && needs_grow(h))) {
+    if (find_struct(h, k, hv, &e, &pos)) {
+      if (found) {
+        *found = 1;
+      }
+      return val_at(h, h->vals, e);
+    }
+  }
+  if (needs_grow(h)) {
+    {
+      AVANT_GC_SCOPE(1);
+      AVANT_GC_ROOT(0, &h);
+      grow(h);
+    }
+    if (find_struct(h, k, hv, &e, &pos)) {
+      if (found) {
+        *found = 1;
+      }
+      return val_at(h, h->vals, e);
+    }
+  }
+  if (found) {
+    *found = 0;
+  }
+  e = claim(h, pos, 1);
+  store_xkey(h, e, k, hv);
+  zero_w(val_at(h, h->vals, e), vw_of(h));
+  return val_at(h, h->vals, e);
+}
+
+void *avant_hash_find_xk(void *hp, const void *key, int32_t *found) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t e = 0;
+  int32_t pos = 0;
+  if (!h || !find_struct(h, (const char *)key, xkey_hash(h, (const char *)key), &e, &pos)) {
+    *found = 0;
+    return (void *)g_hash_none;
+  }
+  *found = 1;
+  return val_at(h, h->vals, e);
+}
+
+void *avant_hash_put_xk(void *hp, const void *key) {
+  return put_xk((AvantHash *)hp, (const char *)key, NULL, 1);
+}
+
+void *avant_hash_upsert_xk(void *hp, const void *key, int32_t *found) {
+  return put_xk((AvantHash *)hp, (const char *)key, found, 0);
+}
+
+/* `h[k] = v` for a reference value and a struct key (RC1: the hash and
+ * the value are handles; the key is the caller's, rooted in its frame). */
+void avant_hash_set_ref_xk(void *hp, const void *key, void *val) {
+  AvantHash *h = (AvantHash *)hp;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &h);
+  AVANT_GC_ROOT(1, &val);
+  void **slot = (void **)put_xk(h, (const char *)key, NULL, 1);
+  /* The barrier before the store (RC5). */
+  avant_barrier_slot_young(h->vals, slot);
+  *slot = val;
+}
+
 /* `h[k] = v` for a scalar value: the generated code stores v at the
  * address. */
 void *avant_hash_put_ik(void *hp, avant_int key) {
@@ -989,6 +1372,17 @@ void *avant_hash_take_sk(void *hp, const char *key, int32_t *found) {
   return take_at(h, e, found);
 }
 
+void *avant_hash_take_xk(void *hp, const void *key, int32_t *found) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t e = 0;
+  int32_t pos = 0;
+  if (!h || !find_struct(h, (const char *)key, xkey_hash(h, (const char *)key), &e, &pos)) {
+    *found = 0;
+    return (void *)g_hash_none;
+  }
+  return take_at(h, e, found);
+}
+
 /* delete as a statement, whose value nobody reads. */
 void avant_hash_del_sk(void *hp, const char *key) {
   int32_t found = 0;
@@ -998,6 +1392,11 @@ void avant_hash_del_sk(void *hp, const char *key) {
 void avant_hash_del_ik(void *hp, avant_int key) {
   int32_t found = 0;
   (void)avant_hash_take_ik(hp, key, &found);
+}
+
+void avant_hash_del_xk(void *hp, const void *key) {
+  int32_t found = 0;
+  (void)avant_hash_take_xk(hp, key, &found);
 }
 
 typedef struct {
@@ -1019,9 +1418,10 @@ static void *hash_collect(AvantHash *h, int keys) {
   AVANT_GC_ROOT(1, &a);
   a = (AvantArrayBox *)avant_alloc(sizeof(AvantArrayBox), AVANT_TYPE_ARRAY_OBJ);
   if (n > 0) {
-    int ref = keys ? key_is_str(h) : val_is_ref(h);
-    size_t w = keys ? kw_of(h) : vw_of(h);
-    void *buf = avant_alloc((uint64_t)n * w, ref ? AVANT_TYPE_PTRS : AVANT_TYPE_BYTES);
+    int ref = keys ? key_refs(h) : val_is_ref(h);
+    size_t w = keys ? key_bytes(h) : vw_of(h);
+    uint32_t tid = keys ? key_type_id(h) : (ref ? AVANT_TYPE_PTRS : AVANT_TYPE_BYTES);
+    void *buf = avant_alloc((uint64_t)n * w, tid);
     int32_t end = walk_end(h);
     int32_t e;
     int32_t k = 0;
@@ -1029,7 +1429,7 @@ static void *hash_collect(AvantHash *h, int keys) {
       if (!ent_live(h, e)) {
         continue;
       }
-      cp_w((char *)buf + (size_t)k * w, (char *)(keys ? h->keys : h->vals) + (size_t)e * w, (unsigned)w);
+      cp_n((char *)buf + (size_t)k * w, (char *)(keys ? h->keys : h->vals) + (size_t)e * w, w);
       k++;
     }
     if (ref) {

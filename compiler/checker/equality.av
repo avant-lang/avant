@@ -33,6 +33,58 @@ import checker.names
 import checker
 import checker.match
 
+// Why the struct key (or a field of one, named by path) cannot be a
+// Hash key, or "". A struct key's hash is derived from its fields the
+// way its derived == compares them (runtime/avant_hash.c): every field
+// must be a key itself (an integer, a Bool, an enum, a String or such a
+// struct), and the struct may not define its own ==, which such a hash
+// could disagree with (two equal keys hashed apart are an entry that
+// cannot be found). seen holds the structs being looked into.
+pub fn (checker_self: Checker) hash_key_problem(ty: Ty, seen: Array(String), path: String): String {
+  if ty.is_integer() || ty.is_bool() || ty.is_enum() || ty.is_string() || ty.is_var() {
+    return ""
+  }
+  if ty.is_float() {
+    return "a Hash key cannot hold a Float64 (${path}): its == follows IEEE 754 (NaN is not equal to itself, -0.0 equals 0.0), so no hash agrees with it; key by an integer (a fixed-point value, or an index)"
+  }
+  if !ty.is_struct() {
+    return "a Hash key's fields are integers, Bools, enums, Strings or structs of those, not ${ty.show()} (${path})"
+  }
+  if checker_self.user_op(ty, "==") {
+    return "${ty.show()} defines its own ==, so it cannot be a Hash key: the key's hash is derived from its fields and could disagree with that == (equal keys hashed apart); key by a struct that compares its fields, or by the fields its == reads"
+  }
+  if seen.contains(ty.name) {
+    return ""
+  }
+  seen.push(ty.name)
+  for f in ty.fields {
+    m = checker_self.hash_key_problem(f.ty, seen, "the field ${ty.show()}.${f.name}")
+    if m.size > 0 {
+      return m
+    }
+  }
+  ""
+}
+
+// The resolver's Hash types with a struct key made so far: each key is
+// tested by hash_key_problem, an error at the Hash type when it fails.
+pub fn (checker_self: Checker) check_hash_key_uses {
+  saved = checker_self.current_module
+  while checker_self.hash_key_done < checker_self.resolver.hash_key_uses.size {
+    use = checker_self.resolver.hash_key_uses[checker_self.hash_key_done]
+    checker_self.hash_key_done += 1
+    if use.mod_name.size > 0 {
+      checker_self.current_module = use.mod_name
+    }
+    seen: Array(String) = []
+    why = checker_self.hash_key_problem(use.key, seen, "")
+    if why.size > 0 {
+      checker_self.fail(use.loc, why)
+    }
+    checker_self.current_module = saved
+  }
+}
+
 // Whether ty (a struct or class) has a method of this name.
 pub fn (checker_self: Checker) user_op(ty: Ty, name: String): Bool {
   for ms in checker_self.methods {

@@ -24,6 +24,20 @@ pub class BoundUse {
   }
 }
 
+// A Hash type whose key is a struct (resolve's Hash case): the checker
+// tests the struct's fields and its own == once every type and method is
+// known (check_hash_key_uses).
+pub class HashKeyUse {
+  pub loc: Location
+  pub key: Ty
+  pub mod_name: String = ""
+
+  fn initialize(loc: Location, key: Ty) {
+    self.loc = loc
+    self.key = key
+  }
+}
+
 pub class TypeResolver {
   pub named: Hash(String, Int)
   pub collide: Hash(String, Int)
@@ -63,6 +77,7 @@ pub class TypeResolver {
   alias_ix: Hash(String, Int)
   alias_inflight: Array(String)
   pub bound_uses: Array(BoundUse)
+  pub hash_key_uses: Array(HashKeyUse)
 
   fn initialize {
     n = Hash(String, Int).new()
@@ -96,6 +111,7 @@ pub class TypeResolver {
     self.alias_ix = ai
     self.alias_inflight = []
     self.bound_uses = []
+    self.hash_key_uses = []
     self.inst_depth = 0
     self.failed = false
     self.err = nil
@@ -530,6 +546,10 @@ pub class TypeResolver {
       why = hash_type_problem(hk, hv)
       if why.size > 0 {
         fail(tn.loc, why)
+      } else if hk.is_struct() {
+        use = HashKeyUse.new(tn.loc, hk)
+        use.mod_name = self.scope_mod
+        self.hash_key_uses.push(use)
       }
       return ty_hash(hk, hv)
     }
