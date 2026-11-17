@@ -1507,6 +1507,7 @@ fn main {
 
 - A struct key's hash and `==` come from its fields, as the struct's own `==` does when it defines none: each field in turn, a `String` by its bytes. A struct that defines its own `==` cannot be a key, since a hash derived from its fields could disagree with it; key by the fields it compares.
 - A `Float64` key, or a struct key that holds one, is a compile error, since IEEE `==` (`NaN` unequal to itself, `-0.0` equal to `0.0`) agrees with no hash: key by an integer.
+- A class key is a compile error, since a class compares by identity and the collector moves objects: key by a value the object holds (an id or a name), or by its index in an array. Every refused key or value names what to use instead.
 - A struct key of integers, `Bool`s and enums whose size is 1, 2, 4 or 8 bytes (two `Int32` fields, say) is kept as one integer, so it costs what a combined integer key costs.
 - A class, an `Array` or a `Hash` value is shared with the table, as a variable would share it; a struct value is a copy, as in an `Array`.
 - A value cannot be optional (`Hash(Int, String?)` is refused): `h[k]` is already `nil` for a missing key, so a stored `nil` could not be told from it.

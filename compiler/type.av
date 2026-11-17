@@ -893,7 +893,7 @@ pub fn hash_type_problem(k: Ty, v: Ty): String {
     return "a Hash key cannot be a Float64: its == follows IEEE 754 (NaN is not equal to itself, -0.0 equals 0.0), so no hash agrees with it; use an integer key (a fixed-point value, or an index)"
   }
   if !(k.is_integer() || k.is_bool() || k.is_enum() || k.is_string() || k.is_struct() || k.is_var()) {
-    return "a Hash key is an integer, a Bool, an enum, a String or a struct of those, not ${k.show()}"
+    return "a Hash key is an integer, a Bool, an enum, a String or a struct of those, not ${k.show()}: ${hash_key_way(k)}"
   }
   if v.is_nilable() {
     return "a Hash value cannot be optional (${v.show()}): h[k] is already nil for a missing key, so a stored nil could not be told from it; store ${ty_without_nil(v).show()}, and delete the key for nil"
@@ -902,6 +902,21 @@ pub fn hash_type_problem(k: Ty, v: Ty): String {
     return "Hash values of type ${v.show()} are not built yet: a value is a number, a Bool, an enum, a String, a class, an Array, a Hash, Bytes, a Buf or a struct; a Hash from the key to an index into an Array(${v.show()}) does the same"
   }
   ""
+}
+
+// What to key by instead of a type no hash can take (the way forward of
+// hash_type_problem's and hash_key_problem's refusals).
+pub fn hash_key_way(k: Ty): String {
+  if k.is_nilable() {
+    return "key by ${ty_without_nil(k).show()} and keep the nil case beside the hash"
+  }
+  if k.is_class() {
+    return "a class compares by identity, which no hash can follow while the collector moves objects; key by a value the object holds (an id or a name), or by its index in an Array(${k.show()})"
+  }
+  if k.is_array() || k.is_bytes() || k.is_buf() {
+    return "key by a String or a struct made from its contents, or by its index in an Array(${k.show()})"
+  }
+  "key by an index into an Array(${k.show()}) that holds them"
 }
 
 pub fn ty_named(kind: Int, name: String): Ty {
