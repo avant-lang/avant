@@ -127,6 +127,12 @@ pub fn (lw: MirLower) lower_stmt(st: Stmt) {
 }
 
 pub fn (lw: MirLower) lower_assign(st: Stmt) {
+  if st.for_kind == 5 {
+    // A `for` over an Array of structs: its variable is the element
+    // itself, each use already an index of the walk (the checker), so
+    // the loop's copy is not made.
+    return
+  }
   if t0 = st.target, t0.kind == ex_name() && t0.ident == "_" {
     // `_ = expr`: computed and dropped.
     if v0 = st.value {

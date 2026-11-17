@@ -332,6 +332,9 @@ pub fn (checker_self: Checker) check_buf_method(expr: Expr): Ty {
 }
 
 pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
+  if recv = expr.receiver, checker_self.refuse_walk_change(expr, recv) {
+    return checker_self.t_void()
+  }
   // An element type with its own <.
   if ordered = checker_self.user_order_call(expr, array) {
     return ordered
@@ -385,9 +388,16 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         return checker_self.t_void()
       }
       if e = array.inner {
+        saved_for = checker_self.for_names.size
+        saved_places = checker_self.place_names.size
         checker_self.loop_depth += 1
-        checker_self.check_block_void(b, b.params[0], e)
+        checker_self.push_scope()
+        checker_self.bind_walk_param(expr, b, array, e)
+        checker_self.check_body(b.body, checker_self.return_type, false)
+        checker_self.pop_scope()
         checker_self.loop_depth -= 1
+        checker_self.end_places(saved_places)
+        checker_self.end_for_vars(saved_for)
       }
       return checker_self.t_void()
     }
@@ -405,13 +415,17 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         return checker_self.t_void()
       }
       if e = array.inner {
+        saved_for = checker_self.for_names.size
         checker_self.push_scope()
         checker_self.bind(b.params[0], e)
         checker_self.bind(b.params[1], e)
+        checker_self.note_for_var(b.params[0], 7)
+        checker_self.note_for_var(b.params[1], 7)
         checker_self.loop_depth += 1
         bt = checker_self.check_block_value(b)
         checker_self.loop_depth -= 1
         checker_self.pop_scope()
+        checker_self.end_for_vars(saved_for)
         if !bt.is_bool() {
           checker_self.fail(b.loc, "sort comparator must return Bool")
         }
@@ -440,13 +454,17 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         return ty_array(checker_self.t_int())
       }
       if e = array.inner {
+        saved_for = checker_self.for_names.size
         checker_self.push_scope()
         checker_self.bind(b.params[0], e)
         checker_self.bind(b.params[1], e)
+        checker_self.note_for_var(b.params[0], 7)
+        checker_self.note_for_var(b.params[1], 7)
         checker_self.loop_depth += 1
         bt = checker_self.check_block_value(b)
         checker_self.loop_depth -= 1
         checker_self.pop_scope()
+        checker_self.end_for_vars(saved_for)
         if !bt.is_bool() {
           checker_self.fail(b.loc, "sorted comparator must return Bool")
         }
@@ -500,12 +518,16 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         return checker_self.t_bool()
       }
       if e = array.inner {
+        saved_for = checker_self.for_names.size
+        saved_places = checker_self.place_names.size
         checker_self.push_scope()
-        checker_self.bind(b.params[0], e)
+        checker_self.bind_walk_param(expr, b, array, e)
         checker_self.loop_depth += 1
         bt = checker_self.check_block_value(b)
         checker_self.loop_depth -= 1
         checker_self.pop_scope()
+        checker_self.end_places(saved_places)
+        checker_self.end_for_vars(saved_for)
         if !bt.is_bool() {
           checker_self.fail(b.loc, "${pred_name} predicate must return Bool")
         }
@@ -706,8 +728,10 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
         checker_self.fail(expr.loc, ".parallel cannot run over an ${array.show()}: its elements (${e.show()}) cannot cross to another task, and two bodies would share one object when the array holds it twice; a mutable object reaches another task only inside a Mutex")
         return ty_array(checker_self.t_int())
       }
+      saved_for = checker_self.for_names.size
       checker_self.push_scope()
       checker_self.bind(b.params[0], e)
+      checker_self.note_for_var(b.params[0], 9)
       checker_self.in_task += 1
       saved_loops = checker_self.loop_depth
       checker_self.loop_depth = 0
@@ -718,6 +742,7 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
       checker_self.loop_depth = saved_loops
       checker_self.in_task -= 1
       checker_self.pop_scope()
+      checker_self.end_for_vars(saved_for)
       checker_self.collect_spawn_captures(expr, b.body)
       return ty_array(result)
     }
@@ -855,13 +880,17 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
         return checker_self.t_void()
       }
       if k = hash.key, v = hash.val {
+        saved_for = checker_self.for_names.size
         checker_self.push_scope()
         checker_self.bind(b.params[0], k)
         checker_self.bind(b.params[1], v)
+        checker_self.note_for_var(b.params[0], 8)
+        checker_self.note_for_var(b.params[1], 8)
         checker_self.loop_depth += 1
         checker_self.check_body(b.body, checker_self.return_type, false)
         checker_self.loop_depth -= 1
         checker_self.pop_scope()
+        checker_self.end_for_vars(saved_for)
       }
       return checker_self.t_void()
     }

@@ -90,6 +90,24 @@ pub fn (lw: MirLower) block_elem(h: Int, aty: Int, i: Int): MOperand {
   lw.tmp(lw.elem_of(aty), b.rv_use(b.copy(b.index(b.deref(b.pl(d)), b.copy_local(i)))))
 }
 
+// The parameter of `each`, `any` or `all` at index _i of the array in
+// _h: the element's copy, or, when the element is a place (the block's
+// place names, checker/places.av), the walked array and the counter
+// bound to the hidden names its uses index.
+pub fn (lw: MirLower) block_param(bl: Block, recv: Expr, h: Int, aty: Int, i: Int) {
+  b = lw.lw_b
+  if bl.place_arr.size > 0 {
+    if rt = recv.ty {
+      lw.bind_name(bl.place_arr, rt, aty, b.copy_local(h), bl.loc, true)
+      ix = lw.tmp(mt_int(), b.rv_cast(b.copy_local(i), mt_int()))
+      lw.bind_name(bl.place_idx, ty_int(), mt_int(), ix, bl.loc, true)
+      return
+    }
+  }
+  v = lw.block_elem(h, aty, i)
+  lw.bind_name(bl.params[0], lw.elem_ty_of(recv), lw.elem_of(aty), v, bl.loc, true)
+}
+
 // Stores v at index _i of the array in _h (emit_arr_store), behind the
 // buffer's barrier when the element is reference-carrying (the old back
 // end stores without one, which loses the young value when a
@@ -273,8 +291,7 @@ pub fn (lw: MirLower) arr_each(e: Expr, recv: Expr, bl: Block): MOperand {
   b.at(head)
   lw.block_test(h, i, body, exit)
   b.at(body)
-  v = lw.block_elem(h, aty, i)
-  lw.bind_name(bl.params[0], lw.elem_ty_of(recv), lw.elem_of(aty), v, bl.loc, true)
+  lw.block_param(bl, recv, h, aty, i)
   lw.block_body(bl.body, step, exit)
   lw.goto_if_open(step, e.loc)
   b.at(step)
@@ -311,8 +328,7 @@ pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MO
   b.at(head)
   lw.block_test(h, i, body, exit)
   b.at(body)
-  v = lw.block_elem(h, aty, i)
-  lw.bind_name(bl.params[0], lw.elem_ty_of(recv), lw.elem_of(aty), v, bl.loc, true)
+  lw.block_param(bl, recv, h, aty, i)
   p = lw.block_value(bl, step, exit)
   if lw.failed() {
     return zero

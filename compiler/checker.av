@@ -235,6 +235,27 @@ pub class Checker {
   pub for_names: Array(String) = []
   pub for_scopes: Array(Int) = []
   pub for_kinds: Array(Int) = []
+  // The places being checked (checker/receiver.av): a `for` variable or
+  // an inlined block's parameter over an Array of structs is the element
+  // itself. Each one's name and scope, the hidden names of the walked
+  // array and of the counter, the walked array's path as written ("" when
+  // it is not a name or a field path), and the lambda and task depths
+  // where it is bound.
+  pub place_names: Array(String) = []
+  pub place_scopes: Array(Int) = []
+  pub place_arrs: Array(String) = []
+  pub place_idxs: Array(String) = []
+  pub place_walked: Array(String) = []
+  pub place_lams: Array(Int) = []
+  pub place_tasks: Array(Int) = []
+  pub place_count: Int = 0
+  // Calls of a struct method on a copy that would be lost (a comparator's
+  // parameter, a Hash walk's value, a .parallel body's element), and what
+  // each parameter is: refused once every method is checked when the
+  // method changes its receiver.
+  pub copy_calls: Array(Expr) = []
+  pub copy_call_names: Array(String) = []
+  pub copy_call_kinds: Array(Int) = []
   pub witness_note: String = ""
   pub impls: Array(ImplFact)
   pub sig_params: Array(Ty)
@@ -642,6 +663,7 @@ pub class Checker {
     self.for_names = []
     self.for_scopes = []
     self.for_kinds = []
+    self.clear_places()
     self.push_scope()
     if fn_is_method(fnn) && !fnn.type_method {
       got_owner = false
@@ -978,6 +1000,10 @@ pub class Checker {
           }
         }
       }
+      saved_places = self.place_names.size
+      if stmt.for_kind == 2 && !self.has_err() {
+        begin_for_place(stmt)
+      }
       saved_facts = self.facts.fact_var.size
       if cond = stmt.cond {
         push_loop_facts(cond, stmt.body)
@@ -1010,6 +1036,7 @@ pub class Checker {
         self.for_scopes.pop()
         self.for_kinds.pop()
       }
+      end_places(saved_places)
       if has_pre {
         self.pop_scope()
       }
@@ -1461,6 +1488,11 @@ pub class Checker {
   pub fn check_assign(stmt: Stmt) {
     if t0 = stmt.target, t0.kind == ex_name() && t0.ident == "_" {
       check_discard(stmt)
+      return
+    }
+    if stmt.for_kind == 5 {
+      // The element's store of a `for` whose variable is a place: the
+      // loop bound the name (begin_for_place) and the store is not made.
       return
     }
     if stmt.for_kind >= 3 {
@@ -3470,6 +3502,11 @@ pub class Checker {
   pub fn check_name(expr: Expr, has_want: Bool, want: Ty): Ty {
     as_recv = self.recv_name
     self.recv_name = false
+    if self.place_names.size > 0 {
+      if pt = place_use(expr, has_want, want) {
+        return pt
+      }
+    }
     if expr.ident == "self" {
       if cf = self.current_fn, cf.type_method {
         fail(expr.loc, "self is not available in a type-level function")
@@ -4985,6 +5022,11 @@ pub class Checker {
 
   pub fn check_method_call(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     got = check_method_call_of(expr, recv, has_want, want)
+    if !self.has_err() {
+      if r0 = expr.receiver {
+        note_copy_call(expr, r0)
+      }
+    }
     if !self.has_err() && expr.callee == "recover" && expr.args.size == 1 {
       if r = expr.receiver, rt = r.ty, is_mutex_ty(rt) {
         // `m.recover(v)` gives the mutex v as `Mutex(T).new(v)` does: the
@@ -5251,13 +5293,6 @@ pub class Checker {
 
   // An `each` block: its statements are checked as the code around it,
   // so a `return` leaves the function with the function's result type.
-  pub fn check_block_void(block: Block, pname: String, pty: Ty) {
-    self.push_scope()
-    bind(pname, pty)
-    check_body(block.body, self.return_type, false)
-    self.pop_scope()
-  }
-
   pub fn check_switch(expr: Expr, has_want: Bool, want: Ty): Ty {
     stmt_mode = self.switch_stmt
     self.switch_stmt = false

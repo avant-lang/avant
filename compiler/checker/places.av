@@ -1,0 +1,270 @@
+// The element as a place.
+//
+// A `for` loop's variable over an Array of structs, and the parameter of
+// an inlined block over one (`each`, `any`, `all`), is the element
+// itself: `p.x = 1` and `p.move(2)` change the element in the array, as
+// they would change a class element's object. Each use of the name is
+// written, here, as an index of two hidden names: the walked array (held
+// once before the loop, so a later assignment to the array's variable
+// does not move the walk) and the loop's counter. The index keeps its
+// bounds check: a change of the array's size through another name than
+// the walked one meets it at the place's next use, so the place never
+// reads past the elements. A growth through another name is harmless
+// (each use reads the buffer again).
+//
+// What the place refuses, with what works instead:
+// - the walked array's size or order changed through its own name inside
+//   the walk (`xs.push(v)`, `xs.pop()`, `xs.sort()` in `for p in xs`):
+//   the place would then name another element, or none;
+// - the place captured by a lambda or a task: the lambda would outlive
+//   the step, and a task would share the element unguarded;
+// - the variable named like one that already exists (a range's or a
+//   class array's `for` reuses an outer variable and leaves its last
+//   value there; a place cannot be left behind);
+// - the variable assigned (`p = q`): the variable is the element, and a
+//   whole-element store through it is not part of the language
+//   (store through an index, `xs[i] = q`).
+//
+// The parameters of the blocks that are not walks (a comparator's, a
+// Hash walk's, a `.parallel` body's) are copies: a write to one would be
+// lost, so it is refused, and so is a call of a method that changes its
+// receiver on one (checked once every method is, as receiver_writes.av
+// reads them).
+
+import location
+import source
+import token
+import type
+import ast
+import resolve
+import typed_ir
+import checker.names
+import checker
+import checker.receiver
+import receiver_writes
+
+pub fn (checker_self: Checker) clear_places {
+  checker_self.place_names = []
+  checker_self.place_scopes = []
+  checker_self.place_arrs = []
+  checker_self.place_idxs = []
+  checker_self.place_walked = []
+  checker_self.place_lams = []
+  checker_self.place_tasks = []
+}
+
+// The walked array as written, for the refusal of a change through its
+// own name: `xs`, `self.items` (a bare field is `self.` and its name),
+// `a.b.c`; "" for any other expression.
+pub fn (checker_self: Checker) walked_text(e: Expr): String {
+  if e.kind == ex_name() {
+    if e.implicit_field {
+      return "self.${e.ident}"
+    }
+    return e.ident
+  }
+  if e.kind == ex_field() && !e.method_call {
+    if o = e.object {
+      head = checker_self.walked_text(o)
+      if head.size > 0 {
+        return "${head}.${e.ident}"
+      }
+    }
+  }
+  ""
+}
+
+pub fn (checker_self: Checker) add_place(name: String, arr: String, idx: String, walked: String) {
+  checker_self.place_names.push(name)
+  checker_self.place_scopes.push(checker_self.lookup_index(name))
+  checker_self.place_arrs.push(arr)
+  checker_self.place_idxs.push(idx)
+  checker_self.place_walked.push(walked)
+  checker_self.place_lams.push(checker_self.lam_exprs.size)
+  checker_self.place_tasks.push(checker_self.in_task)
+}
+
+pub fn (checker_self: Checker) end_places(saved: Int) {
+  while checker_self.place_names.size > saved {
+    checker_self.place_names.pop()
+    checker_self.place_scopes.pop()
+    checker_self.place_arrs.pop()
+    checker_self.place_idxs.pop()
+    checker_self.place_walked.pop()
+    checker_self.place_lams.pop()
+    checker_self.place_tasks.pop()
+  }
+}
+
+// A `for` over an Array of structs (the parser's loop of for_kind 2: the
+// array's and the counter's stores in pre, the element's store first in
+// the body): once the array is checked, its variable becomes the place.
+pub fn (checker_self: Checker) begin_for_place(stmt: Stmt) {
+  if stmt.body.size == 0 || stmt.pre.size < 2 {
+    return
+  }
+  setup = stmt.body[0]
+  if setup.for_kind != 4 && setup.for_kind != 5 {
+    return
+  }
+  if t = setup.target, pa = stmt.pre[0].target, pi = stmt.pre[1].target, at = checker_self.lookup(pa.ident), at.is_array() {
+    if inner = at.inner, inner.is_struct() {
+      if old = checker_self.lookup(t.ident) {
+        checker_self.fail(setup.loc, "for ${t.ident} in ...: ${t.ident} already names a variable here; over an Array of structs the loop's variable is the element itself, in place, and is not left behind after the loop: give it a name of its own")
+        return
+      }
+      setup.for_kind = 5
+      checker_self.bind(t.ident, inner)
+      checker_self.note_for_var(t.ident, 4)
+      walked = ""
+      if v = stmt.pre[0].value {
+        walked = checker_self.walked_text(v)
+      }
+      checker_self.add_place(t.ident, pa.ident, pi.ident, walked)
+    }
+  }
+}
+
+// An inlined block's parameter over an Array of structs: the hidden
+// names of the walked array and the counter (kept on the block, so a
+// copy of the tree checks the same names), bound with the parameter in
+// the scope the caller pushed.
+pub fn (checker_self: Checker) begin_block_place(b: Block, recv: Expr, array: Ty, elem: Ty) {
+  if b.place_arr.size == 0 {
+    checker_self.place_count += 1
+    b.place_arr = "__place${checker_self.place_count}_xs"
+    b.place_idx = "__place${checker_self.place_count}_i"
+  }
+  checker_self.bind(b.place_arr, array)
+  checker_self.bind(b.place_idx, checker_self.t_int())
+  checker_self.bind(b.params[0], elem)
+  checker_self.note_for_var(b.params[0], 6)
+  checker_self.add_place(b.params[0], b.place_arr, b.place_idx, checker_self.walked_text(recv))
+}
+
+// The parameter of `each`, `any` or `all` on an Array, in the scope the
+// caller pushed: the place over an Array of structs, else a copy that
+// cannot be assigned.
+pub fn (checker_self: Checker) bind_walk_param(expr: Expr, b: Block, array: Ty, elem: Ty) {
+  if elem.is_struct() {
+    if recv = expr.receiver {
+      checker_self.begin_block_place(b, recv, array, elem)
+      return
+    }
+  }
+  checker_self.bind(b.params[0], elem)
+  checker_self.note_for_var(b.params[0], 6)
+}
+
+pub fn (checker_self: Checker) end_for_vars(saved: Int) {
+  while checker_self.for_names.size > saved {
+    checker_self.for_names.pop()
+    checker_self.for_scopes.pop()
+    checker_self.for_kinds.pop()
+  }
+}
+
+// A use of a place's name: refused inside a lambda or a task the walk
+// does not hold; else written as the index of the walk and checked as
+// one. nil when the name is not a place here.
+pub fn (checker_self: Checker) place_use(expr: Expr, has_want: Bool, want: Ty): Ty? {
+  i = checker_self.place_at(expr.ident)
+  if i < 0 {
+    return nil
+  }
+  name = expr.ident
+  if checker_self.lam_exprs.size > checker_self.place_lams[i] {
+    checker_self.fail(expr.loc, "a lambda cannot capture ${name}: ${name} is an element of the walked array, in place, and the lambda could outlive the step; copy it first (q = ${name}) and capture the copy")
+    return checker_self.lookup(name)
+  }
+  if checker_self.in_task > checker_self.place_tasks[i] {
+    checker_self.fail(expr.loc, "a task cannot capture ${name}: ${name} is an element of the walked array, in place; copy it first (q = ${name}) and capture the copy")
+    return checker_self.lookup(name)
+  }
+  arr = Expr.new(ex_name(), expr.loc)
+  arr.ident = checker_self.place_arrs[i]
+  ix = Expr.new(ex_name(), expr.loc)
+  ix.ident = checker_self.place_idxs[i]
+  expr.kind = ex_index()
+  expr.ident = ""
+  expr.left = arr
+  expr.right = ix
+  got = checker_self.check_index(expr)
+  // The bounds check stays (the file's comment): the walk's own test
+  // does not cover a step that changed the size through another name.
+  expr.proven = false
+  got
+}
+
+// A change of the walked array's size or order through its own name,
+// inside the walk: refused. True when it failed.
+pub fn (checker_self: Checker) refuse_walk_change(expr: Expr, recv: Expr): Bool {
+  if checker_self.place_names.size == 0 {
+    return false
+  }
+  c = expr.callee
+  if expr.kind == ex_field() {
+    c = expr.ident
+  }
+  if !(c == "push" || c == "pop" || c == "clear" || c == "reserve" || c == "sort" || c == "reverse") {
+    return false
+  }
+  text = checker_self.walked_text(recv)
+  if text.size == 0 {
+    return false
+  }
+  i = checker_self.place_names.size - 1
+  while i >= 0 {
+    if checker_self.place_walked[i] == text {
+      p = checker_self.place_names[i]
+      checker_self.fail(expr.loc, "cannot ${c} ${text} while walking it: ${p} is an element of ${text}, in place, and a change of its size or order would move it; collect the changes and apply them after the loop, or walk an index (i = 0, while i < ${text}.size)")
+      return true
+    }
+    i -= 1
+  }
+  false
+}
+
+// A struct method called on a parameter that is a copy (kinds 7, 8, 9 of
+// the for variables): noted, refused once every method is checked when
+// it changes its receiver.
+pub fn (checker_self: Checker) note_copy_call(expr: Expr, recv: Expr) {
+  if checker_self.for_names.size == 0 || recv.kind != ex_name() {
+    return
+  }
+  k = checker_self.for_var_kind(recv.ident)
+  if k < 7 {
+    return
+  }
+  if rt = recv.ty, rt.is_struct(), expr.resolved.size > 0 {
+    checker_self.copy_calls.push(expr)
+    checker_self.copy_call_names.push(recv.ident)
+    checker_self.copy_call_kinds.push(k)
+  }
+}
+
+pub fn (checker_self: Checker) check_copy_calls {
+  if checker_self.copy_calls.size == 0 || checker_self.any_err() {
+    return
+  }
+  rw = ReceiverWrites.new()
+  for ms in checker_self.methods {
+    rw.add(ms.node)
+  }
+  for f in checker_self.pending {
+    rw.add(f)
+  }
+  i = 0
+  while i < checker_self.copy_calls.size {
+    e = checker_self.copy_calls[i]
+    if rw.writes(e.resolved) {
+      name = e.callee
+      if e.kind == ex_field() {
+        name = e.ident
+      }
+      checker_self.fail(e.loc, "this call changes a copy: ${name} changes its receiver, and ${copy_param_what(checker_self.copy_call_names[i], checker_self.copy_call_kinds[i])}")
+      return
+    }
+    i += 1
+  }
+}

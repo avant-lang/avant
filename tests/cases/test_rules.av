@@ -35,11 +35,12 @@ import backends
 //     block is refused by name (it was a type mismatch, and a bare
 //     `return` stopped the compiler in the MIR verifier).
 //   - a `for` variable is not assignable: `x = ...`
-//     and `x += ...` on a range's counter or an array's element, and a
-//     field of an element through struct values (`p.x = 1`,
-//     `p.pos.x += 1`), which changed the loop's copy and lost the write.
-//     A class element's field, a path through a reference, an index, and
-//     a name the body binds anew stay legal.
+//     and `x += ...` on a range's counter or an array's element. Over an
+//     Array of structs the variable is the element itself, so a field
+//     written through it (`p.x = 1`, `p.pos.x += 1`) changes the element
+//     (tests/cases/test_places.av has the place's rules). A class
+//     element's field, a path through a reference, an index, and a name
+//     the body binds anew stay legal.
 //   - `Array(T).new(n, value)` is refused when T is, or
 //     holds, a reference to an object that can change (every element
 //     would be that one object), and `Array(T).new(n) { |i| ... }` builds
@@ -179,9 +180,9 @@ fn for_cases: Array(RCase) {
   xs.push(refused("for-element-assign", "fn main {\n  xs = [1, 2, 3]\n  for x in xs {\n    x = 0\n  }\n  puts(xs[0])\n}\n", "cannot assign to x: a for variable is a copy of the element, so the array would not change; store through an index (for i in 0..xs.size { xs[i] = ... })", "4:7"))
   xs.push(refused("for-element-compound", "fn main {\n  xs = [1, 2, 3]\n  for x in xs {\n    x *= 2\n  }\n  puts(xs[0])\n}\n", "cannot assign to x: a for variable is a copy of the element, so the array would not change; store through an index (for i in 0..xs.size { xs[i] = ... })", "4:7"))
   xs.push(refused("for-element-class-rebind", "class C {\n  pub n: Int = 0\n}\nfn main {\n  cs = [C.new()]\n  for c in cs {\n    c = C.new()\n  }\n  puts(cs[0].n)\n}\n", "cannot assign to c: a for variable is a copy of the element, so the array would not change; store through an index (for i in 0..xs.size { xs[i] = ... })", "7:7"))
-  xs.push(refused("for-field-struct", "struct P {\n  x: Int\n  y: Int\n}\nfn main {\n  xs = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]\n  for p in xs {\n    p.x = 7\n  }\n  puts(xs[1].x)\n}\n", "cannot assign to p.x: p is a for variable, a copy of the element (a struct is a value), so the array would not change; write the stored element through an index (xs[i].x = ...), or change a copy and store it back (xs[i] = p)", "8:9"))
-  xs.push(refused("for-field-nested-struct", "struct Pos {\n  x: Int\n  y: Int\n}\nstruct P {\n  id: Int\n  pos: Pos\n}\nfn main {\n  xs = [P { id: 1, pos: Pos { x: 1, y: 1 } }]\n  for p in xs {\n    p.pos.x += 10\n  }\n  puts(xs[0].pos.x)\n}\n", "cannot assign to p.pos.x: p is a for variable, a copy of the element (a struct is a value), so the array would not change; write the stored element through an index (xs[i].pos.x = ...), or change a copy and store it back (xs[i] = p)", "12:13"))
-  xs.push(refused("for-field-struct-in-method", "struct P {\n  x: Int\n}\nclass Bag {\n  ps: Array(P) = []\n  fn bump {\n    for p in ps {\n      p.x += 1\n    }\n  }\n}\nfn main {\n  b = Bag.new()\n  b.bump()\n}\n", "cannot assign to p.x: p is a for variable", "8:11"))
+  xs.push(accepted("for-field-struct", "struct P {\n  x: Int\n  y: Int\n}\nfn main {\n  xs = [P { x: 1, y: 2 }, P { x: 3, y: 4 }]\n  for p in xs {\n    p.x = 7\n  }\n  puts(xs[1].x)\n}\n", "7\n"))
+  xs.push(accepted("for-field-nested-struct", "struct Pos {\n  x: Int\n  y: Int\n}\nstruct P {\n  id: Int\n  pos: Pos\n}\nfn main {\n  xs = [P { id: 1, pos: Pos { x: 1, y: 1 } }]\n  for p in xs {\n    p.pos.x += 10\n  }\n  puts(xs[0].pos.x)\n}\n", "11\n"))
+  xs.push(accepted("for-field-struct-in-method", "struct P {\n  x: Int\n}\nclass Bag {\n  ps: Array(P) = []\n  fn bump {\n    for p in ps {\n      p.x += 1\n    }\n  }\n  fn add(n: Int) {\n    ps.push(P { x: n })\n  }\n  fn first: Int {\n    ps[0].x\n  }\n}\nfn main {\n  b = Bag.new()\n  b.add(1)\n  b.bump()\n  puts(b.first())\n}\n", "2\n"))
   xs.push(accepted("for-legal-neighbours", "struct Pos {\n  x: Int\n  y: Int\n}\nstruct P {\n  x: Int\n  pos: Pos\n}\nclass C {\n  pub x: Int = 0\n  pub pos: Pos = Pos { x: 0, y: 0 }\n}\nstruct Holder {\n  c: C\n  xs: Array(Int)\n}\nfn maybe(n: Int): Int? {\n  if n > 0 {\n    return n\n  }\n  nil\n}\nfn main {\n  // a class element: the object changes, at any depth\n  cs = [C.new(), C.new()]\n  for c in cs {\n    c.x = 5\n    c.pos.x += 9\n  }\n  puts(\"\${cs[0].x} \${cs[1].x}\")\n  puts(cs[1].pos.x)\n  // a path through a reference inside a struct element, and an index\n  hs = [Holder { c: C.new(), xs: [1, 2] }]\n  for h in hs {\n    h.c.x = 42\n    h.xs[0] = 2\n  }\n  puts(\"\${hs[0].c.x} \${hs[0].xs[0]}\")\n  // an element that is itself an array\n  grid = [[1, 2], [3, 4]]\n  for row in grid {\n    row[0] = 7\n  }\n  puts(grid[1][0])\n  // a local copy changed and read\n  ps = [P { x: 1, pos: Pos { x: 1, y: 1 } }, P { x: 3, pos: Pos { x: 3, y: 3 } }]\n  last = 0\n  for p in ps {\n    q = p\n    q.x += 0\n    last = q.x\n  }\n  puts(last)\n  // the stores the hints name\n  for i in 0..ps.size {\n    ps[i].x = 100\n    ps[i].pos.y = 200\n    p = ps[i]\n    p.pos.x = 300\n    ps[i] = p\n  }\n  puts(\"\${ps[0].x} \${ps[1].pos.y} \${ps[1].pos.x}\")\n  // a name the body binds anew is not the loop's\n  total = 0\n  for n in [1, 2, 3] {\n    if n = maybe(n) {\n      n += 0\n      total += n\n    }\n  }\n  puts(total)\n  // other names are assignable in the body; a while loop skips\n  k = 0\n  i = 0\n  while i < 10 {\n    i += 3\n    k += 1\n  }\n  puts(k)\n  // after its loop a name is an ordinary one again\n  for j in 0..3 {\n  }\n  j = 3\n  j += 0\n  puts(j)\n}\n", "5 5\n9\n42 2\n7\n3\n100 200 300\n6\n4\n3\n"))
   xs
 }

@@ -206,6 +206,12 @@ pub class Block {
   pub params: Array(String) = []
   pub param_types: Array(TypeName) = []
   pub body: Array(Stmt) = []
+  // An inlined block over an Array of structs (`each`, `any`, `all`):
+  // its parameter is the element itself, a place. The checker names the
+  // walked array and the counter (hidden locals) and writes each use of
+  // the parameter as an index of them; the lowering binds the two.
+  pub place_arr: String = ""
+  pub place_idx: String = ""
 
   fn initialize(loc: Location) {
     self.loc = loc
@@ -313,6 +319,11 @@ pub class Stmt {
   pub else_body: Array(Stmt) = []
   pub body: Array(Stmt) = []
   pub pre: Array(Stmt) = []
+  // A `for` loop's parts (the parser): 1 a range's loop, 2 an array's,
+  // 3 a store of the loop's own (a counter, a bound, the array), 4 the
+  // element's store at each step; 5 that store when the element is a
+  // struct, a place: the checker writes each use as an index and the
+  // store is not made.
   pub for_kind: Int = 0
   pub declared: TypeName? = nil
   pub lead: Int = 0
@@ -956,6 +967,8 @@ pub fn clone_block(b: Block): Block {
     out.body.push(clone_stmt(b.body[i]))
     i += 1
   }
+  out.place_arr = b.place_arr
+  out.place_idx = b.place_idx
   out
 }
 
