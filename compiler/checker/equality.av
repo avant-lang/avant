@@ -358,6 +358,25 @@ pub fn (checker_self: Checker) derive_orders {
   }
 }
 
+// Whether a struct or class ty orders by its `<`: derived here from its
+// `fn compare` when derive_orders could not (an instance of a generic
+// struct, whose methods exist only once it is instantiated).
+pub fn (checker_self: Checker) has_order(ty: Ty, loc: Location): Bool {
+  if checker_self.user_op(ty, "<") {
+    return true
+  }
+  if !ty.is_struct() && !ty.is_class() {
+    return false
+  }
+  for ms in checker_self.methods {
+    if ms.owner == ty.name && ms.name == "compare" && !ms.node.lazy && ms.params.size == 1 && ms.ret.is_int() && ms.params[0].same_as(ty) {
+      checker_self.derive_lt_method(ty, loc)
+      return true
+    }
+  }
+  false
+}
+
 pub fn (checker_self: Checker) derive_lt_method(sty: Ty, loc: Location) {
   fnn = Function.new(loc, "<")
   fnn.owner = sty.name
@@ -732,7 +751,7 @@ pub fn (checker_self: Checker) check_agg_compare(expr: Expr, r: Expr, op: Int, o
     }
     return checker_self.t_bool()
   }
-  if !checker_self.user_op(left, "<") {
+  if !checker_self.has_order(left, expr.loc) {
     checker_self.fail(expr.loc, "${left.show()} has no order: define fn compare(other: ${left.show()}): Int on it (negative, zero or positive: <, <=, >, >=, sort, min and max use it)")
     return checker_self.t_bool()
   }
@@ -779,7 +798,7 @@ pub fn (checker_self: Checker) user_order_call(expr: Expr, array: Ty): Ty? {
   if _ = expr.block {
     return nil
   }
-  if e = array.inner, e.is_agg() && checker_self.user_op(e, "<") {
+  if e = array.inner, e.is_agg() && checker_self.has_order(e, expr.loc) {
     if name == "sort" || name == "sorted" {
       blk = Block.new(expr.loc)
       blk.params.push("__avant_a")
