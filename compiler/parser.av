@@ -2989,6 +2989,11 @@ pub class Parser {
           if self.current().kind == tk_l_paren() {
             took_type = false
             qual_pre = qual_of(cur)
+            // `xs.each (x) { ... }`: a lambda, never a qualified type's
+            // literal (`m.Pair(A) { a: ... }`).
+            if qual_pre.size > 0 && self.allow_struct_lit && self.lambda_head_at(self.index) >= 0 && !(field.value[0] >= 65 && field.value[0] <= 90) {
+              qual_pre = ""
+            }
             if qual_pre.size > 0 {
               if app = parse_maybe_type_app(field, qual_pre) {
                 cur = app
@@ -3366,6 +3371,9 @@ pub class Parser {
       }
     }
     if self.current().kind == tk_l_paren() {
+      if self.allow_struct_lit && self.lambda_head_at(self.index) >= 0 && !(tok.value[0] >= 65 && tok.value[0] <= 90) {
+        return parse_call(tok)
+      }
       if app = parse_maybe_type_app(tok, "") {
         return app
       }
