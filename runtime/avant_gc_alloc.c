@@ -805,6 +805,14 @@ void gc_alloc_stop_all(void) {
     if (!g || g == &gc_thread) {
       continue;
     }
+    if (__builtin_expect(gc_heap.set.verify, 0) && (g->fast_ok == 1 || g->mark)) {
+      /* Another thread is registered, so the program is shared, and
+       * its handshake (gc_alloc_shared_now) left no thread in the
+       * single mutator's inline state: one in it now published it
+       * after that, and allocated without the world lock beside the
+       * others, its allocations since its mark not counted. */
+      gc_die("avant gc verify: a thread is in the single mutator's inline state in a program with threads");
+    }
     cursors_drop(g);
     g->fast_ok = 0;
     g->mark = NULL;
@@ -1416,11 +1424,21 @@ void *avant_alloc_slow(uint64_t nbytes, uint32_t type_id) {
   gc_lock(&gc_heap.world);
   gc_stress_point();
   pthread_mutex_unlock(&gc_heap.world);
-  if (gc_thread.nogc || gc_thread.collecting || gc_heap.set.nursery_off || gc_thread.alloc_mature ||
+  /* The shared flag is read again after the safepoint and the stress
+   * point: another thread may have made the program shared while this
+   * one stopped at either (its handshake cleared this thread's inline
+   * state). From here to the inline sequence's end this thread reaches
+   * no safepoint, so a later registration's handshake waits for it, as
+   * for any allocation of the single mutator. Read only before them,
+   * the cursor's search for room ran without the world lock and the
+   * inline state was published in a shared program, while the other
+   * threads allocated under the lock from the same block lists. */
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 ||
+      gc_thread.nogc || gc_thread.collecting || gc_heap.set.nursery_off || gc_thread.alloc_mature ||
       gc_heap.limit_pending || gc_heap.explicit_pending || gc_heap.mature_since_full >= gc_heap.full_trigger ||
       avant_nursery_held + total >= avant_young_bytes || !young_room(total)) {
     /* Not this one: avant_alloc allocates it, without a second
-     * collection. */
+     * collection (in a program now shared, under the world lock). */
     gc_thread.stress_done = 1;
     return avant_alloc(nbytes, type_id);
   }
