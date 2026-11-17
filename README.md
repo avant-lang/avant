@@ -480,14 +480,14 @@ From loosest to tightest binding; operators on one row associate left to right.
 `==` and `!=` compare two values of one type; different types, an integer and a `Float64` included, are a compile error: convert (`n.to_f() == x`, or `n == x.to_i()`, which truncates), so no precision is lost silently above 2^53. A literal takes the other side's type (`x == 2`).
 
 - Numbers, `Bool`, `String`, `Bytes` and enums compare by value; a `Float64` by IEEE, so NaN equals nothing, itself included.
-- A struct compares its fields in order, each with its own `==`, unless it defines `fn ==` (with its `fn hash`: [Key and value types](#key-and-value-types)); one with a field that has no `==` (a `Hash`, a function) has none either, and the error names the field.
-- A class compares by identity (the same object) unless it defines `fn ==`.
+- A struct compares its fields in order, each with its own `==`, unless it defines `fn equals(other: T): Bool`, which `==` then calls (with its `fn hash`: [Key and value types](#key-and-value-types)); one with a field that has no `==` (a `Hash`, a function) has none either, and the error names the field.
+- A class compares by identity (the same object) unless it defines `fn equals`.
 - An array equals another when the sizes are equal and the elements are, in order.
 - An optional equals another when both are `nil` or both hold equal values; it is never compared with `nil`: open it ([Opening an optional](#opening-an-optional)).
 - A `Hash`, a function and a union of several types have no `==`; take a union apart with [`switch`](#unions).
 - `!=` is always `!(a == b)`.
 
-`<`, `<=`, `>` and `>=` order numbers and `String`s (byte by byte, a prefix first). A struct or a class that defines `fn <` gets `>`, `<=` and `>=` from it, and `sort`, `sorted`, `min` and `max` of its arrays use it.
+`<`, `<=`, `>` and `>=` order numbers and `String`s (byte by byte, a prefix first). A struct or a class that defines `fn compare(other: T): Int` (negative, zero or positive) gets `<`, `<=`, `>` and `>=` from it, and `sort`, `sorted`, `min` and `max` of its arrays use it, so its orders cannot disagree. `a.equals(b)` and `a.compare(b)` can be called as written too.
 
 ```avant
 struct Point {
@@ -499,8 +499,11 @@ struct Version {
   major: Int
   minor: Int
 
-  fn <(other: Version): Bool {
-    major < other.major || (major == other.major && minor < other.minor)
+  fn compare(other: Version): Int {
+    if major != other.major {
+      return major - other.major
+    }
+    minor - other.minor
   }
 }
 
@@ -1507,9 +1510,9 @@ fn main {
 ```
 
 - A struct key's hash and `==` come from its fields, as the struct's own `==` does when it defines none: each field in turn, a `String` by its bytes.
-- A struct that defines its own `==` defines its own hash too, `fn hash(h: Hasher)`, which adds to the hasher the values that `==` compares (`h.add(v)` takes an integer, a `Bool`, an enum, a `String`, or a struct, added by its own hash or field by field); the table then hashes and compares the key by those two methods, and its other fields may be anything. A type with `==` and no `hash`, or `hash` and no `==`, is refused at its declaration: equal values must hash alike. The runtime gives the hasher, with its per-process seed and its mixing; it exists only as that parameter (it is not made, stored, returned or captured).
+- A struct that defines its own equality (`fn equals`) defines its own hash too, `fn hash(h: Hasher)`, which adds to the hasher the values that `equals` compares (`h.add(v)` takes an integer, a `Bool`, an enum, a `String`, or a struct, added by its own hash or field by field); the table then hashes and compares the key by those two methods, and its other fields may be anything. A type with `equals` and no `hash`, or `hash` and no `equals`, is refused at its declaration: equal values must hash alike. The runtime gives the hasher, with its per-process seed and its mixing; it exists only as that parameter (it is not made, stored, returned or captured).
 - A `Float64` key, or a struct key that holds one, is a compile error, since IEEE `==` (`NaN` unequal to itself, `-0.0` equal to `0.0`) agrees with no hash: key by an integer.
-- A class key is a compile error, since a class compares by identity and the collector moves objects, and a class's own `==` reads fields that can change while it is in the table: key by a value the object holds (an id or a name), or by its index in an array. Every refused key or value names what to use instead.
+- A class key is a compile error, since a class compares by identity and the collector moves objects, and a class's own `equals` reads fields that can change while it is in the table: key by a value the object holds (an id or a name), or by its index in an array. Every refused key or value names what to use instead.
 - A struct key of integers, `Bool`s and enums whose size is 1, 2, 4 or 8 bytes (two `Int32` fields, say) is kept as one integer, so it costs what a combined integer key costs.
 - A class, an `Array` or a `Hash` value is shared with the table, as a variable would share it; a struct value is a copy, as in an `Array`.
 - A value cannot be optional (`Hash(Int, String?)` is refused): `h[k]` is already `nil` for a missing key, so a stored `nil` could not be told from it.
@@ -1519,7 +1522,7 @@ struct Ticket {
   id: Int
   note: String
 
-  fn ==(other: Ticket): Bool {
+  fn equals(other: Ticket): Bool {
     id == other.id
   }
 
@@ -1538,7 +1541,7 @@ fn main {
 
 ## Sets
 
-`Set(T)` holds distinct values, each at most once. Its elements are what a `Hash` takes as keys ([Key and value types](#key-and-value-types)), by the same rules: a `Float64`, a class or a struct with its own `==` and no hash is refused with the reason.
+`Set(T)` holds distinct values, each at most once. Its elements are what a `Hash` takes as keys ([Key and value types](#key-and-value-types)), by the same rules: a `Float64`, a class or a struct with its own `equals` and no hash is refused with the reason.
 
 ```avant
 fn main {
@@ -1874,7 +1877,7 @@ fn main {
 
 ### Operator methods
 
-An operator is a method named by it: `+`, `-`, `*`, `/`, `%`, `&+`, `&-`, `&*`, `&`, `|`, `^`, `<<`, `>>`, `==`, `<`, `<=`, `>`, `>=` (one parameter, the right operand); `fn -` with no parameter (`-x`); `fn []`, taking the index or several (`g[x, y]`), reads `c[i]`, and `fn []=`, taking the index, then the value, writes `c[i] = v`. `!`, `&&`, `||` and `~` cannot be defined; `!=` is always `!(a == b)`; defining `<` gives `>`, `<=` and `>=` ([Equality and order](#equality-and-order)); a struct without `fn ==` compares its fields.
+An operator is a method named by it: `+`, `-`, `*`, `/`, `%`, `&+`, `&-`, `&*`, `&`, `|`, `^`, `<<`, `>>` (one parameter, the right operand); `fn -` with no parameter (`-x`); `fn []`, taking the index or several (`g[x, y]`), reads `c[i]`, and `fn []=`, taking the index, then the value, writes `c[i] = v`. `!`, `&&`, `||` and `~` cannot be defined; equality and order are the named methods `fn equals(other: T): Bool` and `fn compare(other: T): Int`, which `==`, `!=` (always `!(a == b)`), `<`, `<=`, `>` and `>=` call ([Equality and order](#equality-and-order)); a struct without `fn equals` compares its fields. A method declared `fn ==` or `fn <` is refused with the one to write.
 
 `at += delta` is `at = at + delta`, and `g[i] += 1` reads with `[]` and writes with `[]=`; the place is read twice, so it must be a name, a field, or an element at a name or a literal (`xs[i] += d`, not `xs[next()] += d`).
 
@@ -1887,7 +1890,7 @@ struct Vec2 {
     Vec2 { x: x + other.x, y: y + other.y }
   }
 
-  fn ==(other: Vec2): Bool {
+  fn equals(other: Vec2): Bool {
     x == other.x && y == other.y
   }
 
@@ -2587,17 +2590,18 @@ A struct, a class, or a `Ptr` to a C layout opts in by name, never by merely hav
 
 - The bound is written where the parameter is: after a parameter's type (`v: T: Show`), inside another type (`xs: Array(T: Ranked)`), or on a generic type's parameters (`class Top(T: Ranked)`). After a union it bounds the last member: `r: T | E: Error`.
 - `E: Error` takes a type marked `Error`, and settles a union's split: `fn failure(r: T | E: Error): E?` on an `Int | ParseError` takes `E` as `ParseError` and `T` as `Int`.
+- A bound by an interface that declares `fn equals(other: T): Bool` (`Eq(T)` below) or `fn compare(other: T): Int` (an order, say `interface Ordered(T)`) lets the body write `a == b`, or `a < b`, `<=`, `>` and `>=`: each type's copy calls its own `equals` (or its derived one) or `compare`.
 
 <!-- check: run -->
 ```avant
 interface Eq(T) {
-  fn ==(other: T): Bool
+  fn equals(other: T): Bool
 }
 
 struct Id: Eq(Id) {
   n: Int
 
-  fn ==(other: Id): Bool {
+  fn equals(other: Id): Bool {
     n == other.n
   }
 

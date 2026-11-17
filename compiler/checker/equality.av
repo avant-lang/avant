@@ -1,8 +1,9 @@
 // Equality and ordering beyond the scalars. The rule:
 //
-//   - a class compares by identity unless it defines fn ==;
+//   - a class compares by identity unless it defines fn equals (its
+//     ==, spell_protocols);
 //   - a struct compares its fields in order, each by its own ==, unless
-//     it defines fn ==: the checker writes that method the first time a
+//     it defines fn equals: the checker writes that method the first time a
 //     program compares the struct or opts it into an interface that asks
 //     for == (derive_eq_method), so it is an ordinary method, a witness of
 //     `interface Eq(T)` included;
@@ -12,7 +13,8 @@
 //     (eq_template) and instantiates for each element type;
 //   - a Float64 compares by IEEE (NaN equals nothing, itself included),
 //     so an array or struct holding NaN is not equal to itself;
-//   - != is always !(a == b); >, <= and >= of a type that defines < are
+//   - != is always !(a == b); a type's order is its fn compare, from
+//     which the checker writes < (derive_orders); >, <= and >= are
 //     b < a, !(b < a) and !(a < b);
 //   - two values of different types do not compare (a compile error),
 //     an optional is never compared with nil, and a Hash, a
@@ -63,7 +65,7 @@ pub fn (checker_self: Checker) key_problem(ty: Ty, seen: Array(String), path: St
     if sig = checker_self.own_hash(ty) {
       return ""
     }
-    return "${ty.show()} defines its own ==, so it cannot be ${what} without its own hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields == compares"
+    return "${ty.show()} defines its own ==, so it cannot be ${what} without its own hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares"
   }
   if seen.contains(ty.name) {
     return ""
@@ -190,7 +192,7 @@ pub fn (checker_self: Checker) hash_add_problem(ty: Ty, seen: Array(String)): St
     return ""
   }
   if checker_self.own_op(ty, "==") {
-    return "${ty.show()} defines == but no hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields == compares"
+    return "${ty.show()} defines equals but no hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares"
   }
   if seen.contains(ty.name) {
     return ""
@@ -297,6 +299,128 @@ pub fn (checker_self: Checker) derive_hash_method(sty: Ty, loc: Location) {
   }
 }
 
+// The protocol methods are named methods (equals, compare, hash), and
+// the operators call them: `fn equals(other: T): Bool` (one parameter)
+// is registered under the name == (so the derived ==, the Eq bounds,
+// contains, index_of and the keys find it as before; messages show
+// equals), and a method declared `fn ==`, `fn <`, `fn <=`, `fn >` or
+// `fn >=` (in a type's body, as an external method, or in an interface)
+// is refused with the method to write.
+pub fn (checker_self: Checker) spell_protocols {
+  for fnn in program_all_functions(checker_self.program) {
+    if fn_is_method(fnn) {
+      checker_self.spell_method(fnn)
+    }
+  }
+  for idef in checker_self.program.interfaces {
+    for m in idef.methods {
+      checker_self.spell_method(m)
+    }
+  }
+}
+
+pub fn (checker_self: Checker) spell_method(fnn: Function) {
+  if fnn.lazy || fnn.shown_name.size > 0 {
+    return
+  }
+  pt = "T"
+  if fnn.params.size == 1 && fnn.params[0].type.name.size > 0 {
+    pt = fnn.params[0].type.name
+  }
+  if fnn.name == "==" {
+    checker_self.fail(fnn.loc, "fn == is spelled equals: write fn equals(other: ${pt}): Bool: == calls it")
+  } else if fnn.name == "<" || fnn.name == "<=" || fnn.name == ">" || fnn.name == ">=" {
+    checker_self.fail(fnn.loc, "fn ${fnn.name} is spelled compare: write fn compare(other: ${pt}): Int: <, <=, >, >= and sort use it")
+  } else if fnn.name == "equals" && fnn.params.size == 1 && !fnn.type_method {
+    fnn.name = "=="
+    fnn.shown_name = "equals"
+  }
+}
+
+// A type's order: each `fn compare(other: T): Int` of a struct or class
+// gets the internal `<` the order machinery calls (`self.compare(other)
+// < 0`, lazy, as derive_eq_method writes ==), so >, <=, >=, sort,
+// sorted, min and max follow compare and cannot disagree with it.
+pub fn (checker_self: Checker) derive_orders {
+  n = checker_self.methods.size
+  i = 0
+  while i < n {
+    ms = checker_self.methods[i]
+    i += 1
+    if ms.node.lazy || ms.name != "compare" || ms.params.size != 1 || !ms.ret.is_int() || ms.node.generic {
+      continue
+    }
+    if oty = checker_self.resolver.get_named_in(ms.node.owner_mod, ms.owner) {
+      if (oty.is_struct() || oty.is_class()) && ms.params[0].same_as(oty) && !checker_self.user_op(oty, "<") {
+        checker_self.derive_lt_method(oty, ms.node.loc)
+      }
+    }
+  }
+}
+
+pub fn (checker_self: Checker) derive_lt_method(sty: Ty, loc: Location) {
+  fnn = Function.new(loc, "<")
+  fnn.owner = sty.name
+  fnn.owner_mod = sty.mod_name
+  fnn.mod_name = sty.mod_name
+  fnn.vis = true
+  fnn.lazy = true
+  fnn.return_type = TypeName.new(loc, "Bool")
+  fnn.params.push(Param.new(loc, "other", ty_to_type_name(sty, loc)))
+  call = Expr.new(ex_call(), loc)
+  call.callee = "compare"
+  me = Expr.new(ex_name(), loc)
+  me.ident = "self"
+  call.receiver = me
+  o = Expr.new(ex_name(), loc)
+  o.ident = "other"
+  call.args.push(o)
+  zero = Expr.new(ex_int(), loc)
+  zero.int_bits = 0u64
+  lt = Expr.new(ex_binary(), loc)
+  lt.op = tk_less()
+  lt.left = call
+  lt.right = zero
+  fnn.body.push(stmt_expr(loc, lt))
+  checker_self.attach_method_fn(fnn)
+  params: Array(Ty) = []
+  params.push(sty)
+  sig = FuncSig.new(fnn.name, fnn, params, checker_self.t_bool())
+  sig.owner = sty.name
+  checker_self.alloc_ol(fnn)
+  checker_self.methods.push(sig)
+  checker_self.note_method_named()
+  key = "${sty.name}__${fnn.name}"
+  if taken = checker_self.method_index.get(key) {
+  } else {
+    checker_self.method_index[key] = checker_self.methods.size - 1
+  }
+  if checker_self.adopt_pending {
+    checker_self.assign_one_method_emit(sig)
+    checker_self.pending.push(fnn)
+  }
+}
+
+// `a.equals(b)` of a struct or a class: the comparison `a == b` (its
+// receiver already checked as left), resolved as the operator is.
+pub fn (checker_self: Checker) check_equals_call(expr: Expr, left: Ty): Ty {
+  if recv = expr.receiver {
+    r = expr.args[0]
+    args: Array(Expr) = []
+    expr.kind = ex_binary()
+    expr.op = tk_eq_eq()
+    expr.left = recv
+    expr.right = r
+    expr.receiver = nil
+    expr.args = args
+    expr.callee = ""
+    if got = checker_self.check_agg_compare(expr, r, tk_eq_eq(), "==", left) {
+      return got
+    }
+  }
+  checker_self.t_bool()
+}
+
 // A type that defines its own equality defines its own hash, and one
 // that defines `fn hash(h: Hasher)` defines its own equality: equal
 // values must hash alike, so one without the other is refused at its
@@ -311,13 +435,13 @@ pub fn (checker_self: Checker) check_hash_pairs {
           checker_self.fail(h.node.loc, "hash takes the Hasher: fn hash(h: Hasher)")
         }
       } else {
-        checker_self.fail(ms.node.loc, "${ms.owner} defines == but no hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields == compares")
+        checker_self.fail(ms.node.loc, "${ms.owner} defines equals but no hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields equals compares")
       }
     }
     if !ms.node.lazy && ms.name == "hash" && ms.params.size == 1 && ms.params[0].is_hasher() {
       if e = checker_self.named_method(ms.owner, "==") {
       } else {
-        checker_self.fail(ms.node.loc, "${ms.owner} defines hash but no ==: a hash agrees with an equality; add fn ==(other: ${ms.owner}): Bool comparing the values hash adds")
+        checker_self.fail(ms.node.loc, "${ms.owner} defines hash but no equals: a hash agrees with an equality; add fn equals(other: ${ms.owner}): Bool comparing the values hash adds")
       }
     }
   }
@@ -384,7 +508,7 @@ pub fn (checker_self: Checker) eq_refusal(ty: Ty, missing: String): String {
     return "${ty.show()} has no ==: take it apart with switch and compare its members"
   }
   if ty.is_struct() {
-    return "cannot compare ${ty.show()}: ${missing} has no ==; define fn == on ${ty.show()}"
+    return "cannot compare ${ty.show()}: ${missing} has no ==; define fn equals(other: ${ty.show()}): Bool on ${ty.show()}"
   }
   if missing == ty.show() {
     return "${ty.show()} has no =="
@@ -609,7 +733,7 @@ pub fn (checker_self: Checker) check_agg_compare(expr: Expr, r: Expr, op: Int, o
     return checker_self.t_bool()
   }
   if !checker_self.user_op(left, "<") {
-    checker_self.fail(expr.loc, "${left.show()} has no order: define fn < on it (>, <= and >= derive from <)")
+    checker_self.fail(expr.loc, "${left.show()} has no order: define fn compare(other: ${left.show()}): Int on it (negative, zero or positive: <, <=, >, >=, sort, min and max use it)")
     return checker_self.t_bool()
   }
   if checker_self.resolve_compare(expr, left, right, "<") {

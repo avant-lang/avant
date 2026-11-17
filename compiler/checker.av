@@ -5405,6 +5405,12 @@ pub class Checker {
     if object.is_hasher() {
       return check_hasher_method(expr)
     }
+    if expr.callee == "equals" && expr.args.size == 1 && (object.is_struct() || object.is_class()) && !self.user_op(object, "equals") {
+      if bl = expr.block {
+      } else {
+        return check_equals_call(expr, object)
+      }
+    }
     if object.is_bool() && expr.callee == "to_s" {
       return scalar_to_s(expr, object)
     }
