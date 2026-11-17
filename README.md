@@ -703,8 +703,32 @@ fn main {
 ```
 
 - **`..` excludes its end** (`for i in 1..n` never reaches `n`); **`..=` includes it** (`for i in 1..=n` ends with `n`, even the largest `Int`, without overflow).
-- The bounds are evaluated once. The loop variable is a new name, only inside the loop, unless a variable of that name exists outside: the loop then uses it and leaves its last value there. `break`, `continue` and `return` work as in `while`.
-- **The loop variable cannot be assigned** (it is a fresh copy at each step): `i = 5`, `x += 1` and a struct element's field (`p.x = 1`) are compile errors. Store through an index (`xs[i] = v`, `xs[i].x = v`), or use `while` for a range that skips or repeats steps. A *class* element's field is assignable: `c.x = 1` changes the object.
+- The bounds are evaluated once. The loop variable is a new name, only inside the loop, unless a variable of that name exists outside: the loop then uses it and leaves its last value there (not over an array of structs, below). `break`, `continue` and `return` work as in `while`.
+- **Over an array of structs the loop variable is the element itself**, in place: `p.x = 1`, `p.pos.x += 1` and a method that changes its receiver (`p.step()`) change the element in the array, as a *class* element's field changes its object. A copy is still a copy (`q = p`, an argument, `ys.push(p)`). While the loop runs, the array's size and order cannot change through its own name (`xs.push`, `pop`, `clear`, `reserve`, `sort` and `reverse` there are compile errors; collect the changes and apply them after the loop); a change through another name that removes the element stops the program at the variable's next use, as a bad index does. The variable cannot be captured by a lambda or a task (copy it first: `q = p`), cannot be replaced as a whole (`p = other` is a compile error: store through an index, `xs[i] = other`), and needs a name of its own. The parameter of `each`, `any` and `all` over an array of structs is the same place.
+- **Any other loop variable cannot be assigned** (it is a fresh copy at each step): `i = 5` and `x += 1` are compile errors. Store through an index (`xs[i] = v`), or use `while` for a range that skips or repeats steps.
+
+```avant
+struct Ball {
+  x: Int
+  dx: Int
+
+  fn step {
+    self.x += self.dx
+  }
+}
+
+fn main {
+  balls = [Ball { x: 0, dx: 1 }, Ball { x: 10, dx: -2 }]
+  for b in balls {
+    b.step()
+    b.dx *= 2
+  }
+  balls.each { |b| b.x += 100 }
+  puts("${balls[0].x} ${balls[1].x}")   // => 101 108
+  puts(balls[1].dx)                     // => -4
+}
+```
+
 - A range is only a `for` form: it is not a value you can store.
 - Arrays and hashes also have `each` ([Array operations](#array-operations), [Hash operations](#hash-operations)).
 - A struct literal in a `for`'s range or array needs parentheses, brackets or a call around it, as in a [condition](#if): `for p in [Point { x: 1, y: 2 }]`.
@@ -1352,7 +1376,7 @@ There are no negative indexes and no slices of arrays yet.
 | `xs.clear()` | remove every element |
 | `xs.reserve(n)` | make room for `n` elements ahead of time |
 | `xs.fill(v)` | set every element (integer and `Bool` arrays) |
-| `xs.each { \|x\| ... }`, `for x in xs` | walk the elements |
+| `xs.each { \|x\| ... }`, `for x in xs` | walk the elements; over structs, `x` is the element in place ([For](#for)) |
 | `xs.sort()`, `xs.sort { \|a, b\| a < b }` | sort in place: by the element's order, or by a block that says whether `a` comes first |
 | `xs.sorted()`, `xs.sorted { \|a, b\| ... }` | the same, as a new array |
 | `xs.reverse()` | reverse in place |
@@ -1365,6 +1389,7 @@ There are no negative indexes and no slices of arrays yet.
 - The element order used by `sort`, `min` and `max` exists for integers, `Float64` (NaN after every number), `String` and `Bytes` (byte order) and `Bool`. Any other element type sorts with a comparator block. On floats, `min` is the smallest number (NaN only when every element is NaN) and `max` is NaN when any element is.
 - No `map`, `select`, `reduce` or `join` is built in yet: write a loop, or a three-line generic function ([Trailing blocks](#trailing-blocks)).
 - The blocks of `each`, `any`, `all`, `sort` and `parallel` are inlined loops, not function values ([Builtin blocks are loops](#builtin-blocks-are-loops)).
+- The parameters of a comparator (`sort`, `sorted`) and of a `parallel` body are copies of the elements: writing one, or calling a method on it that changes its receiver, is a compile error (a comparator only compares; a `parallel` body returns the new element). A block given to a function of your own is a function value: its parameters are copies, as any function's are.
 
 ```avant
 fn main {
@@ -1540,7 +1565,7 @@ When in doubt, use a struct: it allocates nothing, and no other holder can chang
 
 A struct literal names every field without a default, in any order; a copy is independent of the original.
 
-A method's change to its struct receiver is the caller's (no `mutating` mark); a struct argument is a copy, so a change through a parameter stays in the callee. `xs[i].x = v` changes an array element in place; `q = xs[i]` and `for p in xs` copy it (assigning `p` or its field is a compile error: [For](#for)).
+A method's change to its struct receiver is the caller's (no `mutating` mark); a struct argument is a copy, so a change through a parameter stays in the callee. A struct reached through an index or a field is changed where it is stored: `xs[i].x = v`, `xs[i].scale(4)`, `xs[i].pos.x = v`, `obj.pos.x = v` and `obj.pos.scale(4)` change the element or the field, and so does the variable of `for p in xs` and the parameter of `xs.each { |p| ... }` ([For](#for)); `q = xs[i]` copies it. A Hash gives its value as an optional copy (`h[k]` is `nil` when the key is absent), so `h[k].x = v` is a compile error: open it, change it and store it back (`if v = h[k] { v.x = 1; h[k] = v }`); the parameters of `h.each { |k, v| ... }` are copies too, and writing one is a compile error.
 
 ```avant
 struct Vec {
