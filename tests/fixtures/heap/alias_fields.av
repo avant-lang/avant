@@ -1,0 +1,214 @@
+// Object field stores beside element stores and the moves of both. The
+// emitter tags a class's or record's field with its own type-based alias
+// tag, so LLVM may keep a field's value, a slot's value, a buffer
+// reference or a size in a register across a store of another kind. That
+// is right only because an object moves (a collection evacuates it) and
+// its fields change through another path only inside a call, or through
+// an access LLVM sees as possibly the same memory. Each function here
+// mixes field stores with element stores and with the calls that move
+// objects and buffers: a counter field beside element stores and
+// allocations; a field holding an array that is replaced and grown while
+// its elements are stored; two names of one object; a struct inside an
+// object changed by its own method (through the field's address); a
+// closure's captured counter (its box is a record) beside element
+// stores; an object that survived collections whose field takes young
+// values; and tasks whose records and objects move at one another's
+// polls. A field value kept across one of those would read an old value
+// or freed memory, and the checksums would differ (in --release, and
+// under AVANT_GC_STRESS=1, AVANT_YOUNG_MB=1, AVANT_GC_VERIFY=1 and
+// AVANT_NURSERY=0).
+
+class Box {
+  v: Int
+
+  fn initialize(v: Int) {
+    self.v = v
+  }
+}
+
+struct Pos {
+  x: Int
+  y: Int
+
+  fn move(d: Int) {
+    self.x += d
+    self.y = self.y &* 3 &+ self.x
+  }
+}
+
+class Counter {
+  pub count: Int = 0
+  pub xs: Array(Int) = []
+  pub pos: Pos = Pos { x: 0, y: 1 }
+  pub last: Box? = nil
+
+  // The count and the elements in one loop, with an allocation (a
+  // collection may move self and xs's buffer) in every iteration.
+  fn fill(n: Int): Int {
+    acc = 0
+    for i in 0..n {
+      self.count += 1
+      self.xs[i % self.xs.size] = self.count &* 7
+      b = Box.new(self.count)
+      if i % 5 == 0 {
+        self.last = b
+      }
+      acc = acc &+ self.xs[(i + 1) % self.xs.size] &+ self.count
+    }
+    acc
+  }
+
+  // The field that holds the array is replaced and grown inside the loop;
+  // each element store must reach the array the field holds now.
+  fn swap_rows(n: Int): Int {
+    acc = 0
+    for i in 0..n {
+      self.xs[i % self.xs.size] = i
+      if i % 37 == 0 {
+        self.xs = [i, i + 1, i + 2]
+      }
+      if i % 11 == 0 {
+        self.xs.push(i)
+      }
+      acc = acc &* 31 &+ self.xs[self.xs.size - 1] &+ self.xs.size
+    }
+    acc
+  }
+
+  // A struct field changed through its method (the method gets the
+  // field's address) and read through the object before and after.
+  fn walk(n: Int): Int {
+    acc = 0
+    for i in 0..n {
+      before = self.pos.x
+      self.pos.move(i % 5)
+      self.xs[i % self.xs.size] = self.pos.x - before
+      acc = acc &+ self.pos.y &+ self.xs[(i + 3) % self.xs.size]
+    }
+    acc
+  }
+}
+
+fn sum_ints(xs: Array(Int)): Int {
+  acc = 0
+  for k in 0..xs.size {
+    acc = acc &* 31 &+ xs[k]
+  }
+  acc
+}
+
+// Two names of one object: a store through one, a read through the
+// other, beside element stores.
+fn two_names(n: Int): Int {
+  a = Counter.new()
+  a.xs = Array(Int).new(16)
+  b = a
+  acc = 0
+  for i in 0..n {
+    a.count = i
+    b.xs[i % 16] = a.count + 1
+    b.count += 2
+    acc = acc &+ a.count &+ b.xs[(i + 5) % 16]
+  }
+  acc &+ sum_ints(a.xs)
+}
+
+// A closure's captured counter lives in a box (a record) that the block
+// changes beside element stores into an array it also captures.
+fn captured(n: Int): Int {
+  xs = Array(Int).new(n)
+  ys = Array(Int).new(n)
+  for i in 0..n {
+    xs[i] = i
+  }
+  count = 0
+  k = 0
+  xs.each { |x|
+    count = count &+ x
+    ys[k] = count
+    k += 1
+    s = "c${count}"
+    count = count &+ s.size
+  }
+  count &+ sum_ints(ys)
+}
+
+// An object that survived many collections, whose field takes young
+// arrays and young boxes while its elements are stored.
+fn tenured_object(n: Int): Int {
+  c = Counter.new()
+  c.xs = [0, 0, 0, 0]
+  junk: Array(String) = []
+  for i in 0..200000 {
+    junk.push("j${i}")
+    if junk.size > 100 {
+      junk.clear()
+    }
+  }
+  acc = 0
+  for r in 0..20 {
+    c.xs = Array(Int).new(n)
+    for i in 0..n {
+      c.xs[i] = i &* r
+      c.last = Box.new(i)
+      t = "t${i}"
+      acc = acc &+ t.size
+      if l = c.last {
+        acc = acc &+ l.v
+      }
+    }
+    acc = acc &+ sum_ints(c.xs)
+  }
+  acc
+}
+
+// Tasks each update their own object's fields and elements while the
+// others allocate, so a collection one starts moves another's objects at
+// its poll; the captured values sit in the task's record.
+fn task_work(shared: Array(Int), id: Int, n: Int): Int {
+  c = Counter.new()
+  c.xs = Array(Int).new(n)
+  acc = 0
+  for r in 0..40 {
+    i = 0
+    while i < n {
+      c.count += shared[(i + id) % shared.size]
+      c.xs[i] = c.count
+      b = Box.new(i + r)
+      acc = acc &+ b.v &+ c.count
+      i += 1
+    }
+  }
+  acc &+ sum_ints(c.xs)
+}
+
+fn main {
+  c = Counter.new()
+  c.xs = Array(Int).new(64)
+  puts(c.fill(5000))
+  puts(c.swap_rows(3000))
+  puts(c.walk(3000))
+  puts(c.count)
+  puts(two_names(4000))
+  puts(captured(3000))
+  puts(tenured_object(500))
+  shared: Array(Int) = []
+  for i in 0..300 {
+    shared.push(i * i)
+  }
+  hs: Array(JoinHandle(Int)) = []
+  for id in 0..4 {
+    hs.push(spawn { task_work(shared, id, 400) })
+  }
+  mine: Array(String) = []
+  for i in 0..2000 {
+    mine.push("m${i}")
+    if mine.size > 64 {
+      mine.clear()
+    }
+  }
+  total = 0
+  hs.each { |h| total = total &+ (h.join() ?? -1) }
+  puts(total)
+  puts(mine.size)
+}

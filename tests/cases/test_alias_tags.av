@@ -3,10 +3,12 @@ import harness
 // The type-based alias tags of the LLVM emitter (compiler/llvm/emit_core.av,
 // ll_tbaa_tag): an element access carries the element tag, an Array or Buf
 // header's buffer reference and size their own tags, a local (an alloca,
-// a collector's slot among them) its own, and nothing else is tagged
-// (object fields, Hash fields, an array's capacity, which is read
-// atomically, raw pointers). Then the program that stores elements while calls move their
-// buffers (tests/fixtures/heap/alias_moves.av) is built with --release, the
+// a collector's slot among them) its own, a class's or record's field
+// its own, and nothing else is tagged (Hash fields, an array's
+// capacity, which is read atomically, raw pointers). Then the program
+// that stores elements and fields while calls move their
+// buffers and objects (tests/fixtures/heap/alias_moves.av) is built with
+// --release, the
 // mode whose optimizer uses the tags, and run under each collector mode:
 // its output must be its run golden's.
 
@@ -130,31 +132,33 @@ fn test_alias_tags_ll(c: Checks, compiler: String, stamp: Int) {
     for i in 0..lines2.size - 1 {
       if str_has(lines2[i], ".Box\", ptr %t") {
         fields += 1
-        if str_has(lines2[i + 1], "!tbaa") {
+        if str_has(lines2[i + 1], ", !tbaa !11") {
           tagged += 1
         }
       }
     }
     c.expect(fields >= 2, "the probe reaches an object's field")
-    c.eq_int(tagged, 0, "an object's field is not tagged")
-    c.eq_int(tags_count(lines2, "!tbaa", "") - tags_count(lines2, ", !tbaa !9", ""), 0, "only locals are tagged without an array")
+    c.eq_int(tagged, fields, "an object's field carries the object field tag")
+    c.expect(str_has(text2, "!11 = !{!10, !10, i64 0}"), "the object field tag")
+    c.eq_int(tags_count(lines2, "!tbaa", "") - tags_count(lines2, ", !tbaa !9", "") - tags_count(lines2, ", !tbaa !11", ""), 0, "only locals and object fields are tagged without an array")
   } else {
     c.expect(false, "read the object and hash probe's .ll")
   }
 }
 
-fn test_alias_tags_moves(c: Checks, compiler: String, stamp: Int) {
+// name: alias_moves (elements) or alias_fields (object fields).
+fn test_alias_tags_moves(c: Checks, compiler: String, stamp: Int, name: String) {
   root = avant_test_root()
-  src = "${root}/tests/fixtures/heap/alias_moves.av"
-  bin = "${scratch()}/alias-tags-${stamp}-moves"
-  clog = "${scratch()}/alias-tags-${stamp}-moves.clog"
-  want = file_read("${root}/tests/goldens/runs/fixtures/heap/alias_moves.out") ?? ""
-  c.expect(want.size > 0, "the moves' run golden")
+  src = "${root}/tests/fixtures/heap/${name}.av"
+  bin = "${scratch()}/alias-tags-${stamp}-${name}"
+  clog = "${scratch()}/alias-tags-${stamp}-${name}.clog"
+  want = file_read("${root}/tests/goldens/runs/fixtures/heap/${name}.out") ?? ""
+  c.expect(want.size > 0, "${name}'s run golden")
   flags: Array(String) = []
   flags.push("--release")
-  c.eq_int(compile_av_flags(compiler, src, bin, clog, flags), 0, "the moves compile with --release")
+  c.eq_int(compile_av_flags(compiler, src, bin, clog, flags), 0, "${name} compiles with --release")
   if !file_exists(bin) {
-    c.expect(false, "the moves' binary")
+    c.expect(false, "${name}'s binary")
     return
   }
   chmod_x(bin)
@@ -173,14 +177,14 @@ fn test_alias_tags_moves(c: Checks, compiler: String, stamp: Int) {
       args.push(str_slice(words, start, words.size))
     }
     args.push(bin)
-    rlog = "${scratch()}/alias-tags-${stamp}-moves-${j}.out"
-    name = envs[j]
-    if name.size == 0 {
-      name = "the outer environment"
+    rlog = "${scratch()}/alias-tags-${stamp}-${name}-${j}.out"
+    mode = envs[j]
+    if mode.size == 0 {
+      mode = "the outer environment"
     }
     code = process_run_out("/usr/bin/env", args, rlog) ?? -1
-    c.eq_int(code, 0, "the moves exit 0 under ${name}")
-    c.eq_str(file_read(rlog) ?? "", want, "the moves' output under ${name}")
+    c.eq_int(code, 0, "${name} exits 0 under ${mode}")
+    c.eq_str(file_read(rlog) ?? "", want, "${name}'s output under ${mode}")
   }
 }
 
@@ -190,7 +194,8 @@ fn test_alias_tags(c: Checks) {
     stamp = now_ms()
     test_alias_tags_ll(c, compiler, stamp)
     test_alias_tags_cap(c, compiler, stamp)
-    test_alias_tags_moves(c, compiler, stamp)
+    test_alias_tags_moves(c, compiler, stamp, "alias_moves")
+    test_alias_tags_moves(c, compiler, stamp, "alias_fields")
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

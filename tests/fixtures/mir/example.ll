@@ -52,7 +52,7 @@ bb0.s0.cont:
   %t6 = load ptr, ptr %_2.name, align 8, !tbaa !9
   %t7 = load ptr, ptr %_1.self, align 8, !tbaa !9
   %t8 = getelementptr inbounds %"main.Box", ptr %t7, i32 0, i32 0
-  store ptr %t6, ptr %t8, align 8
+  store ptr %t6, ptr %t8, align 8, !tbaa !11
   ret void
 }
 
@@ -171,13 +171,13 @@ bb1.s1.cont:
   %t19 = load ptr, ptr %_4, align 8, !tbaa !9
   %t20 = load ptr, ptr %_2.b, align 8, !tbaa !9
   %t21 = getelementptr inbounds %"main.Box", ptr %t20, i32 0, i32 0
-  store ptr %t19, ptr %t21, align 8
+  store ptr %t19, ptr %t21, align 8, !tbaa !11
   br label %bb2
 
 bb2:
   %t22 = load ptr, ptr %_2.b, align 8, !tbaa !9
   %t23 = getelementptr inbounds %"main.Box", ptr %t22, i32 0, i32 0
-  %t24 = load ptr, ptr %t23, align 8
+  %t24 = load ptr, ptr %t23, align 8, !tbaa !11
   store ptr %t24, ptr %_0, align 8, !tbaa !9
   call void @__avant_frame_pop(ptr %gcf)
   %t25 = load ptr, ptr %_0, align 8
@@ -335,3 +335,5 @@ attributes #0 = { nounwind "frame-pointer"="all" "probe-stack"="inline-asm" }
 !7 = !{!6, !6, i64 0}
 !8 = !{!"local", !1, i64 0}
 !9 = !{!8, !8, i64 0}
+!10 = !{!"object field", !1, i64 0}
+!11 = !{!10, !10, i64 0}
