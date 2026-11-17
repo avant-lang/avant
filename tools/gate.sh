@@ -480,6 +480,17 @@ ptimes() { [ -f "$1" ] && grep -E '^(real|user|sys) ' "$1" | tr '\n' ' '; }
     case "$L" in "$C"-gc*) tag="$L ($(gc_env_of "$L"))" ;; esac
     echo "suite $tag: $(grep -E 'failed, .* passed' "$out/suite-$L.log" | tail -1) $checks $jf $(ptimes "$out/time-$L.txt")$(grep -E '^rc=' "$out/suite-$L.log") new-tmp=$(wc -l < "$out/new-$L.tmp") gone-tmp=$(wc -l < "$out/gone-$L.tmp") new-repo=$(wc -l < "$out/new-$L.repo") gone-repo=$(wc -l < "$out/gone-$L.repo")"
   done
+  # The longest suite pass by its own wall time: with the GC passes
+  # overlapped, the one that bounds their wall (a pass's CPU time can be
+  # the largest while another pass is the longest).
+  for L in $SUITES; do
+    r=$(awk '$1 == "real" { print $2 }' "$out/time-$L.txt" 2>/dev/null)
+    [ -n "$r" ] && printf '%s %s\n' "$r" "$L"
+  done | sort -k1,1 -g -r | head -n 1 | while read -r r L; do
+    tag=$L
+    case "$L" in "$C"-gc*) tag="$L ($(gc_env_of "$L"))" ;; esac
+    echo "longest pass: suite $tag, real $r s"
+  done
   echo "format: $(tail -n 1 "$out/format-check.log" 2>/dev/null) $(ptimes "$out/time-format-check.txt")"
   echo "readme: $(tail -n 2 "$out/readme-check.log" 2>/dev/null | tr '\n' ' ')| $(tail -n 2 "$out/readme-links.log" 2>/dev/null | tr '\n' ' ')"
   echo "contributing: $(tail -n 2 "$out/contributing-check.log" 2>/dev/null | tr '\n' ' ')| $(tail -n 2 "$out/contributing-links.log" 2>/dev/null | tr '\n' ' ')"
