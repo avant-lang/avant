@@ -41,7 +41,7 @@ fn main {
     }
     items.push(item)
   }
-  totals = items.parallel { |item| item.total() }
+  totals = items.parallel (item) { item.total() }
   puts("${items.size} items, ${totals.sum()} cents")
 }
 ```
@@ -67,7 +67,7 @@ import std.http
 
 fn main {
   if server = Http.listen(8080) {
-    server.get("/") { |req| Response.text("hello") }
+    server.get("/", (req) { Response.text("hello") })
     server.serve()
   }
 }
@@ -179,9 +179,8 @@ Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.m
   - [nil, error or trap](#nil-error-or-trap)
 - [Function values](#function-values):
   - [lambdas](#lambdas)
-  - [trailing blocks](#trailing-blocks)
   - [capture](#capture)
-  - [builtin blocks are loops](#builtin-blocks-are-loops)
+  - [lambdas given to builtins](#lambdas-given-to-builtins)
 - [Generics](#generics):
   - [generic functions](#generic-functions)
   - [generic types](#generic-types)
@@ -729,7 +728,7 @@ fn main {
     b.step()
     b.dx *= 2
   }
-  balls.each { |b| b.x += 100 }
+  balls.each (b) { b.x += 100 }
   puts("${balls[0].x} ${balls[1].x}")   // => 101 108
   puts(balls[1].dx)                     // => -4
 }
@@ -1347,8 +1346,8 @@ fn main {
   c = Array(Float64).new(4)           // four elements, each 0.0
   d = Array(String).new(2, "none")    // two elements, each "none"
   e: Array(Int32) = [1, 2, 3]         // dense: 4 bytes per element
-  f = Array(Node).new(2) { |i| Node.new() }                  // two elements, each its own Node
-  g = Array(Array(Int)).new(3) { |y| Array(Int).new(4) }   // a grid of 3 rows of 4
+  f = Array(Node).new(2, (i) { Node.new() })                  // two elements, each its own Node
+  g = Array(Array(Int)).new(3, (y) { Array(Int).new(4) })   // a grid of 3 rows of 4
   g[0][0] = 7
   puts(g[1][0])                       // => 0
   puts(a.size + b.size + c.size + d.size + e.size + f.size + g.size)   // => 17
@@ -1357,7 +1356,7 @@ fn main {
 
 - `Array(T).new(n)` makes `n` elements, each the element type's zero: `0`, `0.0`, `false`, `""`, `nil` for any `T?`, a struct of such fields.
 - `Array(T).new(n, value)` makes `n` copies of `value`: a number, a `Bool`, a `String`, `Bytes`, a struct of those, or `nil` for any `T?`. A `T` that is or holds a mutable object (a class, an `Array`, a `Hash`, a `Buf`, a struct or optional holding one) is a compile error, since every element would be that one object.
-- `Array(T).new(n) { |i| ... }` runs the block once per index, `0` to `n - 1` in order, its value the element: the form for a `T` with no zero (`Array(Node).new(n)` alone is a compile error naming the ways out), for a grid's separate rows, and for one shared object on purpose (`Array(Node).new(n) { |i| shared }`). `return` in the block returns from the enclosing function, as in `each`; `break` and `continue` are compile errors.
+- `Array(T).new(n, (i) { ... })` runs the block once per index, `0` to `n - 1` in order, its value the element: the form for a `T` with no zero (`Array(Node).new(n)` alone is a compile error naming the ways out), for a grid's separate rows, and for one shared object on purpose (`Array(Node).new(n, (i) { shared })`). `return` in the block returns from the enclosing function, as in `each`; `break` and `continue` are compile errors.
 - A negative `n` traps (`avant runtime: Array size -5 is negative`).
 
 ### Indexing and bounds
@@ -1388,28 +1387,28 @@ There are no negative indexes and no slices of arrays yet.
 | `xs.clear()` | remove every element |
 | `xs.reserve(n)` | make room for `n` elements ahead of time |
 | `xs.fill(v)` | set every element (integer and `Bool` arrays) |
-| `xs.each { \|x\| ... }`, `for x in xs` | walk the elements; over structs, `x` is the element in place ([For](#for)) |
-| `xs.sort()`, `xs.sort { \|a, b\| a < b }` | sort in place: by the element's order, or by a block that says whether `a` comes first |
-| `xs.sorted()`, `xs.sorted { \|a, b\| ... }` | the same, as a new array |
+| `xs.each (x) { ... }`, `for x in xs` | walk the elements; over structs, `x` is the element in place ([For](#for)) |
+| `xs.sort()`, `xs.sort (a, b) { a < b }` | sort in place: by the element's order, or by a lambda that says whether `a` comes first |
+| `xs.sorted()`, `xs.sorted (a, b) { ... }` | the same, as a new array |
 | `xs.reverse()` | reverse in place |
 | `xs.contains(v)`, `xs.index_of(v)` | `Bool`; `Int?`, the first position; by the elements' `==` ([Equality and order](#equality-and-order)), so a struct compares its fields and an array its elements, and an element type without `==` is refused |
 | `xs.min()`, `xs.max()` | `T?`: `nil` for an empty array |
 | `xs.sum()` | the total (numeric arrays); traps on overflow |
-| `xs.any { \|x\| ... }`, `xs.all { \|x\| ... }` | `Bool`, stopping at the first answer |
-| `xs.parallel { \|x\| ... }` | a new array, computed [in parallel](#parallel) |
+| `xs.any (x) { ... }`, `xs.all (x) { ... }` | `Bool`, stopping at the first answer |
+| `xs.parallel (x) { ... }` | a new array, computed [in parallel](#parallel) |
 
 - The element order used by `sort`, `min` and `max` exists for integers, `Float64` (NaN after every number), `String` and `Bytes` (byte order) and `Bool`. Any other element type sorts with a comparator block. On floats, `min` is the smallest number (NaN only when every element is NaN) and `max` is NaN when any element is.
-- No `map`, `select`, `reduce` or `join` is built in yet: write a loop, or a three-line generic function ([Trailing blocks](#trailing-blocks)).
-- The blocks of `each`, `any`, `all`, `sort` and `parallel` are inlined loops, not function values ([Builtin blocks are loops](#builtin-blocks-are-loops)).
+- No `map`, `select`, `reduce` or `join` is built in yet: write a loop, or a three-line generic function ([Lambdas](#lambdas)).
+- The lambdas given to `each`, `any`, `all`, `sort` and `parallel` are compiled as inlined loops; `return` in one ends that element's turn, and a `for` leaves early ([Lambdas given to builtins](#lambdas-given-to-builtins)).
 - The parameters of a comparator (`sort`, `sorted`) and of a `parallel` body are copies of the elements: writing one, or calling a method on it that changes its receiver, is a compile error (a comparator only compares; a `parallel` body returns the new element). A block given to a function of your own is a function value: its parameters are copies, as any function's are.
 
 ```avant
 fn main {
   words = ["pear", "fig", "banana"]
-  by_length = words.sorted { |a, b| a.size < b.size }
+  by_length = words.sorted (a, b) { a.size < b.size }
   puts(by_length[0])                          // => fig
   puts(words.index_of("fig") ?? -1)           // => 1
-  puts(words.any { |w| w.size > 5 })          // => true
+  puts(words.any (w) { w.size > 5 })          // => true
   puts(words.max() ?? "")                       // => pear
 }
 ```
@@ -1451,7 +1450,7 @@ fn main {
 | `h.inc(k)`, `h.inc(k, by)` | add to a counter, starting from 0, and give its new value (integer values only; `by` has the value's type); traps on overflow |
 | `h.size`, `h.clear()` | number of keys; remove all |
 | `h.keys()`, `h.values()` | arrays, in unspecified order |
-| `h.each { \|k, v\| ... }` | walk every key with its value |
+| `h.each (k, v) { ... }` | walk every key with its value |
 
 ```avant
 fn main {
@@ -1582,7 +1581,7 @@ fn main {
 | `s.delete(v)` | take `v` out; `true` when it was there |
 | `s.size`, `s.clear()` | number of elements; remove all |
 | `s.values()` | the elements as an array, in unspecified order |
-| `s.each { \|v\| ... }`, `for v in s` | walk every element (over the array `values()` makes when the walk starts); an element added during the walk stops the program after that step, as in a hash's walk |
+| `s.each (v) { ... }`, `for v in s` | walk every element (over the array `values()` makes when the walk starts); an element added during the walk stops the program after that step, as in a hash's walk |
 
 - A set is stored as a `Hash` whose values are one byte nobody reads, and costs what that hash costs; a set is shared as a hash is.
 - **Iteration order is unspecified**, as a hash's; sort `values()` when order matters.
@@ -1643,7 +1642,7 @@ When in doubt, use a struct: it allocates nothing, and no other holder can chang
 
 A struct literal names every field without a default, in any order; a copy is independent of the original.
 
-A method's change to its struct receiver is the caller's (no `mutating` mark); a struct argument is a copy, so a change through a parameter stays in the callee. A struct reached through an index or a field is changed where it is stored: `xs[i].x = v`, `xs[i].scale(4)`, `xs[i].pos.x = v`, `obj.pos.x = v` and `obj.pos.scale(4)` change the element or the field, and so does the variable of `for p in xs` and the parameter of `xs.each { |p| ... }` ([For](#for)); `q = xs[i]` copies it. A Hash gives its value as an optional copy (`h[k]` is `nil` when the key is absent), so `h[k].x = v` is a compile error: open it, change it and store it back (`if v = h[k] { v.x = 1; h[k] = v }`); the parameters of `h.each { |k, v| ... }` are copies too, and writing one is a compile error.
+A method's change to its struct receiver is the caller's (no `mutating` mark); a struct argument is a copy, so a change through a parameter stays in the callee. A struct reached through an index or a field is changed where it is stored: `xs[i].x = v`, `xs[i].scale(4)`, `xs[i].pos.x = v`, `obj.pos.x = v` and `obj.pos.scale(4)` change the element or the field, and so does the variable of `for p in xs` and the parameter of `xs.each (p) { ... }` ([For](#for)); `q = xs[i]` copies it. A Hash gives its value as an optional copy (`h[k]` is `nil` when the key is absent), so `h[k].x = v` is a compile error: open it, change it and store it back (`if v = h[k] { v.x = 1; h[k] = v }`); the parameters of `h.each (k, v) { ... }` are copies too, and writing one is a compile error.
 
 ```avant
 struct Vec {
@@ -2020,7 +2019,7 @@ fn main {
 error[E4000]: postfix ? on Int | ParseError would return ParseError, but the function returns Int; give it a result that includes ParseError, or handle the failure with if-assign or ??
 ```
 
-- `?` returns from a lambda, is refused in a `spawn` or `parallel` block, and in `Mutex.with` returns from the function, releasing the lock.
+- `?` returns from a lambda whose result type holds the failure (`(): Int | ParseError { ... }`); it is refused in a `spawn` block and in a lambda given to a builtin (`each`, `parallel`, `Mutex.with`, ...), where it has nowhere to return the failure: a `for` loop's `?` returns from the function.
 - These forms are compile errors on a union with no failure (`Int | String`) or only failures (`IoError | ParseError`).
 - An optional error (`ParseError?`) is a `T?`: if-assign and `??` give the error when not `nil`; `?` is refused.
 
@@ -2296,7 +2295,7 @@ In the library, `h[k]` and `"42".to_i` return optionals, `file_read` and `Json.p
 
 ## Function values
 
-A function value has the type `fn(T): U`; a lambda is `{ |x| ... }`; a block after a call is its last argument.
+A function value has the type `fn(T): U`; a lambda is a function without a name, `(x) { ... }`, and is passed like any other argument.
 
 ```avant
 fn apply(xs: Array(Int), f: fn(Int): Int): Array(Int) {
@@ -2313,16 +2312,13 @@ fn double(n: Int): Int {
 
 fn main {
   a = apply([1, 2, 3], double)                 // a named function
-  b = apply([1, 2, 3], { |n| n * n })          // a lambda
-  c = apply([1, 2, 3]) { |n| n + 100 }         // a trailing block
+  b = apply([1, 2, 3], (n) { n * n })          // a lambda
   puts(a[2])    // => 6
   puts(b[2])    // => 9
-  puts(c[2])    // => 103
 }
 ```
 
 - `fn(): Int` takes nothing; `fn(Int, String): Bool` takes two arguments; `fn(Int)` returns nothing.
-- A function name, bare or qualified, followed by a block is a call with that block as its only argument (`twice { |n| n + 1 }` is `twice() { |n| n + 1 }`; so is `util.twice { |n| n + 1 }`). The block starts on the call's line (a lambda on the next line is a value of its own); in an `if`, `while` or `switch` head, only a block starting with its parameters (`{ |n|`) is the call's.
 - A bare function name in a value position is that function (`f: fn(Int): Int = double`); another module's is qualified, as at a call (`f = util.double`). When a name means several functions (overloads, or two imported modules' of one name), the expected `fn` type or the module's name picks one.
 - The type is invariant: `fn(Int): Int` is not `fn(Int): Int?`.
 - An optional function value is `(fn(Int): Int)?` (`fn(Int): Int?` returns an `Int?`), opened like any optional (`if f = cb { f(1) }`, `cb ?? double`), no larger than a function value (`nil` is a null code word).
@@ -2330,34 +2326,37 @@ fn main {
 
 ### Lambdas
 
-`{ |x| x + 1 }` is a lambda; its last expression is its result, the result type expected or inferred, including a final `if`/`else` whose branches end in values (`apply(2) { |x| if x > 1 { x * 10 } else { 0 } }`; branches ending in statements keep it a statement). A parameter type is written in the pipes (`{ |a: Int, b: Int| a * 10 + b }`) unless the expected `fn` type gives it; one left unknown is an error.
-
-A lambda with no parameters is `{ || 1 }`.
+`(x) { x + 1 }` is a lambda: a function's parameters and body without `fn` and a name. Its last expression is its result, the result type expected or inferred, including a final `if`/`else` whose branches end in values. A parameter's type, and the lambda's result, are written as in a function (`(a: Int, b: Int): Int { a * 10 + b }`, `(v: Int | String) { ... }`) unless the expected `fn` type gives them; a parameter left unknown is an error. `() { 7 }` takes nothing.
 
 ```avant
 fn main {
-  add: fn(Int, Int): Int = { |a, b| a + b }
-  typed = { |a: Int, b: Int| a * 10 + b }
-  seven = { || 7 }
+  add: fn(Int, Int): Int = (a, b) { a + b }
+  typed = (a: Int, b: Int): Int { a * 10 + b }
+  seven = () { 7 }
   puts(add(1, 2))       // => 3
   puts(typed(4, 2))     // => 42
   puts(seven())         // => 7
 }
 ```
 
-### Trailing blocks
+- `return` returns from the lambda; when the result is inferred, every `return` and the end give one type (`return` with nothing beside an `Int` end is an error that names both: write the result type, as `(n: Int): Int? { ... }`).
+- A postfix `?` in a lambda returns its failure from the lambda, so the result type must hold it: `(): Int | ParseError { parse_age(s)? }`; in a lambda whose result is inferred it is refused with that hint.
+- `break` and `continue` in a lambda have no loop of the lambda's to leave: a compile error, unless inside a loop of its own body.
+- **When the lambda is a call's only argument**, the call's own parentheses may be dropped: `xs.each (x) { puts(x) }` is `xs.each((x) { puts(x) })`, `users.map (u) { u.name }`, `t.group () { ... }`. Not directly in the head of an `if`, `while`, `for` or `switch`, where the `{` begins the statement's body: there, write `if xs.any((x) { x > 3 }) { ... }`. A call with another argument writes the lambda among them: `fold(xs, 0, (acc, x) { acc + x })`.
+- An operator or a method after the call applies to its result: `twice (x) { x - 5 }.abs()`, `count (x) { x > 2 } > 1`.
+- The braces with pipes, `{ |x| ... }`, are the older spelling, still accepted in this release with their old meaning (a builtin's block in pipes is a loop body whose `return` leaves the function); the next release refuses them. `avant format --lambdas FILE...` rewrites them: a block whose body leaves its function with `return`, `break`, `continue` or `?` becomes a `for`.
 
-A block after a call fills a last `fn` parameter the written arguments leave out; an operator after the block applies to the call (`first(xs) { |x| x > 2 } ?? 0`). Your own `map`:
+Your own `map`:
 
 ```avant
 fn map(xs: Array(T), f: fn(T): U): Array(U) {
   ys: Array(U) = []
-  xs.each { |x| ys.push(f(x)) }
+  xs.each (x) { ys.push(f(x)) }
   ys
 }
 
 fn main {
-  lengths = map(["a", "bb", "ccc"]) { |s| s.size }
+  lengths = map(["a", "bb", "ccc"], (s) { s.size })
   puts(lengths[2])    // => 3
 }
 ```
@@ -2369,7 +2368,7 @@ A lambda captures the variables it uses by reference, in a cell both sides share
 ```avant
 fn counter(start: Int): fn(): Int {
   n = start
-  { ||
+  () {
     n += 1
     n
   }
@@ -2381,22 +2380,23 @@ fn main {
   puts(next())     // => 12
 
   total = 0
-  add = { |k: Int| total += k }
+  add = (k: Int) { total += k }
   add(5)
   add(6)
   puts(total)      // => 11
 }
 ```
 
-- Lambdas made in `for i in 0..3` share the one loop variable and all read 3 afterwards; to keep each value, capture a copy (`k = i`): a name first assigned in a loop body is new at each iteration. A per-iteration loop variable is decided, not built.
+- A lambda made in a `for` loop gets that iteration's variable: lambdas made in `for i in 0..3` read 0, 1 and 2 (a new cell each iteration, made only when a lambda captures the variable). A name first assigned in a loop body is new at each iteration too.
 - A lambda in a method may use `self` and its fields and methods bare; it captures the receiver by value: a class's reference (later changes to the object are seen) or a struct's copy (a write through `self` is an error).
+- A parameter's default may be a lambda that reads the parameters before it; one that assigns to them is refused (it would change a copy no one else sees).
 
 ```avant
 class Scale {
   k: Int = 2
 
   fn by: fn(Int): Int {
-    { |n| n * k }
+    (n) { n * k }
   }
 }
 
@@ -2405,55 +2405,58 @@ fn main {
   f = s.by()
   s.k = 10
   puts(f(4))    // => 40
+  fs: Array(fn(): Int) = []
+  for i in 0..3 {
+    fs.push(() { i })
+  }
+  puts((fs[0])() + (fs[2])())   // => 2
 }
 ```
 
-### Builtin blocks are loops
+### Lambdas given to builtins
 
-The builtins' blocks (`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `spawn`, `Mutex.with`, `Array(T).new(n) { ... }`) are inlined loops, not function values:
+`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `Mutex.with` and `Array(T).new(n, (i) { ... })` take a lambda like any function, and the compiler inlines it as a plain loop. A lambda is a function of its own there too: `return` ends this element's turn (with the lambda's value, for `any`, `all`, a comparator or a building lambda), and `break`, `continue` and a `?` with nowhere to return its failure are compile errors with a hint. To leave the walk or the function early, write a `for`:
 
 | Inside | `return` | `break` |
 | --- | --- | --- |
-| a builtin's block (`xs.each { ... }`) | leaves the enclosing function | leaves the loop |
-| a lambda, a trailing block of your own function | returns from the lambda | a compile error |
+| a lambda (`xs.each (x) { ... }`, your own function's) | returns from the lambda: the next element | a compile error |
+| a `for` loop | leaves the enclosing function | leaves the loop |
 
-A builtin block's parameters are new names, as a `for` variable is: a parameter named like a variable that already exists there (`x = 1`, then `xs.each { |x| ... }`) is a compile error, since the block would otherwise assign that variable at every step and leave its last value behind. A lambda's parameters are a function's, and may take any name.
+The parameters of a lambda given to a builtin are new names, as a `for` variable is: one named like a variable that already exists there (`x = 1`, then `xs.each (x) { ... }`) is a compile error, since the compiler inlines the lambda as a loop of the function around it. The parameters of any other lambda are a function's, and may take any name.
 
 ```avant
 fn first_big(xs: Array(Int)): Int {
-  found = -1
-  xs.each { |x|
+  for x in xs {
     if x > 10 {
-      found = x
-      break                  // leaves the each
+      return x                 // leaves first_big
     }
   }
-  found
+  -1
 }
 
-fn report(xs: Array(Int)) {
-  xs.each { |x|
+fn positives(xs: Array(Int)): Int {
+  sum = 0
+  xs.each (x) {
     if x < 0 {
-      puts("negative: ${x}")
-      return                 // leaves report
+      return                   // skips this element
     }
+    sum += x
   }
-  puts("all good")
+  sum
 }
 
 fn main {
   puts(first_big([3, 12, 40]))   // => 12
-  report([1, -2, 3])             // => negative: -2
-  report([1, 2])                 // => all good
+  puts(positives([1, -2, 3]))    // => 4
 }
 ```
 
-`return x` there is checked against the enclosing function's result type. A block whose value is used (`any`, `all`, `sort`, `Array(T).new(n) { ... }`) may end with a value-giving `if`/`else`:
+A lambda whose value is used (`any`, `all`, `sort`, `Array(T).new(n, (i) { ... })`) may end with a value-giving `if`/`else`; for `parallel` and `with`, whose value is the lambda's last expression, a `return` needs the lambda's result type written (`xs.parallel((x): Int { ... })`):
 
 ```avant
 fn main {
   xs = [3, 1, 2]
-  xs.sort { |a, b|
+  xs.sort (a, b) {
     if a % 2 == b % 2 {
       a < b
     } else {
@@ -2896,7 +2899,7 @@ fn fib(n: Int): Int {
 
 fn main {
   h = spawn { fib(27) }                           // one task, on the pool
-  fibs = [20, 21, 22, 23].parallel { |n| fib(n) } // one task per element
+  fibs = [20, 21, 22, 23].parallel (n) { fib(n) } // one task per element
   puts(h.join() ?? 0)  // => 196418
   puts(fibs[3])      // => 28657
 }
@@ -2949,7 +2952,7 @@ fn main {
 
 What the task shared is left safe:
 
-- A `Mutex` the task held in `with` is **poisoned**, its value maybe half-changed: every later `with` on it traps with `Mutex.with on a poisoned mutex: …`. `m.poisoned()` tells; `m.try_with { |x| … }` gives the block's value or, without running the block, a `MutexError` (type `T | MutexError`, or `Void | MutexError` for a block without a value). It heals by `recover: f`, `m.recover(v)` or `m.clear_poison()` ([Channel and Mutex](#channel-and-mutex)).
+- A `Mutex` the task held in `with` is **poisoned**, its value maybe half-changed: every later `with` on it traps with `Mutex.with on a poisoned mutex: …`. `m.poisoned()` tells; `m.try_with (x) { … }` gives the block's value or, without running the block, a `MutexError` (type `T | MutexError`, or `Void | MutexError` for a block without a value). It heals by `recover: f`, `m.recover(v)` or `m.clear_poison()` ([Channel and Mutex](#channel-and-mutex)).
 - Each `Channel` the block captured is closed, which wakes a task waiting on it in `recv` or `send`.
 - Each `Array` the block captured is thawed, as at the task's normal end.
 
@@ -2957,13 +2960,13 @@ These traps still end the program: one in a `.parallel` body, inside a C callbac
 
 ### Parallel
 
-`items.parallel { |item| ... }` runs the block once per element, on the pool, and returns an `Array` of the results **in input order**. The caller waits outside the pool.
+`items.parallel (item) { ... }` runs the block once per element, on the pool, and returns an `Array` of the results **in input order**. The caller waits outside the pool.
 
 ```avant
 fn main {
   words = ["a", "bb", "ccc"]
   suffix = "!"
-  loud = words.parallel { |w| "${w}${suffix}" }
+  loud = words.parallel (w) { "${w}${suffix}" }
   puts(loud[2])      // => ccc!
 }
 ```
@@ -2983,7 +2986,7 @@ fn main {
   for i in 0..4 {
     handles.push(spawn {
       for j in 0..1000 {
-        hits.with { |n| n += 1 }
+        hits.with (n) { n += 1 }
       }
       0                          // a spawn block ends with an Int, for now
     })
@@ -2991,14 +2994,14 @@ fn main {
   for h in handles {
     _ = h.join()
   }
-  puts(hits.with { |n| n })    // => 4000
+  puts(hits.with (n) { n })    // => 4000
 }
 ```
 
-- `Mutex(T).new(value)` holds `value`. `m.with { |x| ... }` runs the block under the lock, `x` naming the guarded value (assigning `x` changes it); as a value, the call gives the block's last expression. `return`, `break`, `continue` and `?` leave it as any block, and every way out releases the lock.
+- `Mutex(T).new(value)` holds `value`. `m.with (x) { ... }` runs the block under the lock, `x` naming the guarded value (assigning `x` changes it); as a value, the call gives the lambda's last expression. `return` ends the lambda (its value needs the result type written, `m.with((x): Int { ... })`); `break`, `continue` and a `?` have nowhere to go in it; every way out releases the lock.
 - **Leaving early keeps the changes made so far** (only a trap poisons), unchecked by the compiler: leave only where the guarded value is whole, after the update (`n += 1`, then `return`) or before it (`if q.size == 0 { return nil }`, then the change).
 - **A poisoned mutex heals** ([When a task traps](#when-a-task-traps)) by one of three operations, each under the lock:
-  - `Mutex(T).new(value, recover: f)`: a `with` or `try_with` that meets the poison, on whichever task, calls `f()`, makes its result the guarded value, clears the poison and runs the block. `f` is a named function or a lambda that captures nothing (`recover: { || Stats.new() }`); a trap inside it is an ordinary trap and leaves the mutex poisoned. `f` costs a lock nothing until it meets the poison; without `recover:`, a poisoned lock traps.
+  - `Mutex(T).new(value, recover: f)`: a `with` or `try_with` that meets the poison, on whichever task, calls `f()`, makes its result the guarded value, clears the poison and runs the block. `f` is a named function or a lambda that captures nothing (`recover: () { Stats.new() }`); a trap inside it is an ordinary trap and leaves the mutex poisoned. `f` costs a lock nothing until it meets the poison; without `recover:`, a poisoned lock traps.
   - `m.recover(value)` replaces the value and clears the poison; it takes `value` as `Mutex(T).new(value)` does (a new value, or a local variable it consumes).
   - `m.clear_poison()` keeps the value as the trapped task left it: for a value whose every state is valid.
 
@@ -3012,7 +3015,7 @@ fn fresh: Array(Int) {
 fn main {
   counts = Mutex(Array(Int)).new([0, 0, 0], recover: fresh)
   h = spawn {
-    counts.with { |c|
+    counts.with (c) {
       c[0] += 1
       c[7] += 1                          // traps: the task ends, the mutex is poisoned
     }
@@ -3020,13 +3023,13 @@ fn main {
   }
   _ = h.join()
   puts(counts.poisoned())                  // => true
-  total = counts.with { |c| c.sum() }      // fresh rebuilds the value first
+  total = counts.with (c) { c.sum() }      // fresh rebuilds the value first
   puts(total)                            // => 0
   puts(counts.poisoned())                  // => false
 }
 ```
 
-- **Nothing the lock guards leaves the block.** The guarded value and every reference reached from it (a field, an element, a name bound to one) may be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand with a plain result (`b.n`, `b.items.size`, `"${b}"`), never an argument, a stored value or a captured name. It may be stored only into the guarded value itself (`b.root = b.root.left`) or into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which follows the same rule. A plain value (a number, `Bool`, `String`, `Bytes`, a struct or optional of those, a `Channel` or `Mutex`) is a copy and goes anywhere; the block's value, when used, must be one. To take data out, push plain values into an array declared before the block (`b.items.each { |it| sizes.push(it.n) }`).
+- **Nothing the lock guards leaves the block.** The guarded value and every reference reached from it (a field, an element, a name bound to one) may be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand with a plain result (`b.n`, `b.items.size`, `"${b}"`), never an argument, a stored value or a captured name. It may be stored only into the guarded value itself (`b.root = b.root.left`) or into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which follows the same rule. A plain value (a number, `Bool`, `String`, `Bytes`, a struct or optional of those, a `Channel` or `Mutex`) is a copy and goes anywhere; the block's value, when used, must be one. To take data out, push plain values into an array declared before the block (`b.items.each (it) { sizes.push(it.n) }`).
 - **What a `Mutex` may guard.** The block may call methods of the guarded class, or of any class it holds (`b.inner.add(c)`), with outside values, under the lock; so `Mutex(T)` is accepted only when no method of `T`, or of any class or struct `T` holds through fields, elements and members, keeps an outside reference or hands out its own:
   - a parameter that can hold a reference is never stored (into a field, an element, a hash, an array by `push` or `fill`, or a new object), passed to a function or another type's method, or returned; reading it (`self.n == other.n`) and building new values is allowed;
   - `self` and what it reaches are stored only into the object itself (`self.root = self.root.left`, `self.head = Node.new(v, self.head)`) and passed only to those same classes' methods;
@@ -3769,7 +3772,7 @@ Compiling it prints `re2c: pattern stays on PCRE2 (...)` on stderr (**Two engine
 | `re.matches(text)`, then `next` on it | `text: String` | each match in turn (`Match?`) | `nil` after the last | |
 | `re.replace(text, repl)` | `text`, `repl: String` | a new string with every match replaced | — | `re.replace_into(buf, text, repl)` appends it to a `Buf`. In a replacement, `$1` to `$9`, `${1}` and `${name}` insert a group (nothing when it did not take part) and `$$` is a dollar sign |
 | `re.split(text)` | `text: String` | `Array(String)`: the pieces between matches, empty pieces kept | — | |
-| `re.close()`, `re.is_closed()`, `re.scoped { \|r\| ... }` | a block for `scoped` | `is_closed` a `Bool` | — | release the pattern; ask; run a block and close on exit. `re.close()` through any copy closes all |
+| `re.close()`, `re.is_closed()`, `re.scoped (r) { ... }` | a lambda for `scoped` | `is_closed` a `Bool` | — | release the pattern; ask; run a block and close on exit. `re.close()` through any copy closes all |
 
 **After close.** Any operation on a closed `Regex` traps (`avant runtime: Regex used after close`), never "no match", as do a `Match`'s named groups and groups past the third (read from the pattern). A `Regex` that is dropped without `close` keeps its compiled pattern until the program ends (the collector runs no finalizer), but not its place in the cache: compiling new patterns stays cached.
 
@@ -3788,10 +3791,10 @@ import std.http
 
 fn main {
   if server = Http.listen(0) {                 // port 0: the OS picks a free port
-    server.get("/hello") { |req|
+    server.get("/hello", (req) {
       server.close()                             // this example answers once, then stops
       Response.text("hello ${req.query ?? "nobody"}")
-    }
+    })
     port = server.port()
     client = spawn {
       if resp = Http.get("http://127.0.0.1:${port}/hello?ada") {
@@ -3816,15 +3819,15 @@ import std.http
 
 fn main {
   if server = Http.listen(8080, "0.0.0.0") {
-    server.get("/") { |req|
+    server.get("/", (req) {
       Response.text("hello")
-    }
-    server.post("/echo") { |req|
+    })
+    server.post("/echo", (req) {
       Response.bytes(req.body).header("X-Echo", "1")
-    }
-    server.route("OPTIONS", "/") { |req|
+    })
+    server.route("OPTIONS", "/", (req) {
       Response.text("", 204)
-    }
+    })
     server.serve()
   }
 }
@@ -3834,8 +3837,8 @@ fn main {
 | --- | --- | --- | --- | --- |
 | `Http.listen(port, host = "127.0.0.1", max_body = 1048576, loops = 0, max_message = 1048576)` | `port: Int`, `host: String`; `max_body`, `loops` and `max_message` are `Int`s | `Server \| HttpError` | an `HttpError` when it cannot bind | `max_body` bounds a request body; `loops` overrides the event-loop count; `max_message` bounds a WebSocket message |
 | `server.port()` | — | `Int`: the bound port | — | |
-| `get`, `post`, `put`, `delete`, `patch`, `route(method, path)` | `path: String` (and `method: String`), then the handler block | the `Server` | one registered from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`; the handler's request fails, answered 500) | **routes** are exact paths; no pattern router, middleware or streaming. Register every route, WebSocket ones too, before `serve` |
-| a handler, `{ \|req\| ... }` | a `Request` | a `Response` | — | gets `method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes` |
+| `get`, `post`, `put`, `delete`, `patch`, `route(method, path)` | `path: String` (and `method: String`), then the handler, a lambda | the `Server` | one registered from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`; the handler's request fails, answered 500) | **routes** are exact paths; no pattern router, middleware or streaming. Register every route, WebSocket ones too, before `serve` |
+| a handler, `(req) { ... }` | a `Request` | a `Response` | — | gets `method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes` |
 | `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)` | `body`: a `String`, `Bytes`; `status: Int` | a `Response` | a `status` outside 200 to 599 traps when written (`avant runtime: a response's status 99 is not 200 to 599: …`): a 1xx is an interim answer, never a handler's (the WebSocket upgrade's 101 is the server's) | the only ways to build one; the server sets `Content-Length` and `Connection` |
 | `.header(name, value)` | `name`, `value: String` | the `Response` | a header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`) | check request text before putting it in a header |
 | `get(name)`, `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)` | `name: String`, `i: Int` | `String?`, `Bool`, `Array(String)`, `Int`, `String?`, `String?` | — | **headers**, on `req.headers` and `resp.headers` |
@@ -3868,9 +3871,9 @@ import std.http
 fn main {
   if opened = Http.listen(8080) {
     server = opened.head_timeout(5000).min_rate(1000, 2000).max_connections(50000)
-    server.get("/") { |req|
+    server.get("/", (req) {
       Response.text("hello")
-    }
+    })
     server.serve()
   }
 }
@@ -3927,12 +3930,12 @@ import std.http
 
 fn main {
   if server = Http.listen(8080) {
-    server.websocket("/echo") { |conn, msg|
+    server.websocket("/echo", (conn, msg) {
       conn.send_message(msg)                   // echo, text or binary
-    }
-    server.websocket_close("/echo") { |conn, code, reason|
+    })
+    server.websocket_close("/echo", (conn, code, reason) {
       puts("closed with ${code}")
-    }
+    })
     server.serve()
   }
 }
@@ -3940,8 +3943,8 @@ fn main {
 
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
-| `websocket(path) { \|conn, msg\| ... }` | `path: String`, a block | the `Server` | a message over `max_message` (1 MiB by default) closes the connection with code 1009 and never reaches the handler | runs once per complete message |
-| `websocket_open(path) { \|conn\| ... }`, `websocket_close(path) { \|conn, code, reason\| ... }` | `path: String`, a block | the `Server` | — | run once per connection (code 1006 when it dropped without a close frame) |
+| `websocket(path, (conn, msg) { ... })` | `path: String`, a lambda | the `Server` | a message over `max_message` (1 MiB by default) closes the connection with code 1009 and never reaches the handler | runs once per complete message |
+| `websocket_open(path, (conn) { ... })`, `websocket_close(path, (conn, code, reason) { ... })` | `path: String`, a lambda | the `Server` | — | run once per connection (code 1006 when it dropped without a close frame) |
 | `msg.text()`, `msg.is_text` | — | `String?`: the text, `nil` for a binary message or bytes that are not valid UTF-8; `Bool` | — | a text message |
 | `msg.body`, `msg.is_binary` | — | `Bytes`; `Bool` | — | `msg.body` is always the payload |
 | `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")` | the text, `Bytes` or message; `code: Int`, `reason: String` | `Bool` | `false` when the connection is closed or its send queue is full | a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole |
@@ -4150,12 +4153,12 @@ import std.testing
 
 fn main: Int {
   t = Test.new()
-  t.test("adds") {
+  t.test("adds", () {
     t.check(1 + 2 == 3, "1+2")
-  }
-  t.parallel("other") {
+  })
+  t.parallel("other", () {
     t.check(true, "other")
-  }
+  })
   t.finish()
 }
 ```
@@ -4382,7 +4385,7 @@ Where Avant differs on purpose:
 | members public by default | functions, types, methods and fields are private to their module unless `pub` ([Visibility](#visibility)) | a module's surface is what it says it is |
 | `let`, `var`; a `const` inside a function; global variables | `=` declares or assigns; `const` is a module's named value, and a module has no variables ([Names and scope](#names-and-scope), [Constants](#constants)) | no state shared by accident |
 | `Array<Int>`, `[]int`, `Vec<i32>` | `Array(Int)`; a single capital letter in a signature is a type parameter ([Generics](#generics)) | |
-| `return` inside a block returning from the block | in a builtin's block (`each`), `return` leaves the function; in a lambda, the lambda ([Builtin blocks are loops](#builtin-blocks-are-loops)) | |
+| `return` inside a lambda returning from the lambda | the same, also in a lambda a builtin inlines (`xs.each (x) { ... }`); `for` is the loop that leaves the function early ([Lambdas given to builtins](#lambdas-given-to-builtins)) | one meaning of `return` |
 | a panic caught per request by the server | a trap ends the process: run servers under a supervisor ([Traps](#traps)) | no unwinding machinery |
 | one optimized build (Go) | two modes: `--debug` for the edit-and-run loop, `--release` for the rest, and only it is timed ([Build modes](#build-modes)) | a fast edit-and-run loop |
 | a power operator `**` | none; multiply, or declare C's `pow` in a `lib` block ([Floats](#floats)) | |
@@ -4406,7 +4409,7 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 | Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
 | `Hash` insertion order | decided | sort the keys ([hash operations](#hash-operations)) |
 | `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion; slices of strings and arrays | planned | `str_slice`, loops, [`std.regex`](#stdregex) |
-| `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#trailing-blocks) |
+| `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#lambdas) |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` on hashes | planned | a loop |
 | A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
