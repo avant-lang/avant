@@ -366,22 +366,30 @@ avant_int avant_wide_hi(void);
  * width (shifted by AVANT_HASH_V_SHIFT) and whether it is a reference.
  * avant_hash_create_typed also takes a struct key's fields (KLAYOUT, its
  * text below avant_hash.c's header), the key's and the value's sizes in
- * bytes and the type ids of the key and value buffers. */
+ * bytes, the type ids of the key and value buffers and of an Array of
+ * the values: for a struct key or a struct value. */
 #define AVANT_HASH_K_WIDTH 0xfu
 #define AVANT_HASH_K_SIGNED 0x10u
 #define AVANT_HASH_K_STR 0x20u
 #define AVANT_HASH_K_STRUCT 0x40u
 #define AVANT_HASH_V_SHIFT 8
 #define AVANT_HASH_V_REF 0x1000u
+/* Set by avant_hash_create_typed: the hash is an AvantHashX. */
+#define AVANT_HASH_TYPED 0x2000u
+/* The values are structs holding references. */
+#define AVANT_HASH_V_WORDS 0x4000u
 void *avant_hash_create(uint32_t desc);
 void *avant_hash_create_typed(uint32_t desc, const char *klayout, uint32_t kw, uint32_t vw, uint32_t ktid,
-                              uint32_t vtid);
+                              uint32_t vtid, uint32_t atid);
 void *avant_hash_find_xk(void *h, const void *key, int32_t *found);
 void *avant_hash_put_xk(void *h, const void *key);
 void *avant_hash_upsert_xk(void *h, const void *key, int32_t *found);
 void avant_hash_set_ref_xk(void *h, const void *key, void *val);
 void *avant_hash_take_xk(void *h, const void *key, int32_t *found);
 void avant_hash_del_xk(void *h, const void *key);
+void *avant_hash_slot_ik(void *h, avant_int key);
+void *avant_hash_slot_sk(void *h, const char *key);
+void *avant_hash_slot_xk(void *h, const void *key);
 void *avant_hash_find_ik(void *h, avant_int key, int32_t *found);
 void *avant_hash_find_sk(void *h, const char *key, int32_t *found);
 void *avant_hash_put_ik(void *h, avant_int key);

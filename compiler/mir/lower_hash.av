@@ -155,9 +155,18 @@ pub fn (lw: MirLower) elems_tid(t: Ty, ty: Int): Int {
   lw.lw_b.type_id(el)
 }
 
-// A value the collector traces: stored by the runtime behind the barrier.
-pub fn mir_hash_val_ref(ht: Ty): Bool {
-  mir_hash_val(ht).is_string()
+// A value that is one reference (a String, a class, an Array, a Hash,
+// Bytes or a Buf): stored by the runtime behind the barrier.
+pub fn (lw: MirLower) hash_val_ref(ht: Ty, loc: Location): Bool {
+  vty = lw.ty_at(mir_hash_val(ht), loc, "a hash value")
+  !lw.failed() && lw.lw_m.types.is_refkind(vty)
+}
+
+// A struct value (stored at the address the runtime returns, its words
+// after the runtime's barrier when it holds references).
+pub fn (lw: MirLower) hash_val_agg(ht: Ty, loc: Location): Bool {
+  vty = lw.ty_at(mir_hash_val(ht), loc, "a hash value")
+  !lw.failed() && lw.lw_m.types.kind(vty) == mk_agg()
 }
 
 // The entry `avant_hash_<op>_ik`, `_sk` or `_xk` for the hash's key.
@@ -197,12 +206,54 @@ pub fn (lw: MirLower) hash_desc(ht: Ty, loc: Location): Int {
       d += 16
     }
   }
-  if mir_hash_val_ref(ht) {
+  if ts.is_refkind(vty) {
     d += 8 * 256 + 4096
-  } else {
+  } else if ts.kind(vty) != mk_agg() {
     d += ts.size_of(vty) * 256
+  } else if ts.ref_carrying(vty) {
+    d += 16384
   }
   d
+}
+
+// A struct value's slot in the table: its size rounded up to a power of
+// two (the runtime finds a value by a shift).
+pub fn mir_hash_slot_bytes(n: Int): Int {
+  p = 1
+  while p < n {
+    p = p * 2
+  }
+  p
+}
+
+// The type id of a buffer of struct values of type vty in their slots:
+// the element buffer of vty itself when its size is a power of two, else
+// of a record of vty and the padding up to the slot.
+pub fn (lw: MirLower) hash_slot_tid(vt: Ty, vty: Int): Int {
+  ts = lw.lw_m.types
+  n = ts.size_of(vty)
+  p = mir_hash_slot_bytes(n)
+  if p == n {
+    return lw.elems_tid(vt, vty)
+  }
+  name = "hslot(${mir_mty(vt)})"
+  f: Array(Int) = []
+  fnames: Array(String) = []
+  f.push(vty)
+  fnames.push("v")
+  i = n
+  while i < p {
+    f.push(mt_u8())
+    fnames.push("")
+    i += 1
+  }
+  rec = lw.lw_b.note_layout(name, mlk_struct(), f, fnames)
+  ef: Array(Int) = []
+  en: Array(String) = []
+  ef.push(ts.agg(rec))
+  en.push("")
+  el = lw.lw_b.note_layout("elems(${name})", mlk_elems(), ef, en)
+  lw.lw_b.type_id(el)
 }
 
 // A key as the runtime takes it: an integer extended to 64 bits by its
@@ -288,7 +339,25 @@ pub fn (lw: MirLower) hash_find_load(ht: Ty, op: String, h: MOperand, k: MOperan
   ops.push(k)
   ops.push(lw.found_ptr(fl))
   p = lw.call_to(mt_ptr(), lw.hash_op(ht, op, loc), ops)
-  lw.hash_load(lw.hash_slot(p, vty), vty)
+  b = lw.lw_b
+  if mir_hash_slot_bytes(b.types.size_of(vty)) <= 256 {
+    return lw.hash_load(lw.hash_slot(p, vty), vty)
+  }
+  // A value wider than the runtime's zeros for an absent key is read
+  // only when it was found.
+  r = b.temp(vty)
+  hit = b.block()
+  miss = b.block()
+  join = b.block()
+  b.branch(lw.found_is(fl), hit, miss)
+  b.at(hit)
+  b.assign(b.pl(r), b.rv_use(lw.hash_load(lw.hash_slot(p, vty), vty)))
+  b.goto(join)
+  b.at(miss)
+  b.assign(b.pl(r), b.rv_zero())
+  b.goto(join)
+  b.at(join)
+  b.copy_local(r)
 }
 
 // `Hash(K, V).new`: avant_hash_create(descriptor).
@@ -313,9 +382,9 @@ pub fn (lw: MirLower) lower_hash_new(e: Expr): MOperand {
 }
 
 // Whether the hash is made by avant_hash_create_typed: a struct key
-// passed by address.
+// passed by address, or a struct value.
 pub fn (lw: MirLower) hash_typed(ht: Ty, loc: Location): Bool {
-  lw.hash_key_class(ht, loc) == 2
+  lw.hash_key_class(ht, loc) == 2 || lw.hash_val_agg(ht, loc)
 }
 
 // avant_hash_create_typed(descriptor, the key's fields, the key's and the
@@ -340,11 +409,14 @@ pub fn (lw: MirLower) hash_create_typed(e: Expr, ht: Ty, ty: Int, d: Int): MOper
   }
   vw = ts.size_of(vty)
   vtid = 0
+  atid = 0
   if ts.is_refkind(vty) {
     vw = 8
     vtid = 65535
+    atid = 65535
   } else if ts.kind(vty) == mk_agg() {
-    vtid = lw.elems_tid(vt, vty)
+    vtid = lw.hash_slot_tid(vt, vty)
+    atid = lw.elems_tid(vt, vty)
   }
   if lw.failed() {
     return b.c_i32(0)
@@ -356,12 +428,16 @@ pub fn (lw: MirLower) hash_create_typed(e: Expr, ht: Ty, ty: Int, d: Int): MOper
   ops.push(b.c_u32(vw))
   ops.push(b.c_u32(ktid))
   ops.push(b.c_u32(vtid))
+  ops.push(b.c_u32(atid))
   lw.call_to(ty, "avant_hash_create_typed", ops)
 }
 
 // `h[k] = v`: the value, the key, the hash, then the entry (it collects).
 // A scalar value is stored at the address `put` returns; a reference
-// value by `set_ref`, behind the barrier.
+// value by `set_ref`, behind the barrier; a struct value at the address
+// `slot` returns after its barrier (as an Array's push of such an
+// element; `slot` refuses a nil hash, whose scratch word `put` would
+// give).
 pub fn (lw: MirLower) lower_hash_store(st: Stmt, t: Expr, arr: Expr, ix: Expr, ht: Ty) {
   b = lw.lw_b
   if st.op != tk_eq() {
@@ -378,8 +454,14 @@ pub fn (lw: MirLower) lower_hash_store(st: Stmt, t: Expr, arr: Expr, ix: Expr, h
     }
     lw.at(st.loc)
     k = lw.hash_key_arg(ht, key, st.loc)
-    if mir_hash_val_ref(ht) {
+    if lw.hash_val_ref(ht, st.loc) {
       dummy = b.call(-1, lw.hash_op(ht, "set_ref", st.loc), lw.three(h, k, val))
+      return
+    }
+    if lw.hash_val_agg(ht, st.loc) {
+      s = b.temp(b.types.addr_of(vty))
+      b.call(s, lw.hash_op(ht, "slot", st.loc), lw.two(h, k))
+      b.assign(b.deref(b.pl(s)), b.rv_use(val))
       return
     }
     p = lw.call_to(mt_ptr(), lw.hash_op(ht, "put", st.loc), lw.two(h, k))

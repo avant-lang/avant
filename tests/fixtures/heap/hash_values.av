@@ -1,0 +1,265 @@
+// Object values of Hash(K, V): a class, an Array, a Hash, Bytes and a
+// Buf are stored as references; a struct is stored as its bytes, with or
+// without references, of a size that is a power of two or not, and one
+// wider than the runtime's zeros (over 256 bytes). Each through set (a
+// new key and a replaced value), get, get_or, delete as a value and as a
+// statement, each, values, clear and growth past several resizes, with
+// Int, String and struct keys; the values are built while the table
+// grows, so young objects are stored into a table that is not young.
+// A class value is shared with the table; a struct value is a copy.
+
+struct Vec3 {
+  x: Float64
+  y: Float64
+  z: Float64
+}
+
+struct Item {
+  name: String
+  n: Int
+}
+
+struct Row {
+  label: String
+  tags: Array(String)
+  w: Vec3
+}
+
+struct Pt {
+  x: Int
+  y: Int
+}
+
+struct Small {
+  a: Int32
+}
+
+struct Half {
+  a: Int32
+  on: Bool
+}
+
+struct Wide {
+  a: Int
+  b: Int
+  c: Int
+  d: Int
+  e: Int
+  f: Int
+  g: Int
+  h: Int
+  i: Int
+  j: Int
+  k: Int
+  l: Int
+  m: Int
+  n: Int
+  o: Int
+  p: Int
+  q: Int
+  r: Int
+  s: Int
+  t: Int
+  u: Int
+  v: Int
+  w: Int
+  x: Int
+  y: Int
+  z: Int
+  aa: Int
+  bb: Int
+  cc: Int
+  dd: Int
+  ee: Int
+  ff: Int
+  gg: Int
+  hh: Int
+  ii: Int
+  jj: Int
+  kk: String
+}
+
+class Node {
+  pub name: String
+  pub kids: Array(Node) = []
+  pub hits: Int = 0
+
+  fn initialize(name: String) {
+    self.name = name
+  }
+}
+
+fn check(what: String, ok: Bool) {
+  if !ok {
+    puts("FAIL ${what}")
+  }
+}
+
+fn classes {
+  h = Hash(String, Node).new()
+  i = 0
+  while i < 2000 {
+    n = Node.new("n${i}")
+    n.kids.push(Node.new("kid${i}"))
+    h["k${i}"] = n
+    i += 1
+  }
+  check("node size", h.size == 2000)
+  if n = h["k1234"] {
+    check("node name", n.name == "n1234" && n.kids[0].name == "kid1234")
+    n.hits += 5
+  }
+  check("node shared", (h["k1234"] ?? Node.new("none")).hits == 5)
+  h["k7"] = Node.new("seven")
+  check("node replaced", (h["k7"] ?? Node.new("none")).name == "seven" && h.size == 2000)
+  if old = h.delete("k8") {
+    check("node taken", old.name == "n8")
+  }
+  h.delete("k9")
+  check("node absent", !h.has_key("k9") && h.size == 1998)
+  total = 0
+  h.each { |k, v|
+    total += v.kids.size
+  }
+  check("node each", total == 1997)
+  arrs = Hash(Int, Array(Int)).new()
+  i = 0
+  while i < 500 {
+    xs: Array(Int) = []
+    j = 0
+    while j < i % 7 {
+      xs.push(i * j)
+      j += 1
+    }
+    arrs[i] = xs
+    i += 1
+  }
+  if xs = arrs[13] {
+    xs.push(99)
+  }
+  check("array shared", (arrs[13] ?? []).size == 7)
+  sum = 0
+  for xs in arrs.values() {
+    sum += xs.size
+  }
+  check("array values", sum == 1495)
+  nested = Hash(String, Hash(String, Int)).new()
+  nested["a"] = Hash(String, Int).new()
+  if inner = nested["a"] {
+    inner.inc("x")
+    inner.inc("x")
+  }
+  check("hash value", ((nested["a"] ?? Hash(String, Int).new())["x"] ?? 0) == 2)
+  bufs = Hash(Int, Buf).new()
+  b = Buf.new()
+  b.push_str("ab")
+  bufs[1] = b
+  bytes = Hash(Int, Bytes).new()
+  bytes[2] = "xyz".bytes
+  check("buf bytes", (bufs[1] ?? Buf.new()).size == 2 && (bytes[2] ?? "".bytes).size == 3)
+  puts("classes ${h.size} ${arrs.size} ${sum}")
+}
+
+fn structs {
+  v = Hash(Int, Vec3).new()
+  i = 0
+  while i < 3000 {
+    v[i] = Vec3 { x: i.to_f(), y: 0.5, z: -1.0 }
+    i += 1
+  }
+  check("vec size", v.size == 3000)
+  p = v[2999] ?? Vec3 { x: 0.0, y: 0.0, z: 0.0 }
+  check("vec get", p.x == 2999.0 && p.z == -1.0)
+  q = v.get_or(5000, Vec3 { x: 7.0, y: 7.0, z: 7.0 })
+  check("vec get_or", q.y == 7.0)
+  if old = v.delete(10) {
+    check("vec taken", old.x == 10.0)
+  }
+  check("vec absent", !v.has_key(10) && v.size == 2999)
+  sx = 0.0
+  for w in v.values() {
+    sx += w.y
+  }
+  check("vec values", sx == 1499.5)
+  items = Hash(String, Item).new()
+  i = 0
+  while i < 2000 {
+    items["i${i}"] = Item { name: "name${i}", n: i }
+    i += 1
+  }
+  it = items["i1999"] ?? Item { name: "", n: 0 }
+  check("item get", it.name == "name1999" && it.n == 1999)
+  it.n = 5
+  check("item copy", (items["i1999"] ?? Item { name: "", n: 0 }).n == 1999)
+  items["i3"] = Item { name: "three", n: 3 }
+  items.delete("i4")
+  if old = items.delete("i5") {
+    check("item taken", old.name == "name5")
+  }
+  ns = 0
+  items.each { |k, x|
+    ns += x.name.size
+  }
+  check("item each", items.size == 1998 && ns > 0)
+  rows = Hash(Pt, Row).new()
+  i = 0
+  while i < 1000 {
+    tags: Array(String) = []
+    tags.push("t${i}")
+    tags.push("u${i}")
+    rows[Pt { x: i, y: 0 - i }] = Row { label: "r${i}", tags: tags, w: Vec3 { x: 1.0, y: i.to_f(), z: 0.0 } }
+    i += 1
+  }
+  r = rows[Pt { x: 777, y: -777 }] ?? Row { label: "", tags: [], w: Vec3 { x: 0.0, y: 0.0, z: 0.0 } }
+  check("row get", r.label == "r777" && r.tags[1] == "u777" && r.w.y == 777.0)
+  wide = Hash(Int, Wide).new()
+  i = 0
+  while i < 300 {
+    wide[i] = Wide { a: i, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0, i: 0, j: 0, k: 0, l: 0, m: 0, n: 0, o: 0, p: 0, q: 0, r: 0, s: 0, t: 0, u: 0, v: 0, w: 0, x: 0, y: 0, z: 0, aa: 0, bb: 0, cc: 0, dd: 0, ee: 0, ff: 0, gg: 0, hh: 0, ii: 0, jj: i * 2, kk: "w${i}" }
+    i += 1
+  }
+  wv = wide[299] ?? wide[0] ?? Wide { a: 0, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0, i: 0, j: 0, k: 0, l: 0, m: 0, n: 0, o: 0, p: 0, q: 0, r: 0, s: 0, t: 0, u: 0, v: 0, w: 0, x: 0, y: 0, z: 0, aa: 0, bb: 0, cc: 0, dd: 0, ee: 0, ff: 0, gg: 0, hh: 0, ii: 0, jj: 0, kk: "" }
+  check("wide get", wv.a == 299 && wv.jj == 598 && wv.kk == "w299")
+  if gone = wide[1000] {
+    check("wide absent", false)
+  }
+  if old = wide.delete(42) {
+    check("wide taken", old.kk == "w42" && old.jj == 84)
+  }
+  rows.clear()
+  check("row clear", rows.size == 0)
+  sm = Hash(Int, Small).new()
+  hf = Hash(Pt, Half).new()
+  i = 0
+  while i < 2000 {
+    sm[i] = Small { a: (i * 3).to_i32() }
+    hf[Pt { x: i, y: i }] = Half { a: i.to_i32(), on: i % 2 == 0 }
+    i += 1
+  }
+  i = 0
+  while i < 2000 {
+    if i % 3 == 0 {
+      sm.delete(i)
+      hf.delete(Pt { x: i, y: i })
+    }
+    i += 1
+  }
+  st = 0
+  for x in sm.values() {
+    st += x.a.to_i()
+  }
+  hn = 0
+  hf.each { |k, x|
+    if x.on && x.a.to_i() == k.x {
+      hn += 1
+    }
+  }
+  check("small values", sm.size == 1333 && st == 3998001 && (sm[1999] ?? Small { a: 0.to_i32() }).a == 5997.to_i32())
+  check("half values", hf.size == 1333 && hn == 666)
+  puts("structs ${v.size} ${items.size} ${wide.size}")
+}
+
+fn main {
+  classes()
+  structs()
+}
