@@ -150,6 +150,7 @@ Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.m
 - [Arrays](#arrays):
   - [creating arrays](#creating-arrays)
   - [indexing and bounds](#indexing-and-bounds)
+  - [slices](#slices)
   - [array operations](#array-operations)
   - [size limits](#size-limits)
 - [Hashes](#hashes):
@@ -1230,7 +1231,10 @@ A string knows its length (`size` is a read, never a scan), and a long slice sha
 | `s.code_points()` | `Array(Int)`, each code point's number |
 | `s.bytes` | the same bytes as [`Bytes`](#bytes-and-buf) |
 | `s.to_i()`, `s.to_u64()`, `s.to_f()` | [parsed numbers](#parsing-numbers), optional |
-| `str_slice(s, start, stop)` | the bytes `start` up to `stop`; traps unless `0 <= start <= stop <= size` |
+| `s[a..b]`, `s[a..]`, `s[..b]`, `s[a..=b]` | a [slice](#slices): the bytes `a` up to `b` (`..=` includes `b`), a new `String` |
+| `s.slice(a, b)`, `s.slice(a)`, `s.try_slice(...)` | the same slices as calls; `try_slice` gives `nil` where the slice would trap |
+| `s.is_empty()` | `s.size == 0` |
+| `str_slice(s, start, stop)` | the same as `s[start..stop]` |
 | `chr(b)` | a one-byte string; `b` must be in `0..255` |
 | `repeat_byte(b, n)` | `n` copies of the byte `b` |
 | `bytes_to_str(xs)` | a string from an `Array(Int)` of bytes |
@@ -1292,7 +1296,8 @@ fn main {
 | `Bytes` operation | Result |
 | --- | --- |
 | `b.size`, `b[i]`, `b.get(i)` | as for `String` |
-| `b.slice(start, stop)` | a new `Bytes`; traps unless `0 <= start <= stop <= size` |
+| `b[a..b]`, `b[a..]`, `b[..b]`, `b.slice(start, stop)`, `b.slice(start)`, `b.try_slice(...)` | a new `Bytes`, as a [slice](#slices) of a `String` |
+| `b.is_empty()` | `b.size == 0` |
 | `a == b` | equality by content |
 | `b.chars()` | as `String.chars` |
 | `b.to_buf()` | a `Buf` holding a copy |
@@ -1300,10 +1305,12 @@ fn main {
 | `Buf` operation | Result |
 | --- | --- |
 | `Buf.new()`, `Buf.new(capacity)`, `buf_new()` | an empty buffer |
-| `push_str(s)`, `push_bytes(b)`, `push_byte(n)` | append a string, `Bytes`, or one byte (`0..255`, else a trap) |
+| `push_str(s)`, `push_bytes(b)`, `push_byte(n)` | append a `String`, `Bytes` or another `Buf` (either name takes each), or one byte (`0..255`, else a trap) |
 | `push_slice(s, start, stop)` | append part of a string without building the substring |
 | `push_fmt_i(n)`, `push_fmt_f(x, digits)` | append a formatted integer or float |
 | `buf.size`, `buf[i]`, `buf.get(i)`, `buf[i] = n` | read and overwrite bytes |
+| `buf[a..b]`, `buf[a..]`, `buf.slice(...)`, `buf.try_slice(...)` | a new `Buf` holding a copy of those bytes ([Slices](#slices)) |
+| `buf.is_empty()` | `buf.size == 0` |
 | `starts_with(s)` | `Bool` |
 | `clear` | empty it, keeping the storage |
 | `to_s`, `to_bytes` | a `String` or `Bytes` of the contents |
@@ -1375,7 +1382,26 @@ fn main {
 }
 ```
 
-There are no negative indexes and no slices of arrays yet.
+There are no negative indexes: `xs[-1]` is an index outside the array and traps; `xs.last()` reads the last element (`T?`).
+
+### Slices
+
+`xs[a..b]` is a copy of the elements `a` up to `b`, excluded; `xs[a..=b]` includes `b`, `xs[a..]` runs to the end and `xs[..b]` starts at `0` (`xs[..]` is a whole copy). The same forms work on `String`, `Bytes`, `Buf` and `Array`, and the slice has the receiver's type: a new `Bytes`, `Buf` or `Array(T)` holding a copy, which a change to either one never shows in the other, or a `String` (immutable, so a long slice shares its string's bytes as `str_slice` does, [Strings](#strings)). `xs.slice(a, b)` and `xs.slice(a)` are the same slices written as calls.
+
+```avant
+fn main {
+  xs = [5, 3, 8, 1, 9]
+  puts(xs[1..3].size)                  // => 2
+  puts(xs[3..][0])                     // => 1
+  puts(xs[..2][1])                     // => 3
+  puts(xs[1..=3].size)                 // => 3
+  word = "hello world"
+  puts(word[6..])                      // => world
+  puts(word.try_slice(4, 99) ?? "none")  // => none
+}
+```
+
+A slice traps unless `0 <= a <= b <= size` (`avant runtime: slice 2..5 out of range (size 3)`); `try_slice(a, b)` and `try_slice(a)` return `nil` instead, as `get` does for an index.
 
 ### Array operations
 
@@ -1384,15 +1410,21 @@ There are no negative indexes and no slices of arrays yet.
 | `xs.size` | number of elements |
 | `xs[i]`, `xs[i] = v`, `xs.get(i)` | read (trapping), write, read (`T?`) |
 | `xs.push(v)` | append; the storage grows as needed |
+| `xs.first()`, `xs.last()` | the first or last element as `T?`: `nil` on an empty array |
+| `xs.is_empty()` | `xs.size == 0` |
+| `xs[a..b]`, `xs[a..]`, `xs[..b]`, `xs.slice(...)`, `xs.try_slice(...)`, `xs.dup()` | a new array: a [slice](#slices), or the whole array |
 | `xs.pop()` | remove and return the last element, as `T?`: `nil` on an empty array (`while v = stack.pop() { ... }`); `xs.pop().expect("why")` where the array cannot be empty. The emptied slot is cleared, so the array keeps nothing alive |
 | `xs.clear()` | remove every element |
 | `xs.reserve(n)` | make room for `n` elements ahead of time |
-| `xs.fill(v)` | set every element (integer and `Bool` arrays) |
+| `xs.fill(v)` | set every element to `v`; a `v` that is or holds a mutable object (a class, an `Array`, a `Hash`, a `Buf`) is refused, as for `Array(T).new(n, value)` |
 | `xs.each (x) { ... }`, `for x in xs` | walk the elements; over structs, `x` is the element in place ([For](#for)) |
 | `xs.sort()`, `xs.sort (a, b) { a < b }` | sort in place: by the element's order, or by a lambda that says whether `a` comes first |
 | `xs.sorted()`, `xs.sorted (a, b) { ... }` | the same, as a new array |
-| `xs.reverse()` | reverse in place |
-| `xs.has(v)`, `xs.index_of(v)` | `Bool`; `Int?`, the first position; by the elements' `==` ([Equality and order](#equality-and-order)), so a struct compares its fields and an array its elements, and an element type without `==` is refused |
+| `xs.reverse()`, `xs.reversed()` | reverse in place; the same as a new array |
+| `xs.has(v)`, `xs.index_of(v)`, `xs.unique()` | `Bool`; `Int?`, the first position; by the elements' `==` ([Equality and order](#equality-and-order)), so a struct compares its fields and an array its elements, and an element type without `==` is refused; `unique` is a new array of each value's first occurrence, in order |
+| `xs.find (x) { ... }`, `xs.index_of (x) { ... }` | the first element the lambda says `true` for (`T?`), or its position (`Int?`); the walk stops there |
+| `xs.min_by (x) { key }`, `xs.max_by (x) { key }` | the first element of the smallest or largest key (`T?`), the key a number, `String` or `Bytes`, computed once per element |
+| `xs.delete_if (x) { ... }` | remove the elements the lambda says `true` for, in place, keeping the others in order |
 | `xs.min()`, `xs.max()` | `T?`: `nil` for an empty array |
 | `xs.sum()` | the total (numeric arrays); traps on overflow |
 | `xs.any (x) { ... }`, `xs.all (x) { ... }` | `Bool`, stopping at the first answer |
@@ -1400,7 +1432,8 @@ There are no negative indexes and no slices of arrays yet.
 
 - The element order used by `sort`, `min` and `max` exists for integers, `Float64` (NaN after every number), `String` and `Bytes` (byte order) and `Bool`. Any other element type sorts with a comparator block. On floats, `min` is the smallest number (NaN only when every element is NaN) and `max` is NaN when any element is.
 - No `map`, `select`, `reduce` or `join` is built in yet: write a loop, or a three-line generic function ([Lambdas](#lambdas)).
-- The lambdas given to `each`, `any`, `all`, `sort` and `parallel` are compiled as inlined loops; `return` in one ends that element's turn, and a `for` leaves early ([Lambdas given to builtins](#lambdas-given-to-builtins)).
+- `sort` and `sorted` are stable: elements neither of which comes before the other keep their order (with a lambda, one that says whether `a` comes strictly first, `a.x < b.x`, never `<=`).
+- The lambdas given to `each`, `any`, `all`, `find`, `index_of`, `min_by`, `max_by`, `delete_if`, `sort` and `parallel` are compiled as inlined loops; `return` in one ends that element's turn, and a `for` leaves early ([Lambdas given to builtins](#lambdas-given-to-builtins)).
 - The parameters of a comparator (`sort`, `sorted`) and of a `parallel` body are copies of the elements: writing one, or calling a method on it that changes its receiver, is a compile error (a comparator only compares; a `parallel` body returns the new element). A block given to a function of your own is a function value: its parameters are copies, as any function's are.
 
 ```avant
@@ -1643,7 +1676,7 @@ When in doubt, use a struct: it allocates nothing, and no other holder can chang
 
 A struct literal names every field without a default, in any order; a copy is independent of the original.
 
-A method's change to its struct receiver is the caller's (no `mutating` mark); a struct argument is a copy, so a change through a parameter stays in the callee. A struct reached through an index or a field is changed where it is stored: `xs[i].x = v`, `xs[i].scale(4)`, `xs[i].pos.x = v`, `obj.pos.x = v` and `obj.pos.scale(4)` change the element or the field, and so does the variable of `for p in xs` and the parameter of `xs.each (p) { ... }` ([For](#for)); `q = xs[i]` copies it. While a method that changes its receiver runs on an array's element, and the call may reach that array (an argument, a lambda or the receiver's own fields may lead to it), the array is frozen: a change of its size or order through any path (`push`, even with room, `pop`, `clear`, `reserve`, `sort`, `reverse`) stops the program, naming the method call (`avant runtime: push on an array while Pos.grow, called on one of its elements, runs: …`), since the method's receiver is the element's place in the buffer. Element stores and reads through other paths, and reassigning the field or the variable that holds the array, stay allowed (the old array keeps the write). To change the array inside such a method, copy the element, call the method on the copy and store it back (`p = b.ps[i]; p.grow(b); b.ps[i] = p`). Cost: none for a call that cannot reach the array; otherwise two atomic operations a call. A Hash gives its value as an optional copy (`h[k]` is `nil` when the key is absent), so `h[k].x = v` is a compile error: open it, change it and store it back (`if v = h[k] { v.x = 1; h[k] = v }`); the parameters of `h.each (k, v) { ... }` are copies too, and writing one is a compile error.
+A method's change to its struct receiver is the caller's (no `mutating` mark); a struct argument is a copy, so a change through a parameter stays in the callee. A struct reached through an index or a field is changed where it is stored: `xs[i].x = v`, `xs[i].scale(4)`, `xs[i].pos.x = v`, `obj.pos.x = v` and `obj.pos.scale(4)` change the element or the field, and so does the variable of `for p in xs` and the parameter of `xs.each (p) { ... }` ([For](#for)); `q = xs[i]` copies it. While a method that changes its receiver runs on an array's element, and the call may reach that array (an argument, a lambda or the receiver's own fields may lead to it), the array is frozen: a change of its size or order through any path (`push`, even with room, `pop`, `clear`, `reserve`, `sort`, `reverse`, `delete_if`) stops the program, naming the method call (`avant runtime: push on an array while Pos.grow, called on one of its elements, runs: …`), since the method's receiver is the element's place in the buffer. Element stores and reads through other paths, and reassigning the field or the variable that holds the array, stay allowed (the old array keeps the write). To change the array inside such a method, copy the element, call the method on the copy and store it back (`p = b.ps[i]; p.grow(b); b.ps[i] = p`). Cost: none for a call that cannot reach the array; otherwise two atomic operations a call. A Hash gives its value as an optional copy (`h[k]` is `nil` when the key is absent), so `h[k].x = v` is a compile error: open it, change it and store it back (`if v = h[k] { v.x = 1; h[k] = v }`); the parameters of `h.each (k, v) { ... }` are copies too, and writing one is a compile error.
 
 ```avant
 struct Vec {
@@ -2306,7 +2339,7 @@ The second row has no position so that hot loops stay fast.
 | `/`, `%` by zero | test the divisor |
 | `to_i`, `to_i32`, `to_u32`, `to_u64` out of range | `wrap_i`, `wrap_i32`, `wrap_u32`, `wrap_u64` |
 | a shift amount outside the width | |
-| a slice with `start > stop` or outside the value | |
+| a slice with `start > stop` or outside the value | `try_slice`, which returns `T?` |
 | a byte outside `0..255` | `n & 255` |
 | `chars` on invalid UTF-8 | `String.from_utf8`, which returns `String?` |
 | growing past a [size limit](#size-limits) | |
@@ -2447,7 +2480,7 @@ fn main {
 
 ### Lambdas given to builtins
 
-`each`, `any`, `all`, `sort`, `sorted`, `parallel`, `Mutex.with` and `Array(T).new(n, (i) { ... })` take a lambda like any function, and the compiler inlines it as a plain loop. A lambda is a function of its own there too: `return` ends this element's turn (with the lambda's value, for `any`, `all`, a comparator or a building lambda), and `break`, `continue` and a `?` with nowhere to return its failure are compile errors with a hint. To leave the walk or the function early, write a `for`:
+`each`, `any`, `all`, `find`, `index_of`, `min_by`, `max_by`, `delete_if`, `sort`, `sorted`, `parallel`, `Mutex.with` and `Array(T).new(n, (i) { ... })` take a lambda like any function, and the compiler inlines it as a plain loop. A lambda is a function of its own there too: `return` ends this element's turn (with the lambda's value, for `any`, `all`, a comparator or a building lambda), and `break`, `continue` and a `?` with nowhere to return its failure are compile errors with a hint. To leave the walk or the function early, write a `for`:
 
 | Inside | `return` | `break` |
 | --- | --- | --- |
@@ -2983,7 +3016,7 @@ fn main {
 
 - A value the block captures is copied when the task is sent ([What may cross a task](#what-may-cross-a-task)); the block cannot assign a captured variable. Its value goes back by the join whatever its type: the task made it or captured it, and nothing else holds it once the join returns.
 - **A task completes when its block and every task it spawned have ended.** A task spawned inside a task, or inside a `.parallel` body, counts in it: the worker goes back to the pool when the block ends, and the join returns once the last of them has ended. So a join guarantees that every array the task captured, directly or through the tasks it spawned, is thawed; a value received through a channel does not.
-- A captured `Array` is shared for reading and frozen, for the block and the sender, from the `spawn` until the task ends, with the tasks it spawned (not the join: a dropped handle does not keep it frozen), at every level of an array of arrays; `.parallel`'s input and its block's captured arrays are frozen while its bodies run. A change through the captured name is a compile error; through another path (another name, a function it is passed to, a field holding it) it stops the program with status 1, naming the operation (`push`, `pop`, `clear`, `fill`, `sort`, `reverse`, `reserve` or an element store): `avant runtime: push on an array a running task reads: …`. Cost: none without `spawn` or `.parallel`; otherwise one compare per element store and `clear`, and one test per runtime mutator call (a `push` with room tests only when it must grow).
+- A captured `Array` is shared for reading and frozen, for the block and the sender, from the `spawn` until the task ends, with the tasks it spawned (not the join: a dropped handle does not keep it frozen), at every level of an array of arrays; `.parallel`'s input and its block's captured arrays are frozen while its bodies run. A change through the captured name is a compile error; through another path (another name, a function it is passed to, a field holding it) it stops the program with status 1, naming the operation (`push`, `pop`, `clear`, `fill`, `sort`, `reverse`, `reserve`, `delete_if` or an element store): `avant runtime: push on an array a running task reads: …`. Cost: none without `spawn` or `.parallel`; otherwise one compare per element store and `clear`, and one test per runtime mutator call (a `push` with room tests only when it must grow).
 - A captured `Hash` (and a `Set`) follows the same rule: shared for reading and frozen until the task ends, at every level of a hash of arrays or an array of hashes. A store (`h[k] = v`), `delete`, `clear`, `inc` or a `Set`'s `add` through the captured name is a compile error; through another path it stops the program, naming the operation (`a store`, `delete` or `clear`): `avant runtime: a store on a hash a running task reads: …`. Cost: one test per runtime call that changes a hash, in every program; the count takes padding the hash already had, so a hash is no larger.
 - `.join` and `.parallel` work inside a task, written in the block or reached through a call: a joined task that no worker has taken yet runs on the joining worker, as do the `.parallel` bodies still queued, and the caller waits for the rest giving its place in the pool back, as a task waiting on a channel does ([The thread pool](#the-thread-pool)). So a recursive split (spawn one half, compute the other, join) needs no more threads than the pool's count. A task that joins a task waiting on a channel only it would send to still waits for good, as anywhere.
 
@@ -4586,7 +4619,7 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 | --- | --- | --- |
 | Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
 | `Hash` insertion order | decided | sort the keys ([hash operations](#hash-operations)) |
-| `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion; slices of strings and arrays | planned | `str_slice`, loops, [`std.regex`](#stdregex) |
+| `String` methods: `contains`, `starts_with`, `replace`, `join`, case conversion | planned | slices, loops, [`std.regex`](#stdregex) |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#lambdas) |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` on hashes | planned | a loop |
