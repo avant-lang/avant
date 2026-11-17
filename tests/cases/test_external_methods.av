@@ -45,6 +45,14 @@ import backends
 //     Cell.show is already defined`, `Cell needs type arguments` and the
 //     ambiguity's message for a qualified name; two instances of one
 //     such template shared their constructor's symbol.
+//   - A program's method on an Array, a Hash or a Set: declared on a
+//     receiver of the container's type (`fn (xs: Array(Int)) total`) or
+//     on a generic pattern of it (`fn (xs: Array(T)) second: T?`), it
+//     is called on every container its receiver fits; two of one name on
+//     Array(Int) and Array(String) are two methods, a call on a receiver
+//     no declaration fits names the receivers it is declared on, and the
+//     container's builtin names are refused where declared. They were
+//     refused as receivers (methods can only extend ...).
 //   - A function's bare name followed by a block is a call with that
 //     block, wherever a qualified name followed by one is
 //     (`puts(twice { |x| x + 1 })` as `puts(m.twice { |x| x + 1 })`):
@@ -161,6 +169,18 @@ fn block_cases: Array(MCase) {
   xs
 }
 
+fn container_cases: Array(MCase) {
+  xs: Array(MCase) = []
+  xs.push(accepted("container-methods", ["main", "fn (xs: Array(T)) second: T? {\n  xs.get(1)\n}\n\nfn (xs: Array(Int)) total: Int {\n  t = 0\n  for x in xs {\n    t += x\n  }\n  t\n}\n\nfn (xs: Array(String)) total: Int {\n  t = 0\n  for x in xs {\n    t += x.size\n  }\n  t\n}\n\nfn (h: Hash(K, V)) has_all(ks: Array(K)): Bool {\n  for k in ks {\n    if !h.has_key(k) {\n      return false\n    }\n  }\n  true\n}\n\nfn (h: Hash(String, Int)) sum_values: Int {\n  t = 0\n  h.each { |k, v| t += v }\n  t\n}\n\nfn (s: Set(T)) add_all(xs: Array(T)): Int {\n  n = 0\n  for x in xs {\n    if s.add(x) {\n      n += 1\n    }\n  }\n  n\n}\n\nfn (xs: Array(T)) firsts(n: Int): Array(T) {\n  out: Array(T) = []\n  for x in xs {\n    if out.size < n {\n      out.push(x)\n    }\n  }\n  out\n}\n\nfn main {\n  puts([1, 2, 3].second() ?? -1)\n  puts([\"a\", \"bc\"].second() ?? \"-\")\n  puts(\"\${[4, 5].total()} \${[\"ab\", \"cde\"].total()}\")\n  h = [\"a\": 1, \"b\": 2]\n  puts(\"\${h.has_all([\"a\", \"b\"])} \${h.has_all([\"a\", \"z\"])} \${h.sum_values()}\")\n  s = Set(Int).new()\n  puts(s.add_all([1, 2, 2, 3]))\n  ys: Array(Int32) = [1, 2, 3]\n  puts(\"\${ys.firsts(2).size} \${[[1], [2, 3]].firsts(5)[1].size}\")\n}\n"], "2\nbc\n9 5\ntrue false 3\n3\n2 2\n"))
+  xs.push(refused("container-builtin-name", ["main", "fn (xs: Array(Int)) push(v: Int) {\n}\n\nfn main {\n  puts(1)\n}\n"], "push is a builtin of Array: a method cannot replace it", "main.av:1:1"))
+  xs.push(refused("container-builtin-name-hash", ["main", "fn main {\n  puts(1)\n}\n\nfn (h: Hash(K, V)) keys: Int {\n  1\n}\n"], "keys is a builtin of Hash: a method cannot replace it", "main.av:5:1"))
+  xs.push(refused("container-other-receiver", ["main", "fn (xs: Array(Int)) total: Int {\n  xs.size\n}\n\nfn main {\n  puts([\"a\"].total())\n}\n"], "no method total on Array(String): total is declared on Array(Int)", "main.av:6:13"))
+  xs.push(refused("container-twice", ["main", "fn (xs: Array(T)) total: Int {\n  1\n}\n\nfn (xs: Array(Int)) total: Int {\n  2\n}\n\nfn main {\n  puts([1].total())\n}\n"], "method Array.total is already defined", "main.av:5:1"))
+  xs.push(accepted("container-imported", ["main", "import ea\n\nfn main {\n  puts([1, 2].total())\n  puts(ea.go())\n}\n", "ea", "pub fn (xs: Array(Int)) total: Int {\n  xs.size * 10\n}\n\npub fn go: Int {\n  [1].total()\n}\n"], "20\n10\n"))
+  xs.push(refused("container-both-imported", ["main", "import ea\nimport eb\n\nfn main {\n  puts([1].total())\n}\n", "ea", "pub fn (xs: Array(Int)) total: Int {\n  xs.size * 10\n}\n\npub fn go: Int {\n  [1].total()\n}\n", "eb", "pub fn (xs: Array(Int)) total: Int {\n  xs.size * 20\n}\n"], "ambiguous call to Array(Int).total: the methods of modules ea and eb both match", "main.av:5:11"))
+  xs
+}
+
 fn run_cases(c: Checks, compiler: String, dir: String, cases: Array(MCase)) {
   jobs: Array(HJob) = []
   for f in cases {
@@ -220,6 +240,9 @@ fn test_main(c: Checks) {
     }
     for b in block_cases() {
       all.push(b)
+    }
+    for k in container_cases() {
+      all.push(k)
     }
     run_cases(c, compiler, scratch_dir(), all)
   } else {

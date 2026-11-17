@@ -214,6 +214,10 @@ pub class Checker {
   // the argument in more than one way (checker/match.av infer_subst):
   // added to "cannot infer type argument".
   pub infer_note: String = ""
+  // The receiver of the method call being matched when it is an Array,
+  // a Hash or a Set (dispatch_method): a program's method on one of them
+  // fits by its receiver's declared type, a pattern when it is generic.
+  pub match_recv: Ty? = nil
   // True while a call's bare integer literal argument is checked before
   // its parameter is known: a value above Int's range is then a UInt64,
   // and the parameter's type decides (fit_call_arg).
@@ -698,7 +702,7 @@ pub class Checker {
         if recv = fnn.receiver {
           ty = resolve_in_module(recv.type)
           self.pull_resolve()
-          if ptr_method_ok(ty) || builtin_receiver_ok(ty) {
+          if ptr_method_ok(ty) || builtin_receiver_ok(ty) || container_owner(ty).size > 0 {
             self.self_name = recv.name
             if existing = lookup(self.self_name) {
               fail(fnn.loc, "duplicate parameter ${self.self_name}")

@@ -204,13 +204,29 @@ pub fn reserved_c_names: Hash(String, Int) {
 // of it carries: it has no module of its own, so its external methods are
 // seen as functions are (in their module, and in its importers when pub).
 pub fn builtin_owner_name(name: String): Bool {
-  name == "String" || name == "Bytes" || name == "Buf" || name == "Int" || name == "Int32" || name == "UInt32" || name == "UInt64" || name == "Float64" || name == "Bool"
+  name == "String" || name == "Bytes" || name == "Buf" || name == "Int" || name == "Int32" || name == "UInt32" || name == "UInt64" || name == "Float64" || name == "Bool" || name == "Array" || name == "Hash" || name == "Set"
 }
 
 // The builtin value types an external method may extend, besides the
 // program's own types and C pointers.
 pub fn builtin_receiver_ok(ty: Ty): Bool {
   ty.is_bytes() || ty.is_string() || ty.is_buf() || ty.is_integer() || ty.is_float() || ty.is_bool()
+}
+
+// The owner a program's method on a builtin container is filed under
+// ("Array", "Hash", "Set"), or "" for any other type: one name for every
+// element type, the receiver's declared type telling the instances apart.
+pub fn container_owner(ty: Ty): String {
+  if ty.is_array() {
+    return "Array"
+  }
+  if ty.is_set() {
+    return "Set"
+  }
+  if ty.is_hash() {
+    return "Hash"
+  }
+  ""
 }
 
 pub fn is_op_fn_name(name: String): Bool {

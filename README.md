@@ -1723,7 +1723,7 @@ A method is a `fn` in the type's body; `self` is its receiver.
 
 ### External methods
 
-A method may be declared outside the type, as a function with a receiver parameter, under the body's rules with the receiver's name for `self` (`p.x = ...`; an ambiguous bare call asks for `p.name(...)`). A lambda in it cannot capture the receiver (copy it into a local). A builtin type's receiver (`String`, `Bytes`, `Buf`, an integer type, `Float64`, `Bool`) is always named.
+A method may be declared outside the type, as a function with a receiver parameter, under the body's rules with the receiver's name for `self` (`p.x = ...`; an ambiguous bare call asks for `p.name(...)`). A lambda in it cannot capture the receiver (copy it into a local). A builtin type's receiver (`String`, `Bytes`, `Buf`, an integer type, `Float64`, `Bool`, an `Array`, a `Hash`, a `Set`) is always named.
 
 <!-- check: run pre=point_decl -->
 ```avant
@@ -1744,7 +1744,38 @@ struct Point {
 }
 -->
 
-So a module adds methods to a type it does not own: an enum, and the builtin `String`, `Bytes`, `Buf`, `Int`, `Int32`, `UInt32`, `UInt64`, `Float64` and `Bool` (the standard library's `bytes.compress` is one; `fn (n: Int) clamp(lo: Int, hi: Int): Int` is called `n.clamp(0, 10)`). `Array` and `Hash` take none yet.
+So a module adds methods to a type it does not own: an enum, and the builtin `String`, `Bytes`, `Buf`, `Int`, `Int32`, `UInt32`, `UInt64`, `Float64` and `Bool` (the standard library's `bytes.compress` is one; `fn (n: Int) clamp(lo: Int, hi: Int): Int` is called `n.clamp(0, 10)`), and `Array`, `Hash` and `Set`, on one element type or on all of them:
+
+```avant
+fn (xs: Array(T)) second: T? {
+  xs.get(1)
+}
+
+fn (xs: Array(Int)) total: Int {
+  t = 0
+  for x in xs {
+    t += x
+  }
+  t
+}
+
+fn (h: Hash(String, V)) has_all(ks: Array(String)): Bool {
+  for k in ks {
+    if !h.has_key(k) {
+      return false
+    }
+  }
+  true
+}
+
+fn main {
+  puts([7, 8].second() ?? 0)                   // => 8
+  puts([1, 2, 3].total())                      // => 6
+  puts(["a": 1, "b": 2].has_all(["a", "b"]))   // => true
+}
+```
+
+- A container's method is declared on its receiver's type: `Array(Int)` is one element type (another method of the same name may serve `Array(String)`), `Array(T)` every one, the type parameters taken from the receiver at each call. A call on a receiver no declaration fits names the types the method is declared on; a generic and a specific declaration of one name are refused as declared twice.
 
 - A builtin type keeps its own methods and fields: `fn (s: String) to_s`, `fn (b: Bytes) size` or `fn (n: Int) abs` is refused where declared.
 - An external method of a builtin type is seen like a function (in its module, and in importers when `pub`); a `pub` one of a program's type is seen wherever the type is.

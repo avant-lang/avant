@@ -296,7 +296,12 @@ pub fn (checker_self: Checker) infer_subst_recv(tparams: Array(String), params: 
   checker_self.infer_err_params = []
   keys: Array(String) = []
   vals: Array(Ty) = []
-  if pat.origin == act.origin {
+  if pat.origin.size == 0 && act.origin.size == 0 {
+    // A builtin container's pattern (Array(T), Hash(K, V), Set(T)).
+    if !checker_self.unify_ty(pat, act, keys, vals) {
+      return nil
+    }
+  } else if pat.origin == act.origin {
     if pat.ty_args.size == act.ty_args.size {
       for i in 0..pat.ty_args.size {
         if !checker_self.unify_ty(pat.ty_args[i], act.ty_args[i], keys, vals) {
@@ -335,6 +340,34 @@ pub fn (checker_self: Checker) infer_subst_recv(tparams: Array(String), params: 
     i += 1
   }
   out
+}
+
+// A program's method on an Array, a Hash or a Set fits the receiver recv
+// when its receiver's declared type does: the same type when the method
+// is not generic, else a pattern unified with recv, its type parameters
+// then taken from the receiver, the arguments and the expected result.
+// The substitution (empty for a method that is not generic), or nil.
+pub fn (checker_self: Checker) container_subst(sig: FuncSig, recv: Ty, arg_tys: Array(Ty), expected: Ty?): Array(Ty)? {
+  if r = sig.node.receiver {
+    checker_self.resolver.set_tparams(sig.node.type_params)
+    pat = checker_self.resolver.resolve(r.type)
+    checker_self.pull_resolve()
+    checker_self.resolver.clear_tparams()
+    if !sig.node.generic {
+      if !pat.same_as(recv) {
+        return nil
+      }
+      for k in 0..arg_tys.size {
+        if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && checker_self.empty_fits(arg_tys[k], sig.params[k])) {
+          return nil
+        }
+      }
+      none: Array(Ty) = []
+      return none
+    }
+    return checker_self.infer_subst_recv(sig.node.type_params, sig.params, arg_tys, sig.ret, expected, pat, recv)
+  }
+  nil
 }
 
 pub fn (checker_self: Checker) subst_for_method(sig: FuncSig, call_owner: String, arg_tys: Array(Ty), expected: Ty?): Array(Ty)? {
@@ -952,7 +985,12 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
             }
           }
           if !is_inst && checker_self.method_is_visible(sig.node, checker_self.current_module) && arity_ok(sig.node, arg_tys.size) {
-            if sig.node.generic {
+            if recv_c = checker_self.match_recv {
+              saw_generic = saw_generic || sig.node.generic
+              if subst_c = checker_self.container_subst(sig, recv_c, checker_self.lit_fit_tys(sig.params, arg_tys, lits), expected) {
+                cands.push(sig)
+              }
+            } else if sig.node.generic {
               saw_generic = true
               if subst = checker_self.infer_subst(sig.node, sig.params, checker_self.lit_fit_tys(sig.params, arg_tys, lits), sig.ret, expected) {
                 cands.push(sig)
@@ -997,7 +1035,12 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
       x += 1
     }
   }
-  if cands.size == 0 && !saw_generic && lits.size > 0 {
+  // (A container's methods took the literals' fit in container_subst.)
+  by_recv = false
+  if recv_l = checker_self.match_recv {
+    by_recv = true
+  }
+  if cands.size == 0 && !saw_generic && lits.size > 0 && !by_recv {
     x = 0
     while x < named.size {
       sig = checker_self.methods[named[x]]
@@ -1044,6 +1087,27 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
           }
         }
       }
+      if recv_m = checker_self.match_recv, all.size > 0 {
+        // A container's method declared on other receivers only.
+        on = buf_new()
+        fits = false
+        for sg in all {
+          pat = checker_self.recv_ty_of(sg.node)
+          ks: Array(String) = []
+          vs: Array(Ty) = []
+          if checker_self.unify_ty(pat, recv_m, ks, vs) {
+            fits = true
+          }
+          if on.size > 0 {
+            on.push_str(", ")
+          }
+          on.push_str(pat.show())
+        }
+        if !fits {
+          checker_self.fail(loc, "no method ${name} on ${shown}: ${name} is declared on ${on.to_s()}")
+          return nil
+        }
+      }
       if all.size > 0 {
         called = "${shown}.${name}"
         if checker_self.in_new && name == "initialize" {
@@ -1063,6 +1127,13 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
     return nil
   }
   chosen = cands[0]
+  if recv_c2 = checker_self.match_recv, chosen.node.generic {
+    if subst_c2 = checker_self.container_subst(chosen, recv_c2, checker_self.lit_fit_tys(chosen.params, arg_tys, lits), expected) {
+      return checker_self.instantiate_method(chosen, subst_c2, loc)
+    }
+    checker_self.fail(loc, "cannot infer type argument")
+    return nil
+  }
   if chosen.node.generic {
     if subst = checker_self.subst_for_method(chosen, owner, checker_self.lit_fit_tys(chosen.params, arg_tys, lits), expected) {
       return checker_self.instantiate_method(chosen, subst, loc)
@@ -1666,6 +1737,18 @@ pub fn (checker_self: Checker) dispatch_method(expr: Expr, object: Ty, expected:
   if builtin_receiver_ok(object) {
     owner = object.show()
   }
+  saved_recv = checker_self.match_recv
+  checker_self.match_recv = nil
+  if container_owner(object).size > 0 {
+    owner = container_owner(object)
+    checker_self.match_recv = object
+  }
+  got = checker_self.dispatch_method_of(expr, object, expected, owner)
+  checker_self.match_recv = saved_recv
+  got
+}
+
+pub fn (checker_self: Checker) dispatch_method_of(expr: Expr, object: Ty, expected: Ty?, owner: String): Ty {
   shown = object.show()
   field_owner = object
   if object.is_ptr() {

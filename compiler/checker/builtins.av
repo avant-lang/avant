@@ -700,6 +700,10 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
   if expr.callee == "parallel" {
     return checker_self.check_parallel(expr, array)
   }
+  if checker_self.owner_has_method("Array", expr.callee) {
+    none: Ty? = nil
+    return checker_self.dispatch_method(expr, array, none)
+  }
   checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Array", checker_self.builtin_hint(array, expr.callee))
   checker_self.t_int()
 }
@@ -809,6 +813,10 @@ pub fn (checker_self: Checker) check_set_method(expr: Expr, set: Ty): Ty {
     }
     checker_self.fail(expr.loc, "each needs a block")
     return checker_self.t_void()
+  }
+  if checker_self.owner_has_method("Set", c) {
+    none: Ty? = nil
+    return checker_self.dispatch_method(expr, set, none)
   }
   hint = checker_self.builtin_hint(set, c)
   if c == "has_key" || c == "has" || c == "includes" {
@@ -1098,6 +1106,10 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       checker_self.fail(expr.loc, "get_concat expects String keys")
     }
     return ty_nilable(checker_self.t_int())
+  }
+  if checker_self.owner_has_method("Hash", expr.callee) {
+    none: Ty? = nil
+    return checker_self.dispatch_method(expr, hash, none)
   }
   checker_self.fail_hint(expr.loc, "no method ${expr.callee} on Hash", checker_self.builtin_hint(hash, expr.callee))
   checker_self.t_int()

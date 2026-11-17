@@ -249,6 +249,7 @@ pub fn (checker_self: Checker) assign_emit_names {
       if flag = checker_self.resolver.collide.get(owner) {
         shown = "${mod_emit_prefix(owner_mod)}__${owner}"
       }
+      shown = checker_self.container_emit_owner(sig, shown)
       sanitized = emit_op_name(name)
       mbase = checker_self.method_emit_base(sig, "${shown}__${sanitized}")
       if n <= 1 {
@@ -706,6 +707,21 @@ pub fn (checker_self: Checker) method_owner_name(ty: Ty): String {
   ty.name
 }
 
+// The receiver's declared type of a method, its type parameters open.
+pub fn (checker_self: Checker) recv_ty_of(fnn: Function): Ty {
+  if r = fnn.receiver {
+    saved = checker_self.current_module
+    checker_self.current_module = fnn.mod_name
+    checker_self.resolver.set_tparams(fnn.type_params)
+    t = checker_self.resolve_in_module(r.type)
+    checker_self.pull_resolve()
+    checker_self.resolver.clear_tparams()
+    checker_self.current_module = saved
+    return t
+  }
+  checker_self.t_void()
+}
+
 pub fn (checker_self: Checker) register_method(fnn: Function) {
   saved_mod = checker_self.current_module
   checker_self.current_module = fnn.mod_name
@@ -747,6 +763,12 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
         owner_ty = ty
         owner_key = ty.show()
         has_owner = true
+      } else if container_owner(ty).size > 0 {
+        fnn.owner = container_owner(ty)
+        fnn.owner_mod = ""
+        owner_ty = ty
+        owner_key = fnn.owner
+        has_owner = true
       } else if checker_self.ptr_method_ok(ty) {
         if tparams.size > 0 {
           checker_self.fail(recv.loc, "Ptr methods are not generic")
@@ -764,7 +786,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
         checker_self.current_module = saved_mod
         return
       } else {
-        checker_self.fail(recv.loc, "methods can only extend a struct, a class, an enum, String, Bytes, Buf, an integer type, Float64 or Bool, not ${ty.show()}")
+        checker_self.fail(recv.loc, "methods can only extend a struct, a class, an enum, String, Bytes, Buf, an integer type, Float64, Bool, an Array, a Hash or a Set, not ${ty.show()}")
         checker_self.resolver.clear_tparams()
         checker_self.current_module = saved_mod
         return
@@ -822,7 +844,7 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   }
   // A builtin type's own methods and fields keep their names: a method
   // of that name would either replace the builtin or never be called.
-  if builtin_receiver_ok(owner_ty) && name_in_list(fnn.name, builtin_member_names(owner_ty)) {
+  if (builtin_receiver_ok(owner_ty) || container_owner(owner_ty).size > 0) && name_in_list(fnn.name, builtin_member_names(owner_ty)) {
     checker_self.fail(fnn.loc, "${fnn.name} is a builtin of ${owner_key}: a method cannot replace it; give the method another name")
     checker_self.resolver.clear_tparams()
     checker_self.current_module = saved_mod
@@ -900,6 +922,11 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
   for existing in checker_self.methods {
     if existing.owner == owner_key && existing.node.owner_mod == fnn.owner_mod && existing.name == fnn.name {
       if !checker_self.methods_meet(existing.node, fnn) {
+        continue
+      }
+      // A container's methods of one name on two receiver types
+      // (Array(Int), Array(String)) are two methods.
+      if container_owner(owner_ty).size > 0 && !existing.node.generic && !fnn.generic && !checker_self.recv_ty_of(existing.node).same_as(owner_ty) {
         continue
       }
       where = ""
@@ -1047,6 +1074,18 @@ pub fn (checker_self: Checker) adopt_new_types {
 // module's prefix when another module declares a method of the same
 // owner, name and parameter types (two modules may each add one, seen
 // each in its own module).
+// A method on a container is named by its receiver's whole type
+// (`Array_Int`), so methods of one name on Array(Int) and Array(String)
+// are two functions; any other owner keeps its name.
+pub fn (checker_self: Checker) container_emit_owner(sig: FuncSig, shown: String): String {
+  if sig.owner == "Array" || sig.owner == "Hash" || sig.owner == "Set" {
+    if r = sig.node.receiver {
+      return mangle_ty(checker_self.recv_ty_of(sig.node))
+    }
+  }
+  shown
+}
+
 pub fn (checker_self: Checker) method_emit_base(sig: FuncSig, base: String): String {
   for other in checker_self.method_indices_named(sig.name) {
     o = checker_self.methods[other]
@@ -1079,7 +1118,7 @@ pub fn (checker_self: Checker) assign_one_method_emit(sig: FuncSig) {
   }
   for other in checker_self.methods {
     if !other.node.generic && other.owner == owner && other.node.owner_mod == sig.node.owner_mod && other.name == name {
-      obase = checker_self.method_emit_base(other, "${shown}__${sanitized}")
+      obase = checker_self.method_emit_base(other, "${checker_self.container_emit_owner(other, shown)}__${sanitized}")
       if n <= 1 {
         other.node.emit_name = obase
       } else {
