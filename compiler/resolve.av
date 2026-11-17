@@ -591,6 +591,10 @@ pub class TypeResolver {
         fail(tn.loc, "JoinHandle takes one type argument")
         return self.t_int
       }
+      // A task whose block gives nothing: JoinHandle(Void).
+      if tn.args[0].name == "Void" && tn.args[0].args.size == 0 {
+        return ty_join(self.t_void)
+      }
       return ty_join(no_hasher(resolve_value_uninline(tn.args[0]), tn.args[0], "a JoinHandle"))
     }
     if idef = find_interface(tn.name) {

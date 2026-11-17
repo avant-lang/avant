@@ -37,8 +37,9 @@ fn expect_compile_error(c: Checks, compiler: String, stamp: Int, tag: String, bo
 }
 
 // .join and .parallel reached through a call from a pool
-// worker: a trap, status 1, after the output printed before
-// it (they aborted, status 134).
+// worker: they work (a joined task no worker took runs on the joining
+// worker; a .parallel's queued bodies too), status 0 and the value
+// (they trapped, status 1, and aborted before that, status 134).
 fn pool_worker_cases(c: Checks, compiler: String, stamp: Int) {
   bin = "${scratch()}/safety-pool-worker-${stamp}.bin"
   clog = "${scratch()}/safety-pool-worker-${stamp}.clog"
@@ -49,8 +50,12 @@ fn pool_worker_cases(c: Checks, compiler: String, stamp: Int) {
     args: Array(String) = []
     args.push(kind)
     status = process_run_out(bin, args, log) ?? -1
-    c.eq_int(status, 1, ".${kind} reached through a call from a pool worker: status 1")
-    c.eq_str(file_read(log) ?? "", "before\navant runtime: .${kind} called from a pool worker: .join and .parallel cannot be called inside a spawn block or a .parallel body, directly or through a call\n", ".${kind} reached through a call from a pool worker: the trap's line after the program's output")
+    c.eq_int(status, 0, ".${kind} reached through a call from a pool worker: status 0")
+    want = "before\n2\n"
+    if kind == "join" {
+      want = "before\n1\n"
+    }
+    c.eq_str(file_read(log) ?? "", want, ".${kind} reached through a call from a pool worker: the value")
   }
 }
 

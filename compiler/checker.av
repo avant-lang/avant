@@ -219,6 +219,9 @@ pub class Checker {
   // Where a postfix `?` stands when it cannot return from the body around it
   // ("a spawn block"); empty in a function or lambda body.
   pub try_in: String = ""
+  // The failures a spawn block's `?` passes up (check_spawn): the
+  // block's value is a union with them.
+  pub spawn_fails: Array(Ty) = []
   // Checking a field default (evaluated before initialize, with no
   // receiver).
   pub in_default: Bool = false
@@ -2293,6 +2296,23 @@ pub class Checker {
   // function, and the failure was whichever member the result type
   // happened to hold).
   pub fn split_try_success(got: Ty, loc: Location): Ty {
+    if self.try_in == "a spawn block" || self.try_in == "a parallel block" || self.try_in == "a lambda given to parallel" {
+      // A spawn block's `?` ends the task with the failure, which the
+      // join gives: the block's value becomes a union with it (a
+      // .parallel body's, that element of the result, whether the body
+      // is a block or a lambda in parentheses).
+      if got.is_union() && ty_failures(got).size > 0 && !ty_has_success(got) {
+        fail(loc, "postfix ? on ${got.show()}: it has no success value (every member but nil is marked Error), so ? would pass up nil and continue with the error; open it with if-assign or ??")
+        return t_int()
+      }
+      if success = failure_split(got, loc, "postfix ?") {
+        for f in ty_failures(got) {
+          self.spawn_fails.push(f)
+        }
+        return success
+      }
+      return t_int()
+    }
     if self.inline_what.size > 0 {
       fail(loc, inline_exit_message("?", self.inline_what))
       return t_int()
@@ -2858,9 +2878,6 @@ pub class Checker {
       if object.is_join() {
         if expr.ident == "join" {
           expr.method_call = true
-          if self.in_task > 0 {
-            fail(expr.loc, "join inside a pool worker")
-          }
           if inner = object.inner {
             return join_result(inner)
           }
@@ -6303,18 +6320,74 @@ pub class Checker {
       self.loop_depth = 0
       saved_try = self.try_in
       self.try_in = "a spawn block"
-      result = check_block_value(b)
+      saved_fails = self.spawn_fails
+      self.spawn_fails = []
+      // A spawn inside the block runs no longer than the block's task
+      // (its join waits for it): what it keeps frozen is the block's own
+      // business, under the block's names.
+      saved_ph = self.pending_handles
+      saved_pa = self.pending_arrays
+      self.pending_handles = []
+      self.pending_arrays = []
+      result = check_spawn_value(b)
+      self.pending_handles = saved_ph
+      self.pending_arrays = saved_pa
+      fails = self.spawn_fails
+      self.spawn_fails = saved_fails
       self.try_in = saved_try
       self.loop_depth = saved_loops
       self.in_task -= 1
-      if !result.is_int() {
-        fail(b.loc, "spawn result must be Int")
+      if fails.size > 0 && !self.has_err() {
+        // A `?` in the block: the join gives the value or the failure.
+        parts: Array(Ty) = []
+        parts.push(result)
+        for f in fails {
+          parts.push(f)
+        }
+        result = ty_union_build(parts)
+      }
+      if !self.has_err() && ty_holds_ptr(result) {
+        fail(b.loc, "a spawn block's value cannot be a ${result.show()}: a Ptr is C memory, and it does not cross to another task")
       }
       collect_spawn_captures(expr, b.body)
       return ty_join(result)
     }
     fail(expr.loc, "spawn needs a block")
     ty_join(t_int())
+  }
+
+  // A spawn block's value: its last expression's type, or Void when it
+  // ends with a statement or a call that gives nothing (the join then
+  // gives `Void | TaskError`).
+  pub fn check_spawn_value(block: Block): Ty {
+    if block.body.size > 0 {
+      last = block.body[block.body.size - 1]
+      gives = last.kind == st_expr() || (last.kind == st_if() && last.else_body.size > 0)
+      if !gives {
+        self.push_scope()
+        for stmt in block.body {
+          check_block_stmt(stmt, self.return_type, false)
+        }
+        self.pop_scope()
+        return t_void()
+      }
+      if last.kind == st_expr() {
+        if e = last.expr, e.kind == ex_call() || e.kind == ex_field() {
+          // A call that gives nothing ends a Void block.
+          self.push_scope()
+          i = 0
+          while i < block.body.size - 1 {
+            check_block_stmt(block.body[i], self.return_type, false)
+            i += 1
+          }
+          scan_pending_expr(e)
+          ty = check_expr(e)
+          self.pop_scope()
+          return ty
+        }
+      }
+    }
+    check_block_value(block)
   }
 
   pub fn check_block_value(block: Block): Ty {
@@ -6536,7 +6609,7 @@ pub class Checker {
       }
       dropped = self.with_drop == expr.loc.show()
       self.with_drop = ""
-      if self.try_in.size > 0 && self.try_in != "a lambda whose result type is inferred" && self.inline_what.size == 0 && !b.paren {
+      if self.try_in.size > 0 && self.try_in != "a lambda whose result type is inferred" && self.try_in != "a spawn block" && self.try_in != "a parallel block" && self.inline_what.size == 0 && !b.paren {
         // `return` and `?` leave a `with` as they leave the code around
         // it, which here cannot return (a spawn or parallel block, a
         // field default): refused there as before.
@@ -6664,11 +6737,7 @@ pub class Checker {
   }
 
   pub fn check_join(expr: Expr, handle: Ty): Ty {
-    if expr.callee == "join" {
-      if self.in_task > 0 {
-        fail(expr.loc, "join inside a pool worker")
-      }
-    } else {
+    if expr.callee != "join" {
       fail_hint(expr.loc, "no method ${expr.callee} on JoinHandle", builtin_hint(handle, expr.callee))
       if inner = handle.inner {
         return inner

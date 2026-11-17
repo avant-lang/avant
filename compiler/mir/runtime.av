@@ -454,13 +454,20 @@ fn mir_rt_fill(t: MRtTable) {
   // waits block while other threads collect.
   t.row("avant_spawn", "ptr, ref", "ref", c, "")
   t.row("avant_join", "ref", "i64", c, "")
-  t.row("avant_parallel_for", "i64, ptr, ref", "void", c, "")
+  t.row("avant_parallel_for", "i64, ptr, ref", "i32", c, "")
   t.row("avant_gate_new", "", "u64", c, "")
   // A trap ends its task: a spawn with its end on a
   // trap; the trap a join found (static C strings: no collection); a C
   // callback's bracket in a program that spawns; `with`'s lock, which
   // says whether the mutex is poisoned.
   t.row("avant_spawn_f", "ptr, ref, ptr", "ref", c, "")
+  // A spawn whose value is not an Int: the handle the generated code
+  // made, rooted until the task is done; the handle of the task the
+  // thread runs (where its block stores its value); a .parallel whose
+  // bodies trapped, trapping in its caller.
+  t.row("avant_spawn_h", "ptr, ref, ptr, ref", "ref", c, "")
+  t.row("avant_task_handle", "", "ref", n, "")
+  t.row("avant_parallel_trap", "", "void", n, "")
   t.row("avant_join_what", "ref", "ref str", n, "")
   t.row("avant_join_site", "ref", "ref str", n, "")
   t.row("avant_task_cb_enter", "", "void", n, "")

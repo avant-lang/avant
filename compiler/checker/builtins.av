@@ -721,10 +721,6 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
 }
 
 pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
-  if checker_self.in_task > 0 {
-    checker_self.fail(expr.loc, "parallel inside a pool worker")
-    return ty_array(checker_self.t_int())
-  }
   if b = expr.block {
     if expr.args.size != 0 {
       checker_self.fail(expr.loc, "parallel takes a block, not arguments")
@@ -754,6 +750,12 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
       checker_self.loop_depth = 0
       saved_try = checker_self.try_in
       checker_self.try_in = "a parallel block"
+      saved_fails = checker_self.spawn_fails
+      checker_self.spawn_fails = []
+      saved_ph = checker_self.pending_handles
+      saved_pa = checker_self.pending_arrays
+      checker_self.pending_handles = []
+      checker_self.pending_arrays = []
       result = checker_self.t_int()
       if b.paren {
         s = checker_self.inline_enter(b, "parallel", checker_self.inline_result(b))
@@ -769,7 +771,20 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
       } else {
         result = checker_self.check_block_value(b)
       }
+      checker_self.pending_handles = saved_ph
+      checker_self.pending_arrays = saved_pa
+      fails = checker_self.spawn_fails
+      checker_self.spawn_fails = saved_fails
       checker_self.try_in = saved_try
+      if fails.size > 0 && !checker_self.has_err() {
+        // A `?` in the body: that element is the failure.
+        parts: Array(Ty) = []
+        parts.push(result)
+        for f in fails {
+          parts.push(f)
+        }
+        result = ty_union_build(parts)
+      }
       checker_self.loop_depth = saved_loops
       checker_self.in_task -= 1
       checker_self.pop_scope()

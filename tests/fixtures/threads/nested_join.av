@@ -1,0 +1,40 @@
+// Joins and .parallel inside tasks: a recursive split that spawns one
+// half, computes the other and joins, and a .parallel whose bodies call
+// .parallel in turn. A joined task no worker took yet runs on the
+// joining worker, so the recursion needs no more threads than the pool's
+// bound: run with `--threads 1` and `--threads 2` by
+// tests/cases/test_task_results.av; without arguments (the run goldens)
+// with the machine's count.
+
+fn fib(n: Int): Int {
+  if n < 2 {
+    return n
+  }
+  fib(n - 1) + fib(n - 2)
+}
+
+fn pfib(n: Int): Int {
+  if n < 12 {
+    return fib(n)
+  }
+  h = spawn { pfib(n - 1) }
+  b = pfib(n - 2)
+  a = h.join() ?? -1000000
+  a + b
+}
+
+fn psum(xs: Array(Int), depth: Int): Int {
+  if depth == 0 {
+    return xs.sum()
+  }
+  parts = [0, 1].parallel { |k| psum(xs, depth - 1) + k }
+  parts[0] + parts[1]
+}
+
+fn main {
+  h = spawn { pfib(22) }
+  puts(h.join() ?? -1)
+  puts(psum([1, 2, 3], 3))
+  t = spawn { psum([1, 2, 3], 4) }
+  puts(t.join() ?? -1)
+}

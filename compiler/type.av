@@ -1441,3 +1441,27 @@ pub fn ty_zero_stores(t: Ty): Bool {
   }
   false
 }
+
+// Whether a value of t holds a Ptr: the type itself, a struct field, a
+// union's member (an optional's value).
+pub fn ty_holds_ptr(t: Ty): Bool {
+  if t.is_ptr() {
+    return true
+  }
+  if t.is_union() {
+    for m in t.members {
+      if ty_holds_ptr(m) {
+        return true
+      }
+    }
+    return false
+  }
+  if t.is_struct() {
+    for f in t.fields {
+      if ty_holds_ptr(f.ty) {
+        return true
+      }
+    }
+  }
+  false
+}

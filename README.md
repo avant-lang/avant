@@ -2907,7 +2907,7 @@ fn main {
 
 ### Spawn
 
-`spawn { ... }` runs the block as a task and returns a `JoinHandle(Int)` at once. `.join` waits and gives an `Int | TaskError`: the block's value (an `Int` for now) or the trap that ended the task ([When a task traps](#when-a-task-traps)), read like any failure (`??`, `?`, an if-assign, `else e`). Handles are ordinary values: an array of them waits for many.
+`spawn { ... }` runs the block as a task and returns a `JoinHandle(T)` at once, `T` the block's value: any type, `Void` for a block that ends with a statement or a call that gives nothing. `.join` waits and gives a `T | TaskError`: the block's value or the trap that ended the task ([When a task traps](#when-a-task-traps)), read like any failure (`??`, `?`, an if-assign, `else e`); a second join gives the same. Handles are ordinary values: an array of them waits for many.
 
 ```avant
 fn work(id: Int): Int {
@@ -2928,9 +2928,31 @@ fn main {
 }
 ```
 
-- A value the block captures is copied when the task is sent ([What may cross a task](#what-may-cross-a-task)); the block cannot assign a captured variable.
-- A captured `Array` is shared for reading and frozen, for the block and the sender, from the `spawn` until the task ends (not the join: a dropped handle does not keep it frozen), at every level of an array of arrays; `.parallel`'s input and its block's captured arrays are frozen while its bodies run. A change through the captured name is a compile error; through another path (another name, a function it is passed to, a field holding it) it stops the program with status 1, naming the operation (`push`, `pop`, `clear`, `fill`, `sort`, `reverse`, `reserve` or an element store): `avant runtime: push on an array a running task reads: …`. Cost: none without `spawn` or `.parallel`; otherwise one compare per element store and `clear`, and one test per runtime mutator call (a `push` with room tests only when it must grow).
-- `.join` or `.parallel` inside a pool worker is refused: a compile error when written in the block; reached through a call, a trap (`.parallel called from a pool worker: …`) that ends the task. A nested `spawn` from a worker is allowed.
+A `?` in the block ends the task with the failure, as it returns one from a function: the block's value is then `T | E` (`T?` for a `nil`), and the join gives `T | E | TaskError`.
+
+```avant
+fn parse_port(s: String): Int? {
+  n = s.to_i()?
+  if n < 1 || n > 65535 {
+    return nil
+  }
+  n
+}
+
+fn main {
+  h = spawn { parse_port("8080")? + 1 }
+  puts(h.join() ?? 0)                         // => 8081
+  bad = spawn { parse_port("http")? + 1 }
+  puts(bad.join() ?? 0)                       // => 0
+  name = spawn { "task ${1 + 1}" }
+  puts(name.join() ?? "")                     // => task 2
+}
+```
+
+- A value the block captures is copied when the task is sent ([What may cross a task](#what-may-cross-a-task)); the block cannot assign a captured variable. Its value goes back by the join whatever its type: the task made it or captured it, and nothing else holds it once the join returns.
+- **A task completes when its block and every task it spawned have ended.** A task spawned inside a task, or inside a `.parallel` body, counts in it: the worker goes back to the pool when the block ends, and the join returns once the last of them has ended. So a join guarantees that every array the task captured, directly or through the tasks it spawned, is thawed; a value received through a channel does not.
+- A captured `Array` is shared for reading and frozen, for the block and the sender, from the `spawn` until the task ends, with the tasks it spawned (not the join: a dropped handle does not keep it frozen), at every level of an array of arrays; `.parallel`'s input and its block's captured arrays are frozen while its bodies run. A change through the captured name is a compile error; through another path (another name, a function it is passed to, a field holding it) it stops the program with status 1, naming the operation (`push`, `pop`, `clear`, `fill`, `sort`, `reverse`, `reserve` or an element store): `avant runtime: push on an array a running task reads: …`. Cost: none without `spawn` or `.parallel`; otherwise one compare per element store and `clear`, and one test per runtime mutator call (a `push` with room tests only when it must grow).
+- `.join` and `.parallel` work inside a task, written in the block or reached through a call: a joined task that no worker has taken yet runs on the joining worker, as do the `.parallel` bodies still queued, and the caller waits for the rest giving its place in the pool back, as a task waiting on a channel does ([The thread pool](#the-thread-pool)). So a recursive split (spawn one half, compute the other, join) needs no more threads than the pool's count. A task that joins a task waiting on a channel only it would send to still waits for good, as anywhere.
 
 ### When a task traps
 
@@ -2956,11 +2978,13 @@ What the task shared is left safe:
 - Each `Channel` the block captured is closed, which wakes a task waiting on it in `recv` or `send`.
 - Each `Array` the block captured is thawed, as at the task's normal end.
 
-These traps still end the program: one in a `.parallel` body, inside a C callback, on the main thread outside an `std.http` handler (a handler's trap fails its request: [HTTP server](#http-server)), and the runtime's own stops (the heap limit, the collector's checks).
+A trap in a `.parallel` body ends that body (it is printed when it happens, and what the body held is given back as above); the other bodies run to their end, and then the `.parallel` traps in its caller, naming how many bodies trapped and the first one's trap: `avant runtime: .parallel: 2 of 8 bodies trapped; the first: index 9 out of bounds …`. In a task that ends the task, whose join gives it; on the main thread it ends the program.
+
+These traps still end the program: inside a C callback, on the main thread outside an `std.http` handler (a handler's trap fails its request: [HTTP server](#http-server)), and the runtime's own stops (the heap limit, the collector's checks).
 
 ### Parallel
 
-`items.parallel (item) { ... }` runs the block once per element, on the pool, and returns an `Array` of the results **in input order**. The caller waits outside the pool.
+`items.parallel (item) { ... }` runs the block once per element, on the pool, and returns an `Array` of the results **in input order**. The caller waits outside the pool; inside a task it runs the bodies still queued itself ([Spawn](#spawn)). A `?` in the body makes that element the failure, as in a `spawn` block: the result is an `Array(T | E)`.
 
 ```avant
 fn main {
@@ -2982,13 +3006,12 @@ import std.sync
 
 fn main {
   hits = Mutex(Int).new(0)
-  handles: Array(JoinHandle(Int)) = []
+  handles: Array(JoinHandle(Void)) = []
   for i in 0..4 {
     handles.push(spawn {
       for j in 0..1000 {
         hits.with (n) { n += 1 }
       }
-      0                          // a spawn block ends with an Int, for now
     })
   }
   for h in handles {
@@ -3019,7 +3042,6 @@ fn main {
       c[0] += 1
       c[7] += 1                          // traps: the task ends, the mutex is poisoned
     }
-    0
   }
   _ = h.join()
   puts(counts.poisoned())                  // => true
@@ -3050,7 +3072,6 @@ fn main {
       jobs.send(i * i)
     }
     jobs.close()
-    0
   }
   total = 0
   while v = jobs.recv() {               // nil once the channel is closed and empty
@@ -3801,7 +3822,6 @@ fn main {
         puts(resp.status)                               // => 200
         puts(String.from_utf8(resp.body) ?? "")         // => hello ada
       }
-      0                                        // a spawn block ends with an Int, for now
     }
     server.serve()
     _ = client.join()
@@ -4414,7 +4434,7 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` on hashes | planned | a loop |
 | A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
-| A `spawn` result other than `Int`; `for v in ch` over a channel | decided | end the block with an `Int`; `while v = ch.recv() { ... }` |
+| `for v in ch` over a channel | decided | `while v = ch.recv() { ... }` |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |
 | The pool's size from `--avant-threads=N` only (a bad value an error) and a call in `std` to set it, every other argument the program's | decided | `--threads N`, which the runtime takes out of `argv()` |
 | TLS for `std.http` (`https`, `wss`) | decided | a TLS-terminating proxy in front |
