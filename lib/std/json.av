@@ -63,6 +63,10 @@ fn json_error(code: Int): JsonError {
   JsonError.new("JSON parse ran out of memory")
 }
 
+// A JSON value copied out of its document (Json.to_value). An object's
+// members are in members, by name, and their names in keys in the
+// document's order; a name that repeats keeps its first value, as get on
+// the document does.
 pub class JsonValue {
   pub kind: JsonKind = JsonKind.null
   pub int_val: Int = 0
@@ -71,17 +75,10 @@ pub class JsonValue {
   pub bool_val: Bool = false
   pub arr: Array(JsonValue) = []
   pub keys: Array(String) = []
-  pub vals: Array(JsonValue) = []
+  pub members: Hash(String, JsonValue) = Hash(String, JsonValue).new()
 
   pub fn get(key: String): JsonValue? {
-    i = 0
-    while i < self.keys.size {
-      if self.keys[i] == key {
-        return self.vals[i]
-      }
-      i += 1
-    }
-    nil
+    self.members[key]
   }
 }
 
@@ -292,9 +289,9 @@ pub struct Json {
     } else if self.is_obj() {
       i = 0
       while i < self.len() {
-        if key = key_at(i), child = get(key) {
+        if key = key_at(i), child = get(key), !v.members.has_key(key) {
           v.keys.push(key)
-          v.vals.push(child.to_value())
+          v.members[key] = child.to_value()
         }
         i += 1
       }
