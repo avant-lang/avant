@@ -359,6 +359,15 @@ avant_int avant_regex_group_index(void *handle, const char *name) {
 
 int64_t avant_regex_find(void *handle, const char *s, avant_int from);
 
+/* Offsets travel as int32_t: in g_last_spans, the two halves of a packed
+ * pair (avant_regex_span_pair) and the re2c scanners' spans. That holds
+ * because no text is longer than a String may be (AVANT_SIZE_MAX, every
+ * String is made through a check of it, a C string result included), so
+ * every offset, the end of the text included, fits; widening String
+ * sizes must widen these first. */
+_Static_assert(AVANT_SIZE_MAX <= INT32_MAX,
+               "regex offsets are int32_t: widen them with String sizes");
+
 /* Span pairs of this thread's most recent avant_regex_find, copied
  * out of the PCRE2 ovector before any later match can overwrite it.
  * The Avant side reads the pairs it needs into the Match value at
@@ -518,12 +527,15 @@ int64_t avant_regex_find(void *handle, const char *s, avant_int from) {
   return avant_regex_span_pair(0);
 }
 
+/* The number of matches can be one more than the text's bytes (an empty
+ * match at every position and at the end): 2^31 for a text of the
+ * largest size, past int32_t, so it is counted in avant_int. */
 avant_int avant_regex_count(void *handle, const char *s) {
   ReEntry *e;
   pcre2_match_data *md;
   size_t slen;
   PCRE2_SIZE start = 0;
-  int32_t n = 0;
+  avant_int n = 0;
   int jit = 1;
   if (!handle) {
     return 0;
