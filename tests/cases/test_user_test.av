@@ -263,6 +263,45 @@ fn test_user_test(c: Checks) {
     fc_sh = "#!/bin/sh\ncd ${ut_quote(root)} && ${ut_quote(compiler)} compile full-hello.av full-hello.bin --debug > /dev/full 2> ${ut_quote(root)}/full-compile.err; echo $? > ${ut_quote(fc_rc)}\n"
     c.eq_int(ut_sh(fc_sh, fc_rc), 1, "output: compile's line that cannot be written fails the compile")
     c.expect(ut_has(file_read("${root}/full-compile.err") ?? "", "cannot write to standard output: No space left on device"), "output: compile's failed write is reported on standard error")
+    // Every flag that takes a value takes it as --flag=V and as --flag V.
+    _ = file_write("${root}/vflags.av", "fn main {\n  puts(1)\n}\n")
+    vf_forms = [["--cpu", "v2"], ["--lib", "m"], ["--cc", "${root}/vflags.c"]]
+    _ = file_write("${root}/vflags.c", "int vflags_c(void) { return 1; }\n")
+    for fv in vf_forms {
+      for joined in [true, false] {
+        flag_text = "${fv[0]} ${ut_quote(fv[1])}"
+        if joined {
+          flag_text = "${fv[0]}=${ut_quote(fv[1])}"
+        }
+        vf_rc = "${root}/vflags.rc"
+        vf_sh = "#!/bin/sh\ncd ${ut_quote(root)} && ${ut_quote(compiler)} compile vflags.av vflags.bin --debug ${flag_text} > ${ut_quote(root)}/vflags.log 2>&1 && ./vflags.bin > ${ut_quote(root)}/vflags.out 2>&1; echo $? > ${ut_quote(vf_rc)}\n"
+        c.eq_int(ut_sh(vf_sh, vf_rc), 0, "value flags: compile ${flag_text}")
+      }
+    }
+    for fv in [["--jobs", "1"], ["--shard", "1/1"], ["--junit", "${root}/vflags.xml"]] {
+      for joined in [true, false] {
+        flag_text = "${fv[0]} ${ut_quote(fv[1])}"
+        if joined {
+          flag_text = "${fv[0]}=${ut_quote(fv[1])}"
+        }
+        vt_rc = "${root}/vflags-test.rc"
+        vt_sh = "#!/bin/sh\ncd ${ut_quote(root)}/failcheck && ${ut_quote(compiler)} test tests/test_pass.av ${flag_text} > ${ut_quote(root)}/vflags-test.log 2>&1; echo $? > ${ut_quote(vt_rc)}\n"
+        c.eq_int(ut_sh(vt_sh, vt_rc), 0, "value flags: test ${flag_text}")
+      }
+    }
+    // --name: the same run either way
+    nm_logs: Array(String) = []
+    for joined in [true, false] {
+      flag_text = "--name holds"
+      if joined {
+        flag_text = "--name=holds"
+      }
+      vn_rc = "${root}/vflags-name.rc"
+      vn_sh = "#!/bin/sh\ncd ${ut_quote(root)}/failcheck && ${ut_quote(compiler)} test tests/test_pass.av ${flag_text} > ${ut_quote(root)}/vflags-name.log 2>&1; echo $? >> ${ut_quote(root)}/vflags-name.log; echo 0 > ${ut_quote(vn_rc)}\n"
+      _ = ut_sh(vn_sh, vn_rc)
+      nm_logs.push(file_read("${root}/vflags-name.log") ?? "")
+    }
+    c.eq_str(nm_logs[0], nm_logs[1], "value flags: test --name=V and --name V run the same")
     // AVANT_COMPILER: a value the user exported reaches the tests as it is;
     // without one, the tests get the runner's own path (the test writes
     // what it sees into the file ENVC_OUT names)
