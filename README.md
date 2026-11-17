@@ -240,6 +240,7 @@ Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.m
   - [std.http](#stdhttp)
   - [std.zlib](#stdzlib)
   - [std.base64](#stdbase64)
+  - [std.random](#stdrandom)
 - [Testing](#testing):
   - [running tests](#running-tests)
   - [checks](#checks)
@@ -1139,7 +1140,7 @@ An operation gives the mathematically correct value, or traps when none exists.
 - `+`, `-`, `*` trap on overflow at the operands' width; `/` and `%` trap on division by zero. `abs` of the minimum value, a `sum` that overflows and a `Hash` `inc` that overflows trap the same way.
 - `/` truncates toward zero and `%` takes the sign of the dividend (`-7 / 2` is `-3`, `-7 % 2` is `-1`). `MIN % -1` is `0`; only `MIN / -1` overflows.
 - `&+`, `&-`, `&*` wrap on overflow. Wrapping is always spelled: an unsigned value has no unary minus (`-u` with `u: UInt64` is a compile error, as `-1u64` is); its two's complement is `0u64 &- u`.
-- `<<` and `>>` take an amount in `0..63` for `Int` and `UInt64`, `0..31` for `Int32` and `UInt32`, an `Int` or the shifted value's type. Any other amount, negative included, traps (`avant runtime: shift amount 64 out of range for Int (0..63)`); a literal one is a compile error.
+- `<<` and `>>` take an amount in `0..63` for `Int` and `UInt64`, `0..31` for `Int32` and `UInt32`, an `Int` or the shifted value's type. Any other amount, negative included, traps (`avant runtime: shift amount 64 out of range for Int (0..63)`); a literal one is a compile error. `x.try_shl(n)` and `x.try_shr(n)` return `nil` for such an amount instead (`T?`).
 - Integers have `abs` (not unsigned types) and `to_f`.
 
 A check is a compare and a never-taken branch, dropped where the compiler proves it: a literal index into a literal, a loop variable under its bound, a loop whose index range is validated once on entry. What a trap prints: [Traps](#traps).
@@ -1410,6 +1411,10 @@ A slice traps unless `0 <= a <= b <= size` (`avant runtime: slice 2..5 out of ra
 | `xs.size` | number of elements |
 | `xs[i]`, `xs[i] = v`, `xs.get(i)` | read (trapping), write, read (`T?`) |
 | `xs.push(v)` | append; the storage grows as needed |
+| `xs.insert(i, v)` | put `v` at position `i`, the elements from `i` on moving up one; traps unless `0 <= i <= size` |
+| `xs.delete_at(i)`, `xs.try_delete_at(i)` | remove the element at `i` and return it, the rest moving down one; `delete_at` traps as `xs[i]` does, `try_delete_at` returns `nil` |
+| `xs.concat(ys)`, `a + b` | append `ys`'s elements in place; a new array of `a`'s elements then `b`'s |
+| `xs.shuffle(rng)`, `xs.shuffled(rng)` | a random order, with a [`Random`](#stdrandom) passed in |
 | `xs.first()`, `xs.last()` | the first or last element as `T?`: `nil` on an empty array |
 | `xs.is_empty()` | `xs.size == 0` |
 | `xs[a..b]`, `xs[a..]`, `xs[..b]`, `xs.slice(...)`, `xs.try_slice(...)`, `xs.dup()` | a new array: a [slice](#slices), or the whole array |
@@ -1433,6 +1438,8 @@ A slice traps unless `0 <= a <= b <= size` (`avant runtime: slice 2..5 out of ra
 - The element order used by `sort`, `min` and `max` exists for integers, `Float64` (NaN after every number), `String` and `Bytes` (byte order) and `Bool`. Any other element type sorts with a comparator block. On floats, `min` is the smallest number (NaN only when every element is NaN) and `max` is NaN when any element is.
 - No `map`, `select`, `reduce` or `join` is built in yet: write a loop, or a three-line generic function ([Lambdas](#lambdas)).
 - `sort` and `sorted` are stable: elements neither of which comes before the other keep their order (with a lambda, one that says whether `a` comes strictly first, `a.x < b.x`, never `<=`).
+- Those builtins (but `parallel`) take a function too, by its name or as a variable holding one: `xs.each(show)`, `xs.any(is_big)`, `xs.sort(by_age)` run the same loop with one call of it per element; a lambda written there is inlined instead.
+- One spelling each: `delete_if` (no `retain`), `unique` (no in-place twin), `delete_at` (no `remove`).
 - The lambdas given to `each`, `any`, `all`, `find`, `index_of`, `min_by`, `max_by`, `delete_if`, `sort` and `parallel` are compiled as inlined loops; `return` in one ends that element's turn, and a `for` leaves early ([Lambdas given to builtins](#lambdas-given-to-builtins)).
 - The parameters of a comparator (`sort`, `sorted`) and of a `parallel` body are copies of the elements: writing one, or calling a method on it that changes its receiver, is a compile error (a comparator only compares; a `parallel` body returns the new element). A block given to a function of your own is a function value: its parameters are copies, as any function's are.
 
@@ -1676,7 +1683,7 @@ When in doubt, use a struct: it allocates nothing, and no other holder can chang
 
 A struct literal names every field without a default, in any order; a copy is independent of the original.
 
-A method's change to its struct receiver is the caller's (no `mutating` mark); a struct argument is a copy, so a change through a parameter stays in the callee. A struct reached through an index or a field is changed where it is stored: `xs[i].x = v`, `xs[i].scale(4)`, `xs[i].pos.x = v`, `obj.pos.x = v` and `obj.pos.scale(4)` change the element or the field, and so does the variable of `for p in xs` and the parameter of `xs.each (p) { ... }` ([For](#for)); `q = xs[i]` copies it. While a method that changes its receiver runs on an array's element, and the call may reach that array (an argument, a lambda or the receiver's own fields may lead to it), the array is frozen: a change of its size or order through any path (`push`, even with room, `pop`, `clear`, `reserve`, `sort`, `reverse`, `delete_if`) stops the program, naming the method call (`avant runtime: push on an array while Pos.grow, called on one of its elements, runs: …`), since the method's receiver is the element's place in the buffer. Element stores and reads through other paths, and reassigning the field or the variable that holds the array, stay allowed (the old array keeps the write). To change the array inside such a method, copy the element, call the method on the copy and store it back (`p = b.ps[i]; p.grow(b); b.ps[i] = p`). Cost: none for a call that cannot reach the array; otherwise two atomic operations a call. A Hash gives its value as an optional copy (`h[k]` is `nil` when the key is absent), so `h[k].x = v` is a compile error: open it, change it and store it back (`if v = h[k] { v.x = 1; h[k] = v }`); the parameters of `h.each (k, v) { ... }` are copies too, and writing one is a compile error.
+A method's change to its struct receiver is the caller's (no `mutating` mark); a struct argument is a copy, so a change through a parameter stays in the callee. A struct reached through an index or a field is changed where it is stored: `xs[i].x = v`, `xs[i].scale(4)`, `xs[i].pos.x = v`, `obj.pos.x = v` and `obj.pos.scale(4)` change the element or the field, and so does the variable of `for p in xs` and the parameter of `xs.each (p) { ... }` ([For](#for)); `q = xs[i]` copies it. While a method that changes its receiver runs on an array's element, and the call may reach that array (an argument, a lambda or the receiver's own fields may lead to it), the array is frozen: a change of its size or order through any path (`push`, even with room, `pop`, `clear`, `reserve`, `sort`, `reverse`, `delete_if`, `insert`, `delete_at`, `concat`, `shuffle`) stops the program, naming the method call (`avant runtime: push on an array while Pos.grow, called on one of its elements, runs: …`), since the method's receiver is the element's place in the buffer. Element stores and reads through other paths, and reassigning the field or the variable that holds the array, stay allowed (the old array keeps the write). To change the array inside such a method, copy the element, call the method on the copy and store it back (`p = b.ps[i]; p.grow(b); b.ps[i] = p`). Cost: none for a call that cannot reach the array; otherwise two atomic operations a call. A Hash gives its value as an optional copy (`h[k]` is `nil` when the key is absent), so `h[k].x = v` is a compile error: open it, change it and store it back (`if v = h[k] { v.x = 1; h[k] = v }`); the parameters of `h.each (k, v) { ... }` are copies too, and writing one is a compile error.
 
 ```avant
 struct Vec {
@@ -2338,7 +2345,7 @@ The second row has no position so that hot loops stay fast.
 | `+`, `-`, `*`, `abs`, `sum`, `inc` overflowing | `&+`, `&-`, `&*` to wrap |
 | `/`, `%` by zero | test the divisor |
 | `to_i`, `to_i32`, `to_u32`, `to_u64` out of range | `wrap_i`, `wrap_i32`, `wrap_u32`, `wrap_u64` |
-| a shift amount outside the width | |
+| a shift amount outside the width | `x.try_shl(n)`, `x.try_shr(n)`, which return `T?` |
 | a slice with `start > stop` or outside the value | `try_slice`, which returns `T?` |
 | a byte outside `0..255` | `n & 255` |
 | `chars` on invalid UTF-8 | `String.from_utf8`, which returns `String?` |
@@ -3016,7 +3023,7 @@ fn main {
 
 - A value the block captures is copied when the task is sent ([What may cross a task](#what-may-cross-a-task)); the block cannot assign a captured variable. Its value goes back by the join whatever its type: the task made it or captured it, and nothing else holds it once the join returns.
 - **A task completes when its block and every task it spawned have ended.** A task spawned inside a task, or inside a `.parallel` body, counts in it: the worker goes back to the pool when the block ends, and the join returns once the last of them has ended. So a join guarantees that every array the task captured, directly or through the tasks it spawned, is thawed; a value received through a channel does not.
-- A captured `Array` is shared for reading and frozen, for the block and the sender, from the `spawn` until the task ends, with the tasks it spawned (not the join: a dropped handle does not keep it frozen), at every level of an array of arrays; `.parallel`'s input and its block's captured arrays are frozen while its bodies run. A change through the captured name is a compile error; through another path (another name, a function it is passed to, a field holding it) it stops the program with status 1, naming the operation (`push`, `pop`, `clear`, `fill`, `sort`, `reverse`, `reserve`, `delete_if` or an element store): `avant runtime: push on an array a running task reads: …`. Cost: none without `spawn` or `.parallel`; otherwise one compare per element store and `clear`, and one test per runtime mutator call (a `push` with room tests only when it must grow).
+- A captured `Array` is shared for reading and frozen, for the block and the sender, from the `spawn` until the task ends, with the tasks it spawned (not the join: a dropped handle does not keep it frozen), at every level of an array of arrays; `.parallel`'s input and its block's captured arrays are frozen while its bodies run. A change through the captured name is a compile error; through another path (another name, a function it is passed to, a field holding it) it stops the program with status 1, naming the operation (`push`, `pop`, `clear`, `fill`, `sort`, `reverse`, `reserve`, `delete_if`, `insert`, `delete_at`, `concat`, `shuffle` or an element store): `avant runtime: push on an array a running task reads: …`. Cost: none without `spawn` or `.parallel`; otherwise one compare per element store and `clear`, and one test per runtime mutator call (a `push` with room tests only when it must grow).
 - A captured `Hash` (and a `Set`) follows the same rule: shared for reading and frozen until the task ends, at every level of a hash of arrays or an array of hashes. A store (`h[k] = v`), `delete`, `clear`, `inc` or a `Set`'s `add` through the captured name is a compile error; through another path it stops the program, naming the operation (`a store`, `delete` or `clear`): `avant runtime: a store on a hash a running task reads: …`. Cost: one test per runtime call that changes a hash, in every program; the count takes padding the hash already had, so a hash is no larger.
 - `.join` and `.parallel` work inside a task, written in the block or reached through a call: a joined task that no worker has taken yet runs on the joining worker, as do the `.parallel` bodies still queued, and the caller waits for the rest giving its place in the pool back, as a task waiting on a channel does ([The thread pool](#the-thread-pool)). So a recursive split (spawn one half, compute the other, join) needs no more threads than the pool's count. A task that joins a task waiting on a channel only it would send to still waits for good, as anywhere.
 
@@ -3119,7 +3126,7 @@ fn main {
 
 - **Nothing the lock guards leaves the block.** The guarded value and every reference reached from it (a field, an element, a name bound to one) may be a receiver (`b.items.push(x)`, `b.n += 1`) or an operand with a plain result (`b.n`, `b.items.size`, `"${b}"`), never an argument, a stored value or a captured name. It may be stored only into the guarded value itself (`b.root = b.root.left`) or into a name the block declares (`node = b.head`, a `for` variable over `b.items`), which follows the same rule. A plain value (a number, `Bool`, `String`, `Bytes`, a struct or optional of those, a `Channel` or `Mutex`) is a copy and goes anywhere; the block's value, when used, must be one. To take data out, push plain values into an array declared before the block (`b.items.each (it) { sizes.push(it.n) }`).
 - **What a `Mutex` may guard.** The block may call methods of the guarded class, or of any class it holds (`b.inner.add(c)`), with outside values, under the lock; so `Mutex(T)` is accepted only when no method of `T`, or of any class or struct `T` holds through fields, elements and members, keeps an outside reference or hands out its own:
-  - a parameter that can hold a reference is never stored (into a field, an element, a hash, an array by `push` or `fill`, or a new object), passed to a function or another type's method, or returned; reading it (`self.n == other.n`) and building new values is allowed;
+  - a parameter that can hold a reference is never stored (into a field, an element, a hash, an array by `push`, `insert`, `fill` or `concat`, or a new object), passed to a function or another type's method, or returned; reading it (`self.n == other.n`) and building new values is allowed;
   - `self` and what it reaches are stored only into the object itself (`self.root = self.root.left`, `self.head = Node.new(v, self.head)`) and passed only to those same classes' methods;
   - `initialize` is not read: its object is new, and a constructor's arguments are checked at the call;
   - the error names the mutex, class, method and store: `Mutex(Box) (at app.av:16:17): Box.add stores a parameter's reference (or a value reached from one) into an array (push); …`.
@@ -3888,6 +3895,7 @@ Each module is imported on its own and links only its own C library: a program t
 | [`std.http`](#stdhttp) | HTTP server and client, WebSocket server and client | uSockets and picohttpparser |
 | [`std.zlib`](#stdzlib) | `Bytes.compress`, `Bytes.uncompress` | zlib |
 | [`std.base64`](#stdbase64) | `Bytes.to_base64`, `Bytes.from_base64` | the aklomp Base64 codec |
+| [`std.random`](#stdrandom) | `Random.new(seed)`, the generator `shuffle` takes | — |
 | `std.sync` | `Channel`, `Mutex`, `pool_size`, `set_pool_size` | the runtime's tasks ([Concurrency](#concurrency)) |
 | `std.gc` | `gc.hold { }`, `gc.collect()` | the collector ([Collection hints](#collection-hints)) |
 | `std.testing` | `Test`, the checks of a test file | — ([Testing](#testing)) |
@@ -4228,6 +4236,32 @@ fn main {
 | `to_base64` | — | a `String` | — | encoding never fails |
 | `from_base64` | — | `Bytes \| Base64Error` | a `Base64Error` on malformed input | |
 | `to_base64_into(buf)`, `from_base64_into(buf)` | `buf: Buf` | `Base64Error?` | as above | the `Buf` twins |
+
+### std.random
+
+A `Random` is a seeded generator (SplitMix64): the same seed gives the same sequence, so a test fixes its order by fixing the seed. A program makes one and passes it where randomness is used; nothing draws from a hidden global one. It is not for secrets.
+
+```avant
+import std.random
+
+fn main {
+  rng = Random.new(42)
+  deck = [1, 2, 3, 4, 5]
+  deck.shuffle(rng)
+  puts(deck.size)                    // => 5
+  again = [1, 2, 3, 4, 5].shuffled(Random.new(42))
+  puts(again == deck)                // => true
+  puts(rng.int(6) < 6)               // => true
+}
+```
+
+| Call | Result |
+| --- | --- |
+| `Random.new(seed)` | a generator; `seed` is any `Int` |
+| `rng.int(n)` | an `Int` in `0..n`, each value equally likely; traps unless `n > 0` |
+| `rng.float()` | a `Float64` in `[0, 1)` |
+| `rng.u64()` | the next 64 random bits |
+| `xs.shuffle(rng)`, `xs.shuffled(rng)` | the array in a random order, in place or as a new array (Fisher–Yates) |
 
 ## Testing
 
