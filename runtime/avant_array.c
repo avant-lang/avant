@@ -976,6 +976,36 @@ void *avant_array_copy(void *arr, uint64_t elem_size, uint32_t buf_type_id) {
   return r;
 }
 
+/* xs[start..stop], xs.slice(start, stop): a new array holding a copy of
+ * the elements start up to stop; traps unless 0 <= start <= stop <= size,
+ * as a String's slice does. */
+void *avant_array_slice(void *arr, avant_int start, avant_int stop, uint64_t elem_size, uint32_t buf_type_id) {
+  AvantArray *a = (AvantArray *)arr;
+  AvantArray *r = NULL;
+  avant_int n = a ? a->size : 0;
+  if (start < 0 || stop < start || stop > n) {
+    avant_trap_slice(start, stop, n);
+  }
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &a);
+  AVANT_GC_ROOT(1, &r);
+  r = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
+  if (stop > start) {
+    int32_t len = (int32_t)(stop - start);
+    void *nbuf = avant_alloc((uint64_t)len * elem_size, buf_type_id);
+    /* a->buf is read after the allocation (RC2). */
+    memcpy(nbuf, (char *)a->buf + (size_t)start * (size_t)elem_size, (size_t)len * (size_t)elem_size);
+    if (buf_type_id != AVANT_TYPE_BYTES) {
+      avant_barrier(nbuf);
+    }
+    avant_barrier(r);
+    r->buf = nbuf;
+    r->size = len;
+    r->cap = len;
+  }
+  return r;
+}
+
 int32_t avant_array_contains_i32(void *arr, int32_t v) { return avant_array_index_i32(arr, v) >= 0 ? 1 : 0; }
 int32_t avant_array_contains_i64(void *arr, int64_t v) { return avant_array_index_i64(arr, v) >= 0 ? 1 : 0; }
 int32_t avant_array_contains_u64(void *arr, uint64_t v) { return avant_array_index_u64(arr, v) >= 0 ? 1 : 0; }

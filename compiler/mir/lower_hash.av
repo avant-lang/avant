@@ -870,6 +870,22 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
 pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(Expr)): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
+  if name == "slice" && (args.size == 1 || args.size == 2) {
+    // A new Buf of the bytes start up to stop (the size when there is no
+    // stop): the bounds, then the receiver.
+    ty1 = lw.ety(e)
+    ops1 = lw.args_then_recv(args, recv)
+    if lw.failed() {
+      return zero
+    }
+    lw.at(e.loc)
+    if args.size == 1 {
+      h = lw.hold(ops1[0], ty1)
+      ops1[0] = b.copy_local(h)
+      ops1.push(lw.seq_size(h))
+    }
+    return lw.call_to(ty1, "avant_buf_slice", ops1)
+  }
 
   f = ""
   n = 0
@@ -884,6 +900,12 @@ pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(
     n = 1
   } else if name == "push_str" || name == "push_bytes" {
     f = "avant_buf_push_str"
+    if args.size == 1 {
+      if at = args[0].ty, at.is_buf() {
+        // Another Buf's bytes, read in place.
+        f = "avant_buf_push_buf"
+      }
+    }
     n = 1
   } else if name == "push_slice" {
     f = "avant_buf_push_slice"

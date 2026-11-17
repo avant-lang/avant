@@ -274,6 +274,44 @@ void *avant_bytes_to_buf(const char *s) {
   return buf;
 }
 
+/* buf[start..stop], buf.slice(start, stop): a new Buf holding a copy of
+ * those bytes; traps unless 0 <= start <= stop <= size. */
+void *avant_buf_slice(void *buf, avant_int start, avant_int stop) {
+  AvantBuf *b = (AvantBuf *)buf;
+  avant_int n = b ? b->size : 0;
+  if (start < 0 || stop < start || stop > n) {
+    avant_trap_slice(start, stop, n);
+  }
+  AvantBuf *r = NULL;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &b);
+  AVANT_GC_ROOT(1, &r);
+  r = (AvantBuf *)avant_buf_new(stop > start ? stop - start : 16);
+  if (stop > start) {
+    /* b->data is read after the allocation (RC2); r has the room. */
+    memcpy(r->data, b->data + start, (size_t)(stop - start));
+    r->size = (int32_t)(stop - start);
+  }
+  return r;
+}
+
+/* buf.push_str(other): appends other's bytes (other may be buf itself:
+ * its size is read first, its storage after the growth). */
+void avant_buf_push_buf(void *buf, void *other) {
+  AvantBuf *b = (AvantBuf *)buf;
+  AvantBuf *o = (AvantBuf *)other;
+  if (!b || !o || o->size <= 0) {
+    return;
+  }
+  int32_t n = o->size;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &b);
+  AVANT_GC_ROOT(1, &o);
+  buf_reserve(b, n);
+  memcpy(b->data + b->size, o->data, (size_t)n);
+  b->size += n;
+}
+
 avant_int avant_buf_size(void *buf) {
   AvantBuf *b = (AvantBuf *)buf;
   return b ? b->size : 0;

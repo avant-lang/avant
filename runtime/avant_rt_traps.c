@@ -161,11 +161,11 @@ void avant_trap_walk_at(int32_t what, int32_t site) {
  * AVANT_ARRAY_FROZEN): op names the operation
  * (AVANT_FROZEN_*). The checks inside the runtime's own functions (push's
  * growth, pop, fill, sort, reverse, reserve) print no site; generated
- * code's (an element store, clear, a sort with a block) call the _at
- * form. */
+ * code's (an element store, clear, a sort with a block, delete_if, a
+ * fill of other elements) call the _at form. */
 static const char *frozen_op(int32_t op) {
-  static const char *names[] = {"push", "pop", "clear", "fill", "sort", "reverse", "reserve", "an element store"};
-  return op >= 0 && op <= 7 ? names[op] : "a change";
+  static const char *names[] = {"push", "pop", "clear", "fill", "sort", "reverse", "reserve", "an element store", "delete_if"};
+  return op >= 0 && op <= 8 ? names[op] : "a change";
 }
 
 void avant_trap_frozen(int32_t op) {

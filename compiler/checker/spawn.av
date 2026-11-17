@@ -305,6 +305,10 @@ pub fn (checker_self: Checker) walk_spawn_expr(expr: Expr, node: Expr, seen: Has
       }
       checker_self.walk_spawn_expr(recv, node, seen)
     }
+    if expr.args.size > 0 && verb_template_mutator(expr.callee) && checker_self.spawn_array_frozen(expr.args[0]) {
+      root = checker_self.expr_root_name(expr.args[0])
+      checker_self.fail(expr.loc, "${task_word(node)} cannot mutate captured ${checker_self.frozen_kind(root)} ${root}; it is ${frozen_until(node)}")
+    }
     for i in 0..expr.args.size {
       checker_self.walk_spawn_expr(expr.args[i], node, seen)
     }
@@ -468,7 +472,17 @@ pub fn (checker_self: Checker) array_mutator(name: String): Bool {
   if name == "reverse" {
     return true
   }
+  if name == "delete_if" {
+    return true
+  }
   name == "reserve"
+}
+
+// The array verbs the checker writes as a call of a generic function
+// whose first argument is the array (checker/verbs.av): by the time a
+// block is walked, `xs.fill(v)` of strings is `__avant_fill(xs, v)`.
+pub fn verb_template_mutator(callee: String): Bool {
+  callee == "__avant_fill"
 }
 
 // The methods that change a Hash or a Set: `delete`, `clear`, `inc`,
@@ -718,6 +732,12 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
     }
     if recv = expr.receiver, checker_self.changes_frozen(expr.callee, recv) {
       root = checker_self.expr_root_name(recv)
+      if root.size > 0 && checker_self.pending_has_array(root) {
+        checker_self.fail(expr.loc, checker_self.pending_mutate_msg(root))
+      }
+    }
+    if expr.args.size > 0 && verb_template_mutator(expr.callee) {
+      root = checker_self.expr_root_name(expr.args[0])
       if root.size > 0 && checker_self.pending_has_array(root) {
         checker_self.fail(expr.loc, checker_self.pending_mutate_msg(root))
       }

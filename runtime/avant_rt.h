@@ -322,6 +322,8 @@ char *avant_str_from_c(const void *p, avant_int n);
 void *avant_bytes_to_buf(const char *s);
 
 void *avant_buf_new(avant_int cap);
+void *avant_buf_slice(void *buf, avant_int start, avant_int stop);
+void avant_buf_push_buf(void *buf, void *other);
 void avant_buf_push_byte(void *buf, avant_int b);
 void avant_buf_push_str(void *buf, const char *s);
 void avant_buf_push_slice(void *buf, const char *s, avant_int start, avant_int stop);
@@ -485,6 +487,7 @@ void avant_array_frozen(void *arr, int32_t op);
 #define AVANT_FROZEN_REVERSE 5
 #define AVANT_FROZEN_RESERVE 6
 #define AVANT_FROZEN_STORE 7
+#define AVANT_FROZEN_DELETE_IF 8
 /* The freeze of a captured value that holds a hash: a Hash, or an Array
  * or Hash of them at any level (a value of arrays only takes
  * avant_array_freeze). depth counts the levels from the outermost, each
@@ -511,6 +514,7 @@ void avant_array_sort_str(void *arr);
 void avant_array_sort_bool(void *arr);
 void avant_array_reverse(void *arr, uint64_t elem_size);
 void *avant_array_copy(void *arr, uint64_t elem_size, uint32_t buf_type_id);
+void *avant_array_slice(void *arr, avant_int start, avant_int stop, uint64_t elem_size, uint32_t buf_type_id);
 int32_t avant_array_contains_i32(void *arr, int32_t v);
 int32_t avant_array_contains_i64(void *arr, int64_t v);
 int32_t avant_array_contains_u64(void *arr, uint64_t v);

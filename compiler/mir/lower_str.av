@@ -295,7 +295,23 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   if got = lw.str_heap_member(e, recv, rt, name, args) {
     return got
   }
-  if rt.is_bytes() && name == "slice" && args.size == 2 {
+  if (rt.is_bytes() || rt.is_string()) && name == "slice" && args.size == 1 {
+    // `s.slice(start)`, `s[start..]`: the start, then the receiver, whose
+    // size is the stop.
+    ops1 = lw.args_then_recv(args, recv)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    h = lw.hold(ops1[0], mt_str())
+    n = lw.int_call1("avant_str_size", b.copy_local(h))
+    sargs: Array(MOperand) = []
+    sargs.push(b.copy_local(h))
+    sargs.push(ops1[1])
+    sargs.push(n)
+    return lw.str_call("avant_str_slice", sargs)
+  }
+  if (rt.is_bytes() || rt.is_string()) && name == "slice" && args.size == 2 {
     // builtins.av:1820-1844: stop, start, then the receiver.
     ops = lw.lower_args_rev(args)
     s = lw.lower_expr(recv)

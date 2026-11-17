@@ -211,6 +211,10 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "spawn-assign-text", "fn main {\n  k = 1\n  h = spawn {\n    k = 2\n    k\n  }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot assign to k: the task has its own copy, made when it starts, and the copy is read-only; give the new value as the block's value and read it from join\n")
     expect_err(c, compiler, stamp, "parallel-assign-text", "fn main {\n  k = 1\n  ys = [1, 2].parallel { |x|\n    k = x\n    k\n  }\n  puts(ys.size)\n}\n", ".parallel cannot assign to k: each body has its own copy, and the copy is read-only; give the new value as the body's value, which .parallel returns in its array\n")
     expect_err(c, compiler, stamp, "parallel-array-push", "fn main {\n  xs = [1, 2]\n  ys = [1, 2].parallel { |x|\n    xs.push(x)\n    x\n  }\n  puts(ys.size)\n}\n", ".parallel cannot mutate captured Array xs; it is read-only while the bodies run\n")
+    // The array verbs that change a size or an order are mutators as push is.
+    expect_err(c, compiler, stamp, "spawn-array-delete-if", "fn main {\n  xs = [1, 2]\n  h = spawn {\n    xs.delete_if((x) { x > 1 })\n    xs.size\n  }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot mutate captured Array xs; it is read-only until join\n")
+    expect_err(c, compiler, stamp, "spawn-sender-delete-if", "fn main {\n  xs = [1, 2]\n  h = spawn { xs.size }\n  xs.delete_if((x) { x > 1 })\n  puts(h.join() ?? -1)\n}\n", "cannot mutate xs while a spawn using it is running; join first")
+    expect_err(c, compiler, stamp, "spawn-array-fill-strings", "fn main {\n  xs = [\"a\", \"b\"]\n  h = spawn {\n    xs.fill(\"c\")\n    xs.size\n  }\n  puts(h.join() ?? -1)\n}\n", "spawn cannot mutate captured Array xs; it is read-only until join\n")
     // A captured Hash is read-only as a captured Array is: through the
     // captured name in the block, through the pending name in the sender
     // before the join; its keys and values cross in turn.

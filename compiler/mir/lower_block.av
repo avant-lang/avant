@@ -51,6 +51,15 @@ pub fn (lw: MirLower) lower_block_call(e: Expr): MOperand? {
       if (c == "sort" || c == "sorted") && bl.params.size == 2 {
         return lw.arr_sort_block(e, recv, bl, c == "sorted")
       }
+      if (c == "find" || c == "index_of") && bl.params.size == 1 {
+        return lw.arr_find(e, recv, bl, c == "index_of")
+      }
+      if (c == "min_by" || c == "max_by") && bl.params.size == 1 {
+        return lw.arr_min_by(e, recv, bl, c == "max_by")
+      }
+      if c == "delete_if" && bl.params.size == 1 {
+        return lw.arr_delete_if(e, recv, bl)
+      }
     }
     if rt.is_hash() && c == "each" && e.args.size == 0 && bl.params.size == 2 {
       return lw.hash_each(e, recv, rt, bl)
@@ -678,4 +687,272 @@ pub fn (lw: MirLower) lam_stmts(stmts: Array(Stmt), cont: Int, exit: Int) {
     return
   }
   lw.block_body(stmts, cont, exit)
+}
+
+// The value of a lambda an array verb inlines (find, index_of, min_by,
+// max_by, delete_if), of type want: the lambda's own result slot when a
+// `return` in it ends its run, else its last expression.
+pub fn (lw: MirLower) verb_value(bl: Block, want: Ty, mty: Int, cont: Int, exit: Int): MOperand {
+  b = lw.lw_b
+  if bl.returns {
+    if v = lw.lam_value(bl, want, mty, cont, exit) {
+      return v
+    }
+    return b.c_i32(0)
+  }
+  head: Array(Stmt) = []
+  i = 0
+  while i < bl.body.size - 1 {
+    head.push(bl.body[i])
+    i += 1
+  }
+  lw.block_body(head, cont, exit)
+  if lw.failed() || !lw.open_now() || bl.body.size == 0 {
+    return b.c_i32(0)
+  }
+  last = bl.body[bl.body.size - 1]
+  if x = last.expr {
+    v = lw.lower_coerced(x, mty, want)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(x.loc)
+    return lw.tmp(mty, b.rv_use(v))
+  }
+  lw.refuse(last.loc, "a lambda that does not end with a value")
+  b.c_i32(0)
+}
+
+// d = nil, for the optional type t (MIR type wty).
+pub fn (lw: MirLower) assign_nil(d: Int, t: Ty, wty: Int) {
+  b = lw.lw_b
+  if r = mir_opt_word(t) {
+    b.assign(b.pl(d), b.rv_use(lw.opt_nil(wty)))
+  } else {
+    b.assign(b.pl(d), b.rv_union_nil(b.types.layout_of(wty), t.tag_of(ty_nil())))
+  }
+}
+
+// `xs.find((x) { p })` and `xs.index_of((x) { p })`: a loop over the
+// elements as `any`'s, which stops at the first element p holds for;
+// the element (find) or its position (index_of), nil when none does.
+pub fn (lw: MirLower) arr_find(e: Expr, recv: Expr, bl: Block, want_index: Bool): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  t = ty_int()
+  if et0 = e.ty {
+    t = et0
+  } else {
+    lw.refuse(e.loc, "an untyped find")
+    return zero
+  }
+  wty = lw.ty_at(t, e.loc, "a value")
+  aty = lw.ety(recv)
+  if lw.failed() {
+    return zero
+  }
+  h = lw.block_recv(recv, aty)
+  if lw.failed() {
+    return zero
+  }
+  lw.at(e.loc)
+  d = b.temp(wty)
+  lw.assign_nil(d, t, wty)
+  i = b.temp(mt_i32())
+  b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  head = b.block()
+  body = b.block()
+  step = b.block()
+  exit = b.block()
+  b.goto(head)
+  b.at(head)
+  lw.block_test(h, i, body, exit)
+  b.at(body)
+  lw.block_param(bl, recv, h, aty, i)
+  p = lw.verb_value(bl, ty_bool(), mt_bool(), step, exit)
+  if lw.failed() {
+    return zero
+  }
+  if lw.open_now() {
+    lw.at(e.loc)
+    hit = b.block()
+    b.branch(p, hit, step)
+    b.at(hit)
+    if want_index {
+      ix = lw.tmp(mt_int(), b.rv_cast(b.copy_local(i), mt_int()))
+      b.assign(b.pl(d), b.rv_use(lw.coerce(ix, ty_int(), t, e.loc)))
+    } else {
+      v = lw.block_elem(h, aty, i)
+      b.assign(b.pl(d), b.rv_use(lw.coerce(v, lw.elem_ty_of(recv), t, e.loc)))
+    }
+    b.goto(exit)
+  }
+  b.at(step)
+  lw.at(e.loc)
+  lw.block_step(i, head)
+  b.at(exit)
+  b.copy_local(d)
+}
+
+// `xs.min_by((x) { key })`, `xs.max_by(...)`: one pass, the key computed
+// once per element; the first element of the smallest (largest) key by
+// <, nil for an empty array. The element is kept when taken, so a lambda
+// that changes the array cannot make the result read past its end.
+pub fn (lw: MirLower) arr_min_by(e: Expr, recv: Expr, bl: Block, is_max: Bool): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  t = ty_int()
+  if et0 = e.ty {
+    t = et0
+  } else {
+    lw.refuse(e.loc, "an untyped min_by")
+    return zero
+  }
+  kt = ty_int()
+  if k0 = bl.key_ty {
+    kt = k0
+  } else {
+    lw.refuse(e.loc, "a min_by key without a type")
+    return zero
+  }
+  wty = lw.ty_at(t, e.loc, "a value")
+  kty = lw.ty_at(kt, e.loc, "a key")
+  aty = lw.ety(recv)
+  if lw.failed() {
+    return zero
+  }
+  h = lw.block_recv(recv, aty)
+  if lw.failed() {
+    return zero
+  }
+  lw.at(e.loc)
+  // The best element so far, as the result (nil until the first).
+  d = b.temp(wty)
+  lw.assign_nil(d, t, wty)
+  best = b.temp(kty)
+  // Written before the loop (the first element takes it): a number's
+  // zero, or the empty string.
+  if kt.is_string() || kt.is_bytes() {
+    b.assign(b.pl(best), b.rv_use(b.str_const("")))
+  } else if kt.is_float() {
+    b.assign(b.pl(best), b.rv_use(b.c_f64(0, "0.0")))
+  } else {
+    b.assign(b.pl(best), b.rv_use(b.c_int(kty, 0)))
+  }
+  at = b.temp(mt_i32())
+  b.assign(b.pl(at), b.rv_use(b.c_i32(-1)))
+  i = b.temp(mt_i32())
+  b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  head = b.block()
+  body = b.block()
+  step = b.block()
+  exit = b.block()
+  b.goto(head)
+  b.at(head)
+  lw.block_test(h, i, body, exit)
+  b.at(body)
+  lw.block_param(bl, recv, h, aty, i)
+  k = lw.verb_value(bl, kt, kty, step, exit)
+  if lw.failed() {
+    return zero
+  }
+  if lw.open_now() {
+    lw.at(e.loc)
+    kh = lw.hold(k, kty)
+    take = b.block()
+    cmp = b.block()
+    first = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(at), b.c_i32(0)))
+    b.branch(first, take, cmp)
+    b.at(cmp)
+    lhs = b.copy_local(kh)
+    rhs = b.copy_local(best)
+    if is_max {
+      lhs = b.copy_local(best)
+      rhs = b.copy_local(kh)
+    }
+    better = b.c_bool(false)
+    if kt.is_string() || kt.is_bytes() {
+      args: Array(MOperand) = []
+      args.push(lhs)
+      args.push(rhs)
+      q = lw.call_to(mt_i32(), "avant_str_cmp", args)
+      better = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), q, b.c_i32(0)))
+    } else {
+      better = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), lhs, rhs))
+    }
+    b.branch(better, take, step)
+    b.at(take)
+    b.assign(b.pl(best), b.rv_use(b.copy_local(kh)))
+    b.assign(b.pl(at), b.rv_use(b.copy_local(i)))
+    v = lw.block_elem(h, aty, i)
+    b.assign(b.pl(d), b.rv_use(lw.coerce(v, lw.elem_ty_of(recv), t, e.loc)))
+    b.goto(step)
+  }
+  b.at(step)
+  lw.at(e.loc)
+  lw.block_step(i, head)
+  b.at(exit)
+  b.copy_local(d)
+}
+
+// `xs.delete_if((x) { p })`: one pass in place, each element p does not
+// hold for moved down to the next kept position; the references past
+// the new size cleared, then the size set.
+pub fn (lw: MirLower) arr_delete_if(e: Expr, recv: Expr, bl: Block): MOperand {
+  b = lw.lw_b
+  zero = b.c_i32(0)
+  aty = lw.ety(recv)
+  if lw.failed() {
+    return zero
+  }
+  h = lw.block_recv(recv, aty)
+  if lw.failed() {
+    return zero
+  }
+  lw.at(e.loc)
+  lw.frozen_check(h, mir_frozen_delete_if(), e.loc)
+  w = b.temp(mt_i32())
+  b.assign(b.pl(w), b.rv_use(b.c_i32(0)))
+  i = b.temp(mt_i32())
+  b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  head = b.block()
+  body = b.block()
+  keep = b.block()
+  step = b.block()
+  exit = b.block()
+  b.goto(head)
+  b.at(head)
+  lw.block_test(h, i, body, exit)
+  b.at(body)
+  lw.block_param(bl, recv, h, aty, i)
+  p = lw.verb_value(bl, ty_bool(), mt_bool(), keep, exit)
+  if lw.failed() {
+    return zero
+  }
+  if lw.open_now() {
+    lw.at(e.loc)
+    b.branch(p, step, keep)
+  }
+  b.at(keep)
+  lw.at(e.loc)
+  v = lw.block_elem(h, aty, i)
+  lw.block_store(h, aty, w, v)
+  b.assign(b.pl(w), b.rv_bin(mop_add(), b.copy_local(w), b.c_i32(1)))
+  b.goto(step)
+  b.at(step)
+  lw.at(e.loc)
+  lw.block_step(i, head)
+  b.at(exit)
+  et = lw.elem_of(aty)
+  if b.types.ref_carrying(et) {
+    n = lw.tmp(mt_i32(), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 1))))
+    lo = lw.tmp(mt_int(), b.rv_cast(b.copy_local(w), mt_int()))
+    hi = lw.tmp(mt_int(), b.rv_cast(n, mt_int()))
+    four = lw.two(b.copy_local(h), lo)
+    four.push(hi)
+    four.push(lw.elem_size(aty))
+    b.call(-1, "avant_array_zero_range", four)
+  }
+  b.assign(b.field(b.deref(b.pl(h)), 1), b.rv_use(b.copy_local(w)))
+  zero
 }

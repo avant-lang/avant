@@ -2963,6 +2963,41 @@ pub class Parser {
     left
   }
 
+  // The rest of a slice `xs[start..stop]` after its start, at the range
+  // operator: `..` excludes stop, `..=` includes it, and a slice without
+  // a stop (`xs[start..]`) runs to the end. It is the call
+  // `xs.slice(start, stop)` (`xs.slice(start)` to the end); `..=` gives
+  // `stop + 1`.
+  pub fn parse_slice_rest(recv: Expr, at: Location, start: Expr): Expr {
+    incl = self.current().kind == tk_dot_dot_eq()
+    op_loc = self.bump().loc
+    self.skip_newlines()
+    call = Expr.new(ex_call(), at)
+    call.callee = "slice"
+    call.receiver = recv
+    call.args.push(start)
+    if self.current().kind == tk_r_bracket() {
+      if incl {
+        fail(op_loc, "an inclusive slice needs its last index: write xs[a..=b], or xs[a..] to the end")
+      }
+    } else {
+      stop = self.parse_expr()
+      self.skip_newlines()
+      if incl {
+        one = Expr.new(ex_int(), op_loc)
+        one.int_bits = 1u64
+        sum = Expr.new(ex_binary(), op_loc)
+        sum.op = tk_plus()
+        sum.left = stop
+        sum.right = one
+        stop = sum
+      }
+      call.args.push(stop)
+    }
+    expect(tk_r_bracket())
+    call
+  }
+
   pub fn parse_postfix(left: Expr): Expr {
     cur = left
     keep = true
@@ -3044,19 +3079,30 @@ pub class Parser {
       } else if k == tk_l_bracket() {
         at = self.bump().loc
         self.skip_newlines()
-        idxe = self.parse_expr()
-        self.skip_newlines()
-        ix = Expr.new(ex_index(), at)
-        // `g[x, y]`: the indexes after the first, for a type's `fn []`.
-        while match_tok(tk_comma()) {
+        if self.current().kind == tk_dot_dot() || self.current().kind == tk_dot_dot_eq() {
+          // `xs[..stop]`: a slice from the start.
+          zero = Expr.new(ex_int(), at)
+          zero.int_bits = 0u64
+          cur = self.parse_slice_rest(cur, at, zero)
+        } else {
+          idxe = self.parse_expr()
           self.skip_newlines()
-          ix.elems.push(self.parse_expr())
-          self.skip_newlines()
+          if self.current().kind == tk_dot_dot() || self.current().kind == tk_dot_dot_eq() {
+            cur = self.parse_slice_rest(cur, at, idxe)
+          } else {
+            ix = Expr.new(ex_index(), at)
+            // `g[x, y]`: the indexes after the first, for a type's `fn []`.
+            while match_tok(tk_comma()) {
+              self.skip_newlines()
+              ix.elems.push(self.parse_expr())
+              self.skip_newlines()
+            }
+            expect(tk_r_bracket())
+            ix.left = cur
+            ix.right = idxe
+            cur = ix
+          }
         }
-        expect(tk_r_bracket())
-        ix.left = cur
-        ix.right = idxe
-        cur = ix
       } else if k == 50 {
         at = self.bump().loc
         tr = Expr.new(ex_try(), at)

@@ -489,10 +489,20 @@ pub fn (lw: MirLower) seq_place(h: Int, aty: Int, i: MOperand, proven: Bool): MP
 // AVANT_ARRAY_FROZEN): the runtime's mutators test it (push only on its
 // growth path, which a frozen array always takes), and the mutations
 // generated code makes itself test it here: an element store
-// (`xs[i] = v`, `xs[i] += v`, `xs[i].f = v`), `clear`, and a sort with
-// a block. The ops are avant_rt.h's AVANT_FROZEN_*.
+// (`xs[i] = v`, `xs[i] += v`, `xs[i].f = v`), `clear`, a sort with a
+// block, `delete_if`, and a `fill` of elements other than numbers (a
+// generic function's loop, checked at its call). The ops are
+// avant_rt.h's AVANT_FROZEN_*.
 pub fn mir_frozen_clear: Int {
   2
+}
+
+pub fn mir_frozen_fill: Int {
+  3
+}
+
+pub fn mir_frozen_delete_if: Int {
+  8
 }
 
 pub fn mir_frozen_sort: Int {
@@ -533,6 +543,32 @@ pub fn (lw: MirLower) frozen_check(h: Int, op: Int, loc: Location) {
     return
   }
   lw.trap_close(ok, "avant_trap_frozen", lw.one(b.c_i32(op)), loc)
+}
+
+// An array verb written as a generic function of the program
+// (checker/verbs.av) changes its array (the first argument) by element
+// stores, which a running element method's freeze lets through: the
+// change is tested against the array's freeze here, at the call, under
+// the verb's own name (frozen_check, above).
+pub fn mir_verb_frozen_op(callee: String): Int {
+  if callee == "__avant_fill" {
+    return mir_frozen_fill()
+  }
+  -1
+}
+
+pub fn (lw: MirLower) verb_frozen_check(e: Expr, args: Array(MOperand)) {
+  op = mir_verb_frozen_op(e.callee)
+  if op < 0 || args.size == 0 || e.args.size == 0 {
+    return
+  }
+  aty = lw.ety(e.args[0])
+  if lw.failed() {
+    return
+  }
+  h = lw.hold(args[0], aty)
+  lw.frozen_check(h, op, e.loc)
+  args[0] = lw.lw_b.copy_local(h)
 }
 
 // The levels of an Array type (Array(Array(T)) has 2) and its innermost
@@ -922,6 +958,29 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     r = lw.call_to(mt_i32(), cf, lw.two(b.copy_local(h), v))
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), r, b.c_i32(1)))
   }
+  if name == "slice" && (args.size == 1 || args.size == 2) {
+    // A new array of the elements start up to stop (the size when there
+    // is no stop): the bounds, then the receiver.
+    ops = lw.args_then_recv(args, recv)
+    if lw.failed() {
+      return zero
+    }
+    lw.at(e.loc)
+    hs = lw.hold(ops[0], aty)
+    sargs: Array(MOperand) = []
+    sargs.push(b.copy_local(hs))
+    sargs.push(ops[1])
+    if args.size == 1 {
+      sargs.push(lw.seq_size(hs))
+    } else {
+      sargs.push(ops[2])
+    }
+    sargs.push(lw.elem_size(aty))
+    sargs.push(lw.buf_tid(aty))
+    r = b.temp(aty)
+    b.call(r, "avant_array_slice", sargs)
+    return b.copy_local(r)
+  }
   if args.size > 0 && name != "reserve" {
     lw.refuse(e.loc, "Array.${name} with arguments")
     return zero
@@ -970,12 +1029,16 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     b.call(-1, "avant_array_reverse", lw.two(b.copy_local(h2), lw.elem_size(aty)))
     return zero
   }
-  if name == "clone" {
-    // The clone of an array whose elements are their own copy (the
-    // checker made any other clone a call): a new buffer of the same
-    // bytes, the routine sorted copies with.
+  if name == "clone" || name == "dup" || name == "reversed" {
+    // A new array of the same elements (in the reverse order): dup and
+    // reversed, and the clone of an array whose elements are their own
+    // copy (the checker made any other clone a call); a new buffer of the
+    // same bytes, the routine sorted copies with.
     c = b.temp(aty)
     b.call(c, "avant_array_copy", lw.three(b.copy_local(h2), lw.elem_size(aty), lw.buf_tid(aty)))
+    if name == "reversed" {
+      b.call(-1, "avant_array_reverse", lw.two(b.copy_local(c), lw.elem_size(aty)))
+    }
     return b.copy_local(c)
   }
   if name == "sort" || name == "sorted" {
