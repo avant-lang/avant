@@ -323,8 +323,8 @@ fn test_errors(c: Checks) {
     // A union in a `fun` signature that is not one pointer: it
     // compiled, and C read a tag or a payload as the value. The
     // optional references stay (tests/fixtures/ffi/opt_refs.av).
-    expect_err(c, compiler, stamp, "fun-optptr-ret", "lib c {\n  struct Pair {\n    a: Int32\n    b: Int32\n  }\n  fun malloc(size: Int): Ptr(Pair)?\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Ptr(Pair)?: C has one pointer there, and Ptr(T)? is a tag and a pointer in Avant, not a nullable pointer (that is not decided yet); declare Ptr(Pair)")
-    expect_err(c, compiler, stamp, "fun-optptr-param", "lib c {\n  fun free(p: Ptr(Void)?)\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Ptr(Void)?: C has one pointer there")
+    expect_err(c, compiler, stamp, "clayout-opt-int", "lib c {\n  struct Pair {\n    a: Int32?\n  }\n}\nfn main {\n  puts(1)\n}\n", "C layout fields must be C types, not Int32?")
+    expect_err(c, compiler, stamp, "clayout-opt-ptr-int", "lib c {\n  struct Pair {\n    a: Ptr(Int)?\n  }\n}\nfn main {\n  puts(1)\n}\n", "C layout fields must be C types, not Ptr(Int)?")
     expect_err(c, compiler, stamp, "fun-optint", "lib c {\n  fun labs(n: Int?): Int\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int?: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL")
     expect_err(c, compiler, stamp, "fun-union-ret", "lib c {\n  fun labs(n: Int): Int | String\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int | String: C has one word there")
     expect_err(c, compiler, stamp, "fun-optfloat", "lib c {\n  fun fabs(x: Float64): Float64?\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Float64?: C has one word there")

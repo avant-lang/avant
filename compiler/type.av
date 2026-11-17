@@ -1188,6 +1188,7 @@ pub fn ty_nilable(inner: Ty): Ty {
 
 // An optional reference: a union of exactly `Nil` and one reference type
 // (a class, `String`, `Bytes`, `Array`, `Hash`, `Buf`, a `JoinHandle`)
+// or a C pointer (`Ptr(T)`, the nullable pointer: `nil` is C's NULL)
 // is that reference's one pointer, `nil` the null pointer; its reference
 // member, or nil for any other type. Every other union keeps the
 // tag-and-payloads layout. The back end's layouts (mir_opt_ref) and the
@@ -1198,7 +1199,7 @@ pub fn ty_opt_ref(t: Ty): Ty? {
     return nil
   }
   for m in t.members {
-    if !m.is_nil() && (m.is_class() || m.is_string() || m.is_bytes() || m.is_array() || m.is_hash() || m.is_buf() || m.is_join()) {
+    if !m.is_nil() && (m.is_class() || m.is_string() || m.is_bytes() || m.is_array() || m.is_hash() || m.is_buf() || m.is_join() || m.is_ptr()) {
       if t.includes_nil() {
         return m
       }

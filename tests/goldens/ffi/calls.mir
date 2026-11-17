@@ -2,7 +2,6 @@ module calls
 file 0 "calls.av"
 
 layout %calls.Holder = class { 0 name: ref str, 1 cell: ptr, 2 n: i64 }  size 24 align 8 id 1
-layout %(Nil|Ptr(Void)) = union { 0 tag: i32, 1 m0: ptr }  size 16 align 8
 layout %elems(String) = elems { 0: ref str }  size 8 align 8 id 65535
 layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 layout %calls.Pair = struct { 0 tag: ref str, 1 cell: ptr }  size 16 align 8
@@ -67,30 +66,26 @@ extern ffi_static_str() -> ref str collects
 extern ffi_str_at(ref str, i32) -> i32 collects
 extern ffi_strlen(ref str) -> i32 collects
 
-fn av.calls/pick(_1: %(Nil|Ptr(Void))) -> i64 frame @calls.av:45:1 {
+fn av.calls/pick(_1: ptr) -> i64 frame @calls.av:45:1 {
   let _0: i64
-  let _1 (p): %(Nil|Ptr(Void))
-  let _2: i32
-  let _3: bool
-  let _4: ptr
-  let _5 (q): ptr slot
-  let _6: i32
-  let _7: i64
+  let _1 (p): ptr
+  let _2: bool
+  let _3 (q): ptr slot
+  let _4: i32
+  let _5: i64
 
 bb0:
-  _5 = zero   @45:1
+  _3 = zero   @45:1
   gc.enter   @45:1
-  gc.roots _5   @45:1
-  _2 = copy _1.0   @46:3
-  _3 = ne copy _2, const i32 0   @46:3
-  branch copy _3, bb1, bb2   @46:3
+  gc.roots _3   @45:1
+  _2 = ne copy _1, const ptr null   @46:3
+  branch copy _2, bb1, bb2   @46:3
 
 bb1:
-  _4 = copy _1.1   @46:3
-  _5 = copy _4   @46:3
-  _6 = call ffi_cell_get(copy _5) collects   @47:16
-  _7 = cast copy _6 to i64   @47:31
-  _0 = copy _7   @47:5
+  _3 = copy _1   @46:3
+  _4 = call ffi_cell_get(copy _3) collects   @47:16
+  _5 = cast copy _4 to i64   @47:31
+  _0 = copy _5   @47:5
   gc.leave   @47:5
   return   @47:5
 
@@ -300,12 +295,10 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @calls.av:71:1 {
   let _120: i64
   let _121: ref %elems(Ptr(Void))
   let _122: ptr
-  let _123: %(Nil|Ptr(Void))
-  let _124 (some): %(Nil|Ptr(Void))
-  let _125: i64
-  let _126: %(Nil|Ptr(Void))
-  let _127 (none): %(Nil|Ptr(Void))
-  let _128: i64
+  let _123 (some): ptr
+  let _124: i64
+  let _125 (none): ptr
+  let _126: i64
 
 bb0:
   _24 = zero   @71:1
@@ -546,14 +539,12 @@ bb15:
   check.bounds const i64 0, copy _120   @135:27
   _121 = copy (*_110).0   @135:27
   _122 = copy (*_121)[const i64 0]   @135:27
-  _123 = union %(Nil|Ptr(Void)) tag 1 (copy _122)   @135:27
-  _124 = copy _123   @135:3
-  _125 = call av.calls/pick(copy _124) collects   @136:8
-  call avant_puts_i64(copy _125) nocollect   @136:3
-  _126 = union %(Nil|Ptr(Void)) tag 0   @137:22
-  _127 = copy _126   @137:3
-  _128 = call av.calls/pick(copy _127) collects   @138:8
-  call avant_puts_i64(copy _128) nocollect   @138:3
+  _123 = copy _122   @135:3
+  _124 = call av.calls/pick(copy _123) collects   @136:8
+  call avant_puts_i64(copy _124) nocollect   @136:3
+  _125 = const ptr null   @137:3
+  _126 = call av.calls/pick(copy _125) collects   @138:8
+  call avant_puts_i64(copy _126) nocollect   @138:3
   call ffi_cell_free(copy _61) collects   @139:6
   call ffi_cell_free(copy _67) collects   @140:6
   _0 = const i32 0   @71:1

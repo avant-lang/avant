@@ -901,7 +901,7 @@ fn main {
 
 ## Nil and unions
 
-`T?` is a `T` or `nil`. The compiler makes you open it before use, so there is no null pointer error at run time (except a C pointer, [`Ptr(T)`](#layouts-and-ptr)).
+`T?` is a `T` or `nil`. The compiler makes you open it before use, so there is no null pointer error at run time (except a C pointer, [`Ptr(T)`](#layouts-and-ptr), whose NULL traps with a message).
 
 ```avant
 fn find(names: Array(String), wanted: String): Int? {
@@ -1036,7 +1036,7 @@ fn main {
 
 ### What an optional costs
 
-`T?` of a class, `String`, `Bytes`, `Array`, `Hash` or `Buf` is one pointer, `nil` the null pointer, wherever it is stored (`left: Node?` is 8 bytes). `(fn(Int): Int)?` is the function value's two words, `nil` a null code word. Any other union holds a small tag and one slot per non-`nil` member.
+`T?` of a class, `String`, `Bytes`, `Array`, `Hash`, `Buf` or `Ptr(T)` is one pointer, `nil` the null pointer, wherever it is stored (`left: Node?` is 8 bytes). `(fn(Int): Int)?` is the function value's two words, `nil` a null code word. Any other union holds a small tag and one slot per non-`nil` member.
 
 A `T?` that nothing assigned is `nil`: an optional field without a default reads as absent.
 
@@ -3205,7 +3205,7 @@ A `lib NAME { ... }` block holds `fun` declarations (`fun` for a C function, `fn
 
 - A `String` argument is passed as a `char *`.
 - A `String?` result is a `char *` that may be NULL, read as `nil` (passing `nil` passes NULL); a `String` result that is NULL traps, naming the function (`avant runtime: C function c.getenv returned NULL for String (declare String?)`).
-- A `fun` signature's only unions are optional references, one pointer with `nil` as NULL: `String?`, `Bytes?`, and an array, a hash, a `Buf` or a class with `?`. Any other union (`Int?`, `Int | String`, `Ptr(T)?`, a tag and a payload where C has one word) is a compile error there.
+- A `fun` signature's only unions are optional references, one pointer with `nil` as NULL: `String?`, `Bytes?`, `Ptr(T)?` (the nullable C pointer, [Layouts and Ptr](#layouts-and-ptr)), and an array, a hash, a `Buf` or a class with `?`. Any other union (`Int?`, `Int | String`, a tag and a payload where C has one word) is a compile error there.
 - C++ is reached only through `extern "C"` functions.
 
 ### C types
@@ -3224,7 +3224,7 @@ Every C scalar type has an exact name at the boundary.
 | `unsigned char`, `uint8_t`; `unsigned short`, `uint16_t` | `UInt8`; `UInt16` | `Int` |
 | `float` | `Float32` | `Float64` |
 | `char *` | `String` or `String?` | the same |
-| a pointer | `Ptr(Layout)` or `Ptr(Void)` | the same |
+| a pointer | `Ptr(Layout)` or `Ptr(Void)`; `Ptr(Layout)?` or `Ptr(Void)?` where C may give NULL | the same |
 
 The five narrow names (`Int8`, `Int16`, `UInt8`, `UInt16`, `Float32`) are written only in a `fun` signature and a C layout's field. A value from C converts exactly. A value to C keeps its value or traps (`avant runtime: 256 out of range for the C type UInt8 (0..255)`); a `Float64` rounds to the nearest `Float32`.
 
@@ -3264,7 +3264,37 @@ fn main {
 
 `Ptr(T)` is for a layout `T`, `Ptr(Void)` for a pointer you only pass around; a `Ptr` of anything else (`Ptr(Int)`) has no fields and takes no methods. Memory from C is C's: the collector neither moves nor frees it. There is no `sizeof`: you state the size passed to `malloc`.
 
-A `Ptr` can be NULL (an unchecked `malloc`) and Avant has no test for it: a field read or written through a NULL `Ptr` is a segmentation fault, with no Avant message and unflushed output lost, so check in C before handing the pointer over (`Ptr(T)?` is refused, above). A `String` field that C left NULL (or `release` made null) reads as `""`.
+`Ptr(T)?` is the nullable pointer: one word, `nil` is C's NULL, in a `fun` result or parameter, a layout's field, and anywhere in Avant code. Declare it where C may give NULL (a failed `malloc`, the end of a list) and test it as any optional:
+
+```avant
+lib c {
+  struct Node {
+    v: Int32
+    next: Ptr(Node)?
+  }
+  fun calloc(n: Int, size: Int): Ptr(Node)?
+}
+
+fn length(head: Ptr(Node)?): Int {
+  n = 0
+  cur = head
+  while node = cur {
+    n += 1
+    cur = node.next
+  }
+  n
+}
+
+fn main {
+  if a = c.calloc(1, 16), b = c.calloc(1, 16) {
+    a.next = b
+    puts(length(a))         // => 2
+  }
+  puts(length(c.calloc(1, 1 << 62)))   // => 0
+}
+```
+
+A plain `Ptr(T)` can still hold NULL when C gives one: a field read or written through it traps, naming the layout and the field, after the program's output is flushed (`avant runtime: the field a read or written through a NULL Ptr(Pair) (...) at app.av:7:8`); inside a task or an HTTP handler it fails that task or request alone. A `String?` field reads a NULL as `nil` and stores `nil` as NULL; a plain `String` field that holds NULL (C left it unset, or `release` made it null) traps when read, naming the field (`avant runtime: the C field Holder.name is NULL (declare it String? to read NULL as nil)`).
 
 ### Strings in C memory
 

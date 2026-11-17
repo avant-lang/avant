@@ -2859,6 +2859,9 @@ pub class Checker {
       if et.is_string() {
         return
       }
+      if r = ty_opt_ref(et), r.is_string() {
+        return
+      }
       if et.is_clayout() {
         if !clayout_holds_ref(et) {
           fail(e.loc, "nothing to release: ${name} is ${et.show()}, which has no String field")
@@ -6679,6 +6682,9 @@ pub fn clayout_holds_ref(t: Ty): Bool {
   for field in t.fields {
     ft = field.ty
     if ft.is_string() {
+      return true
+    }
+    if r = ty_opt_ref(ft), r.is_string() {
       return true
     }
     if ft.is_clayout() && clayout_holds_ref(ft) {

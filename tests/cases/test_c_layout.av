@@ -33,6 +33,46 @@ fn test_release_errors(c: Checks, compiler: String) {
   release_refused(c, compiler, stamp, "int", "  release(42)\n", "release takes a C-layout field or a Ptr to a C layout, got Int")
 }
 
+// A NULL reached through C: each program prints a line, then reads or
+// writes through NULL. The trap names what was NULL and where, after the
+// line (stdout flushed), status 1; inside a task it fails the task alone.
+// Before, a field through a NULL Ptr was a segmentation fault (status 139,
+// the printed line lost when stdout is a file) and a NULL String field
+// read as "".
+fn null_src(body: String): String {
+  "lib e {\n  struct Pair {\n    a: Int32\n    b: Int32\n  }\n  struct H {\n    name: String\n    note: String?\n    at: Pair\n  }\n  fun malloc(size: Int): Ptr(Pair)\n  fun calloc(n: Int, size: Int): Ptr(H)\n}\nfn main {\n  puts(\"before\")\n${body}}\n"
+}
+
+fn null_trap(c: Checks, compiler: String, stamp: Int, tag: String, body: String, status: Int, want: String) {
+  src = "${scratch()}/c_layout-${stamp}-null-${tag}.av"
+  bin = "${scratch()}/c_layout-${stamp}-null-${tag}.bin"
+  log = "${scratch()}/c_layout-${stamp}-null-${tag}.log"
+  _ = file_write(src, null_src(body))
+  code = compile_av(compiler, src, bin, log)
+  c.eq_int(code, 0, "null ${tag}: compiles")
+  if file_exists(bin) {
+    rlog = "${scratch()}/c_layout-${stamp}-null-${tag}.run"
+    c.eq_int(run_av_bin(bin, rlog), status, "null ${tag}: exit status")
+    got = file_read(rlog) ?? ""
+    c.expect(str_has(got, want), "null ${tag}: ${want} (${got})")
+  } else {
+    c.expect(false, "null ${tag}: runs")
+  }
+}
+
+fn test_null_traps(c: Checks, compiler: String) {
+  stamp = now_ms()
+  site = "c_layout-${stamp}-null-"
+  null_trap(c, compiler, stamp, "read", "  p = e.malloc(1 << 62)\n  puts(p.a)\n", 1, "before\navant runtime: the field a read or written through a NULL Ptr(Pair) (a pointer C may leave NULL is declared Ptr(Pair)? and tested: if p = ...) at ${site}read.av:17:")
+  null_trap(c, compiler, stamp, "write", "  p = e.malloc(1 << 62)\n  p.b = 7\n", 1, "before\navant runtime: the field b read or written through a NULL Ptr(Pair)")
+  null_trap(c, compiler, stamp, "compound", "  p = e.malloc(1 << 62)\n  p.b += 1\n", 1, "before\navant runtime: the field b read or written through a NULL Ptr(Pair)")
+  null_trap(c, compiler, stamp, "nested", "  h = e.calloc(1, 1 << 62)\n  puts(h.at.a)\n", 1, "before\navant runtime: the field at read or written through a NULL Ptr(H)")
+  null_trap(c, compiler, stamp, "string-field", "  h = e.calloc(1, 32)\n  puts(h.note ?? \"no note\")\n  puts(h.name.size)\n", 1, "before\nno note\navant runtime: the C field H.name is NULL (declare it String? to read NULL as nil) at ${site}string-field.av:18:")
+  null_trap(c, compiler, stamp, "string-interp", "  h = e.calloc(1, 32)\n  puts(\"name \${h.name}\")\n", 1, "avant runtime: the C field H.name is NULL")
+  null_trap(c, compiler, stamp, "released", "  h = e.calloc(1, 32)\n  h.name = \"x${1}\"\n  puts(h.name)\n  release(h.name)\n  puts(h.name)\n", 1, "before\nx1\navant runtime: the C field H.name is NULL")
+  null_trap(c, compiler, stamp, "task", "  t = spawn {\n    q = e.malloc(1 << 62)\n    q.a.to_i()\n  }\n  if v = t.join() {\n    puts(v)\n  } else err {\n    puts(\"task: \${err.what}\")\n  }\n  puts(\"after\")\n", 0, "task: the field a read or written through a NULL Ptr(Pair) (a pointer C may leave NULL is declared Ptr(Pair)? and tested: if p = ...)\nafter\n")
+}
+
 fn test_c_layout(c: Checks) {
   c.suite("tests/cases/test_c_layout.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -65,6 +105,7 @@ fn test_c_layout(c: Checks) {
       c.expect(false, "layout field walk stdout")
     }
     test_release_errors(c, compiler)
+    test_null_traps(c, compiler)
   } else {
     c.expect(false, "AVANT_COMPILER")
   }

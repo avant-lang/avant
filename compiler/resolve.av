@@ -1436,8 +1436,16 @@ pub fn c_field_ok(ty: Ty): Bool {
   if ty.is_string() {
     return true
   }
+  if r = ty_opt_ref(ty), r.is_string() {
+    // NULL reads as nil, nil stores NULL.
+    return true
+  }
   if ty.is_clayout() {
     return true
+  }
+  if r = ty_opt_ref(ty), r.is_ptr() {
+    // The nullable pointer: NULL reads as nil, nil stores NULL.
+    return c_field_ok(r)
   }
   if ty.is_ptr() {
     if inner = ty.inner {

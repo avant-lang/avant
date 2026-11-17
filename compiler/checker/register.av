@@ -1285,13 +1285,11 @@ pub fn (checker_self: Checker) method_indices_named(name: String): Array(Int) {
 // A union in a `fun` signature: C receives and returns one word there, so
 // only a union that is one word is what it says: an optional reference, a
 // pointer with `nil` as NULL (`String?`, `Bytes?`, `Array(T)?`,
-// `Hash(K, V)?`, `Buf?`, a class `C?`, a `JoinHandle(T)?`; each checked
-// both ways with a C function). Any other union is a tag and a payload in
-// Avant: declared in a `fun` it compiled, and C read or wrote one of the
-// two words as if it were the value (`Int?` gave 72340172838076673 for
-// twice 21, `Ptr(Pair)?` as malloc's result a segmentation fault). It is
-// refused until the nullable pointer is decided: the refusal holds
-// whichever way that goes.
+// `Hash(K, V)?`, `Buf?`, a class `C?`, a `JoinHandle(T)?`, and `Ptr(T)?`,
+// the nullable C pointer; each checked both ways with a C function). Any
+// other union is a tag and a payload in Avant: C would read or write one
+// of the two words as if it were the value (`Int?` gave
+// 72340172838076673 for twice 21), so it is refused.
 pub fn (checker_self: Checker) fun_union_ok(ty: Ty, loc: Location): Bool {
   if !ty.is_union() {
     return true
@@ -1299,11 +1297,7 @@ pub fn (checker_self: Checker) fun_union_ok(ty: Ty, loc: Location): Bool {
   if m = ty_opt_ref(ty) {
     return true
   }
-  if ty.members.size == 2 && ty.includes_nil() && ty_without_nil(ty).is_ptr() {
-    checker_self.fail(loc, "a fun signature cannot use ${ty.show()}: C has one pointer there, and Ptr(T)? is a tag and a pointer in Avant, not a nullable pointer (that is not decided yet); declare ${ty_without_nil(ty).show()}")
-    return false
-  }
-  checker_self.fail(loc, "a fun signature cannot use ${ty.show()}: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL (String?, Bytes?, an array, a hash, a Buf or a class with ?)")
+  checker_self.fail(loc, "a fun signature cannot use ${ty.show()}: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL (String?, Bytes?, Ptr(T)?, an array, a hash, a Buf or a class with ?)")
   false
 }
 

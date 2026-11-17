@@ -31,10 +31,15 @@ import re2c_pat
 
 // Ptr(T): `ptr %L` when T is a C layout (its fields are reached
 // through it), else the untyped `ptr` (opaque, Void, and every other
-// pointee: the language reads nothing through them).
+// pointee: the language reads nothing through them). A layout being laid
+// out is already noted (empty), so a pointer to it inside it, or inside a
+// layout it holds, names it (a list's `next`, a reply's elements).
 pub fn (lw: MirLower) ptr_ty(t: Ty, loc: Location): Int {
   if inner = t.inner, inner.is_clayout() {
-    l = lw.clayout_layout(inner, loc)
+    l = lw.lw_m.types.layout_named(mir_mty(inner))
+    if l < 0 {
+      l = lw.clayout_layout(inner, loc)
+    }
     if l < 0 {
       return -1
     }
@@ -44,19 +49,23 @@ pub fn (lw: MirLower) ptr_ty(t: Ty, loc: Location): Int {
 }
 
 // A C layout: the C fields in declaration order by the C rule, as
-// the old back end's plain STRUCT; noted on first use, never given a type
-// id (it never lives on the GC heap).
+// the old back end's plain STRUCT; noted empty on first use, then filled
+// (a pointer field may name it), never given a type id (it never lives
+// on the GC heap). Held by value inside itself, it is refused.
 pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
   name = mir_mty(t)
+  if b = lw.lw_busy.get(name), b == 1 {
+    lw.refuse(loc, "C layout ${t.show()} holding itself by value")
+    return -1
+  }
   l = lw.lw_m.types.layout_named(name)
   if l >= 0 {
     return l
   }
-  if lw.lw_busy.has_key(name) {
-    lw.refuse(loc, "C layout ${t.show()} holding itself by value")
-    return -1
-  }
   lw.lw_busy[name] = 1
+  none: Array(Int) = []
+  nonames: Array(String) = []
+  id = lw.lw_b.note_layout(name, mlk_clayout(), none, nonames)
   fields: Array(Int) = []
   names: Array(String) = []
   j = 0
@@ -77,7 +86,9 @@ pub fn (lw: MirLower) clayout_layout(t: Ty, loc: Location): Int {
     names.push(t.fields[j].name)
     j += 1
   }
-  lw.lw_b.note_layout(name, mlk_clayout(), fields, names)
+  lw.lw_busy[name] = 0
+  lw.lw_m.types.set_fields(id, fields, names)
+  id
 }
 
 // ---- calls into C
@@ -482,6 +493,48 @@ pub fn (lw: MirLower) c_field_enum(e: Expr): Ty? {
   none
 }
 
+// The C layout and its field that e names (directly or through a Ptr),
+// when the field is declared a plain `String` (not `String?`), else nil.
+pub fn (lw: MirLower) c_field_string(e: Expr): String? {
+  if e.kind == ex_field() && !e.method_call {
+    if obj = e.object, ot = obj.ty {
+      lay = ot
+      if ot.is_ptr() {
+        if inner = ot.inner {
+          lay = inner
+        }
+      }
+      if lay.is_clayout() {
+        if ft = lay.field_named(e.ident), ft.is_string() {
+          return "${lay.name}.${e.ident}"
+        }
+      }
+    }
+  }
+  nil
+}
+
+// A C layout's field declared `String` promises a string: a NULL there
+// (one C left unset, or one `release` made null) traps, naming the field
+// (one compare and a cold block). `String?` reads NULL as nil.
+pub fn (lw: MirLower) c_field_string_read(e: Expr, name: String): MOperand {
+  b = lw.lw_b
+  ty = lw.ety(e)
+  v = lw.lower_place_read(e)
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  d = b.temp(ty)
+  b.assign(b.pl(d), b.rv_use(v))
+  isnull = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(d), b.c_null(ty)))
+  ok = lw.trap_open(isnull, true)
+  targs: Array(MOperand) = []
+  targs.push(b.str_const("the C field ${name} is NULL (declare it String? to read NULL as nil)"))
+  lw.trap_close(ok, "avant_trap_expect", targs, e.loc)
+  b.copy_local(d)
+}
+
 pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
   b = lw.lw_b
   if inner = ot.inner, inner.is_clayout() {
@@ -490,7 +543,16 @@ pub fn (lw: MirLower) ptr_field_place(e: Expr, obj: Expr, ot: Ty): MPlace {
       return b.pl(0)
     }
     lw.at(e.loc)
-    h = lw.hold(o, lw.ety(obj))
+    pt = lw.ety(obj)
+    h = lw.hold(o, pt)
+    // A NULL pointer traps, naming the layout and the field, before the
+    // access (one compare and a cold block): the program's output is
+    // flushed and a task or a request that does it fails alone.
+    isnull = lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(h), b.c_null(pt)))
+    ok = lw.trap_open(isnull, true)
+    targs: Array(MOperand) = []
+    targs.push(b.str_const("the field ${e.ident} read or written through a NULL ${ot.show()} (a pointer C may leave NULL is declared ${ot.show()}? and tested: if p = ...)"))
+    lw.trap_close(ok, "avant_trap_expect", targs, e.loc)
     k = lw.field_of(inner, e.ident, e.loc)
     return b.field(b.deref(b.pl(h)), k)
   }
