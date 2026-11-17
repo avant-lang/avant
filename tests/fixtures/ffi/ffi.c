@@ -862,7 +862,7 @@ int64_t ffi_late_pinned(void *obj) {
  *
  * ffi_gc_count gives one of the collector's public counters
  * (avant_gc_stats): 0 the full collections, 1 the young ones, 2 the bytes
- * the last collection found live. */
+ * the last collection found live, 3 the heap's high-water mark. */
 typedef struct {
   uint64_t collections;
   uint64_t young_collections;
@@ -888,7 +888,10 @@ int64_t ffi_proof_store(void *holder, void *v, int64_t mode) {
 int64_t ffi_gc_count(int64_t which) {
   FfiGcStats st;
   avant_gc_stats(&st);
-  return (int64_t)(which == 0 ? st.full_collections : which == 1 ? st.young_collections : st.live_bytes);
+  return (int64_t)(which == 0   ? st.full_collections
+                   : which == 1 ? st.young_collections
+                   : which == 3 ? st.peak_heap
+                                : st.live_bytes);
 }
 
 /* complete.av: C pins S (a root the program does not hold) and keeps its

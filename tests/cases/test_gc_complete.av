@@ -232,6 +232,63 @@ fn test_sticky_full(c: Checks, compiler: String, root: String, dir: String) {
   c.expect(stat_value(err, "full_sticky") >= 2, "sticky_full.av: the grown chain's and the let-go chain's collections are sticky ones (full_sticky ${stat_value(err, "full_sticky")})")
 }
 
+// ffi/sticky_reuse.av: what the sticky full collection reads that the
+// last full collection left. Each part alone, in every environment, with
+// the oracle silent:
+//   leak   eight rounds of an old holder taking a fresh chain that young
+//          collections promote and the holder lets go, each round's
+//          forced collection a sticky one: the heap's high-water mark
+//          grows by less than one chain from the third round (the line
+//          marks put back before each sticky mark free the dead chain's
+//          lines; left as the young collections marked them, the heap
+//          grows by a chain a round);
+//   reuse  a trace evacuates sparse old blocks and frees them, a chain
+//          of the same objects then fills them and is promoted where it
+//          lies, a sticky collection follows: the chain reads back whole
+//          after fresh objects are made over every free line (a side mark
+//          left on a freed block would make the sticky mark pass over
+//          the chain's nodes there and free their lines; under the
+//          verifier every collection also asks that every side mark is an
+//          old object's).
+// In the default environment the statistics line shows that the path
+// was taken: eight sticky collections in the leak part, an evacuation
+// and a sticky collection in the reuse part.
+fn test_sticky_reuse(c: Checks, compiler: String, root: String, dir: String) {
+  jobs: Array(HJob) = []
+  jobs.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/sticky_reuse.av", "${dir}/sticky_reuse", "${dir}/sticky_reuse.log", ["--cc", "${root}/tests/fixtures/ffi/ffi.c"]))
+  run_waves(jobs)
+  c.eq_int(jobs[0].code, 0, "sticky_reuse.av: compiles")
+  parts = ["leak", "reuse"]
+  wants = ["leak: returned 1\n", "reuse: whole 1\n"]
+  envs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0", "-u AVANT_GC_VERIFY AVANT_GC_STRESS=1"]
+  clean = "-u AVANT_GC_VERIFY -u AVANT_YOUNG_MB -u AVANT_NURSERY -u AVANT_GC_STRESS AVANT_GC_STATS=1"
+  runs: Array(HJob) = []
+  for p in 0..parts.size {
+    for e in 0..envs.size {
+      runs.push(run_job_env(dir, "sticky_reuse", "sticky_reuse.${parts[p]}${e}", "${envs[e]} STICKY_PART=${parts[p]}"))
+    }
+    runs.push(run_job_env(dir, "sticky_reuse", "sticky_reuse.${parts[p]}.show", "${clean} STICKY_PART=${parts[p]}"))
+  }
+  run_waves(runs)
+  for p in 0..parts.size {
+    for e in 0..envs.size {
+      what = "${parts[p]} plain"
+      if envs[e].size > 0 {
+        what = "${parts[p]} under ${envs[e]}"
+      }
+      k = "${dir}/sticky_reuse.${parts[p]}${e}"
+      c.eq_int(runs[p * (envs.size + 1) + e].code, 0, "sticky_reuse.av ${what}: exit 0")
+      c.eq_str(log_text("${k}.out"), wants[p], "sticky_reuse.av ${what}: the known stdout")
+      c.eq_str(log_text("${k}.err"), "", "sticky_reuse.av ${what}: no stderr (the oracle is silent)")
+    }
+  }
+  leak = log_text("${dir}/sticky_reuse.leak.show.err")
+  c.eq_int(stat_value(leak, "full_sticky"), 8, "sticky_reuse.av leak: each round's forced collection is a sticky one (full_sticky ${stat_value(leak, "full_sticky")})")
+  reuse = log_text("${dir}/sticky_reuse.reuse.show.err")
+  c.expect(stat_value(reuse, "def_evac_blocks") >= 16, "sticky_reuse.av reuse: the trace evacuated the sparse blocks (def_evac_blocks ${stat_value(reuse, "def_evac_blocks")})")
+  c.expect(stat_value(reuse, "full_sticky") >= 1, "sticky_reuse.av reuse: a sticky collection followed (full_sticky ${stat_value(reuse, "full_sticky")})")
+}
+
 // The number after ` KEY=` in an AVANT_GC_STATS=1 line, or -1.
 fn stat_value(text: String, key: String): Int {
   parts = text.split(" ")
@@ -251,6 +308,7 @@ fn test_main(c: Checks) {
     test_scope_binding(c, compiler, avant_test_root(), scratch_dir())
     test_keep_young(c, compiler, avant_test_root(), scratch_dir())
     test_sticky_full(c, compiler, avant_test_root(), scratch_dir())
+    test_sticky_reuse(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
