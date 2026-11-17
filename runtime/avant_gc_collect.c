@@ -497,6 +497,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
     /* The side marks the sticky full collection would keep are only the
      * old objects' (avant_gc_verify.c). */
     gc_verify_marks_old();
+    /* Every thread's outermost generated record entered through the
+     * runtime (avant_gc_verify.c). */
+    gc_verify_frames();
     gc_verify_starts_resume();
   }
   if (full && !gc_heap.sticky) {

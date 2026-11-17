@@ -2706,3 +2706,42 @@ void gc_verify_sticky_mark(void) {
   vp_each_object(vs_unreached);
   verify_clear_traced();
 }
+
+/* Generated code links a record that is not a first-frame function's
+ * inline with no test (avant_rt.h; the compiler's emit_gc.av): it relies
+ * on the thread having a record already. Asked before every collection:
+ * each registered thread's outermost record, when it holds its root words
+ * in place (generated code's), is the one avant_gc_frame_enter linked
+ * when the thread had none (a first-frame function's), and each in-place
+ * record's desc maps words inside a sane bound. A record linked inline on
+ * a thread with no frame would be the bottom of its chain without
+ * registering the thread or running the foreign thread's return to
+ * running; it fails here. */
+void gc_verify_frames(void) {
+  ThreadReg *t;
+  for (t = gc_heap.threads; t; t = t->next) {
+    const Frame *last = NULL;
+    uint32_t depth = 0;
+    EACH_FRAME(gc_thread_frames(t), f, {
+      uintptr_t d = gc_frame_desc(f);
+      if ((d & AVANT_GC_FRAME_INPLACE) == 0 && (d & AVANT_GC_FRAME_MAPPED) != 0) {
+        const AvantGcFrameMap *m = (const AvantGcFrameMap *)(d - AVANT_GC_FRAME_MAPPED);
+        if (m->n == 0 || m->n > 1u << 20) {
+          fprintf(stderr, "avant gc verify: frames: thread %d's record %p maps %llu root words, before coll=%llu\n",
+                  t->tid, (const void *)f, (unsigned long long)m->n,
+                  (unsigned long long)avant_g_stats.collections + 1);
+          gc_die("avant gc verify: frames: an in-place record's map is not one");
+        }
+      }
+      last = f;
+      depth++;
+    });
+    if (last && gc_frame_inplace(last) && (!t->owner || t->owner->base_frame != last)) {
+      fprintf(stderr,
+              "avant gc verify: frames: thread %d's outermost record %p (%u records) was linked inline, not by "
+              "avant_gc_frame_enter, before coll=%llu\n",
+              t->tid, (const void *)last, depth, (unsigned long long)avant_g_stats.collections + 1);
+      gc_die("avant gc verify: frames: a generated record linked inline with no frame below it");
+    }
+  }
+}

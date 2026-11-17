@@ -190,10 +190,16 @@ void avant_gc_leave(void) {
   if (!f) {
     gc_die("gc leave without enter");
   }
-  if (f->scope & AVANT_GC_SCOPE_OPEN) {
+  if (gc_frame_scope(f) & AVANT_GC_SCOPE_OPEN) {
     /* A runtime C scope (RC1) is innermost: it was not closed, or a
      * generated frame was left from inside one. */
     gc_die("gc leave inside a runtime C scope");
+  }
+  if (!(gc_frame_scope(f) & AVANT_GC_FRAME_C)) {
+    /* A generated function's record is innermost: its words after prev
+     * are that function's (its slot locals in place), not a free-list
+     * frame's. */
+    gc_die("gc leave inside a generated function's frame (avant_gc_leave without its avant_gc_enter)");
   }
   avant_gc_top = f->prev;
   f->n = 0;
@@ -207,26 +213,30 @@ void avant_gc_leave(void) {
 }
 
 /* The frame record in the caller's own stack. Generated
- * code does not take a frame from the free list: each frame
- * function keeps an AvantGcFrame in its stack frame, its slot array right
- * after it, and fills prev-free fields itself (slots, n = cap = the root
- * words, scope 0, then each slot's address). When the thread already has
- * an innermost frame, it links the record inline (prev = avant_gc_top,
- * avant_gc_top = the record); otherwise, and always in the call forms
- * (AVANT_LLVM_CALL_FORMS=1), it calls avant_gc_frame_enter, which does
- * what avant_gc_enter does for a thread's outermost frame (the heap's
- * first use, the thread's registration, rule 4's return to running for a
- * foreign thread's callback) and links it. At leave, a record that is
- * innermost and not outermost is unlinked inline (avant_gc_top = prev);
- * anything else calls avant_gc_frame_leave. A quiet region does not
- * clear the record's count: registering slots no collection reads is
- * harmless. The enters and roots statistics count the frames that
- * enter through a call (avant_gc_enter, avant_gc_frame_enter): in the
- * inline forms a thread's outermost frame, in the call forms every
+ * code does not take a frame from the free list: each frame function
+ * keeps its record in its stack frame, { prev, desc } with its slot
+ * locals in place after it (avant_gc.h), and stores desc itself. A
+ * function that is not a thread's first frame always runs below another
+ * record of its thread, and links and unlinks its record inline with no
+ * test (prev = avant_gc_top, avant_gc_top = the record; avant_gc_top =
+ * prev). A first-frame function (main, a C callback's thunk, a task's
+ * thunk) links inline when the thread already has an innermost frame;
+ * otherwise, and every frame in the call forms (AVANT_LLVM_CALL_FORMS=1),
+ * it calls avant_gc_frame_enter, which does what avant_gc_enter does for
+ * a thread's outermost frame (the heap's first use, the thread's
+ * registration, rule 4's return to running for a foreign thread's
+ * callback), notes the record as the thread's base_frame (the checked
+ * mode's gc_verify_frames) and links it. At leave such a record, when it
+ * is innermost and not outermost, is unlinked inline; anything else
+ * calls avant_gc_frame_leave. A record of a compiler built before the
+ * in-place layout ({ prev, slots, n, cap, scope } and the slot addresses)
+ * enters the same way. The enters and roots statistics count the frames
+ * that enter through a call (avant_gc_enter, avant_gc_frame_enter): in
+ * the inline forms a thread's outermost frame, in the call forms every
  * frame. */
 void avant_gc_frame_enter(Frame *f) {
   gc_heap.ctr.root.enters++;
-  gc_heap.ctr.root.roots += f->n;
+  gc_heap.ctr.root.roots += gc_frame_slot_count(f);
   gc_init();
   if (!gc_thread.reg.head) {
     register_thread(1);
@@ -234,6 +244,9 @@ void avant_gc_frame_enter(Frame *f) {
   if (gc_thread.base_native && !avant_gc_top) {
     gc_thread.base_native = 0;
     avant_gc_native_end();
+  }
+  if (!avant_gc_top) {
+    gc_thread.base_frame = f;
   }
   f->prev = avant_gc_top;
   avant_gc_top = f;
@@ -244,12 +257,15 @@ void avant_gc_frame_leave(Frame *f) {
     if (!avant_gc_top) {
       gc_die("gc leave without enter");
     }
-    if (avant_gc_top->scope & AVANT_GC_SCOPE_OPEN) {
+    if (gc_frame_scope(avant_gc_top) & AVANT_GC_SCOPE_OPEN) {
       gc_die("gc leave inside a runtime C scope");
     }
     gc_die("gc leave of a frame that is not innermost");
   }
   avant_gc_top = f->prev;
+  if (gc_thread.base_frame == f) {
+    gc_thread.base_frame = NULL;
+  }
   if (!avant_gc_top && gc_thread.foreign && !gc_thread.base_native) {
     /* Rule 4: a foreign thread is native between callbacks. */
     gc_thread.base_native = 1;
@@ -293,15 +309,16 @@ void avant_gc_quiet_leave(void) {
 /* avant_gc_root and avant_gc_root_begin act on the
  * innermost frame, which must be one avant_gc_enter opened. Called by user
  * C without its own avant_gc_enter, the innermost frame is a generated
- * function's record or a runtime scope, whose slot array lives in a stack
- * frame: growing it would realloc a stack address, and filling it would
- * overwrite the caller's registered slots. */
+ * function's record (whose words after prev are that function's own) or
+ * a runtime scope, whose slot array lives in a stack frame: growing it
+ * would realloc a stack address, and filling it would overwrite the
+ * caller's locals or registered slots. */
 static void user_frame_check(Frame *f, const char *who) {
-  if (!(f->scope & AVANT_GC_FRAME_C)) {
+  if (!(gc_frame_scope(f) & AVANT_GC_FRAME_C)) {
     char msg[256];
     snprintf(msg, sizeof msg,
              "%s without avant_gc_enter: the innermost frame is %s, not one this C code opened (call avant_gc_enter first, avant_gc_leave after)",
-             who, (f->scope & AVANT_GC_SCOPE_OPEN) ? "a runtime C scope" : "a generated function's frame record");
+             who, (gc_frame_scope(f) & AVANT_GC_SCOPE_OPEN) ? "a runtime C scope" : "a generated function's frame record");
     gc_die(msg);
   }
 }

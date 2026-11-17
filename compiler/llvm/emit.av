@@ -45,7 +45,7 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
   body = e.out.to_s()
   e.out = buf_new()
   ll_type_maps(e)
-  if e.used_frame_global {
+  if e.used_frame_helpers {
     ll_gc_frame_helpers(e)
   }
   if e.used_alloc_slow {
@@ -63,6 +63,15 @@ pub fn ll_emit_module(m: MModule, inline_fast: Bool): String {
     for i2 in 0..m.strs.size {
       s = m.strs[i2]
       out.push_str("@str.${i2} = private constant [${s.size + 1} x i8] c\"${mir_escape(s)}\\00\", align 1\n")
+    }
+    out.push_str("\n")
+  }
+  if e.frame_maps.size > 0 {
+    // The frame records' maps too wide for an inline desc
+    // (ll_gc_frame_layout).
+    for t in e.frame_maps {
+      out.push_str(t)
+      out.push_str("\n")
     }
     out.push_str("\n")
   }
@@ -315,15 +324,20 @@ fn ll_function(e: LlEmit, f: MFunc) {
   }
   e.out.push_str(") #0 {\nalloca:\n")
   e.label = "alloca"
+  // The frame record first: a slot local's address is in it.
+  ll_gc_frame_layout(e, f)
+  if e.frame_words >= 0 {
+    e.line("%gcf = alloca ${ll_gc_frame_type(e)}, align ${e.frame_align}")
+  }
   for i in 0..f.locals.size {
     if f.valid_local(i) {
       ty = f.locals[i].ty
-      e.line("${e.local_name(i)} = alloca ${e.llt(ty)}, align ${e.align(ty)}")
+      if e.frame_words >= 0 && e.frame_at[i] >= 0 {
+        e.line("${e.local_name(i)} = getelementptr inbounds i8, ptr %gcf, i64 ${e.frame_at[i]}")
+      } else {
+        e.line("${e.local_name(i)} = alloca ${e.llt(ty)}, align ${e.align(ty)}")
+      }
     }
-  }
-  e.frame_words = ll_gc_frame_words(e, f)
-  if e.frame_words >= 0 {
-    e.line("%gcf = alloca ${ll_gc_frame_type(e.frame_words)}, align 8")
   }
   i = 1
   while i <= f.nparams {

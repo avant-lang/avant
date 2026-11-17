@@ -23,6 +23,9 @@ import backends
 // here; `main` keeps its record, and so does the thunk C calls in
 // tests/fixtures/ffi/first_frame.av (`check#cb`, the first-frame rule)
 // while the functions it calls (`check`, `fill`) have none.
+// tests/fixtures/ffi/frame_layout.av: a record holds its slot locals in
+// place after { prev, desc }; desc is an inline map or a constant map's
+// address; a record that is not a thread's first frame links inline.
 //
 // A constructor with an `initialize` and no field code
 // is lowered at its call site (`pair` allocates inline and calls
@@ -132,11 +135,33 @@ fn test_alloc_shape(c: Checks, compiler: String, root: String, dir: String) {
   c.eq_int(emit_ll(compiler, ff, fll, "${dir}/first_frame.ll.log"), 0, "first_frame.av: __emit-ll")
   ftext = log_text(fll)
   thunk = ll_fn(ftext, "av.first_frame/check#cb")
-  c.expect(str_has(thunk, "%gcf = alloca { ptr, ptr, i32, i32, i32 }") && str_has(thunk, "call void @__avant_frame_push(ptr %gcf)"), "frame records: the C callback's thunk check#cb keeps a record with no slot (the first-frame rule)")
+  c.expect(str_has(thunk, "%gcf = alloca { ptr, i64 }") && str_has(thunk, "call void @__avant_frame_push(ptr %gcf)"), "frame records: the C callback's thunk check#cb keeps a record with no slot (the first-frame rule)")
   for f in ["check", "fill"] {
     body = ll_fn(ftext, "av.first_frame/${f}")
     c.expect(body.size > 0 && !str_has(body, "%gcf"), "frame records: first_frame.av's ${f} (no root slot) links no frame record")
   }
+
+  // The record holds its root words in place: { prev, desc } and the
+  // slot locals after it, each named by its address in the record; desc
+  // maps the root words inline up to 62 words, else names a constant map.
+  // A function that is not a thread's first frame links and unlinks it
+  // inline, with no runtime call and no test.
+  fl = "${root}/tests/fixtures/ffi/frame_layout.av"
+  flll = "${dir}/frame_layout.ll"
+  c.eq_int(emit_ll(compiler, fl, flll, "${dir}/frame_layout.ll.log"), 0, "frame_layout.av: __emit-ll")
+  ltext = log_text(flll)
+  hm = ll_fn(ltext, "av.frame_layout/hold_m")
+  c.expect(str_has(hm, "%gcf = alloca { ptr, i64, [2 x i64] }, align 8"), "frame records: hold_m's record is its header and its one slot of type M (two words) in place")
+  c.expect(str_has(hm, "getelementptr inbounds i8, ptr %gcf, i64 16"), "frame records: hold_m's slot local is its address in the record")
+  c.expect(str_has(hm, "store i64 5, ptr "), "frame records: hold_m's desc is the inline map 5 (word 1, M's string, is a root word)")
+  c.expect(str_has(hm, "load ptr, ptr @avant_gc_top") && str_has(hm, "store volatile ptr %gcf, ptr @avant_gc_top"), "frame records: hold_m links its record inline")
+  c.expect(!str_has(hm, "@__avant_frame_push") && !str_has(hm, "@__avant_frame_pop") && !str_has(hm, "@avant_gc_frame_enter") && !str_has(hm, "@avant_gc_frame_leave"), "frame records: hold_m (not a thread's first frame) calls no frame helper or runtime entry")
+  hw = ll_fn(ltext, "av.frame_layout/hold_w")
+  c.expect(str_has(hw, "%gcf = alloca { ptr, i64, [66 x i64] }, align 8"), "frame records: hold_w's record holds its W (64 words) and its M in place")
+  c.expect(str_has(hw, "store ptr getelementptr (i8, ptr @__avant_frame_map."), "frame records: hold_w's desc names a constant map (66 words, over the inline map's 62)")
+  c.expect(str_has(ltext, "{ i64 33, [33 x i32] [i32 1, i32 3, "), "frame records: hold_w's map lists its 33 root words")
+  lm = ll_fn(ltext, "main")
+  c.expect(str_has(lm, "call void @__avant_frame_push(ptr %gcf)") && str_has(lm, "call void @__avant_frame_pop(ptr %gcf)"), "frame records: main (a thread's first frame) links through the helpers")
 
   // The constructor at its call site, no barrier on the fresh object.
   tinit = ll_fn(text, "av.alloc_shape/Tree.initialize")

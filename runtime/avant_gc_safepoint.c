@@ -148,7 +148,7 @@ static void hs_report_stalled(uint64_t waited_ns) {
         gen = f;
         break;
       }
-      if (f->scope & AVANT_GC_SCOPE_OPEN) {
+      if (gc_frame_scope(f) & AVANT_GC_SCOPE_OPEN) {
         above_scope++;
       } else {
         above_c++;

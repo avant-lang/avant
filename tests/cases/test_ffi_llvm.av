@@ -288,6 +288,34 @@ fn test_ffi_llvm(c: Checks, compiler: String, root: String, dir: String) {
   run_waves(gr)
   c.expect(gr[0].code != 0, "root_guard.av: rg_bad stops the program")
   c.expect(str_has(log_text("${dir}/root_guard.r.err"), "avant_gc_root_begin without avant_gc_enter: the innermost frame is a generated function's frame record"), "root_guard.av: the guard's message (after rg_good, with its own frame, returned 1)")
+  // A frame record's root words in place (tests/fixtures/ffi/frame_layout.av):
+  // locals of an inline map and of a constant map held across
+  // collections; avant_gc_leave inside an Avant function's record stops
+  // with its message; a record linked inline at the bottom of a chain is
+  // stopped by the checked mode.
+  fj: Array(HJob) = []
+  fj.push(compile_job_flags("", compiler, "${root}/tests/fixtures/ffi/frame_layout.av", "${dir}/frame_layout", "${dir}/frame_layout.log", flags_of("tests/fixtures/ffi/frame_layout.av", root)))
+  run_waves(fj)
+  c.eq_int(fj[0].code, 0, "frame_layout.av: compiles")
+  fenvs = ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0"]
+  fr: Array(HJob) = []
+  for ei in 0..fenvs.size {
+    fr.push(run_job_env(dir, "frame_layout", "frame_layout.v${ei}", fenvs[ei]))
+  }
+  fr.push(run_job_env(dir, "frame_layout", "frame_layout.leave", "FRAME_PART=leave"))
+  fr.push(run_job_env(dir, "frame_layout", "frame_layout.bottom", "FRAME_PART=bottom AVANT_GC_VERIFY=1"))
+  run_waves(fr)
+  for ei in 0..fenvs.size {
+    c.eq_int(fr[ei].code, 0, "frame_layout.av [${fenvs[ei]}]: exit 0")
+    c.eq_str(log_text("${dir}/frame_layout.v${ei}.out"), "values: 40 of 40 held\n", "frame_layout.av [${fenvs[ei]}]: every slot local held across collections reads back")
+    c.eq_str(log_text("${dir}/frame_layout.v${ei}.err"), "", "frame_layout.av [${fenvs[ei]}]: no stderr")
+  }
+  fi = fenvs.size
+  c.expect(fr[fi].code != 0, "frame_layout.av leave: avant_gc_leave inside an Avant function's record stops the program")
+  c.expect(str_has(log_text("${dir}/frame_layout.leave.err"), "gc leave inside a generated function's frame (avant_gc_leave without its avant_gc_enter)"), "frame_layout.av leave: the runtime's message")
+  c.eq_str(log_text("${dir}/frame_layout.leave.out"), "", "frame_layout.av leave: nothing after the call runs")
+  c.expect(fr[fi + 1].code != 0, "frame_layout.av bottom: the checked mode stops the program")
+  c.expect(str_has(log_text("${dir}/frame_layout.bottom.err"), "a generated record linked inline with no frame below it"), "frame_layout.av bottom: the checked mode's message")
   // A stack overflow through 32 KB frames on a
   // pool thread faults in the thread's guard page on every one of 40
   // runs (the stack probe every function carries). Without the probe

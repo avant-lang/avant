@@ -124,16 +124,22 @@ void *avant_gc_root_begin(uint32_t count);
 void *avant_gc_reload(void *slot);
 /* Frames in the caller's stack: generated code keeps
  * each frame's record in its own stack frame, laid out as
- * { prev: pointer, slots: pointer, n: u32, cap: u32, scope: u32 } (32
- * bytes with padding; the slot array follows it), with slots, n = cap
- * (the frame's root words), scope = 0 and the slot addresses stored by
- * the caller. It links the record itself (prev = avant_gc_top,
- * avant_gc_top = record) when avant_gc_top is not null, else calls
- * avant_gc_frame_enter, which also registers the thread and initializes
- * the heap; it unlinks it itself (avant_gc_top = prev) when the record is
- * avant_gc_top and prev is not null, else calls avant_gc_frame_leave.
- * User C keeps using avant_gc_enter, avant_gc_root_begin and
- * avant_gc_leave. */
+ * { prev: pointer, desc: u64 } followed in place by the function's root
+ * slots themselves (its locals that hold references across a collecting
+ * call, each at its alignment). desc maps the words after the two header
+ * words: when it is odd, bit i + 1 is set exactly when word i is a root
+ * word (at most 62 words); when its low two bits are 2, desc - 2 is the
+ * address of a constant { n: u64, word: u32[n] } listing the root words'
+ * indices. The caller zeroes the slots, stores desc, and links the
+ * record itself (prev = avant_gc_top, avant_gc_top = record) when
+ * avant_gc_top is not null, else calls avant_gc_frame_enter, which also
+ * registers the thread and initializes the heap; it unlinks it itself
+ * (avant_gc_top = prev) when the record is avant_gc_top and prev is not
+ * null, else calls avant_gc_frame_leave. The runtime also walks the
+ * older record { prev, slots, n, cap, scope } with an array of slot
+ * addresses (desc's low two bits clear), which compilers before this
+ * layout emit and user C's frames use. User C keeps using
+ * avant_gc_enter, avant_gc_root_begin and avant_gc_leave. */
 struct AvantGcFrame;
 extern __thread struct AvantGcFrame *avant_gc_top;
 void avant_gc_frame_enter(struct AvantGcFrame *frame);

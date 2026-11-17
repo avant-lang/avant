@@ -406,13 +406,15 @@ typedef struct LargeIter {
 typedef AvantGcFrame Frame;
 
 /* The one frame-slot iterator. Every root walker reads frame records through
- * the three macros below and nothing else, so the record's layout is
- * known in one place: how a record names the one before it (prev), how
- * many root slots it has (n) and where the i-th is (slots[i], the
- * address of the slot: a local of generated code, a C local a scope or a
- * user frame registered). A record with its root words in place would
- * change EACH_SLOT_OF (and the scope bits a walker may ask through
- * gc_frame_generated), and no walker.
+ * the three macros below and nothing else, so the record's layouts are
+ * known in one place: how a record names the one before it (prev), and
+ * which words are its root slots, as the slot's address (a local of
+ * generated code, a C local a scope or a user frame registered). Two
+ * layouts (avant_gc.h): a record generated code links holds its slot
+ * locals in place after { prev, desc }, and desc maps their root words
+ * (inline, or through an AvantGcFrameMap); every other record (user C's,
+ * a scope's, a frame of a compiler built before the in-place layout) has
+ * a slot array, slots[0..n).
  *
  *   EACH_FRAME(HEAD, F, BODY)        the records of a chain from its
  *                                    innermost one HEAD, innermost first,
@@ -431,10 +433,11 @@ typedef AvantGcFrame Frame;
  * defragmenter's fix-up (avant_gc_defrag.c), the verifier's root walks
  * (avant_gc_verify.c: verify_each_root, the stale-root checks of the
  * whole and the incremental sticky check, the defragmentation check),
- * the stalled-handshake report (avant_gc_safepoint.c, records only) and
- * the "is it rooted" test of a growth's freed buffer (avant_gc_los.c).
- * avant_gc_root and avant_gc_root_begin (avant_gc_roots.c) fill a user
- * frame's slot array; they register slots, they do not walk roots. */
+ * the proof's root walk (avant_gc_proof.c), the stalled-handshake report
+ * (avant_gc_safepoint.c, records only) and the "is it rooted" test of a
+ * growth's freed buffer (avant_gc_los.c). avant_gc_root and
+ * avant_gc_root_begin (avant_gc_roots.c) fill a user frame's slot array;
+ * they register slots, they do not walk roots. */
 #define EACH_FRAME(HEAD, F, BODY)                                                   \
   do {                                                                              \
     Frame *F;                                                                       \
@@ -443,25 +446,102 @@ typedef AvantGcFrame Frame;
     }                                                                               \
   } while (0)
 
+/* Whether a record holds its root words in place (generated code's), and
+ * its desc. */
+static inline uintptr_t gc_frame_desc(const Frame *f) {
+  return (uintptr_t)f->slots;
+}
+
+static inline int gc_frame_inplace(const Frame *f) {
+  return (gc_frame_desc(f) & (AVANT_GC_FRAME_INPLACE | AVANT_GC_FRAME_MAPPED)) != 0;
+}
+
+/* The words after an in-place record's two header words. */
+static inline void **gc_frame_words(const Frame *f) {
+  return (void **)((uintptr_t)f + 2 * sizeof(void *));
+}
+
+/* A cursor over one record's root slots: an inline map's remaining bits,
+ * a map's remaining word indices, or a slot array's remaining entries. */
+typedef struct SlotCursor {
+  void **words;
+  uint64_t bits;
+  const uint32_t *idx;
+  void ***slots;
+  uint32_t i;
+  uint32_t n;
+} SlotCursor;
+
+static inline void gc_slot_cursor(SlotCursor *c, const Frame *f) {
+  uintptr_t d = gc_frame_desc(f);
+  c->words = gc_frame_words(f);
+  c->bits = 0;
+  c->idx = NULL;
+  c->slots = NULL;
+  c->i = 0;
+  c->n = 0;
+  if (d & AVANT_GC_FRAME_INPLACE) {
+    c->bits = (uint64_t)d >> 1;
+  } else if (d & AVANT_GC_FRAME_MAPPED) {
+    const AvantGcFrameMap *m = (const AvantGcFrameMap *)(d - AVANT_GC_FRAME_MAPPED);
+    c->idx = m->word;
+    c->n = (uint32_t)m->n;
+  } else {
+    c->slots = f->slots;
+    c->n = f->n;
+  }
+}
+
+/* The next root slot's address into *slot; 0 when the record has no
+ * more (a slot array's entry is passed on as it is, null included). */
+static inline int gc_slot_next(SlotCursor *c, void ***slot) {
+  if (c->bits) {
+    unsigned b = (unsigned)__builtin_ctzll(c->bits);
+    c->bits &= c->bits - 1;
+    *slot = c->words + b;
+    return 1;
+  }
+  if (c->i < c->n) {
+    uint32_t i = c->i++;
+    *slot = c->idx ? c->words + c->idx[i] : c->slots[i];
+    return 1;
+  }
+  return 0;
+}
+
 #define EACH_SLOT_OF(F, SLOT, BODY)                                                 \
   do {                                                                              \
-    const Frame *eso_f_ = (F);                                                      \
-    uint32_t eso_i_;                                                                \
-    for (eso_i_ = 0; eso_i_ < eso_f_->n; eso_i_++) {                                \
-      void **SLOT = eso_f_->slots[eso_i_];                                          \
+    SlotCursor eso_c_;                                                              \
+    void **SLOT;                                                                    \
+    gc_slot_cursor(&eso_c_, (F));                                                   \
+    while (gc_slot_next(&eso_c_, &SLOT)) {                                          \
       BODY                                                                          \
     }                                                                               \
   } while (0)
 
 #define EACH_FRAME_SLOT(HEAD, SLOT, BODY) EACH_FRAME(HEAD, efs_f_, { EACH_SLOT_OF(efs_f_, SLOT, BODY); })
 
+/* A record's scope bits (AVANT_GC_SCOPE_OPEN, AVANT_GC_FRAME_C): none
+ * for an in-place record, whose words after prev and desc are its
+ * function's locals. */
+static inline uint32_t gc_frame_scope(const Frame *f) {
+  return gc_frame_inplace(f) ? 0u : f->scope;
+}
+
 /* A record generated code linked (not a runtime scope, not a user C
  * frame), and its slot count. */
 static inline int gc_frame_generated(const Frame *f) {
-  return (f->scope & (AVANT_GC_SCOPE_OPEN | AVANT_GC_FRAME_C)) == 0;
+  return (gc_frame_scope(f) & (AVANT_GC_SCOPE_OPEN | AVANT_GC_FRAME_C)) == 0;
 }
 
 static inline uint32_t gc_frame_slot_count(const Frame *f) {
+  uintptr_t d = gc_frame_desc(f);
+  if (d & AVANT_GC_FRAME_INPLACE) {
+    return (uint32_t)__builtin_popcountll((uint64_t)d >> 1);
+  }
+  if (d & AVANT_GC_FRAME_MAPPED) {
+    return (uint32_t)((const AvantGcFrameMap *)(d - AVANT_GC_FRAME_MAPPED))->n;
+  }
   return f->n;
 }
 
@@ -1667,6 +1747,11 @@ typedef struct GcThread {
   int collector;
   int foreign;
   int base_native;
+  /* The record avant_gc_frame_enter linked as the thread's outermost
+   * frame (avant_gc_top was null), while it is linked: the checked
+   * mode's gc_verify_frames asks that an in-place record at the bottom
+   * of a chain be this one. */
+  Frame *base_frame;
   /* The thread's allocation cursors (per thread since the handshake stops the
    * world for a collection; they were gc_heap's, one per process, so only one
    * thread could allocate young). cur and limit: the C cursor's block and its
@@ -2089,6 +2174,7 @@ void gc_proof_lines_restore(void);
 void gc_mark_sticky_holders(void);
 void gc_verify_sticky_mark(void);
 void gc_verify_marks_old(void);
+void gc_verify_frames(void);
 void gc_proof_full_begin(void);
 void gc_proof_full_end(void);
 GcProofWhy gc_proof_check(void);

@@ -914,3 +914,35 @@ int64_t ffi_unpin_kept(void) {
   }
   return 1;
 }
+
+/* frame_layout.av: generated code keeps its root words in its frame
+ * record and links a record inline when the thread already has one.
+ * fl_leave calls avant_gc_leave with no avant_gc_enter of its own: the
+ * innermost frame is its Avant caller's record, which the runtime refuses
+ * with a message (it would otherwise put that record, whose words are the
+ * caller's locals, on the thread's free list). fl_inline_bottom links a
+ * record laid out as generated code lays it out, { prev, desc } and one
+ * root word, as the bottom of the thread's chain (no frame below it, as
+ * if a function that is not a thread's first frame ran first) and asks
+ * for a collection: the checked mode stops the program before it
+ * collects; the chain is put back after it. */
+void avant_gc_collect(void);
+struct AvantGcFrame;
+extern __thread struct AvantGcFrame *avant_gc_top;
+
+int64_t fl_leave(void) {
+  avant_gc_leave();
+  return 1;
+}
+
+int64_t fl_inline_bottom(void) {
+  void *rec[3];
+  struct AvantGcFrame *saved = avant_gc_top;
+  rec[0] = NULL;
+  rec[1] = (void *)(uintptr_t)3; /* inline map: word 0 is a root word */
+  rec[2] = NULL;
+  avant_gc_top = (struct AvantGcFrame *)rec;
+  avant_gc_collect();
+  avant_gc_top = saved;
+  return 1;
+}
