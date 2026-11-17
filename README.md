@@ -1324,7 +1324,7 @@ fn main {
   xs.sort()
   puts(xs[0])            // => 1
   puts(xs.sum())           // => 12
-  puts(xs.contains(5))   // => true
+  puts(xs.has(5))        // => true
 
   total = 0
   for x in xs {
@@ -1392,7 +1392,7 @@ There are no negative indexes and no slices of arrays yet.
 | `xs.sort()`, `xs.sort (a, b) { a < b }` | sort in place: by the element's order, or by a lambda that says whether `a` comes first |
 | `xs.sorted()`, `xs.sorted (a, b) { ... }` | the same, as a new array |
 | `xs.reverse()` | reverse in place |
-| `xs.contains(v)`, `xs.index_of(v)` | `Bool`; `Int?`, the first position; by the elements' `==` ([Equality and order](#equality-and-order)), so a struct compares its fields and an array its elements, and an element type without `==` is refused |
+| `xs.has(v)`, `xs.index_of(v)` | `Bool`; `Int?`, the first position; by the elements' `==` ([Equality and order](#equality-and-order)), so a struct compares its fields and an array its elements, and an element type without `==` is refused |
 | `xs.min()`, `xs.max()` | `T?`: `nil` for an empty array |
 | `xs.sum()` | the total (numeric arrays); traps on overflow |
 | `xs.any (x) { ... }`, `xs.all (x) { ... }` | `Bool`, stopping at the first answer |
@@ -3743,7 +3743,7 @@ fn main {
   puts(copy("missing.txt", "copy.txt") ?? -1)     // => -1
   puts(file_exists("copy.txt"))                   // => true
   names = dir_list(".") ?? []
-  puts(names.contains("copy.txt"))                // => true
+  puts(names.has("copy.txt"))                     // => true
 }
 ```
 

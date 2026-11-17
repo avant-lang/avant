@@ -880,8 +880,8 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   }
   et = lw.elem_of(aty)
   want = lw.elem_ty_of(recv)
-  // The value first, then the receiver: push, contains, fill.
-  if (name == "push" || name == "contains" || name == "fill") && args.size == 1 {
+  // The value first, then the receiver: push, has, fill.
+  if (name == "push" || name == "has" || name == "contains" || name == "fill") && args.size == 1 {
     v = lw.snap(lw.lower_coerced(args[0], et, want), recv)
     a = lw.lower_expr(recv)
     if lw.failed() {
@@ -916,7 +916,7 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     }
     cf = lw.kind_fn("avant_array_contains", cet, true)
     if cf.size == 0 {
-      lw.refuse(e.loc, "Array.contains on ${want.show()}")
+      lw.refuse(e.loc, "Array.${name} on ${want.show()}")
       return zero
     }
     r = lw.call_to(mt_i32(), cf, lw.two(b.copy_local(h), v))

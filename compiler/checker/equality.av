@@ -814,7 +814,7 @@ pub fn (checker_self: Checker) user_order_call(expr: Expr, array: Ty): Ty? {
   nil
 }
 
-// `xs.contains(v)` and `xs.index_of(v)` (expr, its argument checked)
+// `xs.has(v)` and `xs.index_of(v)` (expr, its argument checked)
 // with elements of type e: they compare by the element's ==, and refuse
 // what == refuses. An element the runtime searches as == compares it (an
 // integer, a Float64 by IEEE, a Bool, a String by bytes, a class without
@@ -838,6 +838,9 @@ pub fn (checker_self: Checker) search_by_eq(expr: Expr, e: Ty) {
     checker_self.derive_eq_method(e, expr.loc)
   }
   name = "__avant_${expr.callee}"
+  if expr.callee == "has" {
+    name = "__avant_contains"
+  }
   if recv = expr.receiver, sig = checker_self.eq_template(name) {
     subst: Array(Ty) = []
     subst.push(e)

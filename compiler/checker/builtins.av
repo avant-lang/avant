@@ -497,19 +497,22 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
     }
     return checker_self.expect_no_args(expr, checker_self.t_void(), "reverse takes no arguments")
   }
-  if expr.callee == "contains" {
+  // `has` is the membership test of every collection; `contains` is its
+  // old name on arrays, kept while the compiler's own sources use it.
+  if expr.callee == "has" || expr.callee == "contains" {
+    member = expr.callee
     if b = expr.block {
-      checker_self.fail(expr.loc, "contains does not take a block")
+      checker_self.fail(expr.loc, "${member} does not take a block")
       return checker_self.t_bool()
     }
     if expr.args.size != 1 {
-      checker_self.fail(expr.loc, "contains takes one argument")
+      checker_self.fail(expr.loc, "${member} takes one argument")
       return checker_self.t_bool()
     }
     if e = array.inner {
       got = checker_self.check_expr_as(expr.args[0], e)
       if !ty_assignable(got, e) {
-        checker_self.fail(expr.args[0].loc, "contains expects ${e.show()}")
+        checker_self.fail(expr.args[0].loc, "${member} expects ${e.show()}")
         return checker_self.t_bool()
       }
       checker_self.search_by_eq(expr, e)
