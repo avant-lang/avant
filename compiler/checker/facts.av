@@ -2639,3 +2639,28 @@ pub fn (checker_self: Checker) sweep_proofs(s: Stmt, names: Array(String)) {
     checker_self.sweep_proofs(st, names)
   }
 }
+
+// ---- A name bound anew
+//
+// A case binding (`case xs: Array(Int)`), and any other binding of a new
+// variable, may hide a variable of the same name; the facts, keyed by
+// name, would otherwise go on describing the hidden one. They end when the name is bound (the hidden variable
+// loses them too, until its next assignment or loop).
+pub fn (checker_self: Checker) forget_facts(name: String) {
+  if name.size == 0 || !checker_self.facts_name(name) {
+    return
+  }
+  checker_self.kill_facts_for(name)
+  checker_self.nn_remove(name)
+  checker_self.cap_remove(name)
+  checker_self.cap_kill_guards(name)
+  checker_self.sv_remove_var(name)
+  checker_self.bv_remove_var(name)
+  checker_self.cs_remove_var(name)
+}
+
+// Whether any fact or relation names name.
+pub fn (checker_self: Checker) facts_name(name: String): Bool {
+  f = checker_self.facts
+  f.fact_var.contains(name) || f.fact_cont.contains(name) || f.nn_var.contains(name) || f.cap_var.contains(name) || f.sv_var.contains(name) || f.sv_cont.contains(name) || f.bv_var.contains(name) || f.bv_cont.contains(name) || f.cs_var.contains(name) || f.cs_cont.contains(name) || f.gcap_var.contains(name) || f.gnn_var.contains(name) || f.gpos_var.contains(name) || f.gne_var.contains(name)
+}
