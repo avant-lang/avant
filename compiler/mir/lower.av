@@ -196,6 +196,15 @@ pub class MirLower {
   pub lw_arg_ops: Array(MOperand)
   pub lw_heads: Array(Int)
   pub lw_exits: Array(Int)
+  // The lambdas in parentheses a builtin inlines whose body returns
+  // (Block.returns), innermost last: where a `return` goes on (the end
+  // of that run of the body), the local its value goes to (-1 for none),
+  // that value's type, and the pins open when the body began
+  // (lower_block.av lam_open).
+  pub lw_lam_ends: Array(Int)
+  pub lw_lam_slots: Array(Int)
+  pub lw_lam_tys: Array(Ty)
+  pub lw_lam_pins: Array(Int)
   pub lw_ret: Int = 0
   pub lw_main: Bool = false
   pub lw_fn_loc: Location
@@ -228,6 +237,10 @@ pub class MirLower {
     self.lw_arg_ops = []
     self.lw_heads = []
     self.lw_exits = []
+    self.lw_lam_ends = []
+    self.lw_lam_slots = []
+    self.lw_lam_tys = []
+    self.lw_lam_pins = []
     self.lw_fn_loc = program.loc
     self.lw_self_name = ""
     self.lw_busy = Hash(String, Int).new()
@@ -529,6 +542,10 @@ pub class MirLower {
     self.lw_arg_ops = []
     self.lw_heads = []
     self.lw_exits = []
+    self.lw_lam_ends = []
+    self.lw_lam_slots = []
+    self.lw_lam_tys = []
+    self.lw_lam_pins = []
     self.lw_fn_loc = loc
     self.lw_self = 0
     self.lw_self_struct = false

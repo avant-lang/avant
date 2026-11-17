@@ -607,6 +607,16 @@ pub fn (lw: MirLower) load_captures(e: Expr, c: Int, l: Int, base: Int) {
 // emit_parallel_thunk, emit_mutex_with: the last value is not a counted
 // statement).
 pub fn (lw: MirLower) task_value(bl: Block, want: Ty): MOperand? {
+  if bl.paren && bl.returns {
+    mty = mt_void()
+    if !want.is_void() {
+      mty = lw.ty_at(want, bl.loc, "a lambda's value")
+      if lw.failed() {
+        return nil
+      }
+    }
+    return lw.lam_value(bl, want, mty, -1, -1)
+  }
   if bl.body.size == 0 {
     lw.refuse(bl.loc, "an empty block")
     return nil

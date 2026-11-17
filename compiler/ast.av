@@ -215,6 +215,15 @@ pub class Block {
   // the parameter as an index of them; the lowering binds the two.
   pub place_arr: String = ""
   pub place_idx: String = ""
+  // Written as a function without a name, `(x) { ... }` or
+  // `(a: Int): Int { ... }`: `return` returns from the lambda, also when
+  // a builtin inlines it as a loop; the braces with pipes (`{ |x| ... }`)
+  // keep the older meaning, where a builtin's block is a loop body.
+  pub paren: Bool = false
+  pub ret_type: TypeName? = nil
+  // Set by the checker for such a lambda inlined by a builtin when a
+  // `return` in it ends its run (the lowering's result slot).
+  pub returns: Bool = false
 
   fn initialize(loc: Location) {
     self.loc = loc
@@ -976,6 +985,11 @@ pub fn clone_block(b: Block): Block {
   }
   out.place_arr = b.place_arr
   out.place_idx = b.place_idx
+  out.paren = b.paren
+  out.returns = b.returns
+  if rt = b.ret_type {
+    out.ret_type = clone_type_name(rt)
+  }
   out
 }
 
@@ -1295,6 +1309,9 @@ pub fn subst_type_in_expr(e: Expr, from: Array(String), to: Array(TypeName)) {
     while i < b.param_types.size {
       b.param_types[i] = subst_type_name(b.param_types[i], from, to)
       i += 1
+    }
+    if rt = b.ret_type {
+      b.ret_type = subst_type_name(rt, from, to)
     }
   }
   if t = e.elem_type {

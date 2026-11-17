@@ -400,7 +400,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         checker_self.loop_depth += 1
         checker_self.push_scope()
         checker_self.bind_walk_param(expr, b, array, e)
-        checker_self.check_body(b.body, checker_self.return_type, false)
+        checker_self.check_walk_body(b, "each")
         checker_self.pop_scope()
         checker_self.loop_depth -= 1
         checker_self.end_places(saved_places)
@@ -431,7 +431,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         checker_self.note_for_var(b.params[0], 7)
         checker_self.note_for_var(b.params[1], 7)
         checker_self.loop_depth += 1
-        bt = checker_self.check_block_value(b)
+        bt = checker_self.check_walk_value(b, "sort", checker_self.t_bool())
         checker_self.loop_depth -= 1
         checker_self.pop_scope()
         checker_self.end_for_vars(saved_for)
@@ -471,7 +471,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         checker_self.note_for_var(b.params[0], 7)
         checker_self.note_for_var(b.params[1], 7)
         checker_self.loop_depth += 1
-        bt = checker_self.check_block_value(b)
+        bt = checker_self.check_walk_value(b, "sorted", checker_self.t_bool())
         checker_self.loop_depth -= 1
         checker_self.pop_scope()
         checker_self.end_for_vars(saved_for)
@@ -534,7 +534,7 @@ pub fn (checker_self: Checker) check_array_method(expr: Expr, array: Ty): Ty {
         checker_self.push_scope()
         checker_self.bind_walk_param(expr, b, array, e)
         checker_self.loop_depth += 1
-        bt = checker_self.check_block_value(b)
+        bt = checker_self.check_walk_value(b, pred_name, checker_self.t_bool())
         checker_self.loop_depth -= 1
         checker_self.pop_scope()
         checker_self.end_places(saved_places)
@@ -754,7 +754,21 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
       checker_self.loop_depth = 0
       saved_try = checker_self.try_in
       checker_self.try_in = "a parallel block"
-      result = checker_self.check_block_value(b)
+      result = checker_self.t_int()
+      if b.paren {
+        s = checker_self.inline_enter(b, "parallel", checker_self.inline_result(b))
+        want = checker_self.return_type
+        result = checker_self.check_block_value(b)
+        checker_self.inline_leave(s)
+        if !want.is_var() && !checker_self.has_err() {
+          if !ty_assignable(result, want) {
+            checker_self.fail(b.body[b.body.size - 1].loc, "the lambda's result is ${want.show()}, its last expression ${result.show()}")
+          }
+          result = want
+        }
+      } else {
+        result = checker_self.check_block_value(b)
+      }
       checker_self.try_in = saved_try
       checker_self.loop_depth = saved_loops
       checker_self.in_task -= 1
@@ -820,7 +834,7 @@ pub fn (checker_self: Checker) check_set_method(expr: Expr, set: Ty): Ty {
       checker_self.push_scope()
       checker_self.bind(b.params[0], elem)
       checker_self.loop_depth += 1
-      checker_self.check_body(b.body, checker_self.return_type, false)
+      checker_self.check_walk_body(b, "each")
       checker_self.loop_depth -= 1
       checker_self.pop_scope()
       return checker_self.t_void()
@@ -965,7 +979,7 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
         checker_self.note_for_var(b.params[0], 8)
         checker_self.note_for_var(b.params[1], 8)
         checker_self.loop_depth += 1
-        checker_self.check_body(b.body, checker_self.return_type, false)
+        checker_self.check_walk_body(b, "each")
         checker_self.loop_depth -= 1
         checker_self.pop_scope()
         checker_self.end_for_vars(saved_for)

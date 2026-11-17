@@ -147,6 +147,12 @@ pub fn (lw: MirLower) block_body(stmts: Array(Stmt), cont: Int, exit: Int) {
 // e there, as in the old back end).
 pub fn (lw: MirLower) block_value(bl: Block, cont: Int, exit: Int): MOperand {
   b = lw.lw_b
+  if bl.paren && bl.returns {
+    if v = lw.lam_value(bl, ty_bool(), mt_bool(), cont, exit) {
+      return v
+    }
+    return b.c_bool(false)
+  }
   if bl.body.size == 0 {
     lw.refuse(bl.loc, "an empty value block")
     return b.c_bool(false)
@@ -230,6 +236,28 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
     lw.refuse(bl.loc, "an empty value block")
     return zero
   }
+  if bl.paren && bl.returns {
+    // A lambda whose `return` gives the element: its value from the
+    // result slot.
+    if v = lw.lam_value(bl, want, et, step, exit) {
+      lw.at(e.loc)
+      if rc {
+        b.barrier(d)
+      }
+      b.assign(b.index(b.deref(b.pl(d)), b.copy_local(i)), b.rv_use(v))
+    }
+    if lw.failed() {
+      return zero
+    }
+    lw.goto_if_open(step, e.loc)
+    b.at(step)
+    lw.at(e.loc)
+    b.assign(b.pl(i), b.rv_bin(mop_add(), b.copy_local(i), b.c_i64(1)))
+    b.goto(head)
+    b.at(exit)
+    lw.at(e.loc)
+    return lw.array_header(aty, d, lw.tmp(mt_i32(), b.rv_cast(b.copy_local(k), mt_i32())))
+  }
   first: Array(Stmt) = []
   j = 0
   while j < bl.body.size - 1 {
@@ -295,7 +323,7 @@ pub fn (lw: MirLower) arr_each(e: Expr, recv: Expr, bl: Block): MOperand {
   lw.block_test(h, i, body, exit)
   b.at(body)
   lw.block_param(bl, recv, h, aty, i)
-  lw.block_body(bl.body, step, exit)
+  lw.walk_body(bl, step, exit)
   lw.goto_if_open(step, e.loc)
   b.at(step)
   lw.at(e.loc)
@@ -500,7 +528,7 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
     val = lw.tmp(vty, b.rv_use(raw))
     lw.bind_name(bl.params[1], vt, vty, val, bl.loc, true)
   }
-  lw.block_body(bl.body, step, exit)
+  lw.walk_body(bl, step, exit)
   lw.goto_if_open(step, e.loc)
   b.at(step)
   lw.at(e.loc)
@@ -532,4 +560,122 @@ pub fn (lw: MirLower) hash_adds(h: Int): Int {
   a = b.temp(mt_u32())
   b.assign(b.pl(a), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 9))))
   a
+}
+
+// ---- lambdas in parentheses inlined as loops
+
+// A builtin's lambda written in parentheses (`xs.each((x) { ... })`,
+// Block.paren) is lowered in place, as the block in pipes it replaces;
+// when a `return` in it ends a run of its body (Block.returns), that
+// `return` goes on at end, its value into slot (-1: none, a walk's body),
+// after the pins opened inside the body are closed (lower_stmt.av
+// lower_return; lam_return).
+pub fn (lw: MirLower) lam_open(end: Int, slot: Int, want: Ty) {
+  lw.lw_lam_ends.push(end)
+  lw.lw_lam_slots.push(slot)
+  lw.lw_lam_tys.push(want)
+  lw.lw_lam_pins.push(lw.lw_ffi.pins.size)
+}
+
+pub fn (lw: MirLower) lam_close {
+  lw.lw_lam_ends.pop()
+  lw.lw_lam_slots.pop()
+  lw.lw_lam_tys.pop()
+  lw.lw_lam_pins.pop()
+}
+
+pub fn (lw: MirLower) lam_return(st: Stmt) {
+  b = lw.lw_b
+  top = lw.lw_lam_ends.size - 1
+  slot = lw.lw_lam_slots[top]
+  if e = st.expr {
+    if slot >= 0 {
+      v = lw.lower_coerced(e, b.func.locals[slot].ty, lw.lw_lam_tys[top])
+      if lw.failed() {
+        return
+      }
+      lw.at(st.loc)
+      b.assign(b.pl(slot), b.rv_use(v))
+    } else {
+      lw.lower_expr(e)
+      if lw.failed() {
+        return
+      }
+    }
+  }
+  lw.at(st.loc)
+  i = lw.lw_ffi.pins.size - 1
+  while i >= lw.lw_lam_pins[top] {
+    lw.unpin(lw.lw_ffi.pins[i])
+    i -= 1
+  }
+  b.goto(lw.lw_lam_ends[top])
+}
+
+// The body of an inlined walk (`each`) with `break` to exit and `next`
+// to cont; a lambda whose `return` ends its run goes on at cont.
+pub fn (lw: MirLower) walk_body(bl: Block, cont: Int, exit: Int) {
+  if bl.paren && bl.returns {
+    lw.lam_open(cont, -1, ty_void())
+    lw.block_body(bl.body, cont, exit)
+    lw.lam_close()
+    return
+  }
+  lw.block_body(bl.body, cont, exit)
+}
+
+// The value of such a lambda's body (`any`, a comparator, the building
+// lambda of `Array(T).new`, `with`, `parallel`): every statement, the
+// last one's value into a slot as each `return`'s, then the slot where
+// the runs join; nil for a body without a value (want Void).
+pub fn (lw: MirLower) lam_value(bl: Block, want: Ty, mty: Int, cont: Int, exit: Int): MOperand? {
+  b = lw.lw_b
+  slot = -1
+  if !want.is_void() {
+    slot = b.temp(mty)
+  }
+  end = b.block()
+  lw.lam_open(end, slot, want)
+  if bl.body.size > 0 {
+    head: Array(Stmt) = []
+    j = 0
+    while j < bl.body.size - 1 {
+      head.push(bl.body[j])
+      j += 1
+    }
+    lw.lam_stmts(head, cont, exit)
+    if !lw.failed() && lw.open_now() {
+      last = bl.body[bl.body.size - 1]
+      if x = last.expr, last.kind == st_expr() && slot >= 0 {
+        v = lw.lower_coerced(x, mty, want)
+        if !lw.failed() {
+          lw.at(x.loc)
+          b.assign(b.pl(slot), b.rv_use(v))
+        }
+      } else {
+        tail: Array(Stmt) = [last]
+        lw.lam_stmts(tail, cont, exit)
+      }
+    }
+  }
+  lw.lam_close()
+  if lw.failed() {
+    return nil
+  }
+  lw.goto_if_open(end, bl.loc)
+  b.at(end)
+  if slot >= 0 {
+    return b.copy_local(slot)
+  }
+  nil
+}
+
+// Statements of such a body: in a walk, with its loop's targets (cont
+// below zero: a body run in place once, `with`, a task's).
+pub fn (lw: MirLower) lam_stmts(stmts: Array(Stmt), cont: Int, exit: Int) {
+  if cont < 0 {
+    lw.lower_stmts(stmts)
+    return
+  }
+  lw.block_body(stmts, cont, exit)
 }

@@ -2970,7 +2970,7 @@ pub class Parser {
               }
             }
             if !took_type {
-              args = self.parse_arg_list()
+              args = self.parse_call_args(field.value)
               call = Expr.new(ex_call(), at)
               call.callee = field.value
               call.args = args
@@ -3161,6 +3161,9 @@ pub class Parser {
       e.op = tk_tilde()
       e.inner = inner
       return e
+    }
+    if k == tk_l_paren() && self.paren_lambda_ahead() {
+      return self.parse_paren_lambda()
     }
     if k == tk_l_paren() {
       self.bump()
@@ -3377,6 +3380,20 @@ pub class Parser {
       self.skip_newlines()
     }
     expect(tk_r_paren())
+    // `Array(T).new(n, (i) { ... })`: a lambda written there builds each
+    // element (the call named "Array.new" with the block, as the older
+    // `Array(T).new(n) { |i| ... }`); an array of n copies of one function
+    // value takes it from a name.
+    if e.elems.size == 1 && e.elems[0].kind == ex_lambda() {
+      if lb = e.elems[0].block, lb.paren {
+        call = Expr.new(ex_call(), tok.loc)
+        call.callee = "Array.new"
+        call.elem_type = elem
+        call.args.push(size)
+        call.block = lb
+        return call
+      }
+    }
     e
   }
 
@@ -3563,7 +3580,7 @@ pub class Parser {
   }
 
   pub fn parse_call(name: Token): Expr {
-    args = self.parse_arg_list()
+    args = self.parse_call_args(name.value)
     e = Expr.new(ex_call(), name.loc)
     e.callee = name.value
     e.args = args
@@ -3616,6 +3633,187 @@ pub class Parser {
     e
   }
 
+  // The arguments of a call to the callee just read, at its `(`: the
+  // argument list, or, when the parentheses hold a lambda's parameters
+  // followed by its `{` (`xs.each (x) { ... }`), that lambda as the only
+  // argument (the shorthand that drops the call's own parentheses). Not
+  // directly in the head of an `if`, `while`, `for` or `switch`, where
+  // the `{` begins the statement's body, and never for a type's name.
+  pub fn parse_call_args(callee: String): Array(Expr) {
+    if self.allow_struct_lit && callee.size > 0 && !(callee[0] >= 65 && callee[0] <= 90) && self.lambda_head_at(self.index) >= 0 {
+      lam: Array(Expr) = [self.parse_paren_lambda()]
+      self.arg_names = []
+      return lam
+    }
+    self.parse_arg_list()
+  }
+
+  // Whether the `(` at the current token begins a lambda: a parameter
+  // list, a result type maybe, and the body's `{` on the same line. One
+  // bare name in parentheses is an expression when the `{` after it
+  // begins a statement's body (a head's operand: `if (ok) { ... }`).
+  pub fn paren_lambda_ahead: Bool {
+    brace = self.lambda_head_at(self.index)
+    if brace < 0 {
+      return false
+    }
+    if !self.allow_struct_lit && brace == self.index + 3 {
+      return false
+    }
+    true
+  }
+
+  // The index of the `{` of a lambda whose parameter list opens at the
+  // `(` at index i, or -1: `()`, names with or without `: Type`, then an
+  // optional `: Result`, then `{` on the line the list ends on, not
+  // followed by pipes (`f(a) { |x| ... }` is a call with a block).
+  // Syntactic only: () and a list of two or more names are not
+  // expressions (there are no tuples), a typed list is not either, and
+  // for one bare name the `{` decides.
+  pub fn lambda_head_at(i0: Int): Int {
+    n = self.tokens.size
+    i = i0
+    if i >= n || self.tokens[i].kind != tk_l_paren() {
+      return -1
+    }
+    i = self.skip_nl_at(i + 1)
+    if i < n && self.tokens[i].kind != tk_r_paren() {
+      while true {
+        if i >= n || self.tokens[i].kind != tk_ident() {
+          return -1
+        }
+        i = self.skip_nl_at(i + 1)
+        if i < n && self.tokens[i].kind == tk_colon() {
+          i = self.skip_type_at(i + 1, false)
+          if i < 0 {
+            return -1
+          }
+          i = self.skip_nl_at(i)
+        }
+        if i < n && self.tokens[i].kind == tk_comma() {
+          i = self.skip_nl_at(i + 1)
+        } else {
+          break
+        }
+      }
+    }
+    if i >= n || self.tokens[i].kind != tk_r_paren() {
+      return -1
+    }
+    i += 1
+    if i < n && self.tokens[i].kind == tk_colon() {
+      i = self.skip_type_at(i + 1, true)
+      if i < 0 {
+        return -1
+      }
+    }
+    if i >= n || self.tokens[i].kind != tk_l_brace() {
+      return -1
+    }
+    j = self.skip_nl_at(i + 1)
+    if j < n && (self.tokens[j].kind == tk_pipe() || self.tokens[j].kind == tk_pipe_pipe()) {
+      return -1
+    }
+    i
+  }
+
+  pub fn skip_nl_at(i0: Int): Int {
+    i = i0
+    while i < self.tokens.size && self.tokens[i].kind == tk_newline() {
+      i += 1
+    }
+    i
+  }
+
+  // The index after the type that starts at i0 (a parameter's, up to the
+  // `,` or `)` at its own depth; a result's, up to the `{` on its line),
+  // or -1 when the tokens cannot be a type.
+  pub fn skip_type_at(i0: Int, result: Bool): Int {
+    n = self.tokens.size
+    i = i0
+    if !result {
+      i = self.skip_nl_at(i)
+    }
+    dep = 0
+    start = i
+    while i < n {
+      k = self.tokens[i].kind
+      if k == tk_l_paren() || k == tk_l_bracket() {
+        dep += 1
+      } else if k == tk_r_paren() || k == tk_r_bracket() {
+        if dep == 0 {
+          if result || k == tk_r_bracket() || i == start {
+            return -1
+          }
+          return i
+        }
+        dep -= 1
+      } else if k == tk_comma() && dep == 0 {
+        if result || i == start {
+          return -1
+        }
+        return i
+      } else if k == tk_l_brace() {
+        if result && dep == 0 && i > start {
+          return i
+        }
+        return -1
+      } else if k == tk_newline() {
+        if result && dep == 0 {
+          return -1
+        }
+      } else if k == tk_r_brace() || k == tk_eq() || k == tk_eof() {
+        return -1
+      }
+      i += 1
+    }
+    -1
+  }
+
+  // `(a, b) { ... }`, `(x: Int): Int { ... }`, `() { ... }`: a lambda,
+  // a function without a name (its parameters with the grammar of a
+  // function's, a union type written plainly).
+  pub fn parse_paren_lambda: Expr {
+    if !nest_enter(self.current().loc) {
+      return dummy_expr(self.current().loc)
+    }
+    open = expect(tk_l_paren())
+    block = Block.new(open.loc)
+    block.paren = true
+    self.skip_newlines()
+    if self.current().kind != tk_r_paren() {
+      while true {
+        name = expect(tk_ident())
+        block.params.push(name.value)
+        ann = TypeName.new(name.loc, "")
+        self.skip_newlines()
+        if self.current().kind == tk_colon() {
+          self.bump()
+          self.skip_newlines()
+          ann = self.parse_type_name()
+          self.skip_newlines()
+        }
+        block.param_types.push(ann)
+        if match_tok(tk_comma()) {
+          self.skip_newlines()
+        } else {
+          break
+        }
+      }
+    }
+    expect(tk_r_paren())
+    if self.current().kind == tk_colon() {
+      self.bump()
+      block.ret_type = self.parse_type_name()
+    }
+    expect(tk_l_brace())
+    self.parse_block_rest(block)
+    nest_leave()
+    e = Expr.new(ex_lambda(), open.loc)
+    e.block = block
+    e
+  }
+
   pub fn parse_trailing_block: Block {
     if !nest_enter(self.current().loc) {
       return Block.new(self.current().loc)
@@ -3653,6 +3851,15 @@ pub class Parser {
       expect(tk_pipe())
       self.skip_newlines()
     }
+    self.parse_block_rest(block)
+    nest_leave()
+    block
+  }
+
+  // A block's statements after its `{` (and its parameters), through
+  // the closing `}`.
+  pub fn parse_block_rest(block: Block) {
+    self.skip_newlines()
     while true {
       if self.current().kind == tk_r_brace() {
         break
@@ -3673,8 +3880,6 @@ pub class Parser {
     }
     lead_check(block.body)
     expect(tk_r_brace())
-    nest_leave()
-    block
   }
 
   pub fn attach_block(left: Expr, block: Block): Expr {

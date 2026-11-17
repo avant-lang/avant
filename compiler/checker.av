@@ -189,6 +189,18 @@ pub class Checker {
   pub lam_scopes: Array(Int)
   pub lambda_infer: Bool = false
   pub inferred_ret: Ty
+  // In a lambda whose result is inferred: whether a `return` or its end
+  // gave the result yet, where, and whether that was a bare `return` or
+  // an end without a value (every one must agree: note_inferred).
+  pub inferred_seen: Bool = false
+  pub inferred_at: String = ""
+  pub inferred_tail: Bool = false
+  // A lambda a builtin inlines as a loop (`xs.each((x) { ... })`,
+  // Block.paren): the builtin's name for the messages, and the block
+  // whose `return` ends one run of the body (checker/lambda.av
+  // inline_enter). Empty and nil in a function or a lambda of its own.
+  pub inline_what: String = ""
+  pub inline_target: Block? = nil
   pub spawn_skip: Array(String)
   pub pending_handles: Array(String)
   pub pending_arrays: Array(String)
@@ -786,6 +798,61 @@ pub class Checker {
     self.current_module = saved_mod
   }
 
+  // A result of a lambda whose result type is inferred: the first one
+  // met is the result; every later `return` and the end must give the
+  // same type (before, the last one met won, and a bare `return` beside
+  // a value, or a `return "one"` beside an `Int` end, reached the MIR
+  // verifier). A difference names both and asks for the result type.
+  pub fn note_inferred(got: Ty, loc: Location, by_return: Bool) {
+    if !self.inferred_seen {
+      self.inferred_seen = true
+      self.inferred_ret = got
+      self.inferred_at = "${inferred_how(got, by_return)} at ${loc.line()}:${loc.column()}"
+      return
+    }
+    if got.same_as(self.inferred_ret) {
+      return
+    }
+    if self.inferred_ret.is_void() {
+      // The value, so the uses of the lambda are not reported again.
+      self.inferred_ret = got
+    }
+    fail(loc, "this lambda ${inferred_how(got, by_return)} here and ${self.inferred_at}: every return and its end give one result; write the result type, as (x: Int): Int? { ... }, or make them agree")
+  }
+
+  pub fn inferred_how(t: Ty, by_return: Bool): String {
+    if by_return {
+      if t.is_void() {
+        return "returns nothing"
+      }
+      return "returns ${t.show()}"
+    }
+    if t.is_void() {
+      return "ends without a value"
+    }
+    "ends with ${t.show()}"
+  }
+
+  // The refusal of a `break`, a `continue` or a `?` in a lambda a
+  // builtin inlines (checker/lambda.av inline_enter).
+  pub fn inline_exit_message(what: String, builtin: String): String {
+    way = "handle it with if-assign or ??"
+    if inline_walks(builtin) {
+      way = "to leave the walk or the function early, write it as a for loop (for x in xs { ... })"
+    }
+    if what == "?" {
+      if inline_walks(builtin) {
+        way = "write the walk as a for loop, where ? returns from the function (for x in xs { ... }), or handle it with if-assign or ??"
+      }
+      return "postfix ? inside a lambda given to ${builtin} has nowhere to return its failure (return there ends only the lambda's run); ${way}"
+    }
+    if what == "continue" {
+      return "continue inside a lambda given to ${builtin}: the lambda has no loop of its own; return ends this run of it"
+    }
+    "break inside a lambda given to ${builtin}: the lambda has no loop of its own to leave; ${way}"
+  }
+
+
   pub fn check_body(body: Array(Stmt), expected: Ty, at_tail: Bool) {
     i = 0
     while i < body.size {
@@ -863,11 +930,18 @@ pub class Checker {
         fail(stmt.loc, "return inside ${self.try_in}: ${self.try_in} cannot return; its value is its last expression")
         return
       }
+      if t = self.inline_target {
+        t.returns = true
+        if self.return_type.is_var() {
+          fail(stmt.loc, "return inside a lambda given to ${self.inline_what}, whose value is its last expression: to return early, write the lambda's result type, as (x): Int { ... }")
+          return
+        }
+      }
       if self.lambda_infer {
         if expr = stmt.expr {
-          self.inferred_ret = check_expr(expr)
+          note_inferred(check_expr(expr), stmt.loc, true)
         } else {
-          self.inferred_ret = t_void()
+          note_inferred(t_void(), stmt.loc, true)
         }
         return
       }
@@ -906,7 +980,8 @@ pub class Checker {
         got = check_if_value(stmt, false, t_void())
         if t2 = got, !t2.is_void() {
           stmt.tail_value = true
-          self.inferred_ret = t2
+          note_inferred(t2, stmt.loc, false)
+          self.inferred_tail = true
         }
         return
       }
@@ -1099,7 +1174,9 @@ pub class Checker {
     }
     if k == st_break() {
       if self.loop_depth == 0 {
-        if self.in_build > 0 {
+        if self.inline_what.size > 0 {
+          fail(stmt.loc, inline_exit_message("break", self.inline_what))
+        } else if self.in_build > 0 {
           fail(stmt.loc, "break inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value")
         } else {
           fail(stmt.loc, "break is only valid inside a loop")
@@ -1112,7 +1189,9 @@ pub class Checker {
     }
     if k == st_continue() {
       if self.loop_depth == 0 {
-        if self.in_build > 0 {
+        if self.inline_what.size > 0 {
+          fail(stmt.loc, inline_exit_message("continue", self.inline_what))
+        } else if self.in_build > 0 {
           fail(stmt.loc, "continue inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value")
         } else {
           fail(stmt.loc, "continue is only valid inside a loop")
@@ -1138,7 +1217,8 @@ pub class Checker {
             return
           }
           if self.lambda_infer {
-            self.inferred_ret = check_expr(expr)
+            note_inferred(check_expr(expr), stmt.loc, false)
+            self.inferred_tail = true
             return
           }
         }
@@ -2188,6 +2268,14 @@ pub class Checker {
   // function, and the failure was whichever member the result type
   // happened to hold).
   pub fn split_try_success(got: Ty, loc: Location): Ty {
+    if self.inline_what.size > 0 {
+      fail(loc, inline_exit_message("?", self.inline_what))
+      return t_int()
+    }
+    if self.try_in == "a lambda whose result type is inferred" {
+      fail(loc, "postfix ? inside a lambda whose result type is inferred cannot return the failure: write the result type with the failure in it, as (): Int | ParseError { ... }, or handle it with if-assign or ??")
+      return t_int()
+    }
     if self.try_in.size > 0 {
       fail(loc, "postfix ? inside ${self.try_in} cannot return the failure; handle it with if-assign or ??")
       return t_int()
@@ -2428,6 +2516,9 @@ pub class Checker {
 
   // The method checkers of the builtin receiver types.
   pub fn builtin_method(expr: Expr, object: Ty): Ty {
+    if object.is_array() || object.is_hash() || object.is_set() {
+      absorb_lambda_arg(expr, object)
+    }
     // One text for every scalar.
     if expr.callee == "to_s" && (object.is_integer() || object.is_float() || object.is_bool() || object.is_string()) {
       return scalar_to_s(expr, object)
@@ -3156,7 +3247,14 @@ pub class Checker {
       self.loop_depth = 0
       saved_build = self.in_build
       self.in_build += 1
-      bt = check_block_value_as(b, true, elem)
+      bt = t_int()
+      if b.paren {
+        s = inline_enter(b, "Array(T).new", elem)
+        bt = check_block_value_as(b, true, elem)
+        inline_leave(s)
+      } else {
+        bt = check_block_value_as(b, true, elem)
+      }
       self.in_build = saved_build
       self.loop_depth = saved_loops
       self.pop_scope()
@@ -5435,11 +5533,13 @@ pub class Checker {
     }
     if expr.callee == "with" {
       if is_mutex_ty(object) {
+        absorb_lambda_arg(expr, object)
         return check_mutex_with(expr, object)
       }
     }
     if expr.callee == "try_with" {
       if is_mutex_ty(object) {
+        absorb_lambda_arg(expr, object)
         // `with` that gives the block's value, or a MutexError when the
         // mutex is poisoned (a task trapped holding it): T | MutexError.
         got = check_mutex_with(expr, object)
@@ -6212,6 +6312,14 @@ pub class Checker {
             return ty
           }
         }
+        if stmt.kind == st_return() && self.inline_what.size > 0 {
+          // A lambda's last statement may be its `return`.
+          if x = stmt.expr {
+            check_block_stmt(stmt, self.return_type, false)
+            self.pop_scope()
+            return self.return_type
+          }
+        }
         fail(stmt.loc, "block must end with a value")
         self.pop_scope()
         return t_int()
@@ -6380,7 +6488,7 @@ pub class Checker {
       }
       dropped = self.with_drop == expr.loc.show()
       self.with_drop = ""
-      if self.try_in.size > 0 && self.try_in != "a lambda whose result type is inferred" {
+      if self.try_in.size > 0 && self.try_in != "a lambda whose result type is inferred" && self.inline_what.size == 0 && !b.paren {
         // `return` and `?` leave a `with` as they leave the code around
         // it, which here cannot return (a spawn or parallel block, a
         // field default): refused there as before.
@@ -6397,7 +6505,24 @@ pub class Checker {
       // out (mir/lower_task.av lower_mutex_with), as a `gc.hold` ends.
       // Used as a statement, the block ends without a value; used as a
       // value, its last expression is the value.
-      result = check_with_body(b, !dropped)
+      result = t_void()
+      if b.paren {
+        res = t_void()
+        if !dropped {
+          res = inline_result(b)
+        }
+        s = inline_enter(b, expr.callee, res)
+        result = check_with_body(b, !dropped)
+        inline_leave(s)
+        if !dropped && !res.is_var() && !self.has_err() {
+          if !ty_assignable(result, res) {
+            fail(b.body[b.body.size - 1].loc, "the lambda's result is ${res.show()}, its last expression ${result.show()}")
+          }
+          result = res
+        }
+      } else {
+        result = check_with_body(b, !dropped)
+      }
       self.pop_scope()
       // The block's value leaves the lock: it may not be, or hold, a
       // reference to mutable state (two tasks raced on a class handed out
