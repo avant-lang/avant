@@ -58,8 +58,15 @@
 # threads/fresh.av) were blessed from the new back end, and the suite
 # checks their outputs by hand as before.
 #
-# Per program: compile and run under `timeout -k 10 120` with stdin from
-# /dev/null; the run happens in an empty directory as ./prog. A program that
+# Per program: compile under `timeout -k 10 120` and run under `timeout -k
+# 10 LIMIT` with stdin from /dev/null; the run happens in an empty directory
+# as ./prog. LIMIT is GOLDEN_RUN_LIMIT seconds, else 120, or 600 when
+# GOLDEN_ENV sets AVANT_GC_STRESS: measured in the final runs of
+# 2026-11-16 and 2026-11-17 on the 32-thread server, the longest run took
+# 3.3 s in --debug, 2.0 s bare and --release, and 54 s under the full
+# stress mode (the two held-object defragmentation fixtures), which passed
+# 120 s with four stress suites sharing the machine: 600 s keeps eleven
+# times the stress mode's longest run. The summary states the limit. A program that
 # fails to compile is a difference. Every child runs with TMPDIR inside the
 # work directory, so nothing is written to /tmp; the LangArena harness, as in
 # its prod runs, writes its stitched sources and binaries to langarena/tmp/
@@ -108,6 +115,7 @@ has_set() { case ",$sets," in *",$1,"*) return 0 ;; esac; return 1; }
 
 COMPILER=$(realpath -m "${GOLDEN_COMPILER:-bin/avant-c-llvm}")
 ENVW=${GOLDEN_ENV:-}
+case " $ENVW " in *" AVANT_GC_STRESS="*) limit=${GOLDEN_RUN_LIMIT:-600} ;; *) limit=${GOLDEN_RUN_LIMIT:-120} ;; esac
 MODE=${GOLDEN_MODE---debug}
 case "$MODE" in
   --debug) codegen=debug ;;
@@ -264,7 +272,7 @@ prog_job() {
   mkdir "$d/run"
   mv "$b" "$d/run/prog"
   # shellcheck disable=SC2086
-  (cd "$d/run" && exec env -u AVANT_BACKEND TMPDIR="$d/tmp" $ENVW timeout -k 10 120 ./prog > "$d/out" 2> "$d/err" < /dev/null)
+  (cd "$d/run" && exec env -u AVANT_BACKEND TMPDIR="$d/tmp" $ENVW timeout -k 10 "$limit" ./prog > "$d/out" 2> "$d/err" < /dev/null)
   rrc=$?
   r1=$(now)
   [ -n "$lock" ] && rmdir "$lock"
@@ -318,7 +326,7 @@ task_job() {
   t0j=$(now)
   # shellcheck disable=SC2086
   env -u AVANT_SKIP_OK -u AVANT_PROBE_SCALE -u AVANT_TASK_LIST -u AVANT_BACKEND TMPDIR="$d/tmp" $ENVW AVANT_COMPILER="$COMPILER" AVANT_CODEGEN=$codegen \
-    AVANT_RESULTS_DIR="$d/la" AVANT_TASK_LIST="$1" AVANT_TASK_TIMEOUT_S=120 AVANT_COMPILE_TIMEOUT_S=120 \
+    AVANT_RESULTS_DIR="$d/la" AVANT_TASK_LIST="$1" AVANT_TASK_TIMEOUT_S="$limit" AVANT_COMPILE_TIMEOUT_S=120 \
     timeout -k 10 2700 "$(cat "$work/measure.path")" test > "$d/la.log" 2>&1 < /dev/null
   echo "harness rc=$?" >> "$d/la.log"
   echo "total=$(secs "$t0j" "$(now)")" > "$d/time"
@@ -441,8 +449,8 @@ exec 3>&-
 
 t1=$(date +%s)
 if [ $bless -eq 1 ]; then
-  echo "$same blessed, $different failed, $skipped skipped (wall $((t1 - t0)) s)" | tee "$out/summary.txt"
+  echo "$same blessed, $different failed, $skipped skipped (wall $((t1 - t0)) s; run limit $limit s)" | tee "$out/summary.txt"
 else
-  echo "$same same, $different different, $skipped skipped (wall $((t1 - t0)) s)" | tee "$out/summary.txt"
+  echo "$same same, $different different, $skipped skipped (wall $((t1 - t0)) s; run limit $limit s)" | tee "$out/summary.txt"
 fi
 [ "$different" -eq 0 ]
