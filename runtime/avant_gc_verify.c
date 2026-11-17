@@ -2597,6 +2597,60 @@ void gc_verify_proof(int full, int holds) {
   }
 }
 
+/* Between two full collections a side mark is an old object's and
+ * nothing else's while the sticky full collection may run (the last full
+ * collection saved its line marks and did not leave the young generation
+ * young): the sticky mark stops at a marked object as at an old one, and
+ * the log takes a marked holder for an old one (avant_gc_proof.c). Asked
+ * before every collection, while the eager start bits stand in for the
+ * real ones (gc_verify_starts_begin): every mark of a block of small
+ * objects lies in a block in use, at an object's start, on an object that
+ * is not young. A mark left where an object was before its block was
+ * freed (the defragmenter's evacuated blocks, gc_defrag_release) fails
+ * here, in the block out of use or on what the block holds next, before
+ * the sticky mark could pass over that object and free its lines under
+ * it. The large objects' marks are the large sweep's and are not asked. */
+void gc_verify_marks_old(void) {
+  uint64_t n = gc_heap.committed >> CHUNK_SHIFT;
+  uint64_t c;
+  if (!gc_heap.proof.lines_saved || gc_heap.proof.no_sticky) {
+    return;
+  }
+  for (c = 0; c < n; c++) {
+    uint64_t k;
+    if (gc_heap.chunks[c].kind != CHUNK_SMALL) {
+      continue;
+    }
+    for (k = c * BLOCKS_PER_CHUNK; k < (c + 1) * BLOCKS_PER_CHUNK; k++) {
+      const Block *b = &gc_heap.blocks[k];
+      const uint64_t *m = &gc_heap.marks[k * START_WORDS];
+      int w;
+      for (w = 0; w < START_WORDS; w++) {
+        uint64_t bits = m[w];
+        while (bits) {
+          int bit = __builtin_ctzll(bits);
+          const uint8_t *at = b->base + ((size_t)w * 64 + (size_t)bit) * 8;
+          const char *what = NULL;
+          bits &= bits - 1;
+          /* A block out of use is not read (it may be held PROT_NONE). */
+          if (!b->in_use) {
+            what = "in a block out of use";
+          } else if (!((b->start[w] >> bit) & 1ULL)) {
+            what = "where no object starts";
+          } else if (((const AvantHeader *)at)->flags & (AVANT_FLAG_YOUNG | AVANT_FLAG_SURVIVED)) {
+            what = "on a young object";
+          }
+          if (what) {
+            fprintf(stderr, "avant gc verify: sticky: a side mark %s at %p (block %p), before coll=%llu\n", what,
+                    (const void *)at, (const void *)b->base, (unsigned long long)avant_g_stats.collections + 1);
+            gc_die("avant gc verify: sticky: a side mark that is not an old object's");
+          }
+        }
+      }
+    }
+  }
+}
+
 /* The sticky full collection's mark is done (gc_collect, after the late
  * start bits): it must have marked exactly what a trace would. The
  * verifier traces from the roots alone; every object it reaches must be

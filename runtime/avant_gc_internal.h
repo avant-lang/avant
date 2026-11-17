@@ -2088,6 +2088,7 @@ void gc_proof_lines_save(void);
 void gc_proof_lines_restore(void);
 void gc_mark_sticky_holders(void);
 void gc_verify_sticky_mark(void);
+void gc_verify_marks_old(void);
 void gc_proof_full_begin(void);
 void gc_proof_full_end(void);
 GcProofWhy gc_proof_check(void);

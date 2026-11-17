@@ -494,6 +494,9 @@ void gc_collect(GcKind kind, int allow_move, GcWhy why) {
      * (2: objects became old since, which the oracle then expects). */
     gc_verify_proof(full || complete,
                     proof != PROOF_INTACT ? 0 : gc_heap.proof.grown == PROOF_INTACT ? 1 : gc_heap.sticky ? 2 : 0);
+    /* The side marks the sticky full collection would keep are only the
+     * old objects' (avant_gc_verify.c). */
+    gc_verify_marks_old();
     gc_verify_starts_resume();
   }
   if (full && !gc_heap.sticky) {
