@@ -22,7 +22,12 @@
 #     the command), only the LangArena timing goes through it `--timed`,
 #     every other step `--shared`, each named `final: STEP`;
 #   runner-lock-line: SUMMARY.txt says so; runner-none: without
-#     WAVE_RUNNER its `lock:` line says the caller holds the lock.
+#     WAVE_RUNNER its `lock:` line says the caller holds the lock;
+#   runner-wall: through the runner, the gate's wall is its own, the lock's
+#     wait beside it;
+#   base-merge-base: with WAVE_BASE naming a branch that moved on after
+#     the head left it, the base cache and the neutrality are asked for
+#     the merge base, not the branch's tip.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/wave-final-checks.sh WORK" >&2; exit 2; }
@@ -140,4 +145,17 @@ has '^lock: through WAVE_RUNNER (sh .*runner): shared for every step but the Lan
 say runner-lock-line $? "$(line lock: "$s")"
 s=$w/ref-default.out/SUMMARY.txt
 has "^lock: the caller's (WAVE_RUNNER unset" "$s"; say runner-none $? "$(line lock: "$s")"
+grep -q '^wall [0-9.]* s (waited [0-9.]* s for the lock)$' "$w/runner.out/gate-wall.txt"
+say runner-wall $? "$(cat "$w/runner.out/gate-wall.txt" 2>/dev/null)"
+
+# 6. WAVE_BASE is read as the merge base: the git checkout's first commit
+# is the base, a branch from it moves on past it, the head is a child of it.
+f=$w/git/side/avant
+c1=$(git -C "$f" rev-parse HEAD)
+c3=$(cd "$f" && echo moved | git -c user.name=t -c user.email=t@t commit-tree "$c1^{tree}" -p "$c1" 2>/dev/null)
+git -C "$f" update-ref refs/heads/moved "$c3"
+echo x > "$f/x"; (cd "$f" && git add x && git -c user.name=t -c user.email=t@t commit -q -m head) > /dev/null 2>&1
+final "$f" "$w/base.out" WAVE_TMP="$w/tmp1" WAVE_BASE=moved
+s=$w/base.out/SUMMARY.txt
+has "^neutral: red (tools/base-cache.sh $c1 failed" "$s"; say base-merge-base $? "$(line neutral: "$s")"
 echo done

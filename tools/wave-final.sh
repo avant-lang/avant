@@ -40,17 +40,20 @@
 #      in three modes, under the default environment, AVANT_NURSERY=0,
 #      AVANT_GC_VERIFY=1 and AVANT_YOUNG_MB=1, AVANT_GC_STATS=1: 36 .out
 #      and 36 .err files): OUT/gcstats; with BASE_STATS (an earlier run's
-#      OUT/gcstats), else the base cache's set when WAVE_BASE is given,
+#      OUT/gcstats), else the base cache's set when WAVE_BASE is given
+#      (of the merge base, as 5c),
 #      stats.txt compares every file with the pause_*_ns fields removed
 #   5b. the smoke test: tools/package.sh packs C' (bin/avant-c-llvm, with
 #      bin/re2c) into OUT/smoke, tools/smoke.sh runs the tarball's cases:
 #      smoke.log; red on a failed case
 #   5c. only with WAVE_BASE (a revision, such as the branch the wave starts
 #      from): the neutrality, tools/neutral.sh with the base cache's entry
-#      of WAVE_BASE's tree (tools/base-cache.sh, built when missing) as the
-#      base, the files changed since WAVE_BASE (`git diff --name-only`) as
+#      of the base (tools/base-cache.sh, built when missing) as the base,
+#      the files changed since the base (`git diff --name-only`) as
 #      NEUTRAL_CHANGED: OUT/neutral; a program outside them that moved is
-#      named in the line (a difference is explained in the record, not red)
+#      named in the line (a difference is explained in the record, not
+#      red). The base is where HEAD left WAVE_BASE (`git merge-base`): a
+#      branch that moved on since is not this head's base.
 #   6. only with WAVE_LA=1: LangArena prod once with C' (the harness binary
 #      of tools/la-harness.sh, built once per checkout), then the LR table
 #      (tools/lr-table.sh), OUT/la; needs WAVE_LA_SIDE (a directory holding
@@ -119,12 +122,23 @@ runner=${WAVE_RUNNER:-}
 via=""
 lk() {
   l_side=$1 l_step=$2; shift 2
+  lk_start=""; rm -f "$out/.lk-start"
   if [ -n "$runner" ]; then
     via=1
-    # shellcheck disable=SC2086
-    run $runner --"$l_side" --step "final: $l_step" --kind "${WAVE_RUN_KIND:-new}" -- "$@"
+    # The command's own start, the lock granted, in OUT/.lk-start: a step's
+    # wall leaves the lock's wait out (lk_wait).
+    # shellcheck disable=SC2086,SC2016
+    run $runner --"$l_side" --step "final: $l_step" --kind "${WAVE_RUN_KIND:-new}" -- sh -c 'date +%s.%N > "$0"; exec "$@"' "$out/.lk-start" "$@"
   else run "$@"; fi
-  l_rc=$?; via=""; return $l_rc
+  l_rc=$?; via=""
+  [ -s "$out/.lk-start" ] && lk_start=$(cat "$out/.lk-start"); rm -f "$out/.lk-start"
+  return $l_rc
+}
+# own T0 T1: the step's wall from T0 (its start, or the lock's grant
+# through the runner) to T1, and the lock's wait when there was one.
+own() {
+  if [ -n "$lk_start" ]; then echo "$(wall "$lk_start" "$2") s (waited $(wall "$1" "$lk_start") s for the lock)"
+  else echo "$(wall "$1" "$2") s"; fi
 }
 # PID and every descendant, parents first.
 tree() {
@@ -211,7 +225,7 @@ else step "lock: the caller's (WAVE_RUNNER unset: every step runs under the lock
 t0=$(now); curname=gate
 lk shared gate env GATE_OUT="$out/gate" GATE_GC_ENV='AVANT_GC_STRESS=1;AVANT_YOUNG_MB=1;AVANT_GC_VERIFY=1;AVANT_NURSERY=0' \
   timeout -k 10 3600 sh tools/gate.sh < /dev/null > "$out/gate.out" 2>&1
-rc=$?; t1=$(now); echo "wall $(wall "$t0" "$t1") s" > "$out/gate-wall.txt"
+rc=$?; t1=$(now); echo "wall $(own "$t0" "$t1")" > "$out/gate-wall.txt"
 if [ $rc -eq 0 ] && grep -q '^GATE PASS' "$out/gate.out"; then step "gate: pass, $(cat "$out/gate-wall.txt")"; else step "gate: red (rc=$rc; $(tail -1 "$out/gate.out"))"; fi
 
 # 3. letters and exports
@@ -227,7 +241,7 @@ golden() { # NAME MODE ENV
     timeout -k 10 3600 sh tools/run-goldens.sh < /dev/null > "$out/goldens-$1.log" 2>&1
   rc=$?; t1=$(now)
   line=$(grep -iE 'same|different|skipped' "$out/goldens-$1.log" | tail -1)
-  echo "$1: rc=$rc $line wall=$(wall "$t0" "$t1") s" >> "$out/goldens.txt"
+  echo "$1: rc=$rc $line wall=$(own "$t0" "$t1")" >> "$out/goldens.txt"
   [ $rc -eq 0 ] || red_goldens=1
 }
 red_goldens=0
@@ -251,10 +265,11 @@ g="$out/gcstats"; curname=gcstats
 # statistics' base and the neutrality.
 entry=""; entry_why=""
 if [ -n "${WAVE_BASE:-}" ]; then
+  wbase=$(git merge-base "$WAVE_BASE" HEAD 2>/dev/null) || wbase=$WAVE_BASE
   curname="base cache"
-  if lk shared "base cache" sh -c 'sh tools/base-cache.sh "$1" > "$2/base-cache.txt" 2> "$2/base-cache.log" < /dev/null' base-cache "$WAVE_BASE" "$out"; then
+  if lk shared "base cache" sh -c 'sh tools/base-cache.sh "$1" > "$2/base-cache.txt" 2> "$2/base-cache.log" < /dev/null' base-cache "$wbase" "$out"; then
     entry=$(cat "$out/base-cache.txt")
-  else entry_why="tools/base-cache.sh $WAVE_BASE failed (base-cache.log)"; fi
+  else entry_why="tools/base-cache.sh $wbase failed (base-cache.log)"; fi
   curname=gcstats
 fi
 [ -z "$base" ] && [ -n "$entry" ] && base=$entry/gcstats
@@ -294,13 +309,13 @@ if [ -n "${WAVE_BASE:-}" ]; then
   if [ -z "$entry" ]; then step "neutral: red ($entry_why)"
   else
     curname=neutral
-    git diff --name-only "$WAVE_BASE" HEAD > "$out/changed.txt" 2>/dev/null
+    git diff --name-only "$wbase" HEAD > "$out/changed.txt" 2>/dev/null
     lk shared neutral env NEUTRAL_CHANGED="$out/changed.txt" timeout -k 10 1800 sh tools/neutral.sh "$entry" . "$out/neutral" < /dev/null > "$out/neutral.log" 2>&1
     nrc=$?
     if [ ! -f "$out/neutral/summary.txt" ]; then step "neutral: red (rc=$nrc, no summary: neutral.log)"
     else
       moved=$(grep -h '^\(LL-DIFF\|STATUS\|refused-msg\)' "$out/neutral/result.txt" "$out/neutral/la-result.txt" 2>/dev/null | awk '{ print $NF }' | head -n 5 | tr '\n' ' ')
-      step "neutral: against $WAVE_BASE ($entry): $(tr '\n' ';' < "$out/neutral/summary.txt")${moved:+ outside the change: $moved}(neutral/; a difference is explained in the record, not red)"
+      step "neutral: against $WAVE_BASE's $(git rev-parse --short=8 "$wbase") ($entry): $(tr '\n' ';' < "$out/neutral/summary.txt")${moved:+ outside the change: $moved}(neutral/; a difference is explained in the record, not red)"
     fi
   fi
 else step "neutral: skipped (WAVE_BASE unset)"; fi
