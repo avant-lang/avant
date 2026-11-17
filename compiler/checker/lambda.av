@@ -1856,3 +1856,99 @@ pub fn (checker_self: Checker) inline_result(b: Block): Ty {
   }
   ty_var("__inline")
 }
+
+// A parameter's default that assigns to an earlier parameter (`f: fn():
+// Int = () { a = a + 1; a }`): the name it assigns, or "". A default is
+// an expression that reads; the assignment would change a copy only the
+// default sees (neither the caller's variable nor the callee's
+// parameter), so it is refused. A lambda's own parameter of that name
+// hides it.
+pub fn (checker_self: Checker) default_assigns(e: Expr, names: Array(String)): String {
+  if names.size == 0 {
+    return ""
+  }
+  inner = names
+  if b = e.block {
+    if b.params.size > 0 {
+      kept: Array(String) = []
+      for n in names {
+        hidden = false
+        for p in b.params {
+          if p == n {
+            hidden = true
+          }
+        }
+        if !hidden {
+          kept.push(n)
+        }
+      }
+      inner = kept
+    }
+    got = checker_self.default_assigns_stmts(b.body, inner)
+    if got.size > 0 {
+      return got
+    }
+  }
+  for x in [e.left, e.right, e.object, e.cond, e.receiver, e.inner, e.size_expr] {
+    if y = x {
+      got = checker_self.default_assigns(y, names)
+      if got.size > 0 {
+        return got
+      }
+    }
+  }
+  for a in e.args {
+    got = checker_self.default_assigns(a, names)
+    if got.size > 0 {
+      return got
+    }
+  }
+  for a in e.elems {
+    got = checker_self.default_assigns(a, names)
+    if got.size > 0 {
+      return got
+    }
+  }
+  for a in e.field_exprs {
+    got = checker_self.default_assigns(a, names)
+    if got.size > 0 {
+      return got
+    }
+  }
+  for c in e.cases {
+    got = checker_self.default_assigns_stmts(c.body, names)
+    if got.size > 0 {
+      return got
+    }
+  }
+  checker_self.default_assigns_stmts(e.else_body, names)
+}
+
+pub fn (checker_self: Checker) default_assigns_stmts(body: Array(Stmt), names: Array(String)): String {
+  for st in body {
+    if st.kind == st_assign() {
+      if t = st.target, t.kind == ex_name() {
+        for n in names {
+          if n == t.ident {
+            return n
+          }
+        }
+      }
+    }
+    for x in [st.expr, st.value, st.target, st.cond] {
+      if y = x {
+        got = checker_self.default_assigns(y, names)
+        if got.size > 0 {
+          return got
+        }
+      }
+    }
+    for part in [st.then_body, st.else_body, st.body, st.pre] {
+      got = checker_self.default_assigns_stmts(part, names)
+      if got.size > 0 {
+        return got
+      }
+    }
+  }
+  ""
+}

@@ -770,6 +770,19 @@ pub class Checker {
       }
       bind(param.name, params[i])
       if default = param.default {
+        earlier: Array(String) = []
+        j = 0
+        while j < i {
+          earlier.push(fnn.params[j].name)
+          j += 1
+        }
+        hit = default_assigns(default, earlier)
+        if hit.size > 0 {
+          fail(default.loc, "the default of ${param.name} assigns to the earlier parameter ${hit}: a default only reads the parameters before it (the assignment would change a copy no one else sees); compute the new value in the function's body")
+          self.pop_scope()
+          self.current_module = saved_mod
+          return
+        }
         saved = self.self_ty
         self.self_ty = nil
         got = check_expr_as(default, params[i])
