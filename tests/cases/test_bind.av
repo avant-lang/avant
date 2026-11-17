@@ -58,6 +58,12 @@ fn test_bind(c: Checks) {
     abs_compiler = compiler_abs("bind", compiler)
     here = cwd_here()
     real_helper = "${here}/runtime/build/avant-bind"
+    if !file_exists(real_helper) {
+      // Every check below runs the helper: without it they would all fail
+      // for a reason none of them names.
+      c.expect(false, "avant-bind was not built: runtime/build.sh skips ${real_helper} when llvm-config-20 or libclang 20 is missing (sudo apt install llvm-20 libclang-20-dev, then sh runtime/build.sh); its notice is in the runtime build's output")
+      return
+    }
     abs_h = "${here}/examples/c/add.h"
     lay = scratch_dir()
     mkdir_p("${lay}/rel")
@@ -328,7 +334,8 @@ fn test_bind(c: Checks) {
     en_txt = read(en_log)
     c.expect(str_has(en_txt, "  enum Color {\n    red = 0\n    green = 5\n    blue = 6\n  }"), "C enums: a typedef'd anonymous enum takes the typedef's name, CamelCase without _t")
     c.expect(str_has(en_txt, "  enum HttpMethod {\n    http_get = 0\n    http_head = 1\n    http_post = 2\n    // HTTP_ALIAS is an alias of http_head (1); dropped\n  }"), "C enums: a tagged enum in CamelCase, its constants lower-cased, an alias dropped")
-    c.expect(str_has(en_txt, "anonymous enum"), "C enums: an anonymous enum is skipped")
+    c.expect(str_has(en_txt, "}\n\n// the constants of the header's anonymous enums\npub const flag_a = 1\npub const flag_b = 2\npub const flag_c = 4\n// flag_a is the constant flag_a again after lower-casing; skipped\npub const limit = 4000000000\n"), "C enums: an anonymous enum's constants are module constants after the lib block, lower-cased, a repeated name left out (${en_txt})")
+    c.expect(!str_has(en_txt, "anonymous enum (its"), "C enums: an anonymous enum is not skipped")
     c.expect(str_has(en_txt, "big: the value of BIG_HUGE does not fit in Int32; skipped"), "C enums: a value outside Int32 skips the enum")
     c.expect(str_has(en_txt, "clash: two constants are cl_a after lower-casing; skipped"), "C enums: a collision after lower-casing skips the enum")
     c.expect(str_has(en_txt, "word: IF is no Avant member name (if); skipped"), "C enums: a keyword skips the enum")
@@ -341,14 +348,14 @@ fn test_bind(c: Checks) {
     en_cc.push("--cc")
     en_cc.push("${root}/tests/fixtures/ffi/cenum.c")
     en_src = "${scratch()}/bind-${stamp}-enum.av"
-    _ = file_write(en_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  c = cenum.next_color(Color.green)\n  puts(c)\n  puts(cenum.next_color(c))\n  puts(cenum.method_code(HttpMethod.http_post))\n  m = cenum.method_of(1)\n  puts(m)\n  puts(cenum.color_of(5).to_i())\n  puts(cenum.big_value(7))\n  puts(cenum.clash_value(1))\n  r = cenum.req_new()\n  cenum.req_fill(r, 2)\n  puts(\"\${r.method} \${r.color} \${r.n}\")\n  r.method = HttpMethod.http_get\n  puts(cenum.req_method_code(r))\n  cb.call_color(show, 6)\n  switch m {\n    case http_get { puts(\"get\") }\n    case http_head, http_post { puts(\"not get\") }\n  }\n}\n")
+    _ = file_write(en_src, "${en_txt}\nfn show(c: Color) {\n  puts(\"callback \${c}\")\n}\n\nlib cb {\n  fun call_color(f: fn(Color), raw: Int32)\n}\n\nfn main {\n  c = cenum.next_color(Color.green)\n  puts(c)\n  puts(cenum.next_color(c))\n  puts(cenum.method_code(HttpMethod.http_post))\n  m = cenum.method_of(1)\n  puts(m)\n  puts(cenum.color_of(5).to_i())\n  puts(cenum.big_value(7))\n  puts(cenum.clash_value(1))\n  r = cenum.req_new()\n  cenum.req_fill(r, 2)\n  puts(\"\${r.method} \${r.color} \${r.n}\")\n  r.method = HttpMethod.http_get\n  puts(cenum.req_method_code(r))\n  cb.call_color(show, 6)\n  switch m {\n    case http_get { puts(\"get\") }\n    case http_head, http_post { puts(\"not get\") }\n  }\n  puts(cenum.clash_value(flag_a))\n  wide: UInt64 = limit\n  puts(\"\${flag_b | flag_c} \${wide}\")\n}\n")
     en_bin = "${scratch()}/bind-${stamp}-enum.bin"
     c.eq_int(compile_av_flags(compiler, en_src, en_bin, "${scratch()}/bind-${stamp}-enum-cc.log", en_cc), 0, "C enums: the bound program compiles")
     if file_exists(en_bin) {
       chmod_x(en_bin)
       en_rlog = "${scratch()}/bind-${stamp}-enum-run.log"
       c.eq_int(run_av_bin(en_bin, en_rlog), 0, "C enums: the bound program runs")
-      c.eq_str(read(en_rlog), "blue\nred\n102\nhttp_head\n5\n7\n1\nhttp_post blue 3\n100\ncallback blue\nnot get\n", "C enums: values cross both ways")
+      c.eq_str(read(en_rlog), "blue\nred\n102\nhttp_head\n5\n7\n1\nhttp_post blue 3\n100\ncallback blue\nnot get\n1\n6 4000000000\n", "C enums: values cross both ways, the constants of an anonymous enum included")
     } else {
       c.expect(false, "C enums: the bound program runs")
     }

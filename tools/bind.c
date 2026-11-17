@@ -344,6 +344,7 @@ typedef struct {
   int complete;
   int accepted;
   int wide; /* a constant outside Int32 */
+  int anon; /* no tag and no typedef: its constants are C constants */
   char reason[400];
 } EnumInfo;
 
@@ -564,7 +565,7 @@ static void enum_camel(const char *src, char *out, size_t n) {
 }
 
 static int avant_word(const char *s) {
-  static const char *words[] = {"fn", "if", "else", "return", "struct", "class", "lib", "fun", "self", "while", "true", "false", "nil", "spawn", "break", "continue", "switch", "case", "import", "pub", "quote", "comptime", "interface", "for", "in", "pin", "release", "enum",
+  static const char *words[] = {"fn", "if", "else", "return", "struct", "class", "lib", "fun", "self", "while", "true", "false", "nil", "spawn", "break", "continue", "switch", "case", "import", "pub", "quote", "comptime", "interface", "for", "in", "pin", "release", "enum", "const",
                                 /* what every enum has as a type-level name */
                                 "members", "from_i", "from_name", NULL};
   int i;
@@ -711,7 +712,14 @@ static void decide_enum(Bind *b, EnumInfo *en) {
     s = en->tag;
   }
   if (!s) {
-    skip_enum(en, "enum", en->typedefs > 1 ? "two typedefs; skipped" : "anonymous enum (its constants are C constants; Avant has no const yet); skipped");
+    if (en->typedefs == 0) {
+      /* `enum { FLAG_A = 1 };` is how C spells constants: emitted as
+       * module constants after the lib block (emit_consts). */
+      en->anon = 1;
+      en->accepted = 0;
+      return;
+    }
+    skip_enum(en, "enum", "two typedefs; skipped");
     return;
   }
   enum_camel(s, en->avant, sizeof(en->avant));
@@ -769,6 +777,9 @@ static void emit_enums(Bind *b) {
     if (!en->complete) {
       continue;
     }
+    if (en->anon) {
+      continue;
+    }
     if (!en->accepted) {
       fprintf(b->e->out, "  // %s\n", en->reason);
       continue;
@@ -787,6 +798,89 @@ static void emit_enums(Bind *b) {
     fprintf(b->e->out, "  }\n");
     free(w);
   }
+}
+
+/* The constants of the anonymous enums, after the lib block: each a
+ * module constant (`pub const flag_a = 1`), its name the C name
+ * lower-cased, its value C's (a constant takes its place's type, as a
+ * literal does). A name that is no Avant name, a keyword, or one an
+ * earlier constant took after lower-casing is left out with a comment. */
+typedef struct {
+  FILE *out;
+  int unsigned_values;
+  char (*names)[MAX_NAME];
+  int *count;
+} ConstWalk;
+
+#define MAX_CONSTS 1024
+
+static enum CXChildVisitResult walk_const(CXCursor cursor, CXCursor parent, CXClientData data) {
+  ConstWalk *w = (ConstWalk *)data;
+  CXString spelling;
+  const char *raw;
+  char low[MAX_NAME];
+  int i;
+  (void)parent;
+  if (clang_getCursorKind(cursor) != CXCursor_EnumConstantDecl) {
+    return CXChildVisit_Continue;
+  }
+  spelling = clang_getCursorSpelling(cursor);
+  raw = clang_getCString(spelling);
+  lower_name(raw ? raw : "", low, sizeof(low));
+  if (!valid_ident(low) || avant_word(low) || !(low[0] >= 'a' && low[0] <= 'z')) {
+    fprintf(w->out, "// %s is no Avant constant name (%s); skipped\n", raw ? raw : "?", low);
+    clang_disposeString(spelling);
+    return CXChildVisit_Continue;
+  }
+  for (i = 0; i < *w->count; i++) {
+    if (strcmp(w->names[i], low) == 0) {
+      fprintf(w->out, "// %s is the constant %s again after lower-casing; skipped\n", raw ? raw : "?", low);
+      clang_disposeString(spelling);
+      return CXChildVisit_Continue;
+    }
+  }
+  if (*w->count >= MAX_CONSTS) {
+    fprintf(w->out, "// %s: more than %d constants; skipped\n", raw ? raw : "?", MAX_CONSTS);
+    clang_disposeString(spelling);
+    return CXChildVisit_Continue;
+  }
+  copy_name(w->names[*w->count], MAX_NAME, low);
+  *w->count += 1;
+  if (w->unsigned_values) {
+    fprintf(w->out, "pub const %s = %llu\n", low, clang_getEnumConstantDeclUnsignedValue(cursor));
+  } else {
+    fprintf(w->out, "pub const %s = %lld\n", low, clang_getEnumConstantDeclValue(cursor));
+  }
+  clang_disposeString(spelling);
+  return CXChildVisit_Continue;
+}
+
+static void emit_consts(Bind *b) {
+  int i;
+  int count = 0;
+  int first = 1;
+  ConstWalk w;
+  char (*names)[MAX_NAME] = calloc(MAX_CONSTS, MAX_NAME);
+  if (!names) {
+    fail(b->e, "out of memory");
+    return;
+  }
+  w.out = b->e->out;
+  w.names = names;
+  w.count = &count;
+  for (i = 0; i < b->nenums; i++) {
+    EnumInfo *en = &b->enums[i];
+    if (!en->complete || !en->anon) {
+      continue;
+    }
+    if (first) {
+      fprintf(b->e->out, "\n// the constants of the header's anonymous enums\n");
+      first = 0;
+    }
+    w.unsigned_values = enum_unsigned(en);
+    clang_visitChildren(en->decl, walk_const, &w);
+  }
+  free(names);
 }
 
 /* The Avant type of a C enum emitted as none: Int32 (C's int) when it is
@@ -1362,6 +1456,7 @@ int main(int argc, char **argv) {
   emit_layouts(bind);
   clang_visitChildren(clang_getTranslationUnitCursor(tu), visit, &e);
   printf("}\n");
+  emit_consts(bind);
   free(bind->recs);
   free(bind->enums);
   free(bind);
