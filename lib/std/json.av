@@ -96,13 +96,17 @@ pub struct Json {
     Json { node: jsonc.avant_json_root(doc), pool: pool }
   }
 
-  pub fn self.obj: JsonBuilder {
+  // A JsonBuilder with an object open (Json.object) or an array open
+  // (Json.array). The starts are not named obj and arr: those are a
+  // parsed value's readers (arr is its elements), and a type-level
+  // function cannot share a method's name.
+  pub fn self.object: JsonBuilder {
     b = JsonBuilder.new()
     b.obj()
     b
   }
 
-  pub fn self.arr: JsonBuilder {
+  pub fn self.array: JsonBuilder {
     b = JsonBuilder.new()
     b.arr()
     b
@@ -173,8 +177,24 @@ pub struct Json {
     Json { node: child_node, pool: self.pool }
   }
 
-  pub fn iter: JsonIter {
+  // The elements of this value, when it is an array; nil for any other
+  // value (an object, a string, a number, a Bool or null), so a walk
+  // over what is not a list is never an empty walk.
+  pub fn arr: JsonIter? {
+    if jsonc.avant_json_kind(self.node) != JsonKind.arr.to_i() {
+      return nil
+    }
     JsonIter.new(self.node, self.pool, self.len())
+  }
+
+  // The elements of the member `key`, when it is there and is an array;
+  // nil otherwise.
+  pub fn arr(key: String): JsonIter? {
+    child_node = jsonc.avant_json_get(self.node, key)
+    if jsonc.avant_json_kind(child_node) != JsonKind.arr.to_i() {
+      return nil
+    }
+    JsonIter.new(child_node, self.pool, jsonc.avant_json_len(child_node))
   }
 
   pub fn f64s(key: String): Array(Float64)? {

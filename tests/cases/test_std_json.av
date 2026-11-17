@@ -15,8 +15,71 @@ fn churn(rounds: Int) {
   }
 }
 
+// A walk is reachable only through an optional: arr and arr(key) give
+// the elements of an array and nil for any other value, so a handler
+// that sums {"numbers": "many"} learns that numbers is not a list. The
+// walk (iter) used to give an iterator that ended at once on a string,
+// a number, an object or null: a sum of 0, as for an empty list.
+fn sum_numbers(body: String): String {
+  doc = Json.parse(body) ?? return "not JSON"
+  it = doc.arr("numbers") ?? return "not a list"
+  sum = 0
+  n = 0
+  while v = it.next() {
+    sum += v.int() ?? 0
+    n += 1
+  }
+  "${n} numbers, sum ${sum}"
+}
+
+fn json_walks(c: Checks) {
+  c.eq_str(sum_numbers("{\"numbers\": [1, 2, 3]}"), "3 numbers, sum 6", "arr(key) walks an array member")
+  c.eq_str(sum_numbers("{\"numbers\": []}"), "0 numbers, sum 0", "an empty array is an empty walk")
+  c.eq_str(sum_numbers("{\"numbers\": \"many\"}"), "not a list", "arr(key) of a string is nil")
+  c.eq_str(sum_numbers("{\"numbers\": 7}"), "not a list", "arr(key) of a number is nil")
+  c.eq_str(sum_numbers("{\"numbers\": 7.5}"), "not a list", "arr(key) of a float is nil")
+  c.eq_str(sum_numbers("{\"numbers\": {\"a\": 1, \"b\": 2}}"), "not a list", "arr(key) of an object is nil")
+  c.eq_str(sum_numbers("{\"numbers\": null}"), "not a list", "arr(key) of null is nil")
+  c.eq_str(sum_numbers("{\"numbers\": true}"), "not a list", "arr(key) of a Bool is nil")
+  c.eq_str(sum_numbers("{\"count\": [1]}"), "not a list", "arr(key) of a missing member is nil")
+  c.eq_str(sum_numbers("[1, 2]"), "not a list", "arr(key) on an array (no members) is nil")
+  for text in ["\"many\"", "7", "2.5", "{\"a\": [1]}", "null", "false"] {
+    if v = Json.parse(text) {
+      if it = v.arr() {
+        c.expect(false, "arr of ${text} is nil")
+      } else {
+        c.expect(true, "arr of ${text} is nil")
+      }
+    } else {
+      c.expect(false, "parse ${text}")
+    }
+  }
+  if v = Json.parse("[[1, 2], \"x\", [3]]") {
+    it = v.arr() ?? return c.expect(false, "arr of an array")
+    inner = 0
+    lists = 0
+    others = 0
+    while e = it.next() {
+      if sub = e.arr() {
+        lists += 1
+        while x = sub.next() {
+          inner += x.int() ?? 0
+        }
+      } else {
+        others += 1
+      }
+    }
+    c.eq_int(lists, 2, "nested arrays walked")
+    c.eq_int(others, 1, "the string element is not a list")
+    c.eq_int(inner, 6, "nested elements summed")
+  } else {
+    c.expect(false, "parse nested")
+  }
+}
+
 fn test_std_json(c: Checks) {
   c.suite("tests/cases/test_std_json.av")
+  json_walks(c)
   if doc = Json.parse("{\"n\": 7, \"name\": \"ada\", \"pi\": 3.5, \"ok\": true, \"tags\": [\"x\", \"y\"], \"point\": {\"x\": 1, \"y\": 2}, \"nothing\": null}") {
     if n = doc.int("n") {
       c.eq_int(n, 7, "int by key")
@@ -113,7 +176,7 @@ fn test_std_json(c: Checks) {
   } else {
     c.expect(true, "empty input is an error")
   }
-  built = Json.obj()
+  built = Json.object()
   built.set("n", 7)
   built.set("name", "a\"b\\c\nd")
   built.key("tags").arr().add("x").add("y").end()
@@ -151,7 +214,7 @@ fn test_std_json(c: Checks) {
     } else {
       c.expect(false, "first element")
     }
-    it = arr.iter()
+    it = arr.arr() ?? return c.expect(false, "an array has its elements")
     total = 0
     count = 0
     walking = true
