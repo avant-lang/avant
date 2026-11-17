@@ -623,10 +623,18 @@ pub fn (checker_self: Checker) scan_pending_expr(expr: Expr) {
 pub fn (checker_self: Checker) check_block_stmt(stmt: Stmt, expected: Ty, last: Bool) {
   checker_self.scan_pending_stmt(stmt)
   mark = checker_self.facts.use_cont.size
+  lw_mark = checker_self.facts.lam_written.size
   checker_self.check_stmt(stmt, expected, last)
   if !checker_self.has_err() {
     checker_self.register_spawn_pending(stmt)
     checker_self.shrinks_after_stmt(stmt, mark)
+    if checker_self.facts.lam_written.size > lw_mark {
+      fresh: Array(String) = []
+      for i in lw_mark..checker_self.facts.lam_written.size {
+        fresh.push(checker_self.facts.lam_written[i])
+      }
+      checker_self.sweep_proofs(stmt, fresh)
+    }
   }
 }
 

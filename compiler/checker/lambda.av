@@ -912,6 +912,15 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     if ret.is_var() {
       checker_self.try_in = "a lambda whose result type is inferred"
     }
+    // The body runs when the lambda is called, any time later: no fact
+    // of the code around it holds there (a captured name may have
+    // changed, a captured array shrunk).
+    outer_facts = checker_self.facts
+    checker_self.facts = FlowFacts.new()
+    checker_self.facts.reach_memo = outer_facts.reach_memo
+    for lw in outer_facts.lam_written {
+      checker_self.facts.lam_written.push(lw)
+    }
     if ret.is_var() {
       saved_infer = checker_self.lambda_infer
       saved_ty = checker_self.inferred_ret
@@ -924,6 +933,18 @@ pub fn (checker_self: Checker) check_lambda_against(expr: Expr, want: Ty): Ty {
     } else {
       checker_self.check_body(b.body, ret, true)
     }
+    checker_self.facts = outer_facts
+    assigned: Array(String) = []
+    for st in b.body {
+      checker_self.cap_collect_assigned_stmt(st, assigned)
+    }
+    written: Array(String) = []
+    for cap_name in expr.cap_names {
+      if assigned.contains(cap_name) {
+        written.push(cap_name)
+      }
+    }
+    checker_self.lambda_writes(written)
     checker_self.return_type = saved_ret
     checker_self.entry_void = saved_entry
     checker_self.try_in = saved_try
