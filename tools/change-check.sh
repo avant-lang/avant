@@ -99,7 +99,7 @@ ptree=$(git rev-parse "$first^^{tree}")
 touched() { # the changed paths on stdin -> test files of the work tree
   while IFS= read -r p; do
     case "$p" in tests/cases/test_*.av) [ -f "$work/$p" ] && echo "$p" ;; esac
-    case "$p" in tools/*|tests/tools/*) echo tests/cases/test_tools.av ;; esac
+    case "$p" in tools/*|tests/tools/*) [ -f "$work/tests/cases/test_tools.av" ] && echo tests/cases/test_tools.av ;; esac
     stem=$(basename "$p"); stem=${stem%.*}; stem=${stem#avant_}; stem=${stem#test_}
     if [ ${#stem} -ge 3 ]; then
       for t in "$work"/tests/cases/test_*"$stem"*.av; do [ -f "$t" ] && echo "tests/cases/$(basename "$t")"; done
@@ -139,12 +139,12 @@ for c in $commits; do
   : > "$d/new.tsv"
   [ -s "$d/compile.txt" ] && sh "$here/ll-digests.sh" "$work" "$d/compile.txt" "$d/new.tsv" < /dev/null 2>> "$log"
   # The commit's corpus state: the recompiled rows, the rest carried over, the removed dropped.
-  awk -F'\t' 'NR == FNR { n[$1] = $0; next } FILENAME == ARGV[2] { if ($1 in n) print n[$1]; else print; next }' \
+  awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $0; next } FILENAME == ARGV[2] { if ($1 in n) print n[$1]; else print; next }' \
     "$d/new.tsv" "$out/state/corpus.tsv" > "$d/carried.tsv"
-  { cat "$d/carried.tsv"; awk -F'\t' 'NR == FNR { k[$1] = 1; next } !($1 in k)' "$out/state/corpus.tsv" "$d/new.tsv"; } \
-    | awk -F'\t' 'NR == FNR { l[$1] = 1; next } ($1 in l)' "$d/list.txt" - | LC_ALL=C sort > "$d/corpus.tsv"
+  { cat "$d/carried.tsv"; awk -F'\t' 'FILENAME == ARGV[1] { k[$1] = 1; next } !($1 in k)' "$out/state/corpus.tsv" "$d/new.tsv"; } \
+    | awk -F'\t' 'FILENAME == ARGV[1] { l[$1] = 1; next } ($1 in l)' "$d/list.txt" - | LC_ALL=C sort > "$d/corpus.tsv"
   cmpr() { # OLD NEW -> the moved programs' readings
-    awk -F'\t' 'NR == FNR { rc[$1] = $2; ll[$1] = $3; lg[$1] = $4; next }
+    awk -F'\t' 'FILENAME == ARGV[1] { rc[$1] = $2; ll[$1] = $3; lg[$1] = $4; next }
       { seen[$1] = 1 }
       !($1 in rc) { print "new " $1; next }
       rc[$1] == 0 && $2 == 0 { if (ll[$1] != $3) print "LL-DIFF " $1; next }
@@ -168,7 +168,7 @@ for c in $commits; do
   if [ -s "$d/count.txt" ]; then
     # shellcheck disable=SC2046
     sh "$here/la-count.sh" "$work" "$lap" "$d/ins.tsv" $(cat "$d/count.txt") < /dev/null 2>> "$log"
-    ins=$(awk -F'\t' 'NR == FNR { n[$1] = $2; m[$1] = $3; next }
+    ins=$(awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $2; m[$1] = $3; next }
       { r = ($2 ~ /^[0-9]+$/ && n[$1] ~ /^[0-9]+$/ && n[$1] > 0) ? sprintf("%.4f", $2 / n[$1]) : "?"
         o = ($3 == m[$1]) ? "" : " OUTPUT CHANGED"
         s = s (s == "" ? "" : ", ") $1 " " r o }
@@ -176,7 +176,7 @@ for c in $commits; do
     grep -q 'OUTPUT CHANGED\| ?' <<EOF && bad=1
 $ins
 EOF
-    awk -F'\t' 'NR == FNR { n[$1] = $0; next } { if ($1 in n) print n[$1]; else print }' "$d/ins.tsv" "$out/state/ins.tsv" > "$d/ins-state.tsv"
+    awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $0; next } { if ($1 in n) print n[$1]; else print }' "$d/ins.tsv" "$out/state/ins.tsv" > "$d/ins-state.tsv"
     mv "$d/ins-state.tsv" "$out/state/ins.tsv"
   fi
   # The touched tests, with this commit's C'.

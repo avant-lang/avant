@@ -121,7 +121,7 @@ jobs=${NEUTRAL_JOBS:-8}
 # compare BASE.tsv NEW.tsv: tools/ll-digests.sh's lines of the two sides, one
 # reading per NEW program, as --one reads it.
 compare() {
-  awk -F'\t' 'NR == FNR { rc[$1] = $2; ll[$1] = $3; lg[$1] = $4; next }
+  awk -F'\t' 'FILENAME == ARGV[1] { rc[$1] = $2; ll[$1] = $3; lg[$1] = $4; next }
     !($1 in rc) { print "new " $1; next }
     rc[$1] == 0 && $2 == 0 { if (ll[$1] == $3) print "ll-same " $3 " " $1; else print "LL-DIFF " $1; next }
     rc[$1] == $2 { if (lg[$1] == $4) print "refused-same " $1; else print "refused-msg " $1; next }
@@ -168,7 +168,7 @@ fi
 # The change's own files, read apart (NEUTRAL_CHANGED).
 if [ -n "${NEUTRAL_CHANGED:-}" ]; then
   for r in "$OUT/result.txt" "$OUT/la-result.txt"; do
-    awk 'NR == FNR { ch[$0] = 1; if ($0 ~ /^compiler\//) ch["compiler/main.av"] = 1; next }
+    awk 'FILENAME == ARGV[1] { ch[$0] = 1; if ($0 ~ /^compiler\//) ch["compiler/main.av"] = 1; next }
       ($1 == "LL-DIFF" || $1 == "refused-msg" || $1 == "STATUS") && ($NF in ch) { w = $1; if ($1 == "STATUS") w = w " " $2; print "changed (" w ") " $NF; next }
       { print }' "$NEUTRAL_CHANGED" "$r" > "$r.part" && mv "$r.part" "$r"
   done

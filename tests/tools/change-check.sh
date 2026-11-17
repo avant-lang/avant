@@ -29,8 +29,10 @@
 #     and the new one's own stitched programs (the default directory),
 #     whose paths the stub compiler, as the real one, writes relative to
 #     its own checkout, the programs read the same;
-#   check-kept, check-rebuilt, check-runtime, check-failed: change-check's
-#     table: a commit changing one test file keeps C' and names that file
+#   check-first-kept, check-kept, check-rebuilt, check-runtime,
+#     check-failed: change-check's table: a first commit changing a tool
+#     only keeps the base's C' and moves no program; a commit changing one
+#     test file keeps C' and names that file
 #     and its test; a compiler change rebuilds, moves every program and
 #     counts the moved LangArena programs, their output the same; a
 #     runtime change counts every LangArena program without moving a .ll;
@@ -166,7 +168,7 @@ perf_ok=0
 perf stat -x, -e instructions:u -o "$w/perf.txt" true > /dev/null 2>&1 && grep -q '^[0-9]' "$w/perf.txt" && perf_ok=1
 skip() { for n in "$@"; do echo "skip: $n: perf stat cannot count instructions here"; done; }
 if [ $perf_ok = 0 ]; then
-  skip cache-la neutral-cache neutral-default-la check-kept check-rebuilt check-runtime check-failed check-worktree
+  skip cache-la neutral-cache neutral-default-la check-first-kept check-kept check-rebuilt check-runtime check-failed check-worktree
   echo done; exit 0
 fi
 
@@ -198,8 +200,9 @@ TMPDIR="$w/tmp" sh "$r/tools/neutral.sh" "$e2/avant" "$r" "$w/neutral2" < /dev/n
 grep -q '^langarena: files 2 ll-same 2 LL-DIFF 0 ' "$w/neutral2/summary.txt" && [ -z "$(ls "$w/tmp")" ]
 say neutral-default-la $? "$(grep '^langarena' "$w/neutral2/summary.txt" 2>/dev/null); left in TMPDIR: $(ls "$w/tmp" | tr '\n' ' ')"
 
-# 6. change-check over four commits after the third.
+# 6. change-check over five commits after the third.
 b=$(git -C "$r" rev-parse HEAD)
+echo '# a note' >> "$r/tools/gcstats.sh"; g add -A && g commit -q -m 'a tool changed'
 echo 'other, again' > "$r/tests/cases/test_other.av"; g add -A && g commit -q -m 'a test changed'
 echo 'v2' > "$r/compiler/main.av"; g add -A && g commit -q -m 'the compiler changed'
 echo 'r2' > "$r/runtime/rt.txt"; g add -A && g commit -q -m 'the runtime changed'
@@ -207,6 +210,8 @@ printf 'import std.m\nFAILME\n' > "$r/tests/cases/test_m.av"; g add -A && g comm
 (cd "$r" && sh tools/change-check.sh "$b" HEAD "$w/cc" < /dev/null > "$w/cc.log" 2>&1); rc=$?
 t=$w/cc/table.md
 row() { grep -F "| $1 |" "$t" 2>/dev/null; }
+row 'a tool changed' | grep -q '| 1 | kept | none matched | 0 | - (no rebuild) | - |'
+say check-first-kept $? "$(row 'a tool changed')"
 row 'a test changed' | grep -q '| 1 | kept | 0 failed, 1 passed: test_other | 1: tests/cases/test_other.av | - (no rebuild) | - |'
 say check-kept $? "$(row 'a test changed')"
 row 'the compiler changed' | grep -q '| 1 | rebuilt | none matched | 9: .* | 2: a.av, b.av | a [0-9.]*, b [0-9.]* |'
