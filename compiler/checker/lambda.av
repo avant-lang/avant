@@ -793,7 +793,7 @@ pub fn (checker_self: Checker) pop_lambda {
   checker_self.lam_scopes.pop()
 }
 
-pub fn (checker_self: Checker) note_capture(name: String, ty: Ty) {
+pub fn (checker_self: Checker) note_capture(name: String, ty: Ty, loc: Location) {
   nlam = checker_self.lam_exprs.size
   if nlam == 0 {
     return
@@ -819,6 +819,10 @@ pub fn (checker_self: Checker) note_capture(name: String, ty: Ty) {
       }
       captured = true
     }
+  }
+  if captured && ty.is_hasher() {
+    checker_self.fail(loc, "a lambda cannot capture the Hasher ${name}: the runtime gives it to the hash method for the call only; add the values to it in the method itself")
+    return
   }
   if captured {
     checker_self.mark_box(name, idx)

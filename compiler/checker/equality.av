@@ -37,9 +37,13 @@ import checker.match
 // Hash key, or "". A struct key's hash is derived from its fields the
 // way its derived == compares them (runtime/avant_hash.c): every field
 // must be a key itself (an integer, a Bool, an enum, a String or such a
-// struct), and the struct may not define its own ==, which such a hash
-// could disagree with (two equal keys hashed apart are an entry that
-// cannot be found). seen holds the structs being looked into.
+// struct). A struct that defines its own == is a key when it defines its
+// own hash too (fn hash(h: Hasher)), which feeds the hasher the values
+// that == compares: the table hashes and compares it by those two
+// methods (key_fns), and its fields may be anything. One with == and no
+// hash is refused: a hash derived from all its fields could disagree
+// with that == (two equal keys hashed apart are an entry that cannot be
+// found). seen holds the structs being looked into.
 pub fn (checker_self: Checker) hash_key_problem(ty: Ty, seen: Array(String), path: String): String {
   return checker_self.key_problem(ty, seen, path, "a Hash key")
 }
@@ -55,8 +59,11 @@ pub fn (checker_self: Checker) key_problem(ty: Ty, seen: Array(String), path: St
   if !ty.is_struct() {
     return "${what}'s fields are integers, Bools, enums, Strings or structs of those, not ${ty.show()} (${path}): key by a struct of the other fields, or keep this one out of the key (a value beside it)"
   }
-  if checker_self.user_op(ty, "==") {
-    return "${ty.show()} defines its own ==, so it cannot be ${what}: the hash is derived from its fields and could disagree with that == (equal values hashed apart); use a struct that compares its fields, or the fields its == reads"
+  if checker_self.own_op(ty, "==") {
+    if sig = checker_self.own_hash(ty) {
+      return ""
+    }
+    return "${ty.show()} defines its own ==, so it cannot be ${what} without its own hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields == compares"
   }
   if seen.contains(ty.name) {
     return ""
@@ -87,6 +94,206 @@ pub fn (checker_self: Checker) check_hash_key_uses {
       checker_self.fail(use.loc, why)
     }
     checker_self.current_module = saved
+  }
+}
+
+// Whether ty (a struct or class) has a method of this name that the
+// program wrote (not one the checker derived: derive_eq_method's ==,
+// derive_hash_method's hash).
+pub fn (checker_self: Checker) own_op(ty: Ty, name: String): Bool {
+  for ms in checker_self.methods {
+    if ms.owner == ty.name && ms.name == name && !ms.node.lazy {
+      return true
+    }
+  }
+  false
+}
+
+// The struct's hash method, written by the program: `fn hash(h: Hasher)`.
+pub fn (checker_self: Checker) own_hash(ty: Ty): FuncSig? {
+  for ms in checker_self.methods {
+    if ms.owner == ty.name && ms.name == "hash" && !ms.node.lazy && ms.params.size == 1 && ms.params[0].is_hasher() && ms.ret.is_void() {
+      return ms
+    }
+  }
+  nil
+}
+
+// The struct's hash method, its own or the one derive_hash_method wrote.
+pub fn (checker_self: Checker) hash_method(ty: Ty): FuncSig? {
+  for ms in checker_self.methods {
+    if ms.owner == ty.name && ms.name == "hash" && ms.params.size == 1 && ms.params[0].is_hasher() && ms.ret.is_void() {
+      return ms
+    }
+  }
+  nil
+}
+
+// Whether a Hash keyed by ty (a struct the key rule accepts) hashes and
+// compares it by its type's methods (the runtime's _uk entries): ty, or a
+// struct among its fields at any depth, defines its own ==.
+pub fn (checker_self: Checker) key_by_methods(ty: Ty, seen: Array(String)): Bool {
+  if !ty.is_struct() || seen.contains(ty.name) {
+    return false
+  }
+  if checker_self.own_op(ty, "==") {
+    return true
+  }
+  seen.push(ty.name)
+  for f in ty.fields {
+    if checker_self.key_by_methods(f.ty, seen) {
+      return true
+    }
+  }
+  false
+}
+
+// The two functions a Hash keyed by such a struct calls (written once
+// per key type, from key_template_source): the key fed to the hasher,
+// and two keys compared. Made where the program makes such a Hash or
+// Set; the lowering finds them by their emit names
+// (compiler/mir/lower_hash.av).
+pub fn (checker_self: Checker) key_fns(key: Ty, loc: Location) {
+  seen: Array(String) = []
+  if !checker_self.key_by_methods(key, seen) {
+    return
+  }
+  seen2: Array(String) = []
+  if checker_self.key_problem(key, seen2, "", "a Hash key").size > 0 {
+    return
+  }
+  for name in ["__avant_key_hash", "__avant_key_eq"] {
+    if sig = checker_self.eq_template(name) {
+      subst: Array(Ty) = []
+      subst.push(key)
+      _ = checker_self.instantiate_function(sig, subst, loc)
+    }
+  }
+}
+
+// Why a value of type ty cannot be added to a Hasher, or "": an integer,
+// a Bool, an enum, a String, or a struct whose hash is its own or
+// derived from fields that are all such values. A struct with its own ==
+// and no hash is refused (equal values must hash alike). seen holds the
+// structs being looked into.
+pub fn (checker_self: Checker) hash_add_problem(ty: Ty, seen: Array(String)): String {
+  if ty.is_integer() || ty.is_bool() || ty.is_enum() || ty.is_string() || ty.is_var() {
+    return ""
+  }
+  if ty.is_float() {
+    return "a Hasher takes no Float64: its == follows IEEE 754 (NaN is not equal to itself, -0.0 equals 0.0), so no hash agrees with it; add an integer made from it (a fixed-point value)"
+  }
+  if !ty.is_struct() {
+    return "a Hasher takes integers, Bools, enums, Strings and structs, not ${ty.show()}: add the values it holds (each element, or its size and its elements)"
+  }
+  if sig = checker_self.hash_method(ty) {
+    return ""
+  }
+  if checker_self.own_op(ty, "==") {
+    return "${ty.show()} defines == but no hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields == compares"
+  }
+  if seen.contains(ty.name) {
+    return ""
+  }
+  seen.push(ty.name)
+  for f in ty.fields {
+    m = checker_self.hash_add_problem(f.ty, seen)
+    if m.size > 0 {
+      if f.ty.is_struct() {
+        return m
+      }
+      return "${m} (the field ${ty.show()}.${f.name}: give ${ty.show()} its own fn hash(h: Hasher), or leave the field out of it)"
+    }
+  }
+  ""
+}
+
+// `h.add(v)` on a Hasher (h the receiver, checked): an integer, a Bool,
+// an enum or a String the runtime mixes in; a struct is the call of its
+// hash method with h (its own, or the one derive_hash_method writes:
+// each field added in order), so the expression becomes `v.hash(h)`.
+pub fn (checker_self: Checker) check_hasher_method(expr: Expr): Ty {
+  if expr.callee != "add" || expr.args.size != 1 {
+    for a in expr.args {
+      checker_self.check_expr(a)
+    }
+    checker_self.fail(expr.loc, "a Hasher has one method, add(v): it takes each value the type's equality compares")
+    return checker_self.t_void()
+  }
+  if bl = expr.block {
+    checker_self.fail(expr.loc, "Hasher.add does not take a block")
+    return checker_self.t_void()
+  }
+  v = checker_self.check_expr(expr.args[0])
+  if checker_self.has_err() {
+    return checker_self.t_void()
+  }
+  seen: Array(String) = []
+  why = checker_self.hash_add_problem(v, seen)
+  if why.size > 0 {
+    checker_self.fail(expr.args[0].loc, why)
+    return checker_self.t_void()
+  }
+  if v.is_struct() {
+    checker_self.derive_hash_method(v, expr.loc)
+    if sig = checker_self.hash_method(v), h = expr.receiver {
+      args: Array(Expr) = []
+      args.push(h)
+      expr.receiver = expr.args[0]
+      expr.args = args
+      expr.callee = "hash"
+      expr.resolved = sig.node.emit_name
+    }
+  }
+  checker_self.t_void()
+}
+
+// The derived hash of the struct sty: `fn hash(h: Hasher)`, each field
+// added in order (`h.add(self.f)`), as derive_eq_method writes ==;
+// lazy, public, in the struct's module. The caller has checked
+// hash_add_problem.
+pub fn (checker_self: Checker) derive_hash_method(sty: Ty, loc: Location) {
+  if sig = checker_self.hash_method(sty) {
+    return
+  }
+  sloc = loc
+  for sdef in checker_self.program.structs {
+    if sdef.name == sty.name && sdef.mod_name == sty.mod_name {
+      sloc = sdef.loc
+    }
+  }
+  fnn = Function.new(sloc, "hash")
+  fnn.owner = sty.name
+  fnn.owner_mod = sty.mod_name
+  fnn.mod_name = sty.mod_name
+  fnn.vis = true
+  fnn.lazy = true
+  fnn.params.push(Param.new(sloc, "__avant_h", TypeName.new(sloc, "Hasher")))
+  for f in sty.fields {
+    call = Expr.new(ex_call(), sloc)
+    call.callee = "add"
+    hn = Expr.new(ex_name(), sloc)
+    hn.ident = "__avant_h"
+    call.receiver = hn
+    call.args.push(eq_field_of(sloc, "self", f.name))
+    fnn.body.push(stmt_expr(sloc, call))
+  }
+  checker_self.attach_method_fn(fnn)
+  params: Array(Ty) = []
+  params.push(ty_hasher())
+  sig = FuncSig.new(fnn.name, fnn, params, checker_self.t_void())
+  sig.owner = sty.name
+  checker_self.alloc_ol(fnn)
+  checker_self.methods.push(sig)
+  checker_self.note_method_named()
+  key = "${sty.name}__${fnn.name}"
+  if taken = checker_self.method_index.get(key) {
+  } else {
+    checker_self.method_index[key] = checker_self.methods.size - 1
+  }
+  if checker_self.adopt_pending {
+    checker_self.assign_one_method_emit(sig)
+    checker_self.pending.push(fnn)
   }
 }
 
@@ -224,6 +431,12 @@ pub fn eq_field_of(loc: Location, obj: String, name: String): Expr {
 // array's min and max by a user < (each keeps the first of equal
 // elements), as Avant, parsed once per program when first needed.
 pub fn eq_template_source(name: String): String {
+  if name == "__avant_key_hash" {
+    return "fn __avant_key_hash(k: T, h: Hasher) {\n  h.add(k)\n}\n"
+  }
+  if name == "__avant_key_eq" {
+    return "fn __avant_key_eq(a: T, b: T): Bool {\n  a == b\n}\n"
+  }
   if name == "__avant_eq_array" {
     return "fn __avant_eq_array(a: Array(T), b: Array(T)): Bool {\n  if a.size != b.size {\n    return false\n  }\n  i = 0\n  while i < a.size {\n    if a[i] != b[i] {\n      return false\n    }\n    i += 1\n  }\n  true\n}\n"
   }

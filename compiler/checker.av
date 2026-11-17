@@ -1580,7 +1580,7 @@ pub class Checker {
           return
         }
         if existing = lookup(target.ident) {
-          note_capture(target.ident, existing)
+          note_capture(target.ident, existing, target.loc)
           got = check_expr_as(value, existing)
           if !ty_assignable(got, existing) {
             fail(value.loc, "cannot assign ${got.show()} to ${existing.show()}")
@@ -3153,6 +3153,9 @@ pub class Checker {
   pub fn check_hash_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
     if expr.elems.size == 0 {
       if has_want && want.is_hash() {
+        if wk0 = want.key {
+          key_fns(wk0, expr.loc)
+        }
         return want
       }
       fail(expr.loc, "an empty hash literal needs a type, e.g. h: Hash(String, Int) = [:]")
@@ -3196,6 +3199,7 @@ pub class Checker {
       }
       i += 2
     }
+    key_fns(key, expr.loc)
     ty_hash(key, val)
   }
 
@@ -3221,6 +3225,7 @@ pub class Checker {
   // the set (lowered as Set(T).new() and an add of each element).
   pub fn check_set_literal(expr: Expr, want: Ty): Ty {
     if elem = want.key {
+      key_fns(elem, expr.loc)
       for el in expr.elems {
         got = check_expr_as(el, elem)
         if !ty_assignable(got, elem) {
@@ -3254,6 +3259,7 @@ pub class Checker {
       fail(expr.loc, why)
       return t_int()
     }
+    key_fns(key, expr.loc)
     ty_hash(key, val)
   }
 
@@ -3273,11 +3279,16 @@ pub class Checker {
       fail(expr.loc, why)
       return t_int()
     }
+    key_fns(elem, expr.loc)
     ty_set(elem, t_bool())
   }
 
   pub fn check_struct_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
     drop_struct_defaults(expr)
+    if expr.type_name == "Hasher" && expr.mod_name.size == 0 {
+      fail(expr.loc, hasher_made_text())
+      return t_int()
+    }
     if expr.type_args.size > 0 {
       tn = TypeName.new(expr.loc, expr.type_name)
       tn.mod_name = expr.mod_name
@@ -3682,7 +3693,7 @@ pub class Checker {
       if name_failed(expr.ident) {
         read_failed_name()
       }
-      note_capture(expr.ident, existing)
+      note_capture(expr.ident, existing, expr.loc)
       return existing
     }
     if field_ty = implicit_field(expr.ident) {
@@ -4581,7 +4592,7 @@ pub class Checker {
       return t_int()
     }
     if existing = lookup(expr.callee), existing.is_fn() {
-      note_capture(expr.callee, existing)
+      note_capture(expr.callee, existing, expr.loc)
       expr.indirect = true
       return check_indirect_call(expr, existing)
     }
@@ -4812,6 +4823,10 @@ pub class Checker {
 
   pub fn check_constructor(expr: Expr, recv: Expr, has_want: Bool, want: Ty): Ty {
     recv = flatten_type_chain(recv)
+    if recv.kind == ex_name() && recv.ident == "Hasher" && recv.mod_name.size == 0 {
+      fail(expr.loc, hasher_made_text())
+      return t_int()
+    }
     if recv.kind == ex_name() && recv.ident == "Buf" && recv.type_args.size == 0 && recv.mod_name.size == 0 {
       // `Buf.new` and `Buf.new(cap)` are `buf_new()` and `buf_new(cap)`
       // (before, "unknown type Buf").
@@ -5386,6 +5401,9 @@ pub class Checker {
     }
     if object.is_float() || object.is_integer() || object.is_string() || object.is_bytes() || object.is_array() || object.is_hash() || object.is_buf() || object.is_join() {
       return builtin_method(expr, object)
+    }
+    if object.is_hasher() {
+      return check_hasher_method(expr)
     }
     if object.is_bool() && expr.callee == "to_s" {
       return scalar_to_s(expr, object)

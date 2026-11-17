@@ -120,6 +120,12 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
           return lw.lower_expect(recv, e.args[0], t, e.loc)
         }
       }
+      // `h.add(v)` on a type's hasher: an integer, a Bool, an enum or a
+      // String the runtime mixes in (a struct's add is its hash method,
+      // the call the checker made of it).
+      if rt.is_hasher() && e.callee == "add" && e.args.size == 1 && e.resolved.size == 0 {
+        return lw.lower_hasher_add(e, recv)
+      }
       // A user method on any type (Expr.resolved names a program method;
       // the builtin members have none).
       if !ast_is_ctor_call(e) && e.resolved.size > 0 {
@@ -607,4 +613,26 @@ pub fn (lw: MirLower) enum_const(t: Ty, member: String): MOperand {
     v = t.enum_vals()[idx]
   }
   lw.lw_b.c_int(mir_enum_ty(t), v)
+}
+
+// `h.add(v)`: avant_hasher_add_str for a String, else avant_hasher_add
+// with the value widened to 64 bits (an integer by its signedness, a Bool
+// as 0 or 1, an enum as its integer).
+pub fn (lw: MirLower) lower_hasher_add(e: Expr, recv: Expr): MOperand {
+  b = lw.lw_b
+  h = lw.lower_expr(recv)
+  arg = e.args[0]
+  v = lw.lower_expr(arg)
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  ops: Array(MOperand) = []
+  ops.push(h)
+  if at = arg.ty, at.is_string() {
+    ops.push(v)
+    return lw.call_to(mt_void(), "avant_hasher_add_str", ops)
+  }
+  ops.push(lw.tmp(mt_u64(), b.rv_cast(v, mt_u64())))
+  lw.call_to(mt_void(), "avant_hasher_add", ops)
 }

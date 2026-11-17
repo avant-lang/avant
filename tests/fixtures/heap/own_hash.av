@@ -1,0 +1,185 @@
+// A type's own hash: a struct whose == ignores case and whose hash feeds
+// the hasher the same lowered text is a Hash key and a Set element; both
+// methods build Strings, so they allocate (and the collector runs) inside
+// the table's entries, through several resizes. A struct with derived
+// equality holding such a struct is a key through its field's hash; a key
+// with its own == and hash may hold fields neither reads (an Array, a
+// Float64). The walks' results are sums or sorted, so they do not depend
+// on the walk's order.
+
+enum Kind { plain, bold }
+
+struct Name {
+  text: String
+
+  fn ==(other: Name): Bool {
+    lower(self.text) == lower(other.text)
+  }
+
+  fn hash(h: Hasher) {
+    h.add(lower(self.text))
+  }
+}
+
+// Derived == and a derived hash: its fields in order, the Name by its own.
+struct Tag {
+  name: Name
+  kind: Kind
+  n: Int32
+}
+
+struct Reading {
+  id: Int
+  on: Bool
+  samples: Array(Int)
+  weight: Float64
+
+  fn ==(other: Reading): Bool {
+    self.id == other.id && self.on == other.on
+  }
+
+  fn hash(h: Hasher) {
+    h.add(self.id)
+    h.add(self.on)
+  }
+}
+
+fn lower(s: String): String {
+  b = buf_new()
+  i = 0
+  while i < s.size {
+    c = s[i]
+    if c >= 65 && c <= 90 {
+      c += 32
+    }
+    b.push_byte(c)
+    i += 1
+  }
+  b.to_s()
+}
+
+fn check(what: String, ok: Bool) {
+  if !ok {
+    puts("FAIL ${what}")
+  }
+}
+
+// "Word7", "WORD7" and "word7" are one key.
+fn spelled(i: Int): String {
+  if i % 3 == 0 {
+    return "Word${i % 700}"
+  }
+  if i % 3 == 1 {
+    return "WORD${i % 700}"
+  }
+  "word${i % 700}"
+}
+
+fn names {
+  h = Hash(Name, Int).new()
+  i = 0
+  while i < 3000 {
+    h.inc(Name { text: spelled(i) }, 1)
+    i += 1
+  }
+  check("names size", h.size == 700)
+  check("names get", (h[Name { text: "wOrD5" }] ?? 0) == 5 && h.has(Name { text: "WORD699" }) && !h.has(Name { text: "word700" }))
+  h[Name { text: "NEW" }] = 1
+  h[Name { text: "new" }] = 2
+  check("names replace", h.size == 701 && (h[Name { text: "New" }] ?? 0) == 2)
+  gone = 0
+  i = 0
+  while i < 700 {
+    if i % 2 == 0 {
+      if v = h.delete(Name { text: "WoRd${i}" }) {
+        gone += v
+      }
+    }
+    i += 1
+  }
+  h.delete(Name { text: "WORD1" })
+  check("names deleted", !h.has(Name { text: "word1" }) && h.has(Name { text: "word3" }))
+  total = 0
+  h.each { |k, v| total += v + k.text.size }
+  ks = h.keys()
+  vs = h.values()
+  t2 = 0
+  for v in vs {
+    t2 += v
+  }
+  words: Array(String) = []
+  for k in ks {
+    words.push(lower(k.text))
+  }
+  words.sort()
+  puts("names ${h.size} ${gone} ${total} ${t2} ${ks.size} ${words[0]} ${words[words.size - 1]}")
+}
+
+fn name_set {
+  s = Set(Name).new()
+  fresh = 0
+  i = 0
+  while i < 2500 {
+    if s.add(Name { text: spelled(i) }) {
+      fresh += 1
+    }
+    i += 1
+  }
+  check("set fresh", fresh == s.size && !s.add(Name { text: "word3" }))
+  check("set has", s.has(Name { text: "WoRd42" }))
+  check("set delete", s.delete(Name { text: "WORD42" }) && !s.delete(Name { text: "word42" }))
+  lit: Set(Name) = [Name { text: "a" }, Name { text: "A" }, Name { text: "b" }]
+  n = 0
+  for v in lit {
+    n += v.text.size
+  }
+  xs: Array(String) = []
+  for v in s.values() {
+    xs.push(lower(v.text))
+  }
+  xs.sort()
+  puts("set ${fresh} ${s.size} ${lit.size} ${n} ${xs[0]} ${xs[xs.size - 1]}")
+}
+
+fn tags {
+  h = Hash(Tag, String).new()
+  i = 0
+  while i < 1200 {
+    k = Kind.plain
+    if i % 2 == 1 {
+      k = Kind.bold
+    }
+    h[Tag { name: Name { text: spelled(i) }, kind: k, n: (i % 5).to_i32() }] = "v${i}"
+    i += 1
+  }
+  check("tags get", h.has(Tag { name: Name { text: "WORD1" }, kind: Kind.bold, n: 1.to_i32() }))
+  check("tags miss", !h.has(Tag { name: Name { text: "word1" }, kind: Kind.plain, n: 1.to_i32() }))
+  lit = [Tag { name: Name { text: "x" }, kind: Kind.plain, n: 0.to_i32() }: 1, Tag { name: Name { text: "X" }, kind: Kind.plain, n: 0.to_i32() }: 2]
+  len = 0
+  h.each { |k, v| len += v.size }
+  puts("tags ${h.size} ${len} ${lit.size} ${lit[Tag { name: Name { text: "x" }, kind: Kind.plain, n: 0.to_i32() }] ?? 0}")
+}
+
+fn readings {
+  h = Hash(Reading, Int).new()
+  i = 0
+  while i < 2000 {
+    r = Reading { id: i % 400, on: i % 2 == 0, samples: [i, i + 1], weight: 0.5 }
+    h.inc(r, r.samples[0])
+    i += 1
+  }
+  want = Reading { id: 7, on: false, samples: [], weight: 1.5 }
+  check("readings get", (h[want] ?? -1) > 0)
+  sum = 0
+  for k in h.keys() {
+    sum += k.samples.size + k.id
+  }
+  puts("readings ${h.size} ${sum} ${h[want] ?? -1}")
+}
+
+fn main {
+  names()
+  name_set()
+  tags()
+  readings()
+}

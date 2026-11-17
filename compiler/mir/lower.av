@@ -101,6 +101,13 @@ pub class MirCb {
 pub class MirFfi {
   pub cbs: Array(MirCb) = []
   pub cb_seen: Hash(String, Int) = Hash(String, Int).new()
+  // The key types of the hashes keyed by their type's own hash and
+  // equality, each once (by its MIR text), and where its first hash is
+  // made: their two thunks are written after the functions
+  // (lower_hash.av lower_key_thunks).
+  pub ukeys: Array(Ty) = []
+  pub ukey_locs: Array(Location) = []
+  pub ukey_seen: Hash(String, Int) = Hash(String, Int).new()
   pub pins: Array(Int) = []
   pub pin_depth: Array(Int) = []
   // A `Mutex.with` block's pin entry is -2 - h, h the local holding the
@@ -404,6 +411,7 @@ pub class MirLower {
     self.lower_pending_tasks()
     lower_trampolines(fns)
     self.lower_cb_thunks()
+    self.lower_key_thunks()
     self.lower_pending_lambdas()
     self.lower_lazy(fns)
     if self.failed() {

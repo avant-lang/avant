@@ -622,6 +622,12 @@ pub fn (checker_self: Checker) register_function(fnn: Function) {
       checker_self.current_module = saved_mod
       return
     }
+    if ty.is_hasher() {
+      checker_self.fail(t.loc, hasher_held_text("a function's result"))
+      checker_self.resolver.clear_tparams()
+      checker_self.current_module = saved_mod
+      return
+    }
     ret = ty
   }
   checker_self.resolver.clear_tparams()
@@ -883,6 +889,12 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
     }
     if ty.is_clayout() {
       checker_self.fail(t.loc, "${ty.show()} is a C layout; use Ptr(${ty.show()})")
+      checker_self.resolver.clear_tparams()
+      checker_self.current_module = saved_mod
+      return
+    }
+    if ty.is_hasher() {
+      checker_self.fail(t.loc, hasher_held_text("a function's result"))
       checker_self.resolver.clear_tparams()
       checker_self.current_module = saved_mod
       return

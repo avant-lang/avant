@@ -388,6 +388,20 @@ void *avant_hash_upsert_xk(void *h, const void *key, int32_t *found);
 void avant_hash_set_ref_xk(void *h, const void *key, void *val);
 void *avant_hash_take_xk(void *h, const void *key, int32_t *found);
 void avant_hash_del_xk(void *h, const void *key);
+/* A key with its own hash and equality (avant_hash.c's _uk entries): the
+ * two functions the compiler generates for its type, set after the
+ * creation; the entries take the key by address, as the _xk ones. The
+ * hasher those functions are given (a C stack object) takes the values. */
+void avant_hash_user(void *h, void *hashfn, void *eqfn);
+void avant_hasher_add(void *hs, uint64_t v);
+void avant_hasher_add_str(void *hs, const char *s);
+void *avant_hash_find_uk(void *h, const void *key, int32_t *found);
+void *avant_hash_put_uk(void *h, const void *key);
+void *avant_hash_upsert_uk(void *h, const void *key, int32_t *found);
+void avant_hash_set_ref_uk(void *h, const void *key, void *val);
+void *avant_hash_take_uk(void *h, const void *key, int32_t *found);
+void avant_hash_del_uk(void *h, const void *key);
+void *avant_hash_slot_uk(void *h, const void *key);
 void *avant_hash_slot_ik(void *h, avant_int key);
 void *avant_hash_slot_sk(void *h, const char *key);
 void *avant_hash_slot_xk(void *h, const void *key);

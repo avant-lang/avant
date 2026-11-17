@@ -98,6 +98,13 @@ typedef struct {
   /* The type id of an Array of the values (values(): an Array's element
    * buffer, whose stride is the value's size, not its slot's). */
   uint32_t atid;
+  /* A key whose type defines its own hash and equality (the _uk entries,
+   * set by avant_hash_user after the creation): functions the compiler
+   * generates per key type, which feed the key at KEY to the hasher HS
+   * and compare the keys at A and B (1 equal). Both run Avant code, which
+   * may allocate and collect. NULL for every other hash. */
+  void (*uhash)(const void *key, void *hs);
+  int32_t (*ueq)(const void *a, const void *b);
   /* A struct key: its fields, each (offset << 8) | kind, kind the width
    * of an integer field or XK_STR; flat when they cover every byte and
    * none is a String; krefs when one is a String. */
@@ -978,6 +985,8 @@ void *avant_hash_create_typed(uint32_t desc, const char *klayout, uint32_t kw, u
   x->ktid = ktid;
   x->vtid = vtid;
   x->atid = atid;
+  x->uhash = NULL;
+  x->ueq = NULL;
   x->nf = (uint16_t)nf;
   x->flat = (uint8_t)flat;
   x->krefs = (uint8_t)krefs;
@@ -1548,6 +1557,194 @@ void avant_hash_del_ik(void *hp, avant_int key) {
 void avant_hash_del_xk(void *hp, const void *key) {
   int32_t found = 0;
   (void)avant_hash_take_xk(hp, key, &found);
+}
+
+/* ---- keys with their own hash and equality (the _uk entries) ----
+ *
+ * A struct key whose type defines its own hash and equality (or holds
+ * such a struct) is stored as a struct key passed by address is (its
+ * bytes, a uint32 hash per entry, the compact layout), but its hash and
+ * its equality are the type's: the functions avant_hash_user set. The
+ * hash is computed by a hasher on the C stack: the generated hash
+ * function adds the values the type's equality compares
+ * (avant_hasher_add, avant_hasher_add_str), mixed in order with the
+ * hash's seed, and the hasher's state is finished as a struct key's
+ * hash is. Both functions run Avant code that may allocate and collect,
+ * so inside an entry the hash is a handle, and every pointer into its
+ * buffers is read from it again after each call (RC1, RC2). The stored
+ * hashes are what a growth and a deletion read: no key is hashed again
+ * outside an entry. A table slot's key passed to the equality is read
+ * there before anything can collect (the generated function loads both
+ * keys first); the caller's key is the caller's local, a frame root. */
+
+typedef struct {
+  uint64_t a;
+  uint32_t seed;
+} AvantHasher;
+
+void avant_hasher_add(void *hs, uint64_t v) {
+  AvantHasher *s = (AvantHasher *)hs;
+  s->a = xk_mix(s->a, v);
+}
+
+void avant_hasher_add_str(void *hs, const char *str) {
+  AvantHasher *s = (AvantHasher *)hs;
+  s->a = xk_mix(s->a, hash_bytes(str, avant_str_n(str), s->seed));
+}
+
+/* gc-lint: holds nothing (it stores two code addresses, allocates
+ * nothing). */
+void avant_hash_user(void *hp, void *hashfn, void *eqfn) {
+  AvantHashX *x = hx((AvantHash *)hp);
+  x->uhash = (void (*)(const void *, void *))hashfn;
+  x->ueq = (int32_t (*)(const void *, const void *))eqfn;
+}
+
+/* The hash of the user key at K, by the type's hash; *HH is the caller's
+ * handle of the hash (the call may collect). */
+static uint32_t ukey_hash(AvantHash *const *hh, const void *k) {
+  AvantHasher s;
+  void (*fn)(const void *, void *) = hx(*hh)->uhash;
+  s.seed = (*hh)->seed;
+  s.a = (uint64_t)s.seed ^ 0x2545f4914f6cdd1dull;
+  fn(k, &s);
+  return hash_i32((int32_t)(uint32_t)(s.a ^ (s.a >> 32)));
+}
+
+/* As find_struct, with the type's equality: *HH is the caller's handle,
+ * and the table's buffers are read from it again after every call. */
+static int find_user(AvantHash *const *hh, const char *k, uint32_t hv, int32_t *ent, int32_t *pos) {
+  int32_t cap = (*hh)->cap;
+  int32_t n;
+  if (!cap) {
+    *pos = 0;
+    return 0;
+  }
+  int32_t mask = cap - 1;
+  int32_t i = (int32_t)(hv & (uint32_t)mask);
+  for (n = 0; n < cap; n++) {
+    const AvantHash *h = *hh;
+    int32_t e = (int32_t)index_of(h)[i] - 1;
+    if (e < 0) {
+      *pos = i;
+      return 0;
+    }
+    if (hashes_of(h)[e] == hv) {
+      const char *slot = (const char *)h->keys + (size_t)e * hx(h)->kw;
+      if (hx(h)->ueq(slot, k)) {
+        *ent = e;
+        return 1;
+      }
+    }
+    i = (i + 1) & mask;
+  }
+  *pos = 0;
+  return 0;
+}
+
+/* As put_xk for a user key at K (the caller's local, rooted in its
+ * frame). */
+static void *put_uk(AvantHash *h, const char *k, int32_t *found, int grow_first) {
+  int32_t e = 0;
+  int32_t pos = 0;
+  if (!h) {
+    avant_trap_text("a Hash with a struct key was used before it was created");
+  }
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &h);
+  uint32_t hv = ukey_hash(&h, k);
+  if (!(grow_first && needs_grow(h))) {
+    if (find_user(&h, k, hv, &e, &pos)) {
+      if (found) {
+        *found = 1;
+      }
+      return val_at(h, h->vals, e);
+    }
+  }
+  if (needs_grow(h)) {
+    grow(h);
+    if (find_user(&h, k, hv, &e, &pos)) {
+      if (found) {
+        *found = 1;
+      }
+      return val_at(h, h->vals, e);
+    }
+  }
+  if (found) {
+    *found = 0;
+  }
+  e = claim(h, pos, 1);
+  store_xkey(h, e, k, hv);
+  zero_val(h, val_at(h, h->vals, e));
+  return val_at(h, h->vals, e);
+}
+
+void *avant_hash_find_uk(void *hp, const void *key, int32_t *found) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t e = 0;
+  int32_t pos = 0;
+  if (!h) {
+    *found = 0;
+    return (void *)g_hash_none;
+  }
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &h);
+  if (!find_user(&h, (const char *)key, ukey_hash(&h, key), &e, &pos)) {
+    *found = 0;
+    return (void *)g_hash_none;
+  }
+  *found = 1;
+  return val_at(h, h->vals, e);
+}
+
+void *avant_hash_put_uk(void *hp, const void *key) {
+  return put_uk((AvantHash *)hp, (const char *)key, NULL, 1);
+}
+
+void *avant_hash_upsert_uk(void *hp, const void *key, int32_t *found) {
+  return put_uk((AvantHash *)hp, (const char *)key, found, 0);
+}
+
+void avant_hash_set_ref_uk(void *hp, const void *key, void *val) {
+  AvantHash *h = (AvantHash *)hp;
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &h);
+  AVANT_GC_ROOT(1, &val);
+  void **slot = (void **)put_uk(h, (const char *)key, NULL, 1);
+  /* The barrier before the store (RC5). */
+  avant_barrier_slot_young(h->vals, slot);
+  *slot = val;
+}
+
+void *avant_hash_slot_uk(void *hp, const void *key) {
+  AvantHash *h = (AvantHash *)hp;
+  slot_hash(h);
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &h);
+  void *slot = put_uk(h, (const char *)key, NULL, 1);
+  return slot_after(h, slot);
+}
+
+void *avant_hash_take_uk(void *hp, const void *key, int32_t *found) {
+  AvantHash *h = (AvantHash *)hp;
+  int32_t e = 0;
+  int32_t pos = 0;
+  if (!h) {
+    *found = 0;
+    return (void *)g_hash_none;
+  }
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &h);
+  if (!find_user(&h, (const char *)key, ukey_hash(&h, key), &e, &pos)) {
+    *found = 0;
+    return (void *)g_hash_none;
+  }
+  return take_at(h, e, found);
+}
+
+void avant_hash_del_uk(void *hp, const void *key) {
+  int32_t found = 0;
+  (void)avant_hash_take_uk(hp, key, &found);
 }
 
 typedef struct {

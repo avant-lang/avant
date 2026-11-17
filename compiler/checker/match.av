@@ -684,6 +684,12 @@ pub fn (checker_self: Checker) attach_method_fn(fnn: Function) {
 }
 
 pub fn (checker_self: Checker) instantiate_function(sig: FuncSig, subst: Array(Ty), loc: Location): FuncSig? {
+  for t in subst {
+    if t.is_hasher() {
+      checker_self.fail(loc, hasher_held_text("a type argument"))
+      return nil
+    }
+  }
   if !checker_self.bounds_hold(sig.node, subst, loc) {
     return nil
   }

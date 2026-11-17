@@ -36,6 +36,10 @@ pub fn tyk_uint32: Int { 25 }
 // an integer type: no arithmetic, no ordering, no conversion; `==` and
 // `!=` compare two values of one enum.
 pub fn tyk_enum: Int { 26 }
+// The hasher a type's own `fn hash(h: Hasher)` is given: the runtime's,
+// on the C stack for the call; it exists only as a parameter (no value of
+// it is made, stored, returned or captured).
+pub fn tyk_hasher: Int { 27 }
 
 // An enum's members: names and values in declaration order, the values
 // distinct (C's rule: one more than the previous member unless written).
@@ -156,6 +160,7 @@ pub class Ty {
   pub fn is_var: Bool { self.kind == tyk_var() }
   pub fn is_module: Bool { self.kind == tyk_module() }
   pub fn is_enum: Bool { self.kind == tyk_enum() }
+  pub fn is_hasher: Bool { self.kind == tyk_hasher() }
 
   // An enum's member names and values (empty for any other type).
   pub fn enum_names: Array(String) {
@@ -253,6 +258,9 @@ pub class Ty {
       return true
     }
     if k == tyk_buf() {
+      return true
+    }
+    if k == tyk_hasher() {
       return true
     }
     if k == tyk_bytes() {
@@ -482,6 +490,9 @@ pub class Ty {
     if k == tyk_buf() {
       return "Buf"
     }
+    if k == tyk_hasher() {
+      return "Hasher"
+    }
     if k == tyk_bytes() {
       return "Bytes"
     }
@@ -693,6 +704,7 @@ pub fn ty_string: Ty { Ty.new(tyk_string()) }
 pub fn ty_void: Ty { Ty.new(tyk_void()) }
 pub fn ty_nil: Ty { Ty.new(tyk_nil()) }
 pub fn ty_buf: Ty { Ty.new(tyk_buf()) }
+pub fn ty_hasher: Ty { Ty.new(tyk_hasher()) }
 pub fn ty_bytes: Ty { Ty.new(tyk_bytes()) }
 
 pub fn ty_var(name: String): Ty {
@@ -758,6 +770,9 @@ pub fn mangle_ty(ty: Ty): String {
   }
   if k == tyk_buf() {
     return "Buf"
+  }
+  if k == tyk_hasher() {
+    return "Hasher"
   }
   if k == tyk_bytes() {
     return "Bytes"
@@ -931,6 +946,17 @@ pub fn hash_type_problem(k: Ty, v: Ty): String {
   ""
 }
 
+// The refusal of a Hasher where it would outlive its call: what (a
+// field, an Array, a function's result, ...) may not hold one.
+pub fn hasher_held_text(what: String): String {
+  "${what} cannot hold a Hasher: the runtime gives one to a hash method for the call only (fn hash(h: Hasher)), so it is a parameter and nothing else; add values to it there"
+}
+
+// The refusal of a Hasher made by the program.
+pub fn hasher_made_text: String {
+  "a Hasher cannot be made: the runtime gives one to a type's hash method (fn hash(h: Hasher)), which adds the values its equality compares"
+}
+
 // What to key by instead of a type no hash can take (the way forward of
 // hash_type_problem's and set_type_problem's refusals): by is "key by"
 // for a Hash, "store" for a Set.
@@ -939,7 +965,7 @@ pub fn hash_key_way(k: Ty, by: String): String {
     return "${by} ${ty_without_nil(k).show()} and keep the nil case beside it"
   }
   if k.is_class() {
-    return "a class compares by identity, which no hash can follow while the collector moves objects; ${by} a value the object holds (an id or a name), or its index in an Array(${k.show()})"
+    return "a class compares by identity, which no hash can follow while the collector moves objects, and a class's own == reads fields that can change while it is in the table; ${by} a value the object holds (an id or a name), or its index in an Array(${k.show()})"
   }
   if k.is_array() || k.is_bytes() || k.is_buf() {
     return "${by} a String or a struct made from its contents, or its index in an Array(${k.show()})"
@@ -1308,6 +1334,9 @@ pub fn type_is_builtin(name: String): Bool {
     return true
   }
   if name == "Buf" {
+    return true
+  }
+  if name == "Hasher" {
     return true
   }
   if name == "Bytes" {
