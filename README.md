@@ -480,7 +480,7 @@ From loosest to tightest binding; operators on one row associate left to right.
 `==` and `!=` compare two values of one type; different types, an integer and a `Float64` included, are a compile error: convert (`n.to_f() == x`, or `n == x.to_i()`, which truncates), so no precision is lost silently above 2^53. A literal takes the other side's type (`x == 2`).
 
 - Numbers, `Bool`, `String`, `Bytes` and enums compare by value; a `Float64` by IEEE, so NaN equals nothing, itself included.
-- A struct compares its fields in order, each with its own `==`, unless it defines `fn ==`; one with a field that has no `==` (a `Hash`, a function) has none either, and the error names the field.
+- A struct compares its fields in order, each with its own `==`, unless it defines `fn ==` (with its `fn hash`: [Key and value types](#key-and-value-types)); one with a field that has no `==` (a `Hash`, a function) has none either, and the error names the field.
 - A class compares by identity (the same object) unless it defines `fn ==`.
 - An array equals another when the sizes are equal and the elements are, in order.
 - An optional equals another when both are `nil` or both hold equal values; it is never compared with `nil`: open it ([Opening an optional](#opening-an-optional)).
@@ -1506,16 +1506,39 @@ fn main {
 }
 ```
 
-- A struct key's hash and `==` come from its fields, as the struct's own `==` does when it defines none: each field in turn, a `String` by its bytes. A struct that defines its own `==` cannot be a key, since a hash derived from its fields could disagree with it; key by the fields it compares.
+- A struct key's hash and `==` come from its fields, as the struct's own `==` does when it defines none: each field in turn, a `String` by its bytes.
+- A struct that defines its own `==` defines its own hash too, `fn hash(h: Hasher)`, which adds to the hasher the values that `==` compares (`h.add(v)` takes an integer, a `Bool`, an enum, a `String`, or a struct, added by its own hash or field by field); the table then hashes and compares the key by those two methods, and its other fields may be anything. A type with `==` and no `hash`, or `hash` and no `==`, is refused at its declaration: equal values must hash alike. The runtime gives the hasher, with its per-process seed and its mixing; it exists only as that parameter (it is not made, stored, returned or captured).
 - A `Float64` key, or a struct key that holds one, is a compile error, since IEEE `==` (`NaN` unequal to itself, `-0.0` equal to `0.0`) agrees with no hash: key by an integer.
-- A class key is a compile error, since a class compares by identity and the collector moves objects: key by a value the object holds (an id or a name), or by its index in an array. Every refused key or value names what to use instead.
+- A class key is a compile error, since a class compares by identity and the collector moves objects, and a class's own `==` reads fields that can change while it is in the table: key by a value the object holds (an id or a name), or by its index in an array. Every refused key or value names what to use instead.
 - A struct key of integers, `Bool`s and enums whose size is 1, 2, 4 or 8 bytes (two `Int32` fields, say) is kept as one integer, so it costs what a combined integer key costs.
 - A class, an `Array` or a `Hash` value is shared with the table, as a variable would share it; a struct value is a copy, as in an `Array`.
 - A value cannot be optional (`Hash(Int, String?)` is refused): `h[k]` is already `nil` for a missing key, so a stored `nil` could not be told from it.
 
+```avant
+struct Ticket {
+  id: Int
+  note: String
+
+  fn ==(other: Ticket): Bool {
+    id == other.id
+  }
+
+  fn hash(h: Hasher) {
+    h.add(id)
+  }
+}
+
+fn main {
+  open = Set(Ticket).new()
+  open.add(Ticket { id: 7, note: "printer" })
+  puts(open.has(Ticket { id: 7, note: "" }))       // => true
+  puts(open.add(Ticket { id: 7, note: "again" }))  // => false
+}
+```
+
 ## Sets
 
-`Set(T)` holds distinct values, each at most once. Its elements are what a `Hash` takes as keys ([Key and value types](#key-and-value-types)), by the same rules: a `Float64`, a class or a struct with its own `==` is refused with the reason.
+`Set(T)` holds distinct values, each at most once. Its elements are what a `Hash` takes as keys ([Key and value types](#key-and-value-types)), by the same rules: a `Float64`, a class or a struct with its own `==` and no hash is refused with the reason.
 
 ```avant
 fn main {
@@ -1866,6 +1889,11 @@ struct Vec2 {
 
   fn ==(other: Vec2): Bool {
     x == other.x && y == other.y
+  }
+
+  fn hash(h: Hasher) {
+    h.add(x)
+    h.add(y)
   }
 }
 
@@ -2571,6 +2599,10 @@ struct Id: Eq(Id) {
 
   fn ==(other: Id): Bool {
     n == other.n
+  }
+
+  fn hash(h: Hasher) {
+    h.add(n)
   }
 }
 

@@ -297,6 +297,42 @@ pub fn (checker_self: Checker) derive_hash_method(sty: Ty, loc: Location) {
   }
 }
 
+// A type that defines its own equality defines its own hash, and one
+// that defines `fn hash(h: Hasher)` defines its own equality: equal
+// values must hash alike, so one without the other is refused at its
+// declaration, as is a hash of another signature beside an equality.
+// Classes too (a class is never a key, but the pair is one protocol).
+pub fn (checker_self: Checker) check_hash_pairs {
+  for ms in checker_self.methods {
+    if !ms.node.lazy && ms.name == "==" {
+      hm = checker_self.named_method(ms.owner, "hash")
+      if h = hm {
+        if !(h.params.size == 1 && h.params[0].is_hasher() && h.ret.is_void()) {
+          checker_self.fail(h.node.loc, "hash takes the Hasher: fn hash(h: Hasher)")
+        }
+      } else {
+        checker_self.fail(ms.node.loc, "${ms.owner} defines == but no hash: equal values must hash alike; add fn hash(h: Hasher) feeding it the fields == compares")
+      }
+    }
+    if !ms.node.lazy && ms.name == "hash" && ms.params.size == 1 && ms.params[0].is_hasher() {
+      if e = checker_self.named_method(ms.owner, "==") {
+      } else {
+        checker_self.fail(ms.node.loc, "${ms.owner} defines hash but no ==: a hash agrees with an equality; add fn ==(other: ${ms.owner}): Bool comparing the values hash adds")
+      }
+    }
+  }
+}
+
+// The method of owner with this name that the program wrote, or nil.
+pub fn (checker_self: Checker) named_method(owner: String, name: String): FuncSig? {
+  for ms in checker_self.methods {
+    if ms.owner == owner && ms.name == name && !ms.node.lazy {
+      return ms
+    }
+  }
+  nil
+}
+
 // Whether ty (a struct or class) has a method of this name.
 pub fn (checker_self: Checker) user_op(ty: Ty, name: String): Bool {
   for ms in checker_self.methods {
