@@ -312,6 +312,11 @@ char *avant_str_strip(const char *s, int32_t mode);
 void *avant_str_split(const char *s, const char *sep);
 void *avant_str_fields(const char *s);
 char *avant_str_from_utf8(const char *s, int32_t *found);
+/* String.code_points (and Bytes'): each code point's number, an
+ * Array(Int); String.from_code_point(n): its UTF-8. */
+void *avant_str_code_points(const char *s);
+void *avant_bytes_code_points(const char *s);
+char *avant_str_from_code_point(avant_int cp);
 void *avant_bytes_to_buf(const char *s);
 
 void *avant_buf_new(avant_int cap);

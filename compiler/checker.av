@@ -5332,6 +5332,17 @@ pub class Checker {
           }
           return ty_nilable(t_string())
         }
+        if expr.callee == "from_code_point" {
+          if expr.args.size != 1 {
+            fail(expr.loc, "String.from_code_point takes one Int")
+            return t_string()
+          }
+          got = check_expr_as(expr.args[0], t_int())
+          if !got.is_int() {
+            fail(expr.args[0].loc, "String.from_code_point expects Int")
+          }
+          return t_string()
+        }
       }
     }
     // A type without that type-level function: before, its name was

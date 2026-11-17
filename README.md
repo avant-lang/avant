@@ -1197,7 +1197,7 @@ fn main {
 
 ### Bytes, not characters
 
-`size` is the byte length ([Size limits](#size-limits)), and `s[i]` is the byte at `i` as an `Int`. UTF-8 is checked only when you ask for characters: `s.chars()` returns one `String` per code point and traps on invalid UTF-8 (`avant runtime: String.chars needs valid UTF-8`); `String.from_utf8(bytes)` returns `nil` for it.
+`size` is the byte length ([Size limits](#size-limits)), and `s[i]` is the byte at `i` as an `Int`. UTF-8 is checked only when you ask for characters: `s.chars()` returns one `String` per code point and `s.code_points()` each code point's number, and both trap on invalid UTF-8 (`avant runtime: String.chars needs valid UTF-8`); `String.from_utf8(bytes)` returns `nil` for it. `String.from_code_point(n)` is the UTF-8 of one code point; a number outside `0..0x10FFFF`, or a surrogate (`0xD800..0xDFFF`), traps.
 
 ```avant
 fn main {
@@ -1206,6 +1206,8 @@ fn main {
   puts(s[0])               // => 110
   puts(s.chars().size)       // => 2
   puts(s.chars()[1])         // => é
+  puts(s.code_points()[1])   // => 233
+  puts(String.from_code_point(8364))   // => €
 }
 ```
 
@@ -1225,6 +1227,7 @@ A string knows its length (`size` is a read, never a scan), and a long slice sha
 | `s.fields()` | split on runs of whitespace, empty fields dropped |
 | `s.strip()`, `s.strip_left()`, `s.strip_right()` | whitespace trimmed |
 | `s.chars()` | `Array(String)`, one per code point |
+| `s.code_points()` | `Array(Int)`, each code point's number |
 | `s.bytes` | the same bytes as [`Bytes`](#bytes-and-buf) |
 | `s.to_i()`, `s.to_u64()`, `s.to_f()` | [parsed numbers](#parsing-numbers), optional |
 | `str_slice(s, start, stop)` | the bytes `start` up to `stop`; traps unless `0 <= start <= stop <= size` |
@@ -1232,6 +1235,7 @@ A string knows its length (`size` is a read, never a scan), and a long slice sha
 | `repeat_byte(b, n)` | `n` copies of the byte `b` |
 | `bytes_to_str(xs)` | a string from an `Array(Int)` of bytes |
 | `String.from_utf8(bytes)` | `String?`: `nil` when the bytes are not valid UTF-8 |
+| `String.from_code_point(n)` | the UTF-8 of one code point; traps outside `0..0x10FFFF` and on a surrogate |
 
 `String` has no `contains`, `starts_with`, `index_of`, `replace`, `join` or case conversion yet ([Not built yet](#not-built-yet)); [`std.regex`](#stdregex) finds, replaces and splits.
 
@@ -4372,7 +4376,7 @@ Where Avant differs on purpose:
 | truthiness: `if n`, `if list` | conditions are `Bool`; `if v = x` opens an optional ([Conditions that bind](#conditions-that-bind)) | |
 | inheritance, virtual methods, interface values | none: composition, interfaces as compile-time bounds, unions ([No inheritance](#no-inheritance)) | every call is direct, every layout known |
 | `mutating` or `&mut self` on methods that change a struct | a method may change its struct receiver; an argument is a copy ([Structs](#structs)) | Go's pointer receiver, taken automatically |
-| strings of characters | strings of bytes; `.chars` when you want code points ([Bytes, not characters](#bytes-not-characters)) | constant-time `size` and indexing |
+| strings of characters | strings of bytes; `.chars` or `.code_points()` when you want code points ([Bytes, not characters](#bytes-not-characters)) | constant-time `size` and indexing |
 | a missing hash key that raises, or reads as zero | `h[k]` is `V?` ([Hashes](#hashes)) | absence is handled where it happens |
 | hashes that remember insertion order | iteration order is unspecified, for now | |
 | members public by default | functions, types, methods and fields are private to their module unless `pub` ([Visibility](#visibility)) | a module's surface is what it says it is |

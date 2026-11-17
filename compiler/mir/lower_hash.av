@@ -917,8 +917,8 @@ pub fn (lw: MirLower) buf_member(e: Expr, recv: Expr, name: String, args: Array(
 
 // The members of String and Bytes that make an Array or a Buf
 // (the old back end): `split(sep)` (the separator,
-// then the string), `fields`, `chars`, `Bytes.to_buf`; nil when name is
-// not one of them.
+// then the string), `fields`, `chars`, `code_points`, `Bytes.to_buf`;
+// nil when name is not one of them.
 pub fn (lw: MirLower) str_heap_member(e: Expr, recv: Expr, rt: Ty, name: String, args: Array(Expr)): MOperand? {
   f = ""
   n = 0
@@ -931,6 +931,11 @@ pub fn (lw: MirLower) str_heap_member(e: Expr, recv: Expr, rt: Ty, name: String,
     f = "avant_str_chars"
     if rt.is_bytes() {
       f = "avant_bytes_chars"
+    }
+  } else if name == "code_points" {
+    f = "avant_str_code_points"
+    if rt.is_bytes() {
+      f = "avant_bytes_code_points"
     }
   } else if rt.is_bytes() && name == "to_buf" {
     f = "avant_bytes_to_buf"

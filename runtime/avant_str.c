@@ -1445,6 +1445,106 @@ void *avant_bytes_chars(const char *s) {
   return chars_build(s, "Bytes");
 }
 
+/* The code point at S[I], a valid UTF-8 sequence of LEN bytes
+ * (utf8_char_len). */
+static avant_int utf8_decode(const unsigned char *s, size_t i, size_t len) {
+  uint32_t cp;
+  size_t k;
+  if (len == 1) {
+    return (avant_int)s[i];
+  }
+  cp = (uint32_t)s[i] & (len == 2 ? 0x1fu : len == 3 ? 0x0fu : 0x07u);
+  for (k = 1; k < len; k++) {
+    cp = (cp << 6) | (uint32_t)(s[i + k] & 0x3fu);
+  }
+  return (avant_int)cp;
+}
+
+/* String.code_points and Bytes.code_points: each code point's number, in
+ * order, as an Array(Int); invalid UTF-8 traps as chars does. RC1: the
+ * text and the array are handles across the allocations; the text's
+ * bytes are formed again after them (RC2). */
+static void *code_points_build(const char *s, const char *type) {
+  size_t n;
+  size_t i = 0;
+  int32_t count = 0;
+  int32_t k = 0;
+  AvantArray *a = NULL;
+  avant_int *buf = NULL;
+  const unsigned char *d = (const unsigned char *)avant_str_bytes(s, &n);
+  if (!utf8_valid(d, n)) {
+    char msg[64];
+    snprintf(msg, sizeof msg, "%s.code_points needs valid UTF-8", type);
+    avant_trap_text(msg);
+  }
+  while (i < n) {
+    int valid = 0;
+    i += utf8_char_len(d, n, i, &valid);
+    count++;
+  }
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &a);
+  a = (AvantArray *)avant_alloc(sizeof(AvantArray), AVANT_TYPE_ARRAY_OBJ);
+  if (count > 0) {
+    buf = (avant_int *)avant_alloc((uint64_t)count * sizeof(avant_int), AVANT_TYPE_BYTES);
+    avant_barrier(a);
+    a->buf = buf;
+    a->cap = count;
+  }
+  d = (const unsigned char *)avant_str_bytes(s, &n);
+  i = 0;
+  while (i < n && k < count) {
+    int valid = 0;
+    size_t len = utf8_char_len(d, n, i, &valid);
+    buf[k++] = utf8_decode(d, i, len);
+    i += len;
+  }
+  a->size = k;
+  return a;
+}
+
+void *avant_str_code_points(const char *s) {
+  return code_points_build(s, "String");
+}
+
+void *avant_bytes_code_points(const char *s) {
+  return code_points_build(s, "Bytes");
+}
+
+/* String.from_code_point(n): the UTF-8 of one code point, 0 to 0x10FFFF
+ * outside the surrogates 0xD800 to 0xDFFF; anything else traps. */
+/* gc-lint: holds nothing (its input is an integer). */
+char *avant_str_from_code_point(avant_int cp) {
+  char b[4];
+  size_t n;
+  if (cp < 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
+    char msg[96];
+    snprintf(msg, sizeof msg, "String.from_code_point: %lld is not a code point", (long long)cp);
+    avant_trap_text(msg);
+  }
+  if (cp < 0x80) {
+    b[0] = (char)cp;
+    n = 1;
+  } else if (cp < 0x800) {
+    b[0] = (char)(0xc0 | (cp >> 6));
+    b[1] = (char)(0x80 | (cp & 0x3f));
+    n = 2;
+  } else if (cp < 0x10000) {
+    b[0] = (char)(0xe0 | (cp >> 12));
+    b[1] = (char)(0x80 | ((cp >> 6) & 0x3f));
+    b[2] = (char)(0x80 | (cp & 0x3f));
+    n = 3;
+  } else {
+    b[0] = (char)(0xf0 | (cp >> 18));
+    b[1] = (char)(0x80 | ((cp >> 12) & 0x3f));
+    b[2] = (char)(0x80 | ((cp >> 6) & 0x3f));
+    b[3] = (char)(0x80 | (cp & 0x3f));
+    n = 4;
+  }
+  return dup_bytes(b, n);
+}
+
 /* The names the seed's compiler calls: the compiler B, built by the seed
  * release, links this runtime. They go when a release that emits
  * avant_str_cat_int and avant_str_from_int_bytes is the seed. */
