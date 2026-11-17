@@ -1630,7 +1630,10 @@ void avant_hasher_add(void *hs, uint64_t v) {
 
 void avant_hasher_add_str(void *hs, const char *str) {
   AvantHasher *s = (AvantHasher *)hs;
-  s->a = xk_mix(s->a, hash_bytes(str, avant_str_n(str), s->seed));
+  size_t n;
+  /* A view's bytes are its base's. */
+  const char *d = avant_str_bytes(str, &n);
+  s->a = xk_mix(s->a, hash_bytes(d, n, s->seed));
 }
 
 /* gc-lint: holds nothing (it stores two code addresses, allocates

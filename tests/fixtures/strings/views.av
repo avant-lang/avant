@@ -3,8 +3,9 @@
 // that would keep a much larger string alive, is a copy). Every
 // operation reads a view as the string it is: size, indexing, get,
 // equality and order, interpolation and concatenation, a switch, a hash
-// key, an array of them (sort, contains, index, min, max), Buf, parsing,
-// chars, strip and split. A view outlives the name of its base, through
+// key (a String key and a key with its own hash), an array of them
+// (sort, contains, index, min, max), Buf, parsing, chars, strip and
+// split. A view outlives the name of its base, through
 // young and full collections that move the base (AVANT_YOUNG_MB=1,
 // AVANT_GC_STRESS=1 in the gate's passes).
 
@@ -18,6 +19,19 @@ lib gcrt {
 
 class Keep {
   pub views: Array(String) = []
+}
+
+// A key with its own hash: the hasher reads a view's bytes.
+struct Tag {
+  name: String
+
+  fn equals(other: Tag): Bool {
+    name == other.name
+  }
+
+  fn hash(h: Hasher) {
+    h.add(name)
+  }
 }
 
 // A string of n bytes made at run time: "a0b1c2..." cycling.
@@ -71,6 +85,9 @@ fn main {
   h[v] = 1
   h[w] = 2
   puts("${h[str_slice(big, 10, 150)] ?? 0} ${h[w] ?? 0} ${h.size}")
+  tags = Hash(Tag, Int).new()
+  tags[Tag { name: v }] = 7
+  puts("own hash ${tags[Tag { name: str_slice(big, 10, 150) }] ?? 0} ${tags[Tag { name: w }] ?? 0}")
   arr: Array(String) = [v, w, short]
   arr.sort()
   puts("${arr[0].size} ${arr.contains(w)} ${arr.index_of(v) ?? -1} ${(arr.min() ?? "").size} ${(arr.max() ?? "").size}")
