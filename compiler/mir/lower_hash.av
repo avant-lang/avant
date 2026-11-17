@@ -597,7 +597,7 @@ pub fn (lw: MirLower) lower_set_lit(e: Expr, st: Ty): MOperand {
 
 // The members of Set(T), a hash of T to Bool: `add` is the upsert
 // (one probe; an absent element is inserted, its Bool zero) and gives
-// whether it was absent; `contains` the find's found flag; `delete` the
+// whether it was absent; `has` the find's found flag; `delete` the
 // take's (as a statement it is the hash's plain delete,
 // hash_delete_stmt); `values` the keys; `size`, `clear` and `each` the
 // hash's.
@@ -627,7 +627,7 @@ pub fn (lw: MirLower) set_member(e: Expr, recv: Expr, ht: Ty, name: String, args
   op = ""
   if name == "add" {
     op = "upsert"
-  } else if name == "contains" {
+  } else if name == "has" {
     op = "find"
   } else if name == "delete" {
     op = "take"
@@ -683,7 +683,7 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
     f = "avant_hash_keys"
   } else if name == "values" {
     f = "avant_hash_values"
-  } else if name == "has_key" {
+  } else if name == "has" || name == "has_key" {
     f = lw.hash_op(ht, "find", e.loc)
     n = 1
   } else if name == "inc" {
@@ -702,7 +702,7 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
     return zero
   }
   lw.at(e.loc)
-  if name == "has_key" {
+  if name == "has" || name == "has_key" {
     fl = lw.found_local()
     fops: Array(MOperand) = []
     fops.push(ops[0])

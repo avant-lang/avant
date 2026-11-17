@@ -3,7 +3,7 @@
 // == come from its fields. Small all-integer keys (two Int32, an enum
 // beside an Int32 with padding, an enum and a Bool), wider ones (two Ints, a
 // nested struct, a String field, a generic pair), each through set, get,
-// `h[k] ?? d`, has_key, delete (as a statement and as a value), inc, each,
+// `h[k] ?? d`, has, delete (as a statement and as a value), inc, each,
 // keys, values, clear and growth past several resizes. A String field is
 // compared by its bytes: a key built from pieces finds the literal one.
 // The walks' results are sums, so they do not depend on the walk's order.
@@ -69,7 +69,7 @@ fn cells {
   }
   check("cell size", h.size == 3600)
   check("cell get", (h[Cell { x: -30.to_i32(), y: 29.to_i32() }] ?? -1) == 59)
-  check("cell absent", !h.has_key(Cell { x: 30.to_i32(), y: 0.to_i32() }))
+  check("cell absent", !h.has(Cell { x: 30.to_i32(), y: 0.to_i32() }))
   check("cell or default", (h[Cell { x: 99.to_i32(), y: 99.to_i32() }] ?? -7) == -7)
   gone = 0
   y = 0
@@ -108,7 +108,7 @@ fn padded {
   }
   check("tagged size", h.size == 1000)
   check("tagged get", (h[Tagged { id: 249.to_i32(), tag: Dir.west }] ?? "") == "v999")
-  check("tagged absent", !h.has_key(Tagged { id: 250.to_i32(), tag: Dir.north }))
+  check("tagged absent", !h.has(Tagged { id: 250.to_i32(), tag: Dir.north }))
   f = Hash(Flag, Int).new()
   f.inc(Flag { dir: Dir.east, on: true })
   f.inc(Flag { dir: Dir.east, on: true })
@@ -132,7 +132,7 @@ fn wide {
   }
   check("pt size", h.size == 3000)
   check("pt get", (h[Pt { x: 2999 * 7919, y: -2999 }] ?? -1) == 2999)
-  check("pt absent", !h.has_key(Pt { x: 7919, y: 1 }))
+  check("pt absent", !h.has(Pt { x: 7919, y: 1 }))
   i = 0
   while i < 3000 {
     if i % 3 == 0 {
@@ -156,7 +156,7 @@ fn wide {
   p[Pair { a: 1, b: Dir.west }] = false
   check("pair", (p[Pair { a: 1, b: Dir.east }] ?? false) && p.size == 2)
   h.clear()
-  check("pt clear", h.size == 0 && !h.has_key(Pt { x: 7919, y: -1 }))
+  check("pt clear", h.size == 0 && !h.has(Pt { x: 7919, y: -1 }))
   h[Pt { x: 1, y: 1 }] = 1
   check("pt reuse", h.size == 1)
   puts("wide ${e.size} ${p.size}")
@@ -173,7 +173,7 @@ fn named {
   a = "k4"
   b = "99"
   check("named bytes", (h[Named { name: a + b, n: 3 }] ?? -1) == 1999)
-  check("named absent", !h.has_key(Named { name: "k499", n: 4 }))
+  check("named absent", !h.has(Named { name: "k499", n: 4 }))
   if v = h.delete(Named { name: "k0", n: 0 }) {
     check("named take", v == 0)
   }

@@ -757,7 +757,7 @@ pub fn (checker_self: Checker) check_parallel(expr: Expr, array: Ty): Ty {
   ty_array(checker_self.t_int())
 }
 
-// The members of Set(T): add, contains and delete take one element (add
+// The members of Set(T): add, has and delete take one element (add
 // says whether it was new, delete whether it was there), each walks the
 // elements, values gives them as an array, clear empties the set; size
 // is read without parentheses (check_field).
@@ -767,7 +767,7 @@ pub fn (checker_self: Checker) check_set_method(expr: Expr, set: Ty): Ty {
     elem = k
   }
   c = expr.callee
-  if c == "add" || c == "contains" || c == "delete" {
+  if c == "add" || c == "has" || c == "delete" {
     if expr.args.size != 1 {
       checker_self.fail(expr.loc, "${c} takes one element")
       return checker_self.t_bool()
@@ -819,8 +819,8 @@ pub fn (checker_self: Checker) check_set_method(expr: Expr, set: Ty): Ty {
     return checker_self.dispatch_method(expr, set, none)
   }
   hint = checker_self.builtin_hint(set, c)
-  if c == "has_key" || c == "has" || c == "includes" {
-    hint = " (write `s.contains(v)`)"
+  if c == "has_key" || c == "contains" || c == "includes" {
+    hint = " (write `s.has(v)`)"
   } else if c == "push" || c == "insert" || c == "put" {
     hint = " (write `s.add(v)`)"
   } else if c == "remove" {
@@ -865,14 +865,17 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     }
     return ty_array(checker_self.t_int())
   }
-  if expr.callee == "has_key" {
+  // `has`, the one membership test of every collection; `has_key`, its
+  // old name, stays until the compiler's own source (built by a seed
+  // that knows only has_key) moves to has.
+  if expr.callee == "has" || expr.callee == "has_key" {
     if expr.args.size == 1 {
       if b = expr.block {
-        checker_self.fail(expr.loc, "has_key takes one key")
+        checker_self.fail(expr.loc, "${expr.callee} takes one key")
         return checker_self.t_bool()
       }
     } else {
-      checker_self.fail(expr.loc, "has_key takes one key")
+      checker_self.fail(expr.loc, "${expr.callee} takes one key")
       return checker_self.t_bool()
     }
     if k = hash.key {

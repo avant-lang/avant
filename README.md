@@ -1436,7 +1436,7 @@ fn main {
 | `h[k] = v` | insert or replace |
 | `h[k]`, `h.get(k)` | `V?` |
 | `h[k] ?? default` | the value, or `default` for a missing key (one lookup) |
-| `h.has_key(k)` | `Bool` |
+| `h.has(k)` | `Bool`: whether `k` is a key |
 | `h.delete(k)` | remove the key; returns the value it held, or `nil` |
 | `h.inc(k)`, `h.inc(k, by)` | add to a counter, starting from 0, and give its new value (integer values only; `by` has the value's type); traps on overflow |
 | `h.size`, `h.clear()` | number of keys; remove all |
@@ -1497,7 +1497,7 @@ fn main {
   puts(score[Suit.hearts] ?? 0.0)         // => 2.5
   walls = Hash(Cell, Bool).new()
   walls[Cell { x: 1, y: 2 }] = true
-  puts(walls.has_key(Cell { x: 1, y: 2 })) // => true
+  puts(walls.has(Cell { x: 1, y: 2 })) // => true
   rooms = Hash(String, Room).new()
   rooms["hall"] = Room.new("Hall")
   if r = rooms["hall"] {
@@ -1526,7 +1526,7 @@ fn main {
     }
   }
   puts(seen.size)                // => 4
-  puts(seen.contains("cat"))     // => true
+  puts(seen.has("cat"))          // => true
   puts(seen.delete("cat"))       // => true
   words = seen.values()
   words.sort()
@@ -1545,7 +1545,7 @@ fn main {
 | --- | --- |
 | `Set(T).new()`, `[]` | an empty set; `[]` and an array literal make a set where the type says `Set(T)` (`s: Set(Int) = [1, 2, 3]`, a `Set` parameter, a result) |
 | `s.add(v)` | put `v` in; `true` when it was not there |
-| `s.contains(v)` | `Bool` |
+| `s.has(v)` | `Bool`: whether `v` is in the set |
 | `s.delete(v)` | take `v` out; `true` when it was there |
 | `s.size`, `s.clear()` | number of elements; remove all |
 | `s.values()` | the elements as an array, in unspecified order |
@@ -1769,7 +1769,7 @@ fn (xs: Array(Int)) total: Int {
 
 fn (h: Hash(String, V)) has_all(ks: Array(String)): Bool {
   for k in ks {
-    if !h.has_key(k) {
+    if !h.has(k) {
       return false
     }
   }
