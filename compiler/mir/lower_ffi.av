@@ -139,7 +139,7 @@ pub fn (lw: MirLower) lower_lib_call(e: Expr): MOperand {
           o = lw.enum_to_c(o, cs.params[i])
         }
         // A reference the C function holds, or an aggregate the emitter
-        // passes by the C ABI (C3), is a bare local of the call.
+        // passes by the C ABI (its C ABI lowering), is a bare local of the call.
         k = b.types.kind(ps[i])
         if (b.types.traced(ps[i]) || k == mk_agg()) && mir_bare_copy(o) < 0 {
           lw.at(a.loc)
@@ -277,7 +277,7 @@ pub fn (lw: MirLower) cb_pointer(arg: Expr, fty: Ty): MOperand {
 // (after a null environment for a lambda thunk), its result returned. The
 // leaf and frame passes decide its kind like any function's. A struct,
 // union, or fn value by value in a callback's C signature is refused (the
-// C ABI lowering, C3, is done for calls into C only).
+// C ABI lowering of aggregates is done for calls into C only).
 pub fn (lw: MirLower) lower_cb_thunks {
   b = lw.lw_b
   i = 0
@@ -312,7 +312,7 @@ pub fn (lw: MirLower) lower_cb_thunks {
         t = ps[j]
       }
       if b.types.kind(t) == mk_agg() {
-        lw.refuse(cb.loc, "a C callback with a value of type ${b.types.text(t)} (C3)")
+        lw.refuse(cb.loc, "a C callback with a value of type ${b.types.text(t)} (a struct, union or fn value by value is passed by the C ABI only in calls into C)")
         return
       }
       j += 1
@@ -693,7 +693,7 @@ pub fn (lw: MirLower) unpin_loop {
 // Before a return: every open pin, innermost first (the old back end's emit_ret's
 // emit_unpin_all; the old back end also forgets them there, so a pin
 // block whose end is reachable after a return inside it is never
-// unpinned on that path: corrected, C20).
+// unpinned on that path: corrected here).
 pub fn (lw: MirLower) unpin_all {
   i = lw.lw_ffi.pins.size - 1
   while i >= 0 {

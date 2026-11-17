@@ -290,12 +290,12 @@
 ### Fixed
 
 * Wrong-result fixes in the collector:
-  - a hash table could lose keys (C34);
+  - a hash table could lose keys;
   - Array.reserve could lose elements;
-  - split, fields and chars could return bad parts without the nursery (C35);
-  - stale marks after a full collection (C36);
-  - the C-stack rewrite could change a value that only looked like a pointer (C37);
-  - collections could run inside protected regions near the heap limit (C32).
+  - split, fields and chars could return bad parts without the nursery;
+  - stale marks after a full collection;
+  - the C-stack rewrite could change a value that only looked like a pointer;
+  - collections could run inside protected regions near the heap limit.
 
 ### Added
 

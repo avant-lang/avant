@@ -17,6 +17,10 @@
 #     word Wave followed by a capital or a digit;
 #   - the word Stage followed by a number;
 #   - a dated path of the notes, results/ or records/ followed by a date;
+#   - a label of the notes' other numbered lists in the forms they were
+#     written in: C or M and one or two digits in parentheses, before
+#     `: ` or `, `, or before a closing parenthesis, `since M` and digits,
+#     `audit` with a number or N and a digit, `review N section`;
 #   - the name of one of the notes' documents (gc-design.md, mir.md,
 #     gc-audit.md, floor.md, operating.md, philosophy.md, decisions.md,
 #     questions.md, roadmap.md, syntax.md, synthesis.md, triage.md,
@@ -61,6 +65,14 @@ REF = re.compile(
     r"|\b(?:gc-design|mir|gc-audit|floor|operating|philosophy|decisions"
     r"|questions|roadmap|syntax|synthesis|triage|plan|gc|benchmarks)\.md\b"
     r"|\bavant-ledgers\b|\bresearch/valk/"
+    # the labels of other numbered lists the notes keep, in the forms they
+    # were written in (a bare C11 or M1 is a language or a register name):
+    # a correction or a milestone in parentheses, before a colon or a
+    # comma, or closing a parenthesis (`(C14)`, `C3, is`, `M4:`), "since
+    # M4", and the audit and review labels (`audit N2b`, `audit 12`,
+    # `review 4 section 11`)
+    r"|\([CM][1-9][0-9]?\)|\b[CM][1-9][0-9]?(?=:\s|,\s|\))|\bsince\s+M[1-9][0-9]?\b"
+    r"|\baudit\s+(?:N[0-9]|[0-9]+\b)|\breview\s+[0-9]+\s+section"
 )
 
 allow = []
