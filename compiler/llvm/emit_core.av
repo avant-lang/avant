@@ -54,6 +54,7 @@ pub class LlEmit {
   pa_ty: Int = 0
   pub pa_vol: Bool = false
   pub pa_tbaa: String = ""
+  pub pa_atomic: Bool = false
   pub used_tbaa: Bool = false
   pub loop_md: Hash(String, Int)
   pub loop_md_n: Int = 0
@@ -265,8 +266,10 @@ pub class LlEmit {
 
   // The address of a place (E5), emitting the loads and GEPs it needs.
   // Sets pa_ty (the place's type), pa_vol (E2: no deref and the local
-  // is a slot) and pa_tbaa (the access's alias tag, ll_tbaa_tag). An
-  // index operand is evaluated where its projection is.
+  // is a slot), pa_tbaa (the access's alias tag, ll_tbaa_tag) and
+  // pa_atomic (an Array header's capacity word, whose loads are atomic:
+  // see ll_tbaa_last). An index operand is evaluated where its projection
+  // is.
   pub fn place_ptr(p: MPlace): String {
     ptr = local_name(p.local)
     ty = self.f.locals[p.local].ty
@@ -278,6 +281,7 @@ pub class LlEmit {
     // decided by the projection that follows it.
     region = 0
     pend = 0
+    arr = false
     for pr in p.proj {
       mt = self.ts.get(ty)
       if pr.kind == mpk_deref() {
@@ -287,6 +291,7 @@ pub class LlEmit {
         pend = -1
         if self.ts.is_refkind(ty) && mt.layout >= 0 {
           lk = self.ts.layouts[mt.layout].kind
+          arr = lk == mlk_array()
           if lk == mlk_elems() {
             pend = 1
           } else if lk == mlk_array() || lk == mlk_buf() {
@@ -330,6 +335,7 @@ pub class LlEmit {
     }
     self.pa_ty = ty
     self.pa_vol = volatile
+    self.pa_atomic = region == 4 && arr
     self.pa_tbaa = ll_tbaa_tag(region)
     if self.pa_tbaa.size > 0 {
       self.used_tbaa = true
@@ -364,6 +370,12 @@ pub class LlEmit {
     if p = o.place {
       ptr = place_ptr(p)
       ty = self.pa_ty
+      if self.pa_atomic {
+        x = self.tmp()
+        line("${x} = load atomic ${llt(ty)}, ptr ${ptr} monotonic, align ${align(ty)}")
+        self.ov_ty = ty
+        return x
+      }
       x = load_tagged(ty, ptr, self.pa_vol, self.pa_tbaa)
       self.ov_ty = ty
       return x
@@ -433,6 +445,19 @@ pub fn ll_type_text(ts: MTypes, ty: Int): String {
 // poll, a native region), and a buffer grows only inside the runtime's
 // calls: LLVM assumes any such call may write any of this memory,
 // whatever the tags say, so no tag lets a reference outlive a move.
+//
+// An Array's capacity word is read with an atomic (monotonic) load, a
+// plain mov on x86: while tasks hold the array it holds their count, and
+// a task's end changes it with a compare-and-swap from that task's
+// thread (avant_array_thaw). The thread that owns the array reads it in
+// the frozen check before a change it makes through another name; when
+// that read is not ordered after the task's end (no join yet) it races
+// with the swap, and a plain load that races with a store is undefined
+// in LLVM's model. Reading it atomically makes the race a choice between
+// two defined values (the program traps, or the change goes ahead after
+// the task ended) and keeps every later fact about other memory from
+// letting LLVM merge or hoist the read. Stores stay plain: generated code
+// writes the word only into a new array, before any task can hold it.
 pub fn ll_tbaa_last: Int { 9 }
 
 // The tag of an access to region (place_ptr): 0 a local, 1 an element, 2
