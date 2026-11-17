@@ -55,6 +55,23 @@ pub class FlowFacts {
   pub gpos_live: Array(Int) = []
   pub gne_var: Array(String) = []
   pub gne_live: Array(Int) = []
+  // Where each bound was read (checker/facts.av, "Anchors"): a stamp per
+  // fact and per size relation, the proofs made from them, and the
+  // containers whose size a statement may have changed.
+  pub stamp: Int = 0
+  pub fact_anchor: Array(Int) = []
+  pub fact_cty: Array(Ty) = []
+  pub sv_stamp: Array(Int) = []
+  pub bv_stamp: Array(Int) = []
+  pub cs_stamp: Array(Int) = []
+  pub use_cont: Array(String) = []
+  pub use_cty: Array(Ty) = []
+  pub use_anchor: Array(Int) = []
+  pub use_expr: Array(Expr) = []
+  pub kill_cont: Array(String) = []
+  // ty_reaches's answers by the two types' mangled names, kept from one
+  // function's facts to the next.
+  pub reach_memo: Hash(String, Bool) = Hash(String, Bool).new()
 }
 
 pub class Checker {
@@ -654,7 +671,9 @@ pub class Checker {
     self.return_type = ret
     self.pending_handles = []
     self.pending_arrays = []
+    memo = self.facts.reach_memo
     self.facts = FlowFacts.new()
+    self.facts.reach_memo = memo
     // `fn main: Void | E` ends returning 0 (checker/entry.av).
     self.entry_void = fnn.entry_void
     if fnn.entry_void && fallthrough(fnn.body) {
@@ -1023,6 +1042,10 @@ pub class Checker {
         begin_for_place(stmt)
         begin_plain_walk(stmt)
       }
+      // The loop's own reads start here, after a for loop's set-up.
+      region_stamp = self.facts.stamp
+      region_uses = self.facts.use_cont.size
+      region_kills = self.facts.kill_cont.size
       saved_facts = self.facts.fact_var.size
       if cond = stmt.cond {
         push_loop_facts(cond, stmt.body)
@@ -1044,6 +1067,9 @@ pub class Checker {
       self.loop_depth += 1
       check_block(stmt.body, expected, false)
       self.loop_depth -= 1
+      if !self.has_err() {
+        loop_region_end(region_stamp, region_uses, region_kills)
+      }
       cap_kill_assigned_in(stmt.body)
       pop_guard_facts(saved_gcap, saved_gnn, saved_gpos, saved_gne)
       pop_loop_facts(saved_facts)
@@ -2962,24 +2988,28 @@ pub class Checker {
       if arr.kind == ex_name() && !arr.implicit_field {
         cont = arr.ident
         if ix.kind == ex_name() {
-          if fact_slack_of(ix.ident, cont) >= 0 {
+          fi = fact_best(ix.ident, cont)
+          if fi >= 0 {
             expr.proven = true
+            log_use(fi, expr)
           }
         } else if ix.kind == ex_binary() {
           if ix.op == tk_plus() {
             if il = ix.left, ir = ix.right {
               if il.kind == ex_name() && lit_small(ir) {
-                sl = fact_slack_of(il.ident, cont)
-                if sl >= 0 && ir.int_bits <= sl.to_u64() {
+                fi = fact_best(il.ident, cont)
+                if fi >= 0 && ir.int_bits <= self.facts.fact_slack[fi].to_u64() {
                   expr.proven = true
                   ix.proven = true
+                  log_use(fi, expr)
                 }
               }
               if ir.kind == ex_name() && lit_small(il) {
-                sl = fact_slack_of(ir.ident, cont)
-                if sl >= 0 && il.int_bits <= sl.to_u64() {
+                fi = fact_best(ir.ident, cont)
+                if fi >= 0 && il.int_bits <= self.facts.fact_slack[fi].to_u64() {
                   expr.proven = true
                   ix.proven = true
+                  log_use(fi, expr)
                 }
               }
             }

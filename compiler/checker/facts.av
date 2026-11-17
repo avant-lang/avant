@@ -165,15 +165,17 @@ pub fn (checker_self: Checker) stmt_vstep(s: Stmt, ivar: String): Int {
   -1
 }
 
-pub fn (checker_self: Checker) sv_put(v: String, cont: String) {
+pub fn (checker_self: Checker) sv_put(v: String, cont: String, st: Int) {
   for i in 0..checker_self.facts.sv_var.size {
     if checker_self.facts.sv_var[i] == v {
       checker_self.facts.sv_cont[i] = cont
+      checker_self.facts.sv_stamp[i] = st
       return
     }
   }
   checker_self.facts.sv_var.push(v)
   checker_self.facts.sv_cont.push(cont)
+  checker_self.facts.sv_stamp.push(st)
 }
 
 pub fn (checker_self: Checker) sv_get(v: String): String {
@@ -188,14 +190,39 @@ pub fn (checker_self: Checker) sv_get(v: String): String {
 pub fn (checker_self: Checker) sv_remove_var(v: String) {
   kept_v: Array(String) = []
   kept_c: Array(String) = []
+  kept_s: Array(Int) = []
   for i in 0..checker_self.facts.sv_var.size {
     if checker_self.facts.sv_var[i] != v {
       kept_v.push(checker_self.facts.sv_var[i])
       kept_c.push(checker_self.facts.sv_cont[i])
+      kept_s.push(checker_self.facts.sv_stamp[i])
     }
   }
   checker_self.facts.sv_var = kept_v
   checker_self.facts.sv_cont = kept_c
+  checker_self.facts.sv_stamp = kept_s
+}
+
+// The live fact bounding v by cont's size with the most slack, or -1.
+pub fn (checker_self: Checker) fact_best(v: String, cont: String): Int {
+  best = -1
+  at = -1
+  for i in 0..checker_self.facts.fact_var.size {
+    if checker_self.facts.fact_live[i] == 1 && checker_self.facts.fact_var[i] == v && checker_self.facts.fact_cont[i] == cont && checker_self.facts.fact_slack[i] > best {
+      best = checker_self.facts.fact_slack[i]
+      at = i
+    }
+  }
+  at
+}
+
+// An index e proven by fact fi: logged, so a later shrink can take the
+// proof back (Anchors, above).
+pub fn (checker_self: Checker) log_use(fi: Int, e: Expr) {
+  checker_self.facts.use_cont.push(checker_self.facts.fact_cont[fi])
+  checker_self.facts.use_cty.push(checker_self.facts.fact_cty[fi])
+  checker_self.facts.use_anchor.push(checker_self.facts.fact_anchor[fi])
+  checker_self.facts.use_expr.push(e)
 }
 
 pub fn (checker_self: Checker) fact_slack_of(v: String, cont: String): Int {
@@ -208,10 +235,13 @@ pub fn (checker_self: Checker) fact_slack_of(v: String, cont: String): Int {
   best
 }
 
+// Any fact on v, for the arithmetic it proves (`i + 1` cannot overflow
+// when i < some size): a fact whose container may have shrunk (live 2)
+// still bounds i by the size it was read with.
 pub fn (checker_self: Checker) fact_any_slack(v: String): Int {
   best = -1
   for i in 0..checker_self.facts.fact_var.size {
-    if checker_self.facts.fact_live[i] == 1 && checker_self.facts.fact_var[i] == v && checker_self.facts.fact_slack[i] > best {
+    if checker_self.facts.fact_live[i] >= 1 && checker_self.facts.fact_var[i] == v && checker_self.facts.fact_slack[i] > best {
       best = checker_self.facts.fact_slack[i]
     }
   }
@@ -227,19 +257,26 @@ pub fn (checker_self: Checker) kill_facts_for(v: String) {
       checker_self.facts.fact_live[i] = 0
     }
   }
+  // v names another container now: a loop around this assignment reads
+  // the new one with the old bound.
+  if t = checker_self.lookup(v), t.is_array() || t.is_buf() {
+    checker_self.facts.kill_cont.push(v)
+  }
 }
 
-pub fn (checker_self: Checker) bv_put(v: String, cont: String, delta: Int) {
+pub fn (checker_self: Checker) bv_put(v: String, cont: String, delta: Int, st: Int) {
   for i in 0..checker_self.facts.bv_var.size {
     if checker_self.facts.bv_var[i] == v {
       checker_self.facts.bv_cont[i] = cont
       checker_self.facts.bv_delta[i] = delta
+      checker_self.facts.bv_stamp[i] = st
       return
     }
   }
   checker_self.facts.bv_var.push(v)
   checker_self.facts.bv_cont.push(cont)
   checker_self.facts.bv_delta.push(delta)
+  checker_self.facts.bv_stamp.push(st)
 }
 
 pub fn (checker_self: Checker) bv_get(v: String): String {
@@ -264,29 +301,34 @@ pub fn (checker_self: Checker) bv_remove_var(v: String) {
   kept_v: Array(String) = []
   kept_c: Array(String) = []
   kept_d: Array(Int) = []
+  kept_s: Array(Int) = []
   for i in 0..checker_self.facts.bv_var.size {
     if checker_self.facts.bv_var[i] != v {
       kept_v.push(checker_self.facts.bv_var[i])
       kept_c.push(checker_self.facts.bv_cont[i])
       kept_d.push(checker_self.facts.bv_delta[i])
+      kept_s.push(checker_self.facts.bv_stamp[i])
     }
   }
   checker_self.facts.bv_var = kept_v
   checker_self.facts.bv_cont = kept_c
   checker_self.facts.bv_delta = kept_d
+  checker_self.facts.bv_stamp = kept_s
 }
 
-pub fn (checker_self: Checker) cs_put(cont: String, v: String, delta: Int) {
+pub fn (checker_self: Checker) cs_put(cont: String, v: String, delta: Int, st: Int) {
   for i in 0..checker_self.facts.cs_cont.size {
     if checker_self.facts.cs_cont[i] == cont {
       checker_self.facts.cs_var[i] = v
       checker_self.facts.cs_delta[i] = delta
+      checker_self.facts.cs_stamp[i] = st
       return
     }
   }
   checker_self.facts.cs_cont.push(cont)
   checker_self.facts.cs_var.push(v)
   checker_self.facts.cs_delta.push(delta)
+  checker_self.facts.cs_stamp.push(st)
 }
 
 pub fn (checker_self: Checker) cs_cont_of_var(v: String): String {
@@ -302,6 +344,130 @@ pub fn (checker_self: Checker) cs_delta_of_var(v: String): Int {
   for i in 0..checker_self.facts.cs_var.size {
     if checker_self.facts.cs_var[i] == v {
       return checker_self.facts.cs_delta[i]
+    }
+  }
+  0
+}
+
+// Anchors. A bounds fact `i < xs.size - k` holds while xs keeps the size
+// it had where that size was read: at the fact's own condition when the
+// bound is `xs.size` there, else where a size relation was made
+// (`n = xs.size`, `xs = Array(T).new(n)`). Each such read takes a stamp,
+// increasing through the function, and the fact keeps it (fact_anchor).
+// Every index the fact proves is logged with the container, its type and
+// that stamp (use_*), and every container whose size a statement may have
+// changed is logged too (kill_cont), so that:
+// - a statement that may shrink xs (a pop or clear on any array of xs's
+//   type, a call that may reach xs, an assignment to xs) ends its facts
+//   and size relations for the statements after it, and takes back the
+//   proofs it made itself, its own parts being evaluated in an order
+//   these facts do not follow;
+// - a loop whose body may shrink xs takes back every proof inside it that
+//   rests on a size read before the loop: the next iteration reads after
+//   the shrink (loop_region_end).
+pub fn (checker_self: Checker) next_stamp: Int {
+  checker_self.facts.stamp += 1
+  checker_self.facts.stamp
+}
+
+pub fn (checker_self: Checker) sv_stamp_of(v: String): Int {
+  for i in 0..checker_self.facts.sv_var.size {
+    if checker_self.facts.sv_var[i] == v {
+      return checker_self.facts.sv_stamp[i]
+    }
+  }
+  0
+}
+
+pub fn (checker_self: Checker) bv_stamp_of(v: String): Int {
+  for i in 0..checker_self.facts.bv_var.size {
+    if checker_self.facts.bv_var[i] == v {
+      return checker_self.facts.bv_stamp[i]
+    }
+  }
+  0
+}
+
+pub fn (checker_self: Checker) cs_stamp_of_var(v: String): Int {
+  for i in 0..checker_self.facts.cs_var.size {
+    if checker_self.facts.cs_var[i] == v {
+      return checker_self.facts.cs_stamp[i]
+    }
+  }
+  0
+}
+
+// Every size relation about the container cont: its size may have
+// changed, so `n == cont.size` (sv, bv) and `cont.size == n` (cs) no
+// longer hold.
+pub fn (checker_self: Checker) remove_relations_of(cont: String) {
+  sv_v: Array(String) = []
+  sv_c: Array(String) = []
+  sv_s: Array(Int) = []
+  for i in 0..checker_self.facts.sv_var.size {
+    if checker_self.facts.sv_cont[i] != cont {
+      sv_v.push(checker_self.facts.sv_var[i])
+      sv_c.push(checker_self.facts.sv_cont[i])
+      sv_s.push(checker_self.facts.sv_stamp[i])
+    }
+  }
+  checker_self.facts.sv_var = sv_v
+  checker_self.facts.sv_cont = sv_c
+  checker_self.facts.sv_stamp = sv_s
+  bv_v: Array(String) = []
+  bv_c: Array(String) = []
+  bv_d: Array(Int) = []
+  bv_s: Array(Int) = []
+  for i in 0..checker_self.facts.bv_var.size {
+    if checker_self.facts.bv_cont[i] != cont {
+      bv_v.push(checker_self.facts.bv_var[i])
+      bv_c.push(checker_self.facts.bv_cont[i])
+      bv_d.push(checker_self.facts.bv_delta[i])
+      bv_s.push(checker_self.facts.bv_stamp[i])
+    }
+  }
+  checker_self.facts.bv_var = bv_v
+  checker_self.facts.bv_cont = bv_c
+  checker_self.facts.bv_delta = bv_d
+  checker_self.facts.bv_stamp = bv_s
+  cs_c: Array(String) = []
+  cs_v: Array(String) = []
+  cs_d: Array(Int) = []
+  cs_s: Array(Int) = []
+  for i in 0..checker_self.facts.cs_cont.size {
+    if checker_self.facts.cs_cont[i] != cont {
+      cs_c.push(checker_self.facts.cs_cont[i])
+      cs_v.push(checker_self.facts.cs_var[i])
+      cs_d.push(checker_self.facts.cs_delta[i])
+      cs_s.push(checker_self.facts.cs_stamp[i])
+    }
+  }
+  checker_self.facts.cs_cont = cs_c
+  checker_self.facts.cs_var = cs_v
+  checker_self.facts.cs_delta = cs_d
+  checker_self.facts.cs_stamp = cs_s
+}
+
+// The stamp of the size read a bound rests on (bound_cont_of's cases):
+// a fresh one for `xs.size` read here, the relation's for a name.
+pub fn (checker_self: Checker) bound_anchor_of(e: Expr): Int {
+  if e.kind == ex_field() {
+    return checker_self.next_stamp()
+  }
+  if e.kind == ex_name() {
+    got = checker_self.sv_get(e.ident)
+    if got.size > 0 {
+      return checker_self.sv_stamp_of(e.ident)
+    }
+    gotb = checker_self.bv_get(e.ident)
+    if gotb.size > 0 {
+      return checker_self.bv_stamp_of(e.ident)
+    }
+    return checker_self.cs_stamp_of_var(e.ident)
+  }
+  if e.kind == ex_binary() {
+    if l = e.left {
+      return checker_self.bound_anchor_of(l)
     }
   }
   0
@@ -466,7 +632,7 @@ pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
         if val.kind == ex_field() {
           if val.ident == "size" {
             if obj = val.object, obj.kind == ex_name() {
-              checker_self.sv_put(v, obj.ident)
+              checker_self.sv_put(v, obj.ident, checker_self.next_stamp())
               sv_done = true
             }
           }
@@ -474,8 +640,9 @@ pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
         if val.kind == ex_array_new() {
           if sz = val.size_expr {
             if sz.kind == ex_name() {
-              checker_self.sv_put(sz.ident, v)
-              checker_self.cs_put(v, sz.ident, 0)
+              st = checker_self.next_stamp()
+              checker_self.sv_put(sz.ident, v, st)
+              checker_self.cs_put(v, sz.ident, 0, st)
               sv_done = true
             } else if sz.kind == ex_binary() {
               if sz.op == tk_plus() || sz.op == tk_minus() {
@@ -485,10 +652,10 @@ pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
                     if sz.op == tk_minus() {
                       d = 0 - d
                     }
-                    checker_self.cs_put(v, sl2.ident, d)
+                    checker_self.cs_put(v, sl2.ident, d, checker_self.next_stamp())
                   }
                   if sr2.kind == ex_name() && checker_self.lit_small(sl2) && sz.op == tk_plus() {
-                    checker_self.cs_put(v, sr2.ident, sl2.int_bits.to_i())
+                    checker_self.cs_put(v, sr2.ident, sl2.int_bits.to_i(), checker_self.next_stamp())
                   }
                 }
               }
@@ -500,7 +667,7 @@ pub fn (checker_self: Checker) fact_after_stmt(stmt: Stmt) {
         }
         bc = checker_self.bound_cont_of(val)
         if bc.size > 0 {
-          checker_self.bv_put(v, bc, checker_self.bound_delta_of(val))
+          checker_self.bv_put(v, bc, checker_self.bound_delta_of(val), checker_self.bound_anchor_of(val))
         } else {
           checker_self.bv_remove_var(v)
         }
@@ -866,6 +1033,8 @@ pub fn (checker_self: Checker) fact_from_cond(e: Expr, body: Array(Stmt), nnl: A
         checker_self.facts.fact_cont.push("")
         checker_self.facts.fact_slack.push(0)
         checker_self.facts.fact_live.push(1)
+        checker_self.facts.fact_anchor.push(0)
+        checker_self.facts.fact_cty.push(checker_self.t_void())
       }
       return
     }
@@ -896,10 +1065,16 @@ pub fn (checker_self: Checker) fact_from_cond(e: Expr, body: Array(Stmt), nnl: A
       return
     }
     if checker_self.body_ivar_ok(body, ivar) {
+      cty = checker_self.t_void()
+      if got = checker_self.lookup(cont) {
+        cty = got
+      }
       checker_self.facts.fact_var.push(ivar)
       checker_self.facts.fact_cont.push(cont)
       checker_self.facts.fact_slack.push(slack)
       checker_self.facts.fact_live.push(1)
+      checker_self.facts.fact_anchor.push(checker_self.bound_anchor_of(b))
+      checker_self.facts.fact_cty.push(cty)
     }
   }
 }
@@ -916,6 +1091,8 @@ pub fn (checker_self: Checker) pop_loop_facts(saved: Int) {
     dropped_c = checker_self.facts.fact_cont.pop()
     dropped_k = checker_self.facts.fact_slack.pop()
     dropped_l = checker_self.facts.fact_live.pop()
+    dropped_a = checker_self.facts.fact_anchor.pop()
+    dropped_t = checker_self.facts.fact_cty.pop()
   }
 }
 
@@ -1680,3 +1857,570 @@ pub fn (checker_self: Checker) cap_kill_captures_expr(e: Expr) {
     }
   }
 }
+
+// ---- Shrinks through another name
+//
+// What may change the size of the array or Buf a local name holds,
+// besides that name: a `pop` or `clear` on any array of its type (another
+// name may hold the same array), and code that may reach it, which can
+// only reach it through what it is given (a module has no variables): the
+// arguments, the receiver, and the captures of a function value. A call
+// of a function value may reach anything; any other call, and an operator,
+// an index or an interpolation that runs a type's own method (`equals`,
+// `compare`, `hash`, `to_s`), reaches the container when the type of one
+// of its operands may hold its type. A builtin that runs no code of the program and keeps
+// every size (`push`, `size`, a `String` method) reaches nothing.
+
+// Whether a value of type t may be, or lead to, an object of type cty
+// through fields, elements, members and keys. A function value, a type
+// variable and an interface may lead anywhere; a number, a Bool, a
+// String, Bytes, an enum and an opaque C handle lead nowhere (C memory
+// holds no reference the collector would keep), a C pointer or layout to
+// what its type says.
+pub fn (checker_self: Checker) ty_reaches(t: Ty, cty: Ty, seen: Array(String)): Bool {
+  if t.same_as(cty) {
+    return true
+  }
+  if t.is_integer() || t.is_float() || t.is_bool() || t.is_string() || t.is_bytes() || t.is_void() || t.is_nil() || t.is_enum() || t.is_module() || t.is_buf() || t.is_opaque() {
+    return false
+  }
+  if t.is_array() || t.is_join() || t.is_ptr() {
+    if i = t.inner {
+      return checker_self.ty_reaches(i, cty, seen)
+    }
+    return true
+  }
+  if t.is_hash() {
+    if k = t.key, v = t.val {
+      return checker_self.ty_reaches(k, cty, seen) || checker_self.ty_reaches(v, cty, seen)
+    }
+    return true
+  }
+  if t.is_union() {
+    for m in t.members {
+      if checker_self.ty_reaches(m, cty, seen) {
+        return true
+      }
+    }
+    return false
+  }
+  if t.is_struct() || t.is_class() || t.is_clayout() {
+    key = mangle_ty(t)
+    if seen.contains(key) {
+      return false
+    }
+    seen.push(key)
+    for f in t.fields {
+      if checker_self.ty_reaches(f.ty, cty, seen) {
+        return true
+      }
+    }
+    return false
+  }
+  true
+}
+
+// ty_reaches from the top, remembered across the program's functions:
+// the same argument types meet the same containers again and again.
+pub fn (checker_self: Checker) reaches(t: Ty, cty: Ty): Bool {
+  key = "${mangle_ty(t)} ${mangle_ty(cty)}"
+  if got = checker_self.facts.reach_memo.get(key) {
+    return got
+  }
+  seen: Array(String) = []
+  r = checker_self.ty_reaches(t, cty, seen)
+  checker_self.facts.reach_memo[key] = r
+  r
+}
+
+pub fn (checker_self: Checker) expr_reaches(e: Expr, cty: Ty): Bool {
+  if t = e.ty {
+    return checker_self.reaches(t, cty)
+  }
+  true
+}
+
+pub fn (checker_self: Checker) args_reach(e: Expr, cty: Ty): Bool {
+  for arg in e.args {
+    if checker_self.expr_reaches(arg, cty) {
+      return true
+    }
+  }
+  false
+}
+
+// A builtin method of an array that runs no code of the program and
+// keeps every size.
+pub fn plain_array_method(name: String): Bool {
+  name == "push" || name == "size" || name == "reserve" || name == "fill" || name == "each" || name == "any" || name == "all" || name == "get" || name == "parallel"
+}
+
+// Whether evaluating e itself (its operands aside) may shrink the
+// container c of type cty.
+pub fn (checker_self: Checker) node_shrinks(e: Expr, c: String, cty: Ty): Bool {
+  k = e.kind
+  if k == ex_call() || (k == ex_field() && e.method_call) {
+    if e.indirect {
+      return true
+    }
+    name = e.callee
+    recv = e.receiver
+    if k == ex_field() {
+      name = e.ident
+      recv = e.object
+    }
+    if r = recv {
+      if rt = r.ty {
+        if e.resolved.size == 0 {
+          if rt.is_array() {
+            if name == "pop" || name == "clear" {
+              return checker_self.expr_root_name(r) == c || rt.same_as(cty)
+            }
+            if plain_array_method(name) {
+              return false
+            }
+            // The elements' own `equals`, `compare` or `to_s` may run.
+            if i = rt.inner {
+              return checker_self.reaches(i, cty)
+            }
+            return true
+          }
+          if rt.is_buf() {
+            if name == "clear" {
+              return checker_self.expr_root_name(r) == c || rt.same_as(cty)
+            }
+            return false
+          }
+          if rt.is_string() || rt.is_bytes() || rt.is_integer() || rt.is_float() || rt.is_bool() {
+            return checker_self.args_reach(e, cty)
+          }
+          if rt.is_hash() {
+            // The keys' own `hash` and `equals` may run.
+            if key = rt.key {
+              if checker_self.reaches(key, cty) {
+                return true
+              }
+            }
+            return checker_self.args_reach(e, cty)
+          }
+        }
+        if checker_self.reaches(rt, cty) {
+          return true
+        }
+      } else if !e.type_call && !(r.kind == ex_name() && r.ident.size > 0 && r.ident[0] >= 65 && r.ident[0] <= 90) {
+        return true
+      }
+    }
+    return checker_self.args_reach(e, cty)
+  }
+  if k == ex_binary() || k == ex_unary() || k == ex_index() {
+    user = e.resolved.size > 0 || e.op_form != 0
+    if k == ex_binary() && (e.op == tk_eq_eq() || e.op == tk_not_eq() || e.op == tk_less() || e.op == tk_less_eq() || e.op == tk_greater() || e.op == tk_greater_eq()) {
+      // A struct, array or optional compares its parts, each by its own
+      // `equals` or `compare`.
+      if l = e.left, lt = l.ty, lt.is_struct() || lt.is_array() || lt.is_union() {
+        user = true
+      }
+    }
+    if k == ex_index() {
+      if l = e.left, lt = l.ty, lt.is_hash() {
+        user = true
+      }
+    }
+    if user {
+      if l = e.left, checker_self.expr_reaches(l, cty) {
+        return true
+      }
+      if r = e.right, checker_self.expr_reaches(r, cty) {
+        return true
+      }
+      if i = e.inner, checker_self.expr_reaches(i, cty) {
+        return true
+      }
+    }
+    return false
+  }
+  if k == ex_interp() {
+    for part in e.parts {
+      if inner = part.expr, checker_self.expr_reaches(inner, cty) {
+        return true
+      }
+    }
+    return false
+  }
+  if k == ex_hash_new() {
+    // A literal's keys are hashed.
+    if t = e.ty, key = t.key {
+      return checker_self.reaches(key, cty)
+    }
+    return e.elems.size > 0
+  }
+  false
+}
+
+// Whether evaluating e, with everything in it, may shrink c. A lambda's
+// body runs when the lambda is called, a call that reaches anything.
+pub fn (checker_self: Checker) expr_shrinks(e: Expr, c: String, cty: Ty): Bool {
+  if checker_self.node_shrinks(e, c, cty) {
+    return true
+  }
+  if inner = e.inner, checker_self.expr_shrinks(inner, c, cty) {
+    return true
+  }
+  if l = e.left, checker_self.expr_shrinks(l, c, cty) {
+    return true
+  }
+  if r = e.right, checker_self.expr_shrinks(r, c, cty) {
+    return true
+  }
+  if obj = e.object, checker_self.expr_shrinks(obj, c, cty) {
+    return true
+  }
+  if recv = e.receiver, checker_self.expr_shrinks(recv, c, cty) {
+    return true
+  }
+  for arg in e.args {
+    if checker_self.expr_shrinks(arg, c, cty) {
+      return true
+    }
+  }
+  for elem in e.elems {
+    if checker_self.expr_shrinks(elem, c, cty) {
+      return true
+    }
+  }
+  for field_expr in e.field_exprs {
+    if checker_self.expr_shrinks(field_expr, c, cty) {
+      return true
+    }
+  }
+  if sz = e.size_expr, checker_self.expr_shrinks(sz, c, cty) {
+    return true
+  }
+  if cnd = e.cond, checker_self.expr_shrinks(cnd, c, cty) {
+    return true
+  }
+  if e.kind != ex_lambda() {
+    if b = e.block {
+      for st in b.body {
+        if checker_self.stmt_shrinks(st, c, cty) {
+          return true
+        }
+      }
+    }
+  }
+  for cs in e.cases {
+    for st in cs.body {
+      if checker_self.stmt_shrinks(st, c, cty) {
+        return true
+      }
+    }
+  }
+  for st in e.else_body {
+    if checker_self.stmt_shrinks(st, c, cty) {
+      return true
+    }
+  }
+  for part in e.parts {
+    if inner2 = part.expr, checker_self.expr_shrinks(inner2, c, cty) {
+      return true
+    }
+  }
+  false
+}
+
+// The statement's own parts: its expressions and those of a for loop's
+// set-up, not the statements of its bodies (each is checked, and ends
+// facts, itself). An assignment to c in the set-up (`for x in xs` holds xs
+// in a name of its own) comes before the loop's facts: their own end.
+pub fn (checker_self: Checker) stmt_own_shrinks(s: Stmt, c: String, cty: Ty): Bool {
+  if e = s.expr, checker_self.expr_shrinks(e, c, cty) {
+    return true
+  }
+  if cnd = s.cond, checker_self.expr_shrinks(cnd, c, cty) {
+    return true
+  }
+  if t = s.target, checker_self.expr_shrinks(t, c, cty) {
+    return true
+  }
+  if v = s.value, checker_self.expr_shrinks(v, c, cty) {
+    return true
+  }
+  for st in s.pre {
+    if checker_self.stmt_own_shrinks(st, c, cty) {
+      return true
+    }
+  }
+  false
+}
+
+// The whole statement, bodies included, and an assignment to c.
+pub fn (checker_self: Checker) stmt_shrinks(s: Stmt, c: String, cty: Ty): Bool {
+  if s.kind == st_assign() {
+    if t = s.target, t.kind == ex_name() && t.ident == c {
+      return true
+    }
+  }
+  if checker_self.stmt_own_shrinks(s, c, cty) {
+    return true
+  }
+  for st in s.then_body {
+    if checker_self.stmt_shrinks(st, c, cty) {
+      return true
+    }
+  }
+  for st in s.else_body {
+    if checker_self.stmt_shrinks(st, c, cty) {
+      return true
+    }
+  }
+  for st in s.body {
+    if checker_self.stmt_shrinks(st, c, cty) {
+      return true
+    }
+  }
+  false
+}
+
+// c's size may have changed: its facts no longer bound an index (they
+// still bound the variable, for arithmetic), its size relations end, and
+// a loop around this point takes back the proofs that rest on an older
+// size.
+pub fn (checker_self: Checker) shrink_cont(c: String) {
+  for i in 0..checker_self.facts.fact_var.size {
+    if checker_self.facts.fact_live[i] == 1 && checker_self.facts.fact_cont[i] == c {
+      checker_self.facts.fact_live[i] = 2
+    }
+  }
+  checker_self.remove_relations_of(c)
+  checker_self.facts.kill_cont.push(c)
+}
+
+pub fn (checker_self: Checker) add_cand(names: Array(String), tys: Array(Ty), c: String, cty: Ty) {
+  if c.size == 0 || names.contains(c) {
+    return
+  }
+  if !(cty.is_array() || cty.is_buf() || cty.is_void()) {
+    // A String or Bytes never changes size.
+    return
+  }
+  names.push(c)
+  tys.push(cty)
+}
+
+// After statement s (checked, mark the size of the proof log before it):
+// each container whose size s's own parts may change loses its facts and
+// relations, and the proofs s made from them.
+pub fn (checker_self: Checker) shrinks_after_stmt(s: Stmt, mark: Int) {
+  names: Array(String) = []
+  tys: Array(Ty) = []
+  for i in mark..checker_self.facts.use_cont.size {
+    checker_self.add_cand(names, tys, checker_self.facts.use_cont[i], checker_self.facts.use_cty[i])
+  }
+  for i in 0..checker_self.facts.fact_var.size {
+    if checker_self.facts.fact_live[i] == 1 {
+      checker_self.add_cand(names, tys, checker_self.facts.fact_cont[i], checker_self.facts.fact_cty[i])
+    }
+  }
+  rel: Array(String) = []
+  for c in checker_self.facts.sv_cont {
+    rel.push(c)
+  }
+  for c in checker_self.facts.bv_cont {
+    rel.push(c)
+  }
+  for c in checker_self.facts.cs_cont {
+    rel.push(c)
+  }
+  for c in rel {
+    if !names.contains(c) {
+      cty = checker_self.t_void()
+      if got = checker_self.lookup(c) {
+        cty = got
+      }
+      checker_self.add_cand(names, tys, c, cty)
+    }
+  }
+  for ni in 0..names.size {
+    c = names[ni]
+    if checker_self.stmt_own_shrinks(s, c, tys[ni]) {
+      calls: Array(Expr) = []
+      only_calls = checker_self.stmt_shrink_calls(s, c, tys[ni], calls)
+      for i in mark..checker_self.facts.use_cont.size {
+        if checker_self.facts.use_cont[i] == c {
+          u = checker_self.facts.use_expr[i]
+          if !(only_calls && checker_self.before_all(u, calls)) {
+            u.proven = false
+          }
+        }
+      }
+      checker_self.shrink_cont(c)
+    }
+  }
+}
+
+// The nodes of s's own parts that may shrink c, into calls; true when
+// each is a call (its receiver and arguments are read before it runs),
+// false when another node or a statement of a block or an arm may.
+pub fn (checker_self: Checker) stmt_shrink_calls(s: Stmt, c: String, cty: Ty, calls: Array(Expr)): Bool {
+  ok = true
+  if e = s.expr, !checker_self.shrink_calls_of(e, c, cty, calls) {
+    ok = false
+  }
+  if cnd = s.cond, !checker_self.shrink_calls_of(cnd, c, cty, calls) {
+    ok = false
+  }
+  if t = s.target, !checker_self.shrink_calls_of(t, c, cty, calls) {
+    ok = false
+  }
+  if v = s.value, !checker_self.shrink_calls_of(v, c, cty, calls) {
+    ok = false
+  }
+  for st in s.pre {
+    if checker_self.stmt_own_shrinks(st, c, cty) {
+      ok = false
+    }
+  }
+  ok
+}
+
+pub fn (checker_self: Checker) shrink_calls_of(e: Expr, c: String, cty: Ty, calls: Array(Expr)): Bool {
+  ok = true
+  if checker_self.node_shrinks(e, c, cty) {
+    if e.kind == ex_call() || (e.kind == ex_field() && e.method_call) {
+      calls.push(e)
+    } else {
+      ok = false
+    }
+  }
+  for sub in checker_self.operands_of(e) {
+    if !checker_self.shrink_calls_of(sub, c, cty, calls) {
+      ok = false
+    }
+  }
+  if e.kind != ex_lambda() {
+    if b = e.block {
+      for st in b.body {
+        if checker_self.stmt_shrinks(st, c, cty) {
+          ok = false
+        }
+      }
+    }
+  }
+  for cs in e.cases {
+    for st in cs.body {
+      if checker_self.stmt_shrinks(st, c, cty) {
+        ok = false
+      }
+    }
+  }
+  for st in e.else_body {
+    if checker_self.stmt_shrinks(st, c, cty) {
+      ok = false
+    }
+  }
+  if cnd = e.cond, !checker_self.shrink_calls_of(cnd, c, cty, calls) {
+    ok = false
+  }
+  ok
+}
+
+// The sub-expressions of e that are values it reads (no block, arm or
+// condition).
+pub fn (checker_self: Checker) operands_of(e: Expr): Array(Expr) {
+  out: Array(Expr) = []
+  if inner = e.inner {
+    out.push(inner)
+  }
+  if l = e.left {
+    out.push(l)
+  }
+  if r = e.right {
+    out.push(r)
+  }
+  if obj = e.object {
+    out.push(obj)
+  }
+  if recv = e.receiver {
+    out.push(recv)
+  }
+  for arg in e.args {
+    out.push(arg)
+  }
+  for elem in e.elems {
+    out.push(elem)
+  }
+  for field_expr in e.field_exprs {
+    out.push(field_expr)
+  }
+  if sz = e.size_expr {
+    out.push(sz)
+  }
+  for part in e.parts {
+    if inner2 = part.expr {
+      out.push(inner2)
+    }
+  }
+  out
+}
+
+// Whether u is read before every call of calls runs: inside its receiver
+// or one of its arguments (outside a lambda's body).
+pub fn (checker_self: Checker) before_all(u: Expr, calls: Array(Expr)): Bool {
+  for k in calls {
+    inside = false
+    if recv = k.receiver, checker_self.expr_holds(recv, u) {
+      inside = true
+    }
+    if obj = k.object, checker_self.expr_holds(obj, u) {
+      inside = true
+    }
+    for arg in k.args {
+      if checker_self.expr_holds(arg, u) {
+        inside = true
+      }
+    }
+    if !inside {
+      return false
+    }
+  }
+  true
+}
+
+// Whether u is e or one of its operands, at any depth (not in a lambda's
+// body, a block or an arm).
+pub fn (checker_self: Checker) expr_holds(e: Expr, u: Expr): Bool {
+  if e == u {
+    return true
+  }
+  if e.kind == ex_lambda() {
+    return false
+  }
+  for sub in checker_self.operands_of(e) {
+    if checker_self.expr_holds(sub, u) {
+      return true
+    }
+  }
+  false
+}
+
+// The end of a loop whose body began at stamp entry, with the proof and
+// shrink logs at uses and kills: a proof in the body that rests on a size
+// read before the loop is taken back when the body may change that size.
+pub fn (checker_self: Checker) loop_region_end(entry: Int, uses: Int, kills: Int) {
+  if checker_self.facts.kill_cont.size == kills {
+    return
+  }
+  killed: Array(String) = []
+  for i in kills..checker_self.facts.kill_cont.size {
+    if !killed.contains(checker_self.facts.kill_cont[i]) {
+      killed.push(checker_self.facts.kill_cont[i])
+    }
+  }
+  for i in uses..checker_self.facts.use_cont.size {
+    if checker_self.facts.use_anchor[i] <= entry && killed.contains(checker_self.facts.use_cont[i]) {
+      checker_self.facts.use_expr[i].proven = false
+    }
+  }
+}
+
