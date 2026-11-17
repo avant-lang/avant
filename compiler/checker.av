@@ -5030,7 +5030,13 @@ pub class Checker {
     key = "${lib_name}.${expr.callee}"
     if id = self.cfun_index.get(key) {
       sig = self.cfuns[id]
-      check_args(expr, sig.params, "${lib_name}.${expr.callee}")
+      // A callback parameter is checked as Avant code sees it: its narrow
+      // C scalars are their Avant views (fn(UInt8) takes fn(Int)).
+      params: Array(Ty) = []
+      for p in sig.params {
+        params.push(ty_cb_view(p))
+      }
+      check_args(expr, params, "${lib_name}.${expr.callee}")
       if self.has_err() {
         return ty_c_view(sig.ret)
       }

@@ -657,6 +657,25 @@ pub fn ty_c_view(t: Ty): Ty {
   Ty.new(t.kind)
 }
 
+// A C callback's type as Avant code sees it: each narrow C scalar of its
+// parameters and result (Int8 ... Float32) its Avant view (Int,
+// Float64); the thunk C calls converts at the boundary.
+pub fn ty_cb_view(t: Ty): Ty {
+  if !t.is_fn() {
+    return t
+  }
+  ps: Array(Ty) = []
+  for m in t.members {
+    ps.push(ty_c_view(m))
+  }
+  v = Ty.new(tyk_fn())
+  v.members = ps
+  if r = t.inner {
+    v.inner = ty_c_view(r)
+  }
+  v
+}
+
 // The integer conversions: to_i, to_i32, to_u64 and to_u32 keep the
 // value or trap; wrap_i, wrap_i32, wrap_u64 and wrap_u32 take the
 // two's-complement bits at the target's width (truncating, or

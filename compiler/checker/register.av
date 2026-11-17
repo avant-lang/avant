@@ -481,13 +481,9 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
       if pty.is_fn() {
         mi = 0
         bad = false
-        narrow = ""
         while mi < pty.members.size {
           if pty.members[mi].is_fn() {
             bad = true
-          }
-          if pty.members[mi].c_scalar > 0 {
-            narrow = pty.members[mi].show()
           }
           mi += 1
         }
@@ -495,16 +491,9 @@ pub fn (checker_self: Checker) register_lib(lib_def: LibDef) {
           if r.is_fn() {
             bad = true
           }
-          if r.c_scalar > 0 {
-            narrow = r.show()
-          }
         }
         if bad {
           checker_self.fail(cfun.params[k].loc, "C callback signature cannot contain a function type")
-          return
-        }
-        if narrow.size > 0 {
-          checker_self.fail(cfun.params[k].loc, "a C callback cannot take or return ${narrow} yet; use its Avant type (${ty_c_view(ty_c_scalar(c_scalar_of(narrow))).show()})")
           return
         }
       }

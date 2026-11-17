@@ -3366,7 +3366,7 @@ fn main {
 }
 ```
 
-A capturing lambda, a `fn` value held in a variable, and a C function returning a function pointer do not compile. A callback's parameters and result use the everyday types (`Int32`, `Float64`, `Bool`, `Ptr`), not the five narrow names.
+A capturing lambda, a `fn` value held in a variable, and a C function returning a function pointer do not compile. A callback's type may use the five narrow names (`fn(UInt8, Float32): Int16`): the Avant function takes and returns their Avant types (`fn(Int, Float64): Int`), each argument converts exactly on the way in, and the result is checked on the way out (out of range traps; a `Float64` rounds to the nearest `Float32`), as for a `fun`'s own parameters.
 
 ### Linking C code
 
