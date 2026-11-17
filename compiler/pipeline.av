@@ -43,8 +43,13 @@ pub class IrBox {
 }
 
 lib posix {
-  fun write(fd: Int, buf: String, count: Int): Int
   fun exit(code: Int)
+}
+
+// The runtime's checked write to standard output (the one std.testing's
+// report uses): every byte written, or the process stops with the reason.
+lib checked_out {
+  fun avant_test_write(s: String, n: Int)
 }
 
 lib scratch_rt {
@@ -129,14 +134,21 @@ pub fn tmp_keep {
   scratch_rt.avant_tmp_keep()
 }
 
+// A line to standard error, through eputs: it flushes what standard
+// output holds first (the two streams keep their order when they go to one
+// place), and a failed write stops the compiler with status 1 and the
+// stream's name and reason, as puts does for standard output.
 pub fn diag_puts(s: String) {
-  line = "${s}\n"
-  posix.write(2, line, line.size)
+  eputs(s)
 }
 
+// A line to standard output at once, unbuffered (the test runner's report
+// shows as each file ends, also through a pipe), written whole: a write
+// that fails stops the compiler with "avant runtime: cannot write to
+// standard output: REASON" and status 1, never a lost line and status 0.
 pub fn out_puts(s: String) {
   line = "${s}\n"
-  posix.write(1, line, line.size)
+  checked_out.avant_test_write(line, line.size)
 }
 
 pub fn diag_exit(code: Int) {
