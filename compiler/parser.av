@@ -111,10 +111,20 @@ pub class Parser {
   arg_names: Array(String) = []
   // The bounds the last type parameter list wrote (`class Top(T: Ranked)`).
   tparam_bounds: Array(TypeBound) = []
+  // For `avant format --lambdas` (compiler/migrate.av): each block
+  // written with pipes or after a call, whether it stood directly in a statement's head
+  // (where the `{` begins the body), and, for an expression statement
+  // that is a call with such a block, the offset of the statement's
+  // first token by the block's offset.
+  pub pipe_blocks: Array(Block) = []
+  pub pipe_heads: Array(Bool) = []
+  pub stmt_starts: Hash(String, Int)
+  stmt_start_now: Int = 0
 
   fn initialize(source: Source, tokens: Array(Token)) {
     self.source = source
     self.tokens = tokens
+    self.stmt_starts = Hash(String, Int).new()
     self.index = 0
     self.allow_struct_lit = true
     self.failed = false
@@ -2015,7 +2025,9 @@ pub class Parser {
       }
       return self.parse_ident_stmt()
     }
+    start = self.current().loc.offset()
     expr = self.parse_expr()
+    self.stmt_start_now = start
     finish_stmt(expr)
   }
 
@@ -2086,11 +2098,14 @@ pub class Parser {
       s.op = tk_eq()
       return s
     }
+    start = self.current().loc.offset()
     expr = self.parse_expr()
+    self.stmt_start_now = start
     finish_stmt(expr)
   }
 
   pub fn finish_stmt(expr: Expr): Stmt {
+    start = self.stmt_start_now
     expr2 = maybe_trailing_block(expr)
     self.skip_newlines_if_continuing()
     if token_is_assign_op(self.current().kind) {
@@ -2112,6 +2127,11 @@ pub class Parser {
     // nothing (`Void | E`), the guard of an assignment without a name.
     if self.current().kind == tk_else() {
       return stmt_expr(expr2.loc, self.parse_else_guard(expr2))
+    }
+    if expr2.kind == ex_call() {
+      if b = expr2.block {
+        self.stmt_starts["${b.loc.offset()}"] = start
+      }
     }
     stmt_expr(expr2.loc, expr2)
   }
@@ -2172,7 +2192,11 @@ pub class Parser {
     if expr.kind != ex_call() && expr.kind != ex_field() && expr.kind != ex_array_new() && !bare_fn {
       return expr
     }
-    got = attach_block(expr, self.parse_trailing_block())
+    head = !self.allow_struct_lit
+    tb = self.parse_trailing_block()
+    self.pipe_blocks.push(tb)
+    self.pipe_heads.push(head)
+    got = attach_block(expr, tb)
     // A postfix `?` right after the block passes the call's failure up
     // (`m.try_with { |n| n += 1 }?`), as after any call.
     if self.current().kind == tk_question() {
@@ -3180,7 +3204,11 @@ pub class Parser {
     }
     if k == tk_l_brace() && self.lambda_ahead() {
       e = Expr.new(ex_lambda(), tok.loc)
-      e.block = self.parse_trailing_block()
+      head = !self.allow_struct_lit
+      lb = self.parse_trailing_block()
+      self.pipe_blocks.push(lb)
+      self.pipe_heads.push(head)
+      e.block = lb
       return e
     }
     if k == tk_release() {

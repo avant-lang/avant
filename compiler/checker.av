@@ -135,6 +135,12 @@ pub class Checker {
   // noted (its file, the offset where `()` goes, its name) and accepted,
   // so the formatter can write the parentheses in.
   pub calls_migrate: Bool = false
+  // `avant format --lambdas` (compiler/migrate.av): the blocks in pipes a
+  // builtin inlines as a loop, by "path|offset" of their `{`, with the
+  // builtin's kind ("array each", "hash each", "set each", "array any",
+  // "mutex with", "array build", ...).
+  pub inline_kinds: Hash(String, String)
+  pub lambdas_migrate: Bool = false
   pub bare_locs: Array(Location) = []
   // The target of the assignment being checked: `x.name = v` with name a
   // method is refused as an assignment, not taken for a call.
@@ -371,6 +377,7 @@ pub class Checker {
     self.known_mods = km
     self.const_list = []
     self.const_vals = Hash(String, Int).new()
+    self.inline_kinds = Hash(String, String).new()
     self.lam_exprs = []
     self.lam_scopes = []
     self.lambda_infer = false
@@ -865,6 +872,11 @@ pub class Checker {
     "break inside a lambda given to ${builtin}: the lambda has no loop of its own to leave; ${way}"
   }
 
+  pub fn note_inline(b: Block, kind: String) {
+    if self.lambdas_migrate && !b.paren {
+      self.inline_kinds["${b.loc.path}|${b.loc.offset()}"] = kind
+    }
+  }
 
   pub fn check_body(body: Array(Stmt), expected: Ty, at_tail: Bool) {
     i = 0
@@ -2531,6 +2543,15 @@ pub class Checker {
   pub fn builtin_method(expr: Expr, object: Ty): Ty {
     if object.is_array() || object.is_hash() || object.is_set() {
       absorb_lambda_arg(expr, object)
+      if b = expr.block {
+        kind = "array"
+        if object.is_hash() {
+          kind = "hash"
+        } else if object.is_set() {
+          kind = "set"
+        }
+        note_inline(b, "${kind} ${expr.callee}")
+      }
     }
     // One text for every scalar.
     if expr.callee == "to_s" && (object.is_integer() || object.is_float() || object.is_bool() || object.is_string()) {
@@ -3249,6 +3270,7 @@ pub class Checker {
       }
     }
     if b = expr.block {
+      note_inline(b, "array build")
       if b.params.size != 1 {
         fail(b.loc, "Array(T).new(n) { |i| ... } takes one block parameter, the index")
         return ty_array(elem)
@@ -5547,12 +5569,18 @@ pub class Checker {
     if expr.callee == "with" {
       if is_mutex_ty(object) {
         absorb_lambda_arg(expr, object)
+        if b = expr.block {
+          note_inline(b, "mutex with")
+        }
         return check_mutex_with(expr, object)
       }
     }
     if expr.callee == "try_with" {
       if is_mutex_ty(object) {
         absorb_lambda_arg(expr, object)
+        if b = expr.block {
+          note_inline(b, "mutex try_with")
+        }
         // `with` that gives the block's value, or a MutexError when the
         // mutex is poisoned (a task trapped holding it): T | MutexError.
         got = check_mutex_with(expr, object)
