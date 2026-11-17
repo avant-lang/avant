@@ -103,6 +103,44 @@ out=$(realpath -m "$1")
 base=${2:+$(realpath -m "$2")}
 [ -e "$out" ] && { echo "wave-final: $out exists" >&2; exit 2; }
 case "$out/" in "$root"/results/*) ;; "$root"/*) echo "wave-final: OUT must be under results/ or outside the repository" >&2; exit 2 ;; esac
+# The private /tmp (WAVE_PRIVATE_TMP, default 1; not with WAVE_TMP): the
+# script runs itself again in a mount namespace of its own, on a tmpfs
+# /tmp, as tools/gate.sh does, so the litter check sees what this run
+# leaves and nothing another lane does beside its shared steps. The
+# checkout, OUT and WAVE_LA_SIDE, when under /tmp, are bound into it at
+# the same paths. A machine that refuses the namespace snapshots the real
+# /tmp, said in the `tmp:` line (another lane's entry can then read red);
+# `require` stops there instead. 0 snapshots the real /tmp.
+pt_mode=${WAVE_PRIVATE_TMP_MODE:-}
+if [ -z "${WAVE_TMP:-}" ] && [ "${WAVE_IN_PRIVATE_TMP:-}" != 1 ]; then
+  case "${WAVE_PRIVATE_TMP:-1}" in
+    0) pt_mode="the real /tmp, snapshotted (WAVE_PRIVATE_TMP=0)" ;;
+    1|require)
+      if pt_why=$(unshare --user --map-current-user --mount --keep-caps sh -c 'mount -t tmpfs tmpfs /tmp' < /dev/null 2>&1); then
+        # shellcheck disable=SC2016 # expanded by the inner shell
+        export WF_ROOT="$root" WF_OUT="$out"
+        exec unshare --user --map-current-user --mount --keep-caps sh -c '
+          self=$1; shift
+          exec 9< /tmp
+          mount -t tmpfs tmpfs /tmp || exit 2
+          for p in "$WF_ROOT" "$WF_OUT" "${WAVE_LA_SIDE:-}"; do
+            case "$p" in
+              /tmp/*) mkdir -p "$p" && mount --no-canonicalize --rbind "/proc/self/fd/9${p#/tmp}" "$p" || exit 2 ;;
+            esac
+          done
+          exec 9<&-
+          exec setpriv --inh-caps=-all --ambient-caps=-all --bounding-set=-all env -u WF_ROOT -u WF_OUT WAVE_IN_PRIVATE_TMP=1 \
+            WAVE_PRIVATE_TMP_MODE="a tmpfs in a mount namespace of its own" sh "$self" "$@"
+        ' wave-final "$root/tools/wave-final.sh" "$@" < /dev/null
+      fi
+      pt_why=$(printf '%s' "$pt_why" | tail -n 1)
+      if [ "${WAVE_PRIVATE_TMP:-1}" = require ]; then echo "wave-final: cannot make a private /tmp ($pt_why); WAVE_PRIVATE_TMP=require stops here" >&2; exit 2; fi
+      pt_mode="the real /tmp, snapshotted: this machine refuses the namespace ($pt_why)" ;;
+    *) echo "wave-final: WAVE_PRIVATE_TMP must be 0, 1 or require" >&2; exit 2 ;;
+  esac
+fi
+unset WAVE_IN_PRIVATE_TMP WAVE_PRIVATE_TMP_MODE
+[ -n "${WAVE_TMP:-}" ] && pt_mode="WAVE_TMP, snapshotted"
 mkdir -p "$out"
 red=""
 step() { echo "$1" >> "$out/SUMMARY.txt"; case "$1" in *": red"*) red="$red ${1%%:*}" ;; esac; }
@@ -206,7 +244,7 @@ trap 'on_signal HUP 1' HUP
 # The /tmp the litter check reads (WAVE_TMP, for the tool's own tests).
 tmpd=${WAVE_TMP:-/tmp}
 cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort | uniq -c > "$out/governor.txt"
-find "$tmpd" -mindepth 1 -maxdepth 1 | sort > "$out/tmp-before.txt"
+find "$tmpd" -mindepth 1 -maxdepth 1 | LC_ALL=C sort > "$out/tmp-before.txt"
 if ! head_rev=$(git rev-parse --verify -q HEAD 2>/dev/null) || [ "$(git rev-parse --show-toplevel 2>/dev/null)" != "$(pwd -P)" ]; then
   echo "not a git checkout of its own: $root" > "$out/head.txt"
   step "head: red (not a git checkout: no commit to name)"
@@ -402,12 +440,12 @@ else step "langarena: skipped (WAVE_LA unset)"; fi
 # its own (a lane's temporary directory, a daemon's socket): listed, not
 # red. (The gate checks its own litter in a private /tmp.)
 curname=""
-find "$tmpd" -mindepth 1 -maxdepth 1 | sort > "$out/tmp-after.txt"
+find "$tmpd" -mindepth 1 -maxdepth 1 | LC_ALL=C sort > "$out/tmp-after.txt"
 LC_ALL=C comm -13 "$out/tmp-before.txt" "$out/tmp-after.txt" > "$out/tmp-new.txt"
 LC_ALL=C comm -23 "$out/tmp-before.txt" "$out/tmp-after.txt" > "$out/tmp-gone.txt"
 gone=$(wc -l < "$out/tmp-gone.txt")
-if [ -s "$out/tmp-new.txt" ]; then step "tmp: red ($(wc -l < "$out/tmp-new.txt") new in $tmpd, tmp-new.txt: $(head -3 "$out/tmp-new.txt" | tr '\n' ' '))"
-elif [ "$gone" -gt 0 ]; then step "tmp: nothing new ($gone gone during the run, removed by their owners: tmp-gone.txt)"
-else step "tmp: unchanged"; fi
+if [ -s "$out/tmp-new.txt" ]; then step "tmp: red ($(wc -l < "$out/tmp-new.txt") new in $tmpd, tmp-new.txt: $(head -3 "$out/tmp-new.txt" | tr '\n' ' '); $pt_mode)"
+elif [ "$gone" -gt 0 ]; then step "tmp: nothing new ($gone gone during the run, removed by their owners: tmp-gone.txt; $pt_mode)"
+else step "tmp: unchanged ($pt_mode)"; fi
 if [ -z "$red" ]; then step "WAVE FINAL GREEN"; cat "$out/SUMMARY.txt"; exit 0; fi
 step "WAVE FINAL RED:$red"; cat "$out/SUMMARY.txt"; exit 1

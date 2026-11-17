@@ -27,7 +27,13 @@
 #     wait beside it;
 #   base-merge-base: with WAVE_BASE naming a branch that moved on after
 #     the head left it, the base cache and the neutrality are asked for
-#     the merge base, not the branch's tip.
+#     the merge base, not the branch's tip;
+#   tmp-locale: under a locale whose order is not the bytes' (en_US.UTF-8,
+#     when the machine has it), with one entry gone and one new during the
+#     run, only those two are read so, not the entries there throughout;
+#   private-tmp: without WAVE_TMP the run is in a private /tmp: an entry
+#     its step leaves in /tmp is red, named, and not in the real /tmp
+#     afterwards (`skip:` where the machine refuses the namespace).
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/wave-final-checks.sh WORK" >&2; exit 2; }
@@ -158,4 +164,23 @@ echo x > "$f/x"; (cd "$f" && git add x && git -c user.name=t -c user.email=t@t c
 final "$f" "$w/base.out" WAVE_TMP="$w/tmp1" WAVE_BASE=moved
 s=$w/base.out/SUMMARY.txt
 has "^neutral: red (tools/base-cache.sh $c1 failed" "$s"; say base-merge-base $? "$(line neutral: "$s")"
+
+# 7. The snapshots' order: entries whose order differs by locale.
+if locale -a 2>/dev/null | grep -qx 'en_US.utf8'; then
+  mkdir -p "$w/tmp7/.X11-unix" "$w/tmp7/WIozLM" "$w/tmp7/avant-x" "$w/tmp7/.XIM-unix"
+  final "$f" "$w/locale.out" WAVE_TMP="$w/tmp7" LC_ALL=en_US.UTF-8 WF_GONE="$w/tmp7/avant-x" WF_LITTER="$w/tmp7/w9a"
+  s=$w/locale.out/SUMMARY.txt
+  has "^tmp: red (1 new in $w/tmp7, tmp-new.txt: $w/tmp7/w9a ;" "$s" && [ "$(cat "$w/locale.out/tmp-gone.txt")" = "$w/tmp7/avant-x" ]
+  say tmp-locale $? "$(line tmp: "$s")"
+else echo "skip: tmp-locale: no en_US.utf8 locale here"; fi
+
+# 8. The private /tmp: the stub goldens leave an entry in /tmp.
+lit=/tmp/wave-final-checks-litter.$$
+if unshare --user --map-current-user --mount --keep-caps sh -c 'mount -t tmpfs tmpfs /tmp' < /dev/null > /dev/null 2>&1; then
+  final "$f" "$w/private.out" WF_LITTER="$lit"
+  s=$w/private.out/SUMMARY.txt
+  has "^tmp: red (1 new in /tmp, tmp-new.txt: $lit ; a tmpfs in a mount namespace of its own)" "$s" && [ ! -e "$lit" ]
+  say private-tmp $? "$(line tmp: "$s"); real: $(ls -d "$lit" 2>/dev/null)"
+  rmdir "$lit" 2>/dev/null
+else echo "skip: private-tmp: this machine refuses the mount namespace"; fi
 echo done
