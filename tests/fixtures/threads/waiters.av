@@ -4,13 +4,9 @@
 // worker, so the producer runs and the program ends. Before, the
 // producer never started and the program hung with no message. The
 // number of consumers is the pool's bound (an argument overrides it;
-// tests/cases/test_threads.av runs it with --threads 1, 2, 4 and 16),
+// tests/cases/test_threads.av runs it with --avant-threads=1, 2, 4 and 16),
 // and a Mutex waiter is counted the same way.
 import std.sync
-
-lib task {
-  fun avant_chosen_threads: Int
-}
 
 lib c {
   fun usleep(micros: UInt32): Int32
@@ -25,7 +21,7 @@ fn consumer(ch: Channel(Int)): Int {
 }
 
 fn main {
-  n = task.avant_chosen_threads()
+  n = pool_size()
   args = argv()
   if args.size > 1 {
     n = args[1].to_i() ?? n

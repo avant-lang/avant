@@ -68,45 +68,46 @@ static char *cstr_dup(const char *s) {
   return p;
 }
 
-/* The program flag --threads: the generated startup calls
- * this before anything can start the pool or the HTTP server, so
- * scanning here records the override in time, and removing the flag
- * from the array means the program's own argv() never sees it. Both
- * spellings are one implementation; scanning stops at a literal "--".
- * A malformed value dies loudly. */
+/* The runtime's one program flag, --avant-threads=N (the thread pool's
+ * size, 1 to AVANT_POOL_SIZE_MAX): the generated startup calls this
+ * before anything can start the pool or the HTTP server, so scanning
+ * here records the size in time, and removing the flag from the array
+ * means the program's own argv() never sees it. Every other argument,
+ * --threads included, is the program's; scanning stops at a literal
+ * "--". A bare --avant-threads or a bad value stops the program at
+ * startup: one line, status 1. */
+static void avant_threads_bad(const char *a) {
+  fprintf(stderr, "avant runtime: %s: the thread pool's size is --avant-threads=N, N from 1 to %d\n", a,
+          AVANT_POOL_SIZE_MAX);
+  exit(1);
+}
+
 static void scan_threads_flag(void) {
   int32_t i;
   int32_t w = 1;
   for (i = 1; i < g_argc; i++) {
     const char *a = g_argv[i] ? g_argv[i] : "";
-    const char *val = NULL;
-    int consumed = 0;
     if (strcmp(a, "--") == 0) {
       for (; i < g_argc; i++) {
         g_argv[w++] = g_argv[i];
       }
       break;
     }
-    if (strcmp(a, "--threads") == 0) {
-      if (i + 1 >= g_argc) {
-        fprintf(stderr, "avant runtime: --threads must be a positive integer\n");
-        exit(1);
-      }
-      val = g_argv[i + 1];
-      consumed = 2;
-    } else if (strncmp(a, "--threads=", 10) == 0) {
-      val = a + 10;
-      consumed = 1;
+    if (strcmp(a, "--avant-threads") == 0) {
+      avant_threads_bad(a);
     }
-    if (val) {
+    if (strncmp(a, "--avant-threads=", 16) == 0) {
+      const char *val = a + 16;
       char *end = NULL;
-      unsigned long long v = strtoull(val, &end, 10);
-      if (end == val || *end != '\0' || v < 1 || v > 1073741824ull) {
-        fprintf(stderr, "avant runtime: --threads must be a positive integer\n");
-        exit(1);
+      unsigned long long v;
+      if (*val < '0' || *val > '9') {
+        avant_threads_bad(a);
+      }
+      v = strtoull(val, &end, 10);
+      if (*end != '\0' || v < 1 || v > (unsigned long long)AVANT_POOL_SIZE_MAX) {
+        avant_threads_bad(a);
       }
       avant_set_flag_threads((long)v);
-      i += consumed - 1;
       continue;
     }
     g_argv[w++] = g_argv[i];

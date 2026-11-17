@@ -1,0 +1,67 @@
+// std.sync's pool_size and set_pool_size, run by
+// tests/cases/test_threads.av. The program has its own --threads option
+// (the runtime leaves it in argv) and passes the number on:
+//
+//   pool_size.av --threads N   sets N, prints pool_size(), then runs
+//                              twelve tasks that each wait a little and
+//                              prints the most that ran at once (at
+//                              most N: the bound holds)
+//   pool_size.av              the same with N = 1 (its run golden)
+//   pool_size.av after         sets the size after a spawn started the
+//                              pool: a trap
+//   pool_size.av range N       sets N out of range: a trap
+import std.sync
+
+lib c {
+  fun usleep(micros: UInt32): Int32
+}
+
+fn main: Int {
+  args = argv()
+  if args.size == 1 || args.size >= 3 && args[1] == "--threads" {
+    n = 1
+    if args.size >= 3 {
+      n = args[2].to_i() ?? 0
+    }
+    set_pool_size(n)
+    puts(pool_size())
+    running = Mutex(Int).new(0)
+    most = Mutex(Int).new(0)
+    work: Array(Int) = []
+    for i in 0..12 {
+      work.push(i)
+    }
+    _ = work.parallel { |w|
+      now = running.with { |r|
+        r += 1
+        r
+      }
+      most.with { |m|
+        if now > m {
+          m = now
+        }
+      }
+      wait: UInt32 = 20000
+      _ = c.usleep(wait)
+      running.with { |r| r -= 1 }
+      w
+    }
+    top = most.with { |m| m }
+    puts("most at once ${top}")
+    return 0
+  }
+  if args.size >= 2 && args[1] == "after" {
+    h = spawn { 1 }
+    _ = h.join()
+    set_pool_size(3)
+    puts("not reached")
+    return 0
+  }
+  if args.size >= 3 && args[1] == "range" {
+    set_pool_size(args[2].to_i() ?? 0)
+    puts("not reached")
+    return 0
+  }
+  puts("usage")
+  2
+}

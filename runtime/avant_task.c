@@ -17,8 +17,8 @@
 /*
  * Bounded pool shared by spawn and .parallel.
  * The bound is the program's chosen thread count (avant_chosen_threads:
- * --threads, else the CPUs the process may use): at most that many tasks run at
- * once. Workers never touch g_world.
+ * --avant-threads=N or std.sync's set_pool_size, else the CPUs the process
+ * may use): at most that many tasks run at once. Workers never touch g_world.
  *
  * Structured completion: a task's handle completes only when its block
  * and every task it spawned have ended. A task counts its unfinished
@@ -353,7 +353,7 @@ static void pool_kick(void) {
     fprintf(stderr,
             "avant runtime: tasks are queued while the pool's %ld threads are all taken, some by tasks waiting on a "
             "Channel or a Mutex, and the pool starts no more (its limit is %ld threads); the queued tasks wait for a "
-            "thread to be free (--threads N bounds the tasks that run at once, and a task that waits lets a queued "
+            "thread to be free (--avant-threads=N bounds the tasks that run at once, and a task that waits lets a queued "
             "one start while threads remain)\n",
             pool_threads, pool_limit);
   }
@@ -427,14 +427,43 @@ static void pool_resume(void) {
   pthread_mutex_unlock(&pool_mu);
 }
 
-/* The program's one chosen thread count: the --threads flag when the
- * generated startup recorded one, else the CPUs the process may use. The
- * pool and the HTTP server's loop count both read this one value.
- * AVANT_THREADS, deprecated for one release, is not read. */
-static long g_flag_threads;
+/* The program's one chosen thread count: --avant-threads=N, which the
+ * generated startup records, or std.sync's set_pool_size, else the CPUs
+ * the process may use. The pool and the HTTP server's loop count both
+ * read this one value. One atomic word holds it (0: not chosen) and the
+ * POOL_SIZE_FIXED bit, set when the pool starts or a server takes its
+ * loop count from it (avant_pool_size_fix): a set after that traps, so a
+ * program never believes a size that does not hold. The word costs a
+ * spawn nothing: only the pool's start reads it. */
+#define POOL_SIZE_FIXED (1L << 40)
+static long g_pool_size;
 
 void avant_set_flag_threads(long n) {
-  g_flag_threads = n;
+  __atomic_store_n(&g_pool_size, n, __ATOMIC_RELEASE);
+}
+
+/* std.sync's set_pool_size(n). */
+void avant_set_pool_size(avant_int n) {
+  char msg[320];
+  long s;
+  if (n < 1 || n > AVANT_POOL_SIZE_MAX) {
+    snprintf(msg, sizeof msg, "set_pool_size(%lld): the thread pool's size is from 1 to %d", (long long)n,
+             AVANT_POOL_SIZE_MAX);
+    avant_trap_text(msg);
+  }
+  s = __atomic_load_n(&g_pool_size, __ATOMIC_ACQUIRE);
+  for (;;) {
+    if (s & POOL_SIZE_FIXED) {
+      snprintf(msg, sizeof msg,
+               "set_pool_size(%lld) after the thread pool's size was fixed: it is fixed when the pool starts (the "
+               "first spawn or .parallel) or when Http.listen without loops: takes its loop count from it",
+               (long long)n);
+      avant_trap_text(msg);
+    }
+    if (__atomic_compare_exchange_n(&g_pool_size, &s, (long)n, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+      return;
+    }
+  }
 }
 
 /* The CPUs this process may run on: its affinity
@@ -484,14 +513,18 @@ avant_int avant_usable_cpus(void) {
 }
 
 avant_int avant_chosen_threads(void) {
-  if (g_flag_threads > 0) {
-    return (int32_t)g_flag_threads;
+  long n = __atomic_load_n(&g_pool_size, __ATOMIC_ACQUIRE) & ~POOL_SIZE_FIXED;
+  if (n > 0) {
+    return (avant_int)n;
   }
   return avant_usable_cpus();
 }
 
-static long pool_count(void) {
-  return (long)avant_chosen_threads();
+/* The chosen count, fixed from now on (the pool's start, a server's
+ * loop count). */
+avant_int avant_pool_size_fix(void) {
+  __atomic_fetch_or(&g_pool_size, POOL_SIZE_FIXED, __ATOMIC_ACQ_REL);
+  return avant_chosen_threads();
 }
 
 /* The pool's thread limit for a bound of n: POOL_THREAD_LIMIT, or n when
@@ -522,7 +555,7 @@ static void ensure_pool(void) {
     return;
   }
   pool_started = 1;
-  n = pool_count();
+  n = (long)avant_pool_size_fix();
   pool_bound = n;
   pool_limit = pool_thread_limit(n);
   pool_threads = n;

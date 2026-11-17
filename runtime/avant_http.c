@@ -2968,7 +2968,7 @@ void *avant_http_listen(const char *host, avant_int port, avant_int max_body,
       return NULL;
     }
   }
-  n = loops > 0 ? (int)loops : (int)avant_chosen_threads();
+  n = loops > 0 ? (int)loops : (int)avant_pool_size_fix();
   if (n < 1) {
     n = 1;
   }

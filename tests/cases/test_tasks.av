@@ -223,7 +223,7 @@ fn mutex_recover_cases(c: Checks, compiler: String, stamp: Int) {
 // exit, and wrote the output twice).
 //
 // The fixture keeps six tasks busy for good and needs up to two more
-// beside them, so it runs with `--threads 16`: the pool runs at most one
+// beside them, so it runs with `--avant-threads=16`: the pool runs at most one
 // task per CPU at once and queues the rest, so on a machine with fewer
 // than eight CPUs (a 4-CPU CI runner, `taskset -c 0-3`) the exiting task
 // never started and every run waited for its bound. Each run is bounded
@@ -244,7 +244,7 @@ fn task_exit_cases(c: Checks, compiler: String, stamp: Int) {
       log = "${scratch()}/tasks-exit-${stamp}-${kind}-${round}.log"
       args: Array(String) = []
       args.push("-c")
-      args.push("timeout -k 5 20 ${bin} --threads 16 ${kind} 2> ${log}.err")
+      args.push("timeout -k 5 20 ${bin} --avant-threads=16 ${kind} 2> ${log}.err")
       status = process_run_out("/bin/sh", args, log) ?? -1
       out = file_read(log) ?? ""
       if status == 124 || status == 137 {

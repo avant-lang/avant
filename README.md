@@ -3114,9 +3114,29 @@ A mutable object reaches another task only inside a `Mutex`, or as the results o
 
 ### The thread pool
 
-The pool runs at most one task at once per CPU the process may use (its affinity: all online processors, or those `taskset`, `numactl` or a container's cpuset leave it; a cgroup's CPU quota is not read), counted when the pool starts; further tasks queue. `--threads N` (or `--threads=N`) on **your program's** command line replaces that number and is removed before `argv()` sees it (it is to become `--avant-threads=N`: [Not built yet](#not-built-yet)). `std.http`'s event loops take the same count ([HTTP server](#http-server)).
+The pool runs at most `N` tasks at once, its size; further tasks queue. `N` is the number of CPUs the process may use (its affinity: all online processors, or those `taskset`, `numactl` or a container's cpuset leave it; a cgroup's CPU quota is not read), unless one of these sets it:
 
-A task waiting in a channel's `recv` or `send`, or for a `Mutex`, stops counting as running, so a queued task may start, on a free pool thread or a new one, up to 1,024 threads (or `N`, if larger): two consumers waiting in `recv` with `--threads 2` do not block a producer spawned after them. A task whose wait ends goes on once fewer than `N` tasks run. Past the thread limit, the runtime says so once on standard error (`avant runtime: tasks are queued while the pool's 1024 threads are all taken, …`) and queued tasks wait for a free thread.
+- `--avant-threads=N` on **your program's** command line, `N` from 1 to 1,024. The runtime takes it out before `argv()` sees it; a bare `--avant-threads` or a bad value stops the program before `main` with one line on standard error and status 1 (`avant runtime: --avant-threads=0: the thread pool's size is --avant-threads=N, N from 1 to 1024`). Every other argument, `--threads` included, is the program's. After a literal `--` nothing is taken.
+- `set_pool_size(n)` from `std.sync`, for a program with its own option (a `--threads`, a config file); `pool_size()` reads the size.
+
+<!-- check: run args=--threads,2 -->
+```avant
+import std.sync
+
+fn main {
+  args = argv()
+  if args.size >= 3 && args[1] == "--threads" {
+    set_pool_size(args[2].to_i() ?? 1)
+  }
+  puts(pool_size())                        // => 2
+  squares = [1, 2, 3, 4].parallel { |x| x * x }
+  puts(squares[3])                         // => 16
+}
+```
+
+The size is fixed when the pool starts, at the first `spawn` or `.parallel`, or when `Http.listen` without `loops:` takes it as its count of event loops ([HTTP server](#http-server)). A `set_pool_size` after that, or with `n` outside 1 to 1,024, traps (`set_pool_size(3) after the thread pool's size was fixed: …`): a program never runs on a size it did not get. Call it at the start of `main`; it replaces a size given by `--avant-threads=N`.
+
+A task waiting in a channel's `recv` or `send`, or for a `Mutex`, stops counting as running, so a queued task may start, on a free pool thread or a new one, up to 1,024 threads (or `N`, if larger): two consumers waiting in `recv` with `--avant-threads=2` do not block a producer spawned after them. A task whose wait ends goes on once fewer than `N` tasks run. Past the thread limit, the runtime says so once on standard error (`avant runtime: tasks are queued while the pool's 1024 threads are all taken, …`) and queued tasks wait for a free thread.
 
 ## Memory
 
@@ -3699,6 +3719,7 @@ Each module is imported on its own and links only its own C library: a program t
 | [`std.http`](#stdhttp) | HTTP server and client, WebSocket server and client | uSockets and picohttpparser |
 | [`std.zlib`](#stdzlib) | `Bytes.compress`, `Bytes.uncompress` | zlib |
 | [`std.base64`](#stdbase64) | `Bytes.to_base64`, `Bytes.from_base64` | the aklomp Base64 codec |
+| `std.sync` | `Channel`, `Mutex`, `pool_size`, `set_pool_size` | the runtime's tasks ([Concurrency](#concurrency)) |
 | `std.gc` | `gc.hold { }`, `gc.collect()` | the collector ([Collection hints](#collection-hints)) |
 | `std.testing` | `Test`, the checks of a test file | — ([Testing](#testing)) |
 
@@ -4331,7 +4352,7 @@ fn main: Int {
 avant run prog.av -- hello
 ```
 
-`avant run` exits with the program's own status: what `main` returned, 128 + N when signal N killed the program, 127 when it could not be started. `--threads N` among a program's arguments sets its [thread pool](#the-thread-pool) and is not passed on.
+`avant run` exits with the program's own status: what `main` returned, 128 + N when signal N killed the program, 127 when it could not be started. `--avant-threads=N` among a program's arguments sets its [thread pool](#the-thread-pool)'s size and is not passed on; every other argument is.
 
 ### Compile errors
 
@@ -4436,7 +4457,6 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 | A loop variable of its own for each iteration's closures | decided | copy it into a new name in the body |
 | `for v in ch` over a channel | decided | `while v = ch.recv() { ... }` |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |
-| The pool's size from `--avant-threads=N` only (a bad value an error) and a call in `std` to set it, every other argument the program's | decided | `--threads N`, which the runtime takes out of `argv()` |
 | TLS for `std.http` (`https`, `wss`) | decided | a TLS-terminating proxy in front |
 | A trap in an `std.http` handler that ends only its request; a pre-forked server mode | decided | a supervisor that restarts the process |
 | Positions in traps raised inside runtime functions | planned | the message names the operation and its values |

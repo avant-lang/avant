@@ -604,6 +604,11 @@ uint64_t avant_checked_rem_u64(uint64_t a, uint64_t b);
 avant_int avant_chosen_threads(void);
 avant_int avant_usable_cpus(void);
 void avant_set_flag_threads(long n);
+/* The thread pool's size: --avant-threads=N and std.sync's set_pool_size
+ * take 1 to this many. */
+#define AVANT_POOL_SIZE_MAX 1024
+void avant_set_pool_size(avant_int n);
+avant_int avant_pool_size_fix(void);
 void *avant_spawn(void *fn, void *arg);
 /* A spawn whose block may trap without ending the program: fail, when not null, is the block's end on a trap (the
  * captures' thaw and the captured channels' close), called with the
