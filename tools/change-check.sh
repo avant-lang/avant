@@ -15,8 +15,10 @@
 #             file that names a changed file's path (tests/fixtures/x/y.av
 #             as fixtures/x/y), or imports a changed library module
 #             (lib/std/json.av as std.json); test_tools.av for a change
-#             under tools/ or tests/tools/. A changed file none of these
-#             reaches is left to the corpus and the gate.
+#             under tools/ or tests/tools/. Only tests/cases/test_*.av
+#             files run (a helper beside them, such as harness.av, is not a
+#             test). A changed file none of these reaches is left to the
+#             corpus and the gate.
 #   corpus    every program of examples/, tests/fixtures/, tests/cases/,
 #             tests/probe_matrix.av and compiler/main.av through
 #             `__emit-ll` (tools/ll-digests.sh): the programs whose .ll or
@@ -110,7 +112,7 @@ touched() { # the changed paths on stdin -> test files of the work tree
       tests/*) n=${p#tests/}; n=${n%.*}; grep -l -F "$n" "$work"/tests/cases/*.av 2>/dev/null ;;
       *) grep -l -F "$p" "$work"/tests/cases/*.av 2>/dev/null ;;
     esac | sed "s#^$work/##"
-  done | LC_ALL=C sort -u
+  done | grep -E '^tests/cases/test_[^/]*\.av$' | LC_ALL=C sort -u
 }
 
 printf '| Commit | Subject | Files | C'"'"' | Tests | Corpus moved | LangArena moved | Instructions (new/old) | Time |\n| --- | --- | ---: | --- | --- | --- | --- | --- | ---: |\n' > "$out/table.md"

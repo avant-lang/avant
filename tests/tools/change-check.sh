@@ -32,7 +32,8 @@
 #   check-first-kept, check-kept, check-rebuilt, check-runtime,
 #     check-failed: change-check's table: a first commit changing a tool
 #     only keeps the base's C' and moves no program; a commit changing one
-#     test file keeps C' and names that file
+#     test file keeps C' and names that file (a helper beside the tests
+#     that names a changed path is not run as a test)
 #     and its test; a compiler change rebuilds, moves every program and
 #     counts the moved LangArena programs, their output the same; a
 #     runtime change counts every LangArena program without moving a .ll;
@@ -58,6 +59,7 @@ echo 'r1' > "$r/runtime/rt.txt"
 echo 'pub fn m: Int { 1 }' > "$r/lib/std/m.av"
 printf 'import std.m\nm\n' > "$r/tests/cases/test_m.av"
 echo 'other' > "$r/tests/cases/test_other.av"
+echo 'a helper that names compiler/main.av' > "$r/tests/cases/helper.av"
 echo 'REFUSE me' > "$r/examples/refused.av"
 echo 'example' > "$r/examples/e.av"
 echo 'probe' > "$r/tests/probe_matrix.av"
@@ -86,6 +88,7 @@ test)
   f=0 p=0
   for t in "$@"; do
     case $t in -*) continue ;; esac
+    case $(basename "$t") in test_*) ;; *) echo "FAIL $t: program needs fn main"; f=$((f + 1)); continue ;; esac
     if grep -q FAILME "$t"; then echo "FAIL $t"; f=$((f + 1)); else echo "ok $t"; p=$((p + 1)); fi
   done
   echo "$f failed, $p passed"; [ $f -eq 0 ] ;;
@@ -136,7 +139,7 @@ e=$w/cache/$tree
 
 # 1. The entry: built once, then read.
 o=$(cd "$r" && sh tools/base-cache.sh HEAD 2> "$w/c1.err" < /dev/null); rc=$?
-[ $rc -eq 0 ] && [ "$o" = "$e" ] && [ -f "$e/COMPLETE" ] && [ "$(builds)" = 1 ] && [ "$(wc -l < "$e/ll.tsv")" = 9 ] \
+[ $rc -eq 0 ] && [ "$o" = "$e" ] && [ -f "$e/COMPLETE" ] && [ "$(builds)" = 1 ] && [ "$(wc -l < "$e/ll.tsv")" = 10 ] \
   && [ "$(ls "$e/gcstats" | grep -c '\.\(out\|err\)$')" = 72 ] && grep -q "	1	-	" "$e/ll.tsv"
 say cache-build $? "rc=$rc out=$o builds=$(builds) ll=$(wc -l < "$e/ll.tsv" 2>/dev/null) $(tail -n 3 "$w/c1.err" | tr '\n' ';')"
 o=$(cd "$r" && sh tools/base-cache.sh HEAD 2> /dev/null < /dev/null); rc=$?
@@ -161,7 +164,7 @@ e2=$(cat "$w/p1.out")
 sh "$r/tools/ll-digests.sh" "$e2/avant" "$w/list.txt" "$w/d1.tsv" < /dev/null
 (cd "$r" && sh tools/letters.sh > /dev/null 2>&1 < /dev/null)
 sh "$r/tools/ll-digests.sh" "$r" "$w/list.txt" "$w/d2.tsv" < /dev/null
-cmp -s "$w/d1.tsv" "$w/d2.tsv" && [ "$(wc -l < "$w/d1.tsv")" = 5 ] && ! grep -q "$r" "$w/d2.tsv"
+cmp -s "$w/d1.tsv" "$w/d2.tsv" && [ "$(wc -l < "$w/d1.tsv")" = 6 ] && ! grep -q "$r" "$w/d2.tsv"
 say digests-normalized $? "$(diff "$w/d1.tsv" "$w/d2.tsv" | head -n 4 | tr '\n' ';')"
 
 perf_ok=0
@@ -185,7 +188,7 @@ echo 'other, changed' > "$r/tests/cases/test_other.av"; g add -A && g commit -q 
 git -C "$r" diff --name-only HEAD^ HEAD > "$w/changed.txt"
 NEUTRAL_CHANGED="$w/changed.txt" sh "$r/tools/neutral.sh" "$e2" "$r" "$w/neutral" < /dev/null > "$w/neutral.log" 2>&1; rc=$?
 [ $rc -eq 0 ] && grep -qx 'changed (LL-DIFF) tests/cases/test_other.av' "$w/neutral/result.txt" \
-  && grep -q '^sources: files 12 ll-same 10 LL-DIFF 0 refused-same 1 refused-msg 0 STATUS 0 new 0 changed 1 ' "$w/neutral/summary.txt" \
+  && grep -q '^sources: files 13 ll-same 11 LL-DIFF 0 refused-same 1 refused-msg 0 STATUS 0 new 0 changed 1 ' "$w/neutral/summary.txt" \
   && grep -q '^langarena: files 2 ll-same 2 ' "$w/neutral/summary.txt"
 say neutral-cache $? "rc=$rc $(tr '\n' ';' < "$w/neutral/summary.txt" 2>/dev/null)"
 
@@ -214,7 +217,7 @@ row 'a tool changed' | grep -q '| 1 | kept | none matched | 0 | - (no rebuild) |
 say check-first-kept $? "$(row 'a tool changed')"
 row 'a test changed' | grep -q '| 1 | kept | 0 failed, 1 passed: test_other | 1: tests/cases/test_other.av | - (no rebuild) | - |'
 say check-kept $? "$(row 'a test changed')"
-row 'the compiler changed' | grep -q '| 1 | rebuilt | none matched | 9: .* | 2: a.av, b.av | a [0-9.]*, b [0-9.]* |'
+row 'the compiler changed' | grep -q '| 1 | rebuilt | none matched | 10: .* | 2: a.av, b.av | a [0-9.]*, b [0-9.]* |'
 say check-rebuilt $? "$(row 'the compiler changed')"
 row 'the runtime changed' | grep -q '| 1 | rebuilt | none matched | 0 | 0 | a [0-9.]*, b [0-9.]* |'
 say check-runtime $? "$(row 'the runtime changed')"
