@@ -5,6 +5,11 @@ lib c {
   fun setenv(name: String, value: String, overwrite: Int32): Int32
 }
 
+// The suite's view of the regex cache's table (not a library call).
+lib recache {
+  fun avant_regex_cache_holds(pat: String, flags: Int): Int
+}
+
 fn set_env(name: String, value: String) {
   one: Int32 = 1
   _ = c.setenv(name, value, one)
@@ -114,6 +119,35 @@ fn must_compile(c: Checks, pat: String, caseless: Bool, label: String): Regex {
   }
   c.expect(false, "compile ${label}")
   must_compile(c, "a+", false, "fallback")
+}
+
+// Patterns held by Regex values that are never closed (a dropped Regex
+// is not closed for the program) no longer keep the cache from others:
+// with its 128 entries all held, a new pattern takes the place of the
+// least recently used held one, which lives on outside the table. It used
+// to be compiled uncached, and so compiled again at every compile.
+fn regex_cache_held(c: Checks) {
+  held: Array(Regex) = []
+  for i in 0..128 {
+    if r = Regex.compile("held${i}y+") {
+      held.push(r)
+    }
+  }
+  c.eq_int(held.size, 128, "128 patterns held")
+  c.eq_int(recache.avant_regex_cache_holds("held127y+", 0), 1, "the table holds the last held pattern")
+  fresh = must_compile(c, "fresh-after-held+", false, "a pattern after 128 held")
+  c.eq_int(recache.avant_regex_cache_holds("fresh-after-held+", 0), 1, "a new pattern is cached although every entry is held")
+  c.eq_int(recache.avant_regex_cache_holds("held0y+", 0), 0, "the least recently used held pattern left the table")
+  if m = held[0].find("zheld0yyy") {
+    c.eq_int(m.end, 9, "and still matches for the Regex holding it")
+  } else {
+    c.expect(false, "and still matches for the Regex holding it")
+  }
+  fresh.close()
+  c.eq_int(recache.avant_regex_cache_holds("fresh-after-held+", 0), 1, "a closed cached pattern stays for the next compile")
+  for r in held {
+    r.close()
+  }
 }
 
 fn kind_of(r: Match? | RegexError): String {
@@ -426,6 +460,7 @@ fn test_std_regex(c: Checks) {
   deep.close()
 
   regex_limits(c)
+  regex_cache_held(c)
 
   // Groups past the 63rd are read: the span pairs were capped at 64, so
   // they read as "did not take part".
@@ -467,10 +502,10 @@ fn test_std_regex(c: Checks) {
     // Every use through a copy of a closed Regex traps, whichever
     // copy was closed and wherever the copy lives (a parameter, an array,
     // a MatchIter, a Match's named groups and its groups past the third).
-    // "uncached" fills the 128-entry cache with patterns in use first,
-    // so the pattern is freed by close itself: that run used to end in a
-    // segmentation fault.
-    copies = "import std.regex\n\nfn shut(r: Regex) {\n  r.close()\n}\n\nfn main {\n  args = argv()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  held: Array(Regex) = []\n  if mode == \"uncached\" {\n    for i in 0..128 {\n      if r = Regex.compile(\"h\${i}x+\") {\n        held.push(r)\n      }\n    }\n  }\n  p = \"(?<w>a+)(b)(c)(d)\"\n  if mode != \"names\" {\n    p = \"q\" + \"+z\"\n  }\n  if re = Regex.compile(p) {\n    copy = re\n    if mode == \"copy-find\" || mode == \"uncached\" {\n      re.close()\n      puts(\"closed \${copy.is_closed()}\")\n      if m = copy.find(\"aqqz\") {\n        puts(m.start)\n      }\n    }\n    if mode == \"copy-close\" {\n      copy.close()\n      puts(\"closed \${re.is_closed()}\")\n      puts(re.count(\"qz qqz\"))\n    }\n    if mode == \"param\" {\n      shut(re)\n      puts(\"closed \${re.is_closed()}\")\n      puts(re.replace(\"qz\", \"x\"))\n    }\n    if mode == \"array\" {\n      xs: Array(Regex) = []\n      xs.push(re)\n      re.close()\n      puts(\"closed \${xs[0].is_closed()}\")\n      puts(xs[0].split(\"aqzb\").size)\n    }\n    if mode == \"iter\" {\n      it = re.matches(\"qz qqz\")\n      if m = it.next() {\n        puts(m.end)\n      }\n      copy.close()\n      if m = it.next() {\n        puts(m.end)\n      }\n    }\n    if mode == \"names\" {\n      if m = re.find(\"xaabcd\") {\n        re.close()\n        puts(m.group(1) ?? \"?\")\n        puts(m.group(3) ?? \"?\")\n        if args.size > 2 {\n          puts(m.group(4) ?? \"?\")\n        } else {\n          puts(m.group(\"w\") ?? \"?\")\n        }\n      }\n    }\n  }\n  puts(held.size)\n}\n"
+    // "uncached" then fills the 128-entry cache with patterns in use, so
+    // the pattern leaves the cache's table and is freed by close itself:
+    // that run used to end in a segmentation fault.
+    copies = "import std.regex\n\nfn shut(r: Regex) {\n  r.close()\n}\n\nfn main {\n  args = argv()\n  mode = \"\"\n  if args.size > 1 {\n    mode = args[1]\n  }\n  held: Array(Regex) = []\n  p = \"(?<w>a+)(b)(c)(d)\"\n  if mode != \"names\" {\n    p = \"q\" + \"+z\"\n  }\n  if re = Regex.compile(p) {\n    copy = re\n    if mode == \"uncached\" {\n      for i in 0..128 {\n        if r = Regex.compile(\"h\${i}x+\") {\n          held.push(r)\n        }\n      }\n    }\n    if mode == \"copy-find\" || mode == \"uncached\" {\n      re.close()\n      puts(\"closed \${copy.is_closed()}\")\n      if m = copy.find(\"aqqz\") {\n        puts(m.start)\n      }\n    }\n    if mode == \"copy-close\" {\n      copy.close()\n      puts(\"closed \${re.is_closed()}\")\n      puts(re.count(\"qz qqz\"))\n    }\n    if mode == \"param\" {\n      shut(re)\n      puts(\"closed \${re.is_closed()}\")\n      puts(re.replace(\"qz\", \"x\"))\n    }\n    if mode == \"array\" {\n      xs: Array(Regex) = []\n      xs.push(re)\n      re.close()\n      puts(\"closed \${xs[0].is_closed()}\")\n      puts(xs[0].split(\"aqzb\").size)\n    }\n    if mode == \"iter\" {\n      it = re.matches(\"qz qqz\")\n      if m = it.next() {\n        puts(m.end)\n      }\n      copy.close()\n      if m = it.next() {\n        puts(m.end)\n      }\n    }\n    if mode == \"names\" {\n      if m = re.find(\"xaabcd\") {\n        re.close()\n        puts(m.group(1) ?? \"?\")\n        puts(m.group(3) ?? \"?\")\n        if args.size > 2 {\n          puts(m.group(4) ?? \"?\")\n        } else {\n          puts(m.group(\"w\") ?? \"?\")\n        }\n      }\n    }\n  }\n  puts(held.size)\n}\n"
     csrc = "${scratch()}/regex-${stamp}-copies.av"
     cbin = "${scratch()}/regex-${stamp}-copies.bin"
     _ = file_write(csrc, copies)

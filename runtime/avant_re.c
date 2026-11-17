@@ -302,24 +302,55 @@ static void entry_free(ReEntry *e) {
   free(e);
 }
 
-/* Caller holds g_cache_mu. Evicts the least recently used idle entry. */
-static int32_t cache_evict_idle(void) {
+/* Caller holds g_cache_mu; the table is full. Makes room for one entry:
+ * the least recently used idle entry is freed; when every entry is held,
+ * the least recently used one leaves the table and lives on, uncached,
+ * until its last handle closes (avant_regex_release frees it then). A
+ * Regex is never closed for the program when it is dropped (the
+ * collector runs no finalizer), so entries held by Regex values nobody
+ * will close used to fill the table for good, and from then on every new
+ * pattern was compiled again at each compile; now they only keep their
+ * own memory. */
+static void cache_make_room(void) {
   int32_t i;
-  int32_t best = -1;
+  int32_t idle = -1;
+  int32_t held = -1;
+  int32_t best;
   for (i = 0; i < g_cache_n; i++) {
     if (g_cache[i]->refs == 0) {
-      if (best < 0 || g_cache[i]->used < g_cache[best]->used) {
-        best = i;
+      if (idle < 0 || g_cache[i]->used < g_cache[idle]->used) {
+        idle = i;
       }
+    } else if (held < 0 || g_cache[i]->used < g_cache[held]->used) {
+      held = i;
     }
   }
-  if (best < 0) {
-    return 0;
+  best = idle >= 0 ? idle : held;
+  if (idle >= 0) {
+    entry_free(g_cache[best]);
+  } else {
+    g_cache[best]->cached = 0;
   }
-  entry_free(g_cache[best]);
   g_cache_n -= 1;
   g_cache[best] = g_cache[g_cache_n];
-  return 1;
+}
+
+/* Whether the cache's table holds an entry for this pattern, its flags
+ * and the default limits: the suite's view of what the cache keeps
+ * (tests/cases/test_std_regex.av), not a library call. */
+avant_int avant_regex_cache_holds(const char *pat, avant_int flags) {
+  ReLimits lim;
+  avant_int found;
+  if (!pat) {
+    pat = "";
+  }
+  (void)pcre2_config(PCRE2_CONFIG_MATCHLIMIT, &lim.match);
+  (void)pcre2_config(PCRE2_CONFIG_DEPTHLIMIT, &lim.depth);
+  (void)pcre2_config(PCRE2_CONFIG_HEAPLIMIT, &lim.heap_kib);
+  pthread_mutex_lock(&g_cache_mu);
+  found = cache_find(pat, flags ? 1 : 0, &lim) != NULL;
+  pthread_mutex_unlock(&g_cache_mu);
+  return found;
 }
 
 /* A limit as PCRE2 takes it: below 1 is a program error (a trap naming
@@ -440,13 +471,14 @@ void *avant_regex_compile(const char *pat, avant_int flags,
       return again;
     }
   }
-  if (g_cache_n < RE_CACHE_MAX || cache_evict_idle()) {
-    g_cache_tick += 1;
-    e->used = g_cache_tick;
-    e->cached = 1;
-    g_cache[g_cache_n] = e;
-    g_cache_n += 1;
+  if (g_cache_n == RE_CACHE_MAX) {
+    cache_make_room();
   }
+  g_cache_tick += 1;
+  e->used = g_cache_tick;
+  e->cached = 1;
+  g_cache[g_cache_n] = e;
+  g_cache_n += 1;
   pthread_mutex_unlock(&g_cache_mu);
   return e;
 }
