@@ -805,32 +805,13 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
     return checker_self.t_bool()
   }
   if expr.callee == "get_or" {
-    if expr.args.size == 2 {
-      if b = expr.block {
-        checker_self.fail(expr.loc, "get_or takes key and default")
-        if v = hash.val {
-          return v
-        }
-        return checker_self.t_int()
-      }
-    } else {
-      checker_self.fail(expr.loc, "get_or takes key and default")
-      if v = hash.val {
-        return v
-      }
-      return checker_self.t_int()
-    }
-    if k = hash.key {
-      got = checker_self.check_expr_as(expr.args[0], k)
-      if !ty_assignable(got, k) {
-        checker_self.fail(expr.args[0].loc, "hash key must be ${k.show()}, got ${got.show()}")
-      }
+    // One spelling per meaning: `h[k] ?? d` says it, with the same one
+    // probe (the lookup's found flag chooses the value or d).
+    checker_self.fail(expr.loc, "Hash has no get_or: write h[k] ?? default, the value or default when the key is missing")
+    for a in expr.args {
+      dummy = checker_self.check_expr(a)
     }
     if v = hash.val {
-      got2 = checker_self.check_expr_as(expr.args[1], v)
-      if !ty_assignable(got2, v) {
-        checker_self.fail(expr.args[1].loc, "get_or default must be ${v.show()}")
-      }
       return v
     }
     return checker_self.t_int()

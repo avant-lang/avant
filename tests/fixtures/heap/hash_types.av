@@ -3,7 +3,7 @@
 // keys (a one-, a two- and a four-byte enum), String keys; integer, Bool,
 // Float64, enum and String values. Each table grows past several
 // resizes, loses keys by delete (as a statement and as a value), takes
-// them back, and is walked by each, keys and values; get_or, has_key,
+// them back, and is walked by each, keys and values; `h[k] ?? d`, has_key,
 // inc and clear on each kind. The walks' results are sums or sorted, so
 // they do not depend on the walk's order.
 
@@ -71,7 +71,7 @@ fn int32_keys {
     }
   }
   puts("bump ${c[0.to_i32()] ?? 0.to_i32()} ${c[6.to_i32()] ?? 0.to_i32()} ${c.size}")
-  puts("inc ${c.inc(0.to_i32())} ${c.inc(9.to_i32(), 5.to_i32())} ${c.get_or(8.to_i32(), -1.to_i32())}")
+  puts("inc ${c.inc(0.to_i32())} ${c.inc(9.to_i32(), 5.to_i32())} ${c[8.to_i32()] ?? -1.to_i32()}")
 }
 
 fn wide_keys {
@@ -112,7 +112,7 @@ fn small_keys {
   b[true] = "still yes"
   puts("bool ${b.size} ${b[true] ?? ""} ${b[false] ?? ""}")
   b.delete(false)
-  puts("bool ${b.size} ${b.has_key(false)} ${b.get_or(false, "none")}")
+  puts("bool ${b.size} ${b.has_key(false)} ${b[false] ?? "none"}")
   e = Hash(Color, Int).new()
   e[Color.red] = 1
   e[Color.blue] = 3
@@ -142,7 +142,7 @@ fn values_of_every_kind {
   f.each { |k, v|
     t += v
   }
-  puts("float ${f["pi"] ?? 0.0} ${f.get_or("none", 1.5)} ${t}")
+  puts("float ${f["pi"] ?? 0.0} ${f["none"] ?? 1.5} ${t}")
   if v = f.delete("e") {
     puts("float gone ${v} ${f.size}")
   }
@@ -160,7 +160,7 @@ fn values_of_every_kind {
   cv = Hash(String, Color).new()
   cv["sky"] = Color.blue
   cv["leaf"] = Color.green
-  puts("colors ${cv["sky"] ?? Color.red} ${cv.get_or("rose", Color.red)}")
+  puts("colors ${cv["sky"] ?? Color.red} ${cv["rose"] ?? Color.red}")
   sv = Hash(Int, String).new()
   for i in 0..2000 {
     sv[i] = "v${i}"

@@ -1422,7 +1422,7 @@ fn main {
   puts(stock["cake"] ?? 0)           // => 0
   stock.inc("milk")
   stock.inc("milk", 10)
-  puts(stock.get_or("milk", 0))      // => 14
+  puts(stock["milk"] ?? 0)           // => 14
   puts(stock.size)                   // => 2
 }
 ```
@@ -1434,7 +1434,7 @@ fn main {
 | `Hash(K, V).new()` | an empty hash (there is no hash literal) |
 | `h[k] = v` | insert or replace |
 | `h[k]`, `h.get(k)` | `V?` |
-| `h.get_or(k, default)` | the value, or `default` |
+| `h[k] ?? default` | the value, or `default` for a missing key (one lookup) |
 | `h.has_key(k)` | `Bool` |
 | `h.delete(k)` | remove the key; returns the value it held, or `nil` |
 | `h.inc(k)`, `h.inc(k, by)` | add to a counter, starting from 0, and give its new value (integer values only; `by` has the value's type); traps on overflow |
@@ -1490,7 +1490,7 @@ fn main {
   puts(seen[7.to_i32()] ?? 0.to_i32())        // => 3
   names = Hash(Int, String).new()
   names[404] = "not found"
-  puts(names.get_or(500, "unknown"))      // => unknown
+  puts(names[500] ?? "unknown")           // => unknown
   score = Hash(Suit, Float64).new()
   score[Suit.hearts] = 2.5
   puts(score[Suit.hearts] ?? 0.0)         // => 2.5

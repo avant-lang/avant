@@ -517,27 +517,6 @@ pub fn (lw: MirLower) hash_delete_stmt(e: Expr): Bool {
   false
 }
 
-// `h.get_or(k, d)`: the value when the key is there, else d (evaluated
-// first, as every argument).
-pub fn (lw: MirLower) hash_get_or(e: Expr, ht: Ty, ops: Array(MOperand), vty: Int): MOperand {
-  b = lw.lw_b
-  fl = lw.found_local()
-  v = lw.hash_find_load(ht, "find", ops[0], lw.hash_key_arg(ht, ops[1], e.loc), fl, vty, e.loc)
-  r = b.temp(vty)
-  hit = b.block()
-  miss = b.block()
-  join = b.block()
-  b.branch(lw.found_is(fl), hit, miss)
-  b.at(hit)
-  b.assign(b.pl(r), b.rv_use(v))
-  b.goto(join)
-  b.at(miss)
-  b.assign(b.pl(r), b.rv_use(ops[2]))
-  b.goto(join)
-  b.at(join)
-  b.copy_local(r)
-}
-
 // `h.inc(k, by)`: the value's address by `upsert` (an absent key starts
 // at 0), the checked sum stored there and returned.
 pub fn (lw: MirLower) hash_inc(e: Expr, ht: Ty, ops: Array(MOperand), vty: Int): MOperand {
@@ -592,9 +571,6 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
   } else if name == "has_key" {
     f = lw.hash_op(ht, "find", e.loc)
     n = 1
-  } else if name == "get_or" {
-    f = lw.hash_op(ht, "find", e.loc)
-    n = 2
   } else if name == "inc" {
     f = lw.hash_op(ht, "upsert", e.loc)
     n = -1
@@ -619,9 +595,6 @@ pub fn (lw: MirLower) hash_member(e: Expr, recv: Expr, ht: Ty, name: String, arg
     fops.push(lw.found_ptr(fl))
     dummy = lw.call_to(mt_ptr(), f, fops)
     return lw.found_is(fl)
-  }
-  if name == "get_or" {
-    return lw.hash_get_or(e, ht, ops, vty)
   }
   if name == "inc" {
     return lw.hash_inc(e, ht, ops, vty)

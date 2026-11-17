@@ -2,7 +2,7 @@
 // Buf are stored as references; a struct is stored as its bytes, with or
 // without references, of a size that is a power of two or not, and one
 // wider than the runtime's zeros (over 256 bytes). Each through set (a
-// new key and a replaced value), get, get_or, delete as a value and as a
+// new key and a replaced value), get, `h[k] ?? d`, delete as a value and as a
 // statement, each, values, clear and growth past several resizes, with
 // Int, String and struct keys; the values are built while the table
 // grows, so young objects are stored into a table that is not young.
@@ -170,8 +170,8 @@ fn structs {
   check("vec size", v.size == 3000)
   p = v[2999] ?? Vec3 { x: 0.0, y: 0.0, z: 0.0 }
   check("vec get", p.x == 2999.0 && p.z == -1.0)
-  q = v.get_or(5000, Vec3 { x: 7.0, y: 7.0, z: 7.0 })
-  check("vec get_or", q.y == 7.0)
+  q = v[5000] ?? Vec3 { x: 7.0, y: 7.0, z: 7.0 }
+  check("vec or default", q.y == 7.0)
   if old = v.delete(10) {
     check("vec taken", old.x == 10.0)
   }
