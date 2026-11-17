@@ -827,6 +827,14 @@ pub fn (checker_self: Checker) register_method(fnn: Function) {
     checker_self.current_module = saved_mod
     return
   }
+  if fnn.name == "clone" && !fnn.lazy && !fnn.type_method {
+    // A clone is always the derived deep copy (checker/clone.av), so a
+    // copy never shares a mutable part with its original.
+    checker_self.fail(fnn.loc, "clone is derived for every type, a deep copy that shares nothing mutable with the original: a method cannot replace it; give the method another name")
+    checker_self.resolver.clear_tparams()
+    checker_self.current_module = saved_mod
+    return
+  }
   if fnn.name == "new" {
     checker_self.fail(fnn.loc, "new is reserved; write initialize")
     checker_self.resolver.clear_tparams()

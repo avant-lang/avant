@@ -1,0 +1,160 @@
+// clone() is a deep copy: a new object whose fields are copies, a class
+// field cloned in turn, an Array or Hash copied at every level, a struct
+// copied with its class fields cloned, an optional by its value; what
+// cannot change (numbers, String, Bytes) and the shared handles
+// (Channel, Mutex) are the same values. Each check changes one side and
+// reads the other: a clone is independent of its original.
+import std.sync
+
+class Leaf {
+  n: Int = 0
+  tags: Array(String) = []
+}
+
+struct Pos {
+  x: Int
+  leaf: Leaf
+}
+
+enum Kind { small, large }
+
+class Tree {
+  name: String
+  kind: Kind = Kind.small
+  leaf: Leaf = Leaf.new()
+  kids: Array(Tree) = []
+  grid: Array(Array(Int)) = []
+  index: Hash(String, Leaf) = Hash(String, Leaf).new()
+  counts: Hash(String, Int) = Hash(String, Int).new()
+  seen: Set(Int) = Set(Int).new()
+  pos: Pos = Pos { x: 0, leaf: Leaf.new() }
+  spots: Array(Pos) = []
+  next: Tree? = nil
+  maybe: Leaf? = nil
+  data: Bytes = "raw".bytes
+  hits: Mutex(Int) = Mutex(Int).new(0)
+
+  fn initialize(self.name) {
+    puts("initialize ${name}")
+  }
+}
+
+class Node {
+  v: Int
+  next: Node?
+
+  fn initialize(self.v, self.next) {
+  }
+}
+
+fn length(n: Node?): Int {
+  k = 0
+  cur = n
+  while c = cur {
+    k += 1
+    cur = c.next
+  }
+  k
+}
+
+fn main {
+  t = Tree.new("root")
+  t.leaf.n = 1
+  t.leaf.tags.push("a")
+  t.kids.push(Tree.new("kid"))
+  t.grid.push([1, 2])
+  t.index["k"] = Leaf.new()
+  t.counts["c"] = 5
+  _ = t.seen.add(7)
+  t.pos.leaf.n = 3
+  t.spots.push(Pos { x: 1, leaf: Leaf.new() })
+  t.next = Tree.new("next")
+  t.maybe = Leaf.new()
+
+  c = t.clone()                     // no initialize runs
+  puts("${c.name} ${c.kind} ${c.leaf.n} ${c.leaf.tags.size} ${c.kids[0].name} ${c.grid[0][1]} ${c.counts["c"] ?? 0} ${c.seen.has(7)} ${c.pos.leaf.n} ${c.spots[0].x}")
+
+  // Every level of the clone is its own.
+  c.leaf.n = 10
+  c.leaf.tags.push("b")
+  c.kids[0].name = "kid2"
+  c.kids.push(Tree.new("extra"))
+  c.grid[0][1] = 20
+  c.grid.push([3])
+  if l = c.index["k"] {
+    l.n = 30
+  }
+  c.counts["c"] = 50
+  _ = c.seen.add(8)
+  c.pos.leaf.n = 40
+  c.pos.x = 41
+  c.spots[0].leaf.n = 42
+  if nx = c.next {
+    nx.name = "next2"
+  }
+  if m = c.maybe {
+    m.n = 60
+  }
+  puts("${t.leaf.n} ${t.leaf.tags.size} ${t.kids[0].name} ${t.kids.size} ${t.grid[0][1]} ${t.grid.size}")
+  puts("${(t.index["k"] ?? Leaf.new()).n} ${t.counts["c"] ?? 0} ${t.seen.has(8)} ${t.pos.leaf.n} ${t.pos.x} ${t.spots[0].leaf.n}")
+  if nx = t.next {
+    puts(nx.name)
+  }
+  if m = t.maybe {
+    puts(m.n)
+  }
+
+  // An empty optional stays nil; a Bytes value and a String are shared, as nothing changes them.
+  e = Tree.new("empty")
+  ec = e.clone()
+  nils = 0
+  if _ = ec.next {
+  } else {
+    nils += 1
+  }
+  if _ = ec.maybe {
+  } else {
+    nils += 1
+  }
+  puts("${nils} ${ec.data.size} ${ec.kids.size}")
+
+  // The Mutex is a shared handle: both see one count.
+  t.hits.with { |n| n += 1 }
+  puts(c.hits.with { |n| n })
+
+  // A struct's clone copies it and clones its class fields.
+  p = Pos { x: 5, leaf: Leaf.new() }
+  q = p.clone()
+  q.leaf.n = 9
+  r = p                             // a plain copy shares the class field
+  r.leaf.n = 7
+  puts("${p.leaf.n} ${q.leaf.n}")
+
+  // Arrays and hashes clone at every level, by themselves too.
+  xs = [[1], [2, 3]]
+  ys = xs.clone()
+  ys[1][0] = 99
+  puts("${xs[1][0]} ${ys[1][0]}")
+  hs = ["a": [Leaf.new()]]
+  hc = hs.clone()
+  if v = hc["a"] {
+    v[0].n = 5
+    v.push(Leaf.new())
+  }
+  if v = hs["a"] {
+    puts("${v[0].n} ${v.size}")
+  }
+  ns = [Kind.small, Kind.large].clone()
+  puts(ns[1])
+
+  // A long chain clones in full, a new node for each.
+  list: Node? = nil
+  for i in 0..1000 {
+    list = Node.new(i, list)
+  }
+  if l = list {
+    copy = l.clone()
+    copy.v = -1
+    puts("${length(copy)} ${l.v} ${copy.v}")
+  }
+}

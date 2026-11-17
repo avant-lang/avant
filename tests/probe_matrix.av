@@ -145,6 +145,8 @@ fn rules: Array(PRule) {
   // README "Channel and Mutex": the value of `with`, when it is used, is
   // a plain value.
   xs.push(rule("mutex-with-value", "stmt", "", "import std.sync\n\nclass PBox {\n  pub n: Int = 0\n}\n\nfn main {\n  m = Mutex(PBox).new(PBox.new())\n@\n}\n", "", "pv = m.with { |b| b }\nputs(pv.n)", "pv = m.with { |b| b.n }\nputs(pv)", "Mutex.with's value cannot be PBox"))
+  // README "Clone": a deep copy, refused for a type holding a function value.
+  xs.push(rule("clone-fn-field", "stmt", "", "class PBox {\n  pub n: Int = 0\n  pub xs: Array(Int) = []\n}\n\nclass PFn {\n  pub f: fn(Int): Int\n\n  fn initialize(self.f) {\n  }\n}\n\nfn twice(n: Int): Int {\n  n * 2\n}\n\nfn main {\n  pb = PBox.new()\n  pq = PFn.new(twice)\n@\n}\n", "", "pc = pq.clone()\nputs(pc.f(1))", "pc = pb.clone()\nputs(pc.n)", "cannot clone PFn: a function value (PFn.f)"))
   // README "If": conditions are Bool, there is no truthiness.
   xs.push(rule("if-non-bool", "stmt", "", main_site, "", "if probe_k() {\n  puts(1)\n}", "if probe_k() > 0 {\n  puts(1)\n}", "if condition must be Bool"))
   // README "Line breaks": a line that starts with `-` or `[`

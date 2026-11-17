@@ -876,6 +876,14 @@ pub fn (lw: MirLower) arr_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     b.call(-1, "avant_array_reverse", lw.two(b.copy_local(h2), lw.elem_size(aty)))
     return zero
   }
+  if name == "clone" {
+    // The clone of an array whose elements are their own copy (the
+    // checker made any other clone a call): a new buffer of the same
+    // bytes, the routine sorted copies with.
+    c = b.temp(aty)
+    b.call(c, "avant_array_copy", lw.three(b.copy_local(h2), lw.elem_size(aty), lw.buf_tid(aty)))
+    return b.copy_local(c)
+  }
   if name == "sort" || name == "sorted" {
     sf = lw.kind_fn("avant_array_sort", et, false)
     if sf.size == 0 {

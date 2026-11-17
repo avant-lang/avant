@@ -1,7 +1,7 @@
 import harness
 import backends
 
-// Equality and printing, entry points that fail, type names. Each program is
+// Equality and printing, the derived clone, entry points that fail, type names. Each program is
 // compiled in parallel; a refused one must leave no binary, say the
 // expected words and point at the expected line and column; an accepted
 // one must print what it should. The programs that run at length
@@ -117,6 +117,17 @@ fn cases: Array(RCase) {
   xs.push(refused("nil-if-two-types", "fn main {\n  n = 1\n  v = if n > 0 { 1 } else if n < 0 { \"x\" } else { nil }\n}\n", "if branches have different types", "3:7"))
   // An enum's from_i with a value computed from a constant
   xs.push(accepted("from-i-const", "const base = 10\nenum S { a = base, b, c = 3 }\nfn main {\n  puts(S.from_i(11) ?? S.c)\n  puts(S.from_i(3) ?? S.a)\n  puts(S.from_i(0) ?? S.c)\n}\n", "b\nc\nc\n"))
+  // clone: the derived deep copy, its refusals by field, and no clone of a type's own
+  xs.push(refused("clone-fn-field", "class Cb {\n  f: fn(Int): Int\n  fn initialize(self.f) {\n  }\n}\nfn same(n: Int): Int {\n  n\n}\nfn main {\n  c = Cb.new(same)\n  d = c.clone()\n}\n", "cannot clone Cb: a function value (Cb.f) may capture mutable state, which the copy would share", "11:8"))
+  xs.push(refused("clone-join-elem", "class Job {\n  h: JoinHandle(Int)?\n}\nfn main {\n  j = Job.new()\n  k = [j].clone()\n}\n", "cannot clone Array(Job): a JoinHandle (Job.h) is one task's result, waited for once", "6:10"))
+  xs.push(refused("clone-union", "class Box {\n  n: Int = 0\n}\nclass Holder {\n  v: Int | Box = 0\n}\nfn main {\n  h = Holder.new()\n  g = h.clone()\n}\n", "cannot clone Holder: a union of several types that holds something to copy (Holder.v), Box | Int, is not copied yet", "9:8"))
+  xs.push(refused("clone-buf", "class W {\n  b: Buf = buf_new()\n}\nfn main {\n  w = W.new()\n  x = w.clone()\n}\n", "cannot clone W: a Buf (W.b) is not copied yet", "6:8"))
+  xs.push(refused("clone-own", "class C {\n  n: Int = 0\n\n  fn clone: C {\n    self\n  }\n}\nfn main { }\n", "clone is derived for every type, a deep copy that shares nothing mutable with the original: a method cannot replace it; give the method another name", "4:3"))
+  xs.push(refused("clone-own-external", "struct P {\n  x: Int\n}\nfn (p: P) clone: P {\n  p\n}\nfn main { }\n", "clone is derived for every type", "4:1"))
+  xs.push(refused("clone-argument", "class C {\n  n: Int = 0\n}\nfn main {\n  c = C.new()\n  d = c.clone(1)\n}\n", "clone takes no arguments", "6:8"))
+  xs.push(refused("class-literal", "class C {\n  n: Int = 0\n}\nfn main {\n  c = C { n: 1 }\n}\n", "classes are constructed with C.new, not C { }", "5:7"))
+  xs.push(accepted("clone-plain", "struct S {\n  n: Int\n  s: String\n}\nfn main {\n  x = 5.clone()\n  s = \"a\".clone()\n  p = S { n: 1, s: \"x\" }.clone()\n  o: Int? = 3\n  puts(\"\${x} \${s} \${p.n} \${o.clone() ?? 0}\")\n}\n", "5 a 1 3\n"))
+  xs.push(accepted("clone-generic-class", "class Pair(T) {\n  a: T\n  b: Array(T) = []\n  fn initialize(self.a) {\n  }\n}\nfn main {\n  p = Pair(Int).new(1)\n  p.b.push(2)\n  q = p.clone()\n  q.b.push(3)\n  puts(\"\${p.b.size} \${q.b.size} \${q.a}\")\n}\n", "1 2 1\n"))
   // Type names
   xs.push(refused("struct-lower", "struct value {\n  n: Int\n}\nfn main { }\n", "the name of struct value is a type name, written with a capital first letter: write Value", "1:1"))
   xs.push(refused("class-lower", "class http_req {\n  n: Int = 0\n}\nfn main { }\n", "the name of class http_req is a type name, written with a capital first letter: write HttpReq", "1:1"))
@@ -186,6 +197,22 @@ fn check_ll(c: Checks, compiler: String, dir: String) {
   ll3 = log_text("${dir}/eq-ll-search.ll")
   c.expect(str_has(ll3, "@avant_array_contains_i64(") && str_has(ll3, "@avant_array_index_str("), "ll-search: scalars keep the runtime's search")
   c.expect(!str_has(ll3, "__avant_contains") && !str_has(ll3, "__avant_index_of"), "ll-search: no loop written for scalars")
+  // clone: nothing written for a program that clones nothing; a class's
+  // derived clone written once however often it is cloned; an array of
+  // numbers copied by the runtime's buffer copy, with no loop written.
+  c.expect(!str_has(ll, "clone"), "ll-plain: no clone written")
+  cl = "${dir}/eq-ll-clone.av"
+  _ = file_write(cl, "class Box {\n  n: Int = 0\n  xs: Array(Int) = []\n}\nfn main {\n  b = Box.new()\n  c = b.clone()\n  d = c.clone()\n  e = [b].clone()\n  puts(d.xs.size + e.size)\n}\n")
+  c.eq_int(emit_ll(compiler, cl, "${dir}/eq-ll-clone.ll", "${dir}/eq-ll-clone.log"), 0, "ll-clone: emits")
+  ll4 = log_text("${dir}/eq-ll-clone.ll")
+  cdefs = 0
+  for line in ll4.split("\n") {
+    if str_has(line, "define ") && str_has(line, "Box.clone") {
+      cdefs += 1
+    }
+  }
+  c.eq_int(cdefs, 1, "ll-clone: one derived clone for Box")
+  c.expect(str_has(ll4, "@avant_array_copy("), "ll-clone: an Array(Int) field is copied by the runtime")
 }
 
 fn test_main(c: Checks) {

@@ -1,0 +1,314 @@
+// `x.clone()`: a deep copy. The rule:
+//
+//   - every class and struct has a derived `fn clone`: a new object (or
+//     struct value) whose fields are copies, each by this same rule;
+//     the checker writes it the first time a program clones the type
+//     (derive_clone_method), lazy, public, in the type's module, so a
+//     program that clones nothing gets no code, and a type is written
+//     once however many places clone it;
+//   - an Array is copied at every level (the runtime's copy of the
+//     buffer when its elements need no copy of their own, else a new
+//     array of the elements' clones), a Hash and a Set entry by entry
+//     (a key is a value already), an optional by its value;
+//   - what cannot change is shared, as a copy of it would read the same:
+//     a number, a Bool, an enum, a String, Bytes, nil, and a struct,
+//     optional or union of those; a Channel or a Mutex is shared too,
+//     as a task capture shares it: it is a handle whose purpose is to be
+//     shared;
+//   - refused, naming the field: a function value (it may capture mutable
+//     state the copy would share), a Ptr (C memory the compiler cannot
+//     copy), a JoinHandle (one task's result, waited once), a Buf, and a
+//     union of several types holding something to copy;
+//   - a type cannot define its own `clone`: a clone is always the derived
+//     deep copy, so a copy is never shared with its original;
+//   - the copy follows the type: an object reached twice is copied twice,
+//     and a cycle never ends (the stack runs out), as a recursive walk
+//     of a cyclic structure does.
+
+import location
+import source
+import token
+import lexer
+import type
+import ast
+import parser
+import typed_ir
+import checker.names
+import checker
+import checker.equality
+import checker.spawn
+
+// Whether a value of type ty is its own copy: nothing in it can change,
+// or it is a handle meant to be shared.
+pub fn (checker_self: Checker) clone_shares(ty: Ty): Bool {
+  if ty.is_integer() || ty.is_float() || ty.is_bool() || ty.is_enum() || ty.is_string() || ty.is_bytes() || ty.is_nil() {
+    return true
+  }
+  if checker_self.is_share_ty(ty) {
+    return true
+  }
+  if ty.is_struct() {
+    for f in ty.fields {
+      if !checker_self.clone_shares(f.ty) {
+        return false
+      }
+    }
+    return true
+  }
+  if ty.is_union() {
+    for m in ty.members {
+      if !checker_self.clone_shares(m) {
+        return false
+      }
+    }
+    return true
+  }
+  false
+}
+
+// Why clone cannot copy a value of type ty (reached by path, the field
+// path shown in the message), or "". seen holds the classes and structs
+// already looked into (a type that reaches itself is looked at once).
+pub fn (checker_self: Checker) clone_problem(ty: Ty, seen: Array(String), path: String): String {
+  if checker_self.clone_shares(ty) {
+    return ""
+  }
+  where = ""
+  if path.size > 0 {
+    where = " (${path})"
+  }
+  if ty.is_fn() {
+    return "a function value${where} may capture mutable state, which the copy would share"
+  }
+  if ty.is_ptr() {
+    return "a Ptr${where} points at C memory, which the compiler cannot copy"
+  }
+  if ty.is_join() {
+    return "a JoinHandle${where} is one task's result, waited for once"
+  }
+  if ty.is_buf() {
+    return "a Buf${where} is not copied yet; keep the bytes as Bytes, or copy it by hand"
+  }
+  if ty.is_array() {
+    if e = ty.inner {
+      return checker_self.clone_problem(e, seen, "${path}[]")
+    }
+    return ""
+  }
+  if ty.is_set() {
+    return ""
+  }
+  if ty.is_hash() {
+    if v = ty.val {
+      return checker_self.clone_problem(v, seen, "${path}[]")
+    }
+    return ""
+  }
+  if ty.is_union() {
+    if ty.is_nilable() {
+      return checker_self.clone_problem(ty_without_nil(ty), seen, path)
+    }
+    return "a union of several types that holds something to copy${where}, ${ty.show()}, is not copied yet"
+  }
+  if ty.is_class() || ty.is_struct() {
+    key = "${ty.mod_name}.${ty.name}"
+    for s in seen {
+      if s == key {
+        return ""
+      }
+    }
+    seen.push(key)
+    for f in ty.fields {
+      p = "${ty.show()}.${f.name}"
+      got = checker_self.clone_problem(f.ty, seen, p)
+      if got.size > 0 {
+        return got
+      }
+    }
+    return ""
+  }
+  "a ${ty.show()}${where} cannot be copied"
+}
+
+// `x.clone()` (expr, its receiver checked to object): the copy, of
+// object's type. A class or struct gets its derived method and the call
+// is an ordinary method call; an Array whose elements are their own copy
+// stays the builtin (mir/lower_arr.av: the runtime's buffer copy); any
+// other value becomes the call of a template written below for its type.
+pub fn (checker_self: Checker) check_clone_call(expr: Expr, object: Ty, expected: Ty?): Ty {
+  if expr.args.size != 0 {
+    for a in expr.args {
+      checker_self.check_expr(a)
+    }
+    checker_self.fail(expr.loc, "clone takes no arguments")
+    return object
+  }
+  if b = expr.block {
+    checker_self.fail(expr.loc, "clone takes no block")
+    return object
+  }
+  if object.is_var() {
+    return object
+  }
+  seen: Array(String) = []
+  problem = checker_self.clone_problem(object, seen, "")
+  if problem.size > 0 {
+    checker_self.fail(expr.loc, "cannot clone ${object.show()}: ${problem}")
+    return object
+  }
+  if (object.is_class() || object.is_struct()) && !checker_self.clone_shares(object) {
+    checker_self.derive_clone_method(object, expr.loc)
+    return checker_self.dispatch_method(expr, object, expected)
+  }
+  if object.is_array() {
+    if e = object.inner, checker_self.clone_shares(e) {
+      return object
+    }
+  }
+  name = "__avant_clone_same"
+  subst: Array(Ty) = []
+  if checker_self.clone_shares(object) {
+    subst.push(object)
+  } else if object.is_array() {
+    name = "__avant_clone_array"
+    if e = object.inner {
+      subst.push(e)
+    }
+  } else if object.is_set() {
+    name = "__avant_clone_set"
+    if k = object.key {
+      subst.push(k)
+    }
+  } else if object.is_hash() {
+    name = "__avant_clone_hash"
+    if k = object.key, v = object.val {
+      subst.push(k)
+      subst.push(v)
+    }
+  } else if object.is_nilable() {
+    name = "__avant_clone_opt"
+    subst.push(ty_without_nil(object))
+  }
+  if recv = expr.receiver, sig = checker_self.clone_template(name) {
+    if inst = checker_self.instantiate_function(sig, subst, expr.loc) {
+      args: Array(Expr) = []
+      args.push(recv)
+      expr.args = args
+      expr.receiver = nil
+      expr.callee = name
+      expr.resolved = inst.node.emit_name
+      expr.method_call = false
+    }
+  }
+  object
+}
+
+// The generic functions behind the clone of a value that is not a class
+// or a struct, as Avant, parsed once per program when first needed.
+pub fn clone_template_source(name: String): String {
+  if name == "__avant_clone_opt" {
+    return "fn __avant_clone_opt(a: T?): T? {\n  if x = a {\n    return x.clone()\n  }\n  nil\n}\n"
+  }
+  if name == "__avant_clone_array" {
+    return "fn __avant_clone_array(a: Array(T)): Array(T) {\n  Array(T).new(a.size) { |i| a[i].clone() }\n}\n"
+  }
+  if name == "__avant_clone_hash" {
+    return "fn __avant_clone_hash(h: Hash(K, V)): Hash(K, V) {\n  r = Hash(K, V).new()\n  h.each { |k, v|\n    r[k] = v.clone()\n  }\n  r\n}\n"
+  }
+  if name == "__avant_clone_set" {
+    return "fn __avant_clone_set(s: Set(T)): Set(T) {\n  r = Set(T).new()\n  s.each { |v|\n    _ = r.add(v)\n  }\n  r\n}\n"
+  }
+  "fn __avant_clone_same(a: T): T {\n  a\n}\n"
+}
+
+pub fn (checker_self: Checker) clone_template(name: String): FuncSig? {
+  for sig in checker_self.functions {
+    if sig.name == name && sig.node.generic {
+      return sig
+    }
+  }
+  src = Source.new("<avant>", clone_template_source(name))
+  lex = Lexer.new(src)
+  tokens = lex.tokenize()
+  ps = Parser.new(src, tokens)
+  p = ps.parse()
+  if p.functions.size != 1 {
+    return nil
+  }
+  fnn = p.functions[0]
+  fnn.mod_name = checker_self.root_module
+  checker_self.program.functions.push(fnn)
+  saved = checker_self.current_module
+  checker_self.current_module = fnn.mod_name
+  checker_self.register_function(fnn)
+  checker_self.current_module = saved
+  for sig2 in checker_self.functions {
+    if sig2.name == name && sig2.node.generic {
+      return sig2
+    }
+  }
+  nil
+}
+
+// The derived clone of the class or struct sty: `fn clone: T`, whose
+// value is a literal of the type with every field, each `self.f` when
+// it is its own copy and `self.f.clone()` otherwise (a class literal
+// exists only here: it allocates the object and stores the fields,
+// without initialize, whose work the original's fields already hold).
+// Lazy, public, in the type's module; written once per type.
+pub fn (checker_self: Checker) derive_clone_method(sty: Ty, loc: Location) {
+  for ms in checker_self.methods {
+    if ms.owner == sty.name && ms.name == "clone" && ms.node.lazy {
+      return
+    }
+  }
+  sloc = loc
+  for sdef in checker_self.program.structs {
+    if sdef.name == sty.name && sdef.mod_name == sty.mod_name {
+      sloc = sdef.loc
+    }
+  }
+  for cdef in checker_self.program.classes {
+    if cdef.name == sty.name && cdef.mod_name == sty.mod_name {
+      sloc = cdef.loc
+    }
+  }
+  fnn = Function.new(sloc, "clone")
+  fnn.owner = sty.name
+  fnn.owner_mod = sty.mod_name
+  fnn.mod_name = sty.mod_name
+  fnn.vis = true
+  fnn.lazy = true
+  fnn.return_type = ty_to_type_name(sty, sloc)
+  lit = Expr.new(ex_struct(), sloc)
+  lit.type_name = sty.name
+  lit.derived = true
+  for f in sty.fields {
+    v = eq_field_of(sloc, "self", f.name)
+    if !checker_self.clone_shares(f.ty) {
+      call = Expr.new(ex_call(), sloc)
+      call.callee = "clone"
+      call.receiver = v
+      v = call
+    }
+    lit.field_names.push(f.name)
+    lit.field_exprs.push(v)
+  }
+  fnn.body.push(stmt_expr(sloc, lit))
+  checker_self.attach_method_fn(fnn)
+  params: Array(Ty) = []
+  sig = FuncSig.new(fnn.name, fnn, params, sty)
+  sig.owner = sty.name
+  checker_self.alloc_ol(fnn)
+  checker_self.methods.push(sig)
+  checker_self.note_method_named()
+  key = "${sty.name}__${fnn.name}"
+  if taken = checker_self.method_index.get(key) {
+  } else {
+    checker_self.method_index[key] = checker_self.methods.size - 1
+  }
+  if checker_self.adopt_pending {
+    checker_self.assign_one_method_emit(sig)
+    checker_self.pending.push(fnn)
+  }
+}
