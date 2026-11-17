@@ -3341,7 +3341,7 @@ fn (p: Ptr(Pair)) sum: Int32 {
 }
 
 fn main {
-  p = c.malloc(8)
+  p = c.malloc(Pair.size)
   p.a = 40
   p.b = 2
   puts(p.sum())     // => 42
@@ -3349,7 +3349,7 @@ fn main {
 }
 ```
 
-`Ptr(T)` is for a layout `T`, a C scalar or a pointer (the elements of a C array), `Ptr(Void)` for a pointer you only pass around; a `Ptr` of an Avant type (`Ptr(String)`, `Ptr(Array(Int))`) is a compile error. Memory from C is C's: the collector neither moves nor frees it. There is no `sizeof`: you state the size passed to `malloc`.
+`Ptr(T)` is for a layout `T`, a C scalar or a pointer (the elements of a C array), `Ptr(Void)` for a pointer you only pass around; a `Ptr` of an Avant type (`Ptr(String)`, `Ptr(Array(Int))`) is a compile error. Memory from C is C's: the collector neither moves nor frees it. `Pair.size` is the layout's C size (`sizeof(Pair)`), known when compiling, so `c.malloc(Pair.size)` replaces a size counted by hand; it takes the integer type its place wants, as a literal does.
 
 `p[i]` reads element `i` of the C array a `Ptr` points to (`p[0]` its one value): `Ptr(UInt8)`, `Ptr(Int32)`, `Ptr(Ptr(Reply)?)` and the rest; `p[i] = v` writes it. A narrow element reads as its Avant type and is range-checked when written, as a layout's field. C gave no length, so nothing checks `i`: the count comes from C (`elements`, `len`) and stays your code's to respect. A NULL `p` traps.
 
@@ -3392,7 +3392,7 @@ fn length(head: Ptr(Node)?): Int {
 }
 
 fn main {
-  if a = c.calloc(1, 16), b = c.calloc(1, 16) {
+  if a = c.calloc(1, Node.size), b = c.calloc(1, Node.size) {
     a.next = b
     puts(length(a))         // => 2
   }

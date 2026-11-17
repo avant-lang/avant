@@ -346,6 +346,7 @@ fn test_errors(c: Checks) {
     expect_err(c, compiler, stamp, "ptr-index-void", "lib c {\n  fun malloc(n: Int): Ptr(Void)\n}\nfn main {\n  p = c.malloc(8)\n  puts(p[0])\n}\n", "cannot index Ptr(Void)")
     expect_err(c, compiler, stamp, "ptr-index-type", "lib c {\n  fun malloc(n: Int): Ptr(Int32)\n}\nfn main {\n  p = c.malloc(8)\n  puts(p[\"a\"])\n}\n", "a Ptr's index must be Int, got String")
     expect_err(c, compiler, stamp, "ptr-index-value", "lib c {\n  fun malloc(n: Int): Ptr(Int32)\n}\nfn main {\n  p = c.malloc(8)\n  p[0] = \"a\"\n}\n", "cannot assign String to Int32")
+    expect_err(c, compiler, stamp, "struct-size", "struct P {\n  a: Int\n}\nfn main {\n  puts(P.size)\n}\n", "P has no type-level function size")
     expect_err(c, compiler, stamp, "ptr-width", "lib c {\n  fun malloc(n: Int): Ptr(UInt8)\n  fun take(p: Ptr(Int))\n}\nfn main {\n  p = c.malloc(8)\n  c.take(p)\n}\n", "Ptr(UInt8)")
     expect_err(c, compiler, stamp, "fun-optint", "lib c {\n  fun labs(n: Int?): Int\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int?: C has one word there and this union is a tag and a payload in Avant; only an optional reference is one pointer with nil as NULL")
     expect_err(c, compiler, stamp, "fun-union-ret", "lib c {\n  fun labs(n: Int): Int | String\n}\nfn main {\n  puts(1)\n}\n", "a fun signature cannot use Int | String: C has one word there")

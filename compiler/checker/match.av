@@ -1357,6 +1357,47 @@ pub fn (checker_self: Checker) enum_type_named(recv: Expr): Ty? {
   none
 }
 
+// The C layout recv names (`Pair`, `mod.Pair`), or nil.
+pub fn (checker_self: Checker) clayout_type_named(recv: Expr): Ty? {
+  none: Ty? = nil
+  segs: Array(String) = []
+  if !checker_self.ident_chain(recv, segs) {
+    return none
+  }
+  if segs.size == 1 {
+    if found = checker_self.lookup(segs[0]) {
+      return none
+    }
+    if t = checker_self.named_type_seen(segs[0]), t.is_clayout() {
+      return t
+    }
+  } else if segs.size > 1 {
+    mod = checker_self.join_segs(segs, segs.size - 1)
+    if checker_self.qualifier_ok(mod, checker_self.current_module) {
+      if t = checker_self.resolver.get_named_in(mod, segs[segs.size - 1]), t.is_clayout() {
+        return t
+      }
+    }
+  }
+  none
+}
+
+// `L.size` on a C layout L: its C size (c_size_of), an integer constant
+// written in place, so it takes the type its place wants as a literal
+// does (`c.calloc(n, Pair.size)`).
+pub fn (checker_self: Checker) layout_size_form(expr: Expr): Bool {
+  if expr.ident != "size" || expr.method_call {
+    return false
+  }
+  if obj = expr.object, lt = checker_self.clayout_type_named(obj) {
+    expr.kind = ex_int()
+    expr.int_bits = c_size_of(lt).to_u64()
+    expr.object = nil
+    return true
+  }
+  false
+}
+
 pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
   if b = expr.block {
     checker_self.fail(expr.loc, "${ty.show()}.${expr.callee} does not take a block")

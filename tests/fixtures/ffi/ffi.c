@@ -1033,3 +1033,15 @@ static PtPair pt_p1 = { 3, 4 };
 static PtPair *pt_pairs[3] = { &pt_p0, NULL, &pt_p1 };
 PtPair **pt_pairs_at(void) { return pt_pairs; }
 int pt_pair_null(int i) { return pt_pairs[i] == NULL; }
+/* pointers.av: the C sizes L.size must equal. */
+typedef struct PtMixed { int8_t a; double b; int16_t c; } PtMixed;
+typedef struct PtNest { PtPair p; uint8_t x; } PtNest;
+typedef struct PtRefs { const char *s; bool f; void *v; float g; } PtRefs;
+int64_t pt_sizeof(int which) {
+  switch (which) {
+  case 0: return (int64_t)sizeof(PtPair);
+  case 1: return (int64_t)sizeof(PtMixed);
+  case 2: return (int64_t)sizeof(PtNest);
+  default: return (int64_t)sizeof(PtRefs);
+  }
+}

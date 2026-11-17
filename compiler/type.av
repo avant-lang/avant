@@ -1267,6 +1267,58 @@ pub fn ptr_elem_ok(t: Ty): Bool {
   false
 }
 
+// A C layout's field or element by the C rule: its size and its
+// alignment in bytes (a C scalar its C width, an enum C's int, a string
+// or a pointer one word, a nested layout its own). `L.size` is the size
+// of a layout, known when compiling; the back end lays the layout out by
+// the same rule (mir/types.av set_fields).
+pub fn c_size_of(t: Ty): Int {
+  if t.is_clayout() {
+    off = 0
+    al = 1
+    for f in t.fields {
+      fa = c_align_of(f.ty)
+      off = ((off + fa - 1) / fa) * fa
+      off += c_size_of(f.ty)
+      if fa > al {
+        al = fa
+      }
+    }
+    return ((off + al - 1) / al) * al
+  }
+  if t.c_scalar > 0 {
+    k = t.c_scalar
+    if k == cs_int8() || k == cs_uint8() {
+      return 1
+    }
+    if k == cs_int16() || k == cs_uint16() {
+      return 2
+    }
+    return 4
+  }
+  if t.is_bool() {
+    return 1
+  }
+  if t.is_int32() || t.is_uint32() || t.is_enum() {
+    return 4
+  }
+  8
+}
+
+pub fn c_align_of(t: Ty): Int {
+  if t.is_clayout() {
+    al = 1
+    for f in t.fields {
+      fa = c_align_of(f.ty)
+      if fa > al {
+        al = fa
+      }
+    }
+    return al
+  }
+  c_size_of(t)
+}
+
 pub fn ty_without_nil(ty: Ty): Ty {
   kept: Array(Ty) = []
   for m in ty.members {

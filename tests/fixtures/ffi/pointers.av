@@ -2,7 +2,8 @@
 // `Ptr` points to and `p[i] = v` writes it, for every C scalar (the narrow
 // ones read as their Avant view and are range-checked on the way back) and
 // for pointers (`T **`: `Ptr(Ptr(T)?)`, each element tested for NULL).
-// C gives no length, so the counts below are the arrays' own.
+// C gives no length, so the counts below are the arrays' own. `L.size` is
+// a layout's C size, a constant that takes its place's type.
 
 lib pt {
   struct Pair {
@@ -22,6 +23,24 @@ lib pt {
   fun pt_flags_at: Ptr(Bool)
   fun pt_pairs_at: Ptr(Ptr(Pair)?)
   fun pt_pair_null(i: Int32): Int32
+  struct Mixed {
+    a: Int8
+    b: Float64
+    c: Int16
+  }
+  struct Nest {
+    p: Pair
+    x: UInt8
+  }
+  struct Refs {
+    s: String?
+    f: Bool
+    v: Ptr(Void)
+    g: Float32
+  }
+  fun pt_sizeof(which: Int32): Int
+  fun calloc(n: Int, size: Int): Ptr(Pair)
+  fun free(p: Ptr(Pair))
 }
 
 fn show_pairs(pairs: Ptr(Ptr(Pair)?)) {
@@ -81,4 +100,13 @@ fn main {
     q.a = 30
   }
   show_pairs(pairs)
+  sizes = [Pair.size, Mixed.size, Nest.size, Refs.size]
+  for i in 0..4 {
+    puts("size ${sizes[i]} C ${pt.pt_sizeof(i.to_i32())}")
+  }
+  wide_size: UInt64 = Nest.size
+  puts(wide_size)
+  two = pt.calloc(2, Pair.size)
+  two.b = 5
+  pt.free(two)
 }
