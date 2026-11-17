@@ -795,7 +795,7 @@ pub fn (checker_self: Checker) lit_fit_tys(params: Array(Ty), arg_tys: Array(Ty)
     if k < lits.size && k < params.size && lits[k] && a.is_numeric() && params[k].is_numeric() && !type.ty_has_var(params[k]) {
       a = params[k]
     }
-    if k < params.size && checker_self.is_empty_array_ty(a) && params[k].is_array() && !type.ty_has_var(params[k]) {
+    if k < params.size && checker_self.is_empty_array_ty(a) && checker_self.empty_fits(a, params[k]) && !type.ty_has_var(params[k]) {
       a = params[k]
     }
     out.push(a)
@@ -826,7 +826,7 @@ pub fn (checker_self: Checker) match_func(name: String, arg_tys: Array(Ty), expe
         } else {
           ok = true
           for k in 0..arg_tys.size {
-            if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && sig.params[k].is_array()) {
+            if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && checker_self.empty_fits(arg_tys[k], sig.params[k])) {
               ok = false
             }
           }
@@ -960,7 +960,7 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
             } else {
               ok = true
               for k in 0..arg_tys.size {
-                if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && sig.params[k].is_array()) {
+                if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_empty_array_ty(arg_tys[k]) && checker_self.empty_fits(arg_tys[k], sig.params[k])) {
                   ok = false
                 }
               }
@@ -1307,7 +1307,7 @@ pub fn (checker_self: Checker) check_type_call(expr: Expr, ty: Ty): Ty {
           } else if arity_ok(sig.node, arg_tys.size) {
             ok = true
             for k in 0..arg_tys.size {
-              if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_lit_expr(expr.args[k]) && arg_tys[k].is_numeric() && sig.params[k].is_numeric()) && !(checker_self.is_empty_array_ty(arg_tys[k]) && sig.params[k].is_array()) {
+              if !ty_assignable(arg_tys[k], sig.params[k]) && !(checker_self.is_lit_expr(expr.args[k]) && arg_tys[k].is_numeric() && sig.params[k].is_numeric()) && !(checker_self.is_empty_array_ty(arg_tys[k]) && checker_self.empty_fits(arg_tys[k], sig.params[k])) {
                 ok = false
               }
             }
@@ -1823,10 +1823,13 @@ pub fn (checker_self: Checker) arg_types_text(arg_tys: Array(Ty)): String {
 // Argument k of the call being matched, of type t, as a message shows it:
 // its type, except for the two arguments whose type is a stand-in until
 // a parameter takes them: a `[]` (an array of Void, which no value has)
-// reads `[]`, and an integer literal above Int's range (typed UInt64
+// reads `[]` and a `[:]` (a hash of Void) `[:]`, and an integer literal above Int's range (typed UInt64
 // until its parameter decides) reads as written.
 pub fn (checker_self: Checker) arg_shown(k: Int, t: Ty): String {
   if checker_self.is_empty_array_ty(t) {
+    if t.is_hash() {
+      return "[:]"
+    }
     return "[]"
   }
   args = checker_self.args_now

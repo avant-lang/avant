@@ -484,7 +484,7 @@ pub class Parser {
       }
       return false
     }
-    if k == ex_array() {
+    if k == ex_array() || k == ex_hash_lit() {
       return true
     }
     false
@@ -518,7 +518,7 @@ pub class Parser {
           }
         }
         if i < stmts.size - 1 && s.kind == st_expr() {
-          if se = s.expr, se.kind == ex_unary() || se.kind == ex_array() {
+          if se = s.expr, se.kind == ex_unary() || se.kind == ex_array() || se.kind == ex_hash_lit() {
             fail(s.loc, "this line starts with `${t}`, so it begins a new statement whose value nobody uses; ${hint}")
           }
         }
@@ -3411,6 +3411,13 @@ pub class Parser {
     loc = expect(tk_l_bracket()).loc
     self.skip_newlines()
     e = Expr.new(ex_array(), loc)
+    // `[:]`: the empty hash literal.
+    if self.current().kind == tk_colon() {
+      self.bump()
+      self.skip_newlines()
+      expect(tk_r_bracket())
+      return Expr.new(ex_hash_lit(), loc)
+    }
     // Inside the brackets a struct literal is unambiguous, as inside
     // parentheses, also in a condition or a for operand.
     old = self.allow_struct_lit
@@ -3419,6 +3426,22 @@ pub class Parser {
       while true {
         e.elems.push(self.parse_expr())
         self.skip_newlines()
+        // `key: value`: the first entry decides a hash literal, and then
+        // every entry is one.
+        if self.current().kind == tk_colon() {
+          if e.elems.size == 1 {
+            e.kind = ex_hash_lit()
+          }
+          if e.kind != ex_hash_lit() {
+            fail(self.current().loc, "an array literal's elements are values, not key: value entries (a hash literal has one on every entry)")
+          }
+          self.bump()
+          self.skip_newlines()
+          e.elems.push(self.parse_expr())
+          self.skip_newlines()
+        } else if e.kind == ex_hash_lit() {
+          fail(self.current().loc, "a hash literal's entries are each key: value")
+        }
         if match_tok(tk_comma()) {
           self.skip_newlines()
           if self.current().kind == tk_r_bracket() {

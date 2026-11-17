@@ -439,7 +439,6 @@ pub fn (lw: MirLower) hash_create_typed(e: Expr, ht: Ty, ty: Int, d: Int): MOper
 // element; `slot` refuses a nil hash, whose scratch word `put` would
 // give).
 pub fn (lw: MirLower) lower_hash_store(st: Stmt, t: Expr, arr: Expr, ix: Expr, ht: Ty) {
-  b = lw.lw_b
   if st.op != tk_eq() {
     lw.refuse(st.loc, "compound assignment to a hash entry")
     return
@@ -453,21 +452,55 @@ pub fn (lw: MirLower) lower_hash_store(st: Stmt, t: Expr, arr: Expr, ix: Expr, h
       return
     }
     lw.at(st.loc)
-    k = lw.hash_key_arg(ht, key, st.loc)
-    if lw.hash_val_ref(ht, st.loc) {
-      dummy = b.call(-1, lw.hash_op(ht, "set_ref", st.loc), lw.three(h, k, val))
-      return
-    }
-    if lw.hash_val_agg(ht, st.loc) {
-      s = b.temp(b.types.addr_of(vty))
-      b.call(s, lw.hash_op(ht, "slot", st.loc), lw.two(h, k))
-      b.assign(b.deref(b.pl(s)), b.rv_use(val))
-      return
-    }
-    p = lw.call_to(mt_ptr(), lw.hash_op(ht, "put", st.loc), lw.two(h, k))
-    q = lw.hash_slot(p, vty)
-    b.assign(b.deref(b.pl(q)), b.rv_use(val))
+    lw.hash_set(ht, h, key, val, vty, st.loc)
   }
+}
+
+// `h[k] = v` with its operands lowered: a reference value by set_ref
+// (the runtime's barrier), a struct value through the slot entry, any
+// other value stored at the address put gives.
+pub fn (lw: MirLower) hash_set(ht: Ty, h: MOperand, key: MOperand, val: MOperand, vty: Int, loc: Location) {
+  b = lw.lw_b
+  k = lw.hash_key_arg(ht, key, loc)
+  if lw.hash_val_ref(ht, loc) {
+    dummy = b.call(-1, lw.hash_op(ht, "set_ref", loc), lw.three(h, k, val))
+    return
+  }
+  if lw.hash_val_agg(ht, loc) {
+    s = b.temp(b.types.addr_of(vty))
+    b.call(s, lw.hash_op(ht, "slot", loc), lw.two(h, k))
+    b.assign(b.deref(b.pl(s)), b.rv_use(val))
+    return
+  }
+  p = lw.call_to(mt_ptr(), lw.hash_op(ht, "put", loc), lw.two(h, k))
+  q = lw.hash_slot(p, vty)
+  b.assign(b.deref(b.pl(q)), b.rv_use(val))
+}
+
+// `["tea": 12, "milk": 3]`: the hash Hash(K, V).new makes, then each
+// entry set in the written order (its key, then its value, evaluated
+// first), as `h[k] = v`.
+pub fn (lw: MirLower) lower_hash_lit(e: Expr): MOperand {
+  b = lw.lw_b
+  h = lw.lower_hash_new(e)
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  if ht = e.ty {
+    vty = lw.ty_at(mir_hash_val(ht), e.loc, "a hash value")
+    i = 0
+    while i + 1 < e.elems.size {
+      key = lw.snap(lw.lower_expr(e.elems[i]), e.elems[i + 1])
+      val = lw.lower_expr(e.elems[i + 1])
+      if lw.failed() {
+        return b.c_i32(0)
+      }
+      lw.at(e.elems[i].loc)
+      lw.hash_set(ht, h, key, val, vty, e.elems[i].loc)
+      i += 2
+    }
+  }
+  h
 }
 
 // Arguments last to first (the old hash and Buf methods evaluate them so),

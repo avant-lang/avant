@@ -290,7 +290,7 @@ pub fn (checker_self: Checker) guard_fresh(e: Expr): Bool {
   if k == ex_nil() || k == ex_hash_new() {
     return true
   }
-  if k == ex_array() {
+  if k == ex_array() || k == ex_hash_lit() {
     for el in e.elems {
       if !checker_self.guard_fresh(el) {
         return false
@@ -591,7 +591,7 @@ pub fn (checker_self: Checker) guard_expr(w: GuardWalk, e: Expr) {
     }
     return
   }
-  if k == ex_array() {
+  if k == ex_array() || k == ex_hash_lit() {
     for el in e.elems {
       checker_self.guard_use(w, el, "this element")
     }
@@ -1213,7 +1213,7 @@ pub fn (checker_self: Checker) cw_root(w: ClassWalk, e: Expr): Int {
     }
     return bits
   }
-  if k == ex_array() {
+  if k == ex_array() || k == ex_hash_lit() {
     bits = 0
     for el in e.elems {
       bits = bits | checker_self.cw_root(w, el)

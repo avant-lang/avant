@@ -1131,7 +1131,7 @@ pub class Checker {
             // middle. A line starting with `-` or `[` there is a
             // dangling line (such a line always begins a new
             // statement), as in the middle.
-            if !got.is_void() && stmt.lead != 0 && (expr.kind == ex_unary() || expr.kind == ex_array()) {
+            if !got.is_void() && stmt.lead != 0 && (expr.kind == ex_unary() || expr.kind == ex_array() || expr.kind == ex_hash_lit()) {
               fail(stmt.loc, "this line starts with `${lead_spelling(stmt.lead)}`, so it begins a new statement whose value nobody uses; to continue the line before, end it with the operator or an open bracket (`total = a -` then `b`)")
             }
           } else if got.is_void() && tail_switch && block_leaves([stmt]) {
@@ -1305,7 +1305,7 @@ pub class Checker {
       }
       return false
     }
-    if k == ex_array() {
+    if k == ex_array() || k == ex_hash_lit() {
       for el in e.elems {
         if !no_effect(el) {
           return false
@@ -1928,6 +1928,9 @@ pub class Checker {
     }
     if k == ex_array() {
       return check_array_literal(expr, has_want, want)
+    }
+    if k == ex_hash_lit() {
+      return check_hash_literal(expr, has_want, want)
     }
     if k == ex_hash_new() {
       if b0 = expr.bare_name {
@@ -3122,6 +3125,59 @@ pub class Checker {
     ty_array(elem_ty)
   }
 
+  // `["tea": 12, "milk": 3]`: a new Hash(K, V) holding the entries, set
+  // in the written order (a later equal key replaces an earlier one, as
+  // `h[k] = v` does). K and V are a declared type's, else the first
+  // entry's key and value; `[:]` needs a declared type.
+  pub fn check_hash_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if expr.elems.size == 0 {
+      if has_want && want.is_hash() {
+        return want
+      }
+      fail(expr.loc, "an empty hash literal needs a type, e.g. h: Hash(String, Int) = [:]")
+      return t_int()
+    }
+    key = t_int()
+    val = t_int()
+    forced = false
+    if has_want && want.is_hash() {
+      if wk = want.key, wv = want.val, !type.ty_has_var(wk) && !type.ty_has_var(wv) {
+        key = wk
+        val = wv
+        forced = true
+      }
+    }
+    if !forced {
+      key = check_expr(expr.elems[0])
+      val = check_expr(expr.elems[1])
+      if self.has_err() {
+        return t_int()
+      }
+      why = hash_type_problem(key, val)
+      if why.size == 0 && key.is_struct() {
+        seen: Array(String) = []
+        why = hash_key_problem(key, seen, "")
+      }
+      if why.size > 0 {
+        fail(expr.loc, why)
+        return t_int()
+      }
+    }
+    i = 0
+    while i + 1 < expr.elems.size {
+      gk = check_expr_as(expr.elems[i], key)
+      if !ty_assignable(gk, key) {
+        fail(expr.elems[i].loc, "hash literal key is ${gk.show()}, expected ${key.show()}")
+      }
+      gv = check_expr_as(expr.elems[i + 1], val)
+      if !ty_assignable(gv, val) {
+        fail(expr.elems[i + 1].loc, "hash literal value is ${gv.show()}, expected ${val.show()}")
+      }
+      i += 2
+    }
+    ty_hash(key, val)
+  }
+
   pub fn check_hash_new(expr: Expr): Ty {
     key = t_int()
     val = t_int()
@@ -3766,9 +3822,21 @@ pub class Checker {
     false
   }
 
-  // `[]` written with no element.
+  // `[]` written with no element, or `[:]`.
   pub fn is_empty_array(e: Expr): Bool {
-    e.kind == ex_array() && e.elems.size == 0
+    (e.kind == ex_array() || e.kind == ex_hash_lit()) && e.elems.size == 0
+  }
+
+  // The stand-in of `[:]` as `empty_array_ty` is of `[]`: a hash of Void
+  // keys and values.
+  pub fn empty_hash_ty: Ty {
+    ty_hash(t_void(), t_void())
+  }
+
+  // Whether a `[]` or `[:]` argument (its stand-in t) fits a parameter of
+  // type p: an array parameter takes `[]`, a hash parameter `[:]`.
+  pub fn empty_fits(t: Ty, p: Ty): Bool {
+    (t.is_array() && p.is_array()) || (t.is_hash() && p.is_hash())
   }
 
   // The stand-in type of a `[]` argument before its parameter is known
@@ -3783,6 +3851,11 @@ pub class Checker {
         return e.is_void()
       }
     }
+    if t.is_hash() {
+      if k = t.key {
+        return k.is_void()
+      }
+    }
     false
   }
 
@@ -3791,7 +3864,11 @@ pub class Checker {
   pub fn check_call_arg(e: Expr): Ty {
     if is_empty_array(e) {
       // `[]` takes its parameter's type (fit_call_arg); until the call
-      // picks its function it stands for an array of any element.
+      // picks its function it stands for an array of any element (`[:]`
+      // for a hash of any key and value).
+      if e.kind == ex_hash_lit() {
+        return empty_hash_ty()
+      }
       return empty_array_ty()
     }
     if e.kind != ex_int() {
@@ -4581,9 +4658,17 @@ pub class Checker {
 
   pub fn fit_call_arg(expr: Expr, got: Ty, want: Ty): Ty {
     if is_empty_array(expr) && is_empty_array_ty(got) {
-      // `[]` takes the parameter's array type.
-      if want.is_array() && !type.ty_has_var(want) && !is_empty_array_ty(want) {
+      // `[]` takes the parameter's array type, `[:]` its hash type.
+      if empty_fits(got, want) && !type.ty_has_var(want) && !is_empty_array_ty(want) {
         return check_expr_as(expr, want)
+      }
+      if expr.kind == ex_hash_lit() {
+        if !want.is_hash() && !type.ty_has_var(want) {
+          fail(expr.loc, "[:] is a hash, expected ${want.show()}")
+          return want
+        }
+        fail(expr.loc, "an empty hash literal needs a type, e.g. h: Hash(String, Int) = [:]")
+        return want
       }
       if !want.is_array() && !type.ty_has_var(want) {
         fail(expr.loc, "[] is an array, expected ${want.show()}")

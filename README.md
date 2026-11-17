@@ -1412,9 +1412,7 @@ A `String`, `Bytes` or `Buf` holds at most 2,147,483,647 bytes, an `Array` 2,147
 
 ```avant
 fn main {
-  stock = Hash(String, Int).new()
-  stock["tea"] = 12
-  stock["milk"] = 3
+  stock = ["tea": 12, "milk": 3]     // Hash(String, Int)
 
   if n = stock["tea"] {
     puts(n)                          // => 12
@@ -1431,7 +1429,8 @@ fn main {
 
 | Operation | What it does |
 | --- | --- |
-| `Hash(K, V).new()` | an empty hash (there is no hash literal) |
+| `["tea": 12, "milk": 3]` | a hash of these entries, set in order (a repeated key keeps its last value); its types are the first entry's, or the declared type's |
+| `Hash(K, V).new()`, `[:]` | an empty hash; `[:]` takes its type from a declaration or a parameter (`h: Hash(String, Int) = [:]`) |
 | `h[k] = v` | insert or replace |
 | `h[k]`, `h.get(k)` | `V?` |
 | `h[k] ?? default` | the value, or `default` for a missing key (one lookup) |

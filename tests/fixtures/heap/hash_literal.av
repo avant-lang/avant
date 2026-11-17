@@ -1,0 +1,105 @@
+// Hash literals: `["tea": 12, "milk": 3]` makes a Hash(K, V) whose key
+// and value types are the first entry's, or a declared type's; `[:]` is
+// the empty one and takes its type from a declaration or a parameter.
+// The entries are set in the written order, so a repeated key keeps its
+// last value, and each key is evaluated before its value. Keys of every
+// kind a Hash takes (String, Int, Int32, an enum, a struct), values of a
+// class, an Array, a Hash and a String; a literal built in a loop of
+// fresh Strings, so a collection while the entries are set keeps every
+// one (the fixture runs under the collector's modes).
+
+enum Suit { clubs, hearts, spades }
+
+struct Cell {
+  x: Int
+  y: Int
+}
+
+class Room {
+  pub name: String
+
+  fn initialize(name: String) {
+    self.name = name
+  }
+}
+
+fn check(what: String, ok: Bool) {
+  if !ok {
+    puts("FAIL ${what}")
+  }
+}
+
+fn say(what: String, n: Int): Int {
+  puts(what)
+  n
+}
+
+fn total(h: Hash(String, Int)): Int {
+  t = 0
+  h.each { |k, v| t += v }
+  t
+}
+
+fn sizes(h: Hash(Int, Array(Int))): Int {
+  h.size
+}
+
+fn main {
+  stock = ["tea": 12, "milk": 3]
+  check("tea", (stock["tea"] ?? 0) == 12)
+  check("milk", (stock["milk"] ?? 0) == 3)
+  check("cake", !stock.has_key("cake"))
+  stock["cake"] = 1
+  puts("stock ${stock.size} ${total(stock)}")
+
+  none: Hash(String, Int) = [:]
+  puts("empty ${none.size} ${total([:])} ${sizes([:])}")
+
+  small: Hash(Int32, Int32) = [1: 2, 3: 4]
+  puts("small ${small[3.to_i32()] ?? 0.to_i32()}")
+
+  again = ["a": 1, "b": 2, "a": 3]
+  puts("repeated ${again.size} ${again["a"] ?? 0}")
+
+  order = [say("k1", 1): say("v1", 10), say("k2", 2): say("v2", 20)]
+  puts("order ${order.size}")
+
+  suits = [Suit.clubs: "c", Suit.hearts: "h"]
+  puts("suits ${suits[Suit.hearts] ?? "-"} ${suits[Suit.spades] ?? "-"}")
+
+  walls = [Cell { x: 1, y: 2 }: true, Cell { x: 3, y: 4 }: false]
+  check("wall", walls[Cell { x: 1, y: 2 }] ?? false)
+  check("open", !(walls[Cell { x: 3, y: 4 }] ?? true))
+
+  rooms = ["hall": Room.new("Hall"), "den": Room.new("Den")]
+  if r = rooms["den"] {
+    puts("room ${r.name}")
+  }
+
+  lists = [
+    1: [1, 2],
+    2: [3],
+  ]
+  puts("lists ${(lists[1] ?? [0]).size} ${sizes(lists)}")
+
+  nested = ["o": ["i": 7]]
+  puts("nested ${(nested["o"] ?? ["z": 0])["i"] ?? -1}")
+
+  n = 10
+  built = ["${n}": n * 2, "k${n + 1}": switch n { case 10 { 1 } else { 2 } }]
+  puts("built ${built["10"] ?? 0} ${built["k11"] ?? 0}")
+
+  // Fresh keys and values on every entry: the literal's hash is held
+  // while each one is made.
+  keep = 0
+  i = 0
+  while i < 3000 {
+    a = "x${i}"
+    h = [a: "v${i}", "y${i}": "w${i}", "z${i}": "u${i}"]
+    if (h["y${i}"] ?? "") == "w${i}" && (h[a] ?? "") == "v${i}" {
+      keep += h.size
+    }
+    i += 1
+  }
+  puts("fresh ${keep}")
+}
