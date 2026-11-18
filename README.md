@@ -4941,7 +4941,7 @@ Where Avant differs on purpose:
 | `let`, `var`; a `const` inside a function; global variables | `=` declares or assigns; `const` is a module's named value, and a module has no variables ([Names and scope](#names-and-scope), [Constants](#constants)) | no state shared by accident |
 | `Array<Int>`, `[]int`, `Vec<i32>` | `Array(Int)`; a single capital letter in a signature is a type parameter ([Generics](#generics)) | |
 | `return` inside a lambda returning from the lambda | the same, also in a lambda a builtin inlines (`xs.each (x) { ... }`); `for` is the loop that leaves the function early ([Lambdas given to builtins](#lambdas-given-to-builtins)) | one meaning of `return` |
-| a panic caught per request by the server | a trap ends the process: run servers under a supervisor ([Traps](#traps)) | no unwinding machinery |
+| a panic caught per request by the server | a trap in an `std.http` handler fails its request (500) and the server goes on; a trap in a C callback it made, or the runtime's own stop, still ends the process, so run servers under a supervisor too ([Traps](#traps)) | no unwinding machinery: the handler's frames are dropped |
 | one optimized build (Go) | two modes: `--debug` for the edit-and-run loop, `--release` for the rest, and only it is timed ([Build modes](#build-modes)) | a fast edit-and-run loop |
 | a power operator `**` | none; multiply, or declare C's `pow` in a `lib` block ([Floats](#floats)) | |
 | `async`/`await` | OS threads and blocking calls: `spawn`, `.parallel`, channels ([Concurrency](#concurrency)) | no function coloring |
@@ -4968,7 +4968,7 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 | `==` on hashes | planned | a loop |
 | `parallel { }` as a statement, with no receiver | decided | `.parallel` on an array |
 | TLS for `std.http` (`https`, `wss`) | decided | a TLS-terminating proxy in front |
-| A trap in an `std.http` handler that ends only its request; a pre-forked server mode | decided | a supervisor that restarts the process |
+| A pre-forked server mode | decided | a supervisor that restarts the process |
 | Positions in traps raised inside runtime functions | planned | the message names the operation and its values |
 | Platforms other than Linux x86-64 with glibc (musl, ARM, macOS, Windows) | not started | |
 | Editor tooling (a language server) | not started | `avant format`, and compile errors with positions |
