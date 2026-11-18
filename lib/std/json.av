@@ -587,3 +587,202 @@ pub class JsonBuilder {
     self.buf.to_s()
   }
 }
+
+// The typed decode and encode (json.decode, json.encode and
+// json.encode_into) are written by the compiler for each type from its
+// fields, in this module; these are the pieces that code calls. A
+// function of this module named codec_* is lowered only when a call
+// reaches it, so a program that never decodes nor encodes pays nothing
+// for them.
+//
+lib jsoncodec {
+  fun avant_json_first_key(node: Ptr(Void)): Ptr(Void)?
+}
+
+// A decode error is built from the inside out: the value that fails
+// gives ": expected an integer, found \"7\"", each container on the way
+// up puts its step in front (".age", "[2]", ".items"), and the call's
+// own function adds "at $": "at $.items[2].age: expected an integer,
+// found a string". Nothing of the path is built until something fails.
+
+// What a node holds, for a message: a scalar as its JSON text, a string,
+// an array and an object by kind.
+fn codec_found(n: Ptr(Void)): String {
+  k = jsonc.avant_json_kind(n)
+  if k == JsonKind.str.to_i() {
+    return "a string"
+  }
+  if k == JsonKind.arr.to_i() {
+    return "an array"
+  }
+  if k == JsonKind.obj.to_i() {
+    return "an object"
+  }
+  jsonc.avant_json_text(n)
+}
+
+fn codec_wrong(n: Ptr(Void), want: String): JsonError {
+  JsonError.new(": expected ${want}, found ${codec_found(n)}")
+}
+
+// A member's step in a path: `.name` for a name that reads as one,
+// `["a b"]` (escaped as JSON) for any other.
+fn codec_step(key: String): String {
+  plain = key.size > 0
+  for c in key.bytes {
+    if !(c == 95 || (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57)) {
+      plain = false
+    }
+  }
+  if plain && !(key[0] >= 48 && key[0] <= 57) {
+    return ".${key}"
+  }
+  b = Buf.new()
+  b.push_str("[")
+  builder_escape(b, key)
+  b.push_str("]")
+  b.to_s()
+}
+
+fn codec_at_key(e: JsonError, key: String): JsonError {
+  e.message = codec_step(key) + e.message
+  e
+}
+
+fn codec_at_index(e: JsonError, i: Int): JsonError {
+  e.message = "[${i}]" + e.message
+  e
+}
+
+fn codec_missing(key: String): JsonError {
+  JsonError.new("${codec_step(key)}: missing member")
+}
+
+// The first member of the object j whose name is not one of known, as
+// an error; nil when every name is known (a name given twice: the first
+// is the one read, as get reads it).
+fn codec_unknown(j: Json, known: Array(String)): JsonError? {
+  key = jsoncodec.avant_json_first_key(j.node)
+  i = 0
+  while kn = key {
+    k = jsonc.avant_json_as_str(kn)
+    if !known.has(k) {
+      return JsonError.new("${codec_step(k)}: unknown member (ignore_unknown: true skips unknown members)")
+    }
+    i += 1
+    key = nil
+    if i < jsonc.avant_json_len(j.node) {
+      if vn = jsonc.avant_json_next(kn) {
+        key = jsonc.avant_json_next(vn)
+      }
+    }
+  }
+  nil
+}
+
+fn codec_bad_member(s: String, names: String): JsonError {
+  b = Buf.new()
+  builder_escape(b, s)
+  JsonError.new(": expected one of ${names}, found ${b.to_s()}")
+}
+
+// The error of a decode, as the program reads it.
+fn codec_done(e: JsonError): JsonError {
+  e.message = "at $" + e.message
+  e
+}
+
+fn codec_dec_int(j: Json): Int | JsonError {
+  v = jsonc.avant_json_as_int(j.node)
+  if jsonc.avant_json_take_status() != 0 {
+    return codec_wrong(j.node, "an integer")
+  }
+  v
+}
+
+fn codec_dec_f64(j: Json): Float64 | JsonError {
+  v = jsonc.avant_json_as_f64(j.node)
+  if v != v {
+    return codec_wrong(j.node, "a number")
+  }
+  v
+}
+
+fn codec_dec_str(j: Json): String | JsonError {
+  v = jsonc.avant_json_as_str(j.node)
+  if jsonc.avant_json_take_status() != 0 {
+    return codec_wrong(j.node, "a string")
+  }
+  v
+}
+
+fn codec_dec_bool(j: Json): Bool | JsonError {
+  v = jsonc.avant_json_as_bool(j.node)
+  if jsonc.avant_json_take_status() != 0 {
+    return codec_wrong(j.node, "true or false")
+  }
+  v != 0
+}
+
+fn codec_dec_json(j: Json): Json | JsonError {
+  j
+}
+
+fn codec_dec_value(j: Json): JsonValue | JsonError {
+  j.to_value()
+}
+
+fn codec_enc_f64(b: Buf, v: Float64) {
+  d = v - v
+  if d != 0.0 {
+    // NaN and the infinities have no JSON text, as for a JsonBuilder.
+    jsonc.avant_json_misuse("json.encode: ${v} is not a JSON number; write null or a string for it")
+  }
+  b.push_str("${v}")
+}
+
+fn codec_enc_bool(b: Buf, v: Bool) {
+  if v {
+    b.push_str("true")
+  } else {
+    b.push_str("false")
+  }
+}
+
+// A JsonValue tree written as JSON text, an object's members in their
+// order.
+fn codec_enc_value(b: Buf, v: JsonValue) {
+  switch v.kind {
+    case null { b.push_str("null") }
+    case bool { codec_enc_bool(b, v.bool_val) }
+    case int { b.push_fmt_i(v.int_val) }
+    case float { codec_enc_f64(b, v.f64_val) }
+    case str { builder_escape(b, v.str_val) }
+    case arr {
+      b.push_str("[")
+      i = 0
+      for e in v.arr {
+        if i > 0 {
+          b.push_str(",")
+        }
+        codec_enc_value(b, e)
+        i += 1
+      }
+      b.push_str("]")
+    }
+    case obj {
+      b.push_str("{")
+      first = true
+      for k, m in v.members {
+        if !first {
+          b.push_str(",")
+        }
+        first = false
+        builder_escape(b, k)
+        b.push_str(":")
+        codec_enc_value(b, m)
+      }
+      b.push_str("}")
+    }
+  }
+}

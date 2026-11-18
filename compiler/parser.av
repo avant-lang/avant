@@ -3613,6 +3613,22 @@ pub class Parser {
     e
   }
 
+  // `Array(T)`, `Hash(K, V)` or `Set(T)` ending an argument (a `,` or
+  // the `)` after it): a type given as an argument, which only
+  // json.decode reads (`json.decode(text, Array(Point))`); the checker
+  // refuses it anywhere else, as before (`Array(T) only supports .new`).
+  pub fn type_argument_end: Bool {
+    k = self.current().kind
+    k == tk_comma() || k == tk_r_paren()
+  }
+
+  pub fn type_as_argument(tok: Token, args: Array(TypeName)): Expr {
+    e = Expr.new(ex_name(), tok.loc)
+    e.ident = tok.value
+    e.type_args = args
+    e
+  }
+
   pub fn parse_array_new(tok: Token): Expr {
     expect(tk_l_paren())
     self.skip_newlines()
@@ -3620,6 +3636,9 @@ pub class Parser {
     self.skip_newlines()
     expect(tk_r_paren())
     self.skip_newlines()
+    if self.type_argument_end() {
+      return self.type_as_argument(tok, [elem])
+    }
     expect(tk_dot())
     self.skip_newlines()
     meth = self.take_name_after_dot()
@@ -3666,6 +3685,9 @@ pub class Parser {
     self.skip_newlines()
     expect(tk_r_paren())
     self.skip_newlines()
+    if self.type_argument_end() {
+      return self.type_as_argument(tok, [elem])
+    }
     expect(tk_dot())
     self.skip_newlines()
     meth = self.take_name_after_dot()
@@ -3697,6 +3719,9 @@ pub class Parser {
     self.skip_newlines()
     expect(tk_r_paren())
     self.skip_newlines()
+    if self.type_argument_end() {
+      return self.type_as_argument(tok, [key, val])
+    }
     expect(tk_dot())
     self.skip_newlines()
     meth = self.take_name_after_dot()

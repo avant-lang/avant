@@ -285,6 +285,11 @@ pub fn (checker_self: Checker) check: Program {
   while i < checker_self.program.functions.size {
     checker_self.clear_poison()
     fnn = checker_self.program.functions[i]
+    if fnn.mod_name == "std.json" && fnn.owner.size == 0 && fnn.name.size > 6 && str_slice(fnn.name, 0, 6) == "codec_" {
+      // The typed decode's and encode's pieces (checker/json_codec.av):
+      // lowered only when a call reaches them.
+      fnn.lazy = true
+    }
     if fn_is_method(fnn) {
       checker_self.register_method(fnn)
     } else {

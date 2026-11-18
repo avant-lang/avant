@@ -1189,6 +1189,15 @@ pub fn (checker_self: Checker) match_method(owner: String, name: String, arg_tys
 
 pub fn (checker_self: Checker) type_call_target(recv: Expr, callee: String): Ty? {
   none: Ty? = nil
+  if recv.derived && recv.kind == ex_name() {
+    if tn = recv.elem_type {
+      // A receiver the typed decode wrote (checker/json_codec.av): its
+      // type is carried, pinned.
+      tt = checker_self.resolve_in_module(tn)
+      checker_self.pull_resolve()
+      return tt
+    }
+  }
   segs: Array(String) = []
   if !checker_self.ident_chain(recv, segs) {
     return none

@@ -258,6 +258,19 @@ void *avant_json_first(void *nodep) {
   return NULL;
 }
 
+/* The first member's name of an object (a string node; the node after it
+ * is that member's value, and the node after the value the next name),
+ * or NULL for an empty object and any other value: the typed decode
+ * walks a Hash's members and an object's unknown names with it, in one
+ * pass, where at(i) and key_at(i) each walk from the start. */
+void *avant_json_first_key(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || !yyjson_is_obj(v) || yyjson_obj_size(v) == 0) {
+    return NULL;
+  }
+  return unsafe_yyjson_get_first(v);
+}
+
 /* One sibling step. Only meaningful while a next sibling exists; the
  * Avant iterator tracks the element count, so it never steps past. */
 void *avant_json_next(void *nodep) {

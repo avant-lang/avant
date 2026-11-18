@@ -1,0 +1,335 @@
+import harness
+import backends
+import std.fs
+import std.json
+import std.process
+
+// std.json's typed decode and encode: json.decode(text, T) reads a
+// value of T from its fields, json.encode(value) writes one. The
+// compiler writes the code for each type the program decodes or
+// encodes; this file decodes and encodes its own types, then compiles
+// programs that must be refused (each must leave no binary, say the
+// expected words and point at the expected line and column) or must
+// print what they should.
+
+enum Color {
+  red
+  green
+  blue
+}
+
+struct Item {
+  pub name: String
+  pub qty: Int
+  pub price: Float64
+  pub tags: Array(String)
+  pub color: Color
+  pub note: String?
+  pub rank: Int = 5
+}
+
+class Order {
+  pub id: Int
+  pub items: Array(Item) = []
+  pub meta: Hash(String, Int) = Hash(String, Int).new()
+  pub paid: Bool = false
+  pub next: Order? = nil
+
+  fn initialize(self.id) {
+  }
+}
+
+struct Box(T) {
+  pub value: T
+  pub count: Int
+}
+
+struct Empty {
+}
+
+struct Envelope {
+  pub kind: String
+  pub body: json.Json
+  pub raw: json.JsonValue
+}
+
+struct Point {
+  pub x: Float64
+  pub y: Float64
+}
+
+fn order_text: String {
+  "{\"id\": 7, \"items\": [{\"name\": \"tea\", \"qty\": 2, \"price\": 1.5, \"tags\": [\"hot\"], \"color\": \"green\"}, {\"name\": \"cake\", \"qty\": 1, \"price\": 3, \"tags\": [], \"color\": \"red\", \"note\": \"big\", \"rank\": 1}], \"meta\": {\"a\": 1, \"b\": 2}, \"next\": {\"id\": 8, \"paid\": true}}"
+}
+
+fn decode_error(text: String): String {
+  if o = json.decode(text, Order) {
+    return "decoded ${o.id}"
+  } else e {
+    return e.message
+  }
+}
+
+fn test_decode_order(c: Checks) {
+  o = json.decode(order_text(), Order) else e {
+    c.expect(false, "decode an order: ${e.message}")
+    return
+  }
+  c.eq_int(o.id, 7, "a class's field")
+  c.eq_int(o.items.size, 2, "an Array of structs")
+  c.eq_str(o.items[0].name, "tea", "a String field")
+  c.eq_int(o.items[0].qty, 2, "an Int field")
+  c.expect(o.items[1].price == 3.0, "a Float64 field takes an integer")
+  c.eq_str(o.items[0].tags[0], "hot", "an Array(String) field")
+  c.expect(o.items[0].color == Color.green, "an enum by its member's name")
+  c.eq_str(o.items[0].note ?? "absent", "absent", "an optional field left out is nil")
+  c.eq_str(o.items[1].note ?? "absent", "big", "an optional field given")
+  c.eq_int(o.items[0].rank, 5, "a field with a default, left out")
+  c.eq_int(o.items[1].rank, 1, "a field with a default, given")
+  c.eq_int(o.meta["b"] ?? 0, 2, "a Hash(String, Int) field")
+  c.expect(!o.paid, "a Bool field's default")
+  if n = o.next {
+    c.eq_int(n.id, 8, "a class that holds itself")
+    c.expect(n.paid, "the inner one's Bool")
+    c.eq_int(n.items.size, 0, "the inner one's defaults")
+  } else {
+    c.expect(false, "a class that holds itself")
+  }
+  c.eq_str(json.encode(o), "{\"id\":7,\"items\":[{\"name\":\"tea\",\"qty\":2,\"price\":1.5,\"tags\":[\"hot\"],\"color\":\"green\",\"note\":null,\"rank\":5},{\"name\":\"cake\",\"qty\":1,\"price\":3.0,\"tags\":[],\"color\":\"red\",\"note\":\"big\",\"rank\":1}],\"meta\":{\"a\":1,\"b\":2},\"paid\":false,\"next\":{\"id\":8,\"items\":[],\"meta\":{},\"paid\":true,\"next\":null}}", "encode writes every pub field, nil as null")
+  if again = json.decode(json.encode(o), Order) {
+    c.eq_str(json.encode(again), json.encode(o), "what encode writes, decode reads back")
+  } else {
+    c.expect(false, "what encode writes, decode reads back")
+  }
+}
+
+fn test_decode_errors(c: Checks) {
+  c.eq_str(decode_error("{\"id\": \"x\"}"), "at $.id: expected an integer, found a string", "a wrong kind names its path")
+  c.eq_str(decode_error("{\"id\": 1, \"items\": [{\"name\": \"a\"}]}"), "at $.items[0].qty: missing member", "a missing member names its path")
+  c.eq_str(decode_error("{\"id\": 1, \"zap\": 2}"), "at $.zap: unknown member (ignore_unknown: true skips unknown members)", "an unknown member is an error")
+  c.eq_str(decode_error("{\"id\": 1, \"items\": [{\"name\": \"a\", \"qty\": 1, \"price\": 1, \"tags\": [], \"color\": \"pink\"}]}"), "at $.items[0].color: expected one of red, green, blue, found \"pink\"", "an enum's unknown name")
+  c.eq_str(decode_error("[1]"), "at $: expected an object, found an array", "the root's kind")
+  c.eq_str(decode_error("{\"id\": 1, \"meta\": {\"a b\": true}}"), "at $.meta[\"a b\"]: expected an integer, found true", "a name that is not a word, in brackets")
+  c.eq_str(decode_error("{\"id\": null}"), "at $.id: expected an integer, found null", "null for a field that is not optional")
+  c.eq_str(decode_error("{\"id\": 3.5}"), "at $.id: expected an integer, found 3.5", "a fraction for an Int")
+  c.eq_str(decode_error("{\"id\": 18446744073709551615}"), "at $.id: expected an integer, found 18446744073709551615", "an integer beyond Int")
+  c.eq_str(decode_error("{\"id\": 1, \"next\": {\"id\": 2, \"next\": {\"paid\": 1}}}"), "at $.next.next.paid: expected true or false, found 1", "a path through a class that holds itself")
+  c.eq_str(decode_error("{\"id\": 1, \"items\": 7}"), "at $.items: expected an array, found 7", "a number for an Array")
+  c.eq_str(decode_error("{\"id\": 1,}"), "invalid JSON at byte 8: trailing comma is not allowed", "text that does not parse: the parse's error")
+  c.eq_str(decode_error("{\"id\": 1, \"id\": 2}"), "decoded 1", "a name given twice: the first, as get reads it")
+  if o = json.decode("{\"id\": 1, \"zap\": 2, \"items\": [{\"name\": \"a\", \"qty\": 1, \"price\": 1, \"tags\": [], \"color\": \"red\", \"extra\": []}]}", Order, ignore_unknown: true) {
+    c.eq_int(o.items.size, 1, "ignore_unknown: true skips unknown members at every level")
+  } else e {
+    c.expect(false, "ignore_unknown: ${e.message}")
+  }
+}
+
+fn test_decode_shapes(c: Checks) {
+  if xs = json.decode("[1, 2, 3]", Array(Int)) {
+    c.eq_int(xs.sum(), 6, "an Array at the root")
+  } else {
+    c.expect(false, "an Array at the root")
+  }
+  if b = json.decode("{\"value\": \"v\", \"count\": 2}", Box(String)) {
+    c.eq_str(b.value, "v", "a generic struct's instance: its field's own type")
+  } else {
+    c.expect(false, "a generic struct's instance")
+  }
+  if hb = json.decode("{\"a\": {\"value\": [1.5], \"count\": 1}, \"b\": {\"value\": [], \"count\": 0}}", Hash(String, Box(Array(Float64)))) {
+    c.eq_int(hb.size, 2, "a Hash at the root")
+    if a = hb["a"] {
+      c.expect(a.value[0] == 1.5, "a Hash of generic structs")
+    }
+    c.eq_str(hb.keys().join(","), "a,b", "a Hash keeps the document's order")
+  } else e {
+    c.expect(false, "a Hash at the root: ${e.message}")
+  }
+  if n = json.decode("42", Int) {
+    c.eq_int(n, 42, "an Int at the root")
+  }
+  if s = json.decode("\"a\\nb\"", String) {
+    c.eq_str(s, "a\nb", "a String at the root")
+  }
+  if k = json.decode("\"blue\"", Color) {
+    c.expect(k == Color.blue, "an enum at the root")
+  }
+  if e0 = json.decode("{}", Empty) {
+    c.eq_str(json.encode(e0), "{}", "a struct with no fields")
+  }
+  c.eq_str(decode_empty("{\"x\": 1}"), "at $.x: unknown member (ignore_unknown: true skips unknown members)", "a struct with no fields refuses a member")
+  if env = json.decode("{\"kind\": \"k\", \"body\": [1, {\"a\": null}], \"raw\": {\"z\": 2}}", Envelope) {
+    c.eq_str(env.body.text(), "[1,{\"a\":null}]", "a json.Json field is the value as it is")
+    c.eq_int(env.body.len(), 2, "and reads as any Json")
+    c.expect(env.raw.kind == json.JsonKind.obj, "a JsonValue field")
+    c.eq_str(json.encode(env), "{\"kind\":\"k\",\"body\":[1,{\"a\":null}],\"raw\":{\"z\":2}}", "Json and JsonValue written back")
+  } else e {
+    c.expect(false, "Json fields: ${e.message}")
+  }
+}
+
+fn decode_empty(text: String): String {
+  if e0 = json.decode(text, Empty) {
+    return "decoded"
+  } else e {
+    return e.message
+  }
+}
+
+fn test_encode(c: Checks) {
+  c.eq_str(json.encode([Color.red, Color.blue]), "[\"red\",\"blue\"]", "enums by name")
+  h = Hash(String, Float64).new()
+  h["x"] = 0.5
+  h["y\"q"] = 2.5
+  c.eq_str(json.encode(h), "{\"x\":0.5,\"y\\\"q\":2.5}", "a Hash's names escaped")
+  none: Int? = nil
+  c.eq_str(json.encode(none), "null", "nil")
+  c.eq_str(json.encode("tab\there"), "\"tab\\there\"", "a String escaped")
+  c.eq_str(json.encode(Box { value: true, count: 1 }), "{\"value\":true,\"count\":1}", "a generic struct")
+  buf = Buf.new()
+  buf.push_str("data: ")
+  json.encode_into(buf, Point { x: 1.0, y: -2.5 })
+  c.eq_str(buf.to_s(), "data: {\"x\":1.0,\"y\":-2.5}", "encode_into appends to a Buf")
+}
+
+// Many documents, each a fresh parse: what a decode keeps of a document
+// (a json.Json field) stays valid while collections run between them.
+fn test_decode_many(c: Checks) {
+  text = Buf.new()
+  text.push_str("[")
+  for i in 0..2000 {
+    if i > 0 {
+      text.push_str(",")
+    }
+    text.push_str("{\"x\": ${i}, \"y\": 0.5}")
+  }
+  text.push_str("]")
+  all = text.to_s()
+  total = 0.0
+  kept: Array(Envelope) = []
+  for round in 0..20 {
+    if ps = json.decode(all, Array(Point)) {
+      for p in ps {
+        total += p.x + p.y
+      }
+    }
+    if env = json.decode("{\"kind\": \"r${round}\", \"body\": {\"n\": ${round}}, \"raw\": [${round}]}", Envelope) {
+      kept.push(env)
+    }
+  }
+  c.expect(total == 20.0 * (1999.0 * 2000.0 / 2.0 + 1000.0), "2000 points decoded 20 times")
+  n = 0
+  for env in kept {
+    n += env.body.int("n") ?? -100
+  }
+  c.eq_int(n, 190, "the documents' values kept by Json fields")
+}
+
+class JCase {
+  pub tag: String = ""
+  pub src: String = ""
+  pub want: String = ""
+  pub pos: String = ""
+  pub ok: Bool = false
+}
+
+fn refused(tag: String, src: String, needle: String, pos: String): JCase {
+  f = JCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = needle
+  f.pos = pos
+  f
+}
+
+fn accepted(tag: String, src: String, out: String): JCase {
+  f = JCase.new()
+  f.tag = tag
+  f.src = src
+  f.want = out
+  f.ok = true
+  f
+}
+
+fn cases: Array(JCase) {
+  pre = "import std.json\n"
+  xs: Array(JCase) = []
+  xs.push(refused("int32", pre + "struct Bad {\n  pub n: Int32\n}\nfn main {\n  if b = json.decode(\"{}\", Bad) {\n    puts(b.n)\n  }\n}\n", "json.decode cannot read Bad.n: Int32 is not a JSON value std.json reads or writes", "6:28"))
+  xs.push(refused("private", pre + "struct P {\n  pub a: Int\n  b: Int = 0\n}\nfn main {\n  if p = json.decode(\"{}\", P) {\n    puts(p.a)\n  }\n}\n", "json.decode cannot read P: field b of P is not pub; a decode builds the value from its fields, so each must be pub", "7:28"))
+  xs.push(refused("value", pre + "fn main {\n  n = 1\n  if p = json.decode(\"{}\", n) {\n    puts(1)\n  }\n}\n", "json.decode's second argument is the type to read (json.decode(text, Point)), not a value", "4:28"))
+  xs.push(refused("no-type", pre + "fn main {\n  if p = json.decode(\"{}\") {\n    puts(1)\n  }\n}\n", "json.decode takes the text and the type to read: json.decode(text, Point)", "3:14"))
+  xs.push(refused("named", pre + "struct P {\n  pub a: Int\n}\nfn main {\n  if p = json.decode(\"{}\", P, strict: true) {\n    puts(p.a)\n  }\n}\n", "json.decode has no parameter named strict", "6:39"))
+  xs.push(refused("int-keys", pre + "fn main {\n  if h = json.decode(\"{}\", Hash(Int, String)) {\n    puts(h.size)\n  }\n}\n", "has Int keys; a JSON object's names are Strings", "3:28"))
+  xs.push(refused("union", pre + "struct U {\n  pub u: Int | String\n}\nfn main {\n  if v = json.decode(\"{}\", U) {\n    puts(1)\n  }\n}\n", "json.decode cannot read U.u: Int | String is a union", "6:28"))
+  xs.push(refused("encode-fn", pre + "struct F {\n  pub f: fn(Int): Int\n}\nfn main {\n  g = F { f: (x) { x } }\n  puts(json.encode(g))\n}\n", "json.encode cannot write F.f:", "7:20"))
+  xs.push(refused("builder-read", pre + "struct B {\n  pub b: json.JsonBuilder\n}\nfn main {\n  if v = json.decode(\"{}\", B) {\n    puts(1)\n  }\n}\n", "a json.JsonBuilder writes JSON; it is not read from it", "6:28"))
+  xs.push(refused("encode-args", pre + "fn main {\n  puts(json.encode(1, 2))\n}\n", "json.encode takes one value: json.encode(value)", "3:12"))
+  xs.push(refused("array-arg", "fn f(n: Int): Int {\n  n\n}\nfn main {\n  puts(f(Array(Int)))\n}\n", "Array(T) only supports .new", "5:10"))
+  // A type of another module: its pub fields, a generic one's instance
+  // with its own field types; a private field refuses the decode.
+  xs.push(accepted("module", "import std.json\nimport jshapes\nfn main {\n  if p = json.decode(\"{\\\"x\\\": 1, \\\"y\\\": 2.5}\", jshapes.Pt(Float64)) {\n    puts(p.x + p.y)\n    puts(json.encode(p))\n  }\n  h = jshapes.hid(4)\n  puts(json.encode(h))\n}\n", "3.5\n{\"x\":1.0,\"y\":2.5}\n{\"a\":4}\n"))
+  xs.push(refused("module-private", "import std.json\nimport jshapes\nfn main {\n  if h = json.decode(\"{}\", jshapes.Hid) {\n    puts(h.a)\n  }\n}\n", "json.decode cannot read Hid: field b of Hid is not pub", "4:35"))
+  xs.push(accepted("nan-trap", pre + "fn main {\n  puts(json.encode([1.0]))\n  z = 0.0\n  puts(json.encode([z / z]))\n}\n", "[1.0]\n"))
+  xs
+}
+
+fn run_cases(c: Checks, compiler: String, dir: String, all: Array(JCase)) {
+  _ = fs.write("${dir}/jshapes.av", "pub struct Pt(T) {\n  pub x: T\n  pub y: T\n}\npub struct Hid {\n  pub a: Int\n  b: Int = 1\n}\npub fn hid(a: Int): Hid {\n  Hid { a: a }\n}\n")
+  jobs: Array(HJob) = []
+  for f in all {
+    src = "${dir}/jx-${f.tag}.av"
+    _ = fs.write(src, f.src)
+    jobs.push(compile_job("", compiler, src, "${dir}/jx-${f.tag}.bin", "${dir}/jx-${f.tag}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for f2 in all {
+    if f2.ok {
+      runs.push(run_job(dir, "jx-${f2.tag}.bin", "jx-${f2.tag}.run"))
+    }
+  }
+  run_waves(runs)
+  k = 0
+  for i in 0..all.size {
+    f3 = all[i]
+    log = log_text("${dir}/jx-${f3.tag}.log")
+    if f3.ok {
+      c.eq_int(jobs[i].code, 0, "${f3.tag}: compiles")
+      c.eq_str(log_text("${dir}/jx-${f3.tag}.run.out"), f3.want, "${f3.tag}: stdout")
+      if f3.tag == "nan-trap" {
+        c.expect(runs[k].code != 0, "${f3.tag}: a NaN stops the program")
+        c.expect(log_text("${dir}/jx-${f3.tag}.run.err").contains("json.encode: nan is not a JSON number; write null or a string for it"), "${f3.tag}: says why")
+      } else {
+        c.eq_int(runs[k].code, 0, "${f3.tag}: exit 0")
+      }
+      k += 1
+    } else {
+      c.expect(jobs[i].code != 0 && !fs.exists("${dir}/jx-${f3.tag}.bin"), "${f3.tag}: refused")
+      c.expect(log.contains(f3.want), "${f3.tag}: says ${f3.want}")
+      c.expect(log.contains("jx-${f3.tag}.av:${f3.pos}\n"), "${f3.tag}: at ${f3.pos}")
+    }
+  }
+}
+
+fn test_main(c: Checks) {
+  c.suite("tests/cases/test_json_decode.av")
+  test_decode_order(c)
+  test_decode_errors(c)
+  test_decode_shapes(c)
+  test_encode(c)
+  test_decode_many(c)
+  if compiler = process.env("AVANT_COMPILER") {
+    run_cases(c, compiler, scratch_dir(), cases())
+  } else {
+    c.expect(false, "AVANT_COMPILER")
+  }
+}
+
+fn main: Int {
+  if list_only() {
+    return 0
+  }
+  c = Checks.new()
+  c.started = now_ms()
+  test_main(c)
+  c.finish()
+}

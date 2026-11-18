@@ -4452,6 +4452,65 @@ fn main {
 }
 ```
 
+**Typed decode and encode.** `json.decode(text, T)` reads a value of the type `T` from its fields, `json.encode(value)` writes one: the compiler writes the reading and writing code of each type a program decodes or encodes, from its fields, with nothing describing a type at run time.
+
+```avant
+import std.json
+
+enum Role {
+  admin
+  member
+}
+
+struct User {
+  pub name: String
+  pub age: Int
+  pub role: Role
+  pub email: String?
+  pub tags: Array(String) = []
+}
+
+fn main {
+  u = json.decode("{\"name\": \"ada\", \"age\": 36, \"role\": \"admin\"}", User) else e {
+    puts(e.message)
+    return
+  }
+  puts(u.name)                  // => ada
+  puts(u.email ?? "none")       // => none
+  puts(json.encode(u))          // => {"name":"ada","age":36,"role":"admin","email":null,"tags":[]}
+  if old = json.decode("{\"name\": \"bo\", \"age\": \"old\", \"role\": \"member\"}", User) {
+    puts(old.age)
+  } else e {
+    puts(e.message)             // => at $.age: expected an integer, found a string
+  }
+}
+```
+
+| Call | Parameters | Result | Errors | Note |
+| --- | --- | --- | --- | --- |
+| `json.decode(text, T, ignore_unknown = false)` | `text: String`; `T` a type, written as the argument (`User`, `Array(User)`, `Hash(String, User)`, `Box(Int)`, `geo.Point`) | `T \| JsonError` | text that does not parse: the parse's `JsonError`; a member of the wrong kind, a missing member (a field neither optional nor defaulted), a member no field names, an enum's unknown name: a `JsonError` whose message names the path (`at $.items[2].name: missing member`) | `ignore_unknown: true` skips the members no field names, at every level |
+| `json.encode(value)` | `value` of a type below | `String`: compact JSON | a NaN or an infinity traps, naming it | every pub field, `nil` as `null`, a `Hash` in its order |
+| `json.encode_into(buf, value)` | `buf: Buf`, `value` | — | as `encode` | appends the text to `buf` |
+
+| Avant | JSON |
+| --- | --- |
+| `Int` | an integer (no fraction, no exponent) within `Int` |
+| `Float64` | any number |
+| `String`, `Bool` | a string; `true` or `false` |
+| an enum | a string: its member's name |
+| `T?` | `null` for `nil`; in an object, a member left out is `nil` too |
+| `Array(T)` | an array |
+| `Hash(String, V)` | an object, its members in the document's order (a name given twice: its first value) |
+| a struct or a class | an object with a member per field, named as the field; a field with a default may be left out |
+| `json.Json`, `json.JsonValue` | any value: as it is in the document, or copied out of it ([Reading](#stdjson), below) |
+
+- Any other type (`Int32`, a union, a `fn`, a `Set`, `Bytes`, a `Hash` with other keys) is a compile error naming the field that holds it (`json.decode cannot read Bad.n: Int32 is not a JSON value std.json reads or writes`); `json.encode` also writes `nil` and a `JsonBuilder`'s text.
+- The code sees a type's fields as a [field walk](#the-field-walk) from `std.json` does: its `pub` fields, a generic type's instance with its own field types. A decode builds the value from its fields, so a type with a field that is not `pub` is refused, as a literal outside its module is; a class is built without `initialize`, as a [clone](#clone) is. An encode writes the `pub` fields.
+- A type given as an argument is `json.decode`'s alone: `Array(Int)` anywhere else is refused as before (`Array(T) only supports .new`).
+- A class that holds itself is read and written one call deeper per level, as a recursive function would; a cycle of objects never ends.
+
+**Which to use.** `json.decode` when the document has a shape a type states (a request's body, a configuration): one call, every member checked, an error that names where. `Json.parse` and the calls below when the shape is loose, or when a few members are read from a large document: nothing is copied out but what is read. `to_value` for a tree that must outlive its document or change. `json.encode` writes a value of the program's types; a `JsonBuilder` writes a document piece by piece, in a shape no type has.
+
 **Reading.** A `Json` is a position in the parsed document, which owns its values and text: nothing to close.
 
 | Call | Parameters | Result | Errors | Note |

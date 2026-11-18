@@ -3996,6 +3996,19 @@ pub class Checker {
   }
 
   pub fn check_struct_literal(expr: Expr, has_want: Bool, want: Ty): Ty {
+    if expr.derived {
+      if tn = expr.elem_type {
+        // A literal the typed decode wrote (checker/json_codec.av): its
+        // type is carried, pinned.
+        drop_struct_defaults(expr)
+        ty = resolve_in_module(tn)
+        self.pull_resolve()
+        if self.has_err() {
+          return t_int()
+        }
+        return check_struct_fields(expr, ty, true)
+      }
+    }
     if expr.mod_name.size == 0 && expr.type_args.size == 0 {
       // A struct literal through a type alias (`type P = geo.Point`,
       // `P { x: 1, y: 2 }`) builds the type the alias names.
@@ -4106,6 +4119,17 @@ pub class Checker {
     for sdef in self.program.structs {
       if sdef.name == ty.name && sdef.mod_name == ty.mod_name {
         for f in sdef.fields {
+          if f.name == name {
+            return f.default
+          }
+        }
+      }
+    }
+    // A class literal (one the checker writes, Expr.derived) leaves out
+    // the fields with a default as a struct literal does.
+    for cdef in self.program.classes {
+      if cdef.name == ty.name && cdef.mod_name == ty.mod_name {
+        for f in cdef.fields {
           if f.name == name {
             return f.default
           }
@@ -4482,6 +4506,18 @@ pub class Checker {
         self.recv_type = tn
         return t_int()
       }
+    }
+    if expr.type_args.size > 0 && expr.mod_name.size == 0 && (expr.ident == "Array" || expr.ident == "Hash" || expr.ident == "Set") {
+      // A builtin collection's type written as a value (parser.av
+      // type_as_argument): json.decode reads one, nothing else does.
+      shown = "Array(T)"
+      if expr.ident == "Hash" {
+        shown = "Hash(K, V)"
+      } else if expr.ident == "Set" {
+        shown = "Set(T)"
+      }
+      fail(expr.loc, "${shown} only supports .new")
+      return t_int()
     }
     if is_generic_template(expr.ident) {
       fail(expr.loc, "${expr.ident} needs type arguments")
@@ -5343,7 +5379,8 @@ pub class Checker {
     } else if existing = lookup(expr.callee), existing.is_fn() {
       return false
     }
-    if expr.callee == "new" {
+    if expr.callee == "new" || expr.callee == "decode" {
+      // json.decode's options are named (checker/json_codec.av).
       return true
     }
     if fn_indices_named(expr.callee).size > 0 || method_indices_named(expr.callee).size > 0 {
@@ -5397,6 +5434,10 @@ pub class Checker {
     if is_generic_template(expr.callee) {
       fail(expr.loc, "type argument expected")
       return t_int()
+    }
+    if self.current_module == "std.json" && json_codec_callee(expr.callee) {
+      // std.json's own calls of its typed encode (JsonBuilder.value).
+      return check_json_call(expr)
     }
     if existing = lookup(expr.callee), existing.is_fn() {
       note_capture(expr.callee, existing, expr.loc)
@@ -6281,6 +6322,11 @@ pub class Checker {
           if k = self.known_mods.get(recv.ident), qualifier_ok(recv.ident, self.current_module) {
             if module_is_method(recv.ident, recv.loc) {
               return t_int()
+            }
+            if recv.ident == "std.json" && json_codec_callee(expr.callee) {
+              // The typed decode and encode (checker/json_codec.av).
+              expr.receiver = nil
+              return check_json_call(expr)
             }
             return dispatch_qualified_call(expr, recv.ident)
           }
