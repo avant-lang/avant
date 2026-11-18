@@ -378,8 +378,8 @@ pub fn (checker_self: Checker) guard_fresh(e: Expr): Bool {
 // What may leave a `Mutex.with` as its value when its type is not plain
 // (checker.av check_mutex_with): every way the value leaves (the last
 // expression, the arms of a switch there, and in a lambda with its
-// result type written each `return`) gives a plain value or a clone,
-// which is new (checker/clone.av is_clone_call). A failure that `?`
+// result type written each `return`) gives a plain value, a clone
+// (checker/clone.av is_clone_call) or another new object (guard_fresh). A failure that `?`
 // returns from such a lambda is checked where it is made (guard_expr):
 // one reached from the guarded value must be plain.
 pub fn (checker_self: Checker) with_value_leaves(b: Block): Bool {
@@ -402,7 +402,10 @@ pub fn (checker_self: Checker) with_value_leaves(b: Block): Bool {
 }
 
 pub fn (checker_self: Checker) with_exit_ok(e: Expr): Bool {
-  if checker_self.guard_plain(e) || is_clone_call(e) {
+  // A new object (guard_fresh: a constructor call, a literal, a clone,
+  // each built from new or plain values) is not reached from the
+  // guarded value, as a clone is not.
+  if checker_self.guard_fresh(e) {
     return true
   }
   if e.kind == ex_switch() && e.op != tk_return() {
