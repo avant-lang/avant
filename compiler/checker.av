@@ -291,7 +291,7 @@ pub class Checker {
   // result type is inferred: branches that all give nothing make it a
   // statement (Void) rather than an error.
   pub if_void_ok: Bool = false
-  // Inside the block of `Array(T).new(n) { |i| ... }` (how deep): a
+  // Inside the block of `Array(T).new(n, (i) { ... })` (how deep): a
   // `break` or `continue` there gets its own message.
   pub in_build: Int = 0
   // The calls whose defaults name an earlier parameter, counted
@@ -1261,7 +1261,7 @@ pub class Checker {
         if self.inline_what.size > 0 {
           fail(stmt.loc, inline_exit_message("break", self.inline_what))
         } else if self.in_build > 0 {
-          fail(stmt.loc, "break inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value")
+          fail(stmt.loc, "break inside the lambda of Array(T).new(n, (i) { ... }) would leave elements unbuilt; every index gets a value")
         } else {
           fail(stmt.loc, "break is only valid inside a loop")
         }
@@ -1276,7 +1276,7 @@ pub class Checker {
         if self.inline_what.size > 0 {
           fail(stmt.loc, inline_exit_message("continue", self.inline_what))
         } else if self.in_build > 0 {
-          fail(stmt.loc, "continue inside the block of Array(T).new(n) { |i| ... } would leave elements unbuilt; every index gets a value")
+          fail(stmt.loc, "continue inside the lambda of Array(T).new(n, (i) { ... }) would leave elements unbuilt; every index gets a value")
         } else {
           fail(stmt.loc, "continue is only valid inside a loop")
         }
@@ -3645,13 +3645,13 @@ pub class Checker {
       // object that can change, the elements would share that object
       // (a grid built this way had one row). `nil` shares nothing.
       if !self.has_err() && expr.elems[0].kind != ex_nil() && type.ty_holds_mutable_ref(elem) {
-        fail(expr.elems[0].loc, "Array(${elem.show()}).new(n, value) would put the same object in every element (${elem.show()} is, or holds, a reference: a change through one element would show in all); build one per element: Array(${elem.show()}).new(n) { |i| ... }")
+        fail(expr.elems[0].loc, "Array(${elem.show()}).new(n, value) would put the same object in every element (${elem.show()} is, or holds, a reference: a change through one element would show in all); build one per element: Array(${elem.show()}).new(n, (i) { ... })")
       }
     } else if !ty_has_zero(elem) && !type.ty_has_var(elem) {
       // The way out it names must exist: a reference type's elements
       // are built one by one, any other type's take a value.
       if type.ty_holds_mutable_ref(elem) {
-        fail(expr.loc, "Array(${elem.show()}).new(n) needs its elements built: ${elem.show()} has no zero value; write Array(${elem.show()}).new(n) { |i| ... }, or start from [] and push")
+        fail(expr.loc, "Array(${elem.show()}).new(n) needs its elements built: ${elem.show()} has no zero value; write Array(${elem.show()}).new(n, (i) { ... }), or start from [] and push")
       } else {
         fail(expr.loc, "Array(${elem.show()}).new(n) needs an element value: ${elem.show()} has no zero value; write Array(${elem.show()}).new(n, value), or start from [] and push")
       }
@@ -3659,7 +3659,7 @@ pub class Checker {
     ty_array(elem)
   }
 
-  // `Array(T).new(n) { |i| ... }`: the block is run once per index, 0 to
+  // `Array(T).new(n, (i) { ... })`: the block is run once per index, 0 to
   // n - 1 in order, and its value is that element. The parser hands it
   // over as a call named "Array.new" with n as its argument and T as its
   // elem_type. The block is inlined like those of `each` and `any` (a
@@ -3683,7 +3683,7 @@ pub class Checker {
     if b = expr.block {
       note_inline(b, "array build")
       if b.params.size != 1 {
-        fail(b.loc, "Array(T).new(n) { |i| ... } takes one block parameter, the index")
+        fail(b.loc, "Array(T).new(n, (i) { ... }) takes a lambda of one parameter, the index")
         return ty_array(elem)
       }
       refuse_block_param_outer(b, "Array.new")
@@ -3705,7 +3705,7 @@ pub class Checker {
       self.loop_depth = saved_loops
       self.pop_scope()
       if !self.has_err() && !ty_assignable(bt, elem) {
-        fail(b.body[b.body.size - 1].loc, "the block of Array(${elem.show()}).new(n) { |i| ... } must end with a ${elem.show()}, got ${bt.show()}")
+        fail(b.body[b.body.size - 1].loc, "the lambda of Array(${elem.show()}).new(n, (i) { ... }) must end with a ${elem.show()}, got ${bt.show()}")
       }
     }
     ty_array(elem)
@@ -7248,7 +7248,7 @@ pub class Checker {
     }
     if b = expr.block {
       if b.params.size != 1 {
-        fail(b.loc, "sync.Mutex.with { |x| } takes one block parameter")
+        fail(b.loc, "sync.Mutex.with takes a lambda of one parameter: m.with (x) { ... }")
         return t_void()
       }
       if object.ty_args.size != 1 {

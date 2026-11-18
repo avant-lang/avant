@@ -196,7 +196,7 @@ pub fn (lw: MirLower) block_value(bl: Block, cont: Int, exit: Int): MOperand {
   b.c_bool(false)
 }
 
-// `Array(T).new(n) { |i| ... }`: n once, with `Array(T).new(n)`'s two
+// `Array(T).new(n, (i) { ... })`: n once, with `Array(T).new(n)`'s two
 // traps (negative, the ceiling); a zeroed buffer of n elements; then for
 // i from 0 to n - 1 the block with i bound, and its value stored into
 // element i; then the header with size = cap = n, as lower_array_new.
@@ -311,7 +311,7 @@ pub fn (lw: MirLower) arr_build(e: Expr, bl: Block): MOperand {
   lw.array_header(aty, d, lw.tmp(mt_i32(), b.rv_cast(b.copy_local(k), mt_i32())))
 }
 
-// `xs.each { |x| ... }` (emit_array_each, builtins.av:1632-1684).
+// `xs.each (x) { ... }` (emit_array_each, builtins.av:1632-1684).
 pub fn (lw: MirLower) arr_each(e: Expr, recv: Expr, bl: Block): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -344,7 +344,7 @@ pub fn (lw: MirLower) arr_each(e: Expr, recv: Expr, bl: Block): MOperand {
   zero
 }
 
-// `xs.any { |x| p }`, `xs.all { |x| p }` (emit_array_predicate,
+// `xs.any (x) { p }`, `xs.all (x) { p }` (emit_array_predicate,
 // builtins.av:789-862): the result starts false (any) or true (all); the
 // first element that decides it ends the loop.
 pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MOperand {
@@ -394,7 +394,7 @@ pub fn (lw: MirLower) arr_pred(e: Expr, recv: Expr, bl: Block, is_any: Bool): MO
   b.copy_local(res)
 }
 
-// `xs.sort { |a, b| c }` and `xs.sorted { |a, b| c }` (emit_comparator_sort,
+// `xs.sort (a, b) { c }` and `xs.sorted (a, b) { c }` (emit_comparator_sort,
 // builtins.av:864-947; `sorted` first copies the array, :949-974): an
 // insertion sort that moves the element at i left while the comparator
 // of (it, the element before) is true. `break` and `next` in the

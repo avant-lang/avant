@@ -148,7 +148,7 @@ pub fn (checker_self: Checker) refuse_for_name(stmt: Stmt, name: String) {
 }
 
 // A builtin block's parameters (`each`, `any`, `all`, a comparator, a
-// Hash's or a Set's `each`, `Array(T).new(n) { |i| }`, `Mutex.with`,
+// Hash's or a Set's `each`, `Array(T).new(n, (i) { })`, `Mutex.with`,
 // `.parallel`) are the block's own, as a `for` variable is the loop's: a
 // name that already exists here is refused (an inlined block's parameter
 // would otherwise be that variable, assigned at every step and left with
@@ -504,7 +504,7 @@ pub fn (checker_self: Checker) for_walk_operand(stmt: Stmt): String {
 //   for k in h.keys()   the keys, with no array of them
 //   for v in h.values() the values, likewise
 //   for v in s          a Set's elements
-// The loop becomes the walk `__forN_xs.each { |k, v| body }` over the
+// The loop becomes the walk `__forN_xs.each (k, v) { body }` over the
 // operand held once (a block in braces with pipes is a loop body: break,
 // continue and return mean what they mean in the for), followed by a
 // break of the one-step loop around it (for_kind 12); the hidden name

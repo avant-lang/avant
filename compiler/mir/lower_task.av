@@ -1,5 +1,5 @@
 // The lowering of the concurrency constructs: `spawn { }` and
-// `JoinHandle`, `.parallel { |x| }` on arrays, `Mutex.with { |x| }`,
+// `JoinHandle`, `.parallel (x) { }` on arrays, `Mutex.with (x) { }`,
 // and the gate builtins (`avant_gate_*`, which `Channel(T)` is written
 // in), with the old back end's representations and runtime calls
 // (calls.av:451-1116).
@@ -517,7 +517,7 @@ pub fn (lw: MirLower) join_result_sym: String {
 
 // ---- .parallel
 
-// `xs.parallel { |x| ... }` (calls.av emit_parallel): the receiver once,
+// `xs.parallel (x) { ... }` (calls.av emit_parallel): the receiver once,
 // its size n, the result array (a zeroed buffer of n elements and its
 // header, as Array(T).new(n)), the context with the input, the result,
 // and the captures, then `avant_parallel_for(n, thunk, ctx)`, which roots
@@ -1177,7 +1177,7 @@ pub fn (lw: MirLower) gate_args(h: Int, gi: Int): Array(MOperand) {
   lw.two(b.copy_local(h), b.c_u64(off))
 }
 
-// `m.with { |x| ... }` (calls.av emit_mutex_with): the mutex once into
+// `m.with (x) { ... }` (calls.av emit_mutex_with): the mutex once into
 // a local, `avant_gate_lock(&m.gate)`, the block in place with x naming
 // `m.cell` (reads, assignments behind the barrier, field stores through
 // it), the value kept, `avant_gate_unlock(&m.gate)`.
