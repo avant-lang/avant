@@ -2462,116 +2462,54 @@ pub class Parser {
     for_assign(loc, name, for_binary(loc, tk_plus(), for_name_expr(loc, name), for_int_expr(loc, by)))
   }
 
-  // The step of a `for` loop to its next value: the counter's increment;
-  // over an inclusive range (`a..=b`), a break after the last value
-  // first, so a range that ends at the type's maximum never computes the
-  // value after it (the increment would overflow and trap).
-  // With a step `by k` (k above 1), the break comes when fewer than k
-  // values are left before the end (`end - i < k`), which never
-  // overflows either: i is at most the end.
+  // The step a range's body takes (Parser.for_last and for_by, read
+  // where the body is walked).
+  pub fn range_step_now: RangeStep {
+    rs = RangeStep.new()
+    rs.last = self.for_last
+    rs.by = self.for_by
+    rs
+  }
+
   pub fn for_step(loc: Location, counter: String, into: Array(Stmt)) {
-    if self.for_last.size > 0 {
-      stop = Stmt.new(st_if(), loc)
-      if self.for_by == 1u64 {
-        stop.cond = for_binary(loc, tk_eq_eq(), for_name_expr(loc, counter), for_name_expr(loc, self.for_last))
-      } else {
-        left = for_binary(loc, tk_minus(), for_name_expr(loc, self.for_last), for_name_expr(loc, counter))
-        stop.cond = for_binary(loc, tk_less(), left, for_int_expr(loc, self.for_by))
-      }
-      stop.then_body.push(Stmt.new(st_break(), loc))
-      into.push(stop)
-    }
-    inc = for_inc_by(loc, counter, self.for_by)
-    inc.step = true
-    into.push(inc)
+    range_step_into(range_step_now(), loc, counter, into)
   }
 
   pub fn for_advance(body: Array(Stmt), counter: String, loc: Location): Array(Stmt) {
-    out: Array(Stmt) = []
-    for s in body {
-      if s.kind == st_continue() {
-        for_step(loc, counter, out)
-        out.push(s)
-      } else if s.kind == st_while() {
-        // A nested loop's `continue` is its own.
-        out.push(s)
-      } else {
-        if s.kind == st_if() {
-          s.then_body = for_advance(s.then_body, counter, loc)
-          s.else_body = for_advance(s.else_body, counter, loc)
-          for el in s.pre {
-            for_advance_opt(el.cond, counter, loc)
-          }
-        }
-        if s.kind == st_pin() || s.kind == st_hold() {
-          s.body = for_advance(s.body, counter, loc)
-        }
-        for_advance_opt(s.expr, counter, loc)
-        for_advance_opt(s.value, counter, loc)
-        for_advance_opt(s.target, counter, loc)
-        for_advance_opt(s.cond, counter, loc)
-        out.push(s)
-      }
-    }
-    out
+    range_advance(range_step_now(), body, counter, loc)
   }
 
-  // The statements an expression holds (a switch's arms; `?? continue`
-  // and an `if` used as a value), outside lambdas.
-  pub fn for_advance_opt(e: Expr?, counter: String, loc: Location) {
-    if x = e {
-      for_advance_expr(x, counter, loc)
-    }
-  }
-
-  pub fn for_advance_expr(e: Expr, counter: String, loc: Location) {
-    if e.kind == ex_lambda() {
-      return
-    }
-    if e.kind == ex_switch() {
-      for ci in 0..e.cases.size {
-        e.cases[ci].body = for_advance(e.cases[ci].body, counter, loc)
-      }
-      e.else_body = for_advance(e.else_body, counter, loc)
-    }
-    for_advance_opt(e.left, counter, loc)
-    for_advance_opt(e.right, counter, loc)
-    for_advance_opt(e.object, counter, loc)
-    for_advance_opt(e.cond, counter, loc)
-    for_advance_opt(e.receiver, counter, loc)
-    for_advance_opt(e.inner, counter, loc)
-    for a in e.args {
-      for_advance_expr(a, counter, loc)
-    }
-    for x in e.elems {
-      for_advance_expr(x, counter, loc)
-    }
-    for f in e.field_exprs {
-      for_advance_expr(f, counter, loc)
-    }
-    // A `Mutex.with` block runs in place, and its `continue` is the
-    // enclosing loop's; a builtin's block (`each`) is a loop of its own,
-    // like a nested while.
-    if e.callee == "with" || e.callee == "try_with" {
-      if b = e.block {
-        b.body = for_advance(b.body, counter, loc)
-      }
-    }
-  }
-
-  // `by k` after a range: k a positive integer literal, the stride (the
-  // values a, a + k, a + 2k, ... inside the range).
-  pub fn parse_for_by: UInt64 {
-    by_tok = self.bump()
+  // `by k` after a range: k an integer literal or a module constant
+  // (`by 4`, `by -1`, `by chunk`, `by -m.step`), the stride (the values
+  // a, a + k, a + 2k, ... inside the range; a step down gives the same
+  // values in reverse). A literal's sign and size are checked here; a
+  // constant's when the checker knows its value.
+  pub fn parse_for_by: RangeBy {
+    rb = RangeBy.new()
+    self.bump()
     self.skip_newlines()
-    neg = false
     if self.current().kind == tk_minus() {
-      neg = true
+      rb.down = true
       self.bump()
     }
+    if self.current().kind == tk_ident() {
+      name_tok = self.bump()
+      e = Expr.new(ex_name(), name_tok.loc)
+      e.ident = name_tok.value
+      if self.current().kind == tk_dot() && self.index + 1 < self.tokens.size && self.tokens[self.index + 1].kind == tk_ident() {
+        self.bump()
+        field_tok = self.bump()
+        q = Expr.new(ex_field(), name_tok.loc)
+        q.object = e
+        q.ident = field_tok.value
+        e = q
+      }
+      rb.named = e
+      return rb
+    }
     if self.current().kind != tk_integer() {
-      fail(self.current().loc, "for ... by takes a positive integer literal (by 2): the step is fixed when the loop is compiled; for a step computed at run time, use a while loop")
-      return 1u64
+      fail(self.current().loc, "for ... by takes an integer literal or a module constant (by 2, by -1, by step): the step is fixed when the loop is compiled; for a step computed at run time, use a while loop")
+      return rb
     }
     tok = self.bump()
     ok = parse_int_tok(tok)
@@ -2579,21 +2517,18 @@ pub class Parser {
     lit.int_bits = self.int_bits
     lit.int_suffix = self.int_suffix
     if !ok {
-      return 1u64
-    }
-    if neg {
-      fail(by_tok.loc, "for ... by -k: a step down is not supported; walk down with a while loop (i = n - 1, while i >= 0 { ...; i -= 1 })")
-      return 1u64
+      return rb
     }
     if lit.int_bits == 0u64 {
-      fail(lit.loc, "for ... by 0 would never move: the step is a positive integer")
-      return 1u64
+      fail(lit.loc, "for ... by 0 would never move: the step is a nonzero integer")
+      return rb
     }
     if lit.int_bits > 9223372036854775807u64 || lit.int_suffix.size > 0 {
-      fail(lit.loc, "for ... by takes a positive Int literal")
-      return 1u64
+      fail(lit.loc, "for ... by takes an Int literal")
+      return rb
     }
-    lit.int_bits
+    rb.by = lit.int_bits
+    rb
   }
 
   pub fn parse_for: Stmt {
@@ -2634,13 +2569,21 @@ pub class Parser {
       if pos_name.size > 0 {
         fail(loc, "for ${pos_name}, ${var_tok.value} in a range: a range's loop has one variable, its value (for ${var_tok.value} in ...)")
       }
-      by = 1u64
+      rb = RangeBy.new()
       if self.current().kind == tk_ident() && self.current().value == "by" {
-        by = self.parse_for_by()
+        rb = self.parse_for_by()
         self.skip_newlines()
       }
+      by = rb.by
       raw_body = self.parse_block()
       end_name = "__for${id}_end"
+      pending = false
+      if _ = rb.named {
+        pending = true
+      }
+      if rb.down || pending {
+        return range_loop(loc, var_tok.value, first, end_expr, end_name, incl, rb, raw_body)
+      }
       s = Stmt.new(st_while(), loc)
       s.for_kind = 1
       s.pre.push(for_assign(loc, var_tok.value, first))
@@ -4300,4 +4243,263 @@ pub fn error_self_field(loc: Location, name: String): Expr {
   fa.object = me
   fa.ident = name
   fa
+}
+
+// The step of a range `for` (`for i in a..b by k`), as its body is
+// walked: `last` is the inclusive range's end ("" for `..`), `by` the
+// step's size, `down` a step down (`by -k`), whose values are those of
+// `by k` in reverse, ending at `lo`, the range's start.
+pub class RangeStep {
+  pub last: String = ""
+  pub by: UInt64 = 1u64
+  pub down: Bool = false
+  pub lo: String = ""
+}
+
+pub fn range_name(loc: Location, name: String): Expr {
+  e = Expr.new(ex_name(), loc)
+  e.ident = name
+  e
+}
+
+pub fn range_int(loc: Location, bits: UInt64): Expr {
+  e = Expr.new(ex_int(), loc)
+  e.int_bits = bits
+  e
+}
+
+pub fn range_binary(loc: Location, op: Int, left: Expr, right: Expr): Expr {
+  e = Expr.new(ex_binary(), loc)
+  e.op = op
+  e.left = left
+  e.right = right
+  e
+}
+
+pub fn range_call0(loc: Location, recv: Expr, name: String): Expr {
+  e = Expr.new(ex_call(), loc)
+  e.callee = name
+  e.receiver = recv
+  e
+}
+
+pub fn range_assign(loc: Location, name: String, value: Expr): Stmt {
+  s = Stmt.new(st_assign(), loc)
+  s.target = range_name(loc, name)
+  s.value = value
+  s.op = tk_eq()
+  s.for_kind = 3
+  s
+}
+
+// The step of a `for` loop to its next value: the counter's increment;
+// over an inclusive range (`a..=b`), a break after the last value
+// first, so a range that ends at the type's maximum never computes the
+// value after it (the increment would overflow and trap).
+// With a step `by k` (k above 1), the break comes when fewer than k
+// values are left before the end (`end - i < k`), which never
+// overflows either: i is at most the end.
+// A step down breaks at the range's start (`i == lo`), or when fewer
+// than k values are left above it (`(i &- lo)` read as a UInt64, below
+// k: the distance is exact even beyond Int's range), and then
+// subtracts k, which never goes below the start.
+pub fn range_step_into(rs: RangeStep, loc: Location, counter: String, into: Array(Stmt)) {
+  if rs.down {
+    stop0 = Stmt.new(st_if(), loc)
+    if rs.by == 1u64 {
+      stop0.cond = range_binary(loc, tk_eq_eq(), range_name(loc, counter), range_name(loc, rs.lo))
+    } else {
+      dist = range_call0(loc, range_binary(loc, tk_amp_minus(), range_name(loc, counter), range_name(loc, rs.lo)), "wrap_u64")
+      stop0.cond = range_binary(loc, tk_less(), dist, range_int(loc, rs.by))
+    }
+    stop0.then_body.push(Stmt.new(st_break(), loc))
+    into.push(stop0)
+    dec = range_assign(loc, counter, range_binary(loc, tk_minus(), range_name(loc, counter), range_int(loc, rs.by)))
+    dec.step = true
+    into.push(dec)
+    return
+  }
+  if rs.last.size > 0 {
+    stop = Stmt.new(st_if(), loc)
+    if rs.by == 1u64 {
+      stop.cond = range_binary(loc, tk_eq_eq(), range_name(loc, counter), range_name(loc, rs.last))
+    } else {
+      left = range_binary(loc, tk_minus(), range_name(loc, rs.last), range_name(loc, counter))
+      stop.cond = range_binary(loc, tk_less(), left, range_int(loc, rs.by))
+    }
+    stop.then_body.push(Stmt.new(st_break(), loc))
+    into.push(stop)
+  }
+  inc = range_assign(loc, counter, range_binary(loc, tk_plus(), range_name(loc, counter), range_int(loc, rs.by)))
+  inc.step = true
+  into.push(inc)
+}
+
+pub fn range_advance(rs: RangeStep, body: Array(Stmt), counter: String, loc: Location): Array(Stmt) {
+  out: Array(Stmt) = []
+  for s in body {
+    if s.kind == st_continue() {
+      range_step_into(rs, loc, counter, out)
+      out.push(s)
+    } else if s.kind == st_while() {
+      // A nested loop's `continue` is its own.
+      out.push(s)
+    } else {
+      if s.kind == st_if() {
+        s.then_body = range_advance(rs, s.then_body, counter, loc)
+        s.else_body = range_advance(rs, s.else_body, counter, loc)
+        for el in s.pre {
+          range_advance_opt(rs, el.cond, counter, loc)
+        }
+      }
+      if s.kind == st_pin() || s.kind == st_hold() {
+        s.body = range_advance(rs, s.body, counter, loc)
+      }
+      range_advance_opt(rs, s.expr, counter, loc)
+      range_advance_opt(rs, s.value, counter, loc)
+      range_advance_opt(rs, s.target, counter, loc)
+      range_advance_opt(rs, s.cond, counter, loc)
+      out.push(s)
+    }
+  }
+  out
+}
+
+// The statements an expression holds (a switch's arms; `?? continue`
+// and an `if` used as a value), outside lambdas.
+pub fn range_advance_opt(rs: RangeStep, e: Expr?, counter: String, loc: Location) {
+  if x = e {
+    range_advance_expr(rs, x, counter, loc)
+  }
+}
+
+pub fn range_advance_expr(rs: RangeStep, e: Expr, counter: String, loc: Location) {
+  if e.kind == ex_lambda() {
+    return
+  }
+  if e.kind == ex_switch() {
+    for ci in 0..e.cases.size {
+      e.cases[ci].body = range_advance(rs, e.cases[ci].body, counter, loc)
+    }
+    e.else_body = range_advance(rs, e.else_body, counter, loc)
+  }
+  range_advance_opt(rs, e.left, counter, loc)
+  range_advance_opt(rs, e.right, counter, loc)
+  range_advance_opt(rs, e.object, counter, loc)
+  range_advance_opt(rs, e.cond, counter, loc)
+  range_advance_opt(rs, e.receiver, counter, loc)
+  range_advance_opt(rs, e.inner, counter, loc)
+  for a in e.args {
+    range_advance_expr(rs, a, counter, loc)
+  }
+  for x in e.elems {
+    range_advance_expr(rs, x, counter, loc)
+  }
+  for f in e.field_exprs {
+    range_advance_expr(rs, f, counter, loc)
+  }
+  // A `Mutex.with` block runs in place, and its `continue` is the
+  // enclosing loop's; a builtin's block (`each`) is a loop of its own,
+  // like a nested while.
+  if e.callee == "with" || e.callee == "try_with" {
+    if b = e.block {
+      b.body = range_advance(rs, b.body, counter, loc)
+    }
+  }
+}
+
+// A range `for`'s `by`, as parsed: a literal's size and sign, or the
+// constant it names (`named`), whose value the checker reads.
+pub class RangeBy {
+  pub by: UInt64 = 1u64
+  pub down: Bool = false
+  pub named: Expr? = nil
+}
+
+pub fn range_kind_pending: Int { 10 }
+
+// A range `for` with a step down (`by -k`) or a constant step (`by
+// step`). A step named by a constant is a loop of for_kind 10 until the
+// checker knows its value (range_resolve): its set-up stores, the body
+// as written, the step in `expr` (negated for `by -step`) and the
+// range's form in `op`. A literal step down is built at once: the
+// values of `by k` in reverse, from the last one inside the range down
+// to its start, which is always visited (a non-empty range). The first
+// value is computed only for a range that is not empty, so an empty one
+// computes nothing that traps; the loop runs while the range is not
+// empty and leaves by its step's break at the start.
+pub fn range_loop(loc: Location, var: String, first: Expr, end_expr: Expr, end_name: String, incl: Bool, rb: RangeBy, raw_body: Array(Stmt)): Stmt {
+  s = Stmt.new(st_while(), loc)
+  s.pre.push(range_assign(loc, var, first))
+  s.pre.push(range_assign(loc, end_name, end_expr))
+  if named = rb.named {
+    s.for_kind = range_kind_pending()
+    step = named
+    if rb.down {
+      step = Expr.new(ex_unary(), named.loc)
+      step.op = tk_minus()
+      step.inner = named
+    }
+    s.expr = step
+    s.op = if incl { tk_dot_dot_eq() } else { tk_dot_dot() }
+    yes = Expr.new(ex_bool(), loc)
+    yes.bool_val = true
+    s.cond = yes
+    s.body = raw_body
+    return s
+  }
+  range_build(s, loc, var, end_name, incl, rb.by, rb.down, raw_body)
+  s
+}
+
+// Fills s (a range loop with its two set-up stores) with the loop of
+// step `by` (down when `down`): the same loop the parser builds for a
+// literal step.
+pub fn range_build(s: Stmt, loc: Location, var: String, end_name: String, incl: Bool, by: UInt64, down: Bool, raw_body: Array(Stmt)) {
+  s.for_kind = 1
+  s.expr = nil
+  s.op = 0
+  rs = RangeStep.new()
+  rs.by = by
+  op = if incl { tk_less_eq() } else { tk_less() }
+  if !down {
+    if incl {
+      rs.last = end_name
+    }
+    s.cond = range_binary(loc, op, range_name(loc, var), range_name(loc, end_name))
+    s.body = range_advance(rs, raw_body, var, loc)
+    range_step_into(rs, loc, var, s.body)
+    return
+  }
+  lo_name = "${end_name}_lo"
+  rs.down = true
+  rs.lo = lo_name
+  s.pre.push(range_assign(loc, lo_name, range_name(loc, var)))
+  // The first value, set only when the range is not empty (so `end -
+  // 1` never goes below Int's least value): the top, the end itself
+  // (`..=`) or the value before it (`..`), lowered to the last value of
+  // the walk up from the start; the distance from the start is read as
+  // a UInt64, exact even beyond Int's range, and what is taken off it
+  // is less than the step, so the value is never below the start.
+  top = range_name(loc, end_name)
+  if !incl {
+    top = range_binary(loc, tk_minus(), range_name(loc, end_name), range_int(loc, 1u64))
+  }
+  start = top
+  if by != 1u64 {
+    top2 = range_name(loc, end_name)
+    if !incl {
+      top2 = range_binary(loc, tk_minus(), range_name(loc, end_name), range_int(loc, 1u64))
+    }
+    dist = range_call0(loc, range_binary(loc, tk_amp_minus(), top2, range_name(loc, lo_name)), "wrap_u64")
+    extra = range_call0(loc, range_binary(loc, tk_percent(), dist, range_int(loc, by)), "wrap_i")
+    start = range_binary(loc, tk_minus(), top, extra)
+  }
+  first_set = Stmt.new(st_if(), loc)
+  first_set.cond = range_binary(loc, op, range_name(loc, lo_name), range_name(loc, end_name))
+  first_set.then_body.push(range_assign(loc, var, start))
+  s.pre.push(first_set)
+  s.cond = range_binary(loc, op, range_name(loc, lo_name), range_name(loc, end_name))
+  s.body = range_advance(rs, raw_body, var, loc)
+  range_step_into(rs, loc, var, s.body)
 }

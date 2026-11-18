@@ -44,6 +44,8 @@ import checker
 import checker.receiver
 import checker.facts
 import receiver_writes
+import parser
+import checker.consts
 
 pub fn (checker_self: Checker) clear_places {
   checker_self.place_roots = Hash(String, String).new()
@@ -163,6 +165,59 @@ pub fn (checker_self: Checker) refuse_bind_outer_name(st: Stmt, at: Location) {
     form = if st.loop_head { "while" } else { "if" }
     checker_self.fail(at, "${form} ${name} = ...: ${name} already names a variable here; the name a condition binds is its block's own and ends with it (binding ${name} would assign it and leave the value there): give the bound value a new name")
   }
+}
+
+// A range `for` whose step names a module constant (`by step`, `by
+// -m.step`): the constant's value, known here, makes it the loop a
+// literal step makes (the same code as `by 4`); zero is refused, a
+// negative value steps down. A name that is no Int constant is refused,
+// and the loop is then built with step 1 so its body is still checked.
+pub fn (checker_self: Checker) resolve_range_step(stmt: Stmt) {
+  var = ""
+  end_name = ""
+  if t0 = stmt.pre[0].target {
+    var = t0.ident
+  }
+  if t1 = stmt.pre[1].target {
+    end_name = t1.ident
+  }
+  incl = stmt.op == tk_dot_dot_eq()
+  down = false
+  by = 1u64
+  if e = stmt.expr {
+    named = e
+    if e.kind == ex_unary() {
+      if inner = e.inner {
+        named = inner
+        down = true
+      }
+    }
+    what = if named.kind == ex_field() { "a module's constant" } else { named.ident }
+    if named.kind == ex_field() {
+      if o = named.object {
+        what = "${o.ident}.${named.ident}"
+      }
+    }
+    if cv = checker_self.const_named(named) {
+      if checker_self.const_value(cv, named.loc) {
+        if cv.kind != cv_int() {
+          checker_self.fail(named.loc, "for ... by ${what}: the step is an Int; the constant ${what} is ${cv_text(cv)}")
+        } else if cv.iv == 0 {
+          checker_self.fail(named.loc, "for ... by ${what}: the constant ${what} is 0, and the loop would never move: the step is a nonzero integer")
+        } else if cv.iv == Int.min {
+          checker_self.fail(named.loc, "for ... by ${what}: the constant ${what} is too large a step")
+        } else if cv.iv < 0 {
+          by = (0 - cv.iv).to_u64()
+          down = !down
+        } else {
+          by = cv.iv.to_u64()
+        }
+      }
+    } else {
+      checker_self.fail(named.loc, "for ... by ${what}: ${what} is not a module constant; the step is fixed when the loop is compiled: write an integer literal or a constant (const step = 4), or use a while loop for a step computed at run time")
+    }
+  }
+  range_build(stmt, stmt.loc, var, end_name, incl, by, down, stmt.body)
 }
 
 // A builtin block's parameters (`each`, `any`, `all`, a comparator, a

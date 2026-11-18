@@ -801,6 +801,11 @@ fn main {
     steps += i
   }
   puts(steps)                 // => 12
+  back = ""
+  for i in 0..3 by -1 {       // 2, 1, 0
+    back = back + "${i}"
+  }
+  puts(back)                  // => 210
   sum = 0
   for b in "hé".bytes {       // 104, 195, 169
     sum += b
@@ -820,7 +825,7 @@ fn main {
 ```
 
 - **`for i, x in xs`** gives the position, then the element, over an `Array`, `Bytes`, a `Buf` or `s.bytes`. The position is the loop's own, as the variable is: it cannot be assigned, and a `continue` moves it. A range has one variable.
-- **`for i in a..b by k`** (and `a..=b by k`) visits `a`, `a + k`, `a + 2k`, … inside the range; `k` is a positive integer literal. An inclusive range ends at its last value without computing the one past it, so it may end at the largest `Int`. A step down is written with `while`.
+- **`for i in a..b by k`** (and `a..=b by k`) visits `a`, `a + k`, `a + 2k`, … inside the range; `k` is a nonzero integer literal or a module [constant](#constants) (`by chunk`, `by -chunk`), fixed when the loop is compiled. An inclusive range ends at its last value without computing the one past it, so it may end at the largest `Int`. **A step down, `by -k`, visits the same values in reverse**: `for i in 0..n by -1` is `n - 1` down to `0`, and `for i in 0..10 by -3` is `9, 6, 3, 0` (the values of `by 3`, last first); the walk always ends at the range's start, never computes a value below it, and an empty range visits nothing.
 - **Bytes:** `for b in bytes`, `for b in buf` and `for b in s.bytes` give each byte as an `Int` (`s.bytes` walks the string's own bytes, with no copy). A bare `for c in s` is refused with the two walks it may mean: the bytes (`s.bytes`) or the characters (`s.chars()`).
 - **Any type with a method `next` returning `T?`** (a class, a struct or a generic class): `for v in e` is `it = e` (evaluated once), then `while v = it.next() { ... }`, a direct call, the same code as that loop written by hand; the walk ends at the first `nil`. `std.json`'s `arr()`, `std.regex`'s `matches(text)` and a [channel](#channel-and-mutex) (by its `recv`) walk this way. `v` is a copy, as an array's plain element is: it cannot be assigned, nor a field of a struct value. A `T?` operand is opened first (`if it = v.arr() { for e in it { ... } }`). A `next` that can return an error (`T | E`, `T | E | Nil`) is refused: that walk is written `while v = it.next() { ... } else e { ... }` ([While](#while)), whose `else` reads the failure, so an error never ends it as quietly as the end does.
 - **`for w in s.fields()`** scans the string and gives each field as `fields()` would, without building the array.
