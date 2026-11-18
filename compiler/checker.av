@@ -1321,6 +1321,9 @@ pub class Checker {
     if cond = stmt.cond {
       got = check_expr(cond)
       success = if_assign_success(got, cond.loc)
+      if stmt.loop_head && stmt.else_bind.size == 0 && !self.has_err() {
+        loop_drops_error(got, cond.loc)
+      }
       self.push_scope()
       bind(stmt.bind, success)
       check_body(stmt.then_body, expected, false)
@@ -1347,6 +1350,18 @@ pub class Checker {
     }
   }
 
+  // A `while v = f()` whose value can be an error would end on it as it
+  // ends at nil, the error dropped: the loop must read it with
+  // `else e { }`, which runs once when the head fails.
+  pub fn loop_drops_error(got: Ty, loc: Location) {
+    for m in ty_failures(got) {
+      if !m.is_nil() {
+        fail(loc, "this while would end silently when the value is an error (${m.show()}): read it with `while v = f() { ... } else e { ... }`, whose else runs once when the loop ends, with the failure in e")
+        return
+      }
+    }
+  }
+
   // `if v = f() { } else e { }`: the failure the else block reads, of
   // the if-assign's one binding (checked first), or nil after an error:
   // a condition list has several failures, and an if without a binding
@@ -1362,6 +1377,13 @@ pub class Checker {
       return nil
     }
     if c = stmt.cond, ct = c.ty {
+      if stmt.loop_head && ct.is_union() {
+        fails = ty_failures(ct)
+        if fails.size == 1 && fails[0].is_nil() {
+          fail(c.loc, "else ${n} on ${ct.show()}: its only failure is nil, which carries nothing to read, and the loop ends at it by itself: leave the else out")
+          return nil
+        }
+      }
       return else_failure(ct, c.loc, "else ${n}")
     }
     nil
@@ -1584,6 +1606,9 @@ pub class Checker {
       got = check_expr(cond)
       if el.bind.size > 0 {
         success = if_assign_success(got, cond.loc)
+        if el.loop_head && el.else_bind.size == 0 && !self.has_err() {
+          loop_drops_error(got, cond.loc)
+        }
         bind(el.bind, success)
       } else if !got.is_bool() {
         fail(cond.loc, "if condition must be Bool, got ${got.show()}")

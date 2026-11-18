@@ -687,6 +687,29 @@ fn main {
 }
 ```
 
+When `x` can be an error (`T | E`), the loop must read it: `while v = x { ... } else e { ... }` runs the `else` block once, when `x` gives no value, with the failure in `e` (the error, or `nil` at the end), and then the loop ends; a `break` in the body skips it. Without the `else`, such a loop is a compile error (`this while would end silently when the value is an error`), so an error never ends a loop as quietly as the end does. A loop over an optional (`T?`) needs no `else`: its only failure is `nil`.
+
+```avant
+fn total(path: String): Int | IoError {
+  r = file_open(path)?
+  n = 0
+  while line = r.read_line() {
+    n += line.size
+  } else e {
+    if err = e {
+      return err
+    }
+  }
+  n
+}
+
+fn main {
+  _ = file_write("t.txt", "ab\ncde\n")
+  puts(total("t.txt") ?? -1)     // => 5
+  puts(total("none.txt") ?? -1)  // => -1
+}
+```
+
 `break` leaves the nearest loop and `continue` starts its next iteration. `while true { ... }` is the endless loop.
 
 ### For
@@ -3740,20 +3763,18 @@ fn main {
 | `read_line()` | — | `String \| IoError \| Nil`: the next line of standard input without its newline (or a `\r` before it), an unterminated last line included | `nil` at the end; an `IoError` if the read fails | when stdout is a terminal, `read_line` flushes it first, so a `print` prompt shows |
 | `file_read("/dev/stdin")` | — | `String \| IoError` | as [`file_read`](#files-and-directories) | reads all of standard input |
 
-`while line = read_line() { ... }` stops at either; a guard tells them apart (the failure is `nil` at the end).
+`while line = read_line() { ... } else e { ... }` walks the lines; the `else` runs once at the end, with `e` the `IoError` or `nil` ([While](#while)).
 
 ```avant
 fn main {
   count = 0
-  while true {
-    line = read_line() else e {
-      if err = e {
-        eputs("cannot read: ${err}")
-        exit(1)
-      }
-      break
-    }
+  while line = read_line() {
     count += line.size
+  } else e {
+    if err = e {
+      eputs("cannot read: ${err}")
+      exit(1)
+    }
   }
   puts(count)                         // => 0
 }
@@ -3803,6 +3824,10 @@ fn longest(path: String): Int | IoError {
   while line = r.read_line() {
     if line.size > best {
       best = line.size
+    }
+  } else e {
+    if err = e {
+      return err
     }
   }
   best

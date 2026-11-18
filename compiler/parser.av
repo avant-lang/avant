@@ -2348,10 +2348,30 @@ pub class Parser {
       s.body = body
       return s
     }
+    // `while v = f() { } else e { }`: the else block runs once, when
+    // the head fails, with the failure in e; then the loop ends.
+    if head.bind.size > 0 {
+      self.skip_newlines()
+      if self.current().kind == tk_else() {
+        self.bump()
+        self.skip_newlines()
+        if self.current().kind == tk_ident() {
+          head.else_bind = self.bump().value
+          self.skip_newlines()
+        } else {
+          fail(self.current().loc, "a while's else names the failure it reads: write `while v = f() { } else e { }`; to end the loop at any failure, leave the else out")
+        }
+        head.else_body = self.parse_block()
+      }
+    }
     t = Expr.new(ex_bool(), loc)
     t.bool_val = true
     s.cond = t
     head.then_body = body
+    head.loop_head = true
+    for el in head.pre {
+      el.loop_head = true
+    }
     head.else_body.push(Stmt.new(st_break(), loc))
     s.body.push(head)
     s
