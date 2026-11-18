@@ -296,7 +296,16 @@ fn test_std_http(c: Checks) {
     server.get("/hdr", (req) {
       dups = req.headers().get_all("X-Dup")
       first = req.header("x-dup") ?? ""
-      Response.text("${first}/${dups.size}/${req.headers().has("X-One")}")
+      // The walk over the request's headers, in wire order with the
+      // repeated one twice; the client's own lines are skipped.
+      seen = Buf.new()
+      for name, value in req.headers() {
+        if !name.starts_with("X-") {
+          continue
+        }
+        seen.push_str("${name}:${value},")
+      }
+      Response.text("${first}/${dups.size}/${req.headers().has("X-One")}/${seen.to_s()}")
     })
     server.get("/old", (req) {
       Response.text("", 302).header("Location", "/new")
@@ -344,7 +353,7 @@ fn test_std_http(c: Checks) {
     want.push("request-text=text ok")
     want.push("missing=404")
     want.push("mismatch=404")
-    want.push("hdr=one/2/true")
+    want.push("hdr=one/2/true/X-Dup:one,X-Dup:two,X-One:yes,")
     want.push("redir=200:landed")
     want.push("redir-off=302:/new")
     want.push("meta=201:yes,X-Made=yes:true")
