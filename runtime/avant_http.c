@@ -292,6 +292,10 @@ typedef struct AvantWsConn {
   int event_dispatched;
   int pending_close_code;
   int shutdown_after_flush;
+  /* A frame was begun on the wire and its rest could not be queued (no
+   * memory): the stream is cut mid-frame, so the connection is closed
+   * by its loop's next wakeup (ws_cut). */
+  int cut;
   struct AvantWsConn *next_all;
   struct AvantWsConn *next_global;
 } AvantWsConn;
@@ -1188,6 +1192,7 @@ static AvantWsConn *ws_record_take(void) {
   ws->event_dispatched = 0;
   ws->pending_close_code = 0;
   ws->shutdown_after_flush = 0;
+  ws->cut = 0;
   ws->next_all = NULL;
   ws->next_global = NULL;
   return ws;
@@ -1316,6 +1321,26 @@ static int ws_enqueue(AvantWsConn *ws, char *framed, size_t framed_len,
   return 1;
 }
 
+/* A frame's first bytes are on the wire and its rest cannot be queued
+ * (out of memory). Returning false and leaving the connection open let
+ * the next frame's bytes be read as this one's payload; the connection
+ * is closed instead, as the HTTP server's conn_send closes one whose
+ * answer cannot be queued. Not here: a send may run under g_ws_mu, or
+ * inside ws_process's loop over the connection's buffer, and the close
+ * would call srv_on_close, which takes the lock and frees the buffer.
+ * The record is marked dead (every later send answers false) and cut,
+ * and the loop is woken: srv_on_wakeup closes it. Owner thread only (a
+ * frame is begun only by a direct write). */
+static int ws_cut(AvantWsConn *ws) {
+  ws->dead = 1;
+  ws->close_sent = 1;
+  ws->cut = 1;
+  if (ws->loop && ws->loop->loop) {
+    us_wakeup_loop(ws->loop->loop);
+  }
+  return 0;
+}
+
 /* Send one frame. On the loop thread with an empty queue the frame is
  * written vectored with no allocation; only the untaken remainder (or a
  * cross-thread frame, framed into one malloc) ever queues. */
@@ -1348,19 +1373,22 @@ static int ws_send_frame(AvantWsConn *ws, int opcode, const char *payload,
         size_t rem_h = header_len - (size_t)written;
         size_t framed_len = rem_h + len;
         char *framed = (char *)malloc(framed_len ? framed_len : 1);
-        if (!framed) { return 0; }
+        if (!framed) { return written > 0 ? ws_cut(ws) : 0; }
         memcpy(framed, header + written, rem_h);
         if (len > 0) { memcpy(framed + rem_h, payload, len); }
-        return ws_enqueue(ws, framed, framed_len, written > 0);
+        if (!ws_enqueue(ws, framed, framed_len, written > 0)) {
+          return written > 0 ? ws_cut(ws) : 0;
+        }
+        return 1;
       }
       {
         size_t rem = len - ((size_t)written - header_len);
         const char *src = payload + ((size_t)written - header_len);
         char *framed = (char *)malloc(rem ? rem : 1);
-        if (!framed) { return 0; }
+        if (!framed) { return ws_cut(ws); }
         if (rem > 0) { memcpy(framed, src, rem); }
         if (!ws_enqueue(ws, framed, rem, 1)) {
-          return 0;
+          return ws_cut(ws);
         }
         if ((size_t)written == header_len + first) {
           /* The socket took the whole piece: it has not asked for the
@@ -2638,13 +2666,17 @@ static void srv_on_wakeup(struct us_loop_t *loop) {
     return;
   }
   if (!hl->srv->closing) {
-    /* A cross-thread WebSocket send queued frames and woke the loop. */
+    /* A cross-thread WebSocket send queued frames and woke the loop, or
+     * a frame was cut (ws_cut): that connection is closed. */
     ConnNode *node = hl->conns_head;
     while (node) {
-      if (node->conn.ws) {
+      ConnNode *next = node->next;
+      if (node->conn.ws && node->conn.ws->cut) {
+        us_socket_close(0, node->sock, 0, NULL);
+      } else if (node->conn.ws) {
         ws_flush(node->conn.ws);
       }
-      node = node->next;
+      node = next;
     }
     return;
   }

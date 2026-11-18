@@ -975,6 +975,55 @@ fn ws_handshake_cases(c: Checks, root: String) {
 // neither deadline is read from the wall clock any more; the kernel's
 // side of a real step (the futex's clock) is CLOCK_MONOTONIC's by the
 // condition variable's attribute, which the shim cannot reach.
+// A WebSocket frame whose rest could not be
+// copied (out of memory) after its first bytes were on the wire: the
+// send returned false and left the connection open, so the next frame
+// was read as the rest of its payload. The connection is closed now
+// (1006 to the close handler) and every later send answers false; the
+// server goes on. tests/fixtures/http/ws_cut.av runs under the
+// LD_PRELOAD shim tests/fixtures/http/malloc_fail.c, which fails the
+// fixture's large mallocs while its handler sends.
+fn ws_cut_cases(c: Checks, root: String) {
+  if compiler = env_get("AVANT_COMPILER") {
+    stamp = now_ms()
+    bin = "${scratch()}/ws-cut-${stamp}.bin"
+    so = "${scratch()}/malloc-fail-${stamp}.so"
+    code = compile_av(compiler, "${root}/tests/fixtures/http/ws_cut.av", bin, "${scratch()}/ws-cut-${stamp}.clog")
+    c.eq_int(code, 0, "the cut-frame fixture compiles")
+    cargs: Array(String) = []
+    cargs.push("cc")
+    cargs.push("-shared")
+    cargs.push("-fPIC")
+    cargs.push("-o")
+    cargs.push(so)
+    cargs.push("${root}/tests/fixtures/http/malloc_fail.c")
+    c.eq_int(process_run_out("/usr/bin/env", cargs, "${scratch()}/malloc-fail-${stamp}.cclog") ?? -1, 0, "the malloc-fail shim builds")
+    port_file = "${scratch()}/ws-cut-${stamp}.port"
+    log = "${scratch()}/ws-cut-${stamp}.log"
+    server = spawn {
+      args: Array(String) = []
+      args.push("LD_PRELOAD=${so}")
+      args.push(bin)
+      args.push(port_file)
+      process_run_out("/usr/bin/env", args, log) ?? -1
+    }
+    wlog = "${scratch()}/ws-cut-${stamp}.wire"
+    pargs: Array(String) = []
+    pargs.push("${root}/tests/fixtures/http/raw_client.py")
+    pargs.push("0")
+    pargs.push("ws_cut")
+    pargs.push(port_file)
+    _ = process_run_out("/usr/bin/python3", pargs, wlog)
+    wire = nth_line(file_read(wlog) ?? "", 0)
+    port = wait_port(port_file)
+    stop(port)
+    c.eq_int(server.join() ?? -1, 0, "the cut-frame server ends, status 0")
+    c.eq_str(wire, "ws_cut=closed mid-frame; big false, after false, closed 1006", "a frame whose rest cannot be queued closes its connection")
+  } else {
+    c.expect(false, "AVANT_COMPILER is set for the cut-frame test")
+  }
+}
+
 fn ws_deadline_cases(c: Checks, root: String) {
   if compiler = env_get("AVANT_COMPILER") {
     stamp = now_ms()
@@ -1466,5 +1515,6 @@ fn main: Int {
   limit_cases(c, avant_test_root())
   ws_handshake_cases(c, avant_test_root())
   ws_deadline_cases(c, avant_test_root())
+  ws_cut_cases(c, avant_test_root())
   c.finish()
 }

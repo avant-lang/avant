@@ -4425,7 +4425,7 @@ fn main {
 | `websocket_open(path, (conn) { ... })`, `websocket_close(path, (conn, code, reason) { ... })` | `path: String`, a lambda | the `Server` | — | run once per connection (code 1006 when it dropped without a close frame) |
 | `msg.text()`, `msg.is_text` | — | `String?`: the text, `nil` for a binary message or bytes that are not valid UTF-8; `Bool` | — | a text message |
 | `msg.body`, `msg.is_binary` | — | `Bytes`; `Bool` | — | `msg.body` is always the payload |
-| `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")` | the text, `Bytes` or message; `code: Int`, `reason: String` | `Bool` | `false` when the connection is closed or its send queue is full | a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole |
+| `send_text`, `send_bytes`, `send_message`, `close(code = 1000, reason = "")` | the text, `Bytes` or message; `code: Int`, `reason: String` | `Bool` | `false` when the connection is closed or its send queue is full | a message that cannot go out at once and would leave more than 1 MiB waiting is refused whole; one the socket has begun to take is always sent whole, or, when no memory is left to hold its rest, the connection is closed |
 | `conn.sender` | — | a sender with the same four calls | — | a connection stays on its loop thread: to answer from a `spawn` block, capture `conn.sender` and send through it |
 
 A `WsConn` kept after its connection closed, or after `serve` returned, answers `false` to all four. Ping, the close handshake and fragmentation are handled for you. `server.close()` sends code 1001 to open connections.

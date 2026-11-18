@@ -1,0 +1,74 @@
+import std.http
+import std.sync
+
+// A WebSocket frame whose rest cannot be queued: run by
+// tests/cases/test_std_http_safety.av under the LD_PRELOAD shim
+// tests/fixtures/http/malloc_fail.c. On "big N" the handler sends a
+// text of N bytes with mallocs of a megabyte or more failing, to a
+// client that is not reading (raw_client.py mode ws_cut): the socket
+// takes the frame's head and part of its payload, and the copy of the
+// rest fails. The send returned false and left the connection open with
+// half a frame on the wire, so the next frame ("after") was read as the
+// rest of its payload; the connection is closed now, and later sends
+// answer false. "said" answers with what the sends returned and the
+// close code the close handler saw. With an argument (a path) it writes
+// its port there and serves; without one (the run goldens) it stops.
+
+lib c {
+  fun setenv(name: String, value: String, overwrite: Int32): Int32
+}
+
+fn fail_big_mallocs(on: Bool) {
+  value = ""
+  if on {
+    value = "1048576"
+  }
+  one: Int32 = 1
+  _ = c.setenv("AVANT_TEST_MALLOC_FAIL", value, one)
+}
+
+fn main: Int {
+  a = argv()
+  if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
+    server = opened
+    said = Mutex(String).new("nothing")
+    server.websocket("/ws", (conn, msg) {
+      text = msg.text() ?? ""
+      if text.size > 4 && text[0] == 98 && text[1] == 105 && text[2] == 103 && text[3] == 32 {
+        n = str_slice(text, 4, text.size).to_i() ?? 0
+        b = buf_new()
+        for i in 0..n {
+          b.push_byte(97 + i % 26)
+        }
+        big = b.to_s()
+        fail_big_mallocs(true)
+        sent = conn.send_text(big)
+        fail_big_mallocs(false)
+        after = conn.send_text("after")
+        said.with((v) { v = "big ${sent}, after ${after}" })
+      } else {
+        report = said.with((v) { v })
+        _ = conn.send_text(report)
+      }
+    })
+    server.websocket_close("/ws", (conn, code, reason) {
+      said.with((v) { v = "${v}, closed ${code}" })
+    })
+    server.get("/__stop", (req) {
+      server.close()
+      Response.text("bye")
+    })
+    if a.size > 1 {
+      if wrote = file_write(a[1], "${server.port()}\n") {
+      }
+      server.serve()
+      puts("served")
+      return 0
+    }
+    server.close()
+    puts("closed")
+    return 0
+  }
+  puts("listen failed")
+  1
+}

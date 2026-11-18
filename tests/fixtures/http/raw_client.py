@@ -669,6 +669,42 @@ def ws_big(size):
     return "whole,then %s" % payload.decode("latin1")
 
 
+def ws_cut(port_file):
+    # tests/fixtures/http/ws_cut.av under the malloc_fail shim: a frame of
+    # 8 MiB to a client that does not read for 0.3 s, whose rest the
+    # server cannot copy. The connection must end before the frame does
+    # (it stayed open, the next frame's bytes read as this one's
+    # payload); a second connection then reads what the sends returned.
+    if not wait_port(port_file):
+        return "no port"
+    s = small_rcvbuf()
+    s.sendall(b"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(4096)
+        if not chunk:
+            return "no handshake"
+        buf += chunk
+    buf = buf.split(b"\r\n\r\n", 1)[1]
+    ws_frame(s, 1, b"big 8388608")
+    time.sleep(0.3)
+    s.settimeout(3)
+    try:
+        op, payload, buf = ws_read_frame(s, buf)
+        first = "a whole frame of %d bytes" % len(payload)
+    except EOFError:
+        first = "closed mid-frame"
+    except OSError as e:
+        first = "still open mid-frame (%s)" % e
+    s.close()
+    time.sleep(0.2)
+    t, buf = ws_open("/ws")
+    ws_frame(t, 1, b"said")
+    op, payload, buf = ws_read_frame(t, buf)
+    t.close()
+    return "%s; %s" % (first, payload.decode("latin1"))
+
+
 def until_closed(s, limit):
     """Reads until the server ends the connection; returns what came and
     the seconds that took (None when it was still open after `limit`)."""
@@ -816,6 +852,8 @@ try:
         result = handler_trap(arg)
     elif mode == "callback_trap":
         result = callback_trap(arg)
+    elif mode == "ws_cut":
+        result = ws_cut(arg)
     elif mode == "ws_big":
         result = ws_big(int(arg))
     else:
