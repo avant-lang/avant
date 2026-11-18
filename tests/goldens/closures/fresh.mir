@@ -13,12 +13,10 @@ layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 } 
 layout %fn():Int = fnval { 0 env: ref, 1 code: code(ref) -> i64 }  size 16 align 8
 layout %elems(fn():Int) = elems { 0: %fn():Int }  size 16 align 8 id 65535
 layout %Array(fn():Int) = array { 0 data: ref %elems(fn():Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
-layout %Hash = hash { 0 keys: ref, 1 vals: ref, 2 meta: ref, 3 size: i32, 4 cap: i32, 5 desc: i32, 6 seed: i32, 7 used: i32, 8 widths: i32, 9 adds: u32 }  size 56 align 8 id 1023
+layout %Hash = hash { 0 keys: ref, 1 vals: ref, 2 meta: ref, 3 size: i32, 4 cap: i32, 5 desc: i32, 6 seed: i32, 7 used: i32, 8 widths: i32, 9 changes: u32 }  size 56 align 8 id 1023
 layout %fn():String = fnval { 0 env: ref, 1 code: code(ref) -> ref str }  size 16 align 8
 layout %elems(fn():String) = elems { 0: %fn():String }  size 16 align 8 id 65535
 layout %Array(fn():String) = array { 0 data: ref %elems(fn():String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
-layout %elems(String) = elems { 0: ref str }  size 8 align 8
-layout %Array(String) = array { 0 data: ref %elems(String), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 
 const str.0 = "a"
 const str.1 = "b"
@@ -40,9 +38,11 @@ extern __avant_type_maps() -> void never
 extern avant_alloc(u64, u32) -> ref collects alloc
 extern avant_array_push_slot(ref, u64, u32) -> addr collects
 extern avant_hash_create(u32) -> ref collects
-extern avant_hash_find_sk(ref, ref str, ptr) -> ptr never
-extern avant_hash_keys(ref) -> ref collects
 extern avant_hash_put_sk(ref, ref str) -> ptr collects
+extern avant_hash_walk(ref, i32) -> i32 never
+extern avant_hash_walk_key(ref, i32) -> ptr never
+extern avant_hash_walk_ok(ref, u32, i32) -> i32 never
+extern avant_hash_walk_val(ref, i32) -> ptr never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_bool(i32) -> void never
 extern avant_puts_i64(i64) -> void never
@@ -151,47 +151,46 @@ fn main(_1: i32, _2: ptr) -> i32 frame extern @fresh.av:21:1 {
   let _74 (gs): ref %Array(fn():String) slot
   let _75: ref %Hash slot
   let _76: u32
-  let _77: ref %Array(String) slot
+  let _77: i32
   let _78: i32
-  let _79: i32
-  let _80: bool
-  let _81: ref %elems(String)
+  let _79: bool
+  let _80: ptr
+  let _81: ptr ref str
   let _82: ref str slot
-  let _83: i32
-  let _84: ptr i32
-  let _85: ptr
-  let _86: ptr i64
-  let _87: i64
-  let _88: bool
-  let _89: i64
-  let _90: ref %env(av.fresh/main#lam2)
-  let _91: %fn():String slot
-  let _92: addr %fn():String
-  let _93: u32
-  let _94: bool
-  let _95: i32
-  let _96: i64
-  let _97: ref %elems(fn():String)
+  let _83: ptr
+  let _84: ptr i64
+  let _85: i64
+  let _86: ref %env(av.fresh/main#lam2)
+  let _87: %fn():String slot
+  let _88: addr %fn():String
+  let _89: u32
+  let _90: bool
+  let _91: i32
+  let _92: bool
+  let _93: i32
+  let _94: i32
+  let _95: i64
+  let _96: ref %elems(fn():String)
+  let _97: %fn():String
   let _98: %fn():String
-  let _99: %fn():String
+  let _99: ref str slot
   let _100: ref str slot
-  let _101: ref str slot
-  let _102: i32
-  let _103: i64
-  let _104: ref %elems(fn():String)
+  let _101: i32
+  let _102: i64
+  let _103: ref %elems(fn():String)
+  let _104: %fn():String
   let _105: %fn():String
-  let _106: %fn():String
-  let _107: ref str slot
-  let _108: ref str
-  let _109: %(Nil|Int)
-  let _110: ref %env(av.fresh/main#lam3)
-  let _111: %fn():Int
-  let _112 (see_opt): %fn():Int slot
-  let _113: %fn():Int
-  let _114: i64
-  let _115: %(Nil|Int)
-  let _116: %fn():Int
-  let _117: i64
+  let _106: ref str slot
+  let _107: ref str
+  let _108: %(Nil|Int)
+  let _109: ref %env(av.fresh/main#lam3)
+  let _110: %fn():Int
+  let _111 (see_opt): %fn():Int slot
+  let _112: %fn():Int
+  let _113: i64
+  let _114: %(Nil|Int)
+  let _115: %fn():Int
+  let _116: i64
 
 bb0:
   _3 = zero   @21:1
@@ -206,15 +205,14 @@ bb0:
   _68 = zero   @21:1
   _74 = zero   @21:1
   _75 = zero   @21:1
-  _77 = zero   @21:1
   _82 = zero   @21:1
-  _91 = zero   @21:1
+  _87 = zero   @21:1
+  _99 = zero   @21:1
   _100 = zero   @21:1
-  _101 = zero   @21:1
-  _107 = zero   @21:1
-  _112 = zero   @21:1
+  _106 = zero   @21:1
+  _111 = zero   @21:1
   gc.enter   @21:1
-  gc.roots _2, _3, _4, _5, _6, _7, _41, _42, _45, _52, _68, _74, _75, _77, _82, _91, _100, _101, _107, _112   @21:1
+  gc.roots _2, _3, _4, _5, _6, _7, _41, _42, _45, _52, _68, _74, _75, _82, _87, _99, _100, _106, _111   @21:1
   call __avant_type_maps() nocollect   @21:1
   call avant_io_init_argv(copy _1, copy _2) collects   @21:1
   _3 = zero   @21:1
@@ -382,89 +380,92 @@ bb19:
   _74 = copy _73   @53:3
   _75 = copy _68   @54:3
   _76 = copy (*_75).9   @54:4
-  _77 = call avant_hash_keys(copy _75) collects   @54:4
-  _78 = const i32 0   @54:4
+  _77 = const i32 0   @54:4
   goto bb20   @54:4
 
 bb20:
-  _79 = copy (*_77).1   @54:4
-  _80 = lt copy _78, copy _79   @54:4
-  branch copy _80, bb21, bb23   @54:4
+  _78 = call avant_hash_walk(copy _75, copy _77) nocollect   @54:4
+  _79 = lt copy _78, const i32 0   @54:4
+  branch copy _79, bb23, bb21   @54:4
 
 bb21:
-  _81 = copy (*_77).0   @54:4
-  _82 = copy (*_81)[copy _78]   @54:4
+  _77 = add copy _78, const i32 1   @54:4
+  _80 = call avant_hash_walk_key(copy _75, copy _78) nocollect   @54:4
+  _81 = cast copy _80 to ptr ref str   @54:4
+  _82 = copy (*_81)   @54:4
   _4 = call avant_alloc(const u64 8, const u32 3) collects fresh   @54:10
   (*_4).0 = copy _82 fresh   @54:10
-  _83 = const i32 0   @54:4
-  _84 = addr.raw _83   @54:4
-  _85 = call avant_hash_find_sk(copy _75, copy _82, copy _84) nocollect   @54:4
-  _86 = cast copy _85 to ptr i64   @54:4
-  _87 = copy (*_86)   @54:4
-  _88 = eq copy _83, const i32 1   @54:4
-  branch copy _88, bb24, bb22   @54:4
+  _83 = call avant_hash_walk_val(copy _75, copy _78) nocollect   @54:4
+  _84 = cast copy _83 to ptr i64   @54:4
+  _85 = copy (*_84)   @54:4
+  _5 = call avant_alloc(const u64 8, const u32 1) collects   @54:10
+  (*_5).0 = copy _85   @54:10
+  _86 = call avant_alloc(const u64 16, const u32 4) collects fresh   @54:27
+  (*_86).0 = copy _4 fresh   @54:27
+  (*_86).1 = copy _5 fresh   @54:27
+  _87 = fnval %fn():String (copy _86, const fn av.fresh/main#lam2)   @54:27
+  _88 = call avant_array_push_slot(copy _74, const u64 16, const u32 65535) collects   @54:21
+  (*_88) = copy _87   @54:21
+  goto bb22   @54:4
 
 bb22:
-  _93 = copy (*_75).9   @54:4
-  _94 = ne copy _93, copy _76   @54:4
-  branch copy _94, bb25, bb26   @54:4
+  _89 = copy (*_75).9   @54:4
+  _90 = ne copy _89, copy _76   @54:4
+  branch copy _90, bb24, bb25   @54:4
 
 bb23:
-  _95 = copy (*_74).1   @55:11
-  _96 = cast copy _95 to i64   @55:11
-  check.bounds const i64 0, copy _96   @55:11
-  _97 = copy (*_74).0   @55:11
-  _98 = copy (*_97)[const i64 0]   @55:11
-  _99 = copy _98   @55:15
-  _100 = call indirect copy _99() collects   @55:15
-  _101 = call avant_str_concat(copy _100, const str.2) collects   @55:18
-  _102 = copy (*_74).1   @55:29
-  _103 = cast copy _102 to i64   @55:29
-  check.bounds const i64 1, copy _103   @55:29
-  _104 = copy (*_74).0   @55:29
-  _105 = copy (*_104)[const i64 1]   @55:29
-  _106 = copy _105   @55:33
-  _107 = call indirect copy _106() collects   @55:33
-  _108 = call avant_str_concat(copy _101, copy _107) collects   @55:24
-  call avant_puts_str(copy _108) nocollect   @55:3
+  _94 = copy (*_74).1   @55:11
+  _95 = cast copy _94 to i64   @55:11
+  check.bounds const i64 0, copy _95   @55:11
+  _96 = copy (*_74).0   @55:11
+  _97 = copy (*_96)[const i64 0]   @55:11
+  _98 = copy _97   @55:15
+  _99 = call indirect copy _98() collects   @55:15
+  _100 = call avant_str_concat(copy _99, const str.2) collects   @55:18
+  _101 = copy (*_74).1   @55:29
+  _102 = cast copy _101 to i64   @55:29
+  check.bounds const i64 1, copy _102   @55:29
+  _103 = copy (*_74).0   @55:29
+  _104 = copy (*_103)[const i64 1]   @55:29
+  _105 = copy _104   @55:33
+  _106 = call indirect copy _105() collects   @55:33
+  _107 = call avant_str_concat(copy _100, copy _106) collects   @55:24
+  call avant_puts_str(copy _107) nocollect   @55:3
   _6 = call avant_alloc(const u64 16, const u32 5) collects   @56:3
-  _109 = call av.fresh/maybe(const i64 3) nocollect   @56:9
-  (*_6).0 = copy _109   @56:7
-  _110 = call avant_alloc(const u64 8, const u32 6) collects fresh   @57:24
-  (*_110).0 = copy _6 fresh   @57:24
-  _111 = fnval %fn():Int (copy _110, const fn av.fresh/main#lam3)   @57:24
-  _112 = copy _111   @57:3
-  _113 = copy _112   @63:8
-  _114 = call indirect copy _113() collects   @63:8
-  call avant_puts_i64(copy _114) nocollect   @63:3
-  _115 = call av.fresh/maybe(const i64 0) nocollect   @64:9
-  (*_6).0 = copy _115   @64:7
-  _116 = copy _112   @65:8
-  _117 = call indirect copy _116() collects   @65:8
-  call avant_puts_i64(copy _117) nocollect   @65:3
+  _108 = call av.fresh/maybe(const i64 3) nocollect   @56:9
+  (*_6).0 = copy _108   @56:7
+  _109 = call avant_alloc(const u64 8, const u32 6) collects fresh   @57:24
+  (*_109).0 = copy _6 fresh   @57:24
+  _110 = fnval %fn():Int (copy _109, const fn av.fresh/main#lam3)   @57:24
+  _111 = copy _110   @57:3
+  _112 = copy _111   @63:8
+  _113 = call indirect copy _112() collects   @63:8
+  call avant_puts_i64(copy _113) nocollect   @63:3
+  _114 = call av.fresh/maybe(const i64 0) nocollect   @64:9
+  (*_6).0 = copy _114   @64:7
+  _115 = copy _111   @65:8
+  _116 = call indirect copy _115() collects   @65:8
+  call avant_puts_i64(copy _116) nocollect   @65:3
   _0 = const i32 0   @21:1
   gc.leave   @21:1
   return   @21:1
 
 bb24:
-  _89 = copy _87   @54:4
-  _5 = call avant_alloc(const u64 8, const u32 1) collects   @54:10
-  (*_5).0 = copy _89   @54:10
-  _90 = call avant_alloc(const u64 16, const u32 4) collects fresh   @54:27
-  (*_90).0 = copy _4 fresh   @54:27
-  (*_90).1 = copy _5 fresh   @54:27
-  _91 = fnval %fn():String (copy _90, const fn av.fresh/main#lam2)   @54:27
-  _92 = call avant_array_push_slot(copy _74, const u64 16, const u32 65535) collects   @54:21
-  (*_92) = copy _91   @54:21
-  goto bb22   @54:4
+  _91 = call avant_hash_walk_ok(copy _75, copy _76, copy _78) nocollect   @54:4
+  _92 = ne copy _91, const i32 1   @54:4
+  branch copy _92, bb26, bb27   @54:4
 
 bb25:
-  call avant_trap_walk(const i32 0) nocollect   @54:4
-  unreachable   @54:4
+  goto bb20   @54:4
 
 bb26:
-  _78 = add copy _78, const i32 1   @54:4
-  goto bb20   @54:4
+  _93 = add copy _91, const i32 0   @54:4
+  call avant_trap_walk(copy _93) nocollect   @54:4
+  unreachable   @54:4
+
+bb27:
+  _76 = copy _89   @54:4
+  goto bb25   @54:4
 }
 
 fn av.fresh/main#lam1(_1: ref) -> i64 leaf @fresh.av:48:25 {

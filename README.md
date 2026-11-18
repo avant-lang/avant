@@ -716,7 +716,7 @@ fn main {
 
 ### For
 
-`for` walks a range, an array, a `Set`, the bytes of `Bytes`, a `Buf` or a string, or anything with a `next` method.
+`for` walks a range, an array, a `Hash` (`for k, v in h`), a `Set`, the bytes of `Bytes`, a `Buf` or a string, or anything with a `next` method.
 
 ```avant
 fn main {
@@ -763,6 +763,7 @@ fn main {
 ```
 
 - A range is only a `for` form: it is not a value you can store. There is no `...`: it is refused with a message naming `..` and `..=` (in Ruby and Crystal `...` excludes its end, so a port would otherwise be off by one).
+- `for k, v in h` walks a hash's keys with their values, `for k in h.keys()` its keys and `for v in h.values()` its values, in the order the keys were inserted, reading the table in place (no array is made); `for v in s` walks a `Set` the same way. What a walk allows the body to change is in [Hash operations](#hash-operations).
 - Arrays and hashes also have `each` ([Array operations](#array-operations), [Hash operations](#hash-operations)).
 
 **More forms.** A position beside the element, a step, bytes, and any type with `next`:
@@ -1623,8 +1624,9 @@ fn main {
 | `h.delete(k)` | remove the key; returns the value it held, or `nil` |
 | `h.inc(k)`, `h.inc(k, by)` | add to a counter, starting from 0, and give its new value (integer values only; `by` has the value's type); traps on overflow |
 | `h.size`, `h.clear()` | number of keys; remove all |
-| `h.keys()`, `h.values()` | arrays, in unspecified order |
-| `h.each (k, v) { ... }` | walk every key with its value |
+| `h.keys()`, `h.values()` | arrays, in the order the keys were inserted |
+| `for k, v in h { ... }`, `h.each (k, v) { ... }` | walk every key with its value, in that order |
+| `h.delete_if (k, v) { ... }` | remove the entries the lambda says `true` for, in one pass, keeping the others in order |
 
 ```avant
 fn main {
@@ -1642,8 +1644,23 @@ fn main {
 }
 ```
 
-- **Iteration order is unspecified** (stable for one program); sort the keys when order matters. Insertion order is decided, not built.
-- **Changing a hash during its walk:** assigning an existing key's value, deleting a key (the one being visited or another) and `clear()` are allowed, and a key deleted before the walk reaches it is not visited. Adding a key, through the walked name or any other, would be missed by the walk, so it stops the program after that step (`avant runtime: a key was added to a Hash during its walk, …`); collect the new entries and add them after the walk.
+```avant
+fn main {
+  stock = ["tea": 12, "milk": 0, "cake": 3]
+  for name, n in stock {
+    if n == 0 {
+      stock.delete(name)                  // the visited key: allowed
+    }
+  }
+  stock.delete_if (name, n) { n > 10 }
+  for name, n in stock {
+    puts("${name} ${n}")                  // => cake 3
+  }
+}
+```
+
+- **Iteration order is the order of insertion**, for every key type: `keys()`, `values()`, `for` and `each` give the keys in the order they were first set; replacing a value keeps its key's place, and a key deleted and set again goes last. The hashing takes a seed drawn once per process, so keys chosen to collide in one run do not in the next; no output depends on it (`AVANT_HASH_SEED=n` fixes it, for a measurement that must repeat itself exactly).
+- **Changing a hash during its walk:** a walk reads the table in place. Assigning an existing key's value and deleting the key being visited are allowed (the walk goes on with the next one: `for k, v in h { if v == 0 { h.delete(k) } }`). Adding a key would be missed by the walk, and deleting another key (or `clear()`) would change what is left to walk, so each, through the walked name or any other, stops the program after that step (`avant runtime: a key was added to a Hash during its walk, …`, `… a key other than the visited one was deleted from a Hash during its walk …`); collect the keys and change the hash after the walk, or use `delete_if`.
 - Without building the key, `h.inc_slice(s, start, stop)` and `h.get_slice(s, start, stop)` look up a slice of `s`, and `h.get_concat(a, b)` looks up `a + b`.
 
 ### Key and value types
@@ -1754,11 +1771,12 @@ fn main {
 | `s.has(v)` | `Bool`: whether `v` is in the set |
 | `s.delete(v)` | take `v` out; `true` when it was there |
 | `s.size`, `s.clear()` | number of elements; remove all |
-| `s.values()` | the elements as an array, in unspecified order |
-| `s.each (v) { ... }`, `for v in s` | walk every element (over the array `values()` makes when the walk starts); an element added during the walk stops the program after that step, as in a hash's walk |
+| `s.values()` | the elements as an array, in the order they were added |
+| `for v in s`, `s.each (v) { ... }` | walk every element in that order, in place; during the walk, deleting the visited element is allowed, and adding an element or deleting another stops the program after that step, as in a hash's walk |
+| `s.delete_if (v) { ... }` | remove the elements the lambda says `true` for, keeping the others in order |
 
 - A set is stored as a `Hash` whose values are one byte nobody reads, and costs what that hash costs; a set is shared as a hash is.
-- **Iteration order is unspecified**, as a hash's; sort `values()` when order matters.
+- **Iteration order is the order of insertion**, as a hash's.
 - An array literal passed to a `Set` parameter is that set (`count([1, 2, 2])` with `fn count(s: Set(Int))`); where an overload takes an `Array` in that place, the literal is the array.
 - Not built yet: `==` on sets, and union, intersection and difference (a loop over `for` does them).
 
@@ -4956,7 +4974,7 @@ Where Avant differs on purpose:
 | `mutating` or `&mut self` on methods that change a struct | a method may change its struct receiver; an argument is a copy ([Structs](#structs)) | Go's pointer receiver, taken automatically |
 | strings of characters | strings of bytes; `.chars` or `.code_points()` when you want code points ([Bytes, not characters](#bytes-not-characters)) | constant-time `size` and indexing |
 | a missing hash key that raises, or reads as zero | `h[k]` is `V?` ([Hashes](#hashes)) | absence is handled where it happens |
-| hashes that remember insertion order | iteration order is unspecified, for now | |
+| hashes that remember insertion order | they do, for every key type ([Hashes](#hashes)) | |
 | members public by default | functions, types, methods and fields are private to their module unless `pub` ([Visibility](#visibility)) | a module's surface is what it says it is |
 | `let`, `var`; a `const` inside a function; global variables | `=` declares or assigns; `const` is a module's named value, and a module has no variables ([Names and scope](#names-and-scope), [Constants](#constants)) | no state shared by accident |
 | `Array<Int>`, `[]int`, `Vec<i32>` | `Array(Int)`; a single capital letter in a signature is a type parameter ([Generics](#generics)) | |
@@ -4982,7 +5000,6 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 | Missing | Status | Today |
 | --- | --- | --- |
 | Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
-| `Hash` insertion order | decided | sort the keys ([hash operations](#hash-operations)) |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#lambdas) |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` on hashes | planned | a loop |

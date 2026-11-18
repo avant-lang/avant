@@ -537,3 +537,58 @@ pub fn (checker_self: Checker) check_array_fn_verb(expr: Expr, array: Ty, e: Ty)
   }
   res
 }
+
+// `h.delete_if((k, v) { ... })` on a Hash, `s.delete_if((v) { ... })` on
+// a Set: the entries the predicate holds for removed, in one pass in
+// place, the others kept in their order (the walk in place, each entry
+// read once; its parameters are copies, as each's are). Void.
+pub fn (checker_self: Checker) check_hash_delete_if(expr: Expr, hash: Ty, is_set: Bool): Ty {
+  res = checker_self.t_void()
+  form = "(k, v) { ... }"
+  n = 2
+  if is_set {
+    form = "(v) { ... }"
+    n = 1
+  }
+  if expr.args.size != 0 {
+    checker_self.fail(expr.loc, "delete_if takes one function, ${form}")
+    return res
+  }
+  b = Block.new(expr.loc)
+  if bl = expr.block {
+    b = bl
+  } else {
+    checker_self.fail(expr.loc, "delete_if takes one function, ${form}")
+    return res
+  }
+  if !b.paren {
+    checker_self.fail(b.loc, "delete_if takes a lambda: write delete_if(${form}) or delete_if ${form}")
+    return res
+  }
+  if b.params.size != n {
+    checker_self.fail(b.loc, "delete_if on ${hash.show()} takes a function of ${n} parameters, ${form}")
+    return res
+  }
+  if k = hash.key {
+    saved_for = checker_self.for_names.size
+    checker_self.refuse_block_param_outer(b, "delete_if")
+    checker_self.push_scope()
+    checker_self.bind(b.params[0], k)
+    checker_self.note_for_var(b.params[0], 8)
+    if !is_set {
+      if v = hash.val {
+        checker_self.bind(b.params[1], v)
+        checker_self.note_for_var(b.params[1], 8)
+      }
+    }
+    checker_self.loop_depth += 1
+    bt = checker_self.check_walk_value(b, "delete_if", checker_self.t_bool())
+    checker_self.loop_depth -= 1
+    checker_self.pop_scope()
+    checker_self.end_for_vars(saved_for)
+    if !checker_self.has_err() && !bt.is_bool() {
+      checker_self.fail(b.loc, "the predicate of delete_if must give a Bool, got ${bt.show()}")
+    }
+  }
+  res
+}

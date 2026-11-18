@@ -928,6 +928,9 @@ pub fn (checker_self: Checker) check_set_method(expr: Expr, set: Ty): Ty {
     }
     return ty_array(elem)
   }
+  if c == "delete_if" {
+    return checker_self.check_hash_delete_if(expr, set, true)
+  }
   if c == "each" {
     if b = expr.block {
       if expr.args.size != 0 {
@@ -1067,6 +1070,9 @@ pub fn (checker_self: Checker) check_hash_method(expr: Expr, hash: Ty): Ty {
       }
     }
     return vt
+  }
+  if expr.callee == "delete_if" {
+    return checker_self.check_hash_delete_if(expr, hash, false)
   }
   if expr.callee == "each" {
     if b = expr.block {

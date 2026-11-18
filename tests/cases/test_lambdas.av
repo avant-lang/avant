@@ -79,14 +79,14 @@ fn cases: Array(LCase) {
 
 // `avant format --lambdas`: every block in pipes rewritten (a value, a
 // call's last argument, the shorthand, the full form in a head, a
-// building block), a builtin's loop body that returns made a for, a
-// hash walk that returns and a generic body the checker never reaches
-// left and reported; a second run changes nothing; the program prints
+// building block), a builtin's loop body that returns made a for (a
+// hash walk's with its two names), a generic body the checker never
+// reaches left and reported; a second run changes nothing; the program prints
 // what it printed.
 fn check_format_lambdas(c: Checks, compiler: String, dir: String) {
   src = "${dir}/lam-format.av"
   before = "fn twice(n: Int, f: fn(Int): Int): Int {\n  f(f(n))\n}\n\nfn first_neg(xs: Array(Int)): Int {\n  xs.each { |x|\n    if x < 0 {\n      return x\n    }\n  }\n  0\n}\n\nfn main {\n  xs = [3, -1, 2]\n  xs.each { |x| puts(x) } // a comment\n  puts(twice(3) { |n| n * 2 })\n  if xs.any { |x| x > 2 } {\n    puts(\"big\")\n  }\n  f = { |a: Int, b: Int| a + b }\n  g = { || 7 }\n  puts(f(1, g()))\n  ys = Array(Int).new(3) { |i| i * i }\n  puts(ys[2])\n  puts(first_neg(xs))\n  h = [\"a\": 1]\n  h.each { |k, v|\n    if v > 5 {\n      return\n    }\n    puts(k)\n  }\n  xs.sort { |a, b| a < b }\n}\n\nfn find_first(xs: Array(T), f: fn(T): Bool): T? {\n  xs.each { |x|\n    if f(x) {\n      return x\n    }\n  }\n  nil\n}\n\nfn count_all(xs: Array(T)): Int {\n  n = 0\n  xs.each { |x| n += 1 }\n  n\n}\n"
-  after = "fn twice(n: Int, f: fn(Int): Int): Int {\n  f(f(n))\n}\n\nfn first_neg(xs: Array(Int)): Int {\n  for x in xs {\n    if x < 0 {\n      return x\n    }\n  }\n  0\n}\n\nfn main {\n  xs = [3, -1, 2]\n  xs.each (x) { puts(x) } // a comment\n  puts(twice(3, (n) { n * 2 }))\n  if xs.any((x) { x > 2 }) {\n    puts(\"big\")\n  }\n  f = (a: Int, b: Int) { a + b }\n  g = () { 7 }\n  puts(f(1, g()))\n  ys = Array(Int).new(3, (i) { i * i })\n  puts(ys[2])\n  puts(first_neg(xs))\n  h = [\"a\": 1]\n  h.each { |k, v|\n    if v > 5 {\n      return\n    }\n    puts(k)\n  }\n  xs.sort (a, b) { a < b }\n}\n\nfn find_first(xs: Array(T), f: fn(T): Bool): T? {\n  xs.each { |x|\n    if f(x) {\n      return x\n    }\n  }\n  nil\n}\n\nfn count_all(xs: Array(T)): Int {\n  n = 0\n  xs.each (x) { n += 1 }\n  n\n}\n"
+  after = "fn twice(n: Int, f: fn(Int): Int): Int {\n  f(f(n))\n}\n\nfn first_neg(xs: Array(Int)): Int {\n  for x in xs {\n    if x < 0 {\n      return x\n    }\n  }\n  0\n}\n\nfn main {\n  xs = [3, -1, 2]\n  xs.each (x) { puts(x) } // a comment\n  puts(twice(3, (n) { n * 2 }))\n  if xs.any((x) { x > 2 }) {\n    puts(\"big\")\n  }\n  f = (a: Int, b: Int) { a + b }\n  g = () { 7 }\n  puts(f(1, g()))\n  ys = Array(Int).new(3, (i) { i * i })\n  puts(ys[2])\n  puts(first_neg(xs))\n  h = [\"a\": 1]\n  for k, v in h {\n    if v > 5 {\n      return\n    }\n    puts(k)\n  }\n  xs.sort (a, b) { a < b }\n}\n\nfn find_first(xs: Array(T), f: fn(T): Bool): T? {\n  xs.each { |x|\n    if f(x) {\n      return x\n    }\n  }\n  nil\n}\n\nfn count_all(xs: Array(T)): Int {\n  n = 0\n  xs.each (x) { n += 1 }\n  n\n}\n"
   _ = file_write(src, before)
   _ = file_write("${dir}/lam-format-before.av", before)
   args: Array(String) = []
@@ -98,7 +98,7 @@ fn check_format_lambdas(c: Checks, compiler: String, dir: String) {
   c.eq_int(code, 1, "format --lambdas: exits 1 for the blocks it leaves")
   c.eq_str(log_text(src), after, "format --lambdas: the lambdas written")
   c.expect(log.contains("count for: array each that leaves with return: 1"), "format --lambdas: counts the for")
-  c.expect(log.contains("lam-format.av:28:10: a hash each block whose body leaves its function with return"), "format --lambdas: reports the hash walk")
+  c.expect(log.contains("count for: hash each that leaves with return: 1"), "format --lambdas: the hash walk made a for")
   c.expect(log.contains("lam-format.av:38:11: a block the checker does not reach whose body leaves with return"), "format --lambdas: reports the unreached body")
   code2 = process_run_out(compiler, args, "${dir}/lam-format2.log") ?? -1
   c.eq_int(code2, 1, "format --lambdas again: exits 1")

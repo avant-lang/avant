@@ -18,10 +18,10 @@ import backends
 //     over a Set): a key or an element added, through the walked name or
 //     another (a function's parameter too), traps after the step that
 //     added it (the walk would miss it), even when the step deleted it
-//     again; an existing key's value assigned, a key deleted (the
-//     current one or another) and a clear are defined (a deleted key is
-//     not visited), and an addition followed by a break leaves the walk
-//     without a trap.
+//     again, and so does a deletion of another key or a clear (the walk
+//     reads the table in place); an existing key's value assigned and
+//     the visited key deleted are defined, and an addition followed by a
+//     break leaves the walk without a trap.
 //   - an Array walked with `for`, `each`, `any` or `all` over plain
 //     values: a sort or a reverse of it through its own name inside the
 //     walk is refused (the walk would read some elements twice and miss
@@ -84,8 +84,8 @@ fn cases: Array(PCase) {
   xs.push(traps("hash-add-in-function", "fn grow(m: Hash(String, Int)) {\n  m[\"new\"] = 1\n}\n\nfn main {\n  h = [\"a\": 1, \"b\": 2]\n  h.each { |k, v|\n    grow(h)\n  }\n  puts(h.size)\n}\n", "a key was added to a Hash during its walk"))
   xs.push(accepted("hash-assign-existing", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30]\n  g = h\n  h.each { |k, v|\n    h[k] = v + 1\n    g[k] = v + 2\n  }\n  puts((h[1] ?? 0) + (h[2] ?? 0) + (h[3] ?? 0))\n}\n", "66\n"))
   xs.push(accepted("hash-delete-current", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    _ = h.delete(k)\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "visits 4 size 0\n"))
-  xs.push(accepted("hash-delete-other-name", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    _ = g.delete(5 - k)\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "visits 2 size 2\n"))
-  xs.push(accepted("hash-clear", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    g.clear()\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "visits 1 size 0\n"))
+  xs.push(traps("hash-delete-other-name", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    _ = g.delete(5 - k)\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key other than the visited one was deleted from a Hash during its walk"))
+  xs.push(traps("hash-clear", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    g.clear()\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key other than the visited one was deleted from a Hash during its walk"))
   xs.push(traps("hash-add-then-delete", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20, 3: 30, 4: 40]\n  g = h\n  n = 0\n  h.each { |k, v|\n    h[k + 100] = v\n    _ = h.delete(k + 100)\n    n += 1\n  }\n  puts(\"visits \${n} size \${h.size}\")\n}\n", "a key was added to a Hash during its walk"))
   xs.push(accepted("hash-add-then-break", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20]\n  h.each { |k, v|\n    h[k + 100] = v\n    break\n  }\n  puts(h.size)\n}\n", "3\n"))
   xs.push(accepted("hash-add-after-walk", "fn main {\n  h: Hash(Int, Int) = [1: 10, 2: 20]\n  added: Array(Int) = []\n  h.each { |k, v|\n    added.push(k + 100)\n  }\n  for a in added {\n    h[a] = 0\n  }\n  puts(h.size)\n}\n", "4\n"))
@@ -96,7 +96,7 @@ fn cases: Array(PCase) {
   xs.push(traps("set-add-other", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each { |v|\n    _ = t.add(v + 100)\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "an element was added to a Set during its walk"))
   xs.push(accepted("set-add-present", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each { |v|\n    _ = s.add(v)\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "visits 4 size 4\n"))
   xs.push(accepted("set-delete-current", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each { |v|\n    _ = s.delete(v)\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "visits 4 size 0\n"))
-  xs.push(accepted("set-clear", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each { |v|\n    t.clear()\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "visits 1 size 0\n"))
+  xs.push(traps("set-clear", "fn main {\n  s: Set(Int) = [1, 2, 3, 4]\n  t = s\n  n = 0\n  s.each { |v|\n    t.clear()\n    n += 1\n  }\n  puts(\"visits \${n} size \${s.size}\")\n}\n", "an element other than the visited one was deleted from a Set during its walk"))
   xs.push(refused("for-sort-own", "fn main {\n  xs = [3, 1, 2]\n  for x in xs {\n    xs.sort()\n    puts(x)\n  }\n}\n", "cannot sort xs while walking it: the walk reads the elements by their positions, so it would read some twice and miss others", "4:7"))
   xs.push(refused("for-reverse-own", "fn main {\n  xs = [3, 1, 2]\n  for x in xs {\n    xs.reverse()\n    puts(x)\n  }\n}\n", "cannot reverse xs while walking it: the walk reads the elements by their positions, so it would read some twice and miss others", "4:7"))
   xs.push(refused("each-sort-block-own", "fn main {\n  xs = [\"b\", \"a\"]\n  xs.each { |x|\n    xs.sort { |a, b| a.size < b.size }\n    puts(x)\n  }\n}\n", "cannot sort xs while walking it: the walk reads the elements by their positions, so it would read some twice and miss others", "4:13"))

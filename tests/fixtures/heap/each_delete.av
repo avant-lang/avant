@@ -1,5 +1,6 @@
-// `h.each` skips a key the body deleted earlier in the
-// walk. Before, the walk visited it with an invented value (0 or "").
+// A hash walk reads the table in place: deleting the visited key is
+// allowed and every later step reads a live entry with its own value
+// (never an invented 0 or ""), across growth and the collector's moves.
 
 fn main {
   h = Hash(String, Int).new()
@@ -12,50 +13,40 @@ fn main {
   h.each (k, v) {
     seen += 1
     sum += v
-    if seen == 1 {
-      // Delete every other key: none of them may be visited after this.
-      for name in ["a", "b", "c", "d"] {
-        if name != k {
-          h.delete(name)
-        }
-      }
+    if v % 2 == 0 {
+      h.delete(k)
     }
   }
-  puts("visited ${seen}, size ${h.size}")
-  puts("sum is the first value: ${sum == 1 || sum == 2 || sum == 3 || sum == 4}")
+  puts("visited ${seen}, sum ${sum}, size ${h.size}")
   s = Hash(String, String).new()
   s["x"] = "one"
   s["y"] = "two"
   s["z"] = "three"
   n = 0
   empty = 0
-  s.each (k, v) {
+  for k, v in s {
     n += 1
     if v.size == 0 {
       empty += 1
     }
-    if n == 1 {
-      for name in ["x", "y", "z"] {
-        if name != k {
-          s.delete(name)
-        }
-      }
-    }
+    s.delete(k)
   }
   puts("visited ${n}, empty values ${empty}, size ${s.size}")
   m = Hash(Int, Int).new()
-  for j in 0..100 {
+  for j in 0..1000 {
     m[j] = j + 1
   }
   zeros = 0
   visits = 0
-  m.each (k, v) {
+  for k, v in m {
     visits += 1
-    if v == 0 {
+    if v != k + 1 {
       zeros += 1
     }
-    m.delete(k + 1)
-    m.delete(k - 1)
+    if k % 3 != 0 {
+      m.delete(k)
+    }
   }
-  puts("visited ${visits} of 100, zero values ${zeros}, size ${m.size}")
+  m.delete_if((k, v) { k % 2 == 0 })
+  puts("visited ${visits} of 1000, wrong values ${zeros}, size ${m.size}")
 }

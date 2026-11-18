@@ -47,6 +47,8 @@ typedef struct {
   uint8_t vw;
   uint8_t vshift;
   uint8_t compact;
+  uint32_t changes;
+  int32_t frozen;
 } CeilHash;
 
 #define CEIL_MAX 2147483647
@@ -89,6 +91,7 @@ int64_t ceil_probe(int64_t mode) {
     h->meta = (uint8_t *)calloc(1, 16);
     h->cap = 1073741824;
     h->size = 805306368;
+    h->used = 805306368;
     h->kw = 8;
     h->vw = 8;
     h->vshift = 3;

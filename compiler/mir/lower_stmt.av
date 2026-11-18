@@ -328,36 +328,7 @@ pub fn (lw: MirLower) goto_if_open(bb: Int, loc: Location) {
 }
 
 pub fn (lw: MirLower) lower_while(st: Stmt) {
-  set_h = -1
-  adds0 = -1
-  if sw = lw.set_walk_operand(st) {
-    // `for v in s` over a Set walks the array of its elements made
-    // before the loop (the checker's s.values()): the set is held, its
-    // count of added elements read once here and again before each later
-    // step, so an element added during the walk (which the array would
-    // miss) traps, as in s.each.
-    b0 = lw.lw_b
-    if recv = sw.receiver, pt = st.pre[0].target, at0 = sw.ty {
-      sv = lw.lower_expr(recv)
-      if lw.failed() {
-        return
-      }
-      lw.at(st.loc)
-      set_h = b0.temp(lw.ety(recv))
-      b0.assign(b0.pl(set_h), b0.rv_use(sv))
-      adds0 = lw.hash_adds(set_h)
-      aty0 = lw.ety(sw)
-      arr0 = lw.call_to(aty0, "avant_hash_keys", lw.one(b0.copy_local(set_h)))
-      lw.bind_name(pt.ident, at0, aty0, arr0, st.loc, true)
-      rest: Array(Stmt) = []
-      for pi in 1..st.pre.size {
-        rest.push(st.pre[pi])
-      }
-      lw.lower_stmts(rest)
-    }
-  } else {
-    lw.lower_stmts(st.pre)
-  }
+  lw.lower_stmts(st.pre)
   if lw.failed() || !lw.open_now() {
     return
   }
@@ -367,9 +338,6 @@ pub fn (lw: MirLower) lower_while(st: Stmt) {
   lw.lw_b.at(head)
   body = lw.lw_b.block()
   exit = lw.lw_b.block()
-  if set_h >= 0 {
-    lw.walk_added_trap(set_h, adds0, 1, st.loc)
-  }
   if c = st.cond {
     cv = lw.lower_expr(c)
     if lw.failed() {
@@ -389,20 +357,6 @@ pub fn (lw: MirLower) lower_while(st: Stmt) {
   lw.lw_heads.pop()
   lw.lw_exits.pop()
   lw.lw_b.at(exit)
-}
-
-// The `s.values()` a `for` over a Set walks (the checker's rewrite of
-// the loop's array, checker.av set_for_operand), or nil.
-pub fn (lw: MirLower) set_walk_operand(st: Stmt): Expr? {
-  if st.for_kind != 2 || st.pre.size == 0 {
-    return nil
-  }
-  if v = st.pre[0].value, v.callee == "values" && v.args.size == 0 {
-    if recv = v.receiver, rt = recv.ty, rt.is_set() {
-      return v
-    }
-  }
-  nil
 }
 
 // `switch`: the value, one MIR switch (a Bool's: one branch), each arm a

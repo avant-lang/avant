@@ -61,6 +61,9 @@ pub fn (lw: MirLower) lower_block_call(e: Expr): MOperand? {
         return lw.arr_delete_if(e, recv, bl)
       }
     }
+    if (rt.is_hash() || rt.is_set()) && c == "delete_if" && e.args.size == 0 {
+      return lw.hash_delete_if(e, recv, rt, bl)
+    }
     if rt.is_hash() && c == "each" && e.args.size == 0 && bl.params.size == 2 {
       return lw.hash_each(e, recv, rt, bl)
     }
@@ -477,14 +480,16 @@ pub fn (lw: MirLower) arr_sort_block(e: Expr, recv: Expr, bl: Block, do_copy: Bo
   zero
 }
 
-// `h.each { |k, v| ... }` (emit_hash_method, builtins.av:346-441): the
-// hash once, its keys as an array, then for each key the value read back
-// through the hash (a checked lookup: a key the body deleted is skipped),
-// both bound, the body (a Set's: its element only). A key added during
-// the walk (through any name) would be missed: the hash's count of added
-// keys is read before the first step and again after each, and a change
-// traps (avant_trap_walk). Deleting and assigning an existing key's value
-// stay defined.
+// A walk of a hash or a set in place (`for k, v in h`, `for k in
+// h.keys()`, `for v in h.values()`, `for v in s`, `h.each`, `s.each`):
+// the hash once, then each live entry in its order (the order of
+// insertion), its number from avant_hash_walk, its key and value loaded
+// through the addresses the runtime gives, both bound (a hidden name the
+// body never reads is not loaded), the body. The hash's count of changes
+// is read before the first step and again after each (one load and a
+// compare): a step that only deleted the visited entry goes on, a key
+// added (the walk would miss it) or another key deleted traps
+// (walk_changed_check). Assigning an existing key's value is no change.
 pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperand {
   b = lw.lw_b
   zero = b.c_i32(0)
@@ -499,7 +504,6 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   }
   kty = lw.ty_at(kt, e.loc, "a hash key")
   vty = lw.ty_at(vt, e.loc, "a hash value")
-  aty = lw.ty_at(ty_array(kt), e.loc, "the keys")
   if lw.failed() {
     return zero
   }
@@ -508,34 +512,33 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
     return zero
   }
   lw.at(e.loc)
-  adds0 = lw.hash_adds(h)
-  keys = b.temp(aty)
-  b.call(keys, "avant_hash_keys", lw.one(b.copy_local(h)))
-  i = b.temp(mt_i32())
-  b.assign(b.pl(i), b.rv_use(b.c_i32(0)))
+  c0 = lw.hash_changes(h)
+  n = b.temp(mt_i32())
+  b.assign(b.pl(n), b.rv_use(b.c_i32(0)))
+  ent = b.temp(mt_i32())
   head = b.block()
   body = b.block()
   step = b.block()
   exit = b.block()
   b.goto(head)
   b.at(head)
-  lw.block_test(keys, i, body, exit)
+  ops: Array(MOperand) = []
+  ops.push(b.copy_local(h))
+  ops.push(b.copy_local(n))
+  b.call(ent, "avant_hash_walk", ops)
+  done = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ent), b.c_i32(0)))
+  b.branch(done, exit, body)
   b.at(body)
-  kv = lw.block_elem(keys, aty, i)
-  kl = mir_bare_copy(kv)
-  lw.bind_name(bl.params[0], kt, kty, b.copy_local(kl), bl.loc, true)
-  lw.at(e.loc)
-  fl = lw.found_local()
-  raw = lw.hash_find_load(ht, "find", b.copy_local(h), lw.hash_key_arg(ht, b.copy_local(kl), e.loc), fl, vty, e.loc)
-  // A key the body deleted earlier in the walk is skipped: before, it
-  // was visited with an invented value (the zero).
-  hit = b.block()
-  b.branch(lw.found_is(fl), hit, step)
-  b.at(hit)
+  b.assign(b.pl(n), b.rv_bin(mop_add(), b.copy_local(ent), b.c_i32(1)))
+  if !str_starts(bl.params[0], "__for") {
+    kv = lw.walk_load(h, ent, "avant_hash_walk_key", kty)
+    lw.bind_name(bl.params[0], kt, kty, kv, bl.loc, true)
+  }
   // A Set's walk binds the element only (its Bool is nobody's).
-  if bl.params.size > 1 {
-    val = lw.tmp(vty, b.rv_use(raw))
-    lw.bind_name(bl.params[1], vt, vty, val, bl.loc, true)
+  if bl.params.size > 1 && !str_starts(bl.params[1], "__for") {
+    lw.at(e.loc)
+    vv = lw.walk_load(h, ent, "avant_hash_walk_val", vty)
+    lw.bind_name(bl.params[1], vt, vty, vv, bl.loc, true)
   }
   lw.walk_body(bl, step, exit)
   lw.goto_if_open(step, e.loc)
@@ -545,26 +548,143 @@ pub fn (lw: MirLower) hash_each(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperan
   if bl.params.size == 1 {
     what = 1
   }
-  lw.walk_added_trap(h, adds0, what, e.loc)
-  lw.block_step(i, head)
+  lw.walk_changed_check(h, c0, ent, what, e.loc)
+  b.goto(head)
   b.at(exit)
   zero
 }
 
-// The trap of a key added to the hash in _h during its walk: its count of
-// added keys read again and compared with the walk's start (_adds0); what
-// is 0 for a Hash, 1 for a Set (avant_trap_walk_at's words).
-pub fn (lw: MirLower) walk_added_trap(h: Int, adds0: Int, what: Int, loc: Location) {
+// `h.delete_if((k, v) { ... })`, `s.delete_if((v) { ... })`: the walk in
+// place, each entry bound as in hash_each, the predicate, and the
+// visited entry deleted by its number when it holds
+// (avant_hash_walk_delete, which first refuses a frozen hash); a change
+// the predicate made to the hash is checked as a walk's step is, and the
+// walk's own deletion is no change it reports.
+pub fn (lw: MirLower) hash_delete_if(e: Expr, recv: Expr, ht: Ty, bl: Block): MOperand {
   b = lw.lw_b
-  adds = lw.hash_adds(h)
-  added = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(adds), b.copy_local(adds0)))
-  ok = lw.trap_open(added, true)
-  lw.trap_close(ok, "avant_trap_walk", lw.one(b.c_i32(what)), loc)
+  zero = b.c_i32(0)
+  hty = lw.ety(recv)
+  kt = ty_int()
+  if k0 = ht.key {
+    kt = k0
+  }
+  vt = ty_int()
+  if v0 = ht.val {
+    vt = v0
+  }
+  kty = lw.ty_at(kt, e.loc, "a hash key")
+  vty = lw.ty_at(vt, e.loc, "a hash value")
+  if lw.failed() {
+    return zero
+  }
+  h = lw.block_recv(recv, hty)
+  if lw.failed() {
+    return zero
+  }
+  lw.at(e.loc)
+  first: Array(MOperand) = []
+  first.push(b.copy_local(h))
+  first.push(b.c_i32(-1))
+  b.call(-1, "avant_hash_walk_delete", first)
+  c0 = lw.hash_changes(h)
+  n = b.temp(mt_i32())
+  b.assign(b.pl(n), b.rv_use(b.c_i32(0)))
+  ent = b.temp(mt_i32())
+  head = b.block()
+  body = b.block()
+  del = b.block()
+  keep = b.block()
+  exit = b.block()
+  b.goto(head)
+  b.at(head)
+  ops: Array(MOperand) = []
+  ops.push(b.copy_local(h))
+  ops.push(b.copy_local(n))
+  b.call(ent, "avant_hash_walk", ops)
+  done = lw.tmp(mt_bool(), b.rv_cmp(mop_lt(), b.copy_local(ent), b.c_i32(0)))
+  b.branch(done, exit, body)
+  b.at(body)
+  b.assign(b.pl(n), b.rv_bin(mop_add(), b.copy_local(ent), b.c_i32(1)))
+  kv = lw.walk_load(h, ent, "avant_hash_walk_key", kty)
+  lw.bind_name(bl.params[0], kt, kty, kv, bl.loc, true)
+  if bl.params.size > 1 {
+    lw.at(e.loc)
+    vv = lw.walk_load(h, ent, "avant_hash_walk_val", vty)
+    lw.bind_name(bl.params[1], vt, vty, vv, bl.loc, true)
+  }
+  p = lw.verb_value(bl, ty_bool(), mt_bool(), keep, exit)
+  if lw.failed() {
+    return zero
+  }
+  if lw.open_now() {
+    lw.at(e.loc)
+    b.branch(p, del, keep)
+  }
+  what = 0
+  if bl.params.size == 1 {
+    what = 1
+  }
+  b.at(del)
+  lw.at(e.loc)
+  lw.walk_changed_check(h, c0, ent, what, e.loc)
+  dops: Array(MOperand) = []
+  dops.push(b.copy_local(h))
+  dops.push(b.copy_local(ent))
+  b.call(-1, "avant_hash_walk_delete", dops)
+  c1 = lw.hash_changes(h)
+  b.assign(b.pl(c0), b.rv_use(b.copy_local(c1)))
+  b.goto(head)
+  b.at(keep)
+  lw.at(e.loc)
+  lw.walk_changed_check(h, c0, ent, what, e.loc)
+  b.goto(head)
+  b.at(exit)
+  zero
 }
 
-// The count of keys added to the hash in _h (AvantHash.adds, field 9 of
+// The key or the value of entry _ent of the hash in _h, loaded with its
+// type through the address the runtime gives (`avant_hash_walk_key` or
+// `_val`), before anything can collect.
+pub fn (lw: MirLower) walk_load(h: Int, ent: Int, f: String, ty: Int): MOperand {
+  b = lw.lw_b
+  ops: Array(MOperand) = []
+  ops.push(b.copy_local(h))
+  ops.push(b.copy_local(ent))
+  p = lw.call_to(mt_ptr(), f, ops)
+  lw.hash_load(lw.hash_slot(p, ty), ty)
+}
+
+// After a step of the walk of the hash in _h: its count of changes read
+// again and compared with _c0; when it moved, avant_hash_walk_ok says
+// whether the only change was the deletion of the visited entry _ent
+// (then the walk goes on from the new count) or which change it was, and
+// the walk traps naming it (what: 0 a Hash, 1 a Set; 2 is added for a
+// deletion of another key).
+pub fn (lw: MirLower) walk_changed_check(h: Int, c0: Int, ent: Int, what: Int, loc: Location) {
+  b = lw.lw_b
+  c = lw.hash_changes(h)
+  moved = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), b.copy_local(c), b.copy_local(c0)))
+  cold = b.block()
+  join = b.block()
+  b.branch(moved, cold, join)
+  b.at(cold)
+  ops: Array(MOperand) = []
+  ops.push(b.copy_local(h))
+  ops.push(b.copy_local(c0))
+  ops.push(b.copy_local(ent))
+  r = lw.call_to(mt_i32(), "avant_hash_walk_ok", ops)
+  bad = lw.tmp(mt_bool(), b.rv_cmp(mop_ne(), r, b.c_i32(1)))
+  ok = lw.trap_open(bad, true)
+  w = lw.tmp(mt_i32(), b.rv_bin(mop_add(), r, b.c_i32(what)))
+  lw.trap_close(ok, "avant_trap_walk", lw.one(w), loc)
+  b.assign(b.pl(c0), b.rv_use(b.copy_local(c)))
+  b.goto(join)
+  b.at(join)
+}
+
+// The count of changes of the hash in _h (AvantHash.changes, field 9 of
 // %Hash), into a new local.
-pub fn (lw: MirLower) hash_adds(h: Int): Int {
+pub fn (lw: MirLower) hash_changes(h: Int): Int {
   b = lw.lw_b
   a = b.temp(mt_u32())
   b.assign(b.pl(a), b.rv_use(b.copy(b.field(b.deref(b.pl(h)), 9))))

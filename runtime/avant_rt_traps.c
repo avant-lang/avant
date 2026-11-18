@@ -151,6 +151,10 @@ void avant_trap_walk_at(int32_t what, int32_t site) {
   trap_head();
   if (what == 1) {
     trap_out("an element was added to a Set during its walk, which would miss it: collect the new elements and add them after the walk");
+  } else if (what == 2) {
+    trap_out("a key other than the visited one was deleted from a Hash during its walk (or the Hash was cleared), which walks the entries in place: delete the visited key only, collect the keys and delete them after the walk, or use delete_if");
+  } else if (what == 3) {
+    trap_out("an element other than the visited one was deleted from a Set during its walk (or the Set was cleared), which walks the elements in place: delete the visited element only, collect the elements and delete them after the walk, or use delete_if");
   } else {
     trap_out("a key was added to a Hash during its walk, which would miss it: collect the new entries and add them after the walk");
   }

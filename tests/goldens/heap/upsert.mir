@@ -1,10 +1,8 @@
 module upsert
 file 0 "upsert.av"
 
-layout %Hash = hash { 0 keys: ref, 1 vals: ref, 2 meta: ref, 3 size: i32, 4 cap: i32, 5 desc: i32, 6 seed: i32, 7 used: i32, 8 widths: i32, 9 adds: u32 }  size 56 align 8 id 1023
+layout %Hash = hash { 0 keys: ref, 1 vals: ref, 2 meta: ref, 3 size: i32, 4 cap: i32, 5 desc: i32, 6 seed: i32, 7 used: i32, 8 widths: i32, 9 changes: u32 }  size 56 align 8 id 1023
 layout %(Nil|Int) = union { 0 tag: i32, 1 m0: i64 }  size 16 align 8
-layout %elems(Int) = elems { 0: i64 }  size 8 align 8
-layout %Array(Int) = array { 0 data: ref %elems(Int), 1 size: i32, 2 cap: i32 }  size 16 align 8 id 1022
 
 const str.0 = "int "
 const str.1 = " "
@@ -28,12 +26,15 @@ extern avant_hash_put_sk(ref, ref str) -> ptr collects
 extern avant_hash_size(ref) -> i64 never
 extern avant_hash_upsert_ik(ref, i64, ptr) -> ptr collects
 extern avant_hash_upsert_sk(ref, ref str, ptr) -> ptr collects
-extern avant_hash_values(ref) -> ref collects
+extern avant_hash_walk(ref, i32) -> i32 never
+extern avant_hash_walk_ok(ref, u32, i32) -> i32 never
+extern avant_hash_walk_val(ref, i32) -> ptr never
 extern avant_io_init_argv(i32, ptr) -> void collects
 extern avant_puts_str(ref str) -> void never
 extern avant_str_cat_int(ref str, i64) -> ref str collects
 extern avant_str_concat(ref str, ref str) -> ref str collects
 extern avant_str_from_int(i64) -> ref str collects
+extern avant_trap_walk(i32) -> void never noreturn
 
 fn av.upsert/bump(_1: ref %Hash, _2: i64) -> i64 frame @upsert.av:12:1 {
   let _0: i64
@@ -651,98 +652,164 @@ bb9:
   return   @89:3
 }
 
-fn av.upsert/sum_vals(_1: ref %Hash) -> i64 frame @upsert.av:92:1 {
+fn av.upsert/sum_vals(_1: ref %Hash) -> i64 leaf @upsert.av:92:1 {
   let _0: i64
-  let _1 (h): ref %Hash slot
+  let _1 (h): ref %Hash
   let _2 (t): i64
-  let _3: ref %Array(Int)
-  let _4 (__for0_xs): ref %Array(Int)
-  let _5 (__for0_i): i64
+  let _3 (__for0_xs): ref %Hash
+  let _4: ref %Hash
+  let _5: u32
   let _6: i32
-  let _7: i64
+  let _7: i32
   let _8: bool
-  let _9: ref %elems(Int)
-  let _10: i64
-  let _11 (v): i64
-  let _12: i64
+  let _9: ptr
+  let _10: ptr i64
+  let _11: i64
+  let _12 (v): i64
   let _13: i64
+  let _14: u32
+  let _15: bool
+  let _16: i32
+  let _17: bool
+  let _18: i32
 
 bb0:
-  gc.enter   @92:1
-  gc.roots _1   @92:1
   _2 = const i64 0   @93:5
-  _3 = call avant_hash_values(copy _1) collects   @94:13
-  _4 = copy _3   @94:3
-  _5 = const i64 0   @94:3
+  _3 = copy _1   @94:3
   goto bb1   @94:3
 
 bb1:
-  _6 = copy (*_4).1   @94:3
-  _7 = cast copy _6 to i64   @94:3
-  _8 = lt copy _5, copy _7   @94:3
-  branch copy _8, bb2, bb3   @94:3
+  goto bb2   @94:3
 
 bb2:
-  _9 = copy (*_4).0   @94:3
-  _10 = copy (*_9)[copy _5]   @94:3
-  _11 = copy _10   @94:3
-  _12 = add.chk copy _2, copy _11   @95:11
-  _2 = copy _12   @95:7
-  _13 = add copy _5, const i64 1   @94:3
-  _5 = copy _13   @94:3
-  goto bb1   @94:3
+  _4 = copy _3   @94:3
+  _5 = copy (*_4).9   @94:3
+  _6 = const i32 0   @94:3
+  goto bb4   @94:3
 
 bb3:
   _0 = copy _2   @97:3
-  gc.leave   @97:3
   return   @97:3
+
+bb4:
+  _7 = call avant_hash_walk(copy _4, copy _6) nocollect   @94:3
+  _8 = lt copy _7, const i32 0   @94:3
+  branch copy _8, bb7, bb5   @94:3
+
+bb5:
+  _6 = add copy _7, const i32 1   @94:3
+  _9 = call avant_hash_walk_val(copy _4, copy _7) nocollect   @94:3
+  _10 = cast copy _9 to ptr i64   @94:3
+  _11 = copy (*_10)   @94:3
+  _12 = copy _11   @94:3
+  _13 = add.chk copy _2, copy _12   @95:11
+  _2 = copy _13   @95:7
+  goto bb6   @94:3
+
+bb6:
+  _14 = copy (*_4).9   @94:3
+  _15 = ne copy _14, copy _5   @94:3
+  branch copy _15, bb8, bb9   @94:3
+
+bb7:
+  goto bb3   @94:3
+
+bb8:
+  _16 = call avant_hash_walk_ok(copy _4, copy _5, copy _7) nocollect   @94:3
+  _17 = ne copy _16, const i32 1   @94:3
+  branch copy _17, bb10, bb11   @94:3
+
+bb9:
+  goto bb4   @94:3
+
+bb10:
+  _18 = add copy _16, const i32 0   @94:3
+  call avant_trap_walk(copy _18) nocollect   @94:3
+  unreachable   @94:3
+
+bb11:
+  _5 = copy _14   @94:3
+  goto bb9   @94:3
 }
 
-fn av.upsert/sum_vals_s(_1: ref %Hash) -> i64 frame @upsert.av:100:1 {
+fn av.upsert/sum_vals_s(_1: ref %Hash) -> i64 leaf @upsert.av:100:1 {
   let _0: i64
-  let _1 (h): ref %Hash slot
+  let _1 (h): ref %Hash
   let _2 (t): i64
-  let _3: ref %Array(Int)
-  let _4 (__for1_xs): ref %Array(Int)
-  let _5 (__for1_i): i64
+  let _3 (__for1_xs): ref %Hash
+  let _4: ref %Hash
+  let _5: u32
   let _6: i32
-  let _7: i64
+  let _7: i32
   let _8: bool
-  let _9: ref %elems(Int)
-  let _10: i64
-  let _11 (v): i64
-  let _12: i64
+  let _9: ptr
+  let _10: ptr i64
+  let _11: i64
+  let _12 (v): i64
   let _13: i64
+  let _14: u32
+  let _15: bool
+  let _16: i32
+  let _17: bool
+  let _18: i32
 
 bb0:
-  gc.enter   @100:1
-  gc.roots _1   @100:1
   _2 = const i64 0   @101:5
-  _3 = call avant_hash_values(copy _1) collects   @102:13
-  _4 = copy _3   @102:3
-  _5 = const i64 0   @102:3
+  _3 = copy _1   @102:3
   goto bb1   @102:3
 
 bb1:
-  _6 = copy (*_4).1   @102:3
-  _7 = cast copy _6 to i64   @102:3
-  _8 = lt copy _5, copy _7   @102:3
-  branch copy _8, bb2, bb3   @102:3
+  goto bb2   @102:3
 
 bb2:
-  _9 = copy (*_4).0   @102:3
-  _10 = copy (*_9)[copy _5]   @102:3
-  _11 = copy _10   @102:3
-  _12 = add.chk copy _2, copy _11   @103:11
-  _2 = copy _12   @103:7
-  _13 = add copy _5, const i64 1   @102:3
-  _5 = copy _13   @102:3
-  goto bb1   @102:3
+  _4 = copy _3   @102:3
+  _5 = copy (*_4).9   @102:3
+  _6 = const i32 0   @102:3
+  goto bb4   @102:3
 
 bb3:
   _0 = copy _2   @105:3
-  gc.leave   @105:3
   return   @105:3
+
+bb4:
+  _7 = call avant_hash_walk(copy _4, copy _6) nocollect   @102:3
+  _8 = lt copy _7, const i32 0   @102:3
+  branch copy _8, bb7, bb5   @102:3
+
+bb5:
+  _6 = add copy _7, const i32 1   @102:3
+  _9 = call avant_hash_walk_val(copy _4, copy _7) nocollect   @102:3
+  _10 = cast copy _9 to ptr i64   @102:3
+  _11 = copy (*_10)   @102:3
+  _12 = copy _11   @102:3
+  _13 = add.chk copy _2, copy _12   @103:11
+  _2 = copy _13   @103:7
+  goto bb6   @102:3
+
+bb6:
+  _14 = copy (*_4).9   @102:3
+  _15 = ne copy _14, copy _5   @102:3
+  branch copy _15, bb8, bb9   @102:3
+
+bb7:
+  goto bb3   @102:3
+
+bb8:
+  _16 = call avant_hash_walk_ok(copy _4, copy _5, copy _7) nocollect   @102:3
+  _17 = ne copy _16, const i32 1   @102:3
+  branch copy _17, bb10, bb11   @102:3
+
+bb9:
+  goto bb4   @102:3
+
+bb10:
+  _18 = add copy _16, const i32 0   @102:3
+  call avant_trap_walk(copy _18) nocollect   @102:3
+  unreachable   @102:3
+
+bb11:
+  _5 = copy _14   @102:3
+  goto bb9   @102:3
 }
 
 fn main(_1: i32, _2: ptr) -> i32 frame extern @upsert.av:108:1 {
@@ -1047,11 +1114,11 @@ bb2:
 bb3:
   _15 = call avant_hash_size(copy _4) nocollect   @119:16
   _16 = call avant_str_from_int(copy _15) collects   @119:16
-  _17 = call av.upsert/sum_vals(copy _4) collects   @119:25
+  _17 = call av.upsert/sum_vals(copy _4) nocollect   @119:25
   _18 = call avant_str_from_int(copy _17) collects   @119:25
   _19 = call avant_hash_size(copy _6) nocollect   @119:41
   _20 = call avant_str_from_int(copy _19) collects   @119:41
-  _21 = call av.upsert/sum_vals(copy _6) collects   @119:50
+  _21 = call av.upsert/sum_vals(copy _6) nocollect   @119:50
   _22 = call avant_str_from_int(copy _21) collects   @119:50
   _23 = call avant_str_from_int(copy _8) collects   @119:65
   _24 = const i32 0   @119:74
@@ -1158,11 +1225,11 @@ bb17:
 bb18:
   _73 = call avant_hash_size(copy _62) nocollect   @130:16
   _74 = call avant_str_from_int(copy _73) collects   @130:16
-  _75 = call av.upsert/sum_vals_s(copy _62) collects   @130:25
+  _75 = call av.upsert/sum_vals_s(copy _62) nocollect   @130:25
   _76 = call avant_str_from_int(copy _75) collects   @130:25
   _77 = call avant_hash_size(copy _64) nocollect   @130:43
   _78 = call avant_str_from_int(copy _77) collects   @130:43
-  _79 = call av.upsert/sum_vals_s(copy _64) collects   @130:52
+  _79 = call av.upsert/sum_vals_s(copy _64) nocollect   @130:52
   _80 = call avant_str_from_int(copy _79) collects   @130:52
   _81 = const i32 0   @130:70
   _82 = addr.raw _81   @130:70
@@ -1262,7 +1329,7 @@ bb32:
 bb33:
   _124 = call avant_hash_size(copy _117) nocollect   @139:17
   _125 = call avant_str_from_int(copy _124) collects   @139:17
-  _126 = call av.upsert/sum_vals(copy _117) collects   @139:26
+  _126 = call av.upsert/sum_vals(copy _117) nocollect   @139:26
   _127 = call avant_str_from_int(copy _126) collects   @139:26
   _128 = call avant_str_from_int(copy _118) collects   @139:41
   _129 = call avant_str_concat(const str.5, copy _125) collects   @139:8
@@ -1292,7 +1359,7 @@ bb33:
   _151 = copy _150   @143:5
   _152 = call avant_hash_size(copy _135) nocollect   @144:18
   _153 = call avant_str_from_int(copy _152) collects   @144:18
-  _154 = call av.upsert/sum_vals(copy _135) collects   @144:27
+  _154 = call av.upsert/sum_vals(copy _135) nocollect   @144:27
   _155 = call avant_str_from_int(copy _154) collects   @144:27
   _156 = call avant_str_from_int(copy _151) collects   @144:42
   _157 = const i32 0   @144:48

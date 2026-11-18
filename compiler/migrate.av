@@ -11,9 +11,9 @@
 // builtin's block in pipes (`each`, `any`, `sort`, `Mutex.with`, ...) is
 // a loop body whose `return`, `break`, `continue` and `?` leave the code
 // around it, so when its body uses one of them the block becomes a `for`
-// (`xs.each { |x| ... return ... }` is `for x in xs { ... return ... }`),
-// and where no `for` says the same (a value block, a hash's walk) it is
-// left and reported. Which blocks a builtin inlines is the checker's
+// (`xs.each { |x| ... return ... }` is `for x in xs { ... return ... }`,
+// `h.each { |k, v| ... }` is `for k, v in h { ... }`), and where no `for`
+// says the same (a value block) it is left and reported. Which blocks a builtin inlines is the checker's
 // knowledge: every file named is loaded and checked first (its errors are
 // reported, the rest still rewritten), and a block the checker did not
 // reach (a generic function no program instantiates) is rewritten from
@@ -230,10 +230,15 @@ pub fn migrate_lambdas_text(path: String, text: String, tally: LamTally): String
           typed = true
         }
       }
-      if (kind == "array each" || kind == "set each") && si >= 0 && dot >= 0 && ft[dot].kind == tk_dot() && params.size == 1 && !typed && si < dot {
-        // `recv.each { |x| body }` as `for x in recv { body }`.
+      one = (kind == "array each" || kind == "set each") && params.size == 1
+      two = kind == "hash each" && params.size == 3 && params[1].kind == tk_comma()
+      if (one || two) && si >= 0 && dot >= 0 && ft[dot].kind == tk_dot() && !typed && si < dot {
+        // `recv.each { |x| body }` as `for x in recv { body }`, and a
+        // hash's `recv.each { |k, v| body }` as `for k, v in recv { body }`.
         pre[si].push(Token.new(tk_for(), ft[si].loc, "for"))
-        pre[si].push(params[0])
+        for t in params {
+          pre[si].push(t)
+        }
         pre[si].push(Token.new(tk_in(), ft[si].loc, "in"))
         drop[dot] = true
         drop[pv] = true

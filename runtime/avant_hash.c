@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "avant_rt.h"
 #include "avant_gc.h"
 
@@ -6,6 +7,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
+#include <time.h>
+#include <unistd.h>
 
 /* Hash(K, V): one table for every key and value type the compiler builds.
  *
@@ -29,23 +33,28 @@
  * those three words): keys (a pointer buffer for String keys), vals (a
  * pointer buffer for reference values) and meta (no references).
  *
- * Two layouts, one per kind of key (is_compact below says why). The
- * open layout (integer keys): one slot per table position;
- * meta is a state byte per slot (0 empty, 1 full; 0x80 below) and, for
- * String keys, a uint32 hash per slot; keys[i] and vals[i] are slot i's.
- * Linear probing; a deletion slides the cluster back (no tombstones).
+ * Two layouts, one per kind of key (is_compact below says why), both in
+ * the order of insertion. The open layout (integer keys): one slot per
+ * table position, keys[i] and vals[i] slot i's; meta is a state byte per
+ * slot (0 empty, 1 full, 2 deleted; 0x80 below), then the positions in
+ * the order of insertion (uint32 each). Linear probing; a deletion marks
+ * its position deleted, which no insertion takes again before the next
+ * growth, so no entry ever moves while the table lives.
  *
- * The compact layout (String keys): the table is an index of
+ * The compact layout (String and struct keys): the table is an index of
  * uint32 per position (0 empty, else the entry's number plus one), and
  * the entries are dense, in insertion order: keys[e], vals[e], a state
  * byte per entry (0 deleted, 1 live; 0x80 below) and, for String keys, a
  * uint32 hash per entry, in meta after the index. A deletion slides the
  * index's cluster back and marks its entry deleted; a growth copies the
- * live entries in order, so a walk is in insertion order.
+ * live entries in order. In both, a growth when at least half the entries
+ * made since the last one are deleted compacts the table at its size.
  *
  * The seed. Every hash function takes the hash's seed (h->seed), set at
- * creation from g_hash_seed. It is 0 today, which hashes exactly as the
- * unseeded functions did; a per-process random seed is one assignment.
+ * creation from the process's seed (hash_seed), drawn from the system's
+ * entropy, so a program's keys fall on other positions in every run and
+ * keys chosen to collide in one run do not collide in the next. No
+ * output depends on it: every walk is in the order of insertion.
  *
  * Struct keys. A struct whose fields are all integers, Bools and enums
  * and whose size is 1, 2, 4 or 8 bytes is an integer key: the generated
@@ -83,22 +92,31 @@ typedef struct {
   uint8_t vw;
   uint8_t vshift;
   uint8_t compact;
-  /* The keys added so far (a wrapping count; a growth's moves are not
-   * additions): a walk of the hash (h.each, a Set's) reads it before its
-   * first step and again after each step, and traps when a key was
-   * added, which the walk would miss. The generated code reads it as the
-   * tenth field of its %Hash layout (compiler/mir/lower_arr.av), at the
-   * offset asserted below. */
-  uint32_t adds;
+  /* The changes a walk checks (a wrapping count): one for each key
+   * added (a growth's moves are not additions) and HASH_DELETED for each
+   * key removed (a deletion, each key a clear removes). A walk of the
+   * hash (for, each; a Set's) reads it before its first step and again
+   * after each step: an unchanged count is the common case, and a change
+   * of exactly one deletion is allowed when the visited entry is the one
+   * deleted (avant_hash_walk_ok); anything else traps, since the walk
+   * would miss an added key or the walk's order would be lost. The
+   * generated code reads it as the tenth field of its %Hash layout
+   * (compiler/mir/lower_arr.av), at the offset asserted below. */
+  uint32_t changes;
   /* The running tasks that read this hash (avant_rt.h, the freeze of a
    * value holding a hash): 0 when none, and then every operation that
    * changes the hash may run; otherwise each traps
    * (avant_trap_frozen_hash). It takes the four bytes of padding after
-   * adds, so a hash is no larger for it. */
+   * changes, so a hash is no larger for it. */
   int32_t frozen;
 } AvantHash;
 
-_Static_assert(offsetof(AvantHash, adds) == 48, "the generated code reads a hash's count of added keys at byte 48");
+_Static_assert(offsetof(AvantHash, changes) == 48, "the generated code reads a hash's count of changes at byte 48");
+
+/* A deletion's step of the count of changes: an addition's is 1, so a
+ * step that only deleted (fewer than 65536 keys) and one that added are
+ * told apart by the low 16 bits. */
+#define HASH_DELETED 0x10000u
 _Static_assert(sizeof(AvantHash) == 56, "the freeze count takes the hash's padding: a hash is still 56 bytes");
 
 /* The freeze test of every operation that changes a hash: one load and
@@ -156,7 +174,41 @@ static inline AvantHashX *hx(const AvantHash *h) {
   return (AvantHashX *)h;
 }
 
-static uint32_t g_hash_seed = 0;
+/* The process's seed (above): drawn once, at the first hash made, from
+ * the system's entropy; AVANT_HASH_SEED (a decimal number) fixes it, for
+ * a measurement that must repeat its probes exactly. Every hash takes
+ * it at its creation, so a race between two threads' first hashes only
+ * gives each its own seed. */
+static uint32_t g_hash_seed;
+static int g_hash_seed_set;
+
+static __attribute__((noinline, cold)) uint32_t hash_seed_draw(void) {
+  uint32_t v = 0;
+  const char *fixed = getenv("AVANT_HASH_SEED");
+  if (fixed && *fixed) {
+    v = (uint32_t)strtoul(fixed, NULL, 10);
+  } else if (getrandom(&v, sizeof v, GRND_NONBLOCK) != (ssize_t)sizeof v) {
+    /* No entropy yet (early boot) or no getrandom: the clock, the
+     * process id and an address, mixed. */
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    uint64_t m = (uint64_t)ts.tv_nsec ^ ((uint64_t)ts.tv_sec << 30) ^ ((uint64_t)getpid() << 16) ^ (uint64_t)(uintptr_t)&v;
+    m ^= m >> 33;
+    m *= 0xff51afd7ed558ccdull;
+    m ^= m >> 33;
+    v = (uint32_t)m;
+  }
+  __atomic_store_n(&g_hash_seed, v, __ATOMIC_RELAXED);
+  __atomic_store_n(&g_hash_seed_set, 1, __ATOMIC_RELEASE);
+  return v;
+}
+
+static inline uint32_t hash_seed(void) {
+  if (__builtin_expect(__atomic_load_n(&g_hash_seed_set, __ATOMIC_ACQUIRE), 1)) {
+    return __atomic_load_n(&g_hash_seed, __ATOMIC_RELAXED);
+  }
+  return hash_seed_draw();
+}
 
 static __thread const char *g_last_key;
 static __thread int g_last_key_rooted;
@@ -449,43 +501,52 @@ static size_t skey_n(const char *s, uint8_t st) {
 
 /* ---- the two layouts: positions, entries, growth, deletion ---- */
 
-/* The layout a hash takes, by its key: the compact one for String keys,
- * the open one for integer keys. On the benchmark programs the compact
- * table read String keys faster (its dense entries are read in the order
- * they were inserted) and used less memory, and read integer keys slower
- * (the index is one more dependent load before a key that compares in
- * one instruction). Every function below serves both layouts for any key,
- * so the choice is the flag avant_hash_create sets from the key. */
+/* The layout a hash takes, by its key: the compact one for String and
+ * struct keys, the open one for integer keys. Both keep the entries in
+ * the order of their insertion, so every walk is in that order. On the
+ * benchmark programs the compact table read String keys faster (its
+ * dense entries are read in the order they were inserted) and used less
+ * memory; for integer keys it cost 10% to 12% of the time of the two
+ * integer-keyed programs (the index is one more dependent load before a
+ * key that compares in one instruction), and the open table with an
+ * order beside it costs nothing a lookup sees. Every function below
+ * serves both layouts, so the choice is the flag avant_hash_create sets
+ * from the key. */
 static inline int is_compact(const AvantHash *h) {
   return h->compact;
 }
 
-/* The most entries a compact table of CAP positions holds before it
- * grows; an open table holds cap * 3 / 4 too, counted by size. */
+/* The most entries a table of CAP positions takes before it grows (or
+ * compacts): an entry deleted since the last growth still counts. */
 static int32_t fill_max(int32_t cap) {
   return cap - cap / 4;
 }
 
 /* Compact meta: uint32 index[cap], uint8 state[fill_max(cap)], then (String
  * and struct keys) uint32 hash[fill_max(cap)] at the next 4-byte boundary.
- * Open meta: uint8 state[cap], then (String keys) uint32 hash[cap]. */
+ * Open meta: uint8 state[cap] (0 empty, 1 live, 2 deleted: a deleted
+ * position is not taken again until the next growth, so no entry moves
+ * while the table lives), then uint32 order[fill_max(cap)] at the next
+ * 4-byte boundary: the positions in the order of insertion. */
 static inline size_t meta_hash_off(const AvantHash *h, int32_t cap) {
   if (!is_compact(h)) {
-    return (size_t)cap;
+    return ((size_t)cap + 3) & ~(size_t)3;
   }
   size_t off = (size_t)cap * 4 + (size_t)fill_max(cap);
   return (off + 3) & ~(size_t)3;
 }
 
 static uint64_t meta_bytes(const AvantHash *h, int32_t cap) {
-  int32_t ne = is_compact(h) ? fill_max(cap) : cap;
   if (!cap) {
     return 0;
   }
-  if (key_hashed(h)) {
-    return (uint64_t)meta_hash_off(h, cap) + (uint64_t)ne * 4;
+  if (!is_compact(h)) {
+    return (uint64_t)meta_hash_off(h, cap) + (uint64_t)fill_max(cap) * 4;
   }
-  return is_compact(h) ? (uint64_t)cap * 4 + (uint64_t)ne : (uint64_t)cap;
+  if (key_hashed(h)) {
+    return (uint64_t)meta_hash_off(h, cap) + (uint64_t)fill_max(cap) * 4;
+  }
+  return (uint64_t)cap * 4 + (uint64_t)fill_max(cap);
 }
 
 /* The entries a table of CAP positions has room for. */
@@ -508,12 +569,17 @@ static inline uint32_t *hashes_of(const AvantHash *h) {
   return (uint32_t *)((char *)h->meta + meta_hash_off(h, h->cap));
 }
 
+/* The open layout's positions in the order of insertion. */
+static inline uint32_t *order_of(const AvantHash *h) {
+  return (uint32_t *)((char *)h->meta + meta_hash_off(h, h->cap));
+}
+
 static inline uint8_t ent_state(const AvantHash *h, int32_t e) {
   return states_of(h)[e];
 }
 
 /* The entry a position names, or -1: the index's (compact), or the
- * position's own when it is full (open). */
+ * position's own when it is live (open). */
 static inline int32_t pos_entry(const AvantHash *h, int32_t i) {
   if (is_compact(h)) {
     return (int32_t)index_of(h)[i] - 1;
@@ -528,10 +594,19 @@ static inline uint32_t ent_hash(const AvantHash *h, int32_t e) {
   return hash_int(ikey_at(h, h->keys, e), h->seed);
 }
 
-/* The number of entries a walk visits in order: the entries used
- * (compact: the order of insertion) or the positions (open). */
+/* The number of entries a walk visits in order, deleted ones included
+ * (the entries made since the last growth). */
 static int32_t walk_end(const AvantHash *h) {
-  return is_compact(h) ? h->used : h->cap;
+  return h->used;
+}
+
+/* The entry (an index into keys, vals and the states) of the N-th in
+ * the order of insertion: N itself (compact), or its position (open). */
+static inline int32_t walk_slot(const AvantHash *h, int32_t n) {
+  if (is_compact(h)) {
+    return n;
+  }
+  return (int32_t)order_of(h)[n];
 }
 
 static int ent_live(const AvantHash *h, int32_t e) {
@@ -545,7 +620,7 @@ static int ent_live(const AvantHash *h, int32_t e) {
  * the width are chosen once, outside the probe loop: one loop per pair,
  * whose position test (POS, below) and key compare are a load and a
  * compare each. */
-#define POS_OPEN(i) (st_full(st[i]) ? (i) : -1)
+#define POS_OPEN(i) (st[i] == 0 ? -1 : (st_full(st[i]) ? (i) : -2))
 #define POS_COMPACT(i) ((int32_t)ix[i] - 1)
 
 #define FIND_INT_AT(T, POS)                                                         \
@@ -561,6 +636,26 @@ static int ent_live(const AvantHash *h, int32_t e) {
       if (ks[e] == want) {                                                        \
         *ent = e;                                                                 \
         return 1;                                                                 \
+      }                                                                           \
+      i = (i + 1) & mask;                                                         \
+    }                                                                             \
+  } while (0)
+
+/* The open layout's probe: a live position whose key is the one wanted
+ * is found, an empty one ends it, a deleted one is passed over. */
+#define FIND_INT_OPEN_AT(T)                                                         \
+  do {                                                                            \
+    const T *ks = (const T *)h->keys;                                             \
+    T want = (T)key;                                                              \
+    for (n = 0; n < cap; n++) {                                                   \
+      uint8_t s = st[i];                                                          \
+      if (s == 1 && ks[i] == want) {                                              \
+        *ent = i;                                                                 \
+        return 1;                                                                 \
+      }                                                                           \
+      if (s == 0) {                                                               \
+        *pos = i;                                                                 \
+        return 0;                                                                 \
       }                                                                           \
       i = (i + 1) & mask;                                                         \
     }                                                                             \
@@ -599,7 +694,20 @@ static int find_int(const AvantHash *h, int64_t key, uint32_t hv, int32_t *ent, 
     FIND_INT_WIDTHS(POS_COMPACT);
   } else {
     const uint8_t *st = states_of(h);
-    FIND_INT_WIDTHS(POS_OPEN);
+    switch (kw) {
+    case 1:
+      FIND_INT_OPEN_AT(uint8_t);
+      break;
+    case 2:
+      FIND_INT_OPEN_AT(uint16_t);
+      break;
+    case 4:
+      FIND_INT_OPEN_AT(uint32_t);
+      break;
+    default:
+      FIND_INT_OPEN_AT(uint64_t);
+      break;
+    }
   }
   *pos = 0;
   return 0;
@@ -614,6 +722,29 @@ static int find_int(const AvantHash *h, int64_t key, uint32_t hv, int32_t *ent, 
         return 0;                                                                 \
       }                                                                           \
       if (hs[e] == hv) {                                                          \
+        const char *slot = skey_at(keys, e);                                      \
+        if (bytes_eq(slot, skey_n(slot, es[e]), s, n)) {                          \
+          *ent = e;                                                               \
+          return 1;                                                               \
+        }                                                                         \
+      }                                                                           \
+      i = (i + 1) & mask;                                                         \
+    }                                                                             \
+  } while (0)
+
+
+/* As FIND_BYTES_AT, passing over a deleted position (POS gives -2): the
+ * open layout's. */
+#define FIND_BYTES_SKIP_AT(POS)                                                          \
+  do {                                                                            \
+    for (k = 0; k < cap; k++) {                                                   \
+      int32_t e = POS(i);                                                         \
+      if (e < 0) {                                                                \
+        if (e == -1) {                                                            \
+          *pos = i;                                                               \
+          return 0;                                                               \
+        }                                                                         \
+      } else if (hs[e] == hv) {                                                   \
         const char *slot = skey_at(keys, e);                                      \
         if (bytes_eq(slot, skey_n(slot, es[e]), s, n)) {                          \
           *ent = e;                                                               \
@@ -641,7 +772,7 @@ static int find_bytes(const AvantHash *h, const char *s, size_t n, uint32_t hv, 
     FIND_BYTES_AT(POS_COMPACT);
   } else {
     const uint8_t *st = es;
-    FIND_BYTES_AT(POS_OPEN);
+    FIND_BYTES_SKIP_AT(POS_OPEN);
   }
   *pos = 0;
   return 0;
@@ -654,14 +785,16 @@ static int32_t claim(AvantHash *h, int32_t pos, uint8_t st) {
   int32_t e = pos;
   if (is_compact(h)) {
     e = h->used;
-    h->used += 1;
     index_of(h)[pos] = (uint32_t)e + 1u;
+  } else {
+    order_of(h)[h->used] = (uint32_t)pos;
   }
+  h->used += 1;
   states_of(h)[e] = st;
   h->size += 1;
   /* A growth claims into a copy of the hash whose count is not written
    * back, so only a new key counts. */
-  h->adds += 1;
+  h->changes += 1;
   return e;
 }
 
@@ -738,11 +871,76 @@ static void move_entry(AvantHash *dst, const AvantHash *src, void *okeys, void *
  * from the hash after the last allocation (RC2). A reference copied into
  * a new buffer takes the slot's barrier (a large buffer is not young);
  * the hash takes one before it names them. */
+/* A compact table's compaction where it is: the live entries slide down
+ * over the deleted ones in their order, the freed tail is cleared, and
+ * the index is filled again from the stored hashes. Nothing is
+ * allocated, so a table that deletes as much as it inserts (a cache
+ * that drops its oldest key for each new one) keeps one set of buffers.
+ * A moved reference stays in its buffer: each buffer that holds
+ * references takes one barrier for all of them (RC3), and a proof's
+ * log is told first (RC5).
+ * gc-lint: holds nothing (no allocation). */
+static void compact_in_place(AvantHash *h) {
+  int32_t end = h->used;
+  int32_t w = 0;
+  int32_t e;
+  size_t kb = key_bytes(h);
+  size_t vb = (size_t)1 << h->vshift;
+  uint8_t *st = states_of(h);
+  uint32_t *hs = hashes_of(h);
+  int kr = key_refs(h);
+  int vr = val_refs(h);
+  if (kr) {
+    avant_gc_overwrite(h->keys);
+    avant_barrier(h->keys);
+  }
+  if (vr) {
+    avant_gc_overwrite(h->vals);
+    avant_barrier(h->vals);
+  }
+  for (e = 0; e < end; e++) {
+    if (!st_full(st[e])) {
+      continue;
+    }
+    if (w != e) {
+      memcpy((char *)h->keys + (size_t)w * kb, (char *)h->keys + (size_t)e * kb, kb);
+      memcpy(val_at(h, h->vals, w), val_at(h, h->vals, e), vb);
+      st[w] = st[e];
+      hs[w] = hs[e];
+    }
+    w++;
+  }
+  if (w < end) {
+    if (kr) {
+      memset((char *)h->keys + (size_t)w * kb, 0, (size_t)(end - w) * kb);
+    }
+    if (vr) {
+      memset(val_at(h, h->vals, w), 0, (size_t)(end - w) * vb);
+    }
+    memset(st + w, 0, (size_t)(end - w));
+  }
+  uint32_t *ix = index_of(h);
+  int32_t mask = h->cap - 1;
+  memset(ix, 0, (size_t)h->cap * 4);
+  for (e = 0; e < w; e++) {
+    int32_t i = (int32_t)(hs[e] & (uint32_t)mask);
+    while (ix[i] != 0) {
+      i = (i + 1) & mask;
+    }
+    ix[i] = (uint32_t)e + 1u;
+  }
+  h->used = w;
+}
+
 static void grow(AvantHash *h) {
   int32_t ncap = h->cap ? h->cap * 2 : 8;
-  /* A compact table with at least half its entries deleted: the live
-   * ones are compacted into a table of the same size. */
-  if (is_compact(h) && h->cap && h->size < fill_max(h->cap) / 2) {
+  /* A table with at least half its entries deleted: the live ones are
+   * compacted at the same size, a compact table's where it is. */
+  if (h->cap && h->size < fill_max(h->cap) / 2) {
+    if (is_compact(h)) {
+      compact_in_place(h);
+      return;
+    }
     ncap = h->cap;
   }
   /* The slot ceiling, before anything is allocated: cap is a power of
@@ -782,11 +980,12 @@ static void grow(AvantHash *h) {
     avant_barrier(nvals);
   }
   for (e = 0; e < end; e++) {
-    uint8_t st = ent_state(h, e);
+    int32_t x = walk_slot(h, e);
+    uint8_t st = ent_state(h, x);
     if (!st_full(st)) {
       continue;
     }
-    move_entry(&dst, h, okeys, ovals, st, ent_hash(h, e), e);
+    move_entry(&dst, h, okeys, ovals, st, ent_hash(h, x), x);
   }
 
   avant_barrier(h);
@@ -822,8 +1021,8 @@ static void ensure_cap(AvantHash *h) {
 static void erase_compact(AvantHash *h, int32_t e, int32_t mask, int str);
 static void erase_open(AvantHash *h, int32_t e, int32_t mask, int str);
 
-/* Removes the entry E a lookup found: its position's cluster slides back,
- * so no tombstone is left. */
+/* Removes the entry E a lookup found: no other entry moves, so a walk in
+ * place goes on over the rest. */
 static void erase(AvantHash *h, int32_t e) {
   int32_t mask = h->cap - 1;
   int str = key_is_str(h);
@@ -839,6 +1038,7 @@ static void erase(AvantHash *h, int32_t e) {
     }
   }
   h->size -= 1;
+  h->changes += HASH_DELETED;
   if (is_compact(h)) {
     erase_compact(h, e, mask, str);
     return;
@@ -889,45 +1089,21 @@ static void erase_compact(AvantHash *h, int32_t e, int32_t mask, int str) {
   }
 }
 
-/* Open: the entry's position is emptied and later entries of its cluster
- * move back into it.
+/* Open: the position is marked deleted and its references cleared; no
+ * entry moves (a later lookup passes over it, an insertion does not take
+ * it, the next growth drops it).
  * gc-lint: a store helper (erase makes the call on the two buffers first, RC5). */
 static void erase_open(AvantHash *h, int32_t e, int32_t mask, int str) {
-  int32_t i = e;
-  uint8_t *st = states_of(h);
-  uint32_t *hs = hashes_of(h);
-  size_t kw = kw_of(h);
-  for (;;) {
-    int32_t k;
-    st[i] = 0;
-    if (str) {
-      ((void **)h->keys)[i] = NULL;
-    }
-    if (val_refs(h)) {
-      if (val_is_ref(h)) {
-        ((void **)h->vals)[i] = NULL;
-      } else {
-        memset(val_at(h, h->vals, i), 0, (size_t)1 << h->vshift);
-      }
-    }
-    k = (i + 1) & mask;
-    for (;;) {
-      if (!st_full(st[k])) {
-        return;
-      }
-      int32_t home = (int32_t)(ent_hash(h, k) & (uint32_t)mask);
-      int move = (i <= k) ? (home <= i || home > k) : (home <= i && home > k);
-      if (move) {
-        st[i] = st[k];
-        if (str) {
-          hs[i] = hs[k];
-        }
-        cp_w((char *)h->keys + (size_t)i * kw, (char *)h->keys + (size_t)k * kw, (unsigned)kw);
-        cp_val(h, val_at(h, h->vals, i), val_at(h, h->vals, k));
-        i = k;
-        break;
-      }
-      k = (k + 1) & mask;
+  (void)mask;
+  states_of(h)[e] = 2;
+  if (str) {
+    ((void **)h->keys)[e] = NULL;
+  }
+  if (val_refs(h)) {
+    if (val_is_ref(h)) {
+      ((void **)h->vals)[e] = NULL;
+    } else {
+      memset(val_at(h, h->vals, e), 0, (size_t)1 << h->vshift);
     }
   }
 }
@@ -938,7 +1114,7 @@ static void erase_open(AvantHash *h, int32_t e, int32_t mask, int str) {
 void *avant_hash_create(uint32_t desc) {
   AvantHash *h = (AvantHash *)avant_alloc(sizeof(AvantHash), AVANT_TYPE_HASH);
   h->desc = desc;
-  h->seed = g_hash_seed;
+  h->seed = hash_seed();
   h->kw = (uint8_t)(desc & AVANT_HASH_K_WIDTH);
   h->vw = (uint8_t)((desc >> AVANT_HASH_V_SHIFT) & AVANT_HASH_K_WIDTH);
   h->vshift = (uint8_t)__builtin_ctz(h->vw);
@@ -1001,7 +1177,7 @@ void *avant_hash_create_typed(uint32_t desc, const char *klayout, uint32_t kw, u
   AvantHashX *x = (AvantHashX *)avant_alloc(sizeof(AvantHashX) + (uint64_t)nf * sizeof(uint32_t), AVANT_TYPE_HASH);
   AvantHash *h = &x->h;
   h->desc = desc | AVANT_HASH_TYPED;
-  h->seed = g_hash_seed;
+  h->seed = hash_seed();
   h->kw = (uint8_t)(desc & AVANT_HASH_K_WIDTH);
   /* A scalar or reference value of 1, 2, 4 or 8 bytes keeps the plain
    * table's copies (the descriptor's width); a struct value (no width in
@@ -1051,7 +1227,7 @@ void avant_hash_clear(void *hp) {
   if (!h->cap) {
     return;
   }
-  end = walk_end(h);
+  end = entry_cap(h, h->cap);
   /* Every key and value reference leaves its buffer (RC5). */
   if (key_refs(h)) {
     avant_gc_overwrite(h->keys);
@@ -1062,6 +1238,7 @@ void avant_hash_clear(void *hp) {
     memset(h->vals, 0, (size_t)end << h->vshift);
   }
   memset(h->meta, 0, (size_t)meta_bytes(h, h->cap));
+  h->changes += HASH_DELETED * (uint32_t)h->size;
   h->size = 0;
   h->used = 0;
 }
@@ -1098,10 +1275,7 @@ void *avant_hash_find_sk(void *hp, const char *key, int32_t *found) {
 
 /* Whether one more entry needs a larger (or compacted) table first. */
 static int needs_grow(const AvantHash *h) {
-  if (is_compact(h)) {
-    return h->used >= fill_max(h->cap);
-  }
-  return (int64_t)h->size * 4 >= (int64_t)h->cap * 3;
+  return h->used >= fill_max(h->cap);
 }
 
 /* The value of KEY, inserted holding zero when absent (*found 0, else 1;
@@ -1905,6 +2079,96 @@ void avant_hash_del_uk(void *hp, const void *key) {
   (void)avant_hash_take_uk(hp, key, &found);
 }
 
+/* ---- the walk in place (for k, v in h; h.each; a Set's) ----
+ *
+ * A walk visits the entries in their order (the order of insertion),
+ * reading each one where it is: the generated code keeps the entry's
+ * number, asks for the next live one (avant_hash_walk) and loads the key
+ * and the value through their addresses (avant_hash_walk_key, _val),
+ * before anything can collect. Its count of changes (above) is read
+ * before the first step and after each: a deleted entry only changes its
+ * state, so a walk whose step deleted the entry it visits goes on; a key
+ * added would be missed, and a deletion of another key traps too
+ * (avant_hash_walk_ok tells the generated code which). Nothing here
+ * changes the hash, so a walk of a hash that running tasks read is a
+ * read like theirs. */
+
+/* The number of the first live entry at or after N, or -1. */
+int32_t avant_hash_walk(void *hp, int32_t n) {
+  AvantHash *h = (AvantHash *)hp;
+  if (!h || !h->cap || n < 0) {
+    return -1;
+  }
+  int32_t end = walk_end(h);
+  const uint8_t *st = states_of(h);
+  if (is_compact(h)) {
+    for (; n < end; n++) {
+      if (st_full(st[n])) {
+        return n;
+      }
+    }
+    return -1;
+  }
+  const uint32_t *ord = order_of(h);
+  for (; n < end; n++) {
+    if (st_full(st[ord[n]])) {
+      return n;
+    }
+  }
+  return -1;
+}
+
+/* The address of entry E's key and value (E from avant_hash_walk, in the
+ * same step: nothing collected or changed the hash since). */
+void *avant_hash_walk_key(void *hp, int32_t e) {
+  AvantHash *h = (AvantHash *)hp;
+  return (char *)h->keys + (size_t)walk_slot(h, e) * key_bytes(h);
+}
+
+void *avant_hash_walk_val(void *hp, int32_t e) {
+  AvantHash *h = (AvantHash *)hp;
+  return val_at(h, h->vals, walk_slot(h, e));
+}
+
+/* After a step of a walk whose count of changes moved from C0: 1 when
+ * the only change was the deletion of the visited entry E (the walk goes
+ * on), else 0 when a key was added and 2 when another key was deleted
+ * (the walk's trap names which). */
+int32_t avant_hash_walk_ok(void *hp, uint32_t c0, int32_t e) {
+  AvantHash *h = (AvantHash *)hp;
+  uint32_t d = h->changes - c0;
+  if ((d & (HASH_DELETED - 1u)) != 0) {
+    return 0;
+  }
+  /* One key removed, and the visited entry is no longer live (or a clear
+   * emptied the table): that key was the visited one. */
+  if (d == HASH_DELETED && e >= 0 && (e >= walk_end(h) || !ent_live(h, walk_slot(h, e)))) {
+    return 1;
+  }
+  return 2;
+}
+
+/* delete_if's deletion of the entry E it visits, by its number: no key
+ * is hashed or compared again (a key's own hash and equals are not
+ * called); an entry the predicate already deleted stays so. A frozen
+ * hash traps as delete does; delete_if makes that test first with E -1,
+ * so it traps on a frozen hash whatever its predicate says. */
+void avant_hash_walk_delete(void *hp, int32_t e) {
+  AvantHash *h = (AvantHash *)hp;
+  if (!h) {
+    return;
+  }
+  HASH_FROZEN_TRAP(h, AVANT_FROZEN_HASH_DELETE);
+  probe_guard(h, AVANT_FROZEN_HASH_DELETE);
+  if (e < 0 || e >= walk_end(h)) {
+    return;
+  }
+  int32_t x = walk_slot(h, e);
+  if (ent_live(h, x)) {
+    erase(h, x);
+  }
+}
+
 typedef struct {
   void *buf;
   int32_t size;
@@ -1932,10 +2196,11 @@ static void *hash_collect(AvantHash *h, int keys) {
     int32_t e;
     int32_t k = 0;
     for (e = 0; e < end && k < n; e++) {
-      if (!ent_live(h, e)) {
+      int32_t x = walk_slot(h, e);
+      if (!ent_live(h, x)) {
         continue;
       }
-      cp_n((char *)buf + (size_t)k * w, keys ? (char *)h->keys + (size_t)e * w : (char *)val_at(h, h->vals, e), w);
+      cp_n((char *)buf + (size_t)k * w, keys ? (char *)h->keys + (size_t)x * w : (char *)val_at(h, h->vals, x), w);
       k++;
     }
     if (ref) {
@@ -2204,10 +2469,11 @@ static void each_inner(void *v, int32_t depth, uint32_t hashes, int thaw, uint64
     AvantHash *h = (AvantHash *)v;
     int32_t end = h->cap ? walk_end(h) : 0;
     for (i = 0; i < end; i++) {
-      if (!ent_live(h, i)) {
+      int32_t at = walk_slot(h, i);
+      if (!ent_live(h, at)) {
         continue;
       }
-      void *x = *(void **)val_at(h, h->vals, i);
+      void *x = *(void **)val_at(h, h->vals, at);
       if (thaw) {
         avant_value_thaw(x, depth - 1, hashes >> 1, elem_size);
       } else {

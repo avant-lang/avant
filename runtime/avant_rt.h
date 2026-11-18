@@ -449,6 +449,14 @@ void *avant_hash_take_ik(void *h, avant_int key, int32_t *found);
 void *avant_hash_take_sk(void *h, const char *key, int32_t *found);
 void *avant_hash_keys(void *h);
 void *avant_hash_values(void *h);
+/* A walk in place (avant_hash.c): the next live entry's number, its key's
+ * and value's addresses, whether a step's change was the deletion of the
+ * visited entry only, and delete_if's deletion of the visited entry. */
+int32_t avant_hash_walk(void *h, int32_t n);
+void *avant_hash_walk_key(void *h, int32_t e);
+void *avant_hash_walk_val(void *h, int32_t e);
+int32_t avant_hash_walk_ok(void *h, uint32_t c0, int32_t e);
+void avant_hash_walk_delete(void *h, int32_t e);
 avant_int avant_hash_size(void *h);
 void avant_hash_clear(void *h);
 void avant_hash_del_sk(void *h, const char *key);
