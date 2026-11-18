@@ -61,6 +61,12 @@ fn client_round(port: Int, out: Channel(String)): Int {
   }
   // A Content-Type set by header replaces the one Response.text wrote
   // (it was a second Content-Type line); an empty one sends none.
+  // The peer's address (a framework's rate limiter keys on it).
+  if resp = Http.get("${base}/peer") {
+    out.send("peer=${body_text(resp)}")
+  } else {
+    out.send("peer=ERR")
+  }
   if resp = Http.get("${base}/json") {
     types = resp.headers.get_all("Content-Type")
     out.send("json=${types.size}:${types.get(0) ?? ""}")
@@ -185,15 +191,15 @@ fn test_std_http(c: Checks) {
       Response.text("hello http")
     })
     server.get("/q", (req) {
-      Response.text("${req.path}|${req.query ?? ""}")
+      Response.text("${req.path}|${req.query() ?? ""}")
     })
     server.post("/echo", (req) {
-      Response.bytes(req.body)
+      Response.bytes(req.body())
     })
     server.get("/hdr", (req) {
-      dups = req.headers.get_all("X-Dup")
-      first = req.headers.get("x-dup") ?? ""
-      Response.text("${first}/${dups.size}/${req.headers.has("X-One")}")
+      dups = req.headers().get_all("X-Dup")
+      first = req.header("x-dup") ?? ""
+      Response.text("${first}/${dups.size}/${req.headers().has("X-One")}")
     })
     server.get("/old", (req) {
       Response.text("", 302).header("Location", "/new")
@@ -203,6 +209,9 @@ fn test_std_http(c: Checks) {
     })
     server.get("/meta", (req) {
       Response.text("created", 201).header("X-Made", "yes")
+    })
+    server.get("/peer", (req) {
+      Response.text(req.peer())
     })
     server.get("/json", (req) {
       Response.text("{}").header("X-A", "1").header("content-type", "text/html").header("Content-Type", "application/json")
@@ -240,6 +249,7 @@ fn test_std_http(c: Checks) {
     want.push("redir=200:landed")
     want.push("redir-off=302:/new")
     want.push("meta=201:yes")
+    want.push("peer=127.0.0.1")
     want.push("json=1:application/json")
     want.push("untyped=204:0")
     i = 0
@@ -255,6 +265,29 @@ fn test_std_http(c: Checks) {
     c.expect(false, "listen")
   }
 
+  // An IPv6 peer's address, where the machine has an IPv6 loopback.
+  if opened6 = Http.listen(0, "::1", 1048576, 1) {
+    server6 = opened6
+    server6.get("/peer", (req) {
+      server6.close()
+      Response.text(req.peer())
+    })
+    port6 = server6.port()
+    asked = spawn {
+      url6 = "http://[::1]:${port6}/peer"
+      said = "ERR"
+      if resp = Http.get(url6) {
+        said = body_text(resp)
+      }
+      said
+    }
+    server6.serve()
+    switch asked.join() {
+      case said: String { c.eq_str(said, "::1", "an IPv6 peer's address") }
+      case TaskError { c.expect(false, "an IPv6 peer's address") }
+    }
+  }
+
   stamp = now_ms()
   script = "${scratch()}/http-raw-${stamp}.py"
   py = "import socket, sys\nport = int(sys.argv[1])\nmode = sys.argv[2]\ns = socket.create_connection((\"127.0.0.1\", port))\nif mode == \"chunked\":\n    s.sendall(b\"POST /echo HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n4\\r\\nWiki\\r\\n0\\r\\n\\r\\n\")\nelif mode == \"keepalive\":\n    s.sendall(b\"GET /ping HTTP/1.1\\r\\nHost: x\\r\\n\\r\\nGET /ping HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n\")\n    s.settimeout(5)\n    data = b\"\"\n    try:\n        while data.count(b\"pong\") < 2:\n            chunk = s.recv(4096)\n            if not chunk:\n                break\n            data += chunk\n    except Exception:\n        pass\n    print(\"keepalive=\" + \",\".join([\"pong\"] * data.count(b\"pong\")))\n    sys.exit(0)\nelse:\n    s.sendall(b\"this is not http\\r\\n\\r\\n\")\ndata = b\"\"\ntry:\n    while True:\n        chunk = s.recv(4096)\n        if not chunk:\n            break\n        data += chunk\nexcept Exception:\n    pass\nprint(data.decode(\"latin1\").split(\"\\r\\n\")[0])\n"
@@ -263,7 +296,7 @@ fn test_std_http(c: Checks) {
   if opened = Http.listen(0, "127.0.0.1", 8) {
     server = opened
     server.post("/echo", (req) {
-      Response.bytes(req.body)
+      Response.bytes(req.body())
     })
     server.get("/ping", (req) {
       Response.text("pong")

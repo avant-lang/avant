@@ -417,7 +417,9 @@ struct AvantHttpServer {
   AvantWsConn *ws_all;
 };
 
-/* conn comes first: a Conn's address is its node's. */
+/* conn comes first: a Conn's address is its node's. peer is the peer's
+ * address as accept gave it (4 or 16 bytes, peer_len), kept for
+ * Request.peer: copied at open, so a request pays nothing for it. */
 typedef struct ConnNode {
   Conn conn;
   struct us_socket_t *sock;
@@ -425,6 +427,8 @@ typedef struct ConnNode {
   struct ConnNode *wprev;
   struct ConnNode *wnext;
   int watched;
+  int peer_len;
+  unsigned char peer[16];
 } ConnNode;
 
 #define HTTP_HEAD_TIMEOUT_MS 10000
@@ -897,6 +901,65 @@ char *avant_http_req_headers(void *reqp) {
   }
   return build_packed_headers(req->headers, req->num_headers, req->conn->buf,
                               raw_len);
+}
+
+/* The peer's address as two Ints for Request (no allocation on the
+ * request's path; Request.peer makes the text when it is asked):
+ * which 0 is the high word, 1 the low. IPv4 (and an IPv4 address mapped
+ * into IPv6, as a dual-stack listener sees it) is high -1 and the four
+ * bytes in the low word; IPv6 is its 16 bytes, big-endian, in the two;
+ * none (0, 0). */
+avant_int avant_http_req_peer(void *reqp, avant_int which) {
+  AvantHttpReq *req = (AvantHttpReq *)reqp;
+  ConnNode *node = (ConnNode *)req->conn;
+  const unsigned char *p = node->peer;
+  static const unsigned char mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
+  uint64_t hi = 0;
+  uint64_t lo = 0;
+  int i;
+  if (node->peer_len == 16 && memcmp(p, mapped, 12) == 0) {
+    p += 12;
+  } else if (node->peer_len == 16) {
+    for (i = 0; i < 8; i++) {
+      hi = (hi << 8) | p[i];
+      lo = (lo << 8) | p[8 + i];
+    }
+    return which == 0 ? (avant_int)hi : (avant_int)lo;
+  } else if (node->peer_len != 4) {
+    return 0;
+  }
+  if (which == 0) {
+    return -1;
+  }
+  return (avant_int)(((uint64_t)p[0] << 24) | ((uint64_t)p[1] << 16) | ((uint64_t)p[2] << 8) | p[3]);
+}
+
+/* The text of an address in avant_http_req_peer's two words: dotted
+ * IPv4, RFC 5952 IPv6, "" for none. */
+char *avant_http_peer_text(avant_int hi, avant_int lo) {
+  char text[INET6_ADDRSTRLEN];
+  unsigned char b[16];
+  int i;
+  if (hi == 0 && lo == 0) {
+    return avant_str_empty();
+  }
+  if (hi == -1) {
+    for (i = 0; i < 4; i++) {
+      b[i] = (unsigned char)((uint64_t)lo >> (24 - 8 * i));
+    }
+    if (!inet_ntop(AF_INET, b, text, sizeof text)) {
+      return avant_str_empty();
+    }
+  } else {
+    for (i = 0; i < 8; i++) {
+      b[i] = (unsigned char)((uint64_t)hi >> (56 - 8 * i));
+      b[8 + i] = (unsigned char)((uint64_t)lo >> (56 - 8 * i));
+    }
+    if (!inet_ntop(AF_INET6, b, text, sizeof text)) {
+      return avant_str_empty();
+    }
+  }
+  return make_string(text, strlen(text));
 }
 
 /* A handler's status outside 200-599:
@@ -2667,13 +2730,15 @@ static struct us_socket_t *srv_on_open(struct us_socket_t *s, int is_client,
   ConnNode *node = (ConnNode *)us_socket_ext(0, s);
   HttpLoop *hl = loop_of_socket(s);
   (void)is_client;
-  (void)ip;
-  (void)ip_length;
   AvantHttpServer *srv = hl->srv;
   int64_t n;
   memset(node, 0, sizeof(ConnNode));
   node->conn.srv = srv;
   node->sock = s;
+  if (ip && (ip_length == 4 || ip_length == 16)) {
+    memcpy(node->peer, ip, (size_t)ip_length);
+    node->peer_len = ip_length;
+  }
   node->next = hl->conns_head;
   hl->conns_head = node;
   idle_arm(s, srv->idle_secs, srv->idle_mins);

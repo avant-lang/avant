@@ -4270,7 +4270,7 @@ fn main {
   if server = Http.listen(0) {                 // port 0: the OS picks a free port
     server.get("/hello", (req) {
       server.close()                             // this example answers once, then stops
-      Response.text("hello ${req.query ?? "nobody"}")
+      Response.text("hello ${req.query() ?? "nobody"}")
     })
     port = server.port()
     client = spawn {
@@ -4299,7 +4299,7 @@ fn main {
       Response.text("hello")
     })
     server.post("/echo", (req) {
-      Response.bytes(req.body).header("X-Echo", "1")
+      Response.bytes(req.body()).header("X-Echo", "1")
     })
     server.route("OPTIONS", "/", (req) {
       Response.text("", 204)
@@ -4314,10 +4314,10 @@ fn main {
 | `Http.listen(port, host = "127.0.0.1", max_body = 1048576, loops = 0, max_message = 1048576)` | `port: Int`, `host: String`; `max_body`, `loops` and `max_message` are `Int`s | `Server \| HttpError` | an `HttpError` when it cannot bind | `max_body` bounds a request body; `loops` overrides the event-loop count; `max_message` bounds a WebSocket message |
 | `server.port()` | — | `Int`: the bound port | — | |
 | `get`, `post`, `put`, `delete`, `patch`, `route(method, path)` | `path: String` (and `method: String`), then the handler, a lambda | the `Server` | one registered from a handler while serving traps (`avant runtime: route GET /x registered while the server is serving: register every route before serve`; the handler's request fails, answered 500) | **routes** are exact paths; no pattern router, middleware or streaming. Register every route, WebSocket ones too, before `serve` |
-| a handler, `(req) { ... }` | a `Request` | a `Response` | — | gets `method`, `path`, `query` as `String?` without the `?`, `headers`, `body` as `Bytes` |
+| a handler, `(req) { ... }` | a `Request` | a `Response` | — | the fields `method` and `path`; `req.query()`, the raw query (`String?`, without the `?`); `req.header(name)`, a header's first value (`String?`, any case); `req.headers()`, all of them; `req.body()`, the body (`Bytes`); `req.peer()`, the peer's address (`"127.0.0.1"`, `"::1"`; an IPv4-mapped address as IPv4; no port) |
 | `Response.text(body, status = 200)`, `Response.bytes(body, status = 200)` | `body`: a `String`, `Bytes`; `status: Int` | a `Response` | a `status` outside 200 to 599 traps when written (`avant runtime: a response's status 99 is not 200 to 599: …`): a 1xx is an interim answer, never a handler's (the WebSocket upgrade's 101 is the server's) | the only ways to build one; the server sets `Content-Length` and `Connection` |
 | `.header(name, value)` | `name`, `value: String` | the `Response` | a header name must be a token (letters, digits, RFC 9110's punctuation) and its value hold no control character but tab, or it traps (`avant runtime: Response.header value of X-A holds a control character (byte 13 at 1): …`) | check request text before putting it in a header. A `Content-Type` replaces the one `text` or `bytes` set (an empty value sends none): a response has one |
-| `get(name)`, `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)` | `name: String`, `i: Int` | `String?`, `Bool`, `Array(String)`, `Int`, `String?`, `String?` | — | **headers**, on `req.headers` and `resp.headers` |
+| `get(name)`, `has(name)`, `get_all(name)`, `count`, `name_at(i)`, `value_at(i)` | `name: String`, `i: Int` | `String?`, `Bool`, `Array(String)`, `Int`, `String?`, `String?` | — | **headers**, on `req.headers()` and `resp.headers` |
 | `serve` | — | — | — | runs until `close` |
 | `close` | — | — | — | stops the server and lets `serve` return, at the latest at the shutdown deadline (below). An unclosed server keeps its socket until the process exits (no finalizer) |
 

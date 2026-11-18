@@ -9,6 +9,8 @@ lib httpc {
   fun avant_http_req_target(req: Ptr(Void)): String
   fun avant_http_req_body(req: Ptr(Void)): Bytes
   fun avant_http_req_headers(req: Ptr(Void)): Bytes
+  fun avant_http_req_peer(req: Ptr(Void), which: Int): Int
+  fun avant_http_peer_text(hi: Int, lo: Int): String
   fun avant_http_req_respond(req: Ptr(Void), status: Int, ctype: String, head: String, body: Bytes)
   fun avant_http_listen(host: String, port: Int, max_body: Int, loops: Int, max_message: Int): Ptr(Void)
   fun avant_http_port(srv: Ptr(Void)): Int
@@ -129,15 +131,48 @@ fn empty_headers: Headers {
   Headers { data: "".bytes }
 }
 
-// A received request. `method`, `path` and `body` are values copied out
-// of the socket buffer before the handler runs; `query` is the raw
-// query string without the `?`, or nil when the target has none.
+// A received request. `method` and `path` are fields, read by every
+// route match; the rest is read through methods, so that what is read
+// lazily later changes no handler: `query()` is the raw query string
+// without the `?` (nil when the target has none), `header(name)` the
+// first value of a header, `headers()` all of them, `body()` the body,
+// `peer()` the peer's address. Each is a value copied out of the socket
+// buffer before the handler runs; the peer is kept as two words until
+// `peer()` makes its text.
 pub struct Request {
   pub method: String
   pub path: String
-  pub query: String?
-  pub headers: Headers
-  pub body: Bytes
+  raw_query: String?
+  hs: Headers
+  data: Bytes
+  peer_hi: Int
+  peer_lo: Int
+
+  pub fn query: String? {
+    self.raw_query
+  }
+
+  // The first value of the header `name` (in any case), nil when the
+  // request has none.
+  pub fn header(name: String): String? {
+    self.hs.get(name)
+  }
+
+  pub fn headers: Headers {
+    self.hs
+  }
+
+  pub fn body: Bytes {
+    self.data
+  }
+
+  // The address of the peer that sent the request: an IPv4 address in
+  // dotted form ("127.0.0.1", also when a dual-stack listener received
+  // it as an IPv4-mapped IPv6 address) or an IPv6 address ("::1"). The
+  // port is not kept.
+  pub fn peer: String {
+    httpc.avant_http_peer_text(self.peer_hi, self.peer_lo)
+  }
 }
 
 // A response, in both directions: a handler returns one, and the
@@ -460,9 +495,11 @@ fn http_dispatch(state: HttpState, raw: Ptr(Void)) {
   req = Request {
     method: method,
     path: path,
-    query: query,
-    headers: Headers { data: raw_headers },
-    body: req_body
+    raw_query: query,
+    hs: Headers { data: raw_headers },
+    data: req_body,
+    peer_hi: httpc.avant_http_req_peer(raw, 0),
+    peer_lo: httpc.avant_http_req_peer(raw, 1)
   }
   resp = state.dispatch(req)
   // The response head and body travel into C as raw heap pointers; the

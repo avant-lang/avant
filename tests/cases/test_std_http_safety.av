@@ -189,13 +189,13 @@ fn client_cases(c: Checks) {
     server = opened.idle_timeout(4000)
     server.post("/raw", (req) {
       sum = 0
-      for i in 0..req.body.size {
-        sum = sum * 7 + req.body[i]
+      for i in 0..req.body().size {
+        sum = sum * 7 + req.body()[i]
       }
-      Response.text("${req.body.size} bytes, sum ${sum}")
+      Response.text("${req.body().size} bytes, sum ${sum}")
     })
     server.post("/len", (req) {
-      body = req.body
+      body = req.body()
       bad = 0
       for i in 0..body.size {
         if body[i] != 97 + i % 26 {
@@ -853,7 +853,7 @@ fn write_piece_cases(c: Checks) {
       Response.text(big)
     })
     server.post("/size", (req) {
-      Response.text("${req.body.size} ${(String.from_utf8(req.body) ?? "?") == big}")
+      Response.text("${req.body().size} ${(String.from_utf8(req.body()) ?? "?") == big}")
     })
     server.websocket("/ws", (conn, msg) {
       _ = conn.send_text("${msg.body.size} ${(msg.text() ?? "") == big}")
@@ -1170,7 +1170,7 @@ fn deadline_cases(c: Checks, root: String) {
       Response.text("pong")
     })
     server.post("/len", (req) {
-      Response.text("${req.body.size} bytes")
+      Response.text("${req.body().size} bytes")
     })
     server.get("/huge", (req) {
       Response.bytes(huge_bytes)
@@ -1282,7 +1282,7 @@ fn limit_cases(c: Checks, root: String) {
   if opened = Http.listen(0, "127.0.0.1", 1048576, 1) {
     server = opened.body_budget(1000)
     server.post("/len", (req) {
-      Response.text("${req.body.size} bytes")
+      Response.text("${req.body().size} bytes")
     })
     server.get("/__stop", (req) {
       server.close()
@@ -1417,7 +1417,7 @@ fn test_std_http_safety(c: Checks, root: String) {
       Response.text("pong")
     })
     server.post("/echo", (req) {
-      Response.bytes(req.body)
+      Response.bytes(req.body())
     })
     server.get("/hidden", (req) {
       Response.text("smuggled")
@@ -1491,7 +1491,7 @@ fn test_std_http_safety(c: Checks, root: String) {
       Response.bytes(big_bytes)
     })
     server.get("/n", (req) {
-      k = (req.query ?? "0").to_i() ?? 0
+      k = (req.query() ?? "0").to_i() ?? 0
       Response.bytes(digits[k % 10])
     })
     server.get("/f", (req) {
