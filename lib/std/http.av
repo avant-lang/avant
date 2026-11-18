@@ -58,6 +58,7 @@ lib httpc {
   fun avant_ws_client_close_code(id: Int): Int
   fun avant_ws_client_send_text(id: Int, data: String): Int
   fun avant_ws_client_send_bytes(id: Int, data: Bytes): Int
+  fun avant_ws_client_send_text_bytes(id: Int, data: Bytes): Int
   fun avant_ws_client_close(id: Int): Int
   fun avant_ws_client_key: String
   fun avant_http_fetch(host: String, port: Int, request: String, timeout_ms: Int, idle_ms: Int): Bytes
@@ -1181,6 +1182,15 @@ fn bad_byte(s: String, i: Int): String {
   "byte ${s[i]} at ${i}"
 }
 
+// A request body as the bytes sent: a String's bytes, or Bytes as they
+// are (both types are accepted wherever a body is).
+fn body_bytes(body: String | Bytes): Bytes {
+  switch body {
+    case s: String { s.bytes }
+    case b: Bytes { b }
+  }
+}
+
 // The headers that carry a credential for the server they were set
 // for (RFC 9110 11.6.2, 11.7.2; RFC 6265 5.4).
 fn is_credential_header(name: String): Bool {
@@ -1384,10 +1394,15 @@ pub class Http {
     Http.request("GET", url, "".bytes, hs, follow, timeout_ms, idle_ms)
   }
 
-  pub fn self.post(url: String, body: String, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
+  // The body is a String (sent as text/plain; charset=utf-8) or Bytes
+  // (application/octet-stream), its bytes as they are.
+  pub fn self.post(url: String, body: String | Bytes, follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
     hs: Array(Header) = []
-    hs.push(Header { name: "Content-Type", value: "text/plain; charset=utf-8" })
-    Http.request("POST", url, body.bytes, hs, follow, timeout_ms, idle_ms)
+    switch body {
+      case String { hs.push(Header { name: "Content-Type", value: "text/plain; charset=utf-8" }) }
+      case Bytes { hs.push(Header { name: "Content-Type", value: "application/octet-stream" }) }
+    }
+    Http.request("POST", url, body, hs, follow, timeout_ms, idle_ms)
   }
 
   // `timeout_ms` is a deadline for the whole call: every redirect it
@@ -1405,10 +1420,10 @@ pub class Http {
   // Authorization, a Proxy-Authorization, a Cookie or a Host set for one
   // server reached the server a redirect named, as browsers and curl
   // never let them.
-  pub fn self.request(method: String, url: String, body: Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
+  pub fn self.request(method: String, url: String, body: String | Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000, idle_ms: Int = 0): Response | HttpError {
     cur_method = method
     cur_url = url
-    cur_body = body
+    cur_body = body_bytes(body)
     hops = 0
     limit = timeout_ms
     if limit <= 0 {
@@ -1468,6 +1483,15 @@ pub struct WsConnection {
 
   pub fn send_bytes(data: Bytes): Bool {
     httpc.avant_ws_client_send_bytes(self.id, data) != 0
+  }
+
+  // Sends a message onward with its kind kept, as WsConn.send_message
+  // does on the server.
+  pub fn send_message(msg: WsMessage): Bool {
+    if msg.is_text {
+      return httpc.avant_ws_client_send_text_bytes(self.id, msg.body) != 0
+    }
+    httpc.avant_ws_client_send_bytes(self.id, msg.body) != 0
   }
 
   // The next message, or nil when the connection has closed. With a

@@ -847,6 +847,7 @@ char *avant_ws_client_recv(avant_int id, avant_int timeout_ms);
 avant_int avant_ws_client_last_is_text(void);
 avant_int avant_ws_client_close_code(avant_int id);
 avant_int avant_ws_client_send_text(avant_int id, const char *data);
+avant_int avant_ws_client_send_text_bytes(avant_int id, const char *data);
 avant_int avant_ws_client_send_bytes(avant_int id, const char *data);
 avant_int avant_ws_client_close(avant_int id);
 char *avant_ws_client_key(void);

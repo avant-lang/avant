@@ -23,6 +23,18 @@ fn client_round(port: Int, out: Channel(String)): Int {
   } else {
     out.send("echo=ERR")
   }
+  // Http.post took a String and Http.request Bytes: each takes either.
+  if resp = Http.post("${base}/echo", "bytes ok".bytes) {
+    out.send("echo-bytes=${body_text(resp)}")
+  } else {
+    out.send("echo-bytes=ERR")
+  }
+  none: Array(Header) = []
+  if resp = Http.request("POST", "${base}/echo", "text ok", none) {
+    out.send("request-text=${body_text(resp)}")
+  } else {
+    out.send("request-text=ERR")
+  }
   if resp = Http.get("${base}/missing") {
     out.send("missing=${resp.status}")
   } else {
@@ -131,7 +143,19 @@ fn ws_client_round(port: Int, out: Channel(String)): Int {
       first = msg.text() ?? ""
       sent2 = conn.send_bytes("xy".bytes)
       if msg2 = conn.recv(5000) {
-        out.send("ws-client=${first}:${msg2.is_binary()}:${msg2.body.size}")
+        // send_message keeps a message's kind (the server's WsConn had
+        // it; the client's had not): text back as text, bytes as bytes.
+        _ = conn.send_message(msg)
+        third = "BAD3"
+        if msg3 = conn.recv(5000) {
+          third = msg3.text() ?? "not text"
+        }
+        _ = conn.send_message(msg2)
+        fourth = "BAD4"
+        if msg4 = conn.recv(5000) {
+          fourth = "${msg4.is_binary()}:${msg4.body.size}"
+        }
+        out.send("ws-client=${first}:${msg2.is_binary()}:${msg2.body.size}:${third}:${fourth}")
       } else {
         out.send("ws-client=BAD2")
       }
@@ -290,7 +314,7 @@ fn test_std_http(c: Checks) {
       server.close()
       Response.text("bye")
     })
-    out = Channel(String).new(16)
+    out = Channel(String).new(32)
     handle = spawn {
       client_round(port, out)
     }
@@ -300,6 +324,8 @@ fn test_std_http(c: Checks) {
     want.push("hello=200:hello http")
     want.push("q=/q|lang=avant&x=1")
     want.push("echo=abc123")
+    want.push("echo-bytes=bytes ok")
+    want.push("request-text=text ok")
     want.push("missing=404")
     want.push("mismatch=404")
     want.push("hdr=one/2/true")
@@ -486,7 +512,7 @@ fn test_std_http(c: Checks) {
     c.eq_int(handle.join() ?? -1, 0, "ws round task")
     c.eq_int(chandle.join() ?? -1, 0, "ws client task")
     if line = cout.recv() {
-      c.eq_str(line, "ws-client=text:abc:true:2", "ws client round")
+      c.eq_str(line, "ws-client=text:abc:true:2:text:text:abc:true:2", "ws client round")
     } else {
       c.expect(false, "ws client round present")
     }

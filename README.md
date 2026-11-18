@@ -4392,8 +4392,8 @@ fn main {
 | Call | Parameters | Result | Errors | Note |
 | --- | --- | --- | --- | --- |
 | `Http.get(url, follow = true, timeout_ms = 10000, idle_ms = 0)` | `url: String`, `follow: Bool`, `timeout_ms: Int`, `idle_ms: Int` | `Response \| HttpError` | below | |
-| `Http.post(url, body, ...)` | `body`, a `String`; then as `get` | `Response \| HttpError` | below | |
-| `Http.request(method, url, body, headers, ...)` | `method: String`, `body` as `Bytes` and `headers` an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`); then as `get` | `Response \| HttpError` | below | |
+| `Http.post(url, body, ...)` | `body`, a `String` (sent as `text/plain; charset=utf-8`) or `Bytes` (`application/octet-stream`); then as `get` | `Response \| HttpError` | below | |
+| `Http.request(method, url, body, headers, ...)` | `method: String`, `body` a `String` or `Bytes` and `headers` an `Array(Header)` (`Header { name: "Accept", value: "text/plain" }`); then as `get` | `Response \| HttpError` | below | |
 
 | The call returns an `HttpError` when | Message |
 | --- | --- |
@@ -4461,7 +4461,7 @@ fn main {
 | `Ws.connect(url, timeout_ms = 10000)` | `url: String`, `timeout_ms: Int` | `WsConnection \| HttpError` | an `HttpError` without connecting for a URL with a space or a control character | `timeout_ms` covers the connection and its handshake |
 | `recv(timeout_ms = -1)` | `timeout_ms: Int` | `WsMessage?` | `nil` when the connection closed or the timeout passed, and `close_code` says which | blocks. Never call `recv` from a server handler |
 | `close_code` | — | `Int` | — | 1006 until a close frame arrives |
-| `send_text`, `send_bytes` | a `String`, `Bytes` | `Bool` | `false` after `close` | |
+| `send_text`, `send_bytes`, `send_message` | a `String`, `Bytes`, a `WsMessage` (sent as it came, text or binary) | `Bool` | `false` after `close` | |
 | `close` | — | — | — | after `close`, every copy of the connection answers as closed, whatever opens later: `send_text` and `send_bytes` return `false`, `recv` `nil`, `close_code` 1006, and another `close` does nothing |
 
 Both timeouts use the monotonic clock. An unclosed connection keeps its thread until the process exits. A `spawn` block may capture a `WsConnection`, so one task can wait in `recv` while another sends; a `close` makes the waiting `recv` return `nil`.

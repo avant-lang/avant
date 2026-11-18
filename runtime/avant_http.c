@@ -4622,6 +4622,12 @@ avant_int avant_ws_client_send_text(avant_int id, const char *data) {
   return ok;
 }
 
+/* A text message held as Bytes (WsConnection.send_message): validated
+ * as UTF-8 when it was received. */
+avant_int avant_ws_client_send_text_bytes(avant_int id, const char *data) {
+  return avant_ws_client_send_text(id, data);
+}
+
 avant_int avant_ws_client_send_bytes(avant_int id, const char *data) {
   WsClient *c = ws_client_acquire(id);
   int ok;
