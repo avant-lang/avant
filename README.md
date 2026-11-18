@@ -962,8 +962,23 @@ fn main {
 }
 ```
 
-- A member is written qualified, `Tok.eof`, everywhere except a [`case` label](#switch). Members are separated by commas or line breaks (a trailing comma allowed) and named in lower-case snake_case; a capital first letter is refused.
+- A member is written qualified, `Tok.eof`, or short, `:eof`, where an enum is expected (below); a [`case` label](#switch) names it bare (`case eof`). Members are separated by commas or line breaks (a trailing comma allowed) and named in lower-case snake_case; a capital first letter is refused.
 - An enum is its own type, not an `Int`: it has `==` and `!=`, no arithmetic and no `<`.
+- **`:name` is a member of the enum expected where it stands**: a parameter (`open(path, on: :write)`), a field, a declared variable, an array element (`[:read, :write]`), a returned value or a `switch` arm's value, a default (`on: Mode = :read`), the other side of `==` and `!=` (`t == :eof`), the fallback of `??`; the one enum of an optional or a union (`m: Mode? = :read`). A name the enum lacks is a compile error naming its members (`Mode has no member wrte; its members are read, write, append`). With no enum expected (`x = :read`, an `Int` place, a generic parameter, overloads on two enums that both have the name) it is a compile error: there is no free-standing symbol type, so a typo never waits for run time. The colon, not Swift's `.name`, since a line starting with `.` continues a method chain.
+
+```avant
+enum Mode { read, write, append }
+
+fn open(path: String, on: Mode = :read): String {
+  "${path} for ${on}"
+}
+
+fn main {
+  puts(open("log.txt", on: :append))   // => log.txt for append
+  modes: Array(Mode) = [:read, :write]
+  puts(modes[1] == :write)              // => true
+}
+```
 - What every enum has: `t.to_i()` (its number), `t.name()` (the member's exact name, as a `String`), `Tok.from_i(n)` and `Tok.from_name(s)` (a `Tok?`: `nil` when no member has that number or that exact name) and `Tok.members()` (a new `Array(Tok)` in declaration order). It prints as its name ([Printing](#printing)).
 - Values are distinct and fit in `Int32`; a value may be negative (`low = -2`) or a [constant](#constants) (`ok = http_ok`; the members after it count from its value).
 - An enum has no zero value: an enum field has a default (`kind: Tok = Tok.eof`) or is set in `initialize`, and `Array(Tok).new(n)` needs its value: `Array(Tok).new(n, Tok.eof)`.

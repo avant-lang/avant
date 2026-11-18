@@ -2821,6 +2821,13 @@ pub class Parser {
       neg = true
     }
     if self.current().kind != tk_integer() {
+      if !neg && self.enum_lit_ahead() {
+        member = self.tokens[self.index + 1].value
+        fail(self.current().loc, "a case label over an enum is its member's bare name: case ${member}, not case :${member}")
+        self.bump()
+        self.bump()
+        return
+      }
       fail(self.current().loc, "case label must be an integer literal")
       return
     }
@@ -3255,6 +3262,14 @@ pub class Parser {
     if k == tk_interp_open() {
       return self.parse_interpolated_string()
     }
+    if self.enum_lit_ahead() {
+      // `:write`, an enum's member where an enum is expected.
+      self.bump()
+      nt = self.bump()
+      e = Expr.new(ex_enum_lit(), tok.loc)
+      e.ident = nt.value
+      return e
+    }
     if k == tk_true() {
       self.bump()
       e = Expr.new(ex_bool(), tok.loc)
@@ -3654,12 +3669,24 @@ pub class Parser {
     e
   }
 
+  // A colon and a name written together (`:write`): an enum's member
+  // written short.
+  pub fn enum_lit_ahead: Bool {
+    tok = self.current()
+    if tok.kind != tk_colon() || self.index + 1 >= self.tokens.size {
+      return false
+    }
+    nt = self.tokens[self.index + 1]
+    nt.kind == tk_ident() && nt.loc.line() == tok.loc.line() && nt.loc.offset() == tok.loc.offset() + 1
+  }
+
   pub fn parse_array_literal: Expr {
     loc = expect(tk_l_bracket()).loc
     self.skip_newlines()
     e = Expr.new(ex_array(), loc)
-    // `[:]`: the empty hash literal.
-    if self.current().kind == tk_colon() {
+    // `[:]`: the empty hash literal (`[:read]` is an array of an enum's
+    // member written short).
+    if self.current().kind == tk_colon() && !self.enum_lit_ahead() {
       self.bump()
       self.skip_newlines()
       expect(tk_r_bracket())

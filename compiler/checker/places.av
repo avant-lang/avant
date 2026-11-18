@@ -220,6 +220,53 @@ pub fn (checker_self: Checker) resolve_range_step(stmt: Stmt) {
   range_build(stmt, stmt.loc, var, end_name, incl, by, down, stmt.body)
 }
 
+// `:name`, an enum's member written short: the member of the enum the
+// place expects (a parameter, a field, a declared variable, an array's
+// element, an arm's value, the other side of `==`; the one enum of an
+// optional or a union), lowered as the member read `E.name`; it stays
+// `:name` (a default value is checked again at each call). With no enum
+// expected it
+// is refused: there is no free-standing symbol type, so a typo is a
+// compile error, never a run-time string.
+pub fn (checker_self: Checker) check_enum_lit(expr: Expr, has_want: Bool, want: Ty): Ty {
+  name = expr.ident
+  found: Array(Ty) = []
+  if has_want {
+    if want.is_enum() && !want.name.starts_with(":") {
+      found.push(want)
+    } else if want.is_union() {
+      for m in want.members {
+        if m.is_enum() {
+          found.push(m)
+        }
+      }
+    }
+  }
+  if found.size != 1 {
+    what = if !has_want { "no type" } else { want.show() }
+    if found.size > 1 {
+      with: Array(String) = []
+      for f in found {
+        if f.enum_index(name) >= 0 {
+          with.push("${f.show()}.${name}")
+        }
+      }
+      hint = if with.size > 0 { with.join(" or ") } else { "E.${name}" }
+      checker_self.fail(expr.loc, ":${name} names an enum's member, and ${what} holds several enums: write the member with its enum's name (${hint})")
+    } else {
+      checker_self.fail(expr.loc, ":${name} names a member of the enum expected where it stands, and ${what} is expected here: write a value of the type, or the member with its enum's name (E.${name})")
+    }
+    return t_int()
+  }
+  et = found[0]
+  if et.enum_index(name) < 0 {
+    checker_self.fail(expr.loc, "${et.show()} has no member ${name}; its members are ${et.enum_names().join(", ")}")
+    return et
+  }
+  expr.ty = et
+  et
+}
+
 // A builtin block's parameters (`each`, `any`, `all`, a comparator, a
 // Hash's or a Set's `each`, `Array(T).new(n, (i) { })`, `Mutex.with`,
 // `.parallel`) are the block's own, as a `for` variable is the loop's: a

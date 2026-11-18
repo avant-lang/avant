@@ -2167,6 +2167,9 @@ pub class Checker {
     if k == ex_name() {
       return check_name(expr, has_want, want)
     }
+    if k == ex_enum_lit() {
+      return check_enum_lit(expr, has_want, want)
+    }
     if k == ex_lambda() {
       return check_lambda(expr, has_want, want)
     }
@@ -4531,7 +4534,42 @@ pub class Checker {
   // Whether a `[]` or `[:]` argument (its stand-in t) fits a parameter of
   // type p: an array or a Set parameter takes `[]`, a hash parameter `[:]`.
   pub fn empty_fits(t: Ty, p: Ty): Bool {
+    if t.is_enum() {
+      // `:name`: a parameter whose enum has that member.
+      if et = enum_lit_target(p) {
+        return et.enum_index(t.name.slice(1)) >= 0
+      }
+      return false
+    }
     (t.is_array() && (p.is_array() || p.is_set())) || (t.is_hash() && p.is_hash() && !p.is_set())
+  }
+
+  // The stand-in type of a `:name` argument before its parameter is
+  // known: an enum without members named `:name`, which no value has.
+  pub fn enum_lit_arg_ty(name: String): Ty {
+    t = Ty.new(tyk_enum())
+    t.name = ":${name}"
+    t
+  }
+
+  // The enum a `:name` stands for where p is expected: p itself, or the
+  // one enum among a union's members (an optional enum); nil otherwise.
+  pub fn enum_lit_target(p: Ty): Ty? {
+    if p.is_enum() && !p.name.starts_with(":") {
+      return p
+    }
+    if p.is_union() {
+      found: Array(Ty) = []
+      for m in p.members {
+        if m.is_enum() {
+          found.push(m)
+        }
+      }
+      if found.size == 1 {
+        return found[0]
+      }
+    }
+    nil
   }
 
   // The stand-in type of a `[]` argument before its parameter is known
@@ -4541,6 +4579,9 @@ pub class Checker {
   }
 
   pub fn is_empty_array_ty(t: Ty): Bool {
+    if t.is_enum() && t.name.starts_with(":") {
+      return true
+    }
     if t.is_array() {
       if e = t.inner {
         return e.is_void()
@@ -4557,6 +4598,10 @@ pub class Checker {
   // A call's argument, checked before the call picks its function: a bare
   // integer literal may be above Int's range (the parameter decides).
   pub fn check_call_arg(e: Expr): Ty {
+    if e.kind == ex_enum_lit() {
+      // `:name` takes its parameter's enum (fit_call_arg).
+      return enum_lit_arg_ty(e.ident)
+    }
     if is_empty_array(e) {
       // `[]` takes its parameter's type (fit_call_arg); until the call
       // picks its function it stands for an array of any element (`[:]`
@@ -4854,6 +4899,17 @@ pub class Checker {
         }
         fail(expr.loc, "|| expects Bool operands")
         return t_bool()
+      }
+      // `t == :write`: the short member takes the other operand's enum.
+      if (op == tk_eq_eq() || op == tk_not_eq()) && (l.kind == ex_enum_lit()) != (r.kind == ex_enum_lit()) {
+        known = if l.kind == ex_enum_lit() { r } else { l }
+        short = if l.kind == ex_enum_lit() { l } else { r }
+        kt = check_expr(known)
+        st = check_expr_as(short, kt)
+        if l.kind == ex_enum_lit() {
+          return binary_typed(expr, l, r, op, st, kt)
+        }
+        return binary_typed(expr, l, r, op, kt, st)
       }
       // An integer literal on the left adopts the right operand's
       // integer type, as one on the right adopts the left's (`1 + x`
@@ -5419,6 +5475,9 @@ pub class Checker {
   }
 
   pub fn fit_call_arg(expr: Expr, got: Ty, want: Ty): Ty {
+    if expr.kind == ex_enum_lit() {
+      return check_expr_as(expr, want)
+    }
     if got.lit_arr && expr.kind == ex_array() {
       if lit_set_fits(got, want) {
         return adopt_set_literal(expr, want)

@@ -738,6 +738,14 @@ pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight:
   if curr == tk_l_bracket() && value_end(prev) {
     return true
   }
+  if curr == tk_colon() && enum_lit_at(tokens, i) {
+    // `:write`, an enum's member written short: spaced from what is
+    // before it (`on: :write`, `= :read`), joined to its name.
+    return tight_after_kind(prev)
+  }
+  if prev == tk_colon() && enum_lit_at(tokens, prev_significant(tokens, i)) {
+    return true
+  }
   if tight_before(curr) {
     return true
   }
@@ -745,6 +753,22 @@ pub fn no_space(tokens: Array(Token), i: Int, prev: Int, curr: Int, after_tight:
     return true
   }
   false
+}
+
+// The colon at i begins an enum's member written short (`:write`): the
+// name follows it with no space, and what is before it ends no value (a
+// type annotation `x:Int` follows a name).
+pub fn enum_lit_at(tokens: Array(Token), i: Int): Bool {
+  if i < 0 || i + 1 >= tokens.size || tokens[i].kind != tk_colon() {
+    return false
+  }
+  nt = tokens[i + 1]
+  t = tokens[i]
+  if nt.kind != tk_ident() || nt.loc.line() != t.loc.line() || nt.loc.offset() != t.loc.offset() + 1 {
+    return false
+  }
+  p = prev_significant(tokens, i)
+  p < 0 || !value_end(tokens[p].kind)
 }
 
 // Bytes that can end one token and begin the next as one longer token:
