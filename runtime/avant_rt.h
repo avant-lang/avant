@@ -270,6 +270,7 @@ char *avant_str_from_bool(int32_t n);
 char *avant_str_from_byte(avant_int b);
 char *avant_str_fmt_float(double v, avant_int prec);
 int avant_fmt_float_text(char *out, double v);
+int avant_fmt_int_text(char *out, int64_t n);
 void avant_puts_f64(double v);
 void avant_puts_bool(int32_t v);
 void avant_puts_i64(int64_t v);

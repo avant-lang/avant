@@ -200,11 +200,8 @@ void avant_buf_push_fmt_f(void *buf, double v, avant_int prec) {
 
 /* gc-lint: holds nothing (tmp is C memory; the append is the last statement). */
 void avant_buf_push_fmt_i(void *buf, avant_int n) {
-  char tmp[32];
-  int k = snprintf(tmp, sizeof(tmp), "%lld", (long long)n);
-  if (k < 0) {
-    return;
-  }
+  char tmp[24];
+  int k = avant_fmt_int_text(tmp, n);
   avant_buf_append(buf, tmp, k);
 }
 

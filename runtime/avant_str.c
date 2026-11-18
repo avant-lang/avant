@@ -302,22 +302,36 @@ char *avant_str_slice(const char *s, avant_int start, avant_int stop) {
   return str_part(s, i, len);
 }
 
-char *avant_str_from_int(avant_int n) {
-  char buf[32];
-  int k = snprintf(buf, sizeof(buf), "%lld", (long long)n);
-  if (k < 0) {
-    k = 0;
+/* An integer's text, its digits two at a time (avant_fmt.h's
+ * avant_fmt_u64), at the end of buf: printf's parsing of "%lld" cost more
+ * than the digits. Returns the start; the text runs to end. */
+static char *int_text(char *end, int64_t n) {
+  uint64_t u = n < 0 ? 0u - (uint64_t)n : (uint64_t)n;
+  char *o = avant_fmt_u64(end, u);
+  if (n < 0) {
+    *--o = '-';
   }
-  return dup_bytes(buf, (size_t)k);
+  return o;
+}
+
+int avant_fmt_int_text(char *out, int64_t n) {
+  char buf[24];
+  char *o = int_text(buf + sizeof(buf), n);
+  int k = (int)(buf + sizeof(buf) - o);
+  memcpy(out, o, (size_t)k);
+  return k;
+}
+
+char *avant_str_from_int(avant_int n) {
+  char buf[24];
+  char *o = int_text(buf + sizeof(buf), n);
+  return dup_bytes(o, (size_t)(buf + sizeof(buf) - o));
 }
 
 char *avant_str_from_u64(uint64_t n) {
-  char buf[32];
-  int k = snprintf(buf, sizeof(buf), "%llu", (unsigned long long)n);
-  if (k < 0) {
-    k = 0;
-  }
-  return dup_bytes(buf, (size_t)k);
+  char buf[24];
+  char *o = avant_fmt_u64(buf + sizeof(buf), n);
+  return dup_bytes(o, (size_t)(buf + sizeof(buf) - o));
 }
 
 /* v (below 10^8) as exactly eight digits at p. */
@@ -470,28 +484,16 @@ void avant_puts_str(const char *s) {
  * bits as an unsigned number at their own width. */
 void avant_puts_u64(uint64_t v) {
   char buf[24];
-  char *o = buf + sizeof(buf);
-  *--o = '\n';
-  do {
-    *--o = (char)('0' + (int)(v % 10u));
-    v /= 10u;
-  } while (v);
+  buf[sizeof(buf) - 1] = '\n';
+  char *o = avant_fmt_u64(buf + sizeof(buf) - 1, v);
   fwrite(o, 1, (size_t)(buf + sizeof(buf) - o), stdout);
   avant_out_check();
 }
 
 void avant_puts_i64(int64_t v) {
   char buf[24];
-  char *o = buf + sizeof(buf);
-  uint64_t u = v < 0 ? 0u - (uint64_t)v : (uint64_t)v;
-  *--o = '\n';
-  do {
-    *--o = (char)('0' + (int)(u % 10u));
-    u /= 10u;
-  } while (u);
-  if (v < 0) {
-    *--o = '-';
-  }
+  buf[sizeof(buf) - 1] = '\n';
+  char *o = int_text(buf + sizeof(buf) - 1, v);
   fwrite(o, 1, (size_t)(buf + sizeof(buf) - o), stdout);
   avant_out_check();
 }
@@ -522,45 +524,23 @@ char *avant_str_from_byte(avant_int b) {
 }
 
 char *avant_str_cat_int(const char *prefix, avant_int n) {
-  char digs[24];
-  int nd = 0;
-  uint64_t u;
-  /* RC1: the prefix is a handle across the allocation (digs is C
+  char buf[24];
+  /* RC1: the prefix is a handle across the allocation (buf is C
    * memory). */
   AVANT_GC_SCOPE(1);
   AVANT_GC_ROOT(0, &prefix);
-  if (n < 0) {
-    u = (uint64_t)(-((int64_t)n + 1)) + 1u;
-  } else {
-    u = (uint64_t)n;
-  }
-  if (u == 0) {
-    digs[nd++] = '0';
-  } else {
-    while (u) {
-      digs[nd++] = (char)('0' + (u % 10u));
-      u /= 10u;
-    }
-  }
+  char *o = int_text(buf + sizeof(buf), n);
+  size_t nd = (size_t)(buf + sizeof(buf) - o);
   if (!prefix) {
     prefix = AVANT_STR_EMPTY;
   }
   size_t np = avant_str_n(prefix);
-  size_t neg = n < 0 ? 1u : 0u;
-  size_t total = np + neg + (size_t)nd;
-  char *p = avant_str_alloc((uint64_t)total);
+  char *p = avant_str_alloc((uint64_t)(np + nd));
   if (np) {
     memcpy(p, avant_str_bytes(prefix, &np), np);
   }
-  size_t k = np;
-  if (neg) {
-    p[k++] = '-';
-  }
-  while (nd > 0) {
-    nd--;
-    p[k++] = digs[nd];
-  }
-  p[k] = 0;
+  memcpy(p + np, o, nd);
+  p[np + nd] = 0;
   avant_str_tag(p);
   return p;
 }
