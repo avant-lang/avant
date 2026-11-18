@@ -81,10 +81,16 @@ static char *make_bytes(const char *p, size_t n) {
 /* Packed Headers: a uint32 count, then count records of
  * (name_off, name_len, value_off, value_len), then the raw header
  * block the offsets point into. One collector Bytes per header set;
- * lookups materialize a String only for the value actually taken. */
+ * lookups materialize a String only for the value actually taken.
+ * A received request's set also carries its peer's address (PEER, its
+ * length and 16 bytes) after the raw block, PACKED_PEER set in the count
+ * word: Request.peer reads it from there, so a request pays for its
+ * peer neither a call nor a field. */
+#define PACKED_PEER 0x80000000u
 static char *build_packed_headers(struct phr_header *headers, size_t count,
-                                  const char *raw, size_t raw_len) {
-  size_t total = 4 + count * 16 + raw_len;
+                                  const char *raw, size_t raw_len,
+                                  const unsigned char *peer) {
+  size_t total = 4 + count * 16 + raw_len + (peer ? 17 : 0);
   char *out;
   uint32_t *words;
   size_t i;
@@ -97,7 +103,7 @@ static char *build_packed_headers(struct phr_header *headers, size_t count,
   AVANT_GC_ROOT(0, &raw);
   out = avant_str_alloc((uint64_t)total);
   words = (uint32_t *)out;
-  words[0] = (uint32_t)count;
+  words[0] = (uint32_t)count | (peer ? PACKED_PEER : 0);
   for (i = 0; i < count; i++) {
     words[1 + i * 4 + 0] = (uint32_t)(headers[i].name - raw0);
     words[1 + i * 4 + 1] = (uint32_t)headers[i].name_len;
@@ -106,6 +112,9 @@ static char *build_packed_headers(struct phr_header *headers, size_t count,
   }
   if (raw_len > 0) {
     memcpy(out + 4 + count * 16, raw, raw_len);
+  }
+  if (peer) {
+    memcpy(out + total - 17, peer, 17);
   }
   out[total] = 0;
   avant_str_tag(out);
@@ -155,7 +164,7 @@ char *avant_http_headers_pack(const char *block) {
       at = end + 2;
     }
   }
-  out = build_packed_headers(hs, count, block, n);
+  out = build_packed_headers(hs, count, block, n, NULL);
   free(hs);
   return out;
 }
@@ -264,7 +273,7 @@ char *avant_http_params_pack(const char *text) {
       at = i + 1;
     }
   }
-  out = build_packed_headers(hs, count, block, m);
+  out = build_packed_headers(hs, count, block, m, NULL);
   free(hs);
   free(block);
   return out;
@@ -290,7 +299,7 @@ static uint32_t packed_count(const char *data, size_t n) {
   if (!data || n < 4) {
     return 0;
   }
-  return ((uint32_t *)(void *)data)[0];
+  return ((uint32_t *)(void *)data)[0] & ~PACKED_PEER;
 }
 
 static const char *packed_raw(const char *data, uint32_t count) {
@@ -658,8 +667,8 @@ struct AvantHttpServer {
 };
 
 /* conn comes first: a Conn's address is its node's. peer is the peer's
- * address as accept gave it (4 or 16 bytes, peer_len), kept for
- * Request.peer: copied at open, so a request pays nothing for it. */
+ * address as accept gave it, kept for Request.peer: copied at open and
+ * into each request's packed headers. */
 typedef struct ConnNode {
   Conn conn;
   struct us_socket_t *sock;
@@ -667,8 +676,9 @@ typedef struct ConnNode {
   struct ConnNode *wprev;
   struct ConnNode *wnext;
   int watched;
-  int peer_len;
-  unsigned char peer[16];
+  /* peer[0] is the address's length (4 or 16, 0 for none), then its
+   * bytes (an IPv4-mapped IPv6 address kept as its IPv4 four). */
+  unsigned char peer[17];
 } ConnNode;
 
 #define HTTP_HEAD_TIMEOUT_MS 10000
@@ -939,8 +949,9 @@ static int conn_out_append(Conn *conn, const char *p, size_t n) {
  * TCP instead of filling the server's memory. When the queue cannot
  * grow the connection is closed: the answer cannot be completed, and a
  * cut answer followed by another is worse than a closed connection. */
-static void conn_send_raw(Conn *conn, struct us_socket_t *s, const char *a,
-                          size_t an, const char *b, size_t bn) {
+static inline __attribute__((always_inline)) void
+conn_send_raw(Conn *conn, struct us_socket_t *s, const char *a, size_t an,
+              const char *b, size_t bn) {
   size_t written = 0;
   if (us_socket_is_closed(0, s) || us_socket_is_shut_down(0, s)) {
     return;
@@ -994,7 +1005,7 @@ static void conn_send_raw(Conn *conn, struct us_socket_t *s, const char *a,
 
 /* Writes the gathered answers, in one write (conn_send_raw queues what
  * the socket does not take). */
-static void conn_uncork(Conn *conn, struct us_socket_t *s) {
+static __attribute__((noinline)) void conn_uncork(Conn *conn, struct us_socket_t *s) {
   size_t n = conn->cork_len;
   if (n == 0) {
     return;
@@ -1033,8 +1044,9 @@ static int cork_append(Conn *conn, const char *p, size_t n) {
  * fastest servers make one per batch. A piece that would pass
  * HTTP_CORK_MAX first sends the batch, then goes as it would alone, so
  * order is kept. */
-static void conn_send(Conn *conn, struct us_socket_t *s, const char *a,
-                      size_t an, const char *b, size_t bn) {
+static __attribute__((noinline)) void conn_send_batched(Conn *conn, struct us_socket_t *s,
+                                                        const char *a, size_t an,
+                                                        const char *b, size_t bn) {
   if (conn->corking) {
     size_t before = conn->cork_len;
     if (conn->cork_len + an + bn <= HTTP_CORK_MAX && cork_append(conn, a, an) &&
@@ -1043,8 +1055,15 @@ static void conn_send(Conn *conn, struct us_socket_t *s, const char *a,
     }
     conn->cork_len = before;
   }
-  if (conn->cork_len) {
-    conn_uncork(conn, s);
+  conn_uncork(conn, s);
+  conn_send_raw(conn, s, a, an, b, bn);
+}
+
+static void conn_send(Conn *conn, struct us_socket_t *s, const char *a,
+                      size_t an, const char *b, size_t bn) {
+  if (__builtin_expect(conn->corking | (conn->cork_len != 0), 0)) {
+    conn_send_batched(conn, s, a, an, b, bn);
+    return;
   }
   conn_send_raw(conn, s, a, an, b, bn);
 }
@@ -1202,64 +1221,23 @@ char *avant_http_req_headers(void *reqp) {
     raw_len = (size_t)((last->value + last->value_len) - req->conn->buf);
   }
   return build_packed_headers(req->headers, req->num_headers, req->conn->buf,
-                              raw_len);
+                              raw_len, ((ConnNode *)req->conn)->peer);
 }
 
-/* The peer's address as two Ints for Request (no allocation on the
- * request's path; Request.peer makes the text when it is asked):
- * which 0 is the high word, 1 the low. IPv4 (and an IPv4 address mapped
- * into IPv6, as a dual-stack listener sees it) is high -1 and the four
- * bytes in the low word; IPv6 is its 16 bytes, big-endian, in the two;
- * none (0, 0). */
-avant_int avant_http_req_peer(void *reqp, avant_int which) {
-  AvantHttpReq *req = (AvantHttpReq *)reqp;
-  ConnNode *node = (ConnNode *)req->conn;
-  const unsigned char *p = node->peer;
-  static const unsigned char mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
-  uint64_t hi = 0;
-  uint64_t lo = 0;
-  int i;
-  if (node->peer_len == 16 && memcmp(p, mapped, 12) == 0) {
-    p += 12;
-  } else if (node->peer_len == 16) {
-    for (i = 0; i < 8; i++) {
-      hi = (hi << 8) | p[i];
-      lo = (lo << 8) | p[8 + i];
-    }
-    return which == 0 ? (avant_int)hi : (avant_int)lo;
-  } else if (node->peer_len != 4) {
-    return 0;
-  }
-  if (which == 0) {
-    return -1;
-  }
-  return (avant_int)(((uint64_t)p[0] << 24) | ((uint64_t)p[1] << 16) | ((uint64_t)p[2] << 8) | p[3]);
-}
-
-/* The text of an address in avant_http_req_peer's two words: dotted
- * IPv4, RFC 5952 IPv6, "" for none. */
-char *avant_http_peer_text(avant_int hi, avant_int lo) {
+/* The text of a received request's peer (the address after its packed
+ * headers, PACKED_PEER): dotted IPv4, RFC 5952 IPv6, "" for none (a
+ * request built in memory). */
+char *avant_http_headers_peer(const char *data) {
+  size_t n = avant_str_n(data);
+  const unsigned char *p;
   char text[INET6_ADDRSTRLEN];
-  unsigned char b[16];
-  int i;
-  if (hi == 0 && lo == 0) {
+  if (!data || n < 4 + 17 || !(((const uint32_t *)(const void *)data)[0] & PACKED_PEER)) {
     return avant_str_empty();
   }
-  if (hi == -1) {
-    for (i = 0; i < 4; i++) {
-      b[i] = (unsigned char)((uint64_t)lo >> (24 - 8 * i));
-    }
-    if (!inet_ntop(AF_INET, b, text, sizeof text)) {
-      return avant_str_empty();
-    }
-  } else {
-    for (i = 0; i < 8; i++) {
-      b[i] = (unsigned char)((uint64_t)hi >> (56 - 8 * i));
-      b[8 + i] = (unsigned char)((uint64_t)lo >> (56 - 8 * i));
-    }
-    if (!inet_ntop(AF_INET6, b, text, sizeof text)) {
-      return avant_str_empty();
-    }
+  p = (const unsigned char *)data + n - 17;
+  if ((p[0] != 4 && p[0] != 16) ||
+      !inet_ntop(p[0] == 4 ? AF_INET : AF_INET6, p + 1, text, sizeof text)) {
+    return avant_str_empty();
   }
   return make_string(text, strlen(text));
 }
@@ -2805,7 +2783,7 @@ static void conn_process_requests(Conn *conn, struct us_socket_t *s) {
 static void conn_process(Conn *conn, struct us_socket_t *s) {
   conn_process_requests(conn, s);
   conn->corking = 0;
-  if (conn->cork_len && !us_socket_is_closed(0, s)) {
+  if (__builtin_expect(conn->cork_len != 0, 0) && !us_socket_is_closed(0, s)) {
     conn_uncork(conn, s);
   }
 }
@@ -3062,9 +3040,14 @@ static struct us_socket_t *srv_on_open(struct us_socket_t *s, int is_client,
   memset(node, 0, sizeof(ConnNode));
   node->conn.srv = srv;
   node->sock = s;
+  if (ip && ip_length == 16 &&
+      memcmp(ip, "\0\0\0\0\0\0\0\0\0\0\xff\xff", 12) == 0) {
+    ip += 12;
+    ip_length = 4;
+  }
   if (ip && (ip_length == 4 || ip_length == 16)) {
-    memcpy(node->peer, ip, (size_t)ip_length);
-    node->peer_len = ip_length;
+    node->peer[0] = (unsigned char)ip_length;
+    memcpy(node->peer + 1, ip, (size_t)ip_length);
   }
   node->next = hl->conns_head;
   hl->conns_head = node;
@@ -3117,7 +3100,9 @@ static struct us_socket_t *srv_on_data(struct us_socket_t *s, char *data,
   conn->len += (size_t)length;
   if (conn->ws) {
     ws_process(conn, s);
-    ws_watch_in(conn, s);
+    if (conn->ws && (conn->len || conn->ws->frag_opcode >= 0 || conn->body_at)) {
+      ws_watch_in(conn, s);
+    }
   } else {
     conn_process(conn, s);
   }
@@ -5234,7 +5219,7 @@ char *avant_http_resp_headers(const char *raw) {
     set_status(3);
     return make_bytes("", 0);
   }
-  return build_packed_headers(headers, num_headers, raw, (size_t)pret);
+  return build_packed_headers(headers, num_headers, raw, (size_t)pret, NULL);
 }
 
 /* gc-lint: holds nothing (make_bytes roots its source (an interior address of the response or a malloc copy); nothing heap is read after it). */
