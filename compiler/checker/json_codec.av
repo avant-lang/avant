@@ -586,6 +586,37 @@ pub fn json_dec_call(ty: Ty, j: String, deps: Array(Ty)): String {
   "__avant_json_dec__${json_key(ty)}(${j}, ignore_unknown)"
 }
 
+// The runtime call that reads a member of a scalar type by its name
+// ("" for any other type), and what a message says it expected.
+pub fn json_scalar_reader(ty: Ty): String {
+  if ty.is_int() {
+    return "avant_json_obj_int"
+  }
+  if ty.is_float() {
+    return "avant_json_obj_f64"
+  }
+  if ty.is_string() {
+    return "avant_json_obj_str"
+  }
+  if ty.is_bool() {
+    return "avant_json_obj_bool"
+  }
+  ""
+}
+
+pub fn json_scalar_want(ty: Ty): String {
+  if ty.is_int() {
+    return "an integer"
+  }
+  if ty.is_float() {
+    return "a number"
+  }
+  if ty.is_string() {
+    return "a string"
+  }
+  "true or false"
+}
+
 // The reader of a struct, class, Array, Hash or enum:
 // `fn (j: Json, ignore_unknown: Bool): T | JsonError`.
 pub fn (checker_self: Checker) json_dec_fn(ty: Ty, loc: Location): String {
@@ -609,10 +640,10 @@ pub fn (checker_self: Checker) json_dec_fn(ty: Ty, loc: Location): String {
   } else if ty.is_array() {
     et = ty.inner ?? ty
     ind = "    "
-    b.push_str("  if jsonc.avant_json_kind(j.node) != 6 {\n")
+    b.push_str("  len = jsonc.avant_json_arr_size(j.node)\n")
+    b.push_str("  if len < 0 {\n")
     b.push_str("    return codec_wrong(j.node, \"an array\")\n")
     b.push_str("  }\n")
-    b.push_str("  len = jsonc.avant_json_len(j.node)\n")
     b.push_str("  out: ${t0} = []\n")
     b.push_str("  out.reserve(len)\n")
     b.push_str("  cur = jsonc.avant_json_first(j.node)\n")
@@ -644,10 +675,10 @@ pub fn (checker_self: Checker) json_dec_fn(ty: Ty, loc: Location): String {
     vt = ty.val ?? ty
     tv = gen.ph(vt)
     ind = "      "
-    b.push_str("  if jsonc.avant_json_kind(j.node) != 7 {\n")
+    b.push_str("  len = jsonc.avant_json_obj_size(j.node)\n")
+    b.push_str("  if len < 0 {\n")
     b.push_str("    return codec_wrong(j.node, \"an object\")\n")
     b.push_str("  }\n")
-    b.push_str("  len = jsonc.avant_json_len(j.node)\n")
     b.push_str("  out = Hash(String, ${tv}).new()\n")
     b.push_str("  key = jsonc.avant_json_first_key(j.node)\n")
     b.push_str("  i = 0\n")
@@ -694,14 +725,16 @@ pub fn (checker_self: Checker) json_dec_fn(ty: Ty, loc: Location): String {
 // has one, else an error), the members counted, so a name no field has
 // is looked for only when there is one; then the literal.
 pub fn json_dec_object(b: Buf, ty: Ty, t0: String, gen: JsonGen, deps: Array(Ty)) {
-  b.push_str("  if jsonc.avant_json_kind(j.node) != 7 {\n")
+  b.push_str("  size = jsonc.avant_json_obj_size(j.node)\n")
+  b.push_str("  if size < 0 {\n")
   b.push_str("    return codec_wrong(j.node, \"an object\")\n")
   b.push_str("  }\n")
   b.push_str("  found = 0\n")
   names: Array(String) = []
   for i in 0..ty.fields.size {
     f = ty.fields[i]
-    names.push(json_quote(f.name))
+    key = json_quote(f.name)
+    names.push(key)
     tf = gen.ph(f.ty)
     opt = f.ty.is_nilable()
     if opt {
@@ -712,28 +745,67 @@ pub fn json_dec_object(b: Buf, ty: Ty, t0: String, gen: JsonGen, deps: Array(Ty)
     if opt && f.defaulted {
       b.push_str("  s${i} = false\n")
     }
-    b.push_str("  if c${i} = jsonc.avant_json_get(j.node, ${json_quote(f.name)}) {\n")
-    b.push_str("    found += 1\n")
-    ind = "    "
     inner = f.ty
     if opt {
       inner = ty_without_nil(f.ty)
-      if f.defaulted {
+    }
+    reader = json_scalar_reader(inner)
+    if reader.size > 0 {
+      // A scalar is read by name in one runtime call, as `doc.f64(name)`
+      // reads it; only a miss looks again, to tell a member that is
+      // absent from one of another kind.
+      b.push_str("  r${i} = jsonc.${reader}(j.node, ${key})\n")
+      if inner.is_float() {
+        b.push_str("  if r${i} == r${i} {\n")
+      } else {
+        b.push_str("  if jsonc.avant_json_take_status() == 0 {\n")
+      }
+      b.push_str("    found += 1\n")
+      if inner.is_bool() {
+        b.push_str("    f${i} = r${i} != 0\n")
+      } else {
+        b.push_str("    f${i} = r${i}\n")
+      }
+      if opt && f.defaulted {
         b.push_str("    s${i} = true\n")
       }
-      b.push_str("    if jsonc.avant_json_kind(c${i}) != 1 {\n")
-      ind = "      "
+      b.push_str("  } else if c${i} = jsonc.avant_json_get(j.node, ${key}) {\n")
+      b.push_str("    found += 1\n")
+      ind = "    "
+      if opt {
+        if f.defaulted {
+          b.push_str("    s${i} = true\n")
+        }
+        b.push_str("    if jsonc.avant_json_kind(c${i}) != 1 {\n")
+        ind = "      "
+      }
+      b.push_str("${ind}return codec_at_key(codec_wrong(c${i}, ${json_quote(json_scalar_want(inner))}), ${key})\n")
+      if opt {
+        b.push_str("    }\n")
+      }
+      b.push_str("  }\n")
+    } else {
+      b.push_str("  if c${i} = jsonc.avant_json_get(j.node, ${key}) {\n")
+      b.push_str("    found += 1\n")
+      ind = "    "
+      if opt {
+        if f.defaulted {
+          b.push_str("    s${i} = true\n")
+        }
+        b.push_str("    if jsonc.avant_json_kind(c${i}) != 1 {\n")
+        ind = "      "
+      }
+      b.push_str("${ind}v${i} = ${json_dec_call(inner, "Json { node: c${i}, pool: j.pool }", deps)} else e${i} {\n")
+      b.push_str("${ind}  return codec_at_key(e${i}, ${key})\n")
+      b.push_str("${ind}}\n")
+      b.push_str("${ind}f${i} = v${i}\n")
+      if opt {
+        b.push_str("    }\n")
+      }
+      b.push_str("  }\n")
     }
-    b.push_str("${ind}v${i} = ${json_dec_call(inner, "Json { node: c${i}, pool: j.pool }", deps)} else e${i} {\n")
-    b.push_str("${ind}  return codec_at_key(e${i}, ${json_quote(f.name)})\n")
-    b.push_str("${ind}}\n")
-    b.push_str("${ind}f${i} = v${i}\n")
-    if opt {
-      b.push_str("    }\n")
-    }
-    b.push_str("  }\n")
   }
-  b.push_str("  if !ignore_unknown && found != jsonc.avant_json_len(j.node) {\n")
+  b.push_str("  if !ignore_unknown && found != size {\n")
   b.push_str("    if u = codec_unknown(j, [${names.join(", ")}]) {\n")
   b.push_str("      return u\n")
   b.push_str("    }\n")

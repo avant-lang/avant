@@ -117,6 +117,10 @@ fn test_decode_errors(c: Checks) {
   c.eq_str(decode_error("{\"id\": 1, \"items\": 7}"), "at $.items: expected an array, found 7", "a number for an Array")
   c.eq_str(decode_error("{\"id\": 1,}"), "invalid JSON at byte 8: trailing comma is not allowed", "text that does not parse: the parse's error")
   c.eq_str(decode_error("{\"id\": 1, \"id\": 2}"), "decoded 1", "a name given twice: the first, as get reads it")
+  c.eq_str(decode_error("{\"id\": 1, \"items\": [{\"name\": \"a\", \"qty\": 1, \"price\": 1, \"tags\": [], \"color\": \"red\", \"note\": 5}]}"), "at $.items[0].note: expected a string, found 5", "an optional scalar of another kind")
+  c.eq_str(decode_error("{\"id\": 1, \"items\": [{\"name\": \"a\", \"qty\": 1, \"price\": 1, \"tags\": [], \"color\": \"red\", \"note\": null}]}"), "decoded 1", "an optional scalar given null")
+  c.eq_str(decode_error("{\"id\": 1, \"items\": [{\"name\": \"a\", \"qty\": 1, \"price\": \"1\", \"tags\": [], \"color\": \"red\"}]}"), "at $.items[0].price: expected a number, found a string", "a string for a Float64")
+  c.eq_str(decode_error("{\"id\": 1, \"paid\": \"yes\"}"), "at $.paid: expected true or false, found a string", "a string for a Bool")
   if o = json.decode("{\"id\": 1, \"zap\": 2, \"items\": [{\"name\": \"a\", \"qty\": 1, \"price\": 1, \"tags\": [], \"color\": \"red\", \"extra\": []}]}", Order, ignore_unknown: true) {
     c.eq_int(o.items.size, 1, "ignore_unknown: true skips unknown members at every level")
   } else e {

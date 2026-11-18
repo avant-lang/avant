@@ -796,6 +796,8 @@ char *avant_json_obj_str(void *node, const char *key);
 char *avant_json_key_at(void *node, avant_int i);
 char *avant_json_text(void *node);
 void *avant_json_first_key(void *node);
+avant_int avant_json_obj_size(void *node);
+avant_int avant_json_arr_size(void *node);
 
 avant_int avant_http_take_status(void);
 avant_int avant_http_header_count(const char *data);

@@ -328,6 +328,25 @@ avant_int avant_json_len(void *nodep) {
   return 0;
 }
 
+/* The member count of an object, the element count of an array, -1 for
+ * any other value: the typed decode tells the kind and reads the size
+ * in one call. */
+avant_int avant_json_obj_size(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || !yyjson_is_obj(v)) {
+    return -1;
+  }
+  return (avant_int)yyjson_obj_size(v);
+}
+
+avant_int avant_json_arr_size(void *nodep) {
+  yyjson_val *v = (yyjson_val *)nodep;
+  if (!v || !yyjson_is_arr(v)) {
+    return -1;
+  }
+  return (avant_int)yyjson_arr_size(v);
+}
+
 /* RC1: P (inside a document's pool, or yyjson's malloc'ed text, which a
  * slot leaves alone) is a handle across the allocation. */
 static char *copy_str(const char *p, size_t n) {
