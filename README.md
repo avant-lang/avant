@@ -4394,6 +4394,7 @@ fn main {
 | `timeout_ms` passed, whatever had arrived | `request to 127.0.0.1:8080 timed out` |
 
 - The client sets `Content-Length` and `Connection`, skipping a caller's. It sends one `Host`: the URL's, or the caller's in its place (to reach a virtual host by address).
+- A redirect to another authority (another host or port) is sent the caller's headers without `Authorization`, `Proxy-Authorization`, `Cookie` and `Host`, which were set for the first server; a redirect on the same authority is sent them all.
 - A call blocks its thread until the response is complete (from a server handler, `spawn` first): as the framing says (the `Content-Length`, a chunked body's last chunk, or the head alone for HEAD, 204 and 304), or, with neither length nor chunks, when the server closes. Interim answers (`100 Continue`, `103 Early Hints`) are skipped.
 - `timeout_ms` is one deadline, kept within a few milliseconds, for the whole call (connection, request, response, every redirect); a slow server does not extend it. Zero or less means the default, 10000.
 

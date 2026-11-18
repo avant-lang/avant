@@ -884,6 +884,35 @@ fn bad_byte(s: String, i: Int): String {
   "byte ${s[i]} at ${i}"
 }
 
+// The headers that carry a credential for the server they were set
+// for (RFC 9110 11.6.2, 11.7.2; RFC 6265 5.4).
+fn is_credential_header(name: String): Bool {
+  name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("proxy-authorization") || name.eq_ignore_ascii_case("cookie")
+}
+
+// Whether two parsed URLs name one authority: the host in any case and
+// the port (80 when the URL names none).
+fn same_authority(a: UrlParts?, b: UrlParts?): Bool {
+  if x = a {
+    if y = b {
+      return x.port == y.port && x.host.size == y.host.size && ascii_lower(x.host) == ascii_lower(y.host)
+    }
+  }
+  false
+}
+
+fn ascii_lower(s: String): String {
+  buf = buf_new()
+  for i in 0..s.size {
+    ch = s[i]
+    if ch >= 65 && ch <= 90 {
+      ch += 32
+    }
+    buf.push_byte(ch)
+  }
+  buf.to_s()
+}
+
 // The client's request checks: the method, the URL's target and each
 // header were written into the request as given, so CR LF in any of
 // them added request lines or a second request (request splitting). The
@@ -1056,6 +1085,12 @@ pub class Http {
   // follows, each one's connect, request and complete response. When
   // it passes first the call returns an HttpError, whatever has
   // arrived. Zero or less means the default, 10000.
+  //
+  // A redirect to another authority (another host or port) is sent the
+  // caller's headers without its credentials and its Host: an
+  // Authorization, a Proxy-Authorization, a Cookie or a Host set for one
+  // server reached the server a redirect named, as browsers and curl
+  // never let them.
   pub fn self.request(method: String, url: String, body: Bytes, headers: Array(Header), follow: Bool = true, timeout_ms: Int = 10000): Response | HttpError {
     cur_method = method
     cur_url = url
@@ -1066,8 +1101,19 @@ pub class Http {
       limit = 10000
     }
     deadline = now_ms() + limit
+    origin = http_parse_url(url)
+    elsewhere: Array(Header) = []
+    for h in headers {
+      if !is_credential_header(h.name) && !h.name.eq_ignore_ascii_case("host") {
+        elsewhere.push(h)
+      }
+    }
     while true {
-      resp = http_fetch_once(cur_method, cur_url, cur_body, headers, deadline)?
+      hop_headers = headers
+      if hops > 0 && !same_authority(origin, http_parse_url(cur_url)) {
+        hop_headers = elsewhere
+      }
+      resp = http_fetch_once(cur_method, cur_url, cur_body, hop_headers, deadline)?
       redirect = resp.status == 301 || resp.status == 302 || resp.status == 303 || resp.status == 307 || resp.status == 308
       if !follow || !redirect {
         return resp

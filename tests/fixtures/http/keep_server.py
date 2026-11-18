@@ -5,7 +5,8 @@
 # when the server closes.
 # Also the client's request checks and its reading of interim answers
 # and repeated lengths: /echo answers with the
-# request's head as it arrived, the lines joined by "|".
+# request's head as it arrived, the lines joined by "|"; /to?URL answers
+# 302 with Location: URL.
 # Usage: keep_server.py PORT_FILE KEEP. Writes its port to PORT_FILE and
 # serves until GET /__stop, which it answers and then exits.
 import os
@@ -57,7 +58,10 @@ def serve(c):
                 return
             data += chunk
         path = data.split(b"\r\n", 1)[0].decode("latin1").split(" ")[1]
-        if path.startswith("/echo"):
+        if path.startswith("/to?"):
+            # A redirect to the URL after "?", as given.
+            pieces = [b"HTTP/1.1 302 Found\r\nLocation: %s\r\nContent-Length: 0\r\n\r\n" % path[4:].encode("latin1")]
+        elif path.startswith("/echo"):
             head = data.split(b"\r\n\r\n", 1)[0].replace(b"\r\n", b"|")
             pieces = [b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s" % (len(head), head)]
         else:

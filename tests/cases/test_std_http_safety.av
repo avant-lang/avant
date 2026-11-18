@@ -674,6 +674,34 @@ fn client_request_cases(c: Checks, root: String) {
   bad_host: Array(Header) = []
   bad_host.push(Header { name: "Host", value: "a\r\nX-Injected: 1" })
   c.eq_str(outcome(Http.request("GET", "${base}/echo", "".bytes, bad_host, false, 4000)), "invalid request header value of Host (byte 13 at 1): ${value_rule}", "a caller's Host is checked as any value")
+  // A caller's headers followed every redirect, to another authority
+  // too: an Authorization, a Cookie or a Host set for this server
+  // reached the one the redirect named. On a hop to another host or port
+  // they are left out; the others are sent, and a redirect on the same
+  // authority sends them all.
+  creds: Array(Header) = []
+  creds.push(Header { name: "Authorization", value: "Bearer secret" })
+  creds.push(Header { name: "cookie", value: "s=1" })
+  creds.push(Header { name: "Proxy-Authorization", value: "Basic x" })
+  creds.push(Header { name: "X-Keep", value: "1" })
+  creds.push(Header { name: "Host", value: "example.test" })
+  c.eq_str(outcome(Http.request("GET", "${base}/to?http://127.0.0.1:${port}/echo", "".bytes, creds, true, 4000)), "200 GET /echo HTTP/1.1|Host: example.test|Authorization: Bearer secret|cookie: s=1|Proxy-Authorization: Basic x|X-Keep: 1|Content-Length: 0|Connection: close", "a redirect to the same authority is sent every header")
+  c.eq_str(outcome(Http.request("GET", "${base}/to?/echo", "".bytes, creds, true, 4000)), "200 GET /echo HTTP/1.1|Host: example.test|Authorization: Bearer secret|cookie: s=1|Proxy-Authorization: Basic x|X-Keep: 1|Content-Length: 0|Connection: close", "a relative redirect is sent every header")
+  other_file = "${scratch()}/http-request-${stamp}-other.port"
+  other_log = "${scratch()}/http-request-${stamp}-other.log"
+  other = spawn {
+    args: Array(String) = []
+    args.push("${root}/tests/fixtures/http/keep_server.py")
+    args.push(other_file)
+    args.push("0")
+    process_run_out("/usr/bin/python3", args, other_log) ?? -1
+  }
+  other_port = wait_port(other_file)
+  c.eq_str(outcome(Http.request("GET", "${base}/to?http://127.0.0.1:${other_port}/echo", "".bytes, creds, true, 4000)), "200 GET /echo HTTP/1.1|Host: 127.0.0.1:${other_port}|X-Keep: 1|Content-Length: 0|Connection: close", "a redirect to another port is another authority")
+  c.eq_str(outcome(Http.request("GET", "${base}/to?http://127.0.0.1:${other_port}/to?http://127.0.0.1:${port}/echo", "".bytes, creds, true, 4000)), "200 GET /echo HTTP/1.1|Host: example.test|Authorization: Bearer secret|cookie: s=1|Proxy-Authorization: Basic x|X-Keep: 1|Content-Length: 0|Connection: close", "a redirect back to the first authority is sent every header again")
+  if resp = Http.get("http://127.0.0.1:${other_port}/__stop", true, 4000) {
+  }
+  c.eq_int(other.join() ?? -1, 0, "the second echo server ends")
   if resp = Http.get("${base}/__stop", true, 4000) {
   }
   c.eq_int(server.join() ?? -1, 0, "the echo server ends")
