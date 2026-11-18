@@ -3058,6 +3058,15 @@ pub class Parser {
         right.else_body.push(st)
       } else {
         right = parse_expr_min(next_prec)
+        if op.kind == tk_question_question() && ast_is_exit_call(right) {
+          // `x ?? panic("why")`, `?? exit(2)`: a call that never
+          // returns leaves as `?? return` does, held the same way.
+          st = stmt_expr(right.loc, right)
+          right = Expr.new(ex_switch(), st.loc)
+          right.op = tk_return()
+          right.has_else = true
+          right.else_body.push(st)
+        }
       }
       bin = Expr.new(ex_binary(), op.loc)
       bin.op = op.kind

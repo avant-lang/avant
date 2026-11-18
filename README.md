@@ -1393,6 +1393,7 @@ fn main {
 - `s.to_i(base)` and `s.to_u64(base)` take a base from 2 to 36, with letters in either case.
 - A float has the shape of a float literal (`-2.5`, `1e3`, `1.5E-7`) and a finite value: `"nan"`, `"inf"`, `"1e999"`, `".5"` and `"1."` are `nil`.
 - `str_to_f_slice(s, start, stop)` parses a slice the same way without building the substring.
+- No parse traps on its own and none has a non-optional twin: each call says what a non-number means, `?? 0.0` when a default is right, `?? panic("not a number: ${s}")` when it is a bug ([Traps](#traps)), even in a hot loop.
 
 ### Bytes and Buf
 
@@ -2200,6 +2201,7 @@ fn main {
 | `x?` | gives the value | returns the failure from the current function | the caller should decide |
 | `x ?? fallback` | gives the value | gives `fallback`, evaluated only then | a default makes sense |
 | `x ?? return v` (also `?? return`, `?? break`, `?? continue`) | gives the value | leaves | the failure ends this function or iteration |
+| `x ?? panic("why")` | gives the value | [traps](#traps) with the message | the failure is a bug |
 | `v = x else e { ...; continue }` | gives the value | runs the block with `e`, which must leave | the failure is reported, then ends this function or iteration |
 | `if v = x { ... } else { ... }` | runs the block with `v` | runs the `else` (`else e` names the failure) | each outcome needs code |
 
@@ -2465,7 +2467,7 @@ fn main {
 
 ### Traps
 
-A *bug* (an index out of range, an overflow, a misused API) is a trap: the program prints one line and exits with status 1; it cannot be caught.
+A *bug* (an index out of range, an overflow, a misused API) is a trap: the program prints one line and exits with status 1; it cannot be caught. `panic(message)` is the trap a program raises itself, when a value it cannot go on without is missing or wrong ([below](#raising-a-trap-panic)).
 
 <!-- check: trap -->
 ```avant
@@ -2486,7 +2488,7 @@ The line, written after stdout is flushed, is `avant runtime: WHAT` and where:
 
 | Where the trap is | The line names | Example |
 | --- | --- | --- |
-| at one operation: `expect` on `nil`, the number conversions, shifts, `buf[i] = n`, `Array(T).new` with a negative size, `main`'s exit status, a C string result that is NULL | that operation's position | `avant runtime: xs has an element at main.av:7:15` |
+| at one operation: `panic`, `expect` on `nil`, the number conversions, shifts, `buf[i] = n`, `Array(T).new` with a negative size, `main`'s exit status, a C string result that is NULL | that operation's position | `avant runtime: xs has an element at main.av:7:15` |
 | an index out of bounds, an integer overflow, a division by zero | the function, and where it starts | `avant runtime: integer overflow in twice (main.av:9:1)` |
 | inside a runtime function: a slice's bounds, `push_byte`, `chr`, `repeat_byte`, `sum`, a `Hash` counter, `fmt_float`'s precision, a parse base, `split` with an empty separator, `chars` on invalid UTF-8 | the operation and its values; no position yet | `avant runtime: slice 4..2 out of range (size 5)` |
 
@@ -2504,6 +2506,27 @@ The second row has no position so that hot loops stay fast.
 | a byte outside `0..255` | `n & 255` |
 | `chars` on invalid UTF-8 | `String.from_utf8`, which returns `String?` |
 | growing past a [size limit](#size-limits) | |
+
+#### Raising a trap: `panic`
+
+`panic(message)` prints `avant runtime: MESSAGE at FILE:LINE:COL` after flushing standard output and exits with status 1, as the traps above do. It never returns, so it stands where `return` may: after `??`, at the end of a block, a guard's `else`, a `switch` arm or an `if` branch used as a value.
+
+<!-- check: trap -->
+```avant
+fn main {
+  port = "80a".to_i() ?? panic("the port is not a number")
+  puts(port)
+}
+```
+
+<!-- check: stderr -->
+```text
+avant runtime: the port is not a number at main.av:2:26
+```
+
+- `panic` takes one `String`; in a spawned task it ends the task as any trap does, and `join` gives a `TaskError` whose `what` is the message ([When a task traps](#when-a-task-traps)).
+- `exit(status)` also never returns and stands after `??` too (`?? exit(2)`); it prints nothing.
+- `panic`, after Valk's `panic` (valk-lang/valk, MIT).
 
 **A trap ends the whole process**, except in a spawned task ([When a task traps](#when-a-task-traps)) and in an `std.http` handler, where it fails only its request ([HTTP server](#http-server)). The exceptions keep their own limits (a trap inside a C callback, and the runtime's own stops, still end the process), so run servers under a supervisor too (systemd's `Restart=`, a container restart policy). A pre-forked server mode is decided, not built.
 
@@ -2523,7 +2546,7 @@ A stack's size is the process's limit (`ulimit -s`, 8 MiB by default on Linux), 
 | --- | --- | --- |
 | Absence is normal: a lookup, a parse, an empty collection | `T?` | must open it before using the value |
 | The operation can fail, and the caller should know why | `T \| SomeError` | must handle it, pass it up, or discard it visibly |
-| The program is wrong: a bug, not an input | a trap | cannot continue; fix the code |
+| The program is wrong: a bug, not an input | a trap (`panic("why")` raises one) | cannot continue; fix the code |
 
 In the library, `h[k]` and `"42".to_i` return optionals, `file_read` and `Json.parse` errors, and `xs[9]` on three elements traps.
 

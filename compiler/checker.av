@@ -5126,6 +5126,9 @@ pub class Checker {
     if expr.callee == "exit" {
       return check_exit_call(expr)
     }
+    if expr.callee == "panic" {
+      return check_panic_call(expr)
+    }
     if expr.callee == "spawn" {
       return check_spawn(expr)
     }
@@ -7316,7 +7319,7 @@ pub class Checker {
   // An `if` used as a value: the condition (a list, bindings in scope
   // for the then-block), then each branch's value; the branches' types
   // join as a value switch's do. nil when every branch leaves (return,
-  // break, continue).
+  // break, continue, exit, panic).
   pub fn check_if_value(stmt: Stmt, has_want: Bool, want: Ty): Ty? {
     void_ok = self.if_void_ok
     self.if_void_ok = false
@@ -7431,7 +7434,7 @@ pub class Checker {
       st = body[i]
       if i == body.size - 1 {
         k = st.kind
-        if k == st_expr() {
+        if k == st_expr() && !ast_stmt_exits(st) {
           if e = st.expr {
             use_want = false
             use_ty = t_int()
@@ -7447,7 +7450,7 @@ pub class Checker {
           result = check_if_value(st, has_want, want)
         } else {
           check_block_stmt(st, self.return_type, false)
-          if k == st_return() || k == st_break() || k == st_continue() {
+          if k == st_return() || k == st_break() || k == st_continue() || ast_stmt_exits(st) {
             result = nil
           }
         }

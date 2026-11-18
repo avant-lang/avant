@@ -255,6 +255,9 @@ pub fn (lw: MirLower) lower_call(e: Expr): MOperand {
   if c == "exit" && e.args.size == 1 && !e.indirect {
     return lw.lower_exit(e)
   }
+  if c == "panic" && e.args.size == 1 && !e.indirect {
+    return lw.lower_panic(e)
+  }
   // The 64-bit clock: monotonic milliseconds and microseconds as Int
   // (avant_now_ms and avant_now_us, the Int readings that wrapped,
   // stay for the seed v0.40.0's compiler).
@@ -420,6 +423,20 @@ pub fn (lw: MirLower) lower_exit(e: Expr): MOperand {
   }
   st = lw.exit_status(v, e.loc)
   b.call(-1, "avant_exit", lw.one(st))
+  b.unreachable()
+  b.c_i32(0)
+}
+
+// panic(message): the trap expect raises on nil, with the message and the
+// call's site; it never returns, and the block ends there.
+pub fn (lw: MirLower) lower_panic(e: Expr): MOperand {
+  b = lw.lw_b
+  v = lw.lower_expr(e.args[0])
+  if lw.failed() {
+    return b.c_i32(0)
+  }
+  lw.at(e.loc)
+  b.call(-1, "avant_trap_expect", lw.one(v))
   b.unreachable()
   b.c_i32(0)
 }

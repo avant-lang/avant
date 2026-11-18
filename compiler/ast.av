@@ -1024,11 +1024,12 @@ pub fn ast_is_ctor_call(e: Expr): Bool {
   e.callee == "new"
 }
 
-// Whether e is a call of the builtin exit(status), which never returns:
-// a block whose last statement it is leaves, as one ending in return.
-// A local function value named exit is called indirectly and is not it.
+// Whether e is a call of a builtin that never returns, exit(status) or
+// panic(message): a block whose last statement it is leaves, as one
+// ending in return. A local function value of that name is called
+// indirectly and is not it.
 pub fn ast_is_exit_call(e: Expr): Bool {
-  if e.kind != ex_call() || e.callee != "exit" || e.indirect || e.args.size != 1 {
+  if e.kind != ex_call() || !(e.callee == "exit" || e.callee == "panic") || e.indirect || e.args.size != 1 {
     return false
   }
   if r = e.receiver {
@@ -1037,7 +1038,8 @@ pub fn ast_is_exit_call(e: Expr): Bool {
   true
 }
 
-// Whether the statement is an exit(status) call (ast_is_exit_call).
+// Whether the statement is an exit(status) or panic(message) call
+// (ast_is_exit_call).
 pub fn ast_stmt_exits(st: Stmt): Bool {
   if st.kind == st_expr() {
     if e = st.expr {

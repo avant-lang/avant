@@ -12,6 +12,7 @@ import backends
 //   - main's (or run's) Int result outside 0..255 traps; inside it is the exit status
 //   - a C function declared : String that returns NULL traps naming it; String? reads NULL as nil
 //   - every trap the compiler raises names its site (file:line:col), flushes stdout first, names its operation and type, and exits 1
+//   - panic(message) is such a trap, raised by the program; it never returns, so it may follow ?? and end a block
 //   - JsonBuilder misuse and a closed Regex trap saying what failed; Json.parse and Regex.compile errors carry the library's reason and offset
 //   - Hash.delete gives the removed value or nil; String.chars traps on invalid UTF-8 as Bytes.chars does
 
@@ -116,6 +117,24 @@ fn trap_cases: Array(SCase) {
   xs
 }
 
+// panic(message): a trap the program raises, with the call's site; it never
+// returns, so it ends a block, a switch arm or a guard's else, and stands
+// after ?? as return does (exit too).
+fn panic_cases: Array(SCase) {
+  xs: Array(SCase) = []
+  xs.push(trapped("panic-plain", "fn main {\n  puts(\"before\")\n  panic(\"the table is empty\")\n}\n", "before\n", "avant runtime: the table is empty at sys-panic-plain.av:3:3"))
+  xs.push(trapped("panic-coalesce", "fn main {\n  s = \"4x\"\n  n = s.to_i() ?? panic(\"not a number: \${s}\")\n  puts(n)\n}\n", "", "avant runtime: not a number: 4x at sys-panic-coalesce.av:3:19"))
+  xs.push(accepted("panic-coalesce-ok", "fn main {\n  n = \"42\".to_i() ?? panic(\"not a number\")\n  puts(n + 1)\n  xs = [1.5, 2.5]\n  puts(xs.get(1) ?? panic(\"no second\"))\n  n = argv().size\n  v = if n > 0 { n * 2 } else { panic(\"no program name\") }\n  puts(v)\n}\n", "43\n2.5\n2\n"))
+  xs.push(trapped("panic-guard", "class Bad: Error {\n  message: String = \"no such key\"\n}\n\nfn find(k: Int): Int | Bad {\n  if k > 2 {\n    return Bad.new()\n  }\n  k * 10\n}\n\nfn main {\n  for k in 1..5 {\n    v = find(k) else e {\n      panic(\"key \${k}: \${e}\")\n    }\n    puts(v)\n  }\n}\n", "10\n20\n", "avant runtime: key 3: no such key at sys-panic-guard.av:15:7"))
+  xs.push(trapped("panic-tail", "fn pick(n: Int): Int {\n  if n > 0 {\n    return n\n  }\n  panic(\"pick needs a positive number, got \${n}\")\n}\n\nfn kind(n: Int): String {\n  switch n {\n    case 1 { \"one\" }\n    case 2 { \"two\" }\n    else { panic(\"no kind for \${n}\") }\n  }\n}\n\nfn main {\n  puts(pick(3))\n  puts(kind(2))\n  puts(pick(1 - argv().size))\n}\n", "3\ntwo\n", "avant runtime: pick needs a positive number, got 0 at sys-panic-tail.av:5:3"))
+  xs.push(accepted("panic-task", "fn main {\n  n = argv().size\n  h = spawn {\n    if n > 0 {\n      panic(\"the task gave up\")\n    }\n    n\n  }\n  v = h.join() else e {\n    puts(\"joined: \${e.what}\")\n    return\n  }\n  puts(v)\n}\n", "joined: the task gave up\n"))
+  xs.push(exited("exit-coalesce", "fn main {\n  puts(\"start\")\n  n = \"seven\".to_i() ?? exit(4)\n  puts(n)\n}\n", "start\n", 4, ""))
+  xs.push(refused("panic-not-string", "fn main {\n  panic(3)\n}\n", "expected String"))
+  xs.push(refused("panic-no-message", "fn main {\n  panic()\n}\n", "panic takes one String, the message"))
+  xs.push(refused("panic-after-dead", "fn f(n: Int): Int {\n  x = n.to_s() ?? panic(\"no\")\n  n\n}\nfn main {\n  puts(f(1))\n}\n", "?? needs a value that can fail (T? or T | E with E marked Error), got String"))
+  xs
+}
+
 fn lib_cases: Array(SCase) {
   xs: Array(SCase) = []
   xs.push(accepted("lib-json-error", "import std.json\nimport std.regex\n\nfn main {\n  switch Json.parse(\"{\\\"a\\\": 1,}\") {\n    case e: JsonError {\n      puts(\"\${e}\")\n      puts(e.offset ?? -1)\n    }\n    case Json { }\n  }\n  switch Json.parse(\"[1, 2\") {\n    case e2: JsonError {\n      puts(e2.message)\n    }\n    case Json { }\n  }\n  switch Regex.compile(\"(unclosed\") {\n    case e3: RegexError {\n      puts(\"\${e3}\")\n      puts(e3.offset ?? -1)\n    }\n    case Regex { }\n  }\n  puts(JsonError.new(\"mine\").offset ?? -1)\n  puts(RegexError.new(\"mine\").offset ?? -1)\n}\n", "invalid JSON at byte 7: trailing comma is not allowed\n7\ninvalid JSON at byte 5: unexpected end of data\ninvalid regular expression at offset 9: missing closing parenthesis\n9\n-1\n-1\n"))
@@ -196,6 +215,9 @@ fn test_main(c: Checks) {
     }
     for f_trap in trap_cases() {
       all.push(f_trap)
+    }
+    for f_panic in panic_cases() {
+      all.push(f_panic)
     }
     for f_lib in lib_cases() {
       all.push(f_lib)
