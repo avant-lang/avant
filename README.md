@@ -200,6 +200,7 @@ Avant is pre-1.0: the language changes between releases ([CHANGELOG](CHANGELOG.m
   - [updating and removing](#updating-and-removing)
   - [publishing a package](#publishing-a-package)
   - [package conflicts](#package-conflicts)
+  - [C in a package](#c-in-a-package)
   - [package limits](#package-limits)
 - [Concurrency](#concurrency):
   - [spawn](#spawn)
@@ -2927,7 +2928,7 @@ git = "https://github.com/example/greeter.git"
 rev = "v1.0.0"
 ```
 
-A dependency with no `git`, a duplicate, an unknown key, or a bare version string (`greeter = "1.0"`: no registry resolves it) is an error naming the file and line.
+A dependency with no `git`, a duplicate, an unknown key, or a bare version string (`greeter = "1.0"`: no registry resolves it) is an error naming the file and line. A list may span lines up to its closing `]`. Two more sections say what C a package links: `[c]` and `[link]` ([C in a package](#c-in-a-package)).
 
 ### Fetch and lock
 
@@ -3026,9 +3027,45 @@ Each clash is reported, never silently resolved.
 - **One dependency name reaches two commits** (your pin and a dependency's): fetch stops with `avant fetch: dependency greeter resolves to two different commits (...)`; align your pin and fetch again.
 - **Two modules publish the same name.** The ordinary [name clash](#name-clashes): qualify the use.
 
+### C in a package
+
+A package that wraps a C library says what it links once, in its own `avant.toml`; a program that uses it links that C only when the root project opts in.
+
+```toml
+# deps/redis/avant.toml: the package's own manifest
+[package]
+name = "redis"
+version = "0.2.0"
+
+[c]
+sources = [                    # C files the package carries, compiled for "source"
+  "c/valkey/src/valkey.c",
+  "c/valkey/src/net.c",
+]
+include = ["c/valkey/include"] # -I for those sources
+flags = ["-DNDEBUG"]           # -D, -U, -W, -f, -O and -std= flags only
+libs = []                      # system libraries linked either way (-lNAME)
+system = ["valkey"]            # linked instead of the sources for "system"
+```
+
+```toml
+# avant.toml: the root project
+[dependencies]
+redis = { git = "https://github.com/example/redis.git", rev = "v0.2.0" }
+
+[link]
+redis = "source"     # or "system": link the system's libvalkey instead
+```
+
+- **Nothing links unasked.** A program that imports a module of a package with a `[c]` section and has no `[link]` choice for it does not compile: `the dependency redis links C code (2 C sources; the system's valkey instead of its sources), and nothing links unless this project opts in: add [link] with redis = "source" ... or redis = "system" ...`. `avant fetch` says it too (`note: redis links C code`). A dependency the program does not import needs no choice. `[link]` is read from the root project's manifest only, and applies to dependencies at any depth.
+- **`"source"`** compiles the package's `sources` with its `include` and `flags` (`-O2` and `-std=c11` unless the flags choose) and links them with its `libs`; **`"system"`** links its `system` libraries and its `libs` instead. A choice the package cannot serve (`"source"` with no sources, `"system"` with sources and no `system`) is an error that names the other.
+- **The compiled objects are cached** under `AVANT_CACHE_DIR`, else `$XDG_CACHE_HOME/avant`, else `~/.cache/avant`, keyed by the C compiler (its path and `--version`), the flags and the contents of the sources and of the headers in their directories and the include directories: another version or another compiler compiles again, the same one links the cached objects.
+- Paths are the package's own (relative, no `..`); a library is a name as `-l` takes it (`z` for zlib).
+- Your own project's `[c]` needs no `[link]`: its sources and libraries are compiled and linked into every program of the project, instead of `--cc` and `--lib` on each command.
+
 ### Package limits
 
-No registry, no version ranges or solving, no per-package build step, one version per dependency name.
+No registry, no version ranges or solving, no build script (a package's C is the sources its manifest lists), one version per dependency name.
 
 ## Concurrency
 
@@ -3673,6 +3710,8 @@ avant compile app.av --lib z            # link a system library: -lz
 avant compile app.av --cc helper.c      # compile and link a C file (or link a .o)
 avant run app.av --lib z
 ```
+
+A project's own C, and the C a package wraps, can be named once in `avant.toml` instead ([C in a package](#c-in-a-package)).
 
 The C and math libraries need no flag; the standard library's C libraries (yyjson, PCRE2, zlib, a Base64 codec, uSockets, picohttpparser) are compiled into the runtime shipped with `avant`.
 

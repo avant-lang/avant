@@ -563,7 +563,9 @@ pub fn driver_run(args: Array(String)) {
     if box.re2c_obj.size > 0 {
       job.objects.push(box.re2c_obj)
     }
-    attach_std_link(box, job)
+    if !attach_std_link(box, job) {
+      diag_exit(1)
+    }
     // Compile, then run the program here with the user's stdin (only
     // the tools the compiler starts get /dev/null, tool_run).
     out = tmp_path("run.bin")
@@ -611,7 +613,9 @@ pub fn driver_compile(args: Array(String)) {
     if box.re2c_obj.size > 0 {
       job.objects.push(box.re2c_obj)
     }
-    attach_std_link(box, job)
+    if !attach_std_link(box, job) {
+      diag_exit(1)
+    }
     if m = box.mir {
       // The driver leaves this line to its caller.
       err = llvm_build(m, llvm_job_of(job), out_path)

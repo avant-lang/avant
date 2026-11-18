@@ -162,6 +162,93 @@ fn test_package_state(c: Checks, compiler: String, base: String) {
   c.expect(str_has(file_read(plog) ?? "", "avant fetch: git not found on PATH (${base}/nowhere)"), "fetch says git is not on PATH")
 }
 
+// A package names the C it carries and links in its avant.toml; the root
+// project opts in to each dependency's C, and the compiled objects are
+// cached by the C compiler, the flags and the sources' and headers'
+// contents.
+fn test_package_c(c: Checks, compiler: String, base: String) {
+  glog = "${base}/c-git.log"
+  pkg = "${base}/zpkg"
+  app = "${base}/capp"
+  cache = "${base}/c-cache"
+  mkdir_p("${pkg}/c")
+  mkdir_p(app)
+  _ = file_write("${pkg}/zver.av", "lib z {\n  fun zlibVersion: String\n}\n\npub fn zversion: String {\n  z.zlibVersion()\n}\n")
+  _ = file_write("${pkg}/c/zver.c", "#include \"zver.h\"\nconst char *zlibVersion(void) { return ZVER_TEXT; }\n")
+  _ = file_write("${pkg}/c/zver.h", "#define ZVER_TEXT \"vendored \" ZVER_EXTRA\n")
+  _ = file_write("${pkg}/avant.toml", "[package]\nname = \"zpkg\"\nversion = \"1.0.0\"\n\n[c]\nsources = [\n  \"c/zver.c\",  # the vendored copy\n]\ninclude = [\"c\"]\nflags = [\"-DZVER_EXTRA=\\\"copy\\\"\"]\nsystem = [\"z\"]\n")
+  pkg_repo(c, pkg, "zpkg", glog)
+  manifest = "[package]\nname = \"capp\"\nversion = \"0.1.0\"\n\n[dependencies]\nzpkg = { git = \"${pkg}\", rev = \"HEAD\" }\n"
+  _ = file_write("${app}/avant.toml", manifest)
+  _ = file_write("${app}/main.av", "import zver\nfn main {\n  puts(zversion())\n}\n")
+  _ = file_write("${app}/plain.av", "fn main {\n  puts(1)\n}\n")
+  flog = "${base}/c-fetch.log"
+  c.eq_int(pkg_fetch(compiler, app, false, flog), 0, "fetch a package with C")
+  c.expect(str_has(file_read(flog) ?? "", "note: zpkg links C code: opt in with [link] zpkg = \"source\""), "fetch says the package links C and how to opt in")
+  env = ["AVANT_CACHE_DIR=${cache}"]
+  rlog = "${base}/c-run.log"
+  c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 1, "a package's C does not link without the root's opt-in")
+  c.expect(str_has(file_read(rlog) ?? "", "the dependency zpkg links C code (1 C source; the system's z instead of its sources), and nothing links unless this project opts in"), "the refusal says what the package links and how to opt in")
+  c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/plain.av"], rlog), 0, "a program that imports no module of the package needs no opt-in")
+
+  _ = file_write("${app}/avant.toml", "${manifest}\n[link]\nzpkg = \"source\"\n")
+  c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 0, "source: the package's C compiled")
+  c.eq_str(file_read(rlog) ?? "", "vendored copy\n", "source: its sources, include directory and flags")
+  objs = dir_walk("${cache}/c") ?? []
+  cached = ""
+  for o in objs {
+    if o.size > 2 && str_slice(o, o.size - 2, o.size) == ".o" {
+      cached = "${cache}/c/${o}"
+    }
+  }
+  c.expect(cached.size > 0, "the object is kept in the cache")
+  // The cached object is linked as it is: replaced by another object, the
+  // next link uses that one.
+  _ = file_write("${base}/other.c", "const char *zlibVersion(void) { return \"from the cache\"; }\n")
+  c.eq_int(process_run_out("/usr/bin/cc", ["-c", "-o", "${base}/other.o", "${base}/other.c"], glog) ?? -1, 0, "cc another object")
+  c.eq_int(copy_file("${base}/other.o", cached), 0, "replace the cached object")
+  c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 0, "source again")
+  c.eq_str(file_read(rlog) ?? "", "from the cache\n", "a second link takes the cached object")
+  // A header's change is another key.
+  _ = file_write("${app}/deps/zpkg/c/zver.h", "#define ZVER_TEXT \"edited \" ZVER_EXTRA\n")
+  c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 0, "source after a header changed")
+  c.eq_str(file_read(rlog) ?? "", "edited copy\n", "a changed header compiles the sources again")
+  c.eq_int(process_run_out("/usr/bin/git", ["-C", "${app}/deps/zpkg", "checkout", "-q", "--", "c/zver.h"], glog) ?? -1, 0, "restore the header")
+
+  _ = file_write("${app}/avant.toml", "${manifest}\n[link]\nzpkg = \"system\"\n")
+  c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 0, "system: the system's library")
+  out = file_read(rlog) ?? ""
+  c.expect(out.size > 1 && !str_has(out, "vendored") && !str_has(out, "cache"), "system: the system's zlib answers, not the package's copy")
+
+  _ = file_write("${app}/avant.toml", "${manifest}\n[link]\nzpkg = \"vendored\"\n")
+  c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 1, "an unknown choice")
+  c.expect(str_has(file_read(rlog) ?? "", "[link] zpkg is \"vendored\": want \"source\""), "an unknown choice is named")
+  _ = file_write("${app}/avant.toml", "${manifest}\n[link]\nnope = \"source\"\n")
+  c.eq_int(pkg_env_run(env, compiler, ["run", "${app}/main.av"], rlog), 1, "a choice for no dependency")
+  c.expect(str_has(file_read(rlog) ?? "", "[link] names nope, which is not a dependency of this project"), "a choice for no dependency is named")
+
+  // The root project's own [c] needs no opt-in.
+  own = "${base}/own"
+  mkdir_p("${own}/c")
+  _ = file_write("${own}/c/own.c", "int own_twice(int x) { return 2 * x; }\n")
+  _ = file_write("${own}/avant.toml", "[package]\nname = \"own\"\nversion = \"0.1.0\"\n\n[c]\nsources = [\"c/own.c\"]\n")
+  _ = file_write("${own}/main.av", "lib own {\n  fun own_twice(x: Int32): Int32\n}\n\nfn main {\n  puts(own.own_twice(21))\n}\n")
+  c.eq_int(pkg_env_run(env, compiler, ["run", "${own}/main.av"], rlog), 0, "the root's own C sources")
+  c.eq_str(file_read(rlog) ?? "", "42\n", "the root's own C is compiled and linked")
+  bad = [
+    ["flags = [\"-o\", \"/x\"]", "c flag -o is not allowed"],
+    ["sources = [\"../x.c\"]", "c source ../x.c must be a .c file inside the package"],
+    ["include = [\"/usr/include\"]", "c include /usr/include must be a directory inside the package"],
+    ["libs = [\"-lz\"]", "c library -lz must be a name as -l takes it"],
+    ["sources = [\"c/own.c\"", "unterminated list"],
+  ]
+  for b in bad {
+    _ = file_write("${own}/avant.toml", "[package]\nname = \"own\"\nversion = \"0.1.0\"\n\n[c]\n${b[0]}\n")
+    c.eq_int(pkg_env_run(env, compiler, ["run", "${own}/main.av"], rlog), 1, "refused: ${b[0]}")
+    c.expect(str_has(file_read(rlog) ?? "", b[1]), "the message: ${b[1]}")
+  }
+}
+
 fn test_packages(c: Checks) {
   c.suite("tests/cases/test_packages.av")
   if compiler = env_get("AVANT_COMPILER") {
@@ -364,6 +451,7 @@ fn test_packages(c: Checks) {
     c.expect(str_has(file_read(two_log) ?? "", "; a project uses one version of each dependency: pin the same commit for inner everywhere, then fetch again\n"), "two commits: says what to do")
 
     test_package_state(c, compiler, base)
+    test_package_c(c, compiler, base)
 
     _ = file_write("${bad}/avant.toml", "[package]\nname = \"bad\"\nversion = \"0.1.0\"\n\n[dependencies]\nnope = { git = \"/nonexistent-avant-waveh\", rev = \"HEAD\" }\n")
     bad_log = "${base}/bad.log"

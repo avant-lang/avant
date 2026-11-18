@@ -26,6 +26,32 @@ pub class PkgManifest {
   pub cov_include: Array(String) = []
   pub cov_exclude: Array(String) = []
   pub cov_err: String = ""
+  // [c]: the C this package carries or links. `sources` are compiled
+  // (with `include` and `flags`) when the root project chooses "source"
+  // for this package; `system` names the libraries linked instead of
+  // them when it chooses "system"; `libs` are linked either way.
+  pub c_sources: Array(String) = []
+  pub c_include: Array(String) = []
+  pub c_flags: Array(String) = []
+  pub c_libs: Array(String) = []
+  pub c_system: Array(String) = []
+  // [link]: the root project's choice for each dependency that has C,
+  // "source" or "system"; read from the root manifest only.
+  pub link_names: Array(String) = []
+  pub link_modes: Array(String) = []
+
+  pub fn has_c: Bool {
+    self.c_sources.size > 0 || self.c_libs.size > 0 || self.c_system.size > 0
+  }
+
+  pub fn link_mode(name: String): String {
+    for i in 0..self.link_names.size {
+      if self.link_names[i] == name {
+        return self.link_modes[i]
+      }
+    }
+    ""
+  }
 }
 
 pub class PkgLockEnt {
@@ -401,6 +427,170 @@ pub fn pkg_apply_coverage(m: PkgManifest, key: String, val: String, path: String
   true
 }
 
+// Whether a list value's brackets close (outside strings).
+pub fn pkg_list_closed(val: String): Bool {
+  depth = 0
+  in_str = false
+  i = 0
+  while i < val.size {
+    c = val[i]
+    if in_str {
+      if c == 92 {
+        i += 2
+        continue
+      }
+      if c == 34 {
+        in_str = false
+      }
+    } else if c == 34 {
+      in_str = true
+    } else if c == 91 {
+      depth += 1
+    } else if c == 93 {
+      depth -= 1
+      if depth == 0 {
+        return true
+      }
+    }
+    i += 1
+  }
+  false
+}
+
+// A path inside the package: relative, with no `..` segment, no empty
+// segment and no backslash.
+pub fn pkg_inside_path(p: String): Bool {
+  if p.size == 0 || p[0] == 47 {
+    return false
+  }
+  i = 0
+  while i < p.size {
+    if p[i] == 92 {
+      return false
+    }
+    i += 1
+  }
+  for seg in p.split("/") {
+    if seg == ".." || seg.size == 0 {
+      return false
+    }
+  }
+  true
+}
+
+// A library name as `-lNAME` takes it: letters, digits, `_`, `-`, `.`, `+`.
+pub fn pkg_lib_name(n: String): Bool {
+  if n.size == 0 || n[0] == 45 {
+    return false
+  }
+  i = 0
+  while i < n.size {
+    c = n[i]
+    ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || c == 45 || c == 46 || c == 43
+    if !ok {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+// The C compiler flags a package may give its own sources: definitions,
+// warnings, code generation and the language level. Anything else (an
+// output, a path outside the package, a linker flag) is refused.
+pub fn pkg_c_flag(f: String): Bool {
+  if f.size < 3 {
+    return f == "-w"
+  }
+  if str_starts(f, "-D") || str_starts(f, "-U") || str_starts(f, "-W") {
+    return !str_starts(f, "-Wl,") && !str_starts(f, "-Wa,") && !str_starts(f, "-Wp,")
+  }
+  if str_starts(f, "-std=") {
+    return true
+  }
+  if f == "-O0" || f == "-O1" || f == "-O2" || f == "-O3" || f == "-Os" {
+    return true
+  }
+  if str_starts(f, "-f") {
+    return !str_starts(f, "-fplugin") && !str_starts(f, "-fprofile") && !str_starts(f, "-fdump")
+  }
+  false
+}
+
+pub fn pkg_apply_c(m: PkgManifest, key: String, val: String, path: String, line_no: Int): Bool {
+  k = key.strip()
+  if !(k == "sources" || k == "include" || k == "flags" || k == "libs" || k == "system") {
+    m.err = "${path}:${line_no}: unknown c key ${k} (want sources, include, flags, libs, or system)"
+    return false
+  }
+  list = pkg_string_list(val)
+  if !list.ok {
+    m.err = "${path}:${line_no}: ${k} needs a list of strings"
+    return false
+  }
+  dest = m.c_sources
+  if k == "include" {
+    dest = m.c_include
+  } else if k == "flags" {
+    dest = m.c_flags
+  } else if k == "libs" {
+    dest = m.c_libs
+  } else if k == "system" {
+    dest = m.c_system
+  }
+  if dest.size > 0 {
+    m.err = "${path}:${line_no}: duplicate c key ${k}"
+    return false
+  }
+  for item in list.items {
+    if k == "sources" {
+      if !pkg_inside_path(item) || !str_ends(item, ".c") {
+        m.err = "${path}:${line_no}: c source ${item} must be a .c file inside the package (a relative path without ..)"
+        return false
+      }
+    } else if k == "include" {
+      if !pkg_inside_path(item) {
+        m.err = "${path}:${line_no}: c include ${item} must be a directory inside the package (a relative path without ..)"
+        return false
+      }
+    } else if k == "flags" {
+      if !pkg_c_flag(item) {
+        m.err = "${path}:${line_no}: c flag ${item} is not allowed (want -D, -U, -W, -f, -O or -std= flags)"
+        return false
+      }
+    } else if !pkg_lib_name(item) {
+      m.err = "${path}:${line_no}: c library ${item} must be a name as -l takes it (zlib is z)"
+      return false
+    }
+    dest.push(item)
+  }
+  true
+}
+
+pub fn pkg_apply_link(m: PkgManifest, key: String, val: String, path: String, line_no: Int): Bool {
+  k = key.strip()
+  if k.size == 0 {
+    m.err = "${path}:${line_no}: bad package name in [link]"
+    return false
+  }
+  if !pkg_string_closed(val) {
+    m.err = "${path}:${line_no}: [link] ${k} needs \"source\" or \"system\""
+    return false
+  }
+  mode = pkg_parse_string(val, "")
+  if mode != "source" && mode != "system" {
+    m.err = "${path}:${line_no}: [link] ${k} is \"${mode}\": want \"source\" (compile the C sources it carries) or \"system\" (link the system's library)"
+    return false
+  }
+  if m.link_mode(k).size > 0 {
+    m.err = "${path}:${line_no}: duplicate [link] entry ${k}"
+    return false
+  }
+  m.link_names.push(k)
+  m.link_modes.push(mode)
+  true
+}
+
 pub fn pkg_parse_inline(m: PkgManifest, dep_idx: Int, val: String, path: String, line_no: Int): Bool {
   t = val.strip()
   if t.size < 2 || t[0] != 123 || t[t.size - 1] != 125 {
@@ -537,7 +727,17 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
         dep_idx = -1
         continue
       }
-      m.err = "${path}:${line_no}: unknown section [${inner}] (want [package], [dependencies], [test], or [coverage])"
+      if inner == "c" {
+        section = "c"
+        dep_idx = -1
+        continue
+      }
+      if inner == "link" {
+        section = "link"
+        dep_idx = -1
+        continue
+      }
+      m.err = "${path}:${line_no}: unknown section [${inner}] (want [package], [dependencies], [test], [coverage], [c], or [link])"
       return m
     }
     eq = pkg_find_eq(line)
@@ -547,6 +747,17 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
     }
     key = str_slice(line, 0, eq).strip()
     val = str_slice(line, eq + 1, line.size).strip()
+    // A list may go on over several lines, up to its closing bracket.
+    if val.size > 0 && val[0] == 91 && !pkg_list_closed(val) {
+      while li < lines.size && !pkg_list_closed(val) {
+        val = "${val} ${pkg_strip_comment(lines[li]).strip()}"
+        li += 1
+      }
+      if !pkg_list_closed(val) {
+        m.err = "${path}:${line_no}: unterminated list"
+        return m
+      }
+    }
     if section == "package" {
       if !pkg_string_closed(val) {
         m.err = "${path}:${line_no}: unterminated string"
@@ -612,6 +823,18 @@ pub fn pkg_parse_manifest(text: String, path: String): PkgManifest {
     }
     if section == "coverage" {
       if !pkg_apply_coverage(m, key, val, path, line_no) {
+        return m
+      }
+      continue
+    }
+    if section == "c" {
+      if !pkg_apply_c(m, key, val, path, line_no) {
+        return m
+      }
+      continue
+    }
+    if section == "link" {
+      if !pkg_apply_link(m, key, val, path, line_no) {
         return m
       }
       continue

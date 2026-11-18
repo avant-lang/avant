@@ -333,6 +333,11 @@ pub fn pkg_fetch(dir: String, update: Bool): Bool {
   if !pkg_prune(deps_dir, fetched) {
     return false
   }
+  for f in fetched {
+    if f.man.has_c() && m.link_mode(f.name).size == 0 {
+      puts("note: ${f.name} links C code: opt in with [link] ${f.name} = \"source\" (compile the C it carries) or \"system\" (link the system's library) in ${manifest_path}")
+    }
+  }
   lock_path2 = pkg_join(dir, "avant.lock")
   if e = write_failure(file_write(lock_path2, pkg_lock_render(resolved))) {
     diag_puts("avant fetch: ${e.message()}")

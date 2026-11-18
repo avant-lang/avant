@@ -8,6 +8,7 @@ import ast
 import resolve
 import parser
 import loader
+import manifest
 import prelude_src
 import expand
 import checker
@@ -35,6 +36,9 @@ pub class IrBox {
   pub re2c_obj: String = ""
   std_objects: Array(String) = []
   std_flags: Array(String) = []
+  // The C the project's manifests ask for (its own and its dependencies'),
+  // compiled when the program is linked.
+  pub pkg_c: Array(PkgCUnit) = []
   pub mir: MModule? = nil
 
   fn initialize(ok: Bool) {
@@ -68,6 +72,7 @@ lib fs_rt {
   fun avant_fs_cwd: String
   fun avant_process_run_split(path: String, args: Array(String), out: String, err: String): Int
   fun avant_tool_run(path: String, args: Array(String), out: String, err: String): Int
+  fun avant_fs_copy(src: String, dst: String): Int
 }
 
 // rm -f
@@ -643,13 +648,320 @@ pub fn fill_std_link(program: Program, box: IrBox) {
   }
 }
 
-pub fn attach_std_link(box: IrBox, job: LinkJob) {
+// The objects and flags the program links beyond its own code: the
+// standard library's C, then each package's (compiled now, or taken from
+// the cache). False, with the reason said, when a package's C does not
+// compile.
+pub fn attach_std_link(box: IrBox, job: LinkJob): Bool {
   for std_object in box.std_objects {
     job.objects.push(std_object)
   }
   for std_flag in box.std_flags {
     job.flags.push(std_flag)
   }
+  for unit in box.pkg_c {
+    if !build_pkg_c(unit, job) {
+      return false
+    }
+  }
+  true
+}
+
+// One package's C, as the root project chose it.
+pub class PkgCUnit {
+  pub name: String = ""
+  // The package's directory: its paths are read from there.
+  pub dir: String = ""
+  pub sources: Array(String) = []
+  pub include: Array(String) = []
+  pub flags: Array(String) = []
+  pub libs: Array(String) = []
+
+  fn initialize(name: String, dir: String) {
+    self.name = name
+    self.dir = dir
+  }
+}
+
+pub fn pkg_c_list(xs: Array(String)): String {
+  b = buf_new()
+  for i in 0..xs.size {
+    if i > 0 {
+      b.push_str(", ")
+    }
+    b.push_str(xs[i])
+  }
+  b.to_s()
+}
+
+pub fn pkg_c_what(man: PkgManifest): String {
+  b = buf_new()
+  if man.c_sources.size > 0 {
+    if man.c_sources.size == 1 {
+      b.push_str("1 C source")
+    } else {
+      b.push_str("${man.c_sources.size} C sources")
+    }
+  }
+  if man.c_libs.size > 0 {
+    if b.size > 0 {
+      b.push_str("; ")
+    }
+    b.push_str("the libraries ${pkg_c_list(man.c_libs)}")
+  }
+  if man.c_system.size > 0 {
+    if b.size > 0 {
+      b.push_str("; ")
+    }
+    b.push_str("the system's ${pkg_c_list(man.c_system)} instead of its sources")
+  }
+  b.to_s()
+}
+
+// What a program links of its project's C: the root manifest's own [c]
+// (its sources and libraries, no opt-in: they are the project's), and the
+// [c] of each dependency the program imports a module of, only as the
+// root manifest's [link] chose it: "source" compiles the C sources the
+// package carries, "system" links the system's library instead; a
+// package with C and no choice is an error, so nothing links unasked.
+pub fn plan_pkg_c(loader: Loader, box: IrBox): Bool {
+  if ds = loader.dep_set {
+    root = ds.root
+    man_path = man_join(loader.manifest_dir, "avant.toml")
+    for ln in root.link_names {
+      known = false
+      for p in ds.pkgs {
+        if p.name == ln {
+          known = true
+        }
+      }
+      if !known {
+        diag_puts("${man_path}: [link] names ${ln}, which is not a dependency of this project")
+        return false
+      }
+    }
+    if root.has_c() {
+      unit = PkgCUnit.new(root.name, loader.manifest_dir)
+      for x in root.c_sources {
+        unit.sources.push(x)
+      }
+      for x in root.c_include {
+        unit.include.push(x)
+      }
+      for x in root.c_flags {
+        unit.flags.push(x)
+      }
+      for x in root.c_libs {
+        unit.libs.push(x)
+      }
+      box.pkg_c.push(unit)
+    }
+    for p in ds.pkgs {
+      man = p.man
+      if !man.has_c() || !loader.uses_dep(p.dir) {
+        continue
+      }
+      mode = root.link_mode(p.name)
+      if mode.size == 0 {
+        diag_puts("${man_path}: the dependency ${p.name} links C code (${pkg_c_what(man)}), and nothing links unless this project opts in: add [link] with ${p.name} = \"source\" (compile the C it carries) or ${p.name} = \"system\" (link the system's library)")
+        return false
+      }
+      if mode == "source" && man.c_sources.size == 0 {
+        diag_puts("${man_path}: [link] ${p.name} = \"source\", but ${p.name} carries no C sources (${pkg_c_what(man)}): write ${p.name} = \"system\"")
+        return false
+      }
+      if mode == "system" && man.c_sources.size > 0 && man.c_system.size == 0 {
+        diag_puts("${man_path}: [link] ${p.name} = \"system\", but ${p.name} names no system library to link instead of its C sources: write ${p.name} = \"source\"")
+        return false
+      }
+      unit = PkgCUnit.new(p.name, p.dir)
+      if mode == "source" {
+        for x in man.c_sources {
+          unit.sources.push(x)
+        }
+        for x in man.c_include {
+          unit.include.push(x)
+        }
+        for x in man.c_flags {
+          unit.flags.push(x)
+        }
+      } else {
+        for x in man.c_system {
+          unit.libs.push(x)
+        }
+      }
+      for x in man.c_libs {
+        unit.libs.push(x)
+      }
+      box.pkg_c.push(unit)
+    }
+  }
+  true
+}
+
+// The cache of compiled package C: AVANT_CACHE_DIR, else
+// $XDG_CACHE_HOME/avant, else ~/.cache/avant; "" when none can be named
+// (each link then compiles again).
+pub fn avant_cache_dir: String {
+  if v = env_get("AVANT_CACHE_DIR"), v.size > 0 {
+    return v
+  }
+  if v = env_get("XDG_CACHE_HOME"), v.size > 0 {
+    return "${v}/avant"
+  }
+  if v = env_get("HOME"), v.size > 0 {
+    return "${v}/.cache/avant"
+  }
+  ""
+}
+
+// The C compiler run_cc runs, and the first line of its --version: what
+// the cache's key names of the compiler.
+pub fn cc_identity: String {
+  path = "/usr/bin/env"
+  args: Array(String) = []
+  if v = env_get("CC"), file_exists(v) {
+    path = v
+  } else if file_exists("/usr/bin/cc") {
+    path = "/usr/bin/cc"
+  } else {
+    args.push("cc")
+  }
+  args.push("--version")
+  out = "${tmp_new_dir()}/cc-version.txt"
+  _ = tool_run_out(path, args, out)
+  first = ""
+  if text = file_read(out) {
+    lines = text.split("\n")
+    if lines.size > 0 {
+      first = lines[0]
+    }
+  }
+  "${path} ${first}"
+}
+
+// Every header a package's C may read: the .h files under its include
+// directories and beside its sources, as "path sha256" lines, sorted by
+// path as listed.
+pub fn pkg_c_headers(unit: PkgCUnit): String {
+  b = buf_new()
+  dirs: Array(String) = []
+  for inc in unit.include {
+    dirs.push(inc)
+  }
+  for src in unit.sources {
+    d = path_dirname(src)
+    seen = false
+    for x in dirs {
+      if x == d {
+        seen = true
+      }
+    }
+    if !seen {
+      dirs.push(d)
+    }
+  }
+  for d in dirs {
+    full = join_dir(unit.dir, d)
+    names = dir_walk(full) ?? []
+    for n in names {
+      if str_ends(n, ".h") {
+        text = file_read(join_dir(full, n)) ?? ""
+        b.push_str("${d}/${n} ${sha256(text)}\n")
+      }
+    }
+  }
+  b.to_s()
+}
+
+// Compiles a package's C sources (or takes them from the cache, keyed by
+// the C compiler, the flags and the contents of the sources and their
+// headers, so a new version or another compiler is compiled again) and
+// adds them and its libraries to the link.
+pub fn build_pkg_c(unit: PkgCUnit, job: LinkJob): Bool {
+  if unit.sources.size > 0 {
+    key_text = buf_new()
+    key_text.push_str("package C 1\n${cc_identity()}\n")
+    for f in unit.flags {
+      key_text.push_str("flag ${f}\n")
+    }
+    for inc in unit.include {
+      key_text.push_str("include ${inc}\n")
+    }
+    for src in unit.sources {
+      full = join_dir(unit.dir, src)
+      if text = file_read(full) {
+        key_text.push_str("source ${src} ${sha256(text)}\n")
+      } else {
+        diag_puts("package ${unit.name}: its C source ${src} is missing (${full})")
+        return false
+      }
+    }
+    key_text.push_str(pkg_c_headers(unit))
+    key = sha256(key_text.to_s())
+    cache = avant_cache_dir()
+    dest = ""
+    if cache.size > 0 {
+      dest = "${cache}/c/${unit.name}-${str_slice(key, 0, 16)}"
+      if fs_mkdir_p(dest) != 0 {
+        dest = ""
+      }
+    }
+    for i in 0..unit.sources.size {
+      src = unit.sources[i]
+      obj_name = "${i}-${path_basename(src)}.o"
+      cached = ""
+      if dest.size > 0 {
+        cached = "${dest}/${obj_name}"
+        if file_exists(cached) {
+          job.objects.push(cached)
+          continue
+        }
+      }
+      obj = "${tmp_new_dir()}/${obj_name}"
+      args: Array(String) = []
+      args.push("-c")
+      has_opt = false
+      has_std = false
+      for f in unit.flags {
+        if str_starts(f, "-O") {
+          has_opt = true
+        }
+        if str_starts(f, "-std=") {
+          has_std = true
+        }
+      }
+      if !has_opt {
+        args.push("-O2")
+      }
+      if !has_std {
+        args.push("-std=c11")
+      }
+      for inc in unit.include {
+        args.push("-I")
+        args.push(join_dir(unit.dir, inc))
+      }
+      for f in unit.flags {
+        args.push(f)
+      }
+      args.push("-o")
+      args.push(obj)
+      args.push(join_dir(unit.dir, src))
+      if run_cc(args) != 0 {
+        diag_puts("package ${unit.name}: failed to compile its C source ${src}")
+        return false
+      }
+      if cached.size > 0 && fs_rt.avant_fs_copy(obj, cached) == 0 {
+        job.objects.push(cached)
+      } else {
+        job.objects.push(obj)
+      }
+    }
+  }
+  for lname in unit.libs {
+    job.flags.push("-l${lname}")
+  }
+  true
 }
 
 pub fn compile_av_path(path: String): IrBox {
@@ -667,7 +979,11 @@ pub fn compile_av_path(path: String, cov_map: String): IrBox {
     if text = file_read(path) {
       src = Source.new(path, text)
     }
-    return compile_program(src, program, cov_map)
+    box = compile_program(src, program, cov_map)
+    if box.ok && !plan_pkg_c(loader, box) {
+      return IrBox.new(false)
+    }
+    return box
   }
   if e = loader.err {
     diag_bag(loader.errors)
