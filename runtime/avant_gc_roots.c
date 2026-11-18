@@ -443,10 +443,16 @@ static void unpin_locked(void *payload) {
   gc_hdr_and(h, (uint16_t)~AVANT_FLAG_PINNED);
 }
 
+/* A pin sets PINNED in the object's header, and the inline path's
+ * objects since its last sync are read at the sync as that path wrote
+ * them (the check modes stop at any other header). A lookup syncs only
+ * when the object has no start bit yet, and a shared module's inline
+ * sequence sets its objects' bits itself, so the pins sync first. */
 void avant_pin(void *payload) {
   if (!payload) {
     return;
   }
+  gc_alloc_sync();
   pthread_mutex_lock(&gc_heap.world);
   (void)pin_locked(payload);
   pthread_mutex_unlock(&gc_heap.world);
@@ -570,6 +576,7 @@ static void field_grow(void) {
 
 void avant_pin_field(void *field, void *payload) {
   void **f = (void **)field;
+  gc_alloc_sync();
   pthread_mutex_lock(&gc_heap.world);
   int pinned = payload ? pin_locked(payload) : 0;
   if (field_count >= field_tab_size) {

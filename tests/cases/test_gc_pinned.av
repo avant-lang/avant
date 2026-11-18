@@ -16,6 +16,14 @@ import std.process
 // back end needed AVANT_GC_DEFRAG=0 under AVANT_NURSERY=0; it
 // retired. The back end keeps every reference live across a
 // collecting call in a slot, and runs without it.)
+//
+// tests/fixtures/heap/pin_fresh.av pins objects the inline allocation
+// path has just built (in a program that spawns, whose inline sequence
+// sets the start bits itself) and allocates inside each pin; compiled
+// --debug and --release, it runs plain, under AVANT_GC_STRESS=1,
+// AVANT_GC_VERIFY=1 and both: the known stdout, no stderr, exit 0.
+// Before the pin synced the inline allocations first, the stress mode
+// stopped it at the sync inside the first pin.
 
 fn gc_envs: Array(String) {
   ["", "AVANT_GC_VERIFY=1", "AVANT_YOUNG_MB=1", "AVANT_GC_VERIFY=1 AVANT_YOUNG_MB=1", "AVANT_NURSERY=0"]
@@ -59,10 +67,44 @@ fn test_gc_pinned(c: Checks, compiler: String, root: String, dir: String) {
   }
 }
 
+fn test_pin_fresh(c: Checks, compiler: String, root: String, dir: String) {
+  src = "${root}/tests/fixtures/heap/pin_fresh.av"
+  want = "bob x\n400\n2\n"
+  modes = ["--debug", "--release"]
+  envs = ["", "AVANT_GC_STRESS=1", "AVANT_GC_VERIFY=1", "AVANT_GC_STRESS=1 AVANT_GC_VERIFY=1"]
+  jobs: Array(HJob) = []
+  for m, mode in modes {
+    args = ["compile", src, "${dir}/pin_fresh.m${m}", mode]
+    jobs.push(env_job("", compiler, args, "${dir}/pin_fresh.m${m}.log"))
+  }
+  run_waves(jobs)
+  runs: Array(HJob) = []
+  for m, mode in modes {
+    c.eq_int(jobs[m].code, 0, "pin_fresh.av compiles with ${mode}")
+    for e, env in envs {
+      runs.push(run_job_env(dir, "pin_fresh.m${m}", "pin_fresh.m${m}.g${e}", env))
+    }
+  }
+  run_waves(runs)
+  for m, mode in modes {
+    for e, env in envs {
+      what = "plain"
+      if env.size > 0 {
+        what = "under ${env}"
+      }
+      k = "pin_fresh.m${m}.g${e}"
+      c.eq_int(runs[m * envs.size + e].code, 0, "pin_fresh.av (${mode}) ${what}: exit 0")
+      c.eq_str(log_text("${dir}/${k}.out"), want, "pin_fresh.av (${mode}) ${what}: the known stdout")
+      c.eq_str(log_text("${dir}/${k}.err"), "", "pin_fresh.av (${mode}) ${what}: no stderr")
+    }
+  }
+}
+
 fn test_main(c: Checks) {
   c.suite("tests/cases/test_gc_pinned.av")
   if compiler = process.env("AVANT_COMPILER") {
     test_gc_pinned(c, compiler, avant_test_root(), scratch_dir())
+    test_pin_fresh(c, compiler, avant_test_root(), scratch_dir())
   } else {
     c.expect(false, "AVANT_COMPILER")
   }
