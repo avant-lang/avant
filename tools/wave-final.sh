@@ -17,7 +17,20 @@
 # way the script itself is not run under the runner. Without WAVE_RUNNER
 # every step runs as it is: the caller holds the lock (the whole run under
 # one `--timed` run, as before). SUMMARY.txt's `lock:` line says which,
-# and the LangArena line how long the whole machine was held.
+# and the LangArena line how long the whole machine was held. A run started
+# inside an exclusive `ledger run` (the old form: LEDGER_LOCK_HELD, which
+# the runner exports to its command, names an exclusive lock) holds the
+# whole machine for every step whatever WAVE_RUNNER says: the `lock:` line
+# and the script's first line on stdout say so.
+#
+# WAVE_GROUP=1 (with WAVE_RUNNER): the shared steps from 1b to 5c run in one
+# runner call, `final: shared steps` (the script calling itself with
+# WAVE_PART=shared), instead of one call each: the lock is taken once, so
+# another lane's whole-machine run that arrives meanwhile waits for the
+# whole shared part rather than going first at the next step (the lock's
+# turnstile). One lane's wall shrinks by those waits; the other lane's
+# grows by as much. SUMMARY.txt gains a `shared steps:` line with that
+# call's wall and wait; the steps' own walls then have no wait beside them.
 #
 # OUT is a new directory under results/ or outside the repository. Steps, in
 # order, each logged under OUT; a red step is reported and the later steps
@@ -26,6 +39,11 @@
 #   1. head.txt (HEAD, its tree and `git status --short`, which must be
 #      empty; red outside a git checkout of its own), governor.txt,
 #      tmp-before.txt
+#   1b. cases-check: every tests/cases/test_*.av through C''s __emit-ll
+#      (tools/cases-check.sh, under a minute): OUT/cases, cases.log; red
+#      with the first refused file and its message, the line printed at
+#      once on stdout too; with WAVE_CASES_STOP=1 a red one ends the run
+#      there (the gate's suites would only say it again, later)
 #   2. the gate (tools/gate.sh) with the standard GC list (overlapping
 #      two at a time, the gate's default): OUT/gate, gate.out, gate-wall.txt
 #   3. letters.txt: sha256 of B, C', D' and avant_rt.o; nm.txt: the global
@@ -166,16 +184,16 @@ runner=${WAVE_RUNNER:-}
 via=""
 lk() {
   l_side=$1 l_step=$2; shift 2
-  lk_start=""; rm -f "$out/.lk-start"
+  lk_start=""; rm -f "$out/.lk-start.$$"
   if [ -n "$runner" ]; then
     via=1
     # The command's own start, the lock granted, in OUT/.lk-start: a step's
     # wall leaves the lock's wait out (lk_wait).
     # shellcheck disable=SC2086,SC2016
-    run $runner --"$l_side" --step "final: $l_step" --kind "${WAVE_RUN_KIND:-new}" -- sh -c 'date +%s.%N > "$0"; exec "$@"' "$out/.lk-start" "$@"
+    run $runner --"$l_side" --step "final: $l_step" --kind "${WAVE_RUN_KIND:-new}" -- sh -c 'date +%s.%N > "$0"; exec "$@"' "$out/.lk-start.$$" "$@"
   else run "$@"; fi
   l_rc=$?; via=""
-  [ -s "$out/.lk-start" ] && lk_start=$(cat "$out/.lk-start"); rm -f "$out/.lk-start"
+  [ -s "$out/.lk-start.$$" ] && lk_start=$(cat "$out/.lk-start.$$"); rm -f "$out/.lk-start.$$"
   return $l_rc
 }
 # own T0 T1: the step's wall from T0 (its start, or the lock's grant
@@ -246,24 +264,37 @@ trap 'on_signal TERM 15' TERM
 trap 'on_signal INT 2' INT
 trap 'on_signal HUP 1' HUP
 
-# 1. provenance
-# The /tmp the litter check reads (WAVE_TMP, for the tool's own tests).
-tmpd=${WAVE_TMP:-/tmp}
-cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort | uniq -c > "$out/governor.txt"
-find "$tmpd" -mindepth 1 -maxdepth 1 | LC_ALL=C sort > "$out/tmp-before.txt"
-if ! head_rev=$(git rev-parse --verify -q HEAD 2>/dev/null) || [ "$(git rev-parse --show-toplevel 2>/dev/null)" != "$(pwd -P)" ]; then
-  echo "not a git checkout of its own: $root" > "$out/head.txt"
-  step "head: red (not a git checkout: no commit to name)"
-elif ! git status --short > "$out/status.txt" 2>&1; then
-  { echo "$head_rev"; cat "$out/status.txt"; } > "$out/head.txt"
-  step "head: red (git status failed: $(tail -1 "$out/status.txt"))"
-else
-  { echo "$head_rev"; git rev-parse 'HEAD^{tree}'; cat "$out/status.txt"; } > "$out/head.txt"
-  if [ -s "$out/status.txt" ]; then step "head: red (the tree is not clean)"; else step "head: $head_rev clean (tree $(git rev-parse 'HEAD^{tree}'))"; fi
-fi
-rm -f "$out/status.txt"
-if [ -n "$runner" ]; then step "lock: through WAVE_RUNNER ($runner): shared for every step but the LangArena timing, the whole machine for that"
-else step "lock: the caller's (WAVE_RUNNER unset: every step runs under the lock the run was started with)"; fi
+# The lock this run is under. `ledger run` exports LEDGER_LOCK_HELD
+# (MODE:LOCKFILE) to its command: a final started inside an exclusive one
+# (the old form, the whole run under `ledger run --timed`) holds the whole
+# machine for every step, gate and goldens included, which the steps' own
+# runner calls cannot undo. It still runs, and says so first.
+held_mode=""
+case "${LEDGER_LOCK_HELD:-}" in exclusive:*|shared:*|slot:*) held_mode=${LEDGER_LOCK_HELD%%:*} ;; esac
+if [ -n "$runner" ]; then
+  lock_line="lock: through WAVE_RUNNER ($runner): shared for every step but the LangArena timing, the whole machine for that"
+  [ "${WAVE_GROUP:-0}" = 1 ] && lock_line="$lock_line; the shared steps from the cases to the neutrality in one runner call (WAVE_GROUP=1)"
+else lock_line="lock: the caller's (WAVE_RUNNER unset: every step runs under the lock the run was started with)"; fi
+case "$held_mode" in
+  exclusive) lock_line="$lock_line; but the whole run is inside an exclusive \`ledger run\` (LEDGER_LOCK_HELD), which holds the whole machine for every step: the old form; start wave-final.sh outside ledger run, with WAVE_RUNNER, to hold it only for the LangArena timing" ;;
+  shared|slot) [ -n "$runner" ] && lock_line="$lock_line; but the whole run is inside a $held_mode \`ledger run\` (LEDGER_LOCK_HELD): its LangArena timing cannot take the whole machine there (start wave-final.sh outside ledger run)" ;;
+esac
+[ "${WAVE_PART:-}" = shared ] || echo "wave-final: $lock_line"
+# The steps on the shared side, 1b to 5c: run step by step, each through
+# the runner, or (WAVE_GROUP=1, with WAVE_RUNNER) by the script itself
+# called again (WAVE_PART=shared) under one runner call.
+shared_steps() {
+# 1b. the test files compile: a minute's check before the gate's suites.
+curname=cases
+lk shared cases timeout -k 10 900 sh tools/cases-check.sh "$out/cases" < /dev/null > "$out/cases.log" 2>&1
+crc=$?
+if [ -f "$out/cases/summary.txt" ]; then cases_line=$(head -n 1 "$out/cases/summary.txt")
+else cases_line="cases: red (rc=$crc, no summary: cases.log)"; fi
+step "$cases_line"
+echo "wave-final: $cases_line"
+case "$cases_line" in
+  *": red"*) if [ "${WAVE_CASES_STOP:-0}" = 1 ]; then : > "$out/.cases-stop"; return 0; fi ;;
+esac
 
 # 2. the gate
 t0=$(now); curname=gate
@@ -363,6 +394,51 @@ if [ -n "${WAVE_BASE:-}" ]; then
     fi
   fi
 else step "neutral: skipped (WAVE_BASE unset)"; fi
+}
+
+if [ "${WAVE_PART:-}" = shared ]; then shared_steps; exit 0; fi
+
+# 1. provenance
+# The /tmp the litter check reads (WAVE_TMP, for the tool's own tests).
+tmpd=${WAVE_TMP:-/tmp}
+cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort | uniq -c > "$out/governor.txt"
+find "$tmpd" -mindepth 1 -maxdepth 1 | LC_ALL=C sort > "$out/tmp-before.txt"
+if ! head_rev=$(git rev-parse --verify -q HEAD 2>/dev/null) || [ "$(git rev-parse --show-toplevel 2>/dev/null)" != "$(pwd -P)" ]; then
+  echo "not a git checkout of its own: $root" > "$out/head.txt"
+  step "head: red (not a git checkout: no commit to name)"
+elif ! git status --short > "$out/status.txt" 2>&1; then
+  { echo "$head_rev"; cat "$out/status.txt"; } > "$out/head.txt"
+  step "head: red (git status failed: $(tail -1 "$out/status.txt"))"
+else
+  { echo "$head_rev"; git rev-parse 'HEAD^{tree}'; cat "$out/status.txt"; } > "$out/head.txt"
+  if [ -s "$out/status.txt" ]; then step "head: red (the tree is not clean)"; else step "head: $head_rev clean (tree $(git rev-parse 'HEAD^{tree}'))"; fi
+fi
+rm -f "$out/status.txt"
+step "$lock_line"
+
+rm -f "$out/.cases-stop"
+if [ -n "$runner" ] && [ "${WAVE_GROUP:-0}" = 1 ]; then
+  # One runner call for the shared steps: the lock is taken once, so a
+  # whole-machine run of another lane that arrives meanwhile waits for the
+  # whole shared part instead of going first at the next step. The script
+  # itself runs them (WAVE_PART=shared), in this private /tmp; its lines go
+  # to SUMMARY.txt as the steps end.
+  t0=$(now); curname="shared steps"
+  lk shared "shared steps" env WAVE_PART=shared WAVE_RUNNER= WAVE_IN_PRIVATE_TMP=1 WAVE_PRIVATE_TMP_MODE="$pt_mode" \
+    sh "$root/tools/wave-final.sh" "$out" ${base:+"$base"} < /dev/null
+  grc=$?; t1=$(now)
+  # What the steps left for the later ones: the verdicts, the base cache's entry.
+  red=""
+  while IFS= read -r sl; do case "$sl" in *": red"*) red="$red ${sl%%:*}" ;; esac; done < "$out/SUMMARY.txt"
+  entry=""; [ -s "$out/base-cache.txt" ] && entry=$(cat "$out/base-cache.txt")
+  [ -z "$base" ] && [ -n "$entry" ] && base=$entry/gcstats
+  if [ $grc -eq 0 ]; then step "shared steps: one runner call, wall $(own "$t0" "$t1")"
+  else step "shared steps: red (the runner call's rc=$grc, wall $(own "$t0" "$t1"))"; fi
+else shared_steps; fi
+if [ -f "$out/.cases-stop" ]; then
+  rm -f "$out/.cases-stop"
+  step "WAVE FINAL RED:$red (stopped after the cases: WAVE_CASES_STOP=1)"; cat "$out/SUMMARY.txt"; exit 1
+fi
 
 # 6. LangArena (optional)
 # This machine's LR reference: WAVE_LR_REFERENCE, else the directory named

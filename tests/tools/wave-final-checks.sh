@@ -35,7 +35,20 @@
 #     its step leaves in /tmp is red, named, and not in the real /tmp
 #     afterwards (`skip:` where the machine refuses the namespace);
 #     private-tmp-paths: a checkout and OUT under /tmp (as inside the
-#     gate's private /tmp) are bound into the run's own.
+#     gate's private /tmp) are bound into the run's own;
+#   cases-green, cases-red, cases-stdout, cases-stop: the test files go
+#     through C' before the gate: green with their count; one the stub C'
+#     refuses is red, named with its message, before the gate's line and
+#     on stdout at once (the second line, after the lock's); with
+#     WAVE_CASES_STOP=1 the run ends there, no gate;
+#   lock-old-form, lock-old-form-runner, lock-new-form-quiet: inside an
+#     exclusive `ledger run` (LEDGER_LOCK_HELD) the lock line and the first
+#     line on stdout say it is the old form, with or without WAVE_RUNNER;
+#     outside, nothing is said;
+#   group-one-call, group-lines: with WAVE_GROUP=1 the shared steps are one
+#     runner call (`final: shared steps`), the harness build and the timing
+#     as before; every step's line is in SUMMARY.txt, and a `shared steps:`
+#     line with the call's wall and wait.
 # Prints one line per check, `ok: NAME` or `FAIL: NAME: why`, then `done`.
 set -u
 [ $# -eq 1 ] || { echo "usage: sh tests/tools/wave-final-checks.sh WORK" >&2; exit 2; }
@@ -193,4 +206,65 @@ if unshare --user --map-current-user --mount --keep-caps sh -c 'mount -t tmpfs t
   say private-tmp-paths $? "$(line tmp: "$d/out/SUMMARY.txt"); $(tail -n 2 "$d/out.log" 2>/dev/null | tr '\n' ';')"
   rm -rf "$d"
 else echo "skip: private-tmp: this machine refuses the mount namespace"; echo "skip: private-tmp-paths: this machine refuses the mount namespace"; fi
+
+# 9. The test files compile before the gate (tools/cases-check.sh with a
+# stub C' that refuses a file holding REFUSEME).
+cases_fake() { # NAME: a fake checkout with two test files, a helper and the stub compiler
+  f=$(fake "$1")
+  cp "$root/tools/cases-check.sh" "$f/tools/cases-check.sh"
+  mkdir -p "$f/tests/cases" "$f/bin"
+  echo ok > "$f/tests/cases/test_good.av"; echo ok > "$f/tests/cases/test_other.av"; echo 'REFUSEME, a helper' > "$f/tests/cases/harness.av"
+  cat > "$f/bin/avant-c-llvm" <<'EOF'
+#!/bin/sh
+[ "$1" = __emit-ll ] || exit 2
+if grep -q REFUSEME "$2"; then echo "error[E4002]: for i in ...: i already names a variable here ($2)"; exit 1; fi
+: > "$3"
+EOF
+  chmod +x "$f/bin/avant-c-llvm"
+  echo "$f"
+}
+f=$(cases_fake cases)
+final "$f" "$w/cases.out" WAVE_TMP="$w/tmp1"
+s=$w/cases.out/SUMMARY.txt
+has '^cases: 2 files compile ([0-9.]* s)$' "$s"; say cases-green $? "$(line cases: "$s")"
+echo REFUSEME > "$f/tests/cases/test_other.av"
+final "$f" "$w/cases-red.out" WAVE_TMP="$w/tmp1"
+s=$w/cases-red.out/SUMMARY.txt
+has '^cases: red (1 of 2 refused, [0-9.]* s: tests/cases/test_other.av: error\[E4002\]: for i in ...: i already names a variable here (tests/cases/test_other.av))$' "$s" \
+  && [ "$(grep -n '^cases: ' "$s" | cut -d: -f1)" -lt "$(grep -n '^gate: ' "$s" | cut -d: -f1)" ] && has 'WAVE FINAL RED:.* cases' "$s"
+say cases-red $? "$(line cases: "$s"); $(line WAVE "$s")"
+# printed at once: the first two lines on stdout are the lock and the cases
+sed -n '2p' "$w/cases-red.out.log" | grep -q '^wave-final: cases: red (1 of 2 refused'
+say cases-stdout $? "$(head -n 3 "$w/cases-red.out.log" | tr '\n' ';')"
+final "$f" "$w/cases-stop.out" WAVE_TMP="$w/tmp1" WAVE_CASES_STOP=1
+s=$w/cases-stop.out/SUMMARY.txt
+has '^WAVE FINAL RED:.* cases (stopped after the cases: WAVE_CASES_STOP=1)$' "$s" && ! has '^gate: ' "$s"
+say cases-stop $? "$(tr '\n' ';' < "$s" 2>/dev/null)"
+
+# 10. A run inside an exclusive `ledger run` (the old form) says so in its
+# lock line and its first line on stdout; a run outside does not.
+f=$w/nogit/side/avant
+final "$f" "$w/oldform.out" WAVE_TMP="$w/tmp1" LEDGER_LOCK_HELD="exclusive:$w/machine.lock"
+s=$w/oldform.out/SUMMARY.txt
+has "^lock: the caller's (WAVE_RUNNER unset: every step runs under the lock the run was started with); but the whole run is inside an exclusive \`ledger run\` (LEDGER_LOCK_HELD), which holds the whole machine for every step: the old form" "$s" \
+  && head -n 1 "$w/oldform.out.log" | grep -q '^wave-final: lock: .*the old form; start wave-final.sh outside ledger run, with WAVE_RUNNER'
+say lock-old-form $? "$(line lock: "$s"); stdout: $(head -n 1 "$w/oldform.out.log")"
+final "$f" "$w/oldform-runner.out" WAVE_TMP="$w/tmp1" LEDGER_LOCK_HELD="exclusive:$w/machine.lock" WAVE_RUNNER="sh $w/runner" WF_RUNLOG="$w/runner-old.log"
+has '^lock: through WAVE_RUNNER (sh .*runner): shared for every step but the LangArena timing, the whole machine for that; but the whole run is inside an exclusive' "$w/oldform-runner.out/SUMMARY.txt"
+say lock-old-form-runner $? "$(line lock: "$w/oldform-runner.out/SUMMARY.txt")"
+! has 'the old form' "$w/runner.out/SUMMARY.txt" && ! grep -q 'old form' "$w/runner.out.log"
+say lock-new-form-quiet $? "$(line lock: "$w/runner.out/SUMMARY.txt")"
+
+# 11. WAVE_GROUP=1: the shared steps in one runner call, the LangArena
+# timing still alone and --timed, every step's line as before.
+f=$(cases_fake group)
+final "$f" "$w/group.out" WAVE_TMP="$w/tmp1" WAVE_LA=1 WAVE_LA_SIDE="$w/group/side" WAVE_LR_DEFAULT="$w/default" WAVE_RUNNER="sh $w/runner" WF_RUNLOG="$w/group-runner.log" WAVE_GROUP=1
+r=$w/group-runner.log; s=$w/group.out/SUMMARY.txt
+[ "$(tr '\n' ';' < "$r")" = "--shared final: shared steps;--shared final: langarena harness;--timed final: langarena;" ]
+say group-one-call $? "$(tr '\n' ';' < "$r" 2>/dev/null)"
+ok=0
+for l in 'head: ' 'lock: through WAVE_RUNNER .*in one runner call (WAVE_GROUP=1)$' 'cases: 2 files compile' 'gate: pass' 'nm: ' 'goldens: ' 'gcstats: ' 'smoke: ' 'neutral: skipped' 'shared steps: one runner call, wall [0-9.]* s (waited [0-9.]* s for the lock)$' 'langarena: ' 'tmp: '; do
+  has "^$l" "$s" || { ok=1; echo "missing: $l" >> "$w/group.missing"; }
+done
+say group-lines $ok "$(cat "$w/group.missing" 2>/dev/null | tr '\n' ';') / $(tr '\n' ';' < "$s" 2>/dev/null)"
 echo done
