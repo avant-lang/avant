@@ -680,8 +680,23 @@ __attribute__((visibility("hidden"))) int avant_gc_large_drop(void *payload, int
   if (!payload || atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0 || gc_thread.collecting) {
     return 0;
   }
-  gc_lock(&gc_heap.world);
+  /* A small buffer is never dropped: read before the lock, while no
+   * collection can have run. */
   h = (AvantHeader *)payload - 1;
+  if (!(h->flags & AVANT_FLAG_LARGE)) {
+    return 0;
+  }
+  /* A contended lock is waited for natively: a thread that registers
+   * meanwhile (a C thread's first callback) completes its handshake
+   * there, so the program may be shared when the lock is held, and that
+   * thread may have collected (freed or moved the buffer). The flag is
+   * read again under the lock, where no registration completes, before
+   * the buffer is. */
+  gc_lock(&gc_heap.world);
+  if (atomic_load_explicit(&g_avant_shared, memory_order_acquire) != 0) {
+    pthread_mutex_unlock(&gc_heap.world);
+    return 0;
+  }
   if ((h->flags & (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE | AVANT_FLAG_PINNED)) == (AVANT_FLAG_HEAP | AVANT_FLAG_LARGE) &&
       ((h->flags & AVANT_FLAG_YOUNG) || h->type_id == AVANT_TYPE_BYTES) && h != gc_heap.los_spare &&
       !thread_roots_name((const uint8_t *)payload, (const uint8_t *)payload + h->size)) {
