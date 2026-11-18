@@ -67,7 +67,17 @@ fn client_round(port: Int, out: Channel(String)): Int {
   }
   if resp = Http.get("${base}/meta") {
     made = resp.headers().get("X-Made") ?? ""
-    out.send("meta=${resp.status}:${made}")
+    // A Headers value walked by name and value, in wire order.
+    got = resp.headers()
+    walked = ""
+    n = 0
+    for name, value in got {
+      n += 1
+      if name == "X-Made" {
+        walked = "${walked},${name}=${value}"
+      }
+    }
+    out.send("meta=${resp.status}:${made}${walked}:${n == got.count()}")
   } else {
     out.send("meta=ERR")
   }
@@ -331,7 +341,7 @@ fn test_std_http(c: Checks) {
     want.push("hdr=one/2/true")
     want.push("redir=200:landed")
     want.push("redir-off=302:/new")
-    want.push("meta=201:yes")
+    want.push("meta=201:yes,X-Made=yes:true")
     want.push("peer=127.0.0.1")
     want.push("json=1:application/json")
     want.push("untyped=204:0")

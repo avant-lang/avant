@@ -530,6 +530,10 @@ pub fn (checker_self: Checker) hash_for_walk(stmt: Stmt): Bool {
     }
     base = str_slice(pt.ident, 0, pt.ident.size - 2)
     params: Array(String) = []
+    if pos.size > 0 && pty.is_struct() && pty.mod_name == "std.http" && (pty.origin == "Headers" || pty.name == "Headers") {
+      checker_self.headers_for_walk(stmt, pt.ident, pi.ident, pos, el.ident, base)
+      return true
+    }
     if pty.is_set() {
       if pos.size > 0 {
         return false
@@ -590,6 +594,51 @@ pub fn (checker_self: Checker) hash_for_walk(stmt: Stmt): Bool {
     return true
   }
   false
+}
+
+// `for name, value in req.headers()` over std.http's Headers: each header
+// in wire order, duplicates included, as the loop written by hand over
+// its positions reads them:
+//   while i < hs.count { p = i; i += 1; name = hs.name_at(p) ?? ""; value = hs.value_at(p) ?? ""; body }
+// The counter steps first, so a `continue` goes straight to the next
+// header; name and value are this step's copies (they cannot be
+// assigned).
+pub fn (checker_self: Checker) headers_for_walk(stmt: Stmt, xs: String, counter: String, name: String, value: String, base: String) {
+  loc = stmt.loc
+  ix = "${base}i"
+  at = "${base}p"
+  inner: Array(Stmt) = []
+  for bi in 1..stmt.body.size - 1 {
+    inner.push(stmt.body[bi])
+  }
+  stmt.pre[1] = fw_assign(loc, ix, fw_int(loc, 0u64))
+  count = Expr.new(ex_call(), loc)
+  count.callee = "count"
+  count.receiver = fw_name(loc, xs)
+  stmt.cond = fw_bin(loc, tk_less(), fw_name(loc, ix), count)
+  body: Array(Stmt) = []
+  body.push(fw_assign(loc, at, fw_name(loc, ix)))
+  body.push(fw_assign(loc, ix, fw_bin(loc, tk_plus(), fw_name(loc, ix), fw_int(loc, 1u64))))
+  for part in [0, 1] {
+    read = Expr.new(ex_call(), loc)
+    read.callee = "name_at"
+    target = name
+    if part == 1 {
+      read.callee = "value_at"
+      target = value
+    }
+    read.receiver = fw_name(loc, xs)
+    read.args.push(fw_name(loc, at))
+    empty = Expr.new(ex_string(), loc)
+    st = fw_assign(loc, target, fw_bin(loc, tk_question_question(), read, empty))
+    st.for_kind = 11
+    body.push(st)
+  }
+  for x in for_unadvance(inner, counter) {
+    body.push(x)
+  }
+  stmt.body = body
+  stmt.for_kind = 13
 }
 
 // `s.fields()` on a String: the string, else nil.
