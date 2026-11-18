@@ -17,8 +17,14 @@
 #             (lib/std/json.av as std.json); test_tools.av for a change
 #             under tools/ or tests/tools/. Only tests/cases/test_*.av
 #             files run (a helper beside them, such as harness.av, is not a
-#             test). A changed file none of these reaches is left to the
-#             corpus and the gate.
+#             test). With a test map (tools/test-map.sh: TEST_MAP, else the
+#             base cache entry's testmap/ when it was built) also every test
+#             file whose run executed a line the commit changes, or the
+#             function or class around it (`test-map.sh --pick`); the cell
+#             then reads `N failed, M passed: NAMES; by the map, K (J more):
+#             NAMES`, the first names by name, path and import, the second
+#             those only the map chose. A changed file none of these
+#             reaches is left to the corpus and the gate.
 #   corpus    every program of examples/, tests/fixtures/, tests/cases/,
 #             tests/probe_matrix.av and compiler/main.av through
 #             `__emit-ll` (tools/ll-digests.sh): the programs whose .ll or
@@ -79,6 +85,11 @@ echo "base cache: $e, $lap ($(secs "$t0" "$(now)") s, $(grep -c 'built ' "$log")
 # --prune removes no entry a run holds.
 exec 7>> "$e.lock" && flock -s 7
 cp "$e/ll.tsv" "$out/state/corpus.tsv"
+# The test map (tools/test-map.sh): TEST_MAP, else the base entry's own.
+tmap=${TEST_MAP:-}
+[ -z "$tmap" ] && [ -f "$e/testmap/COMPLETE" ] && tmap=$e/testmap
+if [ -n "$tmap" ] && [ -f "$tmap/COMPLETE" ]; then echo "test map: $tmap (tree $(sed -n 's/^tree: //p' "$tmap/MANIFEST"))" >> "$out/cache.txt"
+else tmap=""; echo "test map: none (sh tools/test-map.sh $first^ builds the base's; TEST_MAP names another)" >> "$out/cache.txt"; fi
 cp "$lap/ll.tsv" "$out/state/la.tsv"
 cp "$lap/ins.tsv" "$out/state/ins.tsv"
 
@@ -184,8 +195,17 @@ EOF
     awk -F'\t' 'FILENAME == ARGV[1] { n[$1] = $0; next } { if ($1 in n) print n[$1]; else print }' "$d/ins.tsv" "$out/state/ins.tsv" > "$d/ins-state.tsv"
     mv "$d/ins-state.tsv" "$out/state/ins.tsv"
   fi
-  # The touched tests, with this commit's C'.
-  touched < "$d/changed.txt" > "$d/tests.txt"
+  # The touched tests, with this commit's C': by name, path and import,
+  # and by the test map (the tests whose hits meet the changed lines).
+  touched < "$d/changed.txt" > "$d/tests-name.txt"
+  : > "$d/tests-map.txt"
+  if [ -n "$tmap" ]; then
+    # shellcheck disable=SC2046
+    TMPDIR=$out sh "$here/test-map.sh" --pick "$tmap" "$c^" "$c" $(cat "$d/changed.txt") < /dev/null 2>> "$log" \
+      | while IFS= read -r t; do [ -f "$work/$t" ] && echo "$t"; done > "$d/tests-map.txt"
+  fi
+  LC_ALL=C sort -u "$d/tests-name.txt" "$d/tests-map.txt" > "$d/tests.txt"
+  LC_ALL=C comm -13 "$d/tests-name.txt" "$d/tests-map.txt" > "$d/tests-maponly.txt"
   tests="none matched"
   if [ -s "$d/tests.txt" ]; then
     mkdir -p "$d/tmp"
@@ -193,7 +213,9 @@ EOF
     (cd "$work" && env -u AVANT_COMPILER -u AVANT_BACKEND TMPDIR="$d/tmp" timeout -k 10 1800 ./bin/avant-c-llvm test $(cat "$d/tests.txt") < /dev/null > "$d/tests.log" 2>&1)
     trc=$?
     rm -rf "$d/tmp"
-    tests="$(grep -E '^[0-9]+ failed, [0-9]+ passed' "$d/tests.log" | tail -n 1): $(sed 's#tests/cases/##; s#\.av$##' "$d/tests.txt" | tr '\n' ' ' | sed 's/ $//')"
+    sn() { if [ -s "$1" ]; then sed 's#tests/cases/##; s#\.av$##' "$1" | tr '\n' ' ' | sed 's/ $//'; else echo -; fi; }
+    tests="$(grep -E '^[0-9]+ failed, [0-9]+ passed' "$d/tests.log" | tail -n 1): $(sn "$d/tests-name.txt")"
+    [ -n "$tmap" ] && tests="$tests; by the map, $(wc -l < "$d/tests-map.txt") ($(wc -l < "$d/tests-maponly.txt") more): $(sn "$d/tests-maponly.txt")"
     [ $trc -eq 0 ] || { bad=1; tests="FAILED (rc=$trc) $tests"; }
   fi
   names() { # FILE: "N: a, b" (at most 6 names)

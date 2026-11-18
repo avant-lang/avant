@@ -51,7 +51,15 @@
 #     for longer is removed, its lock file kept, the space said; one read
 #     within DAYS (its COMPLETE, or its read stamp) is kept; one whose lock
 #     a reader holds shared is kept "in use", and removed once the reader
-#     is gone; DAYS must be above 0; a call returning an entry stamps it.
+#     is gone; DAYS must be above 0; a call returning an entry stamps it;
+#   map-pick-carried, map-pick-widened, map-pick-unmapped: test-map.sh
+#     --pick on a map made by hand: a changed line of a commit whose file
+#     moved since the map's tree is carried back to that tree's lines and
+#     picks the test file that hit them; a changed line no test hits (a
+#     signature) picks those that hit its function; a file the map does
+#     not have picks none, and nothing is left in TMPDIR;
+#   check-map: change-check with TEST_MAP runs the map's test file beside
+#     those by name and names it apart in the line.
 # Where `perf stat -e instructions:u` cannot count (a container without
 # the counters), the LangArena part and change-check cannot be built: their
 # checks print `skip: NAME: why`. Prints one line per check, `ok: NAME`,
@@ -65,7 +73,7 @@ say() { if [ "$2" = 0 ]; then echo "ok: $1"; else echo "FAIL: $1: $3"; fi; }
 r=$w/repo/avant
 mkdir -p "$r/tools" "$r/compiler" "$r/lib/std" "$r/runtime" "$r/examples" "$r/tests/cases" \
   "$r/bin/seed" "$r/langarena/harness" "$r/langarena/tasks" "$w/repo/LangArena"
-for t in base-cache.sh ll-digests.sh gcstats.sh la-count.sh neutral.sh change-check.sh; do cp "$root/tools/$t" "$r/tools/$t"; done
+for t in base-cache.sh ll-digests.sh gcstats.sh la-count.sh neutral.sh change-check.sh test-map.sh; do cp "$root/tools/$t" "$r/tools/$t"; done
 for f in heap closures objects; do mkdir -p "$r/tests/fixtures/$f"; echo "churn $f" > "$r/tests/fixtures/$f/churn.av"; done
 echo 'v1' > "$r/compiler/main.av"
 echo 'r1' > "$r/runtime/rt.txt"
@@ -222,11 +230,32 @@ BASE_CACHE=$pc sh "$r/tools/base-cache.sh" --prune 0 < /dev/null > /dev/null 2>&
 [ -f "$e.read" ] && [ "$(stat -c %Y "$e.read")" -ge "$(stat -c %Y "$e/COMPLETE")" ]
 say cache-read-stamp $? "$(ls -l "$e.read" 2>&1)"
 
+# 3c. test-map.sh --pick on a map made by hand: compiler/x.av's two
+# functions, each hit by one test file; a later commit moves them down by
+# three lines and the next changes a line of the second.
+printf 'fn a {\n  1\n}\nfn b {\n  2\n}\n' > "$r/compiler/x.av"; g add -A && g commit -q -m 'x'
+xt=$(git -C "$r" rev-parse 'HEAD^{tree}')
+pm=$w/pickmap; mkdir -p "$pm/hits"
+printf 'tree: %s\n' "$xt" > "$pm/MANIFEST"; : > "$pm/COMPLETE"
+printf 'compiler/x.av\t1-3\n' > "$pm/hits/test_a.tsv"; printf 'compiler/x.av\t5\n' > "$pm/hits/test_b.tsv"
+printf 'compiler/x.av\n' > "$pm/files.txt"
+printf '# a\n# b\n# c\nfn a {\n  1\n}\nfn b {\n  2\n}\n' > "$r/compiler/x.av"; g add -A && g commit -q -m 'x moved'
+p1=$(git -C "$r" rev-parse HEAD)
+printf '# a\n# b\n# c\nfn a {\n  1\n}\nfn b {\n  22\n}\n' > "$r/compiler/x.av"; g add -A && g commit -q -m 'x b changed'
+p2=$(git -C "$r" rev-parse HEAD)
+o=$(cd "$r" && TMPDIR=$w sh tools/test-map.sh --pick "$pm" "$p1" "$p2" compiler/x.av compiler/main.av < /dev/null 2>&1)
+[ "$o" = tests/cases/test_b.av ]; say map-pick-carried $? "picked: $(echo "$o" | tr '\n' ' ')"
+printf '# a\n# b\n# c\nfn a {\n  1\n}\nfn b(x) {\n  22\n}\n' > "$r/compiler/x.av"; g add -A && g commit -q -m 'x b signature'
+o=$(cd "$r" && TMPDIR=$w sh tools/test-map.sh --pick "$pm" "$p2" HEAD compiler/x.av < /dev/null 2>&1)
+[ "$o" = tests/cases/test_b.av ]; say map-pick-widened $? "picked: $(echo "$o" | tr '\n' ' ')"
+o=$(cd "$r" && TMPDIR=$w sh tools/test-map.sh --pick "$pm" "$p2" HEAD compiler/y.av lib/std/m.av < /dev/null 2>&1)
+[ -z "$o" ] && [ -z "$(ls -d "$w"/test-map-pick.* 2>/dev/null)" ]; say map-pick-unmapped $? "picked: $(echo "$o" | tr '\n' ' ')"
+
 perf_ok=0
 perf stat -x, -e instructions:u -o "$w/perf.txt" true > /dev/null 2>&1 && grep -q '^[0-9]' "$w/perf.txt" && perf_ok=1
 skip() { for n in "$@"; do echo "skip: $n: perf stat cannot count instructions here"; done; }
 if [ $perf_ok = 0 ]; then
-  skip cache-la neutral-cache neutral-default-la check-first-kept check-kept check-rebuilt check-runtime check-failed check-worktree \
+  skip check-map cache-la neutral-cache neutral-default-la check-first-kept check-kept check-rebuilt check-runtime check-failed check-worktree \
     cache-la-base-refuses neutral-base-refuses check-base-refuses
   echo done; exit 0
 fi
@@ -301,4 +330,15 @@ say neutral-base-refuses $? "rc=$rc $(tr '\n' ';' < "$w/neutral3/summary.txt" 2>
 (cd "$r" && sh tools/change-check.sh "$nb" HEAD "$w/cc2" < /dev/null > "$w/cc2.log" 2>&1); rc=$?
 [ $rc -eq 0 ] && grep -F '| a new spelling |' "$w/cc2/table.md" | grep -q '| 2: a.av, b.av | a new (the base refused it), b new (the base refused it) |'
 say check-base-refuses $? "rc=$rc $(grep -F '| a new spelling |' "$w/cc2/table.md" 2>/dev/null) $(tail -n 3 "$w/cc2.log" | tr '\n' ';')"
+
+# 8. change-check with a test map: the map's test file joins the ones by
+# name, and the cell says which came from the map.
+mkdir -p "$w/map2/hits"; printf 'tree: %s\n' "$(git -C "$r" rev-parse 'HEAD^{tree}')" > "$w/map2/MANIFEST"; : > "$w/map2/COMPLETE"
+printf 'compiler/main.av\t1\n' > "$w/map2/hits/test_other.tsv"; printf 'lib/std/m.av\t1\n' > "$w/map2/hits/test_m.tsv"
+printf 'compiler/main.av\nlib/std/m.av\n' > "$w/map2/files.txt"
+echo 'v3' > "$r/compiler/main.av"; g add -A && g commit -q -m 'the compiler again'
+(cd "$r" && TEST_MAP="$w/map2" sh tools/change-check.sh HEAD^ HEAD "$w/cc3" < /dev/null > "$w/cc3.log" 2>&1); rc=$?
+[ $rc -eq 0 ] && grep -F '| the compiler again |' "$w/cc3/table.md" | grep -q '| 0 failed, 1 passed: -; by the map, 1 (1 more): test_other |' \
+  && grep -q "^test map: $w/map2 " "$w/cc3/cache.txt"
+say check-map $? "rc=$rc $(grep -F '| the compiler again |' "$w/cc3/table.md" 2>/dev/null) $(tail -n 3 "$w/cc3.log" | tr '\n' ';')"
 echo done
