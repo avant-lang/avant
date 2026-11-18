@@ -357,13 +357,28 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
     ops2.push(b.c_i32(left))
     return lw.str_call("avant_str_pad", ops2)
   }
+  if rt.is_string() && (name == "delete_prefix" || name == "delete_suffix") && args.size == 1 {
+    // The pattern, then the receiver; a slice of the receiver, or the
+    // receiver itself when the pattern is not there.
+    ops3 = lw.args_then_recv(args, recv)
+    if lw.failed() {
+      return b.c_i32(0)
+    }
+    lw.at(e.loc)
+    suffix = 0
+    if name == "delete_suffix" {
+      suffix = 1
+    }
+    ops3.push(b.c_i32(suffix))
+    return lw.str_call("avant_str_delete_affix", ops3)
+  }
   if args.size > 0 {
     lw.refuse(e.loc, "the member .${name} of ${rt.show()}")
     return b.c_i32(0)
   }
   known = name == "size" || name == "bytes"
   if rt.is_string() {
-    known = known || name == "strip" || name == "strip_left" || name == "strip_right"
+    known = known || name == "strip" || name == "strip_left" || name == "strip_right" || name == "to_ascii_lower" || name == "to_ascii_upper"
   }
   if !known {
     lw.refuse(e.loc, "the member .${name} of ${rt.show()}")
@@ -379,6 +394,16 @@ pub fn (lw: MirLower) str_member(e: Expr, recv: Expr, rt: Ty, name: String, args
   }
   if name == "bytes" {
     return s
+  }
+  if name == "to_ascii_lower" || name == "to_ascii_upper" {
+    upper = 0
+    if name == "to_ascii_upper" {
+      upper = 1
+    }
+    cargs: Array(MOperand) = []
+    cargs.push(s)
+    cargs.push(b.c_i32(upper))
+    return lw.str_call("avant_str_ascii_case", cargs)
   }
   mode = 0
   if name == "strip_left" {
@@ -477,8 +502,9 @@ pub fn (lw: MirLower) str_parse(e: Expr, recv: Expr, name: String, args: Array(E
 
 // The search methods of String, Bytes and Buf: `contains(p)`,
 // `index_of(p)`, `index_of(p, from)`, `last_index_of(p)`,
-// `starts_with(p)`, `ends_with(p)` and `count(p)`, the pattern p a
-// String, Bytes, Buf or one byte (an Int). One call of avant_seq_find
+// `starts_with(p)`, `ends_with(p)`, `count(p)` and
+// `eq_ignore_ascii_case(p)`, the pattern p a String, Bytes, Buf or one
+// byte (an Int; not for the equality). One call of avant_seq_find
 // (avant_seq_find_byte for a byte), which reads both sides in place; the
 // arguments last to first, then the receiver. nil for another member
 // (Buf's starts_with of a String keeps avant_buf_starts).
@@ -531,7 +557,7 @@ pub fn (lw: MirLower) seq_search(e: Expr, recv: Expr, rt: Ty, name: String, args
   if name == "count" {
     return b.copy_local(r)
   }
-  if name == "starts_with" || name == "ends_with" {
+  if name == "starts_with" || name == "ends_with" || name == "eq_ignore_ascii_case" {
     return lw.tmp(mt_bool(), b.rv_cmp(mop_eq(), b.copy_local(r), b.c_i64(1)))
   }
   found = lw.tmp(mt_bool(), b.rv_cmp(mop_ge(), b.copy_local(r), b.c_i64(0)))
@@ -561,6 +587,9 @@ pub fn mir_seq_mode(name: String): Int {
   }
   if name == "count" {
     return 4
+  }
+  if name == "eq_ignore_ascii_case" {
+    return 5
   }
   -1
 }

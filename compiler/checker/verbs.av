@@ -98,13 +98,14 @@ pub fn (checker_self: Checker) check_shared_verb(expr: Expr, object: Ty): Ty? {
 
 // The search methods String, Bytes and Buf share.
 pub fn is_search_verb(c: String): Bool {
-  c == "contains" || c == "index_of" || c == "last_index_of" || c == "starts_with" || c == "ends_with" || c == "count"
+  c == "contains" || c == "index_of" || c == "last_index_of" || c == "starts_with" || c == "ends_with" || c == "count" || c == "eq_ignore_ascii_case"
 }
 
 // `contains(p)`, `index_of(p)`, `index_of(p, from)`, `last_index_of(p)`,
-// `starts_with(p)`, `ends_with(p)` and `count(p)` on a String, Bytes or
-// Buf: the pattern p is a String, Bytes, Buf or one byte (an Int, as
-// `s[i]` gives); `from` is an Int, the start of the search.
+// `starts_with(p)`, `ends_with(p)`, `count(p)` and
+// `eq_ignore_ascii_case(p)` on a String, Bytes or Buf: the pattern p is
+// a String, Bytes, Buf or one byte (an Int, as `s[i]` gives; not for the
+// equality); `from` is an Int, the start of the search.
 pub fn (checker_self: Checker) check_search_verb(expr: Expr, object: Ty): Ty {
   c = expr.callee
   res = checker_self.t_bool()
@@ -130,6 +131,10 @@ pub fn (checker_self: Checker) check_search_verb(expr: Expr, object: Ty): Ty {
     return res
   }
   got = checker_self.check_expr(expr.args[0])
+  if c == "eq_ignore_ascii_case" && !(got.is_string() || got.is_bytes() || got.is_buf()) {
+    checker_self.fail(expr.args[0].loc, "eq_ignore_ascii_case compares with a String, Bytes or Buf, got ${got.show()}")
+    return res
+  }
   if !(got.is_string() || got.is_bytes() || got.is_buf() || got.is_int()) {
     checker_self.fail(expr.args[0].loc, "the pattern of ${c} is a String, Bytes, Buf or a byte (Int), got ${got.show()}")
     return res

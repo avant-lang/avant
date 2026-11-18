@@ -1318,6 +1318,7 @@ A string knows its length (`size` is a read, never a scan), and a long slice sha
 | `s.split(sep)`, `s.split(sep, limit)` | `Array(String)`, empty fields kept; with a limit, at most `limit` fields, the last holding the rest (`"k=v=w".split("=", 2)` is `["k", "v=w"]`); an empty separator or a limit below 1 traps |
 | `s.fields()` | split on runs of whitespace, empty fields dropped |
 | `s.strip()`, `s.strip_left()`, `s.strip_right()` | whitespace trimmed |
+| `s.lines()` | `Array(String)`: the lines, each ended by `\n` or `\r\n` (the ending not kept); a final ending adds no empty line, so `"a\nb\n".lines()` and `"a\r\nb".lines()` are both `["a", "b"]` and `"".lines()` is `[]`; a `\r` alone ends no line |
 | `s.chars()` | `Array(String)`, one per code point |
 | `s.code_points()` | `Array(Int)`, each code point's number |
 | `s.bytes` | the same bytes as [`Bytes`](#bytes-and-buf); `for b in s.bytes` walks them without a copy |
@@ -1333,6 +1334,9 @@ A string knows its length (`size` is a read, never a scan), and a long slice sha
 | `s.replace(from, to)` | a new string with every `from`, left to right and without overlapping, replaced by `to`; an empty `from` traps |
 | `s.repeat(n)` | `n` copies of `s`; a negative `n` traps |
 | `s.pad_left(width)`, `s.pad_right(width)`, `s.pad_left(width, '0')` | `s` with spaces (or the byte given) added before or after it up to `width` bytes; `s` itself when it is that long already |
+| `s.delete_prefix(p)`, `s.delete_suffix(p)` | `s` without `p` at its start or its end (`"/users/".delete_suffix("/")` is `"/users"`); `s` unchanged when it does not start or end with `p` |
+| `s.to_ascii_lower()`, `s.to_ascii_upper()` | a string with the ASCII letters `A`–`Z` (or `a`–`z`) changed to the other case; every other byte, UTF-8 included, is kept, so the size never changes (`"Straße".to_ascii_upper()` is `"STRAßE"`) |
+| `s.eq_ignore_ascii_case(t)` | `Bool`: `s == t` with ASCII letters compared without their case (`"Content-Type".eq_ignore_ascii_case("content-type")`); `t` a `String`, `Bytes` or `Buf` |
 | `xs.join(sep)` | the strings of an `Array(String)` with `sep` between them |
 | `a += b` | `a = a + b`: a new string (to build a long text piece by piece, a [`Buf`](#bytes-and-buf) copies less) |
 | `str_slice(s, start, stop)` | the same as `s[start..stop]` |
@@ -1356,6 +1360,9 @@ fn main {
   puts(path.split("/", 3)[2])                  // => v1/users/
   puts(["a", "b", "c"].join(", "))             // => a, b, c
   puts("7".pad_left(3, '0'))                   // => 007
+  puts(path.delete_suffix("/"))                // => /api/v1/users
+  puts("Host".eq_ignore_ascii_case("HOST"))    // => true
+  puts("a\r\nb\n".lines().size)                // => 2
   at = 0
   while i = path.index_of('/', at) {
     at = i + 1
@@ -1364,7 +1371,7 @@ fn main {
 }
 ```
 
-Case conversion is not built yet ([Not built yet](#not-built-yet)); [`std.regex`](#stdregex) matches patterns.
+Case conversion and its comparison change ASCII letters only (HTTP's header names and most identifiers are ASCII by their specifications); Avant has no Unicode case rule. [`std.regex`](#stdregex) matches patterns.
 
 ### Parsing numbers
 
@@ -1422,6 +1429,7 @@ fn main {
 | `b[a..b]`, `b[a..]`, `b[..b]`, `b.slice(start, stop)`, `b.slice(start)`, `b.try_slice(...)` | a new `Bytes`, as a [slice](#slices) of a `String` |
 | `b.is_empty()` | `b.size == 0` |
 | `b.contains(p)`, `b.index_of(p)`, `b.index_of(p, from)`, `b.last_index_of(p)`, `b.starts_with(p)`, `b.ends_with(p)`, `b.count(p)` | as for [`String`](#string-operations), `p` a `String`, `Bytes`, `Buf` or one byte |
+| `b.eq_ignore_ascii_case(t)` | as for `String`, `t` a `String`, `Bytes` or `Buf` |
 | `a == b` | equality by content |
 | `b.chars()` | as `String.chars` |
 | `b.to_buf()` | a `Buf` holding a copy |
@@ -1435,7 +1443,7 @@ fn main {
 | `buf.size`, `buf[i]`, `buf.get(i)`, `buf[i] = n` | read and overwrite bytes |
 | `buf[a..b]`, `buf[a..]`, `buf.slice(...)`, `buf.try_slice(...)` | a new `Buf` holding a copy of those bytes ([Slices](#slices)) |
 | `buf.is_empty()` | `buf.size == 0` |
-| `contains(p)`, `index_of(p)`, `index_of(p, from)`, `last_index_of(p)`, `starts_with(p)`, `ends_with(p)`, `count(p)` | as for [`String`](#string-operations), `p` a `String`, `Bytes`, `Buf` or one byte, read in place |
+| `contains(p)`, `index_of(p)`, `index_of(p, from)`, `last_index_of(p)`, `starts_with(p)`, `ends_with(p)`, `count(p)`, `eq_ignore_ascii_case(p)` | as for [`String`](#string-operations), `p` a `String`, `Bytes`, `Buf` or one byte (not for the comparison), read in place |
 | `clear` | empty it, keeping the storage |
 | `to_s`, `to_bytes` | a `String` or `Bytes` of the contents |
 
@@ -4901,7 +4909,6 @@ What is missing, also said beside each feature it limits. **Decided**: designed,
 | --- | --- | --- |
 | Constant strings and tables (`const names = [...]`) | planned | a function that builds the value |
 | `Hash` insertion order | decided | sort the keys ([hash operations](#hash-operations)) |
-| `String` case conversion and case-insensitive comparison, `lines`, removing a given prefix or suffix | planned | a loop over the bytes, `split("\n")`, `ends_with` and a slice |
 | `map`, `select`, `reduce` on arrays | planned | a loop, or [your own](#lambdas) |
 | The time of day; `sleep` | planned | intervals with `now_ms`; C's `usleep` through a `lib` block |
 | `==` on hashes | planned | a loop |

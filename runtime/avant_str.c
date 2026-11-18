@@ -1724,6 +1724,129 @@ char *avant_str_pad(const char *s, avant_int width, avant_int fill, int32_t left
   return p;
 }
 
+/* s.to_ascii_lower() (UPPER 0) and s.to_ascii_upper() (UPPER 1): S with
+ * each ASCII letter changed to the other case (A-Z to a-z, or a-z to
+ * A-Z) and every other byte kept, so a UTF-8 text stays valid and keeps
+ * its size; S itself when no byte changes. RC1: S is a handle across the
+ * allocation. */
+char *avant_str_ascii_case(const char *s, int32_t upper) {
+  size_t n;
+  size_t i;
+  const char *d;
+  char *p;
+  unsigned char from = upper ? 'a' : 'A';
+  if (!s) {
+    s = AVANT_STR_EMPTY;
+  }
+  d = avant_str_bytes(s, &n);
+  for (i = 0; i < n; i++) {
+    if ((unsigned char)((unsigned char)d[i] - from) < 26u) {
+      break;
+    }
+  }
+  if (i == n) {
+    return (char *)s;
+  }
+  AVANT_GC_SCOPE(1);
+  AVANT_GC_ROOT(0, &s);
+  p = avant_str_alloc((uint64_t)n);
+  d = avant_str_bytes(s, &n);
+  for (i = 0; i < n; i++) {
+    unsigned char c = (unsigned char)d[i];
+    p[i] = (char)((unsigned char)(c - from) < 26u ? c ^ 0x20 : c);
+  }
+  p[n] = 0;
+  avant_str_tag(p);
+  return p;
+}
+
+/* s.delete_prefix(p) (SUFFIX 0) and s.delete_suffix(p) (SUFFIX 1): S
+ * without P at its start (or its end), a view or a copy as a slice is;
+ * S itself when it does not start (or end) with P, or P is empty. */
+/* gc-lint: holds nothing (str_part is its only allocation and its last call). */
+char *avant_str_delete_affix(const char *s, const char *pat, int32_t suffix) {
+  size_t n;
+  size_t m;
+  const char *d;
+  const char *e;
+  if (!s) {
+    s = AVANT_STR_EMPTY;
+  }
+  if (!pat) {
+    pat = AVANT_STR_EMPTY;
+  }
+  d = avant_str_bytes(s, &n);
+  e = avant_str_bytes(pat, &m);
+  if (m == 0 || m > n) {
+    return (char *)s;
+  }
+  if (suffix) {
+    if (memcmp(d + n - m, e, m) != 0) {
+      return (char *)s;
+    }
+    return str_part(s, 0, n - m);
+  }
+  if (memcmp(d, e, m) != 0) {
+    return (char *)s;
+  }
+  return str_part(s, m, n - m);
+}
+
+/* s.lines(): the lines of S, each ended by "\n" or "\r\n" (the ending
+ * not kept); a last line without an ending is a line, and a final ending
+ * adds no empty line: "a\nb\n" and "a\r\nb" are ["a", "b"], "" is [],
+ * "\n" is [""]. A "\r" alone ends no line. RC1: the text and the array
+ * are handles across each line's allocation; RC2: the bytes are formed
+ * again after it. */
+void *avant_str_lines(const char *s) {
+  size_t n;
+  size_t start = 0;
+  int32_t count = 0;
+  const char *d;
+  const char *nl;
+  AvantArray *a = NULL;
+  if (!s) {
+    s = AVANT_STR_EMPTY;
+  }
+  d = avant_str_bytes(s, &n);
+  while (start < n) {
+    nl = (const char *)memchr(d + start, '\n', n - start);
+    count++;
+    if (!nl) {
+      break;
+    }
+    start = (size_t)(nl - d) + 1;
+  }
+  AVANT_GC_SCOPE(2);
+  AVANT_GC_ROOT(0, &s);
+  AVANT_GC_ROOT(1, &a);
+  a = (AvantArray *)str_array_new(count);
+  start = 0;
+  d = avant_str_bytes(s, &n);
+  while (start < n) {
+    size_t stop;
+    size_t next;
+    nl = (const char *)memchr(d + start, '\n', n - start);
+    if (nl) {
+      stop = (size_t)(nl - d);
+      next = stop + 1;
+      if (stop > start && d[stop - 1] == '\r') {
+        stop--;
+      }
+    } else {
+      stop = n;
+      next = n;
+    }
+    {
+      char *p = str_part(s, start, stop - start);
+      str_array_put(a, p);
+    }
+    d = avant_str_bytes(s, &n);
+    start = next;
+  }
+  return a;
+}
+
 /* xs.join(sep) of an Array(String): the elements in order with SEP
  * between them; an empty array is "", one element is that element. RC1:
  * the array and the separator are handles across the allocation; RC2:

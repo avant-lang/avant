@@ -315,6 +315,9 @@ char *avant_str_replace(const char *s, const char *from, const char *to);
 char *avant_str_repeat(const char *s, avant_int count);
 char *avant_str_pad(const char *s, avant_int width, avant_int fill, int32_t left);
 char *avant_str_join(void *arr, const char *sep);
+char *avant_str_ascii_case(const char *s, int32_t upper);
+char *avant_str_delete_affix(const char *s, const char *pat, int32_t suffix);
+void *avant_str_lines(const char *s);
 void *avant_str_fields(const char *s);
 char *avant_str_from_utf8(const char *s, int32_t *found);
 /* String.code_points (and Bytes'): each code point's number, an

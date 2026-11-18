@@ -199,6 +199,23 @@ pub fn (checker_self: Checker) check_string_method(expr: Expr): Ty {
   if expr.callee == "strip_right" {
     return checker_self.expect_no_args(expr, checker_self.t_string(), "strip_right takes no arguments")
   }
+  if expr.callee == "to_ascii_lower" || expr.callee == "to_ascii_upper" {
+    return checker_self.expect_no_args(expr, checker_self.t_string(), "${expr.callee} takes no arguments")
+  }
+  if expr.callee == "lines" {
+    return checker_self.expect_no_args(expr, ty_array(checker_self.t_string()), "lines takes no arguments")
+  }
+  if expr.callee == "delete_prefix" || expr.callee == "delete_suffix" {
+    if expr.args.size != 1 {
+      checker_self.fail(expr.loc, "${expr.callee} takes one String, the part to remove")
+      return checker_self.t_string()
+    }
+    got = checker_self.check_expr_as(expr.args[0], checker_self.t_string())
+    if !ty_assignable(got, checker_self.t_string()) {
+      checker_self.fail(expr.args[0].loc, "${expr.callee} expects String, got ${got.show()}")
+    }
+    return checker_self.t_string()
+  }
   if expr.callee == "bytes" {
     // A builtin read-only property is read without parentheses.
     checker_self.fail(expr.loc, "bytes is read without parentheses: write .bytes")

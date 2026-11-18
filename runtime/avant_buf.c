@@ -612,8 +612,10 @@ static const char *seq_find_from(const char *h, size_t hn, const char *nd, size_
  * first place at or after FROM (-1 when there is none; FROM outside
  * 0..HN traps as the slice h[from..] does), 1 the last place, 2 whether H
  * starts with ND, 3 whether it ends with it, 4 how many times ND occurs
- * without overlapping (an empty ND traps). An empty ND is found at FROM
- * (0) and at the end (1). */
+ * without overlapping (an empty ND traps), 5 whether H and ND are equal
+ * with ASCII letters compared without their case (A-Z as a-z, every
+ * other byte as it is). An empty ND is found at FROM (0) and at the end
+ * (1). */
 static avant_int seq_search(const char *h, size_t hn, const char *nd, size_t nn, avant_int from, int32_t mode) {
   const char *at;
   avant_int count = 0;
@@ -644,6 +646,18 @@ static avant_int seq_search(const char *h, size_t hn, const char *nd, size_t nn,
     return nn <= hn && (nn == 0 || memcmp(h, nd, nn) == 0) ? 1 : 0;
   case 3:
     return nn <= hn && (nn == 0 || memcmp(h + hn - nn, nd, nn) == 0) ? 1 : 0;
+  case 5:
+    if (nn != hn) {
+      return 0;
+    }
+    for (i = 0; i < hn; i++) {
+      unsigned char a = (unsigned char)h[i];
+      unsigned char b = (unsigned char)nd[i];
+      if (a != b && ((a | 0x20) != (b | 0x20) || (unsigned char)((a | 0x20) - 'a') >= 26u)) {
+        return 0;
+      }
+    }
+    return 1;
   default:
     if (nn == 0) {
       avant_trap_text("count of an empty pattern");
@@ -665,9 +679,9 @@ static avant_int seq_search(const char *h, size_t hn, const char *nd, size_t nn,
 }
 
 /* The search methods of String, Bytes and Buf (contains, index_of,
- * last_index_of, starts_with, ends_with, count): the receiver HAY and
- * the pattern NEEDLE, each a Buf when its kind is 1 and a String or
- * Bytes otherwise, both read in place (a view's bytes are its base's). */
+ * last_index_of, starts_with, ends_with, count, eq_ignore_ascii_case):
+ * the receiver HAY and the pattern NEEDLE, each a Buf when its kind is
+ * 1 and a String or Bytes otherwise, both read in place (a view's bytes are its base's). */
 avant_int avant_seq_find(void *hay, int32_t hay_kind, void *needle, int32_t needle_kind, avant_int from, int32_t mode) {
   size_t hn;
   size_t nn;
