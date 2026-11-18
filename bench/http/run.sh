@@ -36,7 +36,12 @@
 #          server, the other four with both siblings for wrk, the
 #          server cores' siblings 8-11 idle; the CPU lists are for a
 #          machine whose siblings are k and k+8:
-#          HTTP_BENCH_SERVER_CPUS, HTTP_BENCH_WRK_CPUS)
+#          HTTP_BENCH_SERVER_CPUS, HTTP_BENCH_WRK_CPUS). Inside a timed
+#          slot of the machine lock (LEDGER_NODE set, the run bound to
+#          that NUMA node) the defaults are that node's cores instead,
+#          split in two halves of whole cores (each core with its
+#          sibling): the first half for the server, the second for wrk;
+#          a CPU outside the node would leave the slot)
 #      B1  wrk --latency -d 5 -c 900 -t 8 --timeout 8 URL
 #          B without pipelining (depth 1 at 900 connections)
 #    HTTP_BENCH_DURATION overrides the seconds of the measured load;
@@ -517,6 +522,41 @@ method_cell() {
   say "$METHOD r$round $row status=$status req/s=${rps:-?} alive_after_load=${alive:-n/a} ${errs:+ERRORS:$errs}"
 }
 
+# node_split: NODE_SERVER_CPUS and NODE_WRK_CPUS, method C's default
+# pins: 0-3 and 4-7,12-15, or in a timed slot (LEDGER_NODE) the slot's
+# node's cores, the first half of them (with their siblings) for the
+# server and the second for wrk.
+node_split() {
+  NODE_SERVER_CPUS=0-3
+  NODE_WRK_CPUS=4-7,12-15
+  if [ -n "${LEDGER_NODE:-}" ]; then
+    _split=$(python3 -I - "$LEDGER_NODE" <<'PY'
+import sys
+node = sys.argv[1]
+def cpus(text):
+    out = []
+    for part in text.strip().split(","):
+        a, _, b = part.partition("-")
+        out += range(int(a), int(b or a) + 1)
+    return out
+mine = cpus(open("/sys/devices/system/node/node%s/cpulist" % node).read())
+cores = []
+for c in mine:
+    sib = cpus(open("/sys/devices/system/cpu/cpu%d/topology/thread_siblings_list" % c).read())
+    core = tuple(x for x in sib if x in mine)
+    if core not in cores:
+        cores.append(core)
+half = max(1, len(cores) // 2)
+srv = sorted(x for core in cores[:half] for x in core)
+wrk = sorted(x for core in cores[half:] for x in core) or srv
+print(",".join(map(str, srv)), ",".join(map(str, wrk)))
+PY
+)
+    NODE_SERVER_CPUS=${_split% *}
+    NODE_WRK_CPUS=${_split#* }
+  fi
+}
+
 method_mode() {
   THREADS=${HTTP_BENCH_THREADS:-}
   SERVER_CPUS=
@@ -530,8 +570,9 @@ method_mode() {
     C)
       DUR=${HTTP_BENCH_DURATION:-5}
       THREADS=${HTTP_BENCH_THREADS:-4}
-      SERVER_CPUS=${HTTP_BENCH_SERVER_CPUS:-0-3}
-      WRK_PIN="taskset -c ${HTTP_BENCH_WRK_CPUS:-4-7,12-15}" ;;
+      node_split
+      SERVER_CPUS=${HTTP_BENCH_SERVER_CPUS:-$NODE_SERVER_CPUS}
+      WRK_PIN="taskset -c ${HTTP_BENCH_WRK_CPUS:-$NODE_WRK_CPUS}" ;;
     *)
       say "unknown METHOD: $METHOD (A, A8, B, C, B1)"
       exit 2 ;;
@@ -636,8 +677,9 @@ syscalls_mode() {
     A | A8 | B | B1) ;;
     C)
       THREADS=${HTTP_BENCH_THREADS:-4}
-      SERVER_CPUS=${HTTP_BENCH_SERVER_CPUS:-0-3}
-      WRK_PIN="taskset -c ${HTTP_BENCH_WRK_CPUS:-4-7,12-15}" ;;
+      node_split
+      SERVER_CPUS=${HTTP_BENCH_SERVER_CPUS:-$NODE_SERVER_CPUS}
+      WRK_PIN="taskset -c ${HTTP_BENCH_WRK_CPUS:-$NODE_WRK_CPUS}" ;;
     *)
       say "syscalls needs METHOD=A, A8, B, C or B1"
       exit 2 ;;
